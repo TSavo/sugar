@@ -186,17 +186,15 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
     // body has zero recoverable value-work, so no better value-lifter could lift it:
     // a SOURCE property, not a lifter limitation. (NOT a fake-zero -- there is nothing
     // to launder.)
-    // TERMINAL: the assertion's helper has NO VISIBLE SOURCE (the called helper is not
-    // lexically present and not in the imported macro/dep source we hold). We operate
-    // exclusively on source; source we cannot see cannot be lifted by ANY value-lifter --
-    // a property of what's available to us, not a lifter limitation. (Not a fake-zero:
-    // nothing is laundered; we state plainly that the producing source is absent.)
+    // NOTE: "has no visible source" is NOT terminal -- it is UNCLASSIFIED work. The helper's
+    // source may be loadable from a dependency / macro registry we have not pulled in yet, so
+    // it is a lifter-reach limitation, not a source property. (Enforced by
+    // nonempty_assert_helper_is_not_terminal_refused_the_twin.)
     let terminal = reason.contains("bin-2")
         || reason.contains("number too large")
         || reason.contains("ambiguous temporal identity")
         || reason.contains("temporally unstable")
         || reason.contains("type-level obligation")
-        || reason.contains("has no visible source")
         // TERMINAL: a macro EXPANDED (from a definition we hold) but its expansion
         // contains NO liftable assertion -- the body is type-level or purely effectful,
         // i.e. it makes no point-wise VALUE claim. There is no value predicate to lift,
@@ -9236,7 +9234,6 @@ mod lifter_key_tests {
             "ambiguous temporal identity for receiver `r`; skipped assertion",
             "assert_eq!: macro in term position references a `x` local; temporally unstable — refused",
             "assertion helper `assert_trusted_len` is a type-level obligation (empty body: trait-bound or no-op), not a point-wise value predicate; refused",
-            "assertion helper `foo` has no visible source; skipped assertion",
             "macro `m`: expansion yielded no liftable assertion (type-level or effectful body); released to layer 0",
             "assertion under while context: not unconditional point-wise; released to layer 0",
         ] {
