@@ -3752,6 +3752,97 @@ def test_lift_source_classifies_static_container_constructor_bindings_as_warrant
     assert all("static binding" in locus.get("reason", "") for locus in static_loci)
 
 
+def test_structural_package_accounting_warrants_static_factory_bindings(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("SUGAR_PY_PACKAGE_ACCOUNTING_MODE", "structural")
+    pkg = tmp_path / "vendpkg_static_factory_bindings"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "factories.py").write_text(
+        textwrap.dedent(
+            '''
+            class Accessor:
+                def __init__(self, name, target):
+                    self.name = name
+                    self.target = target
+
+            def _field_accessor(name, alias=None):
+                return name
+            '''
+        ),
+        encoding="utf-8",
+    )
+    module_path = pkg / "api.py"
+    module_path.write_text(
+        textwrap.dedent(
+            '''
+            from vendpkg_static_factory_bindings.factories import Accessor
+            from vendpkg_static_factory_bindings.factories import _field_accessor
+
+            def local_accessor(name):
+                return name
+
+            class StringMethods:
+                pass
+
+            class Frame:
+                plot = Accessor("plot", StringMethods)
+                year = _field_accessor("year", alias="Y")
+                month = local_accessor("month")
+
+            def ok():
+                return "ok"
+            '''
+        ),
+        encoding="utf-8",
+    )
+    static_lines = {
+        line_no
+        for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
+        if line.strip().startswith(("plot =", "year =", "month ="))
+    }
+    monkeypatch.syspath_prepend(str(tmp_path))
+    constant_universe_for_callee_clear()
+
+    lifted = _lift_source_from_disk(
+        tmp_path,
+        "test_mod.py",
+        """
+        import vendpkg_static_factory_bindings.api as api
+
+        def test_ok():
+            assert api.ok() == "ok"
+        """,
+    )
+
+    audit = next(
+        audit
+        for audit in lifted["sourceAudits"]
+        if audit.get("role") == "python.package-source"
+        and audit.get("package") == "vendpkg_static_factory_bindings"
+    )
+    factory_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith("vendpkg_static_factory_bindings/api.py")
+        and locus["line"] in static_lines
+        and locus.get("ast_kind")
+        in {"Assign", "Call", "Name", "Constant", "keyword"}
+    ]
+    assert factory_loci
+    assert not [
+        locus for locus in factory_loci if locus["status"] == "unclassified"
+    ], factory_loci
+    assert any(
+        locus["status"] == "warranted"
+        and locus.get("ast_kind") == "Call"
+        and "static binding" in locus.get("reason", "")
+        for locus in factory_loci
+    ), factory_loci
+
+
 def test_lift_source_warrants_local_name_assignment_accounting(
     tmp_path, monkeypatch
 ):

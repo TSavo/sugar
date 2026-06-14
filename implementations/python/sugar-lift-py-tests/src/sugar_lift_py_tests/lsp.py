@@ -670,7 +670,12 @@ def _package_locus_classification(
     module_metadata_status = _public_module_metadata_status(node, ancestors)
     if module_metadata_status is not None:
         return module_metadata_status
-    static_binding_status = _static_binding_status(node, ancestors, call_aliases)
+    static_binding_status = _static_binding_status(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+    )
     if static_binding_status is not None:
         return static_binding_status
     guarded_default_status = _guarded_default_value_flow_status(node, ancestors)
@@ -957,7 +962,12 @@ def _package_locus_structural_classification(
     constructor_field_status = _constructor_field_syntax_status(node, ancestors)
     if constructor_field_status is not None:
         return constructor_field_status
-    static_binding_status = _static_binding_status(node, ancestors, call_aliases)
+    static_binding_status = _static_binding_status(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+    )
     if static_binding_status is not None:
         return static_binding_status
     transparent_cast_status = _transparent_typing_cast_status(
@@ -1792,14 +1802,20 @@ def _static_binding_status(
     node: ast.AST,
     ancestors: tuple[ast.AST, ...],
     call_aliases: Dict[str, str],
+    module_name: str,
 ) -> Optional[tuple[str, str]]:
-    stmt = _static_binding_statement_for_locus(node, ancestors)
-    if stmt is None:
+    stmt, parent = _static_binding_statement_for_locus(node, ancestors)
+    if stmt is None or parent is None:
         return None
     value = stmt.value if isinstance(stmt, ast.AnnAssign) else stmt.value
     if value is None:
         return "support", "annotation-only binding carries no runtime value"
-    if _is_static_assignment_value(value, call_aliases):
+    if _is_static_assignment_value(
+        value,
+        call_aliases,
+        module_name,
+        allow_local_factory=isinstance(parent, ast.ClassDef),
+    ):
         return "warranted", "static binding admitted as timeless compiler fact"
     return None
 
@@ -1898,7 +1914,7 @@ def _is_string_constant(node: ast.AST | None) -> bool:
 def _static_binding_statement_for_locus(
     node: ast.AST,
     ancestors: tuple[ast.AST, ...],
-) -> Optional[ast.Assign | ast.AnnAssign]:
+) -> tuple[Optional[ast.Assign | ast.AnnAssign], Optional[ast.AST]]:
     chain = ancestors + (node,)
     stmt_index: Optional[int] = None
     stmt: Optional[ast.Assign | ast.AnnAssign] = None
@@ -1909,94 +1925,205 @@ def _static_binding_statement_for_locus(
             stmt = item
             break
     if stmt is None or stmt_index is None or stmt_index == 0:
-        return None
+        return None, None
     parent = chain[stmt_index - 1]
     if not isinstance(parent, (ast.Module, ast.ClassDef)):
-        return None
+        return None, None
     for item in chain[:stmt_index]:
         if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-            return None
-    return stmt
+            return None, None
+    return stmt, parent
 
 
 def _is_static_assignment_value(
     node: ast.AST,
     call_aliases: Optional[Dict[str, str]] = None,
+    local_module_name: Optional[str] = None,
+    *,
+    allow_local_factory: bool = False,
 ) -> bool:
     if isinstance(node, ast.Constant):
         return True
     if isinstance(node, ast.Name):
         return True
     if isinstance(node, ast.Attribute):
-        return _is_static_assignment_value(node.value, call_aliases)
+        return _is_static_assignment_value(
+            node.value,
+            call_aliases,
+            local_module_name,
+            allow_local_factory=allow_local_factory,
+        )
     if isinstance(node, ast.JoinedStr):
         return all(
-            _is_static_assignment_value(value, call_aliases) for value in node.values
+            _is_static_assignment_value(
+                value,
+                call_aliases,
+                local_module_name,
+                allow_local_factory=allow_local_factory,
+            )
+            for value in node.values
         )
     if isinstance(node, ast.FormattedValue):
-        return _is_static_assignment_value(node.value, call_aliases)
+        return _is_static_assignment_value(
+            node.value,
+            call_aliases,
+            local_module_name,
+            allow_local_factory=allow_local_factory,
+        )
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
-        return _is_static_assignment_value(node.operand, call_aliases)
+        return _is_static_assignment_value(
+            node.operand,
+            call_aliases,
+            local_module_name,
+            allow_local_factory=allow_local_factory,
+        )
     if isinstance(node, ast.BinOp):
         return _is_static_assignment_value(
             node.left,
             call_aliases,
+            local_module_name,
+            allow_local_factory=allow_local_factory,
         ) and _is_static_assignment_value(
             node.right,
             call_aliases,
+            local_module_name,
+            allow_local_factory=allow_local_factory,
         )
     if isinstance(node, ast.Subscript):
         return _is_static_assignment_value(
             node.value,
             call_aliases,
-        ) and _is_static_slice(node.slice, call_aliases)
+            local_module_name,
+            allow_local_factory=allow_local_factory,
+        ) and _is_static_slice(
+            node.slice,
+            call_aliases,
+            local_module_name,
+            allow_local_factory=allow_local_factory,
+        )
     if isinstance(node, ast.Starred):
-        return _is_static_assignment_value(node.value, call_aliases)
+        return _is_static_assignment_value(
+            node.value,
+            call_aliases,
+            local_module_name,
+            allow_local_factory=allow_local_factory,
+        )
     if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
         return all(
-            _is_static_assignment_value(value, call_aliases) for value in node.elts
+            _is_static_assignment_value(
+                value,
+                call_aliases,
+                local_module_name,
+                allow_local_factory=allow_local_factory,
+            )
+            for value in node.elts
         )
     if isinstance(node, ast.Dict):
         return all(
-            (key is None or _is_static_assignment_value(key, call_aliases))
-            and _is_static_assignment_value(value, call_aliases)
+            (
+                key is None
+                or _is_static_assignment_value(
+                    key,
+                    call_aliases,
+                    local_module_name,
+                    allow_local_factory=allow_local_factory,
+                )
+            )
+            and _is_static_assignment_value(
+                value,
+                call_aliases,
+                local_module_name,
+                allow_local_factory=allow_local_factory,
+            )
             for key, value in zip(node.keys, node.values)
         )
     if isinstance(node, ast.Call):
-        return _is_known_static_assignment_call(node, call_aliases)
+        return _is_known_static_assignment_call(
+            node,
+            call_aliases,
+            local_module_name,
+            allow_local_factory=allow_local_factory,
+        )
     return False
 
 
 def _is_static_slice(
     node: ast.AST,
     call_aliases: Optional[Dict[str, str]] = None,
+    local_module_name: Optional[str] = None,
+    *,
+    allow_local_factory: bool = False,
 ) -> bool:
     if isinstance(node, ast.Slice):
         return all(
-            part is None or _is_static_assignment_value(part, call_aliases)
+            part is None
+            or _is_static_assignment_value(
+                part,
+                call_aliases,
+                local_module_name,
+                allow_local_factory=allow_local_factory,
+            )
             for part in (node.lower, node.upper, node.step)
         )
-    return _is_static_assignment_value(node, call_aliases)
+    return _is_static_assignment_value(
+        node,
+        call_aliases,
+        local_module_name,
+        allow_local_factory=allow_local_factory,
+    )
 
 
 def _is_known_static_assignment_call(
     node: ast.Call,
     call_aliases: Optional[Dict[str, str]] = None,
+    local_module_name: Optional[str] = None,
+    *,
+    allow_local_factory: bool = False,
 ) -> bool:
     if any(isinstance(arg, ast.Starred) for arg in node.args):
         return False
     if any(kw.arg is None for kw in node.keywords):
         return False
-    if not all(_is_static_assignment_value(arg, call_aliases) for arg in node.args):
+    if not all(
+        _is_static_assignment_value(
+            arg,
+            call_aliases,
+            local_module_name,
+            allow_local_factory=allow_local_factory,
+        )
+        for arg in node.args
+    ):
         return False
     if not all(
-        _is_static_assignment_value(kw.value, call_aliases) for kw in node.keywords
+        _is_static_assignment_value(
+            kw.value,
+            call_aliases,
+            local_module_name,
+            allow_local_factory=allow_local_factory,
+        )
+        for kw in node.keywords
     ):
         return False
     func = node.func
     if isinstance(func, ast.Attribute) and func.attr == "encode":
-        return _is_static_assignment_value(func.value, call_aliases)
+        return _is_static_assignment_value(
+            func.value,
+            call_aliases,
+            local_module_name,
+            allow_local_factory=allow_local_factory,
+        )
     callee = _resolved_static_call_name(func, call_aliases or {})
+    if (
+        callee
+        and callee != _static_call_name(func)
+        and (
+            local_module_name is None
+            or not callee.startswith(f"{local_module_name}.")
+            or allow_local_factory
+        )
+        and not _static_call_name_is_nondeterministic(callee)
+    ):
+        return True
     return callee in {
         "Decimal",
         "complex",
@@ -2015,6 +2142,13 @@ def _is_known_static_assignment_call(
         "tuple",
         "staticmethod",
     } or callee in _KNOWN_STDLIB_CONSTRUCTOR_CALLS
+
+
+def _static_call_name_is_nondeterministic(callee: str) -> bool:
+    parts = callee.split(".") if callee else []
+    if not parts:
+        return False
+    return parts[0] in _NONDET_CALL_ROOTS and parts[-1] in _NONDET_CALL_ATTRS
 
 
 _KNOWN_STDLIB_CONSTRUCTOR_CALLS = frozenset(
