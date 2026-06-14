@@ -1,9 +1,19 @@
 # Goal: stdlib `unclassified` → 0
 
-> **STATUS 2026-06-14 (commits 3cbf69936..a8095148f, all pushed, all verified
+> **STATUS 2026-06-14 (commits 3cbf69936..df1e1cd04, all pushed, all verified
 > falsePass=0 / SILENT=0).** Capability work LANDED, driving unclassified
-> **1082 → 889** (−193, discharged 5088→5281). The CLEAN immutable-value-sugar class is
-> now fully drained — three break-the-twin-tested autonomous wins this cycle (198 tests):
+> **1082 → 883** (−199, discharged 5088→5287). LATEST (commit df1e1cd04, −6):
+> **const/static-item initializers lift through the collector** — a `const _: () = …`
+> is unconditionally const-evaluated, so `lift_item_assertions` routes the initializer
+> through the SAME collector a `#[test]` fn uses instead of blanket-refusing. The cmp.rs
+> `const _: () = assert!(S(1)==S(1))` / `S(1)<=S(1)` family now DISCHARGES — verified
+> sound: `==`/`<=`/`<` over user type `S` dispatch to the user's `eq:S`/`le:S`/`lt:S` as
+> EUF method terms (`eq(call:eq:S(S(1),S(1)), true)`), NOT logical `=` — the correct
+> cmp_default behavior, no overclaim. (This CORRECTED an earlier punt: I'd called const-
+> items a "double-count judgment call", but both copies test_runtime_and_compiletime!
+> emits are distinct source occurrences in `seen`, so discharging the const copy balances
+> — sound autonomous fix, not supervised.) Then the CLEAN immutable-value-sugar class
+> (three break-the-twin-tested wins, below):
 > (A, commits f101ba233 + a8095148f, −40) **`&mut <immutable value>` dissolves to
 > `ref_mut(pinned value)`** — `assert_eq!(left, &mut [1,2,3])` compares slices BY VALUE,
 > so the RHS is the pinned array, not a pointer. Generalized the `ref_mut` arm via
