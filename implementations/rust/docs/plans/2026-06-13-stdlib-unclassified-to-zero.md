@@ -85,6 +85,20 @@
 > framing of a sub-class can be safe even when its INLINING framing is not — should be applied
 > to the rest before declaring them blocked: for each class, ask whether a refuse-with-reason
 > (the trichotomy's safe leg) discharges the accounting where a lift would be unsound. Every remaining
+> CHECKED + CORRECTLY DECLINED (2026-06-14, applying the safe-refusal lens): "mutable
+> container is not temporally stable" (4) LOOKS like terminal-property wording drift vs the
+> whitelisted "temporally unstable" — but it is NOT. It fires (lib.rs:6921) when an `a[i]`
+> container is `is_mut_local`, and `mut_locals` is populated from SYNTACTIC `let mut`
+> (`collect_mut_pat_idents`: `ident.mutability.is_some()`), NOT proven mutation. A `let mut a`
+> never actually mutated is genuinely STABLE, so `a[i]` is recoverable/liftable; calling it
+> terminal would launder that subset = a FAKE-ZERO. So it stays unclassified, correctly. Its
+> real recovery path is a DISCHARGE (make the index oracle precise: use the proven-mutation
+> set, not syntactic let-mut), which is a shared term-path change with masked-contradiction
+> risk → supervised, NOT a terminal-refusal win. The lesson cuts both ways: the safe-refusal
+> leg only applies when the gate is MECHANICALLY exact (empty-body), not when the underlying
+> condition is conservative/recoverable.
+>
+> Every remaining
 > case requires T at the soundness edge (the sweep catches false-UNSAT and silent drops
 > but NOT masked contradictions / false-discharge). The resume order for the supervised
 > campaign, by leverage: (1) flt2dec float-formatting body lift (388, the single biggest
