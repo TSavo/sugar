@@ -16,6 +16,41 @@ A CID over that ledger is the closure artifact: every door labelled, no junk
 drawer. Until `unclassified = 0`, the ledger CID certifies a completeness it does
 not have.
 
+## Progress log (2026-06-13 overnight, --rustc-cfg baseline)
+
+Measured with `coretests_sweep --rustc-cfg` (the canonical config; without it 178
+cfg-gated asserts read as ambiguous — a measurement artifact, now fixed).
+
+- **Honest accounting** (commit 3cbf69936): `Disposition::Inactive` splits out
+  cfg-disabled asserts (58 — not this target's universe, not work); `temporally
+  unstable` joins the terminal whitelist (a source property). discharged 5088,
+  refused 201, unclassified 1161→1082, inactive 58.
+- **R7 statement-position helper inlining** (commit 8ace70802): bare `check(2);`
+  calls to assert-bodied helpers inline per-callsite (β-reduction). Sound + tested.
+  Fires for simple helper bodies; drained 0 on stdlib because the 517 here are the
+  **complex flt2dec helpers** (`F: FnMut` closure params, nested fns) it correctly
+  declines.
+- **Comparison-ops in term position** — ATTEMPTED, REVERTED. Adding `<`/`<=`/`>`/
+  `>=` to `term_binop_name` discharged +11 (`a[0] < b[0]`) but diverted
+  `!(value() < 3)` off the comparison-ATOM path, breaking euf-coalescing of a
+  negated comparison with its positive sibling (a guard test). Parked with an
+  in-code NOTE; needs a fix that routes top-level/negated comparisons to atoms
+  before the term ctor.
+
+**Empirical finding — the remaining ~1071 is mostly HIGHER-ORDER, not micro-lowerings.**
+The two biggest buckets (517 complex helpers + ~150 closures-in-term-position) are
+the SAME core: lifting requires inlining closures / generic+closure helper bodies
+(higher-order β-reduction, possibly iterator-comprehension lifting). That is real,
+regression-prone work that must be done SUPERVISED with the consistency-sweep
+falsePass net — not forged overnight. A chunk of the flt2dec 517 may further prove
+**terminal (bin-2)** once inlinable, because their asserts are about *runtime
+formatter output*, not source literals — but we cannot claim that reason honestly
+until we can inline far enough to see it, so they correctly stay `unclassified`
+(not refused) today. The moderate buckets (bin-1 loop bodies 60, let-init 32,
+nested-expr 38, branch 45) are tractable but each risks the same kind of
+keying/coalescing side-effect the comparison-op attempt hit; do them one at a time,
+each gated on falsePass=0 + the full guard-test suite.
+
 ## Where we are (sweep, commit ef1bb4d7c)
 
 ```

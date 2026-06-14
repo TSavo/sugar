@@ -7331,6 +7331,13 @@ fn term_binop_name(op: &BinOp) -> Option<&'static str> {
         BinOp::BitXor(_) => Some("bit-xor"),
         BinOp::Shl(_) => Some("shift-left"),
         BinOp::Shr(_) => Some("shift-right"),
+        // NOTE: ordered comparisons (`<`/`<=`/`>`/`>=`) are deliberately NOT term
+        // binops. Adding them here makes `value() < 3` translatable as a `lt` ctor
+        // term, which DIVERTS `!(value() < 3)` away from the comparison-ATOM path
+        // and breaks euf-coalescing of a negated comparison with its positive
+        // sibling (negated_call_result_comparison_lifts_as_fol_not_under_euf_key).
+        // Term-position comparisons (`assert_eq!(a[0] < b[0], true)`) need a fix
+        // that routes top-level/negated comparisons to atoms first; not yet built.
         _ => None,
     }
 }
