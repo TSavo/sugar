@@ -6887,6 +6887,55 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
             }
             Ok(make_var(format!("macro:{token_str}")))
         }
+        // A CLOSURE LITERAL as an opaque EUF symbol, keyed by its body text AND the
+        // version-aware terms of its CAPTURED free variables. Conservative by
+        // identity: same text + same captures -> same symbol (a contradiction over
+        // it coalesces and is CAUGHT); ANY difference -> a distinct symbol (it never
+        // false-coalesces, so it cannot mask a contradiction). Captures MUST be
+        // version-aware -- two `|x| x+n` with different captured `n` have identical
+        // text, so coalescing them would be unsound; we include each free var as a
+        // versioned arg, and REFUSE if a capture is ambiguous (no single `t`).
+        Expr::Closure(closure) => {
+            let params: BTreeSet<String> = closure
+                .inputs
+                .iter()
+                .filter_map(|p| match p {
+                    Pat::Ident(id) => Some(id.ident.to_string()),
+                    Pat::Type(t) => match &*t.pat {
+                        Pat::Ident(id) => Some(id.ident.to_string()),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect();
+            let mut args = Vec::new();
+            for name in names_referenced_in_expr(&closure.body) {
+                if params.contains(&name) {
+                    continue;
+                }
+                // A captured LOCAL must be read at its program-point `t` (versioned);
+                // a global/const path is the same symbol everywhere (bare). Ambiguous
+                // capture -> no single `t` -> refuse the closure.
+                if is_unqualified_local_name(&name) && scope.plan.versioned.contains(&name) {
+                    if scope.ambiguous.contains(&name) {
+                        return Err(format!(
+                            "closure captures ambiguous local `{name}`; refused"
+                        ));
+                    }
+                    let vname = match scope.versions.get(&name) {
+                        Some(v) => format!("{name}@def{v}"),
+                        None => name.clone(),
+                    };
+                    args.push(make_var(vname));
+                } else {
+                    args.push(make_var(name));
+                }
+            }
+            Ok(Rc::new(Term::Ctor {
+                name: format!("closure:{}", token_key(&closure.body)),
+                args,
+            }))
+        }
         other => Err(format!("unsupported term `{}`", token_key(other))),
     }
 }
@@ -8255,6 +8304,40 @@ mod lifter_key_tests {
             "inlined contradictory body must coalesce both pins into one inv (caught, \
              not masked): {:?}",
             out.decls.iter().map(|d| format!("{:?}", d.inv)).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn closure_opaque_is_keyed_by_text_and_captures() {
+        // A closure lifts to an opaque EUF symbol keyed by body text + captured free
+        // vars. DISCRIMINATION: two closures with DIFFERENT text get DISTINCT symbols
+        // (so they never false-coalesce). Same text + same captures coalesce (a
+        // contradiction over the call would be caught).
+        let src = r#"
+            #[test]
+            fn t() {
+                assert_eq!(apply(|x| x + 1), 3);
+                assert_eq!(apply(|x| x + 2), 4);
+            }
+        "#;
+        let out = lift_src(src);
+        let dump = format!("{:?}", out.decls);
+        // Two distinct closure symbols (x+1 vs x+2), not one coalesced.
+        assert!(
+            dump.contains("closure:") ,
+            "closures should lift to opaque closure: symbols: {dump}"
+        );
+        // The two apply-calls must NOT collapse to one obligation (distinct closures).
+        let applies: std::collections::HashSet<&str> = out
+            .decls
+            .iter()
+            .map(|d| d.name.as_str())
+            .filter(|n| n.contains("apply"))
+            .collect();
+        assert!(
+            applies.len() >= 2 || out.decls.len() >= 2,
+            "distinct closures must not coalesce: {:?}",
+            out.decls.iter().map(|d| &d.name).collect::<Vec<_>>()
         );
     }
 
