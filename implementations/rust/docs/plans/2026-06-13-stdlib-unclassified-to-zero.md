@@ -11,11 +11,21 @@
 > three sound by construction (conservative EUF / faithful β-reduction / versioned),
 > each with a discrimination test; verifier falsePass 0 throughout (undec 24→82 is the
 > honest bignum tier the lifts exposed, not a false claim). Remaining 950 is dominated
-> by the **516 "reachable only via inlining"** — the deeply-nested flt2dec helpers
-> (closures within nested fns within the helper); each opaque layer drains less, and
-> the residual blocker (function-registry resolution and/or deeper nested-arg lifting)
-> needs a focused look. Prior baseline line, for reference: discharged 5088 / refused
-> 201 / unclassified 1082 / inactive 58. Sound progress landed: honest accounting
+> by the **516 "reachable only via inlining"**, and a diagnostic pinned the blocker:
+> it is **ARCHITECTURAL, not a per-assert gap.** Those helpers (flt2dec
+> `to_exact_fixed_str_test` etc.) are DEFINED in `num/flt2dec/mod.rs` but CALLED
+> cross-file from `strategy/*.rs`. The lifter processes each file independently with a
+> **per-file function registry** (`ReductionCtx.functions` is built from the current
+> file's items; only MACROS have a cross-file `imported` registry). So at the
+> definition site there is no in-file caller to inline against (Pass 2 refuses), and
+> at the caller's site `reducer.function` can't see the cross-file helper's source.
+> My within-file inline works (it drained the in-file helpers); the 516 need a
+> **whole-program / cross-file function registry** (the analogue of the macro
+> `imported` registry) threaded into `lift_file`, plus the cross-file
+> inlining-inflation accounting. That is the supervised architectural step for this
+> bucket — distinct from the per-assert opaque capabilities, which are done.
+> Prior baseline line, for reference: discharged 5088 / refused 201 / unclassified
+> 1082 / inactive 58. Sound progress landed: honest accounting
 > (Inactive + temporally-unstable-terminal), and 2 of the 3 body-level capabilities
 > the unclassified set bottoms out in — **statement-position helper inlining** and
 > **pure let-substitution** — both tested. The headline is unchanged because the
