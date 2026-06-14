@@ -10504,6 +10504,112 @@ def test_chain_assignment_stdlib_bridge_method_return(vendor_path):
     ) in warranted
 
 
+def test_chain_assignment_function_call_return_queues_recursive_digs(vendor_path):
+    from sugar_lift_py_tests.layer2 import _iter_conjuncts
+    from sugar_lift_py_tests.translate_universe import delegation_universe_for_callee
+
+    delegation_universe_for_callee.cache_clear()
+    vendor_path(
+        "venddeleg_call_queue",
+        """
+        def h(value):
+            return value + "h"
+
+        def g(value):
+            return value + "g"
+
+        def f(value):
+            z = h(value)
+            return g(z)
+        """,
+    )
+
+    universe, refusal = delegation_universe_for_callee("venddeleg_call_queue.f")
+    assert refusal is None
+    assert universe is not None
+    assert universe.kind == "delegation"
+    assert universe.delegate == "venddeleg_call_queue.g"
+    assert universe.args == (
+        (
+            "function-call",
+            "venddeleg_call_queue.h",
+            (("param", 0),),
+        ),
+    )
+
+    out = _lift(
+        """
+        import venddeleg_call_queue
+
+        def test_call_queue():
+            assert venddeleg_call_queue.f("a") == "ahg"
+        """
+    )
+
+    assertion = next(
+        (
+            d
+            for d in out.decls
+            if d.name.endswith("::assertion")
+            and "venddeleg_call_queue.f" in d.name
+        ),
+        None,
+    )
+    assert assertion is not None, [d.name for d in out.decls]
+
+    def contains_ctor(term, name):
+        return getattr(term, "name", None) == name or any(
+            contains_ctor(arg, name) for arg in getattr(term, "args", ())
+        )
+
+    expr_eqs = [
+        atom
+        for atom in _iter_conjuncts(assertion.inv)
+        if getattr(atom, "name", None) == "="
+    ]
+    assert any(
+        contains_ctor(side, "callresult_venddeleg_call_queue_g_a1")
+        for atom in expr_eqs
+        for side in getattr(atom, "args", ())
+    )
+    assert any(
+        contains_ctor(side, "callresult_venddeleg_call_queue_h_a1")
+        for atom in expr_eqs
+        for side in getattr(atom, "args", ())
+    )
+    assert any(
+        contains_ctor(side, "str.++")
+        for atom in expr_eqs
+        for side in getattr(atom, "args", ())
+    )
+
+    warranted = {
+        (warrant.get("role"), warrant.get("source_function_name"))
+        for warrant in assertion.source_warrants
+    }
+    assert ("python.delegation-universe", "f") in warranted
+    assert ("python.delegation-universe", "g") in warranted
+    assert ("python.delegation-universe", "h") in warranted
+
+    delegation_audits = [
+        audit
+        for audit in out.source_audits
+        if audit["role"] == "python.delegation-universe"
+    ]
+    assert delegation_audits
+    assert any(
+        len(
+            [
+                locus
+                for locus in audit["loci"]
+                if locus.get("ast_kind") == "Call" and locus["status"] == "warranted"
+            ]
+        )
+        == 2
+        for audit in delegation_audits
+    ), delegation_audits
+
+
 def test_computed_arg_refuses(vendor_path):
     vendor_path(
         "venddeleg_computed",
@@ -10705,7 +10811,7 @@ def test_delegation_queues_delegate_dig_and_carries_source_warrants(vendor_path)
     assert audits["python.constant-universe"]["totals"]["unclassified_source"] == 0
     assert audits["python.delegation-universe"]["totals"]["unclassified_source"] == 0
     assert any(
-        locus.get("ast_kind") == "Call" and locus["status"] == "support"
+        locus.get("ast_kind") == "Call" and locus["status"] == "warranted"
         for locus in audits["python.delegation-universe"]["loci"]
     ), audits["python.delegation-universe"]
 

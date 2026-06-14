@@ -28,7 +28,14 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 RUST="$REPO/implementations/rust"
 KIT_DIR="$REPO/implementations/java/sugar-lift-java-tests"
-BIN_DIR="$RUST/target/debug"
+if [ -n "${JAVA_FORALL_SHOWCASE_TARGET_DIR:-}" ]; then
+  TARGET_DIR="$JAVA_FORALL_SHOWCASE_TARGET_DIR"
+elif [ "${CI:-0}" = "1" ]; then
+  TARGET_DIR="$HERE/.target"
+else
+  TARGET_DIR="$RUST/target"
+fi
+BIN_DIR="$TARGET_DIR/debug"
 SUGAR="$BIN_DIR/sugar"
 KIT_JAVA="$(which java)"
 
@@ -39,7 +46,12 @@ echo "SCOPE: BAD contradiction detected via engine ambient-forall rule (cross-co
 echo
 echo "== build the sugar CLI =="
 if [ "${JAVA_FORALL_SHOWCASE_SKIP_LOCAL_BUILD:-0}" != "1" ]; then
-  cargo build --manifest-path "$RUST/Cargo.toml" \
+  # GitHub restores target dirs after checkout; force this showcase to use the
+  # verifier from the current source tree, not a stale cached sugar binary. In
+  # CI, use an isolated target dir outside the restored workspace target cache.
+  CARGO_TARGET_DIR="$TARGET_DIR" cargo clean --manifest-path "$RUST/Cargo.toml" \
+    -p sugar-verifier -p sugar-cli >/dev/null 2>&1 || true
+  CARGO_TARGET_DIR="$TARGET_DIR" cargo build --manifest-path "$RUST/Cargo.toml" \
     -p sugar-cli --bin sugar >/dev/null
 fi
 [ -x "$SUGAR" ] || { echo "FAIL: sugar binary not at $SUGAR"; exit 1; }
@@ -62,6 +74,76 @@ for suite in good bad; do
 done
 
 pyget() { python3 -c "import sys,json; d=json.load(open(sys.argv[1])); print($2)" "$1"; }
+
+dump_consistency_rows() {
+  python3 - "$1" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+for r in d.get("rows", []):
+    prop = r.get("property", "")
+    if not prop.startswith("consistency:"):
+        continue
+    print(f"   row {prop} status={r.get('status')}")
+    reason = r.get("reason")
+    if reason:
+        print(f"      reason={reason}")
+PY
+}
+
+dump_contract_members() {
+  local dir="$1"
+  python3 - "$SUGAR" "$dir" <<'PY'
+import glob, json, subprocess, sys
+
+sugar, root = sys.argv[1], sys.argv[2]
+proofs = sorted(glob.glob(root + "/blake3-512:*.proof"))
+if not proofs:
+    print("   proof dump: no top-level proof")
+    raise SystemExit
+
+for proof in proofs:
+    try:
+        raw = subprocess.check_output([sugar, "dump", proof, "--json"], text=True)
+        doc = json.loads(raw)
+    except Exception as exc:
+        print(f"   proof dump failed for {proof}: {exc}")
+        continue
+
+    print(f"   proof {doc.get('cid') or proof} members={doc.get('memberCount')}")
+    for cid, member in sorted((doc.get("members") or {}).items()):
+        header = member.get("header") or {}
+        if header.get("kind") != "contract":
+            continue
+        name = header.get("contractName") or header.get("name") or cid
+        inv = json.dumps(header.get("inv"), sort_keys=True, separators=(",", ":"))
+        print(f"   contract {name}")
+        print("      inv=" + inv[:4000])
+PY
+}
+
+dump_ambient_debug() {
+  local dir="$1"
+  local debug_log="$dir/.prove.debug.log"
+  ( cd "$dir" && RUST_LOG=debug "$SUGAR" prove . --json >/dev/null 2>"$debug_log" ) || true
+  python3 - "$debug_log" <<'PY'
+import sys
+
+path = sys.argv[1]
+try:
+    lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
+except FileNotFoundError:
+    print("   ambient debug: missing log")
+    raise SystemExit
+
+shown = 0
+for line in lines:
+    if "verifier/ambient" in line:
+        print("   " + line)
+        shown += 1
+if shown == 0:
+    print("   ambient debug: no verifier/ambient lines")
+PY
+}
 
 run_suite() {
   local suite="$1" expect_consistency="$2"
@@ -88,15 +170,20 @@ run_suite() {
 
   if [ "$expect_consistency" = "DISCHARGE" ]; then
     if echo "$consistency_status" | grep -q 'unsatisfied'; then
+      dump_consistency_rows "$prove_json"
       echo "FAIL[$suite]: expected consistency discharge, got: $consistency_status"
       exit 1
     fi
     if [ "$consistency_status" = "MISSING" ]; then
+      dump_consistency_rows "$prove_json"
       echo "FAIL[$suite]: no consistency rows found"
       exit 1
     fi
   else
     if ! echo "$consistency_status" | grep -q 'unsatisfied'; then
+      dump_consistency_rows "$prove_json"
+      dump_contract_members "$dir"
+      dump_ambient_debug "$dir"
       echo "FAIL[$suite]: expected consistency unsatisfied, got: $consistency_status"
       exit 1
     fi

@@ -30,11 +30,25 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 TARGET_DIR="${CARGO_TARGET_DIR:-$REPO/implementations/rust/target}"
 BIN="$TARGET_DIR/debug/sugar"
+VENV="${PYTHON_URLSAFE_SEAM_VENV:-/tmp/python-urlsafe-seam-venv}"
+PYTHON="$VENV/bin/python"
 
 echo "== build the CLI =="
 cargo build --manifest-path "$REPO/implementations/rust/Cargo.toml" -p sugar-cli --bin sugar >/dev/null || {
   echo "FAIL: sugar build"; exit 1; }
 [ -x "$BIN" ] || { echo "FAIL: sugar binary missing at $BIN"; exit 1; }
+
+if [ ! -x "$PYTHON" ]; then
+  python3 -m venv "$VENV"
+fi
+if ! "$PYTHON" - <<'PY' >/dev/null 2>&1
+import blake3
+import cbor2
+import nacl
+PY
+then
+  "$VENV/bin/pip" install -q blake3 cbor2 pynacl
+fi
 
 echo "== provenance: the vendor never tested this input =="
 python3 - <<'PY' || exit 1
@@ -57,11 +71,11 @@ run_twin() {
   rm -rf "$dir/.sugar/runs" "$dir/.sugar/witnesses" "$dir/__pycache__" 2>/dev/null
   rm -f "$dir"/.prove*.json "$dir"/.verify*.json 2>/dev/null
 
-  ( cd "$dir" && "$BIN" mint --out . ) >/dev/null || { echo "FAIL: mint ($twin)"; return 1; }
+  ( cd "$dir" && PATH="$VENV/bin:$PATH" "$BIN" mint --out . ) >/dev/null || { echo "FAIL: mint ($twin)"; return 1; }
   ( cd "$dir" && "$BIN" verify --project . --json > .verify.json ) || true
   [ -s "$dir/.verify.json" ] || { echo "FAIL: no verify receipt ($twin)"; return 1; }
 
-  EXPECT="$expect" TWIN="$twin" python3 - "$dir/.verify.json" <<'PY' || return 1
+  EXPECT="$expect" TWIN="$twin" "$PYTHON" - "$dir/.verify.json" <<'PY' || return 1
 import json, os, sys
 expect, twin = os.environ["EXPECT"], os.environ["TWIN"]
 doc = json.load(open(sys.argv[1]))

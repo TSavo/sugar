@@ -1185,6 +1185,7 @@ fn extract_eq_nested_reduce_obligation(
 #[cfg(test)]
 mod discharge_method_tests {
     use super::*;
+    use libsugar::panic_freedom;
     use serde_json::json;
 
     fn ok_ctor(arg: &str) -> Json {

@@ -2487,9 +2487,9 @@ public final class JavaTestAssertionsRpc {
         String endConst = "{\"kind\":\"const\",\"value\":" + endVal
                 + ",\"sort\":{\"kind\":\"primitive\",\"name\":\"Int\"}}";
 
-        String lowerAtom = "{\"kind\":\"atomic\",\"name\":\"≤\",\"args\":["
+        String lowerAtom = "{\"kind\":\"atomic\",\"name\":\"\\u2264\",\"args\":["
                 + startConst + "," + varRef + "]}";
-        String upperOp = inclusive ? "≤" : "<";
+        String upperOp = inclusive ? "\\u2264" : "<";
         String upperAtom = "{\"kind\":\"atomic\",\"name\":\"" + upperOp + "\",\"args\":["
                 + varRef + "," + endConst + "]}";
 
@@ -3504,7 +3504,7 @@ public final class JavaTestAssertionsRpc {
             return;
         }
 
-        liftBinaryIntContract(unexpectedExpr, actualExpr, "≠", methodName, scope, ir, diagnostics);
+        liftBinaryIntContract(unexpectedExpr, actualExpr, "\\u2260", methodName, scope, ir, diagnostics);
     }
 
     private static void liftBinaryIntContract(
@@ -4620,7 +4620,7 @@ public final class JavaTestAssertionsRpc {
             argValues.add(val.getAsLong());
         }
 
-        ir.add(buildNullContract(callee, argValues, "≠"));
+        ir.add(buildNullContract(callee, argValues, "\\u2260"));
     }
 
     // ──────────────────────────────────────────────────────────────
@@ -4702,7 +4702,7 @@ public final class JavaTestAssertionsRpc {
                 + ctorArgs + "]}";
         String truthAtom = "{\"kind\":\"atomic\",\"name\":\"truth\",\"args\":[" + ctorJson + "]}";
         String atomicJson = positive ? truthAtom
-                : "{\"kind\":\"atomic\",\"name\":\"¬\",\"args\":[" + truthAtom + "]}";
+                : "{\"kind\":\"atomic\",\"name\":\"\\u00ac\",\"args\":[" + truthAtom + "]}";
 
         return "{\"kind\":\"contract\""
              + ",\"name\":\"" + esc(contractName) + "\""

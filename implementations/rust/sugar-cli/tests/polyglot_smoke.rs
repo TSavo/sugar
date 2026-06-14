@@ -33,7 +33,7 @@ use sugar_linker::{link, LinkerCallEdge, LinkerContract, LinkerInputs};
 // Daemon-level smoke helpers (used by test 5 below)
 // -------------------------------------------------------------------
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::os::unix::net::{UnixListener as StdUnixListener, UnixStream};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -145,7 +145,26 @@ fn rpc(sock: &PathBuf, req: &serde_json::Value) -> serde_json::Value {
     stream.write_all(line.as_bytes()).expect("write request");
     let mut reader = BufReader::new(stream);
     let mut resp_line = String::new();
-    reader.read_line(&mut resp_line).expect("read response");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match reader.read_line(&mut resp_line) {
+            Ok(0) => panic!("daemon closed connection before response"),
+            Ok(_) => break,
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted
+                ) =>
+            {
+                assert!(
+                    Instant::now() < deadline,
+                    "timed out waiting for daemon response"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(err) => panic!("read response: {err}"),
+        }
+    }
     serde_json::from_str(resp_line.trim()).expect("parse JSON response")
 }
 

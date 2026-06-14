@@ -32,7 +32,15 @@ export ITSDANGEROUS_LOGO_VENV="$VENV"
 if [ ! -x "$VENV/bin/python" ]; then
   echo "== create venv + install the real vendor (itsdangerous) =="
   python3 -m venv "$VENV"
-  "$VENV/bin/pip" install -q itsdangerous
+fi
+if ! "$VENV/bin/python" - <<'PY' >/dev/null 2>&1
+import blake3
+import cbor2
+import itsdangerous
+import nacl
+PY
+then
+  "$VENV/bin/pip" install -q itsdangerous blake3 cbor2 pynacl
 fi
 "$VENV/bin/python" -c "import itsdangerous; print('vendor:', 'itsdangerous', itsdangerous.__version__ if hasattr(itsdangerous,'__version__') else '(installed)')" || {
   echo "FAIL: vendor install"; exit 1; }
@@ -659,12 +667,12 @@ if not any(
 ):
     raise SystemExit("FAIL: TimedSerializer.loads_unsafe return was not warranted")
 if not any(
-    locus.get("status") == "support"
+    locus.get("status") == "warranted"
     and locus.get("ast_kind") == "Call"
     and locus.get("line") == 228
     for locus in timed_loads_unsafe_audit["loci"]
 ):
-    raise SystemExit("FAIL: TimedSerializer.loads_unsafe delegate call was not queued as support")
+    raise SystemExit("FAIL: TimedSerializer.loads_unsafe delegate call was not warranted")
 if not any(
     locus.get("status") == "warranted"
     and locus.get("ast_kind") == "keyword"
