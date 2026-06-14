@@ -52,6 +52,29 @@
 >    `starts_with` (2), `array-repeat non-literal length` (1), mutable-container (4).
 >    Cross-file resolution + type-level — SUPERVISED.
 >
+> **MECHANISM-LEVEL CONFIRMATION on class 6 (why even the smallest sub-class is gated).**
+> Resolved the defs of the 20 "no visible source" helpers (read-only): **7 are genuine
+> empty-body type-level trait markers** — `assert_trusted_len<T: TrustedLen>(_:&T){}` (5,
+> flatten.rs:138), `assert_trusted_random_access<T: TrustedRandomAccess>(_a:&T){}` (1,
+> zip.rs:257), `assert_send_and_sync() where ChunksMut<…>:Send,… {}` (1, slice.rs:1024).
+> These carry ZERO recoverable value-work (the obligation is the trait bound in the
+> signature, a typing judgment the compiler discharges), so refusing them "type-level
+> trait obligation, no point-wise value predicate" IS a legitimate terminal reason per the
+> trichotomy — NOT a fake-zero. The other 13 (`assert_predicates_exact` 8 — TypeId HashSet
+> eq; `assert_exact_exp` 5 — formatter output) have real runtime bodies, stay unclassified.
+> BUT implementing even the 7-marker terminal disposition is NOT autonomous-safe: the
+> registry (`ReductionCtx::collect_items`) only collects MODULE-level fns; these 7 are
+> nested inside `#[test]` bodies → `function()` returns None → "no visible source". To
+> see they're empty I must resolve them, and the registry is FLAT by bare name while
+> nested fns rely on LEXICAL SCOPE (many distinct `check`/`test_chain`/`f` across files).
+> Flat registration → either ambiguous (no drain) or, worse, silently inlines the WRONG
+> same-named body = a masked-contradiction false-discharge the sweep cannot catch. The
+> sound fix is lexically-scoped local-fn resolution threaded through the reduce path — an
+> architectural shared-path change, exactly the supervised tier. So 7/883, the smallest
+> sub-class, is gated on the same false-discharge edge as the rest. Sharpens resume item
+> (6): "cross-file def resolution" = LEXICALLY-SCOPED local-fn resolution; flat-by-name is
+> the trap.
+>
 > **VERDICT: 883 is the ground-truth-verified sound autonomous floor.** Every remaining
 > case requires T at the soundness edge (the sweep catches false-UNSAT and silent drops
 > but NOT masked contradictions / false-discharge). The resume order for the supervised
