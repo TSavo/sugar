@@ -202,7 +202,14 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // i.e. it makes no point-wise VALUE claim. There is no value predicate to lift,
         // by any lifter: a property of what the macro expands to, not a lifter gap. (Kin
         // to `type-level obligation`; not a fake-zero -- the expansion is held + walked.)
-        || reason.contains("yielded no liftable assertion");
+        || reason.contains("yielded no liftable assertion")
+        // TERMINAL: an assertion in a `while` loop body runs 0..n times under runtime
+        // loop control, so it is inherently CONDITIONAL -- never a single timeless,
+        // unconditional point-wise value claim. (Corpus whiles are all `while let
+        // Some(..) = iter.next()` over a runtime iterator -- bin-2 in disguise.) The lifter
+        // unrolls only finite-literal `for` domains; a `while` has no such finite literal
+        // construction to enumerate, so this is a source property, not a missing lifter.
+        || reason.contains("under while context");
     if terminal {
         Disposition::Refused
     } else {
@@ -9239,6 +9246,7 @@ mod lifter_key_tests {
             "assertion helper `assert_trusted_len` is a type-level obligation (empty body: trait-bound or no-op), not a point-wise value predicate; refused",
             "assertion helper `foo` has no visible source; skipped assertion",
             "macro `m`: expansion yielded no liftable assertion (type-level or effectful body); released to layer 0",
+            "assertion under while context: not unconditional point-wise; released to layer 0",
         ] {
             assert_eq!(refusal_disposition(r), Refused, "should be terminal: {r}");
         }
@@ -9253,7 +9261,6 @@ mod lifter_key_tests {
         // not on the whitelist.
         for r in [
             "assertion under if context: not unconditional point-wise; released to layer 0",
-            "assertion under while context: not unconditional point-wise; released to layer 0",
             "assert_eq!: unsupported term",
             "assertion in non-#[test] item to_string: reachable only via call-site inlining",
             "assertion under for context over a literal range (bin-1: domain constructed)",
