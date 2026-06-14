@@ -700,6 +700,9 @@ def _package_locus_classification(
     dynamic_io_status = _dynamic_receiver_io_refusal_status(node, ancestors)
     if dynamic_io_status is not None:
         return dynamic_io_status
+    dynamic_getattr_status = _dynamic_getattr_refusal_status(node, ancestors)
+    if dynamic_getattr_status is not None:
+        return dynamic_getattr_status
     nondet_status = _nondeterministic_call_refusal_status(
         node,
         ancestors,
@@ -978,6 +981,9 @@ def _package_locus_structural_classification(
     )
     if stdlib_constructor_status is not None:
         return stdlib_constructor_status
+    dynamic_getattr_status = _dynamic_getattr_refusal_status(node, ancestors)
+    if dynamic_getattr_status is not None:
+        return dynamic_getattr_status
     dynamic_receiver_status = _dynamic_receiver_method_dispatch_refusal_status(
         node,
         ancestors,
@@ -2302,6 +2308,40 @@ def _dynamic_receiver_io_refusal_status(
                 ),
             )
     return None
+
+
+def _dynamic_getattr_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    stmt = _nearest_statement(ancestors + (node,))
+    if stmt is None:
+        return None
+    owner = _nearest_enclosing_function(ancestors + (node,))
+    if owner is None or isinstance(owner, ast.Lambda):
+        return None
+    calls = (
+        candidate for candidate in ast.walk(stmt) if isinstance(candidate, ast.Call)
+    )
+    for call in calls:
+        if not _is_dynamic_getattr_call(call):
+            continue
+        if node is stmt or any(candidate is node for candidate in ast.walk(stmt)):
+            return (
+                "refused",
+                (
+                    "dynamic getattr lookup refused: runtime attribute lookup "
+                    "can invoke descriptors, __getattr__, or argument unpacking"
+                ),
+            )
+    return None
+
+
+def _is_dynamic_getattr_call(call: ast.Call) -> bool:
+    return (
+        _static_call_name(call.func) == "getattr"
+        and not _is_known_pure_call_value_expr(call)
+    )
 
 
 def _nearest_statement(

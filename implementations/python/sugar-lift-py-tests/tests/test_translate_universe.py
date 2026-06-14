@@ -1428,6 +1428,106 @@ def test_structural_package_accounting_warrants_known_pure_call_value_terms(
     ), pure_call_loci
 
 
+def test_structural_package_accounting_refuses_dynamic_getattr_lookup(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("SUGAR_PY_PACKAGE_ACCOUNTING_MODE", "structural")
+    pkg = tmp_path / "vendpkg_dynamic_getattr_refused"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    module_path = pkg / "api.py"
+    module_path.write_text(
+        textwrap.dedent(
+            """
+            def skipped(value, attr):
+                return getattr(value, attr)
+
+            def skipped_default(value, attr, fallback):
+                result = getattr(value, attr, fallback)
+                return result
+
+            def safe(value):
+                return getattr(value, "name", None)
+
+            def ok():
+                return "ok"
+            """
+        ),
+        encoding="utf-8",
+    )
+    dynamic_lines = {
+        line_no
+        for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
+        if "getattr(value, attr" in line
+    }
+    safe_line = next(
+        line_no
+        for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
+        if 'getattr(value, "name"' in line
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    constant_universe_for_callee_clear()
+
+    lifted = _lift_source_from_disk(
+        tmp_path,
+        "test_mod.py",
+        """
+        import vendpkg_dynamic_getattr_refused.api as api
+
+        def test_ok():
+            assert api.ok() == "ok"
+        """,
+    )
+
+    audit = next(
+        audit
+        for audit in lifted["sourceAudits"]
+        if audit.get("role") == "python.package-source"
+        and audit.get("package") == "vendpkg_dynamic_getattr_refused"
+    )
+    dynamic_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith("vendpkg_dynamic_getattr_refused/api.py")
+        and locus["line"] in dynamic_lines
+    ]
+    assert dynamic_loci
+    assert not [
+        locus for locus in dynamic_loci if locus["status"] == "unclassified"
+    ], dynamic_loci
+    assert any(
+        locus["status"] == "refused"
+        and locus.get("ast_kind") in {"Return", "Assign"}
+        and "dynamic getattr" in locus.get("reason", "")
+        for locus in dynamic_loci
+    ), dynamic_loci
+    assert any(
+        locus["status"] == "refused"
+        and locus.get("ast_kind") == "Call"
+        and "dynamic getattr" in locus.get("reason", "")
+        for locus in dynamic_loci
+    ), dynamic_loci
+
+    safe_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith("vendpkg_dynamic_getattr_refused/api.py")
+        and locus["line"] == safe_line
+        and locus.get("ast_kind") in {"Call", "Name", "Constant"}
+    ]
+    assert safe_loci
+    assert not [
+        locus for locus in safe_loci if locus["status"] == "refused"
+    ], safe_loci
+    assert any(
+        locus["status"] == "warranted"
+        and locus.get("ast_kind") == "Call"
+        and "known pure call value term" in locus.get("reason", "")
+        for locus in safe_loci
+    ), safe_loci
+
+
 def test_structural_package_accounting_warrants_known_pure_stdlib_bridge_terms(
     tmp_path,
     monkeypatch,
