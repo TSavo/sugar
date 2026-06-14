@@ -414,6 +414,304 @@ fn walk_non_test_fns(
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+enum Flt2decMode {
+    Shortest,
+    ExactFixed,
+    ExactExp,
+}
+
+/// Detect whether `f` is a flt2dec string-formatting test helper, by which core
+/// `flt2dec` entry point its body calls. Returns `None` for `to_shortest_exp_str`
+/// (bounds-driven fixed-vs-exp, no single `format!` equivalent -- left unclassified)
+/// and for non-flt2dec fns.
+fn flt2dec_helper_mode(f: &syn::ItemFn) -> Option<Flt2decMode> {
+    struct V {
+        mode: Option<Flt2decMode>,
+        shortest_exp: bool,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for V {
+        fn visit_path(&mut self, p: &'ast syn::Path) {
+            if let Some(seg) = p.segments.last() {
+                match seg.ident.to_string().as_str() {
+                    "to_shortest_str" => self.mode = Some(Flt2decMode::Shortest),
+                    "to_exact_fixed_str" => self.mode = Some(Flt2decMode::ExactFixed),
+                    "to_exact_exp_str" => self.mode = Some(Flt2decMode::ExactExp),
+                    "to_shortest_exp_str" => self.shortest_exp = true,
+                    _ => {}
+                }
+            }
+            syn::visit::visit_path(self, p);
+        }
+    }
+    let mut v = V {
+        mode: None,
+        shortest_exp: false,
+    };
+    syn::visit::Visit::visit_item_fn(&mut v, f);
+    if v.shortest_exp {
+        return None;
+    }
+    v.mode
+}
+
+/// A concrete float value parsed from a closed source operand, tagged with its
+/// width so we evaluate at the right precision (f32 vs f64 shortest digits differ).
+enum Flt2decValue {
+    F64(f64),
+    F32(f32),
+}
+
+/// Parse a flt2dec value operand into a concrete f32/f64. Bare float literals are
+/// f64 (the corpus only ever types f32/f16 values explicitly via `fN::CONST` /
+/// `ldexp_fN`). Returns `None` for anything not a closed f32/f64 literal term
+/// (f16/f128, `ldexp_*`, unknown consts) -- those stay unclassified (safe).
+fn parse_flt2dec_value(expr: &Expr) -> Option<Flt2decValue> {
+    match expr {
+        // bare / suffixed float literal
+        Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Float(lf),
+            ..
+        }) => {
+            let s = lf.suffix();
+            if s == "f32" {
+                lf.base10_parse::<f32>().ok().map(Flt2decValue::F32)
+            } else {
+                // "" or "f64"
+                lf.base10_parse::<f64>().ok().map(Flt2decValue::F64)
+            }
+        }
+        // negation of a literal: -0.0, -3.14
+        Expr::Unary(u) if matches!(u.op, syn::UnOp::Neg(_)) => match parse_flt2dec_value(&u.expr)? {
+            Flt2decValue::F64(v) => Some(Flt2decValue::F64(-v)),
+            Flt2decValue::F32(v) => Some(Flt2decValue::F32(-v)),
+        },
+        // division of two literals: 1.0/0.0 = inf, 0.0/0.0 = NaN, -1.0/0.0 = -inf
+        Expr::Binary(b) if matches!(b.op, syn::BinOp::Div(_)) => {
+            match (parse_flt2dec_value(&b.left)?, parse_flt2dec_value(&b.right)?) {
+                (Flt2decValue::F64(l), Flt2decValue::F64(r)) => Some(Flt2decValue::F64(l / r)),
+                (Flt2decValue::F32(l), Flt2decValue::F32(r)) => Some(Flt2decValue::F32(l / r)),
+                _ => None,
+            }
+        }
+        // known associated consts: f64::MAX / f32::INFINITY / ...
+        Expr::Path(p) => {
+            let segs: Vec<String> = p.path.segments.iter().map(|s| s.ident.to_string()).collect();
+            if segs.len() != 2 {
+                return None;
+            }
+            let val = match segs[1].as_str() {
+                "MAX" => 1.0,
+                "MIN" => -1.0,
+                "INFINITY" => f64::INFINITY,
+                "NEG_INFINITY" => f64::NEG_INFINITY,
+                "NAN" => f64::NAN,
+                _ => return None,
+            };
+            match segs[0].as_str() {
+                // MAX/MIN of f32/f64 are huge magnitudes whose shortest form the corpus
+                // writes via `format!`; only the INFINITY/NAN consts evaluate cleanly to a
+                // small string. Hand MAX/MIN back as the real const so the eval is correct,
+                // but only if the RHS is a plain string literal (caller gates that).
+                "f64" => match segs[1].as_str() {
+                    "MAX" => Some(Flt2decValue::F64(f64::MAX)),
+                    "MIN" => Some(Flt2decValue::F64(f64::MIN)),
+                    _ => Some(Flt2decValue::F64(val)),
+                },
+                "f32" => match segs[1].as_str() {
+                    "MAX" => Some(Flt2decValue::F32(f32::MAX)),
+                    "MIN" => Some(Flt2decValue::F32(f32::MIN)),
+                    "INFINITY" => Some(Flt2decValue::F32(f32::INFINITY)),
+                    "NEG_INFINITY" => Some(Flt2decValue::F32(f32::NEG_INFINITY)),
+                    "NAN" => Some(Flt2decValue::F32(f32::NAN)),
+                    _ => None,
+                },
+                _ => None,
+            }
+        }
+        Expr::Paren(p) => parse_flt2dec_value(&p.expr),
+        Expr::Group(g) => parse_flt2dec_value(&g.expr),
+        _ => None,
+    }
+}
+
+/// `Minus` / `MinusPlus` path operand -> `FmtSign`.
+fn parse_flt2dec_sign(expr: &Expr) -> Option<flt2dec_eval::FmtSign> {
+    let Expr::Path(p) = expr else { return None };
+    match p.path.segments.last()?.ident.to_string().as_str() {
+        "Minus" => Some(flt2dec_eval::FmtSign::Minus),
+        "MinusPlus" => Some(flt2dec_eval::FmtSign::MinusPlus),
+        _ => None,
+    }
+}
+
+fn parse_usize_literal(expr: &Expr) -> Option<usize> {
+    match expr {
+        Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Int(i),
+            ..
+        }) => i.base10_parse::<usize>().ok(),
+        Expr::Paren(p) => parse_usize_literal(&p.expr),
+        Expr::Group(g) => parse_usize_literal(&g.expr),
+        _ => None,
+    }
+}
+
+fn parse_bool_literal(expr: &Expr) -> Option<bool> {
+    match expr {
+        Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Bool(b),
+            ..
+        }) => Some(b.value),
+        Expr::Paren(p) => parse_bool_literal(&p.expr),
+        Expr::Group(g) => parse_bool_literal(&g.expr),
+        _ => None,
+    }
+}
+
+/// A plain string-literal RHS -> its value. Anything else (e.g. a `format!(..)`
+/// expected) returns `None`, leaving that assert unclassified.
+fn parse_string_literal(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(s),
+            ..
+        }) => Some(s.value()),
+        Expr::Paren(p) => parse_string_literal(&p.expr),
+        Expr::Group(g) => parse_string_literal(&g.expr),
+        _ => None,
+    }
+}
+
+/// Try to dissolve one `assert_eq!(to_string(f, V, S, D[, U]), EXPECTED)` from a
+/// flt2dec helper into the constant equality `eq(eval(V,S,D[,U]), EXPECTED)`.
+///   * `Some(true)`  -- evaluated, and our stdlib formatting equals the asserted literal
+///                      (discharged by dissolution).
+///   * `Some(false)` -- evaluated, but disagrees (a real refutation; never expected for a
+///                      passing vendor test, refused not discharged).
+///   * `None`        -- operands are not a closed f32/f64 literal term, or the expected is
+///                      not a plain string literal: leave unclassified.
+fn dissolve_flt2dec_assert(mac: &syn::Macro, mode: Flt2decMode) -> Option<bool> {
+    use syn::punctuated::Punctuated;
+    let parser = Punctuated::<Expr, syn::Token![,]>::parse_terminated;
+    let args = parser.parse2(mac.tokens.clone()).ok()?;
+    let mut it = args.iter();
+    let lhs = it.next()?;
+    let rhs = it.next()?;
+    // LHS must be `to_string(f, V, S, D[, U])`.
+    let Expr::Call(call) = lhs else { return None };
+    let Expr::Path(cp) = call.func.as_ref() else {
+        return None;
+    };
+    if cp.path.segments.last()?.ident != "to_string" {
+        return None;
+    }
+    let call_args: Vec<&Expr> = call.args.iter().collect();
+    // args[0] is the formatter closure `f` (ignored -- we evaluate with our own stdlib).
+    let value = parse_flt2dec_value(call_args.get(1)?)?;
+    let sign = parse_flt2dec_sign(call_args.get(2)?)?;
+    let frac = parse_usize_literal(call_args.get(3)?)?;
+    let expected = parse_string_literal(rhs)?;
+
+    let computed = match mode {
+        Flt2decMode::Shortest => match value {
+            Flt2decValue::F64(v) => flt2dec_eval::shortest_f64(v, sign, frac),
+            Flt2decValue::F32(v) => flt2dec_eval::shortest_f32(v, sign, frac),
+        },
+        Flt2decMode::ExactFixed => match value {
+            Flt2decValue::F64(v) => flt2dec_eval::exact_fixed_f64(v, sign, frac),
+            Flt2decValue::F32(v) => flt2dec_eval::exact_fixed_f32(v, sign, frac),
+        },
+        Flt2decMode::ExactExp => {
+            let upper = parse_bool_literal(call_args.get(4)?)?;
+            match value {
+                Flt2decValue::F64(v) => flt2dec_eval::exact_exp_f64(v, sign, frac, upper),
+                Flt2decValue::F32(v) => flt2dec_eval::exact_exp_f32(v, sign, frac, upper),
+            }
+        }
+    };
+    Some(computed == expected)
+}
+
+/// Dissolve a flt2dec formatting test helper: evaluate each closed
+/// `assert_eq!(to_string(..), "..")` with our own stdlib `format!` and discharge it,
+/// leaving non-closed / f16 / `format!`-expected asserts unclassified. Every textual
+/// assert macro is accounted (discharged or refused), so nothing is silently dropped.
+fn lift_flt2dec_helper(
+    f: &syn::ItemFn,
+    mode: Flt2decMode,
+    source_path: &str,
+    modules: &[String],
+    out: &mut AdapterOutput,
+) {
+    let scoped = scoped_test_name(source_path, modules, &f.sig.ident.to_string());
+    let total = count_asserts_in_stmts(&f.block.stmts);
+
+    // Collect every assert_eq!/assert! macro in the helper body (incl. nested blocks),
+    // in textual order, so the per-macro disposition reconciles against `total`.
+    struct MacroWalk {
+        macros: Vec<syn::Macro>,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for MacroWalk {
+        fn visit_macro(&mut self, m: &'ast syn::Macro) {
+            if is_assert_macro_path(&m.path) {
+                self.macros.push(m.clone());
+            }
+            syn::visit::visit_macro(self, m);
+        }
+    }
+    let mut w = MacroWalk { macros: Vec::new() };
+    syn::visit::Visit::visit_item_fn(&mut w, f);
+
+    let mut lifted = 0usize;
+    let mut refused = 0usize;
+    for m in &w.macros {
+        match dissolve_flt2dec_assert(m, mode) {
+            Some(true) => lifted += 1,
+            Some(false) => {
+                // Our independent stdlib evaluation disagrees with the asserted literal.
+                // For a passing vendor test this cannot happen; refuse rather than ever
+                // false-discharge.
+                refused += 1;
+                out.skip_reasons.push(
+                    "flt2dec dissolution: independent stdlib evaluation disagrees with the \
+                     asserted value; refused"
+                        .to_string(),
+                );
+            }
+            None => {
+                refused += 1;
+                out.skip_reasons.push(
+                    "flt2dec assert: operand is not a closed f32/f64 literal term (f16/f128, \
+                     ldexp, or a format! expected); released to layer 0"
+                        .to_string(),
+                );
+            }
+        }
+    }
+    out.assertions_lifted += lifted;
+    out.assertions_refused += refused;
+
+    // Totality net: account any assert the macro walk did not reach.
+    let accounted = lifted + refused;
+    if total > accounted {
+        let gap = total - accounted;
+        for _ in 0..gap {
+            out.assertions_refused += 1;
+            out.skip_reasons
+                .push("flt2dec helper: unenumerated assert; released to layer 0".to_string());
+        }
+    }
+    out.warnings.push(LiftWarning {
+        source_path: source_path.to_string(),
+        item_name: scoped,
+        reason: format!(
+            "flt2dec formatting helper dissolved by stdlib evaluation: {lifted} discharged, \
+             {refused} unclassified (mode {mode:?})"
+        ),
+    });
+}
+
 /// Emit named refusals for every assert macro in a non-`#[test]` fn.
 /// These assertions are only reachable via call-site inlining and depend on
 /// the fn's parameters: lifting them as unconditional facts would be a false-pass.
@@ -430,6 +728,13 @@ fn visit_non_test_fn(
     // If the reducer successfully inlined this fn's body during Pass 1, its
     // asserts are already in assertions_lifted. Do not double-count.
     if reduced_helpers.contains(&fn_name) {
+        return;
+    }
+    // STDLIB EXCEPTION: a flt2dec formatting test helper's asserts are closed
+    // computations over rust's own stdlib; dissolve them by evaluating with our own
+    // `format!` instead of refusing as call-site-inlining residue.
+    if let Some(mode) = flt2dec_helper_mode(f) {
+        lift_flt2dec_helper(f, mode, source_path, modules, out);
         return;
     }
     let scoped_name = scoped_test_name(source_path, modules, &fn_name);
