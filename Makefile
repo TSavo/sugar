@@ -355,7 +355,7 @@ test-showcases:
 	  remote_tag="$${remote_tag:-default}"; \
 	  remote_root="$${BCARGO_REMOTE_ROOT:-/home/tsavo/remote/sugar-bcargo-$$remote_tag}"; \
 	  remote_repo="$$remote_root/sugar"; \
-	  remote_cmd="cd $$(printf '%q' "$$remote_repo") && SHOWCASES_ON_REMOTE=1 POLARS_SHOWCASE_ON_REMOTE=1 POLARS_SHOWCASE_SKIP_LOCAL_BUILD=1 NUMPY_ATTR_SHOWCASE_ON_REMOTE=1 NUMPY_ATTR_SHOWCASE_SKIP_LOCAL_BUILD=1 make test-showcases"; \
+	  remote_cmd="cd $$(printf '%q' "$$remote_repo") && SHOWCASES_ON_REMOTE=1 USE_BCARGO=0 POLARS_SHOWCASE_ON_REMOTE=1 POLARS_SHOWCASE_SKIP_LOCAL_BUILD=1 NUMPY_ATTR_SHOWCASE_ON_REMOTE=1 NUMPY_ATTR_SHOWCASE_SKIP_LOCAL_BUILD=1 make test-showcases"; \
 	  ssh -o BatchMode=yes "$$remote_host" "bash -lc $$(printf '%q' "$$remote_cmd")"; \
 	  exit $$?; \
 	fi; \

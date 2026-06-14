@@ -152,6 +152,176 @@ fn consistency_verdict(raw: ObligationVerdict) -> (ObligationVerdict, &'static s
     }
 }
 
+fn structural_contradiction_reason(inv: &Json) -> Option<String> {
+    let mut equalities: std::collections::BTreeMap<String, (String, String, String)> =
+        std::collections::BTreeMap::new();
+    collect_ground_equalities(inv, &mut equalities)
+}
+
+fn collect_ground_equalities(
+    node: &Json,
+    equalities: &mut std::collections::BTreeMap<String, (String, String, String)>,
+) -> Option<String> {
+    match node.get("kind").and_then(|k| k.as_str()) {
+        Some("forall") | Some("exists") => None,
+        Some("and") => {
+            for child in node.get("operands").and_then(|v| v.as_array())? {
+                if let Some(reason) = collect_ground_equalities(child, equalities) {
+                    return Some(reason);
+                }
+            }
+            None
+        }
+        Some("implies") => {
+            let operands = node.get("operands").and_then(|v| v.as_array())?;
+            if operands.len() != 2 || !eval_ground_bool(&operands[0])? {
+                return None;
+            }
+            collect_ground_equalities(&operands[1], equalities)
+        }
+        Some("atomic") if node.get("name").and_then(|v| v.as_str()) == Some("=") => {
+            let (term, value) = ground_term_const_equality(node)?;
+            record_ground_equality(term, value, equalities)
+        }
+        _ => None,
+    }
+}
+
+fn record_ground_equality(
+    term: &Json,
+    value: &Json,
+    equalities: &mut std::collections::BTreeMap<String, (String, String, String)>,
+) -> Option<String> {
+    let term_key = libsugar::canonical::json_jcs(term).ok()?;
+    let value_key = libsugar::canonical::json_jcs(value).ok()?;
+    let term_display = compact_json(term);
+    let value_display = compact_json(value);
+    if let Some((existing_key, existing_display, _)) = equalities.get(&term_key) {
+        if existing_key != &value_key {
+            return Some(format!(
+                "{term_display} equals both {existing_display} and {value_display}"
+            ));
+        }
+        return None;
+    }
+    equalities.insert(term_key, (value_key, value_display, term_display));
+    None
+}
+
+fn ground_term_const_equality(eq: &Json) -> Option<(&Json, &Json)> {
+    let args = eq.get("args").and_then(|v| v.as_array())?;
+    if args.len() != 2 {
+        return None;
+    }
+    match (is_ground_non_const_term(&args[0]), is_const_value(&args[1])) {
+        (true, true) => Some((&args[0], &args[1])),
+        _ if is_const_value(&args[0]) && is_ground_non_const_term(&args[1]) => {
+            Some((&args[1], &args[0]))
+        }
+        _ => None,
+    }
+}
+
+fn is_ground_non_const_term(node: &Json) -> bool {
+    match node.get("kind").and_then(|k| k.as_str()) {
+        Some("const") | Some("var") | Some("forall") | Some("exists") => false,
+        Some("ctor") => node
+            .get("args")
+            .and_then(|v| v.as_array())
+            .is_some_and(|args| args.iter().all(is_ground_term)),
+        _ => false,
+    }
+}
+
+fn is_ground_term(node: &Json) -> bool {
+    match node.get("kind").and_then(|k| k.as_str()) {
+        Some("const") => true,
+        Some("ctor") => node
+            .get("args")
+            .and_then(|v| v.as_array())
+            .is_some_and(|args| args.iter().all(is_ground_term)),
+        _ => false,
+    }
+}
+
+fn is_const_value(node: &Json) -> bool {
+    node.get("kind").and_then(|k| k.as_str()) == Some("const")
+}
+
+fn eval_ground_bool(node: &Json) -> Option<bool> {
+    match node.get("kind").and_then(|k| k.as_str()) {
+        Some("and") => {
+            for child in node.get("operands").and_then(|v| v.as_array())? {
+                if !eval_ground_bool(child)? {
+                    return Some(false);
+                }
+            }
+            Some(true)
+        }
+        Some("or") => {
+            for child in node.get("operands").and_then(|v| v.as_array())? {
+                if eval_ground_bool(child)? {
+                    return Some(true);
+                }
+            }
+            Some(false)
+        }
+        Some("not") => {
+            let operands = node.get("operands").and_then(|v| v.as_array())?;
+            if operands.len() == 1 {
+                eval_ground_bool(&operands[0]).map(|value| !value)
+            } else {
+                None
+            }
+        }
+        Some("atomic") => eval_ground_atomic_bool(node),
+        _ => None,
+    }
+}
+
+fn eval_ground_atomic_bool(node: &Json) -> Option<bool> {
+    let name = node.get("name").and_then(|v| v.as_str())?;
+    let args = node.get("args").and_then(|v| v.as_array())?;
+    if args.len() != 2 {
+        return None;
+    }
+    let left = int_const_value(&args[0])?;
+    let right = int_const_value(&args[1])?;
+    match name {
+        "<" => Some(left < right),
+        ">" => Some(left > right),
+        "\u{2264}" | "<=" => Some(left <= right),
+        "\u{2265}" | ">=" => Some(left >= right),
+        "=" => Some(left == right),
+        "\u{2260}" | "!=" => Some(left != right),
+        _ => None,
+    }
+}
+
+fn int_const_value(node: &Json) -> Option<i64> {
+    if node.get("kind").and_then(|k| k.as_str()) != Some("const") {
+        return None;
+    }
+    if node
+        .get("sort")
+        .and_then(|s| s.get("kind"))
+        .and_then(|v| v.as_str())
+        != Some("primitive")
+        || node
+            .get("sort")
+            .and_then(|s| s.get("name"))
+            .and_then(|v| v.as_str())
+            != Some("Int")
+    {
+        return None;
+    }
+    node.get("value").and_then(|v| v.as_i64())
+}
+
+fn compact_json(value: &Json) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "<json>".to_string())
+}
+
 #[derive(Debug, Clone)]
 struct WitnessResolver {
     argv: Vec<String>,
@@ -595,6 +765,14 @@ fn is_witness_member(body: &Json) -> bool {
         == Some("custom")
 }
 
+fn canonicalize_formula_json(inv: &Json) -> Json {
+    let Ok(formula) = serde_json::from_value::<sugar_ir_types::IrFormula>(inv.clone()) else {
+        return inv.clone();
+    };
+    serde_json::to_value(sugar_ir_types::canonicalize_formula(&formula))
+        .unwrap_or_else(|_| inv.clone())
+}
+
 /// Run the raw-satisfiability consistency check on a single `inv` and label it.
 /// Shared by the per-contract path and the cross-proof conjoined path.
 fn check_inv_consistency(
@@ -604,6 +782,16 @@ fn check_inv_consistency(
     plan: &SolverPlan,
     registry: &HashMap<String, SolverHandle>,
 ) -> ConsistencyResult {
+    let inv = with_local_forall_instances(canonicalize_formula_json(&inv), property_name);
+    if let Some(reason) = structural_contradiction_reason(&inv) {
+        return ConsistencyResult {
+            contract_cid: cid,
+            property_name: property_name.to_string(),
+            verdict: ObligationVerdict::Unsatisfied,
+            reason: format!("{CONTRADICTORY_REASON} `{property_name}` [structural: {reason}]"),
+            witnessed: false,
+        };
+    }
     let smt = match emit_asserted(&inv) {
         Ok(s) => s,
         Err(e) => {
@@ -639,39 +827,38 @@ fn check_inv_consistency(
 /// Collect the universal-quantifier sub-formulas of an invariant. A lifted loop
 /// is emitted as a `forall`, but the lifter conjoins a contract's atoms, so the
 /// `inv` reaching here is typically `and([forall, ...])` rather than a bare
-/// `forall`. We pull the `forall` conjuncts out (top-level, or directly under a
-/// top-level `and`) so each can be asserted ambiently against point-claims. We
-/// deliberately do NOT descend into the `and`'s non-forall operands -- asserting
-/// a contract's point-claims into unrelated obligations would be unsound.
+/// `forall`. We pull the `forall` conjuncts out (top-level, or under nested
+/// conjunctions) as instantiation templates for point-claims. We deliberately
+/// do NOT descend into the `and`'s non-forall operands -- asserting a contract's
+/// point-claims into unrelated obligations would be unsound.
 ///
 /// CLOSEDNESS GATE. The pool's shared vocabulary is CALLSITES (`call:*` ctors,
 /// the `#euf#` names) -- that is what every lifter elides to, and it is the only
-/// vocabulary with pool-wide meaning. A universal earns ambient status because
-/// it quantifies over a callsite, instantiable at any point-claim. A forall
-/// still carrying a FREE variable (an un-elided test-local, e.g. a symbolic
-/// range bound `n`) is a fact about THAT TEST's locals, not about a callsite:
-/// two tests' unrelated locals can share a spelling, and conjoining the open
-/// formula would couple them through name capture. Open universals stay home
-/// (their own obligation still checks them); only closed ones travel.
+/// vocabulary with pool-wide meaning. A universal earns cross-obligation force
+/// only through a CLOSED SPECIALIZED INSTANCE. A forall still carrying a FREE
+/// variable after specialization (an un-elided test-local, e.g. a symbolic range
+/// bound `n`) is a fact about THAT TEST's locals, not about a callsite: two
+/// tests' unrelated locals can share a spelling, and conjoining the open formula
+/// would couple them through name capture. Open templates may be collected, but
+/// their open instances stay home.
 fn collect_ambient_foralls(inv: &Json, out: &mut Vec<Json>) {
     let mut consider = |op: &Json| {
         if op.get("kind").and_then(|k| k.as_str()) != Some("forall") {
             return;
         }
-        if formula_is_closed(op, &mut Vec::new()) {
-            out.push(op.clone());
-        } else {
+        if !formula_is_closed(op, &mut Vec::new()) {
             debug!(
-                "verifier/ambient: open universal (free test-local variable) excluded from ambient set"
+                "verifier/ambient: open universal template collected; only closed instances may travel"
             );
         }
+        out.push(op.clone());
     };
     match inv.get("kind").and_then(|k| k.as_str()) {
         Some("forall") => consider(inv),
         Some("and") => {
             if let Some(ops) = inv.get("operands").and_then(|v| v.as_array()) {
                 for op in ops {
-                    consider(op);
+                    collect_ambient_foralls(op, out);
                 }
             }
         }
@@ -722,21 +909,266 @@ fn formula_is_closed(node: &Json, bound: &mut Vec<String>) -> bool {
     }
 }
 
-/// Conjoin the ambient universal invariants into an obligation's inv so the
-/// solver can instantiate them against this obligation's point-claims. Empty
-/// ambient set leaves the inv untouched.
+/// Derive quantifier-free instances of ambient universals for the concrete
+/// callsite terms already present in this obligation. Z3 usually instantiates
+/// `forall x. ... call:g(x) ...` against `call:g(2)` on its own, but that is a
+/// heuristic. The verifier owns the pool vocabulary, so make the obvious
+/// instantiation explicit before asking the solver.
+fn instantiate_ambient_foralls_for_inv(
+    inv: &Json,
+    property_name: &str,
+    ambient: &[Json],
+) -> Vec<Json> {
+    if ambient.is_empty() {
+        return Vec::new();
+    }
+    let mut instances = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for forall in ambient {
+        let Some(var_name) = forall.get("name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(body) = forall.get("body") else {
+            continue;
+        };
+        if let Some(sort) = forall.get("sort") {
+            let mut ground_terms = Vec::new();
+            collect_unquantified_ground_terms(inv, sort, &mut ground_terms);
+            collect_property_name_ground_terms(property_name, sort, &mut ground_terms);
+            for term in &ground_terms {
+                push_ambient_instance(body, var_name, term, &mut instances, &mut seen);
+            }
+        }
+
+        let mut callsites = Vec::new();
+        collect_unquantified_ctor_terms(inv, &mut callsites);
+        let mut patterns = Vec::new();
+        collect_forall_call_patterns(body, var_name, &mut patterns);
+        for pattern in &patterns {
+            for callsite in &callsites {
+                let Some(replacement) = match_forall_call_pattern(pattern, callsite, var_name)
+                else {
+                    continue;
+                };
+                push_ambient_instance(body, var_name, &replacement, &mut instances, &mut seen);
+            }
+        }
+    }
+    instances
+}
+
+fn collect_property_name_ground_terms(property_name: &str, sort: &Json, out: &mut Vec<Json>) {
+    if !sort_is_primitive(sort, "Int") {
+        return;
+    }
+    let mut offset = 0;
+    while let Some(rel) = property_name[offset..].find("i:") {
+        let start = offset + rel + 2;
+        let mut end = start;
+        let bytes = property_name.as_bytes();
+        if end < bytes.len() && bytes[end] == b'-' {
+            end += 1;
+        }
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+        if end > start && property_name[start..end].parse::<i64>().is_ok() {
+            let value = property_name[start..end].parse::<i64>().unwrap();
+            out.push(serde_json::json!({
+                "kind": "const",
+                "value": value,
+                "sort": {"kind": "primitive", "name": "Int"}
+            }));
+        }
+        offset = end.max(start);
+    }
+}
+
+fn sort_is_primitive(sort: &Json, name: &str) -> bool {
+    sort.get("kind").and_then(|v| v.as_str()) == Some("primitive")
+        && sort.get("name").and_then(|v| v.as_str()) == Some(name)
+}
+
+fn push_ambient_instance(
+    body: &Json,
+    var_name: &str,
+    replacement: &Json,
+    instances: &mut Vec<Json>,
+    seen: &mut std::collections::BTreeSet<String>,
+) {
+    let instance = crate::instantiate::substitute_formula_pub(body, var_name, replacement);
+    if !formula_is_closed(&instance, &mut Vec::new()) {
+        return;
+    }
+    let key = libsugar::canonical::json_jcs(&instance)
+        .unwrap_or_else(|_| serde_json::to_string(&instance).unwrap_or_default());
+    if seen.insert(key) {
+        instances.push(instance);
+    }
+}
+
+fn collect_unquantified_ground_terms(node: &Json, sort: &Json, out: &mut Vec<Json>) {
+    match node.get("kind").and_then(|k| k.as_str()) {
+        Some("forall") | Some("exists") => return,
+        Some("const") if term_matches_sort(node, sort) => out.push(node.clone()),
+        _ => {}
+    }
+    for key in ["operands", "args"] {
+        if let Some(arr) = node.get(key).and_then(|v| v.as_array()) {
+            for child in arr {
+                collect_unquantified_ground_terms(child, sort, out);
+            }
+        }
+    }
+    if let Some(body) = node.get("body") {
+        collect_unquantified_ground_terms(body, sort, out);
+    }
+}
+
+fn term_matches_sort(term: &Json, sort: &Json) -> bool {
+    term.get("sort").is_some_and(|term_sort| term_sort == sort)
+}
+
+fn collect_unquantified_ctor_terms(node: &Json, out: &mut Vec<Json>) {
+    match node.get("kind").and_then(|k| k.as_str()) {
+        Some("forall") | Some("exists") => return,
+        Some("ctor") => out.push(node.clone()),
+        _ => {}
+    }
+    for key in ["operands", "args"] {
+        if let Some(arr) = node.get(key).and_then(|v| v.as_array()) {
+            for child in arr {
+                collect_unquantified_ctor_terms(child, out);
+            }
+        }
+    }
+    if let Some(body) = node.get("body") {
+        collect_unquantified_ctor_terms(body, out);
+    }
+}
+
+fn collect_forall_call_patterns(node: &Json, var_name: &str, out: &mut Vec<Json>) {
+    match node.get("kind").and_then(|k| k.as_str()) {
+        Some("forall") | Some("exists") => return,
+        Some("ctor") if ctor_has_direct_bound_arg(node, var_name) => out.push(node.clone()),
+        _ => {}
+    }
+    for key in ["operands", "args"] {
+        if let Some(arr) = node.get(key).and_then(|v| v.as_array()) {
+            for child in arr {
+                collect_forall_call_patterns(child, var_name, out);
+            }
+        }
+    }
+    if let Some(body) = node.get("body") {
+        collect_forall_call_patterns(body, var_name, out);
+    }
+}
+
+fn ctor_has_direct_bound_arg(node: &Json, var_name: &str) -> bool {
+    node.get("args")
+        .and_then(|v| v.as_array())
+        .is_some_and(|args| args.iter().any(|arg| is_var_named(arg, var_name)))
+}
+
+fn match_forall_call_pattern(pattern: &Json, callsite: &Json, var_name: &str) -> Option<Json> {
+    if pattern.get("kind").and_then(|v| v.as_str()) != Some("ctor")
+        || callsite.get("kind").and_then(|v| v.as_str()) != Some("ctor")
+        || pattern.get("name").and_then(|v| v.as_str())
+            != callsite.get("name").and_then(|v| v.as_str())
+    {
+        return None;
+    }
+    let pattern_args = pattern.get("args").and_then(|v| v.as_array())?;
+    let callsite_args = callsite.get("args").and_then(|v| v.as_array())?;
+    if pattern_args.len() != callsite_args.len() {
+        return None;
+    }
+
+    let mut replacement: Option<Json> = None;
+    for (pattern_arg, callsite_arg) in pattern_args.iter().zip(callsite_args.iter()) {
+        if is_var_named(pattern_arg, var_name) {
+            if replacement
+                .as_ref()
+                .is_some_and(|seen| seen != callsite_arg)
+            {
+                return None;
+            }
+            replacement = Some(callsite_arg.clone());
+        } else if term_contains_var(pattern_arg, var_name) || pattern_arg != callsite_arg {
+            return None;
+        }
+    }
+    replacement
+}
+
+fn is_var_named(node: &Json, var_name: &str) -> bool {
+    node.get("kind").and_then(|v| v.as_str()) == Some("var")
+        && node.get("name").and_then(|v| v.as_str()) == Some(var_name)
+}
+
+fn term_contains_var(node: &Json, var_name: &str) -> bool {
+    if is_var_named(node, var_name) {
+        return true;
+    }
+    for key in ["operands", "args"] {
+        if let Some(arr) = node.get(key).and_then(|v| v.as_array()) {
+            if arr.iter().any(|child| term_contains_var(child, var_name)) {
+                return true;
+            }
+        }
+    }
+    node.get("body")
+        .is_some_and(|body| term_contains_var(body, var_name))
+}
+
+/// Conjoin closed instances of ambient universal invariants into an obligation's
+/// inv. The raw forall templates are not copied into every obligation; only
+/// concrete, closed instances travel across contracts.
 fn with_ambient_foralls(inv: Json, property_name: &str, ambient: &[Json]) -> Json {
     if ambient.is_empty() {
         return inv;
     }
+    let instances = instantiate_ambient_foralls_for_inv(&inv, property_name, ambient);
+    let closed_templates: Vec<Json> = if property_name.contains("#euf#") {
+        ambient
+            .iter()
+            .filter(|forall| formula_is_closed(forall, &mut Vec::new()))
+            .cloned()
+            .collect()
+    } else {
+        Vec::new()
+    };
     debug!(
         property = property_name,
         ambient = ambient.len(),
+        closed_templates = closed_templates.len(),
+        instances = instances.len(),
         "verifier/ambient: conjoining universals into obligation"
     );
-    let mut operands = Vec::with_capacity(ambient.len() + 1);
+    if instances.is_empty() && closed_templates.is_empty() {
+        return inv;
+    }
+    let mut operands = Vec::with_capacity(closed_templates.len() + instances.len() + 1);
     operands.push(inv);
-    operands.extend(ambient.iter().cloned());
+    operands.extend(closed_templates);
+    operands.extend(instances);
+    serde_json::json!({ "kind": "and", "operands": operands })
+}
+
+fn with_local_forall_instances(inv: Json, property_name: &str) -> Json {
+    let mut foralls = Vec::new();
+    collect_ambient_foralls(&inv, &mut foralls);
+    if foralls.is_empty() {
+        return inv;
+    }
+    let instances = instantiate_ambient_foralls_for_inv(&inv, property_name, &foralls);
+    if instances.is_empty() {
+        return inv;
+    }
+    let mut operands = Vec::with_capacity(instances.len() + 1);
+    operands.push(inv);
+    operands.extend(instances);
     serde_json::json!({ "kind": "and", "operands": operands })
 }
 
@@ -772,8 +1204,9 @@ pub fn verify_consistency(
             continue;
         }
         if let Some(inv) = body.get("inv") {
+            let inv = canonicalize_formula_json(inv);
             let before = ambient_foralls.len();
-            collect_ambient_foralls(inv, &mut ambient_foralls);
+            collect_ambient_foralls(&inv, &mut ambient_foralls);
             let found = ambient_foralls.len() - before;
             if found > 0 {
                 debug!(
@@ -855,7 +1288,11 @@ pub fn verify_consistency(
             if callsite_keyed && inv_bodies.len() > 1 {
                 let invs: Vec<Json> = inv_bodies
                     .iter()
-                    .map(|b| b.get("inv").cloned().unwrap_or(Json::Null))
+                    .map(|b| {
+                        b.get("inv")
+                            .map(canonicalize_formula_json)
+                            .unwrap_or(Json::Null)
+                    })
                     .collect();
                 let inv = serde_json::json!({ "kind": "and", "operands": invs });
                 out.push(check_inv_consistency(
@@ -867,7 +1304,10 @@ pub fn verify_consistency(
                 ));
             } else {
                 for (cid, body) in inv_cids.iter().zip(inv_bodies.iter()) {
-                    let inv = body.get("inv").cloned().unwrap_or(Json::Null);
+                    let inv = body
+                        .get("inv")
+                        .map(canonicalize_formula_json)
+                        .unwrap_or(Json::Null);
                     out.push(check_inv_consistency(
                         (*cid).clone(),
                         property_name,
@@ -905,9 +1345,9 @@ pub fn verify_consistency(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::solvers::registry;
+    use crate::solvers::{registry, StubSolver};
     use serde_json::json;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::{Arc, Mutex, OnceLock};
 
     static WITNESS_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -1345,6 +1785,255 @@ mod tests {
             loop_row.verdict,
             ObligationVerdict::Discharged,
             "the loop universal alone is consistent: {res:?}"
+        );
+    }
+
+    #[test]
+    fn ambient_forall_is_specialized_at_concrete_callsite() {
+        let callg = |arg: Json| json!({"kind":"ctor","name":"call:g","args":[arg]});
+        let guard = json!({"kind":"and","operands":[
+            json!({"kind":"atomic","name":"\u{2264}","args":[int(0), var("x")]}),
+            json!({"kind":"atomic","name":"<","args":[var("x"), int(3)]}),
+        ]});
+        let forall = json!({
+            "kind":"forall","name":"x",
+            "sort":{"kind":"primitive","name":"Int"},
+            "body": json!({"kind":"implies","operands":[
+                guard,
+                eqf(callg(var("x")), int(1))
+            ]}),
+        });
+        let point_inv = json!({"kind":"and","operands":[eqf(callg(int(2)), int(2))]});
+
+        let instances = instantiate_ambient_foralls_for_inv(
+            &point_inv,
+            "g#euf#c:callresult_g_a1(i:2)::assertion",
+            &[forall],
+        );
+
+        assert_eq!(instances.len(), 1, "one call:g(2) instance: {instances:?}");
+        assert_eq!(
+            instances[0],
+            json!({"kind":"implies","operands":[
+                {"kind":"and","operands":[
+                    {"kind":"atomic","name":"\u{2264}","args":[int(0), int(2)]},
+                    {"kind":"atomic","name":"<","args":[int(2), int(3)]}
+                ]},
+                eqf(callg(int(2)), int(1))
+            ]})
+        );
+    }
+
+    #[test]
+    fn ambient_forall_is_specialized_from_ground_constant() {
+        let callg = |arg: Json| json!({"kind":"ctor","name":"call:g","args":[arg]});
+        let callh = |arg: Json| json!({"kind":"ctor","name":"call:h","args":[arg]});
+        let forall = json!({
+            "kind":"forall","name":"x",
+            "sort":{"kind":"primitive","name":"Int"},
+            "body": eqf(callg(var("x")), int(1)),
+        });
+        let point_inv = json!({"kind":"and","operands":[eqf(callh(int(2)), int(2))]});
+
+        let instances = instantiate_ambient_foralls_for_inv(
+            &point_inv,
+            "h#euf#c:callresult_h_a1(i:2)::assertion",
+            &[forall],
+        );
+
+        assert_eq!(instances, vec![eqf(callg(int(2)), int(1))]);
+    }
+
+    #[test]
+    fn ambient_forall_is_specialized_from_callsite_name_constant() {
+        let callg = |arg: Json| json!({"kind":"ctor","name":"call:g","args":[arg]});
+        let forall = json!({
+            "kind":"forall","name":"x",
+            "sort":{"kind":"primitive","name":"Int"},
+            "body": eqf(callg(var("x")), int(1)),
+        });
+        let point_inv = json!({"kind":"and","operands":[]});
+
+        let instances = instantiate_ambient_foralls_for_inv(
+            &point_inv,
+            "g#euf#c:callresult_g_a1(i:2)::assertion",
+            &[forall],
+        );
+
+        assert_eq!(instances, vec![eqf(callg(int(2)), int(1))]);
+    }
+
+    #[test]
+    fn ambient_forall_ground_contradiction_short_circuits_solver() {
+        let callg = |arg: Json| json!({"kind":"ctor","name":"call:g","args":[arg]});
+        let guard = json!({"kind":"and","operands":[
+            json!({"kind":"atomic","name":"\u{2264}","args":[int(0), var("x")]}),
+            json!({"kind":"atomic","name":"<","args":[var("x"), int(3)]}),
+        ]});
+        let forall = json!({
+            "kind":"forall","name":"x",
+            "sort":{"kind":"primitive","name":"Int"},
+            "body": json!({"kind":"implies","operands":[
+                guard,
+                eqf(callg(var("x")), int(1))
+            ]}),
+        });
+        let loop_inv = json!({"kind":"and","operands":[forall]});
+        let point_inv = json!({"kind":"and","operands":[eqf(callg(int(2)), int(2))]});
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:loop",
+            "src/lib.rs::tests::t::loop::x",
+            loop_inv,
+        );
+        insert_contract(
+            &mut pool,
+            "blake3-512:point",
+            "g#euf#c:callresult_g_a1(i:2)::assertion",
+            point_inv,
+        );
+
+        let plan = SolverPlan::Single("z3".into());
+        let mut registry = HashMap::new();
+        registry.insert(
+            "z3".into(),
+            Arc::new(StubSolver::new("z3", ObligationVerdict::Unsatisfied)) as SolverHandle,
+        );
+        let res = verify_consistency(&pool, &plan, &registry);
+        let point = res
+            .iter()
+            .find(|r| r.contract_cid == "blake3-512:point")
+            .expect("point row present");
+
+        assert_eq!(
+            point.verdict,
+            ObligationVerdict::Unsatisfied,
+            "ground contradiction must refute before the stub solver can discharge: {res:?}"
+        );
+        assert!(
+            point.reason.contains("structural:"),
+            "reason must prove the pre-SMT path fired: {}",
+            point.reason
+        );
+    }
+
+    #[test]
+    fn closed_forall_conjoined_with_point_claim_specializes_before_solver() {
+        let callg = |arg: Json| json!({"kind":"ctor","name":"call:g","args":[arg]});
+        let guard = json!({"kind":"and","operands":[
+            json!({"kind":"atomic","name":"\u{2264}","args":[int(0), var("$b0")]}),
+            json!({"kind":"atomic","name":"<","args":[var("$b0"), int(3)]}),
+        ]});
+        let forall = json!({
+            "kind":"forall","name":"$b0",
+            "sort":{"kind":"primitive","name":"Int"},
+            "body": json!({"kind":"implies","operands":[
+                guard,
+                eqf(callg(var("$b0")), int(1))
+            ]}),
+        });
+        let inv = json!({"kind":"and","operands":[
+            eqf(callg(int(2)), int(2)),
+            forall
+        ]});
+
+        let plan = SolverPlan::Single("z3".into());
+        let mut registry = HashMap::new();
+        registry.insert(
+            "z3".into(),
+            Arc::new(StubSolver::new("z3", ObligationVerdict::Unsatisfied)) as SolverHandle,
+        );
+        let res = check_inv_consistency(
+            "blake3-512:point".into(),
+            "g#euf#c:callresult_g_a1(i:2)::assertion",
+            inv,
+            &plan,
+            &registry,
+        );
+
+        assert_eq!(res.verdict, ObligationVerdict::Unsatisfied, "{res:?}");
+        assert!(
+            res.reason.contains("structural:"),
+            "closed forall instance must be reduced before the solver: {}",
+            res.reason
+        );
+    }
+
+    #[test]
+    fn ambient_forall_is_collected_through_nested_conjunction() {
+        let callg = |arg: Json| json!({"kind":"ctor","name":"call:g","args":[arg]});
+        let forall = json!({
+            "kind":"forall","name":"x",
+            "sort":{"kind":"primitive","name":"Int"},
+            "body": eqf(callg(var("x")), int(1)),
+        });
+        let nested_loop_inv = json!({"kind":"and","operands":[
+            {"kind":"and","operands":[forall]}
+        ]});
+        let point_inv = json!({"kind":"and","operands":[eqf(callg(int(2)), int(2))]});
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:loop",
+            "src/lib.rs::tests::t::loop::x",
+            nested_loop_inv,
+        );
+        insert_contract(
+            &mut pool,
+            "blake3-512:point",
+            "g#euf#c:callresult_g_a1(i:2)::assertion",
+            point_inv,
+        );
+        let reg = HashMap::new();
+        let res = verify_consistency(&pool, &SolverPlan::Single("unused".into()), &reg);
+        let point = res
+            .iter()
+            .find(|r| r.contract_cid == "blake3-512:point")
+            .expect("point-claim row present");
+        assert_eq!(point.verdict, ObligationVerdict::Unsatisfied, "{res:?}");
+    }
+
+    #[test]
+    fn ambient_forall_canonicalizes_mixed_alpha_binder_before_travel() {
+        let callg = |arg: Json| json!({"kind":"ctor","name":"call:g","args":[arg]});
+        let guard = json!({"kind":"and","operands":[
+            json!({"kind":"atomic","name":"\u{2264}","args":[int(0), var("$b0")]}),
+            json!({"kind":"atomic","name":"<","args":[var("$b0"), int(3)]}),
+        ]});
+        let mixed_alpha_forall = json!({
+            "kind":"forall","name":"x",
+            "sort":{"kind":"primitive","name":"Int"},
+            "body": json!({"kind":"implies","operands":[
+                guard,
+                eqf(callg(var("$b0")), int(1))
+            ]}),
+        });
+        let loop_inv = json!({"kind":"and","operands":[mixed_alpha_forall]});
+        let point_inv = json!({"kind":"and","operands":[eqf(callg(int(2)), int(2))]});
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:loop",
+            "src/lib.rs::tests::t::loop::x",
+            loop_inv,
+        );
+        insert_contract(
+            &mut pool,
+            "blake3-512:point",
+            "g#euf#c:callresult_g_a1(i:2)::assertion",
+            point_inv,
+        );
+        let reg = HashMap::new();
+        let res = verify_consistency(&pool, &SolverPlan::Single("unused".into()), &reg);
+        let point = res
+            .iter()
+            .find(|r| r.contract_cid == "blake3-512:point")
+            .expect("point-claim row present");
+        assert_eq!(
+            point.verdict,
+            ObligationVerdict::Unsatisfied,
+            "ambient collection must use the same alpha-normal form as mint: {res:?}"
         );
     }
 

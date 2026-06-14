@@ -1007,7 +1007,10 @@ def _classify_universe_source_node(
             )
         if universe_kind == "delegation-stdlib":
             return "warranted", "emitted into python.delegation-universe"
-        return "support", "queued delegate dig for recursive universe walk"
+        return (
+            "warranted",
+            "queued delegate dig emitted into python.delegation-universe",
+        )
     if role == "python.branch-selected-universe":
         return _classify_branch_selected_source_node(stmt, node, source_memento)
     if role == "python.guard-universe":

@@ -251,7 +251,7 @@ fn assert_string_predicate_atom(formula: &Formula, expected_name: &str, expected
     }
 }
 
-fn assert_string_len_cmp_atom(
+fn assert_method_len_cmp_atom(
     formula: &Formula,
     expected_op: &str,
     expected_lhs: &str,
@@ -263,7 +263,7 @@ fn assert_string_len_cmp_atom(
             assert_eq!(args.len(), 2);
             match args[0].as_ref() {
                 Term::Ctor { name, args } => {
-                    assert_eq!(name, "str.len");
+                    assert_eq!(name, "method:len");
                     assert_eq!(args.len(), 1);
                     match args[0].as_ref() {
                         Term::Const {
@@ -273,10 +273,10 @@ fn assert_string_len_cmp_atom(
                             assert_eq!(value, expected_lhs);
                             assert_eq!(sort.name, "String");
                         }
-                        other => panic!("expected string len receiver, got {other:?}"),
+                        other => panic!("expected method:len receiver, got {other:?}"),
                     }
                 }
-                other => panic!("expected str.len term lhs, got {other:?}"),
+                other => panic!("expected method:len term lhs, got {other:?}"),
             }
             match args[1].as_ref() {
                 Term::Const {
@@ -2688,7 +2688,7 @@ fn test_len() {
         out.decls[2].name,
         "method:len#euf#c:callresult_method_len_a1(s:\"～～～～～\")::assertion"
     );
-    assert_string_len_cmp_atom(&inv_operands(&out.decls[2])[0], "=", "～～～～～", 15);
+    assert_method_len_cmp_atom(&inv_operands(&out.decls[2])[0], "=", "～～～～～", 15);
 }
 
 #[test]

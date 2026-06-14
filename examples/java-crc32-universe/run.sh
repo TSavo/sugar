@@ -135,7 +135,14 @@ unrolled = [r for r in recs if "recurrence unrolled" in r]
 if not unrolled:
     raise SystemExit("FAIL: keystone did NOT unroll the CRC32C static-init table-gen "
                      "(the construction site must be walked, not skipped)")
-note = json.loads(unrolled[0].split("— ", 1)[1])
+raw_note = unrolled[0]
+payload_start = raw_note.find("{")
+if payload_start < 0:
+    raise SystemExit(
+        "FAIL: recurrence unrolled diagnostic did not carry a JSON payload: "
+        + raw_note
+    )
+note = json.loads(raw_note[payload_start:])
 if note["steps"] != 256:
     raise SystemExit(f"FAIL: expected 256 table-gen steps, got {note['steps']}")
 

@@ -4672,14 +4672,6 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
             if let Some(reason) = closure_adaptor_refusal(expr) {
                 return Err(reason);
             }
-            if call.method == "len" && call.args.is_empty() {
-                if let Some(receiver) = string_or_char_literal_term(&call.receiver) {
-                    return Ok(Rc::new(Term::Ctor {
-                        name: "str.len".to_string(),
-                        args: vec![receiver],
-                    }));
-                }
-            }
             let mut args = vec![translate_term_in_scope(&call.receiver, scope)?];
             for arg in &call.args {
                 args.push(translate_term_in_scope(arg, scope)?);

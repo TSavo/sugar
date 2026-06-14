@@ -9,10 +9,17 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT="${1:-$HERE/out}"
 
+if [ -z "$OUT" ] || [ "$OUT" = "/" ]; then
+  echo "Refusing unsafe Java kit output directory: ${OUT:-<empty>}" >&2
+  exit 1
+fi
+
+rm -rf "$OUT"
 mkdir -p "$OUT"
 
 # JavaJunitWitnessRpc: JDK-only, pure Java. Uses --release 21.
 javac \
+  -encoding UTF-8 \
   --release 21 \
   -proc:none \
   -d "$OUT" \
@@ -23,6 +30,7 @@ javac \
 # module). We compile without --release because --add-exports is incompatible
 # with --release for system modules. Written to JDK 21 language level.
 javac \
+  -encoding UTF-8 \
   --add-exports jdk.compiler/com.sun.source.tree=ALL-UNNAMED \
   --add-exports jdk.compiler/com.sun.source.util=ALL-UNNAMED \
   --add-exports jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED \
