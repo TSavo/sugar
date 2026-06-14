@@ -1,0 +1,82 @@
+source audit: loci=2060222 warranted=877081 inactive=668 support=344666 refused=671159 refuted=0 unclassified=166648
+
+contract: pandas.core.arrays.boolean.BooleanDtype.__repr__@test_pandas_source.py:6:11::facts
+facts observed:
+  - /Users/tsavo/provekit/.worktrees/python-next-unclassified-20260613/examples/pandas-source-accounting/good/./test_pandas_source.py:6 test_boolean_dtype_repr_source_warrant() [python.test-fact] claim=pandas.core.arrays.boolean.BooleanDtype.__repr__@test_pandas_source.py:6:11::facts contract=pandas.core.arrays.boolean.BooleanDtype.__repr__@test_pandas_source.py:6:11::assertion
+warranted digs:
+  - /Users/tsavo/provekit/.worktrees/python-next-unclassified-20260613/examples/pandas-source-accounting/good/./test_pandas_source.py:6 test_boolean_dtype_repr_source_warrant() [python.test-fact / ] source_cid=blake3-512:60023ae6e3407eed935cc386e69767756b1bf847bb7b98c8991fda32d523630d16e65f90eeb5bdceec83a0187334f9e3bc3f8aba63495ff23379328803ed363e
+  - /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/core/arrays/boolean.py:117-118 BooleanDtype.__repr__(self) [python.constant-universe / constant] source_cid=blake3-512:b7c4a3d1d6a35e3a366c3ff07d49a403765458a0c2bb73f814b3d1202bf1a96caaa8766cb63fc53abe7a6e6935f877a1037ea918fb1444a5f24809c4f92fa5d4
+lifted FOL:
+  - pandas.core.arrays.boolean.BooleanDtype.__repr__@test_pandas_source.py:6:11::facts :: dtype$0 = call:BooleanDtype ∧ pandas.core.arrays.boolean.BooleanDtype.__repr__$call$6$11 = callval___repr___a1(dtype$0)
+  - pandas.core.arrays.boolean.BooleanDtype.__repr__@test_pandas_source.py:6:11::assertion :: callval___repr___a1(dtype$0) = "BooleanDtype"
+method breakdown:
+  dig: python.test-fact / 
+  totals: loci=1 warranted=1 inactive=0 support=0 refused=0 refuted=0 unclassified=0
+    /Users/tsavo/provekit/.worktrees/python-next-unclassified-20260613/examples/pandas-source-accounting/good/./test_pandas_source.py:6 warranted ?
+  dig: python.constant-universe / constant
+  totals: loci=2 warranted=2 inactive=0 support=0 refused=0 refuted=0 unclassified=0
+  ast types:
+    warranted: Constant=1, Return=1
+  ast rollup:
+    warranted roots: Return=1
+    warranted constraint roots: Return=1
+    warranted covered by parent: Constant=1
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/core/arrays/boolean.py:118 warranted Return emitted into python.constant-universe
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/core/arrays/boolean.py:118 warranted Constant emitted into python.constant-universe
+
+contract: pandas#source-accounting
+facts observed:
+  - not emitted by kit
+warranted digs:
+  - package pandas at /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas [python.package-source / package-accounting]
+method breakdown:
+  dig: python.package-source / package-accounting
+  totals: loci=2060219 warranted=877078 inactive=668 support=344666 refused=671159 refuted=0 unclassified=166648
+  loci: elided (structural package accounting)
+  ast types:
+    warranted: AnnAssign=685, Assign=85036, Attribute=62449, BinOp=3005, BoolOp=1804, Call=81640, Compare=8638, Constant=222549, Dict=8377, Expr=3, FormattedValue=2151, If=12293, IfExp=721, JoinedStr=1748, List=45283, Name=258112, Return=3010, Set=208, Slice=2387, Subscript=10014, Tuple=8780, UnaryOp=4351, keyword=53834
+    inactive: AnnAssign=45, Assign=15, Attribute=5, BinOp=9, Call=6, Constant=26, Expr=2, If=223, List=4, Name=320, Subscript=6, Tuple=3, keyword=4
+    support: AnnAssign=301, Assign=9, Attribute=27134, BinOp=6615, BoolOp=17, Call=16752, ClassDef=1772, Compare=37, Constant=78735, Dict=2124, DictComp=7, Expr=4685, FormattedValue=100, FunctionDef=28264, GeneratorExp=19, IfExp=14, Import=4356, ImportFrom=6583, JoinedStr=100, Lambda=709, List=17808, ListComp=72, Name=52091, Pass=290, Set=44, Slice=176, Starred=67, Subscript=4261, Tuple=10876, UnaryOp=1178, alias=18226, arg=56545, keyword=4699
+    refused: AnnAssign=134, Assert=17543, Assign=20898, Attribute=89971, AugAssign=353, BinOp=4189, BoolOp=1320, Break=77, Call=89329, Compare=16496, Constant=72138, Continue=114, Delete=102, Dict=1086, DictComp=218, ExceptHandler=689, Expr=33316, For=2315, FormattedValue=2252, GeneratorExp=591, Global=1, If=3150, IfExp=329, ImportFrom=3, JoinedStr=1610, Lambda=1442, List=5048, ListComp=1836, Match=1, MatchValue=3, Name=240000, NamedExpr=1, Pass=33, Raise=2776, Return=1247, Set=50, SetComp=39, Slice=2082, Starred=311, Subscript=13702, Try=700, Tuple=4881, UnaryOp=3777, While=66, With=8048, Yield=158, YieldFrom=20, alias=4, keyword=26710
+    unclassified: AnnAssign=201, Assign=2513, Attribute=26457, AugAssign=332, BinOp=4447, BoolOp=1211, Call=27515, Compare=2420, Constant=23726, Dict=505, Expr=355, Global=17, If=2180, IfExp=286, Lambda=3, List=1256, Name=56619, NamedExpr=7, Nonlocal=1, Return=6854, Set=4, Slice=823, Starred=605, Subscript=1914, Tuple=3574, UnaryOp=1409, keyword=1414
+  sample loci:
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:1 support ImportFrom import support for recursive name resolution
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:1 support alias import support for recursive name resolution
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:3 warranted Assign static binding admitted as timeless compiler fact
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:3 warranted Name static binding admitted as timeless compiler fact
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:3 warranted Constant static binding admitted as timeless compiler fact
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:7 warranted Assign static binding admitted as timeless compiler fact
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:7 warranted Name static binding admitted as timeless compiler fact
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:7 warranted Tuple static binding admitted as timeless compiler fact
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:7 warranted Constant static binding admitted as timeless compiler fact
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:7 warranted Constant static binding admitted as timeless compiler fact
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:9 refused For runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:9 refused Name runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:9 refused Name runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:10 refused Try runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:11 refused Expr runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:11 refused Call runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:11 refused Name runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:11 refused Name runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:12 refused ExceptHandler runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:12 refused Name runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:13 refused Raise runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:13 refused Call runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:13 refused Name runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:14 refused JoinedStr runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:14 refused Constant runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:14 refused FormattedValue runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:14 refused Name runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:14 refused Constant runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:16 refused Name runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:18 refused Delete delete mutation refused: del mutates name, attribute, or item binding state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:18 refused Name delete mutation refused: del mutates name, attribute, or item binding state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:18 refused Name delete mutation refused: del mutates name, attribute, or item binding state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:20 refused Try runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:22 refused ImportFrom runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:23 refused alias runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:25 refused ExceptHandler runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:25 refused Name runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:26 refused Assign runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:26 refused Name runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation
+    /private/tmp/pandas-witness-venv/lib/python3.14/site-packages/pandas/__init__.py:26 refused Attribute runtime import probe refused: __import__ mutates import/module state and is not a timeless value relation

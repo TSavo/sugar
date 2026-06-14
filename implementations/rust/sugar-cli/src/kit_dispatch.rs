@@ -1330,7 +1330,11 @@ mod tests {
                 .join(&project_root)
                 .join("./lift-shim.sh")
         );
-        assert!(resolved.working_dir.as_ref().expect("working dir").is_absolute());
+        assert!(resolved
+            .working_dir
+            .as_ref()
+            .expect("working dir")
+            .is_absolute());
     }
 
     #[test]

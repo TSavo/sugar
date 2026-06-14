@@ -135,8 +135,10 @@ class GuardUniverse:
     qualname: str
     source_path: str
     lineno: int
+    guard_lines: tuple = ()
     vendor_vectors_checked: int = 0
     vendor_vector_source: Optional[str] = None
+    source_memento: Optional[dict[str, Any]] = None
 
 
 _CMP_SYMBOL = {
@@ -146,6 +148,8 @@ _CMP_SYMBOL = {
     ast.GtE: "≥",
     ast.Eq: "=",
     ast.NotEq: "≠",
+    ast.Is: "=",
+    ast.IsNot: "≠",
 }
 
 _CMP_EVAL = {
@@ -191,6 +195,7 @@ def guard_universe_for_callee(
         )
     ]
     clauses = []
+    guard_lines = []
     for stmt in body:
         # An `assert P` is a guard with the polarity flipped: it RAISES
         # exactly when P is false, where `if T: raise` raises when T is
@@ -236,6 +241,7 @@ def guard_universe_for_callee(
                 literal=clause.literal,
             )
         clauses.append(clause)
+        guard_lines.append(stmt.lineno)
     if not clauses:
         return None, None
 
@@ -266,8 +272,10 @@ def guard_universe_for_callee(
             qualname=f"{module_name}.{fn_name}",
             source_path=spec_origin,
             lineno=fn.lineno,
+            guard_lines=tuple(guard_lines),
             vendor_vectors_checked=checked,
             vendor_vector_source=vector_source,
+            source_memento=_source_memento_for_resolved_function(fn, spec_origin),
         ),
         None,
     )
@@ -360,7 +368,7 @@ class ConstructorFieldUniverse:
 
 @dataclass(frozen=True)
 class _ConstructorFieldAssignment:
-    assign: ast.Assign | ast.AnnAssign
+    assign: ast.Assign | ast.AnnAssign | ast.Expr
     param_name: str
     default_attr_name: Optional[str] = None
     default_literal: Optional[object] = None
@@ -553,6 +561,32 @@ class ReturnIsinstanceUniverse:
     source_memento: Optional[dict[str, Any]] = None
 
 
+@dataclass(frozen=True)
+class ReturnRegexUniverse:
+    """A body that returns whether a static regex fullmatches a parameter.
+
+    The emitted ProofIR is the existing strings-theory atom
+    ``str.in-regex(value, pattern)`` guarded by the function's boolean result.
+    """
+
+    pattern: str
+    param_name: str
+    param_index: int
+    module: str
+    qualname: str
+    source_path: str
+    lineno: int
+    compile_var: Optional[str] = None
+    match_kind: str = "fullmatch"
+    true_implies_membership: bool = True
+    false_implies_nonmembership: bool = True
+    source_memento: Optional[dict[str, Any]] = None
+
+    @property
+    def membership_pattern(self) -> str:
+        return _regex_membership_pattern(self.pattern, self.match_kind)
+
+
 _MISSING = object()
 
 
@@ -711,6 +745,404 @@ def _is_isinstance_return_call(node: ast.AST) -> bool:
         and len(node.args) == 2
         and not node.keywords
     )
+
+
+@functools.lru_cache(maxsize=None)
+def return_regex_universe_for_callee(
+    callee: str,
+) -> Tuple[Optional[ReturnRegexUniverse], Optional[TranslateWalkRefusal]]:
+    resolved = _resolve_vendor_function(callee, allow_methods=True)
+    if resolved is None:
+        return None, None
+    tree, fn, spec_origin, module_name, fn_name = resolved
+    body = _body_without_docstring(fn.body)
+    if (
+        not body
+        or not isinstance(body[-1], ast.Return)
+        or body[-1].value is None
+    ):
+        return None, None
+    if sum(
+        1
+        for stmt in body
+        for n in ast.walk(stmt)
+        if isinstance(n, (ast.Return, ast.Yield, ast.YieldFrom))
+    ) != 1:
+        return None, None
+
+    params = [a.arg for a in (*fn.args.posonlyargs, *fn.args.args)]
+    env = _regex_compile_env_for_function(tree, fn_name)
+    for stmt in body[:-1]:
+        compiled = _regex_compile_assignment(stmt, tree)
+        if compiled is None:
+            return None, None
+        name, pattern = compiled
+        refusal = _regex_membership_refusal(pattern, "fullmatch")
+        if refusal is not None:
+            return None, TranslateWalkRefusal(callee=callee, reason=refusal)
+        env[name] = pattern
+
+    matched, refusal = _regex_bool_return(body[-1].value, params, env, tree)
+    if refusal is not None:
+        return None, TranslateWalkRefusal(callee=callee, reason=refusal)
+    if matched is None:
+        return None, None
+    (
+        pattern,
+        param_name,
+        compile_var,
+        match_kind,
+        true_implies_membership,
+        false_implies_nonmembership,
+    ) = matched
+    refusal = _regex_membership_refusal(pattern, match_kind)
+    if refusal is not None:
+        return None, TranslateWalkRefusal(callee=callee, reason=refusal)
+
+    source_memento = _source_memento_for_resolved_function(fn, spec_origin)
+    if source_memento is not None:
+        source_memento = dict(source_memento)
+        source_memento["regex_pattern"] = pattern
+        source_memento["regex_param_name"] = param_name
+        source_memento["regex_match_kind"] = match_kind
+        source_memento["regex_membership_pattern"] = _regex_membership_pattern(
+            pattern,
+            match_kind,
+        )
+        source_memento["regex_true_implies_membership"] = true_implies_membership
+        source_memento["regex_false_implies_nonmembership"] = (
+            false_implies_nonmembership
+        )
+        if compile_var is not None:
+            source_memento["regex_compile_var"] = compile_var
+    return (
+        ReturnRegexUniverse(
+            pattern=pattern,
+            param_name=param_name,
+            param_index=params.index(param_name),
+            module=module_name,
+            qualname=f"{module_name}.{fn_name}",
+            source_path=spec_origin,
+            lineno=body[-1].lineno,
+            compile_var=compile_var,
+            match_kind=match_kind,
+            true_implies_membership=true_implies_membership,
+            false_implies_nonmembership=false_implies_nonmembership,
+            source_memento=source_memento,
+        ),
+        None,
+    )
+
+
+_REGEX_ANY_STRING = r"(?:.|\n)*"
+
+
+def _regex_membership_pattern(pattern: str, match_kind: str) -> str:
+    if match_kind == "fullmatch":
+        return pattern
+    if match_kind == "match":
+        return f"(?:{pattern}){_REGEX_ANY_STRING}"
+    if match_kind == "search":
+        return f"{_REGEX_ANY_STRING}(?:{pattern}){_REGEX_ANY_STRING}"
+    return pattern
+
+
+def _regex_compile_env_for_function(
+    tree: ast.Module,
+    fn_name: str,
+) -> dict[str, str]:
+    env: dict[str, str] = {}
+    for stmt in tree.body:
+        compiled = _regex_compile_assignment(stmt, tree)
+        if compiled is not None:
+            env[compiled[0]] = compiled[1]
+    class_path = fn_name.split(".")[:-1]
+    if class_path:
+        cls = _find_class_path(tree.body, class_path)
+        if cls is not None:
+            for stmt in cls.body:
+                compiled = _regex_compile_assignment(stmt, tree)
+                if compiled is not None:
+                    env[compiled[0]] = compiled[1]
+    return env
+
+
+def _regex_compile_assignment(
+    stmt: ast.stmt,
+    tree: ast.Module,
+) -> Optional[tuple[str, str]]:
+    if not (
+        isinstance(stmt, ast.Assign)
+        and len(stmt.targets) == 1
+        and isinstance(stmt.targets[0], ast.Name)
+        and isinstance(stmt.value, ast.Call)
+    ):
+        return None
+    if _qualified_call_name(stmt.value, tree) != "re.compile":
+        return None
+    if len(stmt.value.args) != 1 or stmt.value.keywords:
+        return None
+    pattern = _regex_literal_arg(stmt.value, 0)
+    if pattern is None:
+        return None
+    return stmt.targets[0].id, pattern
+
+
+def _regex_bool_return(
+    node: ast.expr,
+    params: list[str],
+    env: dict[str, str],
+    tree: ast.Module,
+) -> tuple[
+    Optional[tuple[str, str, Optional[str], str, bool, bool]],
+    Optional[str],
+]:
+    call = _regex_call_from_bool_expr(node)
+    if call is not None:
+        return _regex_call_membership(call, params, env, tree, True, True)
+    if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.And):
+        for value in node.values:
+            call = _regex_call_from_bool_expr(value)
+            if call is None:
+                continue
+            matched, refusal = _regex_call_membership(
+                call,
+                params,
+                env,
+                tree,
+                True,
+                False,
+            )
+            if refusal is not None or matched is not None:
+                return matched, refusal
+    return None, None
+
+
+def _regex_fullmatch_bool_return(
+    node: ast.expr,
+    params: list[str],
+    env: dict[str, str],
+    tree: ast.Module,
+) -> Optional[tuple[str, str, Optional[str]]]:
+    matched, refusal = _regex_bool_return(node, params, env, tree)
+    if refusal is not None or matched is None:
+        return None
+    pattern, param_name, compile_var, _match_kind, _true_impl, _false_impl = matched
+    return pattern, param_name, compile_var
+
+
+def _regex_call_membership(
+    call: ast.Call,
+    params: list[str],
+    env: dict[str, str],
+    tree: ast.Module,
+    true_implies_membership: bool,
+    false_implies_nonmembership: bool,
+) -> tuple[
+    Optional[tuple[str, str, Optional[str], str, bool, bool]],
+    Optional[str],
+]:
+    direct = _qualified_call_name(call, tree)
+    direct_methods = {
+        "re.fullmatch": "fullmatch",
+        "re.match": "match",
+        "re.search": "search",
+    }
+    if direct in direct_methods:
+        if len(call.args) != 2 or call.keywords:
+            return None, None
+        pattern = _regex_pattern_arg(call.args[0], env)
+        subject = call.args[1]
+        match_kind = direct_methods[direct]
+        if pattern is None or not isinstance(subject, ast.Name) or subject.id not in params:
+            return None, None
+        refusal = _regex_membership_refusal(pattern, match_kind)
+        if refusal is not None:
+            return None, refusal
+        return (
+            (
+                pattern,
+                subject.id,
+                call.args[0].id if isinstance(call.args[0], ast.Name) else None,
+                match_kind,
+                true_implies_membership,
+                false_implies_nonmembership,
+            ),
+            None,
+        )
+    if not (
+        isinstance(call.func, ast.Attribute)
+        and call.func.attr in {"fullmatch", "match", "search"}
+        and len(call.args) == 1
+        and not call.keywords
+        and isinstance(call.args[0], ast.Name)
+        and call.args[0].id in params
+    ):
+        return None, None
+    compiled = _compiled_regex_pattern(call.func.value, env)
+    if compiled is None:
+        return None, None
+    compile_var, pattern = compiled
+    match_kind = call.func.attr
+    refusal = _regex_membership_refusal(pattern, match_kind)
+    if refusal is not None:
+        return None, refusal
+    return (
+        (
+            pattern,
+            call.args[0].id,
+            compile_var,
+            match_kind,
+            true_implies_membership,
+            false_implies_nonmembership,
+        ),
+        None,
+    )
+
+
+def _regex_pattern_arg(node: ast.AST, env: dict[str, str]) -> Optional[str]:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name):
+        return env.get(node.id)
+    return None
+
+
+def _compiled_regex_pattern(
+    node: ast.AST,
+    env: dict[str, str],
+) -> Optional[tuple[str, str]]:
+    if isinstance(node, ast.Name):
+        pattern = env.get(node.id)
+        return (node.id, pattern) if pattern is not None else None
+    if (
+        isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id in {"self", "cls"}
+    ):
+        pattern = env.get(node.attr)
+        return (node.attr, pattern) if pattern is not None else None
+    return None
+
+
+def _regex_call_from_bool_expr(node: ast.expr) -> Optional[ast.Call]:
+    if (
+        isinstance(node, ast.Compare)
+        and len(node.ops) == 1
+        and len(node.comparators) == 1
+        and isinstance(node.ops[0], (ast.IsNot, ast.NotEq))
+    ):
+        if isinstance(node.left, ast.Call) and _is_none_literal(node.comparators[0]):
+            return node.left
+        if isinstance(node.comparators[0], ast.Call) and _is_none_literal(node.left):
+            return node.comparators[0]
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "bool"
+        and len(node.args) == 1
+        and not node.keywords
+        and isinstance(node.args[0], ast.Call)
+    ):
+        return node.args[0]
+    return None
+
+
+def _regex_literal_arg(call: ast.Call, index: int) -> Optional[str]:
+    if index >= len(call.args):
+        return None
+    arg = call.args[index]
+    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+        return arg.value
+    return None
+
+
+def _qualified_call_name(call: ast.Call, tree: ast.Module) -> Optional[str]:
+    path = _attribute_path(call.func)
+    if path is None:
+        return None
+    root, *attrs = path
+    module = _stdlib_module_aliases(tree).get(root)
+    if module is None:
+        return None
+    if attrs:
+        return ".".join([module, *attrs])
+    return module
+
+
+def _unsupported_regex_literal_reason(pattern: str) -> Optional[str]:
+    unsupported = (
+        ("(?=", "lookahead"),
+        ("(?!", "lookahead"),
+        ("(?<=", "lookbehind"),
+        ("(?<!", "lookbehind"),
+        ("(?P=", "named backreference"),
+        ("\\k<", "named backreference"),
+        ("(?P<", "named group"),
+        ("(?<", "group extension"),
+        ("(?>", "atomic group"),
+        ("*+", "possessive quantifier"),
+        ("++", "possessive quantifier"),
+        ("?+", "possessive quantifier"),
+        ("(?i", "inline flag"),
+        ("(?s", "inline flag"),
+        ("(?m", "inline flag"),
+        ("(?x", "inline flag"),
+        ("(?a", "inline flag"),
+        ("(?u", "inline flag"),
+        ("(?L", "inline flag"),
+    )
+    for needle, feature in unsupported:
+        if needle in pattern:
+            return f"return-regex: regex feature {feature} is not rendered"
+    escaped = False
+    for ch in pattern:
+        if escaped:
+            if ch.isdigit():
+                return "return-regex: regex feature backreference is not rendered"
+            escaped = False
+            continue
+        if ch == "\\":
+            escaped = True
+    return None
+
+
+def _regex_membership_refusal(pattern: str, match_kind: str) -> Optional[str]:
+    unsupported = _unsupported_regex_literal_reason(pattern)
+    if unsupported is not None:
+        return unsupported
+    if match_kind == "search" and _regex_has_unescaped_anchor(pattern, {"^", "$"}):
+        return (
+            "return-regex: search regex anchor cannot be preserved by "
+            "substring membership normalization"
+        )
+    if match_kind == "match" and _regex_has_unescaped_anchor(pattern, {"$"}):
+        return (
+            "return-regex: match regex end anchor cannot be preserved by "
+            "prefix membership normalization"
+        )
+    return None
+
+
+def _regex_has_unescaped_anchor(pattern: str, anchors: set[str]) -> bool:
+    escaped = False
+    in_class = False
+    for ch in pattern:
+        if escaped:
+            escaped = False
+            continue
+        if ch == "\\":
+            escaped = True
+            continue
+        if ch == "[" and not in_class:
+            in_class = True
+            continue
+        if ch == "]" and in_class:
+            in_class = False
+            continue
+        if not in_class and ch in anchors:
+            return True
+    return False
 
 
 @functools.lru_cache(maxsize=None)
@@ -883,12 +1315,13 @@ def instance_field_universe_for_callee(
         return None, None
     returned_field, field_projection = returned
 
-    cls = _find_class_path(tree.body, class_qualname.split("."))
+    cls = _find_class_path(tree.body, class_qualname.split("."), module_name)
     if cls is None:
         return None, None
     init_fn = _find_function_path(
         tree.body,
         [*class_qualname.split("."), "__init__"],
+        module_name,
     )
     if init_fn is None or init_fn.decorator_list:
         return None, None
@@ -1012,7 +1445,7 @@ def _constructor_field_from_super_init(
     if "." not in fn_name:
         return None
     class_qualname, _init_name = fn_name.rsplit(".", 1)
-    cls = _find_class_path(tree.body, class_qualname.split("."))
+    cls = _find_class_path(tree.body, class_qualname.split("."), module_name)
     if cls is None:
         return None
     super_stmt = _single_constructor_super_init(init_fn, init_params)
@@ -1128,7 +1561,7 @@ def _same_module_base_constructor_callee(
     base = cls.bases[0]
     if not isinstance(base, ast.Name):
         return None
-    base_cls = _find_class_path(tree.body, [base.id])
+    base_cls = _find_class_path(tree.body, [base.id], module_name)
     if base_cls is None:
         return None
     return f"{module_name}.{base.id}"
@@ -1301,7 +1734,7 @@ def _constructor_field_assignment_stmt(
     call_aliases: Optional[dict[str, str]] = None,
 ) -> Optional[
     tuple[
-        ast.Assign | ast.AnnAssign,
+        ast.Assign | ast.AnnAssign | ast.Expr,
         str,
         str,
         Optional[str],
@@ -1310,6 +1743,9 @@ def _constructor_field_assignment_stmt(
         Optional[str],
     ]
 ]:
+    object_setattr = _constructor_object_setattr_assignment_stmt(stmt, init_params)
+    if object_setattr is not None:
+        return object_setattr
     if isinstance(stmt, ast.Assign):
         if len(stmt.targets) != 1:
             return None
@@ -1346,6 +1782,51 @@ def _constructor_field_assignment_stmt(
             literal_kind,
         )
     return None
+
+
+def _constructor_object_setattr_assignment_stmt(
+    stmt: ast.stmt,
+    init_params: list[str],
+) -> Optional[
+    tuple[
+        ast.Expr,
+        str,
+        str,
+        Optional[str],
+        Optional[str],
+        Optional[object],
+        Optional[str],
+    ]
+]:
+    if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.Call):
+        return None
+    call = stmt.value
+    if (
+        _static_expr_name(call.func) != "object.__setattr__"
+        or call.keywords
+        or len(call.args) != 3
+    ):
+        return None
+    owner, field, value = call.args
+    if not (
+        isinstance(owner, ast.Name)
+        and owner.id == init_params[0]
+        and isinstance(field, ast.Constant)
+        and isinstance(field.value, str)
+        and isinstance(value, ast.Name)
+        and value.id in init_params[1:]
+    ):
+        return None
+    return stmt, field.value, value.id, None, None, None, None
+
+
+def _static_expr_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        prefix = _static_expr_name(node.value)
+        return f"{prefix}.{node.attr}" if prefix else node.attr
+    return ""
 
 
 def _constructor_field_call_assignment_stmt(
@@ -2963,7 +3444,7 @@ def _receiver_method_delegate_for_call(
         return None, None
 
     delegate_name = value.func.attr
-    cls = _find_class_path(tree.body, class_qualname.split("."))
+    cls = _find_class_path(tree.body, class_qualname.split("."), module_name)
     if cls is None:
         return (
             None,
@@ -3182,7 +3663,7 @@ def _resolve_receiver_delegate_base_class(
     while isinstance(base, ast.Subscript):
         base = base.value
     if isinstance(base, ast.Name):
-        same_module = _find_class_path(tree.body, [base.id])
+        same_module = _find_class_path(tree.body, [base.id], module_name)
         if same_module is not None:
             return tree, same_module, module_name, base.id
         aliases = _module_call_aliases(tree, module_name)
@@ -5218,31 +5699,46 @@ def _guard_clause(test: ast.expr, params: list) -> Optional[GuardClause]:
         and len(test.comparators) == 1
     ):
         return None
-    op = _CMP_SYMBOL.get(type(test.ops[0]))
+    op_type = type(test.ops[0])
+    op = _CMP_SYMBOL.get(op_type)
     if op is None:
         return None
     left, right = test.left, test.comparators[0]
+    right_literal = _guard_literal_value(right, op_type)
     if (
         isinstance(left, ast.Name)
         and left.id in params
-        and isinstance(right, ast.Constant)
-        and isinstance(right.value, (int, str))
-        and not isinstance(right.value, bool)
+        and right_literal is not _NO_GUARD_LITERAL
     ):
-        return GuardClause(params.index(left.id), left.id, op, right.value)
+        return GuardClause(params.index(left.id), left.id, op, right_literal)
     # literal-on-the-left mirror: `if 0 > x: raise` == `x < 0`
+    left_literal = _guard_literal_value(left, op_type)
     if (
         isinstance(right, ast.Name)
         and right.id in params
-        and isinstance(left, ast.Constant)
-        and isinstance(left.value, (int, str))
-        and not isinstance(left.value, bool)
+        and left_literal is not _NO_GUARD_LITERAL
     ):
         mirror = {"<": ">", ">": "<", "≤": "≥", "≥": "≤", "=": "=", "≠": "≠"}
         return GuardClause(
-            params.index(right.id), right.id, mirror[op], left.value
+            params.index(right.id), right.id, mirror[op], left_literal
         )
     return None
+
+
+_NO_GUARD_LITERAL = object()
+
+
+def _guard_literal_value(node: ast.expr, op_type: type) -> object:
+    if not isinstance(node, ast.Constant):
+        return _NO_GUARD_LITERAL
+    value = node.value
+    if value is None and op_type in (ast.Eq, ast.NotEq, ast.Is, ast.IsNot):
+        return None
+    if op_type in (ast.Is, ast.IsNot):
+        return _NO_GUARD_LITERAL
+    if isinstance(value, (int, str)) and not isinstance(value, bool):
+        return value
+    return _NO_GUARD_LITERAL
 
 
 # Non-determinism markers: a body that (transitively, within its module)
@@ -5366,7 +5862,7 @@ def _resolve_class_path_in_module(module_name: str, class_path: list[str]):
         )
     except (OSError, SyntaxError):
         return None
-    cls = _find_class_path(tree.body, class_path)
+    cls = _find_class_path(tree.body, class_path, module_name)
     if cls is None:
         return None
     return tree, cls, spec.origin, module_name, ".".join(class_path)
@@ -5392,7 +5888,7 @@ def _resolve_function_path_in_module(
         )
     except (OSError, SyntaxError):
         return None
-    fn = _find_function_path(tree.body, fn_path)
+    fn = _find_function_path(tree.body, fn_path, module_name)
     if fn is None:
         return None
     if (
@@ -5414,25 +5910,31 @@ def _resolve_function_path_in_module(
 def _find_function_path(
     body: list[ast.stmt],
     fn_path: list[str],
+    module_name: Optional[str] = None,
 ) -> Optional[ast.FunctionDef]:
     if not fn_path:
         return None
+    current_body = body
     for class_name in fn_path[:-1]:
         cls = next(
             (
                 stmt
-                for stmt in body
+                for stmt in current_body
                 if isinstance(stmt, ast.ClassDef) and stmt.name == class_name
             ),
             None,
         )
-        if cls is None or cls.decorator_list:
+        if cls is None or not _class_decorators_preserve_identity(
+            current_body,
+            cls,
+            module_name,
+        ):
             return None
-        body = cls.body
+        current_body = cls.body
     fn_name = fn_path[-1]
     candidates = [
         stmt
-        for stmt in body
+        for stmt in current_body
         if isinstance(stmt, ast.FunctionDef) and stmt.name == fn_name
     ]
     for candidate in candidates:
@@ -5460,6 +5962,7 @@ def _is_overload_stub(fn: ast.FunctionDef) -> bool:
 def _find_class_path(
     body: list[ast.stmt],
     class_path: list[str],
+    module_name: Optional[str] = None,
 ) -> Optional[ast.ClassDef]:
     if not class_path:
         return None
@@ -5474,10 +5977,293 @@ def _find_class_path(
             ),
             None,
         )
-        if found is None or found.decorator_list:
+        if found is None or not _class_decorators_preserve_identity(
+            current_body,
+            found,
+            module_name,
+        ):
             return None
         current_body = found.body
     return found
+
+
+_METADATA_CLASS_DECORATOR_NAMES = {
+    "register_extension_dtype",
+    "set_module",
+}
+
+
+def _class_decorators_preserve_identity(
+    scope_body: list[ast.stmt],
+    cls: ast.ClassDef,
+    module_name: Optional[str],
+) -> bool:
+    return all(
+        _class_decorator_preserves_identity(scope_body, decorator, module_name)
+        for decorator in cls.decorator_list
+    )
+
+
+def _class_decorator_preserves_identity(
+    scope_body: list[ast.stmt],
+    decorator: ast.expr,
+    module_name: Optional[str],
+) -> bool:
+    target = decorator.func if isinstance(decorator, ast.Call) else decorator
+    name = _decorator_name(target)
+    if name is None:
+        return False
+    resolved = _resolve_class_decorator_function(scope_body, target, module_name)
+    if resolved is None:
+        return False
+    metadata_allowed = name.rsplit(".", 1)[-1] in _METADATA_CLASS_DECORATOR_NAMES
+    if isinstance(decorator, ast.Call):
+        return _function_returns_identity_decorator(
+            resolved,
+            metadata_allowed=metadata_allowed,
+        )
+    return _function_preserves_first_arg_identity(
+        resolved,
+        metadata_allowed=metadata_allowed,
+    )
+
+
+def _decorator_name(node: ast.AST) -> Optional[str]:
+    path = _attribute_path(node)
+    if path is None:
+        return None
+    return ".".join(path)
+
+
+def _resolve_class_decorator_function(
+    scope_body: list[ast.stmt],
+    target: ast.expr,
+    module_name: Optional[str],
+) -> Optional[ast.FunctionDef]:
+    name = _decorator_name(target)
+    if name is None:
+        return None
+    if "." not in name:
+        local = _module_level_function(scope_body, name)
+        if local is not None:
+            return local
+        if module_name is None:
+            return None
+        aliases = _module_import_aliases(scope_body, module_name)
+        qualified = aliases.get(name)
+        if qualified is None:
+            return None
+        return _resolve_qualified_decorator_function(qualified, set())
+    parts = name.split(".")
+    if module_name is not None:
+        aliases = _module_import_aliases(scope_body, module_name)
+        alias = aliases.get(parts[0])
+        if alias is not None:
+            name = ".".join([alias, *parts[1:]])
+    return _resolve_qualified_decorator_function(name, set())
+
+
+def _module_level_function(
+    body: list[ast.stmt],
+    name: str,
+) -> Optional[ast.FunctionDef]:
+    for stmt in body:
+        if isinstance(stmt, ast.FunctionDef) and stmt.name == name:
+            return stmt
+    return None
+
+
+def _module_import_aliases(
+    body: list[ast.stmt],
+    module_name: str,
+) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for stmt in body:
+        if isinstance(stmt, ast.Import):
+            for alias in stmt.names:
+                aliases[alias.asname or alias.name.split(".", 1)[0]] = alias.name
+        elif isinstance(stmt, ast.ImportFrom):
+            imported_module = _resolved_import_from_module(module_name, stmt)
+            if imported_module is None:
+                continue
+            for alias in stmt.names:
+                if alias.name == "*":
+                    continue
+                aliases[alias.asname or alias.name] = (
+                    f"{imported_module}.{alias.name}"
+                )
+    return aliases
+
+
+def _resolve_qualified_decorator_function(
+    qualified: str,
+    seen: set[str],
+) -> Optional[ast.FunctionDef]:
+    if qualified in seen or "." not in qualified:
+        return None
+    seen.add(qualified)
+    module_name, local_name = qualified.rsplit(".", 1)
+    parsed = _parse_python_module(module_name)
+    if parsed is None:
+        return None
+    tree, _origin = parsed
+    local = _find_function_path(tree.body, [local_name], module_name)
+    if local is not None:
+        if local.decorator_list and not _function_decorators_preserve_identity(
+            tree.body,
+            local,
+            module_name,
+        ):
+            return None
+        return local
+    alias = _module_import_aliases(tree.body, module_name).get(local_name)
+    if alias is None:
+        return None
+    return _resolve_qualified_decorator_function(alias, seen)
+
+
+def _function_decorators_preserve_identity(
+    scope_body: list[ast.stmt],
+    fn: ast.FunctionDef,
+    module_name: Optional[str],
+) -> bool:
+    return all(
+        _class_decorator_preserves_identity(scope_body, decorator, module_name)
+        for decorator in fn.decorator_list
+    )
+
+
+def _parse_python_module(module_name: str) -> Optional[Tuple[ast.Module, str]]:
+    try:
+        spec = importlib.util.find_spec(module_name)
+    except (ImportError, ValueError):
+        return None
+    if spec is None or spec.origin in (None, "built-in", "frozen"):
+        return None
+    if not spec.origin.endswith(".py"):
+        return None
+    try:
+        return (
+            ast.parse(open(spec.origin, encoding="utf-8").read(), filename=spec.origin),
+            spec.origin,
+        )
+    except (OSError, SyntaxError):
+        return None
+
+
+def _function_returns_identity_decorator(
+    fn: ast.FunctionDef,
+    *,
+    metadata_allowed: bool,
+) -> bool:
+    body = _body_without_docstring(fn.body)
+    if len(body) < 2 or not isinstance(body[-1], ast.Return):
+        return False
+    returned_name = body[-1].value.id if isinstance(body[-1].value, ast.Name) else None
+    if returned_name is None:
+        return False
+    inner = next(
+        (
+            stmt
+            for stmt in body[:-1]
+            if isinstance(stmt, ast.FunctionDef) and stmt.name == returned_name
+        ),
+        None,
+    )
+    if inner is None:
+        return False
+    non_inner = [
+        stmt
+        for stmt in body[:-1]
+        if not (isinstance(stmt, ast.FunctionDef) and stmt.name == returned_name)
+    ]
+    if any(not _identity_decorator_metadata_stmt(stmt, "", False) for stmt in non_inner):
+        return False
+    return _function_preserves_first_arg_identity(
+        inner,
+        metadata_allowed=metadata_allowed,
+    )
+
+
+def _function_preserves_first_arg_identity(
+    fn: ast.FunctionDef,
+    *,
+    metadata_allowed: bool,
+) -> bool:
+    params = _positional_param_names(fn)
+    if not params:
+        return False
+    subject = params[0]
+    body = _body_without_docstring(fn.body)
+    if not body or not isinstance(body[-1], ast.Return):
+        return False
+    if not _return_expr_preserves_identity(body[-1].value, subject):
+        return False
+    return all(
+        _identity_decorator_metadata_stmt(stmt, subject, metadata_allowed)
+        for stmt in body[:-1]
+    )
+
+
+def _return_expr_preserves_identity(
+    expr: Optional[ast.expr],
+    subject: str,
+) -> bool:
+    if isinstance(expr, ast.Name) and expr.id == subject:
+        return True
+    if isinstance(expr, ast.Call) and expr.args:
+        path = _attribute_path(expr.func)
+        if path is not None and path[-1] == "cast":
+            return _return_expr_preserves_identity(expr.args[-1], subject)
+    return False
+
+
+def _identity_decorator_metadata_stmt(
+    stmt: ast.stmt,
+    subject: str,
+    metadata_allowed: bool,
+) -> bool:
+    if isinstance(stmt, ast.Pass):
+        return True
+    if isinstance(stmt, ast.Expr):
+        if isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str):
+            return True
+        return metadata_allowed and isinstance(stmt.value, ast.Call)
+    if isinstance(stmt, ast.Assign):
+        return (
+            metadata_allowed
+            and all(
+                _metadata_assignment_target(target, subject)
+                for target in stmt.targets
+            )
+        )
+    if isinstance(stmt, ast.AnnAssign):
+        return metadata_allowed and _metadata_assignment_target(stmt.target, subject)
+    if isinstance(stmt, ast.If):
+        return metadata_allowed and all(
+            _identity_decorator_metadata_stmt(child, subject, metadata_allowed)
+            for child in [*stmt.body, *stmt.orelse]
+        )
+    if isinstance(stmt, ast.Try):
+        return metadata_allowed and all(
+            _identity_decorator_metadata_stmt(child, subject, metadata_allowed)
+            for child in [
+                *stmt.body,
+                *stmt.orelse,
+                *stmt.finalbody,
+                *(child for handler in stmt.handlers for child in handler.body),
+            ]
+        )
+    return False
+
+
+def _metadata_assignment_target(target: ast.expr, subject: str) -> bool:
+    return (
+        isinstance(target, ast.Attribute)
+        and isinstance(target.value, ast.Name)
+        and target.value.id == subject
+        and target.attr in {"__module__", "_module_source"}
+    )
 
 
 def _class_member_binding_count(cls: ast.ClassDef, name: str) -> int:

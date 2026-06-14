@@ -125,6 +125,7 @@ from .translate_universe import (
     predicate_universe_for_callee,
     raise_locus_universe_for_callee,
     return_isinstance_universe_for_callee,
+    return_regex_universe_for_callee,
     separator_guard_raise_universe_for_callee,
     translate_universe_for_callee,
 )
@@ -615,6 +616,14 @@ def _lean_source_memento(warrant: dict[str, Any]) -> dict[str, Any]:
         "exception_bool_return_delegate",
         "exception_bool_return_success_value",
         "exception_bool_return_exception_value",
+        "guard_lines",
+        "regex_pattern",
+        "regex_param_name",
+        "regex_compile_var",
+        "regex_match_kind",
+        "regex_membership_pattern",
+        "regex_true_implies_membership",
+        "regex_false_implies_nonmembership",
         "separator_guard_exception_type",
         "separator_guard_field_name",
         "separator_guard_param_name",
@@ -633,6 +642,8 @@ def _lean_source_memento(warrant: dict[str, Any]) -> dict[str, Any]:
         elif field_name == "constructor_default_param_names" and isinstance(value, list):
             out[field_name] = list(value)
         elif field_name == "field_projection" and isinstance(value, list):
+            out[field_name] = list(value)
+        elif field_name == "guard_lines" and isinstance(value, list):
             out[field_name] = list(value)
         else:
             out[field_name] = value
@@ -682,6 +693,13 @@ def _source_loci_for_memento(
     universe_kind: str,
 ) -> List[dict[str, Any]]:
     file = _string_field(source_memento, "file")
+    if role == "python.guard-universe":
+        return _source_loci_for_guard_memento(
+            source_memento,
+            root,
+            role,
+            universe_kind,
+        )
     if role not in {
         "python.translate-universe",
         "python.bytes-identity-universe",
@@ -693,6 +711,7 @@ def _source_loci_for_memento(
         "python.raise-locus-universe",
         "python.exception-handler-raise-universe",
         "python.return-isinstance-universe",
+        "python.regex-universe",
     }:
         return [
             _source_line_locus(file, line, "warranted", role, universe_kind)
@@ -737,6 +756,74 @@ def _source_loci_for_memento(
                 node,
                 source_memento,
             )
+            loci.append(
+                _source_line_locus(
+                    file,
+                    getattr(node, "lineno", _source_memento_start_line(source_memento)),
+                    status,
+                    role,
+                    universe_kind,
+                    ast_kind=type(node).__name__,
+                    ast_path=ast_path,
+                    span=_ast_node_span(node),
+                    reason=reason,
+                )
+            )
+    return loci
+
+
+def _source_loci_for_guard_memento(
+    source_memento: dict[str, Any],
+    root: str,
+    role: str,
+    universe_kind: str,
+) -> List[dict[str, Any]]:
+    file = _string_field(source_memento, "file")
+    path = os.path.join(root, file) if root else file
+    with open(path, "r", encoding="utf-8") as fh:
+        source = fh.read()
+    tree = ast.parse(source, filename=path)
+    fn = _locate_source_function_for_accounting(tree, source_memento)
+    if fn is None:
+        return [
+            _source_line_locus(
+                file,
+                _source_memento_start_line(source_memento),
+                "unclassified",
+                role,
+                universe_kind,
+                reason="source function not found after source-oracle resolution",
+            )
+        ]
+
+    guard_lines = {
+        int(line)
+        for line in source_memento.get("guard_lines", [])
+        if isinstance(line, int)
+    }
+    loci: List[dict[str, Any]] = []
+    loci.extend(
+        _source_header_loci_for_memento(
+            fn,
+            source_memento,
+            file,
+            role,
+            universe_kind,
+        )
+    )
+    for index, stmt in enumerate(fn.body):
+        if not _is_docstring_stmt(stmt) and getattr(stmt, "lineno", 0) not in guard_lines:
+            continue
+        for node, ast_path in _iter_ast_nodes_with_paths(stmt, f"$.body[{index}]"):
+            if not hasattr(node, "lineno"):
+                continue
+            status, reason = _classify_guard_source_node(
+                stmt,
+                node,
+                source_memento,
+            )
+            if status == "unclassified":
+                continue
             loci.append(
                 _source_line_locus(
                     file,
@@ -918,6 +1005,8 @@ def _classify_universe_source_node(
         return "support", "queued delegate dig for recursive universe walk"
     if role == "python.branch-selected-universe":
         return _classify_branch_selected_source_node(stmt, node, source_memento)
+    if role == "python.guard-universe":
+        return _classify_guard_source_node(stmt, node, source_memento)
     if role == "python.branch-selected-raise-universe":
         return _classify_branch_selected_raise_source_node(stmt, node, source_memento)
     if role == "python.exception-handler-raise-universe":
@@ -934,6 +1023,8 @@ def _classify_universe_source_node(
         and node.func.id == "isinstance"
     ):
         return "warranted", "isinstance predicate emitted into python.return-isinstance-universe"
+    if role == "python.regex-universe":
+        return _classify_regex_source_node(stmt, node, source_memento)
     return _classify_universe_source_statement(role, stmt, source_memento)
 
 
@@ -985,6 +1076,8 @@ def _classify_universe_source_statement(
         return "support", "non-constraint source support for delegation-universe accounting"
     if role == "python.branch-selected-universe":
         return _classify_branch_selected_source_node(stmt, stmt, source_memento)
+    if role == "python.guard-universe":
+        return _classify_guard_source_node(stmt, stmt, source_memento)
     if role == "python.branch-selected-raise-universe":
         return _classify_branch_selected_raise_source_node(stmt, stmt, source_memento)
     if role == "python.instance-field-universe":
@@ -1041,7 +1134,173 @@ def _classify_universe_source_statement(
         if _is_return_isinstance_stmt(stmt):
             return "warranted", "emitted into python.return-isinstance-universe"
         return "unclassified", "return-isinstance source not emitted"
+    if role == "python.regex-universe":
+        return _classify_regex_source_node(stmt, stmt, source_memento)
     return "unclassified", "source warrant role has no source-audit classifier"
+
+
+def _classify_regex_source_node(
+    stmt: ast.stmt,
+    node: ast.AST,
+    source_memento: dict[str, Any],
+) -> Tuple[str, str]:
+    if _is_docstring_stmt(stmt):
+        return "support", "docstring metadata supports source accounting only"
+    if _is_regex_compile_stmt(stmt, source_memento):
+        return (
+            "warranted",
+            "regex constructor emitted as source support for str.in-regex",
+        )
+    regex_expr = _regex_expr_from_return_stmt(stmt, source_memento)
+    if regex_expr is not None and _regex_source_node_is_emitted(stmt, node, regex_expr):
+        match_kind = _string_field(source_memento, "regex_match_kind") or "fullmatch"
+        if isinstance(node, ast.Call):
+            return "warranted", f"regex {match_kind} emitted into str.in-regex"
+        return "warranted", f"regex {match_kind} return emitted into python.regex-universe"
+    return "unclassified", "regex source not emitted"
+
+
+def _is_regex_compile_stmt(
+    stmt: ast.stmt,
+    source_memento: dict[str, Any],
+) -> bool:
+    compile_var = _string_field(source_memento, "regex_compile_var")
+    return (
+        isinstance(stmt, ast.Assign)
+        and len(stmt.targets) == 1
+        and isinstance(stmt.targets[0], ast.Name)
+        and (not compile_var or stmt.targets[0].id == compile_var)
+        and isinstance(stmt.value, ast.Call)
+        and _static_call_name(stmt.value.func) in {"re.compile", "compile"}
+    )
+
+
+def _is_return_regex_stmt(stmt: ast.stmt) -> bool:
+    return _regex_expr_from_return_stmt(stmt, {}) is not None
+
+
+def _regex_expr_from_return_stmt(
+    stmt: ast.stmt,
+    source_memento: dict[str, Any],
+) -> Optional[ast.expr]:
+    if not isinstance(stmt, ast.Return) or stmt.value is None:
+        return None
+    return _regex_fullmatch_expr_from_return_expr(stmt.value, source_memento)
+
+
+def _regex_source_node_is_emitted(
+    stmt: ast.stmt,
+    node: ast.AST,
+    regex_call: ast.Call,
+) -> bool:
+    if node is stmt:
+        return True
+    if _ast_contains_node(node, regex_call):
+        return True
+    return _ast_contains_node(regex_call, node)
+
+
+def _regex_fullmatch_expr_from_return_expr(
+    node: ast.expr,
+    source_memento: dict[str, Any],
+) -> Optional[ast.expr]:
+    if (
+        isinstance(node, ast.Compare)
+        and len(node.ops) == 1
+        and len(node.comparators) == 1
+        and isinstance(node.ops[0], (ast.IsNot, ast.NotEq))
+    ):
+        if (
+            isinstance(node.left, ast.Call)
+            and _is_none_literal_node(node.comparators[0])
+            and _regex_call_matches_source_memento(node.left, source_memento)
+        ):
+            return node
+        if (
+            isinstance(node.comparators[0], ast.Call)
+            and _is_none_literal_node(node.left)
+            and _regex_call_matches_source_memento(node.comparators[0], source_memento)
+        ):
+            return node
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "bool"
+        and len(node.args) == 1
+        and not node.keywords
+        and isinstance(node.args[0], ast.Call)
+        and _regex_call_matches_source_memento(node.args[0], source_memento)
+    ):
+        return node
+    if isinstance(node, ast.BoolOp):
+        for value in node.values:
+            expr = _regex_fullmatch_expr_from_return_expr(value, source_memento)
+            if expr is not None:
+                return expr
+    return None
+
+
+def _regex_call_matches_source_memento(
+    call: ast.Call,
+    source_memento: dict[str, Any],
+) -> bool:
+    match_kind = _string_field(source_memento, "regex_match_kind")
+    compile_var = _string_field(source_memento, "regex_compile_var")
+    if isinstance(call.func, ast.Attribute):
+        if match_kind and call.func.attr != match_kind:
+            return False
+        if compile_var:
+            receiver = call.func.value
+            if isinstance(receiver, ast.Name):
+                return receiver.id == compile_var
+            return (
+                isinstance(receiver, ast.Attribute)
+                and receiver.attr == compile_var
+            )
+        return call.func.attr in {"fullmatch", "match", "search"}
+    static_name = _static_call_name(call.func)
+    if match_kind:
+        return static_name in {f"re.{match_kind}", match_kind}
+    return static_name in {
+        "re.fullmatch",
+        "fullmatch",
+        "re.match",
+        "match",
+        "re.search",
+        "search",
+    }
+
+
+def _is_none_literal_node(node: ast.AST) -> bool:
+    return isinstance(node, ast.Constant) and node.value is None
+
+
+def _classify_guard_source_node(
+    stmt: ast.stmt,
+    node: ast.AST,
+    source_memento: dict[str, Any],
+) -> Tuple[str, str]:
+    if _is_docstring_stmt(stmt):
+        return "support", "docstring metadata supports source accounting only"
+    guard_lines = {
+        int(line)
+        for line in source_memento.get("guard_lines", [])
+        if isinstance(line, int)
+    }
+    if getattr(stmt, "lineno", 0) in guard_lines and _is_guard_universe_stmt(stmt):
+        return "warranted", "guard emitted into python.guard-universe"
+    return "unclassified", "guard source not emitted"
+
+
+def _is_guard_universe_stmt(stmt: ast.stmt) -> bool:
+    if isinstance(stmt, ast.Assert):
+        return True
+    return (
+        isinstance(stmt, ast.If)
+        and len(stmt.body) == 1
+        and isinstance(stmt.body[0], ast.Raise)
+        and not stmt.orelse
+    )
 
 
 def _classify_exception_handler_raise_source_node(
@@ -5221,6 +5480,53 @@ def _universe_conjuncts(
                 )
             conjuncts.extend(isinst_conjuncts)
 
+    regex_u, regex_refusal = return_regex_universe_for_callee(callee)
+    if regex_refusal is not None:
+        out.warnings.append(
+            LiftWarning(
+                source_path,
+                f"{test_name}::regex-universe",
+                reason=f"{regex_refusal.callee}: {regex_refusal.reason}",
+            )
+        )
+    elif regex_u is not None:
+        try:
+            regex_conjuncts = _return_regex_universe_conjuncts(
+                regex_u,
+                subject_term,
+                _universe_call_args(subject_term, origin),
+            )
+        except ValueError as exc:
+            out.warnings.append(
+                LiftWarning(
+                    source_path,
+                    f"{test_name}::regex-universe",
+                    reason=f"{callee}: {exc}",
+                )
+            )
+            regex_conjuncts = []
+        if regex_conjuncts:
+            if source_warrants is not None and regex_u.source_memento is not None:
+                warrant = _source_warrant_for_universe(
+                    regex_u,
+                    role="python.regex-universe",
+                    universe_kind="return-regex",
+                )
+                warrant["regex_pattern"] = regex_u.pattern
+                warrant["regex_param_name"] = regex_u.param_name
+                warrant["regex_match_kind"] = regex_u.match_kind
+                warrant["regex_membership_pattern"] = regex_u.membership_pattern
+                warrant["regex_true_implies_membership"] = (
+                    regex_u.true_implies_membership
+                )
+                warrant["regex_false_implies_nonmembership"] = (
+                    regex_u.false_implies_nonmembership
+                )
+                if regex_u.compile_var is not None:
+                    warrant["regex_compile_var"] = regex_u.compile_var
+                _append_unique_source_warrant(source_warrants, warrant)
+            conjuncts.extend(regex_conjuncts)
+
     if isinstance(subject_term, _Ctor):
         guards, guard_refusal = guard_universe_for_callee(callee)
         if guard_refusal is not None:
@@ -5237,16 +5543,27 @@ def _universe_conjuncts(
                 if subject_term.name.startswith("callval_")
                 else subject_term.args
             )
+            if source_warrants is not None and guards.source_memento is not None:
+                warrant = _source_warrant_for_universe(
+                    guards,
+                    role="python.guard-universe",
+                    universe_kind="guard",
+                )
+                warrant["guard_lines"] = list(guards.guard_lines)
+                _append_unique_source_warrant(source_warrants, warrant)
             cmp_ctor = {"<": lt, "≤": lte, ">": gt, "≥": gte, "=": eq, "≠": ne}
             for clause in guards.clauses:
                 if clause.param_index >= len(call_args):
                     continue
                 arg_term = call_args[clause.param_index]
-                lit_term = (
-                    num(clause.literal)
-                    if isinstance(clause.literal, int)
-                    else str_const(clause.literal)
-                )
+                if isinstance(clause.literal, int):
+                    lit_term = num(clause.literal)
+                elif isinstance(clause.literal, str):
+                    lit_term = str_const(clause.literal)
+                elif clause.literal is None:
+                    lit_term = ctor("None", [])
+                else:
+                    continue
                 conjuncts.append(not_(cmp_ctor[clause.op](arg_term, lit_term)))
 
         # RETURN-CONSTANT (census family, 34k bodies): the body
@@ -6384,6 +6701,28 @@ def _return_isinstance_universe_conjuncts(
         implies(eq(subject_term, bool_const(True)), predicate),
         implies(eq(subject_term, bool_const(False)), not_(predicate)),
     ]
+
+
+def _return_regex_universe_conjuncts(
+    universe,
+    subject_term: Term,
+    call_args: Tuple[Term, ...],
+) -> List[Formula]:
+    if universe.param_index >= len(call_args):
+        raise ValueError(
+            "return-regex: missing callsite term for param "
+            + universe.param_name
+        )
+    predicate = atomic(
+        "str.in-regex",
+        [call_args[universe.param_index], str_const(universe.membership_pattern)],
+    )
+    conjuncts: List[Formula] = []
+    if universe.true_implies_membership:
+        conjuncts.append(implies(eq(subject_term, bool_const(True)), predicate))
+    if universe.false_implies_nonmembership:
+        conjuncts.append(implies(eq(subject_term, bool_const(False)), not_(predicate)))
+    return conjuncts
 
 
 def _constructor_field_universe_value_term(

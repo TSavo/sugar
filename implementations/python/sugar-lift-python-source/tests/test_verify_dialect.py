@@ -501,7 +501,7 @@ def test_verify_rpc_kit_declaration_returns_python_verify_surface():
         "shutdown": False,
     }
     assert result["proofResolution"] == {"strategy": "pip"}
-    assert result["effectKinds"] == ["concept:panic-freedom"]
+    assert result["effectKinds"] == ["panic-freedom"]
     assert result["effectLeaves"] == []
     assert result["guardPredicates"] == [
         {
