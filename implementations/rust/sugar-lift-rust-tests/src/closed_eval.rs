@@ -98,6 +98,29 @@ fn is_const_or_ctor_path(p: &syn::Path) -> bool {
     first_upper || screaming
 }
 
+/// A call to a TYPE-ASSOCIATED stdlib function: a path `A::..::func` of >=2 segments
+/// whose FIRST segment is a type/enum (starts uppercase) and whose LAST segment is the
+/// associated-fn name (e.g. `FormattingOptions::new`, `NonZero::new`, `Ordering::from`).
+/// This is stdlib VALUE sugar -- a pure constructor / converter on a stdlib type -- as
+/// long as the fn name is not in the impure set. A USER type's associated fn matches the
+/// SHAPE, but the harness carries no user type defs, so `MyType::compute()` fails to
+/// COMPILE => not dissolved (the harness compile is the backstop, same fence as a
+/// lowercase user-fn call). The first segment must be a type-ish name, NOT a lowercase
+/// local/module path, so this never admits `mymod::helper()`.
+fn is_type_assoc_call_path(p: &syn::Path) -> bool {
+    if p.segments.len() < 2 {
+        return false;
+    }
+    let first = p.segments.first().map(|s| s.ident.to_string()).unwrap_or_default();
+    let first_type = first
+        .chars()
+        .next()
+        .map(|c| c.is_uppercase())
+        .unwrap_or(false);
+    let last = p.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
+    first_type && !IMPURE_NAMES.contains(&last.as_str())
+}
+
 trait PathLastIdent {
     fn path_last_ident(&self) -> Option<String>;
 }
@@ -116,8 +139,11 @@ fn closed_pure_sugar(expr: &Expr) -> bool {
         Expr::Path(p) => is_const_or_ctor_path(&p.path),
         // value constructor / variant call: Some(x), Ok(x), Wrapping(x). The callee must
         // be an uppercase ctor path (NOT a lowercase user/local fn -> fence #1), args pure.
+        // Also a TYPE-associated stdlib fn (`FormattingOptions::new()`, `NonZero::new(..)`):
+        // pure value sugar; a user type matches the shape but fails the harness compile.
         Expr::Call(c) => {
-            let ctor = matches!(c.func.as_ref(), Expr::Path(p) if is_const_or_ctor_path(&p.path));
+            let ctor = matches!(c.func.as_ref(),
+                Expr::Path(p) if is_const_or_ctor_path(&p.path) || is_type_assoc_call_path(&p.path));
             ctor && c.args.iter().all(closed_pure_sugar)
         }
         // stdlib method sugar on a closed receiver: 'A'.to_digit(16), "x".to_ascii_uppercase().
@@ -192,6 +218,62 @@ fn operands_use_stdlib_op(operands: &[&Expr]) -> bool {
         syn::visit::Visit::visit_expr(&mut w, e);
     }
     w.found
+}
+
+/// Value-position-aware token substitution: replace every `Ident == var` in `ts` with
+/// `val`, EXCEPT when the ident is in name position -- immediately after `.` (a method
+/// or field name) or after `::` (a path segment). This stops a loop variable named like
+/// a method (`sign`) from rewriting `.sign(..)` into `.None(..)`. Descends into groups.
+/// A struct-field name (`Foo { sign: x }`) is rarer in these loops; if it ever mis-subs
+/// the result simply fails to parse/compile -> not dissolved (safe under-claim).
+fn replace_value_ident(
+    ts: proc_macro2::TokenStream,
+    var: &str,
+    val: &proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    use proc_macro2::{Punct, TokenTree};
+    let mut out = proc_macro2::TokenStream::new();
+    // prev_dot: previous token was a `.`; prev_colon: previous token was a `:` (so a
+    // second `:` makes `::`, and an ident right after `::` is a path segment name).
+    let mut prev_dot = false;
+    let mut prev_colon = false;
+    for tt in ts {
+        match tt {
+            TokenTree::Ident(id) if id.to_string() == var && !prev_dot && !prev_colon => {
+                out.extend(val.clone());
+                prev_dot = false;
+                prev_colon = false;
+            }
+            TokenTree::Group(g) => {
+                let inner = replace_value_ident(g.stream(), var, val);
+                out.extend(std::iter::once(TokenTree::Group(proc_macro2::Group::new(
+                    g.delimiter(),
+                    inner,
+                ))));
+                prev_dot = false;
+                prev_colon = false;
+            }
+            TokenTree::Punct(ref p) if p.as_char() == '.' => {
+                prev_dot = true;
+                prev_colon = false;
+                out.extend(std::iter::once(TokenTree::Punct(Punct::new('.', p.spacing()))));
+            }
+            TokenTree::Punct(ref p) if p.as_char() == ':' => {
+                // A `:` (often part of `::`); mark so the NEXT ident is treated as a path
+                // segment name and not substituted.
+                prev_colon = true;
+                prev_dot = false;
+                out.extend(std::iter::once(TokenTree::Punct(Punct::new(':', p.spacing()))));
+            }
+            other => {
+                // any other token resets both name-position flags.
+                prev_dot = false;
+                prev_colon = false;
+                out.extend(std::iter::once(other));
+            }
+        }
+    }
+    out
 }
 
 /// A pure local helper that may be CARRIED into the harness prelude: a thin wrapper
@@ -310,13 +392,37 @@ pub fn collect_dissolvable(file: &syn::File) -> Vec<Dissolvable> {
     let mut units = Vec::new();
     for f in &all_fns {
         // setup = this fn's top-level `let` statements (verbatim); locals = their names.
+        // `let_inits` records each top-level binding's initializer EXPR so a for-loop
+        // range bound like `0..v.len()` can be resolved when `v` is a literal-array /
+        // slice local of known length (the iterator.rs `for i in 0..v.len()` shape).
         let mut setup = String::new();
         let mut locals: BTreeSet<String> = BTreeSet::new();
+        let mut let_inits: std::collections::BTreeMap<String, Expr> =
+            std::collections::BTreeMap::new();
+        // Carry the fn body's own `use` items (e.g. `use core::fmt::*;`) into the harness
+        // `main` so unqualified stdlib paths the asserts reference (`FormattingOptions`,
+        // `Sign::Plus`) resolve. A `use` is plumbing, not logic: a wrong/unresolvable use
+        // just fails the harness compile => not dissolved (safe under-claim). Emitted
+        // BEFORE the `let` setup so the lets may reference the imported names; visible in
+        // every nested point block.
+        for st in &f.block.stmts {
+            if let syn::Stmt::Item(syn::Item::Use(u)) = st {
+                setup.push_str(&quote::quote!(#u).to_string());
+                setup.push('\n');
+            }
+        }
         for st in &f.block.stmts {
             if let syn::Stmt::Local(local) = st {
                 collect_pat_idents(&local.pat, &mut locals);
                 setup.push_str(&quote::quote!(#local).to_string());
                 setup.push('\n');
+                if let Some(name) = pat_binding_ident(&local.pat) {
+                    if let Some(init) = &local.init {
+                        if init.diverge.is_none() {
+                            let_inits.insert(name, (*init.expr).clone());
+                        }
+                    }
+                }
             }
         }
         // Local `macro_rules!` defs in this fn (carried verbatim into the harness prelude
@@ -336,7 +442,7 @@ pub fn collect_dissolvable(file: &syn::File) -> Vec<Dissolvable> {
             }
         }
         let (asserts, helpers, macro_asserts) =
-            collect_block_asserts(&f.block.stmts, &fns, &locals, &local_macros);
+            collect_block_asserts(&f.block.stmts, &fns, &locals, &local_macros, &let_inits);
         // helper-defs prelude, shared by the regular unit and each macro unit.
         let mut helper_prelude = String::new();
         for name in &helpers {
@@ -518,11 +624,20 @@ fn collect_helper_call_inlinings(
         // Collect setup (the substituted body's top-level `let`s) + its concrete asserts.
         let mut setup = String::new();
         let mut locals: BTreeSet<String> = BTreeSet::new();
+        let mut let_inits: std::collections::BTreeMap<String, Expr> =
+            std::collections::BTreeMap::new();
         for st in &body_substituted.stmts {
             if let syn::Stmt::Local(local) = st {
                 collect_pat_idents(&local.pat, &mut locals);
                 setup.push_str(&quote::quote!(#local).to_string());
                 setup.push('\n');
+                if let Some(name) = pat_binding_ident(&local.pat) {
+                    if let Some(init) = &local.init {
+                        if init.diverge.is_none() {
+                            let_inits.insert(name, (*init.expr).clone());
+                        }
+                    }
+                }
             }
         }
         let (asserts, more_helpers, _macro_asserts) = collect_block_asserts(
@@ -530,6 +645,7 @@ fn collect_helper_call_inlinings(
             fns,
             &locals,
             &std::collections::BTreeMap::new(),
+            &let_inits,
         );
         if asserts.is_empty() {
             continue;
@@ -604,6 +720,18 @@ fn substitute_block(
 }
 
 /// Collect the binding idents of a `let` pattern (handles ident, tuple, ref, etc.).
+/// The single bound identifier of a simple binding pattern, unwrapping a type
+/// ascription (`let v: &[u32] = ..` -> `Pat::Type(Pat::Ident(v), ty)`) so a typed local
+/// is still recognised as a named binding. `None` for tuple/struct/ref/wildcard patterns
+/// (no single name to key a `let_inits` entry on).
+fn pat_binding_ident(pat: &syn::Pat) -> Option<String> {
+    match pat {
+        syn::Pat::Ident(pi) if pi.subpat.is_none() => Some(pi.ident.to_string()),
+        syn::Pat::Type(t) => pat_binding_ident(&t.pat),
+        _ => None,
+    }
+}
+
 fn collect_pat_idents(pat: &syn::Pat, out: &mut std::collections::BTreeSet<String>) {
     match pat {
         syn::Pat::Ident(i) => {
@@ -629,6 +757,7 @@ fn collect_block_asserts(
     fns: &std::collections::BTreeMap<String, Vec<syn::ItemFn>>,
     locals: &std::collections::BTreeSet<String>,
     local_macros: &std::collections::BTreeMap<String, String>,
+    let_inits: &std::collections::BTreeMap<String, Expr>,
 ) -> (
     Vec<String>,
     std::collections::BTreeSet<String>,
@@ -653,6 +782,12 @@ fn collect_block_asserts(
     ) -> bool {
         if let Expr::Call(c) = expr {
             if let Expr::Path(p) = c.func.as_ref() {
+                // A TYPE-associated stdlib fn call (`FormattingOptions::new()`,
+                // `NonZero::new(..)`) is value sugar if its args are sugar. Backstopped by
+                // the harness compile (a user type is not carried -> fails to compile).
+                if is_type_assoc_call_path(&p.path) {
+                    return c.args.iter().all(|a| check(a, fns, locals, helpers));
+                }
                 if let Some(id) = p.path.get_ident() {
                     let name = id.to_string();
                     // lowercase call: only OK if it resolves to a carryable local helper
@@ -703,43 +838,65 @@ fn collect_block_asserts(
         }
     }
 
-    // Rebuild an assert macro with the loop variable token-substituted (loopvar ->
-    // value) throughout its token stream, descending into groups. Token-level is
-    // simple and fully backstopped: a wrong substitution can only yield a non-green
+    // Rebuild an assert macro with the loop variable substituted (loopvar -> value)
+    // throughout its token stream. Substitution is VALUE-POSITION aware: an ident equal
+    // to `var` is replaced ONLY when it denotes a value, NOT when it is a method/field
+    // name (immediately after `.`) or a path segment (immediately after `::`). The loop
+    // variable `sign` must not rewrite the method call `.sign(..)` to `.None(..)`. Still
+    // fully backstopped: a wrong substitution can only yield a non-parse / non-green
     // harness -> not dissolved (safe); it can never false-discharge.
     fn subst_macro(m: &syn::Macro, var: &str, value: &Expr) -> Option<syn::Macro> {
-        fn replace(
-            ts: proc_macro2::TokenStream,
-            var: &str,
-            val: &proc_macro2::TokenStream,
-        ) -> proc_macro2::TokenStream {
-            ts.into_iter()
-                .flat_map(|tt| -> proc_macro2::TokenStream {
-                    match tt {
-                        proc_macro2::TokenTree::Ident(id) if id.to_string() == var => val.clone(),
-                        proc_macro2::TokenTree::Group(g) => {
-                            let inner = replace(g.stream(), var, val);
-                            std::iter::once(proc_macro2::TokenTree::Group(
-                                proc_macro2::Group::new(g.delimiter(), inner),
-                            ))
-                            .collect()
-                        }
-                        other => std::iter::once(other).collect(),
-                    }
-                })
-                .collect()
-        }
         let val_tokens = quote::quote!(#value);
         let mut m2 = m.clone();
-        m2.tokens = replace(m.tokens.clone(), var, &val_tokens);
+        m2.tokens = replace_value_ident(m.tokens.clone(), var, &val_tokens);
         Some(m2)
+    }
+
+    // Token-substitute `var -> value` throughout an arbitrary statement (used to
+    // specialize a loop body to one concrete iteration value). Re-parses the rewritten
+    // tokens as a `syn::Stmt`; `None` if the rewrite fails to parse (safe -- the point
+    // is simply not built). Same backstop as `subst_macro`: a wrong substitution can
+    // only yield a non-parse / non-compile, never a false-discharge.
+    fn subst_stmt(stmt: &syn::Stmt, var: &str, value: &Expr) -> Option<syn::Stmt> {
+        let val_tokens = quote::quote!(#value);
+        let toks = quote::quote!(#stmt);
+        let subbed = replace_value_ident(toks, var, &val_tokens);
+        syn::parse2::<syn::Stmt>(subbed).ok()
     }
 
     // The finite, concrete domain of a `for v in <domain>` loop, as the list of
     // iteration values (each an `Expr`). `None` if the domain is not a finite literal
     // construction (a runtime collection, a non-literal bound, or too large).
-    fn for_loop_domain(f: &syn::ExprForLoop) -> Option<Vec<Expr>> {
+    fn for_loop_domain(
+        f: &syn::ExprForLoop,
+        let_inits: &std::collections::BTreeMap<String, Expr>,
+    ) -> Option<Vec<Expr>> {
         const CAP: i64 = 512;
+        // The literal element count of `<ident>` when it is a top-level local bound to a
+        // literal array `[..]` / array-repeat `[x; N]`, optionally behind `&`/`&[..]`
+        // slice coercion. None for a runtime collection (opaque) -> the bound stays
+        // unresolved -> the loop is left to the bin-2 refusal (safe).
+        fn literal_len(
+            ident: &str,
+            let_inits: &std::collections::BTreeMap<String, Expr>,
+        ) -> Option<i64> {
+            fn array_len(e: &Expr) -> Option<i64> {
+                match e {
+                    Expr::Reference(r) => array_len(&r.expr),
+                    Expr::Group(g) => array_len(&g.expr),
+                    Expr::Paren(p) => array_len(&p.expr),
+                    Expr::Array(a) => Some(a.elems.len() as i64),
+                    Expr::Repeat(rep) => match rep.len.as_ref() {
+                        Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(i), .. }) => {
+                            i.base10_parse::<i64>().ok()
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            }
+            array_len(let_inits.get(ident)?)
+        }
         match &*f.expr {
             Expr::Range(r) => {
                 let parse_int = |e: &Expr| -> Option<i64> {
@@ -753,6 +910,16 @@ fn collect_block_asserts(
                             }
                             _ => None,
                         },
+                        // `v.len()` on a literal-array / slice LOCAL of known length.
+                        Expr::MethodCall(mc)
+                            if mc.method == "len" && mc.args.is_empty() =>
+                        {
+                            let recv = match mc.receiver.as_ref() {
+                                Expr::Path(p) => p.path.get_ident().map(|i| i.to_string()),
+                                _ => None,
+                            }?;
+                            literal_len(&recv, let_inits)
+                        }
                         _ => None,
                     }
                 };
@@ -782,17 +949,24 @@ fn collect_block_asserts(
         helpers: &'a mut std::collections::BTreeSet<String>,
         local_macros: &'a std::collections::BTreeMap<String, String>,
         macro_asserts: &'a mut std::collections::BTreeMap<String, Vec<String>>,
+        let_inits: &'a std::collections::BTreeMap<String, Expr>,
     }
     impl<'a> W<'a> {
         // Try one assert macro (already loop-substituted if applicable) as a dissolvable
         // candidate; push it if it gates.
         fn try_assert(&mut self, m: &syn::Macro) {
-            W::try_assert_static(m, self.fns, self.locals, self.asserts, self.helpers);
+            W::try_assert_static(m, self.fns, self.locals, "", self.asserts, self.helpers);
         }
         fn try_assert_static(
             m: &syn::Macro,
             fns: &std::collections::BTreeMap<String, Vec<syn::ItemFn>>,
             locals: &std::collections::BTreeSet<String>,
+            // Per-point SETUP prefix (loop-substituted body `let`s / builder stmts that
+            // precede this assert in the unrolled iteration). Emitted INSIDE the assert
+            // statement as a brace block `{ prefix; assert }` so the carried bindings are
+            // in scope and the whole point stays one closed, self-contained unit. Empty
+            // for a plain (non-loop) assert -- behaviour is then identical to before.
+            prefix: &str,
             asserts: &mut Vec<String>,
             helpers: &mut std::collections::BTreeSet<String>,
         ) {
@@ -825,12 +999,23 @@ fn collect_block_asserts(
                         all_sugar && (operands_use_stdlib_op(&value_ops) || !scratch.is_empty());
                     if gated {
                         helpers.extend(scratch);
-                        let stmt = if macro_name == "assert" {
+                        let assert_stmt = if macro_name == "assert" {
                             format!("assert!({})", quote::quote!(#(#value_ops)*))
                         } else {
                             let l = value_ops[0];
                             let r = value_ops[1];
                             format!("{}!({}, {})", macro_name, quote::quote!(#l), quote::quote!(#r))
+                        };
+                        // With a per-point prefix (unrolled-iteration `let`s / builder
+                        // stmts), wrap the whole point in a brace block so the carried
+                        // bindings are in scope: `{ prefix; assert }`. The brace block
+                        // is itself the catch_unwind'd statement in the harness, so the
+                        // point is closed + self-contained. A non-compiling prefix simply
+                        // fails the compile -> not dissolved (safe under-claim).
+                        let stmt = if prefix.trim().is_empty() {
+                            assert_stmt
+                        } else {
+                            format!("{{ {prefix} {assert_stmt}; }}")
                         };
                         asserts.push(stmt);
                     }
@@ -880,45 +1065,190 @@ fn collect_block_asserts(
                 .push(format!("{}!({})", name, m.tokens));
         }
     }
-    impl<'a, 'ast> syn::visit::Visit<'ast> for W<'a> {
-        fn visit_expr_for_loop(&mut self, f: &'ast syn::ExprForLoop) {
-            // UNROLL a finite literal-domain loop into point assertions: each body
-            // assert with the loop variable replaced by each concrete iteration value.
-            // This turns a bounded UNIVERSE into points, each then dissolvable. A
-            // runtime/non-literal domain falls through to the normal walk (whose
-            // free-variable asserts the gate rejects -> stays unclassified, safe).
-            if let (syn::Pat::Ident(pi), Some(values)) =
-                (f.pat.as_ref(), for_loop_domain(f))
-            {
-                if pi.subpat.is_none() {
-                    let var = pi.ident.to_string();
-                    // collect the body's assert macros once.
-                    struct Collect {
-                        macros: Vec<syn::Macro>,
-                    }
-                    impl<'b> syn::visit::Visit<'b> for Collect {
-                        fn visit_macro(&mut self, m: &'b syn::Macro) {
-                            self.macros.push(m.clone());
-                            syn::visit::visit_macro(self, m);
+    impl<'a> W<'a> {
+        // Recursively UNROLL a finite literal-domain `for` loop into closed point
+        // assertions. For each iteration value, the loop body is token-substituted
+        // (loopvar -> value), then walked statement-by-statement:
+        //   * a non-assert, non-loop statement (a body `let` or a builder/expr stmt)
+        //     is GATED as closed stdlib sugar referencing the in-scope locals, then
+        //     CARRIED into the per-point `prefix` (verbatim, substituted) -- its
+        //     bindings are added to `scope` so a later assert may reference them.
+        //   * a NESTED `for` over a literal domain recurses, carrying the accumulated
+        //     prefix + scope (the fmt `for sign .. for alternate .. { let opts; assert }`
+        //     shape).
+        //   * an assert macro is emitted as `{ prefix; assert }` -- a self-contained
+        //     closed point -- via the prefix-carrying `try_assert_static`.
+        // A non-literal / runtime / opaque domain (`for x in v` with `v` not a known
+        // literal local of known length) yields no domain -> nothing is unrolled; the
+        // loop is left to the bin-2 refusal (safe). Backstop: every point is closed +
+        // GATED, and the harness compile+run is the final fence -- a wrong substitution
+        // or a non-sugar carried stmt can only fail to compile => not dissolved.
+        fn unroll_loop(&mut self, f: &syn::ExprForLoop, prefix: &str, scope: &std::collections::BTreeSet<String>) {
+            // Bound total emitted points per top-level loop site (nested literal domains
+            // multiply); keep it finite and cheap. A loop that would exceed the cap is
+            // left unrolled-only-partially is NOT acceptable (it would under/over claim
+            // unpredictably), so we refuse the whole loop above the cap (safe).
+            const POINT_CAP: usize = 4096;
+            let var = match f.pat.as_ref() {
+                syn::Pat::Ident(pi) if pi.subpat.is_none() => pi.ident.to_string(),
+                _ => return,
+            };
+            let values = match for_loop_domain(f, self.let_inits) {
+                Some(v) if !v.is_empty() && v.len() <= POINT_CAP => v,
+                _ => return,
+            };
+            for value in &values {
+                // Substitute loopvar -> value across the WHOLE body, then walk the
+                // substituted statements building this iteration's prefix + scope.
+                let mut iter_prefix = String::from(prefix);
+                let mut iter_scope = scope.clone();
+                // Pre-scan: gate fails on a non-sugar carried stmt -> drop the whole
+                // iteration (do not emit a partial point).
+                let mut ok = true;
+                let mut pending: Vec<syn::Stmt> = Vec::new();
+                for st in &f.body.stmts {
+                    match subst_stmt(st, &var, value) {
+                        Some(s) => pending.push(s),
+                        None => {
+                            ok = false;
+                            break;
                         }
                     }
-                    let mut c = Collect { macros: Vec::new() };
-                    for st in &f.body.stmts {
-                        syn::visit::Visit::visit_stmt(&mut c, st);
+                }
+                if !ok {
+                    continue;
+                }
+                self.walk_unrolled_stmts(&pending, &mut iter_prefix, &mut iter_scope);
+            }
+        }
+
+        // Walk the (already loop-substituted) statements of one unrolled iteration,
+        // accumulating carried prefix + in-scope local names and emitting each closed
+        // assert as a point. Nested literal loops recurse.
+        fn walk_unrolled_stmts(
+            &mut self,
+            stmts: &[syn::Stmt],
+            prefix: &mut String,
+            scope: &mut std::collections::BTreeSet<String>,
+        ) {
+            for st in stmts {
+                match st {
+                    // A nested literal-domain loop: recurse with the prefix/scope so far.
+                    syn::Stmt::Expr(Expr::ForLoop(inner), _) => {
+                        let snap = scope.clone();
+                        self.unroll_loop(inner, prefix, &snap);
                     }
-                    for value in &values {
-                        for m in &c.macros {
-                            // substitute loopvar -> value in the macro's tokens by
-                            // re-parsing operands, substituting, and rebuilding a macro.
-                            if let Some(subbed) = subst_macro(m, &var, value) {
-                                self.try_assert(&subbed);
-                                self.try_custom_macro(&subbed);
+                    // A body `let`: gate its initializer as closed sugar over in-scope
+                    // locals, carry it verbatim, and bring its bindings into scope.
+                    syn::Stmt::Local(local) => {
+                        if let Some(init) = &local.init {
+                            let mut scratch = std::collections::BTreeSet::new();
+                            let ok = init.diverge.is_none()
+                                && check(&init.expr, self.fns, scope, &mut scratch);
+                            if ok {
+                                self.helpers.extend(scratch);
+                                collect_pat_idents(&local.pat, scope);
+                                prefix.push_str(&quote::quote!(#local).to_string());
+                                prefix.push(' ');
+                            } else {
+                                // a non-sugar / diverging initializer: stop carrying this
+                                // iteration (a later assert that needs the binding cannot
+                                // close -> safe under-claim).
+                                return;
                             }
                         }
                     }
-                    return; // do NOT recurse into the body (avoid free-var versions).
+                    // An assert macro: emit `{ prefix; assert }` as one closed point.
+                    syn::Stmt::Macro(sm) => {
+                        let name = sm.mac.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
+                        if name.starts_with("assert") || name.starts_with("debug_assert") {
+                            W::try_assert_static(&sm.mac, self.fns, scope, prefix, self.asserts, self.helpers);
+                            self.try_custom_macro_prefixed(&sm.mac, scope, prefix);
+                        }
+                        // a non-assert statement macro (e.g. `println!`) is ignored.
+                    }
+                    syn::Stmt::Expr(Expr::Macro(em), _) => {
+                        let name = em.mac.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
+                        if name.starts_with("assert") || name.starts_with("debug_assert") {
+                            W::try_assert_static(&em.mac, self.fns, scope, prefix, self.asserts, self.helpers);
+                            self.try_custom_macro_prefixed(&em.mac, scope, prefix);
+                        }
+                    }
+                    // A bare expression statement (a builder mutation like
+                    // `opts.sign(sign).alternate(alternate);`): gate it as a stdlib-sugar
+                    // method chain over in-scope locals, then carry it verbatim so a
+                    // following assert observes its effect.
+                    syn::Stmt::Expr(e, _) => {
+                        let mut scratch = std::collections::BTreeSet::new();
+                        let okk = check(e, self.fns, scope, &mut scratch);
+                        if okk {
+                            self.helpers.extend(scratch);
+                            prefix.push_str(&quote::quote!(#e).to_string());
+                            prefix.push_str("; ");
+                        } else {
+                            // a non-sugar effecting statement we cannot certify: stop (a
+                            // later assert may depend on it) -- safe under-claim.
+                            return;
+                        }
+                    }
+                    syn::Stmt::Item(_) => {}
                 }
             }
+        }
+
+        // The prefixed analogue of `try_custom_macro` for an unrolled point: a local
+        // `macro_rules!` invocation with closed args, emitted with the carried prefix.
+        fn try_custom_macro_prefixed(
+            &mut self,
+            m: &syn::Macro,
+            scope: &std::collections::BTreeSet<String>,
+            prefix: &str,
+        ) {
+            let name = m.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
+            if name == "macro_rules" || !self.local_macros.contains_key(&name) {
+                return;
+            }
+            let parser = Punctuated::<Expr, syn::Token![,]>::parse_terminated;
+            let args = match parser.parse2(m.tokens.clone()) {
+                Ok(a) => a,
+                Err(_) => return,
+            };
+            if args.is_empty() {
+                return;
+            }
+            let mut scratch = std::collections::BTreeSet::new();
+            if !args.iter().all(|a| check(a, self.fns, scope, &mut scratch)) {
+                return;
+            }
+            self.helpers.extend(scratch);
+            let inv = format!("{}!({})", name, m.tokens);
+            let stmt = if prefix.trim().is_empty() {
+                inv
+            } else {
+                format!("{{ {prefix} {inv}; }}")
+            };
+            self.macro_asserts.entry(name).or_default().push(stmt);
+        }
+    }
+    impl<'a, 'ast> syn::visit::Visit<'ast> for W<'a> {
+        fn visit_expr_for_loop(&mut self, f: &'ast syn::ExprForLoop) {
+            // UNROLL a finite literal-domain loop into closed point assertions (carrying
+            // the body's own `let`s / builder stmts per iteration, recursing into nested
+            // literal loops). A runtime/non-literal domain produces no points.
+            let is_literal_domain = matches!(
+                f.pat.as_ref(),
+                syn::Pat::Ident(pi) if pi.subpat.is_none()
+            ) && for_loop_domain(f, self.let_inits).is_some();
+            if is_literal_domain {
+                // Fully handled by the unroll; do NOT descend (that would re-collect the
+                // free-loop-variable body asserts, which would fail the gate anyway but
+                // also miss the per-point carry).
+                self.unroll_loop(f, "", self.locals);
+                return;
+            }
+            // A runtime/non-literal domain: fall through to the normal walk so a closed
+            // (loop-var-independent) assert or a NESTED literal loop inside is still
+            // found. The free-variable body asserts the gate rejects stay unclassified.
             syn::visit::visit_expr_for_loop(self, f);
         }
         fn visit_macro(&mut self, m: &'ast syn::Macro) {
@@ -938,6 +1268,7 @@ fn collect_block_asserts(
         helpers: &mut helpers,
         local_macros,
         macro_asserts: &mut macro_asserts,
+        let_inits,
     };
     for st in stmts {
         syn::visit::Visit::visit_stmt(&mut w, st);
@@ -1336,6 +1667,132 @@ mod tests {
         .unwrap();
         let d = collect_dissolvable(&file);
         assert!(d.iter().all(|u| u.asserts.is_empty()), "runtime-domain loop must not unroll");
+    }
+
+    #[test]
+    fn collect_carries_body_let_in_unrolled_loop() {
+        // BIN-1 BODY-LET CARRY: a `for i in 0..3` whose body defines its OWN `let` that a
+        // following assert references. Each unrolled point must carry the (substituted)
+        // body `let` so the point is closed: `{ let s = i.to_string(); assert!(...) }`.
+        let file: syn::File = syn::parse_str(
+            "#[test] fn t() { for i in 0..3 { let s = (i as u32).to_string(); \
+             assert_eq!(s.len(), 1); } }\n",
+        )
+        .unwrap();
+        let d = collect_dissolvable(&file);
+        let total: usize = d.iter().map(|u| u.asserts.len()).sum();
+        assert_eq!(total, 3, "0..3 with a body `let` unrolls to 3 closed points");
+        assert!(
+            d.iter().flat_map(|u| &u.asserts).all(|a| a.contains("let s =")),
+            "each unrolled point carries the body `let` into a brace block: {:?}",
+            d.iter().map(|u| &u.asserts).collect::<Vec<_>>()
+        );
+        // the loop var is concretely substituted (no free `i` remains).
+        assert!(
+            d.iter().flat_map(|u| &u.asserts).all(|a| !a.contains("(i as u32)")),
+            "loop var i is substituted to a concrete value in every point"
+        );
+    }
+
+    #[test]
+    fn collect_resolves_len_bound_over_literal_local() {
+        // `for i in 0..v.len()` where `v` is a LITERAL array LOCAL of known length:
+        // the bound `v.len()` resolves to 3, so the loop unrolls to 3 points. The body
+        // assert references the carried `v` and the substituted `i`.
+        let file: syn::File = syn::parse_str(
+            "#[test] fn t() { let v: &[u32] = &[10u32, 20u32, 30u32]; \
+             for i in 0..v.len() { assert_eq!(v[i].to_string(), v[i].to_string()); } }\n",
+        )
+        .unwrap();
+        let d = collect_dissolvable(&file);
+        let total: usize = d.iter().map(|u| u.asserts.len()).sum();
+        assert_eq!(total, 3, "0..v.len() over a 3-element literal local unrolls to 3 points");
+    }
+
+    #[test]
+    fn collect_unrolls_nested_literal_loops_with_builder() {
+        // The fmt `formatting_options_flags` shape (compressed): NESTED literal-array
+        // loops, a body `let` + a builder MUTATION statement, then asserts that observe
+        // the mutated builder. Each point carries the use, the let, and the (substituted)
+        // builder stmt. The loop-var `sign`/`alternate` must NOT rewrite the method names
+        // `.sign(..)`/`.alternate(..)` (value-position-aware substitution).
+        let file: syn::File = syn::parse_str(
+            "#[test] fn t() {\n             use core::fmt::*;\n             for sign in [None, Some(Sign::Plus)] {\n               for alternate in [true, false] {\n                 let mut o = FormattingOptions::new();\n                 o.sign(sign).alternate(alternate);\n                 assert_eq!(o.get_sign(), sign);\n                 assert_eq!(o.get_alternate(), alternate);\n               }\n             }\n           }\n",
+        )
+        .unwrap();
+        let d = collect_dissolvable(&file);
+        let total: usize = d.iter().map(|u| u.asserts.len()).sum();
+        // 2 (sign) * 2 (alternate) * 2 (asserts) = 8 closed points.
+        assert_eq!(total, 8, "nested 2x2 literal loops x 2 asserts = 8 points");
+        // value-position-aware: the method `.sign(` is preserved, never rewritten to a
+        // value; the ARGUMENT `sign` is substituted to a concrete enum value.
+        assert!(
+            d.iter().flat_map(|u| &u.asserts).all(|a| a.contains(". sign (") || a.contains(".sign(")),
+            "the method name `.sign(` is preserved (not corrupted by value subst): {:?}",
+            d.iter().map(|u| &u.asserts).collect::<Vec<_>>()
+        );
+        assert!(
+            d.iter().flat_map(|u| &u.asserts).all(|a| !a.contains("sign (sign)") && !a.contains("sign(sign)")),
+            "the loop-var argument is substituted (no free `sign` remains in the builder)"
+        );
+        // the body `let` + builder mutation are carried into each point block.
+        assert!(
+            d.iter().flat_map(|u| &u.asserts).all(|a| a.contains("FormattingOptions :: new") || a.contains("FormattingOptions::new")),
+            "the body `let` constructor is carried into every point"
+        );
+    }
+
+    #[test]
+    fn collect_does_not_unroll_len_bound_over_runtime_local() {
+        // DISCRIMINATION: `for i in 0..v.len()` where `v` is a RUNTIME value (not a
+        // literal array of known length) -> the bound does NOT resolve -> no unroll ->
+        // the free-var body assert is rejected by the gate (stays unclassified). This is
+        // the bin-2 membrane: runtime data, not constructed from source literals.
+        let file: syn::File = syn::parse_str(
+            "#[test] fn t() { let v = make(); \
+             for i in 0..v.len() { assert_eq!(v[i].to_string(), \"x\"); } }\n",
+        )
+        .unwrap();
+        let d = collect_dissolvable(&file);
+        assert!(
+            d.iter().all(|u| u.asserts.is_empty()),
+            "a len()-bound over a RUNTIME local must NOT unroll (bin-2 stays refused): {:?}",
+            d.iter().map(|u| &u.asserts).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn collect_does_not_unroll_nested_runtime_loop() {
+        // DISCRIMINATION: a NESTED loop whose inner domain is a runtime collection does
+        // not unroll the inner body (no finite construction). The outer literal loop
+        // produces no closed points because the inner asserts are free over the runtime
+        // element -> safe under-claim.
+        let file: syn::File = syn::parse_str(
+            "#[test] fn t() { let data = make(); \
+             for k in [0u32, 1u32] { for x in data.iter() { assert_eq!(x.to_string(), k.to_string()); } } }\n",
+        )
+        .unwrap();
+        let d = collect_dissolvable(&file);
+        assert!(
+            d.iter().all(|u| u.asserts.is_empty()),
+            "a nested runtime-domain loop must not unroll: {:?}",
+            d.iter().map(|u| &u.asserts).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn value_aware_subst_preserves_method_and_path_names() {
+        // The value-position-aware substitution must replace `sign` ONLY as a value, not
+        // as a method name (`.sign(`) or a path segment. Direct check of the rewriter.
+        let e: Expr = syn::parse_str("o.sign(sign).foo(Sign::sign)").unwrap();
+        let toks: proc_macro2::TokenStream = quote::quote!(#e);
+        let val: proc_macro2::TokenStream = quote::quote!(VALUE);
+        let out = replace_value_ident(toks, "sign", &val).to_string();
+        // method name `.sign(` preserved; the bare value `sign` arg replaced; the path
+        // segment `Sign::sign` preserved.
+        assert!(out.contains("sign (VALUE)") || out.contains("sign(VALUE)"), "value arg replaced: {out}");
+        assert!(!out.contains("VALUE (VALUE)"), "method name `.sign` NOT replaced: {out}");
+        assert!(out.contains("Sign :: sign") || out.contains("Sign::sign"), "path segment preserved: {out}");
     }
 
     #[test]
