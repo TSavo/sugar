@@ -610,6 +610,7 @@ fn check_inv_consistency(
     inv: Json,
     plan: &SolverPlan,
     registry: &HashMap<String, SolverHandle>,
+    pool: &MementoPool,
 ) -> ConsistencyResult {
     let smt = match emit_asserted(&inv) {
         Ok(s) => s,
@@ -639,17 +640,13 @@ fn check_inv_consistency(
     }
     let (mut verdict, label) = consistency_verdict(raw);
     let mut reason = format!("{label} `{property_name}` [{raw_reason}]");
-    // THE VENDOR FIXED `t`. An `unsat` resting on conflicting pins of a non-ground
-    // compound is a fork-around-`t` we cannot distinguish from a real contradiction
-    // without the callee body (v2's dig). Refuse rather than falsely accuse.
+    // THE VENDOR FIXED `t`. An `unsat` on conflicting pins of a non-ground compound
+    // is a fork-around-`t`: vindicated to Discharged when the callee is proven
+    // impure (v2 dig), convicted when proven pure, refused while purity is unproven.
     if verdict == ObligationVerdict::Unsatisfied {
-        if let Some(term) = unwarranted_compound_conflict(&inv) {
-            verdict = ObligationVerdict::Refused;
-            reason = format!(
-                "refused: conflicting pins on non-ground term `{term}` -- a real \
-                 contradiction vs. a `t`-dependent (impure/interior-mutable) trajectory \
-                 cannot be distinguished without the callee body; not accused"
-            );
+        if let Some((nv, nr)) = vindicate_or_refuse(&inv, property_name, pool) {
+            verdict = nv;
+            reason = nr;
         }
     }
     if verdict == ObligationVerdict::Undecidable {
@@ -843,6 +840,86 @@ fn is_nonground_compound(t: &Json) -> bool {
     t.get("kind").and_then(|k| k.as_str()) == Some("ctor") && !term_is_ground(t)
 }
 
+/// The kind of unwarranted conflict an `unsat` invariant exhibits.
+enum ConflictKind {
+    /// A non-ground compound (call/method/field/deref) pinned to differing values,
+    /// or forced `X != X` -- a fork around `t`. The carried term is the offending
+    /// call, for the body dig (v2) to classify: IMPURE -> legitimate trajectory
+    /// (vindicate Discharged); PURE -> real contradiction (Unsatisfied).
+    Trajectory(Json),
+    /// A lift artifact unrelated to purity: value-equality conflated with
+    /// reference-identity (`eq` and `ne` on one pair), or a partial order lowered
+    /// onto a total encoding (asserted incomparability). Always refused.
+    Relational(String),
+}
+
+// v2, the dig: the wp-based purity classifier. `callee_purity` reduces a callee's
+// body via wp and returns Pure / Impure / Unknown, conservatively (Unknown on any
+// ambiguity -- no body, wp refused, non-trivial `pre`, or an unexplained free var).
+// Impure is reached only via an explicit lifter-injected `__state::`/`__hidden::`
+// symbol; absent that, a stateful read with no body contract stays Unknown ->
+// Refused. See `crate::callee_purity`.
+use crate::callee_purity::{callee_purity, Purity};
+
+/// v2 vindication. Given an `unsat` invariant that is an unwarranted conflict,
+/// decide the final verdict: a fork-around-`t` trajectory is vindicated to
+/// Discharged when its callee is PROVEN impure, convicted (Unsatisfied) when
+/// PROVEN pure, and refused while purity is Unknown. Relational artifacts are
+/// always refused. Returns None when the inv is not an unwarranted conflict, so
+/// the caller keeps the raw verdict.
+fn vindicate_or_refuse(
+    inv: &Json,
+    property_name: &str,
+    pool: &MementoPool,
+) -> Option<(ObligationVerdict, String)> {
+    let kind = unwarranted_compound_conflict(inv)?;
+    Some(match kind {
+        ConflictKind::Trajectory(call) => match callee_purity(&call, pool) {
+            Purity::Impure => (
+                // SOUND LIMIT: knowing the callee is impure is NOT enough to discharge
+                // at the verdict layer. The lifted inv does not carry the program-point
+                // `t`, so `=(load(A),0) ∧ =(load(A),5)` is the SAME term whether it came
+                // from two re-evaluations (different `t`, a legit trajectory) or from ONE
+                // value bound once and pinned twice (same `t`, a real contradiction -- a
+                // broken test). Discharging would falsePass the latter. So we still
+                // REFUSE; true vindication needs lift-side `t`-tagging of impure-call
+                // evaluations (re-evaluations become distinct terms -> discharge
+                // naturally; a same-`t` double-pin stays a bare-var contradiction).
+                ObligationVerdict::Refused,
+                format!(
+                    "refused: callee proven IMPURE, but the lift does not distinguish a \
+                     re-evaluation (legit `t`-trajectory) from a single read pinned twice \
+                     (real contradiction); not discharged without program-point `t` -- \
+                     `{property_name}`"
+                ),
+            ),
+            Purity::Pure => (
+                ObligationVerdict::Unsatisfied,
+                format!(
+                    "CONVICTED: callee proven PURE (cannot fork around `t`); the conflicting \
+                     pins are a real contradiction -- `{property_name}`"
+                ),
+            ),
+            Purity::Unknown => (
+                ObligationVerdict::Refused,
+                format!(
+                    "refused: conflicting pins on a non-ground call whose purity is unproven \
+                     (no callee body); a real contradiction vs. a `t`-dependent trajectory \
+                     cannot be distinguished -- not accused -- `{property_name}`"
+                ),
+            ),
+        },
+        ConflictKind::Relational(t) => (
+            ObligationVerdict::Refused,
+            format!(
+                "refused: `{t}` -- value-equality vs reference-identity conflated, or a partial \
+                 order on a total encoding; lift artifact, not a warranted contradiction -- \
+                 `{property_name}`"
+            ),
+        ),
+    })
+}
+
 /// THE VENDOR FIXED `t`. Each assertion is pinned at a concrete program point.
 /// If an UNSAT invariant's contradiction rests on two or more pins (`=(T, c)`) of
 /// the SAME non-ground compound `T` set to DIFFERENT constants, the
@@ -860,7 +937,7 @@ fn is_nonground_compound(t: &Json) -> bool {
 ///     (`numpy.add(2,3)==5` vs `==6`; `g(7)<10 ∧ g(7)<5`).
 /// A same-`T` group with two distinct constants is independently UNSAT, so its
 /// mere presence means the unsat cannot be cleanly accused.
-fn unwarranted_compound_conflict(inv: &Json) -> Option<String> {
+fn unwarranted_compound_conflict(inv: &Json) -> Option<ConflictKind> {
     use std::collections::{BTreeMap, BTreeSet};
 
     // Canonical unordered pair key for two operand terms.
@@ -900,6 +977,9 @@ fn unwarranted_compound_conflict(inv: &Json) -> Option<String> {
         ne_pairs: BTreeSet<(String, String)>,
         // (d) per pair, the set of NEGATED non-strict directions {le, ge}.
         neg_cmp: BTreeMap<(String, String), BTreeSet<&'static str>>,
+        // serialized non-ground-compound term -> its Json, so a Trajectory
+        // conflict can hand the offending call to the purity probe (v2).
+        terms: BTreeMap<String, Json>,
     }
 
     // `negated` tracks whether we are under an odd number of `not`s.
@@ -940,8 +1020,10 @@ fn unwarranted_compound_conflict(inv: &Json) -> Option<String> {
                         None
                     };
                     if let Some((term, c)) = pin {
+                        let key = serde_json::to_string(term).unwrap_or_default();
+                        acc.terms.entry(key.clone()).or_insert_with(|| term.clone());
                         acc.pins
-                            .entry(serde_json::to_string(term).unwrap_or_default())
+                            .entry(key)
                             .or_default()
                             .insert(serde_json::to_string(c).unwrap_or_default());
                     }
@@ -955,7 +1037,9 @@ fn unwarranted_compound_conflict(inv: &Json) -> Option<String> {
                     if is_nonground_compound(a)
                         && serde_json::to_string(a).ok() == serde_json::to_string(b).ok()
                     {
-                        acc.self_ne.insert(serde_json::to_string(a).unwrap_or_default());
+                        let key = serde_json::to_string(a).unwrap_or_default();
+                        acc.terms.entry(key.clone()).or_insert_with(|| a.clone());
+                        acc.self_ne.insert(key);
                     }
                     if is_nonground_compound(a) || is_nonground_compound(b) {
                         acc.ne_pairs.insert(upair(a, b));
@@ -976,20 +1060,25 @@ fn unwarranted_compound_conflict(inv: &Json) -> Option<String> {
     let mut acc = Acc::default();
     collect(inv, &mut acc, false);
 
-    // (a) fork-around-`t`: a non-ground compound pinned to >=2 distinct values.
-    if let Some((term, _)) = acc.pins.iter().find(|(_, consts)| consts.len() >= 2) {
-        return Some(term.clone());
-    }
-    // (b) self-distinct on a non-ground compound.
-    if let Some(t) = acc.self_ne.iter().next() {
-        return Some(t.clone());
+    // (a)/(b) fork-around-`t`: a non-ground compound pinned to >=2 distinct values,
+    // or forced `X != X`. Eligible for purity vindication -- carry the offending
+    // call so the dig can classify it.
+    let traj_key = acc
+        .pins
+        .iter()
+        .find(|(_, consts)| consts.len() >= 2)
+        .map(|(k, _)| k.clone())
+        .or_else(|| acc.self_ne.iter().next().cloned());
+    if let Some(k) = traj_key {
+        let term = acc.terms.get(&k).cloned().unwrap_or(Json::Null);
+        return Some(ConflictKind::Trajectory(term));
     }
     // (c) RELATION CONFLATION: the SAME pair asserted both equal AND unequal,
     // with a non-ground compound operand. The lift merged value-equality and
     // reference-identity (`assert_eq!(a,&*b)` + `ptr::eq`) onto one `=`/`ne`; we
     // cannot warrant they are the same relation -> refuse, do not accuse.
     if let Some((x, _)) = acc.eq_pairs.intersection(&acc.ne_pairs).next() {
-        return Some(format!("eq∧ne:{x}"));
+        return Some(ConflictKind::Relational(format!("eq∧ne:{x}")));
     }
     // (d) INCOMPARABILITY on a TOTAL encoding: a pair asserted neither `<=` nor
     // `>=`. For a total order `a<=b ∨ b<=a` always holds, so this is unsat only
@@ -1000,7 +1089,7 @@ fn unwarranted_compound_conflict(inv: &Json) -> Option<String> {
         .iter()
         .find(|(_, dirs)| dirs.contains("le") && dirs.contains("ge"))
     {
-        return Some(format!("incomparable:{}", pair.0));
+        return Some(ConflictKind::Relational(format!("incomparable:{}", pair.0)));
     }
     None
 }
@@ -1114,7 +1203,10 @@ fn unknown_symbol_frag(fragment: &str) -> Option<String> {
 /// (encoding STOP) and excluded from the batch. Verdicts map exactly as the
 /// per-spawn path: raw `sat`->consistent, raw `unsat`->contradictory, unknown
 /// constant->Refused (no discharger), timeout/unknown->Undecidable.
-fn solve_obligations_batched(obligations: &[Obligation]) -> Vec<ConsistencyResult> {
+fn solve_obligations_batched(
+    obligations: &[Obligation],
+    pool: &MementoPool,
+) -> Vec<ConsistencyResult> {
     let mut results: Vec<Option<ConsistencyResult>> = (0..obligations.len()).map(|_| None).collect();
     let mut scripts: Vec<String> = Vec::new();
     let mut script_idx: Vec<usize> = Vec::new();
@@ -1176,13 +1268,9 @@ fn solve_obligations_batched(obligations: &[Obligation]) -> Vec<ConsistencyResul
             // compound is a fork-around-`t`, indistinguishable from a real
             // contradiction without the callee body (v2). Refuse, do not accuse.
             if v == ObligationVerdict::Unsatisfied {
-                if let Some(term) = unwarranted_compound_conflict(&o.inv) {
-                    v = ObligationVerdict::Refused;
-                    r = format!(
-                        "refused: conflicting pins on non-ground term `{term}` -- real \
-                         contradiction vs. `t`-dependent trajectory unresolved without \
-                         callee body; not accused"
-                    );
+                if let Some((nv, nr)) = vindicate_or_refuse(&o.inv, &o.property_name, pool) {
+                    v = nv;
+                    r = nr;
                 }
             }
             (v, r)
@@ -1355,11 +1443,13 @@ pub fn verify_consistency(
     // PHASE 2: solve. Batch through few z3 processes when the plan is plain z3
     // (the common case); otherwise the general per-obligation plan path.
     if should_batch(plan) {
-        results.extend(solve_obligations_batched(&obligations));
+        results.extend(solve_obligations_batched(&obligations, pool));
     } else {
         let solved: Vec<ConsistencyResult> = obligations
             .par_iter()
-            .map(|o| check_inv_consistency(o.cid.clone(), &o.property_name, o.inv.clone(), plan, registry))
+            .map(|o| {
+                check_inv_consistency(o.cid.clone(), &o.property_name, o.inv.clone(), plan, registry, pool)
+            })
             .collect();
         results.extend(solved);
     }
