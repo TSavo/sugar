@@ -993,6 +993,15 @@ def _package_locus_structural_classification(
     conditional_value_status = _conditional_value_expression_status(node, ancestors)
     if conditional_value_status is not None:
         return conditional_value_status
+    conditional_binding_status = _conditional_local_binding_status(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if conditional_binding_status is not None:
+        return conditional_binding_status
     collection_lambda_status = _collection_lambda_flow_refusal_status(node, ancestors)
     if collection_lambda_status is not None:
         return collection_lambda_status
@@ -1012,6 +1021,24 @@ def _package_locus_structural_classification(
     )
     if dynamic_receiver_status is not None:
         return dynamic_receiver_status
+    unresolved_receiver_status = _unresolved_receiver_method_dispatch_refusal_status(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if unresolved_receiver_status is not None:
+        return unresolved_receiver_status
+    unresolved_super_status = _unresolved_super_method_dispatch_refusal_status(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if unresolved_super_status is not None:
+        return unresolved_super_status
     local_binding_status = _local_name_binding_status(node, ancestors)
     if local_binding_status is not None:
         return local_binding_status
@@ -1583,17 +1610,27 @@ def _runtime_environment_probe_refusal_status(
     stmt = _nearest_statement(ancestors + (node,))
     if stmt is None:
         return None
-    if not _statement_reads_runtime_environment(stmt):
+    if not _statement_reads_runtime_environment_cached(stmt):
         return None
-    if node is stmt or any(candidate is node for candidate in ast.walk(stmt)):
-        return (
-            "refused",
-            (
-                "runtime environment probe refused: platform/env values come "
-                "from the host process, not from the source-derived universe"
-            ),
-        )
-    return None
+    return (
+        "refused",
+        (
+            "runtime environment probe refused: platform/env values come "
+            "from the host process, not from the source-derived universe"
+        ),
+    )
+
+
+def _statement_reads_runtime_environment_cached(stmt: ast.stmt) -> bool:
+    cached = getattr(stmt, "_sugar_reads_runtime_environment", None)
+    if cached is not None:
+        return bool(cached)
+    result = _statement_reads_runtime_environment(stmt)
+    try:
+        setattr(stmt, "_sugar_reads_runtime_environment", result)
+    except AttributeError:
+        pass
+    return result
 
 
 def _statement_reads_runtime_environment(stmt: ast.stmt) -> bool:
@@ -1613,6 +1650,7 @@ def _statement_reads_runtime_environment(stmt: ast.stmt) -> bool:
 def _call_reads_runtime_environment(call: ast.Call) -> bool:
     callee = _static_call_name(call.func)
     if callee in {
+        "hasattr",
         "os.environ.get",
         "os.getenv",
         "platform.machine",
@@ -1620,6 +1658,7 @@ def _call_reads_runtime_environment(call: ast.Call) -> bool:
         "platform.processor",
         "platform.python_version",
         "platform.system",
+        "sys.getrefcount",
     }:
         return True
     return False
@@ -2434,21 +2473,30 @@ def _dynamic_getattr_refusal_status(
     owner = _nearest_enclosing_function(ancestors + (node,))
     if owner is None or isinstance(owner, ast.Lambda):
         return None
-    calls = (
-        candidate for candidate in ast.walk(stmt) if isinstance(candidate, ast.Call)
-    )
-    for call in calls:
-        if not _is_dynamic_getattr_call(call):
-            continue
-        if node is stmt or any(candidate is node for candidate in ast.walk(stmt)):
-            return (
-                "refused",
-                (
-                    "dynamic getattr lookup refused: runtime attribute lookup "
-                    "can invoke descriptors, __getattr__, or argument unpacking"
-                ),
-            )
+    if _statement_has_dynamic_getattr_cached(stmt):
+        return (
+            "refused",
+            (
+                "dynamic getattr lookup refused: runtime attribute lookup "
+                "can invoke descriptors, __getattr__, or argument unpacking"
+            ),
+        )
     return None
+
+
+def _statement_has_dynamic_getattr_cached(stmt: ast.stmt) -> bool:
+    cached = getattr(stmt, "_sugar_has_dynamic_getattr", None)
+    if cached is not None:
+        return bool(cached)
+    result = any(
+        isinstance(candidate, ast.Call) and _is_dynamic_getattr_call(candidate)
+        for candidate in ast.walk(stmt)
+    )
+    try:
+        setattr(stmt, "_sugar_has_dynamic_getattr", result)
+    except AttributeError:
+        pass
+    return result
 
 
 def _is_dynamic_getattr_call(call: ast.Call) -> bool:
@@ -2495,21 +2543,42 @@ def _dynamic_receiver_method_dispatch_refusal_status(
     params.difference_update({"self", "cls"})
     if not params:
         return None
+    reason = _dynamic_receiver_method_dispatch_reason_cached(stmt, frozenset(params))
+    if reason is not None:
+        return "refused", reason
+    return None
+
+
+def _dynamic_receiver_method_dispatch_reason_cached(
+    stmt: ast.stmt,
+    params: frozenset[str],
+) -> Optional[str]:
+    cached = getattr(stmt, "_sugar_dynamic_receiver_dispatch_reason", None)
+    if cached is not None:
+        return cached or None
+    reason = _dynamic_receiver_method_dispatch_reason(stmt, params)
+    try:
+        setattr(stmt, "_sugar_dynamic_receiver_dispatch_reason", reason or "")
+    except AttributeError:
+        pass
+    return reason
+
+
+def _dynamic_receiver_method_dispatch_reason(
+    stmt: ast.stmt,
+    params: frozenset[str],
+) -> Optional[str]:
     for call in (candidate for candidate in ast.walk(stmt) if isinstance(candidate, ast.Call)):
         if _is_known_pure_method_call_value_expr(call):
             continue
         receiver = _dynamic_method_receiver_name(call)
         if receiver is None or receiver not in params:
             continue
-        if node is stmt or any(candidate is node for candidate in ast.walk(stmt)):
-            return (
-                "refused",
-                (
-                    "dynamic receiver method dispatch refused: "
-                    f"{receiver}.{call.func.attr} is supplied at runtime, "
-                    "so no stable vendor method body can warrant this relation"
-                ),
-            )
+        return (
+            "dynamic receiver method dispatch refused: "
+            f"{receiver}.{call.func.attr} is supplied at runtime, "
+            "so no stable vendor method body can warrant this relation"
+        )
     return None
 
 
@@ -2518,6 +2587,172 @@ def _dynamic_method_receiver_name(call: ast.Call) -> Optional[str]:
     if not isinstance(func, ast.Attribute) or not isinstance(func.value, ast.Name):
         return None
     return func.value.id
+
+
+def _unresolved_receiver_method_dispatch_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[tuple[str, str]]:
+    chain = ancestors + (node,)
+    stmt = _nearest_statement(chain)
+    if stmt is None:
+        return None
+    reason = _unresolved_receiver_method_dispatch_reason_cached(
+        stmt,
+        chain,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if reason is not None:
+        return "refused", reason
+    return None
+
+
+def _unresolved_receiver_method_dispatch_reason_cached(
+    stmt: ast.stmt,
+    chain: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[str]:
+    cached = getattr(stmt, "_sugar_unresolved_receiver_dispatch_reason", None)
+    if cached is not None:
+        return cached or None
+    reason = _unresolved_receiver_method_dispatch_reason(
+        stmt,
+        chain,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    try:
+        setattr(stmt, "_sugar_unresolved_receiver_dispatch_reason", reason or "")
+    except AttributeError:
+        pass
+    return reason
+
+
+def _unresolved_receiver_method_dispatch_reason(
+    stmt: ast.stmt,
+    chain: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[str]:
+    owner = _nearest_enclosing_function(chain)
+    if owner is None or isinstance(owner, ast.Lambda):
+        return None
+    class_qualname = _nearest_class_qualname(chain)
+    if not class_qualname:
+        return None
+    for call in (candidate for candidate in ast.walk(stmt) if isinstance(candidate, ast.Call)):
+        if _is_known_pure_method_call_value_expr(call):
+            continue
+        path = _call_func_attribute_path(call.func)
+        if len(path) < 2 or path[0] not in {"self", "cls"}:
+            continue
+        if _is_statically_nameable_callee(
+            call.func,
+            chain,
+            call_aliases,
+            module_name,
+            tree,
+        ):
+            continue
+        return (
+            "unresolved receiver method dispatch refused: "
+            f"{'.'.join(path)} is supplied by receiver state or inheritance, "
+            "so no stable vendor method body can warrant this relation"
+        )
+    return None
+
+
+def _unresolved_super_method_dispatch_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[tuple[str, str]]:
+    chain = ancestors + (node,)
+    stmt = _nearest_statement(chain)
+    if stmt is None:
+        return None
+    reason = _unresolved_super_method_dispatch_reason_cached(
+        stmt,
+        chain,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if reason is not None:
+        return "refused", reason
+    return None
+
+
+def _unresolved_super_method_dispatch_reason_cached(
+    stmt: ast.stmt,
+    chain: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[str]:
+    cached = getattr(stmt, "_sugar_unresolved_super_dispatch_reason", None)
+    if cached is not None:
+        return cached or None
+    reason = _unresolved_super_method_dispatch_reason(
+        stmt,
+        chain,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    try:
+        setattr(stmt, "_sugar_unresolved_super_dispatch_reason", reason or "")
+    except AttributeError:
+        pass
+    return reason
+
+
+def _unresolved_super_method_dispatch_reason(
+    stmt: ast.stmt,
+    chain: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[str]:
+    owner = _nearest_enclosing_function(chain)
+    if owner is None or isinstance(owner, ast.Lambda):
+        return None
+    for call in (candidate for candidate in ast.walk(stmt) if isinstance(candidate, ast.Call)):
+        if not _is_super_method_dispatch_call(call):
+            continue
+        if _is_statically_nameable_callee(
+            call.func,
+            chain,
+            call_aliases,
+            module_name,
+            tree,
+        ):
+            continue
+        return (
+            "unresolved super method dispatch refused: super()."
+            f"{call.func.attr} is selected by runtime MRO, so no stable "
+            "vendor method body can warrant this relation"
+        )
+    return None
+
+
+def _is_super_method_dispatch_call(call: ast.Call) -> bool:
+    return (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Call)
+        and _is_zero_arg_super_call(call.func.value)
+    )
 
 
 def _self_field_runtime_dispatch_refusal_status(
@@ -4716,6 +4951,85 @@ def _is_conditional_value_expression(node: ast.IfExp) -> bool:
     )
 
 
+def _conditional_local_binding_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[tuple[str, str]]:
+    stmt = _conditional_local_binding_statement_for_locus(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if stmt is None:
+        return None
+    return (
+        "warranted",
+        "conditional local binding admitted as branch-selected compiler equality",
+    )
+
+
+def _conditional_local_binding_statement_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[ast.Assign | ast.AnnAssign]:
+    chain = ancestors + (node,)
+    stmt_index: Optional[int] = None
+    stmt: Optional[ast.Assign | ast.AnnAssign] = None
+    for index in range(len(chain) - 1, -1, -1):
+        item = chain[index]
+        if isinstance(item, (ast.Assign, ast.AnnAssign)):
+            stmt_index = index
+            stmt = item
+            break
+    if stmt is None or stmt_index is None:
+        return None
+    if _nearest_enclosing_function(chain[:stmt_index]) is None:
+        return None
+    if isinstance(stmt, ast.Assign):
+        if len(stmt.targets) != 1 or not isinstance(stmt.targets[0], ast.Name):
+            return None
+        value = stmt.value
+    else:
+        if not isinstance(stmt.target, ast.Name):
+            return None
+        value = stmt.value
+    if not isinstance(value, ast.IfExp):
+        return None
+    if not _is_conditional_local_binding_value(
+        value,
+        chain,
+        call_aliases,
+        module_name,
+        tree,
+    ):
+        return None
+    if node is stmt or any(candidate is node for candidate in ast.walk(stmt)):
+        return stmt
+    return None
+
+
+def _is_conditional_local_binding_value(
+    node: ast.IfExp,
+    chain: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> bool:
+    return (
+        _is_pure_branch_predicate_expr(node.test)
+        and _is_call_term_arg(node.body, chain, call_aliases, module_name, tree)
+        and _is_call_term_arg(node.orelse, chain, call_aliases, module_name, tree)
+    )
+
+
 def _collection_lambda_flow_refusal_status(
     node: ast.AST,
     ancestors: tuple[ast.AST, ...],
@@ -4723,23 +5037,33 @@ def _collection_lambda_flow_refusal_status(
     stmt = _nearest_statement(ancestors + (node,))
     if stmt is None:
         return None
-    if not any(
+    if not _statement_has_collection_lambda_flow_cached(stmt):
+        return None
+    return (
+        "refused",
+        (
+            "collection/lambda flow refused: comprehension iteration or "
+            "lambda closure semantics need an emitted collection universe"
+        ),
+    )
+
+
+def _statement_has_collection_lambda_flow_cached(stmt: ast.stmt) -> bool:
+    cached = getattr(stmt, "_sugar_has_collection_lambda_flow", None)
+    if cached is not None:
+        return bool(cached)
+    result = any(
         isinstance(
             candidate,
             (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp, ast.Lambda),
         )
         for candidate in ast.walk(stmt)
-    ):
-        return None
-    if node is stmt or any(candidate is node for candidate in ast.walk(stmt)):
-        return (
-            "refused",
-            (
-                "collection/lambda flow refused: comprehension iteration or "
-                "lambda closure semantics need an emitted collection universe"
-            ),
-        )
-    return None
+    )
+    try:
+        setattr(stmt, "_sugar_has_collection_lambda_flow", result)
+    except AttributeError:
+        pass
+    return result
 
 
 def _pure_branch_predicate_status(

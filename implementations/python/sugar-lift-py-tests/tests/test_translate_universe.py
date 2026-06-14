@@ -2844,10 +2844,13 @@ def test_structural_package_accounting_refuses_runtime_environment_probes(
             """
             import os
             import platform
+            import sys
 
-            def skipped():
+            def skipped(value):
                 if platform.system() in ("Linux", "Darwin"):
                     return True
+                if hasattr(value, "__array__"):
+                    return sys.getrefcount(value) > 1
                 return os.environ.get("PANDAS_CI", "0") == "1"
 
             def ok():
@@ -2859,7 +2862,14 @@ def test_structural_package_accounting_refuses_runtime_environment_probes(
     refused_lines = {
         line_no
         for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
-        if line.strip().startswith(("if platform.system", "return os.environ"))
+        if line.strip().startswith(
+            (
+                "if platform.system",
+                "if hasattr",
+                "return sys.getrefcount",
+                "return os.environ",
+            )
+        )
     }
     monkeypatch.syspath_prepend(str(tmp_path))
     constant_universe_for_callee_clear()
@@ -8519,6 +8529,73 @@ def test_structural_package_accounting_warrants_terminal_conditional_returns(
     ), conditional_loci
 
 
+def test_structural_package_accounting_warrants_conditional_local_bindings(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("SUGAR_PY_PACKAGE_ACCOUNTING_MODE", "structural")
+    pkg = tmp_path / "vendpkg_structural_conditional_binding"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    module_path = pkg / "signer.py"
+    module_path.write_text(
+        textwrap.dedent(
+            '''
+            def default_value(seed):
+                return seed
+
+            def skipped(value, fallback):
+                selected = value if value is not None else default_value(fallback)
+                return selected
+
+            def b64e(s):
+                return s.rstrip(b"=")
+            '''
+        ),
+        encoding="utf-8",
+    )
+    binding_line = next(
+        line_no
+        for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
+        if "selected =" in line
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    lifted = _lift_source_from_disk(
+        tmp_path,
+        "test_mod.py",
+        """
+        import vendpkg_structural_conditional_binding.signer as signer
+
+        def test_token():
+            assert signer.b64e(b"abc") == b"abc"
+        """,
+    )
+
+    audit = next(
+        audit
+        for audit in lifted["sourceAudits"]
+        if audit.get("role") == "python.package-source"
+    )
+    binding_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith("vendpkg_structural_conditional_binding/signer.py")
+        and locus["line"] == binding_line
+        and locus.get("ast_kind")
+        in {"Assign", "Name", "IfExp", "Compare", "Constant", "Call"}
+    ]
+    assert binding_loci
+    assert not [
+        locus for locus in binding_loci if locus["status"] == "unclassified"
+    ], binding_loci
+    assert any(
+        locus["status"] == "warranted"
+        and locus.get("ast_kind") == "IfExp"
+        and "conditional local binding" in locus.get("reason", "")
+        for locus in binding_loci
+    ), binding_loci
+
+
 def test_structural_package_accounting_refuses_dynamic_receiver_method_dispatch(
     tmp_path,
     monkeypatch,
@@ -8577,6 +8654,171 @@ def test_structural_package_accounting_refuses_dynamic_receiver_method_dispatch(
     assert {locus["status"] for locus in dispatch_loci} == {"refused"}
     assert all(
         "dynamic receiver method dispatch" in locus.get("reason", "")
+        for locus in dispatch_loci
+    ), dispatch_loci
+
+
+def test_structural_package_accounting_refuses_unresolved_self_receiver_dispatch(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("SUGAR_PY_PACKAGE_ACCOUNTING_MODE", "structural")
+    pkg = tmp_path / "vendpkg_structural_unresolved_self_dispatch"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    module_path = pkg / "signer.py"
+    module_path.write_text(
+        textwrap.dedent(
+            '''
+            class BaseFrame:
+                @property
+                def _constructor(self):
+                    return type(self)
+
+            class Frame(BaseFrame):
+                def helper(self, value):
+                    return value
+
+                def stable(self, value):
+                    return self.helper(value)
+
+                def rebuild(self, value):
+                    return self._constructor(value)
+
+            def b64e(s):
+                return s.rstrip(b"=")
+            '''
+        ),
+        encoding="utf-8",
+    )
+    stable_line = next(
+        line_no
+        for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
+        if "return self.helper" in line
+    )
+    dispatch_line = next(
+        line_no
+        for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
+        if "return self._constructor" in line
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    lifted = _lift_source_from_disk(
+        tmp_path,
+        "test_mod.py",
+        """
+        import vendpkg_structural_unresolved_self_dispatch.signer as signer
+
+        def test_token():
+            assert signer.b64e(b"abc") == b"abc"
+        """,
+    )
+
+    audit = next(
+        audit
+        for audit in lifted["sourceAudits"]
+        if audit.get("role") == "python.package-source"
+    )
+    stable_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith(
+            "vendpkg_structural_unresolved_self_dispatch/signer.py"
+        )
+        and locus["line"] == stable_line
+        and locus.get("ast_kind") in {"Return", "Call", "Attribute", "Name"}
+    ]
+    dispatch_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith(
+            "vendpkg_structural_unresolved_self_dispatch/signer.py"
+        )
+        and locus["line"] == dispatch_line
+        and locus.get("ast_kind") in {"Return", "Call", "Attribute", "Name"}
+    ]
+    assert stable_loci
+    assert not [
+        locus for locus in stable_loci if locus["status"] == "refused"
+    ], stable_loci
+    assert dispatch_loci
+    assert not [
+        locus for locus in dispatch_loci if locus["status"] == "unclassified"
+    ], dispatch_loci
+    assert {locus["status"] for locus in dispatch_loci} == {"refused"}
+    assert all(
+        "unresolved receiver method dispatch" in locus.get("reason", "")
+        for locus in dispatch_loci
+    ), dispatch_loci
+
+
+def test_structural_package_accounting_refuses_unresolved_super_dispatch(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("SUGAR_PY_PACKAGE_ACCOUNTING_MODE", "structural")
+    pkg = tmp_path / "vendpkg_structural_unresolved_super_dispatch"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    module_path = pkg / "signer.py"
+    module_path.write_text(
+        textwrap.dedent(
+            '''
+            class Left:
+                def run(self, value):
+                    return value
+
+            class Right:
+                def run(self, value):
+                    return value
+
+            class Child(Left, Right):
+                def run(self, value):
+                    return super().run(value)
+
+            def b64e(s):
+                return s.rstrip(b"=")
+            '''
+        ),
+        encoding="utf-8",
+    )
+    dispatch_line = next(
+        line_no
+        for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
+        if "return super().run" in line
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    lifted = _lift_source_from_disk(
+        tmp_path,
+        "test_mod.py",
+        """
+        import vendpkg_structural_unresolved_super_dispatch.signer as signer
+
+        def test_token():
+            assert signer.b64e(b"abc") == b"abc"
+        """,
+    )
+
+    audit = next(
+        audit
+        for audit in lifted["sourceAudits"]
+        if audit.get("role") == "python.package-source"
+    )
+    dispatch_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith(
+            "vendpkg_structural_unresolved_super_dispatch/signer.py"
+        )
+        and locus["line"] == dispatch_line
+        and locus.get("ast_kind") in {"Return", "Call", "Attribute", "Name"}
+    ]
+    assert dispatch_loci
+    assert not [
+        locus for locus in dispatch_loci if locus["status"] == "unclassified"
+    ], dispatch_loci
+    assert {locus["status"] for locus in dispatch_loci} == {"refused"}
+    assert all(
+        "unresolved super method dispatch" in locus.get("reason", "")
         for locus in dispatch_loci
     ), dispatch_loci
 
