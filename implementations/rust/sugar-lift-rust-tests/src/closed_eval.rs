@@ -320,25 +320,245 @@ pub fn collect_dissolvable(file: &syn::File) -> Vec<Dissolvable> {
             }
         }
         let (asserts, helpers) = collect_block_asserts(&f.block.stmts, &fns, &locals);
+        if !asserts.is_empty() {
+            let mut prelude = String::new();
+            for name in &helpers {
+                if let Some(defs) = fns.get(name) {
+                    if defs.len() == 1 {
+                        prelude.push_str(&quote::quote!(#(#defs)*).to_string());
+                        prelude.push('\n');
+                    }
+                }
+            }
+            units.push(Dissolvable {
+                prelude,
+                setup,
+                asserts,
+            });
+        }
+
+        // CALL-SITE ARG-INLINING (fence-bounded). The symbolic lifter counts a
+        // non-`#[test]` helper's INTERNAL asserts once per helper as "reachable only via
+        // call-site inlining" (free over its params). When this fn calls such a helper
+        // with CLOSED literal args (`lower('A')`, `do_test(b'a', &[..])`) and the helper is
+        // CARRYABLE (body bottoms out in stdlib sugar + literals, fence #1), we β-reduce:
+        // substitute params := the call's closed actuals, then re-run the closed-sugar
+        // collector on the substituted body so each INTERNAL assert becomes a CONCRETE
+        // point (fence #3) carried into its own harness unit. A green run is the
+        // dissolution of that helper's internal asserts at the pinned args; a wrong
+        // substitution can only fail to compile/hold => not dissolved (safe under-claim).
+        for u in collect_helper_call_inlinings(&f.block.stmts, &fns) {
+            units.push(u);
+        }
+    }
+    units
+}
+
+/// β-reduce CLOSED-arg calls to CARRYABLE local helpers found anywhere in `stmts`
+/// (bare statement calls AND calls in assert/let positions) into dissolvable units: one
+/// per distinct (helper, closed-arg-tuple) call site. For each, substitute the helper's
+/// params with the call's closed actual tokens, then collect the substituted body's
+/// stdlib-sugar asserts (now concrete) plus its `let` context as setup. Skips a helper
+/// whose params are not all plain idents, or any call whose args are not all closed
+/// stdlib sugar, or any non-unique / non-carryable helper (all = safe under-claim).
+fn collect_helper_call_inlinings(
+    stmts: &[syn::Stmt],
+    fns: &std::collections::BTreeMap<String, Vec<syn::ItemFn>>,
+) -> Vec<Dissolvable> {
+    use std::collections::BTreeSet;
+    // Collect every call expression to a unique-name local fn in this fn's statements.
+    struct CallW<'a> {
+        calls: Vec<(String, Vec<Expr>)>,
+        fns: &'a std::collections::BTreeMap<String, Vec<syn::ItemFn>>,
+    }
+    impl<'a, 'ast> syn::visit::Visit<'ast> for CallW<'a> {
+        fn visit_expr_call(&mut self, c: &'ast syn::ExprCall) {
+            if let Expr::Path(p) = c.func.as_ref() {
+                if let Some(id) = p.path.get_ident() {
+                    let name = id.to_string();
+                    if !is_const_or_ctor_path(&p.path) && self.fns.contains_key(&name) {
+                        self.calls.push((name, c.args.iter().cloned().collect()));
+                    }
+                }
+            }
+            syn::visit::visit_expr_call(self, c);
+        }
+        // syn::visit does NOT descend into macro token streams (they are opaque), so a
+        // helper call inside `assert_eq!(lower('A'), "a")` would be missed. Parse the
+        // operands of an assert-shaped macro and visit them for helper calls.
+        fn visit_macro(&mut self, m: &'ast syn::Macro) {
+            use syn::parse::Parser;
+            use syn::punctuated::Punctuated;
+            let name = m
+                .path
+                .segments
+                .last()
+                .map(|s| s.ident.to_string())
+                .unwrap_or_default();
+            if name.starts_with("assert") || name.starts_with("debug_assert") {
+                let parser = Punctuated::<Expr, syn::Token![,]>::parse_terminated;
+                if let Ok(args) = parser.parse2(m.tokens.clone()) {
+                    for a in &args {
+                        syn::visit::Visit::visit_expr(self, a);
+                    }
+                }
+            }
+            syn::visit::visit_macro(self, m);
+        }
+        // Do not descend into nested fn items: their own calls belong to their own unit.
+        fn visit_item_fn(&mut self, _f: &'ast syn::ItemFn) {}
+    }
+    let mut w = CallW {
+        calls: Vec::new(),
+        fns,
+    };
+    for st in stmts {
+        syn::visit::Visit::visit_stmt(&mut w, st);
+    }
+
+    let mut out = Vec::new();
+    let mut seen_sites: BTreeSet<String> = BTreeSet::new();
+    for (name, args) in &w.calls {
+        // The helper must be unique + carryable (fence #1). helper_carryable records the
+        // helper and its transitive carryable callees into `deps` (the prelude set).
+        let mut deps = BTreeSet::new();
+        let mut seen = BTreeSet::new();
+        if !helper_carryable(name, fns, &mut deps, &mut seen) {
+            continue;
+        }
+        let def = match fns.get(name) {
+            Some(d) if d.len() == 1 => &d[0],
+            _ => continue,
+        };
+        // Every actual must be CLOSED stdlib sugar (fence #1 + #3): a runtime arg
+        // disqualifies the call (no construction to pin) -> safe under-claim.
+        if !args.iter().all(closed_pure_sugar) {
+            continue;
+        }
+        // Bind plain-ident params := closed actuals; bail on a non-ident pattern or an
+        // arity mismatch (we cannot soundly substitute, so skip = safe).
+        let params: Vec<String> = match def
+            .sig
+            .inputs
+            .iter()
+            .map(|inp| match inp {
+                syn::FnArg::Typed(pt) => match pt.pat.as_ref() {
+                    syn::Pat::Ident(pi) if pi.subpat.is_none() => Some(pi.ident.to_string()),
+                    _ => None,
+                },
+                syn::FnArg::Receiver(_) => None,
+            })
+            .collect::<Option<Vec<_>>>()
+        {
+            Some(p) => p,
+            None => continue,
+        };
+        if params.is_empty() || params.len() != args.len() {
+            continue;
+        }
+        // De-dup identical call sites (same helper, same arg tokens): one point each.
+        let site_key = format!(
+            "{name}({})",
+            args.iter()
+                .map(|a| quote::quote!(#a).to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        if !seen_sites.insert(site_key) {
+            continue;
+        }
+        // Substitute params := actuals throughout the body's token stream.
+        let bindings: Vec<(String, proc_macro2::TokenStream)> = params
+            .iter()
+            .cloned()
+            .zip(args.iter().map(|a| quote::quote!(#a)))
+            .collect();
+        let body_substituted = match substitute_block(&def.block, &bindings) {
+            Some(b) => b,
+            None => continue,
+        };
+        // Collect setup (the substituted body's top-level `let`s) + its concrete asserts.
+        let mut setup = String::new();
+        let mut locals: BTreeSet<String> = BTreeSet::new();
+        for st in &body_substituted.stmts {
+            if let syn::Stmt::Local(local) = st {
+                collect_pat_idents(&local.pat, &mut locals);
+                setup.push_str(&quote::quote!(#local).to_string());
+                setup.push('\n');
+            }
+        }
+        let (asserts, more_helpers) =
+            collect_block_asserts(&body_substituted.stmts, fns, &locals);
         if asserts.is_empty() {
             continue;
         }
+        // Prelude: the carryable helper's transitive callees plus any helper the
+        // substituted body's asserts reference (e.g. a sibling carryable fn). The helper
+        // itself is inlined (β-reduced), so it is removed from the prelude set.
         let mut prelude = String::new();
-        for name in &helpers {
-            if let Some(defs) = fns.get(name) {
+        let mut prelude_names: BTreeSet<String> = deps.clone();
+        prelude_names.extend(more_helpers);
+        prelude_names.remove(name);
+        for hn in &prelude_names {
+            if let Some(defs) = fns.get(hn) {
                 if defs.len() == 1 {
                     prelude.push_str(&quote::quote!(#(#defs)*).to_string());
                     prelude.push('\n');
                 }
             }
         }
-        units.push(Dissolvable {
+        out.push(Dissolvable {
             prelude,
             setup,
             asserts,
         });
     }
-    units
+    out
+}
+
+/// Token-level substitute `param := value` (for each binding) throughout a block,
+/// re-parsing the result. Token-level is fully backstopped: a wrong substitution can
+/// only yield a body that fails to parse/compile (=> the unit dissolves nothing, safe),
+/// never a false-discharge. Returns `None` if the rewritten block does not re-parse.
+fn substitute_block(
+    block: &syn::Block,
+    bindings: &[(String, proc_macro2::TokenStream)],
+) -> Option<syn::Block> {
+    fn replace_all(
+        ts: proc_macro2::TokenStream,
+        bindings: &[(String, proc_macro2::TokenStream)],
+    ) -> proc_macro2::TokenStream {
+        ts.into_iter()
+            .flat_map(|tt| -> proc_macro2::TokenStream {
+                match tt {
+                    proc_macro2::TokenTree::Ident(id) => {
+                        let s = id.to_string();
+                        match bindings.iter().find(|(p, _)| *p == s) {
+                            Some((_, val)) => val.clone(),
+                            None => std::iter::once(proc_macro2::TokenTree::Ident(id)).collect(),
+                        }
+                    }
+                    proc_macro2::TokenTree::Group(g) => {
+                        let inner = replace_all(g.stream(), bindings);
+                        std::iter::once(proc_macro2::TokenTree::Group(proc_macro2::Group::new(
+                            g.delimiter(),
+                            inner,
+                        )))
+                        .collect()
+                    }
+                    other => std::iter::once(other).collect(),
+                }
+            })
+            .collect()
+    }
+    let body_tokens = {
+        let stmts = &block.stmts;
+        quote::quote!(#(#stmts)*)
+    };
+    let replaced = replace_all(body_tokens, bindings);
+    // Re-wrap in braces and parse back to a Block.
+    let wrapped = quote::quote!({ #replaced });
+    syn::parse2::<syn::Block>(wrapped).ok()
 }
 
 /// Collect the binding idents of a `let` pattern (handles ident, tuple, ref, etc.).
@@ -936,6 +1156,70 @@ mod tests {
         assert_eq!(d.iter().map(|u| u.asserts.len()).sum::<usize>(), 1, "multilevel pure helper dissolvable");
         assert!(d.iter().any(|u| u.prelude.contains("fn outer") && u.prelude.contains("fn inner")),
             "both helpers in the chain are carried");
+    }
+
+    #[test]
+    fn callsite_inlines_helper_internal_asserts_at_literal_args() {
+        // A non-#[test] helper with INTERNAL asserts over its param `c`, called with a
+        // char literal. β-reduce (c := 'A') so the internal assert becomes a CONCRETE
+        // point dissolvable on its own (the bucket the symbolic lifter leaves as
+        // "reachable only via call-site inlining").
+        let file: syn::File = syn::parse_str(
+            "#[test] fn t() {\n             fn lower(c: char) -> String {\n               let lo = c.to_lowercase();\n               assert_eq!(lo.clone().count(), c.to_lowercase().count());\n               c.to_lowercase().collect()\n             }\n             assert_eq!(lower(\'A\'), \"a\");\n             }\n",
+        )
+        .unwrap();
+        let d = collect_dissolvable(&file);
+        // The helper's INTERNAL assert is carried as a concrete point (c := 'A'): a unit
+        // whose asserts reference the substituted body (`'A'.to_lowercase()`), NOT a free `c`.
+        let inlined = d.iter().any(|u| {
+            u.asserts.iter().any(|a| a.contains("count")) && !u.asserts.iter().any(|a| a.contains("c ."))
+        });
+        assert!(inlined, "helper internal assert should inline at the literal arg: {:?}",
+            d.iter().map(|u| &u.asserts).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn callsite_does_not_inline_helper_with_runtime_arg() {
+        // DISCRIMINATION: the same helper called with a RUNTIME arg (`x`, a free local
+        // not a literal) is NOT closed -> no construction to pin -> not inlined (safe).
+        let file: syn::File = syn::parse_str(
+            "#[test] fn t() {\n             fn lower(c: char) -> String {\n               assert_eq!(c.to_lowercase().count(), c.to_lowercase().count());\n               c.to_lowercase().collect()\n             }\n             let x = make();\n             let _ = lower(x);\n             }\n",
+        )
+        .unwrap();
+        let d = collect_dissolvable(&file);
+        // No unit carries the helper's internal `count` assert (its arg is runtime `x`).
+        assert!(
+            d.iter().all(|u| !u.asserts.iter().any(|a| a.contains("count"))),
+            "a runtime-arg call must not inline the helper body: {:?}",
+            d.iter().map(|u| &u.asserts).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn callsite_does_not_inline_impure_or_unresolvable_helper() {
+        // DISCRIMINATION #1: an IMPURE helper body (`now()`-class op) is not carryable.
+        let impure: syn::File = syn::parse_str(
+            "#[test] fn t() {\n             fn h(c: char) -> u32 {\n               assert_eq!(c.to_digit(10).unwrap(), Instant::now().elapsed().as_secs() as u32);\n               0\n             }\n             let _ = h(\'1\');\n             }\n",
+        )
+        .unwrap();
+        let di = collect_dissolvable(&impure);
+        assert!(
+            di.iter().all(|u| u.asserts.is_empty()),
+            "impure helper must not inline: {:?}",
+            di.iter().map(|u| &u.asserts).collect::<Vec<_>>()
+        );
+        // DISCRIMINATION #2: a helper whose body calls an UNRESOLVABLE fn (user logic
+        // we cannot see) is not carryable -> not inlined.
+        let unres: syn::File = syn::parse_str(
+            "#[test] fn t() {\n             fn h(c: char) -> u32 {\n               assert_eq!(mystery(c), 1u32);\n               0\n             }\n             let _ = h(\'1\');\n             }\n",
+        )
+        .unwrap();
+        let du = collect_dissolvable(&unres);
+        assert!(
+            du.iter().all(|u| u.asserts.is_empty()),
+            "unresolvable-callee helper must not inline: {:?}",
+            du.iter().map(|u| &u.asserts).collect::<Vec<_>>()
+        );
     }
 
     #[test]
