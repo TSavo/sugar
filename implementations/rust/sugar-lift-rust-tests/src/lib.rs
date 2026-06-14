@@ -129,6 +129,51 @@ pub fn lift_file(file: &syn::File, source_path: &str) -> AdapterOutput {
     lift_file_with_options(file, source_path, &LiftOptions::default())
 }
 
+/// The disposition of a non-discharged assertion. REFUSED means "closed with a
+/// damn good reason" -- a property of the SOURCE that no lifter could get past
+/// (runtime/opaque data, a value outside the chosen sort, a mutation with no
+/// single `t` to read). UNCLASSIFIED means a property of OUR lifter -- an AST
+/// shape, term, or call we have not taught yet; it is WORK, not closure.
+///
+/// Refused is a WHITELIST: a reason must MATCH a terminal pattern to be refused.
+/// Everything else -- including any future reason we forget to classify --
+/// defaults to Unclassified, so the only way into `refused` is a reason that
+/// survives the challenge "why couldn't you lift this?". This makes the ledger
+/// honest: it can only ever UNDER-claim closure, never launder a TODO as a
+/// verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Disposition {
+    Refused,
+    Unclassified,
+}
+
+/// Classify a refusal reason string as a terminal Refusal or Unclassified work.
+/// The terminal whitelist is intentionally short -- a reason earns `Refused` only
+/// when it names a SOURCE property no better lifter could lift:
+///   * `bin-2`             -- iterated/asserted values are RUNTIME data, not source
+///                            literals (no construction to walk).
+///   * `number too large`  -- a literal outside the representable integer sort.
+///   * `ambiguous temporal identity` -- a receiver conditionally/aliased-mutated,
+///                            so there is no single `t` to read it at. [BOUNDARY
+///                            CALL: terminal-today; flip to Unclassified if branch
+///                            partitioning + alias analysis are taught to recover
+///                            the pinned-branch subset.]
+/// Everything else is a LIFTER limitation -> Unclassified: `if`/`while`/`match`
+/// (branch partitioning), `unsupported term`, `reachable only via call-site
+/// inlining` (call queueing), `bin-1` literal domains, let-init/nested/unenumerated
+/// positions, unsupported macros, and `ambiguous cfg` (a missing target input,
+/// recoverable by pinning the cfg). Default = Unclassified.
+pub fn refusal_disposition(reason: &str) -> Disposition {
+    let terminal = reason.contains("bin-2")
+        || reason.contains("number too large")
+        || reason.contains("ambiguous temporal identity");
+    if terminal {
+        Disposition::Refused
+    } else {
+        Disposition::Unclassified
+    }
+}
+
 pub fn lift_file_with_options(
     file: &syn::File,
     source_path: &str,
@@ -7930,6 +7975,35 @@ mod lifter_key_tests {
             dump.contains("@adv"),
             "the second same-statement `nth` must carry an `@adv` occurrence tag: {dump}"
         );
+    }
+
+    // ── Refusal disposition: refused is earned, unclassified is the default ────
+
+    #[test]
+    fn refusal_disposition_is_a_terminal_whitelist() {
+        use Disposition::*;
+        // TERMINAL (source property -- closed with a damn good reason).
+        for r in [
+            "assertion under for context over an opaque collection (bin-2: runtime data)",
+            "assert_eq!: int literal 999999999999999999999: number too large to fit in target type",
+            "ambiguous temporal identity for receiver `r`; skipped assertion",
+        ] {
+            assert_eq!(refusal_disposition(r), Refused, "should be terminal: {r}");
+        }
+        // UNCLASSIFIED (lifter limitation -- WORK), incl. the default for anything
+        // not on the whitelist.
+        for r in [
+            "assertion under if context: not unconditional point-wise; released to layer 0",
+            "assertion under while context: not unconditional point-wise; released to layer 0",
+            "assert_eq!: unsupported term",
+            "assertion in non-#[test] item to_string: reachable only via call-site inlining",
+            "assertion under for context over a literal range (bin-1: domain constructed)",
+            "assertion inside a let-initializer expression; released to layer 0",
+            "ambiguous cfg on assertion; skipped",
+            "some brand new reason nobody has classified yet",
+        ] {
+            assert_eq!(refusal_disposition(r), Unclassified, "should be work: {r}");
+        }
     }
 
     // ── Discrimination: versioning is ONLY for warranted mutation ──────────────

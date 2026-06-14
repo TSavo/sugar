@@ -17,7 +17,10 @@
 
 use std::collections::BTreeMap;
 
-use sugar_lift_rust_tests::{lift_file_with_macro_imports, LiftOptions, MacroRegistry, TargetCfg};
+use sugar_lift_rust_tests::{
+    lift_file_with_macro_imports, refusal_disposition, Disposition, LiftOptions, MacroRegistry,
+    TargetCfg,
+};
 use syn::visit::{self, Visit};
 
 /// The lifter's assertion universe: any macro whose name starts with assert or
@@ -114,7 +117,11 @@ struct Totals {
     test_fns_seen: usize,
     test_fns_lifted: usize,
     discharged: usize,
+    // The named non-discharged total, split by disposition. `refused` =
+    // terminal, closed with a source-property reason; `unclassified` = a lifter
+    // limitation, i.e. WORK. `refused + unclassified` is the old "refused" count.
     refused: usize,
+    unclassified: usize,
 }
 
 fn main() {
@@ -255,23 +262,46 @@ fn main() {
 
         let out = lift_file_with_macro_imports(&file, &rel, &options, &registry);
         let discharged = out.assertions_lifted;
-        let refused = out.assertions_refused;
+        let refused_total = out.assertions_refused;
 
         totals.assert_macros += counter.total;
         totals.test_fns_seen += out.seen;
         totals.test_fns_lifted += out.lifted;
         totals.discharged += discharged;
-        totals.refused += refused;
 
+        // Split the named refusals by disposition: TERMINAL (closed with a source-
+        // property reason) vs UNCLASSIFIED (a lifter limitation = work). A refusal
+        // counted without a reason string, or any unrecognized reason, defaults to
+        // Unclassified -- the only way into `refused` is to earn it.
+        let mut file_terminal = 0usize;
         for reason in &out.skip_reasons {
-            let b = bucket(reason);
-            *reasons.entry(b.clone()).or_insert(0) += 1;
-            let samples = reason_samples.entry(b).or_default();
-            if samples.len() < 12 {
-                samples.push(format!("{}: {}", rel, reason));
+            match refusal_disposition(reason) {
+                Disposition::Refused => {
+                    file_terminal += 1;
+                    let b = format!("[refused] {}", bucket(reason));
+                    *reasons.entry(b.clone()).or_insert(0) += 1;
+                    let samples = reason_samples.entry(b).or_default();
+                    if samples.len() < 12 {
+                        samples.push(format!("{}: {}", rel, reason));
+                    }
+                }
+                Disposition::Unclassified => {
+                    let b = format!("[unclassified] {}", bucket(reason));
+                    *reasons.entry(b.clone()).or_insert(0) += 1;
+                    let samples = reason_samples.entry(b).or_default();
+                    if samples.len() < 12 {
+                        samples.push(format!("{}: {}", rel, reason));
+                    }
+                }
             }
             all_reasons.push(reason.clone());
         }
+        // Reconcile against the count: any refused-without-a-reason is unclassified.
+        let file_terminal = file_terminal.min(refused_total);
+        let file_unclassified = refused_total - file_terminal;
+        totals.refused += file_terminal;
+        totals.unclassified += file_unclassified;
+        let refused = refused_total;
 
         // Silent drop: a real assert macro the collector never reached (nested
         // in control flow) -- neither lifted nor refused with a reason.
@@ -279,9 +309,13 @@ fn main() {
         rows.push((rel, counter.total, discharged, refused, unaccounted, true));
     }
 
-    // Headline reconciliation at macro granularity.
-    let unaccounted =
-        totals.assert_macros as i64 - totals.discharged as i64 - totals.refused as i64;
+    // Headline reconciliation at macro granularity. `refused + unclassified` is the
+    // full named non-discharged set; only their sum reconciles against the textual
+    // macro count.
+    let named_non_discharged = totals.refused + totals.unclassified;
+    let unaccounted = totals.assert_macros as i64
+        - totals.discharged as i64
+        - named_non_discharged as i64;
     // Per-file split. A positive per-file residual is a genuinely unreached
     // assertion (the true silent drop). A negative per-file residual is
     // inlining inflation: the reducer inlined a helper called from several
@@ -311,9 +345,14 @@ fn main() {
         pct(totals.discharged)
     );
     println!(
-        "  refused (named reason):      {:>6}  ({:.1}%)",
+        "  refused  (TERMINAL, source): {:>6}  ({:.1}%)   <-- closed with a damn good reason",
         totals.refused,
         pct(totals.refused)
+    );
+    println!(
+        "  unclassified (lifter WORK):  {:>6}  ({:.1}%)   <-- the real roadmap; drive to 0",
+        totals.unclassified,
+        pct(totals.unclassified)
     );
     println!(
         "  unaccounted (net):           {:>6}  ({:.1}%)",
@@ -418,6 +457,7 @@ fn build_ledger_json(
     obj.insert("assert_macros".into(), totals.assert_macros.into());
     obj.insert("discharged".into(), totals.discharged.into());
     obj.insert("refused".into(), totals.refused.into());
+    obj.insert("unclassified".into(), totals.unclassified.into());
     obj.insert("unaccounted".into(), unaccounted.into());
     obj.insert(
         "assertion_multiset_cid".into(),
@@ -490,7 +530,8 @@ mod tests {
             test_fns_seen: 3,
             test_fns_lifted: 3,
             discharged: 3,
-            refused: 2,
+            refused: 1,
+            unclassified: 1,
         };
         let reasons = BTreeMap::from([("closure argument".to_string(), 2usize)]);
         let samples = BTreeMap::from([(
