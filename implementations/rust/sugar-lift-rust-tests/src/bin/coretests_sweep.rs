@@ -89,18 +89,18 @@ fn prune_feature_prelude(feature_prelude: &str, dir: &std::path::Path) -> String
     feats.join("\n")
 }
 
-fn dissolve_count(prelude: &str, asserts: &[String], dir: &std::path::Path) -> usize {
+fn dissolve_count(prelude: &str, setup: &str, asserts: &[String], dir: &std::path::Path) -> usize {
     if asserts.is_empty() {
         return 0;
     }
     let args = harness_rustc_args();
-    match closed_eval::evaluate_asserts(prelude, asserts, "rustup", &args, "2021", dir) {
+    match closed_eval::evaluate_asserts(prelude, setup, asserts, "rustup", &args, "2021", dir) {
         HarnessResult::Ran(held) => held.iter().filter(|&&h| h).count(),
         HarnessResult::CompileError(_) => asserts
             .iter()
             .filter(|a| {
                 matches!(
-                    closed_eval::evaluate_asserts(prelude, std::slice::from_ref(a), "rustup", &args, "2021", dir),
+                    closed_eval::evaluate_asserts(prelude, setup, std::slice::from_ref(a), "rustup", &args, "2021", dir),
                     HarnessResult::Ran(held) if held.first() == Some(&true)
                 )
             })
@@ -428,9 +428,13 @@ fn main() {
         // same `unaccounted`, so SILENT is unaffected). Capped at file_unclassified so we
         // only ever reclassify work the lifter actually left open.
         let dissolved = if dissolve {
-            let d = closed_eval::collect_dissolvable(&file);
-            let full_prelude = format!("{}\n{}", feature_prelude, d.prelude);
-            dissolve_count(&full_prelude, &d.asserts, &dissolve_dir).min(file_unclassified)
+            let units = closed_eval::collect_dissolvable(&file);
+            let mut got = 0usize;
+            for u in &units {
+                let full_prelude = format!("{}\n{}", feature_prelude, u.prelude);
+                got += dissolve_count(&full_prelude, &u.setup, &u.asserts, &dissolve_dir);
+            }
+            got.min(file_unclassified)
         } else {
             0
         };

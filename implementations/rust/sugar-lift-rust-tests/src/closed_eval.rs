@@ -244,55 +244,112 @@ fn helper_is_carryable(f: &syn::ItemFn) -> bool {
 /// assert calls) plus the reconstructed, message-stripped assert statements. Message
 /// args are dropped so a message referencing a runtime local cannot break the compile.
 pub struct Dissolvable {
+    /// Crate-level prelude: the carryable local helper defs the unit's asserts call.
     pub prelude: String,
+    /// `main`-level setup: the enclosing fn's `let` bindings the asserts reference
+    /// (closed context). A non-closed setup line just fails the unit's compile (safe).
+    pub setup: String,
     pub asserts: Vec<String>,
 }
 
-pub fn collect_dissolvable(file: &syn::File) -> Dissolvable {
-    use std::collections::BTreeMap;
+pub fn collect_dissolvable(file: &syn::File) -> Vec<Dissolvable> {
+    use std::collections::{BTreeMap, BTreeSet};
     // name -> defs (a name defined more than once is ambiguous; never carried).
     let mut fns: BTreeMap<String, Vec<syn::ItemFn>> = BTreeMap::new();
-    struct FnWalk<'a>(&'a mut BTreeMap<String, Vec<syn::ItemFn>>);
+    // every fn in the file, in source order (top-level + nested + in mods); each
+    // becomes its own dissolvable unit (its locals in scope, asserts attributed to it).
+    let mut all_fns: Vec<syn::ItemFn> = Vec::new();
+    struct FnWalk<'a> {
+        map: &'a mut BTreeMap<String, Vec<syn::ItemFn>>,
+        all: &'a mut Vec<syn::ItemFn>,
+    }
     impl<'a, 'ast> syn::visit::Visit<'ast> for FnWalk<'a> {
         fn visit_item_fn(&mut self, f: &'ast syn::ItemFn) {
-            self.0.entry(f.sig.ident.to_string()).or_default().push(f.clone());
+            self.map.entry(f.sig.ident.to_string()).or_default().push(f.clone());
+            self.all.push(f.clone());
             syn::visit::visit_item_fn(self, f);
         }
     }
-    syn::visit::Visit::visit_file(&mut FnWalk(&mut fns), file);
+    syn::visit::Visit::visit_file(
+        &mut FnWalk {
+            map: &mut fns,
+            all: &mut all_fns,
+        },
+        file,
+    );
 
-    let raw = collect_dissolvable_asserts_with_helpers(file, &fns);
-    // Build the prelude from the unique carryable helpers actually referenced.
-    let mut prelude = String::new();
-    for name in &raw.1 {
-        if let Some(defs) = fns.get(name) {
-            if defs.len() == 1 {
-                prelude.push_str(&quote::quote!(#(#defs)*).to_string());
-                prelude.push('\n');
+    let mut units = Vec::new();
+    for f in &all_fns {
+        // setup = this fn's top-level `let` statements (verbatim); locals = their names.
+        let mut setup = String::new();
+        let mut locals: BTreeSet<String> = BTreeSet::new();
+        for st in &f.block.stmts {
+            if let syn::Stmt::Local(local) = st {
+                collect_pat_idents(&local.pat, &mut locals);
+                setup.push_str(&quote::quote!(#local).to_string());
+                setup.push('\n');
             }
         }
+        let (asserts, helpers) = collect_block_asserts(&f.block.stmts, &fns, &locals);
+        if asserts.is_empty() {
+            continue;
+        }
+        let mut prelude = String::new();
+        for name in &helpers {
+            if let Some(defs) = fns.get(name) {
+                if defs.len() == 1 {
+                    prelude.push_str(&quote::quote!(#(#defs)*).to_string());
+                    prelude.push('\n');
+                }
+            }
+        }
+        units.push(Dissolvable {
+            prelude,
+            setup,
+            asserts,
+        });
     }
-    Dissolvable {
-        prelude,
-        asserts: raw.0,
+    units
+}
+
+/// Collect the binding idents of a `let` pattern (handles ident, tuple, ref, etc.).
+fn collect_pat_idents(pat: &syn::Pat, out: &mut std::collections::BTreeSet<String>) {
+    match pat {
+        syn::Pat::Ident(i) => {
+            out.insert(i.ident.to_string());
+            if let Some((_, sub)) = &i.subpat {
+                collect_pat_idents(sub, out);
+            }
+        }
+        syn::Pat::Tuple(t) => t.elems.iter().for_each(|e| collect_pat_idents(e, out)),
+        syn::Pat::TupleStruct(t) => t.elems.iter().for_each(|e| collect_pat_idents(e, out)),
+        syn::Pat::Reference(r) => collect_pat_idents(&r.pat, out),
+        syn::Pat::Type(t) => collect_pat_idents(&t.pat, out),
+        syn::Pat::Paren(p) => collect_pat_idents(&p.pat, out),
+        _ => {}
     }
 }
 
-/// Returns (assert statements, set of carryable-helper names referenced).
-fn collect_dissolvable_asserts_with_helpers(
-    file: &syn::File,
+/// Collect the dissolvable asserts in ONE block's statements (not descending into
+/// nested fns), gated allowing `locals` (the enclosing fn's `let`-bound names, carried
+/// as setup). Returns (assert statements, carryable-helper names referenced).
+fn collect_block_asserts(
+    stmts: &[syn::Stmt],
     fns: &std::collections::BTreeMap<String, Vec<syn::ItemFn>>,
+    locals: &std::collections::BTreeSet<String>,
 ) -> (Vec<String>, std::collections::BTreeSet<String>) {
     use syn::parse::Parser;
     use syn::punctuated::Punctuated;
     let mut asserts = Vec::new();
     let mut helpers = std::collections::BTreeSet::new();
 
-    // Does `expr` qualify as closed stdlib sugar, allowing calls to UNIQUE carryable
-    // local helpers (recorded into `helpers`)?
+    // Does `expr` qualify as closed stdlib sugar, allowing (a) calls to UNIQUE carryable
+    // local helpers (recorded into `helpers`) and (b) references to `locals` -- the
+    // enclosing fn's `let`-bound names, carried into the harness setup (closed context)?
     fn check(
         expr: &Expr,
         fns: &std::collections::BTreeMap<String, Vec<syn::ItemFn>>,
+        locals: &std::collections::BTreeSet<String>,
         helpers: &mut std::collections::BTreeSet<String>,
     ) -> bool {
         if let Expr::Call(c) = expr {
@@ -304,7 +361,7 @@ fn collect_dissolvable_asserts_with_helpers(
                         match fns.get(&name) {
                             Some(defs) if defs.len() == 1 && helper_is_carryable(&defs[0]) => {
                                 helpers.insert(name);
-                                return c.args.iter().all(|a| check(a, fns, helpers));
+                                return c.args.iter().all(|a| check(a, fns, locals, helpers));
                             }
                             _ => return false,
                         }
@@ -312,28 +369,36 @@ fn collect_dissolvable_asserts_with_helpers(
                 }
             }
         }
-        // Fall back to the plain sugar gate for non-helper-call shapes, but recurse
-        // through composite nodes so nested helper calls are still recorded.
         match expr {
+            // a reference to a carried local `let` binding is a closed leaf (its value
+            // is supplied by the setup block).
+            Expr::Path(p) => {
+                p.path.get_ident().map(|i| locals.contains(&i.to_string())).unwrap_or(false)
+                    || is_const_or_ctor_path(&p.path)
+            }
             Expr::Call(c) => {
                 let ctor =
                     matches!(c.func.as_ref(), Expr::Path(p) if is_const_or_ctor_path(&p.path));
-                ctor && c.args.iter().all(|a| check(a, fns, helpers))
+                ctor && c.args.iter().all(|a| check(a, fns, locals, helpers))
             }
             Expr::MethodCall(m) => {
                 !IMPURE_NAMES.contains(&m.method.to_string().as_str())
-                    && check(&m.receiver, fns, helpers)
-                    && m.args.iter().all(|a| check(a, fns, helpers))
+                    && check(&m.receiver, fns, locals, helpers)
+                    && m.args.iter().all(|a| check(a, fns, locals, helpers))
             }
-            Expr::Paren(p) => check(&p.expr, fns, helpers),
-            Expr::Group(g) => check(&g.expr, fns, helpers),
-            Expr::Reference(r) => check(&r.expr, fns, helpers),
-            Expr::Unary(u) => check(&u.expr, fns, helpers),
-            Expr::Binary(b) => check(&b.left, fns, helpers) && check(&b.right, fns, helpers),
-            Expr::Array(a) => a.elems.iter().all(|e| check(e, fns, helpers)),
-            Expr::Tuple(t) => t.elems.iter().all(|e| check(e, fns, helpers)),
-            Expr::Cast(c) => check(&c.expr, fns, helpers),
-            Expr::Index(i) => check(&i.expr, fns, helpers) && check(&i.index, fns, helpers),
+            Expr::Paren(p) => check(&p.expr, fns, locals, helpers),
+            Expr::Group(g) => check(&g.expr, fns, locals, helpers),
+            Expr::Reference(r) => check(&r.expr, fns, locals, helpers),
+            Expr::Unary(u) => check(&u.expr, fns, locals, helpers),
+            Expr::Binary(b) => {
+                check(&b.left, fns, locals, helpers) && check(&b.right, fns, locals, helpers)
+            }
+            Expr::Array(a) => a.elems.iter().all(|e| check(e, fns, locals, helpers)),
+            Expr::Tuple(t) => t.elems.iter().all(|e| check(e, fns, locals, helpers)),
+            Expr::Cast(c) => check(&c.expr, fns, locals, helpers),
+            Expr::Index(i) => {
+                check(&i.expr, fns, locals, helpers) && check(&i.index, fns, locals, helpers)
+            }
             // leaves / macros handled by the plain gate.
             _ => closed_pure_sugar(expr),
         }
@@ -413,6 +478,7 @@ fn collect_dissolvable_asserts_with_helpers(
 
     struct W<'a> {
         fns: &'a std::collections::BTreeMap<String, Vec<syn::ItemFn>>,
+        locals: &'a std::collections::BTreeSet<String>,
         asserts: &'a mut Vec<String>,
         helpers: &'a mut std::collections::BTreeSet<String>,
     }
@@ -420,11 +486,12 @@ fn collect_dissolvable_asserts_with_helpers(
         // Try one assert macro (already loop-substituted if applicable) as a dissolvable
         // candidate; push it if it gates.
         fn try_assert(&mut self, m: &syn::Macro) {
-            W::try_assert_static(m, self.fns, self.asserts, self.helpers);
+            W::try_assert_static(m, self.fns, self.locals, self.asserts, self.helpers);
         }
         fn try_assert_static(
             m: &syn::Macro,
             fns: &std::collections::BTreeMap<String, Vec<syn::ItemFn>>,
+            locals: &std::collections::BTreeSet<String>,
             asserts: &mut Vec<String>,
             helpers: &mut std::collections::BTreeSet<String>,
         ) {
@@ -452,7 +519,7 @@ fn collect_dissolvable_asserts_with_helpers(
                     let enough = value_ops.len() == if macro_name == "assert" { 1 } else { 2 };
                     let mut scratch = std::collections::BTreeSet::new();
                     let all_sugar =
-                        enough && value_ops.iter().all(|e| check(e, fns, &mut scratch));
+                        enough && value_ops.iter().all(|e| check(e, fns, locals, &mut scratch));
                     let gated =
                         all_sugar && (operands_use_stdlib_op(&value_ops) || !scratch.is_empty());
                     if gated {
@@ -514,13 +581,20 @@ fn collect_dissolvable_asserts_with_helpers(
             self.try_assert(m);
             syn::visit::visit_macro(self, m);
         }
+        // Do NOT descend into a nested fn item: it is collected as its own unit (with
+        // its own `let` context). This keeps each assert attributed to exactly the fn
+        // whose locals are in scope for it.
+        fn visit_item_fn(&mut self, _f: &'ast syn::ItemFn) {}
     }
     let mut w = W {
         fns,
+        locals,
         asserts: &mut asserts,
         helpers: &mut helpers,
     };
-    syn::visit::Visit::visit_file(&mut w, file);
+    for st in stmts {
+        syn::visit::Visit::visit_stmt(&mut w, st);
+    }
     (asserts, helpers)
 }
 
@@ -610,6 +684,7 @@ pub enum HarnessResult {
 /// `rustc_args`). `work_dir` must exist and be writable.
 pub fn evaluate_asserts(
     prelude: &str,
+    setup: &str,
     asserts: &[String],
     rustc: &str,
     rustc_args: &[String],
@@ -619,7 +694,7 @@ pub fn evaluate_asserts(
     if asserts.is_empty() {
         return HarnessResult::Ran(Vec::new());
     }
-    let src = build_harness_source(prelude, asserts);
+    let src = build_harness_source(prelude, setup, asserts);
     let src_path = work_dir.join("sugar_closed_eval_probe.rs");
     let bin_path = work_dir.join("sugar_closed_eval_probe_bin");
     if let Err(e) = std::fs::File::create(&src_path).and_then(|mut f| f.write_all(src.as_bytes())) {
@@ -663,12 +738,19 @@ pub fn evaluate_asserts(
 
 /// Build the harness: prelude, then a `main` that runs each assert under a silenced
 /// panic hook and prints `OK <i>` for each that does not panic.
-fn build_harness_source(prelude: &str, asserts: &[String]) -> String {
+fn build_harness_source(prelude: &str, setup: &str, asserts: &[String]) -> String {
     let mut s = String::new();
     s.push_str(prelude);
     s.push_str("\n#[allow(unused)]\nfn main() {\n");
     // Silence panic output so a deliberately-failing assert does not spam stderr.
     s.push_str("    std::panic::set_hook(Box::new(|_| {}));\n");
+    // SETUP: the carried enclosing-fn `let` bindings (closed context the asserts
+    // reference, e.g. `let expected = [..];`). A non-closed setup line just fails the
+    // compile -> the whole unit dissolves nothing (safe).
+    if !setup.trim().is_empty() {
+        s.push_str(setup);
+        s.push('\n');
+    }
     for (i, a) in asserts.iter().enumerate() {
         // Each assert is wrapped so a panic is caught and only the survivors print OK.
         let stmt = a.trim().trim_end_matches(';');
@@ -761,8 +843,8 @@ mod tests {
         )
         .unwrap();
         let d = collect_dissolvable(&file);
-        assert!(d.prelude.contains("fn lower"), "helper carried: {:?}", d.prelude);
-        assert_eq!(d.asserts.len(), 1, "the helper-wrapped assert is dissolvable");
+        assert!(d.iter().any(|u| u.prelude.contains("fn lower")), "helper carried");
+        assert_eq!(d.iter().map(|u| u.asserts.len()).sum::<usize>(), 1, "the helper-wrapped assert is dissolvable");
     }
 
     #[test]
@@ -774,9 +856,30 @@ mod tests {
         )
         .unwrap();
         let d = collect_dissolvable(&file);
-        assert_eq!(d.asserts.len(), 3, "0..3 unrolls to 3 points: {:?}", d.asserts);
-        assert!(d.asserts.iter().any(|a| a.contains("0i32") || a.contains("0 .") || a.contains("0.")),
-            "loop var substituted with concrete values: {:?}", d.asserts);
+        let total: usize = d.iter().map(|u| u.asserts.len()).sum();
+        assert_eq!(total, 3, "0..3 unrolls to 3 points");
+        assert!(
+            d.iter().flat_map(|u| &u.asserts).any(|a| a.contains("0 .") || a.contains("0.") || a.contains("0i32")),
+            "loop var substituted with concrete values"
+        );
+    }
+
+    #[test]
+    fn collect_carries_local_let_for_loop() {
+        // for i in 0..3 over a LOCAL literal array: unroll to 3 points, each referencing
+        // `expected[0..2]` -- carried via setup so the harness closes.
+        let file: syn::File = syn::parse_str(
+            "#[test] fn t() { let expected = [0u32, 1u32, 2u32]; \
+             for i in 0..3 { assert_eq!((i as u32).to_string(), expected[i].to_string()); } }\n",
+        )
+        .unwrap();
+        let d = collect_dissolvable(&file);
+        let total: usize = d.iter().map(|u| u.asserts.len()).sum();
+        assert_eq!(total, 3, "0..3 over local array unrolls to 3 carried points");
+        assert!(
+            d.iter().any(|u| u.setup.contains("let expected")),
+            "the local `let expected` array is carried into setup"
+        );
     }
 
     #[test]
@@ -788,7 +891,7 @@ mod tests {
         )
         .unwrap();
         let d = collect_dissolvable(&file);
-        assert!(d.asserts.is_empty(), "runtime-domain loop must not unroll: {:?}", d.asserts);
+        assert!(d.iter().all(|u| u.asserts.is_empty()), "runtime-domain loop must not unroll");
     }
 
     #[test]
@@ -801,7 +904,7 @@ mod tests {
         )
         .unwrap();
         let d = collect_dissolvable(&file);
-        assert!(d.asserts.is_empty(), "multilevel helper must be skipped (safe)");
+        assert!(d.iter().all(|u| u.asserts.is_empty()), "multilevel helper must be skipped (safe)");
     }
 
     #[test]
@@ -822,7 +925,7 @@ mod tests {
             // another true
             r#"assert_eq!(format!("{}", 3.14_f64), "3.14")"#.to_string(),
         ];
-        let res = evaluate_asserts("", &asserts, "rustc", &[], "2021", &dir);
+        let res = evaluate_asserts("", "", &asserts, "rustc", &[], "2021", &dir);
         match res {
             HarnessResult::Ran(held) => {
                 assert_eq!(held, vec![true, false, true], "true/false/true expected");
@@ -850,7 +953,7 @@ fn lower(c: char) -> String {
             r#"assert_eq!(lower('A'), "a")"#.to_string(),
             r#"assert_eq!(lower('Σ'), "σ")"#.to_string(),
         ];
-        match evaluate_asserts(prelude, &asserts, "rustc", &[], "2021", &dir) {
+        match evaluate_asserts(prelude, "", &asserts, "rustc", &[], "2021", &dir) {
             HarnessResult::Ran(held) => assert_eq!(held, vec![true, true]),
             other => panic!("expected Ran, got {other:?}"),
         }
