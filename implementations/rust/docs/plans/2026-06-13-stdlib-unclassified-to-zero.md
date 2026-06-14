@@ -526,6 +526,34 @@ house with every door labelled.
 > (all touch lib.rs → resolve conflicts on cherry-pick). Genuinely TERMINAL remainder: bin-2 [refused]
 > ~107 (iterator/for over runtime collections) + estimator/f16 core-internal/unstable.
 >
+> **DESIGN — dissolution-identity refactor (carry the term). T-converged 2026-06-14; land AFTER letinit+loops.**
+> PROBLEM: a Dissolved is a `+1` to a counter, not a reclassification of an identified assert. The sweep
+> reconciles dissolution vs the lifter by a per-file cap `dissolved = min(got, file_unclassified)`. Because
+> nothing carries the original term, that `min` conflates lift/dissolve/refuse: whenever a lift or refusal
+> shrinks `file_unclassified`, the cap clamps and silently drops UNRELATED closed-sugar dissolves in the
+> same file (the −25 on conds, the −3 on letinit). The `dissolved` headline is corrupted by any sound work
+> that moves an assert.
+> PRINCIPLE (desugar/resugar, both permissible, same justification): desugaring → lean on the compiler as
+> a NAMED/PINNED axiom (sound: named+pinned+deterministic). Resugaring → re-present the term for the next
+> stage; equally permissible because the transform is a homomorphism (logic invariant both ways) and the
+> CID pins identity, so it adds NO trust — just re-skins the same pinned term. The pipeline is
+> representation-fluid over a CID-pinned term: desugared form where you compute against axioms
+> (dissolution/EUF/canonical compare), resugared form where you need intent (refusal decision, FOL emit,
+> human logo). Desugaring never destroys the term — it carries it, recoverable on demand.
+> DESIGN: each assert SITE gets a CID. Dissolution emits per-CID RECORDS `{cid, sugared_term,
+> canonical_form, verdict, axiom_basis}` — not a count. `axiom_basis` (the toolchain pin it leaned on)
+> TRAVELS with the term, so the final CID names exactly which axioms were rested on (honest residual / named
+> TCB; same discipline as pinning k,I,t). Disposition becomes a per-CID PARTITION: `discharged = lifted ∪
+> dissolved`; `refused` = residual carrying a terminal reason; `unclassified` = the rest. Refusal is decided
+> AFTER recovering the term + its lift/dissolve verdicts → refusal is RESIDUAL-ONLY and cannot refuse a fact
+> some path proved. DROP the per-file `min()` cap (the exact partition makes it unnecessary).
+> CONSEQUENCES: (1) conds integrates cleanly — re-apply its sharpened terminal reason strings as
+> residual-only; (2) `dissolved` becomes exact + reproducible (no cap noise); (3) we can finally LIST which
+> asserts dissolved, content-addressed, reconcilable against the multiset CID we already print. TOUCHES:
+> closed_eval.rs (Dissolvable→CID records), coretests_sweep.rs (partition replaces min-cap accounting),
+> lib.rs (refusal as residual). Until it lands: trust the hermetic/CID/SILENT/unaccounted readings, NOT the
+> `dissolved` headline, when judging a drain.
+>
 > **Reproducibility fix `2a531a105` (kept, real win for verification integrity):** the dissolve dir reused
 > fixed harness filenames, so a sequential sweep hit ETXTBSY overwrite races → non-reproducible dissolved
 > count (261–293). Fix = per-source-hash unique filenames + 3-try compile retry + cleanup. Count unchanged
