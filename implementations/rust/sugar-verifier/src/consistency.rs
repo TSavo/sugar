@@ -637,8 +637,21 @@ fn check_inv_consistency(
     } else if n % 200 == 0 {
         eprintln!("[verify] {n} obligations checked…");
     }
-    let (verdict, label) = consistency_verdict(raw);
-    let reason = format!("{label} `{property_name}` [{raw_reason}]");
+    let (mut verdict, label) = consistency_verdict(raw);
+    let mut reason = format!("{label} `{property_name}` [{raw_reason}]");
+    // THE VENDOR FIXED `t`. An `unsat` resting on conflicting pins of a non-ground
+    // compound is a fork-around-`t` we cannot distinguish from a real contradiction
+    // without the callee body (v2's dig). Refuse rather than falsely accuse.
+    if verdict == ObligationVerdict::Unsatisfied {
+        if let Some(term) = unwarranted_compound_conflict(&inv) {
+            verdict = ObligationVerdict::Refused;
+            reason = format!(
+                "refused: conflicting pins on non-ground term `{term}` -- a real \
+                 contradiction vs. a `t`-dependent (impure/interior-mutable) trajectory \
+                 cannot be distinguished without the callee body; not accused"
+            );
+        }
+    }
     if verdict == ObligationVerdict::Undecidable {
         warn!(
             contract = %property_name,
@@ -748,12 +761,45 @@ fn formula_is_closed(node: &Json, bound: &mut Vec<String>) -> bool {
 /// Collect the uninterpreted-function (`ctor`) symbols a formula references —
 /// its solver vocabulary. Two formulas are independent (disjoint-signature, so
 /// sound to separate) iff they share no such symbol.
+/// Structural / arithmetic plumbing ctors (`ref`, `deref`, `+`/`-`/`*`, bitwise,
+/// range constructors) appear ubiquitously and are NOT meaningful uninterpreted
+/// predicates to quantify over: the arithmetic ones are z3 builtins, and
+/// `ref`/`deref`/`range` are wrappers applied to unrelated arguments. A universal
+/// that shares ONLY such a symbol with an obligation does not constrain it
+/// (`ref(Big::from_small 1)` never aliases `ref(1)`), so counting them as
+/// relevance vocabulary spuriously drags unrelated lifted-loop universals
+/// (bignum/ascii) into a trivial obligation through a common `ref`, turning
+/// `align_of_val(ref 1) == 2` (SAT) into a quantifier-laden `unknown`. Excluding
+/// them only makes relevance STRICTER (fewer foralls conjoined) -- sound, since a
+/// dropped disjoint-signature universal is a conservative extension.
+fn is_structural_hub_symbol(name: &str) -> bool {
+    matches!(
+        name,
+        "ref" | "deref"
+            | "+"
+            | "-"
+            | "*"
+            | "int-div"
+            | "int-rem"
+            | "bit-and"
+            | "bit-or"
+            | "bit-xor"
+            | "shift-left"
+            | "shift-right"
+            | "bit-not"
+            | "range"
+            | "range_incl"
+    )
+}
+
 fn collect_ctor_symbols(j: &Json, out: &mut std::collections::BTreeSet<String>) {
     match j {
         Json::Object(m) => {
             if m.get("kind").and_then(|k| k.as_str()) == Some("ctor") {
                 if let Some(n) = m.get("name").and_then(|n| n.as_str()) {
-                    out.insert(n.to_string());
+                    if !is_structural_hub_symbol(n) {
+                        out.insert(n.to_string());
+                    }
                 }
             }
             for v in m.values() {
@@ -767,6 +813,196 @@ fn collect_ctor_symbols(j: &Json, out: &mut std::collections::BTreeSet<String>) 
         }
         _ => {}
     }
+}
+
+/// A term is GROUND iff built entirely from constants (no variable) -- its value
+/// is fixed by literals alone, so it is `t`-independent and pure-evaluable.
+fn term_is_ground(t: &Json) -> bool {
+    match t.get("kind").and_then(|k| k.as_str()) {
+        Some("const") => true,
+        Some("var") => false,
+        Some("ctor") => t
+            .get("args")
+            .and_then(|a| a.as_array())
+            .map(|a| a.iter().all(term_is_ground))
+            .unwrap_or(true),
+        _ => false,
+    }
+}
+
+fn json_is_const(t: &Json) -> bool {
+    t.get("kind").and_then(|k| k.as_str()) == Some("const")
+}
+
+/// A NON-GROUND COMPOUND: a constructor application (a call/method/field/deref/
+/// projection) carrying at least one variable -- so its value MAY depend on
+/// hidden state (`t`) the lift cannot see (interior mutability, a mutated binding,
+/// a pointer write). Whether it is actually pure is a body-walk question we cannot
+/// answer without the callee body.
+fn is_nonground_compound(t: &Json) -> bool {
+    t.get("kind").and_then(|k| k.as_str()) == Some("ctor") && !term_is_ground(t)
+}
+
+/// THE VENDOR FIXED `t`. Each assertion is pinned at a concrete program point.
+/// If an UNSAT invariant's contradiction rests on two or more pins (`=(T, c)`) of
+/// the SAME non-ground compound `T` set to DIFFERENT constants, the
+/// "contradiction" cannot be distinguished -- without the callee body -- from a
+/// benign trajectory of an impure / `t`-dependent `T` (`get(i)==0`, then
+/// `get(i)==4` after a mutation; the drop-counter even mutates via the drop
+/// side-effects of OTHER bindings, with no syntactic reference to `i`). A PURE `T`
+/// cannot fork around `t`, so for a pure `T` this WOULD be a real contradiction --
+/// but proving purity is the dig (v2). Until then we must NOT accuse: return the
+/// term so the caller REFUSES (not "contradictory", not "consistent").
+///
+/// Warranted contradictions are NOT reported here and stay `Unsatisfied`:
+///   * pins on a BARE VAR -- a value bound once, so same `t` (`x==1 ∧ x==2`);
+///   * pins on a GROUND call -- `t`-independent, pure-evaluable
+///     (`numpy.add(2,3)==5` vs `==6`; `g(7)<10 ∧ g(7)<5`).
+/// A same-`T` group with two distinct constants is independently UNSAT, so its
+/// mere presence means the unsat cannot be cleanly accused.
+fn unwarranted_compound_conflict(inv: &Json) -> Option<String> {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    // Canonical unordered pair key for two operand terms.
+    fn upair(a: &Json, b: &Json) -> (String, String) {
+        let x = serde_json::to_string(a).unwrap_or_default();
+        let y = serde_json::to_string(b).unwrap_or_default();
+        if x <= y {
+            (x, y)
+        } else {
+            (y, x)
+        }
+    }
+    // ≤-family vs ≥-family of a NON-STRICT comparison (strict `<`/`>` do not
+    // witness incomparability: `not(a<b) ∧ not(a>b)` just means `a==b`).
+    fn nonstrict_dir(name: &str) -> Option<&'static str> {
+        match name {
+            "lte" | "le" | "<=" | "\u{2264}" => Some("le"),
+            "gte" | "ge" | ">=" | "\u{2265}" => Some("ge"),
+            _ => None,
+        }
+    }
+    fn is_eq(name: &str) -> bool {
+        matches!(name, "=" | "eq")
+    }
+    fn is_ne(name: &str) -> bool {
+        matches!(name, "ne" | "neq" | "distinct" | "\u{2260}")
+    }
+
+    #[derive(Default)]
+    struct Acc {
+        // (a) =(T,c) pins on a non-ground compound T -> set of distinct consts.
+        pins: BTreeMap<String, BTreeSet<String>>,
+        // (b) a non-ground compound forced `X != X` (self-distinct).
+        self_ne: BTreeSet<String>,
+        // (c) unordered pairs (>=1 non-ground compound) seen under `=` and `ne`.
+        eq_pairs: BTreeSet<(String, String)>,
+        ne_pairs: BTreeSet<(String, String)>,
+        // (d) per pair, the set of NEGATED non-strict directions {le, ge}.
+        neg_cmp: BTreeMap<(String, String), BTreeSet<&'static str>>,
+    }
+
+    // `negated` tracks whether we are under an odd number of `not`s.
+    fn collect(inv: &Json, acc: &mut Acc, negated: bool) {
+        match inv.get("kind").and_then(|k| k.as_str()) {
+            Some("and") | Some("or") => {
+                if let Some(ops) = inv.get("operands").and_then(|o| o.as_array()) {
+                    for op in ops {
+                        collect(op, acc, negated);
+                    }
+                }
+            }
+            Some("not") => {
+                if let Some(ops) = inv.get("operands").and_then(|o| o.as_array()) {
+                    for op in ops {
+                        collect(op, acc, !negated);
+                    }
+                } else if let Some(op) = inv.get("operand") {
+                    collect(op, acc, !negated);
+                }
+            }
+            Some("atomic") => {
+                let name = inv.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                let Some(args) = inv.get("args").and_then(|a| a.as_array()) else {
+                    return;
+                };
+                if args.len() != 2 {
+                    return;
+                }
+                let (a, b) = (&args[0], &args[1]);
+                if !negated && is_eq(name) {
+                    // (a) fork-around-`t` in equality form.
+                    let pin = if is_nonground_compound(a) && json_is_const(b) {
+                        Some((a, b))
+                    } else if is_nonground_compound(b) && json_is_const(a) {
+                        Some((b, a))
+                    } else {
+                        None
+                    };
+                    if let Some((term, c)) = pin {
+                        acc.pins
+                            .entry(serde_json::to_string(term).unwrap_or_default())
+                            .or_default()
+                            .insert(serde_json::to_string(c).unwrap_or_default());
+                    }
+                    if is_nonground_compound(a) || is_nonground_compound(b) {
+                        acc.eq_pairs.insert(upair(a, b));
+                    }
+                }
+                if !negated && is_ne(name) {
+                    // (b) `X != X` on a non-ground compound (re-evaluated stateful
+                    // call), and (c) record the inequality pair.
+                    if is_nonground_compound(a)
+                        && serde_json::to_string(a).ok() == serde_json::to_string(b).ok()
+                    {
+                        acc.self_ne.insert(serde_json::to_string(a).unwrap_or_default());
+                    }
+                    if is_nonground_compound(a) || is_nonground_compound(b) {
+                        acc.ne_pairs.insert(upair(a, b));
+                    }
+                }
+                if negated {
+                    // (d) a NEGATED non-strict comparison witnesses one direction
+                    // of an asserted incomparability.
+                    if let Some(dir) = nonstrict_dir(name) {
+                        acc.neg_cmp.entry(upair(a, b)).or_default().insert(dir);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut acc = Acc::default();
+    collect(inv, &mut acc, false);
+
+    // (a) fork-around-`t`: a non-ground compound pinned to >=2 distinct values.
+    if let Some((term, _)) = acc.pins.iter().find(|(_, consts)| consts.len() >= 2) {
+        return Some(term.clone());
+    }
+    // (b) self-distinct on a non-ground compound.
+    if let Some(t) = acc.self_ne.iter().next() {
+        return Some(t.clone());
+    }
+    // (c) RELATION CONFLATION: the SAME pair asserted both equal AND unequal,
+    // with a non-ground compound operand. The lift merged value-equality and
+    // reference-identity (`assert_eq!(a,&*b)` + `ptr::eq`) onto one `=`/`ne`; we
+    // cannot warrant they are the same relation -> refuse, do not accuse.
+    if let Some((x, _)) = acc.eq_pairs.intersection(&acc.ne_pairs).next() {
+        return Some(format!("eq∧ne:{x}"));
+    }
+    // (d) INCOMPARABILITY on a TOTAL encoding: a pair asserted neither `<=` nor
+    // `>=`. For a total order `a<=b ∨ b<=a` always holds, so this is unsat only
+    // because a PARTIAL order (PartialOrd / NaN / float) was lowered onto z3's
+    // total `<=`. The encoding is wrong, not the vendor -> refuse.
+    if let Some((pair, _)) = acc
+        .neg_cmp
+        .iter()
+        .find(|(_, dirs)| dirs.contains("le") && dirs.contains("ge"))
+    {
+        return Some(format!("incomparable:{}", pair.0));
+    }
+    None
 }
 
 /// Conjoin ONLY the ambient universals RELEVANT to this obligation. An ambient
@@ -934,8 +1170,22 @@ fn solve_obligations_batched(obligations: &[Obligation]) -> Vec<ConsistencyResul
                 ),
             )
         } else {
-            let (v, label) = consistency_verdict(outcome.raw);
-            (v, format!("{label} `{}` [batched z3]", o.property_name))
+            let (mut v, label) = consistency_verdict(outcome.raw);
+            let mut r = format!("{label} `{}` [batched z3]", o.property_name);
+            // THE VENDOR FIXED `t`: an `unsat` on conflicting pins of a non-ground
+            // compound is a fork-around-`t`, indistinguishable from a real
+            // contradiction without the callee body (v2). Refuse, do not accuse.
+            if v == ObligationVerdict::Unsatisfied {
+                if let Some(term) = unwarranted_compound_conflict(&o.inv) {
+                    v = ObligationVerdict::Refused;
+                    r = format!(
+                        "refused: conflicting pins on non-ground term `{term}` -- real \
+                         contradiction vs. `t`-dependent trajectory unresolved without \
+                         callee body; not accused"
+                    );
+                }
+            }
+            (v, r)
         };
         if verdict == ObligationVerdict::Undecidable {
             undecidable += 1;
@@ -1338,6 +1588,148 @@ mod tests {
         let res = verify_consistency(&pool, &plan, &reg);
         assert_eq!(res.len(), 1);
         assert_eq!(res[0].verdict, ObligationVerdict::Discharged);
+    }
+
+    /// THE FORK-AROUND-`t` GUARD (the lemma, as teeth). A test pins the SAME
+    /// non-ground compound `get(i)` to two values -- a `t`-dependent trajectory
+    /// (an interior-mutable read), NOT a contradiction. Without the callee body we
+    /// cannot prove `get` pure, so we REFUSE rather than accuse. A GROUND call
+    /// (`add(2,3)`) and a BARE VAR (`x`) are warranted, so their conflicts stay
+    /// `Unsatisfied` -- the discrimination that keeps the numpy/holster findings
+    /// real. An identical repeated observation is the fixedpoint holding: no fork,
+    /// consistent.
+    #[test]
+    fn nonground_compound_conflict_is_refused_not_accused() {
+        let (plan, reg) = z3_plan_and_registry();
+        let get_i = || json!({"kind":"ctor","name":"method:get","args":[var("i")]});
+        let andf = |ops: Vec<Json>| json!({"kind":"and","operands":ops});
+
+        // (1) impure/unknown fork: get(i)==0 ∧ get(i)==4 -> REFUSED (not accused)
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:traj",
+            "method:get#euf#c:callresult_method_get_a1(v:t::i)::assertion",
+            andf(vec![eqf(get_i(), int(0)), eqf(get_i(), int(4))]),
+        );
+        let res = verify_consistency(&pool, &plan, &reg);
+        assert_eq!(res.len(), 1);
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Refused,
+            "a fork-around-t on a non-ground compound must be refused, not accused: {res:?}"
+        );
+
+        // (2) pure GROUND call fork: add(2,3)==5 ∧ add(2,3)==6 -> still UNSATISFIED
+        let add23 = || json!({"kind":"ctor","name":"call:add","args":[int(2), int(3)]});
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:ground",
+            "add#euf#c:callresult_add_a2(i:2,i:3)::assertion",
+            andf(vec![eqf(add23(), int(5)), eqf(add23(), int(6))]),
+        );
+        let res = verify_consistency(&pool, &plan, &reg);
+        assert_eq!(res.len(), 1);
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Unsatisfied,
+            "a ground-arg (t-independent, pure) call conflict is a real contradiction: {res:?}"
+        );
+
+        // (3) BARE VAR same-t: x==1 ∧ x==2 -> UNSATISFIED (single binding, same t)
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:bare",
+            "x#euf#c:callresult_x_a0()::assertion",
+            andf(vec![eqf(var("x"), int(1)), eqf(var("x"), int(2))]),
+        );
+        let res = verify_consistency(&pool, &plan, &reg);
+        assert_eq!(res.len(), 1);
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Unsatisfied,
+            "a bare-var (same-t, value bound once) conflict is a real contradiction: {res:?}"
+        );
+
+        // (5) self-distinct (fork-around-t in inequality form): ne(nth(it),nth(it))
+        //     -- a re-evaluated stateful call forced unequal to itself. REFUSED.
+        let nth_it = || json!({"kind":"ctor","name":"method:nth","args":[var("it"), int(0)]});
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:selfne",
+            "method:nth#euf#c:callresult_method_nth_a2(v:t::it,i:0)::assertion",
+            json!({"kind":"atomic","name":"ne","args":[nth_it(), nth_it()]}),
+        );
+        let res = verify_consistency(&pool, &plan, &reg);
+        assert_eq!(res.len(), 1);
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Refused,
+            "ne(X,X) on a non-ground compound (stateful re-evaluation) must be refused: {res:?}"
+        );
+
+        // (4) idempotent repeat (the fixedpoint holds, no fork): get(i)==4 ∧ ==4
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:idem",
+            "method:get#euf#c:callresult_method_get_a1(v:t::j)::assertion",
+            andf(vec![eqf(get_i(), int(4)), eqf(get_i(), int(4))]),
+        );
+        let res = verify_consistency(&pool, &plan, &reg);
+        assert_eq!(res.len(), 1);
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Discharged,
+            "identical repeated observation is consistent (fixedpoint holds), not refused: {res:?}"
+        );
+
+        // (6) RELATION CONFLATION (C): a == ref(deref b) ∧ a != ref(deref b).
+        //     value-equality and pointer-identity merged onto one =/ne over a
+        //     non-ground compound -> cannot warrant they are one relation -> REFUSED.
+        let refderef_b =
+            || json!({"kind":"ctor","name":"ref","args":[{"kind":"ctor","name":"deref","args":[var("b")]}]});
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:clone",
+            "method:clone_to_uninit#euf#c:callresult_x_a0()::assertion",
+            json!({"kind":"and","operands":[
+                {"kind":"atomic","name":"=","args":[var("a"), refderef_b()]},
+                {"kind":"atomic","name":"ne","args":[var("a"), refderef_b()]}
+            ]}),
+        );
+        let res = verify_consistency(&pool, &plan, &reg);
+        assert_eq!(res.len(), 1);
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Refused,
+            "eq∧ne on the same non-ground-compound pair (relation conflation) must be refused: {res:?}"
+        );
+
+        // (7) INCOMPARABILITY (D): not(x<=y) ∧ not(x>=y). On z3's TOTAL Int order
+        //     this is unsat, but it is only assertable for a PARTIAL order
+        //     (PartialOrd/NaN) lowered onto the wrong encoding -> REFUSED.
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:partialord",
+            "tuple_cmp#euf#c:callresult_cmp_a2(v:t::x,v:t::y)::assertion",
+            json!({"kind":"and","operands":[
+                {"kind":"not","operands":[{"kind":"atomic","name":"lte","args":[var("x"), var("y")]}]},
+                {"kind":"not","operands":[{"kind":"atomic","name":"gte","args":[var("x"), var("y")]}]}
+            ]}),
+        );
+        let res = verify_consistency(&pool, &plan, &reg);
+        assert_eq!(res.len(), 1);
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Refused,
+            "asserted incomparability (partial order on a total encoding) must be refused: {res:?}"
+        );
     }
 
     /// THE HOLSTER DEMO. A vendor swears `result < X`; a consumer swears

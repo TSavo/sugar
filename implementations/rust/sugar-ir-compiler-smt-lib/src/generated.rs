@@ -130,6 +130,15 @@ pub fn emit_term(term: &Term) -> String {
 fn emit_sort_with_reason(sort: &Sort) -> (String, Option<String>) {
     match sort {
         Sort::Primitive { name } if is_supported_smt_primitive_sort(name) => (name.clone(), None),
+        // NUMBER HIERARCHY: a fixed-width integer sort (u8 … i128, usize, isize)
+        // IS `Int` for SMT, with NO opaque reason. The width is a refinement that
+        // rides in the lifted callsite KEY (so `1u8` and `1u64` stay distinct
+        // calls); the VALUE is a concrete Int, so arithmetic on it is checked
+        // exactly. Without this explicit entry the literal fell to the opaque
+        // fallback below, whose `reason` flips quantifier binders / decls onto a
+        // CID-named opaque sort and turned otherwise-decidable obligations into
+        // `unknown`.
+        Sort::Primitive { name } if is_int_width_sort(name) => ("Int".to_string(), None),
         Sort::Primitive { name } => (
             "Int".to_string(),
             Some(format!("opaque_primitive_sort:{name}")),
@@ -148,6 +157,26 @@ fn emit_sort_with_reason(sort: &Sort) -> (String, Option<String>) {
 
 fn is_supported_smt_primitive_sort(name: &str) -> bool {
     matches!(name, "Int" | "Bool" | "Real" | "String")
+}
+
+/// A Rust fixed-width integer sort. For SMT it IS `Int` (the value is concrete,
+/// arithmetic is exact); the width is a refinement carried only in the lifted
+/// callsite key. See `emit_sort_with_reason`.
+fn is_int_width_sort(name: &str) -> bool {
+    matches!(
+        name,
+        "u8" | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+    )
 }
 
 pub fn emit_sort(sort: &Sort) -> String {
