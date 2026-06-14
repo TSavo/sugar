@@ -4898,29 +4898,32 @@ fn lit_tup() {
 // --- item-level const assertion accounting (totality to zero) ---
 
 #[test]
-fn const_item_assertion_is_refused_not_silent() {
-    // A compile-time `const _: () = assert!(...)` at item level (inside a module)
-    // must be accounted, not silently dropped. This was the last silent-drop
-    // class in coretests cmp.rs (mod const_cmp).
+fn const_item_assertion_is_lifted_not_silent() {
+    // A compile-time `const _: () = assert!(...)` at item level is UNCONDITIONALLY
+    // const-evaluated, so its asserts are real obligations. With pinned scalar
+    // operands they now LIFT (sugar in, constraint out) rather than being refused --
+    // strictly better than the old "accounted as a named refusal" behavior, and still
+    // never a silent drop. (Non-liftable const-item asserts, e.g. `S(1) == S(1)`
+    // construction-semantics, stay refused/unclassified via the collector.)
     let src = r#"
 mod const_cmp {
-    struct S(i32);
     const _: () = assert!(1 == 1);
     const _: () = assert!(0 != 1);
 }
 "#;
     let out = lift_file(&parse(src), "tests/cmp.rs");
-    let refused: Vec<_> = out
-        .skip_reasons
-        .iter()
-        .filter(|r| r.contains("const-item assertion"))
-        .collect();
     assert_eq!(
-        refused.len(),
-        2,
-        "both const-item asserts must be named refusals: {:?}",
+        out.assertions_lifted, 2,
+        "both pinned const-item asserts must lift: lifted={} refused={} reasons={:?}",
+        out.assertions_lifted, out.assertions_refused, out.skip_reasons
+    );
+    assert_eq!(
+        out.assertions_refused, 0,
+        "no const-item assert should be refused here: {:?}",
         out.skip_reasons
     );
+    // Totality preserved: the two asserts are accounted (lifted), none silently dropped.
+    assert_eq!(out.decls.len(), 2, "each const-item assert yields a contract");
 }
 
 #[test]

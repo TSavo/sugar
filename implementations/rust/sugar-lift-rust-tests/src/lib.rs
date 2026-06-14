@@ -395,10 +395,10 @@ fn walk_non_test_fns(
             // (e.g. `const _: () = assert!(S(1) == S(1));`). Count and refuse them
             // so they are accounted, not silently dropped.
             Item::Const(c) => {
-                refuse_item_assertions(&c.expr, "const-item", source_path, modules, out);
+                lift_item_assertions(&c.expr, "const-item", source_path, modules, options, reducer, out);
             }
             Item::Static(s) => {
-                refuse_item_assertions(&s.expr, "static-item", source_path, modules, out);
+                lift_item_assertions(&s.expr, "static-item", source_path, modules, options, reducer, out);
             }
             _ => {}
         }
@@ -2024,32 +2024,90 @@ fn refuse_nested_asserts_in_stmts(stmts: &[Stmt], context: &str, skipped: &mut V
     }
 }
 
-/// Account for assert macros inside an item-level const/static initializer by
-/// emitting one named refusal per assert. Keeps the totality invariant for
-/// compile-time asserts written as `const _: () = assert!(...)`.
-fn refuse_item_assertions(
+/// Lift the assert macros inside an item-level const/static initializer. The
+/// initializer of a `const`/`static` is UNCONDITIONALLY evaluated (compile-time
+/// const-eval), so its asserts are real, unconditional obligations -- lift them
+/// through the SAME collector a `#[test]` fn body uses, rather than blanket-refusing.
+/// This discharges e.g. the `const _: () = { .. }` compile-time twin that
+/// `test_runtime_and_compiletime!` emits alongside each `#[test] fn` (both copies are
+/// distinct source occurrences counted in the textual total, so discharging the const
+/// copy balances `seen`, it does not double-count). A non-liftable assert propagates
+/// its own named refusal via the collector (stays unclassified/refused, never a silent
+/// drop or false discharge); the totality net refuses any unenumerated remainder so the
+/// accounting stays closed.
+fn lift_item_assertions(
     expr: &Expr,
     kind: &str,
     source_path: &str,
     modules: &[String],
+    options: &LiftOptions,
+    reducer: &ReductionCtx<'_>,
     out: &mut AdapterOutput,
 ) {
-    let count = count_asserts_in_expr(expr);
-    if count == 0 {
+    let textual_total = count_asserts_in_expr(expr);
+    if textual_total == 0 {
         return;
     }
-    let reason = format!("{kind} assertion: compile-time const/static assert; released to layer 0");
-    for _ in 0..count {
-        out.assertions_refused += 1;
-        out.skip_reasons.push(reason.clone());
+    let item_name = scoped_test_name(source_path, modules, kind);
+    // Normalize the initializer to a statement slice the collector understands:
+    // a block initializer contributes its own statements; a bare `assert!(..)` is
+    // wrapped as the macro statement; anything else is a single expression statement.
+    let stmts: Vec<Stmt> = match expr {
+        Expr::Block(b) => b.block.stmts.clone(),
+        Expr::Macro(m) => vec![Stmt::Macro(syn::StmtMacro {
+            attrs: Vec::new(),
+            mac: m.mac.clone(),
+            semi_token: None,
+        })],
+        other => vec![Stmt::Expr(other.clone(), None)],
+    };
+    let mut entries = Vec::new();
+    let mut skipped = Vec::new();
+    let mut float_widths = FloatWidthScope::new();
+    let mut macros_lifted = 0usize;
+    collect_assertion_entries(
+        &stmts,
+        &item_name,
+        options,
+        reducer,
+        &mut float_widths,
+        &mut entries,
+        &mut skipped,
+        &mut macros_lifted,
+        &mut out.reduced_helpers,
+        0,
+        &BTreeSet::new(),
+    );
+    out.assertions_lifted += macros_lifted;
+    out.assertions_refused += skipped.len();
+    out.skip_reasons.extend(skipped.iter().cloned());
+
+    // Totality net: every textual assert macro in the initializer is accounted
+    // (lifted or refused). Any remainder the structured walk did not reach is
+    // refused by name -- no silent drop.
+    let accounted = macros_lifted + skipped.len();
+    if textual_total > accounted {
+        let gap = textual_total - accounted;
+        let reason =
+            format!("{kind} assertion: compile-time const/static assert; released to layer 0");
+        for _ in 0..gap {
+            out.assertions_refused += 1;
+            out.skip_reasons.push(reason.clone());
+        }
     }
-    out.warnings.push(LiftWarning {
-        source_path: source_path.to_string(),
-        item_name: scoped_test_name(source_path, modules, kind),
-        reason: format!(
-            "rust test assertions: unsupported assertion surface; released to layer 0: {reason}"
-        ),
-    });
+
+    for (name, atoms) in group_assertions(entries, &item_name) {
+        out.decls.push(ContractDecl {
+            name,
+            pre: None,
+            post: None,
+            inv: Some(and_(atoms)),
+            out_binding: "out".to_string(),
+            evidence: None,
+            panic_loci: Vec::new(),
+            concept_hint: None,
+        });
+    }
 }
 
 fn temporal_plan_for_stmts(stmts: &[Stmt], inherited_stateful: &BTreeSet<String>) -> TemporalPlan {
