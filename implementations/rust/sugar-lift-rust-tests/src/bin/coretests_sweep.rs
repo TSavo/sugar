@@ -28,17 +28,79 @@ use syn::visit::{self, Visit};
 /// toolchain. One batched harness; on a batch COMPILE error (one bad assert sinks the
 /// lot) fall back to per-assert so the rest still salvage. Non-determinism / unavailable
 /// toolchain -> 0 (dissolve nothing).
-fn dissolve_count(asserts: &[String], dir: &std::path::Path) -> usize {
+/// The pinned toolchain that compiles the harness. The corpus is nightly stdlib-test
+/// code (heavy `#![feature(...)]`), so the harness is compiled under the matching
+/// nightly -- the same toolchain the vendor's tests assume (the named, pinned axiom).
+fn harness_rustc_args() -> Vec<String> {
+    vec!["run".into(), "nightly-2026-02-07".into(), "rustc".into()]
+}
+
+/// Prune `#![feature(...)]` gates the pinned nightly no longer accepts (features that
+/// STABILIZED since the corpus's toolchain -- the gate is now an "unknown feature"
+/// error while the method is stable, so dropping the gate is sound; behavior is
+/// unchanged). Iterates until the feature prelude compiles a trivial harness.
+fn prune_feature_prelude(feature_prelude: &str, dir: &std::path::Path) -> String {
+    let mut feats: Vec<String> = feature_prelude
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.to_string())
+        .collect();
+    let args = harness_rustc_args();
+    for _ in 0..40 {
+        let src = format!("{}\nfn main() {{}}\n", feats.join("\n"));
+        let src_path = dir.join("feature_probe.rs");
+        if std::fs::write(&src_path, &src).is_err() {
+            return feats.join("\n");
+        }
+        let out = match std::process::Command::new("rustup")
+            .args(&args)
+            .arg("--edition")
+            .arg("2021")
+            .arg("-A")
+            .arg("warnings")
+            .arg(&src_path)
+            .arg("-o")
+            .arg(dir.join("feature_probe_bin"))
+            .output()
+        {
+            Ok(o) => o,
+            Err(_) => return feats.join("\n"),
+        };
+        if out.status.success() {
+            return feats.join("\n");
+        }
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        // collect every `unknown feature \`X\`` and drop the matching gate line.
+        let mut unknown: Vec<String> = Vec::new();
+        for line in stderr.lines() {
+            if let Some(idx) = line.find("unknown feature `") {
+                let rest = &line[idx + "unknown feature `".len()..];
+                if let Some(end) = rest.find('`') {
+                    unknown.push(rest[..end].to_string());
+                }
+            }
+        }
+        if unknown.is_empty() {
+            // a non-feature error -- stop pruning, return what we have.
+            return feats.join("\n");
+        }
+        feats.retain(|l| !unknown.iter().any(|u| l.contains(&format!("feature({u})"))));
+    }
+    feats.join("\n")
+}
+
+fn dissolve_count(prelude: &str, asserts: &[String], dir: &std::path::Path) -> usize {
     if asserts.is_empty() {
         return 0;
     }
-    match closed_eval::evaluate_asserts("", asserts, "rustc", &[], "2021", dir) {
+    let args = harness_rustc_args();
+    match closed_eval::evaluate_asserts(prelude, asserts, "rustup", &args, "2021", dir) {
         HarnessResult::Ran(held) => held.iter().filter(|&&h| h).count(),
         HarnessResult::CompileError(_) => asserts
             .iter()
             .filter(|a| {
                 matches!(
-                    closed_eval::evaluate_asserts("", std::slice::from_ref(a), "rustc", &[], "2021", dir),
+                    closed_eval::evaluate_asserts(prelude, std::slice::from_ref(a), "rustup", &args, "2021", dir),
                     HarnessResult::Ran(held) if held.first() == Some(&true)
                 )
             })
@@ -172,6 +234,27 @@ fn main() {
     if dissolve {
         let _ = std::fs::create_dir_all(&dissolve_dir);
     }
+    // The corpus's crate-level `#![feature(...)]` gates: the harness must declare the
+    // same gates the vendor's nightly test crate does, or unstable-method asserts
+    // (`'a'.is_cased()`, ...) will not compile. Lifted verbatim from the corpus lib.rs.
+    let feature_prelude = if dissolve {
+        std::fs::read_to_string(std::path::Path::new(corpus).join("lib.rs"))
+            .map(|s| {
+                s.lines()
+                    .filter(|l| l.trim_start().starts_with("#![feature("))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    // Prune stabilized gates once, upfront, against the pinned nightly.
+    let feature_prelude = if dissolve && !feature_prelude.is_empty() {
+        prune_feature_prelude(&feature_prelude, &dissolve_dir)
+    } else {
+        feature_prelude
+    };
     let mut dissolved_total = 0usize;
     // `--deps dir1,dir2,...`: dependency SOURCE trees whose macro_rules! should
     // be in scope when expanding (we operate exclusively on source).
@@ -345,8 +428,9 @@ fn main() {
         // same `unaccounted`, so SILENT is unaffected). Capped at file_unclassified so we
         // only ever reclassify work the lifter actually left open.
         let dissolved = if dissolve {
-            let cands = closed_eval::collect_dissolvable_asserts(&file);
-            dissolve_count(&cands, &dissolve_dir).min(file_unclassified)
+            let d = closed_eval::collect_dissolvable(&file);
+            let full_prelude = format!("{}\n{}", feature_prelude, d.prelude);
+            dissolve_count(&full_prelude, &d.asserts, &dissolve_dir).min(file_unclassified)
         } else {
             0
         };

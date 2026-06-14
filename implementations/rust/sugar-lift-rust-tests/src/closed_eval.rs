@@ -194,6 +194,213 @@ fn operands_use_stdlib_op(operands: &[&Expr]) -> bool {
     w.found
 }
 
+/// A pure local helper that may be CARRIED into the harness prelude: a thin wrapper
+/// whose body is itself stdlib sugar (test plumbing like
+/// `fn lower(c: char) -> String { ...; c.to_lowercase().collect() }`), NOT a user
+/// algorithm. Its parameters are allowed as leaves (they are bound to closed literals
+/// at the call site); every expression in its body must otherwise be stdlib sugar.
+/// Single level only: a body that calls another local helper does NOT qualify (skip =
+/// safe under-claim). This stays inside fence #1: we are not verifying the helper, we
+/// are dissolving the stdlib sugar it wraps -- the helper carries no logic of its own.
+fn helper_is_carryable(f: &syn::ItemFn) -> bool {
+    // Desugar-and-continue: the helper is plumbing whose body we replace by its value.
+    // It qualifies iff its body is pure stdlib sugar -- NO impure op, and NO call to
+    // another (non-ctor) function (single level). Local `let` bindings and the helper's
+    // own params are fine; a genuinely-free var would fail the harness compile (safe).
+    struct BodyCheck {
+        ok: bool,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for BodyCheck {
+        fn visit_expr_call(&mut self, c: &'ast syn::ExprCall) {
+            // calls allowed only to ctors/variants (Some/Ok/..); a lowercase call =
+            // another helper / user fn -> disqualify (single-level only).
+            let ctor =
+                matches!(c.func.as_ref(), Expr::Path(p) if is_const_or_ctor_path(&p.path));
+            if !ctor {
+                self.ok = false;
+            }
+            syn::visit::visit_expr_call(self, c);
+        }
+        fn visit_expr_method_call(&mut self, m: &'ast syn::ExprMethodCall) {
+            if IMPURE_NAMES.contains(&m.method.to_string().as_str()) {
+                self.ok = false;
+            }
+            syn::visit::visit_expr_method_call(self, m);
+        }
+        // NOTE: we deliberately do NOT reject bare identifiers. A helper body legitimately
+        // uses local `let` bindings (`let iter = c.to_lowercase().collect(); ...`). A
+        // genuinely-free variable would simply fail to compile in the harness -> not green
+        // -> not dissolved (safe). The real fences are: no impure op (above) and no call to
+        // another (non-ctor) function (below, single-level).
+    }
+    let mut c = BodyCheck { ok: true };
+    syn::visit::Visit::visit_block(&mut c, &f.block);
+    c.ok
+}
+
+/// Walk a file for unit-test assertions that are CLOSED STDLIB VALUE SUGAR (gate) and
+/// perform at least one stdlib sugar op the symbolic lifter cannot model. Returns a
+/// shared `prelude` (the unique, unambiguous, carryable local helpers any dissolvable
+/// assert calls) plus the reconstructed, message-stripped assert statements. Message
+/// args are dropped so a message referencing a runtime local cannot break the compile.
+pub struct Dissolvable {
+    pub prelude: String,
+    pub asserts: Vec<String>,
+}
+
+pub fn collect_dissolvable(file: &syn::File) -> Dissolvable {
+    use std::collections::BTreeMap;
+    // name -> defs (a name defined more than once is ambiguous; never carried).
+    let mut fns: BTreeMap<String, Vec<syn::ItemFn>> = BTreeMap::new();
+    struct FnWalk<'a>(&'a mut BTreeMap<String, Vec<syn::ItemFn>>);
+    impl<'a, 'ast> syn::visit::Visit<'ast> for FnWalk<'a> {
+        fn visit_item_fn(&mut self, f: &'ast syn::ItemFn) {
+            self.0.entry(f.sig.ident.to_string()).or_default().push(f.clone());
+            syn::visit::visit_item_fn(self, f);
+        }
+    }
+    syn::visit::Visit::visit_file(&mut FnWalk(&mut fns), file);
+
+    let raw = collect_dissolvable_asserts_with_helpers(file, &fns);
+    // Build the prelude from the unique carryable helpers actually referenced.
+    let mut prelude = String::new();
+    for name in &raw.1 {
+        if let Some(defs) = fns.get(name) {
+            if defs.len() == 1 {
+                prelude.push_str(&quote::quote!(#(#defs)*).to_string());
+                prelude.push('\n');
+            }
+        }
+    }
+    Dissolvable {
+        prelude,
+        asserts: raw.0,
+    }
+}
+
+/// Returns (assert statements, set of carryable-helper names referenced).
+fn collect_dissolvable_asserts_with_helpers(
+    file: &syn::File,
+    fns: &std::collections::BTreeMap<String, Vec<syn::ItemFn>>,
+) -> (Vec<String>, std::collections::BTreeSet<String>) {
+    use syn::parse::Parser;
+    use syn::punctuated::Punctuated;
+    let mut asserts = Vec::new();
+    let mut helpers = std::collections::BTreeSet::new();
+
+    // Does `expr` qualify as closed stdlib sugar, allowing calls to UNIQUE carryable
+    // local helpers (recorded into `helpers`)?
+    fn check(
+        expr: &Expr,
+        fns: &std::collections::BTreeMap<String, Vec<syn::ItemFn>>,
+        helpers: &mut std::collections::BTreeSet<String>,
+    ) -> bool {
+        if let Expr::Call(c) = expr {
+            if let Expr::Path(p) = c.func.as_ref() {
+                if let Some(id) = p.path.get_ident() {
+                    let name = id.to_string();
+                    // lowercase call: only OK if it's a unique carryable local helper.
+                    if !is_const_or_ctor_path(&p.path) {
+                        match fns.get(&name) {
+                            Some(defs) if defs.len() == 1 && helper_is_carryable(&defs[0]) => {
+                                helpers.insert(name);
+                                return c.args.iter().all(|a| check(a, fns, helpers));
+                            }
+                            _ => return false,
+                        }
+                    }
+                }
+            }
+        }
+        // Fall back to the plain sugar gate for non-helper-call shapes, but recurse
+        // through composite nodes so nested helper calls are still recorded.
+        match expr {
+            Expr::Call(c) => {
+                let ctor =
+                    matches!(c.func.as_ref(), Expr::Path(p) if is_const_or_ctor_path(&p.path));
+                ctor && c.args.iter().all(|a| check(a, fns, helpers))
+            }
+            Expr::MethodCall(m) => {
+                !IMPURE_NAMES.contains(&m.method.to_string().as_str())
+                    && check(&m.receiver, fns, helpers)
+                    && m.args.iter().all(|a| check(a, fns, helpers))
+            }
+            Expr::Paren(p) => check(&p.expr, fns, helpers),
+            Expr::Group(g) => check(&g.expr, fns, helpers),
+            Expr::Reference(r) => check(&r.expr, fns, helpers),
+            Expr::Unary(u) => check(&u.expr, fns, helpers),
+            Expr::Binary(b) => check(&b.left, fns, helpers) && check(&b.right, fns, helpers),
+            Expr::Array(a) => a.elems.iter().all(|e| check(e, fns, helpers)),
+            Expr::Tuple(t) => t.elems.iter().all(|e| check(e, fns, helpers)),
+            Expr::Cast(c) => check(&c.expr, fns, helpers),
+            Expr::Index(i) => check(&i.expr, fns, helpers) && check(&i.index, fns, helpers),
+            // leaves / macros handled by the plain gate.
+            _ => closed_pure_sugar(expr),
+        }
+    }
+
+    struct W<'a> {
+        fns: &'a std::collections::BTreeMap<String, Vec<syn::ItemFn>>,
+        asserts: &'a mut Vec<String>,
+        helpers: &'a mut std::collections::BTreeSet<String>,
+    }
+    impl<'a, 'ast> syn::visit::Visit<'ast> for W<'a> {
+        fn visit_macro(&mut self, m: &'ast syn::Macro) {
+            let name = m
+                .path
+                .segments
+                .last()
+                .map(|s| s.ident.to_string())
+                .unwrap_or_default();
+            let macro_name = match name.as_str() {
+                "assert_eq" | "debug_assert_eq" => Some("assert_eq"),
+                "assert_ne" | "debug_assert_ne" => Some("assert_ne"),
+                "assert" | "debug_assert" => Some("assert"),
+                _ => None,
+            };
+            if let Some(macro_name) = macro_name {
+                let parser = Punctuated::<Expr, syn::Token![,]>::parse_terminated;
+                if let Ok(args) = parser.parse2(m.tokens.clone()) {
+                    let ops: Vec<&Expr> = args.iter().collect();
+                    let value_ops: Vec<&Expr> = if macro_name == "assert" {
+                        ops.iter().take(1).copied().collect()
+                    } else {
+                        ops.iter().take(2).copied().collect()
+                    };
+                    let enough = value_ops.len() == if macro_name == "assert" { 1 } else { 2 };
+                    // try with a scratch helper set; commit only if the whole assert gates.
+                    let mut scratch = std::collections::BTreeSet::new();
+                    let all_sugar = enough && value_ops.iter().all(|e| check(e, self.fns, &mut scratch));
+                    // A dissolvable candidate must be something the SYMBOLIC lifter could not
+                    // model -> a direct stdlib op in the operand, OR a carried local helper
+                    // (a helper call is also unclassified by the lifter). Either avoids double-count.
+                    let gated =
+                        all_sugar && (operands_use_stdlib_op(&value_ops) || !scratch.is_empty());
+                    if gated {
+                        self.helpers.extend(scratch);
+                        let stmt = if macro_name == "assert" {
+                            format!("assert!({})", quote::quote!(#(#value_ops)*))
+                        } else {
+                            let l = value_ops[0];
+                            let r = value_ops[1];
+                            format!("{}!({}, {})", macro_name, quote::quote!(#l), quote::quote!(#r))
+                        };
+                        self.asserts.push(stmt);
+                    }
+                }
+            }
+            syn::visit::visit_macro(self, m);
+        }
+    }
+    let mut w = W {
+        fns,
+        asserts: &mut asserts,
+        helpers: &mut helpers,
+    };
+    syn::visit::Visit::visit_file(&mut w, file);
+    (asserts, helpers)
+}
+
 /// Walk a file for unit-test assertions that are CLOSED STDLIB VALUE SUGAR (gate) and
 /// perform at least one stdlib sugar op the symbolic lifter cannot model. Returns each
 /// as a reconstructed, message-stripped assert statement (`assert_eq!(LHS, RHS)` /
@@ -421,6 +628,31 @@ mod tests {
         // field access / arbitrary expr -> not certified.
         assert!(!gate("x.field"));
         assert!(!gate("{ let y = 3; y }"));
+    }
+
+    #[test]
+    fn collect_carries_a_pure_local_helper() {
+        let file: syn::File = syn::parse_str(
+            "fn lower(c: char) -> String { c.to_lowercase().collect() }\n\
+             #[test] fn t() { assert_eq!(lower('A'), \"a\"); }\n",
+        )
+        .unwrap();
+        let d = collect_dissolvable(&file);
+        assert!(d.prelude.contains("fn lower"), "helper carried: {:?}", d.prelude);
+        assert_eq!(d.asserts.len(), 1, "the helper-wrapped assert is dissolvable");
+    }
+
+    #[test]
+    fn collect_skips_multilevel_or_user_logic_helper() {
+        // helper that calls ANOTHER fn -> not single-level pure stdlib -> skipped.
+        let file: syn::File = syn::parse_str(
+            "fn inner(c: char) -> char { c }\n\
+             fn outer(c: char) -> String { inner(c).to_lowercase().collect() }\n\
+             #[test] fn t() { assert_eq!(outer('A'), \"a\"); }\n",
+        )
+        .unwrap();
+        let d = collect_dissolvable(&file);
+        assert!(d.asserts.is_empty(), "multilevel helper must be skipped (safe)");
     }
 
     #[test]
