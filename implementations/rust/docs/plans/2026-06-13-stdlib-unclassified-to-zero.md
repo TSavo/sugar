@@ -84,7 +84,8 @@ routes through exactly one of three walls; none has a sound, mechanically-isolat
 autonomous-safe path to *discharge*. Logged here so the supervised campaign targets,
 not re-surveys.**
 
-**Wall A — higher-order body (closures / `format!` / formatter output).** A
+**Wall A — higher-order / construction-semantics body (closures, constructor-method
+chains, `format!`).** A
 shared-path term/body change; a mis-lift here is a MASKED-CONTRADICTION the sweep
 cannot catch (it only catches false-UNSAT + silent drops). Buckets:
 - `38` *nested in an unlifted expression statement* — the `other` arm already
@@ -94,8 +95,18 @@ cannot catch (it only catches false-UNSAT + silent drops). Buckets:
   term operator is the SAME shared-path edit that regressed `negated_call_result_…`
   when comparison-ops were added to `term_binop_name` (reverted). Regression-prone.
 - `44`+`16`+`6`+`3` *for/adaptor over a literal range/array (bin-1)* — domain IS
-  pinned (precondition met), but the bodies are `format!("{i:.p$e}", …)` formatter
-  output (e.g. `fmt/num.rs:274`) → needs the formatter/closure body lifter.
+  pinned (precondition met); body-by-body audit (2026-06-14) shows the bodies are
+  **NOT** mostly `format!` (that is only the `fmt/num.rs:274` subset). The dominant
+  shapes are: **(a) constructor-method-chains** — `Big::from_small(1).mul_pow2(i)
+  .bit_length() == i + 1` (bignum.rs:202/220/224); RHS `i+1` IS pinned arithmetic
+  over the loop var, only the LHS construction chain is the wall → **rung 3 /
+  Voltron construction-semantics**, and `Big`/`Big32x40` are cross-file types so it
+  is ALSO Wall B; **(b) cross-file helper calls** — `memrchr(needle, &data[start..])`
+  (slice.rs:1825), `round_down_imprecise((i as f32).log10())` (int_log.rs:136) →
+  Wall B; **(c) string-method chains** — `from_u32(i).unwrap().to_string()
+  .to_ascii_lowercase()` (ascii.rs:40). So this bucket's supervised need is
+  **construction-semantics + cross-file accounting**, NOT a formatter model —
+  redirecting the earlier "format! output" characterization, which was wrong.
 
 **Wall B — cross-file inlining (needs corpus-wide accounting, the M1 restructure).**
 - `516` *reachable only via call-site inlining* — the architectural bucket (see
