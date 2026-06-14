@@ -5038,6 +5038,12 @@ def _is_known_pure_call_value_expr(node: ast.Call) -> bool:
             and 1 <= len(node.args) <= 3
             and all(_is_known_pure_call_arg(arg) for arg in node.args)
         )
+    if name == "slice":
+        return (
+            not node.keywords
+            and 1 <= len(node.args) <= 3
+            and all(_is_known_pure_call_arg(arg) for arg in node.args)
+        )
     if name == "sorted":
         return (
             len(node.args) == 1

@@ -1428,6 +1428,74 @@ def test_structural_package_accounting_warrants_known_pure_call_value_terms(
     ), pure_call_loci
 
 
+def test_structural_package_accounting_warrants_builtin_slice_value_terms(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("SUGAR_PY_PACKAGE_ACCOUNTING_MODE", "structural")
+    pkg = tmp_path / "vendpkg_builtin_slice_terms"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    module_path = pkg / "api.py"
+    module_path.write_text(
+        textwrap.dedent(
+            """
+            def skipped(values):
+                return (
+                    slice(None),
+                    slice(1, len(values), 2),
+                )
+
+            def ok():
+                return "ok"
+            """
+        ),
+        encoding="utf-8",
+    )
+    slice_lines = {
+        line_no
+        for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
+        if line.strip().startswith("slice(")
+    }
+    monkeypatch.syspath_prepend(str(tmp_path))
+    constant_universe_for_callee_clear()
+
+    lifted = _lift_source_from_disk(
+        tmp_path,
+        "test_mod.py",
+        """
+        import vendpkg_builtin_slice_terms.api as api
+
+        def test_ok():
+            assert api.ok() == "ok"
+        """,
+    )
+
+    audit = next(
+        audit
+        for audit in lifted["sourceAudits"]
+        if audit.get("role") == "python.package-source"
+        and audit.get("package") == "vendpkg_builtin_slice_terms"
+    )
+    slice_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith("vendpkg_builtin_slice_terms/api.py")
+        and locus["line"] in slice_lines
+        and locus.get("ast_kind") in {"Call", "Name", "Constant"}
+    ]
+    assert slice_loci
+    assert not [
+        locus for locus in slice_loci if locus["status"] == "unclassified"
+    ], slice_loci
+    assert any(
+        locus["status"] == "warranted"
+        and locus.get("ast_kind") == "Call"
+        and "known pure call value term" in locus.get("reason", "")
+        for locus in slice_loci
+    ), slice_loci
+
+
 def test_structural_package_accounting_refuses_dynamic_getattr_lookup(
     tmp_path,
     monkeypatch,
