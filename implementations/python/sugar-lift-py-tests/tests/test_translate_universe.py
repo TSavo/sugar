@@ -2830,6 +2830,100 @@ def test_lift_source_refuses_nondeterministic_time_package_accounting(
     ), nondet_loci
 
 
+def test_structural_package_accounting_refuses_numpy_rng_chains(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("SUGAR_PY_PACKAGE_ACCOUNTING_MODE", "structural")
+    numpy_pkg = tmp_path / "numpy"
+    numpy_pkg.mkdir()
+    (numpy_pkg / "__init__.py").write_text(
+        textwrap.dedent(
+            """
+            class _Random:
+                def default_rng(self, seed=None):
+                    return self
+
+                def random(self, shape=None):
+                    return shape
+
+                def standard_normal(self, shape=None):
+                    return shape
+
+                def choice(self, values):
+                    return values
+
+            random = _Random()
+            """
+        ),
+        encoding="utf-8",
+    )
+    pkg = tmp_path / "vendpkg_numpy_rng_refused"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    module_path = pkg / "encoding.py"
+    module_path.write_text(
+        textwrap.dedent(
+            """
+            import numpy as np
+
+            def b64e(s):
+                return s.rstrip(b"=")
+
+            def seeded_arrays():
+                values = np.random.default_rng(2).random((10, 2))
+                normal = np.random.default_rng(2).standard_normal(3)
+                chosen = np.random.default_rng(2).choice([1, 2, 3])
+                return values
+            """
+        ),
+        encoding="utf-8",
+    )
+    rng_lines = {
+        line_no
+        for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
+        if "default_rng" in line
+    }
+    monkeypatch.syspath_prepend(str(tmp_path))
+    translate_universe_for_callee.cache_clear()
+
+    lifted = _lift_source_from_disk(
+        tmp_path,
+        "test_mod.py",
+        """
+        import vendpkg_numpy_rng_refused.encoding as enc
+
+        def test_token():
+            assert enc.b64e(b"abc=") == b"abc"
+        """,
+    )
+
+    audit = next(
+        audit
+        for audit in lifted["sourceAudits"]
+        if audit.get("role") == "python.package-source"
+        and audit.get("package") == "vendpkg_numpy_rng_refused"
+    )
+    rng_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith("vendpkg_numpy_rng_refused/encoding.py")
+        and locus.get("line") in rng_lines
+        and locus.get("ast_kind")
+        in {"Assign", "Call", "Attribute", "Name", "Constant", "Tuple", "List"}
+    ]
+    assert rng_loci
+    assert not [
+        locus for locus in rng_loci if locus["status"] == "unclassified"
+    ], rng_loci
+    assert any(
+        locus["status"] == "refused"
+        and locus.get("ast_kind") == "Call"
+        and "nondeterminism" in locus.get("reason", "")
+        for locus in rng_loci
+    ), rng_loci
+
+
 def test_structural_package_accounting_refuses_runtime_environment_probes(
     tmp_path,
     monkeypatch,
