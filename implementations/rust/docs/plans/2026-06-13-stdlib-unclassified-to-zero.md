@@ -3,10 +3,11 @@
 > **COMPLETE CENSUS 2026-06-14 (every one of the 883 enumerated by concrete class
 > + per-class soundness verdict; ground truth from the sweep's own classifier with
 > the reason-sample cap temporarily raised 12→5000, captured, reverted — NOT regex
-> inference).** unclassified=883, discharged=5287, refused(terminal)=201, inactive=58,
-> SILENT=0, falsePass=0. The 883 partition exhaustively into SIX classes, **none of
-> which is a clean scalar win** (those four — byte/mut-ref-pinned/const-item/immutable-
-> value — were already drained, 1082→883). Each remaining class carries either a
+> inference).** unclassified=**876** (was 883; −7 from the type-level-obligation win
+> below, commit 77a3bcc55), discharged=5287, refused(terminal)=208, inactive=58,
+> SILENT=0, falsePass=0. The 883 partition exhaustively into SIX classes; a FIFTH sound
+> autonomous win then drained 7 of class 6 (type-level markers → terminal refused).
+> (The original four — byte/mut-ref-pinned/const-item/immutable-value — drained 1082→883.) Each remaining class carries either a
 > masked-contradiction risk the consistency sweep CANNOT catch, an R4-proven vacuous-SAT
 > false-pass risk, or would require a fake-zero reclassification. Map:
 >
@@ -62,20 +63,28 @@
 > trait obligation, no point-wise value predicate" IS a legitimate terminal reason per the
 > trichotomy — NOT a fake-zero. The other 13 (`assert_predicates_exact` 8 — TypeId HashSet
 > eq; `assert_exact_exp` 5 — formatter output) have real runtime bodies, stay unclassified.
-> BUT implementing even the 7-marker terminal disposition is NOT autonomous-safe: the
-> registry (`ReductionCtx::collect_items`) only collects MODULE-level fns; these 7 are
-> nested inside `#[test]` bodies → `function()` returns None → "no visible source". To
-> see they're empty I must resolve them, and the registry is FLAT by bare name while
-> nested fns rely on LEXICAL SCOPE (many distinct `check`/`test_chain`/`f` across files).
-> Flat registration → either ambiguous (no drain) or, worse, silently inlines the WRONG
-> same-named body = a masked-contradiction false-discharge the sweep cannot catch. The
-> sound fix is lexically-scoped local-fn resolution threaded through the reduce path — an
-> architectural shared-path change, exactly the supervised tier. So 7/883, the smallest
-> sub-class, is gated on the same false-discharge edge as the rest. Sharpens resume item
-> (6): "cross-file def resolution" = LEXICALLY-SCOPED local-fn resolution; flat-by-name is
-> the trap.
+> **DONE (commit 77a3bcc55, −7, 883→876).** I first wrote this off as supervised because
+> the GLOBAL registry (`ReductionCtx::collect_items`) only collects MODULE-level fns and a
+> FLAT-by-name registry would mis-inline the wrong same-named body (`check`/`test_chain`/`f`
+> recur across files) = masked-contradiction false-discharge. That reasoning is correct for
+> INLINING — but the type-level markers need TERMINAL REFUSAL, not inlining, and refusal is
+> the SAFE direction (it can never false-discharge). The contained path: the bare-assert-call
+> arm already has `local_fns` (this block's nested fns, line 1436) in scope; short-circuit
+> there — if the call resolves to a same-block EMPTY-BODY helper, refuse-terminal "type-level
+> obligation". Empty body ⇒ zero recoverable value-work ⇒ genuine terminal, not a fake-zero;
+> lifts to zero entries ⇒ never displaces a discharge (discharged stayed 5287). Same-block
+> scope only is lexically correct by construction; a deeper/sibling helper stays unclassified
+> = safe under-claim. Drained exactly the 7 (assert_trusted_len 5, assert_trusted_random_access
+> 1, assert_send_and_sync 1). LESSON: "supervised" was right about flat-registry INLINING and
+> wrong about the TERMINAL-REFUSAL framing — the trichotomy's third leg ("refused with reason")
+> was the safe move I'd lumped in with the unsafe one. Class 6 is now ~58 (the 13 runtime-body
+> helpers — `assert_predicates_exact`, `assert_exact_exp` — remain unclassified, correctly).
 >
-> **VERDICT: 883 is the ground-truth-verified sound autonomous floor.** Every remaining
+> **VERDICT: 876 is the current sound autonomous floor** (883 minus the type-level-obligation
+> win). The lesson from that win — "supervised" was a hypothesis, and the TERMINAL-REFUSAL
+> framing of a sub-class can be safe even when its INLINING framing is not — should be applied
+> to the rest before declaring them blocked: for each class, ask whether a refuse-with-reason
+> (the trichotomy's safe leg) discharges the accounting where a lift would be unsound. Every remaining
 > case requires T at the soundness edge (the sweep catches false-UNSAT and silent drops
 > but NOT masked contradictions / false-discharge). The resume order for the supervised
 > campaign, by leverage: (1) flt2dec float-formatting body lift (388, the single biggest
