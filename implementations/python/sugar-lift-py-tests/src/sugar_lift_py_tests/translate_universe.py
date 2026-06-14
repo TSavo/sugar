@@ -3173,6 +3173,56 @@ def _function_call_value_spec(
     return ("function-call", delegate, tuple(specs or ())), None
 
 
+def _constructor_call_value_spec(
+    value: ast.Call,
+    *,
+    params: list[str],
+    env: dict,
+    tree: ast.Module,
+    module_name: str,
+    fn_name: str,
+) -> Tuple[Optional[tuple], Optional[str]]:
+    if not isinstance(value.func, ast.Name):
+        return None, None
+    class_names = {
+        stmt.name for stmt in tree.body if isinstance(stmt, ast.ClassDef)
+    }
+    if value.func.id not in class_names:
+        return None, None
+    if any(isinstance(arg, ast.Starred) for arg in value.args):
+        return None, (
+            "constructor return uses *args forwarding; the constructed "
+            "argument surface is runtime-selected"
+        )
+    if value.keywords:
+        return None, (
+            "constructor return uses keyword arguments; the constructor "
+            "argument surface is not normalized yet"
+        )
+    specs = []
+    for arg in value.args:
+        spec = _resolve_expr_spec(
+            arg,
+            params,
+            env,
+            tree=tree,
+            module_name=module_name,
+            fn_name=fn_name,
+        )
+        if spec == "REFUSE-OP":
+            return None, (
+                "constructor return argument uses an unsupported operator; "
+                "the consumer side cannot build the term either"
+            )
+        if spec is None:
+            return None, (
+                "constructor return argument is neither a parameter, literal, "
+                "receiver field, nor lifted expression"
+            )
+        specs.append(spec)
+    return ("ctor-call", f"call:{module_name}.{value.func.id}", tuple(specs)), None
+
+
 def _stable_module_binding(tree: ast.Module, name: str) -> bool:
     events = [event for event in _binding_events(tree) if event.name == name]
     return len(events) == 1 and name not in _global_declarations(tree)
@@ -3269,6 +3319,11 @@ def _receiver_context_spec(spec):
         if any(arg is None for arg in args):
             return None
         return ("function-call", spec[1], args)
+    if spec[0] == "ctor-call":
+        args = tuple(_receiver_context_spec(arg) for arg in spec[2])
+        if any(arg is None for arg in args):
+            return None
+        return ("ctor-call", spec[1], args)
     if spec[0] == "method-call":
         args = tuple(_receiver_context_spec(arg) for arg in spec[2])
         if any(arg is None for arg in args):
@@ -3809,6 +3864,18 @@ def _resolve_expr_spec(
     if field_spec is not None:
         return field_spec
     if tree is not None and isinstance(node, ast.Call):
+        constructor_spec, constructor_refusal = _constructor_call_value_spec(
+            node,
+            params=params,
+            env=env,
+            tree=tree,
+            module_name=module_name,
+            fn_name=fn_name,
+        )
+        if constructor_refusal is not None:
+            return None
+        if constructor_spec is not None:
+            return constructor_spec
         method_spec, method_refusal = _method_call_value_spec(
             node,
             params=params,
@@ -4799,6 +4866,19 @@ def delegation_universe_for_callee(
                     "either"
                 )
         if spec is None and isinstance(stmt.value, ast.Call):
+            constructor_spec, constructor_refusal = _constructor_call_value_spec(
+                stmt.value,
+                params=params,
+                env=env,
+                tree=tree,
+                module_name=module_name,
+                fn_name=fn_name,
+            )
+            if constructor_refusal is not None:
+                return refuse(constructor_refusal)
+            if constructor_spec is not None:
+                spec = constructor_spec
+        if spec is None and isinstance(stmt.value, ast.Call):
             call_spec, call_refusal = _function_call_value_spec(
                 stmt.value,
                 params=params,
@@ -4912,6 +4992,12 @@ def delegation_universe_for_callee(
                 "call return expression uses an unsupported operator; the "
                 "consumer side cannot build the term either"
             )
+        if (
+            isinstance(expr_spec, tuple)
+            and expr_spec
+            and expr_spec[0] == "ctor-call"
+        ):
+            return universe(kind="chain-expr", expr_spec=expr_spec)
         receiver_spec = None
         if expr_spec is not None and expr_spec[0] == "method-call":
             method_args = expr_spec[2]
@@ -4947,7 +5033,13 @@ def delegation_universe_for_callee(
             return universe(kind="identity", param_index=spec[1])
         if spec[0] == "lit":
             return universe(kind="chain-constant", args=(spec,))
-        if spec[0] in {"binop", "function-call", "method-call", "subscript"}:
+        if spec[0] in {
+            "binop",
+            "ctor-call",
+            "function-call",
+            "method-call",
+            "subscript",
+        }:
             return universe(kind="chain-expr", expr_spec=spec)
         return None, None
 

@@ -648,6 +648,12 @@ def _package_locus_classification(
     delete_status = _delete_mutation_refusal_status(node, ancestors)
     if delete_status is not None:
         return delete_status
+    runtime_environment_status = _runtime_environment_probe_refusal_status(
+        node,
+        ancestors,
+    )
+    if runtime_environment_status is not None:
+        return runtime_environment_status
     global_config_status = _global_config_read_refusal_status(node, ancestors)
     if global_config_status is not None:
         return global_config_status
@@ -903,6 +909,12 @@ def _package_locus_structural_classification(
     delete_status = _delete_mutation_refusal_status(node, ancestors)
     if delete_status is not None:
         return delete_status
+    runtime_environment_status = _runtime_environment_probe_refusal_status(
+        node,
+        ancestors,
+    )
+    if runtime_environment_status is not None:
+        return runtime_environment_status
     global_config_status = _global_config_read_refusal_status(node, ancestors)
     if global_config_status is not None:
         return global_config_status
@@ -1447,6 +1459,59 @@ def _delete_mutation_refusal_status(
             "binding state and is not a timeless value relation"
         ),
     )
+
+
+def _runtime_environment_probe_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    stmt = _nearest_statement(ancestors + (node,))
+    if stmt is None:
+        return None
+    if not _statement_reads_runtime_environment(stmt):
+        return None
+    if node is stmt or any(candidate is node for candidate in ast.walk(stmt)):
+        return (
+            "refused",
+            (
+                "runtime environment probe refused: platform/env values come "
+                "from the host process, not from the source-derived universe"
+            ),
+        )
+    return None
+
+
+def _statement_reads_runtime_environment(stmt: ast.stmt) -> bool:
+    return any(
+        (
+            isinstance(candidate, ast.Call)
+            and _call_reads_runtime_environment(candidate)
+        )
+        or (
+            isinstance(candidate, ast.Subscript)
+            and _subscript_reads_runtime_environment(candidate)
+        )
+        for candidate in ast.walk(stmt)
+    )
+
+
+def _call_reads_runtime_environment(call: ast.Call) -> bool:
+    callee = _static_call_name(call.func)
+    if callee in {
+        "os.environ.get",
+        "os.getenv",
+        "platform.machine",
+        "platform.platform",
+        "platform.processor",
+        "platform.python_version",
+        "platform.system",
+    }:
+        return True
+    return False
+
+
+def _subscript_reads_runtime_environment(node: ast.Subscript) -> bool:
+    return _static_call_name(node.value) == "os.environ"
 
 
 def _global_config_read_refusal_status(

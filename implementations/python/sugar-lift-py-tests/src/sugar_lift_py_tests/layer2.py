@@ -266,12 +266,17 @@ class _CallOrigin:
 @dataclass
 class _ValueScope:
     current: Dict[str, Term] = field(default_factory=dict)
+    projections: Dict[str, Dict[Term, Term]] = field(default_factory=dict)
     origins: Dict[str, _CallOrigin] = field(default_factory=dict)
     facts: List[Formula] = field(default_factory=list)
 
     def copy(self) -> "_ValueScope":
         return _ValueScope(
             current=dict(self.current),
+            projections={
+                name: dict(projection)
+                for name, projection in self.projections.items()
+            },
             origins=dict(self.origins),
             facts=list(self.facts),
         )
@@ -2606,7 +2611,81 @@ def _translate_subscript_term(node: ast.Subscript, base_term: Term) -> Term:
     Non-literal keys raise ValueError (LOUD REFUSE); see ``_subscript_key_term``.
     """
     key_term = _subscript_key_term(node.slice)
+    return _subscript_term_or_projection(base_term, key_term)
+
+
+def _subscript_term_or_projection(base_term: Term, key_term: Term) -> Term:
+    projected = _static_subscript_projection(base_term, key_term)
+    if projected is not None:
+        return projected
     return ctor("subscript", [base_term, key_term])
+
+
+def _static_subscript_projection(base_term: Term, key_term: Term) -> Optional[Term]:
+    from .ir import _ConstInt
+
+    if isinstance(base_term, _Ctor) and base_term.name in {"python:list", "python:tuple"}:
+        if not isinstance(key_term, _ConstInt):
+            return None
+        try:
+            return base_term.args[key_term.value]
+        except IndexError:
+            return None
+    if isinstance(base_term, _Ctor) and base_term.name.startswith("python:dict_a"):
+        for entry in reversed(base_term.args):
+            if (
+                isinstance(entry, _Ctor)
+                and entry.name == "python:dict-entry_a2"
+                and len(entry.args) == 2
+                and entry.args[0] == key_term
+            ):
+                return entry.args[1]
+    return None
+
+
+def _static_container_projection_map_from_expr(
+    node: ast.expr,
+    translate_element,
+) -> Optional[Dict[Term, Term]]:
+    try:
+        if isinstance(node, (ast.List, ast.Tuple)):
+            if any(isinstance(element, ast.Starred) for element in node.elts):
+                return None
+            elements = [translate_element(element) for element in node.elts]
+            projections: Dict[Term, Term] = {}
+            count = len(elements)
+            for index, element in enumerate(elements):
+                projections[num(index)] = element
+                projections[num(index - count)] = element
+            return projections or None
+        if isinstance(node, ast.Dict):
+            projections: Dict[Term, Term] = {}
+            for key, value in zip(node.keys, node.values):
+                if key is None:
+                    return None
+                projections[_subscript_key_term(key)] = translate_element(value)
+            return projections or None
+    except ValueError:
+        return None
+    return None
+
+
+def _static_container_projection_from_expr(
+    container: ast.expr,
+    key: ast.expr,
+    translate_element,
+) -> Optional[Term]:
+    try:
+        key_term = _subscript_key_term(key)
+    except ValueError:
+        return None
+    projections = _static_container_projection_map_from_expr(
+        container,
+        translate_element,
+    )
+    if projections is None:
+        return None
+    return projections.get(key_term)
 
 
 def _callval_head(method: str, arity: int) -> str:
@@ -2764,6 +2843,17 @@ def _translate_term(node: ast.expr) -> Term:
                 "(e.g. `assert x == pytest.approx(target)`); "
                 "use it in a direct == or != comparison at the top level of an assert"
             )
+        module_attr_callee = _module_attr_callee(node.func)
+        if (
+            module_attr_callee is not None
+            and _is_constructor_call_name(module_attr_callee)
+        ):
+            if node.keywords:
+                raise ValueError("qualified constructor call with kwargs is not liftable")
+            return ctor(
+                f"call:{module_attr_callee}",
+                [_translate_term(arg) for arg in node.args],
+            )
         if isinstance(node.func, ast.Attribute):
             # Method call: ``recv.method(args)`` → callval ctor.
             # LOUD REFUSE on keyword args: cannot order-stably translate.
@@ -2820,6 +2910,13 @@ def _translate_term(node: ast.expr) -> Term:
         # recursively translated so nested subscripts (``a['b']['c']``) and
         # attribute-then-subscript (``a.b['c']``) chain naturally.
         # Non-literal keys LOUDLY REFUSE via ``_subscript_key_term``.
+        projected = _static_container_projection_from_expr(
+            node.value,
+            node.slice,
+            _translate_term,
+        )
+        if projected is not None:
+            return projected
         base_term = _translate_term(node.value)
         return _translate_subscript_term(node, base_term)
     raise ValueError("expression shape not in v0 lift whitelist")
@@ -4981,6 +5078,7 @@ def _apply_value_scope_binding(
             )
             if constructor_mapping is None:
                 next_scope.current.pop(name, None)
+                next_scope.projections.pop(name, None)
                 next_scope.origins.pop(name, None)
                 out.append(next_scope)
                 continue
@@ -4991,6 +5089,7 @@ def _apply_value_scope_binding(
                 rhs = _translate_term_scoped(value, scope)
             except ValueError:
                 next_scope.current.pop(name, None)
+                next_scope.projections.pop(name, None)
                 next_scope.origins.pop(name, None)
                 out.append(next_scope)
                 continue
@@ -5000,6 +5099,14 @@ def _apply_value_scope_binding(
         ssa_name = f"{name}${version}"
         ssa = make_var(ssa_name)
         next_scope.current[name] = ssa
+        projections = _static_container_projection_map_from_expr(
+            value,
+            lambda element: _translate_term_scoped(element, scope),
+        )
+        if projections is not None:
+            next_scope.projections[name] = projections
+        else:
+            next_scope.projections.pop(name, None)
         if origin is not None:
             if _is_constructor_call_name(origin.callee):
                 try:
@@ -7112,7 +7219,7 @@ def _expr_spec_term_and_queued(
         base_term, base_delegates, base_fields, _base_kind = base_mapped
         index_term, index_delegates, index_fields, _index_kind = index_mapped
         return (
-            ctor("subscript", [base_term, index_term]),
+            _subscript_term_or_projection(base_term, index_term),
             [*base_delegates, *index_delegates],
             [*base_fields, *index_fields],
             "unknown",
@@ -7204,6 +7311,13 @@ def _expr_spec_term_and_queued(
         ):
             return None
         field_name = spec[1]
+        pinned_field = _pinned_receiver_field_term(
+            receiver_term,
+            field_name,
+            origin,
+        )
+        if pinned_field is not None:
+            return pinned_field
         field_u, field_refusal = constructor_field_universe_for_callee(
             origin.receiver_constructor,
             field_name,
@@ -7267,6 +7381,91 @@ def _expr_spec_term_and_queued(
         return ctor(f"python:dict_a{len(entries)}", entries), queued, fields, "unknown"
     mapped = _mapped_delegate_args((spec,), call_args)
     return None if mapped is None else (mapped[0], [], [], _chain_expr_concat_kind(mapped[0]))
+
+
+def _pinned_receiver_field_term(
+    receiver_term: Optional[Term],
+    field_name: str,
+    origin: _CallOrigin,
+):
+    if not (
+        isinstance(receiver_term, _Ctor)
+        and receiver_term.name.startswith("callval_")
+        and origin.receiver_constructor is not None
+    ):
+        return None
+    method_name = _method_name_from_callval_head(receiver_term)
+    if method_name is None:
+        return None
+    callee = f"{origin.receiver_constructor}.{method_name}"
+    deleg_u, deleg_refusal = delegation_universe_for_callee(callee)
+    if deleg_refusal is not None or deleg_u is None or deleg_u.kind != "chain-expr":
+        return None
+    ctor_spec = _constructor_return_spec(deleg_u.expr_spec)
+    if ctor_spec is None or ctor_spec[1] != f"call:{origin.receiver_constructor}":
+        return None
+    field_u, field_refusal = constructor_field_universe_for_callee(
+        origin.receiver_constructor,
+        field_name,
+    )
+    if field_refusal is not None or field_u is None:
+        return None
+    receiver_call_args = _delegation_universe_call_args(deleg_u, receiver_term)
+    receiver_receiver = _receiver_term_for_callval_subject(receiver_term)
+    mapped = _expr_spec_term_and_queued(
+        ctor_spec,
+        receiver_call_args,
+        receiver_term=receiver_receiver,
+        origin=origin,
+        subject_term=receiver_term,
+        receiver_context=False,
+    )
+    if mapped is None:
+        return None
+    constructed, queued, fields, _kind = mapped
+    if (
+        not isinstance(constructed, _Ctor)
+        or constructed.name != ctor_spec[1]
+        or field_u.constructor_param_index >= len(constructed.args)
+    ):
+        return None
+    value_term = _constructor_field_projection_term(
+        field_u,
+        _constructor_field_adapter_term(
+            field_u,
+            constructed.args[field_u.constructor_param_index],
+        ),
+        origin,
+    )
+    return (
+        value_term,
+        [*queued, (callee, list(receiver_call_args), receiver_term)],
+        [*fields, (field_u, value_term)],
+        _chain_expr_concat_kind(value_term),
+    )
+
+
+def _method_name_from_callval_head(term: _Ctor) -> Optional[str]:
+    prefix = "callval_"
+    if not term.name.startswith(prefix):
+        return None
+    body = term.name[len(prefix):]
+    marker = body.rfind("_a")
+    if marker <= 0:
+        return None
+    arity_text = body[marker + 2 :]
+    if not arity_text.isdigit() or int(arity_text) != len(term.args):
+        return None
+    method_name = body[:marker]
+    if not method_name.isidentifier():
+        return None
+    return method_name
+
+
+def _constructor_return_spec(spec):
+    if isinstance(spec, tuple) and spec and spec[0] == "ctor-call":
+        return spec
+    return None
 
 
 def _expr_specs_terms_and_queued(
@@ -7628,7 +7827,7 @@ def _receiver_delegate_spec_term(
         base_term, base_queued = base
         index_term, index_queued = index
         return (
-            ctor("subscript", [base_term, index_term]),
+            _subscript_term_or_projection(base_term, index_term),
             [*base_queued, *index_queued],
         )
     if spec[0] == "method-call":
@@ -7982,7 +8181,7 @@ def _mapped_delegate_spec_and_queued(
         base_term, base_queued = base
         index_term, index_queued = index
         return (
-            ctor("subscript", [base_term, index_term]),
+            _subscript_term_or_projection(base_term, index_term),
             [*base_queued, *index_queued],
         )
     if spec[0] == "method-call":
@@ -8503,6 +8702,8 @@ def _call_origin_from_expr_scoped(
     scope: Optional[_ValueScope],
 ) -> Optional[_CallOrigin]:
     origin = _call_origin_from_expr(node)
+    if origin is None:
+        origin = _inline_receiver_method_origin(node, scope)
     if origin is not None:
         return origin
     if scope is None:
@@ -8527,6 +8728,72 @@ def _call_origin_from_expr_scoped(
         constructor_default_params=receiver_origin.constructor_default_params,
         receiver_constructor=receiver_origin.callee,
     )
+
+
+def _inline_receiver_method_origin(
+    node: ast.expr,
+    scope: Optional[_ValueScope],
+) -> Optional[_CallOrigin]:
+    if not (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Call)
+        and not node.keywords
+    ):
+        return None
+    receiver_origin = _inline_receiver_call_origin(node.func.value, scope)
+    if receiver_origin is None or receiver_origin.receiver_constructor is None:
+        return None
+    return _CallOrigin(
+        callee=f"{receiver_origin.receiver_constructor}.{node.func.attr}",
+        lineno=getattr(node, "lineno", 0),
+        col=getattr(node, "col_offset", 0),
+        constructor_args=receiver_origin.constructor_args,
+        constructor_default_params=receiver_origin.constructor_default_params,
+        receiver_constructor=receiver_origin.receiver_constructor,
+    )
+
+
+def _inline_receiver_call_origin(
+    node: ast.Call,
+    scope: Optional[_ValueScope],
+) -> Optional[_CallOrigin]:
+    direct = _call_origin_from_expr(node)
+    if direct is not None and _is_constructor_call_name(direct.callee):
+        constructor_terms = _constructor_call_terms_for_origin(node, direct, scope)
+        if constructor_terms is None:
+            return None
+        constructor_args, constructor_default_params = constructor_terms
+        direct.constructor_args = constructor_args
+        direct.constructor_default_params = constructor_default_params
+        direct.receiver_constructor = direct.callee
+        return direct
+    nested = _inline_receiver_method_origin(node, scope)
+    if nested is not None:
+        return nested
+    return None
+
+
+def _constructor_call_terms_for_origin(
+    call: ast.Call,
+    origin: _CallOrigin,
+    scope: Optional[_ValueScope],
+) -> Optional[Tuple[Tuple[Term, ...], Tuple[str, ...]]]:
+    if not _is_constructor_call_name(origin.callee):
+        return None
+    active_scope = scope or _ValueScope()
+    mapping = _constructor_call_arg_mapping(call, origin.callee, active_scope)
+    if mapping is not None:
+        return mapping
+    if call.keywords:
+        return None
+    try:
+        return (
+            tuple(_translate_term_scoped(arg, active_scope) for arg in call.args),
+            (),
+        )
+    except ValueError:
+        return None
 
 
 def _is_constructor_call_expr(
@@ -8756,6 +9023,21 @@ def _translate_term_scoped(
                 "(e.g. `assert x == pytest.approx(target)`); "
                 "use it in a direct == or != comparison at the top level of an assert"
             )
+        module_attr_callee = _module_attr_callee(node.func)
+        if (
+            module_attr_callee is not None
+            and _is_constructor_call_name(module_attr_callee)
+        ):
+            mapping = _constructor_call_arg_mapping(node, module_attr_callee, scope)
+            if mapping is not None:
+                constructor_args, _defaulted = mapping
+                return ctor(f"call:{module_attr_callee}", list(constructor_args))
+            if node.keywords:
+                raise ValueError("qualified constructor call with kwargs is not liftable")
+            return ctor(
+                f"call:{module_attr_callee}",
+                [_translate_term_scoped(arg, scope, call_vars) for arg in node.args],
+            )
         if isinstance(node.func, ast.Attribute):
             # Method call as a TERM: ``recv.method(args)`` → callval ctor.
             # SSA-key the receiver through the current scope so that
@@ -8836,6 +9118,21 @@ def _translate_term_scoped(
         # attribute access: same-generation base + same key = same term = UNSAT
         # on contradiction; different generation = distinct terms = PROVEN.
         # Non-literal keys LOUDLY REFUSE via ``_subscript_key_term``.
+        projected = _static_container_projection_from_expr(
+            node.value,
+            node.slice,
+            lambda element: _translate_term_scoped(element, scope, call_vars),
+        )
+        if projected is not None:
+            return projected
+        try:
+            key_term = _subscript_key_term(node.slice)
+        except ValueError:
+            key_term = None
+        if key_term is not None and isinstance(node.value, ast.Name):
+            projection = scope.projections.get(node.value.id, {}).get(key_term)
+            if projection is not None:
+                return projection
         base_term = _translate_term_scoped(node.value, scope, call_vars)
         return _translate_subscript_term(node, base_term)
     raise ValueError("expression shape not in value-scope lift whitelist")
