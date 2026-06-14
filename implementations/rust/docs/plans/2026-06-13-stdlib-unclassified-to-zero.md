@@ -1,8 +1,21 @@
 # Goal: stdlib `unclassified` → 0
 
-> **STATUS 2026-06-13 overnight (commits 3cbf69936..1c884119a, all pushed, all
-> verified falsePass=0).** Baseline `--rustc-cfg`: discharged 5088 / refused 201 /
-> unclassified 1082 / inactive 58. Sound progress landed: honest accounting
+> **STATUS 2026-06-14 (commits 3cbf69936..04bcf3da9, all pushed, all verified
+> falsePass=0).** Capability work LANDED, driving unclassified **1082 → 950** (−132,
+> discharged 5088→5220): (#1) **monotonic statement-helper inlining** — β-reduce +
+> recurse the unchanged collector, committed ONLY if the body adds zero unclassified
+> (so inlining can only drain, never inflate — the earlier naive version inflated and
+> was reverted); (#2) **closures as opaque EUF symbols** keyed by text + version-aware
+> captures (drained 124; "unsupported term" 192→78); (#3) **`&mut <closure>/<literal>`
+> as opaque `ref_mut`** (guard-preserving — `&mut <variable>` still residual). All
+> three sound by construction (conservative EUF / faithful β-reduction / versioned),
+> each with a discrimination test; verifier falsePass 0 throughout (undec 24→82 is the
+> honest bignum tier the lifts exposed, not a false claim). Remaining 950 is dominated
+> by the **516 "reachable only via inlining"** — the deeply-nested flt2dec helpers
+> (closures within nested fns within the helper); each opaque layer drains less, and
+> the residual blocker (function-registry resolution and/or deeper nested-arg lifting)
+> needs a focused look. Prior baseline line, for reference: discharged 5088 / refused
+> 201 / unclassified 1082 / inactive 58. Sound progress landed: honest accounting
 > (Inactive + temporally-unstable-terminal), and 2 of the 3 body-level capabilities
 > the unclassified set bottoms out in — **statement-position helper inlining** and
 > **pure let-substitution** — both tested. The headline is unchanged because the
