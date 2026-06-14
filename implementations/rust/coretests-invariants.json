@@ -1,10 +1,10 @@
 {
   "assertion_multiset_cid": "blake3-512:ee0c6d92a4aa44f2f43bb657b70d9b87ba202392a6ea5c2aee519197e02aa59f6a3a425b49f7aa00191688e57c48bb795b58f74b35a2518cb6d4465eeb000a50",
   "silent": 0,
-  "unaccounted": -98,
-  "discharged": 5694,
-  "refused": 327,
-  "unclassified": 394,
-  "prev_unclassified": 416,
-  "note": "HERMETIC (no --dissolve) snapshot of the rust 1.96.0 coretests accounting sweep, gated in CI. Each lifter-moving push updates this pin to its predicted snapshot; CI asserts an EXACT match. This push: FN-LOCAL MACRO EXPANSION -- the lifter now walks a fn's private macro_rules! (e.g. estimator.rs assert_almost_eq!, str_lossy.rs assert_chunks!) the same way it walks file/dep macros, so they expand from their real definitions instead of dead-ending at 'unsupported assertion macro'. unclassified 416->394; discharged 5626->5694. unaccounted -52->-98 is INFLATION, not a silent drop (SILENT stays 0): one source macro (e.g. one assert_chunks! call) legitimately expands to several assert_eq! point-claims (one per chunk-pair), so discharged gains entries beyond the source-macro count -- the same legit inflation as helper-inlining. CID conserved (the assertion *sites* in source are unchanged; expansion is internal). prev_unclassified 416. unclassified here is lifter-only; --dissolve mode credits further by evaluation (not gated). Drive unclassified -> 0."
+  "unaccounted": -104,
+  "discharged": 5698,
+  "refused": 340,
+  "unclassified": 383,
+  "prev_unclassified": 394,
+  "note": "HERMETIC snapshot, gated in CI. This push: EASY TERMINAL REFUSES -- 'mutable container is not temporally stable' (no single timeless value; temporal family, producer lib.rs `unsupported term`) + array-repeat '[_; N]' with a non-literal length = 'not a finite construction' (construction-semantics axiom; producer lib.rs). Both have real producers; reclassified unclassified->refused in refusal_disposition. Effect vs #2161 (5694/327/394/-98): discharged 5694->5698 (+4), refused 327->340 (+13), unclassified 394->383 (-11). DIRECT reclassification is only +5 (4 'mutable container' + 1 array-repeat, moving unclassified->refused). The remaining +8 refused / +4 discharged / extra unclassified drop is a SOUND CASCADE through the call-site-inlining MONOTONIC GATE (lib.rs ~2628, R7): refusal_disposition is consulted to commit a beta-reduced helper-body inlining ONLY when added_unclassified==0. Making these reasons terminal lets helper bodies whose only residual refusals are now-terminal pass the gate -> a 'reachable only via inlining' placeholder (unclassified) is replaced by the body's honest dispositions (te lifted=discharged, ts terminal-refused) from the same collect_assertion_entries recursion. No false-discharge (every discharged entry is an honest lift). unaccounted -98->-104 is the matching legit inflation (one source site -> several point-claims), SILENT stays 0, CID conserved. prev_unclassified 394 (#2161). unclassified here is lifter-only. Drive -> 0."
 }

@@ -212,7 +212,15 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // ships cannot format f16/f128 (no stable flt2dec for them), so the value is neither
         // dissolvable by evaluation nor modellable (no-model axiom) -- a source/environment
         // property, not a lifter gap.
-        || reason.contains("f16/f128 formatting is unstable");
+        || reason.contains("f16/f128 formatting is unstable")
+        // TERMINAL: a MUTABLE CONTAINER has no single timeless value -- a term reading it
+        // cannot be read at one `t`. Same family as `temporally unstable` / `ambiguous
+        // temporal identity`: a source property, not a missing lift.
+        || reason.contains("mutable container is not temporally stable")
+        // TERMINAL: an array-repeat `[_; N]` with a NON-LITERAL length is not a finite
+        // construction from the literal -- by the construction-semantics axiom (provable iff
+        // finitely constructible) there is nothing to enumerate. A source property, not a gap.
+        || reason.contains("not a finite construction");
     if terminal {
         Disposition::Refused
     } else {
@@ -9375,6 +9383,8 @@ mod lifter_key_tests {
             "macro `m`: expansion yielded no liftable assertion (type-level or effectful body); released to layer 0",
             "assertion under while context: not unconditional point-wise; released to layer 0",
             "flt2dec assert: f16/f128 formatting is unstable -- unformattable on the stable toolchain the lifter ships and not modellable as a point-wise claim; refused",
+            "assert!: unsupported term `COUNTER`: mutable container is not temporally stable",
+            "assert_eq!: array-repeat `[0u8; LEN]` has a non-literal length -- not a finite construction from the literal; refused by name",
         ] {
             assert_eq!(refusal_disposition(r), Refused, "should be terminal: {r}");
         }
