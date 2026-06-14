@@ -1971,6 +1971,41 @@ fn init_is_iterator_construction(expr: &Expr) -> bool {
             // An adapter IS an iterator iff its receiver is one.
             ADAPTERS.contains(&m.as_str()) && init_is_iterator_construction(&mc.receiver)
         }
+        // Free-function / UFCS forms: `core::iter::repeat(x)`, `iter::once(x)`,
+        // `IntoIterator::into_iter([..])`, `<[T]>::iter(xs)`.
+        Expr::Call(call) => {
+            let Expr::Path(p) = call.func.as_ref() else {
+                return false;
+            };
+            let last = p
+                .path
+                .segments
+                .last()
+                .map(|s| s.ident.to_string())
+                .unwrap_or_default();
+            // Iterator producer free functions.
+            const PRODUCERS: &[&str] = &[
+                "repeat",
+                "repeat_with",
+                "repeat_n",
+                "once",
+                "once_with",
+                "empty",
+                "from_fn",
+                "successors",
+            ];
+            // UFCS iterator sources (same source names as the method form).
+            const UFCS_SOURCES: &[&str] = &[
+                "into_iter",
+                "iter",
+                "iter_mut",
+                "chars",
+                "char_indices",
+                "bytes",
+                "drain",
+            ];
+            PRODUCERS.contains(&last.as_str()) || UFCS_SOURCES.contains(&last.as_str())
+        }
         _ => false,
     }
 }
@@ -6927,6 +6962,46 @@ mod lifter_key_tests {
                 distinct.len(),
                 1,
                 "a plain immutable binding's reads must COALESCE (one key): {calls:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn iterator_producer_and_ufcs_reads_do_not_coalesce() {
+        // `core::iter::repeat(x).take(n)` (a producer free fn) and
+        // `IntoIterator::into_iter([..])` (UFCS) are iterators too -- their reads
+        // must get distinct keys, not coalesce.
+        for src in [
+            r#"
+            #[test]
+            fn prod() {
+                let mut iter = core::iter::repeat(42).take(40);
+                assert_eq!(iter.len(), 40);
+                let _ = iter.next();
+                assert_eq!(iter.len(), 39);
+            }
+            "#,
+            r#"
+            #[test]
+            fn ufcs() {
+                let mut it = IntoIterator::into_iter([0, 9, 2, 4]);
+                assert_eq!(it.len(), 4);
+                let _ = it.next();
+                assert_eq!(it.len(), 3);
+            }
+            "#,
+        ] {
+            let out = lift_src(src);
+            let lens: Vec<&str> = contract_names(&out)
+                .into_iter()
+                .filter(|n| n.contains("method:len"))
+                .collect();
+            assert!(lens.len() >= 2, "expected two len obligations: {lens:?}");
+            let distinct: std::collections::HashSet<&str> = lens.iter().cloned().collect();
+            assert_eq!(
+                distinct.len(),
+                lens.len(),
+                "producer/UFCS iterator reads must have distinct keys: {lens:?}"
             );
         }
     }
