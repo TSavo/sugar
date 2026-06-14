@@ -1500,6 +1500,107 @@ def test_structural_package_accounting_warrants_known_pure_stdlib_bridge_terms(
     ), bridge_loci
 
 
+def test_structural_package_accounting_warrants_imported_stdlib_constructors(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("SUGAR_PY_PACKAGE_ACCOUNTING_MODE", "structural")
+    pkg = tmp_path / "vendpkg_stdlib_constructor_terms"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    module_path = pkg / "api.py"
+    module_path.write_text(
+        textwrap.dedent(
+            """
+            import datetime as dt
+            from datetime import datetime
+
+            START = datetime(2020, 1, 2)
+            DELTA = dt.timedelta(days=3)
+
+            def values():
+                return [
+                    datetime(2020, 1, 2),
+                    dt.timedelta(days=3),
+                ]
+
+            def ok():
+                return "ok"
+            """
+        ),
+        encoding="utf-8",
+    )
+    shadow_path = pkg / "shadow.py"
+    shadow_path.write_text(
+        textwrap.dedent(
+            '''
+            def datetime(value):
+                return value
+
+            LOCAL = datetime("not-stdlib")
+            '''
+        ),
+        encoding="utf-8",
+    )
+    stdlib_lines = {
+        line_no
+        for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
+        if line.strip().startswith(("START =", "DELTA =", "datetime(", "dt.timedelta("))
+    }
+    local_line = next(
+        line_no
+        for line_no, line in enumerate(shadow_path.read_text().splitlines(), 1)
+        if line.strip().startswith("LOCAL =")
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    constant_universe_for_callee_clear()
+
+    lifted = _lift_source_from_disk(
+        tmp_path,
+        "test_mod.py",
+        """
+        import vendpkg_stdlib_constructor_terms.api as api
+
+        def test_ok():
+            assert api.ok() == "ok"
+        """,
+    )
+
+    audit = next(
+        audit
+        for audit in lifted["sourceAudits"]
+        if audit.get("role") == "python.package-source"
+        and audit.get("package") == "vendpkg_stdlib_constructor_terms"
+    )
+    stdlib_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith("vendpkg_stdlib_constructor_terms/api.py")
+        and locus["line"] in stdlib_lines
+        and locus.get("ast_kind") in {"Call", "Name", "Attribute", "Constant", "keyword"}
+    ]
+    assert stdlib_loci
+    assert not [
+        locus for locus in stdlib_loci if locus["status"] == "unclassified"
+    ], stdlib_loci
+    assert any(
+        locus["status"] == "warranted"
+        and locus.get("ast_kind") == "Call"
+        and "stdlib constructor value term" in locus.get("reason", "")
+        for locus in stdlib_loci
+    ), stdlib_loci
+
+    local_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith("vendpkg_stdlib_constructor_terms/shadow.py")
+        and locus["line"] == local_line
+        and locus.get("ast_kind") == "Call"
+    ]
+    assert local_loci
+    assert any(locus["status"] == "unclassified" for locus in local_loci), local_loci
+
+
 def test_structural_package_accounting_warrants_known_pure_method_value_terms(
     tmp_path,
     monkeypatch,
