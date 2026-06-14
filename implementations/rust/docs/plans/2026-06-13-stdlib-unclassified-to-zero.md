@@ -1,8 +1,22 @@
 # Goal: stdlib `unclassified` → 0
 
-> **STATUS 2026-06-14 (commits 3cbf69936..fe51cc88b, all pushed, all verified
+> **STATUS 2026-06-14 (commits 3cbf69936..f101ba233, all pushed, all verified
 > falsePass=0 / SILENT=0).** Capability work LANDED, driving unclassified
-> **1082 → 929** (−153, discharged 5088→5241). LATEST (commit fe51cc88b, −21):
+> **1082 → 904** (−178, discharged 5088→5266). Two clean autonomous wins this cycle,
+> each sound-by-construction with break-the-twin tests:
+> (A, commit f101ba233, −25) **`&mut [array literal]` dissolves to `ref_mut(pinned
+> value)`** — `assert_eq!(left, &mut [1,2,3])` compares slices BY VALUE, so the RHS is
+> the pinned array, not a pointer; added `Expr::Array` to the existing `ref_mut` arm
+> (same accepted immutable-value class as `&mut <scalar lit>`, NOT a new soundness
+> class). `&mut <variable>`/`&mut <call>` still residual (pointer-identity guard green).
+> Drained 25 of the 73 "unsupported term" bucket (array.rs/slice.rs split/chunk).
+> (B, commit fe51cc88b, −21) byte literals → u8 constants (below).
+> DIAGNOSTIC (JSON `all_reasons` dump, 2026-06-14): the 73-now-48 "unsupported term"
+> bucket is dominated by `&mut [array]` (25, DONE) + `&mut [array][..]` full-slice
+> (~9, intricate Index→Array+RangeFull match with a `&mut buf[i]` mutable-element edge
+> → delicate, NOT taken unsupervised) + `a[0] < b[0]` ordered comparison (16, the
+> lt/lte/gt/gte regression path → supervised) + `unsafe { *p }` derefs (pointer/runtime).
+> LATEST byte-literal win (commit fe51cc88b, −21):
 > **byte literals dissolve to u8 constants** — `b'0'` is pure sugar for the u8 value
 > 48; added `Lit::Byte` to `translate_lit` lifting to the same concrete-Int-with-u8-
 > sort form `48u8` lifts to. Sound by construction (refutation inherited from the
