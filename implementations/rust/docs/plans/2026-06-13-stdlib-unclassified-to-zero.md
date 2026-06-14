@@ -479,3 +479,14 @@ After every rung, re-run `coretests_sweep`. The milestone is met when it prints
 list of source-property reasons (runtime data, dynamic dispatch, values outside the
 sort). At that point the ledger CID is a real closure artifact: 64 bytes over a
 house with every door labelled.
+
+> **NEXT LEVERS (designed 2026-06-14 PM, queued behind the 2 parallel agents on closed_eval/flt2dec).**
+> Floor 332 (91.4% discharged). Two worktree agents in flight: (A) call-site arg-inlining for the
+> "non-#[test] item" bucket (128) — carry a param-taking carryable helper + run the call with the
+> literal call-site args; (B) flt2dec f16/ldexp/format!-RHS edges (105). Post-integration levers (all
+> touch closed_eval -> serialize): (1) MACRO-CARRY — a local `macro_rules!` (e.g. estimator.rs
+> `assert_almost_eq!` wrapping `estimate_scaling_factor(LIT,LIT)` + tolerance) is closed stdlib sugar;
+> carry the macro_rules! def into the harness + dissolve (22). (2) USE-IMPORT-CARRY — carry the source
+> file's top-level `use` items into the harness prelude (unblocks asserts needing imports like
+> `core::num::imp::flt2dec::estimator::*`, `Ordering`). Genuinely TERMINAL (no lever): bin-2 [refused]
+> ~107 = iterator/for over RUNTIME collections = universes over runtime values (can't run forall x).
