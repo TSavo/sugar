@@ -319,22 +319,60 @@ pub fn collect_dissolvable(file: &syn::File) -> Vec<Dissolvable> {
                 setup.push('\n');
             }
         }
-        let (asserts, helpers) = collect_block_asserts(&f.block.stmts, &fns, &locals);
-        if !asserts.is_empty() {
-            let mut prelude = String::new();
-            for name in &helpers {
-                if let Some(defs) = fns.get(name) {
-                    if defs.len() == 1 {
-                        prelude.push_str(&quote::quote!(#(#defs)*).to_string());
-                        prelude.push('\n');
+        // Local `macro_rules!` defs in this fn (carried verbatim into the harness prelude
+        // when an invocation with all-closed args is dissolved -- MACRO-CARRY). The
+        // vendor's own assertion macro (e.g. `assert_chunks!`) is pure sugar; carrying its
+        // def + a closed invocation lets the expansion's stdlib ops be dissolved by
+        // evaluation. An unreachable API (e.g. a core-internal import) just fails the
+        // harness compile => not dissolved (safe under-claim).
+        let mut local_macros: BTreeMap<String, String> = BTreeMap::new();
+        for st in &f.block.stmts {
+            if let syn::Stmt::Item(syn::Item::Macro(im)) = st {
+                if im.mac.path.is_ident("macro_rules") {
+                    if let Some(id) = &im.ident {
+                        local_macros.insert(id.to_string(), quote::quote!(#im).to_string());
                     }
                 }
             }
+        }
+        let (asserts, helpers, macro_asserts) =
+            collect_block_asserts(&f.block.stmts, &fns, &locals, &local_macros);
+        // helper-defs prelude, shared by the regular unit and each macro unit.
+        let mut helper_prelude = String::new();
+        for name in &helpers {
+            if let Some(defs) = fns.get(name) {
+                if defs.len() == 1 {
+                    helper_prelude.push_str(&quote::quote!(#(#defs)*).to_string());
+                    helper_prelude.push('\n');
+                }
+            }
+        }
+        if !asserts.is_empty() {
             units.push(Dissolvable {
-                prelude,
-                setup,
+                prelude: helper_prelude.clone(),
+                setup: setup.clone(),
                 asserts,
             });
+        }
+        // MACRO-CARRY: each local macro's closed invocations form their OWN unit, with the
+        // macro def carried into that unit's prelude (def must precede use). Isolated, so a
+        // macro whose expansion needs an unreachable API fails ONLY its own unit and never
+        // poisons the fn's regular-assert dissolution.
+        for (mname, invs) in macro_asserts {
+            if invs.is_empty() {
+                continue;
+            }
+            if let Some(def) = local_macros.get(&mname) {
+                let mut prelude = String::new();
+                prelude.push_str(def);
+                prelude.push('\n');
+                prelude.push_str(&helper_prelude);
+                units.push(Dissolvable {
+                    prelude,
+                    setup: setup.clone(),
+                    asserts: invs,
+                });
+            }
         }
 
         // CALL-SITE ARG-INLINING (fence-bounded). The symbolic lifter counts a
@@ -487,8 +525,12 @@ fn collect_helper_call_inlinings(
                 setup.push('\n');
             }
         }
-        let (asserts, more_helpers) =
-            collect_block_asserts(&body_substituted.stmts, fns, &locals);
+        let (asserts, more_helpers, _macro_asserts) = collect_block_asserts(
+            &body_substituted.stmts,
+            fns,
+            &locals,
+            &std::collections::BTreeMap::new(),
+        );
         if asserts.is_empty() {
             continue;
         }
@@ -586,11 +628,19 @@ fn collect_block_asserts(
     stmts: &[syn::Stmt],
     fns: &std::collections::BTreeMap<String, Vec<syn::ItemFn>>,
     locals: &std::collections::BTreeSet<String>,
-) -> (Vec<String>, std::collections::BTreeSet<String>) {
+    local_macros: &std::collections::BTreeMap<String, String>,
+) -> (
+    Vec<String>,
+    std::collections::BTreeSet<String>,
+    std::collections::BTreeMap<String, Vec<String>>,
+) {
     use syn::parse::Parser;
     use syn::punctuated::Punctuated;
     let mut asserts = Vec::new();
     let mut helpers = std::collections::BTreeSet::new();
+    // macro name -> its closed invocations (each becomes its OWN dissolvable unit).
+    let mut macro_asserts: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
 
     // Does `expr` qualify as closed stdlib sugar, allowing (a) calls to UNIQUE carryable
     // local helpers (recorded into `helpers`) and (b) references to `locals` -- the
@@ -730,6 +780,8 @@ fn collect_block_asserts(
         locals: &'a std::collections::BTreeSet<String>,
         asserts: &'a mut Vec<String>,
         helpers: &'a mut std::collections::BTreeSet<String>,
+        local_macros: &'a std::collections::BTreeMap<String, String>,
+        macro_asserts: &'a mut std::collections::BTreeMap<String, Vec<String>>,
     }
     impl<'a> W<'a> {
         // Try one assert macro (already loop-substituted if applicable) as a dissolvable
@@ -785,6 +837,48 @@ fn collect_block_asserts(
                 }
             }
         }
+
+        // MACRO-CARRY: an invocation of a LOCAL `macro_rules!` (collected in
+        // `local_macros`) whose every argument is closed stdlib sugar is dissolved by
+        // carrying the macro def into the prelude and evaluating the verbatim invocation.
+        // The macro body supplies the stdlib op (its metavars are filled by the closed
+        // literal args). Soundness is the same harness compile+run boundary: a body that
+        // needs an unreachable API (e.g. a core-internal import) or a non-closed arg
+        // simply fails to compile => not dissolved (safe under-claim); the double-run
+        // determinism check still guards the run.
+        fn try_custom_macro(&mut self, m: &syn::Macro) {
+            let name = m
+                .path
+                .segments
+                .last()
+                .map(|s| s.ident.to_string())
+                .unwrap_or_default();
+            if name == "macro_rules" || !self.local_macros.contains_key(&name) {
+                return;
+            }
+            let parser = Punctuated::<Expr, syn::Token![,]>::parse_terminated;
+            let args = match parser.parse2(m.tokens.clone()) {
+                Ok(a) => a,
+                Err(_) => return,
+            };
+            if args.is_empty() {
+                return;
+            }
+            let mut scratch = std::collections::BTreeSet::new();
+            if !args
+                .iter()
+                .all(|a| check(a, self.fns, self.locals, &mut scratch))
+            {
+                return;
+            }
+            self.helpers.extend(scratch);
+            // Into a SEPARATE per-macro unit (not the fn's regular-assert unit) so a macro
+            // whose def/expansion fails to compile can never poison the regular asserts.
+            self.macro_asserts
+                .entry(name.clone())
+                .or_default()
+                .push(format!("{}!({})", name, m.tokens));
+        }
     }
     impl<'a, 'ast> syn::visit::Visit<'ast> for W<'a> {
         fn visit_expr_for_loop(&mut self, f: &'ast syn::ExprForLoop) {
@@ -818,6 +912,7 @@ fn collect_block_asserts(
                             // re-parsing operands, substituting, and rebuilding a macro.
                             if let Some(subbed) = subst_macro(m, &var, value) {
                                 self.try_assert(&subbed);
+                                self.try_custom_macro(&subbed);
                             }
                         }
                     }
@@ -828,6 +923,7 @@ fn collect_block_asserts(
         }
         fn visit_macro(&mut self, m: &'ast syn::Macro) {
             self.try_assert(m);
+            self.try_custom_macro(m);
             syn::visit::visit_macro(self, m);
         }
         // Do NOT descend into a nested fn item: it is collected as its own unit (with
@@ -840,11 +936,13 @@ fn collect_block_asserts(
         locals,
         asserts: &mut asserts,
         helpers: &mut helpers,
+        local_macros,
+        macro_asserts: &mut macro_asserts,
     };
     for st in stmts {
         syn::visit::Visit::visit_stmt(&mut w, st);
     }
-    (asserts, helpers)
+    (asserts, helpers, macro_asserts)
 }
 
 /// Walk a file for unit-test assertions that are CLOSED STDLIB VALUE SUGAR (gate) and
@@ -1154,6 +1252,43 @@ mod tests {
         let d = collect_dissolvable(&file);
         assert!(d.iter().any(|u| u.prelude.contains("fn lower")), "helper carried");
         assert_eq!(d.iter().map(|u| u.asserts.len()).sum::<usize>(), 1, "the helper-wrapped assert is dissolvable");
+    }
+
+    #[test]
+    fn collect_carries_local_macro_with_closed_args() {
+        // MACRO-CARRY: a LOCAL macro_rules! invoked with CLOSED literal/sugar args is
+        // carried (def -> prelude) and the verbatim invocation becomes one dissolvable unit
+        // (the assert_chunks!/assert_almost_eq! shape).
+        let file: syn::File = syn::parse_str(
+            "#[test] fn t() {\n             macro_rules! ae { ($a:expr, $b:expr) => {{ assert_eq!($a, $b); }}; }\n             ae!('A'.to_lowercase().to_string(), \"a\");\n             }\n",
+        )
+        .unwrap();
+        let d = collect_dissolvable(&file);
+        assert!(
+            d.iter().any(|u| u.prelude.contains("macro_rules ! ae") || u.prelude.contains("macro_rules! ae")),
+            "macro def carried into prelude"
+        );
+        assert!(
+            d.iter().flat_map(|u| &u.asserts).any(|a| a.starts_with("ae !") || a.starts_with("ae!")),
+            "closed macro invocation collected as a dissolvable unit"
+        );
+    }
+
+    #[test]
+    fn collect_rejects_local_macro_with_free_arg() {
+        // TWIN: the SAME macro invoked with a FREE variable arg (`c`, not a let-local, not
+        // a literal) is NOT closed (fence #3) -> not collected. (Even if it slipped past,
+        // the free var would fail the harness compile => not dissolved; this asserts the
+        // gate refuses it up front.)
+        let file: syn::File = syn::parse_str(
+            "#[test] fn t() {\n             macro_rules! ae { ($a:expr, $b:expr) => {{ assert_eq!($a, $b); }}; }\n             ae!(c, \"a\");\n             }\n",
+        )
+        .unwrap();
+        let d = collect_dissolvable(&file);
+        assert!(
+            d.iter().flat_map(|u| &u.asserts).all(|a| !a.starts_with("ae !") && !a.starts_with("ae!")),
+            "free-arg macro invocation is NOT dissolved"
+        );
     }
 
     #[test]

@@ -96,7 +96,14 @@ fn dissolve_count(prelude: &str, setup: &str, asserts: &[String], dir: &std::pat
     let args = harness_rustc_args();
     match closed_eval::evaluate_asserts(prelude, setup, asserts, "rustup", &args, "2021", dir) {
         HarnessResult::Ran(held) => held.iter().filter(|&&h| h).count(),
-        HarnessResult::CompileError(_) => asserts
+        // Any non-clean BATCH result -- a compile error, run nondeterminism, or an
+        // unavailable run -- may be caused by a SINGLE bad assert poisoning the whole
+        // batch (e.g. a carried macro invocation whose expansion needs an unreachable
+        // API, or one assert whose run varies). Fall back to evaluating each assert in
+        // ISOLATION so the rest still dissolve. Each per-assert eval keeps its own
+        // double-run determinism guard, so this only ever recovers a genuinely
+        // deterministic green assert -- never a new false-discharge, only fewer lost.
+        _ => asserts
             .iter()
             .filter(|a| {
                 matches!(
@@ -105,7 +112,6 @@ fn dissolve_count(prelude: &str, setup: &str, asserts: &[String], dir: &std::pat
                 )
             })
             .count(),
-        HarnessResult::Nondeterministic | HarnessResult::Unavailable(_) => 0,
     }
 }
 
