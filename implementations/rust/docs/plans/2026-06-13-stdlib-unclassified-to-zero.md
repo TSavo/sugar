@@ -24,6 +24,20 @@
 > `imported` registry) threaded into `lift_file`, plus the cross-file
 > inlining-inflation accounting. That is the supervised architectural step for this
 > bucket — distinct from the per-assert opaque capabilities, which are done.
+> CONFIRMED: the production RPC (`rust_test_assertions_rpc`) ALSO lifts per-file
+> (`lift_file_with_options` per file, per-file `collect_fns`), so this is a REAL
+> pipeline gap, not a sweep artifact. MEASURED (and reverted): I BUILT the cross-file
+> `FnRegistry` (owned `Rc`, mirroring the macro `imported` registry; 82 corpus fns
+> indexed) and wired it into `lift_file_with_imports` + the sweep — and it drained
+> **0** (discharged unchanged). So a caller-side cross-file registry ALONE is
+> insufficient: the "reachable only via inlining" refusal is emitted at the
+> helper's DEFINITION-site Pass 2 (per-file), which persists regardless of whether a
+> caller in another file could now inline it (double-count), AND no caller-inline
+> fired (the gate/structural reason unpinned this deep). The real fix needs
+> **global, call-site-aware accounting** — suppress the def-site refusal when the fn
+> is inlined somewhere in the corpus — not just a definition registry. That is the
+> supervised architectural step; the `FnRegistry` head-start is saved
+> (`/tmp/capability-crossfile-fnregistry.patch`, 281 lines).
 > Prior baseline line, for reference: discharged 5088 / refused 201 / unclassified
 > 1082 / inactive 58. Sound progress landed: honest accounting
 > (Inactive + temporally-unstable-terminal), and 2 of the 3 body-level capabilities
