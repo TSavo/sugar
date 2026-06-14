@@ -1,5 +1,26 @@
 # Goal: stdlib `unclassified` → 0
 
+> **STATUS 2026-06-14 PM — DISSOLVE-BY-EVALUATION (T-designed live).** unclassified
+> **593** (was 1082 at session start; −489 over seven sound wins, all pushed, SILENT=0,
+> falsePass=0). The breakthrough past the "huge/supervised flt2dec" floor: a closed/
+> deterministic/total/effect-free STDLIB computation is rust *sugar* every (non-`no_std`)
+> dev assumes, so the rust kit DISSOLVES it by evaluating with the same stdlib it ships
+> — `format!("{}",3.14)`="3.14" — not modeling Grisu (can't), not an uninterpreted EUF
+> symbol (tautology), not running the code-under-test (unstable internals, can't). It's
+> recompute-don't-trust with an INDEPENDENT correct impl (`format!` is built on flt2dec).
+> "Need stdlib to prove stdlib? Yes — that's the named, pinned TCB: axioms all the way
+> down, then a floor with a name on it." Sound iff: named + pinned + deterministic +
+> independent-of-the-thing-under-test. All FOUR flt2dec modes done (`flt2dec_eval.rs`,
+> 78 verbatim-corpus break-the-twin cases, f32+f64): flt2dec −283, ZERO disagreements
+> (our eval never contradicted a vendor assertion). f16/f128/ldexp/`format!`-RHS stay
+> honestly unclassified. CROSS-KIT: identical to encoding Java `toString`/`equals` into a
+> Java kit — each kit encodes its own stdlib as its axiom set. NEXT (messier, lower
+> yield): char case-mapping (`to_{lower,upper}case().collect()` via lifter's own char
+> methods; helpers nest iterator-consistency + a ptr-identity assert) → general endgame =
+> a stable-API closed-expression compile-run evaluator (char/str/int uniformly).
+> Commits: type-level markers 77a3bcc55; flt2dec_eval 1c517784a; integration e2ca82504;
+> shortest_exp 0c0dc2394.
+
 > **COMPLETE CENSUS 2026-06-14 (every one of the 883 enumerated by concrete class
 > + per-class soundness verdict; ground truth from the sweep's own classifier with
 > the reason-sample cap temporarily raised 12→5000, captured, reverted — NOT regex
