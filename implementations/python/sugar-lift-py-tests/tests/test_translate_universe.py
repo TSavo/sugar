@@ -1152,11 +1152,11 @@ def test_structural_package_accounting_warrants_pure_branch_predicates(
     ), predicate_loci
 
 
-def test_structural_package_accounting_leaves_unknown_branch_calls_unclassified(
+def test_structural_package_accounting_refuses_runtime_branch_predicates(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("SUGAR_PY_PACKAGE_ACCOUNTING_MODE", "structural")
-    pkg = tmp_path / "vendpkg_unknown_branch_call"
+    pkg = tmp_path / "vendpkg_runtime_branch_predicate"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("", encoding="utf-8")
     module_path = pkg / "api.py"
@@ -1166,9 +1166,11 @@ def test_structural_package_accounting_leaves_unknown_branch_calls_unclassified(
             def expensive(value):
                 return value == "x"
 
-            def skipped(value):
+            def skipped(value, values):
                 if expensive(value):
                     return value
+                if not values.isna().all():
+                    return "missing"
                 return "ok"
 
             def ok():
@@ -1177,11 +1179,11 @@ def test_structural_package_accounting_leaves_unknown_branch_calls_unclassified(
         ),
         encoding="utf-8",
     )
-    branch_line = next(
+    branch_lines = {
         line_no
         for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
-        if line.strip().startswith("if expensive")
-    )
+        if line.strip().startswith("if ")
+    }
     monkeypatch.syspath_prepend(str(tmp_path))
     constant_universe_for_callee_clear()
 
@@ -1189,7 +1191,7 @@ def test_structural_package_accounting_leaves_unknown_branch_calls_unclassified(
         tmp_path,
         "test_mod.py",
         """
-        import vendpkg_unknown_branch_call.api as api
+        import vendpkg_runtime_branch_predicate.api as api
 
         def test_ok():
             assert api.ok() == "ok"
@@ -1200,21 +1202,24 @@ def test_structural_package_accounting_leaves_unknown_branch_calls_unclassified(
         audit
         for audit in lifted["sourceAudits"]
         if audit.get("role") == "python.package-source"
-        and audit.get("package") == "vendpkg_unknown_branch_call"
+        and audit.get("package") == "vendpkg_runtime_branch_predicate"
     )
     branch_loci = [
         locus
         for locus in audit["loci"]
-        if locus["file"].endswith("vendpkg_unknown_branch_call/api.py")
-        and locus["line"] == branch_line
-        and locus.get("ast_kind") in {"If", "Call"}
+        if locus["file"].endswith("vendpkg_runtime_branch_predicate/api.py")
+        and locus["line"] in branch_lines
+        and locus.get("ast_kind") in {"If", "UnaryOp", "Call", "Attribute", "Name"}
     ]
     assert branch_loci
-    assert {
-        locus.get("ast_kind")
+    assert not [
+        locus for locus in branch_loci if locus["status"] == "unclassified"
+    ], branch_loci
+    assert {locus["status"] for locus in branch_loci} == {"refused"}
+    assert all(
+        "runtime branch predicate" in locus.get("reason", "")
         for locus in branch_loci
-        if locus["status"] == "unclassified"
-    } == {"If", "Call"}
+    ), branch_loci
 
 
 def test_structural_package_accounting_warrants_literal_container_terms(
