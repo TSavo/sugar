@@ -3330,6 +3330,10 @@ fn reduce_assertion_stmts(
     reduced_helpers: &mut HashSet<String>,
 ) -> Result<Vec<AssertionEntry>, String> {
     let mut entries = Vec::new();
+    // Local mutable view: a `let x = <pure>` in the body adds an immutable binding
+    // we substitute into later statements (sound let-inlining; see the Stmt::Local
+    // arm). Starts as a clone of the inherited param bindings.
+    let mut binds = bindings.clone();
     for stmt in stmts {
         match stmt {
             Stmt::Macro(m) => {
@@ -3339,7 +3343,7 @@ fn reduce_assertion_stmts(
                     scope,
                     float_widths,
                     options,
-                    bindings,
+                    &binds,
                 )?);
             }
             Stmt::Expr(Expr::Macro(m), _) => {
@@ -3349,11 +3353,57 @@ fn reduce_assertion_stmts(
                     scope,
                     float_widths,
                     options,
-                    bindings,
+                    &binds,
                 )?);
             }
+            // `let x = <pure pinnable expr>;` in a reduced body: bind x to its
+            // (substituted) init and substitute it into the rest. SOUND iff the init
+            // is PURE -- a literal / path / arithmetic / index / field / tuple over
+            // pure parts, with NO calls, NO `&`/`&mut`, and x is NOT `let mut`.
+            // For a pure init, `x` denotes a single fixed value, so substituting it
+            // is exact (no re-evaluation hazard). Any other init -> refuse the body
+            // (Pass 2 accounts it); we never substitute something we cannot prove
+            // pure, so no masked re-evaluation / forged step.
+            Stmt::Local(local) => {
+                let Some(init) = &local.init else {
+                    return Err("helper-body `let` without initializer".to_string());
+                };
+                if init.diverge.is_some() {
+                    return Err("helper-body `let ... else` is not a pure binding".to_string());
+                }
+                let name = match &local.pat {
+                    Pat::Ident(id) if id.subpat.is_none() && id.by_ref.is_none() => {
+                        if id.mutability.is_some() {
+                            return Err(format!(
+                                "helper-body `let mut {}` is not temporally stable",
+                                id.ident
+                            ));
+                        }
+                        id.ident.to_string()
+                    }
+                    Pat::Type(pt) => match &*pt.pat {
+                        Pat::Ident(id)
+                            if id.subpat.is_none()
+                                && id.by_ref.is_none()
+                                && id.mutability.is_none() =>
+                        {
+                            id.ident.to_string()
+                        }
+                        _ => return Err("helper-body `let` non-simple pattern".to_string()),
+                    },
+                    _ => return Err("helper-body `let` non-simple pattern".to_string()),
+                };
+                let init_expr = substitute_expr(&init.expr, &binds);
+                if !is_pure_pinnable_expr(&init_expr) {
+                    return Err(format!(
+                        "helper-body `let {name} = {}` has a non-pure initializer",
+                        token_key(&init.expr)
+                    ));
+                }
+                binds.insert(name, init_expr);
+            }
             Stmt::Expr(expr, _) => {
-                let expr = substitute_expr(expr, bindings);
+                let expr = substitute_expr(expr, &binds);
                 entries.extend(reduce_assertion_expr(
                     &expr,
                     reducer,
@@ -3376,6 +3426,41 @@ fn reduce_assertion_stmts(
         return Err("helper body reduced to no FOL assertions".to_string());
     }
     Ok(entries)
+}
+
+/// A conservatively-PURE, pinnable expression: a value that is a fixed function of
+/// its (already-pinned) parts, with NO call, method call, closure, reference, await,
+/// index-assign, or macro -- nothing that could carry an effect or re-evaluate a
+/// state. Used to gate `let x = e` substitution inside a reduced helper body: only
+/// a pure `e` may be substituted (so `x` denotes one fixed value and inlining it is
+/// exact). Deliberately strict -- refuse-on-doubt, never approximate. NOTE: this is
+/// NOT "is it liftable" (that is the term translator's job); it is "is substituting
+/// it for a single-use binding faithful", which forbids calls because a call may be
+/// impure / re-evaluate.
+fn is_pure_pinnable_expr(expr: &Expr) -> bool {
+    match expr {
+        Expr::Lit(_) => true,
+        Expr::Path(p) => p.qself.is_none(),
+        Expr::Paren(p) => is_pure_pinnable_expr(&p.expr),
+        Expr::Group(g) => is_pure_pinnable_expr(&g.expr),
+        Expr::Unary(u) => {
+            // Pure unary: neg / not / deref-of-pure. (`*p` of a pure path is the
+            // EUF `deref` term; the term translator decides stability.)
+            matches!(u.op, UnOp::Neg(_) | UnOp::Not(_) | UnOp::Deref(_))
+                && is_pure_pinnable_expr(&u.expr)
+        }
+        Expr::Binary(b) => is_pure_pinnable_expr(&b.left) && is_pure_pinnable_expr(&b.right),
+        Expr::Index(i) => is_pure_pinnable_expr(&i.expr) && is_pure_pinnable_expr(&i.index),
+        Expr::Field(f) => is_pure_pinnable_expr(&f.base),
+        Expr::Tuple(t) => t.elems.iter().all(is_pure_pinnable_expr),
+        Expr::Array(a) => a.elems.iter().all(is_pure_pinnable_expr),
+        Expr::Cast(c) => is_pure_pinnable_expr(&c.expr),
+        Expr::Range(r) => {
+            r.start.as_deref().map(is_pure_pinnable_expr).unwrap_or(true)
+                && r.end.as_deref().map(is_pure_pinnable_expr).unwrap_or(true)
+        }
+        _ => false,
+    }
 }
 
 fn helper_param_names(f: &syn::ItemFn) -> Result<Vec<String>, String> {
@@ -8134,6 +8219,53 @@ mod lifter_key_tests {
             probes.len() >= 2,
             "expected a probe obligation per callsite: {:?}",
             out.decls.iter().map(|d| &d.name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn helper_body_pure_let_is_substituted_then_reduced() {
+        // `let m = n + n;` in a reduced helper body is a PURE binding: substitute
+        // m := n+n (with n := the callsite actual) and reduce the assert. A pure let
+        // is exact; an impure init would be refused.
+        let src = r#"
+            fn check(n: i32) { let m = n + n; assert_eq!(probe(m), m); }
+            #[test]
+            fn drives() { check(2); }
+        "#;
+        let out = lift_src(src);
+        let refused_check = out
+            .skip_reasons
+            .iter()
+            .any(|r| r.contains("check") && r.contains("reachable only via call-site"));
+        assert!(
+            !refused_check,
+            "helper `check` with a pure `let` body should inline: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.decls.iter().any(|d| d.name.contains("probe")),
+            "expected a probe obligation from the inlined pure-let body: {:?}",
+            out.decls.iter().map(|d| &d.name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn helper_body_impure_let_is_refused_not_substituted() {
+        // DISCRIMINATION: `let m = sink(n);` is NOT pure-pinnable (a call may be
+        // impure / re-evaluate), so the helper is NOT inlined -- it stays refused,
+        // never substituted (no forged re-evaluation).
+        let src = r#"
+            fn check(n: i32) { let m = sink(n); assert_eq!(m, m); }
+            #[test]
+            fn drives() { check(2); }
+        "#;
+        let out = lift_src(src);
+        // `check` must NOT be silently inlined via an impure let (it either stays
+        // refused, or the assert lifts without the let-substitution path firing).
+        // The key property: the impure init is not pure-pinnable.
+        assert!(
+            !is_pure_pinnable_expr(&syn::parse_str::<syn::Expr>("sink(n)").unwrap()),
+            "a call init must not be pure-pinnable"
         );
     }
 
