@@ -1095,6 +1095,15 @@ def _package_locus_structural_classification(
     )
     if return_local_status is not None:
         return return_local_status
+    runtime_callable_binding_status = (
+        _return_from_runtime_callable_dispatch_binding_status(
+            node,
+            ancestors,
+            call_aliases,
+        )
+    )
+    if runtime_callable_binding_status is not None:
+        return runtime_callable_binding_status
     known_pure_call_status = _known_pure_call_value_term_status(
         node,
         ancestors,
@@ -1125,6 +1134,13 @@ def _package_locus_structural_classification(
     expression_call_status = _expression_call_flow_refusal_status(node, ancestors)
     if expression_call_status is not None:
         return expression_call_status
+    runtime_callable_status = _runtime_callable_dispatch_refusal_status(
+        node,
+        ancestors,
+        call_aliases,
+    )
+    if runtime_callable_status is not None:
+        return runtime_callable_status
     if _is_docstring_expr_node(node, ancestors):
         return "support", "docstring metadata supports source accounting only"
     decl = _nearest_declaration_ancestor(ancestors)
@@ -2564,6 +2580,125 @@ def _object_setattr_constructor_field_name(
     ):
         return None
     return field.value
+
+
+def _runtime_callable_dispatch_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+) -> Optional[tuple[str, str]]:
+    stmt = _nearest_statement(ancestors + (node,))
+    if stmt is None:
+        return None
+    if not _statement_has_runtime_callable_dispatch_cached(stmt, call_aliases):
+        return None
+    if node is stmt or any(candidate is node for candidate in ast.walk(stmt)):
+        return (
+            "refused",
+            (
+                "runtime callable dispatch refused: bare callable value is "
+                "supplied by runtime state, so no stable vendor body can "
+                "warrant this relation"
+            ),
+        )
+    return None
+
+
+def _statement_has_runtime_callable_dispatch_cached(
+    stmt: ast.stmt,
+    call_aliases: Dict[str, str],
+) -> bool:
+    cached = getattr(stmt, "_sugar_has_runtime_callable_dispatch", None)
+    if cached is not None:
+        return bool(cached)
+    result = _node_has_runtime_callable_dispatch_outside_nested_scope(
+        stmt,
+        call_aliases,
+    )
+    try:
+        setattr(stmt, "_sugar_has_runtime_callable_dispatch", result)
+    except AttributeError:
+        pass
+    return result
+
+
+def _node_has_runtime_callable_dispatch_outside_nested_scope(
+    node: ast.AST,
+    call_aliases: Dict[str, str],
+) -> bool:
+    if isinstance(
+        node,
+        (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+    ):
+        return False
+    if isinstance(node, ast.Call) and _is_runtime_callable_dispatch_call(
+        node,
+        call_aliases,
+    ):
+        return True
+    return any(
+        _node_has_runtime_callable_dispatch_outside_nested_scope(
+            child,
+            call_aliases,
+        )
+        for child in ast.iter_child_nodes(node)
+    )
+
+
+def _is_runtime_callable_dispatch_call(
+    call: ast.Call,
+    call_aliases: Dict[str, str],
+) -> bool:
+    if not isinstance(call.func, ast.Name):
+        return False
+    name = call.func.id
+    if name in call_aliases or name == "super":
+        return False
+    if _is_known_pure_call_value_expr(call):
+        return False
+    return True
+
+
+def _return_from_runtime_callable_dispatch_binding_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+) -> Optional[tuple[str, str]]:
+    chain = ancestors + (node,)
+    stmt = _nearest_statement(chain)
+    if not isinstance(stmt, ast.Return):
+        return None
+    if not (node is stmt or any(candidate is node for candidate in ast.walk(stmt))):
+        return None
+    owner = _nearest_enclosing_function(chain)
+    if owner is None or isinstance(owner, ast.Lambda):
+        return None
+    loaded_names = _loaded_name_ids(stmt)
+    if not loaded_names:
+        return None
+    previous = _previous_function_body_statements(owner, stmt)
+    if previous is None:
+        return None
+    for prior in reversed(previous):
+        assignment = _single_name_assignment(prior)
+        if assignment is None:
+            continue
+        name, value = assignment
+        if name not in loaded_names or value is None:
+            continue
+        if _node_has_runtime_callable_dispatch_outside_nested_scope(
+            value,
+            call_aliases,
+        ):
+            return (
+                "refused",
+                (
+                    "return depends on refused runtime callable dispatch "
+                    f"binding {name!r}: callable value is supplied by runtime "
+                    "state"
+                ),
+            )
+    return None
 
 
 def _dynamic_receiver_io_refusal_status(
