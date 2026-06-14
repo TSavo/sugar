@@ -164,6 +164,98 @@ fn closed_pure_sugar(expr: &Expr) -> bool {
     }
 }
 
+/// True if any operand subtree performs a stdlib SUGAR operation (a method call or a
+/// `format!`/`concat!` macro) -- the operations the symbolic lifter cannot model and
+/// therefore leaves unclassified. Requiring this avoids double-counting: a dissolvable
+/// candidate is exactly an assert the lifter could not discharge on its own.
+fn operands_use_stdlib_op(operands: &[&Expr]) -> bool {
+    struct W {
+        found: bool,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for W {
+        fn visit_expr_method_call(&mut self, m: &'ast syn::ExprMethodCall) {
+            self.found = true;
+            syn::visit::visit_expr_method_call(self, m);
+        }
+        fn visit_macro(&mut self, m: &'ast syn::Macro) {
+            if let Some(seg) = m.path.segments.last() {
+                let n = seg.ident.to_string();
+                if matches!(n.as_str(), "format" | "concat") {
+                    self.found = true;
+                }
+            }
+            syn::visit::visit_macro(self, m);
+        }
+    }
+    let mut w = W { found: false };
+    for e in operands {
+        syn::visit::Visit::visit_expr(&mut w, e);
+    }
+    w.found
+}
+
+/// Walk a file for unit-test assertions that are CLOSED STDLIB VALUE SUGAR (gate) and
+/// perform at least one stdlib sugar op the symbolic lifter cannot model. Returns each
+/// as a reconstructed, message-stripped assert statement (`assert_eq!(LHS, RHS)` /
+/// `assert!(COND)`) ready to drop into a harness. Message args are dropped so a message
+/// referencing a runtime local cannot break the harness compile.
+pub fn collect_dissolvable_asserts(file: &syn::File) -> Vec<String> {
+    use syn::parse::Parser;
+    use syn::punctuated::Punctuated;
+    struct W {
+        out: Vec<String>,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for W {
+        fn visit_macro(&mut self, m: &'ast syn::Macro) {
+            let name = m
+                .path
+                .segments
+                .last()
+                .map(|s| s.ident.to_string())
+                .unwrap_or_default();
+            let kind = match name.as_str() {
+                "assert_eq" | "debug_assert_eq" => Some("assert_eq"),
+                "assert_ne" | "debug_assert_ne" => Some("assert_ne"),
+                "assert" | "debug_assert" => Some("assert"),
+                _ => None,
+            };
+            if let Some(macro_name) = kind {
+                let parser = Punctuated::<Expr, syn::Token![,]>::parse_terminated;
+                if let Ok(args) = parser.parse2(m.tokens.clone()) {
+                    let ops: Vec<&Expr> = args.iter().collect();
+                    let value_ops: Vec<&Expr> = if macro_name == "assert" {
+                        ops.iter().take(1).copied().collect()
+                    } else {
+                        ops.iter().take(2).copied().collect()
+                    };
+                    let enough = if macro_name == "assert" {
+                        value_ops.len() == 1
+                    } else {
+                        value_ops.len() == 2
+                    };
+                    if enough
+                        && assert_operands_are_stdlib_sugar(&value_ops)
+                        && operands_use_stdlib_op(&value_ops)
+                    {
+                        let stmt = if macro_name == "assert" {
+                            format!("assert!({})", quote::quote!(#(#value_ops)*))
+                        } else {
+                            let l = value_ops[0];
+                            let r = value_ops[1];
+                            format!("{}!({}, {})", macro_name, quote::quote!(#l), quote::quote!(#r))
+                        };
+                        self.out.push(stmt);
+                    }
+                }
+            }
+            syn::visit::visit_macro(self, m);
+        }
+    }
+    let mut w = W { out: Vec::new() };
+    syn::visit::Visit::visit_file(&mut w, file);
+    w.out
+}
+
 /// Outcome of a harness compile+run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HarnessResult {

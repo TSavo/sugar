@@ -17,11 +17,35 @@
 
 use std::collections::BTreeMap;
 
+use sugar_lift_rust_tests::closed_eval::{self, HarnessResult};
 use sugar_lift_rust_tests::{
     lift_file_with_macro_imports, refusal_disposition, Disposition, LiftOptions, MacroRegistry,
     TargetCfg,
 };
 use syn::visit::{self, Visit};
+
+/// Dissolve a batch of gated stdlib-sugar asserts: count how many hold under the pinned
+/// toolchain. One batched harness; on a batch COMPILE error (one bad assert sinks the
+/// lot) fall back to per-assert so the rest still salvage. Non-determinism / unavailable
+/// toolchain -> 0 (dissolve nothing).
+fn dissolve_count(asserts: &[String], dir: &std::path::Path) -> usize {
+    if asserts.is_empty() {
+        return 0;
+    }
+    match closed_eval::evaluate_asserts("", asserts, "rustc", &[], "2021", dir) {
+        HarnessResult::Ran(held) => held.iter().filter(|&&h| h).count(),
+        HarnessResult::CompileError(_) => asserts
+            .iter()
+            .filter(|a| {
+                matches!(
+                    closed_eval::evaluate_asserts("", std::slice::from_ref(a), "rustc", &[], "2021", dir),
+                    HarnessResult::Ran(held) if held.first() == Some(&true)
+                )
+            })
+            .count(),
+        HarnessResult::Nondeterministic | HarnessResult::Unavailable(_) => 0,
+    }
+}
 
 /// The lifter's assertion universe: any macro whose name starts with assert or
 /// debug_assert. This covers the standard six plus stdlib custom macros
@@ -141,6 +165,14 @@ fn main() {
         .position(|a| a == "--json")
         .and_then(|i| args.get(i + 1))
         .cloned();
+    // `--dissolve`: dissolve gated closed stdlib-sugar unit-test asserts by evaluating
+    // them under the pinned toolchain (shells to rustc). Off by default (hermetic).
+    let dissolve = args.iter().any(|a| a == "--dissolve");
+    let dissolve_dir = std::env::temp_dir().join("sugar_dissolve_sweep");
+    if dissolve {
+        let _ = std::fs::create_dir_all(&dissolve_dir);
+    }
+    let mut dissolved_total = 0usize;
     // `--deps dir1,dir2,...`: dependency SOURCE trees whose macro_rules! should
     // be in scope when expanding (we operate exclusively on source).
     let dep_dirs: Vec<String> = args
@@ -305,9 +337,25 @@ fn main() {
         let file_terminal = file_terminal.min(refused_total);
         let file_inactive = file_inactive.min(refused_total - file_terminal);
         let file_unclassified = refused_total - file_terminal - file_inactive;
+
+        // STDLIB-SUGAR DISSOLUTION: gated closed stdlib-sugar unit-test asserts that the
+        // symbolic lifter left unclassified are dissolved by evaluation under the pinned
+        // toolchain. A green move is unclassified -> discharged; refused/inactive/silent
+        // are untouched (effective discharged+dissolved and refused-dissolved net to the
+        // same `unaccounted`, so SILENT is unaffected). Capped at file_unclassified so we
+        // only ever reclassify work the lifter actually left open.
+        let dissolved = if dissolve {
+            let cands = closed_eval::collect_dissolvable_asserts(&file);
+            dissolve_count(&cands, &dissolve_dir).min(file_unclassified)
+        } else {
+            0
+        };
+        dissolved_total += dissolved;
+
         totals.refused += file_terminal;
         totals.inactive += file_inactive;
-        totals.unclassified += file_unclassified;
+        totals.unclassified += file_unclassified - dissolved;
+        totals.discharged += dissolved;
         let refused = refused_total;
 
         // Silent drop: a real assert macro the collector never reached (nested
@@ -351,6 +399,12 @@ fn main() {
         totals.discharged,
         pct(totals.discharged)
     );
+    if dissolve {
+        println!(
+            "    of which stdlib-sugar DISSOLVED by evaluation: {:>6}",
+            dissolved_total
+        );
+    }
     println!(
         "  refused  (TERMINAL, source): {:>6}  ({:.1}%)   <-- closed with a damn good reason",
         totals.refused,
