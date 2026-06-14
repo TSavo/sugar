@@ -1904,6 +1904,149 @@ fn subst_var_in_formula(formula: &Rc<Formula>, name: &str, repl: &Rc<Term>) -> R
 /// value (effectful, mutated accumulator, conditional) is gutter (None here,
 /// refused by the caller). Returns the quantified formula and the number of
 /// body assert macros it accounts for, or None to refuse the loop.
+/// A FINITE-CONSTRUCTION domain for a bounded universal: a closed integer range
+/// `a..b` / `a..=b` (transcribed as a forall guard) or a literal array
+/// `[e0, e1, ...]` (unrolled over its constructed element terms). A runtime
+/// collection is NOT constructed from source literals and is NOT a `BoundedDomain`.
+enum BoundedDomain {
+    Range {
+        start: Rc<Term>,
+        end: Rc<Term>,
+        inclusive: bool,
+    },
+    Array(Vec<Rc<Term>>),
+}
+
+/// Read an iteration domain expression as a FINITE CONSTRUCTION, or None when it
+/// is a runtime collection (`v`, `v.iter()`, `coll.get(k)`, ...) that is not
+/// constructed from source literals. Shared by the `for` loop and the
+/// `.for_each(|x| ..)` adaptor: both iterate exactly the same constructed domains,
+/// so both discriminate it identically here. An empty array is None (the loop
+/// never runs -> vacuous; leave to the refusal path, never emit a vacuous `true`).
+fn bounded_domain_from_expr(expr: &Expr, scope: &TemporalScope) -> Option<BoundedDomain> {
+    match expr {
+        Expr::Range(range) => {
+            let (Some(start_expr), Some(end_expr)) = (&range.start, &range.end) else {
+                return None;
+            };
+            Some(BoundedDomain::Range {
+                start: translate_term_in_scope(start_expr, scope).ok()?,
+                end: translate_term_in_scope(end_expr, scope).ok()?,
+                inclusive: matches!(range.limits, syn::RangeLimits::Closed(_)),
+            })
+        }
+        Expr::Array(arr) => {
+            if arr.elems.is_empty() {
+                return None;
+            }
+            let mut elems = Vec::with_capacity(arr.elems.len());
+            for e in &arr.elems {
+                elems.push(translate_term_in_scope(e, scope).ok()?);
+            }
+            Some(BoundedDomain::Array(elems))
+        }
+        Expr::Paren(p) => bounded_domain_from_expr(&p.expr, scope),
+        Expr::Group(g) => bounded_domain_from_expr(&g.expr, scope),
+        Expr::Reference(r) => bounded_domain_from_expr(&r.expr, scope),
+        _ => None,
+    }
+}
+
+/// Lift `∀ <var> ∈ <domain>. <body>` where `<domain>` is a finite construction
+/// and `<body>` is the statement list executed once per element with `<var>`
+/// bound. This is the shared core of `try_lift_for_loop_forall` (a `for` loop)
+/// and `try_lift_for_each_forall` (a `.for_each(|var| body)` adaptor): a `for`
+/// loop and a `.for_each` over the SAME constructed domain assert the SAME
+/// universal, so the construction is one piece of code. Returns the quantified
+/// formula and the number of body assert macros it accounts for, or None to
+/// refuse (mutation, body not point-wise, or count mismatch).
+#[allow(clippy::too_many_arguments)]
+fn lift_bounded_forall(
+    var: &str,
+    domain: BoundedDomain,
+    body_stmts: &[Stmt],
+    scope: &TemporalScope,
+    options: &LiftOptions,
+    reducer: &ReductionCtx<'_>,
+    float_widths: &mut FloatWidthScope,
+    macro_depth: usize,
+) -> Option<(Rc<Formula>, usize)> {
+    // Lift the body through the normal collector. Truth-table-or-gutter: every
+    // body assert must lift cleanly (none refused, none missing) or we refuse
+    // the whole loop.
+    let n_body = count_asserts_in_stmts(body_stmts);
+    if n_body == 0 {
+        return None;
+    }
+    // Purity gate: the body must not mutate anything. An assignment, a `let mut`,
+    // or a `&mut` borrow means a value varies across iterations independently of
+    // the loop variable (e.g. an accumulator `count = count + 1`), so a single
+    // universal over x would be a false claim. Gutter such loops -- the
+    // single-iteration view can look stable when it is not.
+    if loop_body_mutates(body_stmts) {
+        return None;
+    }
+    let mut body_entries = Vec::new();
+    let mut body_skipped = Vec::new();
+    let mut body_lifted = 0usize;
+    let mut body_helpers = HashSet::new();
+    collect_assertion_entries(
+        body_stmts,
+        scope.local_scope(),
+        options,
+        reducer,
+        float_widths,
+        &mut body_entries,
+        &mut body_skipped,
+        &mut body_lifted,
+        &mut body_helpers,
+        macro_depth,
+        &scope.plan.interior_mut,
+    );
+    if !body_skipped.is_empty() || body_entries.len() != n_body {
+        return None;
+    }
+    let body_conj = and_(body_entries.iter().map(|e| e.atom.clone()).collect());
+
+    let quantified = match domain {
+        // forall x:Int. ( start <= x (< | <=) end ) => body[var := x]
+        BoundedDomain::Range {
+            start,
+            end,
+            inclusive,
+        } => {
+            let bound_var = var.to_string();
+            forall(Sort::int(), move |x| {
+                let lower = lte(start.clone(), x.clone());
+                let upper = if inclusive {
+                    lte(x.clone(), end.clone())
+                } else {
+                    lt(x.clone(), end.clone())
+                };
+                let guard = and_(vec![lower, upper]);
+                let body = subst_var_in_formula(&body_conj, &bound_var, &x);
+                implies(guard, body)
+            })
+        }
+        // `for x in [e0, e1, ...]` is exactly the FINITE conjunction
+        // body[x:=e0] ∧ body[x:=e1] ∧ ... -- a complete unroll over the constructed
+        // element terms, every instance concrete (full point-wise teeth). This is
+        // the construction axiom directly: the domain is allocated at formation, so
+        // `∀x ∈ {e_i}. body` IS the finite conjunction, no quantifier needed.
+        BoundedDomain::Array(elems) => {
+            let instances = elems
+                .iter()
+                .map(|e| subst_var_in_formula(&body_conj, var, e))
+                .collect();
+            and_(instances)
+        }
+    };
+    Some((quantified, n_body))
+}
+
+/// Read a `for <ident> in <range> { body }` loop as the bounded universal it
+/// literally states: forall x. (range_guard(x) => body(x)). Delegates the domain
+/// discrimination and body lift to the shared `lift_bounded_forall`.
 #[allow(clippy::too_many_arguments)]
 fn try_lift_for_loop_forall(
     f: &syn::ExprForLoop,
@@ -1923,112 +2066,91 @@ fn try_lift_for_loop_forall(
     // (unrolled over its constructed element terms). A runtime collection
     // (`for x in v`) is NOT constructed from source literals -- it is left to the
     // for-context refusal (named bin-2 by `for_iter_domain`).
-    enum ForDomain {
-        Range {
-            start: Rc<Term>,
-            end: Rc<Term>,
-            inclusive: bool,
-        },
-        Array(Vec<Rc<Term>>),
-    }
-    let domain = match &*f.expr {
-        Expr::Range(range) => {
-            let (Some(start_expr), Some(end_expr)) = (&range.start, &range.end) else {
-                return None;
-            };
-            ForDomain::Range {
-                start: translate_term_in_scope(start_expr, scope).ok()?,
-                end: translate_term_in_scope(end_expr, scope).ok()?,
-                inclusive: matches!(range.limits, syn::RangeLimits::Closed(_)),
-            }
-        }
-        Expr::Array(arr) => {
-            // An empty array means the loop never runs -> nothing is asserted
-            // (vacuously). Leave it to the refusal path rather than emit a vacuous
-            // `true`. Each element must translate, or the domain is not fully
-            // constructed and we refuse.
-            if arr.elems.is_empty() {
-                return None;
-            }
-            let mut elems = Vec::with_capacity(arr.elems.len());
-            for e in &arr.elems {
-                elems.push(translate_term_in_scope(e, scope).ok()?);
-            }
-            ForDomain::Array(elems)
-        }
-        _ => return None,
-    };
-
-    // Lift the body through the normal collector. Truth-table-or-gutter: every
-    // body assert must lift cleanly (none refused, none missing) or we refuse
-    // the whole loop.
-    let n_body = count_asserts_in_stmts(&f.body.stmts);
-    if n_body == 0 {
-        return None;
-    }
-    // Purity gate: the body must not mutate anything. An assignment, a `let mut`,
-    // or a `&mut` borrow means a value varies across iterations independently of
-    // the loop variable (e.g. an accumulator `count = count + 1`), so a single
-    // universal over x would be a false claim. Gutter such loops -- the
-    // single-iteration view can look stable when it is not.
-    if loop_body_mutates(&f.body.stmts) {
-        return None;
-    }
-    let mut body_entries = Vec::new();
-    let mut body_skipped = Vec::new();
-    let mut body_lifted = 0usize;
-    let mut body_helpers = HashSet::new();
-    collect_assertion_entries(
+    let domain = bounded_domain_from_expr(&f.expr, scope)?;
+    let (quantified, n_body) = lift_bounded_forall(
+        &var,
+        domain,
         &f.body.stmts,
-        scope.local_scope(),
+        scope,
         options,
         reducer,
         float_widths,
-        &mut body_entries,
-        &mut body_skipped,
-        &mut body_lifted,
-        &mut body_helpers,
         macro_depth,
-        &scope.plan.interior_mut,
-    );
-    if !body_skipped.is_empty() || body_entries.len() != n_body {
+    )?;
+    Some((quantified, n_body, var))
+}
+
+/// Read a `<domain>.iter().for_each(|v| body)` / `<domain>.into_iter().for_each(..)`
+/// / `(a..b).for_each(..)` adaptor as the bounded universal it literally states,
+/// IDENTICALLY to the equivalent `for v in <domain> { body }` loop. The closure
+/// body executes exactly once per element of `<domain>`, so a finite-construction
+/// domain (literal array / closed range) makes the `.for_each` a finite
+/// conjunction (construction axiom) -- sound. A RUNTIME / opaque receiver
+/// (`v.iter()` for a binding `v`, a method result) is NOT constructed from source
+/// literals: `bounded_domain_from_expr` returns None and we refuse, leaving the
+/// assert in its existing bin-2 refusal. Mutation / non-point-wise body refuses
+/// (the shared `lift_bounded_forall` gate). Returns the quantified formula, the
+/// number of body assert macros it accounts for, and the bound var name, or None.
+#[allow(clippy::too_many_arguments)]
+fn try_lift_for_each_forall(
+    expr: &Expr,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+    reducer: &ReductionCtx<'_>,
+    float_widths: &mut FloatWidthScope,
+    macro_depth: usize,
+) -> Option<(Rc<Formula>, usize, String)> {
+    // Must be `<receiver>.for_each(<closure>)` with exactly one closure argument.
+    let Expr::MethodCall(call) = expr else {
+        return None;
+    };
+    if call.method != "for_each" || call.args.len() != 1 {
         return None;
     }
-    let body_conj = and_(body_entries.iter().map(|e| e.atom.clone()).collect());
-
-    let quantified = match domain {
-        // forall x:Int. ( start <= x (< | <=) end ) => body[var := x]
-        ForDomain::Range {
-            start,
-            end,
-            inclusive,
-        } => {
-            let bound_var = var.clone();
-            forall(Sort::int(), move |x| {
-                let lower = lte(start.clone(), x.clone());
-                let upper = if inclusive {
-                    lte(x.clone(), end.clone())
-                } else {
-                    lt(x.clone(), end.clone())
-                };
-                let guard = and_(vec![lower, upper]);
-                let body = subst_var_in_formula(&body_conj, &bound_var, &x);
-                implies(guard, body)
-            })
-        }
-        // `for x in [e0, e1, ...]` is exactly the FINITE conjunction
-        // body[x:=e0] ∧ body[x:=e1] ∧ ... -- a complete unroll over the constructed
-        // element terms, every instance concrete (full point-wise teeth). This is
-        // the construction axiom directly: the domain is allocated at formation, so
-        // `∀x ∈ {e_i}. body` IS the finite conjunction, no quantifier needed.
-        ForDomain::Array(elems) => {
-            let instances = elems
-                .iter()
-                .map(|e| subst_var_in_formula(&body_conj, &var, e))
-                .collect();
-            and_(instances)
-        }
+    let Expr::Closure(closure) = &call.args[0] else {
+        return None;
     };
+    // The closure must bind exactly one parameter, a plain ident (the bound
+    // variable). A tuple pattern (`.enumerate().for_each(|(i, v)| ..)`) or any
+    // other pattern is not this clean single-binder shape: refuse.
+    if closure.inputs.len() != 1 {
+        return None;
+    }
+    let var = match &closure.inputs[0] {
+        Pat::Ident(p) if p.subpat.is_none() => p.ident.to_string(),
+        // `|&x|` / `|&mut x|` reference-elision patterns bind a value; strip a
+        // single leading reference pattern to the inner ident, otherwise refuse.
+        Pat::Reference(r) => match &*r.pat {
+            Pat::Ident(p) if p.subpat.is_none() && r.mutability.is_none() => p.ident.to_string(),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    // Discriminate the domain EXACTLY as the for-loop does. The receiver is the
+    // collection, possibly wrapped in a single element-producing adaptor
+    // (`.iter()` / `.into_iter()`). `iter_adaptor_base` strips one such no-arg
+    // adaptor; `(a..b).for_each` has no adaptor (the range IS the receiver). A
+    // binding / runtime collection / method result is not a finite construction:
+    // `bounded_domain_from_expr` returns None and the whole lift refuses.
+    let base = iter_adaptor_base(&call.receiver);
+    let domain = bounded_domain_from_expr(base, scope)?;
+    // The closure body is one expression (block or bare). Reuse the for-loop body
+    // machinery: a block contributes its statements; a bare body expr is one
+    // statement.
+    let body_stmts: Vec<Stmt> = match &*closure.body {
+        Expr::Block(b) => b.block.stmts.clone(),
+        other => vec![Stmt::Expr(other.clone(), None)],
+    };
+    let (quantified, n_body) = lift_bounded_forall(
+        &var,
+        domain,
+        &body_stmts,
+        scope,
+        options,
+        reducer,
+        float_widths,
+        macro_depth,
+    )?;
     Some((quantified, n_body, var))
 }
 
@@ -2126,6 +2248,28 @@ fn collect_assertion_entries(
                             macro_depth,
                             &temporal_scope.plan.interior_mut,
                         );
+                    } else if let Some((quantified, n, var)) = try_lift_for_each_forall(
+                        &init.expr,
+                        &temporal_scope,
+                        options,
+                        reducer,
+                        float_widths,
+                        macro_depth,
+                    ) {
+                        // `let _ = <lit>.iter().for_each(|v| assert!(..));` is the
+                        // SAME bounded universal as `for v in <lit> { assert!(..) }`
+                        // -- a finite conjunction over the constructed domain.
+                        // Account its body asserts (no silent drop) and add the
+                        // named universal memento (mirrors the for-loop caller).
+                        entries.push(AssertionEntry {
+                            name: Some(format!(
+                                "{}::for_each::{}",
+                                temporal_scope.local_scope(),
+                                var
+                            )),
+                            atom: quantified,
+                        });
+                        *macros_lifted += n;
                     } else {
                         let mut count = count_asserts_in_expr(&init.expr);
                         if let Some((_, diverge)) = &init.diverge {
@@ -2548,6 +2692,32 @@ fn collect_assertion_entries(
                 // its asserts. The per-fn safety net accounts anything not
                 // reached, so no silent drop. Otherwise refuse.
                 let recursed = if let Stmt::Expr(e, _) = other {
+                    // `<lit>.iter().for_each(|v| assert!(..))` (or `.into_iter()` /
+                    // `(a..b).for_each(..)`) is the SAME bounded universal as the
+                    // equivalent `for v in <lit> { .. }` loop -- a finite conjunction
+                    // over the constructed domain (construction axiom). Recognize it
+                    // and add the named universal; the body asserts are accounted by
+                    // `n`. An OPAQUE receiver makes `try_lift_for_each_forall` None,
+                    // so the assert stays in its existing bin-2 refusal below.
+                    if let Some((quantified, n, var)) = try_lift_for_each_forall(
+                        e,
+                        &temporal_scope,
+                        options,
+                        reducer,
+                        float_widths,
+                        macro_depth,
+                    ) {
+                        entries.push(AssertionEntry {
+                            name: Some(format!(
+                                "{}::for_each::{}",
+                                temporal_scope.local_scope(),
+                                var
+                            )),
+                            atom: quantified,
+                        });
+                        *macros_lifted += n;
+                        true
+                    } else {
                     // const_eval_select((), compiletime, runtime): inline the
                     // runtime branch (the fn called at run time).
                     let select_target = const_eval_select_runtime_target(e)
@@ -2640,6 +2810,7 @@ fn collect_assertion_entries(
                         }
                     } else {
                         false
+                    }
                     }
                 } else {
                     false
@@ -8977,6 +9148,145 @@ mod lifter_key_tests {
         assert!(
             !s_asserts_conjoined,
             "s must not appear as a bare EUF key after closure mutation"
+        );
+    }
+
+    // ── fold-closure foralls: `.for_each(|v| assert..)` over a FINITE domain ──
+    //
+    // `<lit>.iter().for_each(|v| assert!(..))` is the SAME bounded universal as
+    // `for v in <lit> { assert!(..) }`: a finite conjunction over the constructed
+    // domain (construction axiom). The collector did not descend the `for_each`
+    // closure, so the body assert fell to the nested-unlifted-expr-statement /
+    // let-initializer refusal. `try_lift_for_each_forall` mirrors the for-loop
+    // lift and drains them -- but ONLY for a finite-literal domain, NEVER for an
+    // opaque receiver and NEVER for a mutating body (an unsound single universal).
+
+    #[test]
+    fn for_each_over_literal_array_lifts_like_for_loop() {
+        // POSITIVE: a clean assert body in a `.for_each` over a LITERAL array is a
+        // finite conjunction over its elements -- it must LIFT (one named
+        // universal memento), not fall to the nested-unlifted-expr-statement
+        // bucket. `into_iter` over a literal array is constructed identically.
+        let src = r#"
+            #[test]
+            fn each_lit() {
+                [1i32, 2, 3].into_iter().for_each(|x| {
+                    assert!(x > 0);
+                });
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "the literal-array `.for_each` body assert must lift as a bounded \
+             universal; reasons: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "no assert should be refused for a clean literal-domain `.for_each`: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            !out.skip_reasons.iter().any(|r| r
+                .contains("nested in an unlifted expression statement")
+                || r.contains("inside a let-initializer expression")),
+            "the `.for_each` body assert must not stay in a fold-closure refusal: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            contract_names(&out).iter().any(|n| n.contains("::for_each::x")),
+            "the lifted universal must be named `<test>::for_each::<var>`: {:?}",
+            contract_names(&out)
+        );
+    }
+
+    #[test]
+    fn for_each_over_closed_range_lifts_as_guarded_forall() {
+        // POSITIVE (range form): `(a..b).for_each(|i| assert!(..))` is the guarded
+        // universal `forall i. a<=i<b => body` -- the same lift the for-loop gives
+        // a closed range. It must lift, not refuse.
+        let src = r#"
+            #[test]
+            fn each_range() {
+                (0..4).for_each(|i| {
+                    assert!(i < 4);
+                });
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "the closed-range `.for_each` body assert must lift as a guarded \
+             universal; reasons: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    }
+
+    #[test]
+    fn for_each_over_opaque_collection_stays_refused() {
+        // DISCRIMINATION: the receiver is a BINDING (`v`), so its elements are
+        // RUNTIME data, not constructed from source literals. There is no finite
+        // conjunction to walk: the lift MUST refuse (bin-2), leaving the body
+        // assert in its existing refusal -- forcing a universal over an opaque
+        // domain would be an unfounded claim.
+        let src = r#"
+            #[test]
+            fn each_opaque() {
+                let v = make_collection();
+                v.iter().for_each(|x| {
+                    assert!(x.is_valid());
+                });
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "an opaque-domain `.for_each` must NOT be lifted (runtime data, not \
+             constructible): {:?}",
+            contract_names(&out)
+        );
+        assert!(
+            out.assertions_refused >= 1,
+            "the opaque-domain `.for_each` body assert must stay refused: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            !contract_names(&out).iter().any(|n| n.contains("::for_each::")),
+            "no `for_each` universal memento may be minted over an opaque domain: {:?}",
+            contract_names(&out)
+        );
+    }
+
+    #[test]
+    fn for_each_with_mutating_body_stays_refused() {
+        // STRUCTURAL: the domain is a LITERAL array (finite), but the body MUTATES
+        // an accumulator (`total += x`). A single universal over the bound var
+        // would be a false claim (the asserted value varies across iterations
+        // independently of the var). The purity gate must REFUSE the whole lift,
+        // leaving the body assert in its refusal.
+        let src = r#"
+            #[test]
+            fn each_mut() {
+                let mut total = 0;
+                [1i32, 2, 3].iter().for_each(|x| {
+                    total += x;
+                    assert!(total > 0);
+                });
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "a mutating-body `.for_each` must NOT be lifted even over a literal \
+             domain (unsound single universal): {:?}",
+            contract_names(&out)
+        );
+        assert!(
+            !contract_names(&out).iter().any(|n| n.contains("::for_each::")),
+            "no `for_each` universal memento may be minted for a mutating body: {:?}",
+            contract_names(&out)
         );
     }
 
