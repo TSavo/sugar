@@ -98,16 +98,23 @@
 > leg only applies when the gate is MECHANICALLY exact (empty-body), not when the underlying
 > condition is conservative/recoverable.
 >
-> Every remaining
-> case requires T at the soundness edge (the sweep catches false-UNSAT and silent drops
-> but NOT masked contradictions / false-discharge). The resume order for the supervised
-> campaign, by leverage: (1) flt2dec float-formatting body lift (388, the single biggest
-> lever — but the highest masked-contradiction risk, model against a re-walkable oracle);
-> (2) pinned-guard branch-partitioning + loop-unrolling (~106 — gate on guard PINNEDNESS,
-> not effect-freedom, per R4); (3) float/IEEE refinement (~80); (4) statement-graph
-> restructure (~81); (5) transmute/raw-term modeling (35); (6) cross-file def resolution
-> (~65). NONE is drainable without watching the false-discharge edge — driving any of
-> them blind would make the 64 bytes lie.
+ RECALIBRATION (2026-06-14, answering "why me at the soundness edge?"): "needs T at the
+> edge" was IMPRECISE. A masked contradiction is invisible to inspection — a human reviewer
+> catches it no better than the lifter does. What catches false-discharge is a BREAK-THE-TWIN
+> test (construct the should-be-refuted case, prove it's refuted) — mechanical, and the
+> lifter-author's to write. So the real division is "mechanically twin-testable (autonomous)"
+> vs "MEANING-JUDGMENT (T's)", and the remaining work splits by PRECISE blocker, not a blanket
+> "supervised": (1) flt2dec 388 = SCOPE+SUBTLETY (faithful Grisu is a huge reimplementation;
+> the EUF-blackbox shortcut is tautological/false-pass) — a poor solo bet, NOT a human-eyes
+> gate; (2) branch-partitioning ~106 = EMPIRICAL DEAD-END (R4: corpus guards are
+> .len()/method/runtime, never pinned → drains 0); (3) float/NaN ~80 + bool-eq-as-term =
+> SHARED-PATH REGRESSION risk (the lt/le/gt/ge term_binop_name scar) — derisked by a full-suite
+> run, not by eyes; (4) iterator/flt2dec helper bodies = UNLIFTABLE-EVEN-WHEN-INLINED (Wall A);
+> (5) transmute/raw-term 35 + duplicate-obligation (const-item) = the ONLY genuinely T-needs
+> class, MEANING-JUDGMENT ("recoverable or terminal?" is not mechanical). 876 is where the
+> mechanically-twin-testable autonomous surface is exhausted; the rest is large/subtle
+> reimplementation + empirical dead-ends + genuine meaning-judgment. A twin-test still gates
+> every future lift — driving one blind would make the 64 bytes lie.
 
 > **STATUS 2026-06-14 (commits 3cbf69936..df1e1cd04, all pushed, all verified
 > falsePass=0 / SILENT=0).** Capability work LANDED, driving unclassified
