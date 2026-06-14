@@ -1,0 +1,10 @@
+{
+  "assertion_multiset_cid": "blake3-512:ee0c6d92a4aa44f2f43bb657b70d9b87ba202392a6ea5c2aee519197e02aa59f6a3a425b49f7aa00191688e57c48bb795b58f74b35a2518cb6d4465eeb000a50",
+  "silent": 0,
+  "unaccounted": -52,
+  "discharged": 5626,
+  "refused": 291,
+  "unclassified": 452,
+  "prev_unclassified": 452,
+  "note": "HERMETIC (no --dissolve) snapshot of the rust 1.96.0 coretests accounting sweep, gated in CI. Each push that moves the lifter MUST update this pin to its predicted snapshot; CI runs the deterministic hermetic sweep and asserts an EXACT match, so it goes red when a commit fails to move the numbers as it claimed. unclassified here is lifter-only (452); --dissolve mode credits a further ~256 by evaluation (not gated -- nightly-compile dependent). Drive unclassified -> 0."
+}
