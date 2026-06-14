@@ -6004,13 +6004,18 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
             Err(format!("unsupported term `{}`", token_key(expr)))
         }
         Expr::Range(range) => {
+            // An omitted bound must NOT lift to a `_` var: `_` is not a valid
+            // SMT-LIB symbol, so it reached the solver as `unknown constant _` and
+            // spuriously REFUSED every `v[..k]` / `v[k..]` slice obligation. An
+            // omitted START is 0 (`..k` == `0..k`); an omitted END is the
+            // collection length -- an opaque but VALID symbol, never `_`.
             let start = match &range.start {
                 Some(expr) => translate_term_in_scope(expr, scope)?,
-                None => make_var("_"),
+                None => num(0),
             };
             let end = match &range.end {
                 Some(expr) => translate_term_in_scope(expr, scope)?,
-                None => make_var("_"),
+                None => make_var("range_end_len"),
             };
             let name = match range.limits {
                 syn::RangeLimits::HalfOpen(_) => "range",
@@ -6815,6 +6820,115 @@ mod lifter_key_tests {
 
     fn contract_names(out: &AdapterOutput) -> Vec<&str> {
         out.decls.iter().map(|d| d.name.as_str()).collect()
+    }
+
+    // ── Stateful-read trajectory vindication (interior-mut / iterator) ────────
+
+    #[test]
+    fn omitted_range_bound_is_not_an_underscore_var() {
+        // `v[..4]` must lift with start 0, never a `_` var -- `_` is not a valid
+        // SMT symbol and reached the solver as `unknown constant _`, spuriously
+        // refusing every slice obligation.
+        let src = r#"
+            #[test]
+            fn slice_count() {
+                let v = [1, 2, 3, 4, 5];
+                assert_eq!(v[..4].iter().count(), 4);
+            }
+        "#;
+        let out = lift_src(src);
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            !dump.contains("name: \"_\""),
+            "an omitted range bound must not lift to a `_` var: {dump}"
+        );
+        assert!(
+            contract_names(&out).iter().any(|n| n.contains("range(i:0")),
+            "an omitted range start must lift to 0: {:?}",
+            contract_names(&out)
+        );
+    }
+
+    #[test]
+    fn interior_mutable_cell_reads_do_not_coalesce() {
+        // `c.get()` at two program points observes a mutable interior, so the
+        // reads must get DISTINCT keys (c is versioned per statement) rather than
+        // coalesce into a false contradiction.
+        let src = r#"
+            #[test]
+            fn cell_traj() {
+                let c = Cell::new(0);
+                assert_eq!(c.get(), 0);
+                assert_eq!(c.get(), 4);
+            }
+        "#;
+        let out = lift_src(src);
+        let gets: Vec<&str> = contract_names(&out)
+            .into_iter()
+            .filter(|n| n.contains("method:get"))
+            .collect();
+        assert!(gets.len() >= 2, "expected two get obligations: {gets:?}");
+        let distinct: std::collections::HashSet<&str> = gets.iter().cloned().collect();
+        assert_eq!(
+            distinct.len(),
+            gets.len(),
+            "interior-mut reads must have distinct keys, not coalesce: {gets:?}"
+        );
+    }
+
+    #[test]
+    fn iterator_reads_do_not_coalesce() {
+        // An iterator is consumed/advanced, so `len` observed at two program
+        // points must get distinct keys rather than coalesce.
+        let src = r#"
+            #[test]
+            fn iter_traj() {
+                let mut it = [1, 2, 3].iter();
+                assert_eq!(it.len(), 3);
+                let _ = it.next();
+                assert_eq!(it.len(), 2);
+            }
+        "#;
+        let out = lift_src(src);
+        let lens: Vec<&str> = contract_names(&out)
+            .into_iter()
+            .filter(|n| n.contains("method:len"))
+            .collect();
+        assert!(lens.len() >= 2, "expected two len obligations: {lens:?}");
+        let distinct: std::collections::HashSet<&str> = lens.iter().cloned().collect();
+        assert_eq!(
+            distinct.len(),
+            lens.len(),
+            "iterator reads must have distinct keys, not coalesce: {lens:?}"
+        );
+    }
+
+    #[test]
+    fn plain_immutable_binding_reads_do_coalesce() {
+        // DISCRIMINATION: a plain (non-stateful) binding read twice with the SAME
+        // value coalesces to ONE key -- versioning is ONLY for stateful receivers,
+        // so a real contradiction on an immutable value is still caught.
+        let src = r#"
+            #[test]
+            fn plain() {
+                let x = 5;
+                assert_eq!(plain_helper(x), 1);
+                assert_eq!(plain_helper(x), 1);
+            }
+        "#;
+        let out = lift_src(src);
+        let calls: Vec<&str> = contract_names(&out)
+            .into_iter()
+            .filter(|n| n.contains("plain_helper"))
+            .collect();
+        if calls.len() >= 2 {
+            let distinct: std::collections::HashSet<&str> = calls.iter().cloned().collect();
+            assert_eq!(
+                distinct.len(),
+                1,
+                "a plain immutable binding's reads must COALESCE (one key): {calls:?}"
+            );
+        }
     }
 
     // ── Int literal width: SOUNDNESS GUARD (no opaque wrapper) ────────────────
