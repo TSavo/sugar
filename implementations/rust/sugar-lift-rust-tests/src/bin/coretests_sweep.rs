@@ -427,36 +427,40 @@ fn main() {
         let file_inactive = file_inactive.min(refused_total - file_terminal);
         let file_unclassified = refused_total - file_terminal - file_inactive;
 
-        // STDLIB-SUGAR DISSOLUTION as a per-file PARTITION move (no `min(unclassified)`
-        // cap, which cannibalized). Dissolution proves closed stdlib-sugar asserts green
-        // by evaluation under the pinned toolchain. By the dissolution GATE these asserts
-        // use a stdlib op the symbolic lifter cannot model, so a green is NEVER in the
-        // LIFTED set -- it sits in this file's UNCLASSIFIED set, or (after a
-        // reclassification, e.g. a closed assert inside a `while` body now marked terminal)
-        // in the TERMINAL set. A proven assert is DISCHARGED regardless of which of those
-        // two the lifter assigned it: refusal is RESIDUAL -- dissolution wins. So credit
-        // every green to discharged and draw it down from UNCLASSIFIED first, then
-        // TERMINAL. The credit is capped at unclassified+terminal (the whole non-lifted
-        // pool) so no bucket goes negative and the per-file total contribution stays
-        // exactly file_terminal+file_unclassified -- identical to the pre-dissolution
-        // accounting, so SILENT and net unaccounted are invariant. Crucially the credit no
-        // longer keys off file_unclassified alone, so reclassifying an assert
-        // unclassified->terminal cannot clip an unrelated dissolve (the old cap artifact).
-        // Hermetic (no --dissolve): green=0 => every bucket unchanged.
-        let green = if dissolve {
+        // STDLIB-SUGAR DISSOLUTION as a per-file EXACT PARTITION. Dissolution proves closed
+        // stdlib-sugar asserts green by evaluation under the pinned toolchain. By the
+        // dissolution GATE these asserts use a stdlib op the symbolic lifter cannot model,
+        // so a green is NEVER in the LIFTED set -- it sits in this file's UNCLASSIFIED set
+        // OR, when the assert is inside a `while` body (the only terminal context that holds
+        // a dissolvable green), in the TERMINAL set. `collect_dissolvable` tags each unit
+        // with `under_while`, so we know each green's ACTUAL bucket and credit it there:
+        // a while-body green discharges from REFUSED (residual refusal -- dissolution wins),
+        // every other green from UNCLASSIFIED. Capped per bucket so none goes negative.
+        // This is EXACT (no draw-order): a non-green unclassified assert can NEVER be drawn
+        // down by a while-body green, so unclassified cannot be fake-zeroed as we drive to 0.
+        // Per-file total contribution stays file_terminal+file_unclassified (move, not add)
+        // => SILENT and net unaccounted invariant. Hermetic (no --dissolve): greens=0 =>
+        // every bucket unchanged.
+        let (green_unclassified, green_while) = if dissolve {
             let units = closed_eval::collect_dissolvable(&file);
-            let mut got = 0usize;
+            let mut gu = 0usize;
+            let mut gw = 0usize;
             for u in &units {
                 let full_prelude = format!("{}\n{}", feature_prelude, u.prelude);
-                got += dissolve_count(&full_prelude, &u.setup, &u.asserts, &dissolve_dir);
+                let g = dissolve_count(&full_prelude, &u.setup, &u.asserts, &dissolve_dir);
+                if u.under_while {
+                    gw += g;
+                } else {
+                    gu += g;
+                }
             }
-            got
+            (gu, gw)
         } else {
-            0
+            (0, 0)
         };
-        let dissolved = green.min(file_unclassified + file_terminal);
-        let from_unclassified = dissolved.min(file_unclassified);
-        let from_terminal = dissolved - from_unclassified;
+        let from_terminal = green_while.min(file_terminal);
+        let from_unclassified = green_unclassified.min(file_unclassified);
+        let dissolved = from_unclassified + from_terminal;
         dissolved_total += dissolved;
 
         totals.refused += file_terminal - from_terminal;
