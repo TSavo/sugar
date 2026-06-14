@@ -4607,6 +4607,67 @@ def test_lift_source_classifies_typing_cast_wrapper_as_package_warranted(
     ), local_loci
 
 
+def test_lift_source_classifies_imported_typing_cast_wrapper_as_package_warranted(
+    tmp_path,
+    monkeypatch,
+):
+    pkg = tmp_path / "vendpkg_imported_cast_wrapper"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "encoding.py").write_text(
+        textwrap.dedent(
+            """
+            from typing import cast
+
+            def dynamic(seed):
+                return cast(str, seed.transform(noisy()))
+
+
+            def b64e(s):
+                return s.rstrip(b"=")
+            """
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    translate_universe_for_callee.cache_clear()
+
+    lifted = _lift_source_from_disk(
+        tmp_path,
+        "test_mod.py",
+        """
+        import vendpkg_imported_cast_wrapper.encoding as enc
+
+        def test_token():
+            assert enc.b64e(b"abc") == b"abc"
+        """,
+    )
+
+    audit = next(
+        audit
+        for audit in lifted["sourceAudits"]
+        if audit.get("role") == "python.package-source"
+    )
+    local_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith("vendpkg_imported_cast_wrapper/encoding.py")
+    ]
+    assert any(
+        locus["status"] == "warranted"
+        and locus.get("ast_kind") == "Call"
+        and locus.get("ast_path") == "$.module.body[1].body[0].value"
+        and "transparent typing cast" in locus.get("reason", "")
+        for locus in local_loci
+    ), local_loci
+    assert any(
+        locus["status"] == "unclassified"
+        and locus.get("ast_kind") == "Call"
+        and locus.get("ast_path") == "$.module.body[1].body[0].value.args[1]"
+        for locus in local_loci
+    ), local_loci
+
+
 def test_lift_source_warrants_guarded_default_value_flow(tmp_path, monkeypatch):
     pkg = tmp_path / "vendpkg_guarded_default_warranted"
     pkg.mkdir()
@@ -5138,6 +5199,135 @@ def test_lift_source_classifies_overload_declarations_as_type_metadata(
         and "delegation" in locus.get("reason", "")
         for locus in audit["loci"]
     ), audit
+
+
+def test_lift_source_classifies_imported_overload_declarations_as_type_metadata(
+    tmp_path, monkeypatch
+):
+    pkg = tmp_path / "vendpkg_imported_overload_metadata"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "encoding.py").write_text(
+        textwrap.dedent(
+            '''
+            from typing import overload as type_overload
+
+            class Codec:
+                @type_overload
+                def encode(self, value: str, fallback: None = None) -> str: ...
+
+                @type_overload
+                def encode(self, value: bytes, fallback: bytes | None = None) -> bytes: ...
+
+                def encode(self, value, fallback=None):
+                    return value
+
+            def b64e(s):
+                return s.rstrip(b"=")
+            '''
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    translate_universe_for_callee.cache_clear()
+
+    lifted = _lift_source_from_disk(
+        tmp_path,
+        "test_mod.py",
+        """
+        import vendpkg_imported_overload_metadata.encoding as enc
+
+        def test_token():
+            assert enc.b64e(b"abc") == b"abc"
+        """,
+    )
+
+    audit = next(
+        audit
+        for audit in lifted["sourceAudits"]
+        if audit.get("role") == "python.package-source"
+    )
+    overload_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith("vendpkg_imported_overload_metadata/encoding.py")
+        and (
+            locus.get("ast_path", "").startswith("$.module.body[1].body[0]")
+            or locus.get("ast_path", "").startswith("$.module.body[1].body[1]")
+        )
+    ]
+    assert overload_loci
+    assert not [
+        locus for locus in overload_loci if locus["status"] == "unclassified"
+    ], overload_loci
+    assert any(
+        locus["status"] == "support"
+        and locus.get("ast_kind") == "Name"
+        and "overload" in locus.get("reason", "")
+        for locus in overload_loci
+    ), overload_loci
+    assert any(
+        locus["status"] == "inactive"
+        and locus.get("ast_kind") == "Expr"
+        and "overload" in locus.get("reason", "")
+        for locus in overload_loci
+    ), overload_loci
+
+
+def test_lift_source_classifies_type_alias_declarations_as_type_metadata(
+    tmp_path, monkeypatch
+):
+    pkg = tmp_path / "vendpkg_type_alias_metadata"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "encoding.py").write_text(
+        textwrap.dedent(
+            '''
+            from typing import Literal, TypeAlias
+
+            Label: TypeAlias = Literal["left", "right"] | tuple[str, ...]
+
+            def b64e(s):
+                return s.rstrip(b"=")
+            '''
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    translate_universe_for_callee.cache_clear()
+
+    lifted = _lift_source_from_disk(
+        tmp_path,
+        "test_mod.py",
+        """
+        import vendpkg_type_alias_metadata.encoding as enc
+
+        def test_token():
+            assert enc.b64e(b"abc") == b"abc"
+        """,
+    )
+
+    audit = next(
+        audit
+        for audit in lifted["sourceAudits"]
+        if audit.get("role") == "python.package-source"
+    )
+    alias_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith("vendpkg_type_alias_metadata/encoding.py")
+        and locus.get("ast_path", "").startswith("$.module.body[1]")
+    ]
+    assert alias_loci
+    assert not [
+        locus for locus in alias_loci if locus["status"] == "unclassified"
+    ], alias_loci
+    assert any(
+        locus["status"] == "support"
+        and locus.get("ast_kind") == "AnnAssign"
+        and "TypeAlias" in locus.get("reason", "")
+        for locus in alias_loci
+    ), alias_loci
 
 
 def test_universe_row_emitted_once_per_base_across_tests(vendor_path):
