@@ -715,6 +715,47 @@ fn slice_contradiction() {
 }
 
 #[test]
+fn mut_ref_full_slice_of_array_literal_lifts() {
+    // `&mut [0, 1][..]` is the FULL slice of an array literal — the same pinned value
+    // as `&mut [0, 1]`. It lifts (sugar dissolves); the residual-variable twin below
+    // proves this does NOT leak into the mutable-container case.
+    let src = r#"
+fn make_slice() -> &'static mut [i32] { todo!() }
+
+#[test]
+fn full_slice_is_01() {
+    assert_eq!(make_slice(), &mut [0, 1][..]);
+}
+"#;
+    let out = lift_file(&parse(src), "src/lib.rs");
+    assert_eq!(out.seen, 1);
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+}
+
+#[test]
+fn mut_ref_full_slice_of_mutable_variable_stays_residual() {
+    // THE SOUNDNESS BOUNDARY: `&mut buf[..]` over a MUTABLE variable is NOT an
+    // immutable value — it aliases a mutable buffer with its own pointer/temporal
+    // identity, so it must stay RESIDUAL (not coalesced to a stable ref_mut term).
+    // is_immutable_value_expr returns false for an Index whose base is a path, so the
+    // ref_mut arm does not fire and the assert is released, not falsely discharged.
+    let src = r#"
+#[test]
+fn full_slice_of_var() {
+    let mut buf = [0, 1];
+    assert_eq!(buf.len(), (&mut buf[..]).len());
+}
+"#;
+    let out = lift_file(&parse(src), "src/lib.rs");
+    assert_eq!(out.seen, 1);
+    assert_eq!(
+        out.lifted, 0,
+        "full slice of a mutable variable must stay residual, not lift: {:?}",
+        out.warnings
+    );
+}
+
+#[test]
 fn transparent_assert_helper_reduces_to_assert_eq_base_lifter() {
     let src = r#"
 fn assert_same(actual: i32, expected: i32) {

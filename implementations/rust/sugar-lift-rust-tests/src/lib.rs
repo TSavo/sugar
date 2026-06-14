@@ -6771,12 +6771,7 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
         // a non-liftable element propagates its own Err (stays unclassified, never a
         // false discharge). Strictly narrower than the residual rule: a plain `&mut x`
         // (and `&mut <call>`, e.g. `&mut ready(1)`) still falls through and refuses.
-        Expr::Reference(reference)
-            if matches!(
-                &*reference.expr,
-                Expr::Closure(_) | Expr::Lit(_) | Expr::Array(_)
-            ) =>
-        {
+        Expr::Reference(reference) if is_immutable_value_expr(&reference.expr) => {
             Ok(Rc::new(Term::Ctor {
                 name: "ref_mut".to_string(),
                 args: vec![translate_term_in_scope(&reference.expr, scope)?],
@@ -7147,6 +7142,32 @@ fn is_literal_identity_term(term: &Term) -> bool {
         Term::Ctor { name, args } if constructor_operator_tag(term).is_some() => {
             name.starts_with("call:") && args.iter().all(|arg| is_literal_identity_term(arg))
         }
+        _ => false,
+    }
+}
+
+/// A `..` with both bounds omitted — `x[..]` is the FULL slice of `x`, the same
+/// value as `x` for slice/array PartialEq.
+fn is_full_range_expr(expr: &Expr) -> bool {
+    matches!(expr, Expr::Range(r) if r.start.is_none() && r.end.is_none())
+}
+
+/// An expression that denotes an IMMUTABLE VALUE constructed from the source: a
+/// closure, a scalar literal, an array literal, the negation of one, or a FULL
+/// slice (`[..]`) of one. `&mut <such expr>` is a stable `ref_mut(<value>)` term
+/// (it cannot be reassigned), unlike `&mut <variable>` / `&mut <call>` / a partial
+/// or non-literal index (`&mut buf[i]`, `&mut buf[..]`) — those keep distinct
+/// pointer/temporal identity and stay RESIDUAL (mutable_reference_pointer_eq guard).
+/// Element/inner translation goes through the normal version-aware path, so a
+/// mutable element cannot false-coalesce and a non-liftable inner propagates Err
+/// (stays unclassified, never a false discharge).
+fn is_immutable_value_expr(expr: &Expr) -> bool {
+    match expr {
+        Expr::Closure(_) | Expr::Lit(_) | Expr::Array(_) => true,
+        Expr::Unary(u) if matches!(u.op, syn::UnOp::Neg(_)) => is_immutable_value_expr(&u.expr),
+        Expr::Index(i) if is_full_range_expr(&i.index) => is_immutable_value_expr(&i.expr),
+        Expr::Paren(p) => is_immutable_value_expr(&p.expr),
+        Expr::Group(g) => is_immutable_value_expr(&g.expr),
         _ => false,
     }
 }
