@@ -53,6 +53,117 @@ use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
+use syn::Expr;
+
+/// Method/function names that are NOT value-sugar: pointer/address, time, IO, RNG,
+/// concurrency, env/fs, unsafe reinterpretation. An assertion operand naming any of
+/// these is rejected (out of the stdlib-VALUE-sugar category, per T's boundaries) even
+/// if it happens to evaluate deterministically. Closedness (below) already rejects the
+/// common cases (their receivers are runtime locals, not literals); this is a focused
+/// backstop for the rare impure-op-on-a-literal.
+const IMPURE_NAMES: &[&str] = &[
+    "as_ptr", "as_mut_ptr", "addr", "expose_addr", "expose_provenance", "with_addr",
+    "from_raw", "into_raw", "transmute", "transmute_copy", "assume_init",
+    "now", "elapsed", "duration_since", "instant",
+    "read", "write", "read_to_string", "stdin", "stdout", "stderr", "lock",
+    "random", "gen", "gen_range", "fill", "next_u32", "next_u64",
+    "spawn", "join", "load", "store", "fetch_add", "fetch_sub", "fetch_or",
+    "compare_exchange", "swap", "send", "recv", "try_recv",
+    "var", "vars", "args", "open", "metadata", "create", "remove_file",
+];
+
+/// Certify that every operand of a unit-test assertion is CLOSED STDLIB VALUE SUGAR
+/// (fences #1-#3): built only from literals / const-or-ctor paths and stdlib method
+/// calls, with NO free variable (generalization), NO call to a user/local function
+/// (logic to model), and NO impure op. This is the eligibility gate; only operands it
+/// certifies may be handed to the harness driver.
+pub fn assert_operands_are_stdlib_sugar(operands: &[&Expr]) -> bool {
+    !operands.is_empty() && operands.iter().all(|e| closed_pure_sugar(e))
+}
+
+/// A path is an acceptable closed leaf if it is a value constructor / enum variant
+/// (`Some`/`Ok`/`Err`/`Ordering::Less`/...) or a SCREAMING_SNAKE associated const
+/// (`f64::MAX`, `char::MAX`, `u32::BITS`). A bare lowercase identifier is a free
+/// variable or a local binding -> rejected (not closed).
+fn is_const_or_ctor_path(p: &syn::Path) -> bool {
+    let Some(last) = p.path_last_ident() else {
+        return false;
+    };
+    let s = last;
+    // value ctors / enum variants: first char uppercase, rest not screaming-only is fine
+    let first_upper = s.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
+    // SCREAMING_SNAKE const: all uppercase / digits / underscore
+    let screaming = !s.is_empty()
+        && s.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+    first_upper || screaming
+}
+
+trait PathLastIdent {
+    fn path_last_ident(&self) -> Option<String>;
+}
+impl PathLastIdent for syn::Path {
+    fn path_last_ident(&self) -> Option<String> {
+        self.segments.last().map(|s| s.ident.to_string())
+    }
+}
+
+fn closed_pure_sugar(expr: &Expr) -> bool {
+    match expr {
+        // literals: the pinned leaves.
+        Expr::Lit(_) => true,
+        // const / ctor / variant path (None, f64::MAX, Ordering::Less); a bare lowercase
+        // ident (free var / local) fails is_const_or_ctor_path.
+        Expr::Path(p) => is_const_or_ctor_path(&p.path),
+        // value constructor / variant call: Some(x), Ok(x), Wrapping(x). The callee must
+        // be an uppercase ctor path (NOT a lowercase user/local fn -> fence #1), args pure.
+        Expr::Call(c) => {
+            let ctor = matches!(c.func.as_ref(), Expr::Path(p) if is_const_or_ctor_path(&p.path));
+            ctor && c.args.iter().all(closed_pure_sugar)
+        }
+        // stdlib method sugar on a closed receiver: 'A'.to_digit(16), "x".to_ascii_uppercase().
+        // Receiver + args must be closed-pure; the method name must not be impure.
+        Expr::MethodCall(m) => {
+            let name = m.method.to_string();
+            !IMPURE_NAMES.contains(&name.as_str())
+                && closed_pure_sugar(&m.receiver)
+                && m.args.iter().all(closed_pure_sugar)
+        }
+        // format!/concat!/... over pure args is value sugar; reject impure-named macros.
+        Expr::Macro(mac) => {
+            use syn::parse::Parser;
+            use syn::punctuated::Punctuated;
+            let name = mac
+                .mac
+                .path
+                .path_last_ident()
+                .unwrap_or_default();
+            if !matches!(name.as_str(), "format" | "concat" | "stringify" | "vec") {
+                return false;
+            }
+            let parser = Punctuated::<Expr, syn::Token![,]>::parse_terminated;
+            match parser.parse2(mac.mac.tokens.clone()) {
+                // stringify! takes arbitrary tokens but its result is a literal of the
+                // SOURCE text -- pure regardless of args.
+                _ if name == "stringify" => true,
+                Ok(args) => args.iter().all(closed_pure_sugar),
+                Err(_) => false,
+            }
+        }
+        Expr::Unary(u) => closed_pure_sugar(&u.expr),
+        Expr::Binary(b) => closed_pure_sugar(&b.left) && closed_pure_sugar(&b.right),
+        Expr::Paren(p) => closed_pure_sugar(&p.expr),
+        Expr::Group(g) => closed_pure_sugar(&g.expr),
+        Expr::Reference(r) => closed_pure_sugar(&r.expr),
+        Expr::Array(a) => a.elems.iter().all(closed_pure_sugar),
+        Expr::Tuple(t) => t.elems.iter().all(closed_pure_sugar),
+        Expr::Cast(c) => closed_pure_sugar(&c.expr),
+        Expr::Index(i) => closed_pure_sugar(&i.expr) && closed_pure_sugar(&i.index),
+        // everything else (Field, If, Block, Closure, Await, bare local Call, ...) is
+        // not certified -> the assertion stays unclassified (safe under-claim).
+        _ => false,
+    }
+}
+
 /// Outcome of a harness compile+run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HarnessResult {
@@ -175,6 +286,49 @@ mod tests {
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
+    }
+
+    fn gate(src: &str) -> bool {
+        let e: Expr = syn::parse_str(src).expect("parse");
+        assert_operands_are_stdlib_sugar(&[&e])
+    }
+
+    #[test]
+    fn gate_accepts_closed_stdlib_value_sugar() {
+        // direct stdlib method sugar on literals
+        assert!(gate("'0'.to_digit(10)"));
+        assert!(gate("'A'.to_digit(16)"));
+        assert!(gate(r#""url()URL()".to_ascii_uppercase()"#));
+        assert!(gate("'A'.to_lowercase().collect::<String>()"));
+        // value ctors / variants as RHS expecteds
+        assert!(gate("Some(10)"));
+        assert!(gate("None"));
+        // consts
+        assert!(gate("f64::MAX"));
+        assert!(gate("u32::BITS"));
+        // format! sugar over literals
+        assert!(gate(r#"format!("{}", 3.14_f64)"#));
+        // literals, refs, byte
+        assert!(gate("b'0'"));
+        assert!(gate(r#""HİKß""#));
+        // arithmetic over literals
+        assert!(gate("1.0 / 0.0"));
+    }
+
+    #[test]
+    fn gate_rejects_non_sugar_the_fences() {
+        // FENCE #3 generalization: a free variable (param/local) is not closed.
+        assert!(!gate("c"));
+        assert!(!gate("c.to_lowercase().collect::<String>()"));
+        // FENCE #1 user/local function call (lowercase callee) -> model it, don't run it.
+        assert!(!gate("lower('A')"));
+        assert!(!gate("my_helper(3, 4)"));
+        // impure ops (pointer / time / IO / atomic), even on literals.
+        assert!(!gate("'a'.encode_utf8(&mut buf).as_ptr()")); // free `buf` AND as_ptr
+        assert!(!gate("Instant::now()")); // ctor-ish path but `now` is impure-named... it's a method-free call
+        // field access / arbitrary expr -> not certified.
+        assert!(!gate("x.field"));
+        assert!(!gate("{ let y = 3; y }"));
     }
 
     #[test]
