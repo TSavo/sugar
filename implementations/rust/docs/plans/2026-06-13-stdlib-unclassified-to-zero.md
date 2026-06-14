@@ -507,6 +507,25 @@ house with every door labelled.
 > incremental target in THIS corpus. A's commit is therefore sound-but-redundant infra. **Keep-or-revert
 > is a judgment call left for T** (not reverted unilaterally overnight; no regression either way).
 >
+> **MACRO-CARRY landed `f48bc9d41` (reproducible, sound).** Local `macro_rules!` (e.g. str_lossy.rs
+> `assert_chunks!`) invoked with all-closed args is dissolved by carrying the def into the harness +
+> evaluating; each macro's invocations form their OWN isolated unit (a bad macro can't poison regular
+> asserts). dissolve_count now falls back to per-assert on ANY non-clean batch (hardening). Result:
+> unclassified 279→**272**, discharged 5891 (92.4%), dissolved 268, refused 208, SILENT 0, unaccounted −52,
+> 278 tests green (+2 twins). str_lossy drains 9 isolated; corpus net +7 (a safe 2-assert under-claim —
+> NOT prelude-poisoning, unit-isolation left it unchanged; never a false-discharge; cause still open).
+> estimator.rs `assert_almost_eq!` (22) correctly NOT dissolved (its `estimate_scaling_factor` is
+> core-internal `core::num::imp`, unreachable from a standalone harness → compile fails → safe).
+>
+> **PARALLEL DRAIN AGENTS dispatched (2026-06-14, branches off `f48bc9d41`).** Three isolated worktree
+> agents (own target/ + own TMPDIR, no sweep contention), each soundness-gated, commit-don't-push:
+> (1) `drain-letinit` — let-initializer (32) + nested-expr-stmt (38) lifter-positioning; (2) `drain-loops`
+> — for/iter over finite literal domains (66+9) via per-iteration carry/unroll; (3) `drain-conds` — while
+> (30)/if (8)/match (7): SCOPE conditional-vs-unconditional, reclassify genuinely-conditional to
+> refused-with-sharpened-reason (legitimate drain), lift only unconditional-in-disguise. Integrate serially
+> (all touch lib.rs → resolve conflicts on cherry-pick). Genuinely TERMINAL remainder: bin-2 [refused]
+> ~107 (iterator/for over runtime collections) + estimator/f16 core-internal/unstable.
+>
 > **Reproducibility fix `2a531a105` (kept, real win for verification integrity):** the dissolve dir reused
 > fixed harness filenames, so a sequential sweep hit ETXTBSY overwrite races → non-reproducible dissolved
 > count (261–293). Fix = per-source-hash unique filenames + 3-try compile retry + cleanup. Count unchanged
