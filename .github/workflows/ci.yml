@@ -11,6 +11,8 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
   pull_request:
 
 # Cancel superseded runs on the same branch / PR.

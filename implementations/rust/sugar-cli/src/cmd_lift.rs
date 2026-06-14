@@ -540,6 +540,17 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
             if let Some(totals) = audit.get("totals") {
                 out.push_str(&format!("  totals: {}\n", format_counts(totals)));
             }
+            if audit
+                .get("loci_elided")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                let mode = audit
+                    .get("accounting_mode")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                out.push_str(&format!("  loci: elided ({mode} package accounting)\n"));
+            }
             if let Some(loci) = audit.get("loci").and_then(Value::as_array) {
                 let mut loci = loci.iter().collect::<Vec<_>>();
                 loci.sort_by_key(|locus| {
@@ -594,6 +605,43 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
                         out.push_str(&format!("    {file}:{line} {status} {ast_kind} {reason}\n"));
                     }
                 }
+            } else {
+                let ast_summary = format_ast_type_counts_value(audit.get("ast_type_counts"));
+                if !ast_summary.is_empty() {
+                    out.push_str("  ast types:\n");
+                    for row in ast_summary {
+                        out.push_str(&format!("    {row}\n"));
+                    }
+                }
+                if let Some(samples) = audit.get("sample_loci").and_then(Value::as_array) {
+                    if !samples.is_empty() {
+                        out.push_str("  sample loci:\n");
+                        for locus in samples {
+                            let file = locus
+                                .get("file")
+                                .and_then(Value::as_str)
+                                .unwrap_or("<unknown file>");
+                            let line = locus
+                                .get("line")
+                                .and_then(Value::as_i64)
+                                .map(|line| line.to_string())
+                                .unwrap_or_else(|| "?".to_string());
+                            let status = normalized_source_status(
+                                locus.get("status").and_then(Value::as_str),
+                            );
+                            let ast_kind =
+                                locus.get("ast_kind").and_then(Value::as_str).unwrap_or("?");
+                            let reason = locus.get("reason").and_then(Value::as_str).unwrap_or("");
+                            if reason.is_empty() {
+                                out.push_str(&format!("    {file}:{line} {status} {ast_kind}\n"));
+                            } else {
+                                out.push_str(&format!(
+                                    "    {file}:{line} {status} {ast_kind} {reason}\n"
+                                ));
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -626,6 +674,39 @@ fn format_ast_type_summary(loci: &[&Value]) -> Vec<String> {
     }
 
     let mut rows = by_status.into_iter().collect::<Vec<_>>();
+    rows.sort_by_key(|(status, _)| (source_status_order(status), status.clone()));
+    rows.into_iter()
+        .map(|(status, counts)| {
+            let counts = counts
+                .into_iter()
+                .map(|(kind, count)| format!("{kind}={count}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{status}: {counts}")
+        })
+        .collect()
+}
+
+fn format_ast_type_counts_value(value: Option<&Value>) -> Vec<String> {
+    let Some(Value::Object(by_status)) = value else {
+        return Vec::new();
+    };
+    let mut rows = by_status
+        .iter()
+        .filter_map(|(status, counts)| {
+            let Value::Object(counts) = counts else {
+                return None;
+            };
+            let counts = counts
+                .iter()
+                .filter_map(|(kind, count)| count.as_i64().map(|count| (kind.clone(), count)))
+                .collect::<BTreeMap<_, _>>();
+            if counts.is_empty() {
+                return None;
+            }
+            Some((normalized_source_status(Some(status)).to_string(), counts))
+        })
+        .collect::<Vec<_>>();
     rows.sort_by_key(|(status, _)| (source_status_order(status), status.clone()));
     rows.into_iter()
         .map(|(status, counts)| {
@@ -1939,6 +2020,68 @@ mod tests {
         assert!(!human.contains("<missing source memento>"));
         assert!(human
             .contains("/site-packages/itsdangerous/serializer.py:245 unclassified FunctionDef"));
+    }
+
+    #[test]
+    fn human_report_shows_compact_package_source_accounting() {
+        let response = serde_json::json!({
+            "kind": "ir-document",
+            "ir": [],
+            "sourceLedger": {
+                "source_loci": 4,
+                "source_warranted": 1,
+                "source_support": 1,
+                "source_refused": 0,
+                "source_inactive": 0,
+                "source_refuted": 0,
+                "unclassified_source": 2
+            },
+            "sourceAudits": [
+                {
+                    "kind": "source-audit",
+                    "role": "python.package-source",
+                    "universe_kind": "package-accounting",
+                    "accounting_mode": "structural",
+                    "loci_elided": true,
+                    "package": "pandas",
+                    "package_root": "/site-packages/pandas",
+                    "contract": {"name": "pandas#source-accounting"},
+                    "totals": {
+                        "source_loci": 4,
+                        "source_warranted": 1,
+                        "source_support": 1,
+                        "source_refused": 0,
+                        "source_inactive": 0,
+                        "source_refuted": 0,
+                        "unclassified_source": 2
+                    },
+                    "ast_type_counts": {
+                        "warranted": {"Return": 1},
+                        "support": {"FunctionDef": 1},
+                        "unclassified": {"Assign": 1, "Call": 1}
+                    },
+                    "sample_loci": [
+                        {
+                            "file": "/site-packages/pandas/core/frame.py",
+                            "line": 10,
+                            "status": "unclassified",
+                            "ast_kind": "Assign",
+                            "reason": "not classified by any emitted Python source warrant"
+                        }
+                    ]
+                }
+            ],
+            "sourceMementos": []
+        });
+        let report = source_report_from_lift_response(&response, Some("pandas")).expect("report");
+        let human = render_source_report_human(&report);
+
+        assert!(human.contains("loci: elided (structural package accounting)"));
+        assert!(human.contains("warranted: Return=1"));
+        assert!(human.contains("support: FunctionDef=1"));
+        assert!(human.contains("unclassified: Assign=1, Call=1"));
+        assert!(human.contains("sample loci:"));
+        assert!(human.contains("/site-packages/pandas/core/frame.py:10 unclassified Assign"));
     }
 
     #[test]

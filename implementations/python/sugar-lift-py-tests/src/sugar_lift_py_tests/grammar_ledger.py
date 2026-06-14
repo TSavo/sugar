@@ -84,7 +84,7 @@ _NAMED: dict = {
         residual="dict-form str.maketrans bindings refuse by name",
     ),
     "return-strip-literal": _lifted(
-        "_rstrip_return_shape/_lstrip_return_shape",
+        "translate_universe_for_callee",
         "no-suffix/no-prefix universe (rstrip/lstrip totality)",
         residual="strip arms owed (both-sides twin)",
     ),
@@ -395,6 +395,12 @@ _RETURN_OTHER: dict = {
     "FormattedValue": _debt(
         "occurs only inside JoinedStr in legal parses; covered by the "
         "format family when reachable"
+    ),
+    "Ellipsis": _debt(
+        "legacy ast.Ellipsis compatibility class: parser-normalized "
+        "ellipsis constants route through return-constant; if this alias "
+        "ever reaches return-other as its own node, map it to the "
+        "constant-singleton universe"
     ),
     "TemplateStr": _debt(
         "t-string template universe (PEP 750): deterministic template "

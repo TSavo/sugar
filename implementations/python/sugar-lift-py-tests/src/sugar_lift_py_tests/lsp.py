@@ -45,13 +45,21 @@ from .cpython_ctypes_resolver import resolve_ctypes_calls
 from .translate_universe import (
     bytes_identity_universe_for_callee,
     branch_selected_raise_universe_for_callee,
+    conditional_chain_universe_for_callee,
     constructor_field_universe_for_callee,
     delegation_universe_for_callee,
     exception_bool_return_universe_for_callee,
     exception_handler_raise_universe_for_callee,
+    guard_universe_for_callee,
     instance_field_universe_for_callee,
     list_adapter_universe_for_callee,
     raise_locus_universe_for_callee,
+    return_regex_universe_for_callee,
+    translate_universe_for_callee,
+    _regex_bool_return,
+    _regex_compile_assignment,
+    _unsupported_regex_literal_reason,
+    _regex_membership_pattern,
 )
 
 
@@ -129,7 +137,7 @@ def kit_declaration_result() -> Dict[str, Any]:
             ]
         },
         "proofResolution": {"strategy": "pip"},
-        "effectKinds": ["concept:panic-freedom"],
+        "effectKinds": ["panic-freedom"],
         "effectLeaves": [],
         "guardPredicates": [
             {
@@ -186,22 +194,25 @@ def _merge_source_ledger(dst: Dict[str, int], src: Dict[str, Any]) -> None:
 
 def _source_totals(loci: List[Dict[str, Any]]) -> Dict[str, int]:
     totals = _empty_source_ledger()
-    totals["source_loci"] = len(loci)
     for locus in loci:
-        status = locus.get("status")
-        if status == "warranted":
-            totals["source_warranted"] += 1
-        elif status == "support":
-            totals["source_support"] += 1
-        elif status == "refused":
-            totals["source_refused"] += 1
-        elif status == "inactive":
-            totals["source_inactive"] += 1
-        elif status == "refuted":
-            totals["source_refuted"] += 1
-        else:
-            totals["unclassified_source"] += 1
+        _increment_source_totals(totals, locus.get("status"))
     return totals
+
+
+def _increment_source_totals(totals: Dict[str, int], status: Any) -> None:
+    totals["source_loci"] += 1
+    if status == "warranted":
+        totals["source_warranted"] += 1
+    elif status == "support":
+        totals["source_support"] += 1
+    elif status == "refused":
+        totals["source_refused"] += 1
+    elif status == "inactive":
+        totals["source_inactive"] += 1
+    elif status == "refuted":
+        totals["source_refuted"] += 1
+    else:
+        totals["unclassified_source"] += 1
 
 
 def _ast_node_span(node: ast.AST) -> Dict[str, int]:
@@ -300,37 +311,6 @@ def _python_package_root_for_file(file: Any) -> Optional[Path]:
     return root
 
 
-def _covered_source_lines(source_audits: List[Any]) -> Dict[Path, Set[int]]:
-    covered: Dict[Path, Set[int]] = {}
-    for audit in source_audits:
-        if not isinstance(audit, dict):
-            continue
-        if audit.get("role") == "python.package-source":
-            continue
-        for locus in audit.get("loci") or []:
-            if not isinstance(locus, dict):
-                continue
-            path = _path_for_source_file(locus.get("file"))
-            if path is None:
-                continue
-            line_range = locus.get("line_range")
-            if (
-                isinstance(line_range, list)
-                and len(line_range) == 2
-                and all(isinstance(v, int) for v in line_range)
-            ):
-                start, end = line_range
-            else:
-                line = locus.get("line")
-                if not isinstance(line, int):
-                    continue
-                start = end = line
-            if end < start:
-                end = start
-            covered.setdefault(path, set()).update(range(start, end + 1))
-    return covered
-
-
 def _package_roots_from_source_audits(source_audits: List[Any]) -> Dict[Path, str]:
     roots: Dict[Path, str] = {}
     for audit in source_audits:
@@ -349,9 +329,78 @@ def _package_roots_from_source_audits(source_audits: List[Any]) -> Dict[Path, st
     return roots
 
 
-def _package_unclassified_loci(
+_SOURCE_STATUS_RANK = {
+    "unclassified": 0,
+    "support": 1,
+    "inactive": 2,
+    "refuted": 3,
+    "refused": 4,
+    "warranted": 5,
+}
+
+
+def _source_status_rank(status: Any) -> int:
+    return _SOURCE_STATUS_RANK.get(str(status or ""), 0)
+
+
+def _emitted_source_locus_index(
+    source_audits: List[Any],
+) -> Dict[tuple[Path, int, str], Dict[str, Any]]:
+    index: Dict[tuple[Path, int, str], Dict[str, Any]] = {}
+    for audit in source_audits:
+        if not isinstance(audit, dict) or audit.get("role") == "python.package-source":
+            continue
+        for locus in audit.get("loci") or []:
+            if not isinstance(locus, dict):
+                continue
+            path = _path_for_source_file(locus.get("file"))
+            line = locus.get("line")
+            ast_kind = locus.get("ast_kind")
+            if path is None or not isinstance(line, int):
+                continue
+            if _source_status_rank(locus.get("status")) <= 0:
+                continue
+            key = (path, line, ast_kind if isinstance(ast_kind, str) else "")
+            current = index.get(key)
+            if current is None or _source_status_rank(
+                locus.get("status")
+            ) > _source_status_rank(current.get("status")):
+                indexed = dict(locus)
+                indexed["source_audit_role"] = audit.get("role")
+                indexed["source_audit_universe_kind"] = audit.get("universe_kind")
+                index[key] = indexed
+    return index
+
+
+def _emitted_source_locus_for_package_node(
+    emitted_loci: Dict[tuple[Path, int, str], Dict[str, Any]],
+    path: Path,
+    line: int,
+    node: ast.AST,
+) -> Optional[Dict[str, Any]]:
+    resolved = path.resolve()
+    return _emitted_source_locus_for_resolved_package_node(
+        emitted_loci,
+        resolved,
+        line,
+        node,
+    )
+
+
+def _emitted_source_locus_for_resolved_package_node(
+    emitted_loci: Dict[tuple[Path, int, str], Dict[str, Any]],
+    resolved: Path,
+    line: int,
+    node: ast.AST,
+) -> Optional[Dict[str, Any]]:
+    return emitted_loci.get((resolved, line, type(node).__name__)) or emitted_loci.get(
+        (resolved, line, "")
+    )
+
+
+def _package_accounting_loci(
     root: Path,
-    covered_lines: Dict[Path, Set[int]],
+    emitted_loci: Dict[tuple[Path, int, str], Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     loci: List[Dict[str, Any]] = []
     for path in sorted(root.rglob("*.py")):
@@ -376,12 +425,11 @@ def _package_unclassified_loci(
 
         module_name = _package_module_name(root, path)
         call_aliases = _package_call_aliases(tree, module_name)
-        already_classified = covered_lines.get(path.resolve(), set())
+        resolved_path = path.resolve()
         for node, ast_path, ancestors in _iter_ast_nodes_with_paths(tree, "$.module"):
             line = getattr(node, "lineno", None)
-            if not isinstance(line, int) or line in already_classified:
+            if not isinstance(line, int):
                 continue
-            span = _ast_node_span(node)
             status, reason = _package_locus_classification(
                 node,
                 ast_path,
@@ -390,20 +438,150 @@ def _package_unclassified_loci(
                 module_name,
                 tree,
             )
-            loci.append(
-                _source_line_locus(
+            replayed = _emitted_source_locus_for_resolved_package_node(
+                emitted_loci,
+                resolved_path,
+                line,
+                node,
+            )
+            if replayed is not None and _source_status_rank(
+                replayed.get("status")
+            ) > _source_status_rank(status):
+                status = str(replayed.get("status") or status)
+                reason = str(replayed.get("reason") or reason)
+            locus = _source_line_locus(
+                file,
+                line,
+                status,
+                "python.package-source",
+                "package-accounting",
+                ast_kind=type(node).__name__,
+                ast_path=ast_path,
+                span=_ast_node_span(node),
+                reason=reason,
+            )
+            if replayed is not None:
+                locus["source_audit_role"] = replayed.get("source_audit_role")
+                locus["source_audit_universe_kind"] = replayed.get(
+                    "source_audit_universe_kind"
+                )
+            loci.append(locus)
+    return loci
+
+
+def _package_accounting_summary(
+    root: Path,
+    emitted_loci: Dict[tuple[Path, int, str], Dict[str, Any]],
+) -> Dict[str, Any]:
+    totals = _empty_source_ledger()
+    ast_type_counts: Dict[str, Dict[str, int]] = {}
+    samples: List[Dict[str, Any]] = []
+    sample_limit = _package_accounting_sample_limit()
+    file_count = 0
+    for path in sorted(root.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        file_count += 1
+        file = str(path)
+        try:
+            source = path.read_text(encoding="utf-8")
+            tree = ast.parse(source, filename=file)
+        except (OSError, SyntaxError) as exc:
+            locus = _source_line_locus(
+                file,
+                0,
+                "refused",
+                "python.package-source",
+                "package-accounting",
+                reason=f"package source could not be parsed: {exc}",
+            )
+            _account_package_locus(totals, ast_type_counts, samples, sample_limit, locus)
+            continue
+
+        module_name = _package_module_name(root, path)
+        call_aliases = _package_call_aliases(tree, module_name)
+        resolved_path = path.resolve()
+        for node, ast_path, ancestors in _iter_ast_nodes_with_paths(tree, "$.module"):
+            line = getattr(node, "lineno", None)
+            if not isinstance(line, int):
+                continue
+            status, reason = _package_locus_classification(
+                node,
+                ast_path,
+                ancestors,
+                call_aliases,
+                module_name,
+                tree,
+            )
+            replayed = _emitted_source_locus_for_resolved_package_node(
+                emitted_loci,
+                resolved_path,
+                line,
+                node,
+            )
+            if replayed is not None and _source_status_rank(
+                replayed.get("status")
+            ) > _source_status_rank(status):
+                status = str(replayed.get("status") or status)
+                reason = str(replayed.get("reason") or reason)
+            ast_kind = type(node).__name__
+            _account_package_locus_fields(totals, ast_type_counts, status, ast_kind)
+            if len(samples) < sample_limit:
+                locus = _source_line_locus(
                     file,
                     line,
                     status,
                     "python.package-source",
                     "package-accounting",
-                    ast_kind=type(node).__name__,
+                    ast_kind=ast_kind,
                     ast_path=ast_path,
-                    span=span,
+                    span=_ast_node_span(node),
                     reason=reason,
                 )
-            )
-    return loci
+                if replayed is not None:
+                    locus["source_audit_role"] = replayed.get("source_audit_role")
+                    locus["source_audit_universe_kind"] = replayed.get(
+                        "source_audit_universe_kind"
+                    )
+                samples.append(locus)
+    return {
+        "totals": totals,
+        "ast_type_counts": ast_type_counts,
+        "sample_loci": samples,
+        "package_file_count": file_count,
+    }
+
+
+def _account_package_locus(
+    totals: Dict[str, int],
+    ast_type_counts: Dict[str, Dict[str, int]],
+    samples: List[Dict[str, Any]],
+    sample_limit: int,
+    locus: Dict[str, Any],
+) -> None:
+    status = _normalized_source_status(locus.get("status"))
+    ast_kind = str(locus.get("ast_kind") or "?")
+    _account_package_locus_fields(totals, ast_type_counts, status, ast_kind)
+    if len(samples) < sample_limit:
+        samples.append(locus)
+
+
+def _account_package_locus_fields(
+    totals: Dict[str, int],
+    ast_type_counts: Dict[str, Dict[str, int]],
+    status: Any,
+    ast_kind: str,
+) -> None:
+    normalized = _normalized_source_status(status)
+    _increment_source_totals(totals, normalized)
+    ast_type_counts.setdefault(normalized, {}).setdefault(ast_kind, 0)
+    ast_type_counts[normalized][ast_kind] += 1
+
+
+def _normalized_source_status(status: Any) -> str:
+    if status in {"warranted", "support", "refused", "inactive", "refuted"}:
+        return str(status)
+    return "unclassified"
 
 
 def _package_locus_classification(
@@ -414,9 +592,24 @@ def _package_locus_classification(
     module_name: str,
     tree: ast.Module,
 ) -> tuple[str, str]:
-    overload_status = _overload_declaration_status(node, ancestors)
+    if _package_accounting_mode() == "structural":
+        return _package_locus_structural_classification(
+            node,
+            ast_path,
+            ancestors,
+            call_aliases,
+            module_name,
+            tree,
+        )
+    overload_status = _overload_declaration_status(node, ancestors, call_aliases)
     if overload_status is not None:
         return overload_status
+    import_probe_status = _top_level_import_probe_refusal_status(node, ancestors)
+    if import_probe_status is not None:
+        return import_probe_status
+    version_probe_status = _top_level_version_probe_refusal_status(node, ancestors)
+    if version_probe_status is not None:
+        return version_probe_status
     if isinstance(node, (ast.Import, ast.ImportFrom, ast.alias)):
         return "support", "import support for recursive name resolution"
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -425,6 +618,19 @@ def _package_locus_classification(
         return "support", "class declaration supports attribute/name resolution"
     if isinstance(node, ast.arg):
         return "support", "function parameter metadata supports callsite argument mapping"
+    generator_flow_status = _generator_flow_refusal_status(node, ancestors)
+    if generator_flow_status is not None:
+        return generator_flow_status
+    with_context_status = _with_context_flow_refusal_status(node, ancestors)
+    if with_context_status is not None:
+        return with_context_status
+    if isinstance(node, ast.Pass):
+        return "support", "pass no-op scaffolding supports source accounting only"
+    if isinstance(node, (ast.Break, ast.Continue)):
+        return (
+            "refused",
+            "loop control flow refused until a loop/path universe is emitted",
+        )
     if _is_function_annotation_path(ast_path):
         return "support", "type annotation metadata supports source accounting only"
     if _is_decorator_metadata_path(ast_path):
@@ -439,15 +645,64 @@ def _package_locus_classification(
     type_checking_status = _type_checking_block_status(node, ast_path, ancestors)
     if type_checking_status is not None:
         return type_checking_status
-    static_binding_status = _static_binding_status(node, ancestors)
+    typing_metadata_status = _typing_metadata_assignment_status(
+        node,
+        ancestors,
+        call_aliases,
+    )
+    if typing_metadata_status is not None:
+        return typing_metadata_status
+    delete_status = _delete_mutation_refusal_status(node, ancestors)
+    if delete_status is not None:
+        return delete_status
+    runtime_environment_status = _runtime_environment_probe_refusal_status(
+        node,
+        ancestors,
+    )
+    if runtime_environment_status is not None:
+        return runtime_environment_status
+    global_config_status = _global_config_read_refusal_status(node, ancestors)
+    if global_config_status is not None:
+        return global_config_status
+    option_registry_status = _option_registry_flow_refusal_status(node, ancestors)
+    if option_registry_status is not None:
+        return option_registry_status
+    module_metadata_status = _public_module_metadata_status(node, ancestors)
+    if module_metadata_status is not None:
+        return module_metadata_status
+    static_binding_status = _static_binding_status(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+    )
     if static_binding_status is not None:
         return static_binding_status
     guarded_default_status = _guarded_default_value_flow_status(node, ancestors)
     if guarded_default_status is not None:
         return guarded_default_status
-    transparent_cast_status = _transparent_typing_cast_status(node, ancestors)
+    transparent_cast_status = _transparent_typing_cast_status(
+        node,
+        ancestors,
+        call_aliases,
+    )
     if transparent_cast_status is not None:
         return transparent_cast_status
+    regex_universe_status = _regex_universe_source_status(
+        node,
+        ancestors,
+        module_name,
+        tree,
+    )
+    if regex_universe_status is not None:
+        return regex_universe_status
+    conditional_chain_status = _conditional_chain_source_status(
+        node,
+        ancestors,
+        module_name,
+    )
+    if conditional_chain_status is not None:
+        return conditional_chain_status
     super_init_status = _super_init_support_status(node, ancestors)
     if super_init_status is not None:
         return super_init_status
@@ -461,11 +716,15 @@ def _package_locus_classification(
     dynamic_io_status = _dynamic_receiver_io_refusal_status(node, ancestors)
     if dynamic_io_status is not None:
         return dynamic_io_status
+    dynamic_getattr_status = _dynamic_getattr_refusal_status(node, ancestors)
+    if dynamic_getattr_status is not None:
+        return dynamic_getattr_status
     nondet_status = _nondeterministic_call_refusal_status(
         node,
         ancestors,
         module_name,
         tree,
+        call_aliases,
     )
     if nondet_status is not None:
         return nondet_status
@@ -476,6 +735,13 @@ def _package_locus_classification(
     )
     if exception_universe_status is not None:
         return exception_universe_status
+    guard_universe_status = _guard_universe_source_status(
+        node,
+        ancestors,
+        module_name,
+    )
+    if guard_universe_status is not None:
+        return guard_universe_status
     unhandled_try_status = _unhandled_try_flow_refusal_status(node, ancestors)
     if unhandled_try_status is not None:
         return unhandled_try_status
@@ -486,6 +752,19 @@ def _package_locus_classification(
     )
     if self_field_dispatch_status is not None:
         return self_field_dispatch_status
+    refused_binding_status = _return_from_refused_binding_status(
+        node,
+        ancestors,
+        tree,
+    )
+    if refused_binding_status is not None:
+        return refused_binding_status
+    terminal_refused_status = _terminal_return_after_refused_flow_status(
+        node,
+        ancestors,
+    )
+    if terminal_refused_status is not None:
+        return terminal_refused_status
     receiver_iteration_status = _receiver_iteration_refusal_status(
         node,
         ancestors,
@@ -517,6 +796,29 @@ def _package_locus_classification(
     )
     if tuple_unpack_call_status is not None:
         return tuple_unpack_call_status
+    tuple_unpack_fixed_sequence_status = _local_tuple_unpack_fixed_sequence_status(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if tuple_unpack_fixed_sequence_status is not None:
+        return tuple_unpack_fixed_sequence_status
+    translate_body_status = _translate_body_status(
+        node,
+        ancestors,
+        module_name,
+    )
+    if translate_body_status is not None:
+        return translate_body_status
+    bytes_identity_body_status = _bytes_identity_body_status(
+        node,
+        ancestors,
+        module_name,
+    )
+    if bytes_identity_body_status is not None:
+        return bytes_identity_body_status
     list_adapter_body_status = _list_adapter_body_status(
         node,
         ancestors,
@@ -556,6 +858,337 @@ def _package_locus_classification(
     return "unclassified", "not classified by any emitted Python source warrant"
 
 
+def _package_accounting_mode() -> str:
+    mode = os.environ.get("SUGAR_PY_PACKAGE_ACCOUNTING_MODE", "").strip().lower()
+    if mode in {"structural", "deep"}:
+        return mode
+    return "deep"
+
+
+def _package_accounting_elide_loci() -> bool:
+    mode = os.environ.get("SUGAR_PY_PACKAGE_ACCOUNTING_LOCI", "").strip().lower()
+    return mode in {"summary", "elide", "counts"}
+
+
+def _package_accounting_sample_limit() -> int:
+    raw = os.environ.get("SUGAR_PY_PACKAGE_ACCOUNTING_SAMPLE_LIMIT", "").strip()
+    if not raw:
+        return 200
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 200
+
+
+def _package_locus_structural_classification(
+    node: ast.AST,
+    ast_path: str,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> tuple[str, str]:
+    overload_status = _overload_declaration_status(node, ancestors, call_aliases)
+    if overload_status is not None:
+        return overload_status
+    import_probe_status = _top_level_import_probe_refusal_status(node, ancestors)
+    if import_probe_status is not None:
+        return import_probe_status
+    version_probe_status = _top_level_version_probe_refusal_status(node, ancestors)
+    if version_probe_status is not None:
+        return version_probe_status
+    if isinstance(node, (ast.Import, ast.ImportFrom, ast.alias)):
+        return "support", "import support for recursive name resolution"
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return "support", "function declaration supports callsite arity/name resolution"
+    if isinstance(node, ast.ClassDef):
+        return "support", "class declaration supports attribute/name resolution"
+    if isinstance(node, ast.arg):
+        return "support", "function parameter metadata supports callsite argument mapping"
+    generator_flow_status = _generator_flow_refusal_status(node, ancestors)
+    if generator_flow_status is not None:
+        return generator_flow_status
+    with_context_status = _with_context_flow_refusal_status(node, ancestors)
+    if with_context_status is not None:
+        return with_context_status
+    if isinstance(node, ast.Pass):
+        return "support", "pass no-op scaffolding supports source accounting only"
+    if isinstance(node, (ast.Break, ast.Continue)):
+        return (
+            "refused",
+            "loop control flow refused until a loop/path universe is emitted",
+        )
+    loop_iteration_status = _loop_iteration_flow_refusal_status(node, ancestors)
+    if loop_iteration_status is not None:
+        return loop_iteration_status
+    if _is_function_annotation_path(ast_path):
+        return "support", "type annotation metadata supports source accounting only"
+    if _is_decorator_metadata_path(ast_path):
+        return "support", "decorator metadata supports source accounting only"
+    default_literal_status = _function_default_literal_status(
+        node,
+        ast_path,
+        ancestors,
+    )
+    if default_literal_status is not None:
+        return default_literal_status
+    type_checking_status = _type_checking_block_status(node, ast_path, ancestors)
+    if type_checking_status is not None:
+        return type_checking_status
+    typing_metadata_status = _typing_metadata_assignment_status(
+        node,
+        ancestors,
+        call_aliases,
+    )
+    if typing_metadata_status is not None:
+        return typing_metadata_status
+    delete_status = _delete_mutation_refusal_status(node, ancestors)
+    if delete_status is not None:
+        return delete_status
+    runtime_environment_status = _runtime_environment_probe_refusal_status(
+        node,
+        ancestors,
+    )
+    if runtime_environment_status is not None:
+        return runtime_environment_status
+    global_config_status = _global_config_read_refusal_status(node, ancestors)
+    if global_config_status is not None:
+        return global_config_status
+    option_registry_status = _option_registry_flow_refusal_status(node, ancestors)
+    if option_registry_status is not None:
+        return option_registry_status
+    exception_control_status = _exception_control_flow_refusal_status(node, ancestors)
+    if exception_control_status is not None:
+        return exception_control_status
+    assert_guard_status = _assert_guard_flow_refusal_status(node, ancestors)
+    if assert_guard_status is not None:
+        return assert_guard_status
+    nondet_status = _nondeterministic_call_refusal_status(
+        node,
+        ancestors,
+        module_name,
+        tree,
+        call_aliases,
+    )
+    if nondet_status is not None:
+        return nondet_status
+    module_metadata_status = _public_module_metadata_status(node, ancestors)
+    if module_metadata_status is not None:
+        return module_metadata_status
+    super_init_status = _super_init_support_status(node, ancestors)
+    if super_init_status is not None:
+        return super_init_status
+    constructor_field_status = _constructor_field_syntax_status(node, ancestors)
+    if constructor_field_status is not None:
+        return constructor_field_status
+    static_binding_status = _static_binding_status(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+    )
+    if static_binding_status is not None:
+        return static_binding_status
+    transparent_cast_status = _transparent_typing_cast_status(
+        node,
+        ancestors,
+        call_aliases,
+    )
+    if transparent_cast_status is not None:
+        return transparent_cast_status
+    regex_universe_status = _regex_universe_source_status(
+        node,
+        ancestors,
+        module_name,
+        tree,
+    )
+    if regex_universe_status is not None:
+        return regex_universe_status
+    terminal_conditional_status = _terminal_conditional_return_status(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if terminal_conditional_status is not None:
+        return terminal_conditional_status
+    pure_branch_status = _pure_branch_predicate_status(node, ancestors)
+    if pure_branch_status is not None:
+        return pure_branch_status
+    runtime_branch_status = _runtime_branch_predicate_refusal_status(node, ancestors)
+    if runtime_branch_status is not None:
+        return runtime_branch_status
+    formatted_string_status = _formatted_string_status(node, ancestors)
+    if formatted_string_status is not None:
+        return formatted_string_status
+    conditional_value_status = _conditional_value_expression_status(node, ancestors)
+    if conditional_value_status is not None:
+        return conditional_value_status
+    conditional_binding_status = _conditional_local_binding_status(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if conditional_binding_status is not None:
+        return conditional_binding_status
+    collection_lambda_status = _collection_lambda_flow_refusal_status(node, ancestors)
+    if collection_lambda_status is not None:
+        return collection_lambda_status
+    stdlib_constructor_status = _stdlib_constructor_value_term_status(
+        node,
+        ancestors,
+        call_aliases,
+    )
+    if stdlib_constructor_status is not None:
+        return stdlib_constructor_status
+    dynamic_getattr_status = _dynamic_getattr_refusal_status(node, ancestors)
+    if dynamic_getattr_status is not None:
+        return dynamic_getattr_status
+    dynamic_receiver_status = _dynamic_receiver_method_dispatch_refusal_status(
+        node,
+        ancestors,
+    )
+    if dynamic_receiver_status is not None:
+        return dynamic_receiver_status
+    unresolved_receiver_status = _unresolved_receiver_method_dispatch_refusal_status(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if unresolved_receiver_status is not None:
+        return unresolved_receiver_status
+    unresolved_super_status = _unresolved_super_method_dispatch_refusal_status(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if unresolved_super_status is not None:
+        return unresolved_super_status
+    local_binding_status = _local_name_binding_status(node, ancestors)
+    if local_binding_status is not None:
+        return local_binding_status
+    subscript_slice_status = _subscript_slice_value_term_status(node, ancestors)
+    if subscript_slice_status is not None:
+        return subscript_slice_status
+    static_value_status = _static_value_reference_status(node, ancestors, tree)
+    if static_value_status is not None:
+        return static_value_status
+    call_term_assignment_status = _local_call_term_assignment_status(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if call_term_assignment_status is not None:
+        return call_term_assignment_status
+    tuple_unpack_call_status = _local_tuple_unpack_call_status(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if tuple_unpack_call_status is not None:
+        return tuple_unpack_call_status
+    tuple_unpack_fixed_sequence_status = _local_tuple_unpack_fixed_sequence_status(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if tuple_unpack_fixed_sequence_status is not None:
+        return tuple_unpack_fixed_sequence_status
+    return_call_term_status = _return_call_term_status(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if return_call_term_status is not None:
+        return return_call_term_status
+    call_term_value_status = _call_term_value_expression_status(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if call_term_value_status is not None:
+        return call_term_value_status
+    return_local_status = _return_through_local_binding_status(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if return_local_status is not None:
+        return return_local_status
+    runtime_callable_binding_status = (
+        _return_from_runtime_callable_dispatch_binding_status(
+            node,
+            ancestors,
+            call_aliases,
+        )
+    )
+    if runtime_callable_binding_status is not None:
+        return runtime_callable_binding_status
+    known_pure_call_status = _known_pure_call_value_term_status(
+        node,
+        ancestors,
+    )
+    if known_pure_call_status is not None:
+        return known_pure_call_status
+    literal_container_status = _literal_container_value_term_status(
+        node,
+        ancestors,
+    )
+    if literal_container_status is not None:
+        return literal_container_status
+    keyword_argument_status = _keyword_argument_binding_status(
+        node,
+        ancestors,
+    )
+    if keyword_argument_status is not None:
+        return keyword_argument_status
+    return_value_status = _return_value_relation_status(node, ancestors)
+    if return_value_status is not None:
+        return return_value_status
+    assignment_mutation_status = _assignment_target_mutation_refusal_status(
+        node,
+        ancestors,
+    )
+    if assignment_mutation_status is not None:
+        return assignment_mutation_status
+    expression_call_status = _expression_call_flow_refusal_status(node, ancestors)
+    if expression_call_status is not None:
+        return expression_call_status
+    runtime_callable_status = _runtime_callable_dispatch_refusal_status(
+        node,
+        ancestors,
+        call_aliases,
+    )
+    if runtime_callable_status is not None:
+        return runtime_callable_status
+    if _is_docstring_expr_node(node, ancestors):
+        return "support", "docstring metadata supports source accounting only"
+    decl = _nearest_declaration_ancestor(ancestors)
+    line = getattr(node, "lineno", None)
+    if decl is not None and isinstance(line, int) and line == decl.lineno:
+        return "support", "declaration metadata supports callsite arity/name resolution"
+    return "unclassified", "not classified by any emitted Python source warrant"
+
+
 def _package_module_name(root: Path, path: Path) -> str:
     try:
         rel = path.relative_to(root).with_suffix("")
@@ -573,6 +1206,8 @@ def _package_call_aliases(tree: ast.Module, module_name: str) -> Dict[str, str]:
     for stmt in tree.body:
         if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
             aliases[stmt.name] = f"{module_name}.{stmt.name}"
+        elif isinstance(stmt, ast.ClassDef):
+            aliases[stmt.name] = f"{module_name}.{stmt.name}"
         elif isinstance(stmt, ast.Import):
             for alias in stmt.names:
                 aliases[alias.asname or alias.name.split(".", 1)[0]] = alias.name
@@ -587,6 +1222,35 @@ def _package_call_aliases(tree: ast.Module, module_name: str) -> Dict[str, str]:
                     f"{imported_module}.{alias.name}"
                 )
     return aliases
+
+
+def _conditional_chain_source_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    module_name: str,
+) -> Optional[tuple[str, str]]:
+    chain = ancestors + (node,)
+    owner = _nearest_enclosing_function(chain)
+    if owner is None or isinstance(owner, ast.Lambda):
+        return None
+    if not _function_body_has_node_type(owner, (ast.If,)):
+        return None
+    if not _node_is_in_function_body(node, owner):
+        return None
+    applies = _owner_cached_package_fact(
+        owner,
+        (module_name, "conditional-chain"),
+        lambda: _universe_family_applies(
+            conditional_chain_universe_for_callee,
+            _owner_callee(module_name, owner, chain),
+        ),
+    )
+    if not applies:
+        return None
+    return (
+        "warranted",
+        "conditional SSA branch emitted into python.conditional-chain-universe",
+    )
 
 
 def _resolved_import_from_module(
@@ -607,8 +1271,9 @@ def _resolved_import_from_module(
 def _overload_declaration_status(
     node: ast.AST,
     ancestors: tuple[ast.AST, ...],
+    call_aliases: Optional[Dict[str, str]] = None,
 ) -> Optional[tuple[str, str]]:
-    fn = _nearest_overload_function(node, ancestors)
+    fn = _nearest_overload_function(node, ancestors, call_aliases or {})
     if fn is None:
         return None
     if _node_is_in_function_body(node, fn):
@@ -619,30 +1284,138 @@ def _overload_declaration_status(
 def _nearest_overload_function(
     node: ast.AST,
     ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
 ) -> Optional[ast.FunctionDef | ast.AsyncFunctionDef]:
     chain = ancestors + (node,)
     for item in reversed(chain):
         if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
-            _is_overload_decorator(decorator)
+            _is_overload_decorator(decorator, call_aliases)
             for decorator in item.decorator_list
         ):
             return item
     return None
 
 
-def _is_overload_decorator(node: ast.AST) -> bool:
-    return _static_call_name(node) in {"t.overload", "typing.overload"}
+def _is_overload_decorator(
+    node: ast.AST,
+    call_aliases: Dict[str, str],
+) -> bool:
+    return _resolved_static_call_name(node, call_aliases) == "typing.overload"
+
+
+_TYPING_METADATA_CALLS = frozenset(
+    {
+        "typing.NewType",
+        "typing.ParamSpec",
+        "typing.TypeVar",
+        "typing_extensions.NewType",
+        "typing_extensions.ParamSpec",
+        "typing_extensions.TypeVar",
+    }
+)
+
+
+def _typing_metadata_assignment_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+) -> Optional[tuple[str, str]]:
+    stmt = _nearest_typing_metadata_assignment(node, ancestors, call_aliases)
+    if stmt is None:
+        return None
+    if node is stmt or any(descendant is node for descendant in ast.walk(stmt)):
+        return (
+            "support",
+            "typing metadata assignment (TypeVar/ParamSpec/NewType/TypeAlias) supports source accounting only",
+        )
+    return None
+
+
+def _nearest_typing_metadata_assignment(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+) -> Optional[ast.Assign | ast.AnnAssign]:
+    chain = ancestors + (node,)
+    for item in reversed(chain):
+        value: Optional[ast.AST]
+        if isinstance(item, ast.Assign):
+            value = item.value
+        elif isinstance(item, ast.AnnAssign):
+            value = item.value
+        else:
+            continue
+        if isinstance(value, ast.Call) and _is_typing_metadata_call(
+            value,
+            call_aliases,
+        ):
+            return item
+        if isinstance(item, ast.AnnAssign) and _is_type_alias_annotation(
+            item.annotation,
+            call_aliases,
+        ):
+            return item
+    return None
+
+
+def _is_typing_metadata_call(
+    node: ast.Call,
+    call_aliases: Dict[str, str],
+) -> bool:
+    return (
+        not node.keywords
+        or all(keyword.arg is not None for keyword in node.keywords)
+    ) and _resolved_static_call_name(node.func, call_aliases) in _TYPING_METADATA_CALLS
+
+
+def _is_type_alias_annotation(
+    node: ast.AST,
+    call_aliases: Dict[str, str],
+) -> bool:
+    return _resolved_static_call_name(node, call_aliases) in {
+        "typing.TypeAlias",
+        "typing_extensions.TypeAlias",
+    }
 
 
 def _node_is_in_function_body(
     node: ast.AST,
     fn: ast.FunctionDef | ast.AsyncFunctionDef,
 ) -> bool:
-    return any(
-        descendant is node
-        for stmt in fn.body
-        for descendant in ast.walk(stmt)
-    )
+    cached = getattr(fn, "_sugar_body_node_ids", None)
+    if cached is None:
+        cached = {
+            id(descendant)
+            for stmt in fn.body
+            for descendant in ast.walk(stmt)
+        }
+        try:
+            setattr(fn, "_sugar_body_node_ids", cached)
+        except AttributeError:
+            pass
+    return id(node) in cached
+
+
+def _owner_cached_package_fact(
+    owner: ast.FunctionDef | ast.AsyncFunctionDef,
+    key: tuple,
+    compute,
+):
+    cache = getattr(owner, "_sugar_package_fact_cache", None)
+    if cache is None:
+        cache = {}
+        try:
+            setattr(owner, "_sugar_package_fact_cache", cache)
+        except AttributeError:
+            return compute()
+    if key not in cache:
+        cache[key] = compute()
+    return cache[key]
+
+
+def _universe_family_applies(resolver, callee: str) -> bool:
+    universe, refusal = resolver(callee)
+    return refusal is None and universe is not None
 
 
 def _is_function_annotation_path(ast_path: str) -> bool:
@@ -718,28 +1491,495 @@ def _top_level_type_checking_if_for_locus(
 
 
 def _is_type_checking_test(node: ast.AST) -> bool:
-    return _static_call_name(node) in {"t.TYPE_CHECKING", "typing.TYPE_CHECKING"}
+    return _static_call_name(node) in {
+        "TYPE_CHECKING",
+        "t.TYPE_CHECKING",
+        "typing.TYPE_CHECKING",
+    }
+
+
+def _top_level_import_probe_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    stmt = _top_level_import_probe_statement_for_locus(node, ancestors)
+    if stmt is None:
+        return None
+    return (
+        "refused",
+        (
+            "runtime import probe refused: __import__ mutates import/module "
+            "state and is not a timeless value relation"
+        ),
+    )
+
+
+def _top_level_import_probe_statement_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[ast.stmt]:
+    chain = ancestors + (node,)
+    for index, item in enumerate(chain):
+        if not isinstance(item, ast.For):
+            continue
+        if index == 0 or not isinstance(chain[index - 1], ast.Module):
+            continue
+        if _for_contains_runtime_import_probe(item):
+            return item
+    for index, item in enumerate(chain):
+        if not isinstance(item, ast.Try):
+            continue
+        if index == 0 or not isinstance(chain[index - 1], ast.Module):
+            continue
+        if _try_is_runtime_import_probe(item):
+            return item
+    return None
+
+
+def _for_contains_runtime_import_probe(stmt: ast.For) -> bool:
+    return any(
+        isinstance(child, ast.Try) and _try_is_runtime_import_probe(child)
+        for child in stmt.body
+    )
+
+
+def _try_is_runtime_import_probe(stmt: ast.Try) -> bool:
+    return (
+        _stmt_list_has_runtime_import_effect(stmt.body)
+        and any(_handler_catches_import_error(handler) for handler in stmt.handlers)
+        and any(isinstance(node, ast.Raise) for handler in stmt.handlers for node in ast.walk(handler))
+    )
+
+
+def _stmt_list_has_runtime_import_effect(stmts: list[ast.stmt]) -> bool:
+    for stmt in stmts:
+        if isinstance(stmt, (ast.Import, ast.ImportFrom)):
+            return True
+        if any(_call_is_dunder_import(call) for call in ast.walk(stmt)):
+            return True
+    return False
+
+
+def _call_is_dunder_import(call: ast.AST) -> bool:
+    return (
+        isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id == "__import__"
+    )
+
+
+def _handler_catches_import_error(handler: ast.ExceptHandler) -> bool:
+    if handler.type is None:
+        return False
+    if _static_call_name(handler.type) == "ImportError":
+        return True
+    if isinstance(handler.type, ast.Tuple):
+        return any(_static_call_name(elt) == "ImportError" for elt in handler.type.elts)
+    return False
+
+
+def _top_level_version_probe_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    stmt = _top_level_version_probe_statement_for_locus(node, ancestors)
+    if stmt is None:
+        return None
+    return (
+        "refused",
+        (
+            "runtime version metadata probe refused: optional version imports "
+            "and get_versions() mutate module metadata outside a timeless "
+            "value relation"
+        ),
+    )
+
+
+def _top_level_version_probe_statement_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[ast.Try]:
+    chain = ancestors + (node,)
+    for index, item in enumerate(chain):
+        if not isinstance(item, ast.Try):
+            continue
+        if index == 0 or not isinstance(chain[index - 1], ast.Module):
+            continue
+        if _try_is_version_metadata_probe(item):
+            return item
+    return None
+
+
+def _try_is_version_metadata_probe(stmt: ast.Try) -> bool:
+    if not any(_handler_catches_import_error(handler) for handler in stmt.handlers):
+        return False
+    if not (
+        _stmt_list_imports_version_metadata(stmt.body)
+        or any(_stmt_list_imports_version_metadata(handler.body) for handler in stmt.handlers)
+    ):
+        return False
+    all_handler_body = [
+        child
+        for handler in stmt.handlers
+        for child in handler.body
+    ]
+    return (
+        _stmt_list_assigns_version_metadata(stmt.body)
+        or _stmt_list_assigns_version_metadata(all_handler_body)
+    )
+
+
+def _stmt_list_imports_version_metadata(stmts: list[ast.stmt]) -> bool:
+    for stmt in stmts:
+        if isinstance(stmt, ast.ImportFrom):
+            imported = {alias.name for alias in stmt.names}
+            if {"__version__", "__git_version__"} & imported:
+                return True
+            if "get_versions" in imported:
+                return True
+    return False
+
+
+def _stmt_list_assigns_version_metadata(stmts: list[ast.stmt]) -> bool:
+    return any(
+        target in {"__version__", "__git_version__"}
+        for stmt in stmts
+        for target in _assigned_name_targets(stmt)
+    )
+
+
+def _assigned_name_targets(stmt: ast.stmt) -> set[str]:
+    targets: list[ast.AST] = []
+    if isinstance(stmt, ast.Assign):
+        targets.extend(stmt.targets)
+    elif isinstance(stmt, ast.AnnAssign):
+        targets.append(stmt.target)
+    elif isinstance(stmt, ast.AugAssign):
+        targets.append(stmt.target)
+    return {
+        target.id
+        for target in targets
+        if isinstance(target, ast.Name)
+    }
+
+
+def _delete_mutation_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    if not any(isinstance(item, ast.Delete) for item in ancestors + (node,)):
+        return None
+    return (
+        "refused",
+        (
+            "delete mutation refused: del mutates name, attribute, or item "
+            "binding state and is not a timeless value relation"
+        ),
+    )
+
+
+def _runtime_environment_probe_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    stmt = _nearest_statement(ancestors + (node,))
+    if stmt is None:
+        return None
+    if not _statement_reads_runtime_environment_cached(stmt):
+        return None
+    return (
+        "refused",
+        (
+            "runtime environment probe refused: platform/env values come "
+            "from the host process, not from the source-derived universe"
+        ),
+    )
+
+
+def _statement_reads_runtime_environment_cached(stmt: ast.stmt) -> bool:
+    cached = getattr(stmt, "_sugar_reads_runtime_environment", None)
+    if cached is not None:
+        return bool(cached)
+    result = _statement_reads_runtime_environment(stmt)
+    try:
+        setattr(stmt, "_sugar_reads_runtime_environment", result)
+    except AttributeError:
+        pass
+    return result
+
+
+def _statement_reads_runtime_environment(stmt: ast.stmt) -> bool:
+    return any(
+        (
+            isinstance(candidate, ast.Call)
+            and _call_reads_runtime_environment(candidate)
+        )
+        or (
+            isinstance(candidate, ast.Subscript)
+            and _subscript_reads_runtime_environment(candidate)
+        )
+        for candidate in ast.walk(stmt)
+    )
+
+
+def _call_reads_runtime_environment(call: ast.Call) -> bool:
+    callee = _static_call_name(call.func)
+    if callee in {
+        "hasattr",
+        "os.environ.get",
+        "os.getenv",
+        "platform.machine",
+        "platform.platform",
+        "platform.processor",
+        "platform.python_version",
+        "platform.system",
+        "sys.getrefcount",
+    }:
+        return True
+    return False
+
+
+def _subscript_reads_runtime_environment(node: ast.Subscript) -> bool:
+    return _static_call_name(node.value) == "os.environ"
+
+
+def _global_config_read_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    owner = _nearest_enclosing_function(ancestors + (node,))
+    if owner is None or isinstance(owner, ast.Lambda):
+        return None
+    if not _node_is_in_function_body(node, owner):
+        return None
+    if _is_docstring_expr_node(node, ancestors):
+        return None
+    if not _function_body_reads_global_config(owner):
+        return None
+    return (
+        "refused",
+        (
+            "runtime global config read refused: _global_config is mutable "
+            "package state, so the value relation is not timeless without a "
+            "global-state universe"
+        ),
+    )
+
+
+def _function_body_reads_global_config(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    cached = getattr(fn, "_sugar_body_reads_global_config", None)
+    if cached is not None:
+        return bool(cached)
+    result = any(_node_reads_name_outside_nested_scope(stmt, "_global_config") for stmt in fn.body)
+    try:
+        setattr(fn, "_sugar_body_reads_global_config", result)
+    except AttributeError:
+        pass
+    return result
+
+
+def _node_reads_name_outside_nested_scope(node: ast.AST, name: str) -> bool:
+    if isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, ast.Load):
+        return True
+    if isinstance(
+        node,
+        (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+    ):
+        return False
+    return any(
+        _node_reads_name_outside_nested_scope(child, name)
+        for child in ast.iter_child_nodes(node)
+    )
+
+
+_OPTION_REGISTRY_CALLS = frozenset(
+    {
+        "_select_options",
+        "_warn_if_deprecated",
+        "_translate_key",
+        "_get_registered_option",
+        "_get_root",
+        "register_option",
+        "deprecate_option",
+        "get_option",
+        "set_option",
+        "reset_option",
+        "describe_option",
+        "option_context",
+    }
+)
+
+
+def _option_registry_flow_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    owner = _nearest_enclosing_function(ancestors + (node,))
+    if owner is None or isinstance(owner, ast.Lambda):
+        return None
+    if not _node_is_in_function_body(node, owner):
+        return None
+    if _is_docstring_expr_node(node, ancestors):
+        return None
+    if not _function_body_calls_option_registry(owner):
+        return None
+    return (
+        "refused",
+        (
+            "runtime option registry flow refused: option lookup, warning, "
+            "callback, or mutation depends on mutable package registry state"
+        ),
+    )
+
+
+def _function_body_calls_option_registry(
+    fn: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> bool:
+    cached = getattr(fn, "_sugar_body_calls_option_registry", None)
+    if cached is not None:
+        return bool(cached)
+    result = any(_node_calls_option_registry_outside_nested_scope(stmt) for stmt in fn.body)
+    try:
+        setattr(fn, "_sugar_body_calls_option_registry", result)
+    except AttributeError:
+        pass
+    return result
+
+
+def _node_calls_option_registry_outside_nested_scope(node: ast.AST) -> bool:
+    if isinstance(node, ast.Call):
+        callee = _static_call_name(node.func)
+        leaf = callee.rsplit(".", 1)[-1] if callee else ""
+        if leaf in _OPTION_REGISTRY_CALLS:
+            return True
+    if isinstance(
+        node,
+        (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+    ):
+        return False
+    return any(
+        _node_calls_option_registry_outside_nested_scope(child)
+        for child in ast.iter_child_nodes(node)
+    )
 
 
 def _static_binding_status(
     node: ast.AST,
     ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
 ) -> Optional[tuple[str, str]]:
-    stmt = _static_binding_statement_for_locus(node, ancestors)
-    if stmt is None:
+    stmt, parent = _static_binding_statement_for_locus(node, ancestors)
+    if stmt is None or parent is None:
         return None
     value = stmt.value if isinstance(stmt, ast.AnnAssign) else stmt.value
     if value is None:
         return "support", "annotation-only binding carries no runtime value"
-    if _is_static_assignment_value(value):
+    if _is_static_assignment_value(
+        value,
+        call_aliases,
+        module_name,
+        allow_local_factory=isinstance(parent, ast.ClassDef),
+    ):
         return "warranted", "static binding admitted as timeless compiler fact"
     return None
+
+
+def _public_module_metadata_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    stmt, parent = _public_module_metadata_statement_for_locus(node, ancestors)
+    if stmt is None or parent is None:
+        return None
+    if not any(descendant is node for descendant in ast.walk(stmt)):
+        return None
+    return (
+        "support",
+        (
+            "public module metadata rebinding supports reflection/import-path "
+            "resolution only"
+        ),
+    )
+
+
+def _public_module_metadata_statement_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> tuple[Optional[ast.stmt], Optional[ast.AST]]:
+    chain = ancestors + (node,)
+    for index in range(len(chain) - 1, 0, -1):
+        stmt = chain[index]
+        parent = chain[index - 1]
+        if not isinstance(parent, (ast.Module, ast.ClassDef)):
+            continue
+        if isinstance(stmt, (ast.Assign, ast.AnnAssign)) and (
+            _assigns_public_module_metadata(stmt, parent)
+        ):
+            return stmt, parent
+        if isinstance(stmt, ast.Expr) and _object_setattr_public_module_metadata(
+            stmt,
+            parent,
+        ):
+            return stmt, parent
+    return None, None
+
+
+def _assigns_public_module_metadata(
+    stmt: ast.Assign | ast.AnnAssign,
+    parent: ast.AST,
+) -> bool:
+    value = stmt.value if isinstance(stmt, ast.AnnAssign) else stmt.value
+    if not _is_string_constant(value):
+        return False
+    if isinstance(stmt, ast.Assign):
+        return bool(stmt.targets) and all(
+            _public_module_metadata_target(target, parent)
+            for target in stmt.targets
+        )
+    return _public_module_metadata_target(stmt.target, parent)
+
+
+def _public_module_metadata_target(target: ast.AST, parent: ast.AST) -> bool:
+    if (
+        isinstance(parent, ast.ClassDef)
+        and isinstance(target, ast.Name)
+        and target.id == "__module__"
+    ):
+        return True
+    return isinstance(target, ast.Attribute) and target.attr == "__module__"
+
+
+def _object_setattr_public_module_metadata(
+    stmt: ast.Expr,
+    parent: ast.AST,
+) -> bool:
+    if not isinstance(parent, ast.Module):
+        return False
+    if not isinstance(stmt.value, ast.Call):
+        return False
+    call = stmt.value
+    return (
+        _static_call_name(call.func) == "object.__setattr__"
+        and not call.keywords
+        and len(call.args) == 3
+        and _is_module_metadata_key(call.args[1])
+        and _is_string_constant(call.args[2])
+    )
+
+
+def _is_module_metadata_key(node: ast.AST) -> bool:
+    return isinstance(node, ast.Constant) and node.value == "__module__"
+
+
+def _is_string_constant(node: ast.AST | None) -> bool:
+    return isinstance(node, ast.Constant) and isinstance(node.value, str)
 
 
 def _static_binding_statement_for_locus(
     node: ast.AST,
     ancestors: tuple[ast.AST, ...],
-) -> Optional[ast.Assign | ast.AnnAssign]:
+) -> tuple[Optional[ast.Assign | ast.AnnAssign], Optional[ast.AST]]:
     chain = ancestors + (node,)
     stmt_index: Optional[int] = None
     stmt: Optional[ast.Assign | ast.AnnAssign] = None
@@ -750,74 +1990,324 @@ def _static_binding_statement_for_locus(
             stmt = item
             break
     if stmt is None or stmt_index is None or stmt_index == 0:
-        return None
+        return None, None
     parent = chain[stmt_index - 1]
     if not isinstance(parent, (ast.Module, ast.ClassDef)):
-        return None
+        return None, None
     for item in chain[:stmt_index]:
         if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-            return None
-    return stmt
+            return None, None
+    return stmt, parent
 
 
-def _is_static_assignment_value(node: ast.AST) -> bool:
+def _is_static_assignment_value(
+    node: ast.AST,
+    call_aliases: Optional[Dict[str, str]] = None,
+    local_module_name: Optional[str] = None,
+    *,
+    allow_local_factory: bool = False,
+) -> bool:
     if isinstance(node, ast.Constant):
         return True
     if isinstance(node, ast.Name):
         return True
     if isinstance(node, ast.Attribute):
-        return _is_static_assignment_value(node.value)
+        return _is_static_assignment_value(
+            node.value,
+            call_aliases,
+            local_module_name,
+            allow_local_factory=allow_local_factory,
+        )
     if isinstance(node, ast.JoinedStr):
-        return all(_is_static_assignment_value(value) for value in node.values)
+        return all(
+            _is_static_assignment_value(
+                value,
+                call_aliases,
+                local_module_name,
+                allow_local_factory=allow_local_factory,
+            )
+            for value in node.values
+        )
     if isinstance(node, ast.FormattedValue):
-        return _is_static_assignment_value(node.value)
+        return _is_static_assignment_value(
+            node.value,
+            call_aliases,
+            local_module_name,
+            allow_local_factory=allow_local_factory,
+        )
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
-        return _is_static_assignment_value(node.operand)
+        return _is_static_assignment_value(
+            node.operand,
+            call_aliases,
+            local_module_name,
+            allow_local_factory=allow_local_factory,
+        )
     if isinstance(node, ast.BinOp):
-        return _is_static_assignment_value(node.left) and _is_static_assignment_value(
-            node.right
+        return _is_static_assignment_value(
+            node.left,
+            call_aliases,
+            local_module_name,
+            allow_local_factory=allow_local_factory,
+        ) and _is_static_assignment_value(
+            node.right,
+            call_aliases,
+            local_module_name,
+            allow_local_factory=allow_local_factory,
         )
     if isinstance(node, ast.Subscript):
-        return _is_static_assignment_value(node.value) and _is_static_slice(node.slice)
+        return _is_static_assignment_value(
+            node.value,
+            call_aliases,
+            local_module_name,
+            allow_local_factory=allow_local_factory,
+        ) and _is_static_slice(
+            node.slice,
+            call_aliases,
+            local_module_name,
+            allow_local_factory=allow_local_factory,
+        )
+    if isinstance(node, ast.Starred):
+        return _is_static_assignment_value(
+            node.value,
+            call_aliases,
+            local_module_name,
+            allow_local_factory=allow_local_factory,
+        )
     if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
-        return all(_is_static_assignment_value(value) for value in node.elts)
+        return all(
+            _is_static_assignment_value(
+                value,
+                call_aliases,
+                local_module_name,
+                allow_local_factory=allow_local_factory,
+            )
+            for value in node.elts
+        )
     if isinstance(node, ast.Dict):
         return all(
-            (key is None or _is_static_assignment_value(key))
-            and _is_static_assignment_value(value)
+            (
+                key is None
+                or _is_static_assignment_value(
+                    key,
+                    call_aliases,
+                    local_module_name,
+                    allow_local_factory=allow_local_factory,
+                )
+            )
+            and _is_static_assignment_value(
+                value,
+                call_aliases,
+                local_module_name,
+                allow_local_factory=allow_local_factory,
+            )
             for key, value in zip(node.keys, node.values)
         )
     if isinstance(node, ast.Call):
-        return _is_known_static_assignment_call(node)
+        return _is_known_static_assignment_call(
+            node,
+            call_aliases,
+            local_module_name,
+            allow_local_factory=allow_local_factory,
+        )
     return False
 
 
-def _is_static_slice(node: ast.AST) -> bool:
+def _is_static_slice(
+    node: ast.AST,
+    call_aliases: Optional[Dict[str, str]] = None,
+    local_module_name: Optional[str] = None,
+    *,
+    allow_local_factory: bool = False,
+) -> bool:
     if isinstance(node, ast.Slice):
         return all(
-            part is None or _is_static_assignment_value(part)
+            part is None
+            or _is_static_assignment_value(
+                part,
+                call_aliases,
+                local_module_name,
+                allow_local_factory=allow_local_factory,
+            )
             for part in (node.lower, node.upper, node.step)
         )
-    return _is_static_assignment_value(node)
+    return _is_static_assignment_value(
+        node,
+        call_aliases,
+        local_module_name,
+        allow_local_factory=allow_local_factory,
+    )
 
 
-def _is_known_static_assignment_call(node: ast.Call) -> bool:
+def _is_known_static_assignment_call(
+    node: ast.Call,
+    call_aliases: Optional[Dict[str, str]] = None,
+    local_module_name: Optional[str] = None,
+    *,
+    allow_local_factory: bool = False,
+) -> bool:
     if any(isinstance(arg, ast.Starred) for arg in node.args):
         return False
-    if not all(_is_static_assignment_value(arg) for arg in node.args):
+    if any(kw.arg is None for kw in node.keywords):
         return False
-    if not all(_is_static_assignment_value(kw.value) for kw in node.keywords):
+    if not all(
+        _is_static_assignment_value(
+            arg,
+            call_aliases,
+            local_module_name,
+            allow_local_factory=allow_local_factory,
+        )
+        for arg in node.args
+    ):
+        return False
+    if not all(
+        _is_static_assignment_value(
+            kw.value,
+            call_aliases,
+            local_module_name,
+            allow_local_factory=allow_local_factory,
+        )
+        for kw in node.keywords
+    ):
         return False
     func = node.func
     if isinstance(func, ast.Attribute) and func.attr == "encode":
-        return _is_static_assignment_value(func.value)
-    callee = _static_call_name(func)
+        return _is_static_assignment_value(
+            func.value,
+            call_aliases,
+            local_module_name,
+            allow_local_factory=allow_local_factory,
+        )
+    callee = _resolved_static_call_name(func, call_aliases or {})
+    if (
+        callee
+        and callee != _static_call_name(func)
+        and (
+            local_module_name is None
+            or not callee.startswith(f"{local_module_name}.")
+            or allow_local_factory
+        )
+        and not _static_call_name_is_nondeterministic(callee)
+    ):
+        return True
     return callee in {
+        "Decimal",
+        "complex",
+        "decimal.Decimal",
+        "dict",
+        "float",
+        "frozenset",
+        "int",
+        "list",
+        "range",
+        "set",
+        "slice",
         "struct.Struct",
         "t.cast",
         "typing.cast",
+        "tuple",
         "staticmethod",
+    } or callee in _KNOWN_STDLIB_CONSTRUCTOR_CALLS
+
+
+def _static_call_name_is_nondeterministic(callee: str) -> bool:
+    parts = callee.split(".") if callee else []
+    if not parts:
+        return False
+    return parts[0] in _NONDET_CALL_ROOTS and parts[-1] in _NONDET_CALL_ATTRS
+
+
+_KNOWN_STDLIB_CONSTRUCTOR_CALLS = frozenset(
+    {
+        "datetime.date",
+        "datetime.datetime",
+        "datetime.time",
+        "datetime.timedelta",
+        "datetime.timezone",
     }
+)
+
+
+def _stdlib_constructor_value_term_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+) -> Optional[tuple[str, str]]:
+    call = _nearest_stdlib_constructor_value_for_locus(
+        node,
+        ancestors,
+        call_aliases,
+    )
+    if call is None:
+        return None
+    return (
+        "warranted",
+        "imported stdlib constructor value term admitted as compiler construction fact",
+    )
+
+
+def _nearest_stdlib_constructor_value_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+) -> Optional[ast.Call]:
+    chain = ancestors + (node,)
+    for item in reversed(chain):
+        if not isinstance(item, ast.Call):
+            continue
+        if not _is_imported_stdlib_constructor_value_expr(item, call_aliases):
+            return None
+        if node is item or any(candidate is node for candidate in ast.walk(item)):
+            return item
+        return None
+    return None
+
+
+def _is_imported_stdlib_constructor_value_expr(
+    node: ast.Call,
+    call_aliases: Dict[str, str],
+) -> bool:
+    if _has_store_or_del_context(node):
+        return False
+    if any(isinstance(arg, ast.Starred) for arg in node.args):
+        return False
+    if any(keyword.arg is None for keyword in node.keywords):
+        return False
+    callee = _resolved_static_call_name(node.func, call_aliases)
+    if callee not in _KNOWN_STDLIB_CONSTRUCTOR_CALLS:
+        return False
+    return all(
+        _is_stdlib_constructor_value_arg(arg, call_aliases) for arg in node.args
+    ) and all(
+        _is_stdlib_constructor_value_arg(keyword.value, call_aliases)
+        for keyword in node.keywords
+    )
+
+
+def _is_stdlib_constructor_value_arg(
+    node: ast.AST,
+    call_aliases: Dict[str, str],
+) -> bool:
+    if isinstance(node, ast.Call):
+        return _is_known_pure_call_value_expr(
+            node
+        ) or _is_imported_stdlib_constructor_value_expr(node, call_aliases)
+    return _is_known_pure_call_arg(node)
+
+
+def _resolved_static_call_name(
+    node: ast.AST,
+    call_aliases: Dict[str, str],
+) -> str:
+    static_name = _static_call_name(node)
+    if not static_name:
+        return ""
+    root, sep, suffix = static_name.partition(".")
+    resolved_root = call_aliases.get(root)
+    if not resolved_root:
+        return static_name
+    if not sep:
+        return resolved_root
+    return f"{resolved_root}.{suffix}"
 
 
 def _guarded_default_value_flow_status(
@@ -907,10 +2397,11 @@ def _guarded_default_attribute_root(node: ast.Attribute) -> str:
 def _transparent_typing_cast_status(
     node: ast.AST,
     ancestors: tuple[ast.AST, ...],
+    call_aliases: Optional[Dict[str, str]] = None,
 ) -> Optional[tuple[str, str]]:
     chain = ancestors + (node,)
     for item in reversed(chain):
-        if not _is_transparent_typing_cast_call(item):
+        if not _is_transparent_typing_cast_call(item, call_aliases or {}):
             continue
         if item is node:
             return (
@@ -931,12 +2422,16 @@ def _transparent_typing_cast_status(
     return None
 
 
-def _is_transparent_typing_cast_call(node: ast.AST) -> bool:
+def _is_transparent_typing_cast_call(
+    node: ast.AST,
+    call_aliases: Optional[Dict[str, str]] = None,
+) -> bool:
     return (
         isinstance(node, ast.Call)
         and not node.keywords
         and len(node.args) == 2
-        and _static_call_name(node.func) in {"t.cast", "typing.cast"}
+        and _resolved_static_call_name(node.func, call_aliases or {})
+        in {"typing.cast"}
     )
 
 
@@ -1014,22 +2509,54 @@ def _constructor_field_assignment_status(
     )
     if refusal is not None or universe is None:
         return None
+    if isinstance(assign_stmt, ast.Expr):
+        return (
+            "warranted",
+            (
+                "object.__setattr__ constructor field emitted as "
+                "constructor-field universe fact"
+            ),
+        )
     return (
         "warranted",
         "constructor field assignment emitted as constructor-field universe fact",
     )
 
 
+def _constructor_field_syntax_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    stmt = _constructor_field_assignment_for_locus(node, ancestors)
+    if stmt is None:
+        return None
+    assign_stmt, _owner, _field_name = stmt
+    if not any(descendant is node for descendant in ast.walk(assign_stmt)):
+        return None
+    if isinstance(assign_stmt, ast.Expr):
+        return (
+            "warranted",
+            (
+                "object.__setattr__ constructor field admitted as "
+                "constructor field compiler fact"
+            ),
+        )
+    return (
+        "warranted",
+        "constructor field assignment admitted as constructor field compiler fact",
+    )
+
+
 def _constructor_field_assignment_for_locus(
     node: ast.AST,
     ancestors: tuple[ast.AST, ...],
-) -> Optional[tuple[ast.Assign | ast.AnnAssign, ast.FunctionDef, str]]:
+) -> Optional[tuple[ast.Assign | ast.AnnAssign | ast.Expr, ast.FunctionDef, str]]:
     chain = ancestors + (node,)
-    stmt: Optional[ast.Assign | ast.AnnAssign] = None
+    stmt: Optional[ast.Assign | ast.AnnAssign | ast.Expr] = None
     stmt_index: Optional[int] = None
     for index in range(len(chain) - 1, -1, -1):
         item = chain[index]
-        if isinstance(item, (ast.Assign, ast.AnnAssign)):
+        if isinstance(item, (ast.Assign, ast.AnnAssign, ast.Expr)):
             stmt = item
             stmt_index = index
             break
@@ -1038,6 +2565,11 @@ def _constructor_field_assignment_for_locus(
     owner = _nearest_enclosing_function(chain[:stmt_index])
     if not isinstance(owner, ast.FunctionDef) or owner.name != "__init__":
         return None
+    if isinstance(stmt, ast.Expr):
+        field_name = _object_setattr_constructor_field_name(stmt, owner)
+        if field_name is None:
+            return None
+        return stmt, owner, field_name
     if isinstance(stmt, ast.Assign):
         if len(stmt.targets) != 1:
             return None
@@ -1057,6 +2589,155 @@ def _constructor_field_assignment_for_locus(
     ):
         return None
     return stmt, owner, target.attr
+
+
+def _object_setattr_constructor_field_name(
+    stmt: ast.Expr,
+    owner: ast.FunctionDef,
+) -> Optional[str]:
+    if not owner.args.args:
+        return None
+    self_name = owner.args.args[0].arg
+    param_names = {arg.arg for arg in owner.args.args[1:]}
+    if not isinstance(stmt.value, ast.Call):
+        return None
+    call = stmt.value
+    if (
+        _static_call_name(call.func) != "object.__setattr__"
+        or call.keywords
+        or len(call.args) != 3
+    ):
+        return None
+    receiver, field, value = call.args
+    if not (
+        isinstance(receiver, ast.Name)
+        and receiver.id == self_name
+        and isinstance(field, ast.Constant)
+        and isinstance(field.value, str)
+        and isinstance(value, ast.Name)
+        and value.id in param_names
+    ):
+        return None
+    return field.value
+
+
+def _runtime_callable_dispatch_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+) -> Optional[tuple[str, str]]:
+    stmt = _nearest_statement(ancestors + (node,))
+    if stmt is None:
+        return None
+    if not _statement_has_runtime_callable_dispatch_cached(stmt, call_aliases):
+        return None
+    if node is stmt or any(candidate is node for candidate in ast.walk(stmt)):
+        return (
+            "refused",
+            (
+                "runtime callable dispatch refused: bare callable value is "
+                "supplied by runtime state, so no stable vendor body can "
+                "warrant this relation"
+            ),
+        )
+    return None
+
+
+def _statement_has_runtime_callable_dispatch_cached(
+    stmt: ast.stmt,
+    call_aliases: Dict[str, str],
+) -> bool:
+    cached = getattr(stmt, "_sugar_has_runtime_callable_dispatch", None)
+    if cached is not None:
+        return bool(cached)
+    result = _node_has_runtime_callable_dispatch_outside_nested_scope(
+        stmt,
+        call_aliases,
+    )
+    try:
+        setattr(stmt, "_sugar_has_runtime_callable_dispatch", result)
+    except AttributeError:
+        pass
+    return result
+
+
+def _node_has_runtime_callable_dispatch_outside_nested_scope(
+    node: ast.AST,
+    call_aliases: Dict[str, str],
+) -> bool:
+    if isinstance(
+        node,
+        (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+    ):
+        return False
+    if isinstance(node, ast.Call) and _is_runtime_callable_dispatch_call(
+        node,
+        call_aliases,
+    ):
+        return True
+    return any(
+        _node_has_runtime_callable_dispatch_outside_nested_scope(
+            child,
+            call_aliases,
+        )
+        for child in ast.iter_child_nodes(node)
+    )
+
+
+def _is_runtime_callable_dispatch_call(
+    call: ast.Call,
+    call_aliases: Dict[str, str],
+) -> bool:
+    if not isinstance(call.func, ast.Name):
+        return False
+    name = call.func.id
+    if name in call_aliases or name == "super":
+        return False
+    if _is_known_pure_call_value_expr(call):
+        return False
+    return True
+
+
+def _return_from_runtime_callable_dispatch_binding_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+) -> Optional[tuple[str, str]]:
+    chain = ancestors + (node,)
+    stmt = _nearest_statement(chain)
+    if not isinstance(stmt, ast.Return):
+        return None
+    if not (node is stmt or any(candidate is node for candidate in ast.walk(stmt))):
+        return None
+    owner = _nearest_enclosing_function(chain)
+    if owner is None or isinstance(owner, ast.Lambda):
+        return None
+    loaded_names = _loaded_name_ids(stmt)
+    if not loaded_names:
+        return None
+    previous = _previous_function_body_statements(owner, stmt)
+    if previous is None:
+        return None
+    for prior in reversed(previous):
+        assignment = _single_name_assignment(prior)
+        if assignment is None:
+            continue
+        name, value = assignment
+        if name not in loaded_names or value is None:
+            continue
+        if _node_has_runtime_callable_dispatch_outside_nested_scope(
+            value,
+            call_aliases,
+        ):
+            return (
+                "refused",
+                (
+                    "return depends on refused runtime callable dispatch "
+                    f"binding {name!r}: callable value is supplied by runtime "
+                    "state"
+                ),
+            )
+    return None
 
 
 def _dynamic_receiver_io_refusal_status(
@@ -1100,6 +2781,49 @@ def _dynamic_receiver_io_refusal_status(
     return None
 
 
+def _dynamic_getattr_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    stmt = _nearest_statement(ancestors + (node,))
+    if stmt is None:
+        return None
+    owner = _nearest_enclosing_function(ancestors + (node,))
+    if owner is None or isinstance(owner, ast.Lambda):
+        return None
+    if _statement_has_dynamic_getattr_cached(stmt):
+        return (
+            "refused",
+            (
+                "dynamic getattr lookup refused: runtime attribute lookup "
+                "can invoke descriptors, __getattr__, or argument unpacking"
+            ),
+        )
+    return None
+
+
+def _statement_has_dynamic_getattr_cached(stmt: ast.stmt) -> bool:
+    cached = getattr(stmt, "_sugar_has_dynamic_getattr", None)
+    if cached is not None:
+        return bool(cached)
+    result = any(
+        isinstance(candidate, ast.Call) and _is_dynamic_getattr_call(candidate)
+        for candidate in ast.walk(stmt)
+    )
+    try:
+        setattr(stmt, "_sugar_has_dynamic_getattr", result)
+    except AttributeError:
+        pass
+    return result
+
+
+def _is_dynamic_getattr_call(call: ast.Call) -> bool:
+    return (
+        _static_call_name(call.func) == "getattr"
+        and not _is_known_pure_call_value_expr(call)
+    )
+
+
 def _nearest_statement(
     chain: tuple[ast.AST, ...],
 ) -> Optional[ast.stmt]:
@@ -1123,6 +2847,232 @@ def _dynamic_io_receiver_name(call: ast.Call) -> Optional[str]:
     return func.value.id
 
 
+def _dynamic_receiver_method_dispatch_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    stmt = _nearest_statement(ancestors + (node,))
+    if stmt is None:
+        return None
+    owner = _nearest_enclosing_function(ancestors + (node,))
+    if owner is None or isinstance(owner, ast.Lambda):
+        return None
+    params = _function_parameter_names(owner)
+    params.difference_update({"self", "cls"})
+    if not params:
+        return None
+    reason = _dynamic_receiver_method_dispatch_reason_cached(stmt, frozenset(params))
+    if reason is not None:
+        return "refused", reason
+    return None
+
+
+def _dynamic_receiver_method_dispatch_reason_cached(
+    stmt: ast.stmt,
+    params: frozenset[str],
+) -> Optional[str]:
+    cached = getattr(stmt, "_sugar_dynamic_receiver_dispatch_reason", None)
+    if cached is not None:
+        return cached or None
+    reason = _dynamic_receiver_method_dispatch_reason(stmt, params)
+    try:
+        setattr(stmt, "_sugar_dynamic_receiver_dispatch_reason", reason or "")
+    except AttributeError:
+        pass
+    return reason
+
+
+def _dynamic_receiver_method_dispatch_reason(
+    stmt: ast.stmt,
+    params: frozenset[str],
+) -> Optional[str]:
+    for call in (candidate for candidate in ast.walk(stmt) if isinstance(candidate, ast.Call)):
+        if _is_known_pure_method_call_value_expr(call):
+            continue
+        receiver = _dynamic_method_receiver_name(call)
+        if receiver is None or receiver not in params:
+            continue
+        return (
+            "dynamic receiver method dispatch refused: "
+            f"{receiver}.{call.func.attr} is supplied at runtime, "
+            "so no stable vendor method body can warrant this relation"
+        )
+    return None
+
+
+def _dynamic_method_receiver_name(call: ast.Call) -> Optional[str]:
+    func = call.func
+    if not isinstance(func, ast.Attribute) or not isinstance(func.value, ast.Name):
+        return None
+    return func.value.id
+
+
+def _unresolved_receiver_method_dispatch_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[tuple[str, str]]:
+    chain = ancestors + (node,)
+    stmt = _nearest_statement(chain)
+    if stmt is None:
+        return None
+    reason = _unresolved_receiver_method_dispatch_reason_cached(
+        stmt,
+        chain,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if reason is not None:
+        return "refused", reason
+    return None
+
+
+def _unresolved_receiver_method_dispatch_reason_cached(
+    stmt: ast.stmt,
+    chain: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[str]:
+    cached = getattr(stmt, "_sugar_unresolved_receiver_dispatch_reason", None)
+    if cached is not None:
+        return cached or None
+    reason = _unresolved_receiver_method_dispatch_reason(
+        stmt,
+        chain,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    try:
+        setattr(stmt, "_sugar_unresolved_receiver_dispatch_reason", reason or "")
+    except AttributeError:
+        pass
+    return reason
+
+
+def _unresolved_receiver_method_dispatch_reason(
+    stmt: ast.stmt,
+    chain: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[str]:
+    owner = _nearest_enclosing_function(chain)
+    if owner is None or isinstance(owner, ast.Lambda):
+        return None
+    class_qualname = _nearest_class_qualname(chain)
+    if not class_qualname:
+        return None
+    for call in (candidate for candidate in ast.walk(stmt) if isinstance(candidate, ast.Call)):
+        if _is_known_pure_method_call_value_expr(call):
+            continue
+        path = _call_func_attribute_path(call.func)
+        if len(path) < 2 or path[0] not in {"self", "cls"}:
+            continue
+        if _is_statically_nameable_callee(
+            call.func,
+            chain,
+            call_aliases,
+            module_name,
+            tree,
+        ):
+            continue
+        return (
+            "unresolved receiver method dispatch refused: "
+            f"{'.'.join(path)} is supplied by receiver state or inheritance, "
+            "so no stable vendor method body can warrant this relation"
+        )
+    return None
+
+
+def _unresolved_super_method_dispatch_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[tuple[str, str]]:
+    chain = ancestors + (node,)
+    stmt = _nearest_statement(chain)
+    if stmt is None:
+        return None
+    reason = _unresolved_super_method_dispatch_reason_cached(
+        stmt,
+        chain,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if reason is not None:
+        return "refused", reason
+    return None
+
+
+def _unresolved_super_method_dispatch_reason_cached(
+    stmt: ast.stmt,
+    chain: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[str]:
+    cached = getattr(stmt, "_sugar_unresolved_super_dispatch_reason", None)
+    if cached is not None:
+        return cached or None
+    reason = _unresolved_super_method_dispatch_reason(
+        stmt,
+        chain,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    try:
+        setattr(stmt, "_sugar_unresolved_super_dispatch_reason", reason or "")
+    except AttributeError:
+        pass
+    return reason
+
+
+def _unresolved_super_method_dispatch_reason(
+    stmt: ast.stmt,
+    chain: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[str]:
+    owner = _nearest_enclosing_function(chain)
+    if owner is None or isinstance(owner, ast.Lambda):
+        return None
+    for call in (candidate for candidate in ast.walk(stmt) if isinstance(candidate, ast.Call)):
+        if not _is_super_method_dispatch_call(call):
+            continue
+        if _is_statically_nameable_callee(
+            call.func,
+            chain,
+            call_aliases,
+            module_name,
+            tree,
+        ):
+            continue
+        return (
+            "unresolved super method dispatch refused: super()."
+            f"{call.func.attr} is selected by runtime MRO, so no stable "
+            "vendor method body can warrant this relation"
+        )
+    return None
+
+
+def _is_super_method_dispatch_call(call: ast.Call) -> bool:
+    return (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Call)
+        and _is_zero_arg_super_call(call.func.value)
+    )
+
+
 def _self_field_runtime_dispatch_refusal_status(
     node: ast.AST,
     ancestors: tuple[ast.AST, ...],
@@ -1132,22 +3082,10 @@ def _self_field_runtime_dispatch_refusal_status(
     class_qualname = _nearest_class_qualname(chain)
     if not class_qualname:
         return None
-    cls = _find_class_by_qualname(tree, class_qualname)
-    if cls is None:
-        methods: set[str] = set()
-        fields: set[str] = set()
-        has_bases = False
-    else:
-        methods = {
-            item.name
-            for item in cls.body
-            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-        }
-        fields = _class_receiver_field_names(cls)
-        has_bases = bool(cls.bases)
+    methods, fields, has_bases = _class_dispatch_info(tree, class_qualname)
     stmt = _nearest_statement(chain)
     if stmt is not None:
-        reason = _runtime_field_dispatch_refusal_reason(
+        reason = _runtime_field_dispatch_refusal_reason_cached(
             stmt,
             methods,
             fields,
@@ -1156,7 +3094,7 @@ def _self_field_runtime_dispatch_refusal_status(
         if reason is not None:
             return "refused", reason
     for guard in _enclosing_if_statements(chain):
-        reason = _runtime_field_dispatch_refusal_reason(
+        reason = _runtime_field_dispatch_refusal_reason_cached(
             guard.test,
             methods,
             fields,
@@ -1165,6 +3103,59 @@ def _self_field_runtime_dispatch_refusal_status(
         if reason is not None:
             return "refused", reason
     return None
+
+
+def _class_dispatch_info(
+    tree: ast.Module,
+    class_qualname: str,
+) -> tuple[set[str], set[str], bool]:
+    cache = getattr(tree, "_sugar_class_dispatch_info", None)
+    if cache is None:
+        cache = {}
+        try:
+            setattr(tree, "_sugar_class_dispatch_info", cache)
+        except AttributeError:
+            cache = None
+    if cache is not None and class_qualname in cache:
+        return cache[class_qualname]
+    cls = _find_class_by_qualname(tree, class_qualname)
+    if cls is None:
+        result = (set(), set(), False)
+    else:
+        result = (
+            {
+                item.name
+                for item in cls.body
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+            },
+            _class_receiver_field_names(cls),
+            bool(cls.bases),
+        )
+    if cache is not None:
+        cache[class_qualname] = result
+    return result
+
+
+def _runtime_field_dispatch_refusal_reason_cached(
+    node: ast.AST,
+    methods: set[str],
+    fields: set[str],
+    has_bases: bool,
+) -> Optional[str]:
+    cached = getattr(node, "_sugar_runtime_field_dispatch_reason", None)
+    if cached is not None:
+        return cached or None
+    reason = _runtime_field_dispatch_refusal_reason(
+        node,
+        methods,
+        fields,
+        has_bases,
+    )
+    try:
+        setattr(node, "_sugar_runtime_field_dispatch_reason", reason or "")
+    except AttributeError:
+        pass
+    return reason
 
 
 def _enclosing_if_statements(chain: tuple[ast.AST, ...]) -> list[ast.If]:
@@ -1195,6 +3186,308 @@ def _runtime_field_dispatch_refusal_reason(
             "so no stable vendor method body can warrant this relation"
         )
     return None
+
+
+def _return_from_refused_binding_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    tree: ast.Module,
+) -> Optional[tuple[str, str]]:
+    chain = ancestors + (node,)
+    stmt = _nearest_statement(chain)
+    if not isinstance(stmt, ast.Return):
+        return None
+    if not (node is stmt or any(candidate is node for candidate in ast.walk(stmt))):
+        return None
+    owner = _nearest_enclosing_function(chain)
+    if owner is None or isinstance(owner, ast.Lambda):
+        return None
+    loaded_names = _loaded_name_ids(stmt)
+    if not loaded_names:
+        return None
+    previous = _previous_function_body_statements(owner, stmt)
+    if previous is None:
+        return None
+
+    class_qualname = _nearest_class_qualname(chain)
+    if not class_qualname:
+        return None
+    cls = _find_class_by_qualname(tree, class_qualname)
+    if cls is None:
+        return None
+    methods = {
+        item.name
+        for item in cls.body
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    fields = _class_receiver_field_names(cls)
+    has_bases = bool(cls.bases)
+
+    for prior in reversed(previous):
+        assignment = _single_name_assignment(prior)
+        if assignment is None:
+            continue
+        name, value = assignment
+        if name not in loaded_names or value is None:
+            continue
+        reason = _runtime_field_dispatch_refusal_reason(
+            value,
+            methods,
+            fields,
+            has_bases,
+        )
+        if reason is not None:
+            return (
+                "refused",
+                (
+                    "return depends on refused runtime field dispatch binding "
+                    f"{name!r}: {reason}"
+                ),
+            )
+    return None
+
+
+def _terminal_return_after_refused_flow_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    chain = ancestors + (node,)
+    owner = _nearest_enclosing_function(chain)
+    if owner is None or isinstance(owner, ast.Lambda):
+        return None
+    body = _body_without_docstring(owner.body)
+    if len(body) < 2:
+        return None
+    branch = body[-2]
+    fallback = body[-1]
+    if (
+        not isinstance(branch, ast.If)
+        or branch.orelse
+        or len(branch.body) != 1
+        or not isinstance(branch.body[0], ast.Return)
+        or not isinstance(fallback, ast.Return)
+    ):
+        return None
+    tail_statements = (branch, branch.body[0], fallback)
+    if not any(
+        node is stmt or any(candidate is node for candidate in ast.walk(stmt))
+        for stmt in tail_statements
+    ):
+        return None
+    prelude = body[:-2]
+    if not _body_contains_refused_path_sensitive_flow(prelude):
+        return None
+    return (
+        "refused",
+        (
+            "terminal return refused: earlier path-sensitive try/raise flow "
+            "is not emitted as a value relation"
+        ),
+    )
+
+
+def _terminal_conditional_return_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[tuple[str, str]]:
+    pattern = _terminal_conditional_return_pattern_for_locus(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if pattern is None:
+        return None
+    return (
+        "warranted",
+        "terminal conditional return admitted as branch-selected value relation",
+    )
+
+
+def _terminal_conditional_return_pattern_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[ast.If]:
+    chain = ancestors + (node,)
+    owner = _nearest_enclosing_function(chain)
+    if owner is None or isinstance(owner, ast.Lambda):
+        return None
+    body = _body_without_docstring(owner.body)
+    for index, stmt in enumerate(body):
+        if not isinstance(stmt, ast.If):
+            continue
+        returns = _terminal_conditional_return_pair(body, index)
+        if returns is None or not _is_pure_branch_predicate_expr(stmt.test):
+            continue
+        previous = body[:index]
+        if not any(
+            _return_value_uses_prior_local_binding(return_stmt.value, previous)
+            for return_stmt in returns
+        ):
+            continue
+        if not all(
+            _is_terminal_conditional_return_value(
+                return_stmt.value,
+                previous,
+                owner,
+                chain,
+                call_aliases,
+                module_name,
+                tree,
+            )
+            for return_stmt in returns
+        ):
+            continue
+        covered: tuple[ast.stmt, ...] = (stmt, *returns)
+        if any(
+            node is item or any(candidate is node for candidate in ast.walk(item))
+            for item in covered
+        ):
+            return stmt
+    return None
+
+
+def _terminal_conditional_return_pair(
+    body: list[ast.stmt],
+    index: int,
+) -> Optional[tuple[ast.Return, ast.Return]]:
+    stmt = body[index]
+    if not isinstance(stmt, ast.If) or len(stmt.body) != 1:
+        return None
+    first = stmt.body[0]
+    if not isinstance(first, ast.Return):
+        return None
+    if stmt.orelse:
+        if len(stmt.orelse) != 1 or not isinstance(stmt.orelse[0], ast.Return):
+            return None
+        return first, stmt.orelse[0]
+    if index + 1 >= len(body) or not isinstance(body[index + 1], ast.Return):
+        return None
+    return first, body[index + 1]
+
+
+def _is_terminal_conditional_return_value(
+    node: ast.expr | None,
+    previous: list[ast.stmt],
+    owner: ast.FunctionDef | ast.AsyncFunctionDef,
+    chain: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> bool:
+    if node is None:
+        return False
+    if _is_local_literal_binding_value(node) or _is_literal_container_value_expr(node):
+        return True
+    if isinstance(node, ast.Name):
+        binding = _prior_local_binding_value(previous, node.id)
+        return binding is not None and _is_return_through_local_binding_value(
+            binding,
+            chain,
+            call_aliases,
+            module_name,
+            tree,
+        )
+    if isinstance(node, ast.Call):
+        return _is_known_pure_call_value_expr(node) or _is_statically_nameable_call_term(
+            node,
+            chain,
+            call_aliases,
+            module_name,
+            tree,
+        )
+    return False
+
+
+def _return_value_uses_prior_local_binding(
+    node: ast.expr | None,
+    previous: list[ast.stmt],
+) -> bool:
+    return (
+        isinstance(node, ast.Name)
+        and _prior_local_binding_value(previous, node.id) is not None
+    )
+
+
+def _function_parameter_names(
+    owner: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> set[str]:
+    names = {
+        arg.arg
+        for arg in (
+            *owner.args.posonlyargs,
+            *owner.args.args,
+            *owner.args.kwonlyargs,
+        )
+    }
+    if owner.args.vararg is not None:
+        names.add(owner.args.vararg.arg)
+    if owner.args.kwarg is not None:
+        names.add(owner.args.kwarg.arg)
+    return names
+
+
+def _loaded_name_ids(node: ast.AST) -> set[str]:
+    return {
+        candidate.id
+        for candidate in ast.walk(node)
+        if isinstance(candidate, ast.Name) and isinstance(candidate.ctx, ast.Load)
+    }
+
+
+def _previous_function_body_statements(
+    owner: ast.FunctionDef | ast.AsyncFunctionDef,
+    stmt: ast.stmt,
+) -> Optional[list[ast.stmt]]:
+    try:
+        index = next(i for i, candidate in enumerate(owner.body) if candidate is stmt)
+    except StopIteration:
+        for i, candidate in enumerate(owner.body):
+            if any(descendant is stmt for descendant in ast.walk(candidate)):
+                return owner.body[:i]
+        return None
+    return owner.body[:index]
+
+
+def _single_name_assignment(
+    stmt: ast.stmt,
+) -> Optional[tuple[str, Optional[ast.expr]]]:
+    if isinstance(stmt, ast.Assign):
+        if len(stmt.targets) != 1 or not isinstance(stmt.targets[0], ast.Name):
+            return None
+        return stmt.targets[0].id, stmt.value
+    if isinstance(stmt, ast.AnnAssign):
+        if not isinstance(stmt.target, ast.Name):
+            return None
+        return stmt.target.id, stmt.value
+    return None
+
+
+def _body_without_docstring(body: list[ast.stmt]) -> list[ast.stmt]:
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        return body[1:]
+    return body
+
+
+def _body_contains_refused_path_sensitive_flow(body: list[ast.stmt]) -> bool:
+    for stmt in body:
+        if isinstance(stmt, ast.Try):
+            return True
+        if any(isinstance(node, ast.Raise) for node in ast.walk(stmt)):
+            return True
+    return False
 
 
 def _receiver_iteration_refusal_status(
@@ -1290,6 +3583,9 @@ def _receiver_iteration_expr_path(node: ast.AST) -> Optional[tuple[str, ...]]:
 
 
 def _class_receiver_field_names(cls: ast.ClassDef) -> set[str]:
+    cached = getattr(cls, "_sugar_receiver_field_names", None)
+    if cached is not None:
+        return set(cached)
     fields: set[str] = set()
     for node in ast.walk(cls):
         targets: list[ast.AST] = []
@@ -1307,6 +3603,10 @@ def _class_receiver_field_names(cls: ast.ClassDef) -> set[str]:
                 and target.value.id in {"self", "cls"}
             ):
                 fields.add(target.attr)
+    try:
+        setattr(cls, "_sugar_receiver_field_names", frozenset(fields))
+    except AttributeError:
+        pass
     return fields
 
 
@@ -1324,6 +3624,7 @@ def _call_func_attribute_path(node: ast.AST) -> tuple[str, ...]:
 
 _NONDET_CALL_ATTRS = frozenset(
     {
+        "default_rng",
         "random",
         "uniform",
         "randint",
@@ -1343,7 +3644,7 @@ _NONDET_CALL_ATTRS = frozenset(
         "perf_counter",
     }
 )
-_NONDET_CALL_ROOTS = frozenset({"random", "secrets", "uuid", "time"})
+_NONDET_CALL_ROOTS = frozenset({"numpy", "random", "secrets", "uuid", "time"})
 
 
 def _nondeterministic_call_refusal_status(
@@ -1351,17 +3652,53 @@ def _nondeterministic_call_refusal_status(
     ancestors: tuple[ast.AST, ...],
     module_name: str,
     tree: ast.Module,
+    call_aliases: Optional[Dict[str, str]] = None,
 ) -> Optional[tuple[str, str]]:
     stmt = _nearest_statement(ancestors + (node,))
     if stmt is None:
         return None
     chain = ancestors + (node,)
+    reason = _nondeterministic_statement_reason(
+        stmt,
+        chain,
+        module_name,
+        tree,
+        call_aliases,
+    )
+    if reason is not None:
+        return "refused", reason
+    return None
+
+
+def _nondeterministic_statement_reason(
+    stmt: ast.stmt,
+    chain: tuple[ast.AST, ...],
+    module_name: str,
+    tree: ast.Module,
+    call_aliases: Optional[Dict[str, str]] = None,
+) -> Optional[str]:
+    cached = getattr(stmt, "_sugar_nondeterministic_reason", None)
+    if cached is not None:
+        return str(cached) if cached else None
     for call in (n for n in ast.walk(stmt) if isinstance(n, ast.Call)):
-        reason = _nondeterministic_call_reason(call, chain, module_name, tree)
+        reason = _nondeterministic_call_reason(
+            call,
+            chain,
+            module_name,
+            tree,
+            call_aliases,
+        )
         if reason is None:
             continue
-        if node is stmt or any(candidate is node for candidate in ast.walk(stmt)):
-            return "refused", reason
+        try:
+            setattr(stmt, "_sugar_nondeterministic_reason", reason)
+        except AttributeError:
+            pass
+        return reason
+    try:
+        setattr(stmt, "_sugar_nondeterministic_reason", False)
+    except AttributeError:
+        pass
     return None
 
 
@@ -1370,8 +3707,9 @@ def _nondeterministic_call_reason(
     chain: tuple[ast.AST, ...],
     module_name: str,
     tree: ast.Module,
+    call_aliases: Optional[Dict[str, str]] = None,
 ) -> Optional[str]:
-    direct = _direct_nondeterministic_call_name(call)
+    direct = _direct_nondeterministic_call_name(call, call_aliases)
     if direct:
         return (
             "nondeterminism source refused: "
@@ -1418,10 +3756,33 @@ def _exception_universe_source_status(
     owner = _nearest_enclosing_function(ancestors + (node,))
     if owner is None or isinstance(owner, ast.Lambda):
         return None
+    if not _function_body_has_node_type(owner, (ast.Try, ast.Raise)):
+        return None
     stmt = _owner_body_statement(ancestors + (node,), owner)
     if stmt is None:
         return None
-    callee = _owner_callee(module_name, owner, ancestors + (node,))
+    universes = _owner_cached_package_fact(
+        owner,
+        (module_name, "exception-universes"),
+        lambda: _exception_source_universes(
+            _owner_callee(module_name, owner, ancestors + (node,))
+        ),
+    )
+    for role, universe_kind, source_memento in universes:
+        status, reason = _classify_universe_source_node(
+            role,
+            universe_kind,
+            stmt,
+            node,
+            source_memento,
+        )
+        if status != "unclassified":
+            return status, reason
+    return None
+
+
+def _exception_source_universes(callee: str) -> tuple[tuple[str, str, dict], ...]:
+    out: list[tuple[str, str, dict]] = []
     for role, universe_kind, resolver in (
         (
             "python.exception-handler-raise-universe",
@@ -1448,18 +3809,192 @@ def _exception_universe_source_status(
         if refusal is not None or universe is None:
             continue
         source_memento = getattr(universe, "source_memento", None)
-        if source_memento is None:
+        if source_memento is not None:
+            out.append((role, universe_kind, source_memento))
+    return tuple(out)
+
+
+def _guard_universe_source_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    module_name: str,
+) -> Optional[tuple[str, str]]:
+    owner = _nearest_enclosing_function(ancestors + (node,))
+    if owner is None or isinstance(owner, ast.Lambda):
+        return None
+    if not _function_body_has_node_type(owner, (ast.Assert, ast.If)):
+        return None
+    if not _node_is_in_function_body(node, owner):
+        return None
+    stmt = _owner_body_statement(ancestors + (node,), owner)
+    if stmt is None:
+        return None
+    source_memento = _owner_cached_package_fact(
+        owner,
+        (module_name, "guard-source-memento"),
+        lambda: _guard_source_memento_for_callee(
+            _owner_callee(module_name, owner, ancestors + (node,))
+        ),
+    )
+    if source_memento is None:
+        return None
+    status, reason = _classify_universe_source_node(
+        "python.guard-universe",
+        "guard",
+        stmt,
+        node,
+        source_memento,
+    )
+    if status == "unclassified":
+        return None
+    return status, reason
+
+
+def _regex_universe_source_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[tuple[str, str]]:
+    owner = _nearest_enclosing_function(ancestors + (node,))
+    if owner is None or isinstance(owner, ast.Lambda):
+        return None
+    if not _function_body_has_node_type(owner, (ast.Return,)):
+        return None
+    if not _node_is_in_function_body(node, owner):
+        return None
+    stmt = _owner_body_statement(ancestors + (node,), owner)
+    if stmt is None:
+        return None
+    source_memento = _owner_cached_package_fact(
+        owner,
+        (module_name, "regex-source-memento-ast"),
+        lambda: _regex_source_memento_for_owner(owner, tree, ancestors),
+    )
+    if source_memento is None:
+        return None
+    status, reason = _classify_universe_source_node(
+        "python.regex-universe",
+        "return-regex",
+        stmt,
+        node,
+        source_memento,
+    )
+    if status == "unclassified":
+        return None
+    return status, reason
+
+
+def _regex_source_memento_for_owner(
+    owner: ast.FunctionDef | ast.AsyncFunctionDef,
+    tree: ast.Module,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[dict]:
+    body = _body_without_docstring(owner.body)
+    if (
+        not body
+        or not isinstance(body[-1], ast.Return)
+        or body[-1].value is None
+    ):
+        return None
+    if sum(
+        1
+        for stmt in body
+        for descendant in ast.walk(stmt)
+        if isinstance(descendant, (ast.Return, ast.Yield, ast.YieldFrom))
+    ) != 1:
+        return None
+
+    params = [arg.arg for arg in (*owner.args.posonlyargs, *owner.args.args)]
+    env = _regex_compile_env_for_owner(tree, ancestors)
+    for stmt in body[:-1]:
+        compiled = _regex_compile_assignment(stmt, tree)
+        if compiled is None:
+            return None
+        name, pattern = compiled
+        if _unsupported_regex_literal_reason(pattern) is not None:
+            return None
+        env[name] = pattern
+
+    matched, refusal = _regex_bool_return(body[-1].value, params, env, tree)
+    if refusal is not None:
+        return None
+    if matched is None:
+        return None
+    (
+        pattern,
+        param_name,
+        compile_var,
+        match_kind,
+        true_implies_membership,
+        false_implies_nonmembership,
+    ) = matched
+    if _unsupported_regex_literal_reason(pattern) is not None:
+        return None
+
+    source_memento: dict[str, Any] = {
+        "kind": "source-memento",
+        "source_function_name": owner.name,
+        "span": _ast_node_span(owner),
+        "regex_pattern": pattern,
+        "regex_param_name": param_name,
+        "regex_match_kind": match_kind,
+        "regex_membership_pattern": _regex_membership_pattern(pattern, match_kind),
+        "regex_true_implies_membership": true_implies_membership,
+        "regex_false_implies_nonmembership": false_implies_nonmembership,
+    }
+    if compile_var is not None:
+        source_memento["regex_compile_var"] = compile_var
+    return source_memento
+
+
+def _regex_compile_env_for_owner(
+    tree: ast.Module,
+    ancestors: tuple[ast.AST, ...],
+) -> dict[str, str]:
+    env: dict[str, str] = {}
+    for stmt in tree.body:
+        compiled = _regex_compile_assignment(stmt, tree)
+        if compiled is not None:
+            env[compiled[0]] = compiled[1]
+    for ancestor in reversed(ancestors):
+        if not isinstance(ancestor, ast.ClassDef):
             continue
-        status, reason = _classify_universe_source_node(
-            role,
-            universe_kind,
-            stmt,
-            node,
-            source_memento,
-        )
-        if status != "unclassified":
-            return status, reason
-    return None
+        for stmt in ancestor.body:
+            compiled = _regex_compile_assignment(stmt, tree)
+            if compiled is not None:
+                env[compiled[0]] = compiled[1]
+        break
+    return env
+
+
+def _regex_source_memento_for_callee(callee: str) -> Optional[dict]:
+    universe, refusal = return_regex_universe_for_callee(callee)
+    if refusal is not None or universe is None or universe.source_memento is None:
+        return None
+    source_memento = dict(universe.source_memento)
+    source_memento["regex_pattern"] = universe.pattern
+    source_memento["regex_param_name"] = universe.param_name
+    source_memento["regex_match_kind"] = universe.match_kind
+    source_memento["regex_membership_pattern"] = universe.membership_pattern
+    source_memento["regex_true_implies_membership"] = (
+        universe.true_implies_membership
+    )
+    source_memento["regex_false_implies_nonmembership"] = (
+        universe.false_implies_nonmembership
+    )
+    if universe.compile_var is not None:
+        source_memento["regex_compile_var"] = universe.compile_var
+    return source_memento
+
+
+def _guard_source_memento_for_callee(callee: str) -> Optional[dict]:
+    universe, refusal = guard_universe_for_callee(callee)
+    if refusal is not None or universe is None or universe.source_memento is None:
+        return None
+    source_memento = dict(universe.source_memento)
+    source_memento["guard_lines"] = list(universe.guard_lines)
+    return source_memento
 
 
 def _owner_body_statement(
@@ -1610,8 +4145,210 @@ def _generator_flow_refusal_status(
     )
 
 
+def _with_context_flow_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    if not any(
+        isinstance(item, (ast.With, ast.AsyncWith))
+        for item in ancestors + (node,)
+    ):
+        return None
+    return (
+        "refused",
+        (
+            "with-context flow refused: context manager enter/exit effects are "
+            "runtime-selected and not modeled as a timeless value relation"
+        ),
+    )
+
+
+def _loop_iteration_flow_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    if not any(
+        isinstance(item, (ast.For, ast.AsyncFor, ast.While))
+        for item in ancestors + (node,)
+    ):
+        return None
+    return (
+        "refused",
+        (
+            "loop iteration flow refused: iteration order and loop-target "
+            "rebinding are runtime-selected and not modeled as a timeless "
+            "value relation"
+        ),
+    )
+
+
+def _exception_control_flow_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    chain = ancestors + (node,)
+    try_stmt = next(
+        (item for item in reversed(chain) if isinstance(item, ast.Try)),
+        None,
+    )
+    if try_stmt is not None and (
+        node is try_stmt or any(candidate is node for candidate in ast.walk(try_stmt))
+    ):
+        return (
+            "refused",
+            (
+                "exception control flow refused: try/except/finally path "
+                "selection is runtime-selected and not modeled as a timeless "
+                "value relation"
+            ),
+        )
+    raise_stmt = next(
+        (item for item in reversed(chain) if isinstance(item, ast.Raise)),
+        None,
+    )
+    if raise_stmt is not None and (
+        node is raise_stmt or any(candidate is node for candidate in ast.walk(raise_stmt))
+    ):
+        return (
+            "refused",
+            (
+                "exception control flow refused: raise/no-return path is not "
+                "modeled without an emitted exception universe"
+            ),
+        )
+    return None
+
+
+def _assert_guard_flow_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    chain = ancestors + (node,)
+    assert_stmt = next(
+        (item for item in reversed(chain) if isinstance(item, ast.Assert)),
+        None,
+    )
+    if assert_stmt is None:
+        return None
+    if node is assert_stmt or any(candidate is node for candidate in ast.walk(assert_stmt)):
+        return (
+            "refused",
+            (
+                "assert guard flow refused: assertion raises at runtime unless "
+                "an emitted guard universe accounts for this condition"
+            ),
+        )
+    return None
+
+
+def _expression_call_flow_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    chain = ancestors + (node,)
+    expr_stmt = next(
+        (
+            item
+            for item in reversed(chain)
+            if isinstance(item, ast.Expr) and isinstance(item.value, ast.Call)
+        ),
+        None,
+    )
+    if expr_stmt is None or _is_super_init_expr(expr_stmt):
+        return None
+    if node is expr_stmt or any(candidate is node for candidate in ast.walk(expr_stmt)):
+        return (
+            "refused",
+            (
+                "expression call flow refused: discarded call result leaves only "
+                "runtime side effects or raises, not a timeless value relation"
+            ),
+        )
+    return None
+
+
+def _assignment_target_mutation_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    stmt = _assignment_target_mutation_statement_for_locus(node, ancestors)
+    if stmt is None:
+        return None
+    if node is stmt or any(candidate is node for candidate in ast.walk(stmt)):
+        return (
+            "refused",
+            (
+                "assignment target mutation refused: attribute/item rebinding "
+                "mutates runtime state and is not a timeless value relation"
+            ),
+        )
+    return None
+
+
+def _assignment_target_mutation_statement_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[ast.Assign | ast.AnnAssign | ast.AugAssign]:
+    chain = ancestors + (node,)
+    stmt = next(
+        (
+            item
+            for item in reversed(chain)
+            if isinstance(item, (ast.Assign, ast.AnnAssign, ast.AugAssign))
+        ),
+        None,
+    )
+    if stmt is None:
+        return None
+    if isinstance(stmt, ast.Assign):
+        if any(_is_assignment_mutation_target(target) for target in stmt.targets):
+            return stmt
+        return None
+    target = stmt.target
+    if _is_assignment_mutation_target(target):
+        return stmt
+    return None
+
+
+def _is_assignment_mutation_target(node: ast.AST) -> bool:
+    return isinstance(node, (ast.Attribute, ast.Subscript))
+
+
 def _function_body_has_yield(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    return any(_node_has_yield_outside_nested_scope(stmt) for stmt in fn.body)
+    cached = getattr(fn, "_sugar_body_has_yield", None)
+    if cached is not None:
+        return bool(cached)
+    result = any(_node_has_yield_outside_nested_scope(stmt) for stmt in fn.body)
+    try:
+        setattr(fn, "_sugar_body_has_yield", result)
+    except AttributeError:
+        pass
+    return result
+
+
+def _function_body_has_node_type(
+    fn: ast.FunctionDef | ast.AsyncFunctionDef,
+    node_types: tuple[type, ...],
+) -> bool:
+    cache = getattr(fn, "_sugar_body_node_type_cache", None)
+    if cache is None:
+        cache = {}
+        try:
+            setattr(fn, "_sugar_body_node_type_cache", cache)
+        except AttributeError:
+            return any(
+                isinstance(descendant, node_types)
+                for stmt in fn.body
+                for descendant in ast.walk(stmt)
+            )
+    key = tuple(t.__name__ for t in node_types)
+    if key not in cache:
+        cache[key] = any(
+            isinstance(descendant, node_types)
+            for stmt in fn.body
+            for descendant in ast.walk(stmt)
+        )
+    return bool(cache[key])
 
 
 def _node_has_yield_outside_nested_scope(node: ast.AST) -> bool:
@@ -1628,15 +4365,19 @@ def _node_has_yield_outside_nested_scope(node: ast.AST) -> bool:
     )
 
 
-def _direct_nondeterministic_call_name(call: ast.Call) -> str:
+def _direct_nondeterministic_call_name(
+    call: ast.Call,
+    call_aliases: Optional[Dict[str, str]] = None,
+) -> str:
     static_name = _static_call_name(call.func)
-    parts = static_name.split(".") if static_name else []
-    if not parts:
-        return ""
-    root = parts[0]
-    leaf = parts[-1]
-    if root in _NONDET_CALL_ROOTS and leaf in _NONDET_CALL_ATTRS:
-        return static_name
+    resolved_name = (
+        _resolved_static_call_name(call.func, call_aliases)
+        if call_aliases is not None
+        else ""
+    )
+    for candidate in (resolved_name, static_name):
+        if candidate and _static_call_name_is_nondeterministic(candidate):
+            return candidate
     return ""
 
 
@@ -1644,6 +4385,15 @@ def _find_class_by_qualname(
     tree: ast.Module,
     qualname: str,
 ) -> Optional[ast.ClassDef]:
+    cache = getattr(tree, "_sugar_class_by_qualname", None)
+    if cache is None:
+        cache = {}
+        try:
+            setattr(tree, "_sugar_class_by_qualname", cache)
+        except AttributeError:
+            cache = None
+    if cache is not None and qualname in cache:
+        return cache[qualname]
     parts = [part for part in qualname.split(".") if part]
     body: list[ast.stmt] = list(tree.body)
     found: Optional[ast.ClassDef] = None
@@ -1657,8 +4407,12 @@ def _find_class_by_qualname(
             None,
         )
         if found is None:
+            if cache is not None:
+                cache[qualname] = None
             return None
         body = list(found.body)
+    if cache is not None:
+        cache[qualname] = found
     return found
 
 
@@ -1759,6 +4513,16 @@ def _local_call_term_assignment_status(
         tree,
     ):
         return None
+    if _is_local_constructor_call_term(
+        value,
+        call_aliases,
+        module_name,
+        tree,
+    ):
+        return (
+            "warranted",
+            "local constructor call-term admitted as construction fact",
+        )
     return (
         "warranted",
         "local call-term SSA binding admitted as compiler equality",
@@ -1850,6 +4614,353 @@ def _local_tuple_unpack_call_statement_for_locus(
     return stmt, stmt.value
 
 
+def _local_tuple_unpack_fixed_sequence_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[tuple[str, str]]:
+    stmt = _local_tuple_unpack_fixed_sequence_statement_for_locus(node, ancestors)
+    if stmt is None:
+        return None
+    assign_stmt, value = stmt
+    if not any(descendant is node for descendant in ast.walk(assign_stmt)):
+        return None
+    if not all(
+        _is_call_term_arg(elt, ancestors + (node,), call_aliases, module_name, tree)
+        for elt in value.elts
+    ):
+        return None
+    return (
+        "warranted",
+        "local tuple-unpack fixed-sequence projection admitted as compiler equality",
+    )
+
+
+def _local_tuple_unpack_fixed_sequence_statement_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[ast.Assign, ast.Tuple | ast.List]]:
+    chain = ancestors + (node,)
+    stmt_index: Optional[int] = None
+    stmt: Optional[ast.Assign] = None
+    for index in range(len(chain) - 1, -1, -1):
+        item = chain[index]
+        if isinstance(item, ast.Assign):
+            stmt_index = index
+            stmt = item
+            break
+    if stmt is None or stmt_index is None:
+        return None
+    owner = _nearest_enclosing_function(chain[:stmt_index])
+    if owner is None:
+        return None
+    if len(stmt.targets) != 1 or not isinstance(stmt.targets[0], ast.Tuple):
+        return None
+    target = stmt.targets[0]
+    if not target.elts or not all(isinstance(elt, ast.Name) for elt in target.elts):
+        return None
+    if not isinstance(stmt.value, (ast.Tuple, ast.List)):
+        return None
+    if any(isinstance(elt, ast.Starred) for elt in stmt.value.elts):
+        return None
+    if len(target.elts) != len(stmt.value.elts):
+        return None
+    return stmt, stmt.value
+
+
+def _return_call_term_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[tuple[str, str]]:
+    stmt = _return_call_term_statement_for_locus(node, ancestors)
+    if stmt is None:
+        return None
+    if not any(descendant is node for descendant in ast.walk(stmt)):
+        return None
+    value = stmt.value
+    if not isinstance(value, ast.Call):
+        return None
+    if not _is_statically_nameable_call_term(
+        value,
+        ancestors + (node,),
+        call_aliases,
+        module_name,
+        tree,
+    ):
+        return None
+    if _is_local_constructor_call_term(
+        value,
+        call_aliases,
+        module_name,
+        tree,
+    ):
+        return (
+            "warranted",
+            "return constructor call-term admitted as construction fact",
+        )
+    return (
+        "warranted",
+        "return call-term admitted as function result equality",
+    )
+
+
+def _return_call_term_statement_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[ast.Return]:
+    chain = ancestors + (node,)
+    stmt_index: Optional[int] = None
+    stmt: Optional[ast.Return] = None
+    for index in range(len(chain) - 1, -1, -1):
+        item = chain[index]
+        if isinstance(item, ast.Return):
+            stmt_index = index
+            stmt = item
+            break
+    if stmt is None or stmt_index is None:
+        return None
+    owner = _nearest_enclosing_function(chain[:stmt_index])
+    if owner is None:
+        return None
+    if not isinstance(stmt.value, ast.Call):
+        return None
+    return stmt
+
+
+def _call_term_value_expression_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[tuple[str, str]]:
+    expr = _call_term_value_expression_for_locus(node, ancestors)
+    if expr is None:
+        return None
+    chain = ancestors + (node,)
+    if not _is_call_term_value_expression(expr, chain, call_aliases, module_name, tree):
+        return None
+    return (
+        "warranted",
+        "call-term value expression admitted as compiler equality",
+    )
+
+
+def _call_term_value_expression_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[ast.expr]:
+    chain = ancestors + (node,)
+    for index in range(len(chain) - 1, -1, -1):
+        item = chain[index]
+        if isinstance(item, ast.Return):
+            if item.value is None or isinstance(item.value, ast.Call):
+                return None
+            if node is item or any(candidate is node for candidate in ast.walk(item.value)):
+                return item.value
+            return None
+        if isinstance(item, (ast.Assign, ast.AnnAssign)):
+            if _nearest_enclosing_function(chain[:index]) is None:
+                return None
+            value = item.value
+            if value is None or isinstance(value, ast.Call):
+                return None
+            if isinstance(item, ast.Assign):
+                if len(item.targets) != 1 or not isinstance(item.targets[0], ast.Name):
+                    return None
+            elif not isinstance(item.target, ast.Name):
+                return None
+            if node is item or any(candidate is node for candidate in ast.walk(value)):
+                return value
+            return None
+    return None
+
+
+def _is_call_term_value_expression(
+    node: ast.expr,
+    chain: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> bool:
+    return _is_call_term_arg(
+        node,
+        chain,
+        call_aliases,
+        module_name,
+        tree,
+    ) and _contains_statically_nameable_call_term(
+        node,
+        chain,
+        call_aliases,
+        module_name,
+        tree,
+    )
+
+
+def _contains_statically_nameable_call_term(
+    node: ast.AST,
+    chain: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> bool:
+    for candidate in ast.walk(node):
+        if not isinstance(candidate, ast.Call):
+            continue
+        if _is_known_pure_call_value_expr(candidate):
+            continue
+        if _is_statically_nameable_call_term(
+            candidate,
+            chain,
+            call_aliases,
+            module_name,
+            tree,
+        ):
+            return True
+    return False
+
+
+def _return_through_local_binding_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[tuple[str, str]]:
+    stmt = _return_local_name_statement_for_locus(node, ancestors)
+    if stmt is None:
+        return None
+    if not (node is stmt or any(candidate is node for candidate in ast.walk(stmt))):
+        return None
+    value = stmt.value
+    if not isinstance(value, ast.Name):
+        return None
+    owner = _nearest_enclosing_function(ancestors + (node,))
+    if owner is None or isinstance(owner, ast.Lambda):
+        return None
+    previous = _previous_function_body_statements(owner, stmt)
+    if previous is None:
+        return None
+    binding = _prior_local_binding_value(previous, value.id)
+    if binding is None:
+        return None
+    if not _is_return_through_local_binding_value(
+        binding,
+        ancestors + (node,),
+        call_aliases,
+        module_name,
+        tree,
+    ):
+        return None
+    return (
+        "warranted",
+        "return-through-local binding admitted as compiler equality",
+    )
+
+
+def _return_value_relation_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    stmt = _return_value_relation_statement_for_locus(node, ancestors)
+    if stmt is None:
+        return None
+    return (
+        "warranted",
+        "return value relation admitted as function result equality",
+    )
+
+
+def _return_value_relation_statement_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[ast.Return]:
+    chain = ancestors + (node,)
+    stmt_index: Optional[int] = None
+    stmt: Optional[ast.Return] = None
+    for index in range(len(chain) - 1, -1, -1):
+        item = chain[index]
+        if isinstance(item, ast.Return):
+            stmt_index = index
+            stmt = item
+            break
+    if stmt is None or stmt_index is None:
+        return None
+    owner = _nearest_enclosing_function(chain[:stmt_index])
+    if owner is None:
+        return None
+    if stmt.value is None:
+        return stmt if node is stmt else None
+    if not _is_return_value_relation_expr(stmt.value):
+        return None
+    if node is stmt or any(candidate is node for candidate in ast.walk(stmt.value)):
+        return stmt
+    return None
+
+
+def _is_return_value_relation_expr(node: ast.AST) -> bool:
+    if _has_store_or_del_context(node):
+        return False
+    if isinstance(node, (ast.BoolOp, ast.Compare)):
+        return _is_pure_branch_predicate_expr(node)
+    return _is_known_pure_call_arg(node)
+
+
+def _return_local_name_statement_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[ast.Return]:
+    chain = ancestors + (node,)
+    stmt = _nearest_statement(chain)
+    if isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.Name):
+        return stmt
+    return None
+
+
+def _prior_local_binding_value(
+    statements: list[ast.stmt],
+    name: str,
+) -> Optional[ast.expr]:
+    for prior in reversed(statements):
+        assignment = _single_name_assignment(prior)
+        if assignment is None:
+            continue
+        bound_name, value = assignment
+        if bound_name == name:
+            return value
+    return None
+
+
+def _is_return_through_local_binding_value(
+    node: ast.expr,
+    chain: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> bool:
+    if isinstance(node, ast.Name):
+        return True
+    if _is_local_literal_binding_value(node):
+        return True
+    if _is_literal_container_value_expr(node):
+        return True
+    if isinstance(node, ast.Call):
+        return _is_known_pure_call_value_expr(node) or _is_statically_nameable_call_term(
+            node,
+            chain,
+            call_aliases,
+            module_name,
+            tree,
+        )
+    return False
+
+
 def _is_statically_nameable_call_term(
     call: ast.Call,
     chain: tuple[ast.AST, ...],
@@ -1928,6 +5039,22 @@ def _is_statically_nameable_callee(
     return root in call_aliases
 
 
+def _is_local_constructor_call_term(
+    call: ast.Call,
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> bool:
+    if not isinstance(call.func, ast.Name):
+        return False
+    callee = call_aliases.get(call.func.id)
+    prefix = f"{module_name}."
+    if not callee or not callee.startswith(prefix):
+        return False
+    class_qualname = callee[len(prefix):]
+    return _find_class_by_qualname(tree, class_qualname) is not None
+
+
 def _class_has_stable_method(cls: ast.ClassDef, name: str) -> bool:
     candidates = [
         stmt
@@ -1964,11 +5091,55 @@ def _is_call_term_arg(
     module_name: str,
     tree: ast.Module,
 ) -> bool:
+    if _has_store_or_del_context(node):
+        return False
     if isinstance(node, (ast.Constant, ast.Name)):
         return True
     if isinstance(node, ast.Attribute):
         return _is_call_term_arg(node.value, chain, call_aliases, module_name, tree)
+    if isinstance(node, ast.Subscript):
+        return _is_call_term_arg(
+            node.value,
+            chain,
+            call_aliases,
+            module_name,
+            tree,
+        ) and _is_call_term_slice(node.slice, chain, call_aliases, module_name, tree)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+        return _is_call_term_arg(node.operand, chain, call_aliases, module_name, tree)
+    if isinstance(node, ast.BinOp):
+        return _is_call_term_arg(
+            node.left,
+            chain,
+            call_aliases,
+            module_name,
+            tree,
+        ) and _is_call_term_arg(node.right, chain, call_aliases, module_name, tree)
+    if isinstance(node, ast.Starred):
+        return _is_call_term_arg(node.value, chain, call_aliases, module_name, tree)
+    if isinstance(node, ast.IfExp):
+        return _is_conditional_local_binding_value(
+            node,
+            chain,
+            call_aliases,
+            module_name,
+            tree,
+        )
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return all(
+            _is_call_term_arg(value, chain, call_aliases, module_name, tree)
+            for value in node.elts
+        )
+    if isinstance(node, ast.Dict):
+        return all(
+            key is not None
+            and _is_call_term_arg(key, chain, call_aliases, module_name, tree)
+            and _is_call_term_arg(value, chain, call_aliases, module_name, tree)
+            for key, value in zip(node.keys, node.values)
+        )
     if isinstance(node, ast.Call):
+        if _is_known_pure_call_value_expr(node):
+            return True
         return _is_statically_nameable_call_term(
             node,
             chain,
@@ -1979,6 +5150,22 @@ def _is_call_term_arg(
     return False
 
 
+def _is_call_term_slice(
+    node: ast.AST,
+    chain: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> bool:
+    if isinstance(node, ast.Slice):
+        return all(
+            part is None
+            or _is_call_term_arg(part, chain, call_aliases, module_name, tree)
+            for part in (node.lower, node.upper, node.step)
+        )
+    return _is_call_term_arg(node, chain, call_aliases, module_name, tree)
+
+
 def _list_adapter_body_status(
     node: ast.AST,
     ancestors: tuple[ast.AST, ...],
@@ -1987,14 +5174,21 @@ def _list_adapter_body_status(
     owner = _nearest_enclosing_function(ancestors + (node,))
     if owner is None or isinstance(owner, ast.Lambda):
         return None
+    if not _function_body_has_node_type(owner, (ast.Return,)):
+        return None
     if _is_docstring_expr_node(node, ancestors):
         return "support", "docstring metadata supports source accounting only"
     if not _node_is_in_function_body(node, owner):
         return None
-    universe, refusal = list_adapter_universe_for_callee(
-        _owner_callee(module_name, owner, ancestors + (node,))
+    applies = _owner_cached_package_fact(
+        owner,
+        (module_name, "list-adapter"),
+        lambda: _universe_family_applies(
+            list_adapter_universe_for_callee,
+            _owner_callee(module_name, owner, ancestors + (node,)),
+        ),
     )
-    if refusal is not None or universe is None:
+    if not applies:
         return None
     return (
         "warranted",
@@ -2010,19 +5204,100 @@ def _instance_field_body_status(
     owner = _nearest_enclosing_function(ancestors + (node,))
     if owner is None or isinstance(owner, ast.Lambda):
         return None
+    if not _function_body_has_node_type(owner, (ast.Return,)):
+        return None
     if _is_docstring_expr_node(node, ancestors):
         return "support", "docstring metadata supports source accounting only"
     if not _node_is_in_function_body(node, owner):
         return None
-    universe, refusal = instance_field_universe_for_callee(
-        _owner_callee(module_name, owner, ancestors + (node,))
+    applies = _owner_cached_package_fact(
+        owner,
+        (module_name, "instance-field"),
+        lambda: _universe_family_applies(
+            instance_field_universe_for_callee,
+            _owner_callee(module_name, owner, ancestors + (node,)),
+        ),
     )
-    if refusal is not None or universe is None:
+    if not applies:
         return None
     return (
         "warranted",
         "instance-field source family emitted into python.instance-field-universe",
     )
+
+
+def _translate_body_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    module_name: str,
+) -> Optional[tuple[str, str]]:
+    owner = _nearest_enclosing_function(ancestors + (node,))
+    if owner is None or isinstance(owner, ast.Lambda):
+        return None
+    if not _function_body_has_node_type(owner, (ast.Return,)):
+        return None
+    if not _node_is_in_function_body(node, owner):
+        return None
+    stmt = _owner_body_statement(ancestors + (node,), owner)
+    if stmt is None:
+        return None
+    source_memento = _owner_cached_package_fact(
+        owner,
+        (module_name, "translate-source-memento"),
+        lambda: _source_memento_for_universe_family(
+            translate_universe_for_callee,
+            _owner_callee(module_name, owner, ancestors + (node,)),
+        ),
+    )
+    if source_memento is None:
+        return None
+    status, reason = _classify_universe_source_node(
+        "python.translate-universe",
+        str(source_memento.get("universe_kind") or "translate"),
+        stmt,
+        node,
+        source_memento,
+    )
+    if status == "unclassified":
+        return None
+    return status, reason
+
+
+def _bytes_identity_body_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    module_name: str,
+) -> Optional[tuple[str, str]]:
+    owner = _nearest_enclosing_function(ancestors + (node,))
+    if owner is None or isinstance(owner, ast.Lambda):
+        return None
+    if not _function_body_has_node_type(owner, (ast.Return,)):
+        return None
+    if not _node_is_in_function_body(node, owner):
+        return None
+    stmt = _owner_body_statement(ancestors + (node,), owner)
+    if stmt is None:
+        return None
+    source_memento = _owner_cached_package_fact(
+        owner,
+        (module_name, "bytes-identity-source-memento"),
+        lambda: _source_memento_for_universe_family(
+            bytes_identity_universe_for_callee,
+            _owner_callee(module_name, owner, ancestors + (node,)),
+        ),
+    )
+    if source_memento is None:
+        return None
+    status, reason = _classify_universe_source_node(
+        "python.bytes-identity-universe",
+        "bytes-identity",
+        stmt,
+        node,
+        source_memento,
+    )
+    if status == "unclassified":
+        return None
+    return status, reason
 
 
 def _delegation_body_status(
@@ -2033,19 +5308,33 @@ def _delegation_body_status(
     owner = _nearest_enclosing_function(ancestors + (node,))
     if owner is None or isinstance(owner, ast.Lambda):
         return None
+    if not _function_body_has_node_type(owner, (ast.Return,)):
+        return None
     if _is_docstring_expr_node(node, ancestors):
         return "support", "docstring metadata supports source accounting only"
     if not _node_is_in_function_body(node, owner):
         return None
-    universe, refusal = delegation_universe_for_callee(
-        _owner_callee(module_name, owner, ancestors + (node,))
+    applies = _owner_cached_package_fact(
+        owner,
+        (module_name, "delegation"),
+        lambda: _universe_family_applies(
+            delegation_universe_for_callee,
+            _owner_callee(module_name, owner, ancestors + (node,)),
+        ),
     )
-    if refusal is not None or universe is None:
+    if not applies:
         return None
     return (
         "warranted",
         "delegation source family emitted into python.delegation-universe",
     )
+
+
+def _source_memento_for_universe_family(resolver, callee: str) -> Optional[dict]:
+    universe, refusal = resolver(callee)
+    if refusal is not None or universe is None:
+        return None
+    return getattr(universe, "source_memento", None)
 
 
 def _adapter_assignment_statement_for_locus(
@@ -2095,6 +5384,840 @@ def _is_adapter_assignment_arg(node: ast.AST) -> bool:
     return False
 
 
+def _formatted_string_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    joined = _nearest_formatted_string_for_locus(node, ancestors)
+    if joined is None:
+        return None
+    if _is_simple_formatted_string(joined):
+        return (
+            "warranted",
+            "formatted string construction admitted as compiler value fact",
+        )
+    return (
+        "refused",
+        (
+            "formatted string runtime formatting refused: conversion or format "
+            "spec invokes runtime formatting semantics not emitted as a value relation"
+        ),
+    )
+
+
+def _nearest_formatted_string_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[ast.JoinedStr]:
+    chain = ancestors + (node,)
+    for item in reversed(chain):
+        if not isinstance(item, ast.JoinedStr):
+            continue
+        if node is item or any(candidate is node for candidate in ast.walk(item)):
+            return item
+        return None
+    return None
+
+
+def _is_simple_formatted_string(node: ast.JoinedStr) -> bool:
+    for value in node.values:
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            continue
+        if not isinstance(value, ast.FormattedValue):
+            return False
+        if value.conversion != -1 or value.format_spec is not None:
+            return False
+        if not _is_known_pure_call_arg(value.value):
+            return False
+    return True
+
+
+def _conditional_value_expression_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    ifexp = _nearest_conditional_value_expression_for_locus(node, ancestors)
+    if ifexp is None:
+        return None
+    return (
+        "warranted",
+        "conditional value expression admitted as compiler value fact",
+    )
+
+
+def _nearest_conditional_value_expression_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[ast.IfExp]:
+    chain = ancestors + (node,)
+    for item in reversed(chain):
+        if not isinstance(item, ast.IfExp):
+            continue
+        if not _is_conditional_value_expression(item):
+            return None
+        if node is item or any(candidate is node for candidate in ast.walk(item)):
+            return item
+        return None
+    return None
+
+
+def _is_conditional_value_expression(node: ast.IfExp) -> bool:
+    if _has_store_or_del_context(node):
+        return False
+    return (
+        _is_pure_branch_predicate_expr(node.test)
+        and _is_known_pure_call_arg(node.body)
+        and _is_known_pure_call_arg(node.orelse)
+    )
+
+
+def _conditional_local_binding_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[tuple[str, str]]:
+    stmt = _conditional_local_binding_statement_for_locus(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if stmt is None:
+        return None
+    return (
+        "warranted",
+        "conditional local binding admitted as branch-selected compiler equality",
+    )
+
+
+def _conditional_local_binding_statement_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[ast.Assign | ast.AnnAssign]:
+    chain = ancestors + (node,)
+    stmt_index: Optional[int] = None
+    stmt: Optional[ast.Assign | ast.AnnAssign] = None
+    for index in range(len(chain) - 1, -1, -1):
+        item = chain[index]
+        if isinstance(item, (ast.Assign, ast.AnnAssign)):
+            stmt_index = index
+            stmt = item
+            break
+    if stmt is None or stmt_index is None:
+        return None
+    if _nearest_enclosing_function(chain[:stmt_index]) is None:
+        return None
+    if isinstance(stmt, ast.Assign):
+        if len(stmt.targets) != 1 or not isinstance(stmt.targets[0], ast.Name):
+            return None
+        value = stmt.value
+    else:
+        if not isinstance(stmt.target, ast.Name):
+            return None
+        value = stmt.value
+    if not isinstance(value, ast.IfExp):
+        return None
+    if not _is_conditional_local_binding_value(
+        value,
+        chain,
+        call_aliases,
+        module_name,
+        tree,
+    ):
+        return None
+    if node is stmt or any(candidate is node for candidate in ast.walk(stmt)):
+        return stmt
+    return None
+
+
+def _is_conditional_local_binding_value(
+    node: ast.IfExp,
+    chain: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> bool:
+    return (
+        _is_pure_branch_predicate_expr(node.test)
+        and _is_call_term_arg(node.body, chain, call_aliases, module_name, tree)
+        and _is_call_term_arg(node.orelse, chain, call_aliases, module_name, tree)
+    )
+
+
+def _collection_lambda_flow_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    stmt = _nearest_statement(ancestors + (node,))
+    if stmt is None:
+        return None
+    if not _statement_has_collection_lambda_flow_cached(stmt):
+        return None
+    return (
+        "refused",
+        (
+            "collection/lambda flow refused: comprehension iteration or "
+            "lambda closure semantics need an emitted collection universe"
+        ),
+    )
+
+
+def _statement_has_collection_lambda_flow_cached(stmt: ast.stmt) -> bool:
+    cached = getattr(stmt, "_sugar_has_collection_lambda_flow", None)
+    if cached is not None:
+        return bool(cached)
+    result = any(
+        isinstance(
+            candidate,
+            (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp, ast.Lambda),
+        )
+        for candidate in ast.walk(stmt)
+    )
+    try:
+        setattr(stmt, "_sugar_has_collection_lambda_flow", result)
+    except AttributeError:
+        pass
+    return result
+
+
+def _pure_branch_predicate_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    branch = _nearest_pure_branch_predicate_for_locus(node, ancestors)
+    if branch is None:
+        return None
+    return (
+        "warranted",
+        "pure branch predicate admitted as timeless value constraint",
+    )
+
+
+def _runtime_branch_predicate_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    branch = _nearest_runtime_branch_predicate_for_locus(node, ancestors)
+    if branch is None:
+        return None
+    return (
+        "refused",
+        "runtime branch predicate refused until a branch/path universe is emitted",
+    )
+
+
+def _nearest_runtime_branch_predicate_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[ast.If]:
+    chain = ancestors + (node,)
+    if _nearest_enclosing_function(chain) is None:
+        return None
+    for item in reversed(chain):
+        if not isinstance(item, ast.If):
+            continue
+        if _is_pure_branch_predicate_expr(item.test):
+            return None
+        if node is item:
+            return item
+        if any(candidate is node for candidate in ast.walk(item.test)):
+            return item
+        return None
+    return None
+
+
+def _nearest_pure_branch_predicate_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[ast.If]:
+    chain = ancestors + (node,)
+    for item in reversed(chain):
+        if not isinstance(item, ast.If):
+            continue
+        if node is item:
+            return item if _is_pure_branch_predicate_expr(item.test) else None
+        if any(candidate is node for candidate in ast.walk(item.test)):
+            return item if _is_pure_branch_predicate_expr(item.test) else None
+        return None
+    return None
+
+
+def _is_pure_branch_predicate_expr(node: ast.AST) -> bool:
+    if isinstance(node, ast.BoolOp):
+        return bool(node.values) and all(
+            _is_pure_branch_predicate_expr(value) for value in node.values
+        )
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        return _is_pure_branch_predicate_expr(node.operand)
+    if isinstance(node, ast.Compare):
+        if not node.ops or not node.comparators:
+            return False
+        if not all(_is_pure_branch_compare_op(op) for op in node.ops):
+            return False
+        terms = [node.left, *node.comparators]
+        return all(_is_pure_branch_value_expr(term) for term in terms)
+    if isinstance(node, ast.Call):
+        return _is_pure_branch_known_call(node)
+    return _is_pure_branch_value_expr(node)
+
+
+def _is_pure_branch_compare_op(op: ast.cmpop) -> bool:
+    return isinstance(
+        op,
+        (
+            ast.Eq,
+            ast.NotEq,
+            ast.Is,
+            ast.IsNot,
+            ast.Lt,
+            ast.LtE,
+            ast.Gt,
+            ast.GtE,
+            ast.In,
+            ast.NotIn,
+        ),
+    )
+
+
+def _is_pure_branch_value_expr(node: ast.AST) -> bool:
+    if isinstance(node, (ast.Name, ast.Constant)):
+        return True
+    if isinstance(node, ast.Attribute):
+        return _is_pure_branch_value_expr(node.value)
+    if isinstance(node, ast.Subscript):
+        return _is_pure_branch_value_expr(node.value) and _is_pure_branch_slice(
+            node.slice
+        )
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return all(_is_pure_branch_value_expr(value) for value in node.elts)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+        return _is_pure_branch_value_expr(node.operand)
+    if isinstance(node, ast.BinOp):
+        return _is_pure_branch_value_expr(node.left) and _is_pure_branch_value_expr(
+            node.right
+        )
+    if isinstance(node, ast.Call):
+        return _is_pure_branch_known_call(node)
+    return False
+
+
+def _is_pure_branch_slice(node: ast.AST) -> bool:
+    if isinstance(node, ast.Slice):
+        return all(
+            part is None or _is_pure_branch_value_expr(part)
+            for part in (node.lower, node.upper, node.step)
+        )
+    return _is_pure_branch_value_expr(node)
+
+
+def _is_pure_branch_known_call(node: ast.Call) -> bool:
+    if _is_known_pure_method_call_value_expr(node):
+        return True
+    if node.keywords or any(isinstance(arg, ast.Starred) for arg in node.args):
+        return False
+    name = _static_call_name(node.func)
+    if name not in {"len", "type", "isinstance", "callable", "bool"}:
+        return False
+    return all(_is_pure_branch_value_expr(arg) for arg in node.args)
+
+
+def _subscript_slice_value_term_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    selector = _nearest_subscript_value_term_for_locus(node, ancestors)
+    if selector is None:
+        return None
+    return (
+        "warranted",
+        "subscript/slice selection admitted as compiler value fact",
+    )
+
+
+def _nearest_subscript_value_term_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[ast.Subscript]:
+    chain = ancestors + (node,)
+    for item in reversed(chain):
+        if not isinstance(item, ast.Subscript):
+            continue
+        if not _is_subscript_value_term(item):
+            return None
+        if node is item or any(candidate is node for candidate in ast.walk(item)):
+            return item
+        return None
+    return None
+
+
+def _is_subscript_value_term(node: ast.Subscript) -> bool:
+    if _has_store_or_del_context(node):
+        return False
+    return _is_known_pure_call_arg(node.value) and _is_known_pure_call_slice(node.slice)
+
+
+def _static_value_reference_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    tree: ast.Module,
+) -> Optional[tuple[str, str]]:
+    if not isinstance(node, (ast.Name, ast.Attribute)):
+        return None
+    if _has_store_or_del_context(node):
+        return None
+    chain = ancestors + (node,)
+    if _nearest_enclosing_function(chain) is None:
+        return None
+    static_attr = _nearest_static_attribute_reference_for_locus(node, ancestors, tree)
+    if static_attr is not None:
+        return (
+            "warranted",
+            "static value reference admitted as timeless compiler fact",
+        )
+    if isinstance(node, ast.Name) and node.id in _module_static_binding_names(tree):
+        return (
+            "warranted",
+            "static value reference admitted as timeless compiler fact",
+        )
+    return None
+
+
+def _nearest_static_attribute_reference_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    tree: ast.Module,
+) -> Optional[ast.Attribute]:
+    static_attrs = _class_static_attribute_binding_names(tree)
+    if not static_attrs:
+        return None
+    chain = ancestors + (node,)
+    for item in reversed(chain):
+        if not isinstance(item, ast.Attribute):
+            continue
+        if _static_call_name(item) not in static_attrs:
+            return None
+        if node is item or any(candidate is node for candidate in ast.walk(item)):
+            return item
+        return None
+    return None
+
+
+def _module_static_binding_names(tree: ast.Module) -> frozenset[str]:
+    cached = getattr(tree, "_sugar_module_static_binding_names", None)
+    if cached is not None:
+        return cached
+    names: set[str] = set()
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Assign) and _is_static_assignment_value(stmt.value):
+            for target in stmt.targets:
+                if isinstance(target, ast.Name):
+                    names.add(target.id)
+        elif (
+            isinstance(stmt, ast.AnnAssign)
+            and isinstance(stmt.target, ast.Name)
+            and stmt.value is not None
+            and _is_static_assignment_value(stmt.value)
+        ):
+            names.add(stmt.target.id)
+    result = frozenset(names)
+    try:
+        setattr(tree, "_sugar_module_static_binding_names", result)
+    except AttributeError:
+        pass
+    return result
+
+
+def _class_static_attribute_binding_names(tree: ast.Module) -> frozenset[str]:
+    cached = getattr(tree, "_sugar_class_static_attribute_binding_names", None)
+    if cached is not None:
+        return cached
+    attrs: set[str] = set()
+    for stmt in tree.body:
+        if not isinstance(stmt, ast.ClassDef):
+            continue
+        for body_stmt in stmt.body:
+            if isinstance(body_stmt, ast.Assign) and _is_static_assignment_value(
+                body_stmt.value
+            ):
+                for target in body_stmt.targets:
+                    if isinstance(target, ast.Name):
+                        attrs.add(f"{stmt.name}.{target.id}")
+            elif (
+                isinstance(body_stmt, ast.AnnAssign)
+                and isinstance(body_stmt.target, ast.Name)
+                and body_stmt.value is not None
+                and _is_static_assignment_value(body_stmt.value)
+            ):
+                attrs.add(f"{stmt.name}.{body_stmt.target.id}")
+    result = frozenset(attrs)
+    try:
+        setattr(tree, "_sugar_class_static_attribute_binding_names", result)
+    except AttributeError:
+        pass
+    return result
+
+
+def _literal_container_value_term_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    container = _nearest_literal_container_value_for_locus(node, ancestors)
+    if container is None:
+        return None
+    return (
+        "warranted",
+        "literal container value term admitted as compiler fact",
+    )
+
+
+def _known_pure_call_value_term_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    call = _nearest_known_pure_call_value_for_locus(node, ancestors)
+    if call is None:
+        return None
+    if _is_known_pure_method_call_value_expr(call):
+        return (
+            "warranted",
+            "known pure method value term admitted as compiler fact",
+        )
+    return (
+        "warranted",
+        "known pure call value term admitted as compiler fact",
+    )
+
+
+def _keyword_argument_binding_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    if _expression_call_flow_refusal_status(node, ancestors) is not None:
+        return None
+    keyword = _nearest_keyword_argument_binding_for_locus(node, ancestors)
+    if keyword is None:
+        return None
+    return (
+        "warranted",
+        "keyword argument binding admitted as compiler argument mapping",
+    )
+
+
+def _nearest_keyword_argument_binding_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[ast.keyword]:
+    chain = ancestors + (node,)
+    for item in reversed(chain):
+        if not isinstance(item, ast.keyword):
+            continue
+        if item.arg is None:
+            return None
+        if not _is_keyword_argument_value_expr(item.value):
+            return None
+        if node is item or any(candidate is node for candidate in ast.walk(item.value)):
+            return item
+        return None
+    return None
+
+
+def _is_keyword_argument_value_expr(node: ast.AST) -> bool:
+    return not _has_store_or_del_context(node) and _is_known_pure_call_arg(node)
+
+
+def _nearest_known_pure_call_value_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[ast.Call]:
+    chain = ancestors + (node,)
+    for item in reversed(chain):
+        if not isinstance(item, ast.Call):
+            continue
+        if not _is_known_pure_call_value_expr(item):
+            return None
+        if node is item or any(candidate is node for candidate in ast.walk(item)):
+            return item
+        return None
+    return None
+
+
+def _is_known_pure_call_value_expr(node: ast.Call) -> bool:
+    if _has_store_or_del_context(node):
+        return False
+    if any(isinstance(arg, ast.Starred) for arg in node.args):
+        return False
+    if any(keyword.arg is None for keyword in node.keywords):
+        return False
+    if _is_known_pure_method_call_value_expr(node):
+        return True
+    name = _static_call_name(node.func)
+    if name == "getattr":
+        return (
+            not node.keywords
+            and len(node.args) in {2, 3}
+            and _is_known_pure_call_arg(node.args[0])
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+            and (
+                len(node.args) == 2
+                or _is_known_pure_call_arg(node.args[2])
+            )
+        )
+    if name == "dict":
+        return (
+            len(node.args) <= 1
+            and all(_is_known_pure_call_arg(arg) for arg in node.args)
+            and all(_is_known_pure_call_arg(keyword.value) for keyword in node.keywords)
+        )
+    if name in {
+        "math.ceil",
+        "math.floor",
+        "math.isfinite",
+        "math.isinf",
+        "math.isnan",
+        "math.trunc",
+        "os.fspath",
+        "os.path.abspath",
+        "os.path.basename",
+        "os.path.dirname",
+        "os.path.normpath",
+        "os.path.splitext",
+    }:
+        return (
+            not node.keywords
+            and len(node.args) == 1
+            and _is_known_pure_call_arg(node.args[0])
+        )
+    if node.keywords:
+        if name != "sorted":
+            return False
+        if len(node.args) != 1:
+            return False
+        allowed_keywords = {"reverse"}
+        if any(keyword.arg not in allowed_keywords for keyword in node.keywords):
+            return False
+        if not all(_is_known_pure_call_arg(keyword.value) for keyword in node.keywords):
+            return False
+    if name in {"len", "type", "callable", "bool"}:
+        return (
+            not node.keywords
+            and len(node.args) == 1
+            and _is_known_pure_call_arg(node.args[0])
+        )
+    if name == "isinstance":
+        return (
+            not node.keywords
+            and len(node.args) == 2
+            and _is_known_pure_call_arg(node.args[0])
+            and _is_type_reference_expr(node.args[1])
+        )
+    if name in {"list", "tuple", "set", "frozenset"}:
+        return (
+            not node.keywords
+            and len(node.args) <= 1
+            and all(_is_known_pure_call_arg(arg) for arg in node.args)
+        )
+    if name == "range":
+        return (
+            not node.keywords
+            and 1 <= len(node.args) <= 3
+            and all(_is_known_pure_call_arg(arg) for arg in node.args)
+        )
+    if name == "slice":
+        return (
+            not node.keywords
+            and 1 <= len(node.args) <= 3
+            and all(_is_known_pure_call_arg(arg) for arg in node.args)
+        )
+    if name == "sorted":
+        return (
+            len(node.args) == 1
+            and _is_known_pure_call_arg(node.args[0])
+        )
+    return False
+
+
+_KNOWN_PURE_NO_ARG_METHODS = frozenset(
+    {
+        "capitalize",
+        "casefold",
+        "items",
+        "keys",
+        "lower",
+        "title",
+        "upper",
+        "values",
+    }
+)
+_KNOWN_PURE_OPTIONAL_ONE_ARG_METHODS = frozenset(
+    {
+        "lstrip",
+        "removeprefix",
+        "removesuffix",
+        "rstrip",
+        "strip",
+    }
+)
+_KNOWN_PURE_ONE_ARG_METHODS = frozenset({"join"})
+_KNOWN_PURE_TWO_OR_THREE_ARG_METHODS = frozenset({"replace"})
+_KNOWN_PURE_ZERO_TO_TWO_ARG_METHODS = frozenset({"rsplit", "split"})
+_KNOWN_PURE_ONE_TO_THREE_ARG_METHODS = frozenset({"endswith", "startswith"})
+
+
+def _is_known_pure_method_call_value_expr(node: ast.Call) -> bool:
+    if _has_store_or_del_context(node):
+        return False
+    if any(isinstance(arg, ast.Starred) for arg in node.args):
+        return False
+    if node.keywords:
+        return False
+    func = node.func
+    if not isinstance(func, ast.Attribute):
+        return False
+    method = func.attr
+    if method in _NONDET_CALL_ATTRS:
+        return False
+    if not _is_known_pure_call_arg(func.value):
+        return False
+    if method in _KNOWN_PURE_NO_ARG_METHODS:
+        return not node.args
+    if method in _KNOWN_PURE_OPTIONAL_ONE_ARG_METHODS:
+        return len(node.args) <= 1 and all(
+            _is_known_pure_call_arg(arg) for arg in node.args
+        )
+    if method in _KNOWN_PURE_ONE_ARG_METHODS:
+        return len(node.args) == 1 and _is_known_pure_call_arg(node.args[0])
+    if method in _KNOWN_PURE_TWO_OR_THREE_ARG_METHODS:
+        return 2 <= len(node.args) <= 3 and all(
+            _is_known_pure_call_arg(arg) for arg in node.args
+        )
+    if method in _KNOWN_PURE_ZERO_TO_TWO_ARG_METHODS:
+        return len(node.args) <= 2 and all(
+            _is_known_pure_call_arg(arg) for arg in node.args
+        )
+    if method in _KNOWN_PURE_ONE_TO_THREE_ARG_METHODS:
+        return 1 <= len(node.args) <= 3 and all(
+            _is_known_pure_call_arg(arg) for arg in node.args
+        )
+    return False
+
+
+def _is_known_pure_call_arg(node: ast.AST) -> bool:
+    if isinstance(node, (ast.Name, ast.Constant)):
+        return True
+    if isinstance(node, ast.Attribute):
+        return _is_known_pure_call_arg(node.value)
+    if isinstance(node, ast.Subscript):
+        return _is_known_pure_call_arg(node.value) and _is_known_pure_call_slice(
+            node.slice
+        )
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+        return _is_known_pure_call_arg(node.operand)
+    if isinstance(node, ast.BinOp):
+        return _is_known_pure_call_arg(node.left) and _is_known_pure_call_arg(
+            node.right
+        )
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set, ast.Dict)):
+        return _is_literal_container_value_expr(node)
+    if isinstance(node, ast.Call):
+        return _is_known_pure_call_value_expr(node)
+    if isinstance(node, ast.IfExp):
+        return _is_conditional_value_expression(node)
+    return False
+
+
+def _is_known_pure_call_slice(node: ast.AST) -> bool:
+    if isinstance(node, ast.Slice):
+        return all(
+            part is None or _is_known_pure_call_arg(part)
+            for part in (node.lower, node.upper, node.step)
+        )
+    if isinstance(node, ast.Tuple):
+        return all(_is_known_pure_call_slice(elt) for elt in node.elts)
+    return _is_known_pure_call_arg(node)
+
+
+def _is_type_reference_expr(node: ast.AST) -> bool:
+    if isinstance(node, ast.Name):
+        return True
+    if isinstance(node, ast.Attribute):
+        return _is_type_reference_expr(node.value)
+    if isinstance(node, ast.Tuple):
+        return bool(node.elts) and all(_is_type_reference_expr(elt) for elt in node.elts)
+    return False
+
+
+def _nearest_literal_container_value_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[ast.expr]:
+    chain = ancestors + (node,)
+    for item in reversed(chain):
+        if not isinstance(item, (ast.List, ast.Tuple, ast.Set, ast.Dict)):
+            continue
+        if not _is_literal_container_value_expr(item):
+            return None
+        if node is item or any(candidate is node for candidate in ast.walk(item)):
+            return item
+        return None
+    return None
+
+
+def _is_literal_container_value_expr(node: ast.AST) -> bool:
+    if _has_store_or_del_context(node):
+        return False
+    return _is_literal_container_value_part(node)
+
+
+def _is_literal_container_value_part(node: ast.AST) -> bool:
+    if isinstance(node, (ast.Name, ast.Constant)):
+        return True
+    if isinstance(node, ast.Attribute):
+        return _is_literal_container_value_part(node.value)
+    if isinstance(node, ast.Subscript):
+        return _is_literal_container_value_part(
+            node.value
+        ) and _is_literal_container_slice(node.slice)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+        return _is_literal_container_value_part(node.operand)
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return not any(isinstance(value, ast.Starred) for value in node.elts) and all(
+            _is_literal_container_value_part(value) for value in node.elts
+        )
+    if isinstance(node, ast.Dict):
+        return all(
+            key is not None
+            and _is_literal_container_value_part(key)
+            and _is_literal_container_value_part(value)
+            for key, value in zip(node.keys, node.values)
+        )
+    if isinstance(node, ast.Call):
+        return _is_known_pure_call_value_expr(node)
+    return False
+
+
+def _is_literal_container_slice(node: ast.AST) -> bool:
+    if isinstance(node, ast.Slice):
+        return all(
+            part is None or _is_literal_container_value_part(part)
+            for part in (node.lower, node.upper, node.step)
+        )
+    return _is_literal_container_value_part(node)
+
+
+def _has_store_or_del_context(node: ast.AST) -> bool:
+    return any(
+        isinstance(getattr(descendant, "ctx", None), (ast.Store, ast.Del))
+        for descendant in ast.walk(node)
+    )
+
+
 def _local_name_binding_status(
     node: ast.AST,
     ancestors: tuple[ast.AST, ...],
@@ -2102,21 +6225,23 @@ def _local_name_binding_status(
     stmt = _local_name_binding_statement_for_locus(node, ancestors)
     if stmt is None:
         return None
-    assign_stmt, target, value = stmt
-    if node is target:
+    assign_stmt, targets, value = stmt
+    if any(node is target for target in targets):
         return "warranted", "local SSA binding target admitted as compiler fact"
     if isinstance(value, ast.Name) and (node is value or node is assign_stmt):
         return "warranted", "local SSA alias assignment emitted as compiler equality"
     if value is not None and _is_local_literal_binding_value(value):
         if node is assign_stmt or any(descendant is node for descendant in ast.walk(value)):
             return "warranted", "local literal binding admitted as compiler fact"
+    if node is assign_stmt and value is not None:
+        return "warranted", "local SSA binding statement admitted as compiler fact"
     return None
 
 
 def _local_name_binding_statement_for_locus(
     node: ast.AST,
     ancestors: tuple[ast.AST, ...],
-) -> Optional[tuple[ast.Assign | ast.AnnAssign, ast.Name, ast.expr | None]]:
+) -> Optional[tuple[ast.Assign | ast.AnnAssign, list[ast.Name], ast.expr | None]]:
     chain = ancestors + (node,)
     stmt_index: Optional[int] = None
     stmt: Optional[ast.Assign | ast.AnnAssign] = None
@@ -2132,12 +6257,14 @@ def _local_name_binding_statement_for_locus(
     if owner is None:
         return None
     if isinstance(stmt, ast.Assign):
-        if len(stmt.targets) != 1 or not isinstance(stmt.targets[0], ast.Name):
+        if not stmt.targets or not all(
+            isinstance(target, ast.Name) for target in stmt.targets
+        ):
             return None
-        return stmt, stmt.targets[0], stmt.value
+        return stmt, list(stmt.targets), stmt.value
     if not isinstance(stmt.target, ast.Name):
         return None
-    return stmt, stmt.target, stmt.value
+    return stmt, [stmt.target], stmt.value
 
 
 def _nearest_enclosing_function(
@@ -2217,28 +6344,39 @@ def _is_docstring_expr_node(
 
 
 def _package_source_audits(source_audits: List[Any]) -> List[Dict[str, Any]]:
-    covered_lines = _covered_source_lines(source_audits)
+    emitted_loci = _emitted_source_locus_index(source_audits)
     audits: List[Dict[str, Any]] = []
     for root, package in sorted(
         _package_roots_from_source_audits(source_audits).items(),
         key=lambda item: str(item[0]),
     ):
-        loci = _package_unclassified_loci(root, covered_lines)
-        if not loci:
+        compact = _package_accounting_elide_loci()
+        if compact:
+            accounting = _package_accounting_summary(root, emitted_loci)
+            totals = accounting["totals"]
+        else:
+            loci = _package_accounting_loci(root, emitted_loci)
+            if not loci:
+                continue
+            totals = _source_totals(loci)
+            accounting = {"loci": loci}
+        if totals.get("source_loci", 0) <= 0:
             continue
-        audits.append(
-            {
-                "kind": "source-audit",
-                "language": "python",
-                "contract": {"name": f"{package}#source-accounting"},
-                "role": "python.package-source",
-                "universe_kind": "package-accounting",
-                "package": package,
-                "package_root": str(root),
-                "loci": loci,
-                "totals": _source_totals(loci),
-            }
-        )
+        audit = {
+            "kind": "source-audit",
+            "language": "python",
+            "contract": {"name": f"{package}#source-accounting"},
+            "role": "python.package-source",
+            "universe_kind": "package-accounting",
+            "accounting_mode": _package_accounting_mode(),
+            "package": package,
+            "package_root": str(root),
+            "totals": totals,
+        }
+        audit.update(accounting)
+        if compact:
+            audit["loci_elided"] = True
+        audits.append(audit)
     return audits
 
 

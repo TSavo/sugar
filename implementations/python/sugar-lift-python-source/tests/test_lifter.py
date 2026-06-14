@@ -45,7 +45,7 @@ RUNTIME_FAILURE_EFFECT_LEAVES = [
     ATTRIBUTE_RUNTIME_FAILURE_EFFECT_LEAF,
     SUBSCRIPT_RUNTIME_FAILURE_EFFECT_LEAF,
 ]
-PANIC_FREEDOM_EFFECT_KIND = "concept:panic-freedom"
+PANIC_FREEDOM_EFFECT_KIND = "panic-freedom"
 RUNTIME_FAILURE_SITE_CONCEPT = "concept:panic-freedom.leaf.runtime-failure-site"
 
 
@@ -3279,7 +3279,7 @@ def test_kit_declaration_returns_python_source_lift_surface() -> None:
         "shutdown": False,
     }
     assert result["proofResolution"] == {"strategy": "pip"}
-    assert result["effectKinds"] == ["concept:panic-freedom"]
+    assert result["effectKinds"] == ["panic-freedom"]
     assert result["effectLeaves"] == RUNTIME_FAILURE_EFFECT_LEAVES
     assert all("subkind" not in leaf for leaf in result["effectLeaves"])
     assert result["guardPredicates"] == [

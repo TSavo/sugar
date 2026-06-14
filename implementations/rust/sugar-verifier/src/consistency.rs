@@ -70,13 +70,6 @@ use crate::types::{memento_body, memento_kind, MementoPool, ObligationVerdict};
 use sugar_canonicalizer::blake3_512_of;
 use sugar_ir_compiler_smt_lib::emit_asserted;
 
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-/// Running count of consistency obligations solved this process — drives the
-/// per-obligation progress log so a `verify` run is never silent about what it
-/// is doing or where it is slow.
-static OBLIGATIONS_CHECKED: AtomicUsize = AtomicUsize::new(0);
-
 /// Outcome of a single contract's consistency check.
 #[derive(Debug, Clone)]
 pub struct ConsistencyResult {
@@ -157,6 +150,176 @@ fn consistency_verdict(raw: ObligationVerdict) -> (ObligationVerdict, &'static s
         // unknown / error -> encoding STOP, surfaced loud
         other => (other, "consistency check undecidable (encoding STOP)"),
     }
+}
+
+fn structural_contradiction_reason(inv: &Json) -> Option<String> {
+    let mut equalities: std::collections::BTreeMap<String, (String, String, String)> =
+        std::collections::BTreeMap::new();
+    collect_ground_equalities(inv, &mut equalities)
+}
+
+fn collect_ground_equalities(
+    node: &Json,
+    equalities: &mut std::collections::BTreeMap<String, (String, String, String)>,
+) -> Option<String> {
+    match node.get("kind").and_then(|k| k.as_str()) {
+        Some("forall") | Some("exists") => None,
+        Some("and") => {
+            for child in node.get("operands").and_then(|v| v.as_array())? {
+                if let Some(reason) = collect_ground_equalities(child, equalities) {
+                    return Some(reason);
+                }
+            }
+            None
+        }
+        Some("implies") => {
+            let operands = node.get("operands").and_then(|v| v.as_array())?;
+            if operands.len() != 2 || !eval_ground_bool(&operands[0])? {
+                return None;
+            }
+            collect_ground_equalities(&operands[1], equalities)
+        }
+        Some("atomic") if node.get("name").and_then(|v| v.as_str()) == Some("=") => {
+            let (term, value) = ground_term_const_equality(node)?;
+            record_ground_equality(term, value, equalities)
+        }
+        _ => None,
+    }
+}
+
+fn record_ground_equality(
+    term: &Json,
+    value: &Json,
+    equalities: &mut std::collections::BTreeMap<String, (String, String, String)>,
+) -> Option<String> {
+    let term_key = libsugar::canonical::json_jcs(term).ok()?;
+    let value_key = libsugar::canonical::json_jcs(value).ok()?;
+    let term_display = compact_json(term);
+    let value_display = compact_json(value);
+    if let Some((existing_key, existing_display, _)) = equalities.get(&term_key) {
+        if existing_key != &value_key {
+            return Some(format!(
+                "{term_display} equals both {existing_display} and {value_display}"
+            ));
+        }
+        return None;
+    }
+    equalities.insert(term_key, (value_key, value_display, term_display));
+    None
+}
+
+fn ground_term_const_equality(eq: &Json) -> Option<(&Json, &Json)> {
+    let args = eq.get("args").and_then(|v| v.as_array())?;
+    if args.len() != 2 {
+        return None;
+    }
+    match (is_ground_non_const_term(&args[0]), is_const_value(&args[1])) {
+        (true, true) => Some((&args[0], &args[1])),
+        _ if is_const_value(&args[0]) && is_ground_non_const_term(&args[1]) => {
+            Some((&args[1], &args[0]))
+        }
+        _ => None,
+    }
+}
+
+fn is_ground_non_const_term(node: &Json) -> bool {
+    match node.get("kind").and_then(|k| k.as_str()) {
+        Some("const") | Some("var") | Some("forall") | Some("exists") => false,
+        Some("ctor") => node
+            .get("args")
+            .and_then(|v| v.as_array())
+            .is_some_and(|args| args.iter().all(is_ground_term)),
+        _ => false,
+    }
+}
+
+fn is_ground_term(node: &Json) -> bool {
+    match node.get("kind").and_then(|k| k.as_str()) {
+        Some("const") => true,
+        Some("ctor") => node
+            .get("args")
+            .and_then(|v| v.as_array())
+            .is_some_and(|args| args.iter().all(is_ground_term)),
+        _ => false,
+    }
+}
+
+fn is_const_value(node: &Json) -> bool {
+    node.get("kind").and_then(|k| k.as_str()) == Some("const")
+}
+
+fn eval_ground_bool(node: &Json) -> Option<bool> {
+    match node.get("kind").and_then(|k| k.as_str()) {
+        Some("and") => {
+            for child in node.get("operands").and_then(|v| v.as_array())? {
+                if !eval_ground_bool(child)? {
+                    return Some(false);
+                }
+            }
+            Some(true)
+        }
+        Some("or") => {
+            for child in node.get("operands").and_then(|v| v.as_array())? {
+                if eval_ground_bool(child)? {
+                    return Some(true);
+                }
+            }
+            Some(false)
+        }
+        Some("not") => {
+            let operands = node.get("operands").and_then(|v| v.as_array())?;
+            if operands.len() == 1 {
+                eval_ground_bool(&operands[0]).map(|value| !value)
+            } else {
+                None
+            }
+        }
+        Some("atomic") => eval_ground_atomic_bool(node),
+        _ => None,
+    }
+}
+
+fn eval_ground_atomic_bool(node: &Json) -> Option<bool> {
+    let name = node.get("name").and_then(|v| v.as_str())?;
+    let args = node.get("args").and_then(|v| v.as_array())?;
+    if args.len() != 2 {
+        return None;
+    }
+    let left = int_const_value(&args[0])?;
+    let right = int_const_value(&args[1])?;
+    match name {
+        "<" => Some(left < right),
+        ">" => Some(left > right),
+        "\u{2264}" | "<=" => Some(left <= right),
+        "\u{2265}" | ">=" => Some(left >= right),
+        "=" => Some(left == right),
+        "\u{2260}" | "!=" => Some(left != right),
+        _ => None,
+    }
+}
+
+fn int_const_value(node: &Json) -> Option<i64> {
+    if node.get("kind").and_then(|k| k.as_str()) != Some("const") {
+        return None;
+    }
+    if node
+        .get("sort")
+        .and_then(|s| s.get("kind"))
+        .and_then(|v| v.as_str())
+        != Some("primitive")
+        || node
+            .get("sort")
+            .and_then(|s| s.get("name"))
+            .and_then(|v| v.as_str())
+            != Some("Int")
+    {
+        return None;
+    }
+    node.get("value").and_then(|v| v.as_i64())
+}
+
+fn compact_json(value: &Json) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "<json>".to_string())
 }
 
 #[derive(Debug, Clone)]
@@ -602,6 +765,14 @@ fn is_witness_member(body: &Json) -> bool {
         == Some("custom")
 }
 
+fn canonicalize_formula_json(inv: &Json) -> Json {
+    let Ok(formula) = serde_json::from_value::<sugar_ir_types::IrFormula>(inv.clone()) else {
+        return inv.clone();
+    };
+    serde_json::to_value(sugar_ir_types::canonicalize_formula(&formula))
+        .unwrap_or_else(|_| inv.clone())
+}
+
 /// Run the raw-satisfiability consistency check on a single `inv` and label it.
 /// Shared by the per-contract path and the cross-proof conjoined path.
 fn check_inv_consistency(
@@ -610,8 +781,17 @@ fn check_inv_consistency(
     inv: Json,
     plan: &SolverPlan,
     registry: &HashMap<String, SolverHandle>,
-    pool: &MementoPool,
 ) -> ConsistencyResult {
+    let inv = with_local_forall_instances(canonicalize_formula_json(&inv), property_name);
+    if let Some(reason) = structural_contradiction_reason(&inv) {
+        return ConsistencyResult {
+            contract_cid: cid,
+            property_name: property_name.to_string(),
+            verdict: ObligationVerdict::Unsatisfied,
+            reason: format!("{CONTRADICTORY_REASON} `{property_name}` [structural: {reason}]"),
+            witnessed: false,
+        };
+    }
     let smt = match emit_asserted(&inv) {
         Ok(s) => s,
         Err(e) => {
@@ -624,31 +804,9 @@ fn check_inv_consistency(
             };
         }
     };
-    let solve_started = std::time::Instant::now();
     let (raw, raw_reason, _invs) = run_plan(plan, registry, &smt, Some(&inv));
-    let ms = solve_started.elapsed().as_millis();
-    // Per-obligation progress on stderr. A PINNED obligation is a closed ground
-    // check (microseconds); >=250ms is the signal of an unpinned/open lowering —
-    // always surfaced. Set SUGAR_VERIFY_PROGRESS=1 to log every obligation.
-    let n = OBLIGATIONS_CHECKED.fetch_add(1, Ordering::Relaxed) + 1;
-    if ms >= 250 {
-        eprintln!("[verify #{n}] SLOW {ms}ms  {property_name}  (unpinned/open?)");
-    } else if std::env::var_os("SUGAR_VERIFY_PROGRESS").is_some() {
-        eprintln!("[verify #{n}] {ms}ms  {property_name}");
-    } else if n % 200 == 0 {
-        eprintln!("[verify] {n} obligations checked…");
-    }
-    let (mut verdict, label) = consistency_verdict(raw);
-    let mut reason = format!("{label} `{property_name}` [{raw_reason}]");
-    // THE VENDOR FIXED `t`. An `unsat` on conflicting pins of a non-ground compound
-    // is a fork-around-`t`: vindicated to Discharged when the callee is proven
-    // impure (v2 dig), convicted when proven pure, refused while purity is unproven.
-    if verdict == ObligationVerdict::Unsatisfied {
-        if let Some((nv, nr)) = vindicate_or_refuse(&inv, property_name, pool) {
-            verdict = nv;
-            reason = nr;
-        }
-    }
+    let (verdict, label) = consistency_verdict(raw);
+    let reason = format!("{label} `{property_name}` [{raw_reason}]");
     if verdict == ObligationVerdict::Undecidable {
         warn!(
             contract = %property_name,
@@ -669,39 +827,38 @@ fn check_inv_consistency(
 /// Collect the universal-quantifier sub-formulas of an invariant. A lifted loop
 /// is emitted as a `forall`, but the lifter conjoins a contract's atoms, so the
 /// `inv` reaching here is typically `and([forall, ...])` rather than a bare
-/// `forall`. We pull the `forall` conjuncts out (top-level, or directly under a
-/// top-level `and`) so each can be asserted ambiently against point-claims. We
-/// deliberately do NOT descend into the `and`'s non-forall operands -- asserting
-/// a contract's point-claims into unrelated obligations would be unsound.
+/// `forall`. We pull the `forall` conjuncts out (top-level, or under nested
+/// conjunctions) as instantiation templates for point-claims. We deliberately
+/// do NOT descend into the `and`'s non-forall operands -- asserting a contract's
+/// point-claims into unrelated obligations would be unsound.
 ///
 /// CLOSEDNESS GATE. The pool's shared vocabulary is CALLSITES (`call:*` ctors,
 /// the `#euf#` names) -- that is what every lifter elides to, and it is the only
-/// vocabulary with pool-wide meaning. A universal earns ambient status because
-/// it quantifies over a callsite, instantiable at any point-claim. A forall
-/// still carrying a FREE variable (an un-elided test-local, e.g. a symbolic
-/// range bound `n`) is a fact about THAT TEST's locals, not about a callsite:
-/// two tests' unrelated locals can share a spelling, and conjoining the open
-/// formula would couple them through name capture. Open universals stay home
-/// (their own obligation still checks them); only closed ones travel.
+/// vocabulary with pool-wide meaning. A universal earns cross-obligation force
+/// only through a CLOSED SPECIALIZED INSTANCE. A forall still carrying a FREE
+/// variable after specialization (an un-elided test-local, e.g. a symbolic range
+/// bound `n`) is a fact about THAT TEST's locals, not about a callsite: two
+/// tests' unrelated locals can share a spelling, and conjoining the open formula
+/// would couple them through name capture. Open templates may be collected, but
+/// their open instances stay home.
 fn collect_ambient_foralls(inv: &Json, out: &mut Vec<Json>) {
     let mut consider = |op: &Json| {
         if op.get("kind").and_then(|k| k.as_str()) != Some("forall") {
             return;
         }
-        if formula_is_closed(op, &mut Vec::new()) {
-            out.push(op.clone());
-        } else {
+        if !formula_is_closed(op, &mut Vec::new()) {
             debug!(
-                "verifier/ambient: open universal (free test-local variable) excluded from ambient set"
+                "verifier/ambient: open universal template collected; only closed instances may travel"
             );
         }
+        out.push(op.clone());
     };
     match inv.get("kind").and_then(|k| k.as_str()) {
         Some("forall") => consider(inv),
         Some("and") => {
             if let Some(ops) = inv.get("operands").and_then(|v| v.as_array()) {
                 for op in ops {
-                    consider(op);
+                    collect_ambient_foralls(op, out);
                 }
             }
         }
@@ -752,545 +909,267 @@ fn formula_is_closed(node: &Json, bound: &mut Vec<String>) -> bool {
     }
 }
 
-/// Conjoin the ambient universal invariants into an obligation's inv so the
-/// solver can instantiate them against this obligation's point-claims. Empty
-/// ambient set leaves the inv untouched.
-/// Collect the uninterpreted-function (`ctor`) symbols a formula references —
-/// its solver vocabulary. Two formulas are independent (disjoint-signature, so
-/// sound to separate) iff they share no such symbol.
-/// Structural / arithmetic plumbing ctors (`ref`, `deref`, `+`/`-`/`*`, bitwise,
-/// range constructors) appear ubiquitously and are NOT meaningful uninterpreted
-/// predicates to quantify over: the arithmetic ones are z3 builtins, and
-/// `ref`/`deref`/`range` are wrappers applied to unrelated arguments. A universal
-/// that shares ONLY such a symbol with an obligation does not constrain it
-/// (`ref(Big::from_small 1)` never aliases `ref(1)`), so counting them as
-/// relevance vocabulary spuriously drags unrelated lifted-loop universals
-/// (bignum/ascii) into a trivial obligation through a common `ref`, turning
-/// `align_of_val(ref 1) == 2` (SAT) into a quantifier-laden `unknown`. Excluding
-/// them only makes relevance STRICTER (fewer foralls conjoined) -- sound, since a
-/// dropped disjoint-signature universal is a conservative extension.
-fn is_structural_hub_symbol(name: &str) -> bool {
-    matches!(
-        name,
-        "ref" | "deref"
-            | "+"
-            | "-"
-            | "*"
-            | "int-div"
-            | "int-rem"
-            | "bit-and"
-            | "bit-or"
-            | "bit-xor"
-            | "shift-left"
-            | "shift-right"
-            | "bit-not"
-            | "range"
-            | "range_incl"
-    )
-}
-
-fn collect_ctor_symbols(j: &Json, out: &mut std::collections::BTreeSet<String>) {
-    match j {
-        Json::Object(m) => {
-            if m.get("kind").and_then(|k| k.as_str()) == Some("ctor") {
-                if let Some(n) = m.get("name").and_then(|n| n.as_str()) {
-                    if !is_structural_hub_symbol(n) {
-                        out.insert(n.to_string());
-                    }
-                }
-            }
-            for v in m.values() {
-                collect_ctor_symbols(v, out);
-            }
-        }
-        Json::Array(a) => {
-            for v in a {
-                collect_ctor_symbols(v, out);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// A term is GROUND iff built entirely from constants (no variable) -- its value
-/// is fixed by literals alone, so it is `t`-independent and pure-evaluable.
-fn term_is_ground(t: &Json) -> bool {
-    match t.get("kind").and_then(|k| k.as_str()) {
-        Some("const") => true,
-        Some("var") => false,
-        Some("ctor") => t
-            .get("args")
-            .and_then(|a| a.as_array())
-            .map(|a| a.iter().all(term_is_ground))
-            .unwrap_or(true),
-        _ => false,
-    }
-}
-
-fn json_is_const(t: &Json) -> bool {
-    t.get("kind").and_then(|k| k.as_str()) == Some("const")
-}
-
-/// A NON-GROUND COMPOUND: a constructor application (a call/method/field/deref/
-/// projection) carrying at least one variable -- so its value MAY depend on
-/// hidden state (`t`) the lift cannot see (interior mutability, a mutated binding,
-/// a pointer write). Whether it is actually pure is a body-walk question we cannot
-/// answer without the callee body.
-fn is_nonground_compound(t: &Json) -> bool {
-    t.get("kind").and_then(|k| k.as_str()) == Some("ctor") && !term_is_ground(t)
-}
-
-/// The kind of unwarranted conflict an `unsat` invariant exhibits.
-enum ConflictKind {
-    /// A non-ground compound (call/method/field/deref) pinned to differing values,
-    /// or forced `X != X` -- a fork around `t`. The carried term is the offending
-    /// call, for the body dig (v2) to classify: IMPURE -> legitimate trajectory
-    /// (vindicate Discharged); PURE -> real contradiction (Unsatisfied).
-    Trajectory(Json),
-    /// A lift artifact unrelated to purity: value-equality conflated with
-    /// reference-identity (`eq` and `ne` on one pair), or a partial order lowered
-    /// onto a total encoding (asserted incomparability). Always refused.
-    Relational(String),
-}
-
-// v2, the dig: the wp-based purity classifier. `callee_purity` reduces a callee's
-// body via wp and returns Pure / Impure / Unknown, conservatively (Unknown on any
-// ambiguity -- no body, wp refused, non-trivial `pre`, or an unexplained free var).
-// Impure is reached only via an explicit lifter-injected `__state::`/`__hidden::`
-// symbol; absent that, a stateful read with no body contract stays Unknown ->
-// Refused. See `crate::callee_purity`.
-use crate::callee_purity::{callee_purity, Purity};
-
-/// v2 vindication. Given an `unsat` invariant that is an unwarranted conflict,
-/// decide the final verdict: a fork-around-`t` trajectory is vindicated to
-/// Discharged when its callee is PROVEN impure, convicted (Unsatisfied) when
-/// PROVEN pure, and refused while purity is Unknown. Relational artifacts are
-/// always refused. Returns None when the inv is not an unwarranted conflict, so
-/// the caller keeps the raw verdict.
-fn vindicate_or_refuse(
+/// Derive quantifier-free instances of ambient universals for the concrete
+/// callsite terms already present in this obligation. Z3 usually instantiates
+/// `forall x. ... call:g(x) ...` against `call:g(2)` on its own, but that is a
+/// heuristic. The verifier owns the pool vocabulary, so make the obvious
+/// instantiation explicit before asking the solver.
+fn instantiate_ambient_foralls_for_inv(
     inv: &Json,
     property_name: &str,
-    pool: &MementoPool,
-) -> Option<(ObligationVerdict, String)> {
-    let kind = unwarranted_compound_conflict(inv)?;
-    Some(match kind {
-        ConflictKind::Trajectory(call) => match callee_purity(&call, pool) {
-            Purity::Impure => (
-                // SOUND LIMIT: knowing the callee is impure is NOT enough to discharge
-                // at the verdict layer. The lifted inv does not carry the program-point
-                // `t`, so `=(load(A),0) ∧ =(load(A),5)` is the SAME term whether it came
-                // from two re-evaluations (different `t`, a legit trajectory) or from ONE
-                // value bound once and pinned twice (same `t`, a real contradiction -- a
-                // broken test). Discharging would falsePass the latter. So we still
-                // REFUSE; true vindication needs lift-side `t`-tagging of impure-call
-                // evaluations (re-evaluations become distinct terms -> discharge
-                // naturally; a same-`t` double-pin stays a bare-var contradiction).
-                ObligationVerdict::Refused,
-                format!(
-                    "refused: callee proven IMPURE, but the lift does not distinguish a \
-                     re-evaluation (legit `t`-trajectory) from a single read pinned twice \
-                     (real contradiction); not discharged without program-point `t` -- \
-                     `{property_name}`"
-                ),
-            ),
-            Purity::Pure => (
-                ObligationVerdict::Unsatisfied,
-                format!(
-                    "CONVICTED: callee proven PURE (cannot fork around `t`); the conflicting \
-                     pins are a real contradiction -- `{property_name}`"
-                ),
-            ),
-            Purity::Unknown => (
-                ObligationVerdict::Refused,
-                format!(
-                    "refused: conflicting pins on a non-ground call whose purity is unproven \
-                     (no callee body); a real contradiction vs. a `t`-dependent trajectory \
-                     cannot be distinguished -- not accused -- `{property_name}`"
-                ),
-            ),
-        },
-        ConflictKind::Relational(t) => (
-            ObligationVerdict::Refused,
-            format!(
-                "refused: `{t}` -- value-equality vs reference-identity conflated, or a partial \
-                 order on a total encoding; lift artifact, not a warranted contradiction -- \
-                 `{property_name}`"
-            ),
-        ),
-    })
-}
-
-/// THE VENDOR FIXED `t`. Each assertion is pinned at a concrete program point.
-/// If an UNSAT invariant's contradiction rests on two or more pins (`=(T, c)`) of
-/// the SAME non-ground compound `T` set to DIFFERENT constants, the
-/// "contradiction" cannot be distinguished -- without the callee body -- from a
-/// benign trajectory of an impure / `t`-dependent `T` (`get(i)==0`, then
-/// `get(i)==4` after a mutation; the drop-counter even mutates via the drop
-/// side-effects of OTHER bindings, with no syntactic reference to `i`). A PURE `T`
-/// cannot fork around `t`, so for a pure `T` this WOULD be a real contradiction --
-/// but proving purity is the dig (v2). Until then we must NOT accuse: return the
-/// term so the caller REFUSES (not "contradictory", not "consistent").
-///
-/// Warranted contradictions are NOT reported here and stay `Unsatisfied`:
-///   * pins on a BARE VAR -- a value bound once, so same `t` (`x==1 ∧ x==2`);
-///   * pins on a GROUND call -- `t`-independent, pure-evaluable
-///     (`numpy.add(2,3)==5` vs `==6`; `g(7)<10 ∧ g(7)<5`).
-/// A same-`T` group with two distinct constants is independently UNSAT, so its
-/// mere presence means the unsat cannot be cleanly accused.
-fn unwarranted_compound_conflict(inv: &Json) -> Option<ConflictKind> {
-    use std::collections::{BTreeMap, BTreeSet};
-
-    // Canonical unordered pair key for two operand terms.
-    fn upair(a: &Json, b: &Json) -> (String, String) {
-        let x = serde_json::to_string(a).unwrap_or_default();
-        let y = serde_json::to_string(b).unwrap_or_default();
-        if x <= y {
-            (x, y)
-        } else {
-            (y, x)
-        }
+    ambient: &[Json],
+) -> Vec<Json> {
+    if ambient.is_empty() {
+        return Vec::new();
     }
-    // ≤-family vs ≥-family of a NON-STRICT comparison (strict `<`/`>` do not
-    // witness incomparability: `not(a<b) ∧ not(a>b)` just means `a==b`).
-    fn nonstrict_dir(name: &str) -> Option<&'static str> {
-        match name {
-            "lte" | "le" | "<=" | "\u{2264}" => Some("le"),
-            "gte" | "ge" | ">=" | "\u{2265}" => Some("ge"),
-            _ => None,
-        }
-    }
-    fn is_eq(name: &str) -> bool {
-        matches!(name, "=" | "eq")
-    }
-    fn is_ne(name: &str) -> bool {
-        matches!(name, "ne" | "neq" | "distinct" | "\u{2260}")
-    }
-
-    #[derive(Default)]
-    struct Acc {
-        // (a) =(T,c) pins on a non-ground compound T -> set of distinct consts.
-        pins: BTreeMap<String, BTreeSet<String>>,
-        // (b) a non-ground compound forced `X != X` (self-distinct).
-        self_ne: BTreeSet<String>,
-        // (c) unordered pairs (>=1 non-ground compound) seen under `=` and `ne`.
-        eq_pairs: BTreeSet<(String, String)>,
-        ne_pairs: BTreeSet<(String, String)>,
-        // (d) per pair, the set of NEGATED non-strict directions {le, ge}.
-        neg_cmp: BTreeMap<(String, String), BTreeSet<&'static str>>,
-        // serialized non-ground-compound term -> its Json, so a Trajectory
-        // conflict can hand the offending call to the purity probe (v2).
-        terms: BTreeMap<String, Json>,
-    }
-
-    // `negated` tracks whether we are under an odd number of `not`s.
-    fn collect(inv: &Json, acc: &mut Acc, negated: bool) {
-        match inv.get("kind").and_then(|k| k.as_str()) {
-            Some("and") | Some("or") => {
-                if let Some(ops) = inv.get("operands").and_then(|o| o.as_array()) {
-                    for op in ops {
-                        collect(op, acc, negated);
-                    }
-                }
+    let mut instances = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for forall in ambient {
+        let Some(var_name) = forall.get("name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(body) = forall.get("body") else {
+            continue;
+        };
+        if let Some(sort) = forall.get("sort") {
+            let mut ground_terms = Vec::new();
+            collect_unquantified_ground_terms(inv, sort, &mut ground_terms);
+            collect_property_name_ground_terms(property_name, sort, &mut ground_terms);
+            for term in &ground_terms {
+                push_ambient_instance(body, var_name, term, &mut instances, &mut seen);
             }
-            Some("not") => {
-                if let Some(ops) = inv.get("operands").and_then(|o| o.as_array()) {
-                    for op in ops {
-                        collect(op, acc, !negated);
-                    }
-                } else if let Some(op) = inv.get("operand") {
-                    collect(op, acc, !negated);
-                }
-            }
-            Some("atomic") => {
-                let name = inv.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                let Some(args) = inv.get("args").and_then(|a| a.as_array()) else {
-                    return;
+        }
+
+        let mut callsites = Vec::new();
+        collect_unquantified_ctor_terms(inv, &mut callsites);
+        let mut patterns = Vec::new();
+        collect_forall_call_patterns(body, var_name, &mut patterns);
+        for pattern in &patterns {
+            for callsite in &callsites {
+                let Some(replacement) = match_forall_call_pattern(pattern, callsite, var_name)
+                else {
+                    continue;
                 };
-                if args.len() != 2 {
-                    return;
-                }
-                let (a, b) = (&args[0], &args[1]);
-                if !negated && is_eq(name) {
-                    // (a) fork-around-`t` in equality form.
-                    let pin = if is_nonground_compound(a) && json_is_const(b) {
-                        Some((a, b))
-                    } else if is_nonground_compound(b) && json_is_const(a) {
-                        Some((b, a))
-                    } else {
-                        None
-                    };
-                    if let Some((term, c)) = pin {
-                        let key = serde_json::to_string(term).unwrap_or_default();
-                        acc.terms.entry(key.clone()).or_insert_with(|| term.clone());
-                        acc.pins
-                            .entry(key)
-                            .or_default()
-                            .insert(serde_json::to_string(c).unwrap_or_default());
-                    }
-                    if is_nonground_compound(a) || is_nonground_compound(b) {
-                        acc.eq_pairs.insert(upair(a, b));
-                    }
-                }
-                if !negated && is_ne(name) {
-                    // (b) `X != X` on a non-ground compound (re-evaluated stateful
-                    // call), and (c) record the inequality pair.
-                    if is_nonground_compound(a)
-                        && serde_json::to_string(a).ok() == serde_json::to_string(b).ok()
-                    {
-                        let key = serde_json::to_string(a).unwrap_or_default();
-                        acc.terms.entry(key.clone()).or_insert_with(|| a.clone());
-                        acc.self_ne.insert(key);
-                    }
-                    if is_nonground_compound(a) || is_nonground_compound(b) {
-                        acc.ne_pairs.insert(upair(a, b));
-                    }
-                }
-                if negated {
-                    // (d) a NEGATED non-strict comparison witnesses one direction
-                    // of an asserted incomparability.
-                    if let Some(dir) = nonstrict_dir(name) {
-                        acc.neg_cmp.entry(upair(a, b)).or_default().insert(dir);
-                    }
-                }
+                push_ambient_instance(body, var_name, &replacement, &mut instances, &mut seen);
             }
-            _ => {}
         }
     }
-
-    let mut acc = Acc::default();
-    collect(inv, &mut acc, false);
-
-    // (a)/(b) fork-around-`t`: a non-ground compound pinned to >=2 distinct values,
-    // or forced `X != X`. Eligible for purity vindication -- carry the offending
-    // call so the dig can classify it.
-    let traj_key = acc
-        .pins
-        .iter()
-        .find(|(_, consts)| consts.len() >= 2)
-        .map(|(k, _)| k.clone())
-        .or_else(|| acc.self_ne.iter().next().cloned());
-    if let Some(k) = traj_key {
-        let term = acc.terms.get(&k).cloned().unwrap_or(Json::Null);
-        return Some(ConflictKind::Trajectory(term));
-    }
-    // (c) RELATION CONFLATION: the SAME pair asserted both equal AND unequal,
-    // with a non-ground compound operand. The lift merged value-equality and
-    // reference-identity (`assert_eq!(a,&*b)` + `ptr::eq`) onto one `=`/`ne`; we
-    // cannot warrant they are the same relation -> refuse, do not accuse.
-    if let Some((x, _)) = acc.eq_pairs.intersection(&acc.ne_pairs).next() {
-        return Some(ConflictKind::Relational(format!("eq∧ne:{x}")));
-    }
-    // (d) INCOMPARABILITY on a TOTAL encoding: a pair asserted neither `<=` nor
-    // `>=`. For a total order `a<=b ∨ b<=a` always holds, so this is unsat only
-    // because a PARTIAL order (PartialOrd / NaN / float) was lowered onto z3's
-    // total `<=`. The encoding is wrong, not the vendor -> refuse.
-    if let Some((pair, _)) = acc
-        .neg_cmp
-        .iter()
-        .find(|(_, dirs)| dirs.contains("le") && dirs.contains("ge"))
-    {
-        return Some(ConflictKind::Relational(format!("incomparable:{}", pair.0)));
-    }
-    None
+    instances
 }
 
-/// Conjoin ONLY the ambient universals RELEVANT to this obligation. An ambient
-/// `forall` is conjoined iff its vocabulary intersects the obligation's (or that
-/// of an already-included forall — relevance closure, so transitively-linked
-/// universals are kept). A universal over disjoint vocabulary is a conservative
-/// extension: it cannot change this obligation's SAT/UNSAT, so dropping it is
-/// sound — and it removes the quantifier-instantiation cost that turned a
-/// microsecond EUF check (e.g. `cmp::max_by`) into a >250ms `unknown` by dragging
-/// 7 unrelated lifted-loop universals (bignum/ascii/case-folding) into it.
+fn collect_property_name_ground_terms(property_name: &str, sort: &Json, out: &mut Vec<Json>) {
+    if !sort_is_primitive(sort, "Int") {
+        return;
+    }
+    let mut offset = 0;
+    while let Some(rel) = property_name[offset..].find("i:") {
+        let start = offset + rel + 2;
+        let mut end = start;
+        let bytes = property_name.as_bytes();
+        if end < bytes.len() && bytes[end] == b'-' {
+            end += 1;
+        }
+        while end < bytes.len() && bytes[end].is_ascii_digit() {
+            end += 1;
+        }
+        if end > start && property_name[start..end].parse::<i64>().is_ok() {
+            let value = property_name[start..end].parse::<i64>().unwrap();
+            out.push(serde_json::json!({
+                "kind": "const",
+                "value": value,
+                "sort": {"kind": "primitive", "name": "Int"}
+            }));
+        }
+        offset = end.max(start);
+    }
+}
+
+fn sort_is_primitive(sort: &Json, name: &str) -> bool {
+    sort.get("kind").and_then(|v| v.as_str()) == Some("primitive")
+        && sort.get("name").and_then(|v| v.as_str()) == Some(name)
+}
+
+fn push_ambient_instance(
+    body: &Json,
+    var_name: &str,
+    replacement: &Json,
+    instances: &mut Vec<Json>,
+    seen: &mut std::collections::BTreeSet<String>,
+) {
+    let instance = crate::instantiate::substitute_formula_pub(body, var_name, replacement);
+    if !formula_is_closed(&instance, &mut Vec::new()) {
+        return;
+    }
+    let key = libsugar::canonical::json_jcs(&instance)
+        .unwrap_or_else(|_| serde_json::to_string(&instance).unwrap_or_default());
+    if seen.insert(key) {
+        instances.push(instance);
+    }
+}
+
+fn collect_unquantified_ground_terms(node: &Json, sort: &Json, out: &mut Vec<Json>) {
+    match node.get("kind").and_then(|k| k.as_str()) {
+        Some("forall") | Some("exists") => return,
+        Some("const") if term_matches_sort(node, sort) => out.push(node.clone()),
+        _ => {}
+    }
+    for key in ["operands", "args"] {
+        if let Some(arr) = node.get(key).and_then(|v| v.as_array()) {
+            for child in arr {
+                collect_unquantified_ground_terms(child, sort, out);
+            }
+        }
+    }
+    if let Some(body) = node.get("body") {
+        collect_unquantified_ground_terms(body, sort, out);
+    }
+}
+
+fn term_matches_sort(term: &Json, sort: &Json) -> bool {
+    term.get("sort").is_some_and(|term_sort| term_sort == sort)
+}
+
+fn collect_unquantified_ctor_terms(node: &Json, out: &mut Vec<Json>) {
+    match node.get("kind").and_then(|k| k.as_str()) {
+        Some("forall") | Some("exists") => return,
+        Some("ctor") => out.push(node.clone()),
+        _ => {}
+    }
+    for key in ["operands", "args"] {
+        if let Some(arr) = node.get(key).and_then(|v| v.as_array()) {
+            for child in arr {
+                collect_unquantified_ctor_terms(child, out);
+            }
+        }
+    }
+    if let Some(body) = node.get("body") {
+        collect_unquantified_ctor_terms(body, out);
+    }
+}
+
+fn collect_forall_call_patterns(node: &Json, var_name: &str, out: &mut Vec<Json>) {
+    match node.get("kind").and_then(|k| k.as_str()) {
+        Some("forall") | Some("exists") => return,
+        Some("ctor") if ctor_has_direct_bound_arg(node, var_name) => out.push(node.clone()),
+        _ => {}
+    }
+    for key in ["operands", "args"] {
+        if let Some(arr) = node.get(key).and_then(|v| v.as_array()) {
+            for child in arr {
+                collect_forall_call_patterns(child, var_name, out);
+            }
+        }
+    }
+    if let Some(body) = node.get("body") {
+        collect_forall_call_patterns(body, var_name, out);
+    }
+}
+
+fn ctor_has_direct_bound_arg(node: &Json, var_name: &str) -> bool {
+    node.get("args")
+        .and_then(|v| v.as_array())
+        .is_some_and(|args| args.iter().any(|arg| is_var_named(arg, var_name)))
+}
+
+fn match_forall_call_pattern(pattern: &Json, callsite: &Json, var_name: &str) -> Option<Json> {
+    if pattern.get("kind").and_then(|v| v.as_str()) != Some("ctor")
+        || callsite.get("kind").and_then(|v| v.as_str()) != Some("ctor")
+        || pattern.get("name").and_then(|v| v.as_str())
+            != callsite.get("name").and_then(|v| v.as_str())
+    {
+        return None;
+    }
+    let pattern_args = pattern.get("args").and_then(|v| v.as_array())?;
+    let callsite_args = callsite.get("args").and_then(|v| v.as_array())?;
+    if pattern_args.len() != callsite_args.len() {
+        return None;
+    }
+
+    let mut replacement: Option<Json> = None;
+    for (pattern_arg, callsite_arg) in pattern_args.iter().zip(callsite_args.iter()) {
+        if is_var_named(pattern_arg, var_name) {
+            if replacement
+                .as_ref()
+                .is_some_and(|seen| seen != callsite_arg)
+            {
+                return None;
+            }
+            replacement = Some(callsite_arg.clone());
+        } else if term_contains_var(pattern_arg, var_name) || pattern_arg != callsite_arg {
+            return None;
+        }
+    }
+    replacement
+}
+
+fn is_var_named(node: &Json, var_name: &str) -> bool {
+    node.get("kind").and_then(|v| v.as_str()) == Some("var")
+        && node.get("name").and_then(|v| v.as_str()) == Some(var_name)
+}
+
+fn term_contains_var(node: &Json, var_name: &str) -> bool {
+    if is_var_named(node, var_name) {
+        return true;
+    }
+    for key in ["operands", "args"] {
+        if let Some(arr) = node.get(key).and_then(|v| v.as_array()) {
+            if arr.iter().any(|child| term_contains_var(child, var_name)) {
+                return true;
+            }
+        }
+    }
+    node.get("body")
+        .is_some_and(|body| term_contains_var(body, var_name))
+}
+
+/// Conjoin closed instances of ambient universal invariants into an obligation's
+/// inv. The raw forall templates are not copied into every obligation; only
+/// concrete, closed instances travel across contracts.
 fn with_ambient_foralls(inv: Json, property_name: &str, ambient: &[Json]) -> Json {
     if ambient.is_empty() {
         return inv;
     }
-    let mut relevant: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    collect_ctor_symbols(&inv, &mut relevant);
-    let forall_syms: Vec<std::collections::BTreeSet<String>> = ambient
-        .iter()
-        .map(|f| {
-            let mut s = std::collections::BTreeSet::new();
-            collect_ctor_symbols(f, &mut s);
-            s
-        })
-        .collect();
-    let mut included = vec![false; ambient.len()];
-    loop {
-        let mut changed = false;
-        for i in 0..ambient.len() {
-            if included[i] {
-                continue;
-            }
-            if forall_syms[i].iter().any(|s| relevant.contains(s)) {
-                included[i] = true;
-                relevant.extend(forall_syms[i].iter().cloned());
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-    let chosen: Vec<Json> = ambient
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| included[*i])
-        .map(|(_, f)| f.clone())
-        .collect();
-    if chosen.is_empty() {
-        return inv;
-    }
+    let instances = instantiate_ambient_foralls_for_inv(&inv, property_name, ambient);
+    let closed_templates: Vec<Json> = if property_name.contains("#euf#") {
+        ambient
+            .iter()
+            .filter(|forall| formula_is_closed(forall, &mut Vec::new()))
+            .cloned()
+            .collect()
+    } else {
+        Vec::new()
+    };
     debug!(
         property = property_name,
-        ambient_relevant = chosen.len(),
-        ambient_total = ambient.len(),
-        "verifier/ambient: conjoining RELEVANT universals (disjoint-vocabulary ones dropped, sound)"
+        ambient = ambient.len(),
+        closed_templates = closed_templates.len(),
+        instances = instances.len(),
+        "verifier/ambient: conjoining universals into obligation"
     );
-    let mut operands = Vec::with_capacity(chosen.len() + 1);
+    if instances.is_empty() && closed_templates.is_empty() {
+        return inv;
+    }
+    let mut operands = Vec::with_capacity(closed_templates.len() + instances.len() + 1);
     operands.push(inv);
-    operands.extend(chosen);
+    operands.extend(closed_templates);
+    operands.extend(instances);
     serde_json::json!({ "kind": "and", "operands": operands })
 }
 
-/// A consistency obligation to solve: the contract CID, the callsite-keyed
-/// property name, and the (ambient-conjoined) invariant.
-struct Obligation {
-    cid: String,
-    property_name: String,
-    inv: Json,
-}
-
-/// Batch the z3 solve unless the plan is non-z3 or it is explicitly disabled.
-/// Only the plain `z3` single-solver plan (the common consistency case) is
-/// batched; coq/maude/portfolio plans keep the per-obligation `run_plan` path.
-fn should_batch(plan: &SolverPlan) -> bool {
-    if std::env::var("SUGAR_VERIFY_BATCH").as_deref() == Ok("0") {
-        return false;
+fn with_local_forall_instances(inv: Json, property_name: &str) -> Json {
+    let mut foralls = Vec::new();
+    collect_ambient_foralls(&inv, &mut foralls);
+    if foralls.is_empty() {
+        return inv;
     }
-    matches!(plan, SolverPlan::Single(n) if n == "z3")
-}
-
-/// Per-query solver timeout in ms (SUGAR_SOLVER_TIMEOUT_MS, then _SECS, else
-/// 250ms — a pinned check is microseconds, so 250ms is generous headroom).
-fn solver_timeout_ms() -> u64 {
-    if let Ok(v) = std::env::var("SUGAR_SOLVER_TIMEOUT_MS") {
-        if let Ok(n) = v.trim().parse::<u64>() {
-            return n;
-        }
+    let instances = instantiate_ambient_foralls_for_inv(&inv, property_name, &foralls);
+    if instances.is_empty() {
+        return inv;
     }
-    if let Ok(v) = std::env::var("SUGAR_SOLVER_TIMEOUT_SECS") {
-        if let Ok(n) = v.trim().parse::<u64>() {
-            return n.saturating_mul(1000);
-        }
-    }
-    250
-}
-
-fn unknown_symbol_frag(fragment: &str) -> Option<String> {
-    const MARK: &str = "unknown constant ";
-    let start = fragment.find(MARK)? + MARK.len();
-    let sym: String = fragment[start..]
-        .chars()
-        .take_while(|c| !c.is_whitespace() && *c != '(' && *c != ')')
-        .collect();
-    (!sym.is_empty()).then_some(sym)
-}
-
-/// Solve all obligations by batching them through few z3 processes (PHASE 2 for
-/// the z3 plan). emit_asserted each; compilation failures are Undecidable
-/// (encoding STOP) and excluded from the batch. Verdicts map exactly as the
-/// per-spawn path: raw `sat`->consistent, raw `unsat`->contradictory, unknown
-/// constant->Refused (no discharger), timeout/unknown->Undecidable.
-fn solve_obligations_batched(
-    obligations: &[Obligation],
-    pool: &MementoPool,
-) -> Vec<ConsistencyResult> {
-    let mut results: Vec<Option<ConsistencyResult>> = (0..obligations.len()).map(|_| None).collect();
-    let mut scripts: Vec<String> = Vec::new();
-    let mut script_idx: Vec<usize> = Vec::new();
-    let dump_needle = std::env::var("SUGAR_DUMP_SMT").ok();
-    for (i, o) in obligations.iter().enumerate() {
-        match emit_asserted(&o.inv) {
-            Ok(s) => {
-                if let Some(needle) = &dump_needle {
-                    if o.property_name.contains(needle.as_str()) {
-                        let path = format!("/tmp/sugar_smt_dump_{i}.smt2");
-                        let _ = std::fs::write(&path, &s);
-                        eprintln!(
-                            "[verify] dumped SMT for {} -> {} ({} bytes, {} forall)",
-                            o.property_name,
-                            path,
-                            s.len(),
-                            s.matches("forall").count()
-                        );
-                    }
-                }
-                scripts.push(s);
-                script_idx.push(i);
-            }
-            Err(e) => {
-                results[i] = Some(ConsistencyResult {
-                    contract_cid: o.cid.clone(),
-                    property_name: o.property_name.clone(),
-                    verdict: ObligationVerdict::Undecidable,
-                    reason: format!("consistency smt-emit (encoding STOP): {e}"),
-                    witnessed: false,
-                });
-            }
-        }
-    }
-    let timeout_ms = solver_timeout_ms();
-    eprintln!(
-        "[verify] batched z3: {} obligation(s), {}ms/query cap (pinned=µs; cap bounds the unpinned)",
-        scripts.len(),
-        timeout_ms
-    );
-    let outcomes = crate::solvers::batch::batch_solve(&scripts, "z3", timeout_ms, 100);
-    let mut undecidable = 0usize;
-    for (k, &i) in script_idx.iter().enumerate() {
-        let o = &obligations[i];
-        let outcome = &outcomes[k];
-        let (verdict, reason) = if outcome.raw == ObligationVerdict::Refused {
-            let sym = unknown_symbol_frag(&outcome.fragment).unwrap_or_default();
-            (
-                ObligationVerdict::Refused,
-                format!(
-                    "no discharger for `{sym}`: solver cannot interpret (unknown constant); \
-                     refused, not guessed"
-                ),
-            )
-        } else {
-            let (mut v, label) = consistency_verdict(outcome.raw);
-            let mut r = format!("{label} `{}` [batched z3]", o.property_name);
-            // THE VENDOR FIXED `t`: an `unsat` on conflicting pins of a non-ground
-            // compound is a fork-around-`t`, indistinguishable from a real
-            // contradiction without the callee body (v2). Refuse, do not accuse.
-            if v == ObligationVerdict::Unsatisfied {
-                if let Some((nv, nr)) = vindicate_or_refuse(&o.inv, &o.property_name, pool) {
-                    v = nv;
-                    r = nr;
-                }
-            }
-            (v, r)
-        };
-        if verdict == ObligationVerdict::Undecidable {
-            undecidable += 1;
-        }
-        results[i] = Some(ConsistencyResult {
-            contract_cid: o.cid.clone(),
-            property_name: o.property_name.clone(),
-            verdict,
-            reason,
-            witnessed: false,
-        });
-    }
-    eprintln!(
-        "[verify] batched z3: done; {} undecidable (unpinned/open -> the worklist)",
-        undecidable
-    );
-    results.into_iter().map(|r| r.expect("every obligation assigned a result")).collect()
+    let mut operands = Vec::with_capacity(instances.len() + 1);
+    operands.push(inv);
+    operands.extend(instances);
+    serde_json::json!({ "kind": "and", "operands": operands })
 }
 
 pub fn verify_consistency(
@@ -1298,7 +1177,6 @@ pub fn verify_consistency(
     plan: &SolverPlan,
     registry: &HashMap<String, SolverHandle>,
 ) -> Vec<ConsistencyResult> {
-    OBLIGATIONS_CHECKED.store(0, Ordering::Relaxed);
     let candidates: Vec<(&String, &Json)> = pool
         .mementos
         .iter()
@@ -1306,10 +1184,6 @@ pub fn verify_consistency(
         .filter_map(|(cid, env)| memento_body(env).map(|b| (cid, b)))
         .filter(|(_, body)| is_consistency_candidate(body))
         .collect();
-    eprintln!(
-        "[verify] consistency: {} candidate obligation(s); solver timeout caps unpinned queries",
-        candidates.len()
-    );
 
     // AMBIENT UNIVERSALS: a forall invariant (a lifted bounded loop, memento
     // `<test>::loop::<var>`, from any language's lifter) constrains every claim
@@ -1330,8 +1204,9 @@ pub fn verify_consistency(
             continue;
         }
         if let Some(inv) = body.get("inv") {
+            let inv = canonicalize_formula_json(inv);
             let before = ambient_foralls.len();
-            collect_ambient_foralls(inv, &mut ambient_foralls);
+            collect_ambient_foralls(&inv, &mut ambient_foralls);
             let found = ambient_foralls.len() - before;
             if found > 0 {
                 debug!(
@@ -1352,10 +1227,6 @@ pub fn verify_consistency(
         candidates = candidates.len(),
         ambient_foralls = ambient_foralls.len(),
         "verifier/ambient: universals will be conjoined into every obligation"
-    );
-    eprintln!(
-        "[verify] ambient foralls conjoined into EVERY obligation: {} (quantifiers = z3 instantiation, not µs eval)",
-        ambient_foralls.len()
     );
 
     // CROSS-PROOF CONJOIN: group same-named contracts and conjoin their `inv`s
@@ -1380,15 +1251,15 @@ pub fn verify_consistency(
     }
     let groups: Vec<(String, Vec<(&String, &Json)>)> = by_name.into_iter().collect();
 
-    // PHASE 1 (parallel, cheap, NO solving): settle witnesses and BUILD the
-    // solver obligations. Collecting them all first lets PHASE 2 batch them into
-    // a few z3 processes — a fresh z3 per obligation costs ~50ms alone and
-    // ~270ms under contention, dwarfing the microsecond solve of a pinned check.
-    let built: Vec<(Vec<ConsistencyResult>, Vec<Obligation>)> = groups
+    let results: Vec<ConsistencyResult> = groups
         .par_iter()
-        .map(|(property_name, members)| {
-            let mut wits: Vec<ConsistencyResult> = Vec::new();
-            let mut obls: Vec<Obligation> = Vec::new();
+        .flat_map(|(property_name, members)| {
+            let mut out: Vec<ConsistencyResult> = Vec::new();
+
+            // WITNESS members are settled from the rust-recomputed package body,
+            // PER MEMBER. They are NEVER folded into the symbolic conjunction
+            // AND never short-circuit the group: a witness member must not mask
+            // a contradictory inv group.
             let mut inv_cids: Vec<&String> = Vec::new();
             let mut inv_bodies: Vec<&Json> = Vec::new();
             for (m_cid, body) in members {
@@ -1396,7 +1267,7 @@ pub fn verify_consistency(
                     if let Some(res) =
                         try_witness_discharge(body, (*m_cid).clone(), property_name.clone())
                     {
-                        wits.push(res);
+                        out.push(res);
                         continue;
                     }
                 }
@@ -1404,55 +1275,51 @@ pub fn verify_consistency(
                 inv_cids.push(m_cid);
             }
             if inv_bodies.is_empty() {
-                return (wits, obls);
+                return out;
             }
-            // CROSS-PROOF CONJOIN only for CALLSITE-KEYED names (`#euf#`), as before.
+
+            // CROSS-PROOF CONJOIN only for CALLSITE-KEYED names (`#euf#`). That key
+            // is `(callee, args)`, so same name == same call == sound to conjoin a
+            // consumer's assertion with an imported vendor contract -> `and(==5,==6)`
+            // -> unsat -> refused. A bare test/location name does NOT guarantee the
+            // same subject, so those stay PER-CONTRACT (conjoining them could falsely
+            // refuse two unrelated tests that happen to share a function name).
             let callsite_keyed = property_name.contains("#euf#");
             if callsite_keyed && inv_bodies.len() > 1 {
                 let invs: Vec<Json> = inv_bodies
                     .iter()
-                    .map(|b| b.get("inv").cloned().unwrap_or(Json::Null))
+                    .map(|b| {
+                        b.get("inv")
+                            .map(canonicalize_formula_json)
+                            .unwrap_or(Json::Null)
+                    })
                     .collect();
                 let inv = serde_json::json!({ "kind": "and", "operands": invs });
-                obls.push(Obligation {
-                    cid: inv_cids[0].clone(),
-                    property_name: property_name.clone(),
-                    inv: with_ambient_foralls(inv, property_name, &ambient_foralls),
-                });
+                out.push(check_inv_consistency(
+                    inv_cids[0].clone(),
+                    property_name,
+                    with_ambient_foralls(inv, property_name, &ambient_foralls),
+                    plan,
+                    registry,
+                ));
             } else {
                 for (cid, body) in inv_cids.iter().zip(inv_bodies.iter()) {
-                    let inv = body.get("inv").cloned().unwrap_or(Json::Null);
-                    obls.push(Obligation {
-                        cid: (*cid).clone(),
-                        property_name: property_name.clone(),
-                        inv: with_ambient_foralls(inv, property_name, &ambient_foralls),
-                    });
+                    let inv = body
+                        .get("inv")
+                        .map(canonicalize_formula_json)
+                        .unwrap_or(Json::Null);
+                    out.push(check_inv_consistency(
+                        (*cid).clone(),
+                        property_name,
+                        with_ambient_foralls(inv, property_name, &ambient_foralls),
+                        plan,
+                        registry,
+                    ));
                 }
             }
-            (wits, obls)
+            out
         })
         .collect();
-
-    let mut results: Vec<ConsistencyResult> = Vec::new();
-    let mut obligations: Vec<Obligation> = Vec::new();
-    for (wits, obls) in built {
-        results.extend(wits);
-        obligations.extend(obls);
-    }
-
-    // PHASE 2: solve. Batch through few z3 processes when the plan is plain z3
-    // (the common case); otherwise the general per-obligation plan path.
-    if should_batch(plan) {
-        results.extend(solve_obligations_batched(&obligations, pool));
-    } else {
-        let solved: Vec<ConsistencyResult> = obligations
-            .par_iter()
-            .map(|o| {
-                check_inv_consistency(o.cid.clone(), &o.property_name, o.inv.clone(), plan, registry, pool)
-            })
-            .collect();
-        results.extend(solved);
-    }
 
     info!(
         candidates = candidates.len(),
@@ -1478,9 +1345,9 @@ pub fn verify_consistency(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::solvers::registry;
+    use crate::solvers::{registry, StubSolver};
     use serde_json::json;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::{Arc, Mutex, OnceLock};
 
     static WITNESS_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -1678,148 +1545,6 @@ mod tests {
         let res = verify_consistency(&pool, &plan, &reg);
         assert_eq!(res.len(), 1);
         assert_eq!(res[0].verdict, ObligationVerdict::Discharged);
-    }
-
-    /// THE FORK-AROUND-`t` GUARD (the lemma, as teeth). A test pins the SAME
-    /// non-ground compound `get(i)` to two values -- a `t`-dependent trajectory
-    /// (an interior-mutable read), NOT a contradiction. Without the callee body we
-    /// cannot prove `get` pure, so we REFUSE rather than accuse. A GROUND call
-    /// (`add(2,3)`) and a BARE VAR (`x`) are warranted, so their conflicts stay
-    /// `Unsatisfied` -- the discrimination that keeps the numpy/holster findings
-    /// real. An identical repeated observation is the fixedpoint holding: no fork,
-    /// consistent.
-    #[test]
-    fn nonground_compound_conflict_is_refused_not_accused() {
-        let (plan, reg) = z3_plan_and_registry();
-        let get_i = || json!({"kind":"ctor","name":"method:get","args":[var("i")]});
-        let andf = |ops: Vec<Json>| json!({"kind":"and","operands":ops});
-
-        // (1) impure/unknown fork: get(i)==0 ∧ get(i)==4 -> REFUSED (not accused)
-        let mut pool = MementoPool::default();
-        insert_contract(
-            &mut pool,
-            "blake3-512:traj",
-            "method:get#euf#c:callresult_method_get_a1(v:t::i)::assertion",
-            andf(vec![eqf(get_i(), int(0)), eqf(get_i(), int(4))]),
-        );
-        let res = verify_consistency(&pool, &plan, &reg);
-        assert_eq!(res.len(), 1);
-        assert_eq!(
-            res[0].verdict,
-            ObligationVerdict::Refused,
-            "a fork-around-t on a non-ground compound must be refused, not accused: {res:?}"
-        );
-
-        // (2) pure GROUND call fork: add(2,3)==5 ∧ add(2,3)==6 -> still UNSATISFIED
-        let add23 = || json!({"kind":"ctor","name":"call:add","args":[int(2), int(3)]});
-        let mut pool = MementoPool::default();
-        insert_contract(
-            &mut pool,
-            "blake3-512:ground",
-            "add#euf#c:callresult_add_a2(i:2,i:3)::assertion",
-            andf(vec![eqf(add23(), int(5)), eqf(add23(), int(6))]),
-        );
-        let res = verify_consistency(&pool, &plan, &reg);
-        assert_eq!(res.len(), 1);
-        assert_eq!(
-            res[0].verdict,
-            ObligationVerdict::Unsatisfied,
-            "a ground-arg (t-independent, pure) call conflict is a real contradiction: {res:?}"
-        );
-
-        // (3) BARE VAR same-t: x==1 ∧ x==2 -> UNSATISFIED (single binding, same t)
-        let mut pool = MementoPool::default();
-        insert_contract(
-            &mut pool,
-            "blake3-512:bare",
-            "x#euf#c:callresult_x_a0()::assertion",
-            andf(vec![eqf(var("x"), int(1)), eqf(var("x"), int(2))]),
-        );
-        let res = verify_consistency(&pool, &plan, &reg);
-        assert_eq!(res.len(), 1);
-        assert_eq!(
-            res[0].verdict,
-            ObligationVerdict::Unsatisfied,
-            "a bare-var (same-t, value bound once) conflict is a real contradiction: {res:?}"
-        );
-
-        // (5) self-distinct (fork-around-t in inequality form): ne(nth(it),nth(it))
-        //     -- a re-evaluated stateful call forced unequal to itself. REFUSED.
-        let nth_it = || json!({"kind":"ctor","name":"method:nth","args":[var("it"), int(0)]});
-        let mut pool = MementoPool::default();
-        insert_contract(
-            &mut pool,
-            "blake3-512:selfne",
-            "method:nth#euf#c:callresult_method_nth_a2(v:t::it,i:0)::assertion",
-            json!({"kind":"atomic","name":"ne","args":[nth_it(), nth_it()]}),
-        );
-        let res = verify_consistency(&pool, &plan, &reg);
-        assert_eq!(res.len(), 1);
-        assert_eq!(
-            res[0].verdict,
-            ObligationVerdict::Refused,
-            "ne(X,X) on a non-ground compound (stateful re-evaluation) must be refused: {res:?}"
-        );
-
-        // (4) idempotent repeat (the fixedpoint holds, no fork): get(i)==4 ∧ ==4
-        let mut pool = MementoPool::default();
-        insert_contract(
-            &mut pool,
-            "blake3-512:idem",
-            "method:get#euf#c:callresult_method_get_a1(v:t::j)::assertion",
-            andf(vec![eqf(get_i(), int(4)), eqf(get_i(), int(4))]),
-        );
-        let res = verify_consistency(&pool, &plan, &reg);
-        assert_eq!(res.len(), 1);
-        assert_eq!(
-            res[0].verdict,
-            ObligationVerdict::Discharged,
-            "identical repeated observation is consistent (fixedpoint holds), not refused: {res:?}"
-        );
-
-        // (6) RELATION CONFLATION (C): a == ref(deref b) ∧ a != ref(deref b).
-        //     value-equality and pointer-identity merged onto one =/ne over a
-        //     non-ground compound -> cannot warrant they are one relation -> REFUSED.
-        let refderef_b =
-            || json!({"kind":"ctor","name":"ref","args":[{"kind":"ctor","name":"deref","args":[var("b")]}]});
-        let mut pool = MementoPool::default();
-        insert_contract(
-            &mut pool,
-            "blake3-512:clone",
-            "method:clone_to_uninit#euf#c:callresult_x_a0()::assertion",
-            json!({"kind":"and","operands":[
-                {"kind":"atomic","name":"=","args":[var("a"), refderef_b()]},
-                {"kind":"atomic","name":"ne","args":[var("a"), refderef_b()]}
-            ]}),
-        );
-        let res = verify_consistency(&pool, &plan, &reg);
-        assert_eq!(res.len(), 1);
-        assert_eq!(
-            res[0].verdict,
-            ObligationVerdict::Refused,
-            "eq∧ne on the same non-ground-compound pair (relation conflation) must be refused: {res:?}"
-        );
-
-        // (7) INCOMPARABILITY (D): not(x<=y) ∧ not(x>=y). On z3's TOTAL Int order
-        //     this is unsat, but it is only assertable for a PARTIAL order
-        //     (PartialOrd/NaN) lowered onto the wrong encoding -> REFUSED.
-        let mut pool = MementoPool::default();
-        insert_contract(
-            &mut pool,
-            "blake3-512:partialord",
-            "tuple_cmp#euf#c:callresult_cmp_a2(v:t::x,v:t::y)::assertion",
-            json!({"kind":"and","operands":[
-                {"kind":"not","operands":[{"kind":"atomic","name":"lte","args":[var("x"), var("y")]}]},
-                {"kind":"not","operands":[{"kind":"atomic","name":"gte","args":[var("x"), var("y")]}]}
-            ]}),
-        );
-        let res = verify_consistency(&pool, &plan, &reg);
-        assert_eq!(res.len(), 1);
-        assert_eq!(
-            res[0].verdict,
-            ObligationVerdict::Refused,
-            "asserted incomparability (partial order on a total encoding) must be refused: {res:?}"
-        );
     }
 
     /// THE HOLSTER DEMO. A vendor swears `result < X`; a consumer swears
@@ -2060,6 +1785,255 @@ mod tests {
             loop_row.verdict,
             ObligationVerdict::Discharged,
             "the loop universal alone is consistent: {res:?}"
+        );
+    }
+
+    #[test]
+    fn ambient_forall_is_specialized_at_concrete_callsite() {
+        let callg = |arg: Json| json!({"kind":"ctor","name":"call:g","args":[arg]});
+        let guard = json!({"kind":"and","operands":[
+            json!({"kind":"atomic","name":"\u{2264}","args":[int(0), var("x")]}),
+            json!({"kind":"atomic","name":"<","args":[var("x"), int(3)]}),
+        ]});
+        let forall = json!({
+            "kind":"forall","name":"x",
+            "sort":{"kind":"primitive","name":"Int"},
+            "body": json!({"kind":"implies","operands":[
+                guard,
+                eqf(callg(var("x")), int(1))
+            ]}),
+        });
+        let point_inv = json!({"kind":"and","operands":[eqf(callg(int(2)), int(2))]});
+
+        let instances = instantiate_ambient_foralls_for_inv(
+            &point_inv,
+            "g#euf#c:callresult_g_a1(i:2)::assertion",
+            &[forall],
+        );
+
+        assert_eq!(instances.len(), 1, "one call:g(2) instance: {instances:?}");
+        assert_eq!(
+            instances[0],
+            json!({"kind":"implies","operands":[
+                {"kind":"and","operands":[
+                    {"kind":"atomic","name":"\u{2264}","args":[int(0), int(2)]},
+                    {"kind":"atomic","name":"<","args":[int(2), int(3)]}
+                ]},
+                eqf(callg(int(2)), int(1))
+            ]})
+        );
+    }
+
+    #[test]
+    fn ambient_forall_is_specialized_from_ground_constant() {
+        let callg = |arg: Json| json!({"kind":"ctor","name":"call:g","args":[arg]});
+        let callh = |arg: Json| json!({"kind":"ctor","name":"call:h","args":[arg]});
+        let forall = json!({
+            "kind":"forall","name":"x",
+            "sort":{"kind":"primitive","name":"Int"},
+            "body": eqf(callg(var("x")), int(1)),
+        });
+        let point_inv = json!({"kind":"and","operands":[eqf(callh(int(2)), int(2))]});
+
+        let instances = instantiate_ambient_foralls_for_inv(
+            &point_inv,
+            "h#euf#c:callresult_h_a1(i:2)::assertion",
+            &[forall],
+        );
+
+        assert_eq!(instances, vec![eqf(callg(int(2)), int(1))]);
+    }
+
+    #[test]
+    fn ambient_forall_is_specialized_from_callsite_name_constant() {
+        let callg = |arg: Json| json!({"kind":"ctor","name":"call:g","args":[arg]});
+        let forall = json!({
+            "kind":"forall","name":"x",
+            "sort":{"kind":"primitive","name":"Int"},
+            "body": eqf(callg(var("x")), int(1)),
+        });
+        let point_inv = json!({"kind":"and","operands":[]});
+
+        let instances = instantiate_ambient_foralls_for_inv(
+            &point_inv,
+            "g#euf#c:callresult_g_a1(i:2)::assertion",
+            &[forall],
+        );
+
+        assert_eq!(instances, vec![eqf(callg(int(2)), int(1))]);
+    }
+
+    #[test]
+    fn ambient_forall_ground_contradiction_short_circuits_solver() {
+        let callg = |arg: Json| json!({"kind":"ctor","name":"call:g","args":[arg]});
+        let guard = json!({"kind":"and","operands":[
+            json!({"kind":"atomic","name":"\u{2264}","args":[int(0), var("x")]}),
+            json!({"kind":"atomic","name":"<","args":[var("x"), int(3)]}),
+        ]});
+        let forall = json!({
+            "kind":"forall","name":"x",
+            "sort":{"kind":"primitive","name":"Int"},
+            "body": json!({"kind":"implies","operands":[
+                guard,
+                eqf(callg(var("x")), int(1))
+            ]}),
+        });
+        let loop_inv = json!({"kind":"and","operands":[forall]});
+        let point_inv = json!({"kind":"and","operands":[eqf(callg(int(2)), int(2))]});
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:loop",
+            "src/lib.rs::tests::t::loop::x",
+            loop_inv,
+        );
+        insert_contract(
+            &mut pool,
+            "blake3-512:point",
+            "g#euf#c:callresult_g_a1(i:2)::assertion",
+            point_inv,
+        );
+
+        let plan = SolverPlan::Single("z3".into());
+        let mut registry = HashMap::new();
+        registry.insert(
+            "z3".into(),
+            Arc::new(StubSolver::new("z3", ObligationVerdict::Unsatisfied)) as SolverHandle,
+        );
+        let res = verify_consistency(&pool, &plan, &registry);
+        let point = res
+            .iter()
+            .find(|r| r.contract_cid == "blake3-512:point")
+            .expect("point row present");
+
+        assert_eq!(
+            point.verdict,
+            ObligationVerdict::Unsatisfied,
+            "ground contradiction must refute before the stub solver can discharge: {res:?}"
+        );
+        assert!(
+            point.reason.contains("structural:"),
+            "reason must prove the pre-SMT path fired: {}",
+            point.reason
+        );
+    }
+
+    #[test]
+    fn closed_forall_conjoined_with_point_claim_specializes_before_solver() {
+        let callg = |arg: Json| json!({"kind":"ctor","name":"call:g","args":[arg]});
+        let guard = json!({"kind":"and","operands":[
+            json!({"kind":"atomic","name":"\u{2264}","args":[int(0), var("$b0")]}),
+            json!({"kind":"atomic","name":"<","args":[var("$b0"), int(3)]}),
+        ]});
+        let forall = json!({
+            "kind":"forall","name":"$b0",
+            "sort":{"kind":"primitive","name":"Int"},
+            "body": json!({"kind":"implies","operands":[
+                guard,
+                eqf(callg(var("$b0")), int(1))
+            ]}),
+        });
+        let inv = json!({"kind":"and","operands":[
+            eqf(callg(int(2)), int(2)),
+            forall
+        ]});
+
+        let plan = SolverPlan::Single("z3".into());
+        let mut registry = HashMap::new();
+        registry.insert(
+            "z3".into(),
+            Arc::new(StubSolver::new("z3", ObligationVerdict::Unsatisfied)) as SolverHandle,
+        );
+        let res = check_inv_consistency(
+            "blake3-512:point".into(),
+            "g#euf#c:callresult_g_a1(i:2)::assertion",
+            inv,
+            &plan,
+            &registry,
+        );
+
+        assert_eq!(res.verdict, ObligationVerdict::Unsatisfied, "{res:?}");
+        assert!(
+            res.reason.contains("structural:"),
+            "closed forall instance must be reduced before the solver: {}",
+            res.reason
+        );
+    }
+
+    #[test]
+    fn ambient_forall_is_collected_through_nested_conjunction() {
+        let callg = |arg: Json| json!({"kind":"ctor","name":"call:g","args":[arg]});
+        let forall = json!({
+            "kind":"forall","name":"x",
+            "sort":{"kind":"primitive","name":"Int"},
+            "body": eqf(callg(var("x")), int(1)),
+        });
+        let nested_loop_inv = json!({"kind":"and","operands":[
+            {"kind":"and","operands":[forall]}
+        ]});
+        let point_inv = json!({"kind":"and","operands":[eqf(callg(int(2)), int(2))]});
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:loop",
+            "src/lib.rs::tests::t::loop::x",
+            nested_loop_inv,
+        );
+        insert_contract(
+            &mut pool,
+            "blake3-512:point",
+            "g#euf#c:callresult_g_a1(i:2)::assertion",
+            point_inv,
+        );
+        let reg = HashMap::new();
+        let res = verify_consistency(&pool, &SolverPlan::Single("unused".into()), &reg);
+        let point = res
+            .iter()
+            .find(|r| r.contract_cid == "blake3-512:point")
+            .expect("point-claim row present");
+        assert_eq!(point.verdict, ObligationVerdict::Unsatisfied, "{res:?}");
+    }
+
+    #[test]
+    fn ambient_forall_canonicalizes_mixed_alpha_binder_before_travel() {
+        let callg = |arg: Json| json!({"kind":"ctor","name":"call:g","args":[arg]});
+        let guard = json!({"kind":"and","operands":[
+            json!({"kind":"atomic","name":"\u{2264}","args":[int(0), var("$b0")]}),
+            json!({"kind":"atomic","name":"<","args":[var("$b0"), int(3)]}),
+        ]});
+        let mixed_alpha_forall = json!({
+            "kind":"forall","name":"x",
+            "sort":{"kind":"primitive","name":"Int"},
+            "body": json!({"kind":"implies","operands":[
+                guard,
+                eqf(callg(var("$b0")), int(1))
+            ]}),
+        });
+        let loop_inv = json!({"kind":"and","operands":[mixed_alpha_forall]});
+        let point_inv = json!({"kind":"and","operands":[eqf(callg(int(2)), int(2))]});
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:loop",
+            "src/lib.rs::tests::t::loop::x",
+            loop_inv,
+        );
+        insert_contract(
+            &mut pool,
+            "blake3-512:point",
+            "g#euf#c:callresult_g_a1(i:2)::assertion",
+            point_inv,
+        );
+        let reg = HashMap::new();
+        let res = verify_consistency(&pool, &SolverPlan::Single("unused".into()), &reg);
+        let point = res
+            .iter()
+            .find(|r| r.contract_cid == "blake3-512:point")
+            .expect("point-claim row present");
+        assert_eq!(
+            point.verdict,
+            ObligationVerdict::Unsatisfied,
+            "ambient collection must use the same alpha-normal form as mint: {res:?}"
         );
     }
 

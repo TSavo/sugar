@@ -45,7 +45,7 @@ def kit_declaration_result() -> dict[str, Any]:
             ]
         },
         "proofResolution": {"strategy": "pip"},
-        "effectKinds": ["concept:panic-freedom"],
+        "effectKinds": ["panic-freedom"],
         "effectLeaves": [
             {
                 "surface": SURFACE,

@@ -12,6 +12,15 @@ BIN="$REPO/implementations/rust/target/debug/sugar"
 VENV="${SKLEARN_WITNESS_VENV:-/tmp/sklearn-witness-venv}"
 if [ ! -x "$VENV/bin/python" ]; then
   python3 -m venv "$VENV"
+fi
+if ! "$VENV/bin/python" - <<'PY' >/dev/null 2>&1
+import blake3
+import cbor2
+import nacl
+import pytest
+import sklearn
+PY
+then
   "$VENV/bin/pip" install -q 'scikit-learn==1.9.0' pytest pynacl blake3 cbor2
 fi
 
@@ -37,11 +46,11 @@ check_text() {
 check() { check_text "$report" "$1" "$2"; }
 
 # Consistency axis: good rows discharge, the contradiction is UNSAT.
-check "consistency discharges accuracy_score rows"          "consistent about callsite \`accuracy_score@test_sklearn_metrics.py"
-check "consistency discharges zero_one_loss rows"           "consistent about callsite \`zero_one_loss@test_sklearn_metrics.py"
-check "consistency discharges estimate_bandwidth == 0"      "consistent about callsite \`estimate_bandwidth@test_sklearn_cluster.py"
+check "consistency discharges accuracy_score rows"          "consistent about callsite \`sklearn.metrics.accuracy_score@test_sklearn_metrics.py"
+check "consistency discharges zero_one_loss rows"           "consistent about callsite \`sklearn.metrics.zero_one_loss@test_sklearn_metrics.py"
+check "consistency discharges estimate_bandwidth == 0"      "consistent about callsite \`sklearn.cluster.estimate_bandwidth@test_sklearn_cluster.py"
 check "consistency discharges sklearn assert_array_equal"   "consistent about callsite .test_sklearn_testing_exact_scalar_row"
-check "consistency REFUSES the contradiction"               "contradictory about callsite \`accuracy_score@test_sklearn_metrics_bad.py"
+check "consistency REFUSES the contradiction"               "contradictory about callsite \`sklearn.metrics.accuracy_score@test_sklearn_metrics_bad.py"
 
 # Witness axis: one WitnessPackageMemento over the suite. The package refuses
 # because it includes the deliberately failing contradictory twin, and the
