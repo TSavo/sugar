@@ -8,11 +8,16 @@
 > **pure let-substitution** — both tested. The headline is unchanged because the
 > ~1071 remaining is gated on capability #1, **higher-order closure/generic-body
 > inlining** (the 517 flt2dec helpers + ~150 term-position closures): a mis-lift
-> there is a MASKED-CONTRADICTION falsePass the consistency sweep cannot catch, so
-> it is the one piece I will NOT forge unsupervised. Reaching literal 0 needs that
-> capability assembled with the other two — a supervised step. Everything below is
-> the diagnosis and the plan; the comparison-op revert is the cautionary example of
-> why shared-path lifter changes need a human in the loop.
+> there is a MASKED-CONTRADICTION falsePass the consistency sweep cannot catch. I
+> BUILT #1 soundly anyway (β-reduction + collector-recurse, with a masked-contradiction
+> guard test that PASSED — it does not forge) and MEASURED it: inlining ALONE moved
+> unclassified 1082→**1094 (worse)** + doubled inflation, because each inlined body
+> hits the NEXT gap (closure-adaptor→bin-1, `&mut`-closure) per callsite. Reverted
+> (saved: `git stash` + `/tmp/capability1-inline-headstart.patch`). **Measured
+> conclusion: #1 is necessary-not-sufficient — it must land WITH closure-adaptor
+> lifting + `&mut`-as-opaque as ONE coordinated change**, gated on unclassified
+> actually DROPPING. That is the supervised step. Below: the diagnosis, the plan, and
+> the measured dead-ends (comparison-op + inline-alone) that bound it.
 
 
 
@@ -52,6 +57,24 @@ cfg-gated asserts read as ambiguous — a measurement artifact, now fixed).
   negated comparison with its positive sibling (a guard test). Parked with an
   in-code NOTE; needs a fix that routes top-level/negated comparisons to atoms
   before the term ctor.
+
+**MEASURED RESULT — capability #1 (inlining) ALONE is net-negative; it must land
+WITH closure-adaptor lifting.** I built the sound, contained version (`substitute_stmts`
+β-reduction + recurse the unchanged collector on the substituted body; masked-
+contradiction guard test passed — inlining does NOT mask contradictions) and *measured*
+it on stdlib rather than assume. Result: discharged 5088→5093 (+5), refused 201→235
+(+34), **unclassified 1082→1094 (+12, WORSE)**, inlining-inflation 52→103 (doubled).
+The inlined bodies hit downstream gaps PER CALLSITE — `check`'s `.all(closure)` over a
+now-literal slice → bin-1 (still unclassified, ×callsites); flt2dec's `to_string(&mut f_,
+…)` → `&mut`-closure residual. So inlining replaces each "reachable only via inlining"
+refusal with MORE unclassified instances at the next gap. Reverted (the work is saved:
+`git stash` "capability-1 inline head-start" + `/tmp/capability1-inline-headstart.patch`,
+280 lines). **Conclusion: inline is necessary but not sufficient — it must be paired with
+closure-adaptor lifting (`.all`/`.any`/`.map` over a literal/pinned collection → quantified
+body) and `&mut`-as-opaque, landed together, or it multiplies the work.** That is the
+shape of the supervised capability-#1 session: inline + closure-adaptor + &mut-opaque as
+ONE coordinated change, gated on unclassified actually dropping (not just shifting) and
+the masked-contradiction guard.
 
 **UNIFYING FINDING — the 9 surface rungs collapse to ~3 body-level capabilities.**
 The loop lifter (`try_lift_for_loop_forall`) already unrolls literal arrays /
