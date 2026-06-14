@@ -724,6 +724,7 @@ def _package_locus_classification(
         ancestors,
         module_name,
         tree,
+        call_aliases,
     )
     if nondet_status is not None:
         return nondet_status
@@ -953,6 +954,15 @@ def _package_locus_structural_classification(
     assert_guard_status = _assert_guard_flow_refusal_status(node, ancestors)
     if assert_guard_status is not None:
         return assert_guard_status
+    nondet_status = _nondeterministic_call_refusal_status(
+        node,
+        ancestors,
+        module_name,
+        tree,
+        call_aliases,
+    )
+    if nondet_status is not None:
+        return nondet_status
     module_metadata_status = _public_module_metadata_status(node, ancestors)
     if module_metadata_status is not None:
         return module_metadata_status
@@ -3440,6 +3450,7 @@ def _call_func_attribute_path(node: ast.AST) -> tuple[str, ...]:
 
 _NONDET_CALL_ATTRS = frozenset(
     {
+        "default_rng",
         "random",
         "uniform",
         "randint",
@@ -3459,7 +3470,7 @@ _NONDET_CALL_ATTRS = frozenset(
         "perf_counter",
     }
 )
-_NONDET_CALL_ROOTS = frozenset({"random", "secrets", "uuid", "time"})
+_NONDET_CALL_ROOTS = frozenset({"numpy", "random", "secrets", "uuid", "time"})
 
 
 def _nondeterministic_call_refusal_status(
@@ -3467,17 +3478,53 @@ def _nondeterministic_call_refusal_status(
     ancestors: tuple[ast.AST, ...],
     module_name: str,
     tree: ast.Module,
+    call_aliases: Optional[Dict[str, str]] = None,
 ) -> Optional[tuple[str, str]]:
     stmt = _nearest_statement(ancestors + (node,))
     if stmt is None:
         return None
     chain = ancestors + (node,)
+    reason = _nondeterministic_statement_reason(
+        stmt,
+        chain,
+        module_name,
+        tree,
+        call_aliases,
+    )
+    if reason is not None:
+        return "refused", reason
+    return None
+
+
+def _nondeterministic_statement_reason(
+    stmt: ast.stmt,
+    chain: tuple[ast.AST, ...],
+    module_name: str,
+    tree: ast.Module,
+    call_aliases: Optional[Dict[str, str]] = None,
+) -> Optional[str]:
+    cached = getattr(stmt, "_sugar_nondeterministic_reason", None)
+    if cached is not None:
+        return str(cached) if cached else None
     for call in (n for n in ast.walk(stmt) if isinstance(n, ast.Call)):
-        reason = _nondeterministic_call_reason(call, chain, module_name, tree)
+        reason = _nondeterministic_call_reason(
+            call,
+            chain,
+            module_name,
+            tree,
+            call_aliases,
+        )
         if reason is None:
             continue
-        if node is stmt or any(candidate is node for candidate in ast.walk(stmt)):
-            return "refused", reason
+        try:
+            setattr(stmt, "_sugar_nondeterministic_reason", reason)
+        except AttributeError:
+            pass
+        return reason
+    try:
+        setattr(stmt, "_sugar_nondeterministic_reason", False)
+    except AttributeError:
+        pass
     return None
 
 
@@ -3486,8 +3533,9 @@ def _nondeterministic_call_reason(
     chain: tuple[ast.AST, ...],
     module_name: str,
     tree: ast.Module,
+    call_aliases: Optional[Dict[str, str]] = None,
 ) -> Optional[str]:
-    direct = _direct_nondeterministic_call_name(call)
+    direct = _direct_nondeterministic_call_name(call, call_aliases)
     if direct:
         return (
             "nondeterminism source refused: "
@@ -4143,15 +4191,19 @@ def _node_has_yield_outside_nested_scope(node: ast.AST) -> bool:
     )
 
 
-def _direct_nondeterministic_call_name(call: ast.Call) -> str:
+def _direct_nondeterministic_call_name(
+    call: ast.Call,
+    call_aliases: Optional[Dict[str, str]] = None,
+) -> str:
     static_name = _static_call_name(call.func)
-    parts = static_name.split(".") if static_name else []
-    if not parts:
-        return ""
-    root = parts[0]
-    leaf = parts[-1]
-    if root in _NONDET_CALL_ROOTS and leaf in _NONDET_CALL_ATTRS:
-        return static_name
+    resolved_name = (
+        _resolved_static_call_name(call.func, call_aliases)
+        if call_aliases is not None
+        else ""
+    )
+    for candidate in (resolved_name, static_name):
+        if candidate and _static_call_name_is_nondeterministic(candidate):
+            return candidate
     return ""
 
 
