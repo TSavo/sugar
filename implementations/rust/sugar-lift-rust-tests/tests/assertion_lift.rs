@@ -638,6 +638,82 @@ fn byte_contradiction() {
     assert_ne!(v0, v1, "distinct byte literals must not coalesce");
 }
 
+// `assert_eq!(left, &mut [1, 2, 3])`: slice/array PartialEq is BY VALUE, so the
+// `&mut [literal]` RHS denotes the pinned array value, not a pointer. It lifts as
+// `ref_mut(<array value>)` -- the SAME immutable-value class as `&mut <scalar lit>`.
+// Distinct array literals must stay distinct (no false coalesce); a `&mut <variable>`
+// must STILL stay residual (the pointer-identity guard, asserted elsewhere).
+fn ref_mut_array_rhs_var_name(formula: &Formula) -> String {
+    match formula {
+        Formula::Atomic { name, args } => {
+            assert_eq!(name, "=");
+            assert_eq!(args.len(), 2);
+            match args[1].as_ref() {
+                Term::Ctor { name, args } => {
+                    assert_eq!(name, "ref_mut", "RHS must be a ref_mut term");
+                    assert_eq!(args.len(), 1);
+                    match args[0].as_ref() {
+                        Term::Var { name } => name.clone(),
+                        other => panic!("expected array-value var inside ref_mut, got {other:?}"),
+                    }
+                }
+                other => panic!("expected ref_mut ctor rhs, got {other:?}"),
+            }
+        }
+        other => panic!("expected equality atom, got {other:?}"),
+    }
+}
+
+#[test]
+fn mut_ref_to_array_literal_lifts_as_ref_mut_of_pinned_value() {
+    // Positive: the pinned array value rides inside ref_mut (sugar in, constraint
+    // out). `make_slice()` is the EUF call-result LHS.
+    let src = r#"
+fn make_slice() -> &'static mut [i32] { todo!() }
+
+#[test]
+fn slice_is_123() {
+    assert_eq!(make_slice(), &mut [1, 2, 3]);
+}
+"#;
+    let out = lift_file(&parse(src), "src/lib.rs");
+    assert_eq!(out.seen, 1);
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    let operands = inv_operands(&out.decls[0]);
+    assert_eq!(operands.len(), 1);
+    let name = ref_mut_array_rhs_var_name(&operands[0]);
+    assert_eq!(
+        name, "literal:Array(i:1,i:2,i:3)",
+        "the array literal value must be pinned by content"
+    );
+}
+
+#[test]
+fn distinct_mut_ref_array_literals_stay_distinct_no_coalesce() {
+    // Break-the-twin: `&mut [1,2,3]` and `&mut [4,5,6]` must lift to DISTINCT pinned
+    // values so the conjoined obligation is genuinely refutable -- a single receiver
+    // cannot equal both. If they coalesced, a false assert would discharge vacuously
+    // (the masked contradiction the consistency sweep cannot catch).
+    let src = r#"
+fn make_slice() -> &'static mut [i32] { todo!() }
+
+#[test]
+fn slice_contradiction() {
+    assert_eq!(make_slice(), &mut [1, 2, 3]);
+    assert_eq!(make_slice(), &mut [4, 5, 6]);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/slice_contradiction.rs");
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    let operands = inv_operands(&out.decls[0]);
+    assert_eq!(operands.len(), 2, "two distinct array-literal atoms");
+    let n0 = ref_mut_array_rhs_var_name(&operands[0]);
+    let n1 = ref_mut_array_rhs_var_name(&operands[1]);
+    assert_eq!(n0, "literal:Array(i:1,i:2,i:3)");
+    assert_eq!(n1, "literal:Array(i:4,i:5,i:6)");
+    assert_ne!(n0, n1, "distinct array literals must not coalesce");
+}
+
 #[test]
 fn transparent_assert_helper_reduces_to_assert_eq_base_lifter() {
     let src = r#"

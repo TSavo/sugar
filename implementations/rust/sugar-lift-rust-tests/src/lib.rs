@@ -6756,18 +6756,25 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
             name: "ref".to_string(),
             args: vec![translate_term_in_scope(&reference.expr, scope)?],
         })),
-        // `&mut <closure>` / `&mut <literal>`: the referent is an IMMUTABLE VALUE (a
-        // closure or literal cannot be reassigned), so unlike `&mut <variable>` --
-        // which stays RESIDUAL because two `&mut x` of a mutable binding are distinct
+        // `&mut <closure>` / `&mut <literal>` / `&mut [<array literal>]`: the referent
+        // is an IMMUTABLE VALUE (a closure, scalar literal, or freshly-constructed
+        // array literal cannot be reassigned), so unlike `&mut <variable>` -- which
+        // stays RESIDUAL because two `&mut x` of a mutable binding are distinct
         // pointers (mutable_reference_pointer_eq_stays_residual) -- this `&mut` is a
         // stable term: `ref_mut(<value>)`. Needed so `to_string(&mut |d,b,l| .., 3.14)`
         // (the flt2dec FnMut pattern, post-inline) lifts as a stated point-observation
-        // rather than refusing on `& mut |..|`. Strictly narrower than the residual
-        // rule: a plain `&mut x` still falls through to the catch-all and refuses.
+        // rather than refusing on `& mut |..|`, AND so `assert_eq!(left, &mut [1,2,3])`
+        // -- slice/array PartialEq is BY VALUE, not by pointer -- lifts its pinned RHS
+        // (`array.rs`/`slice.rs` split/chunk asserts). The array is the SAME immutable-
+        // value class as a scalar literal: its elements lift via the version-aware
+        // element path (so a mutable element cannot false-coalesce across a tick), and
+        // a non-liftable element propagates its own Err (stays unclassified, never a
+        // false discharge). Strictly narrower than the residual rule: a plain `&mut x`
+        // (and `&mut <call>`, e.g. `&mut ready(1)`) still falls through and refuses.
         Expr::Reference(reference)
             if matches!(
                 &*reference.expr,
-                Expr::Closure(_) | Expr::Lit(_)
+                Expr::Closure(_) | Expr::Lit(_) | Expr::Array(_)
             ) =>
         {
             Ok(Rc::new(Term::Ctor {
