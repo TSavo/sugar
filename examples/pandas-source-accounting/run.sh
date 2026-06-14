@@ -27,9 +27,6 @@ rm -rf .sugar/runs .sugar/witnesses __pycache__ 2>/dev/null || true
 echo "== sugar lift --report --json (full pandas package source accounting) =="
 "$BIN" lift --report --json . > .pandas-source-report.json
 
-echo "== sugar lift --report (human report) =="
-"$BIN" lift --report . > .pandas-source-report.txt
-
 "$VENV/bin/python" - <<'PY'
 import json
 from pathlib import Path
@@ -81,10 +78,6 @@ print(
     sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:10],
 )
 PY
-
-echo ""
-echo "== report excerpt =="
-sed -n '1,120p' .pandas-source-report.txt
 
 echo ""
 echo "==== pandas-source-accounting: PASS ===="

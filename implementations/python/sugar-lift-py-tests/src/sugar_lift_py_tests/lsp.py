@@ -1019,6 +1019,9 @@ def _package_locus_structural_classification(
     )
     if keyword_argument_status is not None:
         return keyword_argument_status
+    return_value_status = _return_value_relation_status(node, ancestors)
+    if return_value_status is not None:
+        return return_value_status
     assignment_mutation_status = _assignment_target_mutation_refusal_status(
         node,
         ancestors,
@@ -2141,6 +2144,8 @@ def _dynamic_receiver_method_dispatch_refusal_status(
     if not params:
         return None
     for call in (candidate for candidate in ast.walk(stmt) if isinstance(candidate, ast.Call)):
+        if _is_known_pure_method_call_value_expr(call):
+            continue
         receiver = _dynamic_method_receiver_name(call)
         if receiver is None or receiver not in params:
             continue
@@ -3762,6 +3767,52 @@ def _return_through_local_binding_status(
     )
 
 
+def _return_value_relation_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    stmt = _return_value_relation_statement_for_locus(node, ancestors)
+    if stmt is None:
+        return None
+    return (
+        "warranted",
+        "return value relation admitted as function result equality",
+    )
+
+
+def _return_value_relation_statement_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[ast.Return]:
+    chain = ancestors + (node,)
+    stmt_index: Optional[int] = None
+    stmt: Optional[ast.Return] = None
+    for index in range(len(chain) - 1, -1, -1):
+        item = chain[index]
+        if isinstance(item, ast.Return):
+            stmt_index = index
+            stmt = item
+            break
+    if stmt is None or stmt_index is None:
+        return None
+    owner = _nearest_enclosing_function(chain[:stmt_index])
+    if owner is None or stmt.value is None:
+        return None
+    if not _is_return_value_relation_expr(stmt.value):
+        return None
+    if node is stmt or any(candidate is node for candidate in ast.walk(stmt.value)):
+        return stmt
+    return None
+
+
+def _is_return_value_relation_expr(node: ast.AST) -> bool:
+    if _has_store_or_del_context(node):
+        return False
+    if isinstance(node, (ast.BoolOp, ast.Compare)):
+        return _is_pure_branch_predicate_expr(node)
+    return _is_known_pure_call_arg(node)
+
+
 def _return_local_name_statement_for_locus(
     node: ast.AST,
     ancestors: tuple[ast.AST, ...],
@@ -4435,6 +4486,8 @@ def _is_pure_branch_slice(node: ast.AST) -> bool:
 
 
 def _is_pure_branch_known_call(node: ast.Call) -> bool:
+    if _is_known_pure_method_call_value_expr(node):
+        return True
     if node.keywords or any(isinstance(arg, ast.Starred) for arg in node.args):
         return False
     name = _static_call_name(node.func)
@@ -4599,6 +4652,11 @@ def _known_pure_call_value_term_status(
     call = _nearest_known_pure_call_value_for_locus(node, ancestors)
     if call is None:
         return None
+    if _is_known_pure_method_call_value_expr(call):
+        return (
+            "warranted",
+            "known pure method value term admitted as compiler fact",
+        )
     return (
         "warranted",
         "known pure call value term admitted as compiler fact",
@@ -4665,6 +4723,8 @@ def _is_known_pure_call_value_expr(node: ast.Call) -> bool:
         return False
     if any(keyword.arg is None for keyword in node.keywords):
         return False
+    if _is_known_pure_method_call_value_expr(node):
+        return True
     name = _static_call_name(node.func)
     if name == "getattr":
         return (
@@ -4742,6 +4802,66 @@ def _is_known_pure_call_value_expr(node: ast.Call) -> bool:
         return (
             len(node.args) == 1
             and _is_known_pure_call_arg(node.args[0])
+        )
+    return False
+
+
+_KNOWN_PURE_NO_ARG_METHODS = frozenset(
+    {
+        "capitalize",
+        "casefold",
+        "items",
+        "keys",
+        "lower",
+        "title",
+        "upper",
+        "values",
+    }
+)
+_KNOWN_PURE_OPTIONAL_ONE_ARG_METHODS = frozenset(
+    {
+        "lstrip",
+        "removeprefix",
+        "removesuffix",
+        "rstrip",
+        "strip",
+    }
+)
+_KNOWN_PURE_ONE_ARG_METHODS = frozenset({"join"})
+_KNOWN_PURE_TWO_OR_THREE_ARG_METHODS = frozenset({"replace"})
+_KNOWN_PURE_ONE_TO_THREE_ARG_METHODS = frozenset({"endswith", "startswith"})
+
+
+def _is_known_pure_method_call_value_expr(node: ast.Call) -> bool:
+    if _has_store_or_del_context(node):
+        return False
+    if any(isinstance(arg, ast.Starred) for arg in node.args):
+        return False
+    if node.keywords:
+        return False
+    func = node.func
+    if not isinstance(func, ast.Attribute):
+        return False
+    method = func.attr
+    if method in _NONDET_CALL_ATTRS:
+        return False
+    if not _is_known_pure_call_arg(func.value):
+        return False
+    if method in _KNOWN_PURE_NO_ARG_METHODS:
+        return not node.args
+    if method in _KNOWN_PURE_OPTIONAL_ONE_ARG_METHODS:
+        return len(node.args) <= 1 and all(
+            _is_known_pure_call_arg(arg) for arg in node.args
+        )
+    if method in _KNOWN_PURE_ONE_ARG_METHODS:
+        return len(node.args) == 1 and _is_known_pure_call_arg(node.args[0])
+    if method in _KNOWN_PURE_TWO_OR_THREE_ARG_METHODS:
+        return 2 <= len(node.args) <= 3 and all(
+            _is_known_pure_call_arg(arg) for arg in node.args
+        )
+    if method in _KNOWN_PURE_ONE_TO_THREE_ARG_METHODS:
+        return 1 <= len(node.args) <= 3 and all(
+            _is_known_pure_call_arg(arg) for arg in node.args
         )
     return False
 

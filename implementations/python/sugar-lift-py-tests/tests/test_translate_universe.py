@@ -1500,6 +1500,164 @@ def test_structural_package_accounting_warrants_known_pure_stdlib_bridge_terms(
     ), bridge_loci
 
 
+def test_structural_package_accounting_warrants_known_pure_method_value_terms(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("SUGAR_PY_PACKAGE_ACCOUNTING_MODE", "structural")
+    pkg = tmp_path / "vendpkg_known_pure_method_terms"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    module_path = pkg / "api.py"
+    module_path.write_text(
+        textwrap.dedent(
+            '''
+            def skipped(value, values, items):
+                lowered = value.lower()
+                keys = list(values.keys())
+                joined = "|".join(items)
+                stripped = value.rstrip("=")
+                if not value or "ascii" in value.lower():
+                    ascii_safe = True
+                return joined
+
+            def ok():
+                return "ok"
+            '''
+        ),
+        encoding="utf-8",
+    )
+    method_lines = {
+        line_no
+        for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
+        if line.strip().startswith(
+            ("lowered =", "keys =", "joined =", "stripped =", "if not value")
+        )
+    }
+    monkeypatch.syspath_prepend(str(tmp_path))
+    constant_universe_for_callee_clear()
+
+    lifted = _lift_source_from_disk(
+        tmp_path,
+        "test_mod.py",
+        """
+        import vendpkg_known_pure_method_terms.api as api
+
+        def test_ok():
+            assert api.ok() == "ok"
+        """,
+    )
+
+    audit = next(
+        audit
+        for audit in lifted["sourceAudits"]
+        if audit.get("role") == "python.package-source"
+        and audit.get("package") == "vendpkg_known_pure_method_terms"
+    )
+    method_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith("vendpkg_known_pure_method_terms/api.py")
+        and locus["line"] in method_lines
+        and locus.get("ast_kind")
+        in {"Assign", "If", "BoolOp", "Compare", "Call", "Attribute", "Name", "Constant"}
+    ]
+    assert method_loci
+    assert not [
+        locus
+        for locus in method_loci
+        if locus["status"] in {"unclassified", "refused"}
+    ], method_loci
+    assert any(
+        locus["status"] == "warranted"
+        and locus.get("ast_kind") == "Call"
+        and "known pure method value term" in locus.get("reason", "")
+        for locus in method_loci
+    ), method_loci
+    assert any(
+        locus["status"] == "warranted"
+        and locus.get("ast_kind") == "If"
+        and "pure branch predicate" in locus.get("reason", "")
+        for locus in method_loci
+    ), method_loci
+
+
+def test_structural_package_accounting_warrants_direct_return_value_relations(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("SUGAR_PY_PACKAGE_ACCOUNTING_MODE", "structural")
+    pkg = tmp_path / "vendpkg_direct_return_value_relations"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    module_path = pkg / "api.py"
+    module_path.write_text(
+        textwrap.dedent(
+            """
+            def by_arg(value):
+                return value
+
+            def by_literal():
+                return True
+
+            def by_selector(values, key):
+                return values[key]
+
+            def by_compare(value):
+                return value == "x"
+
+            def ok():
+                return "ok"
+            """
+        ),
+        encoding="utf-8",
+    )
+    return_lines = {
+        line_no
+        for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
+        if line.strip().startswith("return ")
+        and not line.strip().startswith('return "ok"')
+    }
+    monkeypatch.syspath_prepend(str(tmp_path))
+    constant_universe_for_callee_clear()
+
+    lifted = _lift_source_from_disk(
+        tmp_path,
+        "test_mod.py",
+        """
+        import vendpkg_direct_return_value_relations.api as api
+
+        def test_ok():
+            assert api.ok() == "ok"
+        """,
+    )
+
+    audit = next(
+        audit
+        for audit in lifted["sourceAudits"]
+        if audit.get("role") == "python.package-source"
+        and audit.get("package") == "vendpkg_direct_return_value_relations"
+    )
+    return_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith("vendpkg_direct_return_value_relations/api.py")
+        and locus["line"] in return_lines
+        and locus.get("ast_kind")
+        in {"Return", "Name", "Constant", "Subscript", "Compare"}
+    ]
+    assert return_loci
+    assert not [
+        locus for locus in return_loci if locus["status"] == "unclassified"
+    ], return_loci
+    assert any(
+        locus["status"] == "warranted"
+        and locus.get("ast_kind") == "Return"
+        and "return value relation" in locus.get("reason", "")
+        for locus in return_loci
+    ), return_loci
+
+
 def test_structural_package_accounting_warrants_static_value_references(
     tmp_path,
     monkeypatch,
