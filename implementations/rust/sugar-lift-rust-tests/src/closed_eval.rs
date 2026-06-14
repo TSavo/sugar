@@ -202,40 +202,69 @@ fn operands_use_stdlib_op(operands: &[&Expr]) -> bool {
 /// Single level only: a body that calls another local helper does NOT qualify (skip =
 /// safe under-claim). This stays inside fence #1: we are not verifying the helper, we
 /// are dissolving the stdlib sugar it wraps -- the helper carries no logic of its own.
-fn helper_is_carryable(f: &syn::ItemFn) -> bool {
-    // Desugar-and-continue: the helper is plumbing whose body we replace by its value.
-    // It qualifies iff its body is pure stdlib sugar -- NO impure op, and NO call to
-    // another (non-ctor) function (single level). Local `let` bindings and the helper's
-    // own params are fine; a genuinely-free var would fail the harness compile (safe).
-    struct BodyCheck {
-        ok: bool,
+/// Recursively decide whether the local helper `name` is CARRYABLE -- plumbing whose
+/// body is pure stdlib sugar, where every non-ctor call it makes is to ANOTHER carryable
+/// helper (multi-level, with a cycle guard). On success, `name` and all its transitive
+/// helper callees are recorded into `deps` (the set to carry into the harness prelude).
+/// A helper that is ambiguous (defined more than once), impure, or calls a non-carryable
+/// fn disqualifies (-> not carried -> safe under-claim). Bare idents/local lets are fine
+/// (a genuinely-free var just fails the harness compile = safe).
+fn helper_carryable(
+    name: &str,
+    fns: &std::collections::BTreeMap<String, Vec<syn::ItemFn>>,
+    deps: &mut std::collections::BTreeSet<String>,
+    seen: &mut std::collections::BTreeSet<String>,
+) -> bool {
+    if deps.contains(name) {
+        return true; // already validated + recorded
     }
-    impl<'ast> syn::visit::Visit<'ast> for BodyCheck {
+    if !seen.insert(name.to_string()) {
+        return false; // cycle -> reject (safe)
+    }
+    let f = match fns.get(name) {
+        Some(d) if d.len() == 1 => &d[0],
+        _ => return false, // missing or ambiguous
+    };
+    // Gather every method name (for the impure check) and every non-ctor call callee.
+    struct Collect {
+        methods: Vec<String>,
+        calls: Vec<String>,
+        bad: bool,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Collect {
+        fn visit_expr_method_call(&mut self, m: &'ast syn::ExprMethodCall) {
+            self.methods.push(m.method.to_string());
+            syn::visit::visit_expr_method_call(self, m);
+        }
         fn visit_expr_call(&mut self, c: &'ast syn::ExprCall) {
-            // calls allowed only to ctors/variants (Some/Ok/..); a lowercase call =
-            // another helper / user fn -> disqualify (single-level only).
-            let ctor =
-                matches!(c.func.as_ref(), Expr::Path(p) if is_const_or_ctor_path(&p.path));
-            if !ctor {
-                self.ok = false;
+            match c.func.as_ref() {
+                Expr::Path(p) if is_const_or_ctor_path(&p.path) => {}
+                Expr::Path(p) => match p.path.get_ident() {
+                    Some(id) => self.calls.push(id.to_string()),
+                    None => self.bad = true, // path call we can't resolve (e.g. T::f)
+                },
+                _ => self.bad = true,
             }
             syn::visit::visit_expr_call(self, c);
         }
-        fn visit_expr_method_call(&mut self, m: &'ast syn::ExprMethodCall) {
-            if IMPURE_NAMES.contains(&m.method.to_string().as_str()) {
-                self.ok = false;
-            }
-            syn::visit::visit_expr_method_call(self, m);
-        }
-        // NOTE: we deliberately do NOT reject bare identifiers. A helper body legitimately
-        // uses local `let` bindings (`let iter = c.to_lowercase().collect(); ...`). A
-        // genuinely-free variable would simply fail to compile in the harness -> not green
-        // -> not dissolved (safe). The real fences are: no impure op (above) and no call to
-        // another (non-ctor) function (below, single-level).
     }
-    let mut c = BodyCheck { ok: true };
+    let mut c = Collect {
+        methods: Vec::new(),
+        calls: Vec::new(),
+        bad: false,
+    };
     syn::visit::Visit::visit_block(&mut c, &f.block);
-    c.ok
+    if c.bad || c.methods.iter().any(|m| IMPURE_NAMES.contains(&m.as_str())) {
+        return false;
+    }
+    // every non-ctor callee must itself be carryable (transitively).
+    for callee in &c.calls {
+        if !helper_carryable(callee, fns, deps, seen) {
+            return false;
+        }
+    }
+    deps.insert(name.to_string());
+    true
 }
 
 /// Walk a file for unit-test assertions that are CLOSED STDLIB VALUE SUGAR (gate) and
@@ -356,15 +385,15 @@ fn collect_block_asserts(
             if let Expr::Path(p) = c.func.as_ref() {
                 if let Some(id) = p.path.get_ident() {
                     let name = id.to_string();
-                    // lowercase call: only OK if it's a unique carryable local helper.
+                    // lowercase call: only OK if it resolves to a carryable local helper
+                    // (multi-level: helper_carryable records it + its transitive helper
+                    // callees into `helpers` for the prelude).
                     if !is_const_or_ctor_path(&p.path) {
-                        match fns.get(&name) {
-                            Some(defs) if defs.len() == 1 && helper_is_carryable(&defs[0]) => {
-                                helpers.insert(name);
-                                return c.args.iter().all(|a| check(a, fns, locals, helpers));
-                            }
-                            _ => return false,
+                        let mut seen = std::collections::BTreeSet::new();
+                        if helper_carryable(&name, fns, helpers, &mut seen) {
+                            return c.args.iter().all(|a| check(a, fns, locals, helpers));
                         }
+                        return false;
                     }
                 }
             }
@@ -895,8 +924,8 @@ mod tests {
     }
 
     #[test]
-    fn collect_skips_multilevel_or_user_logic_helper() {
-        // helper that calls ANOTHER fn -> not single-level pure stdlib -> skipped.
+    fn collect_carries_multilevel_pure_helper() {
+        // outer calls inner (both pure stdlib plumbing) -> the WHOLE chain is carried.
         let file: syn::File = syn::parse_str(
             "fn inner(c: char) -> char { c }\n\
              fn outer(c: char) -> String { inner(c).to_lowercase().collect() }\n\
@@ -904,7 +933,21 @@ mod tests {
         )
         .unwrap();
         let d = collect_dissolvable(&file);
-        assert!(d.iter().all(|u| u.asserts.is_empty()), "multilevel helper must be skipped (safe)");
+        assert_eq!(d.iter().map(|u| u.asserts.len()).sum::<usize>(), 1, "multilevel pure helper dissolvable");
+        assert!(d.iter().any(|u| u.prelude.contains("fn outer") && u.prelude.contains("fn inner")),
+            "both helpers in the chain are carried");
+    }
+
+    #[test]
+    fn collect_skips_helper_calling_unresolvable_fn() {
+        // outer calls a fn we cannot see (external/user logic) -> not carryable -> skipped.
+        let file: syn::File = syn::parse_str(
+            "fn outer(c: char) -> String { mystery(c).to_lowercase().collect() }\n\
+             #[test] fn t() { assert_eq!(outer('A'), \"a\"); }\n",
+        )
+        .unwrap();
+        let d = collect_dissolvable(&file);
+        assert!(d.iter().all(|u| u.asserts.is_empty()), "helper with unresolvable callee must be skipped (safe)");
     }
 
     #[test]
