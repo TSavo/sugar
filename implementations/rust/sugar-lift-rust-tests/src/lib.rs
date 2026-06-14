@@ -6756,6 +6756,25 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
             name: "ref".to_string(),
             args: vec![translate_term_in_scope(&reference.expr, scope)?],
         })),
+        // `&mut <closure>` / `&mut <literal>`: the referent is an IMMUTABLE VALUE (a
+        // closure or literal cannot be reassigned), so unlike `&mut <variable>` --
+        // which stays RESIDUAL because two `&mut x` of a mutable binding are distinct
+        // pointers (mutable_reference_pointer_eq_stays_residual) -- this `&mut` is a
+        // stable term: `ref_mut(<value>)`. Needed so `to_string(&mut |d,b,l| .., 3.14)`
+        // (the flt2dec FnMut pattern, post-inline) lifts as a stated point-observation
+        // rather than refusing on `& mut |..|`. Strictly narrower than the residual
+        // rule: a plain `&mut x` still falls through to the catch-all and refuses.
+        Expr::Reference(reference)
+            if matches!(
+                &*reference.expr,
+                Expr::Closure(_) | Expr::Lit(_)
+            ) =>
+        {
+            Ok(Rc::new(Term::Ctor {
+                name: "ref_mut".to_string(),
+                args: vec![translate_term_in_scope(&reference.expr, scope)?],
+            }))
+        }
         Expr::Cast(cast) => {
             if is_shared_dyn_any_type(&cast.ty) {
                 return Ok(Rc::new(Term::Ctor {
