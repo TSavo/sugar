@@ -4791,8 +4791,18 @@ def _is_call_term_arg(
             module_name,
             tree,
         ) and _is_call_term_arg(node.right, chain, call_aliases, module_name, tree)
+    if isinstance(node, ast.Starred):
+        return _is_call_term_arg(node.value, chain, call_aliases, module_name, tree)
+    if isinstance(node, ast.IfExp):
+        return _is_conditional_local_binding_value(
+            node,
+            chain,
+            call_aliases,
+            module_name,
+            tree,
+        )
     if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-        return not any(isinstance(value, ast.Starred) for value in node.elts) and all(
+        return all(
             _is_call_term_arg(value, chain, call_aliases, module_name, tree)
             for value in node.elts
         )
