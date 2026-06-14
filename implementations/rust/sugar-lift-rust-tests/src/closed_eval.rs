@@ -339,13 +339,95 @@ fn collect_dissolvable_asserts_with_helpers(
         }
     }
 
+    // Rebuild an assert macro with the loop variable token-substituted (loopvar ->
+    // value) throughout its token stream, descending into groups. Token-level is
+    // simple and fully backstopped: a wrong substitution can only yield a non-green
+    // harness -> not dissolved (safe); it can never false-discharge.
+    fn subst_macro(m: &syn::Macro, var: &str, value: &Expr) -> Option<syn::Macro> {
+        fn replace(
+            ts: proc_macro2::TokenStream,
+            var: &str,
+            val: &proc_macro2::TokenStream,
+        ) -> proc_macro2::TokenStream {
+            ts.into_iter()
+                .flat_map(|tt| -> proc_macro2::TokenStream {
+                    match tt {
+                        proc_macro2::TokenTree::Ident(id) if id.to_string() == var => val.clone(),
+                        proc_macro2::TokenTree::Group(g) => {
+                            let inner = replace(g.stream(), var, val);
+                            std::iter::once(proc_macro2::TokenTree::Group(
+                                proc_macro2::Group::new(g.delimiter(), inner),
+                            ))
+                            .collect()
+                        }
+                        other => std::iter::once(other).collect(),
+                    }
+                })
+                .collect()
+        }
+        let val_tokens = quote::quote!(#value);
+        let mut m2 = m.clone();
+        m2.tokens = replace(m.tokens.clone(), var, &val_tokens);
+        Some(m2)
+    }
+
+    // The finite, concrete domain of a `for v in <domain>` loop, as the list of
+    // iteration values (each an `Expr`). `None` if the domain is not a finite literal
+    // construction (a runtime collection, a non-literal bound, or too large).
+    fn for_loop_domain(f: &syn::ExprForLoop) -> Option<Vec<Expr>> {
+        const CAP: i64 = 512;
+        match &*f.expr {
+            Expr::Range(r) => {
+                let parse_int = |e: &Expr| -> Option<i64> {
+                    match e {
+                        Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(i), .. }) => {
+                            i.base10_parse::<i64>().ok()
+                        }
+                        Expr::Unary(u) if matches!(u.op, syn::UnOp::Neg(_)) => match u.expr.as_ref() {
+                            Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(i), .. }) => {
+                                i.base10_parse::<i64>().ok().map(|n| -n)
+                            }
+                            _ => None,
+                        },
+                        _ => None,
+                    }
+                };
+                let start = parse_int(r.start.as_deref()?)?;
+                let end = parse_int(r.end.as_deref()?)?;
+                let end = if matches!(r.limits, syn::RangeLimits::Closed(_)) { end + 1 } else { end };
+                if end < start || end - start > CAP {
+                    return None;
+                }
+                Some(
+                    (start..end)
+                        .map(|n| syn::parse_str::<Expr>(&n.to_string()).unwrap())
+                        .collect(),
+                )
+            }
+            Expr::Array(a) if !a.elems.is_empty() && a.elems.len() as i64 <= CAP => {
+                Some(a.elems.iter().cloned().collect())
+            }
+            _ => None,
+        }
+    }
+
     struct W<'a> {
         fns: &'a std::collections::BTreeMap<String, Vec<syn::ItemFn>>,
         asserts: &'a mut Vec<String>,
         helpers: &'a mut std::collections::BTreeSet<String>,
     }
-    impl<'a, 'ast> syn::visit::Visit<'ast> for W<'a> {
-        fn visit_macro(&mut self, m: &'ast syn::Macro) {
+    impl<'a> W<'a> {
+        // Try one assert macro (already loop-substituted if applicable) as a dissolvable
+        // candidate; push it if it gates.
+        fn try_assert(&mut self, m: &syn::Macro) {
+            W::try_assert_static(m, self.fns, self.asserts, self.helpers);
+        }
+        fn try_assert_static(
+            m: &syn::Macro,
+            fns: &std::collections::BTreeMap<String, Vec<syn::ItemFn>>,
+            asserts: &mut Vec<String>,
+            helpers: &mut std::collections::BTreeSet<String>,
+        ) {
             let name = m
                 .path
                 .segments
@@ -368,16 +450,13 @@ fn collect_dissolvable_asserts_with_helpers(
                         ops.iter().take(2).copied().collect()
                     };
                     let enough = value_ops.len() == if macro_name == "assert" { 1 } else { 2 };
-                    // try with a scratch helper set; commit only if the whole assert gates.
                     let mut scratch = std::collections::BTreeSet::new();
-                    let all_sugar = enough && value_ops.iter().all(|e| check(e, self.fns, &mut scratch));
-                    // A dissolvable candidate must be something the SYMBOLIC lifter could not
-                    // model -> a direct stdlib op in the operand, OR a carried local helper
-                    // (a helper call is also unclassified by the lifter). Either avoids double-count.
+                    let all_sugar =
+                        enough && value_ops.iter().all(|e| check(e, fns, &mut scratch));
                     let gated =
                         all_sugar && (operands_use_stdlib_op(&value_ops) || !scratch.is_empty());
                     if gated {
-                        self.helpers.extend(scratch);
+                        helpers.extend(scratch);
                         let stmt = if macro_name == "assert" {
                             format!("assert!({})", quote::quote!(#(#value_ops)*))
                         } else {
@@ -385,10 +464,54 @@ fn collect_dissolvable_asserts_with_helpers(
                             let r = value_ops[1];
                             format!("{}!({}, {})", macro_name, quote::quote!(#l), quote::quote!(#r))
                         };
-                        self.asserts.push(stmt);
+                        asserts.push(stmt);
                     }
                 }
             }
+        }
+    }
+    impl<'a, 'ast> syn::visit::Visit<'ast> for W<'a> {
+        fn visit_expr_for_loop(&mut self, f: &'ast syn::ExprForLoop) {
+            // UNROLL a finite literal-domain loop into point assertions: each body
+            // assert with the loop variable replaced by each concrete iteration value.
+            // This turns a bounded UNIVERSE into points, each then dissolvable. A
+            // runtime/non-literal domain falls through to the normal walk (whose
+            // free-variable asserts the gate rejects -> stays unclassified, safe).
+            if let (syn::Pat::Ident(pi), Some(values)) =
+                (f.pat.as_ref(), for_loop_domain(f))
+            {
+                if pi.subpat.is_none() {
+                    let var = pi.ident.to_string();
+                    // collect the body's assert macros once.
+                    struct Collect {
+                        macros: Vec<syn::Macro>,
+                    }
+                    impl<'b> syn::visit::Visit<'b> for Collect {
+                        fn visit_macro(&mut self, m: &'b syn::Macro) {
+                            self.macros.push(m.clone());
+                            syn::visit::visit_macro(self, m);
+                        }
+                    }
+                    let mut c = Collect { macros: Vec::new() };
+                    for st in &f.body.stmts {
+                        syn::visit::Visit::visit_stmt(&mut c, st);
+                    }
+                    for value in &values {
+                        for m in &c.macros {
+                            // substitute loopvar -> value in the macro's tokens by
+                            // re-parsing operands, substituting, and rebuilding a macro.
+                            if let Some(subbed) = subst_macro(m, &var, value) {
+                                self.try_assert(&subbed);
+                            }
+                        }
+                    }
+                    return; // do NOT recurse into the body (avoid free-var versions).
+                }
+            }
+            syn::visit::visit_expr_for_loop(self, f);
+        }
+        fn visit_macro(&mut self, m: &'ast syn::Macro) {
+            self.try_assert(m);
             syn::visit::visit_macro(self, m);
         }
     }
@@ -640,6 +763,32 @@ mod tests {
         let d = collect_dissolvable(&file);
         assert!(d.prelude.contains("fn lower"), "helper carried: {:?}", d.prelude);
         assert_eq!(d.asserts.len(), 1, "the helper-wrapped assert is dissolvable");
+    }
+
+    #[test]
+    fn collect_unrolls_finite_range_loop_into_points() {
+        // for i in 0..3 { assert_eq!(i.to_string(), format!("{}", i)); }
+        // unrolls to 3 point asserts (i -> 0,1,2), each closed stdlib sugar.
+        let file: syn::File = syn::parse_str(
+            "#[test] fn t() { for i in 0..3 { assert_eq!(i.to_string(), format!(\"{}\", i)); } }\n",
+        )
+        .unwrap();
+        let d = collect_dissolvable(&file);
+        assert_eq!(d.asserts.len(), 3, "0..3 unrolls to 3 points: {:?}", d.asserts);
+        assert!(d.asserts.iter().any(|a| a.contains("0i32") || a.contains("0 .") || a.contains("0.")),
+            "loop var substituted with concrete values: {:?}", d.asserts);
+    }
+
+    #[test]
+    fn collect_does_not_unroll_runtime_domain_loop() {
+        // for x in v { ... }: runtime collection, NOT a finite literal domain -> not
+        // unrolled; the free-var body assert is rejected by the gate (stays unclassified).
+        let file: syn::File = syn::parse_str(
+            "#[test] fn t() { let v = make(); for x in v { assert_eq!(x.to_string(), \"1\"); } }\n",
+        )
+        .unwrap();
+        let d = collect_dissolvable(&file);
+        assert!(d.asserts.is_empty(), "runtime-domain loop must not unroll: {:?}", d.asserts);
     }
 
     #[test]
