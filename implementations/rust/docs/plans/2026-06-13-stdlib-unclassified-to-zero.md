@@ -17,8 +17,20 @@
 > RESIDUAL after this class (full-text JSON `all_reasons` dump): the bulk is cross-file
 > inlining (`to_exact_fixed_str_test` 133, `to_exact_exp_str_test` 130, … flt2dec +
 > in-file helpers whose def-site refusal needs GLOBAL accounting to suppress — Wall B);
-> construction-semantics/higher-order bodies (bin-1 for 69, const-item 6,
-> `assert_eq_const_safe`/`assert_float_result_bits_eq` macro expansions — Wall A);
+> construction-semantics/higher-order bodies (bin-1 for 69, const-item 6 — Wall A);
+> macro-engine gaps (2026-06-14, inspected): **`assert_float_result_bits_eq` (23)** body
+> = `dec2flt::<ty>(str).map(|x| x.to_bits())` (cross-file parser-under-test + closure →
+> Wall A/B, held); **`assert_eq_const_safe` (16)** operands ARE pinned
+> (`(1 as i32).abs()`, `A.count_ones()`, `$T::BITS-3`); the macro DOES expand (reason is
+> "expansion yielded no liftable assertion", so the matcher worked) to the
+> `const_eval_select((), compiletime, runtime)` block whose `runtime()` body is
+> `assert_eq!($left, $right)`. The downstream gap is one of: (a) the const_eval_select
+> runtime-branch inlining not firing for this macro-expanded BLOCK-expr-in-assert-
+> position form, or (b) the integer-method operands (`.abs()`/`.signum()`/`.count_ones()`)
+> not lifting (would need EUF-method terms). (a) is a stays-unclassified-safe structural
+> fix worth a supervised look; (b) is EUF-method coverage. NEEDS A TRACE to tell which —
+> not taken unsupervised because the const_eval_select-in-block recursion touches the
+> shared inliner;
 > regression-prone comparison ops (`a[0]<b[0]` 16, `false==false` 2 — the lt/lte/gt/gte
 > shared path); and correctly-held conditional/`-0.0`-IEEE/mutable-container cases.
 > DIAGNOSTIC (JSON `all_reasons` dump, 2026-06-14): the 73-now-48 "unsupported term"
