@@ -944,45 +944,105 @@ pub fn evaluate_asserts(
         return HarnessResult::Ran(Vec::new());
     }
     let src = build_harness_source(prelude, setup, asserts);
-    let src_path = work_dir.join("sugar_closed_eval_probe.rs");
-    let bin_path = work_dir.join("sugar_closed_eval_probe_bin");
-    if let Err(e) = std::fs::File::create(&src_path).and_then(|mut f| f.write_all(src.as_bytes())) {
-        return HarnessResult::Unavailable(format!("write harness: {e}"));
-    }
+    // UNIQUE per-harness filenames (hash of the source). The dissolve dir is a single
+    // REUSED temp dir and every unit used to compile to the SAME `..._probe_bin`; in a
+    // sequential sweep, unit N runs that binary and unit N+1's `rustc -o` overwrites the
+    // same path — if N's executable is not yet released the OS returns ETXTBSY ("text
+    // file busy"), a spurious compile failure => under-claim. Unique names per (closed)
+    // harness source remove that cross-unit overwrite race deterministically (and let
+    // concurrent sweeps coexist). Identical source reuses the same name, which is fine.
+    let tag = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        src.hash(&mut h);
+        format!("{:016x}", h.finish())
+    };
+    let src_path = work_dir.join(format!("sugar_closed_eval_{tag}.rs"));
+    let bin_path = work_dir.join(format!("sugar_closed_eval_{tag}_bin"));
+    let n = asserts.len();
 
-    // Compile.
-    let mut cmd = Command::new(rustc);
-    cmd.args(rustc_args)
-        .arg("--edition")
-        .arg(edition)
-        .arg("-A")
-        .arg("warnings")
-        .arg(&src_path)
-        .arg("-o")
-        .arg(&bin_path);
-    let compile = match cmd.output() {
-        Ok(o) => o,
-        Err(e) => return HarnessResult::Unavailable(format!("invoke rustc: {e}")),
-    };
-    if !compile.status.success() {
-        let mut err = String::from_utf8_lossy(&compile.stderr).to_string();
-        err.truncate(2000);
-        return HarnessResult::CompileError(err);
-    }
+    let run = || -> HarnessResult {
+        if let Err(e) =
+            std::fs::File::create(&src_path).and_then(|mut f| f.write_all(src.as_bytes()))
+        {
+            return HarnessResult::Unavailable(format!("write harness: {e}"));
+        }
 
-    // Run twice for determinism.
-    let run1 = match run_and_collect(&bin_path, asserts.len()) {
-        Ok(v) => v,
-        Err(e) => return HarnessResult::Unavailable(e),
+        // Compile, with a small retry that absorbs transient/environmental failures
+        // (rustup/rustc I/O contention, residual ETXTBSY, linker hiccups under sustained
+        // load). SOUND: a genuine front-end error carries an `error[E####]` code and
+        // reproduces identically, so it is returned immediately and NEVER retried (a
+        // broken harness stays a CompileError => not dissolved). Only diagnostic-free /
+        // non-front-end failures are retried. A successful compile of the EXACT harness
+        // source is ground truth, and the double-run check below still guards the run, so
+        // retry can only recover a true dissolvable — never manufacture a false-discharge.
+        // Worst case a real failure is retried a few times then still fails (safe).
+        const COMPILE_TRIES: usize = 3;
+        let mut last_err = String::new();
+        let mut last_was_invoke = false;
+        let mut compiled = false;
+        for attempt in 0..COMPILE_TRIES {
+            let mut cmd = Command::new(rustc);
+            cmd.args(rustc_args)
+                .arg("--edition")
+                .arg(edition)
+                .arg("-A")
+                .arg("warnings")
+                .arg(&src_path)
+                .arg("-o")
+                .arg(&bin_path);
+            match cmd.output() {
+                Ok(o) if o.status.success() => {
+                    compiled = true;
+                    break;
+                }
+                Ok(o) => {
+                    let mut err = String::from_utf8_lossy(&o.stderr).to_string();
+                    err.truncate(2000);
+                    if err.contains("error[E") {
+                        return HarnessResult::CompileError(err);
+                    }
+                    last_err = err;
+                    last_was_invoke = false;
+                }
+                Err(e) => {
+                    last_err = format!("invoke rustc: {e}");
+                    last_was_invoke = true;
+                }
+            }
+            if attempt + 1 < COMPILE_TRIES {
+                std::thread::sleep(std::time::Duration::from_millis(120));
+            }
+        }
+        if !compiled {
+            return if last_was_invoke {
+                HarnessResult::Unavailable(last_err)
+            } else {
+                HarnessResult::CompileError(last_err)
+            };
+        }
+
+        // Run twice for determinism.
+        let run1 = match run_and_collect(&bin_path, n) {
+            Ok(v) => v,
+            Err(e) => return HarnessResult::Unavailable(e),
+        };
+        let run2 = match run_and_collect(&bin_path, n) {
+            Ok(v) => v,
+            Err(e) => return HarnessResult::Unavailable(e),
+        };
+        if run1 != run2 {
+            return HarnessResult::Nondeterministic;
+        }
+        HarnessResult::Ran(run1)
     };
-    let run2 = match run_and_collect(&bin_path, asserts.len()) {
-        Ok(v) => v,
-        Err(e) => return HarnessResult::Unavailable(e),
-    };
-    if run1 != run2 {
-        return HarnessResult::Nondeterministic;
-    }
-    HarnessResult::Ran(run1)
+
+    let result = run();
+    // Best-effort cleanup: names are unique per unit, so removing them cannot disturb any
+    // other unit, and it keeps the reused dissolve dir bounded across a full sweep.
+    let _ = std::fs::remove_file(&src_path);
+    let _ = std::fs::remove_file(&bin_path);
+    result
 }
 
 /// Build the harness: prelude, then a `main` that runs each assert under a silenced
