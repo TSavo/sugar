@@ -1857,27 +1857,61 @@ fn collect_assertion_entries(
                             &temporal_scope.plan.interior_mut,
                         );
                         true
-                    } else if let Some(result) = try_reduce_helper_call_stmt(
-                        e,
-                        reducer,
-                        &temporal_scope,
-                        &*float_widths,
-                        options,
-                        MAX_ASSERTION_REDUCTION_DEPTH,
-                        reduced_helpers,
-                    ) {
-                        // R7: a bare call to a helper whose body asserts. On Ok, the
-                        // callsite obligations are lifted and the helper's K source
-                        // asserts are accounted as discharged (Pass 2 skips it). On
-                        // Err, leave it: the helper stays unreduced and Pass 2 refuses
-                        // its body honestly -- we add nothing here.
-                        match result {
-                            Ok((es, k)) => {
-                                entries.extend(es);
-                                *macros_lifted += k;
-                                true
-                            }
-                            Err(_) => false,
+                    } else if macro_depth < MAX_MACRO_EXPANSION_DEPTH
+                        && resolve_inlinable_helper_call(e, reducer, options).is_some()
+                    {
+                        // R7 (capability #1): a bare call to a helper whose body
+                        // asserts. β-reduce (param := callsite actual) and recurse the
+                        // NORMAL collector on the substituted body, so each body assert
+                        // gets its honest disposition. The collector is unchanged and
+                        // runs with no bindings (substitution already applied), so
+                        // existing lifts are byte-identical; a contradictory body is
+                        // CAUGHT, not masked (guard test).
+                        //
+                        // MONOTONIC GATE: inlining MUST NOT increase `unclassified`.
+                        // Measured: a body that hits a downstream gap (closure-adaptor,
+                        // `&mut`) per callsite turns ONE "reachable only via inlining"
+                        // refusal into N×M unclassified instances (1082→1094). So we
+                        // TRIAL-lift into scratch buffers first and commit ONLY if the
+                        // body adds zero unclassified (it fully discharges / terminal-
+                        // refuses). Otherwise we leave it: the helper stays unreduced
+                        // and Pass 2 keeps the single "reachable only" refusal. Inlining
+                        // therefore only ever DRAINS, never inflates.
+                        let (helper, name, bindings) =
+                            resolve_inlinable_helper_call(e, reducer, options).unwrap();
+                        let subst = substitute_stmts(&helper.block.stmts, &bindings);
+                        let mut te = Vec::new();
+                        let mut ts = Vec::new();
+                        let mut tl = 0usize;
+                        let mut th = reduced_helpers.clone();
+                        collect_assertion_entries(
+                            &subst,
+                            &child_block_scope(local_scope, stmt_idx),
+                            options,
+                            reducer,
+                            float_widths,
+                            &mut te,
+                            &mut ts,
+                            &mut tl,
+                            &mut th,
+                            macro_depth + 1,
+                            &BTreeSet::new(),
+                        );
+                        let added_unclassified = ts
+                            .iter()
+                            .filter(|r| {
+                                matches!(refusal_disposition(r), Disposition::Unclassified)
+                            })
+                            .count();
+                        if added_unclassified == 0 {
+                            entries.extend(te);
+                            skipped.extend(ts);
+                            *macros_lifted += tl;
+                            *reduced_helpers = th;
+                            reduced_helpers.insert(name);
+                            true
+                        } else {
+                            false
                         }
                     } else {
                         false
@@ -3242,83 +3276,6 @@ fn reduce_assertion_expr(
     }
 }
 
-/// R7 (call-disappearance → queued dig), statement position. A bare call statement
-/// `check(a); to_str_test(b);` whose callee is a resolvable helper WHOSE BODY
-/// CONTAINS ASSERTIONS is inlined: bind params := callsite actuals (β-reduction, a
-/// faithful homomorphism -- the helper's asserts at this callsite ARE the helper's
-/// asserts with its params fixed to these args) and reduce the body. Distinct from
-/// the assert-position path (`assert_eq!(helper(x), y)`): here the helper returns
-/// nothing and its asserts are statements. Returns:
-///   None             -- not a helper-with-asserts call; fall through.
-///   Some(Ok((es,k)))  -- inlined; `es` = callsite obligations, `k` = the number of
-///                        SOURCE assert macros the helper body accounts for (so the
-///                        caller bumps `discharged` by `k` and the macro-count
-///                        reconciles); helper marked reduced.
-///   Some(Err(_))      -- a helper-with-asserts call we could NOT reduce (internal
-///                        `let`, non-simple arg, ...); NOT marked reduced, so Pass 2
-///                        refuses its body honestly. Caller adds nothing in Pass 1.
-fn try_reduce_helper_call_stmt(
-    expr: &Expr,
-    reducer: &ReductionCtx<'_>,
-    scope: &TemporalScope,
-    float_widths: &FloatWidthScope,
-    options: &LiftOptions,
-    depth: usize,
-    reduced_helpers: &mut HashSet<String>,
-) -> Option<Result<(Vec<AssertionEntry>, usize), String>> {
-    let inner = match expr {
-        Expr::Paren(p) => &*p.expr,
-        Expr::Group(g) => &*g.expr,
-        other => other,
-    };
-    let Expr::Call(call) = inner else { return None };
-    let name = simple_call_name(call)?;
-    // Resolve the callee to a helper we hold the SOURCE of. No source -> not this
-    // rung (fall through; Pass 2 will refuse with "no visible source").
-    let helper = reducer.function(&name).ok()??;
-    // Only inline a call whose body actually CONTRIBUTES assertions -- otherwise it
-    // is an ordinary effectful/value call, not a point-claim carrier.
-    let body_asserts = count_asserts_in_stmts(&helper.block.stmts);
-    if body_asserts == 0 {
-        return None;
-    }
-    if !matches!(cfg_eval_for_attrs(&helper.attrs, options), CfgEval::Active) {
-        return None;
-    }
-    let params = match helper_param_names(helper) {
-        Ok(p) => p,
-        Err(_) => return None,
-    };
-    if params.len() != call.args.len() {
-        return None;
-    }
-    let mut bindings = ExprBindings::new();
-    for (param, arg) in params.into_iter().zip(call.args.iter()) {
-        bindings.insert(param, arg.clone());
-    }
-    if depth == 0 {
-        return Some(Err(format!("{name}: reduction depth exhausted")));
-    }
-    let result = reduce_assertion_stmts(
-        &helper.block.stmts,
-        &bindings,
-        reducer,
-        scope,
-        float_widths,
-        options,
-        depth - 1,
-        reduced_helpers,
-    )
-    .map_err(|e| format!("{name}: {e}"));
-    match result {
-        Ok(es) => {
-            reduced_helpers.insert(name);
-            Some(Ok((es, body_asserts)))
-        }
-        Err(e) => Some(Err(e)),
-    }
-}
-
 fn reduce_assertion_stmts(
     stmts: &[Stmt],
     bindings: &ExprBindings,
@@ -3554,6 +3511,97 @@ fn substitute_exprs(exprs: &[Expr], bindings: &ExprBindings) -> Vec<Expr> {
         .iter()
         .map(|expr| substitute_expr(expr, bindings))
         .collect()
+}
+
+/// β-reduction over a helper body: substitute `bindings` (param := callsite actual)
+/// into every statement so the body can be re-lifted at the callsite by the normal
+/// (binding-free) collector. Faithful -- each param is replaced by its actual
+/// exactly (no merge, no re-evaluation). A `let` binding a name shadows a param of
+/// that name for the rest. Assert-MACRO args are substituted via parse → substitute
+/// → re-quote. Nested fn items are kept as-is (their calls lift opaquely / resolve
+/// via the file registry).
+fn substitute_stmts(stmts: &[Stmt], bindings: &ExprBindings) -> Vec<Stmt> {
+    let mut binds = bindings.clone();
+    stmts.iter().map(|s| substitute_stmt(s, &mut binds)).collect()
+}
+
+fn substitute_stmt(stmt: &Stmt, binds: &mut ExprBindings) -> Stmt {
+    match stmt {
+        Stmt::Local(local) => {
+            let mut l = local.clone();
+            if let Some(init) = &local.init {
+                let mut ni = init.clone();
+                ni.expr = Box::new(substitute_expr(&init.expr, binds));
+                l.init = Some(ni);
+            }
+            // The let binds names that shadow same-named params for the rest.
+            for name in pat_idents(&local.pat) {
+                binds.remove(&name);
+            }
+            Stmt::Local(l)
+        }
+        Stmt::Expr(e, semi) => Stmt::Expr(substitute_expr(e, binds), *semi),
+        Stmt::Macro(m) => {
+            let mut sm = m.clone();
+            if let Some(tokens) = substitute_macro_tokens(&m.mac, binds) {
+                sm.mac.tokens = tokens;
+            }
+            Stmt::Macro(sm)
+        }
+        Stmt::Item(_) => stmt.clone(),
+    }
+}
+
+/// Substitute bindings into an assertion macro's comma-separated expression args by
+/// parsing, substituting, and re-quoting. None if the tokens are not a parseable
+/// expression list (a non-assertion macro) -- the caller keeps the macro as-is.
+fn substitute_macro_tokens(
+    mac: &syn::Macro,
+    binds: &ExprBindings,
+) -> Option<proc_macro2::TokenStream> {
+    let args = parse_macro_args(mac.tokens.clone()).ok()?;
+    let subst = substitute_exprs(&args.exprs, binds);
+    let mut ts = proc_macro2::TokenStream::new();
+    for (i, e) in subst.iter().enumerate() {
+        if i > 0 {
+            ts.extend(quote::quote!(,));
+        }
+        ts.extend(quote::quote!(#e));
+    }
+    Some(ts)
+}
+
+/// Resolve a bare call expression to an inlinable helper: a file-resolvable fn whose
+/// body contains assertions, active cfg, simple params, matching arity. Returns the
+/// helper, its name, and the param := actual bindings. None otherwise.
+fn resolve_inlinable_helper_call<'a>(
+    expr: &Expr,
+    reducer: &ReductionCtx<'a>,
+    options: &LiftOptions,
+) -> Option<(&'a syn::ItemFn, String, ExprBindings)> {
+    let inner = match expr {
+        Expr::Paren(p) => &*p.expr,
+        Expr::Group(g) => &*g.expr,
+        other => other,
+    };
+    let Expr::Call(call) = inner else { return None };
+    let name = simple_call_name(call)?;
+    let helper = reducer.function(&name).ok()??;
+    if count_asserts_in_stmts(&helper.block.stmts) == 0 {
+        return None;
+    }
+    if !matches!(cfg_eval_for_attrs(&helper.attrs, options), CfgEval::Active) {
+        return None;
+    }
+    let params = helper_param_names(helper).ok()?;
+    if params.len() != call.args.len() {
+        return None;
+    }
+    let mut bindings = ExprBindings::new();
+    for (param, arg) in params.into_iter().zip(call.args.iter()) {
+        bindings.insert(param, arg.clone());
+    }
+    Some((helper, name, bindings))
 }
 
 fn substitute_expr(expr: &Expr, bindings: &ExprBindings) -> Expr {
@@ -8182,6 +8230,34 @@ mod lifter_key_tests {
         );
     }
 
+    #[test]
+    fn inlined_contradictory_helper_body_is_caught_not_masked() {
+        // SOUNDNESS GUARD for capability #1: inlining must not MASK a real
+        // contradiction. A helper whose body pins the SAME callsite to two distinct
+        // values, inlined, must produce a single coalesced inv with BOTH pins (so the
+        // verifier refutes it) -- never two split obligations that each look fine.
+        let src = r#"
+            fn bad(n: i32) { assert_eq!(g(n), 1); assert_eq!(g(n), 2); }
+            #[test]
+            fn drives() { bad(5); }
+        "#;
+        let out = lift_src(src);
+        // The two pins on g(5) must land in ONE inv (coalesced), so unsat is visible.
+        let mut found_both = false;
+        for d in &out.decls {
+            let dump = format!("{:?}", d.inv);
+            if dump.contains("Int(1)") && dump.contains("Int(2)") && dump.contains("call:g") {
+                found_both = true;
+            }
+        }
+        assert!(
+            found_both,
+            "inlined contradictory body must coalesce both pins into one inv (caught, \
+             not masked): {:?}",
+            out.decls.iter().map(|d| format!("{:?}", d.inv)).collect::<Vec<_>>()
+        );
+    }
+
     // ── R7: statement-position helper-call inlining (β-reduction) ──────────────
 
     #[test]
@@ -8223,10 +8299,11 @@ mod lifter_key_tests {
     }
 
     #[test]
-    fn helper_body_pure_let_is_substituted_then_reduced() {
-        // `let m = n + n;` in a reduced helper body is a PURE binding: substitute
-        // m := n+n (with n := the callsite actual) and reduce the assert. A pure let
-        // is exact; an impure init would be refused.
+    fn helper_body_with_let_inlines_via_collector_monotonically() {
+        // A statement-called helper with a `let` body inlines through the NORMAL
+        // collector (β-reduced params; the `let` local stays a free var the collector
+        // lifts over). The monotonic gate admits it because the body adds no
+        // unclassified: `check` is not refused, and the `probe` term is lifted.
         let src = r#"
             fn check(n: i32) { let m = n + n; assert_eq!(probe(m), m); }
             #[test]
@@ -8239,13 +8316,13 @@ mod lifter_key_tests {
             .any(|r| r.contains("check") && r.contains("reachable only via call-site"));
         assert!(
             !refused_check,
-            "helper `check` with a pure `let` body should inline: {:?}",
+            "helper `check` should inline (monotonic gate admits a fully-lifting body): {:?}",
             out.skip_reasons
         );
+        let dump = format!("{:?}", out.decls);
         assert!(
-            out.decls.iter().any(|d| d.name.contains("probe")),
-            "expected a probe obligation from the inlined pure-let body: {:?}",
-            out.decls.iter().map(|d| &d.name).collect::<Vec<_>>()
+            dump.contains("probe"),
+            "expected a probe term from the inlined body: {dump}"
         );
     }
 
