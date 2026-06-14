@@ -26,6 +26,44 @@
 //!     fixed-vs-exp selection -- NOT YET handled here (the `(lo,hi)` dec-bounds have
 //!     no single `format!` equivalent); those stay unclassified.
 
+/// `m * 2^exp`, computed by exact stepwise scaling (matching the corpus's own
+/// `ldexp_fN` helper, which is documented as `x * 2^exp`). We deliberately do NOT
+/// use `2f64.powi(exp)`: for the extreme negative exponents the corpus uses to
+/// build the smallest subnormals (`ldexp_f64(1.0, -1074)`, `ldexp_f32(1.0, -149)`)
+/// `powi` underflows to `0.0`. Multiplying by `2.0`/`0.5` one step at a time is
+/// each-step exact, so gradual underflow rounds per IEEE-754 and we reproduce the
+/// exact value bit-for-bit (verified: `ldexp_f32(1.0,-149).to_bits() == 1`, the
+/// smallest positive subnormal). This is an INDEPENDENT correct recomputation of
+/// the same value, so dissolution stays sound: a value computed wrong would
+/// mismatch the asserted literal and be refused, never force-discharged.
+pub fn ldexp_f64(m: f64, exp: i32) -> f64 {
+    let mut v = m;
+    let mut e = exp;
+    while e > 0 {
+        v *= 2.0;
+        e -= 1;
+    }
+    while e < 0 {
+        v *= 0.5;
+        e += 1;
+    }
+    v
+}
+
+pub fn ldexp_f32(m: f32, exp: i32) -> f32 {
+    let mut v = m;
+    let mut e = exp;
+    while e > 0 {
+        v *= 2.0;
+        e -= 1;
+    }
+    while e < 0 {
+        v *= 0.5;
+        e += 1;
+    }
+    v
+}
+
 /// The sign mode (`core::num::imp::flt2dec::Sign`). `Minus` prints `-` only for
 /// negatives; `MinusPlus` additionally prints `+` for non-negatives. NaN never
 /// carries a sign in either mode.
@@ -302,5 +340,34 @@ mod tests {
         // discrimination: a wrong value must produce a different string.
         assert_ne!(shortest_f64(3.14, Minus, 0), shortest_f64(3.15, Minus, 0));
         assert_ne!(exact_exp_f64(0.195, Minus, 1, false), exact_exp_f64(0.295, Minus, 1, false));
+    }
+
+    #[test]
+    fn ldexp_reproduces_exact_subnormals() {
+        // The corpus builds the smallest subnormals via ldexp; stepwise scaling
+        // must land on the exact IEEE value (bit-for-bit), NOT underflow to 0 the
+        // way `powi` would.
+        assert_eq!(ldexp_f32(1.0, -149).to_bits(), 1, "smallest f32 subnormal");
+        assert_eq!(ldexp_f64(1.0, -1074).to_bits(), 1, "smallest f64 subnormal");
+        // Non-subnormal ldexp values stay exact too.
+        assert_eq!(ldexp_f32(1.0, 25), 33554432.0_f32);
+        assert_eq!(ldexp_f64(1.0, 64), 18446744073709552000.0_f64);
+        assert_eq!(ldexp_f64(1.0, 0), 1.0);
+    }
+
+    #[test]
+    fn ldexp_subnormal_format_matches_corpus() {
+        // minf32 = ldexp_f32(1.0, -149): shortest Display is "0." + 44 zeros + "1".
+        let minf32 = ldexp_f32(1.0, -149);
+        let want32 = format!("0.{}1", "0".repeat(44));
+        assert_eq!(shortest_f32(minf32, Minus, 0), want32);
+        assert_eq!(exact_exp_f32(minf32, Minus, 1, false), "1e-45");
+        assert_eq!(exact_exp_f32(minf32, Minus, 2, false), "1.4e-45");
+        // minf64 = ldexp_f64(1.0, -1074): shortest Display is "0." + 323 zeros + "5".
+        let minf64 = ldexp_f64(1.0, -1074);
+        let want64 = format!("0.{}5", "0".repeat(323));
+        assert_eq!(shortest_f64(minf64, Minus, 0), want64);
+        // break-the-twin: a wrong exponent yields a different (here zero) value.
+        assert_ne!(shortest_f32(ldexp_f32(1.0, -148), Minus, 0), want32);
     }
 }
