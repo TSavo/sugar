@@ -427,28 +427,41 @@ fn main() {
         let file_inactive = file_inactive.min(refused_total - file_terminal);
         let file_unclassified = refused_total - file_terminal - file_inactive;
 
-        // STDLIB-SUGAR DISSOLUTION: gated closed stdlib-sugar unit-test asserts that the
-        // symbolic lifter left unclassified are dissolved by evaluation under the pinned
-        // toolchain. A green move is unclassified -> discharged; refused/inactive/silent
-        // are untouched (effective discharged+dissolved and refused-dissolved net to the
-        // same `unaccounted`, so SILENT is unaffected). Capped at file_unclassified so we
-        // only ever reclassify work the lifter actually left open.
-        let dissolved = if dissolve {
+        // STDLIB-SUGAR DISSOLUTION as a per-file PARTITION move (no `min(unclassified)`
+        // cap, which cannibalized). Dissolution proves closed stdlib-sugar asserts green
+        // by evaluation under the pinned toolchain. By the dissolution GATE these asserts
+        // use a stdlib op the symbolic lifter cannot model, so a green is NEVER in the
+        // LIFTED set -- it sits in this file's UNCLASSIFIED set, or (after a
+        // reclassification, e.g. a closed assert inside a `while` body now marked terminal)
+        // in the TERMINAL set. A proven assert is DISCHARGED regardless of which of those
+        // two the lifter assigned it: refusal is RESIDUAL -- dissolution wins. So credit
+        // every green to discharged and draw it down from UNCLASSIFIED first, then
+        // TERMINAL. The credit is capped at unclassified+terminal (the whole non-lifted
+        // pool) so no bucket goes negative and the per-file total contribution stays
+        // exactly file_terminal+file_unclassified -- identical to the pre-dissolution
+        // accounting, so SILENT and net unaccounted are invariant. Crucially the credit no
+        // longer keys off file_unclassified alone, so reclassifying an assert
+        // unclassified->terminal cannot clip an unrelated dissolve (the old cap artifact).
+        // Hermetic (no --dissolve): green=0 => every bucket unchanged.
+        let green = if dissolve {
             let units = closed_eval::collect_dissolvable(&file);
             let mut got = 0usize;
             for u in &units {
                 let full_prelude = format!("{}\n{}", feature_prelude, u.prelude);
                 got += dissolve_count(&full_prelude, &u.setup, &u.asserts, &dissolve_dir);
             }
-            got.min(file_unclassified)
+            got
         } else {
             0
         };
+        let dissolved = green.min(file_unclassified + file_terminal);
+        let from_unclassified = dissolved.min(file_unclassified);
+        let from_terminal = dissolved - from_unclassified;
         dissolved_total += dissolved;
 
-        totals.refused += file_terminal;
+        totals.refused += file_terminal - from_terminal;
         totals.inactive += file_inactive;
-        totals.unclassified += file_unclassified - dissolved;
+        totals.unclassified += file_unclassified - from_unclassified;
         totals.discharged += dissolved;
         let refused = refused_total;
 
