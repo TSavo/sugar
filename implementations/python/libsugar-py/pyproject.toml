@@ -6,6 +6,8 @@ build-backend = "setuptools.build_meta"
 name = "libsugar-py"
 version = "0.1.0"
 description = "Python libsugar experiment with honest refusal at the first FFI shim gap."
+# libsugar_py/__init__.py imports `blake3`; declare it so any install pulls it.
+dependencies = ["blake3"]
 
 [tool.setuptools.packages.find]
 where = ["."]
