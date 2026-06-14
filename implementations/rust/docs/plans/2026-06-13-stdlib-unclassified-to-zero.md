@@ -1,8 +1,24 @@
 # Goal: stdlib `unclassified` → 0
 
-> **STATUS 2026-06-14 (commits 3cbf69936..04bcf3da9, all pushed, all verified
-> falsePass=0).** Capability work LANDED, driving unclassified **1082 → 950** (−132,
-> discharged 5088→5220): (#1) **monotonic statement-helper inlining** — β-reduce +
+> **STATUS 2026-06-14 (commits 3cbf69936..fe51cc88b, all pushed, all verified
+> falsePass=0 / SILENT=0).** Capability work LANDED, driving unclassified
+> **1082 → 929** (−153, discharged 5088→5241). LATEST (commit fe51cc88b, −21):
+> **byte literals dissolve to u8 constants** — `b'0'` is pure sugar for the u8 value
+> 48; added `Lit::Byte` to `translate_lit` lifting to the same concrete-Int-with-u8-
+> sort form `48u8` lifts to. Sound by construction (refutation inherited from the
+> int path; `b'0'!=49` REFUTED), two break-the-twin tests (positive + distinct-byte-
+> literals-no-coalesce), 194 assertion_lift green. This FULLY drained the "only
+> integer/string/char/finite decimal float scalar constants are liftable" bucket
+> (was 21) — `Lit::Verbatim` is the only remaining `translate_lit` fall-through and
+> never appears in source asserts. KEY LESSON: this class (pinned operand, the only
+> gap is a missing literal-kind/structural case, failure mode = stays-unclassified
+> NOT false-discharge) IS soundly autonomously drainable — it is NOT the supervised
+> tier. The supervised tier is only the shared-path term/closure-body edits (masked-
+> contradiction risk) + cross-file accounting. Checked and REJECTED as clean wins:
+> **const-item asserts** (6, all in cmp.rs) are `S(1) == S(1)` / `S(1) <= S(1)` —
+> custom-struct construction-semantics + comparison operators (the lt/lte/gt/gte
+> shared-path change that regressed negated-comparison coalescing) → Wall A, not
+> clean. Earlier capability work (−132): (#1) **monotonic statement-helper inlining** — β-reduce +
 > recurse the unchanged collector, committed ONLY if the body adds zero unclassified
 > (so inlining can only drain, never inflate — the earlier naive version inflated and
 > was reverted); (#2) **closures as opaque EUF symbols** keyed by text + version-aware
