@@ -480,10 +480,18 @@ list of source-property reasons (runtime data, dynamic dispatch, values outside 
 sort). At that point the ledger CID is a real closure artifact: 64 bytes over a
 house with every door labelled.
 
-> **NEXT LEVERS (designed 2026-06-14 PM, queued behind the 2 parallel agents on closed_eval/flt2dec).**
-> Floor 332 (91.4% discharged). Two worktree agents in flight: (A) call-site arg-inlining for the
-> "non-#[test] item" bucket (128) — carry a param-taking carryable helper + run the call with the
-> literal call-site args; (B) flt2dec f16/ldexp/format!-RHS edges (105). Post-integration levers (all
+> **AGENTS LANDED (2026-06-14, integrated + pushed `d2288f6ff`).** Both parallel drains merged onto
+> `kit/rust-source-ledger`: (A) call-site arg-inlining `3debf6070` (+13, `closed_eval.rs`); (B) flt2dec
+> ldexp + closed-`format!`-RHS `d2288f6ff`/`c4d62cb8c` (flt2dec bucket 105→52, `flt2dec_eval.rs`+`lib.rs`).
+> Combined sweep: **discharged 5831→5884, unclassified 332→279, refused 208 (unchanged), SILENT 0,
+> unaccounted −52, assertion CID conserved, 276 tests green, zero false-discharge.** NOTE: `dissolved`
+> jitters run-to-run (261–293) from transient `rustup run nightly` harness-compile failures under load —
+> always a *safe under-claim* (drops a true dissolvable, never false-discharges; never moves
+> SILENT/unaccounted). FIX flagged by A (worth doing): retry-on-transient-compile-error in the harness
+> driver — recovers the flakily-dropped asserts AND makes the headline reproducible.
+>
+> **NEXT LEVERS (designed 2026-06-14 PM).**
+> Floor now 279. Post-integration levers (all
 > touch closed_eval -> serialize): (1) MACRO-CARRY — a local `macro_rules!` (e.g. estimator.rs
 > `assert_almost_eq!` wrapping `estimate_scaling_factor(LIT,LIT)` + tolerance) is closed stdlib sugar;
 > carry the macro_rules! def into the harness + dissolve (22). (2) USE-IMPORT-CARRY — carry the source
