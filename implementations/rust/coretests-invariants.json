@@ -3,8 +3,8 @@
   "silent": 0,
   "unaccounted": -52,
   "discharged": 5626,
-  "refused": 288,
-  "unclassified": 455,
-  "prev_unclassified": 465,
-  "note": "HERMETIC (no --dissolve) snapshot of the rust 1.96.0 coretests accounting sweep, gated in CI. Each lifter-moving push updates this pin to its predicted snapshot; CI asserts an EXACT match. This push: runtime-parametric helper asserts (closure/iterator/dyn params -> bin-2, not constructible from source literals at any call site) reclassified from 'reachable only via call-site inlining' (unclassified) to terminal-refused -> unclassified 465->455, refused 278->288 (discharged unchanged). prev_unclassified 465 = prior baseline. unclassified here is lifter-only; --dissolve mode credits further by evaluation (not gated). Drive unclassified -> 0."
+  "refused": 327,
+  "unclassified": 416,
+  "prev_unclassified": 455,
+  "note": "HERMETIC (no --dissolve) snapshot of the rust 1.96.0 coretests accounting sweep, gated in CI. Each lifter-moving push updates this pin to its predicted snapshot; CI asserts an EXACT match. This push: flt2dec f16/f128 asserts (UNSTABLE float types -- unformattable on the stable toolchain the lifter ships, and not modellable per the no-model axiom) reclassified from the catch-all unclassified flt2dec reason to terminal-refused -> unclassified 455->416 (39 moved), refused 288->327 (discharged unchanged). prev_unclassified 455 = prior baseline. unclassified here is lifter-only; --dissolve mode credits further by evaluation (not gated). Drive unclassified -> 0."
 }

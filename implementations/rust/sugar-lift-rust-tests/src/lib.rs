@@ -207,7 +207,12 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // Some(..) = iter.next()` over a runtime iterator -- bin-2 in disguise.) The lifter
         // unrolls only finite-literal `for` domains; a `while` has no such finite literal
         // construction to enumerate, so this is a source property, not a missing lifter.
-        || reason.contains("under while context");
+        || reason.contains("under while context")
+        // TERMINAL: f16/f128 formatting is an UNSTABLE API. The stable toolchain the lifter
+        // ships cannot format f16/f128 (no stable flt2dec for them), so the value is neither
+        // dissolvable by evaluation nor modellable (no-model axiom) -- a source/environment
+        // property, not a lifter gap.
+        || reason.contains("f16/f128 formatting is unstable");
     if terminal {
         Disposition::Refused
     } else {
@@ -890,11 +895,28 @@ fn lift_flt2dec_helper(
             }
             None => {
                 refused += 1;
-                out.skip_reasons.push(
-                    "flt2dec assert: operand is not a closed f32/f64 literal term (f16/f128, \
-                     ldexp, or a format! expected); released to layer 0"
-                        .to_string(),
-                );
+                let toks = m.tokens.to_string();
+                if toks.contains("f16") || toks.contains("f128") {
+                    // TERMINAL: f16/f128 formatting. These are UNSTABLE float types; the
+                    // stable toolchain the lifter ships cannot format them (no stable
+                    // Display/flt2dec for f16/f128), so the value cannot be dissolved by
+                    // evaluation, and we do NOT model the flt2dec algorithm (no-model
+                    // axiom). The assert tests an unstable API not expressible as a
+                    // point-wise claim over the stable surface -- a source/environment
+                    // property, not a lifter gap. (Refused, stated plainly; not a fake-zero.)
+                    out.skip_reasons.push(
+                        "flt2dec assert: f16/f128 formatting is unstable -- unformattable on \
+                         the stable toolchain the lifter ships and not modellable as a \
+                         point-wise claim; refused"
+                            .to_string(),
+                    );
+                } else {
+                    out.skip_reasons.push(
+                        "flt2dec assert: operand is not a closed f32/f64 literal term (ldexp \
+                         or a format! expected); released to layer 0"
+                            .to_string(),
+                    );
+                }
             }
         }
     }
@@ -9323,6 +9345,7 @@ mod lifter_key_tests {
             "assertion helper `assert_trusted_len` is a type-level obligation (empty body: trait-bound or no-op), not a point-wise value predicate; refused",
             "macro `m`: expansion yielded no liftable assertion (type-level or effectful body); released to layer 0",
             "assertion under while context: not unconditional point-wise; released to layer 0",
+            "flt2dec assert: f16/f128 formatting is unstable -- unformattable on the stable toolchain the lifter ships and not modellable as a point-wise claim; refused",
         ] {
             assert_eq!(refusal_disposition(r), Refused, "should be terminal: {r}");
         }
