@@ -212,7 +212,14 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // ships cannot format f16/f128 (no stable flt2dec for them), so the value is neither
         // dissolvable by evaluation nor modellable (no-model axiom) -- a source/environment
         // property, not a lifter gap.
-        || reason.contains("f16/f128 formatting is unstable");
+        || reason.contains("f16/f128 formatting is unstable")
+        // TERMINAL: a SIDE-EFFECTING closure body (HALF 2 of the fold-closure bucket) --
+        // a `.for_each`/`.map`/`.fold` closure that mutates captured state or advances an
+        // iterator (`iter.next()`, `nth += 1`). Its assert observes a per-iteration
+        // varying value, not a single timeless point-wise claim, so no value lifter could
+        // lift it -- a source property. (The opaque/effectful-accessor twin carries `bin-2`
+        // above.)
+        || reason.contains("side-effecting closure body");
     if terminal {
         Disposition::Refused
     } else {
@@ -2154,6 +2161,507 @@ fn try_lift_for_each_forall(
     Some((quantified, n_body, var))
 }
 
+/// Peel SEQUENCE-PRESERVING iterator adaptors off a `.fold`/`.rfold` receiver and
+/// RESOLVE `let`-bound receivers through `let_inits`, reaching the base literal-domain
+/// expression. Returns (base, reversed, enumerated) or None if a NON-sequence-preserving
+/// (transforming/filtering) adaptor is present (those change the element sequence and
+/// need a future "defilter"; refuse for now) or a binding cannot be resolved.
+/// Sequence-preserving: `.iter()/.into_iter()/.cloned()/.copied()/.fuse()` (identity on
+/// the element sequence), `.rev()` (reverses order), `.enumerate()` (pairs (i, e)). A
+/// bare ident bound in `let_inits` (`it = xs.iter()`) is resolved to its initializer and
+/// re-peeled, so `it.fold(..)` reaches `xs`'s literal array (recursion-capped).
+fn resolve_fold_domain<'a>(
+    expr: &'a Expr,
+    let_inits: &BTreeMap<String, &'a Expr>,
+    depth: usize,
+) -> Option<(&'a Expr, bool, bool)> {
+    const MAX_DEPTH: usize = 8;
+    if depth > MAX_DEPTH {
+        return None;
+    }
+    let mut cur = expr;
+    let mut reversed = false;
+    let mut enumerated = false;
+    loop {
+        match cur {
+            Expr::MethodCall(m) if m.args.is_empty() => {
+                match m.method.to_string().as_str() {
+                    "iter" | "into_iter" | "cloned" | "copied" | "fuse" => {}
+                    "rev" => reversed = !reversed,
+                    // enumerate after a rev still pairs the POST-rev positions; accept at
+                    // most once (index = position in the iterated order).
+                    "enumerate" if !enumerated => enumerated = true,
+                    // a transforming/filtering adaptor (map/filter/skip/take/...) changes
+                    // the element sequence -> not yet defoldable.
+                    _ => return None,
+                }
+                cur = &m.receiver;
+            }
+            Expr::Paren(p) => cur = &p.expr,
+            Expr::Group(g) => cur = &g.expr,
+            Expr::Reference(r) => cur = &r.expr,
+            // A bare ident bound in this block: resolve to its initializer and re-peel,
+            // composing the reverse/enumerate flags learned so far.
+            Expr::Path(p) => {
+                if let Some(id) = p.path.get_ident() {
+                    if let Some(init) = let_inits.get(&id.to_string()) {
+                        let (inner_base, inner_rev, inner_enum) =
+                            resolve_fold_domain(init, let_inits, depth + 1)?;
+                        return Some((
+                            inner_base,
+                            reversed ^ inner_rev,
+                            enumerated || inner_enum,
+                        ));
+                    }
+                }
+                break;
+            }
+            _ => break,
+        }
+    }
+    Some((cur, reversed, enumerated))
+}
+
+/// Const-fold an integer accumulator-update tail expression: evaluate `tail` to an
+/// `i64` given the bound substitutions (`acc_var -> acc`, `elem_var -> elem`, `idx_var
+/// -> idx`). Supports literals, the three bound vars, `+`/`-`/`*`, unary neg, parens,
+/// and `as <int>` casts. Any other shape / unbound ident -> None (refuse the defold).
+fn const_fold_acc_update(
+    tail: &Expr,
+    acc_var: &str,
+    acc: i64,
+    elem_var: Option<&str>,
+    elem: Option<i64>,
+    idx_var: Option<&str>,
+    idx: Option<i64>,
+) -> Option<i64> {
+    match tail {
+        Expr::Lit(ExprLit { lit: Lit::Int(i), .. }) => parse_int_lit(i).ok(),
+        Expr::Path(p) => {
+            let id = p.path.get_ident()?.to_string();
+            if id == acc_var {
+                Some(acc)
+            } else if Some(id.as_str()) == elem_var {
+                elem
+            } else if Some(id.as_str()) == idx_var {
+                idx
+            } else {
+                None
+            }
+        }
+        Expr::Paren(pr) => {
+            const_fold_acc_update(&pr.expr, acc_var, acc, elem_var, elem, idx_var, idx)
+        }
+        Expr::Group(g) => {
+            const_fold_acc_update(&g.expr, acc_var, acc, elem_var, elem, idx_var, idx)
+        }
+        Expr::Cast(c) => const_fold_acc_update(&c.expr, acc_var, acc, elem_var, elem, idx_var, idx),
+        Expr::Unary(u) if matches!(u.op, UnOp::Neg(_)) => {
+            const_fold_acc_update(&u.expr, acc_var, acc, elem_var, elem, idx_var, idx)
+                .map(|n| -n)
+        }
+        Expr::Binary(b) => {
+            let l = const_fold_acc_update(&b.left, acc_var, acc, elem_var, elem, idx_var, idx)?;
+            let r = const_fold_acc_update(&b.right, acc_var, acc, elem_var, elem, idx_var, idx)?;
+            match b.op {
+                BinOp::Add(_) => l.checked_add(r),
+                BinOp::Sub(_) => l.checked_sub(r),
+                BinOp::Mul(_) => l.checked_mul(r),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// DEFOLDER (T 2026-06-14). `fold`'s definition IS its desugaring:
+///   `let mut acc = init; while let Some(x) = it.next() { acc = f(acc, x); }`
+/// so a `<lit-domain>.<seq-adaptors>.fold(init, |acc, item| { <asserts>; <tail> })`
+/// over a FINITE literal domain is the finite conjunction of the per-iteration body,
+/// with `acc` threaded as a CONST-FOLDED integer and `item`/index bound to the concrete
+/// element. `for_each` is `fold` with `acc = ()`; this is that, plus the accumulator.
+/// `.rfold` reverses the element order.
+///
+/// Lifts iff: (1) the receiver peels (seq-preserving adaptors only) to a finite literal
+/// array / closed range; (2) `init` is a literal int; (3) the closure binds `|acc, item|`
+/// (item a plain ident, or `(idx, elem)` under `.enumerate()`); (4) the closure body's
+/// tail const-folds to the next `acc` each step (`acc`, `acc+1`, `acc+<lit>`, ...); (5)
+/// the body asserts lift all-or-nothing and the body is otherwise pure. The result is
+/// `body[acc:=acc_0, item:=e_0] ∧ body[acc:=acc_1, item:=e_1] ∧ ...` -- the construction
+/// axiom. Any miss -> None (refuse; stays unclassified / terminal as classified
+/// elsewhere). Returns (conjunction, static body assert-macro count, "fold"/"rfold").
+#[allow(clippy::too_many_arguments)]
+fn try_lift_fold_forall(
+    expr: &Expr,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+    reducer: &ReductionCtx<'_>,
+    float_widths: &mut FloatWidthScope,
+    macro_depth: usize,
+    let_inits: &BTreeMap<String, &Expr>,
+) -> Option<(Rc<Formula>, usize, String)> {
+    let Expr::MethodCall(call) = expr else {
+        return None;
+    };
+    let method = call.method.to_string();
+    let rev_fold = match method.as_str() {
+        "fold" => false,
+        "rfold" => true,
+        _ => return None,
+    };
+    // fold(init, closure): exactly two args, the second a closure.
+    if call.args.len() != 2 {
+        return None;
+    }
+    let init_expr = &call.args[0];
+    let Expr::Closure(closure) = &call.args[1] else {
+        return None;
+    };
+    // |acc, item| -- exactly two params; acc a plain ident; item a plain ident or, under
+    // `.enumerate()`, a 2-tuple `(idx, elem)`.
+    if closure.inputs.len() != 2 {
+        return None;
+    }
+    let acc_var = match &closure.inputs[0] {
+        Pat::Ident(p) if p.subpat.is_none() => p.ident.to_string(),
+        _ => return None,
+    };
+    // Peel the receiver to the base domain (resolving `let`-bound receivers like
+    // `it = xs.iter()` through `let_inits`); learn reverse / enumerate across all levels.
+    let (base, peeled_rev, enumerated) = resolve_fold_domain(&call.receiver, let_inits, 0)?;
+    let reversed = peeled_rev ^ rev_fold;
+    // The item binder: a plain ident, or `(idx, elem)` when enumerated.
+    let (idx_var, elem_var): (Option<String>, String) = if enumerated {
+        match &closure.inputs[1] {
+            Pat::Tuple(t) if t.elems.len() == 2 => {
+                let idx = match &t.elems[0] {
+                    Pat::Ident(p) if p.subpat.is_none() => p.ident.to_string(),
+                    _ => return None,
+                };
+                let elem = match &t.elems[1] {
+                    Pat::Ident(p) if p.subpat.is_none() => p.ident.to_string(),
+                    // `(i, &x)` reference-elision binder.
+                    Pat::Reference(r) => match &*r.pat {
+                        Pat::Ident(p) if p.subpat.is_none() => p.ident.to_string(),
+                        _ => return None,
+                    },
+                    _ => return None,
+                };
+                (Some(idx), elem)
+            }
+            _ => return None,
+        }
+    } else {
+        let elem = match &closure.inputs[1] {
+            Pat::Ident(p) if p.subpat.is_none() => p.ident.to_string(),
+            Pat::Reference(r) => match &*r.pat {
+                Pat::Ident(p) if p.subpat.is_none() && r.mutability.is_none() => {
+                    p.ident.to_string()
+                }
+                _ => return None,
+            },
+            _ => return None,
+        };
+        (None, elem)
+    };
+    // init must be a literal integer accumulator (the threaded value is int-only for now).
+    let acc_0 = const_int(init_expr)?;
+
+    // Enumerate the domain as (element Term, element int-value-if-known) in iterated order.
+    let domain = bounded_domain_from_expr(base, scope)?;
+    let mut elems: Vec<(Rc<Term>, Option<i64>)> = match domain {
+        BoundedDomain::Array(terms) => {
+            // Re-read the base array's element EXPRs for their int values (for tail fold);
+            // a non-int element just yields None (tail must then not use `item`).
+            let elem_vals: Vec<Option<i64>> = match strip_refs_groups(base) {
+                Expr::Array(arr) => arr.elems.iter().map(const_int).collect(),
+                _ => terms.iter().map(|_| None).collect(),
+            };
+            terms.into_iter().zip(elem_vals).collect()
+        }
+        BoundedDomain::Range {
+            start,
+            end,
+            inclusive,
+        } => {
+            // Concrete integer enumeration of a closed range (acc threads, so we need the
+            // points, not a quantifier). Bounded to a sane cap to stay finite + cheap.
+            const CAP: i64 = 4096;
+            let (Some(s), Some(e)) = (term_as_int(&start), term_as_int(&end)) else {
+                return None;
+            };
+            let e = if inclusive { e + 1 } else { e };
+            if e < s || e - s > CAP {
+                return None;
+            }
+            (s..e).map(|n| (num(n), Some(n))).collect()
+        }
+    };
+    if elems.is_empty() {
+        return None;
+    }
+    if reversed {
+        elems.reverse();
+    }
+
+    // The closure body: block-bodied (the asserts + the acc-update tail). A bare-expr body
+    // has no asserts -> nothing in this bucket.
+    let Expr::Block(body_block) = &*closure.body else {
+        return None;
+    };
+    let stmts = &body_block.block.stmts;
+    // The tail is the final expr-without-semi (the acc update). The preceding statements
+    // are the body (asserts + any pure body lets). A `fold` whose closure does not END in
+    // a value expression is not a clean acc update -> refuse.
+    let Some((Stmt::Expr(tail, None), body_stmts)) = stmts.split_last() else {
+        return None;
+    };
+    let n_body = count_asserts_in_stmts(body_stmts);
+    if n_body == 0 {
+        return None;
+    }
+    // Purity: the closure body must not mutate external state -- no assignment / `&mut` /
+    // `let mut`, AND no iterator-advancing / mutating method call (`other.next()`,
+    // `v.push(..)`), INCLUDING inside an assert macro's tokens (the intersperse shape
+    // `assert_eq!(Some(&x), other.next())` mutates the captured `other`). The acc-update
+    // tail's own `acc + 1` arithmetic is pure and unaffected. A side-effecting body makes
+    // each iteration observe a varying external value, so the finite conjunction would be a
+    // false claim -- refuse (HALF 2 then makes it terminal).
+    if closure_body_is_side_effecting(&closure.body) {
+        return None;
+    }
+    // Lift the body ONCE, free in acc_var / elem_var / idx_var. All-or-nothing.
+    let mut body_entries = Vec::new();
+    let mut body_skipped = Vec::new();
+    let mut body_lifted = 0usize;
+    let mut body_helpers = HashSet::new();
+    collect_assertion_entries(
+        body_stmts,
+        scope.local_scope(),
+        options,
+        reducer,
+        float_widths,
+        &mut body_entries,
+        &mut body_skipped,
+        &mut body_lifted,
+        &mut body_helpers,
+        macro_depth,
+        &scope.plan.interior_mut,
+    );
+    if !body_skipped.is_empty() || body_entries.len() != n_body {
+        return None;
+    }
+    let body_conj = and_(body_entries.iter().map(|e| e.atom.clone()).collect());
+
+    // Thread the accumulator: for each element (in iterated order) substitute the concrete
+    // acc_k / element / index into the body formula, and const-fold the tail to acc_{k+1}.
+    let mut instances = Vec::with_capacity(elems.len());
+    let mut acc = acc_0;
+    for (k, (elem_term, elem_val)) in elems.iter().enumerate() {
+        let idx_k = idx_var.as_ref().map(|_| k as i64);
+        // Substitute acc_var := acc, elem_var := elem_term, idx_var := idx_k in the body.
+        let mut inst = subst_var_in_formula(&body_conj, &acc_var, &num(acc));
+        inst = subst_var_in_formula(&inst, &elem_var, elem_term);
+        if let (Some(iv), Some(ik)) = (idx_var.as_ref(), idx_k) {
+            inst = subst_var_in_formula(&inst, iv, &num(ik));
+        }
+        instances.push(inst);
+        // acc_{k+1} = const-fold(tail; acc:=acc, elem:=elem_val, idx:=idx_k).
+        acc = const_fold_acc_update(
+            tail,
+            &acc_var,
+            acc,
+            Some(elem_var.as_str()),
+            *elem_val,
+            idx_var.as_deref(),
+            idx_k,
+        )?;
+    }
+    let conj = and_(instances);
+    Some((conj, n_body, method))
+}
+
+/// Strip references / parens / groups to reveal an underlying expression (used to
+/// re-read a domain array's element literals for accumulator const-folding).
+fn strip_refs_groups(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Reference(r) => strip_refs_groups(&r.expr),
+        Expr::Paren(p) => strip_refs_groups(&p.expr),
+        Expr::Group(g) => strip_refs_groups(&g.expr),
+        _ => expr,
+    }
+}
+
+/// Read a Term as an i64 when it is a literal integer constant (`num`), for closed
+/// range enumeration in the defolder. None for any non-literal-int term.
+fn term_as_int(t: &Rc<Term>) -> Option<i64> {
+    match t.as_ref() {
+        Term::Const {
+            value: ConstValue::Int(n),
+            ..
+        } => Some(*n),
+        _ => None,
+    }
+}
+
+/// Mutating method names: a call to one of these on a CAPTURED binding inside a
+/// closure body advances / mutates external state (a side effect), so a single
+/// universal over the closure parameter is not a timeless point-wise claim.
+const CLOSURE_BODY_MUTATING_METHODS: &[&str] = &[
+    "next", "next_back", "nth", "nth_back", "push", "push_back", "push_front",
+    "pop", "pop_back", "pop_front", "insert", "remove", "clear", "set", "replace",
+    "swap", "truncate", "extend", "append", "drain", "store", "fetch_add",
+    "fetch_sub", "fetch_or", "borrow_mut", "get_mut", "write", "send",
+];
+
+/// The closure-bearing iterator/Option adaptors whose closure body MAY carry a
+/// dissolvable / liftable point-wise assertion (pure value-sugar adaptors). A
+/// closure-method NOT in this set (`.with`, `.with_unfilled_buf`, `.scope`, an
+/// arbitrary effectful accessor) is an opaque/effectful accessor, not a pure
+/// iteration -- its asserts are not point-wise and cannot be lifted by any value
+/// lifter, so they are TERMINAL (closed with a source property), not lifter work.
+const PURE_CLOSURE_ADAPTORS: &[&str] = &[
+    "for_each", "try_for_each", "fold", "rfold", "try_fold", "map", "filter_map",
+    "flat_map", "scan", "inspect", "all", "any", "find", "find_map", "position",
+    "rposition", "reduce", "map_while", "take_while", "skip_while", "filter",
+    "and_then", "or_else", "map_or", "map_or_else", "unwrap_or_else",
+];
+
+/// True if a closure body (a `Block`'s stmts or a single body expr) is
+/// SIDE-EFFECTING: it mutates captured state (an assignment / compound-assign /
+/// `&mut` / `let mut` -- via `loop_body_mutates`) or calls a known mutating /
+/// iterator-advancing method (`iter.next()`, `v.push(..)`, ...). A side-effecting
+/// body is not a pure point-wise claim, so a universal over the closure parameter
+/// would be a false claim -- it is TERMINAL, not dissolvable / liftable.
+fn closure_body_is_side_effecting(body: &Expr) -> bool {
+    let stmts: Vec<Stmt> = match body {
+        Expr::Block(b) => b.block.stmts.clone(),
+        other => vec![Stmt::Expr(other.clone(), None)],
+    };
+    if loop_body_mutates(&stmts) {
+        return true;
+    }
+    struct MethScan {
+        found: bool,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for MethScan {
+        fn visit_expr_method_call(&mut self, m: &'ast syn::ExprMethodCall) {
+            if CLOSURE_BODY_MUTATING_METHODS.contains(&m.method.to_string().as_str()) {
+                self.found = true;
+            }
+            syn::visit::visit_expr_method_call(self, m);
+        }
+        // A mutating call frequently lives INSIDE an assert macro's tokens
+        // (`assert_eq!(Some(x), iter.next())`), which the AST visitor does NOT descend
+        // (macro tokens are opaque). Parse the macro args as a comma-list of exprs and
+        // scan those, so `iter.next()` inside the assert is seen.
+        fn visit_macro(&mut self, m: &'ast syn::Macro) {
+            use syn::parse::Parser;
+            use syn::punctuated::Punctuated;
+            let parser = Punctuated::<Expr, syn::Token![,]>::parse_terminated;
+            if let Ok(args) = parser.parse2(m.tokens.clone()) {
+                for a in &args {
+                    syn::visit::Visit::visit_expr(self, a);
+                }
+            }
+            syn::visit::visit_macro(self, m);
+        }
+    }
+    let mut s = MethScan { found: false };
+    syn::visit::Visit::visit_expr(&mut s, body);
+    s.found
+}
+
+/// If `expr` is a CLOSURE-BEARING method call whose closure body contains assert
+/// macro(s) but is NOT a dissolvable/liftable pure-point-wise iteration, return a
+/// TERMINAL refusal reason (a source property no value lifter could lift). This is
+/// HALF 2 of the fold-closure bucket: the side-effecting / opaque-accessor cases
+/// (intersperse `iter.clone().for_each(|x| .. iter.next())`, BorrowedBuf
+/// `cursor.with_unfilled_buf(|buf| ..)`, TLS `DROPS.with(|d| ..)`, `array::from_fn(..)
+/// .map(|x| { assert!(..); nth += 1 })`) move from unclassified -> terminal-refused.
+///
+/// Discrimination (the construction + purity boundary, exact so a defoldable case is
+/// NEVER fake-refused):
+///   * the closure-method is NOT a pure adaptor (an effectful/opaque accessor like
+///     `.with` / `.with_unfilled_buf`) -> terminal "opaque ... bin-2" accessor.
+///   * a PURE adaptor whose closure body is side-effecting (mutates captured state /
+///     advances an iterator) -> terminal "side-effecting closure body".
+///   * a PURE iterator adaptor (for_each/fold-family) whose RECEIVER does NOT resolve
+///     (through `let_inits`) to a finite literal domain -> the iterated values are runtime
+///     data, terminal "opaque runtime receiver (bin-2)".
+///   * a PURE adaptor, PURE body, LITERAL-resolvable receiver -> None: this is a
+///     defoldable / for_each-liftable case (`try_lift_fold_forall` / `try_lift_for_each_
+///     forall` already discharged it, or declined for a recoverable reason like a non-
+///     const-foldable accumulator) -> leave the generic UNCLASSIFIED skip (honest work).
+/// None also for any non-closure-method statement (handled by the existing skip).
+fn closure_method_terminal_reason(
+    expr: &Expr,
+    scope: &TemporalScope,
+    let_inits: &BTreeMap<String, &Expr>,
+) -> Option<&'static str> {
+    // Find the closure-bearing method call (anywhere along the chain), its closure, and
+    // its receiver (for the literal-domain resolution).
+    struct Find {
+        method: Option<String>,
+        closure: Option<syn::ExprClosure>,
+        receiver: Option<Expr>,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Find {
+        fn visit_expr_method_call(&mut self, m: &'ast syn::ExprMethodCall) {
+            if self.closure.is_none() {
+                if let Some(Expr::Closure(c)) = m.args.iter().find(|a| matches!(a, Expr::Closure(_)))
+                {
+                    self.method = Some(m.method.to_string());
+                    self.closure = Some(c.clone());
+                    self.receiver = Some((*m.receiver).clone());
+                }
+            }
+            syn::visit::visit_expr_method_call(self, m);
+        }
+    }
+    let mut f = Find {
+        method: None,
+        closure: None,
+        receiver: None,
+    };
+    syn::visit::Visit::visit_expr(&mut f, expr);
+    let (method, closure, receiver) = (f.method?, f.closure?, f.receiver?);
+    // The closure body must actually carry an assertion (else this is not a
+    // fold-closure-bucket statement -- nothing to classify; leave it alone).
+    if count_asserts_in_expr(&closure.body) == 0 {
+        return None;
+    }
+    let is_pure_adaptor = PURE_CLOSURE_ADAPTORS.contains(&method.as_str());
+    if !is_pure_adaptor {
+        // An effectful / opaque accessor (`.with`, `.with_unfilled_buf`, ...): the
+        // receiver is runtime/opaque state, not a constructed literal domain -- bin-2.
+        return Some(
+            "assertion in a closure over an opaque/effectful accessor (bin-2: runtime \
+             data, not constructible from source literals); refused",
+        );
+    }
+    if closure_body_is_side_effecting(&closure.body) {
+        return Some(
+            "assertion in a side-effecting closure body (mutates captured state / \
+             advances an iterator); not a pure point-wise claim; refused",
+        );
+    }
+    // Pure adaptor, pure body: does the RECEIVER resolve to a finite literal domain? If
+    // not, the iterated/threaded values are runtime data -- bin-2 terminal. If yes, this
+    // is a defoldable/for_each-liftable case the symbolic lifter handles (or declined for
+    // a recoverable reason) -- leave it UNCLASSIFIED (honest work), never fake-refuse.
+    let resolves_literal = resolve_fold_domain(&receiver, let_inits, 0)
+        .and_then(|(base, _, _)| bounded_domain_from_expr(base, scope))
+        .is_some();
+    if !resolves_literal {
+        return Some(
+            "assertion in a closure over an opaque runtime receiver (bin-2: runtime data, \
+             not constructible from source literals); refused",
+        );
+    }
+    None
+}
+
 /// A nested block is a DISTINCT program region. Two sibling blocks that each
 /// rebind a same-named local (`const { let ty = .. }` twice; `{ let as_mut = .. }`
 /// twice; the `{ let i = Cell::new(0); .. }` rebind-in-block of `iterator_drops`)
@@ -2224,6 +2732,25 @@ fn collect_assertion_entries(
             _ => None,
         })
         .collect();
+    // Map of this block's simple `let <ident> = <init>;` bindings, so the DEFOLDER can
+    // resolve a fold receiver that is a binding (`it.fold(..)` where `it = xs.iter()`,
+    // `xs = [..]`) back through to its literal-array / range domain. A non-simple pat or
+    // a diverging init is omitted (resolution then fails -> the defolder declines, safe).
+    let let_inits: BTreeMap<String, &Expr> = stmts
+        .iter()
+        .filter_map(|s| match s {
+            Stmt::Local(local) => {
+                let init = local.init.as_ref().filter(|i| i.diverge.is_none())?;
+                match &local.pat {
+                    Pat::Ident(p) if p.subpat.is_none() => {
+                        Some((p.ident.to_string(), &*init.expr))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+        .collect();
     for (stmt_idx, stmt) in stmts.iter().enumerate() {
         match stmt {
             Stmt::Local(local) => {
@@ -2248,6 +2775,27 @@ fn collect_assertion_entries(
                             macro_depth,
                             &temporal_scope.plan.interior_mut,
                         );
+                    } else if let Some((quantified, n, method)) = try_lift_fold_forall(
+                        &init.expr,
+                        &temporal_scope,
+                        options,
+                        reducer,
+                        float_widths,
+                        macro_depth,
+                        &let_inits,
+                    ) {
+                        // DEFOLDER: `let i = <lit>.iter().fold(0, |i, &x| { assert..; i+1 });`
+                        // is the finite conjunction of its per-iteration body with `i`
+                        // threaded as a const-folded accumulator -- the construction axiom.
+                        entries.push(AssertionEntry {
+                            name: Some(format!(
+                                "{}::{}",
+                                temporal_scope.local_scope(),
+                                method
+                            )),
+                            atom: quantified,
+                        });
+                        *macros_lifted += n;
                     } else if let Some((quantified, n, var)) = try_lift_for_each_forall(
                         &init.expr,
                         &temporal_scope,
@@ -2275,11 +2823,20 @@ fn collect_assertion_entries(
                         if let Some((_, diverge)) = &init.diverge {
                             count += count_asserts_in_expr(diverge);
                         }
+                        // HALF 2: a closure-method let-init whose body is side-effecting /
+                        // over an opaque accessor is TERMINAL (a source property), not the
+                        // generic unclassified work. A pure adaptor + pure body returns None
+                        // here and keeps the generic skip (dissolvable in --dissolve).
+                        let reason = closure_method_terminal_reason(
+                            &init.expr,
+                            &temporal_scope,
+                            &let_inits,
+                        )
+                        .unwrap_or(
+                            "assertion inside a let-initializer expression: not a top-level point-wise assertion; released to layer 0",
+                        );
                         for _ in 0..count {
-                            skipped.push(
-                                "assertion inside a let-initializer expression: not a top-level point-wise assertion; released to layer 0"
-                                    .to_string(),
-                            );
+                            skipped.push(reason.to_string());
                         }
                     }
                 }
@@ -2699,7 +3256,27 @@ fn collect_assertion_entries(
                     // and add the named universal; the body asserts are accounted by
                     // `n`. An OPAQUE receiver makes `try_lift_for_each_forall` None,
                     // so the assert stays in its existing bin-2 refusal below.
-                    if let Some((quantified, n, var)) = try_lift_for_each_forall(
+                    if let Some((quantified, n, method)) = try_lift_fold_forall(
+                        e,
+                        &temporal_scope,
+                        options,
+                        reducer,
+                        float_widths,
+                        macro_depth,
+                        &let_inits,
+                    ) {
+                        // DEFOLDER over a literal domain (bare `.fold`/`.rfold` statement).
+                        entries.push(AssertionEntry {
+                            name: Some(format!(
+                                "{}::{}",
+                                temporal_scope.local_scope(),
+                                method
+                            )),
+                            atom: quantified,
+                        });
+                        *macros_lifted += n;
+                        true
+                    } else if let Some((quantified, n, var)) = try_lift_for_each_forall(
                         e,
                         &temporal_scope,
                         options,
@@ -2817,11 +3394,20 @@ fn collect_assertion_entries(
                 };
                 if !recursed {
                     let count = count_asserts_in_stmts(std::slice::from_ref(other));
+                    // HALF 2: a bare closure-method statement whose body is side-effecting /
+                    // over an opaque accessor is TERMINAL (a source property), not generic
+                    // unclassified work. A pure adaptor + pure body returns None and keeps
+                    // the generic skip (dissolvable verbatim in --dissolve).
+                    let reason = if let Stmt::Expr(e, _) = other {
+                        closure_method_terminal_reason(e, &temporal_scope, &let_inits)
+                    } else {
+                        None
+                    }
+                    .unwrap_or(
+                        "assertion nested in an unlifted expression statement: not a top-level point-wise assertion; released to layer 0",
+                    );
                     for _ in 0..count {
-                        skipped.push(
-                            "assertion nested in an unlifted expression statement: not a top-level point-wise assertion; released to layer 0"
-                                .to_string(),
-                        );
+                        skipped.push(reason.to_string());
                     }
                 }
             }
@@ -9290,6 +9876,239 @@ mod lifter_key_tests {
         );
     }
 
+    // ── HALF 2: side-effecting / opaque closure-method asserts -> TERMINAL ─────
+    //
+    // The fold-closure bucket has two halves. HALF 1 (the Dissolver) compiles+runs the
+    // CONSTRUCTIBLE-PURE closure statements verbatim (drains in --dissolve). HALF 2: the
+    // side-effecting / opaque-accessor cases are NOT dissolvable and NOT liftable -- they
+    // are a SOURCE property, so they move unclassified -> TERMINAL refused ("happy
+    // refuse") instead of the generic "nested unlifted expression statement" unclassified.
+
+    #[test]
+    fn side_effecting_for_each_body_is_terminal_refused() {
+        // The intersperse shape: `iter.clone().for_each(|x| assert_eq!(Some(x),
+        // iter.next()))` -- the body ADVANCES a captured iterator (`iter.next()`), a side
+        // effect, so the assert observes a per-iteration value, not a timeless point-wise
+        // claim. TERMINAL, not unclassified.
+        let src = r#"
+            #[test]
+            fn intersperse_like() {
+                let mut iter = [1i32, 2, 3].iter();
+                iter.clone().for_each(|x| assert_eq!(Some(x), iter.next()));
+            }
+        "#;
+        let out = lift_src(src);
+        assert!(
+            out.skip_reasons.iter().any(|r| r.contains("side-effecting closure body")),
+            "a for_each body that advances a captured iterator must be TERMINAL refused: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.skip_reasons.iter().all(|r| !r.contains("nested in an unlifted expression statement")),
+            "the side-effecting case must NOT stay in the generic unclassified bucket: {:?}",
+            out.skip_reasons
+        );
+        // and its disposition is terminal (Refused), not Unclassified work.
+        assert!(
+            out.skip_reasons
+                .iter()
+                .filter(|r| r.contains("side-effecting closure body"))
+                .all(|r| matches!(refusal_disposition(r), Disposition::Refused)),
+            "side-effecting closure body reason must be a terminal disposition"
+        );
+    }
+
+    #[test]
+    fn opaque_accessor_closure_is_terminal_refused() {
+        // The TLS / BorrowedBuf shape: `DROPS.with(|d| assert_eq!(*d.borrow(), [0]))` --
+        // `.with` is NOT a pure iterator/Option adaptor; the receiver is opaque runtime
+        // state (a thread-local), not a constructed literal domain. TERMINAL (bin-2).
+        let src = r#"
+            #[test]
+            fn tls_like() {
+                DROPS.with(|d| assert_eq!(*d.borrow(), [0]));
+            }
+        "#;
+        let out = lift_src(src);
+        assert!(
+            out.skip_reasons.iter().any(|r| r.contains("opaque/effectful accessor") && r.contains("bin-2")),
+            "a `.with`-accessor closure assert must be TERMINAL refused (bin-2): {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.skip_reasons
+                .iter()
+                .filter(|r| r.contains("opaque/effectful accessor"))
+                .all(|r| matches!(refusal_disposition(r), Disposition::Refused)),
+            "opaque-accessor reason must be a terminal disposition"
+        );
+    }
+
+    // ── DEFOLDER: hermetic symbolic fold-unroll over a literal domain ─────────
+    //
+    // `fold`'s definition IS its desugaring (`acc = init; while let Some(x) = it.next()
+    // { acc = f(acc, x) }`). Over a FINITE literal domain it is the finite conjunction of
+    // the per-iteration body with `acc` threaded as a const-folded value -- the
+    // construction axiom, no compile/run. `for_each` is `fold` with `acc = ()`.
+
+    #[test]
+    fn defold_pure_fold_over_literal_locals_lifts() {
+        // (a) POSITIVE: `xs.iter().fold(0, |i, &x| { assert_eq!(x, ys[i]); i + 1 })` over
+        // literal `xs`/`ys` -- the index accumulator threads 0,1,2 and each body assert
+        // becomes a concrete point. Lifts as the finite conjunction (no skip).
+        let src = r#"
+            #[test]
+            fn pure_fold() {
+                let xs = [1u32, 2, 3];
+                let ys = [1u32, 2, 3];
+                let _ = xs.iter().fold(0usize, |i, &x| { assert_eq!(x, ys[i]); i + 1 });
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "the defolded fold body assert must lift as the finite conjunction; reasons: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.skip_reasons.iter().all(|r| !r.contains("let-initializer expression")
+                && !r.contains("side-effecting closure body")
+                && !r.contains("opaque/effectful accessor")),
+            "a defolded pure fold must NOT remain in any skip bucket: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            contract_names(&out).iter().any(|n| n.contains("::fold")),
+            "the lifted conjunction must be named `<test>::fold`: {:?}",
+            contract_names(&out)
+        );
+    }
+
+    #[test]
+    fn defold_rfold_reverses_element_order_and_lifts() {
+        // (b) `.rfold` iterates the literal domain in REVERSE; the accumulator threads over
+        // the reversed order. Still a finite conjunction -- lifts.
+        let src = r#"
+            #[test]
+            fn rfold_t() {
+                let xs = [10u32, 20, 30];
+                let _ = xs.iter().rfold(0usize, |i, &x| { assert!(x > 0); i + 1 });
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "an rfold over a literal array must lift (reverse order); reasons: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            contract_names(&out).iter().any(|n| n.contains("::rfold")),
+            "named `<test>::rfold`: {:?}",
+            contract_names(&out)
+        );
+    }
+
+    #[test]
+    fn defold_enumerate_fold_lifts() {
+        // (c) `.iter().enumerate().fold(0, |acc, (j, &x)| ..)` binds the index pair; the
+        // index `j` is the concrete position each step. Lifts.
+        let src = r#"
+            #[test]
+            fn enum_fold() {
+                let xs = [5u32, 6, 7];
+                let _ = xs.iter().enumerate().fold(0usize, |acc, (j, &x)| { assert!(x >= j as u32); acc + 1 });
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "an enumerate().fold over a literal array must lift; reasons: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn defold_opaque_receiver_fold_is_terminal_refused() {
+        // (d) DISCRIMINATION: inside a `#[test]` fn, the fold receiver `v` is bound to a
+        // RUNTIME fn-call result (`make()`), not a literal domain. The defolder declines
+        // (the receiver does not resolve to a finite construction); HALF 2 then makes it a
+        // TERMINAL refusal (opaque runtime receiver, bin-2), not generic unclassified.
+        let src = r#"
+            #[test]
+            fn opaque_fold() {
+                let v = make_runtime();
+                let _ = v.iter().fold(0usize, |i, &x| { assert_eq!(x, i as u32); i + 1 });
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "an opaque-domain fold must NOT be lifted by the defolder: {:?}",
+            contract_names(&out)
+        );
+        assert!(
+            out.skip_reasons.iter().any(|r| r.contains("opaque runtime receiver")
+                && matches!(refusal_disposition(r), Disposition::Refused)),
+            "an opaque-receiver fold body assert must be TERMINAL refused (bin-2): {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn defold_side_effecting_body_fold_is_terminal_refused() {
+        // (e) DISCRIMINATION: a literal-domain fold whose body ADVANCES a captured iterator
+        // (`other.next()`) is side-effecting -- the defolder declines (purity gate), and
+        // HALF 2 makes it TERMINAL refused, not generic unclassified.
+        let src = r#"
+            #[test]
+            fn se_fold() {
+                let xs = [1u32, 2, 3];
+                let mut other = [4u32, 5, 6].iter();
+                let _ = xs.iter().fold(0usize, |i, &x| { assert_eq!(Some(&x), other.next()); i + 1 });
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "a side-effecting-body fold must NOT be lifted: {:?}",
+            contract_names(&out)
+        );
+        assert!(
+            out.skip_reasons.iter().any(|r| r.contains("side-effecting closure body")
+                && matches!(refusal_disposition(r), Disposition::Refused)),
+            "a side-effecting fold body assert must be TERMINAL refused: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn defold_non_const_foldable_accumulator_stays_unclassified() {
+        // (f) HONEST BOUNDARY: a literal-domain fold whose tail is NOT a const-foldable
+        // accumulator update (`acc.wrapping_mul(x)` -- a method call we do not const-fold)
+        // is declined by the defolder. The body is pure and the receiver is a pure adaptor,
+        // so HALF 2 does NOT terminal-refuse it -- it stays UNCLASSIFIED (honest work, not a
+        // fake discharge or a fake refusal).
+        let src = r#"
+            #[test]
+            fn nf_fold() {
+                let xs = [1u32, 2, 3];
+                let _ = xs.iter().fold(1u32, |acc, &x| { assert!(x > 0); acc.wrapping_mul(x) });
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "a non-const-foldable accumulator must NOT be defolded: {:?}",
+            contract_names(&out)
+        );
+        assert!(
+            out.skip_reasons.iter().any(|r| r.contains("let-initializer expression")
+                && matches!(refusal_disposition(r), Disposition::Unclassified)),
+            "a non-foldable-acc fold stays UNCLASSIFIED (honest), not terminal: {:?}",
+            out.skip_reasons
+        );
+    }
+
     // ── Fix E: format! with mut local is refused ─────────────────────────────
     //
     // `format!("{:?}", r)` where `r` is `let mut r = ...` must be refused as
@@ -9685,6 +10504,8 @@ mod lifter_key_tests {
             "macro `m`: expansion yielded no liftable assertion (type-level or effectful body); released to layer 0",
             "assertion under while context: not unconditional point-wise; released to layer 0",
             "flt2dec assert: f16/f128 formatting is unstable -- unformattable on the stable toolchain the lifter ships and not modellable as a point-wise claim; refused",
+            "assertion in a side-effecting closure body (mutates captured state / advances an iterator); not a pure point-wise claim; refused",
+            "assertion in a closure over an opaque/effectful accessor (bin-2: runtime data, not constructible from source literals); refused",
         ] {
             assert_eq!(refusal_disposition(r), Refused, "should be terminal: {r}");
         }
