@@ -498,8 +498,14 @@ house with every door labelled.
 > drained. The corpus still has **128 [unclassified] "reachable only via call-site inlining"** asserts
 > (emitted by the lifter at `lib.rs:938`); A's `collect_helper_call_inlinings` does NOT fire on them.
 > A's machinery is sound + unit-tested + causes no regression (SILENT 0, unaccounted −52, CID conserved),
-> but is presently 0-drain infra. OPEN: is the 128-bucket wireable (the single biggest lever) or
-> legitimately excused? — under investigation; do not re-claim A's +13.
+> but is presently 0-drain infra. RESOLVED (sample-traced via `--json` ledger): the 128-bucket is
+> **legitimately excused, NOT a wiring gap.** Its members are `check` (iter/traits/iterator.rs) and
+> `test_chain` (iter/adapters/chain.rs) — helpers that iterate OPAQUE/RUNTIME data and use the `Unfuse`
+> user type + fn-pointer params. They are bin-2 universes (∀x over runtime values), not closed points;
+> A's `helper_carryable` CORRECTLY refuses them. The only carryable-arg helpers (char.rs `lower`/`upper`)
+> are already dissolved by the existing per-fn `collect_dissolvable` path, so call-site inlining has no
+> incremental target in THIS corpus. A's commit is therefore sound-but-redundant infra. **Keep-or-revert
+> is a judgment call left for T** (not reverted unilaterally overnight; no regression either way).
 >
 > **Reproducibility fix `2a531a105` (kept, real win for verification integrity):** the dissolve dir reused
 > fixed harness filenames, so a sequential sweep hit ETXTBSY overwrite races → non-reproducible dissolved
