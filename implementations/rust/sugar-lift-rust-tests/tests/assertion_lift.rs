@@ -4927,6 +4927,76 @@ mod const_cmp {
 }
 
 #[test]
+fn empty_body_type_level_assert_helper_is_terminal_refused() {
+    // `fn assert_trusted_len<T: TrustedLen>(_: &T) {}` is a TYPE-LEVEL marker: its
+    // only content is the `T: TrustedLen` trait bound, discharged by the compiler.
+    // The empty body has zero point-wise value content. The call must be refused with
+    // a TERMINAL reason ("type-level obligation"), not lifted and not left as an
+    // unclassified "no visible source" lifter-limitation.
+    let src = r#"
+#[test]
+fn t() {
+    fn assert_trusted_len<T: Sized>(_: &T) {}
+    let v = [0u8; 4];
+    assert_trusted_len(&v);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/flatten.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "an empty-body type-level helper has no value predicate to lift: {:?}",
+        out.skip_reasons
+    );
+    let reason = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains("type-level obligation"))
+        .unwrap_or_else(|| panic!("expected a type-level-obligation refusal, got {:?}", out.skip_reasons));
+    assert_eq!(
+        sugar_lift_rust_tests::refusal_disposition(reason),
+        sugar_lift_rust_tests::Disposition::Refused,
+        "type-level obligation must classify as TERMINAL refused, not unclassified work"
+    );
+}
+
+#[test]
+fn nonempty_assert_helper_is_not_terminal_refused_the_twin() {
+    // BREAK-THE-TWIN: the SAME nested-helper shape but with a NON-empty body must NOT
+    // get the type-level terminal treatment. A real helper body carries value
+    // obligations (recoverable via lexically-scoped inlining we have not built yet);
+    // mislabeling it terminal would be a FAKE-ZERO -- laundering recoverable work as
+    // closed. So it must stay UNCLASSIFIED ("no visible source"), never "type-level
+    // obligation", proving the discrimination is exactly empty-vs-non-empty body.
+    let src = r#"
+#[test]
+fn t() {
+    fn assert_is_zero(x: u8) { assert_eq!(x, 0u8); }
+    assert_is_zero(0u8);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/flatten.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "a nested non-empty helper does not inline via the module registry: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        !out.skip_reasons.iter().any(|r| r.contains("type-level obligation")),
+        "a non-empty-body helper must NOT be labeled a type-level obligation: {:?}",
+        out.skip_reasons
+    );
+    // Its refusal stays UNCLASSIFIED (work), not terminal -- the recoverable subset
+    // is not laundered into a fake-zero.
+    for r in &out.skip_reasons {
+        assert_eq!(
+            sugar_lift_rust_tests::refusal_disposition(r),
+            sugar_lift_rust_tests::Disposition::Unclassified,
+            "non-empty helper refusal must stay unclassified work, not terminal: {r}"
+        );
+    }
+}
+
+#[test]
 fn deeply_nested_assert_is_accounted_by_safety_net() {
     // An assert in an AST position no specific arm enumerates (here, inside a
     // method-call closure argument as a statement) must still be accounted via

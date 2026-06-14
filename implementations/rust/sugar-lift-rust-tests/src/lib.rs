@@ -177,10 +177,18 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
     // TERMINAL (source property). `temporally unstable` joins `ambiguous temporal
     // identity`: a term reading a mutated local has no single `t`, so it cannot be
     // read timelessly -- a property of the source, not a missing lift.
+    // TERMINAL: a `type-level obligation` is an assert-prefixed call to a
+    // lexically-visible EMPTY-BODY helper (`fn assert_trusted_len<T: TrustedLen>(_: &T) {}`).
+    // Its only content is the signature's trait bounds -- a typing judgment the
+    // compiler discharges, categorically NOT a point-wise value predicate. An empty
+    // body has zero recoverable value-work, so no better value-lifter could lift it:
+    // a SOURCE property, not a lifter limitation. (NOT a fake-zero -- there is nothing
+    // to launder.)
     let terminal = reason.contains("bin-2")
         || reason.contains("number too large")
         || reason.contains("ambiguous temporal identity")
-        || reason.contains("temporally unstable");
+        || reason.contains("temporally unstable")
+        || reason.contains("type-level obligation");
     if terminal {
         Disposition::Refused
     } else {
@@ -1593,22 +1601,44 @@ fn collect_assertion_entries(
                 }
             },
             Stmt::Expr(expr, _) if assertion_call_name(expr).is_some() => {
-                match reduce_assertion_expr(
-                    expr,
-                    reducer,
-                    &temporal_scope,
-                    &*float_widths,
-                    options,
-                    MAX_ASSERTION_REDUCTION_DEPTH,
-                    reduced_helpers,
-                ) {
-                    Ok(reduced_entries) => {
-                        if !reduced_entries.is_empty() {
-                            *macros_lifted += 1;
+                let call_name = assertion_call_name(expr).expect("guard ensures Some");
+                // An assert-prefixed call to a LEXICALLY-VISIBLE empty-body helper is a
+                // TYPE-LEVEL obligation: the helper's only content is its signature's
+                // trait bounds (e.g. `fn assert_trusted_len<T: TrustedLen>(_: &T) {}`),
+                // discharged by the type system, not a point-wise value predicate. Empty
+                // body => zero recoverable value-work => terminal refusal (a source
+                // property no value-lifter can lift), NOT a lifter limitation and NOT a
+                // fake-zero. Same-block scope only (`local_fns` = this block's nested fns,
+                // lexically correct by construction); a deeper/sibling-scope helper is not
+                // matched and stays unclassified -- a safe under-claim, never a wrong one.
+                // This NEVER displaces a discharge: an empty body lifts to zero entries.
+                if local_fns
+                    .get(&call_name)
+                    .is_some_and(|f| f.block.stmts.is_empty())
+                {
+                    skipped.push(format!(
+                        "assertion helper `{call_name}` is a type-level obligation \
+                         (empty body: trait-bound or no-op), not a point-wise value \
+                         predicate; refused"
+                    ));
+                } else {
+                    match reduce_assertion_expr(
+                        expr,
+                        reducer,
+                        &temporal_scope,
+                        &*float_widths,
+                        options,
+                        MAX_ASSERTION_REDUCTION_DEPTH,
+                        reduced_helpers,
+                    ) {
+                        Ok(reduced_entries) => {
+                            if !reduced_entries.is_empty() {
+                                *macros_lifted += 1;
+                            }
+                            entries.extend(reduced_entries);
                         }
-                        entries.extend(reduced_entries);
+                        Err(reason) => skipped.push(reason),
                     }
-                    Err(reason) => skipped.push(reason),
                 }
             }
             // Unconditional plain block: recurse and lift normally.
@@ -8556,6 +8586,7 @@ mod lifter_key_tests {
             "assert_eq!: int literal 999999999999999999999: number too large to fit in target type",
             "ambiguous temporal identity for receiver `r`; skipped assertion",
             "assert_eq!: macro in term position references a `x` local; temporally unstable — refused",
+            "assertion helper `assert_trusted_len` is a type-level obligation (empty body: trait-bound or no-op), not a point-wise value predicate; refused",
         ] {
             assert_eq!(refusal_disposition(r), Refused, "should be terminal: {r}");
         }
