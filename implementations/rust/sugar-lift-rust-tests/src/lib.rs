@@ -1857,6 +1857,28 @@ fn collect_assertion_entries(
                             &temporal_scope.plan.interior_mut,
                         );
                         true
+                    } else if let Some(result) = try_reduce_helper_call_stmt(
+                        e,
+                        reducer,
+                        &temporal_scope,
+                        &*float_widths,
+                        options,
+                        MAX_ASSERTION_REDUCTION_DEPTH,
+                        reduced_helpers,
+                    ) {
+                        // R7: a bare call to a helper whose body asserts. On Ok, the
+                        // callsite obligations are lifted and the helper's K source
+                        // asserts are accounted as discharged (Pass 2 skips it). On
+                        // Err, leave it: the helper stays unreduced and Pass 2 refuses
+                        // its body honestly -- we add nothing here.
+                        match result {
+                            Ok((es, k)) => {
+                                entries.extend(es);
+                                *macros_lifted += k;
+                                true
+                            }
+                            Err(_) => false,
+                        }
                     } else {
                         false
                     }
@@ -3217,6 +3239,83 @@ fn reduce_assertion_expr(
             "assertion expression is not structurally reducible `{}`",
             token_key(other)
         )),
+    }
+}
+
+/// R7 (call-disappearance → queued dig), statement position. A bare call statement
+/// `check(a); to_str_test(b);` whose callee is a resolvable helper WHOSE BODY
+/// CONTAINS ASSERTIONS is inlined: bind params := callsite actuals (β-reduction, a
+/// faithful homomorphism -- the helper's asserts at this callsite ARE the helper's
+/// asserts with its params fixed to these args) and reduce the body. Distinct from
+/// the assert-position path (`assert_eq!(helper(x), y)`): here the helper returns
+/// nothing and its asserts are statements. Returns:
+///   None             -- not a helper-with-asserts call; fall through.
+///   Some(Ok((es,k)))  -- inlined; `es` = callsite obligations, `k` = the number of
+///                        SOURCE assert macros the helper body accounts for (so the
+///                        caller bumps `discharged` by `k` and the macro-count
+///                        reconciles); helper marked reduced.
+///   Some(Err(_))      -- a helper-with-asserts call we could NOT reduce (internal
+///                        `let`, non-simple arg, ...); NOT marked reduced, so Pass 2
+///                        refuses its body honestly. Caller adds nothing in Pass 1.
+fn try_reduce_helper_call_stmt(
+    expr: &Expr,
+    reducer: &ReductionCtx<'_>,
+    scope: &TemporalScope,
+    float_widths: &FloatWidthScope,
+    options: &LiftOptions,
+    depth: usize,
+    reduced_helpers: &mut HashSet<String>,
+) -> Option<Result<(Vec<AssertionEntry>, usize), String>> {
+    let inner = match expr {
+        Expr::Paren(p) => &*p.expr,
+        Expr::Group(g) => &*g.expr,
+        other => other,
+    };
+    let Expr::Call(call) = inner else { return None };
+    let name = simple_call_name(call)?;
+    // Resolve the callee to a helper we hold the SOURCE of. No source -> not this
+    // rung (fall through; Pass 2 will refuse with "no visible source").
+    let helper = reducer.function(&name).ok()??;
+    // Only inline a call whose body actually CONTRIBUTES assertions -- otherwise it
+    // is an ordinary effectful/value call, not a point-claim carrier.
+    let body_asserts = count_asserts_in_stmts(&helper.block.stmts);
+    if body_asserts == 0 {
+        return None;
+    }
+    if !matches!(cfg_eval_for_attrs(&helper.attrs, options), CfgEval::Active) {
+        return None;
+    }
+    let params = match helper_param_names(helper) {
+        Ok(p) => p,
+        Err(_) => return None,
+    };
+    if params.len() != call.args.len() {
+        return None;
+    }
+    let mut bindings = ExprBindings::new();
+    for (param, arg) in params.into_iter().zip(call.args.iter()) {
+        bindings.insert(param, arg.clone());
+    }
+    if depth == 0 {
+        return Some(Err(format!("{name}: reduction depth exhausted")));
+    }
+    let result = reduce_assertion_stmts(
+        &helper.block.stmts,
+        &bindings,
+        reducer,
+        scope,
+        float_widths,
+        options,
+        depth - 1,
+        reduced_helpers,
+    )
+    .map_err(|e| format!("{name}: {e}"));
+    match result {
+        Ok(es) => {
+            reduced_helpers.insert(name);
+            Some(Ok((es, body_asserts)))
+        }
+        Err(e) => Some(Err(e)),
     }
 }
 
@@ -7988,6 +8087,46 @@ mod lifter_key_tests {
         assert!(
             dump.contains("@adv"),
             "the second same-statement `nth` must carry an `@adv` occurrence tag: {dump}"
+        );
+    }
+
+    // ── R7: statement-position helper-call inlining (β-reduction) ──────────────
+
+    #[test]
+    fn statement_helper_call_with_asserting_body_inlines_per_callsite() {
+        // `check(2); check(3);` — a bare-statement call to a helper whose body
+        // asserts. Each callsite inlines (params := actuals), so the helper's assert
+        // discharges point-wise per callsite and the helper is NOT refused in Pass 2.
+        let src = r#"
+            fn check(n: i32) { assert_eq!(probe(n), n); }
+            #[test]
+            fn drives() {
+                check(2);
+                check(3);
+            }
+        "#;
+        let out = lift_src(src);
+        // `check`'s body assert is lifted at the callsites, not refused.
+        let refused_check = out
+            .skip_reasons
+            .iter()
+            .any(|r| r.contains("check") && r.contains("reachable only via call-site"));
+        assert!(
+            !refused_check,
+            "helper `check` should inline at the callsite, not be refused: {:?}",
+            out.skip_reasons
+        );
+        // Two callsites with different args -> two distinct probe-obligations.
+        let probes: Vec<&str> = out
+            .decls
+            .iter()
+            .map(|d| d.name.as_str())
+            .filter(|n| n.contains("probe"))
+            .collect();
+        assert!(
+            probes.len() >= 2,
+            "expected a probe obligation per callsite: {:?}",
+            out.decls.iter().map(|d| &d.name).collect::<Vec<_>>()
         );
     }
 
