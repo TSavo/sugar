@@ -226,14 +226,22 @@ public final class JavaPanamaFfmRpc {
                             column = (int) lm.getColumnNumber(pos);
                         }
 
-                        // Build the #euf# name and resolve bindings
+                        // Build the #euf# name and resolve bindings.
+                        // The #euf# symbol IS the cross-language identity (no hub). A Rust
+                        // contract row name may be location-qualified for per-occurrence
+                        // disambiguation (`file::module::fn::SYMBOL#euf#...`), while the Java
+                        // consumer's own row is the bare SYMBOL. Match on the EUF symbol
+                        // identity: the bare name, or that name as the `::`-delimited tail of
+                        // a qualified name. The location prefix is sugar and dissolves.
                         String eufName = eufAssertionName(wrapperName, argValue);
 
                         Optional<Binding> src = bindings.stream()
-                            .filter(b -> b.name.equals(eufName) && b.targetProofCid == null)
+                            .filter(b -> (b.name.equals(eufName) || b.name.endsWith("::" + eufName))
+                                && b.targetProofCid == null)
                             .findFirst();
                         Optional<Binding> tgt = bindings.stream()
-                            .filter(b -> b.name.equals(eufName) && b.targetProofCid != null)
+                            .filter(b -> (b.name.equals(eufName) || b.name.endsWith("::" + eufName))
+                                && b.targetProofCid != null)
                             .findFirst();
 
                         String relPath = root.relativize(abs).toString().replace('\\', '/');
