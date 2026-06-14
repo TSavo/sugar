@@ -406,7 +406,7 @@ CORETESTS_RUST_VER ?= 1.96.0
 coretests-invariants:
 	@set -e; \
 	rustup toolchain install $(CORETESTS_RUST_VER) --component rust-src --profile minimal 2>/dev/null || true; \
-	( cd implementations/rust && cargo build --release -p sugar-lift-rust-tests --bin coretests_sweep ); \
+	$(CARGO_LOCAL) build --manifest-path implementations/rust/Cargo.toml --release -p sugar-lift-rust-tests --bin coretests_sweep; \
 	CORPUS="$$(rustc +$(CORETESTS_RUST_VER) --print sysroot)/lib/rustlib/src/rust/library/coretests/tests"; \
 	implementations/rust/target/release/coretests_sweep "$$CORPUS" --rustc-cfg > /tmp/coretests-hermetic.out; \
 	python3 scripts/check-coretests-invariants.py /tmp/coretests-hermetic.out implementations/rust/coretests-invariants.json
