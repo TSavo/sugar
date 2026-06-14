@@ -806,6 +806,17 @@ struct TemporalPlan {
     /// treated as unstable (it may be mutated in a way the syntactic tracker
     /// cannot follow, e.g. `xs[i] = v` or `xs.push(..)`).
     mut_locals: BTreeSet<String>,
+    /// Locals bound to an INTERIOR-MUTABLE primitive (`Cell::new`, `RefCell::new`,
+    /// `UnsafeCell::new`, an `Atomic*::new`, `Mutex::new`, `RwLock::new`). The
+    /// `mut` keyword is blind to interior mutability: such a binding is NOT `mut`
+    /// yet its observed value changes through `&self` (a `set`/`store`, or even the
+    /// drop side-effects of OTHER bindings -- the `iterator_drops` counter). So a
+    /// READ of it (`get`/`load`/`borrow`) at two program points is a fork around
+    /// `t`, not a contradiction. We version such a binding at EVERY statement so
+    /// each read observes a distinct `t`; the reads then do not coalesce and each
+    /// pin discharges on its own. A value bound once (`let v = c.get()`) is a bare
+    /// var, so a double-pin on it is still caught.
+    interior_mut: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1851,6 +1862,7 @@ fn temporal_plan_for_stmts(stmts: &[Stmt]) -> TemporalPlan {
     let mut definitions = BTreeMap::<String, usize>::new();
     let mut ambiguous = BTreeSet::<String>::new();
     let mut mut_locals = BTreeSet::<String>::new();
+    let mut interior_mut = BTreeSet::<String>::new();
     for stmt in stmts {
         for name in deterministic_definition_names(stmt) {
             *definitions.entry(name).or_insert(0) += 1;
@@ -1859,15 +1871,78 @@ fn temporal_plan_for_stmts(stmts: &[Stmt]) -> TemporalPlan {
             ambiguous.insert(name);
         }
         collect_mut_binding_names_in_stmt(stmt, &mut mut_locals);
+        collect_interior_mut_binding_names_in_stmt(stmt, &mut interior_mut);
     }
-    let versioned = definitions
+    let mut versioned: BTreeSet<String> = definitions
         .into_iter()
         .filter_map(|(name, count)| (count > 1 || ambiguous.contains(&name)).then_some(name))
         .collect();
+    // An interior-mutable binding is versioned even though it is bound once: its
+    // INTERIOR changes across statements, so each read must observe a distinct `t`.
+    versioned.extend(interior_mut.iter().cloned());
     TemporalPlan {
         versioned,
         mut_locals,
+        interior_mut,
     }
+}
+
+/// `let <name> = <interior-mutable constructor>(..)` -- record `<name>`.
+/// Interior-mutable primitives are the language's interior-mutability mechanism
+/// (all built on `UnsafeCell`): `Cell`, `RefCell`, `UnsafeCell`, the `Atomic*`
+/// family, `Mutex`, `RwLock`, `OnceCell`/`OnceLock`, `LazyCell`/`LazyLock`. A
+/// binding to one of their constructors is non-`mut` yet observably changes
+/// through `&self`. Recognising the constructor (not any per-method behaviour) is
+/// the interior-mutability dual of the `mut` keyword oracle.
+fn collect_interior_mut_binding_names_in_stmt(stmt: &Stmt, out: &mut BTreeSet<String>) {
+    let Stmt::Local(local) = stmt else { return };
+    let Some(init) = &local.init else { return };
+    if !init_is_interior_mut_construction(&init.expr) {
+        return;
+    }
+    for name in pat_idents(&local.pat) {
+        out.insert(name);
+    }
+}
+
+/// True iff `expr` is a call to an interior-mutable primitive's constructor, e.g.
+/// `Cell::new(..)`, `core::cell::RefCell::new(..)`, `AtomicUsize::new(..)`.
+fn init_is_interior_mut_construction(expr: &Expr) -> bool {
+    let Expr::Call(call) = expr else { return false };
+    let Expr::Path(path) = call.func.as_ref() else {
+        return false;
+    };
+    let segs: Vec<String> = path
+        .path
+        .segments
+        .iter()
+        .map(|s| s.ident.to_string())
+        .collect();
+    // The constructor is the last `::new` (or `::from`) segment; the type is the
+    // segment before it.
+    let n = segs.len();
+    if n < 2 {
+        return false;
+    }
+    let ctor = segs[n - 1].as_str();
+    if !matches!(ctor, "new" | "from" | "new_in") {
+        return false;
+    }
+    let ty = segs[n - 2].as_str();
+    ty.starts_with("Atomic")
+        || matches!(
+            ty,
+            "Cell"
+                | "RefCell"
+                | "UnsafeCell"
+                | "SyncUnsafeCell"
+                | "Mutex"
+                | "RwLock"
+                | "OnceCell"
+                | "OnceLock"
+                | "LazyCell"
+                | "LazyLock"
+        )
 }
 
 /// Collect `let mut <name>` binding names in a statement (recursing into nested
@@ -1903,6 +1978,14 @@ fn advance_temporal_scope_for_stmt(stmt: &Stmt, scope: &mut TemporalScope) {
     }
     for name in ambiguous_boundary_names_in_stmt(stmt) {
         scope.mark_ambiguous(&name);
+    }
+    // Interior-mutable bindings advance their `t` at EVERY statement: the value
+    // may change through `&self` (a `set`/`store`, or the drop side-effects of
+    // other bindings) between any two reads, so each read observes a fresh
+    // version and the reads do not coalesce into a false contradiction.
+    let interior: Vec<String> = scope.plan.interior_mut.iter().cloned().collect();
+    for name in interior {
+        scope.define_local(&name);
     }
 }
 
