@@ -321,6 +321,18 @@ is the most mechanical — it's the queued-dig you already named.
    gets a lowering (discharge) or a "not expressible in FOL" terminal refusal.
 4. **R4 family (110)** — branch partitioning + finite-domain loop bodies (one
    mechanism: `guard ⇒ out`, finite/non-quantified case of the forall lifter).
+   **ATTEMPTED + REVERTED 2026-06-14 (empirical):** implemented the hard-gated
+   `if <effect-free guard> { Pᵢ }` → `∧ implies(g, Pᵢ)` (no else, no if-let, pure
+   guard, `implies`/IR support confirmed present). Result: **0 corpus drain** (the
+   coretests if-guards are `.len()`/method/`cfg!`/runtime — all rejected by the
+   effect-free gate or non-lifting) AND it broke `assert_in_if_branch_is_refused_not_lifted`,
+   which encodes the intentional soundness judgment: a conditional whose guard is NOT
+   pinned makes `implies(g, false)` VACUOUSLY SAT, hiding a false body-assert — a
+   false-pass the consistency sweep CANNOT catch. So R4 is **empirically confirmed
+   supervised**: it is sound only when the guard is provably PINNED (so `implies` either
+   collapses to `Pᵢ` or to vacuous-true for a dead branch); a free/opaque guard is the
+   sweep-blind false-pass. The supervised version must gate on guard-PINNEDNESS (not just
+   effect-freedom) and prove the guard collapses. Reverted; floor stays 883.
 5. **Tail (193)** — R8 split, R1 nested, R5 let-init, MAC, then the long edge cases.
 
 ## Done means
