@@ -1,16 +1,26 @@
 # Goal: stdlib `unclassified` → 0
 
-> **STATUS 2026-06-14 (commits 3cbf69936..f101ba233, all pushed, all verified
+> **STATUS 2026-06-14 (commits 3cbf69936..a8095148f, all pushed, all verified
 > falsePass=0 / SILENT=0).** Capability work LANDED, driving unclassified
-> **1082 → 904** (−178, discharged 5088→5266). Two clean autonomous wins this cycle,
-> each sound-by-construction with break-the-twin tests:
-> (A, commit f101ba233, −25) **`&mut [array literal]` dissolves to `ref_mut(pinned
-> value)`** — `assert_eq!(left, &mut [1,2,3])` compares slices BY VALUE, so the RHS is
-> the pinned array, not a pointer; added `Expr::Array` to the existing `ref_mut` arm
-> (same accepted immutable-value class as `&mut <scalar lit>`, NOT a new soundness
-> class). `&mut <variable>`/`&mut <call>` still residual (pointer-identity guard green).
-> Drained 25 of the 73 "unsupported term" bucket (array.rs/slice.rs split/chunk).
+> **1082 → 889** (−193, discharged 5088→5281). The CLEAN immutable-value-sugar class is
+> now fully drained — three break-the-twin-tested autonomous wins this cycle (198 tests):
+> (A, commits f101ba233 + a8095148f, −40) **`&mut <immutable value>` dissolves to
+> `ref_mut(pinned value)`** — `assert_eq!(left, &mut [1,2,3])` compares slices BY VALUE,
+> so the RHS is the pinned array, not a pointer. Generalized the `ref_mut` arm via
+> `is_immutable_value_expr`: closure | scalar lit | array lit | negation of one | FULL
+> slice `[..]` of one (same accepted immutable-value class as `&mut <scalar lit>`, NOT a
+> new soundness class). SOUNDNESS BOUNDARY (tested): an Index over a PATH base
+> (`&mut buf[..]`, `&mut buf[i]`) and `&mut <variable>`/`&mut <call>` stay RESIDUAL
+> (pointer-identity guard green). Drained 40 of the 73 "unsupported term" bucket
+> (array.rs/slice.rs/ptr.rs split/chunk/tuple asserts).
 > (B, commit fe51cc88b, −21) byte literals → u8 constants (below).
+> RESIDUAL after this class (full-text JSON `all_reasons` dump): the bulk is cross-file
+> inlining (`to_exact_fixed_str_test` 133, `to_exact_exp_str_test` 130, … flt2dec +
+> in-file helpers whose def-site refusal needs GLOBAL accounting to suppress — Wall B);
+> construction-semantics/higher-order bodies (bin-1 for 69, const-item 6,
+> `assert_eq_const_safe`/`assert_float_result_bits_eq` macro expansions — Wall A);
+> regression-prone comparison ops (`a[0]<b[0]` 16, `false==false` 2 — the lt/lte/gt/gte
+> shared path); and correctly-held conditional/`-0.0`-IEEE/mutable-container cases.
 > DIAGNOSTIC (JSON `all_reasons` dump, 2026-06-14): the 73-now-48 "unsupported term"
 > bucket is dominated by `&mut [array]` (25, DONE) + `&mut [array][..]` full-slice
 > (~9, intricate Index→Array+RangeFull match with a `&mut buf[i]` mutable-element edge
