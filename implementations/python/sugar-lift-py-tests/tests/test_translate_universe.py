@@ -2924,6 +2924,88 @@ def test_structural_package_accounting_refuses_numpy_rng_chains(
     ), rng_loci
 
 
+def test_structural_package_accounting_warrants_call_term_starred_conditional_args(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("SUGAR_PY_PACKAGE_ACCOUNTING_MODE", "structural")
+    pkg = tmp_path / "vendpkg_call_term_args"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    module_path = pkg / "encoding.py"
+    module_path.write_text(
+        textwrap.dedent(
+            """
+            class Series:
+                def __init__(self, values, name=None, dtype=None):
+                    self.values = values
+                    self.name = name
+                    self.dtype = dtype
+
+            def b64e(s):
+                return s.rstrip(b"=")
+
+            def build(by_row):
+                exp = Series([*list(range(24)), 0], name="XX", dtype="int64" if by_row else "int32")
+                return exp
+            """
+        ),
+        encoding="utf-8",
+    )
+    call_line = next(
+        line_no
+        for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
+        if "Series([*list(range(24)), 0]" in line
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    translate_universe_for_callee.cache_clear()
+
+    lifted = _lift_source_from_disk(
+        tmp_path,
+        "test_mod.py",
+        """
+        import vendpkg_call_term_args.encoding as enc
+
+        def test_token():
+            assert enc.b64e(b"abc=") == b"abc"
+        """,
+    )
+
+    audit = next(
+        audit
+        for audit in lifted["sourceAudits"]
+        if audit.get("role") == "python.package-source"
+        and audit.get("package") == "vendpkg_call_term_args"
+    )
+    call_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith("vendpkg_call_term_args/encoding.py")
+        and locus.get("line") == call_line
+        and locus.get("ast_kind")
+        in {
+            "Assign",
+            "Call",
+            "Constant",
+            "IfExp",
+            "List",
+            "Name",
+            "Starred",
+            "keyword",
+        }
+    ]
+    assert call_loci
+    assert not [
+        locus for locus in call_loci if locus["status"] == "unclassified"
+    ], call_loci
+    assert any(
+        locus["status"] == "warranted"
+        and locus.get("ast_kind") == "Call"
+        and "call-term" in locus.get("reason", "")
+        for locus in call_loci
+    ), call_loci
+
+
 def test_structural_package_accounting_refuses_runtime_environment_probes(
     tmp_path,
     monkeypatch,
