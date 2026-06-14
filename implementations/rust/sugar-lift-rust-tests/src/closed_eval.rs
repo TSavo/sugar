@@ -361,6 +361,14 @@ pub struct Dissolvable {
     /// (closed context). A non-closed setup line just fails the unit's compile (safe).
     pub setup: String,
     pub asserts: Vec<String>,
+    /// EXACT-PARTITION tag: this unit's asserts are collected from inside a `while` body,
+    /// so the lifter classifies their sites as TERMINAL ("under while context" -- the only
+    /// terminal context that holds dissolvable greens). A green here is credited to the
+    /// REFUSED (terminal) bucket, not unclassified. Every other unit (top-level asserts,
+    /// macro-carry, helper-inlining) is `false` => its greens credit unclassified. This is
+    /// what makes the sweep partition exact (credit each green to its real disposition)
+    /// rather than a draw-order guess that could fake-zero unclassified.
+    pub under_while: bool,
 }
 
 pub fn collect_dissolvable(file: &syn::File) -> Vec<Dissolvable> {
@@ -441,7 +449,7 @@ pub fn collect_dissolvable(file: &syn::File) -> Vec<Dissolvable> {
                 }
             }
         }
-        let (asserts, helpers, macro_asserts) =
+        let (asserts, helpers, macro_asserts, while_asserts) =
             collect_block_asserts(&f.block.stmts, &fns, &locals, &local_macros, &let_inits);
         // helper-defs prelude, shared by the regular unit and each macro unit.
         let mut helper_prelude = String::new();
@@ -458,6 +466,19 @@ pub fn collect_dissolvable(file: &syn::File) -> Vec<Dissolvable> {
                 prelude: helper_prelude.clone(),
                 setup: setup.clone(),
                 asserts,
+                under_while: false,
+            });
+        }
+        // WHILE-body asserts: their own unit, tagged terminal. A green here credits the
+        // REFUSED bucket (exact partition), so a while-body closed equality the lifter
+        // refused as "under while context" is recovered to discharged -- and a non-green
+        // top-level unclassified assert is never drawn down by it (no fake-zero).
+        if !while_asserts.is_empty() {
+            units.push(Dissolvable {
+                prelude: helper_prelude.clone(),
+                setup: setup.clone(),
+                asserts: while_asserts,
+                under_while: true,
             });
         }
         // MACRO-CARRY: each local macro's closed invocations form their OWN unit, with the
@@ -477,6 +498,7 @@ pub fn collect_dissolvable(file: &syn::File) -> Vec<Dissolvable> {
                     prelude,
                     setup: setup.clone(),
                     asserts: invs,
+                    under_while: false,
                 });
             }
         }
@@ -640,13 +662,17 @@ fn collect_helper_call_inlinings(
                 }
             }
         }
-        let (asserts, more_helpers, _macro_asserts) = collect_block_asserts(
+        let (mut asserts, more_helpers, _macro_asserts, while_asserts) = collect_block_asserts(
             &body_substituted.stmts,
             fns,
             &locals,
             &std::collections::BTreeMap::new(),
             &let_inits,
         );
+        // A helper's internal asserts are all "reachable only via call-site inlining"
+        // (UNCLASSIFIED) regardless of an in-helper `while`, so fold the while split back
+        // in -- their greens correctly credit unclassified (under_while: false below).
+        asserts.extend(while_asserts);
         if asserts.is_empty() {
             continue;
         }
@@ -669,6 +695,7 @@ fn collect_helper_call_inlinings(
             prelude,
             setup,
             asserts,
+            under_while: false,
         });
     }
     out
@@ -762,6 +789,7 @@ fn collect_block_asserts(
     Vec<String>,
     std::collections::BTreeSet<String>,
     std::collections::BTreeMap<String, Vec<String>>,
+    Vec<String>,
 ) {
     use syn::parse::Parser;
     use syn::punctuated::Punctuated;
@@ -770,6 +798,10 @@ fn collect_block_asserts(
     // macro name -> its closed invocations (each becomes its OWN dissolvable unit).
     let mut macro_asserts: std::collections::BTreeMap<String, Vec<String>> =
         std::collections::BTreeMap::new();
+    // Asserts collected from inside a `while` body (lifter disposition = terminal). Kept
+    // SEPARATE so the sweep credits their greens to refused, not unclassified (exact
+    // partition, no fake-zero).
+    let mut while_asserts: Vec<String> = Vec::new();
 
     // Does `expr` qualify as closed stdlib sugar, allowing (a) calls to UNIQUE carryable
     // local helpers (recorded into `helpers`) and (b) references to `locals` -- the
@@ -950,12 +982,21 @@ fn collect_block_asserts(
         local_macros: &'a std::collections::BTreeMap<String, String>,
         macro_asserts: &'a mut std::collections::BTreeMap<String, Vec<String>>,
         let_inits: &'a std::collections::BTreeMap<String, Expr>,
+        // Asserts collected while inside a `while` body (terminal disposition).
+        while_asserts: &'a mut Vec<String>,
+        // Depth of enclosing `while` bodies (>0 ⇒ the current assert is terminal).
+        while_depth: usize,
     }
     impl<'a> W<'a> {
         // Try one assert macro (already loop-substituted if applicable) as a dissolvable
         // candidate; push it if it gates.
         fn try_assert(&mut self, m: &syn::Macro) {
-            W::try_assert_static(m, self.fns, self.locals, "", self.asserts, self.helpers);
+            let target = if self.while_depth > 0 {
+                &mut *self.while_asserts
+            } else {
+                &mut *self.asserts
+            };
+            W::try_assert_static(m, self.fns, self.locals, "", target, self.helpers);
         }
         fn try_assert_static(
             m: &syn::Macro,
@@ -1032,6 +1073,12 @@ fn collect_block_asserts(
         // simply fails to compile => not dissolved (safe under-claim); the double-run
         // determinism check still guards the run.
         fn try_custom_macro(&mut self, m: &syn::Macro) {
+            // Under a `while` body, do NOT collect a custom-macro invocation: leave it
+            // refused (terminal) rather than route a whole macro unit into the terminal
+            // bucket. Safe under-claim (not dissolved), never a fake-zero.
+            if self.while_depth > 0 {
+                return;
+            }
             let name = m
                 .path
                 .segments
@@ -1162,7 +1209,8 @@ fn collect_block_asserts(
                     syn::Stmt::Macro(sm) => {
                         let name = sm.mac.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
                         if name.starts_with("assert") || name.starts_with("debug_assert") {
-                            W::try_assert_static(&sm.mac, self.fns, scope, prefix, self.asserts, self.helpers);
+                            let target = if self.while_depth > 0 { &mut *self.while_asserts } else { &mut *self.asserts };
+                            W::try_assert_static(&sm.mac, self.fns, scope, prefix, target, self.helpers);
                             self.try_custom_macro_prefixed(&sm.mac, scope, prefix);
                         }
                         // a non-assert statement macro (e.g. `println!`) is ignored.
@@ -1170,7 +1218,8 @@ fn collect_block_asserts(
                     syn::Stmt::Expr(Expr::Macro(em), _) => {
                         let name = em.mac.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
                         if name.starts_with("assert") || name.starts_with("debug_assert") {
-                            W::try_assert_static(&em.mac, self.fns, scope, prefix, self.asserts, self.helpers);
+                            let target = if self.while_depth > 0 { &mut *self.while_asserts } else { &mut *self.asserts };
+                            W::try_assert_static(&em.mac, self.fns, scope, prefix, target, self.helpers);
                             self.try_custom_macro_prefixed(&em.mac, scope, prefix);
                         }
                     }
@@ -1204,6 +1253,10 @@ fn collect_block_asserts(
             scope: &std::collections::BTreeSet<String>,
             prefix: &str,
         ) {
+            // Under a `while` body, skip (leave refused) -- see try_custom_macro.
+            if self.while_depth > 0 {
+                return;
+            }
             let name = m.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
             if name == "macro_rules" || !self.local_macros.contains_key(&name) {
                 return;
@@ -1256,6 +1309,15 @@ fn collect_block_asserts(
             self.try_custom_macro(m);
             syn::visit::visit_macro(self, m);
         }
+        // A `while` (incl. `while let`) body: its asserts run 0..n times under runtime
+        // loop control, so the lifter classifies them TERMINAL ("under while context").
+        // Bump the depth so asserts collected within route to `while_asserts` (credited to
+        // the terminal bucket), keeping the dissolution partition exact.
+        fn visit_expr_while(&mut self, w: &'ast syn::ExprWhile) {
+            self.while_depth += 1;
+            syn::visit::visit_expr_while(self, w);
+            self.while_depth -= 1;
+        }
         // Do NOT descend into a nested fn item: it is collected as its own unit (with
         // its own `let` context). This keeps each assert attributed to exactly the fn
         // whose locals are in scope for it.
@@ -1269,11 +1331,13 @@ fn collect_block_asserts(
         local_macros,
         macro_asserts: &mut macro_asserts,
         let_inits,
+        while_asserts: &mut while_asserts,
+        while_depth: 0,
     };
     for st in stmts {
         syn::visit::Visit::visit_stmt(&mut w, st);
     }
-    (asserts, helpers, macro_asserts)
+    (asserts, helpers, macro_asserts, while_asserts)
 }
 
 /// Walk a file for unit-test assertions that are CLOSED STDLIB VALUE SUGAR (gate) and
@@ -1533,6 +1597,37 @@ mod tests {
     fn gate(src: &str) -> bool {
         let e: Expr = syn::parse_str(src).expect("parse");
         assert_operands_are_stdlib_sugar(&[&e])
+    }
+
+    #[test]
+    fn while_body_green_tagged_terminal_top_level_stays_unclassified() {
+        // EXACT-PARTITION discrimination (the whole point): a closed assert inside a
+        // `while` body is collected into an `under_while` unit (terminal disposition);
+        // a top-level closed assert into a non-`under_while` unit (unclassified). The sweep
+        // then credits a while-body green to REFUSED and a top-level green to UNCLASSIFIED.
+        // Because the two are NEVER conflated, a non-green unclassified sibling can never be
+        // drawn down by a while-body green -- no fake-zero of unclassified.
+        let file: syn::File = syn::parse_str(
+            "#[test] fn t() {\n\
+                assert_eq!('A'.to_lowercase().to_string(), \"a\");\n\
+                while [1u8].iter().next().is_some() {\n\
+                    assert_eq!('B'.to_lowercase().to_string(), \"b\");\n\
+                    break;\n\
+                }\n\
+            }\n",
+        )
+        .unwrap();
+        let units = collect_dissolvable(&file);
+        let in_while =
+            |n: &str| units.iter().any(|u| u.under_while && u.asserts.iter().any(|a| a.contains(n)));
+        let in_top =
+            |n: &str| units.iter().any(|u| !u.under_while && u.asserts.iter().any(|a| a.contains(n)));
+        // the while-body 'B'->"b" assert: tagged terminal, and NOT in any unclassified unit.
+        assert!(in_while("\"b\""), "while-body closed assert must be tagged terminal (under_while)");
+        assert!(!in_top("\"b\""), "while-body assert must NOT land in an unclassified unit");
+        // the top-level 'A'->"a" assert: unclassified, and NOT tagged terminal.
+        assert!(in_top("\"a\""), "top-level closed assert must be unclassified (not under_while)");
+        assert!(!in_while("\"a\""), "top-level assert must NOT be tagged terminal");
     }
 
     #[test]
