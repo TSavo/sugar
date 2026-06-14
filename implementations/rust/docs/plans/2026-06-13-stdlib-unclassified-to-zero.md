@@ -1,5 +1,21 @@
 # Goal: stdlib `unclassified` → 0
 
+> **STATUS 2026-06-13 overnight (commits 3cbf69936..1c884119a, all pushed, all
+> verified falsePass=0).** Baseline `--rustc-cfg`: discharged 5088 / refused 201 /
+> unclassified 1082 / inactive 58. Sound progress landed: honest accounting
+> (Inactive + temporally-unstable-terminal), and 2 of the 3 body-level capabilities
+> the unclassified set bottoms out in — **statement-position helper inlining** and
+> **pure let-substitution** — both tested. The headline is unchanged because the
+> ~1071 remaining is gated on capability #1, **higher-order closure/generic-body
+> inlining** (the 517 flt2dec helpers + ~150 term-position closures): a mis-lift
+> there is a MASKED-CONTRADICTION falsePass the consistency sweep cannot catch, so
+> it is the one piece I will NOT forge unsupervised. Reaching literal 0 needs that
+> capability assembled with the other two — a supervised step. Everything below is
+> the diagnosis and the plan; the comparison-op revert is the cautionary example of
+> why shared-path lifter changes need a human in the loop.
+
+
+
 ## The target (closure invariant)
 
 For the stdlib (rust 1.96.0 coretests) corpus, drive **`unclassified = 0`**. Not
