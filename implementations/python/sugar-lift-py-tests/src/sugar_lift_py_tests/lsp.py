@@ -1718,6 +1718,8 @@ def _is_static_assignment_value(node: ast.AST) -> bool:
         )
     if isinstance(node, ast.Subscript):
         return _is_static_assignment_value(node.value) and _is_static_slice(node.slice)
+    if isinstance(node, ast.Starred):
+        return _is_static_assignment_value(node.value)
     if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
         return all(_is_static_assignment_value(value) for value in node.elts)
     if isinstance(node, ast.Dict):
@@ -1752,6 +1754,11 @@ def _is_known_static_assignment_call(node: ast.Call) -> bool:
         return _is_static_assignment_value(func.value)
     callee = _static_call_name(func)
     return callee in {
+        "Decimal",
+        "complex",
+        "decimal.Decimal",
+        "float",
+        "int",
         "struct.Struct",
         "t.cast",
         "typing.cast",
@@ -3796,8 +3803,10 @@ def _return_value_relation_statement_for_locus(
     if stmt is None or stmt_index is None:
         return None
     owner = _nearest_enclosing_function(chain[:stmt_index])
-    if owner is None or stmt.value is None:
+    if owner is None:
         return None
+    if stmt.value is None:
+        return stmt if node is stmt else None
     if not _is_return_value_relation_expr(stmt.value):
         return None
     if node is stmt or any(candidate is node for candidate in ast.walk(stmt.value)):

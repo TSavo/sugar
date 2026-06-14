@@ -1606,6 +1606,9 @@ def test_structural_package_accounting_warrants_direct_return_value_relations(
             def by_compare(value):
                 return value == "x"
 
+            def by_none():
+                return
+
             def ok():
                 return "ok"
             """
@@ -1615,8 +1618,13 @@ def test_structural_package_accounting_warrants_direct_return_value_relations(
     return_lines = {
         line_no
         for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
-        if line.strip().startswith("return ")
-        and not line.strip().startswith('return "ok"')
+        if (
+            line.strip() == "return"
+            or (
+                line.strip().startswith("return ")
+                and not line.strip().startswith('return "ok"')
+            )
+        )
     }
     monkeypatch.syspath_prepend(str(tmp_path))
     constant_universe_for_callee_clear()
@@ -1730,6 +1738,82 @@ def test_structural_package_accounting_warrants_static_value_references(
         and "static value reference" in locus.get("reason", "")
         for locus in static_loci
     ), static_loci
+
+
+def test_structural_package_accounting_warrants_static_value_table_construction(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("SUGAR_PY_PACKAGE_ACCOUNTING_MODE", "structural")
+    pkg = tmp_path / "vendpkg_static_value_table_construction"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    module_path = pkg / "api.py"
+    module_path.write_text(
+        textwrap.dedent(
+            """
+            from decimal import Decimal
+
+            NUMPY_DTYPES = ["int8", "int16"]
+            EXTENSION_DTYPES = ["Int8", "Int16"]
+            ALL_DTYPES: list[object] = [*NUMPY_DTYPES, *EXTENSION_DTYPES]
+            NULL_OBJECTS = [None, float("nan"), Decimal("NaN")]
+
+            def ok():
+                return "ok"
+            """
+        ),
+        encoding="utf-8",
+    )
+    table_lines = {
+        line_no
+        for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
+        if line.strip().startswith(("ALL_DTYPES", "NULL_OBJECTS"))
+    }
+    monkeypatch.syspath_prepend(str(tmp_path))
+    constant_universe_for_callee_clear()
+
+    lifted = _lift_source_from_disk(
+        tmp_path,
+        "test_mod.py",
+        """
+        import vendpkg_static_value_table_construction.api as api
+
+        def test_ok():
+            assert api.ok() == "ok"
+        """,
+    )
+
+    audit = next(
+        audit
+        for audit in lifted["sourceAudits"]
+        if audit.get("role") == "python.package-source"
+        and audit.get("package") == "vendpkg_static_value_table_construction"
+    )
+    table_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith("vendpkg_static_value_table_construction/api.py")
+        and locus["line"] in table_lines
+        and locus.get("ast_kind")
+        in {"AnnAssign", "Assign", "List", "Starred", "Name", "Call", "Constant"}
+    ]
+    assert table_loci
+    assert not [
+        locus for locus in table_loci if locus["status"] == "unclassified"
+    ], table_loci
+    assert any(
+        locus["status"] == "warranted"
+        and locus.get("ast_kind") == "Starred"
+        and "static binding" in locus.get("reason", "")
+        for locus in table_loci
+    ), table_loci
+    assert any(
+        locus["status"] == "warranted"
+        and locus.get("ast_kind") == "Call"
+        and "static binding" in locus.get("reason", "")
+        for locus in table_loci
+    ), table_loci
 
 
 def test_structural_package_accounting_warrants_keyword_argument_bindings(
