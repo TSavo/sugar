@@ -1261,7 +1261,20 @@ impl<'a> ReductionCtx<'a> {
     fn collect_items(&mut self, items: &'a [Item]) {
         for item in items {
             match item {
-                Item::Fn(f) if !has_test_attr(&f.attrs) => self.insert_function(f),
+                Item::Fn(f) => {
+                    if !has_test_attr(&f.attrs) {
+                        self.insert_function(f);
+                    }
+                    // fn-local `macro_rules!` (defined INSIDE a fn body, e.g. a test fn's
+                    // private `assert_almost_eq!` / `assert_chunks!`) were previously invisible,
+                    // so their invocations hit the "unsupported assertion macro" fallthrough.
+                    // Collect them by name like any other macro: the same in-file precedence and
+                    // the same ambiguity guard apply (a name defined more than once is marked
+                    // ambiguous and never expanded -- so collecting fn-local macros globally can
+                    // only ever fail to expand, never wrong-expand). This lets the lifter walk
+                    // into a fn-local macro's real definition the same way it does a file/dep one.
+                    self.collect_macros_in_block(&f.block);
+                }
                 Item::Macro(m) if m.mac.path.is_ident("macro_rules") => {
                     if let Some(ident) = &m.ident {
                         self.insert_macro(&ident.to_string(), m.mac.tokens.clone());
@@ -1272,6 +1285,22 @@ impl<'a> ReductionCtx<'a> {
                         self.collect_items(items);
                     }
                 }
+                _ => {}
+            }
+        }
+    }
+
+    /// Scan a fn body for fn-local `macro_rules!` definitions, recursing into nested
+    /// fns, so a macro defined inside a test fn expands from its real definition.
+    fn collect_macros_in_block(&mut self, block: &'a syn::Block) {
+        for stmt in &block.stmts {
+            match stmt {
+                syn::Stmt::Item(Item::Macro(m)) if m.mac.path.is_ident("macro_rules") => {
+                    if let Some(ident) = &m.ident {
+                        self.insert_macro(&ident.to_string(), m.mac.tokens.clone());
+                    }
+                }
+                syn::Stmt::Item(Item::Fn(f)) => self.collect_macros_in_block(&f.block),
                 _ => {}
             }
         }

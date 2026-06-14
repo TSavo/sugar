@@ -1,10 +1,10 @@
 {
   "assertion_multiset_cid": "blake3-512:ee0c6d92a4aa44f2f43bb657b70d9b87ba202392a6ea5c2aee519197e02aa59f6a3a425b49f7aa00191688e57c48bb795b58f74b35a2518cb6d4465eeb000a50",
   "silent": 0,
-  "unaccounted": -52,
-  "discharged": 5626,
+  "unaccounted": -98,
+  "discharged": 5694,
   "refused": 327,
-  "unclassified": 416,
-  "prev_unclassified": 455,
-  "note": "HERMETIC (no --dissolve) snapshot of the rust 1.96.0 coretests accounting sweep, gated in CI. Each lifter-moving push updates this pin to its predicted snapshot; CI asserts an EXACT match. This push: flt2dec f16/f128 asserts (UNSTABLE float types -- unformattable on the stable toolchain the lifter ships, and not modellable per the no-model axiom) reclassified from the catch-all unclassified flt2dec reason to terminal-refused -> unclassified 455->416 (39 moved), refused 288->327 (discharged unchanged). prev_unclassified 455 = prior baseline. unclassified here is lifter-only; --dissolve mode credits further by evaluation (not gated). Drive unclassified -> 0."
+  "unclassified": 394,
+  "prev_unclassified": 416,
+  "note": "HERMETIC (no --dissolve) snapshot of the rust 1.96.0 coretests accounting sweep, gated in CI. Each lifter-moving push updates this pin to its predicted snapshot; CI asserts an EXACT match. This push: FN-LOCAL MACRO EXPANSION -- the lifter now walks a fn's private macro_rules! (e.g. estimator.rs assert_almost_eq!, str_lossy.rs assert_chunks!) the same way it walks file/dep macros, so they expand from their real definitions instead of dead-ending at 'unsupported assertion macro'. unclassified 416->394; discharged 5626->5694. unaccounted -52->-98 is INFLATION, not a silent drop (SILENT stays 0): one source macro (e.g. one assert_chunks! call) legitimately expands to several assert_eq! point-claims (one per chunk-pair), so discharged gains entries beyond the source-macro count -- the same legit inflation as helper-inlining. CID conserved (the assertion *sites* in source are unchanged; expansion is internal). prev_unclassified 416. unclassified here is lifter-only; --dissolve mode credits further by evaluation (not gated). Drive unclassified -> 0."
 }
