@@ -125,6 +125,7 @@ from .translate_universe import (
     predicate_universe_for_callee,
     raise_locus_universe_for_callee,
     return_isinstance_universe_for_callee,
+    return_regex_universe_for_callee,
     separator_guard_raise_universe_for_callee,
     translate_universe_for_callee,
 )
@@ -265,12 +266,17 @@ class _CallOrigin:
 @dataclass
 class _ValueScope:
     current: Dict[str, Term] = field(default_factory=dict)
+    projections: Dict[str, Dict[Term, Term]] = field(default_factory=dict)
     origins: Dict[str, _CallOrigin] = field(default_factory=dict)
     facts: List[Formula] = field(default_factory=list)
 
     def copy(self) -> "_ValueScope":
         return _ValueScope(
             current=dict(self.current),
+            projections={
+                name: dict(projection)
+                for name, projection in self.projections.items()
+            },
             origins=dict(self.origins),
             facts=list(self.facts),
         )
@@ -615,6 +621,14 @@ def _lean_source_memento(warrant: dict[str, Any]) -> dict[str, Any]:
         "exception_bool_return_delegate",
         "exception_bool_return_success_value",
         "exception_bool_return_exception_value",
+        "guard_lines",
+        "regex_pattern",
+        "regex_param_name",
+        "regex_compile_var",
+        "regex_match_kind",
+        "regex_membership_pattern",
+        "regex_true_implies_membership",
+        "regex_false_implies_nonmembership",
         "separator_guard_exception_type",
         "separator_guard_field_name",
         "separator_guard_param_name",
@@ -633,6 +647,8 @@ def _lean_source_memento(warrant: dict[str, Any]) -> dict[str, Any]:
         elif field_name == "constructor_default_param_names" and isinstance(value, list):
             out[field_name] = list(value)
         elif field_name == "field_projection" and isinstance(value, list):
+            out[field_name] = list(value)
+        elif field_name == "guard_lines" and isinstance(value, list):
             out[field_name] = list(value)
         else:
             out[field_name] = value
@@ -682,6 +698,13 @@ def _source_loci_for_memento(
     universe_kind: str,
 ) -> List[dict[str, Any]]:
     file = _string_field(source_memento, "file")
+    if role == "python.guard-universe":
+        return _source_loci_for_guard_memento(
+            source_memento,
+            root,
+            role,
+            universe_kind,
+        )
     if role not in {
         "python.translate-universe",
         "python.bytes-identity-universe",
@@ -693,6 +716,7 @@ def _source_loci_for_memento(
         "python.raise-locus-universe",
         "python.exception-handler-raise-universe",
         "python.return-isinstance-universe",
+        "python.regex-universe",
     }:
         return [
             _source_line_locus(file, line, "warranted", role, universe_kind)
@@ -737,6 +761,74 @@ def _source_loci_for_memento(
                 node,
                 source_memento,
             )
+            loci.append(
+                _source_line_locus(
+                    file,
+                    getattr(node, "lineno", _source_memento_start_line(source_memento)),
+                    status,
+                    role,
+                    universe_kind,
+                    ast_kind=type(node).__name__,
+                    ast_path=ast_path,
+                    span=_ast_node_span(node),
+                    reason=reason,
+                )
+            )
+    return loci
+
+
+def _source_loci_for_guard_memento(
+    source_memento: dict[str, Any],
+    root: str,
+    role: str,
+    universe_kind: str,
+) -> List[dict[str, Any]]:
+    file = _string_field(source_memento, "file")
+    path = os.path.join(root, file) if root else file
+    with open(path, "r", encoding="utf-8") as fh:
+        source = fh.read()
+    tree = ast.parse(source, filename=path)
+    fn = _locate_source_function_for_accounting(tree, source_memento)
+    if fn is None:
+        return [
+            _source_line_locus(
+                file,
+                _source_memento_start_line(source_memento),
+                "unclassified",
+                role,
+                universe_kind,
+                reason="source function not found after source-oracle resolution",
+            )
+        ]
+
+    guard_lines = {
+        int(line)
+        for line in source_memento.get("guard_lines", [])
+        if isinstance(line, int)
+    }
+    loci: List[dict[str, Any]] = []
+    loci.extend(
+        _source_header_loci_for_memento(
+            fn,
+            source_memento,
+            file,
+            role,
+            universe_kind,
+        )
+    )
+    for index, stmt in enumerate(fn.body):
+        if not _is_docstring_stmt(stmt) and getattr(stmt, "lineno", 0) not in guard_lines:
+            continue
+        for node, ast_path in _iter_ast_nodes_with_paths(stmt, f"$.body[{index}]"):
+            if not hasattr(node, "lineno"):
+                continue
+            status, reason = _classify_guard_source_node(
+                stmt,
+                node,
+                source_memento,
+            )
+            if status == "unclassified":
+                continue
             loci.append(
                 _source_line_locus(
                     file,
@@ -918,6 +1010,8 @@ def _classify_universe_source_node(
         return "support", "queued delegate dig for recursive universe walk"
     if role == "python.branch-selected-universe":
         return _classify_branch_selected_source_node(stmt, node, source_memento)
+    if role == "python.guard-universe":
+        return _classify_guard_source_node(stmt, node, source_memento)
     if role == "python.branch-selected-raise-universe":
         return _classify_branch_selected_raise_source_node(stmt, node, source_memento)
     if role == "python.exception-handler-raise-universe":
@@ -934,6 +1028,8 @@ def _classify_universe_source_node(
         and node.func.id == "isinstance"
     ):
         return "warranted", "isinstance predicate emitted into python.return-isinstance-universe"
+    if role == "python.regex-universe":
+        return _classify_regex_source_node(stmt, node, source_memento)
     return _classify_universe_source_statement(role, stmt, source_memento)
 
 
@@ -985,6 +1081,8 @@ def _classify_universe_source_statement(
         return "support", "non-constraint source support for delegation-universe accounting"
     if role == "python.branch-selected-universe":
         return _classify_branch_selected_source_node(stmt, stmt, source_memento)
+    if role == "python.guard-universe":
+        return _classify_guard_source_node(stmt, stmt, source_memento)
     if role == "python.branch-selected-raise-universe":
         return _classify_branch_selected_raise_source_node(stmt, stmt, source_memento)
     if role == "python.instance-field-universe":
@@ -1041,7 +1139,173 @@ def _classify_universe_source_statement(
         if _is_return_isinstance_stmt(stmt):
             return "warranted", "emitted into python.return-isinstance-universe"
         return "unclassified", "return-isinstance source not emitted"
+    if role == "python.regex-universe":
+        return _classify_regex_source_node(stmt, stmt, source_memento)
     return "unclassified", "source warrant role has no source-audit classifier"
+
+
+def _classify_regex_source_node(
+    stmt: ast.stmt,
+    node: ast.AST,
+    source_memento: dict[str, Any],
+) -> Tuple[str, str]:
+    if _is_docstring_stmt(stmt):
+        return "support", "docstring metadata supports source accounting only"
+    if _is_regex_compile_stmt(stmt, source_memento):
+        return (
+            "warranted",
+            "regex constructor emitted as source support for str.in-regex",
+        )
+    regex_expr = _regex_expr_from_return_stmt(stmt, source_memento)
+    if regex_expr is not None and _regex_source_node_is_emitted(stmt, node, regex_expr):
+        match_kind = _string_field(source_memento, "regex_match_kind") or "fullmatch"
+        if isinstance(node, ast.Call):
+            return "warranted", f"regex {match_kind} emitted into str.in-regex"
+        return "warranted", f"regex {match_kind} return emitted into python.regex-universe"
+    return "unclassified", "regex source not emitted"
+
+
+def _is_regex_compile_stmt(
+    stmt: ast.stmt,
+    source_memento: dict[str, Any],
+) -> bool:
+    compile_var = _string_field(source_memento, "regex_compile_var")
+    return (
+        isinstance(stmt, ast.Assign)
+        and len(stmt.targets) == 1
+        and isinstance(stmt.targets[0], ast.Name)
+        and (not compile_var or stmt.targets[0].id == compile_var)
+        and isinstance(stmt.value, ast.Call)
+        and _static_call_name(stmt.value.func) in {"re.compile", "compile"}
+    )
+
+
+def _is_return_regex_stmt(stmt: ast.stmt) -> bool:
+    return _regex_expr_from_return_stmt(stmt, {}) is not None
+
+
+def _regex_expr_from_return_stmt(
+    stmt: ast.stmt,
+    source_memento: dict[str, Any],
+) -> Optional[ast.expr]:
+    if not isinstance(stmt, ast.Return) or stmt.value is None:
+        return None
+    return _regex_fullmatch_expr_from_return_expr(stmt.value, source_memento)
+
+
+def _regex_source_node_is_emitted(
+    stmt: ast.stmt,
+    node: ast.AST,
+    regex_call: ast.Call,
+) -> bool:
+    if node is stmt:
+        return True
+    if _ast_contains_node(node, regex_call):
+        return True
+    return _ast_contains_node(regex_call, node)
+
+
+def _regex_fullmatch_expr_from_return_expr(
+    node: ast.expr,
+    source_memento: dict[str, Any],
+) -> Optional[ast.expr]:
+    if (
+        isinstance(node, ast.Compare)
+        and len(node.ops) == 1
+        and len(node.comparators) == 1
+        and isinstance(node.ops[0], (ast.IsNot, ast.NotEq))
+    ):
+        if (
+            isinstance(node.left, ast.Call)
+            and _is_none_literal_node(node.comparators[0])
+            and _regex_call_matches_source_memento(node.left, source_memento)
+        ):
+            return node
+        if (
+            isinstance(node.comparators[0], ast.Call)
+            and _is_none_literal_node(node.left)
+            and _regex_call_matches_source_memento(node.comparators[0], source_memento)
+        ):
+            return node
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "bool"
+        and len(node.args) == 1
+        and not node.keywords
+        and isinstance(node.args[0], ast.Call)
+        and _regex_call_matches_source_memento(node.args[0], source_memento)
+    ):
+        return node
+    if isinstance(node, ast.BoolOp):
+        for value in node.values:
+            expr = _regex_fullmatch_expr_from_return_expr(value, source_memento)
+            if expr is not None:
+                return expr
+    return None
+
+
+def _regex_call_matches_source_memento(
+    call: ast.Call,
+    source_memento: dict[str, Any],
+) -> bool:
+    match_kind = _string_field(source_memento, "regex_match_kind")
+    compile_var = _string_field(source_memento, "regex_compile_var")
+    if isinstance(call.func, ast.Attribute):
+        if match_kind and call.func.attr != match_kind:
+            return False
+        if compile_var:
+            receiver = call.func.value
+            if isinstance(receiver, ast.Name):
+                return receiver.id == compile_var
+            return (
+                isinstance(receiver, ast.Attribute)
+                and receiver.attr == compile_var
+            )
+        return call.func.attr in {"fullmatch", "match", "search"}
+    static_name = _static_call_name(call.func)
+    if match_kind:
+        return static_name in {f"re.{match_kind}", match_kind}
+    return static_name in {
+        "re.fullmatch",
+        "fullmatch",
+        "re.match",
+        "match",
+        "re.search",
+        "search",
+    }
+
+
+def _is_none_literal_node(node: ast.AST) -> bool:
+    return isinstance(node, ast.Constant) and node.value is None
+
+
+def _classify_guard_source_node(
+    stmt: ast.stmt,
+    node: ast.AST,
+    source_memento: dict[str, Any],
+) -> Tuple[str, str]:
+    if _is_docstring_stmt(stmt):
+        return "support", "docstring metadata supports source accounting only"
+    guard_lines = {
+        int(line)
+        for line in source_memento.get("guard_lines", [])
+        if isinstance(line, int)
+    }
+    if getattr(stmt, "lineno", 0) in guard_lines and _is_guard_universe_stmt(stmt):
+        return "warranted", "guard emitted into python.guard-universe"
+    return "unclassified", "guard source not emitted"
+
+
+def _is_guard_universe_stmt(stmt: ast.stmt) -> bool:
+    if isinstance(stmt, ast.Assert):
+        return True
+    return (
+        isinstance(stmt, ast.If)
+        and len(stmt.body) == 1
+        and isinstance(stmt.body[0], ast.Raise)
+        and not stmt.orelse
+    )
 
 
 def _classify_exception_handler_raise_source_node(
@@ -2347,7 +2611,81 @@ def _translate_subscript_term(node: ast.Subscript, base_term: Term) -> Term:
     Non-literal keys raise ValueError (LOUD REFUSE); see ``_subscript_key_term``.
     """
     key_term = _subscript_key_term(node.slice)
+    return _subscript_term_or_projection(base_term, key_term)
+
+
+def _subscript_term_or_projection(base_term: Term, key_term: Term) -> Term:
+    projected = _static_subscript_projection(base_term, key_term)
+    if projected is not None:
+        return projected
     return ctor("subscript", [base_term, key_term])
+
+
+def _static_subscript_projection(base_term: Term, key_term: Term) -> Optional[Term]:
+    from .ir import _ConstInt
+
+    if isinstance(base_term, _Ctor) and base_term.name in {"python:list", "python:tuple"}:
+        if not isinstance(key_term, _ConstInt):
+            return None
+        try:
+            return base_term.args[key_term.value]
+        except IndexError:
+            return None
+    if isinstance(base_term, _Ctor) and base_term.name.startswith("python:dict_a"):
+        for entry in reversed(base_term.args):
+            if (
+                isinstance(entry, _Ctor)
+                and entry.name == "python:dict-entry_a2"
+                and len(entry.args) == 2
+                and entry.args[0] == key_term
+            ):
+                return entry.args[1]
+    return None
+
+
+def _static_container_projection_map_from_expr(
+    node: ast.expr,
+    translate_element,
+) -> Optional[Dict[Term, Term]]:
+    try:
+        if isinstance(node, (ast.List, ast.Tuple)):
+            if any(isinstance(element, ast.Starred) for element in node.elts):
+                return None
+            elements = [translate_element(element) for element in node.elts]
+            projections: Dict[Term, Term] = {}
+            count = len(elements)
+            for index, element in enumerate(elements):
+                projections[num(index)] = element
+                projections[num(index - count)] = element
+            return projections or None
+        if isinstance(node, ast.Dict):
+            projections: Dict[Term, Term] = {}
+            for key, value in zip(node.keys, node.values):
+                if key is None:
+                    return None
+                projections[_subscript_key_term(key)] = translate_element(value)
+            return projections or None
+    except ValueError:
+        return None
+    return None
+
+
+def _static_container_projection_from_expr(
+    container: ast.expr,
+    key: ast.expr,
+    translate_element,
+) -> Optional[Term]:
+    try:
+        key_term = _subscript_key_term(key)
+    except ValueError:
+        return None
+    projections = _static_container_projection_map_from_expr(
+        container,
+        translate_element,
+    )
+    if projections is None:
+        return None
+    return projections.get(key_term)
 
 
 def _callval_head(method: str, arity: int) -> str:
@@ -2505,6 +2843,17 @@ def _translate_term(node: ast.expr) -> Term:
                 "(e.g. `assert x == pytest.approx(target)`); "
                 "use it in a direct == or != comparison at the top level of an assert"
             )
+        module_attr_callee = _module_attr_callee(node.func)
+        if (
+            module_attr_callee is not None
+            and _is_constructor_call_name(module_attr_callee)
+        ):
+            if node.keywords:
+                raise ValueError("qualified constructor call with kwargs is not liftable")
+            return ctor(
+                f"call:{module_attr_callee}",
+                [_translate_term(arg) for arg in node.args],
+            )
         if isinstance(node.func, ast.Attribute):
             # Method call: ``recv.method(args)`` → callval ctor.
             # LOUD REFUSE on keyword args: cannot order-stably translate.
@@ -2561,6 +2910,13 @@ def _translate_term(node: ast.expr) -> Term:
         # recursively translated so nested subscripts (``a['b']['c']``) and
         # attribute-then-subscript (``a.b['c']``) chain naturally.
         # Non-literal keys LOUDLY REFUSE via ``_subscript_key_term``.
+        projected = _static_container_projection_from_expr(
+            node.value,
+            node.slice,
+            _translate_term,
+        )
+        if projected is not None:
+            return projected
         base_term = _translate_term(node.value)
         return _translate_subscript_term(node, base_term)
     raise ValueError("expression shape not in v0 lift whitelist")
@@ -4722,6 +5078,7 @@ def _apply_value_scope_binding(
             )
             if constructor_mapping is None:
                 next_scope.current.pop(name, None)
+                next_scope.projections.pop(name, None)
                 next_scope.origins.pop(name, None)
                 out.append(next_scope)
                 continue
@@ -4732,6 +5089,7 @@ def _apply_value_scope_binding(
                 rhs = _translate_term_scoped(value, scope)
             except ValueError:
                 next_scope.current.pop(name, None)
+                next_scope.projections.pop(name, None)
                 next_scope.origins.pop(name, None)
                 out.append(next_scope)
                 continue
@@ -4741,6 +5099,14 @@ def _apply_value_scope_binding(
         ssa_name = f"{name}${version}"
         ssa = make_var(ssa_name)
         next_scope.current[name] = ssa
+        projections = _static_container_projection_map_from_expr(
+            value,
+            lambda element: _translate_term_scoped(element, scope),
+        )
+        if projections is not None:
+            next_scope.projections[name] = projections
+        else:
+            next_scope.projections.pop(name, None)
         if origin is not None:
             if _is_constructor_call_name(origin.callee):
                 try:
@@ -5221,6 +5587,53 @@ def _universe_conjuncts(
                 )
             conjuncts.extend(isinst_conjuncts)
 
+    regex_u, regex_refusal = return_regex_universe_for_callee(callee)
+    if regex_refusal is not None:
+        out.warnings.append(
+            LiftWarning(
+                source_path,
+                f"{test_name}::regex-universe",
+                reason=f"{regex_refusal.callee}: {regex_refusal.reason}",
+            )
+        )
+    elif regex_u is not None:
+        try:
+            regex_conjuncts = _return_regex_universe_conjuncts(
+                regex_u,
+                subject_term,
+                _universe_call_args(subject_term, origin),
+            )
+        except ValueError as exc:
+            out.warnings.append(
+                LiftWarning(
+                    source_path,
+                    f"{test_name}::regex-universe",
+                    reason=f"{callee}: {exc}",
+                )
+            )
+            regex_conjuncts = []
+        if regex_conjuncts:
+            if source_warrants is not None and regex_u.source_memento is not None:
+                warrant = _source_warrant_for_universe(
+                    regex_u,
+                    role="python.regex-universe",
+                    universe_kind="return-regex",
+                )
+                warrant["regex_pattern"] = regex_u.pattern
+                warrant["regex_param_name"] = regex_u.param_name
+                warrant["regex_match_kind"] = regex_u.match_kind
+                warrant["regex_membership_pattern"] = regex_u.membership_pattern
+                warrant["regex_true_implies_membership"] = (
+                    regex_u.true_implies_membership
+                )
+                warrant["regex_false_implies_nonmembership"] = (
+                    regex_u.false_implies_nonmembership
+                )
+                if regex_u.compile_var is not None:
+                    warrant["regex_compile_var"] = regex_u.compile_var
+                _append_unique_source_warrant(source_warrants, warrant)
+            conjuncts.extend(regex_conjuncts)
+
     if isinstance(subject_term, _Ctor):
         guards, guard_refusal = guard_universe_for_callee(callee)
         if guard_refusal is not None:
@@ -5237,16 +5650,27 @@ def _universe_conjuncts(
                 if subject_term.name.startswith("callval_")
                 else subject_term.args
             )
+            if source_warrants is not None and guards.source_memento is not None:
+                warrant = _source_warrant_for_universe(
+                    guards,
+                    role="python.guard-universe",
+                    universe_kind="guard",
+                )
+                warrant["guard_lines"] = list(guards.guard_lines)
+                _append_unique_source_warrant(source_warrants, warrant)
             cmp_ctor = {"<": lt, "≤": lte, ">": gt, "≥": gte, "=": eq, "≠": ne}
             for clause in guards.clauses:
                 if clause.param_index >= len(call_args):
                     continue
                 arg_term = call_args[clause.param_index]
-                lit_term = (
-                    num(clause.literal)
-                    if isinstance(clause.literal, int)
-                    else str_const(clause.literal)
-                )
+                if isinstance(clause.literal, int):
+                    lit_term = num(clause.literal)
+                elif isinstance(clause.literal, str):
+                    lit_term = str_const(clause.literal)
+                elif clause.literal is None:
+                    lit_term = ctor("None", [])
+                else:
+                    continue
                 conjuncts.append(not_(cmp_ctor[clause.op](arg_term, lit_term)))
 
         # RETURN-CONSTANT (census family, 34k bodies): the body
@@ -6386,6 +6810,28 @@ def _return_isinstance_universe_conjuncts(
     ]
 
 
+def _return_regex_universe_conjuncts(
+    universe,
+    subject_term: Term,
+    call_args: Tuple[Term, ...],
+) -> List[Formula]:
+    if universe.param_index >= len(call_args):
+        raise ValueError(
+            "return-regex: missing callsite term for param "
+            + universe.param_name
+        )
+    predicate = atomic(
+        "str.in-regex",
+        [call_args[universe.param_index], str_const(universe.membership_pattern)],
+    )
+    conjuncts: List[Formula] = []
+    if universe.true_implies_membership:
+        conjuncts.append(implies(eq(subject_term, bool_const(True)), predicate))
+    if universe.false_implies_nonmembership:
+        conjuncts.append(implies(eq(subject_term, bool_const(False)), not_(predicate)))
+    return conjuncts
+
+
 def _constructor_field_universe_value_term(
     subject_term: Term,
     field_name: str,
@@ -6773,7 +7219,7 @@ def _expr_spec_term_and_queued(
         base_term, base_delegates, base_fields, _base_kind = base_mapped
         index_term, index_delegates, index_fields, _index_kind = index_mapped
         return (
-            ctor("subscript", [base_term, index_term]),
+            _subscript_term_or_projection(base_term, index_term),
             [*base_delegates, *index_delegates],
             [*base_fields, *index_fields],
             "unknown",
@@ -6865,6 +7311,13 @@ def _expr_spec_term_and_queued(
         ):
             return None
         field_name = spec[1]
+        pinned_field = _pinned_receiver_field_term(
+            receiver_term,
+            field_name,
+            origin,
+        )
+        if pinned_field is not None:
+            return pinned_field
         field_u, field_refusal = constructor_field_universe_for_callee(
             origin.receiver_constructor,
             field_name,
@@ -6928,6 +7381,91 @@ def _expr_spec_term_and_queued(
         return ctor(f"python:dict_a{len(entries)}", entries), queued, fields, "unknown"
     mapped = _mapped_delegate_args((spec,), call_args)
     return None if mapped is None else (mapped[0], [], [], _chain_expr_concat_kind(mapped[0]))
+
+
+def _pinned_receiver_field_term(
+    receiver_term: Optional[Term],
+    field_name: str,
+    origin: _CallOrigin,
+):
+    if not (
+        isinstance(receiver_term, _Ctor)
+        and receiver_term.name.startswith("callval_")
+        and origin.receiver_constructor is not None
+    ):
+        return None
+    method_name = _method_name_from_callval_head(receiver_term)
+    if method_name is None:
+        return None
+    callee = f"{origin.receiver_constructor}.{method_name}"
+    deleg_u, deleg_refusal = delegation_universe_for_callee(callee)
+    if deleg_refusal is not None or deleg_u is None or deleg_u.kind != "chain-expr":
+        return None
+    ctor_spec = _constructor_return_spec(deleg_u.expr_spec)
+    if ctor_spec is None or ctor_spec[1] != f"call:{origin.receiver_constructor}":
+        return None
+    field_u, field_refusal = constructor_field_universe_for_callee(
+        origin.receiver_constructor,
+        field_name,
+    )
+    if field_refusal is not None or field_u is None:
+        return None
+    receiver_call_args = _delegation_universe_call_args(deleg_u, receiver_term)
+    receiver_receiver = _receiver_term_for_callval_subject(receiver_term)
+    mapped = _expr_spec_term_and_queued(
+        ctor_spec,
+        receiver_call_args,
+        receiver_term=receiver_receiver,
+        origin=origin,
+        subject_term=receiver_term,
+        receiver_context=False,
+    )
+    if mapped is None:
+        return None
+    constructed, queued, fields, _kind = mapped
+    if (
+        not isinstance(constructed, _Ctor)
+        or constructed.name != ctor_spec[1]
+        or field_u.constructor_param_index >= len(constructed.args)
+    ):
+        return None
+    value_term = _constructor_field_projection_term(
+        field_u,
+        _constructor_field_adapter_term(
+            field_u,
+            constructed.args[field_u.constructor_param_index],
+        ),
+        origin,
+    )
+    return (
+        value_term,
+        [*queued, (callee, list(receiver_call_args), receiver_term)],
+        [*fields, (field_u, value_term)],
+        _chain_expr_concat_kind(value_term),
+    )
+
+
+def _method_name_from_callval_head(term: _Ctor) -> Optional[str]:
+    prefix = "callval_"
+    if not term.name.startswith(prefix):
+        return None
+    body = term.name[len(prefix):]
+    marker = body.rfind("_a")
+    if marker <= 0:
+        return None
+    arity_text = body[marker + 2 :]
+    if not arity_text.isdigit() or int(arity_text) != len(term.args):
+        return None
+    method_name = body[:marker]
+    if not method_name.isidentifier():
+        return None
+    return method_name
+
+
+def _constructor_return_spec(spec):
+    if isinstance(spec, tuple) and spec and spec[0] == "ctor-call":
+        return spec
+    return None
 
 
 def _expr_specs_terms_and_queued(
@@ -7289,7 +7827,7 @@ def _receiver_delegate_spec_term(
         base_term, base_queued = base
         index_term, index_queued = index
         return (
-            ctor("subscript", [base_term, index_term]),
+            _subscript_term_or_projection(base_term, index_term),
             [*base_queued, *index_queued],
         )
     if spec[0] == "method-call":
@@ -7643,7 +8181,7 @@ def _mapped_delegate_spec_and_queued(
         base_term, base_queued = base
         index_term, index_queued = index
         return (
-            ctor("subscript", [base_term, index_term]),
+            _subscript_term_or_projection(base_term, index_term),
             [*base_queued, *index_queued],
         )
     if spec[0] == "method-call":
@@ -8164,6 +8702,8 @@ def _call_origin_from_expr_scoped(
     scope: Optional[_ValueScope],
 ) -> Optional[_CallOrigin]:
     origin = _call_origin_from_expr(node)
+    if origin is None:
+        origin = _inline_receiver_method_origin(node, scope)
     if origin is not None:
         return origin
     if scope is None:
@@ -8188,6 +8728,72 @@ def _call_origin_from_expr_scoped(
         constructor_default_params=receiver_origin.constructor_default_params,
         receiver_constructor=receiver_origin.callee,
     )
+
+
+def _inline_receiver_method_origin(
+    node: ast.expr,
+    scope: Optional[_ValueScope],
+) -> Optional[_CallOrigin]:
+    if not (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Call)
+        and not node.keywords
+    ):
+        return None
+    receiver_origin = _inline_receiver_call_origin(node.func.value, scope)
+    if receiver_origin is None or receiver_origin.receiver_constructor is None:
+        return None
+    return _CallOrigin(
+        callee=f"{receiver_origin.receiver_constructor}.{node.func.attr}",
+        lineno=getattr(node, "lineno", 0),
+        col=getattr(node, "col_offset", 0),
+        constructor_args=receiver_origin.constructor_args,
+        constructor_default_params=receiver_origin.constructor_default_params,
+        receiver_constructor=receiver_origin.receiver_constructor,
+    )
+
+
+def _inline_receiver_call_origin(
+    node: ast.Call,
+    scope: Optional[_ValueScope],
+) -> Optional[_CallOrigin]:
+    direct = _call_origin_from_expr(node)
+    if direct is not None and _is_constructor_call_name(direct.callee):
+        constructor_terms = _constructor_call_terms_for_origin(node, direct, scope)
+        if constructor_terms is None:
+            return None
+        constructor_args, constructor_default_params = constructor_terms
+        direct.constructor_args = constructor_args
+        direct.constructor_default_params = constructor_default_params
+        direct.receiver_constructor = direct.callee
+        return direct
+    nested = _inline_receiver_method_origin(node, scope)
+    if nested is not None:
+        return nested
+    return None
+
+
+def _constructor_call_terms_for_origin(
+    call: ast.Call,
+    origin: _CallOrigin,
+    scope: Optional[_ValueScope],
+) -> Optional[Tuple[Tuple[Term, ...], Tuple[str, ...]]]:
+    if not _is_constructor_call_name(origin.callee):
+        return None
+    active_scope = scope or _ValueScope()
+    mapping = _constructor_call_arg_mapping(call, origin.callee, active_scope)
+    if mapping is not None:
+        return mapping
+    if call.keywords:
+        return None
+    try:
+        return (
+            tuple(_translate_term_scoped(arg, active_scope) for arg in call.args),
+            (),
+        )
+    except ValueError:
+        return None
 
 
 def _is_constructor_call_expr(
@@ -8417,6 +9023,21 @@ def _translate_term_scoped(
                 "(e.g. `assert x == pytest.approx(target)`); "
                 "use it in a direct == or != comparison at the top level of an assert"
             )
+        module_attr_callee = _module_attr_callee(node.func)
+        if (
+            module_attr_callee is not None
+            and _is_constructor_call_name(module_attr_callee)
+        ):
+            mapping = _constructor_call_arg_mapping(node, module_attr_callee, scope)
+            if mapping is not None:
+                constructor_args, _defaulted = mapping
+                return ctor(f"call:{module_attr_callee}", list(constructor_args))
+            if node.keywords:
+                raise ValueError("qualified constructor call with kwargs is not liftable")
+            return ctor(
+                f"call:{module_attr_callee}",
+                [_translate_term_scoped(arg, scope, call_vars) for arg in node.args],
+            )
         if isinstance(node.func, ast.Attribute):
             # Method call as a TERM: ``recv.method(args)`` → callval ctor.
             # SSA-key the receiver through the current scope so that
@@ -8497,6 +9118,21 @@ def _translate_term_scoped(
         # attribute access: same-generation base + same key = same term = UNSAT
         # on contradiction; different generation = distinct terms = PROVEN.
         # Non-literal keys LOUDLY REFUSE via ``_subscript_key_term``.
+        projected = _static_container_projection_from_expr(
+            node.value,
+            node.slice,
+            lambda element: _translate_term_scoped(element, scope, call_vars),
+        )
+        if projected is not None:
+            return projected
+        try:
+            key_term = _subscript_key_term(node.slice)
+        except ValueError:
+            key_term = None
+        if key_term is not None and isinstance(node.value, ast.Name):
+            projection = scope.projections.get(node.value.id, {}).get(key_term)
+            if projection is not None:
+                return projection
         base_term = _translate_term_scoped(node.value, scope, call_vars)
         return _translate_subscript_term(node, base_term)
     raise ValueError("expression shape not in value-scope lift whitelist")

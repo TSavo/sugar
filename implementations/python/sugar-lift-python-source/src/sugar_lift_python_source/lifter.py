@@ -24,7 +24,7 @@ from .ir import (
     var,
 )
 
-PANIC_FREEDOM_EFFECT_KIND = "concept:panic-freedom"
+PANIC_FREEDOM_EFFECT_KIND = "panic-freedom"
 RUNTIME_FAILURE_SITE_CONCEPT = "concept:panic-freedom.leaf.runtime-failure-site"
 CLASS_SHAPE_ASSUMPTIONS = [
     "presence-guaranteed-assuming-standard-construction-via-__init__",
