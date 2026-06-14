@@ -4,6 +4,7 @@
 
 use owo_colors::OwoColorize;
 use serde_json::{json, Value as Json};
+use sugar_verifier::superposition::{reports_from_report, Strength, SuperpositionReport};
 use sugar_verifier::{LoadError, Report, ReportRow};
 
 pub fn report_to_json(r: &Report) -> Json {
@@ -29,6 +30,33 @@ pub fn report_to_json(r: &Report) -> Json {
         "rows": rows,
         "loadErrors": load_errors,
         "callEdges": call_edges,
+        // Per-symbol superposition verdict: the N z3 compiles this run already
+        // performed, folded by callee symbol. strength = surviving universe count.
+        "superposition": superposition_to_json(r),
+    })
+}
+
+fn superposition_to_json(r: &Report) -> Json {
+    let reports = reports_from_report(r);
+    let entries: Vec<Json> = reports.iter().map(superposition_report_to_json).collect();
+    json!({
+        "symbols": reports.len(),
+        "strong": reports.iter().filter(|s| s.strength == Strength::Strong).count(),
+        "weak": reports.iter().filter(|s| s.strength == Strength::Weak).count(),
+        "undecidable": reports.iter().filter(|s| s.strength == Strength::Undecidable).count(),
+        "reports": entries,
+    })
+}
+
+fn superposition_report_to_json(s: &SuperpositionReport) -> Json {
+    json!({
+        "symbol": s.symbol,
+        "strength": s.strength.tag(),
+        "verdict": s.verdict,
+        "levers": s.levers,
+        "licensing": s.licensing,
+        "findings": s.findings,
+        "cid": s.cid,
     })
 }
 
@@ -141,6 +169,25 @@ pub fn print_report_pretty(r: &Report, quiet: bool) {
             }
             if let Some(tier) = &row.body_discharge_tier {
                 println!("      body tier: {}", tier);
+            }
+        }
+        let superpositions = reports_from_report(r);
+        if !superpositions.is_empty() {
+            println!();
+            println!("{}", "Superposition (strength per symbol):".bold());
+            for s in &superpositions {
+                let strength_pretty = match s.strength {
+                    Strength::Strong => s.strength.tag().green().to_string(),
+                    Strength::Weak => s.strength.tag().yellow().to_string(),
+                    Strength::Undecidable => s.strength.tag().red().to_string(),
+                };
+                println!("  [{}] {}", strength_pretty, s.symbol);
+                if !s.findings.is_empty() {
+                    println!("      findings: {}", s.findings.len());
+                }
+                if !s.levers.is_empty() {
+                    println!("      collapse: {}", s.levers.join(" | "));
+                }
             }
         }
         if !r.load_errors.is_empty() {

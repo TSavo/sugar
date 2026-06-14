@@ -64,11 +64,43 @@ fn is_lean_compiler(ir_compiler: &str) -> bool {
     ir_compiler == "lean" || ir_compiler == LEAN_DIALECT
 }
 
+/// Backstop solver timeout when the config sets none. A PINNED obligation is a
+/// closed ground consistency check — `and(out == <answer>, relation)` — which z3
+/// decides in microseconds. Anything that runs for seconds is not a slow answer:
+/// it is an UNPINNED / open lowering (free vars, nonlinear, deep string theory)
+/// that left the solver an open search. We cap it so such a query returns a
+/// loudly-bounded Undecidable instead of hanging forever (the old `None`).
+/// Override with `SUGAR_SOLVER_TIMEOUT_SECS` (0 = no timeout, restores `None`).
+fn default_solver_timeout() -> Option<Duration> {
+    // A pinned ground check is microseconds; even with z3 process startup it is
+    // ~60ms. 250ms is generous headroom, so anything that hits it is an
+    // unpinned/open obligation -> loudly-bounded Undecidable. SUGAR_SOLVER_TIMEOUT_MS
+    // (preferred) or _SECS override; 0 disables (restores the old hang).
+    if let Ok(v) = std::env::var("SUGAR_SOLVER_TIMEOUT_MS") {
+        return match v.trim().parse::<u64>() {
+            Ok(0) => None,
+            Ok(n) => Some(Duration::from_millis(n)),
+            Err(_) => Some(Duration::from_millis(250)),
+        };
+    }
+    match std::env::var("SUGAR_SOLVER_TIMEOUT_SECS") {
+        Ok(v) => match v.trim().parse::<u64>() {
+            Ok(0) => None,
+            Ok(n) => Some(Duration::from_secs(n)),
+            Err(_) => Some(Duration::from_millis(250)),
+        },
+        Err(_) => Some(Duration::from_millis(250)),
+    }
+}
+
 fn build_one(name: &str, sc: &SolverConfig) -> SolverHandle {
     if let Some(stub) = StubSolver::from_binary(name, &sc.binary) {
         return Arc::new(stub) as SolverHandle;
     }
-    let timeout = sc.timeout_seconds.map(Duration::from_secs);
+    let timeout = sc
+        .timeout_seconds
+        .map(Duration::from_secs)
+        .or_else(default_solver_timeout);
     let bin = if sc.binary.is_empty() && is_lean_compiler(&sc.ir_compiler) {
         "lake".to_string()
     } else if sc.binary.is_empty() {

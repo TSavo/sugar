@@ -336,13 +336,64 @@ fn recompute_source_ledger(audits: &[Value]) -> Value {
     Value::Object(ledger)
 }
 
+/// The symbol-under-test for a lifted assertion contract: each lifted assertion
+/// is one candidate UNIVERSE about a callsite. The contract is named
+/// `SYMBOL#euf#callresult_SYMBOL(args)::assertion` (args after `#euf#`); stripping
+/// the arg tail groups the per-argument universes of one method under that method.
+fn universe_symbol(name: &str) -> String {
+    let n = name.strip_prefix("consistency:").unwrap_or(name);
+    let n = n.split("#euf#").next().unwrap_or(n);
+    n.strip_suffix("::assertion").unwrap_or(n).to_string()
+}
+
+/// `method -> N universes detected` over the lifted assertion contracts. This is
+/// the lift-side superposition report: how many candidate readings exist per
+/// method, before `sugar prove` collapses them to strong/weak/undecidable.
+fn universes_per_method(contracts: &[Value]) -> BTreeMap<String, usize> {
+    let mut m: BTreeMap<String, usize> = BTreeMap::new();
+    for c in contracts {
+        if let Some(name) = contract_value_name(c) {
+            *m.entry(universe_symbol(name)).or_insert(0) += 1;
+        }
+    }
+    m
+}
+
+/// `method -> [universe reading FOL]`: each lifted assertion is one universe; its
+/// reading is the instantiated FOL of its `inv`. Lets the report show the
+/// universes of a method in superposition, side by side.
+fn universe_readings_per_method(contracts: &[Value]) -> BTreeMap<String, Vec<String>> {
+    let mut m: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for c in contracts {
+        if let Some(name) = contract_value_name(c) {
+            let reading = c
+                .get("inv")
+                .map(proofir_formula_to_fol_with_instances)
+                .unwrap_or_else(|| "<no inv>".to_string());
+            m.entry(universe_symbol(name)).or_default().push(reading);
+        }
+    }
+    m
+}
+
 fn render_source_report_json(report: &LiftSourceReport) -> Result<String, serde_json::Error> {
+    let universes = universes_per_method(&report.contracts);
+    let universe_rows: Vec<Value> = universes
+        .iter()
+        .map(|(method, n)| serde_json::json!({ "method": method, "universes": n }))
+        .collect();
     serde_json::to_string_pretty(&serde_json::json!({
         "kind": "lift-source-report",
         "sourceLedger": report.ledger,
         "sourceAudits": report.audits,
         "sourceMementos": report.source_mementos,
         "contracts": report.contracts,
+        // Lift-side superposition: candidate universes detected per method.
+        "superposition": {
+            "methods": universes.len(),
+            "universes": report.contracts.len(),
+            "perMethod": universe_rows,
+        },
     }))
     .map(|mut rendered| {
         rendered.push('\n');
@@ -356,6 +407,24 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
         "source audit: {}\n",
         format_counts(&report.ledger)
     ));
+    let readings = universe_readings_per_method(&report.contracts);
+    if !readings.is_empty() {
+        out.push_str(&format!(
+            "superposition (universes detected): {} methods, {} universes\n",
+            readings.len(),
+            report.contracts.len()
+        ));
+        for (method, rows) in &readings {
+            out.push_str(&format!("  {method} — {} universe(s):\n", rows.len()));
+            // Show up to 8 readings side by side; beyond that, count the tail.
+            for r in rows.iter().take(8) {
+                out.push_str(&format!("      {r}\n"));
+            }
+            if rows.len() > 8 {
+                out.push_str(&format!("      (+{} more universes)\n", rows.len() - 8));
+            }
+        }
+    }
     if report.audits.is_empty() {
         out.push_str("no source audits emitted\n");
         return out;

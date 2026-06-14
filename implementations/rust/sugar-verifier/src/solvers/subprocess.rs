@@ -66,15 +66,7 @@ impl Solver for SubprocessSolver {
         cmd.stderr(Stdio::piped());
 
         let mut child = match cmd.spawn() {
-            Ok(c) => {
-                eprintln!(
-                    "[sugar-verifier] spawned solver {:?} (binary={:?}) pid={}",
-                    self.name,
-                    self.binary,
-                    c.id()
-                );
-                c
-            }
+            Ok(c) => c,
             Err(e) => {
                 eprintln!(
                     "[sugar-verifier] failed to spawn solver {:?} (binary={:?}): {e}",
@@ -123,6 +115,16 @@ impl Solver for SubprocessSolver {
                         if Instant::now() >= deadline {
                             let _ = child.kill();
                             let _ = child.wait();
+                            // A pinned obligation is microseconds; hitting the
+                            // timeout means this query was UNPINNED/open (free
+                            // vars / hard theory). Loudly bounded -> Undecidable,
+                            // never a hang.
+                            eprintln!(
+                                "[verify] {} TIMEOUT after {}s — unpinned/open obligation \
+                                 (a pinned check is microseconds); -> Undecidable",
+                                self.name,
+                                to.as_secs().max(1)
+                            );
                             return SolveResult {
                                 verdict: ObligationVerdict::Undecidable,
                                 solver_name: self.name.clone(),
@@ -152,10 +154,6 @@ impl Solver for SubprocessSolver {
             timed_out = false;
         }
 
-        eprintln!(
-            "[sugar-verifier] waiting for solver {:?} to exit (timeout={:?})",
-            self.name, self.timeout
-        );
         let output = match child.wait_with_output() {
             Ok(o) => o,
             Err(e) => {

@@ -17,8 +17,103 @@
 
 use std::collections::BTreeMap;
 
-use sugar_lift_rust_tests::{lift_file_with_macro_imports, LiftOptions, MacroRegistry, TargetCfg};
+use sugar_lift_rust_tests::closed_eval::{self, HarnessResult};
+use sugar_lift_rust_tests::{
+    lift_file_with_macro_imports, refusal_disposition, Disposition, LiftOptions, MacroRegistry,
+    TargetCfg,
+};
 use syn::visit::{self, Visit};
+
+/// Dissolve a batch of gated stdlib-sugar asserts: count how many hold under the pinned
+/// toolchain. One batched harness; on a batch COMPILE error (one bad assert sinks the
+/// lot) fall back to per-assert so the rest still salvage. Non-determinism / unavailable
+/// toolchain -> 0 (dissolve nothing).
+/// The pinned toolchain that compiles the harness. The corpus is nightly stdlib-test
+/// code (heavy `#![feature(...)]`), so the harness is compiled under the matching
+/// nightly -- the same toolchain the vendor's tests assume (the named, pinned axiom).
+fn harness_rustc_args() -> Vec<String> {
+    vec!["run".into(), "nightly-2026-02-07".into(), "rustc".into()]
+}
+
+/// Prune `#![feature(...)]` gates the pinned nightly no longer accepts (features that
+/// STABILIZED since the corpus's toolchain -- the gate is now an "unknown feature"
+/// error while the method is stable, so dropping the gate is sound; behavior is
+/// unchanged). Iterates until the feature prelude compiles a trivial harness.
+fn prune_feature_prelude(feature_prelude: &str, dir: &std::path::Path) -> String {
+    let mut feats: Vec<String> = feature_prelude
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.to_string())
+        .collect();
+    let args = harness_rustc_args();
+    for _ in 0..40 {
+        let src = format!("{}\nfn main() {{}}\n", feats.join("\n"));
+        let src_path = dir.join("feature_probe.rs");
+        if std::fs::write(&src_path, &src).is_err() {
+            return feats.join("\n");
+        }
+        let out = match std::process::Command::new("rustup")
+            .args(&args)
+            .arg("--edition")
+            .arg("2021")
+            .arg("-A")
+            .arg("warnings")
+            .arg(&src_path)
+            .arg("-o")
+            .arg(dir.join("feature_probe_bin"))
+            .output()
+        {
+            Ok(o) => o,
+            Err(_) => return feats.join("\n"),
+        };
+        if out.status.success() {
+            return feats.join("\n");
+        }
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        // collect every `unknown feature \`X\`` and drop the matching gate line.
+        let mut unknown: Vec<String> = Vec::new();
+        for line in stderr.lines() {
+            if let Some(idx) = line.find("unknown feature `") {
+                let rest = &line[idx + "unknown feature `".len()..];
+                if let Some(end) = rest.find('`') {
+                    unknown.push(rest[..end].to_string());
+                }
+            }
+        }
+        if unknown.is_empty() {
+            // a non-feature error -- stop pruning, return what we have.
+            return feats.join("\n");
+        }
+        feats.retain(|l| !unknown.iter().any(|u| l.contains(&format!("feature({u})"))));
+    }
+    feats.join("\n")
+}
+
+fn dissolve_count(prelude: &str, setup: &str, asserts: &[String], dir: &std::path::Path) -> usize {
+    if asserts.is_empty() {
+        return 0;
+    }
+    let args = harness_rustc_args();
+    match closed_eval::evaluate_asserts(prelude, setup, asserts, "rustup", &args, "2021", dir) {
+        HarnessResult::Ran(held) => held.iter().filter(|&&h| h).count(),
+        // Any non-clean BATCH result -- a compile error, run nondeterminism, or an
+        // unavailable run -- may be caused by a SINGLE bad assert poisoning the whole
+        // batch (e.g. a carried macro invocation whose expansion needs an unreachable
+        // API, or one assert whose run varies). Fall back to evaluating each assert in
+        // ISOLATION so the rest still dissolve. Each per-assert eval keeps its own
+        // double-run determinism guard, so this only ever recovers a genuinely
+        // deterministic green assert -- never a new false-discharge, only fewer lost.
+        _ => asserts
+            .iter()
+            .filter(|a| {
+                matches!(
+                    closed_eval::evaluate_asserts(prelude, setup, std::slice::from_ref(a), "rustup", &args, "2021", dir),
+                    HarnessResult::Ran(held) if held.first() == Some(&true)
+                )
+            })
+            .count(),
+    }
+}
 
 /// The lifter's assertion universe: any macro whose name starts with assert or
 /// debug_assert. This covers the standard six plus stdlib custom macros
@@ -100,8 +195,12 @@ fn bucket(reason: &str) -> String {
     if head.is_empty() {
         reason.trim().to_lowercase()
     } else {
-        // Cap length so near-identical long reasons still merge.
-        head.chars().take(72).collect()
+        // NO TRUNCATION. The full normalized shape is the bucket key. Merging is
+        // done by erasing backtick-quoted SPECIFICS (above), not by cutting the
+        // string -- truncating split the call-site-inlining family across dozens
+        // of per-helper-name keys and hid a 521-strong rung. Variable parts belong
+        // in backticks at the emission site so they are erased here, not chopped.
+        head.to_string()
     }
 }
 
@@ -114,7 +213,12 @@ struct Totals {
     test_fns_seen: usize,
     test_fns_lifted: usize,
     discharged: usize,
+    // The named non-discharged total, split by disposition. `refused` =
+    // terminal, closed with a source-property reason; `unclassified` = a lifter
+    // limitation, i.e. WORK. `refused + unclassified` is the old "refused" count.
     refused: usize,
+    unclassified: usize,
+    inactive: usize,
 }
 
 fn main() {
@@ -129,6 +233,35 @@ fn main() {
         .position(|a| a == "--json")
         .and_then(|i| args.get(i + 1))
         .cloned();
+    // `--dissolve`: dissolve gated closed stdlib-sugar unit-test asserts by evaluating
+    // them under the pinned toolchain (shells to rustc). Off by default (hermetic).
+    let dissolve = args.iter().any(|a| a == "--dissolve");
+    let dissolve_dir = std::env::temp_dir().join("sugar_dissolve_sweep");
+    if dissolve {
+        let _ = std::fs::create_dir_all(&dissolve_dir);
+    }
+    // The corpus's crate-level `#![feature(...)]` gates: the harness must declare the
+    // same gates the vendor's nightly test crate does, or unstable-method asserts
+    // (`'a'.is_cased()`, ...) will not compile. Lifted verbatim from the corpus lib.rs.
+    let feature_prelude = if dissolve {
+        std::fs::read_to_string(std::path::Path::new(corpus).join("lib.rs"))
+            .map(|s| {
+                s.lines()
+                    .filter(|l| l.trim_start().starts_with("#![feature("))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    // Prune stabilized gates once, upfront, against the pinned nightly.
+    let feature_prelude = if dissolve && !feature_prelude.is_empty() {
+        prune_feature_prelude(&feature_prelude, &dissolve_dir)
+    } else {
+        feature_prelude
+    };
+    let mut dissolved_total = 0usize;
     // `--deps dir1,dir2,...`: dependency SOURCE trees whose macro_rules! should
     // be in scope when expanding (we operate exclusively on source).
     let dep_dirs: Vec<String> = args
@@ -255,16 +388,33 @@ fn main() {
 
         let out = lift_file_with_macro_imports(&file, &rel, &options, &registry);
         let discharged = out.assertions_lifted;
-        let refused = out.assertions_refused;
+        let refused_total = out.assertions_refused;
 
         totals.assert_macros += counter.total;
         totals.test_fns_seen += out.seen;
         totals.test_fns_lifted += out.lifted;
         totals.discharged += discharged;
-        totals.refused += refused;
 
+        // Split the named refusals by disposition: TERMINAL (closed with a source-
+        // property reason) vs UNCLASSIFIED (a lifter limitation = work). A refusal
+        // counted without a reason string, or any unrecognized reason, defaults to
+        // Unclassified -- the only way into `refused` is to earn it.
+        let mut file_terminal = 0usize;
+        let mut file_inactive = 0usize;
         for reason in &out.skip_reasons {
-            let b = bucket(reason);
+            let (tag, disp) = match refusal_disposition(reason) {
+                Disposition::Refused => {
+                    file_terminal += 1;
+                    ("[refused]", ())
+                }
+                Disposition::Inactive => {
+                    file_inactive += 1;
+                    ("[inactive]", ())
+                }
+                Disposition::Unclassified => ("[unclassified]", ()),
+            };
+            let _ = disp;
+            let b = format!("{} {}", tag, bucket(reason));
             *reasons.entry(b.clone()).or_insert(0) += 1;
             let samples = reason_samples.entry(b).or_default();
             if samples.len() < 12 {
@@ -272,6 +422,35 @@ fn main() {
             }
             all_reasons.push(reason.clone());
         }
+        // Reconcile against the count: any refused-without-a-reason is unclassified.
+        let file_terminal = file_terminal.min(refused_total);
+        let file_inactive = file_inactive.min(refused_total - file_terminal);
+        let file_unclassified = refused_total - file_terminal - file_inactive;
+
+        // STDLIB-SUGAR DISSOLUTION: gated closed stdlib-sugar unit-test asserts that the
+        // symbolic lifter left unclassified are dissolved by evaluation under the pinned
+        // toolchain. A green move is unclassified -> discharged; refused/inactive/silent
+        // are untouched (effective discharged+dissolved and refused-dissolved net to the
+        // same `unaccounted`, so SILENT is unaffected). Capped at file_unclassified so we
+        // only ever reclassify work the lifter actually left open.
+        let dissolved = if dissolve {
+            let units = closed_eval::collect_dissolvable(&file);
+            let mut got = 0usize;
+            for u in &units {
+                let full_prelude = format!("{}\n{}", feature_prelude, u.prelude);
+                got += dissolve_count(&full_prelude, &u.setup, &u.asserts, &dissolve_dir);
+            }
+            got.min(file_unclassified)
+        } else {
+            0
+        };
+        dissolved_total += dissolved;
+
+        totals.refused += file_terminal;
+        totals.inactive += file_inactive;
+        totals.unclassified += file_unclassified - dissolved;
+        totals.discharged += dissolved;
+        let refused = refused_total;
 
         // Silent drop: a real assert macro the collector never reached (nested
         // in control flow) -- neither lifted nor refused with a reason.
@@ -279,9 +458,13 @@ fn main() {
         rows.push((rel, counter.total, discharged, refused, unaccounted, true));
     }
 
-    // Headline reconciliation at macro granularity.
-    let unaccounted =
-        totals.assert_macros as i64 - totals.discharged as i64 - totals.refused as i64;
+    // Headline reconciliation at macro granularity. `refused + unclassified` is the
+    // full named non-discharged set; only their sum reconciles against the textual
+    // macro count.
+    let named_non_discharged = totals.refused + totals.unclassified + totals.inactive;
+    let unaccounted = totals.assert_macros as i64
+        - totals.discharged as i64
+        - named_non_discharged as i64;
     // Per-file split. A positive per-file residual is a genuinely unreached
     // assertion (the true silent drop). A negative per-file residual is
     // inlining inflation: the reducer inlined a helper called from several
@@ -310,10 +493,26 @@ fn main() {
         totals.discharged,
         pct(totals.discharged)
     );
+    if dissolve {
+        println!(
+            "    of which stdlib-sugar DISSOLVED by evaluation: {:>6}",
+            dissolved_total
+        );
+    }
     println!(
-        "  refused (named reason):      {:>6}  ({:.1}%)",
+        "  refused  (TERMINAL, source): {:>6}  ({:.1}%)   <-- closed with a damn good reason",
         totals.refused,
         pct(totals.refused)
+    );
+    println!(
+        "  unclassified (lifter WORK):  {:>6}  ({:.1}%)   <-- the real roadmap; drive to 0",
+        totals.unclassified,
+        pct(totals.unclassified)
+    );
+    println!(
+        "  inactive (cfg-disabled):     {:>6}  ({:.1}%)   <-- not in this target's universe",
+        totals.inactive,
+        pct(totals.inactive)
     );
     println!(
         "  unaccounted (net):           {:>6}  ({:.1}%)",
@@ -418,6 +617,8 @@ fn build_ledger_json(
     obj.insert("assert_macros".into(), totals.assert_macros.into());
     obj.insert("discharged".into(), totals.discharged.into());
     obj.insert("refused".into(), totals.refused.into());
+    obj.insert("unclassified".into(), totals.unclassified.into());
+    obj.insert("inactive".into(), totals.inactive.into());
     obj.insert("unaccounted".into(), unaccounted.into());
     obj.insert(
         "assertion_multiset_cid".into(),
@@ -490,7 +691,9 @@ mod tests {
             test_fns_seen: 3,
             test_fns_lifted: 3,
             discharged: 3,
-            refused: 2,
+            refused: 1,
+            unclassified: 1,
+            inactive: 0,
         };
         let reasons = BTreeMap::from([("closure argument".to_string(), 2usize)]);
         let samples = BTreeMap::from([(

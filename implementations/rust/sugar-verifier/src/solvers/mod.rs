@@ -29,6 +29,7 @@
 //   * Dispatch                    - inspect the formula and pick the
 //                                   matching solver for that fragment.
 
+pub mod batch;
 pub mod ceta;
 pub mod config;
 pub mod coq;

@@ -450,10 +450,21 @@ pub async fn handle_resolve_receiver_crate(
                     let pkey = format!("{line}:{col}");
                     match entry.positions.get(&pkey) {
                         Some(cached) if cached.deps.validate(&workspace_root) => {
-                            if let PosOutcome::Crate { krate, type_stem } = &cached.outcome {
+                            if let PosOutcome::Crate {
+                                krate,
+                                type_stem,
+                                effect,
+                            } = &cached.outcome
+                            {
+                                // Effect is cached alongside the crate, so a hit
+                                // reproduces the oracle's verdict (Mutating ->
+                                // refused) with no RA spawn. An empty effect (old
+                                // cache file) renders as "unknown" -> conservatively
+                                // left unclassified.
+                                let effect_str = if effect.is_empty() { "unknown" } else { effect };
                                 resolved.insert(
                                     format!("{file}:{line}:{col}"),
-                                    resolution_value(krate, type_stem.as_deref()),
+                                    resolution_value(krate, type_stem.as_deref(), effect_str),
                                 );
                             }
                             // Refused -> stays unresolved (refuse-floor).
@@ -543,16 +554,22 @@ pub async fn handle_resolve_receiver_crate(
                     krate,
                     type_stem,
                     definition_files,
+                    effect,
                 } => {
                     resolved.insert(
                         format!("{file}:{line}:{col}"),
-                        resolution_value(krate, type_stem.as_deref()),
+                        resolution_value(krate, type_stem.as_deref(), sig_effect_str(*effect)),
                     );
                     let deps = ResolutionDeps::from_files(&workspace_root, definition_files)
                         .unwrap_or_else(|| ResolutionDeps::workspace(&workspace_root));
                     file_res.positions.insert(
                         pkey,
-                        CachedPosition::resolved(krate, type_stem.as_deref(), deps),
+                        CachedPosition::resolved(
+                            krate,
+                            type_stem.as_deref(),
+                            sig_effect_str(*effect),
+                            deps,
+                        ),
                     );
                     n_resolved += 1;
                 }
@@ -613,11 +630,23 @@ pub async fn handle_resolve_receiver_crate(
 /// shim's disambiguated partial (`option_unwrap`) instead of the ambiguous bare
 /// leaf. `type` is null when the crate was definite but the type could not be
 /// disambiguated; the caller then keeps the crate and refuses to disambiguate.
-fn resolution_value(krate: &str, type_stem: Option<&str>) -> Json {
+fn resolution_value(krate: &str, type_stem: Option<&str>, effect: &str) -> Json {
     serde_json::json!({
         "crate": krate,
         "type": type_stem,
+        // Source-audit datum: "mutating" (mutation through &mut) / "refclean" / "unknown".
+        "effect": effect,
     })
+}
+
+/// Wire string for a resolved method's receiver/param mutability.
+fn sig_effect_str(effect: sugar_walk::ra_oracle::SignatureEffect) -> &'static str {
+    use sugar_walk::ra_oracle::SignatureEffect::*;
+    match effect {
+        Mutating => "mutating",
+        RefClean => "refclean",
+        Unknown => "unknown",
+    }
 }
 
 /// Write the resolve-cache sidecar atomically (write temp + rename) so a reader

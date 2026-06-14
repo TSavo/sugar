@@ -36,7 +36,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use sugar_walk::ra_oracle::{RaOracle, ResolveQuery};
+use sugar_walk::ra_oracle::{RaOracle, ResolveQuery, SignatureEffect};
 use tracing::{info, warn};
 
 /// Readiness phase of a resident RA session.
@@ -78,6 +78,9 @@ pub enum PosResult {
         krate: String,
         type_stem: Option<String>,
         definition_files: Vec<PathBuf>,
+        /// Receiver/param mutability of the resolved method (source-audit datum):
+        /// Mutating -> "mutation through &mut", RefClean -> no ref mutation.
+        effect: SignatureEffect,
     },
     Refused,
     NotReady,
@@ -207,11 +210,15 @@ fn session_loop(
             // Resolve BOTH crate and receiver-type stem in one definition
             // round-trip; the stem disambiguates the panic partial downstream.
             let r = match oracle.resolve_typed_classified(q) {
-                Ok(Some(tr)) => PosResult::Resolved {
-                    krate: tr.krate,
-                    type_stem: tr.type_stem,
-                    definition_files: tr.definition_files,
-                },
+                Ok(Some(tr)) => {
+                    let effect = oracle.resolve_signature_effect(q);
+                    PosResult::Resolved {
+                        krate: tr.krate,
+                        type_stem: tr.type_stem,
+                        definition_files: tr.definition_files,
+                        effect,
+                    }
+                }
                 Ok(None) => PosResult::Refused,
                 Err(()) => PosResult::NotReady,
             };

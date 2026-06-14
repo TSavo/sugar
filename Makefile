@@ -393,8 +393,26 @@ self-attest: build-rust
 	echo "self-attest: PASS (manifest artifacts pinned + verified)"; \
 	rm -rf $$tmp
 
+# Pin-and-assert gate over the rust stdlib coretests accounting sweep. Runs the
+# HERMETIC sweep (no --dissolve -> deterministic: no nightly harness compiles, no
+# per-file dissolution cap) and asserts the result EXACTLY equals the pinned
+# snapshot (implementations/rust/coretests-invariants.json). CI goes red when a
+# commit fails to move the numbers as it claimed (a drain that didn't drain, a
+# regression, a silent drop, or a corpus change). Corpus = rust $(CORETESTS_RUST_VER)
+# coretests via rust-src, pinned independent of the runner's default stable so the
+# assertion-multiset CID stays stable. Self-provisions the toolchain (idempotent).
+CORETESTS_RUST_VER ?= 1.96.0
+.PHONY: coretests-invariants
+coretests-invariants:
+	@set -e; \
+	rustup toolchain install $(CORETESTS_RUST_VER) --component rust-src --profile minimal 2>/dev/null || true; \
+	$(CARGO_LOCAL) build --manifest-path implementations/rust/Cargo.toml --release -p sugar-lift-rust-tests --bin coretests_sweep; \
+	CORPUS="$$(rustc +$(CORETESTS_RUST_VER) --print sysroot)/lib/rustlib/src/rust/library/coretests/tests"; \
+	implementations/rust/target/release/coretests_sweep "$$CORPUS" --rustc-cfg > /tmp/coretests-hermetic.out; \
+	python3 scripts/check-coretests-invariants.py /tmp/coretests-hermetic.out implementations/rust/coretests-invariants.json
+
 .PHONY: ci
-ci: check-cargo-entrypoint test-all test-showcases self-attest
+ci: check-cargo-entrypoint test-all test-showcases self-attest coretests-invariants
 	@echo ""
 	@echo "==== ci: PASS ===="
 

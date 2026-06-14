@@ -316,9 +316,26 @@ fn main() -> ExitCode {
 }
 
 fn init_tracing() {
-    let filter = tracing_subscriber::EnvFilter::builder()
-        .with_default_directive(tracing_subscriber::filter::LevelFilter::WARN.into())
-        .from_env_lossy();
+    // The pipeline is richly instrumented at info!/debug! (per-stage counts,
+    // ambient-forall totals, "consistency pass complete: consistent/contradictory/
+    // undecidable", etc.). Defaulting the whole world to WARN hid all of it and
+    // made `sugar verify` a black box. Default OUR crates to info (the stage
+    // narrative) while third-party deps stay at warn; RUST_LOG fully overrides.
+    let filter = if std::env::var_os("RUST_LOG").is_some() {
+        tracing_subscriber::EnvFilter::builder()
+            .with_default_directive(tracing_subscriber::filter::LevelFilter::WARN.into())
+            .from_env_lossy()
+    } else {
+        tracing_subscriber::EnvFilter::new(
+            "warn,\
+             sugar_cli=info,\
+             sugar_verifier=info,\
+             sugar_walk=info,\
+             sugar_lift=info,\
+             sugar_lift_rust_tests=info,\
+             libsugar=info",
+        )
+    };
     if let Ok(path) = std::env::var("SUGAR_LOG_FILE") {
         match std::fs::OpenOptions::new()
             .create(true)

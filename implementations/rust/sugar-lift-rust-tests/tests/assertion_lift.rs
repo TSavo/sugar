@@ -533,7 +533,7 @@ fn scalar_is_six() {
     let decl = &out.decls[0];
     assert_eq!(
         decl.name,
-        "make_value#euf#c:callresult_make_value_a0()::assertion"
+        "src/lib.rs::scalar_is_six::make_value#euf#c:callresult_make_value_a0()::assertion"
     );
     assert!(decl.pre.is_none());
     assert!(decl.post.is_none());
@@ -562,12 +562,197 @@ fn scalar_contradiction() {
     let decl = &out.decls[0];
     assert_eq!(
         decl.name,
-        "make_value#euf#c:callresult_make_value_a0()::assertion"
+        "tests/contradiction.rs::scalar_contradiction::make_value#euf#c:callresult_make_value_a0()::assertion"
     );
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 2);
     assert_eq_atom(&operands[0], 6);
     assert_eq_atom(&operands[1], 7);
+}
+
+// A byte literal `b'0'` is pure sugar for a u8 constant (48). It must dissolve to
+// the SAME concrete-Int-with-u8-sort form `48u8` lifts to — value-faithful, and
+// distinct byte literals must stay distinct so a false twin cannot coalesce into a
+// vacuous discharge (the masked-contradiction failure mode the sweep can't catch).
+fn byte_literal_eq_atom_value_and_sort(formula: &Formula) -> (i64, String) {
+    match formula {
+        Formula::Atomic { name, args } => {
+            assert_eq!(name, "=");
+            assert_eq!(args.len(), 2);
+            match args[1].as_ref() {
+                Term::Const {
+                    value: ConstValue::Int(value),
+                    sort,
+                } => (*value, sort.name.clone()),
+                other => panic!("expected int-const byte-literal rhs, got {other:?}"),
+            }
+        }
+        other => panic!("expected equality atom, got {other:?}"),
+    }
+}
+
+#[test]
+fn byte_literal_dissolves_to_u8_constant() {
+    // Positive: `b'0'` lifts to the int value 48 with u8 sort (sugar in, constraint
+    // out). `byte_val()` is the EUF call-result LHS; the byte literal is the RHS.
+    let src = r#"
+fn byte_val() -> u8 { 48 }
+
+#[test]
+fn byte_is_zero() {
+    assert_eq!(byte_val(), b'0');
+}
+"#;
+    let out = lift_file(&parse(src), "src/lib.rs");
+    assert_eq!(out.seen, 1);
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    let operands = inv_operands(&out.decls[0]);
+    assert_eq!(operands.len(), 1);
+    let (value, sort) = byte_literal_eq_atom_value_and_sort(&operands[0]);
+    assert_eq!(value, 48, "b'0' must lift to its u8 value 48");
+    assert_eq!(sort, "u8", "byte literal carries u8 sort");
+}
+
+#[test]
+fn distinct_byte_literals_stay_distinct_no_coalesce() {
+    // Break-the-twin: `b'0'` (48) and `b'1'` (49) must lift to DISTINCT constants so
+    // the conjoined obligation is genuinely refutable (a single receiver cannot equal
+    // both) — not silently coalesced into a vacuously-satisfiable claim.
+    let src = r#"
+fn byte_val() -> u8 { 48 }
+
+#[test]
+fn byte_contradiction() {
+    assert_eq!(byte_val(), b'0');
+    assert_eq!(byte_val(), b'1');
+}
+"#;
+    let out = lift_file(&parse(src), "tests/byte_contradiction.rs");
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    let operands = inv_operands(&out.decls[0]);
+    assert_eq!(operands.len(), 2, "two distinct byte-literal atoms");
+    let (v0, _) = byte_literal_eq_atom_value_and_sort(&operands[0]);
+    let (v1, _) = byte_literal_eq_atom_value_and_sort(&operands[1]);
+    assert_eq!(v0, 48);
+    assert_eq!(v1, 49);
+    assert_ne!(v0, v1, "distinct byte literals must not coalesce");
+}
+
+// `assert_eq!(left, &mut [1, 2, 3])`: slice/array PartialEq is BY VALUE, so the
+// `&mut [literal]` RHS denotes the pinned array value, not a pointer. It lifts as
+// `ref_mut(<array value>)` -- the SAME immutable-value class as `&mut <scalar lit>`.
+// Distinct array literals must stay distinct (no false coalesce); a `&mut <variable>`
+// must STILL stay residual (the pointer-identity guard, asserted elsewhere).
+fn ref_mut_array_rhs_var_name(formula: &Formula) -> String {
+    match formula {
+        Formula::Atomic { name, args } => {
+            assert_eq!(name, "=");
+            assert_eq!(args.len(), 2);
+            match args[1].as_ref() {
+                Term::Ctor { name, args } => {
+                    assert_eq!(name, "ref_mut", "RHS must be a ref_mut term");
+                    assert_eq!(args.len(), 1);
+                    match args[0].as_ref() {
+                        Term::Var { name } => name.clone(),
+                        other => panic!("expected array-value var inside ref_mut, got {other:?}"),
+                    }
+                }
+                other => panic!("expected ref_mut ctor rhs, got {other:?}"),
+            }
+        }
+        other => panic!("expected equality atom, got {other:?}"),
+    }
+}
+
+#[test]
+fn mut_ref_to_array_literal_lifts_as_ref_mut_of_pinned_value() {
+    // Positive: the pinned array value rides inside ref_mut (sugar in, constraint
+    // out). `make_slice()` is the EUF call-result LHS.
+    let src = r#"
+fn make_slice() -> &'static mut [i32] { todo!() }
+
+#[test]
+fn slice_is_123() {
+    assert_eq!(make_slice(), &mut [1, 2, 3]);
+}
+"#;
+    let out = lift_file(&parse(src), "src/lib.rs");
+    assert_eq!(out.seen, 1);
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    let operands = inv_operands(&out.decls[0]);
+    assert_eq!(operands.len(), 1);
+    let name = ref_mut_array_rhs_var_name(&operands[0]);
+    assert_eq!(
+        name, "literal:Array(i:1,i:2,i:3)",
+        "the array literal value must be pinned by content"
+    );
+}
+
+#[test]
+fn distinct_mut_ref_array_literals_stay_distinct_no_coalesce() {
+    // Break-the-twin: `&mut [1,2,3]` and `&mut [4,5,6]` must lift to DISTINCT pinned
+    // values so the conjoined obligation is genuinely refutable -- a single receiver
+    // cannot equal both. If they coalesced, a false assert would discharge vacuously
+    // (the masked contradiction the consistency sweep cannot catch).
+    let src = r#"
+fn make_slice() -> &'static mut [i32] { todo!() }
+
+#[test]
+fn slice_contradiction() {
+    assert_eq!(make_slice(), &mut [1, 2, 3]);
+    assert_eq!(make_slice(), &mut [4, 5, 6]);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/slice_contradiction.rs");
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    let operands = inv_operands(&out.decls[0]);
+    assert_eq!(operands.len(), 2, "two distinct array-literal atoms");
+    let n0 = ref_mut_array_rhs_var_name(&operands[0]);
+    let n1 = ref_mut_array_rhs_var_name(&operands[1]);
+    assert_eq!(n0, "literal:Array(i:1,i:2,i:3)");
+    assert_eq!(n1, "literal:Array(i:4,i:5,i:6)");
+    assert_ne!(n0, n1, "distinct array literals must not coalesce");
+}
+
+#[test]
+fn mut_ref_full_slice_of_array_literal_lifts() {
+    // `&mut [0, 1][..]` is the FULL slice of an array literal — the same pinned value
+    // as `&mut [0, 1]`. It lifts (sugar dissolves); the residual-variable twin below
+    // proves this does NOT leak into the mutable-container case.
+    let src = r#"
+fn make_slice() -> &'static mut [i32] { todo!() }
+
+#[test]
+fn full_slice_is_01() {
+    assert_eq!(make_slice(), &mut [0, 1][..]);
+}
+"#;
+    let out = lift_file(&parse(src), "src/lib.rs");
+    assert_eq!(out.seen, 1);
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+}
+
+#[test]
+fn mut_ref_full_slice_of_mutable_variable_stays_residual() {
+    // THE SOUNDNESS BOUNDARY: `&mut buf[..]` over a MUTABLE variable is NOT an
+    // immutable value — it aliases a mutable buffer with its own pointer/temporal
+    // identity, so it must stay RESIDUAL (not coalesced to a stable ref_mut term).
+    // is_immutable_value_expr returns false for an Index whose base is a path, so the
+    // ref_mut arm does not fire and the assert is released, not falsely discharged.
+    let src = r#"
+#[test]
+fn full_slice_of_var() {
+    let mut buf = [0, 1];
+    assert_eq!(buf.len(), (&mut buf[..]).len());
+}
+"#;
+    let out = lift_file(&parse(src), "src/lib.rs");
+    assert_eq!(out.seen, 1);
+    assert_eq!(
+        out.lifted, 0,
+        "full slice of a mutable variable must stay residual, not lift: {:?}",
+        out.warnings
+    );
 }
 
 #[test]
@@ -592,7 +777,7 @@ fn scalar_is_six() {
     let decl = &out.decls[0];
     assert_eq!(
         decl.name,
-        "make_value#euf#c:callresult_make_value_a0()::assertion"
+        "src/lib.rs::scalar_is_six::make_value#euf#c:callresult_make_value_a0()::assertion"
     );
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
@@ -622,7 +807,7 @@ fn scalar_contradiction() {
     let decl = &out.decls[0];
     assert_eq!(
         decl.name,
-        "make_value#euf#c:callresult_make_value_a0()::assertion"
+        "tests/contradiction.rs::scalar_contradiction::make_value#euf#c:callresult_make_value_a0()::assertion"
     );
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 2);
@@ -652,11 +837,11 @@ fn distinct_calls() {
     assert_eq!(out.decls.len(), 2, "decls: {:?}", out.decls);
     assert_eq!(
         out.decls[0].name,
-        "first_value#euf#c:callresult_first_value_a0()::assertion"
+        "tests/helpers.rs::distinct_calls::first_value#euf#c:callresult_first_value_a0()::assertion"
     );
     assert_eq!(
         out.decls[1].name,
-        "second_value#euf#c:callresult_second_value_a0()::assertion"
+        "tests/helpers.rs::distinct_calls::second_value#euf#c:callresult_second_value_a0()::assertion"
     );
     assert_eq_atom(&inv_operands(&out.decls[0])[0], 6);
     assert_eq_atom(&inv_operands(&out.decls[1])[0], 7);
@@ -676,7 +861,7 @@ fn scalar_assert_binary() {
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
     assert_eq!(
         out.decls[0].name,
-        "make_value#euf#c:callresult_make_value_a0()::assertion"
+        "src/lib.rs::scalar_assert_binary::make_value#euf#c:callresult_make_value_a0()::assertion"
     );
     let operands = inv_operands(&out.decls[0]);
     assert_eq!(operands.len(), 1);
@@ -701,7 +886,7 @@ fn decoded_len_est() {
     let decl = &out.decls[0];
     assert_eq!(
         decl.name,
-        "decoded_len_estimate#euf#c:callresult_decoded_len_estimate_a1(i:4)::assertion"
+        "src/decode.rs::decoded_len_est::decoded_len_estimate#euf#c:callresult_decoded_len_estimate_a1(i:4)::assertion"
     );
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
@@ -869,7 +1054,7 @@ mod tests {
     assert_eq!(out.decls.len(), 1);
     assert_eq!(
         out.decls[0].name,
-        "make_value#euf#c:callresult_make_value_a0()::assertion"
+        "src/lib.rs::tests::scalar_is_six::make_value#euf#c:callresult_make_value_a0()::assertion"
     );
 }
 
@@ -895,7 +1080,7 @@ mod tests {
     assert_eq!(out.decls.len(), 1);
     assert_eq!(
         out.decls[0].name,
-        "decoded_len_estimate#euf#c:callresult_decoded_len_estimate_a1(i:4)::assertion"
+        "src/decode.rs::tests::decoded_len_est::decoded_len_estimate#euf#c:callresult_decoded_len_estimate_a1(i:4)::assertion"
     );
     assert_int_call_eq_atom(
         &inv_operands(&out.decls[0])[0],
@@ -1166,7 +1351,7 @@ fn exponent_float_literal() {
     assert_eq!(out.decls.len(), 1);
 
     let decl = &out.decls[0];
-    assert_eq!(decl.name, "value#euf#c:callresult_value_a0()::assertion");
+    assert_eq!(decl.name, "tests/num/floats.rs::exponent_float_literal::value#euf#c:callresult_value_a0()::assertion");
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 2);
     assert_real_call_eq_atom(&operands[0], "call:value", "0.001");
@@ -1568,8 +1753,8 @@ fn test_range_contains() {
     assert_eq!(
         names,
         vec![
-            "method:contains#euf#c:callresult_method_contains_a2(c:range(i:1,i:5),c:ref(i:0))::assertion",
-            "method:contains#euf#c:callresult_method_contains_a2(c:range(i:1,i:5),c:ref(i:1))::assertion",
+            "method:contains#euf#c:callresult_method_contains_a2(c:range(i:1:u32,i:5),c:ref(i:0:u32))::assertion",
+            "method:contains#euf#c:callresult_method_contains_a2(c:range(i:1:u32,i:5),c:ref(i:1:u32))::assertion",
         ]
     );
     let first = inv_operands(&out.decls[0]);
@@ -2905,7 +3090,7 @@ fn comparison_atoms() {
     assert_eq!(out.decls.len(), 1);
 
     let decl = &out.decls[0];
-    assert_eq!(decl.name, "value#euf#c:callresult_value_a0()::assertion");
+    assert_eq!(decl.name, "tests/compare.rs::comparison_atoms::value#euf#c:callresult_value_a0()::assertion");
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 3);
     assert_int_call_cmp_atom(&operands[0], ">", "call:value", 3);
@@ -2930,7 +3115,7 @@ fn connective_atoms() {
     assert_eq!(out.decls.len(), 1);
 
     let decl = &out.decls[0];
-    assert_eq!(decl.name, "value#euf#c:callresult_value_a0()::assertion");
+    assert_eq!(decl.name, "tests/compare.rs::connective_atoms::value#euf#c:callresult_value_a0()::assertion");
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 2);
     match operands[0].as_ref() {
@@ -2970,7 +3155,7 @@ fn negated_comparison() {
     assert_eq!(out.decls.len(), 1);
 
     let decl = &out.decls[0];
-    assert_eq!(decl.name, "value#euf#c:callresult_value_a0()::assertion");
+    assert_eq!(decl.name, "tests/compare.rs::negated_comparison::value#euf#c:callresult_value_a0()::assertion");
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 2);
     assert_int_call_cmp_atom(&operands[0], "\u{2265}", "call:value", 3);
@@ -4713,29 +4898,102 @@ fn lit_tup() {
 // --- item-level const assertion accounting (totality to zero) ---
 
 #[test]
-fn const_item_assertion_is_refused_not_silent() {
-    // A compile-time `const _: () = assert!(...)` at item level (inside a module)
-    // must be accounted, not silently dropped. This was the last silent-drop
-    // class in coretests cmp.rs (mod const_cmp).
+fn const_item_assertion_is_lifted_not_silent() {
+    // A compile-time `const _: () = assert!(...)` at item level is UNCONDITIONALLY
+    // const-evaluated, so its asserts are real obligations. With pinned scalar
+    // operands they now LIFT (sugar in, constraint out) rather than being refused --
+    // strictly better than the old "accounted as a named refusal" behavior, and still
+    // never a silent drop. (Non-liftable const-item asserts, e.g. `S(1) == S(1)`
+    // construction-semantics, stay refused/unclassified via the collector.)
     let src = r#"
 mod const_cmp {
-    struct S(i32);
     const _: () = assert!(1 == 1);
     const _: () = assert!(0 != 1);
 }
 "#;
     let out = lift_file(&parse(src), "tests/cmp.rs");
-    let refused: Vec<_> = out
-        .skip_reasons
-        .iter()
-        .filter(|r| r.contains("const-item assertion"))
-        .collect();
     assert_eq!(
-        refused.len(),
-        2,
-        "both const-item asserts must be named refusals: {:?}",
+        out.assertions_lifted, 2,
+        "both pinned const-item asserts must lift: lifted={} refused={} reasons={:?}",
+        out.assertions_lifted, out.assertions_refused, out.skip_reasons
+    );
+    assert_eq!(
+        out.assertions_refused, 0,
+        "no const-item assert should be refused here: {:?}",
         out.skip_reasons
     );
+    // Totality preserved: the two asserts are accounted (lifted), none silently dropped.
+    assert_eq!(out.decls.len(), 2, "each const-item assert yields a contract");
+}
+
+#[test]
+fn empty_body_type_level_assert_helper_is_terminal_refused() {
+    // `fn assert_trusted_len<T: TrustedLen>(_: &T) {}` is a TYPE-LEVEL marker: its
+    // only content is the `T: TrustedLen` trait bound, discharged by the compiler.
+    // The empty body has zero point-wise value content. The call must be refused with
+    // a TERMINAL reason ("type-level obligation"), not lifted and not left as an
+    // unclassified "no visible source" lifter-limitation.
+    let src = r#"
+#[test]
+fn t() {
+    fn assert_trusted_len<T: Sized>(_: &T) {}
+    let v = [0u8; 4];
+    assert_trusted_len(&v);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/flatten.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "an empty-body type-level helper has no value predicate to lift: {:?}",
+        out.skip_reasons
+    );
+    let reason = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains("type-level obligation"))
+        .unwrap_or_else(|| panic!("expected a type-level-obligation refusal, got {:?}", out.skip_reasons));
+    assert_eq!(
+        sugar_lift_rust_tests::refusal_disposition(reason),
+        sugar_lift_rust_tests::Disposition::Refused,
+        "type-level obligation must classify as TERMINAL refused, not unclassified work"
+    );
+}
+
+#[test]
+fn nonempty_assert_helper_is_not_terminal_refused_the_twin() {
+    // BREAK-THE-TWIN: the SAME nested-helper shape but with a NON-empty body must NOT
+    // get the type-level terminal treatment. A real helper body carries value
+    // obligations (recoverable via lexically-scoped inlining we have not built yet);
+    // mislabeling it terminal would be a FAKE-ZERO -- laundering recoverable work as
+    // closed. So it must stay UNCLASSIFIED ("no visible source"), never "type-level
+    // obligation", proving the discrimination is exactly empty-vs-non-empty body.
+    let src = r#"
+#[test]
+fn t() {
+    fn assert_is_zero(x: u8) { assert_eq!(x, 0u8); }
+    assert_is_zero(0u8);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/flatten.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "a nested non-empty helper does not inline via the module registry: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        !out.skip_reasons.iter().any(|r| r.contains("type-level obligation")),
+        "a non-empty-body helper must NOT be labeled a type-level obligation: {:?}",
+        out.skip_reasons
+    );
+    // Its refusal stays UNCLASSIFIED (work), not terminal -- the recoverable subset
+    // is not laundered into a fake-zero.
+    for r in &out.skip_reasons {
+        assert_eq!(
+            sugar_lift_rust_tests::refusal_disposition(r),
+            sugar_lift_rust_tests::Disposition::Unclassified,
+            "non-empty helper refusal must stay unclassified work, not terminal: {r}"
+        );
+    }
 }
 
 #[test]
@@ -5541,4 +5799,1222 @@ fn t() {
         "refusal must name the opaque-collection provenance: {:?}",
         out.skip_reasons
     );
+}
+
+// ── Source-audit value-contract emission (emit_value_contract) ──────────────
+// A warrant is real only if the kit EMITS the ProofIR. These pin the slice-1
+// char-class predicate emitter: matches! body -> `out <-> membership` contract.
+
+#[test]
+fn emit_value_contract_emits_char_class_predicate() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let f: syn::ItemFn =
+        syn::parse_str("fn is_up(c: char) -> bool { matches!(c, 'A'..='Z') }").unwrap();
+    let decl = emit_value_contract("is_up", &f.block).expect("char-class body emits a contract");
+    assert_eq!(decl.out_binding, "out");
+    let inv = format!("{:?}", decl.inv.expect("inv present"));
+    // bounds are the code points of 'A' (65) and 'Z' (90), and `out` is related.
+    assert!(inv.contains("65"), "lower bound 'A'=65 present: {inv}");
+    assert!(inv.contains("90"), "upper bound 'Z'=90 present: {inv}");
+    assert!(inv.contains("out"), "return value `out` is related: {inv}");
+    assert!(inv.contains("implies"), "biconditional via implies: {inv}");
+}
+
+#[test]
+fn emit_value_contract_handles_or_of_matches() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    // core's is_ascii_alphanumeric shape: OR of three matches! predicates.
+    let f: syn::ItemFn = syn::parse_str(
+        "fn alnum(c: char) -> bool { matches!(c, '0'..='9') | matches!(c, 'A'..='Z') | matches!(c, 'a'..='z') }",
+    )
+    .unwrap();
+    let decl = emit_value_contract("alnum", &f.block).expect("OR-of-matches emits");
+    let inv = format!("{:?}", decl.inv.expect("inv present"));
+    for cp in ["48", "57", "65", "90", "97", "122"] {
+        assert!(inv.contains(cp), "alnum bound {cp} present: {inv}");
+    }
+}
+
+#[test]
+fn emit_value_contract_refuses_unemittable_bodies() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    // A panic method (unwrap -> divergence), a mutating multi-statement body, and
+    // a guarded matches! over a NESTED pattern (match_arm_discriminant refuses
+    // nested binders -> ambiguous payload positions) are NOT emittable here ->
+    // None, so the caller routes them to effect_refusal/unclassified (never a
+    // hollow warrant). (Value-position calls like v.len() DO emit as EUF; a
+    // dead-let prefix + liftable tail DOES warrant; a guarded matches! over a
+    // FLAT pattern with a pure-predicate guard DOES warrant -- see the
+    // guarded-matches tests below.)
+    for src in [
+        "fn f(r: Result<i32, ()>) -> i32 { r.unwrap() }",
+        "fn f(p: Option<Result<i32, ()>>) -> bool { matches!(p, Some(Ok(n)) if n > 0) }",
+        "fn f(x: i32) -> i32 { let mut a = x; a += 1; a }",
+    ] {
+        let f: syn::ItemFn = syn::parse_str(src).unwrap();
+        assert!(
+            emit_value_contract("f", &f.block).is_none(),
+            "must not emit a contract for: {src}"
+        );
+    }
+}
+
+// Step 7: the emitted relation must actually COMPOSE -- compile to SMT-LIB and
+// be well-sorted + consistent under z3 -- not merely classify. This feeds the
+// REAL marshalled bytes of emit_value_contract through the same compiler the
+// prove path uses.
+#[test]
+fn emit_value_contract_char_class_composes_through_compiler() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let f: syn::ItemFn =
+        syn::parse_str("fn is_up(c: char) -> bool { matches!(c, 'A'..='Z') }").unwrap();
+    let decl = emit_value_contract("is_up", &f.block).unwrap();
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
+    let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+    let inv = parsed[0]["inv"].clone();
+
+    // 1) it compiles to SMT-LIB (composes), not a vacuous/ill-sorted classify.
+    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
+        .expect("emitted char-class inv must compile to SMT-LIB");
+    let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+
+    // 2) z3 (if present) must find it well-sorted and SATISFIABLE: the relation
+    //    out <-> (65 <= c <= 90) is consistent (real teeth, not a contradiction).
+    let z3 = "/usr/local/bin/z3";
+    if std::path::Path::new(z3).exists() {
+        let path = std::env::temp_dir().join("sugar_char_class_compose.smt2");
+        std::fs::write(&path, &script).expect("write smt2");
+        let out = std::process::Command::new(z3)
+            .arg(&path)
+            .output()
+            .expect("run z3");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
+            "emitted relation must be well-sorted for z3:\n{stdout}\n--- script ---\n{script}"
+        );
+        assert!(
+            stdout.contains("sat"),
+            "emitted consistency relation must be satisfiable:\n{stdout}\n--- script ---\n{script}"
+        );
+    }
+}
+
+// Slice 17: STRING-literal `matches!` membership. core/std are full of pure
+// `fn is_x(name: &str) -> bool { matches!(name, "a" | "b" | ..) }` predicates --
+// `is_io_method`, `is_known_pure_method`, `is_panic_leaf` are this exact shape.
+// They are side-effect-free (a pattern match over a &str against string
+// literals), so they WARRANT as `out <-> (name == "a" \/ name == "b" \/ ..)` in
+// the compiler's String-theory regime. Before this slice the membership emitter
+// only handled char/byte/int code points, so a string scrutinee fell out as a
+// hollow `opaque macro matches!` unclassified locus.
+#[test]
+fn emit_value_contract_string_matches_membership_warrants() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let f: syn::ItemFn = syn::parse_str(
+        "fn is_io(name: &str) -> bool { matches!(name, \"write\" | \"write_all\" | \"read\") }",
+    )
+    .unwrap();
+    let decl = emit_value_contract("is_io", &f.block).expect("string-membership body emits");
+    assert_eq!(decl.out_binding, "out");
+    let inv = format!("{:?}", decl.inv.expect("inv present"));
+    for lit in ["write", "write_all", "read"] {
+        assert!(inv.contains(lit), "membership literal {lit} present: {inv}");
+    }
+    assert!(inv.contains("out"), "return value `out` is related: {inv}");
+    assert!(inv.contains("implies"), "biconditional via implies: {inv}");
+}
+
+// Step 7 for string membership: the emitted relation must COMPOSE through the
+// real compiler -- well-sorted under z3's String theory AND satisfiable (the
+// scrutinee can be one of the literals -> out=true, or anything else -> out=false:
+// real teeth, not a contradiction).
+#[test]
+fn emit_value_contract_string_matches_composes_through_compiler() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let f: syn::ItemFn = syn::parse_str(
+        "fn is_io(name: &str) -> bool { matches!(name, \"write\" | \"write_all\" | \"read\") }",
+    )
+    .unwrap();
+    let decl = emit_value_contract("is_io", &f.block).unwrap();
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
+    let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+    let inv = parsed[0]["inv"].clone();
+
+    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
+        .expect("emitted string-membership inv must compile to SMT-LIB");
+    let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+
+    let z3 = "/usr/local/bin/z3";
+    if std::path::Path::new(z3).exists() {
+        let path = std::env::temp_dir().join("sugar_string_matches_compose.smt2");
+        std::fs::write(&path, &script).expect("write smt2");
+        let out = std::process::Command::new(z3)
+            .arg(&path)
+            .output()
+            .expect("run z3");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
+            "emitted string-membership relation must be well-sorted for z3:\n{stdout}\n--- script ---\n{script}"
+        );
+        assert!(
+            stdout.contains("sat"),
+            "emitted string-membership relation must be satisfiable:\n{stdout}\n--- script ---\n{script}"
+        );
+    }
+}
+
+// Slice 18: GUARDED `matches!` (matches!(x, Pat if guard)). Pervasive in core:
+// matches!(token, TokenTree::Punct(p) if p.as_char() == ',') and friends. The
+// match is side-effect-free (pattern test + a pure guard predicate), so it
+// warrants `out <-> (variant_of(x) == "variant::Pat" /\ guard[p := payload(x)])`
+// -- the discriminant conjoined with the guard, with the pattern binding mapped
+// to its payload accessor via the SAME match_arm_discriminant machinery a value
+// `match` uses. A nested pattern or a non-predicate guard stays None (refused).
+#[test]
+fn emit_value_contract_guarded_matches_warrants() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    // A flat enum-variant pattern with a pure comparison guard over the binding.
+    let f: syn::ItemFn = syn::parse_str(
+        "fn pos(p: Option<i32>) -> bool { matches!(p, Some(n) if n > 0) }",
+    )
+    .unwrap();
+    let decl = emit_value_contract("pos", &f.block).expect("guarded matches! warrants");
+    assert_eq!(decl.out_binding, "out");
+    let inv = format!("{:?}", decl.inv.expect("inv present"));
+    assert!(inv.contains("variant_of"), "discriminant present: {inv}");
+    assert!(inv.contains("payload:"), "binding mapped to payload accessor: {inv}");
+    assert!(inv.contains("out"), "return value related: {inv}");
+}
+
+// Discrimination: a binding-only catch-all guard (matches!(v, x if x == 5))
+// reduces to `out <-> v == 5` -- the binding maps straight to the scrutinee, no
+// variant discriminant. This is the shape that USED to be refused (a guard was a
+// blanket None) and now warrants, because the guard is a pure predicate.
+#[test]
+fn emit_value_contract_guarded_matches_binding_only_warrants() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let f: syn::ItemFn =
+        syn::parse_str("fn isfive(v: i32) -> bool { matches!(v, x if x == 5) }").unwrap();
+    let decl = emit_value_contract("isfive", &f.block).expect("binding-only guard warrants");
+    let inv = format!("{:?}", decl.inv.expect("inv present"));
+    // the guard reduces to v == 5 (the binding x maps straight to v, no variant_of).
+    assert!(inv.contains('5'), "guard reduced to v == 5: {inv}");
+    assert!(!inv.contains("variant_of"), "no discriminant for a binding pattern: {inv}");
+}
+
+// Step 7 for guarded matches!: the emitted relation must COMPOSE -- well-sorted
+// under z3 AND satisfiable (real teeth: some p makes it true, some false).
+#[test]
+fn emit_value_contract_guarded_matches_composes_through_compiler() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let f: syn::ItemFn = syn::parse_str(
+        "fn pos(p: Option<i32>) -> bool { matches!(p, Some(n) if n > 0) }",
+    )
+    .unwrap();
+    let decl = emit_value_contract("pos", &f.block).unwrap();
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
+    let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+    let inv = parsed[0]["inv"].clone();
+
+    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
+        .expect("emitted guarded-matches inv must compile to SMT-LIB");
+    let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+
+    let z3 = "/usr/local/bin/z3";
+    if std::path::Path::new(z3).exists() {
+        let path = std::env::temp_dir().join("sugar_guarded_matches_compose.smt2");
+        std::fs::write(&path, &script).expect("write smt2");
+        let out = std::process::Command::new(z3)
+            .arg(&path)
+            .output()
+            .expect("run z3");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
+            "emitted guarded-matches relation must be well-sorted for z3:\n{stdout}\n--- script ---\n{script}"
+        );
+        assert!(
+            stdout.contains("sat"),
+            "emitted guarded-matches relation must be satisfiable:\n{stdout}\n--- script ---\n{script}"
+        );
+    }
+}
+
+// Slice 19: UNGUARDED enum-variant `matches!` (matches!(x, Enum::Variant(..))).
+// The ubiquitous discriminator predicate -- is_ipv4 { matches!(self, IpAddr::V4(_)) },
+// is_some, is_ok, ... The unguarded membership path only handled scalar/string
+// code points; an enum-variant pattern fell through to a hollow "opaque macro
+// matches!" unclassified. Route it (when scalar membership is None) through
+// match_arm_discriminant -> `out <-> variant_of(x) == "variant::Variant"`.
+#[test]
+fn emit_value_contract_unguarded_enum_variant_matches_warrants() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let f: syn::ItemFn = syn::parse_str(
+        "fn is_v4(s: &IpKind) -> bool { matches!(s, IpKind::V4(_)) }",
+    )
+    .unwrap();
+    let decl = emit_value_contract("is_v4", &f.block).expect("enum-variant matches! warrants");
+    let inv = format!("{:?}", decl.inv.expect("inv present"));
+    assert!(inv.contains("variant_of"), "discriminant present: {inv}");
+    assert!(inv.contains("V4"), "the matched variant tag is present: {inv}");
+}
+
+// Discrimination: is_v4 and is_v6 over the same subject are DISTINCT discriminants
+// (variant::V4 vs variant::V6), and a bare binding/wildcard pattern (always
+// matches -> no teeth) stays None.
+#[test]
+fn emit_value_contract_unguarded_enum_variant_discrimination() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let v4: syn::ItemFn =
+        syn::parse_str("fn f(s: &IpKind) -> bool { matches!(s, IpKind::V4(_)) }").unwrap();
+    let v6: syn::ItemFn =
+        syn::parse_str("fn f(s: &IpKind) -> bool { matches!(s, IpKind::V6(_)) }").unwrap();
+    let i4 = format!("{:?}", emit_value_contract("f", &v4.block).unwrap().inv.unwrap());
+    let i6 = format!("{:?}", emit_value_contract("f", &v6.block).unwrap().inv.unwrap());
+    assert!(i4.contains("V4") && !i4.contains("V6"), "v4 discriminant: {i4}");
+    assert!(i6.contains("V6") && !i6.contains("V4"), "v6 discriminant: {i6}");
+    // a bare binding pattern is always-true (vacuous) -> not warranted.
+    let bind: syn::ItemFn =
+        syn::parse_str("fn f(s: &IpKind) -> bool { matches!(s, _anything) }").unwrap();
+    assert!(
+        emit_value_contract("f", &bind.block).is_none(),
+        "a vacuous always-matching pattern must not warrant"
+    );
+}
+
+#[test]
+fn emit_value_contract_unguarded_enum_variant_composes_through_compiler() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let f: syn::ItemFn = syn::parse_str(
+        "fn is_v4(s: &IpKind) -> bool { matches!(s, IpKind::V4(_)) }",
+    )
+    .unwrap();
+    let decl = emit_value_contract("is_v4", &f.block).unwrap();
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
+    let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+    let inv = parsed[0]["inv"].clone();
+
+    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
+        .expect("emitted enum-variant inv must compile to SMT-LIB");
+    let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+
+    let z3 = "/usr/local/bin/z3";
+    if std::path::Path::new(z3).exists() {
+        let path = std::env::temp_dir().join("sugar_enum_variant_compose.smt2");
+        std::fs::write(&path, &script).expect("write smt2");
+        let out = std::process::Command::new(z3).arg(&path).output().expect("run z3");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
+            "enum-variant relation must be well-sorted for z3:\n{stdout}\n--- {script}"
+        );
+        assert!(
+            stdout.contains("sat"),
+            "enum-variant relation must be satisfiable:\n{stdout}\n--- {script}"
+        );
+    }
+}
+
+// Slice 20: `char` cast (`x as char`, `(*self as u8) as char`). translate_term
+// handled integer-scalar casts but not `as char`, so core's char-conversion
+// bodies (to_ascii_uppercase/lowercase: if cond { (*self as u8).f() as char }
+// else { *self }) fell out at the cast. `as char` is a pure code-point
+// conversion -> the opaque EUF ctor cast:char(x), same standard as the integer
+// casts, Int/opaque regime so it composes.
+#[test]
+fn emit_value_contract_char_cast_warrants_and_composes() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    // a bare char cast, and the to_ascii_uppercase shape (if + nested casts).
+    let f: syn::ItemFn = syn::parse_str(
+        "fn up(c: char) -> char { if c.is_ascii_lowercase() { (c as u8) as char } else { c } }",
+    )
+    .unwrap();
+    let decl = emit_value_contract("up", &f.block).expect("char-cast if-body warrants");
+    let inv_dbg = format!("{:?}", decl.inv.clone().expect("inv present"));
+    assert!(inv_dbg.contains("cast:char"), "char cast ctor present: {inv_dbg}");
+    assert!(inv_dbg.contains("cast:u8"), "nested u8 cast ctor present: {inv_dbg}");
+
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
+    let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+    let inv = parsed[0]["inv"].clone();
+    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
+        .expect("char-cast inv must compile to SMT-LIB");
+    let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+    let z3 = "/usr/local/bin/z3";
+    if std::path::Path::new(z3).exists() {
+        let path = std::env::temp_dir().join("sugar_char_cast_compose.smt2");
+        std::fs::write(&path, &script).expect("write smt2");
+        let out = std::process::Command::new(z3).arg(&path).output().expect("run z3");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
+            "char-cast relation must be well-sorted for z3:\n{stdout}\n--- {script}"
+        );
+        assert!(stdout.contains("sat"), "char-cast relation must be satisfiable:\n{stdout}\n--- {script}");
+    }
+}
+
+// Discrimination: a cast to a NON-scalar/unhandled target (e.g. `as *const T`)
+// stays unemittable -> None (never a hollow warrant over an opaque pointer cast).
+#[test]
+fn emit_value_contract_unhandled_cast_refused() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let f: syn::ItemFn =
+        syn::parse_str("fn p(x: &u8) -> *const u8 { x as *const u8 }").unwrap();
+    assert!(
+        emit_value_contract("p", &f.block).is_none(),
+        "a raw-pointer cast must not warrant"
+    );
+}
+
+// Slice 21: early-return GUARD CLAUSE -- `(if COND { return RET; })+ TAIL`. The
+// ?/let-else family of bin-1: a guard-clause body is semantically
+// `if COND { RET } else { TAIL }`, so it warrants with the value-if encoding:
+// out==RET under COND (and earlier guards negated), out==TAIL under all negated.
+// Plus unary negation of a non-literal (`-x` -> 0 - x) which a guard tail like
+// `{ if a > 0 { return a; } -a }` needs.
+#[test]
+fn emit_value_contract_guard_return_warrants_and_composes() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let f: syn::ItemFn = syn::parse_str(
+        "fn sign(a: i32) -> i32 { if a > 0 { return 1; } if a < 0 { return 2; } 0 }",
+    )
+    .unwrap();
+    let decl = emit_value_contract("sign", &f.block).expect("guard-clause body warrants");
+    let inv_dbg = format!("{:?}", decl.inv.clone().expect("inv present"));
+    assert!(inv_dbg.contains("implies"), "guard clauses encode via implies: {inv_dbg}");
+    assert!(inv_dbg.contains("out"), "return value related: {inv_dbg}");
+
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
+    let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+    let inv = parsed[0]["inv"].clone();
+    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
+        .expect("guard-clause inv must compile to SMT-LIB");
+    let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+    let z3 = "/usr/local/bin/z3";
+    if std::path::Path::new(z3).exists() {
+        let path = std::env::temp_dir().join("sugar_guard_return_compose.smt2");
+        std::fs::write(&path, &script).expect("write smt2");
+        let out = std::process::Command::new(z3).arg(&path).output().expect("run z3");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
+            "guard-clause relation must be well-sorted for z3:\n{stdout}\n--- {script}"
+        );
+        assert!(stdout.contains("sat"), "guard-clause relation must be satisfiable:\n{stdout}");
+    }
+}
+
+// Unary negation of a non-literal: `{ if a > 0 { return a; } -a }` -- the guard
+// returns a, the tail is `-a` (0 - a). Warrants now (was refused: unary neg of a
+// non-literal had no term).
+#[test]
+fn emit_value_contract_unary_neg_tail_warrants() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let f: syn::ItemFn =
+        syn::parse_str("fn abs_ish(a: i32) -> i32 { if a > 0 { return a; } -a }").unwrap();
+    let decl = emit_value_contract("abs_ish", &f.block).expect("unary-neg guard tail warrants");
+    assert!(decl.inv.is_some(), "inv present");
+}
+
+// Discrimination: a guard clause whose TAIL is not an EUF value (e.g. a mutating
+// or unmodelable tail) stays None -- never a partial/hollow warrant.
+#[test]
+fn emit_value_contract_guard_return_non_value_tail_refused() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    // tail is a loop expression (not an EUF value) -> None.
+    let f: syn::ItemFn = syn::parse_str(
+        "fn f(a: i32) -> i32 { if a > 0 { return a; } loop { } }",
+    )
+    .unwrap();
+    assert!(
+        emit_value_contract("f", &f.block).is_none(),
+        "a non-value guard tail must not warrant"
+    );
+}
+
+// Slice 22: array/slice-pattern `matches!` (matches!(scrut, [169, 254, ..])).
+// core::net is full of these -- is_documentation { matches!(self.octets(),
+// [192, 0, 2, _]) }, is_link_local { matches!(self.octets(), [169, 254, ..]) }.
+// Pure: an array pattern test over a (method-call) scrutinee. Warrants as the
+// conjunction of fixed-front positions: index(scrut, i) == lit, over the
+// existing `index` accessor. Trailing `..` leaves the rest unconstrained.
+#[test]
+fn emit_value_contract_slice_pattern_matches_warrants_and_composes() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let f: syn::ItemFn = syn::parse_str(
+        "fn is_doc(o: [u8; 4]) -> bool { matches!(o, [192, 0, 2, _]) }",
+    )
+    .unwrap();
+    let decl = emit_value_contract("is_doc", &f.block).expect("slice-pattern matches! warrants");
+    let inv_dbg = format!("{:?}", decl.inv.clone().expect("inv present"));
+    assert!(inv_dbg.contains("index"), "index accessor present: {inv_dbg}");
+    for lit in ["192", "2"] {
+        assert!(inv_dbg.contains(lit), "fixed byte {lit} present: {inv_dbg}");
+    }
+
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
+    let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+    let inv = parsed[0]["inv"].clone();
+    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
+        .expect("slice-pattern inv must compile to SMT-LIB");
+    let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+    let z3 = "/usr/local/bin/z3";
+    if std::path::Path::new(z3).exists() {
+        let path = std::env::temp_dir().join("sugar_slice_pattern_compose.smt2");
+        std::fs::write(&path, &script).expect("write smt2");
+        let out = std::process::Command::new(z3).arg(&path).output().expect("run z3");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
+            "slice-pattern relation must be well-sorted for z3:\n{stdout}\n--- {script}"
+        );
+        assert!(stdout.contains("sat"), "slice-pattern relation must be satisfiable:\n{stdout}");
+    }
+}
+
+// Discrimination: a trailing `..` is fine (front-indexed), but a NON-trailing
+// rest (`[.., 1]`, back-indexing) and an all-wildcard pattern (no teeth) stay
+// None.
+#[test]
+fn emit_value_contract_slice_pattern_discrimination() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let trailing: syn::ItemFn =
+        syn::parse_str("fn f(o: [u8; 4]) -> bool { matches!(o, [169, 254, ..]) }").unwrap();
+    assert!(
+        emit_value_contract("f", &trailing.block).is_some(),
+        "trailing-rest slice pattern warrants"
+    );
+    let leading: syn::ItemFn =
+        syn::parse_str("fn f(o: [u8; 4]) -> bool { matches!(o, [.., 1]) }").unwrap();
+    assert!(
+        emit_value_contract("f", &leading.block).is_none(),
+        "a non-trailing rest (back-indexing) must not warrant"
+    );
+    let allwild: syn::ItemFn =
+        syn::parse_str("fn f(o: [u8; 4]) -> bool { matches!(o, [_, _, ..]) }").unwrap();
+    assert!(
+        emit_value_contract("f", &allwild.block).is_none(),
+        "an all-wildcard slice pattern has no teeth -> not warranted"
+    );
+}
+
+// Slice 23: `const { EXPR }` value blocks. core uses const blocks for
+// const-generic / intrinsic constants (const { type_name::<T>() }, const { 4*8 }).
+// A const block is compile-time evaluation -- PURE, its value IS EXPR's value --
+// so it warrants as EXPR's term. The general term path lacked the Expr::Const arm
+// the assertion path already had.
+#[test]
+fn emit_value_contract_const_block_warrants_and_composes() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let f: syn::ItemFn = syn::parse_str("fn k() -> usize { const { 4 * 8 } }").unwrap();
+    let decl = emit_value_contract("k", &f.block).expect("const-block value warrants");
+    let inv_dbg = format!("{:?}", decl.inv.clone().expect("inv present"));
+    assert!(inv_dbg.contains("out"), "return value related: {inv_dbg}");
+
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
+    let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+    let inv = parsed[0]["inv"].clone();
+    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
+        .expect("const-block inv must compile to SMT-LIB");
+    let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+    let z3 = "/usr/local/bin/z3";
+    if std::path::Path::new(z3).exists() {
+        let path = std::env::temp_dir().join("sugar_const_block_compose.smt2");
+        std::fs::write(&path, &script).expect("write smt2");
+        let out = std::process::Command::new(z3).arg(&path).output().expect("run z3");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
+            "const-block relation must be well-sorted for z3:\n{stdout}\n--- {script}"
+        );
+        assert!(stdout.contains("sat"), "const-block relation must be satisfiable:\n{stdout}");
+    }
+}
+
+// NEW DOCTRINE -- the vendor is the referee. A body's warrant is not checked for
+// purity; it is INSTANTIATED at a vendor call's arguments, conjoined with the
+// vendor's sworn output, and handed to z3. SAT = the warrant coexists with the
+// answer (holds); UNSAT = the derived constraint can't be true against the sworn
+// answer -> refuse. The interior is an unopened EUF box; order/effects never enter.
+fn z3_verdict(inv: &serde_json::Value, label: &str) -> Option<bool> {
+    // Some(true) = SAT, Some(false) = UNSAT, None = z3 absent.
+    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(inv)
+        .expect("conjoined inv must compile to SMT-LIB");
+    let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+    let z3 = "/usr/local/bin/z3";
+    if !std::path::Path::new(z3).exists() {
+        return None;
+    }
+    // Unique path per call: cargo runs tests in parallel; a shared temp file
+    // races (one test reads another's script).
+    let path = std::env::temp_dir().join(format!("sugar_vendor_check_{label}.smt2"));
+    std::fs::write(&path, &script).expect("write smt2");
+    let out = std::process::Command::new(z3).arg(&path).output().expect("run z3");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
+        "conjoined relation must be well-sorted:\n{stdout}\n--- {script}"
+    );
+    Some(stdout.contains("sat") && !stdout.contains("unsat"))
+}
+
+fn inv_json(decl: &sugar_ir_symbolic::ContractDecl) -> serde_json::Value {
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(decl));
+    let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+    parsed[0]["inv"].clone()
+}
+
+#[test]
+fn vendor_pin_confirms_correct_warrant_sat() {
+    use sugar_lift_rust_tests::{emit_value_contract, warrant_conjoined_with_vendor};
+    // body: double(x) = x * 2. Vendor GOOD twin: double(3) == 6.
+    let f: syn::ItemFn = syn::parse_str("fn double(x: i32) -> i32 { x * 2 }").unwrap();
+    let decl = emit_value_contract("double", &f.block).expect("warrants");
+    let conjoined = warrant_conjoined_with_vendor(&decl, &[("x", 3)], 6);
+    if let Some(sat) = z3_verdict(&inv_json(&conjoined), "good") {
+        assert!(sat, "warrant out=x*2 at x=3 must coexist with the sworn answer 6 (SAT)");
+    }
+}
+
+#[test]
+fn vendor_pin_refutes_wrong_warrant_unsat() {
+    use sugar_lift_rust_tests::{emit_value_contract, warrant_conjoined_with_vendor};
+    // body: double(x) = x * 2. Vendor BAD twin: double(3) == 7. The derived
+    // constraint (out=6) cannot coexist with the sworn answer (out=7) -> UNSAT ->
+    // refuse, carrying the contradiction. This is the teeth: the check, not a
+    // purity sniff, is what catches a wrong answer.
+    let f: syn::ItemFn = syn::parse_str("fn double(x: i32) -> i32 { x * 2 }").unwrap();
+    let decl = emit_value_contract("double", &f.block).expect("warrants");
+    let conjoined = warrant_conjoined_with_vendor(&decl, &[("x", 3)], 7);
+    if let Some(sat) = z3_verdict(&inv_json(&conjoined), "bad") {
+        assert!(!sat, "warrant out=x*2 at x=3 must CONTRADICT the sworn answer 7 (UNSAT)");
+    }
+}
+
+// The broad functional fallback must COMPOSE (warranted <=> composes through z3):
+// a body with no structural shape (a loop) warrants `out = call:f(params)` --
+// bare functionality -- and that relation is well-sorted and satisfiable.
+#[test]
+fn broad_functional_warrant_composes_through_compiler() {
+    use sugar_lift_rust_tests::broad_functional_warrant;
+    let f: syn::ItemFn =
+        syn::parse_str("fn sum(a: i32) -> i32 { let mut s = 0; for i in 0..a { s += i; } s }")
+            .unwrap();
+    let decl = broad_functional_warrant("sum", &f.sig, &f.block).expect("value body warrants");
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
+    let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+    let inv = parsed[0]["inv"].clone();
+    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
+        .expect("functional warrant must compile to SMT-LIB");
+    let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+    let z3 = "/usr/local/bin/z3";
+    if std::path::Path::new(z3).exists() {
+        let path = std::env::temp_dir().join("sugar_broad_functional_compose.smt2");
+        std::fs::write(&path, &script).expect("write smt2");
+        let out = std::process::Command::new(z3).arg(&path).output().expect("run z3");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
+            "functional warrant must be well-sorted:\n{stdout}\n--- {script}"
+        );
+        assert!(stdout.contains("sat"), "functional warrant must be satisfiable:\n{stdout}");
+    }
+}
+
+// ── Slice 2: value-term emission (out = <side-effect-free term>) ────────────
+
+#[test]
+fn emit_value_contract_emits_side_effect_free_value_term() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    // pure arithmetic / read / constructor bodies -> out = <term>.
+    for src in [
+        "fn f(x: i32) -> i32 { x * 2 + 1 }",
+        "fn f(a: u32, b: u32) -> u32 { (a ^ b) & 0xff }",
+        "fn f(a: u32) -> u32 { a >> 2 }",
+        "fn f(p: (i32, i32)) -> i32 { p.0 + p.1 }",
+    ] {
+        let f: syn::ItemFn = syn::parse_str(src).unwrap();
+        let decl = emit_value_contract("f", &f.block)
+            .unwrap_or_else(|| panic!("side-effect-free value term must emit: {src}"));
+        let inv = format!("{:?}", decl.inv.expect("inv present"));
+        assert!(
+            inv.contains("out"),
+            "out is the return value: {src} -> {inv}"
+        );
+    }
+}
+
+#[test]
+fn emit_value_contract_warrants_value_position_calls_as_euf() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    // method-call-as-EUF (the goal's sanctioned shape, mirroring Python's
+    // value-position policy): a value-position call is an uninterpreted
+    // deterministic function -> out = m(recv, args) / f(args), warranted.
+    for src in [
+        "fn f(v: Vec<u8>) -> usize { v.len() }",
+        "fn f() -> i32 { g() }",
+        "fn f(x: i32) -> i32 { helper(x) + 1 }",
+    ] {
+        let f: syn::ItemFn = syn::parse_str(src).unwrap();
+        assert!(
+            emit_value_contract("f", &f.block).is_some(),
+            "value-position call must warrant as EUF: {src}"
+        );
+    }
+    // But a known PANIC method (divergence), await, or macro does NOT emit here
+    // -> routed to effect_refusal/unclassified, never a pure warrant.
+    for src in [
+        "fn f(r: Result<i32, ()>) -> i32 { r.unwrap() }",
+        "fn f(o: Option<i32>) -> i32 { o.expect(\"x\") }",
+    ] {
+        let f: syn::ItemFn = syn::parse_str(src).unwrap();
+        assert!(
+            emit_value_contract("f", &f.block).is_none(),
+            "panic method must not warrant as pure EUF: {src}"
+        );
+    }
+}
+
+#[test]
+fn emit_value_contract_value_term_composes_through_compiler() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let f: syn::ItemFn = syn::parse_str("fn f(x: i32) -> i32 { x * 2 + 1 }").unwrap();
+    let decl = emit_value_contract("f", &f.block).unwrap();
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
+    let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+    let inv = parsed[0]["inv"].clone();
+    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
+        .expect("emitted value-term inv must compile to SMT-LIB");
+    let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+    let z3 = "/usr/local/bin/z3";
+    if std::path::Path::new(z3).exists() {
+        let path = std::env::temp_dir().join("sugar_value_term_compose.smt2");
+        std::fs::write(&path, &script).expect("write smt2");
+        let out = std::process::Command::new(z3)
+            .arg(&path)
+            .output()
+            .expect("run z3");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
+            "value-term relation must be well-sorted:\n{stdout}\n--- script ---\n{script}"
+        );
+        assert!(
+            stdout.contains("sat"),
+            "value-term consistency relation must be satisfiable:\n{stdout}\n--- script ---\n{script}"
+        );
+    }
+}
+
+// ── Slice 4: bounded-output universe (clamp) -- a rust-native universe lift ──
+// The rust analog of Python's no-suffix universe: a total primitive (clamp)
+// whose source bounds the output for every input. The teeth are the verdict
+// flip -- an out-of-bound bad twin goes UNSAT against the walked bound.
+
+#[test]
+fn emit_value_contract_clamp_emits_bounded_output_universe() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let f: syn::ItemFn = syn::parse_str("fn f(x: i32) -> i32 { x.clamp(0, 10) }").unwrap();
+    let decl = emit_value_contract("f", &f.block).expect("clamp emits a bounded-output universe");
+    let inv = format!("{:?}", decl.inv.expect("inv"));
+    assert!(
+        inv.contains("out"),
+        "bound is over the return value `out`: {inv}"
+    );
+    assert!(
+        inv.contains('0') && inv.contains("10"),
+        "bounds 0 and 10 present: {inv}"
+    );
+}
+
+#[test]
+fn clamp_universe_refutes_out_of_bound_bad_twin() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let f: syn::ItemFn = syn::parse_str("fn f(x: i32) -> i32 { x.clamp(0, 10) }").unwrap();
+    let decl = emit_value_contract("f", &f.block).unwrap();
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
+    let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+    let universe = parsed[0]["inv"].clone();
+    let z3 = "/usr/local/bin/z3";
+    if !std::path::Path::new(z3).exists() {
+        return;
+    }
+    let eq_out = |v: i64| {
+        serde_json::json!({"kind":"atomic","name":"=","args":[
+            {"kind":"var","name":"out"},
+            {"kind":"const","value":v,"sort":{"kind":"primitive","name":"Int"}}]})
+    };
+    let verdict = |val: i64| -> String {
+        let conj = serde_json::json!({"kind":"and","operands":[universe.clone(), eq_out(val)]});
+        let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&conj).expect("compile");
+        let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+        let path = std::env::temp_dir().join(format!("sugar_clamp_{val}.smt2"));
+        std::fs::write(&path, &script).unwrap();
+        let out = std::process::Command::new(z3).arg(&path).output().unwrap();
+        String::from_utf8_lossy(&out.stdout).to_string()
+    };
+    // GOOD twin: out == 5 is within [0,10] -> SAT (discharges).
+    let good = verdict(5);
+    assert!(
+        good.contains("sat") && !good.contains("unsat"),
+        "good twin (out=5) must discharge: {good}"
+    );
+    // BAD twin: out == 11 is out of bound -> UNSAT (statically refuted by the bound).
+    let bad = verdict(11);
+    assert!(
+        bad.contains("unsat"),
+        "bad twin (out=11) must be refuted: {bad}"
+    );
+}
+
+#[test]
+fn euf_call_value_composes_through_compiler() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let f: syn::ItemFn = syn::parse_str("fn f(v: Vec<u8>) -> usize { v.len() }").unwrap();
+    let decl = emit_value_contract("f", &f.block).unwrap();
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
+    let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+    let inv = parsed[0]["inv"].clone();
+    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
+        .expect("EUF call inv must compile to SMT-LIB");
+    let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+    let z3 = "/usr/local/bin/z3";
+    if std::path::Path::new(z3).exists() {
+        let path = std::env::temp_dir().join("sugar_euf_call_compose.smt2");
+        std::fs::write(&path, &script).unwrap();
+        let out = std::process::Command::new(z3).arg(&path).output().unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
+            "EUF call relation must be well-sorted:\n{stdout}\n--- {script}"
+        );
+        assert!(
+            stdout.contains("sat"),
+            "EUF relation must be satisfiable:\n{stdout}"
+        );
+    }
+}
+
+#[test]
+fn euf_value_decls_compose_across_diverse_shapes() {
+    // The method-EUF warrant must COMPOSE for the variety of real value bodies it
+    // emits, not just one shape -- otherwise 'warranted' would be hollow. Compile
+    // each real emitted decl through the prove compiler + z3.
+    use sugar_lift_rust_tests::emit_value_contract;
+    let z3 = "/usr/local/bin/z3";
+    let bodies = [
+        "fn f(v: &[u8]) -> usize { v.len() }",
+        "fn f(s: &str) -> usize { s.len() + 1 }",
+        "fn f(x: u32) -> u32 { x.swap_bytes() }",
+        "fn f(p: P) -> u64 { p.field.count_ones() as u64 }",
+        "fn f(a: u8, b: u8) -> u8 { a.wrapping_add(b) }",
+        "fn f(x: i32) -> i32 { helper(x) + g(x) * 2 }",
+        "fn f(v: &[u32]) -> u32 { v[0] & 0xff }",
+        "fn f(x: u64) -> u64 { x.rotate_left(13) ^ x }",
+    ];
+    for src in bodies {
+        let f: syn::ItemFn = syn::parse_str(src).unwrap();
+        let Some(decl) = emit_value_contract("f", &f.block) else {
+            panic!("expected an EUF/value warrant for: {src}");
+        };
+        let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
+        let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+        let inv = parsed[0]["inv"].clone();
+        let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
+            .unwrap_or_else(|e| panic!("must compile to SMT-LIB: {src}: {e:?}"));
+        if std::path::Path::new(z3).exists() {
+            let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+            let path = std::env::temp_dir().join("sugar_euf_diverse.smt2");
+            std::fs::write(&path, &script).unwrap();
+            let out = std::process::Command::new(z3).arg(&path).output().unwrap();
+            let so = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                !so.contains("unknown constant") && !so.to_lowercase().contains("error"),
+                "must be well-sorted: {src}:\n{so}\n--- {script}"
+            );
+            assert!(so.contains("sat"), "must be satisfiable: {src}:\n{so}");
+        }
+    }
+}
+
+// ── Slice 6: leading immutable-let prefix + EUF tail (multi-statement drain) ──
+
+#[test]
+fn emit_value_contract_let_prefix_warrants_and_composes() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let z3 = "/usr/local/bin/z3";
+    for src in [
+        "fn f(x: i32) -> i32 { let y = x * 2; y + 1 }",
+        "fn f(v: &[u8]) -> usize { let n = v.len(); n + 1 }",
+        "fn f(a: u32, b: u32) -> u32 { let m = a & 0xff; let k = b >> 2; m ^ k }",
+    ] {
+        let f: syn::ItemFn = syn::parse_str(src).unwrap();
+        let decl = emit_value_contract("f", &f.block)
+            .unwrap_or_else(|| panic!("let-prefix EUF body must warrant: {src}"));
+        let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
+        let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+        let inv = parsed[0]["inv"].clone();
+        let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
+            .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
+        if std::path::Path::new(z3).exists() {
+            let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+            let path = std::env::temp_dir().join("sugar_letprefix.smt2");
+            std::fs::write(&path, &script).unwrap();
+            let out = std::process::Command::new(z3).arg(&path).output().unwrap();
+            let so = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                !so.contains("unknown constant") && !so.to_lowercase().contains("error"),
+                "well-sorted: {src}:\n{so}"
+            );
+            assert!(so.contains("sat"), "satisfiable: {src}:\n{so}");
+        }
+    }
+}
+
+#[test]
+fn emit_value_contract_let_prefix_refuses_mut_and_letelse() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    // mutation (let mut + compound assign) and let-else (divergence) are NOT this
+    // shape -> None -> routed to effect_refusal / unclassified, never warranted.
+    for src in [
+        "fn f(x: i32) -> i32 { let mut a = x; a += 1; a }",
+        "fn f(o: Option<i32>) -> i32 { let Some(y) = o else { return 0 }; y }",
+    ] {
+        let f: syn::ItemFn = syn::parse_str(src).unwrap();
+        assert!(
+            emit_value_contract("f", &f.block).is_none(),
+            "mut/let-else must not warrant via let-prefix: {src}"
+        );
+    }
+}
+
+// ── Slice 8: value-position if/else-if/else -> ite via implies/and (no compiler ctor) ──
+
+#[test]
+fn emit_value_contract_if_else_warrants_and_composes() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let z3 = "/usr/local/bin/z3";
+    for src in [
+        "fn f(x: i32, a: i32, b: i32) -> i32 { if x > 0 { a } else { b } }",
+        "fn f(x: i32) -> i32 { if x > 10 { 1 } else if x > 5 { 2 } else { 3 } }",
+    ] {
+        let f: syn::ItemFn = syn::parse_str(src).unwrap();
+        let decl = emit_value_contract("f", &f.block)
+            .unwrap_or_else(|| panic!("if/else value must warrant: {src}"));
+        let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
+        let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+        let inv = parsed[0]["inv"].clone();
+        let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
+            .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
+        if std::path::Path::new(z3).exists() {
+            let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+            let path = std::env::temp_dir().join("sugar_if.smt2");
+            std::fs::write(&path, &script).unwrap();
+            let out = std::process::Command::new(z3).arg(&path).output().unwrap();
+            let so = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                !so.contains("unknown constant") && !so.to_lowercase().contains("error"),
+                "well-sorted: {src}:\n{so}"
+            );
+            assert!(so.contains("sat"), "satisfiable: {src}:\n{so}");
+        }
+    }
+}
+
+#[test]
+fn emit_value_contract_if_refuses_non_total_and_if_let() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    // no final else (out undefined on a branch) and if-let (cond is not a bool
+    // formula) are NOT this shape -> None (routed to unclassified/effect_refusal).
+    for src in [
+        "fn f(x: i32) { if x > 0 { let _ = x; } }",
+        "fn f(o: Option<i32>) -> i32 { if let Some(x) = o { x } else { 0 } }",
+    ] {
+        let f: syn::ItemFn = syn::parse_str(src).unwrap();
+        assert!(
+            emit_value_contract("f", &f.block).is_none(),
+            "non-total / if-let must not warrant via the if path: {src}"
+        );
+    }
+}
+
+// ── Slice 9: bool-predicate body (comparison / && / || / predicate) -> out <-> F ──
+
+#[test]
+fn emit_value_contract_bool_predicate_body_warrants_and_composes() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let z3 = "/usr/local/bin/z3";
+    for src in [
+        "fn f(a: usize, b: usize) -> bool { a <= b }",
+        "fn f(x: i32) -> bool { x == 0 }",
+        "fn f(a: i32, b: i32) -> bool { a < b && b < 100 }",
+    ] {
+        let f: syn::ItemFn = syn::parse_str(src).unwrap();
+        let decl = emit_value_contract("f", &f.block)
+            .unwrap_or_else(|| panic!("bool predicate body must warrant: {src}"));
+        let inv = format!("{:?}", decl.inv.clone().expect("inv"));
+        assert!(inv.contains("out"), "out related: {src}");
+        let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
+        let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+        let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&parsed[0]["inv"])
+            .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
+        if std::path::Path::new(z3).exists() {
+            let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+            let path = std::env::temp_dir().join("sugar_boolpred.smt2");
+            std::fs::write(&path, &script).unwrap();
+            let out = std::process::Command::new(z3).arg(&path).output().unwrap();
+            let so = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                !so.contains("unknown constant") && !so.to_lowercase().contains("error"),
+                "well-sorted: {src}:\n{so}"
+            );
+            assert!(so.contains("sat"), "satisfiable: {src}:\n{so}");
+        }
+    }
+}
+
+// ── Slice 10: value-position scalar match (literal/range/_ arms) -> ite ──
+
+#[test]
+fn emit_value_contract_scalar_match_warrants_and_composes() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let z3 = "/usr/local/bin/z3";
+    for src in [
+        "fn f(x: i32) -> i32 { match x { 0 => 10, 1..=5 => 20, _ => 30 } }",
+        "fn f(x: u8) -> u8 { match x { 0 | 1 => 1, _ => 0 } }",
+    ] {
+        let f: syn::ItemFn = syn::parse_str(src).unwrap();
+        let decl = emit_value_contract("f", &f.block)
+            .unwrap_or_else(|| panic!("scalar match must warrant: {src}"));
+        let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
+        let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+        let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&parsed[0]["inv"])
+            .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
+        if std::path::Path::new(z3).exists() {
+            let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+            let path = std::env::temp_dir().join("sugar_match.smt2");
+            std::fs::write(&path, &script).unwrap();
+            let out = std::process::Command::new(z3).arg(&path).output().unwrap();
+            let so = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                !so.contains("unknown constant") && !so.to_lowercase().contains("error"),
+                "well-sorted: {src}:\n{so}"
+            );
+            assert!(so.contains("sat"), "satisfiable: {src}:\n{so}");
+        }
+    }
+}
+
+#[test]
+fn emit_value_contract_match_refuses_guarded_and_nested() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    // an arm guard and a NESTED binding pattern (a sub-pattern that isn't a plain
+    // ident/wild) are NOT this shape -> None.
+    for src in [
+        "fn f(x: i32) -> i32 { match x { n if n > 0 => 1, _ => 0 } }",
+        "fn f(o: Option<Option<i32>>) -> i32 { match o { Some(Some(x)) => x, _ => 0 } }",
+    ] {
+        let f: syn::ItemFn = syn::parse_str(src).unwrap();
+        assert!(
+            emit_value_contract("f", &f.block).is_none(),
+            "guarded / nested-pattern match must not warrant: {src}"
+        );
+    }
+}
+
+#[test]
+fn emit_value_contract_multifield_enum_match_warrants_and_composes() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let z3 = "/usr/local/bin/z3";
+    for src in [
+        "fn f(p: Pair) -> i32 { match p { Pair(a, b) => a + b, _ => 0 } }",
+        "fn f(e: E) -> i32 { match e { E::P { x, y } => x + y, _ => 0 } }",
+    ] {
+        let f: syn::ItemFn = syn::parse_str(src).unwrap();
+        let decl = emit_value_contract("f", &f.block)
+            .unwrap_or_else(|| panic!("multi-field enum match must warrant: {src}"));
+        let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
+        let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+        let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&parsed[0]["inv"])
+            .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
+        if std::path::Path::new(z3).exists() {
+            let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+            let path = std::env::temp_dir().join("sugar_multifield.smt2");
+            std::fs::write(&path, &script).unwrap();
+            let out = std::process::Command::new(z3).arg(&path).output().unwrap();
+            let so = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                !so.contains("unknown constant") && !so.to_lowercase().contains("error"),
+                "well-sorted: {src}:\n{so}"
+            );
+            assert!(so.contains("sat"), "satisfiable: {src}:\n{so}");
+        }
+    }
+}
+
+#[test]
+fn emit_value_contract_enum_match_warrants_and_composes() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let z3 = "/usr/local/bin/z3";
+    for src in [
+        // Option payload binding: Some(x) -> variant_of==Some & out=payload:Some(o); None -> ¬earlier.
+        "fn f(o: Option<i32>) -> i32 { match o { Some(x) => x, None => 0 } }",
+        // ignored payload + qualified unit variant.
+        "fn f(r: Result<i32, ()>) -> i32 { match r { Ok(_) => 1, Err(_) => 0 } }",
+    ] {
+        let f: syn::ItemFn = syn::parse_str(src).unwrap();
+        let decl = emit_value_contract("f", &f.block)
+            .unwrap_or_else(|| panic!("enum match must warrant: {src}"));
+        let inv = format!("{:?}", decl.inv.clone().expect("inv"));
+        assert!(
+            inv.contains("variant_of"),
+            "uses variant_of discriminant: {src}"
+        );
+        let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
+        let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+        let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&parsed[0]["inv"])
+            .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
+        if std::path::Path::new(z3).exists() {
+            let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+            let path = std::env::temp_dir().join("sugar_enummatch.smt2");
+            std::fs::write(&path, &script).unwrap();
+            let out = std::process::Command::new(z3).arg(&path).output().unwrap();
+            let so = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                !so.contains("unknown constant") && !so.to_lowercase().contains("error"),
+                "well-sorted: {src}:\n{so}"
+            );
+            assert!(so.contains("sat"), "satisfiable: {src}:\n{so}");
+        }
+    }
+}
+
+// ── Slice 11: leading let-prefix + control-flow/bool tail (multi-statement) ──
+
+#[test]
+fn emit_value_contract_let_prefix_with_control_flow_tail() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let z3 = "/usr/local/bin/z3";
+    for src in [
+        "fn f(x: i32, a: i32, b: i32) -> i32 { let t = x + 1; if t > 0 { a } else { b } }",
+        "fn f(x: u32) -> bool { let m = x & 0xff; m == 0 }",
+        "fn f(x: i32) -> i32 { let y = x; match y { 0 => 1, _ => 2 } }",
+    ] {
+        let f: syn::ItemFn = syn::parse_str(src).unwrap();
+        let decl = emit_value_contract("f", &f.block)
+            .unwrap_or_else(|| panic!("let-prefix + control-flow tail must warrant: {src}"));
+        let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
+        let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+        let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&parsed[0]["inv"])
+            .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
+        if std::path::Path::new(z3).exists() {
+            let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+            let path = std::env::temp_dir().join("sugar_letctrl.smt2");
+            std::fs::write(&path, &script).unwrap();
+            let out = std::process::Command::new(z3).arg(&path).output().unwrap();
+            let so = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                !so.contains("unknown constant") && !so.to_lowercase().contains("error"),
+                "well-sorted: {src}:\n{so}"
+            );
+            assert!(so.contains("sat"), "satisfiable: {src}:\n{so}");
+        }
+    }
+}
+
+// ── Slice 14: unsafe/plain block is value-transparent ──
+
+#[test]
+fn emit_value_contract_unsafe_and_block_are_value_transparent() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    for src in [
+        "fn f(x: usize) -> usize { unsafe { id(x) } }",
+        "fn f(x: i32) -> i32 { unsafe { let y = x + 1; y * 2 } }",
+        "fn f(x: i32) -> i32 { { x + 1 } }",
+        "fn f(x: i32, a: i32, b: i32) -> i32 { unsafe { if x > 0 { a } else { b } } }",
+    ] {
+        let f: syn::ItemFn = syn::parse_str(src).unwrap();
+        let decl = emit_value_contract("f", &f.block)
+            .unwrap_or_else(|| panic!("unsafe/plain block must be value-transparent: {src}"));
+        // The unwrapped inner inv must still COMPOSE (the unsafe wrapper introduces
+        // no new shape -- it must inherit a composing inv).
+        let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
+        let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+        let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&parsed[0]["inv"])
+            .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
+        let z3 = "/usr/local/bin/z3";
+        if std::path::Path::new(z3).exists() {
+            let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+            let path = std::env::temp_dir().join("sugar_unsafe.smt2");
+            std::fs::write(&path, &script).unwrap();
+            let out = std::process::Command::new(z3).arg(&path).output().unwrap();
+            let so = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                !so.contains("unknown constant") && !so.to_lowercase().contains("error"),
+                "well-sorted: {src}:\n{so}"
+            );
+            assert!(so.contains("sat"), "satisfiable: {src}:\n{so}");
+        }
+    }
+}
+
+// ── Slice 15: tuple-destructuring let prefix ──
+
+#[test]
+fn emit_value_contract_tuple_destructuring_let() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let z3 = "/usr/local/bin/z3";
+    for src in [
+        "fn f(p: (i32, i32)) -> i32 { let (a, b) = p; a + b }",
+        "fn f(t: usize) -> usize { let (s, a) = (sz(t), al(t)); unsafe { mk(s, a) } }",
+        "fn f(p: (i32, i32, i32)) -> i32 { let (a, _, c) = p; a + c }",
+    ] {
+        let f: syn::ItemFn = syn::parse_str(src).unwrap();
+        let decl = emit_value_contract("f", &f.block)
+            .unwrap_or_else(|| panic!("tuple-destructuring let must warrant: {src}"));
+        let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
+        let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+        sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&parsed[0]["inv"])
+            .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
+        let _ = z3;
+    }
+    // a `let mut` tuple still refuses (mutation).
+    let f: syn::ItemFn =
+        syn::parse_str("fn f(p: (i32, i32)) -> i32 { let (mut a, b) = p; a += b; a }").unwrap();
+    assert!(emit_value_contract("f", &f.block).is_none());
+}
+
+// ── Slice 16: value-if with a bool-returning call/EUF condition ──
+
+#[test]
+fn emit_value_contract_if_with_call_condition() {
+    use sugar_lift_rust_tests::emit_value_contract;
+    let z3 = "/usr/local/bin/z3";
+    for src in [
+        "fn f(x: usize, a: i32, b: i32) -> i32 { if is_valid(x) { a } else { b } }",
+        "fn f(s: &str, a: i32, b: i32) -> i32 { if s.is_empty() { a } else { b } }",
+    ] {
+        let f: syn::ItemFn = syn::parse_str(src).unwrap();
+        let decl = emit_value_contract("f", &f.block)
+            .unwrap_or_else(|| panic!("if with call cond must warrant: {src}"));
+        let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
+        let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+        let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&parsed[0]["inv"])
+            .unwrap_or_else(|e| panic!("must compile: {src}: {e:?}"));
+        if std::path::Path::new(z3).exists() {
+            let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+            let path = std::env::temp_dir().join("sugar_ifcall.smt2");
+            std::fs::write(&path, &script).unwrap();
+            let out = std::process::Command::new(z3).arg(&path).output().unwrap();
+            let so = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                !so.contains("unknown constant") && !so.to_lowercase().contains("error"),
+                "well-sorted: {src}:\n{so}"
+            );
+            assert!(so.contains("sat"), "satisfiable: {src}:\n{so}");
+        }
+    }
 }

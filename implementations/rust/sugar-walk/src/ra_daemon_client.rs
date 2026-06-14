@@ -48,6 +48,10 @@ pub struct DaemonQuery {
 pub struct DaemonResolution {
     pub krate: String,
     pub type_stem: Option<String>,
+    /// The resolved method's receiver/param mutability (source-audit datum):
+    /// "mutating" | "refclean" | "unknown". Defaults to "unknown" (a cache hit,
+    /// an older daemon, or a missing field) so the source-audit stays conservative.
+    pub effect: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -180,13 +184,16 @@ pub fn resolve_receiver_crates(
         for (key, val) in map {
             // val is `{ "crate": <str>, "type": <str>|null }` (current shape) or
             // a bare crate string (backward-compatible). Parse both.
-            let (krate, type_stem) = match val {
-                Json::String(s) => (Some(s.as_str()), None),
+            let (krate, type_stem, effect) = match val {
+                Json::String(s) => (Some(s.as_str()), None, "unknown"),
                 Json::Object(_) => (
                     val.get("crate").and_then(|v| v.as_str()),
                     val.get("type").and_then(|v| v.as_str()).map(str::to_string),
+                    val.get("effect")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown"),
                 ),
-                _ => (None, None),
+                _ => (None, None, "unknown"),
             };
             let Some(krate) = krate else { continue };
             if let Some((file, line, col)) = parse_pos_key(key) {
@@ -195,6 +202,7 @@ pub fn resolve_receiver_crates(
                     DaemonResolution {
                         krate: krate.to_string(),
                         type_stem,
+                        effect: effect.to_string(),
                     },
                 );
             }

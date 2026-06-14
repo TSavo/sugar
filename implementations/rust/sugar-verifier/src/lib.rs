@@ -34,6 +34,7 @@
 
 pub mod attribute_safety;
 pub mod body_discharge;
+pub mod callee_purity;
 pub mod call_edge_loader;
 pub mod cbor_decode;
 pub mod consistency;
@@ -51,6 +52,7 @@ pub mod runner;
 pub mod smt_emitter;
 pub mod solve_obligation;
 pub mod solvers;
+pub mod superposition;
 pub mod types;
 
 pub use domain_claim_verifier::{

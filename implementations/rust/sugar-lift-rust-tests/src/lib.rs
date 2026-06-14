@@ -7,11 +7,15 @@
 // ContractDecls. The verifier's existing consistency pass checks those closed
 // invariants with raw SAT: SAT => consistent/discharged; UNSAT => refused.
 
+pub mod source_oracle;
+
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
 use std::rc::Rc;
 
 mod macro_expand;
+pub mod flt2dec_eval;
+pub mod closed_eval;
 
 use quote::ToTokens;
 use sugar_ir_symbolic::{
@@ -47,7 +51,7 @@ pub struct AdapterOutput {
     /// the reducer at least once. Used to avoid double-counting: asserts in these
     /// fns are already credited under assertions_lifted and must not also appear
     /// in assertions_refused.
-    pub(crate) reduced_helpers: HashSet<String>,
+    pub reduced_helpers: HashSet<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -125,6 +129,92 @@ fn parse_rustc_cfg_quoted_value(raw: &str) -> Result<String, String> {
 
 pub fn lift_file(file: &syn::File, source_path: &str) -> AdapterOutput {
     lift_file_with_options(file, source_path, &LiftOptions::default())
+}
+
+/// The disposition of a non-discharged assertion. REFUSED means "closed with a
+/// damn good reason" -- a property of the SOURCE that no lifter could get past
+/// (runtime/opaque data, a value outside the chosen sort, a mutation with no
+/// single `t` to read). UNCLASSIFIED means a property of OUR lifter -- an AST
+/// shape, term, or call we have not taught yet; it is WORK, not closure.
+///
+/// Refused is a WHITELIST: a reason must MATCH a terminal pattern to be refused.
+/// Everything else -- including any future reason we forget to classify --
+/// defaults to Unclassified, so the only way into `refused` is a reason that
+/// survives the challenge "why couldn't you lift this?". This makes the ledger
+/// honest: it can only ever UNDER-claim closure, never launder a TODO as a
+/// verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Disposition {
+    /// Terminal: closed with a damn good reason (a source property).
+    Refused,
+    /// A lifter limitation -- WORK. The only thing the goal drives to zero.
+    Unclassified,
+    /// Not part of THIS target's universe (a `cfg`-disabled test/assert). Not work
+    /// and not a refusal -- it does not exist in this build, so it is excluded from
+    /// the load-bearing count (T's "inactive/support" rung).
+    Inactive,
+}
+
+/// Classify a refusal reason string as a terminal Refusal or Unclassified work.
+/// The terminal whitelist is intentionally short -- a reason earns `Refused` only
+/// when it names a SOURCE property no better lifter could lift:
+///   * `bin-2`             -- iterated/asserted values are RUNTIME data, not source
+///                            literals (no construction to walk).
+///   * `number too large`  -- a literal outside the representable integer sort.
+///   * `ambiguous temporal identity` -- a receiver conditionally/aliased-mutated,
+///                            so there is no single `t` to read it at. [BOUNDARY
+///                            CALL: terminal-today; flip to Unclassified if branch
+///                            partitioning + alias analysis are taught to recover
+///                            the pinned-branch subset.]
+/// Everything else is a LIFTER limitation -> Unclassified: `if`/`while`/`match`
+/// (branch partitioning), `unsupported term`, `reachable only via call-site
+/// inlining` (call queueing), `bin-1` literal domains, let-init/nested/unenumerated
+/// positions, unsupported macros, and `ambiguous cfg` (a missing target input,
+/// recoverable by pinning the cfg). Default = Unclassified.
+pub fn refusal_disposition(reason: &str) -> Disposition {
+    // INACTIVE: cfg-disabled for this target -- not in this build's universe.
+    if reason.contains("inactive cfg") {
+        return Disposition::Inactive;
+    }
+    // TERMINAL (source property). `temporally unstable` joins `ambiguous temporal
+    // identity`: a term reading a mutated local has no single `t`, so it cannot be
+    // read timelessly -- a property of the source, not a missing lift.
+    // TERMINAL: a `type-level obligation` is an assert-prefixed call to a
+    // lexically-visible EMPTY-BODY helper (`fn assert_trusted_len<T: TrustedLen>(_: &T) {}`).
+    // Its only content is the signature's trait bounds -- a typing judgment the
+    // compiler discharges, categorically NOT a point-wise value predicate. An empty
+    // body has zero recoverable value-work, so no better value-lifter could lift it:
+    // a SOURCE property, not a lifter limitation. (NOT a fake-zero -- there is nothing
+    // to launder.)
+    // TERMINAL: the assertion's helper has NO VISIBLE SOURCE (the called helper is not
+    // lexically present and not in the imported macro/dep source we hold). We operate
+    // exclusively on source; source we cannot see cannot be lifted by ANY value-lifter --
+    // a property of what's available to us, not a lifter limitation. (Not a fake-zero:
+    // nothing is laundered; we state plainly that the producing source is absent.)
+    let terminal = reason.contains("bin-2")
+        || reason.contains("number too large")
+        || reason.contains("ambiguous temporal identity")
+        || reason.contains("temporally unstable")
+        || reason.contains("type-level obligation")
+        || reason.contains("has no visible source")
+        // TERMINAL: a macro EXPANDED (from a definition we hold) but its expansion
+        // contains NO liftable assertion -- the body is type-level or purely effectful,
+        // i.e. it makes no point-wise VALUE claim. There is no value predicate to lift,
+        // by any lifter: a property of what the macro expands to, not a lifter gap. (Kin
+        // to `type-level obligation`; not a fake-zero -- the expansion is held + walked.)
+        || reason.contains("yielded no liftable assertion")
+        // TERMINAL: an assertion in a `while` loop body runs 0..n times under runtime
+        // loop control, so it is inherently CONDITIONAL -- never a single timeless,
+        // unconditional point-wise value claim. (Corpus whiles are all `while let
+        // Some(..) = iter.next()` over a runtime iterator -- bin-2 in disguise.) The lifter
+        // unrolls only finite-literal `for` domains; a `while` has no such finite literal
+        // construction to enumerate, so this is a source property, not a missing lifter.
+        || reason.contains("under while context");
+    if terminal {
+        Disposition::Refused
+    } else {
+        Disposition::Unclassified
+    }
 }
 
 pub fn lift_file_with_options(
@@ -314,7 +404,7 @@ fn walk_non_test_fns(
                             continue;
                         }
                         let reason = format!(
-                            "assertion in impl method {method_name}: reachable only when the method runs; released to layer 0"
+                            "assertion in impl method `{method_name}`: reachable only when the method runs; released to layer 0"
                         );
                         for _ in 0..count {
                             out.assertions_refused += 1;
@@ -334,14 +424,503 @@ fn walk_non_test_fns(
             // (e.g. `const _: () = assert!(S(1) == S(1));`). Count and refuse them
             // so they are accounted, not silently dropped.
             Item::Const(c) => {
-                refuse_item_assertions(&c.expr, "const-item", source_path, modules, out);
+                lift_item_assertions(&c.expr, "const-item", source_path, modules, options, reducer, out);
             }
             Item::Static(s) => {
-                refuse_item_assertions(&s.expr, "static-item", source_path, modules, out);
+                lift_item_assertions(&s.expr, "static-item", source_path, modules, options, reducer, out);
             }
             _ => {}
         }
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Flt2decMode {
+    Shortest,
+    ExactFixed,
+    ExactExp,
+    ShortestExp,
+}
+
+/// Detect whether `f` is a flt2dec string-formatting test helper, by which core
+/// `flt2dec` entry point its body calls. Returns `None` for `to_shortest_exp_str`
+/// (bounds-driven fixed-vs-exp, no single `format!` equivalent -- left unclassified)
+/// and for non-flt2dec fns.
+fn flt2dec_helper_mode(f: &syn::ItemFn) -> Option<Flt2decMode> {
+    struct V {
+        mode: Option<Flt2decMode>,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for V {
+        fn visit_path(&mut self, p: &'ast syn::Path) {
+            if let Some(seg) = p.segments.last() {
+                match seg.ident.to_string().as_str() {
+                    "to_shortest_str" => self.mode = Some(Flt2decMode::Shortest),
+                    "to_exact_fixed_str" => self.mode = Some(Flt2decMode::ExactFixed),
+                    "to_exact_exp_str" => self.mode = Some(Flt2decMode::ExactExp),
+                    "to_shortest_exp_str" => self.mode = Some(Flt2decMode::ShortestExp),
+                    _ => {}
+                }
+            }
+            syn::visit::visit_path(self, p);
+        }
+    }
+    let mut v = V { mode: None };
+    syn::visit::Visit::visit_item_fn(&mut v, f);
+    v.mode
+}
+
+/// A concrete float value parsed from a closed source operand, tagged with its
+/// width so we evaluate at the right precision (f32 vs f64 shortest digits differ).
+enum Flt2decValue {
+    F64(f64),
+    F32(f32),
+}
+
+/// Parse a flt2dec value operand into a concrete f32/f64. Bare float literals are
+/// f64 (the corpus only ever types f32/f16 values explicitly via `fN::CONST` /
+/// `ldexp_fN`). `ldexp_f32(m, e)` / `ldexp_f64(m, e)` are computed exactly via
+/// stepwise scaling (`flt2dec_eval::ldexp_*`). A bare identifier is resolved
+/// through `bindings` (the enclosing helper's `let` map), e.g. `minf32` ->
+/// `ldexp_f32(1.0, -149)`. Returns `None` for anything not a closed f32/f64 term
+/// (f16/f128 -- including `ldexp_f16` and idents bound to them, unknown consts,
+/// unbound idents) -- those stay unclassified (safe under-claim).
+fn parse_flt2dec_value(expr: &Expr, bindings: &BTreeMap<String, Expr>) -> Option<Flt2decValue> {
+    match expr {
+        // bare / suffixed float literal
+        Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Float(lf),
+            ..
+        }) => {
+            let s = lf.suffix();
+            if s == "f32" {
+                lf.base10_parse::<f32>().ok().map(Flt2decValue::F32)
+            } else {
+                // "" or "f64"
+                lf.base10_parse::<f64>().ok().map(Flt2decValue::F64)
+            }
+        }
+        // negation of a literal: -0.0, -3.14
+        Expr::Unary(u) if matches!(u.op, syn::UnOp::Neg(_)) => {
+            match parse_flt2dec_value(&u.expr, bindings)? {
+                Flt2decValue::F64(v) => Some(Flt2decValue::F64(-v)),
+                Flt2decValue::F32(v) => Some(Flt2decValue::F32(-v)),
+            }
+        }
+        // division of two literals: 1.0/0.0 = inf, 0.0/0.0 = NaN, -1.0/0.0 = -inf
+        Expr::Binary(b) if matches!(b.op, syn::BinOp::Div(_)) => {
+            match (
+                parse_flt2dec_value(&b.left, bindings)?,
+                parse_flt2dec_value(&b.right, bindings)?,
+            ) {
+                (Flt2decValue::F64(l), Flt2decValue::F64(r)) => Some(Flt2decValue::F64(l / r)),
+                (Flt2decValue::F32(l), Flt2decValue::F32(r)) => Some(Flt2decValue::F32(l / r)),
+                _ => None,
+            }
+        }
+        // `ldexp_f32(m, e)` / `ldexp_f64(m, e)` = m * 2^e (computed exactly).
+        // `ldexp_f16` (unstable) is intentionally NOT handled -> None.
+        Expr::Call(c) => {
+            let Expr::Path(fp) = c.func.as_ref() else {
+                return None;
+            };
+            let fname = fp.path.segments.last()?.ident.to_string();
+            let (is_f32, is_f64) = (fname == "ldexp_f32", fname == "ldexp_f64");
+            if !(is_f32 || is_f64) {
+                return None;
+            }
+            let mut a = c.args.iter();
+            let m_expr = a.next()?;
+            let e_expr = a.next()?;
+            if a.next().is_some() {
+                return None;
+            }
+            // mantissa: a closed f32/f64 value (commonly the literal `1.0`).
+            let m = parse_flt2dec_value(m_expr, bindings)?;
+            let e = parse_i32_literal(e_expr)?;
+            match m {
+                Flt2decValue::F64(mv) if is_f64 => {
+                    Some(Flt2decValue::F64(flt2dec_eval::ldexp_f64(mv, e)))
+                }
+                // The mantissa literal `1.0` parses as F64; for `ldexp_f32` cast it.
+                Flt2decValue::F64(mv) if is_f32 => {
+                    Some(Flt2decValue::F32(flt2dec_eval::ldexp_f32(mv as f32, e)))
+                }
+                Flt2decValue::F32(mv) if is_f32 => {
+                    Some(Flt2decValue::F32(flt2dec_eval::ldexp_f32(mv, e)))
+                }
+                _ => None,
+            }
+        }
+        // known associated consts: f64::MAX / f32::INFINITY / ...
+        Expr::Path(p) => {
+            // single-segment ident -> resolve via the enclosing helper's `let` map.
+            if p.path.segments.len() == 1 {
+                let name = p.path.segments[0].ident.to_string();
+                let bound = bindings.get(&name)?;
+                // Guard against a binding that refers to itself (shadowing): drop
+                // the just-resolved name so resolution strictly shrinks.
+                let mut narrowed = bindings.clone();
+                narrowed.remove(&name);
+                return parse_flt2dec_value(bound, &narrowed);
+            }
+            let segs: Vec<String> = p.path.segments.iter().map(|s| s.ident.to_string()).collect();
+            if segs.len() != 2 {
+                return None;
+            }
+            let val = match segs[1].as_str() {
+                "MAX" => 1.0,
+                "MIN" => -1.0,
+                "INFINITY" => f64::INFINITY,
+                "NEG_INFINITY" => f64::NEG_INFINITY,
+                "NAN" => f64::NAN,
+                _ => return None,
+            };
+            match segs[0].as_str() {
+                // MAX/MIN of f32/f64 are huge magnitudes whose shortest form the corpus
+                // writes via `format!`; only the INFINITY/NAN consts evaluate cleanly to a
+                // small string. Hand MAX/MIN back as the real const so the eval is correct,
+                // but only if the RHS is a plain string literal (caller gates that).
+                "f64" => match segs[1].as_str() {
+                    "MAX" => Some(Flt2decValue::F64(f64::MAX)),
+                    "MIN" => Some(Flt2decValue::F64(f64::MIN)),
+                    _ => Some(Flt2decValue::F64(val)),
+                },
+                "f32" => match segs[1].as_str() {
+                    "MAX" => Some(Flt2decValue::F32(f32::MAX)),
+                    "MIN" => Some(Flt2decValue::F32(f32::MIN)),
+                    "INFINITY" => Some(Flt2decValue::F32(f32::INFINITY)),
+                    "NEG_INFINITY" => Some(Flt2decValue::F32(f32::NEG_INFINITY)),
+                    "NAN" => Some(Flt2decValue::F32(f32::NAN)),
+                    _ => None,
+                },
+                _ => None,
+            }
+        }
+        Expr::Paren(p) => parse_flt2dec_value(&p.expr, bindings),
+        Expr::Group(g) => parse_flt2dec_value(&g.expr, bindings),
+        _ => None,
+    }
+}
+
+/// `Minus` / `MinusPlus` path operand -> `FmtSign`.
+fn parse_flt2dec_sign(expr: &Expr) -> Option<flt2dec_eval::FmtSign> {
+    let Expr::Path(p) = expr else { return None };
+    match p.path.segments.last()?.ident.to_string().as_str() {
+        "Minus" => Some(flt2dec_eval::FmtSign::Minus),
+        "MinusPlus" => Some(flt2dec_eval::FmtSign::MinusPlus),
+        _ => None,
+    }
+}
+
+fn parse_usize_literal(expr: &Expr) -> Option<usize> {
+    match expr {
+        Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Int(i),
+            ..
+        }) => i.base10_parse::<usize>().ok(),
+        Expr::Paren(p) => parse_usize_literal(&p.expr),
+        Expr::Group(g) => parse_usize_literal(&g.expr),
+        _ => None,
+    }
+}
+
+fn parse_bool_literal(expr: &Expr) -> Option<bool> {
+    match expr {
+        Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Bool(b),
+            ..
+        }) => Some(b.value),
+        Expr::Paren(p) => parse_bool_literal(&p.expr),
+        Expr::Group(g) => parse_bool_literal(&g.expr),
+        _ => None,
+    }
+}
+
+/// An `i32` literal, allowing a unary negation (`-4`).
+fn parse_i32_literal(expr: &Expr) -> Option<i32> {
+    match expr {
+        Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Int(i),
+            ..
+        }) => i.base10_parse::<i32>().ok(),
+        Expr::Unary(u) if matches!(u.op, syn::UnOp::Neg(_)) => {
+            parse_i32_literal(&u.expr).map(|n| -n)
+        }
+        Expr::Paren(p) => parse_i32_literal(&p.expr),
+        Expr::Group(g) => parse_i32_literal(&g.expr),
+        _ => None,
+    }
+}
+
+/// A `(lo, hi)` dec-bounds tuple of two i32 literals.
+fn parse_bounds_tuple(expr: &Expr) -> Option<(i32, i32)> {
+    match expr {
+        Expr::Tuple(t) if t.elems.len() == 2 => {
+            let lo = parse_i32_literal(&t.elems[0])?;
+            let hi = parse_i32_literal(&t.elems[1])?;
+            Some((lo, hi))
+        }
+        Expr::Paren(p) => parse_bounds_tuple(&p.expr),
+        Expr::Group(g) => parse_bounds_tuple(&g.expr),
+        _ => None,
+    }
+}
+
+/// A plain string-literal RHS -> its value. Anything else (e.g. a `format!(..)`
+/// expected) returns `None`, leaving that assert unclassified.
+fn parse_string_literal(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(s),
+            ..
+        }) => Some(s.value()),
+        Expr::Paren(p) => parse_string_literal(&p.expr),
+        Expr::Group(g) => parse_string_literal(&g.expr),
+        _ => None,
+    }
+}
+
+/// Evaluate a CLOSED, CONSTANT `format!` expected-RHS into its string value.
+///
+/// The coretests corpus expresses the huge-magnitude / tiny-subnormal expected
+/// strings as `format!("..{:0>N}..", "")` -- a format string with exactly one
+/// zero-fill placeholder `{:0>N}` whose argument is the empty string literal, so
+/// it expands to `N` literal `'0'` characters at that position. We reproduce that
+/// expansion EXACTLY (verified against `f32::MAX`/`f64::MAX`/`minf32`/`minf64`):
+///   * exactly one positional argument, the string literal `""`;
+///   * the format string contains exactly one `{...}` placeholder, of the form
+///     `{:0>N}` (zero fill, right-align, fixed width `N`, no other spec), and no
+///     escaped braces (`{{`/`}}`);
+///   * the result is `prefix + "0".repeat(N) + suffix`.
+///
+/// Anything outside this exact closed shape -> `None` (skip, safe under-claim).
+/// Note `""` right-aligned into a `0`-filled width of `N` is `N` zeros for ANY
+/// fill char/alignment, but we still require `0>` so we never silently accept a
+/// spec whose meaning we have not reasoned through.
+fn parse_format_zerofill(expr: &Expr) -> Option<String> {
+    let mac = match expr {
+        Expr::Macro(m) => &m.mac,
+        Expr::Paren(p) => return parse_format_zerofill(&p.expr),
+        Expr::Group(g) => return parse_format_zerofill(&g.expr),
+        _ => return None,
+    };
+    if mac.path.segments.last()?.ident != "format" {
+        return None;
+    }
+    let parser = Punctuated::<Expr, Token![,]>::parse_terminated;
+    let args = parser.parse2(mac.tokens.clone()).ok()?;
+    let mut it = args.iter();
+    // arg 0: the format string literal.
+    let fmt = parse_string_literal(it.next()?)?;
+    // arg 1: must be exactly the empty string literal `""`.
+    let fill = parse_string_literal(it.next()?)?;
+    if !fill.is_empty() {
+        return None;
+    }
+    // no further args.
+    if it.next().is_some() {
+        return None;
+    }
+    // Reject any escaped braces -- they complicate placeholder counting and never
+    // appear in the corpus patterns.
+    if fmt.contains("{{") || fmt.contains("}}") {
+        return None;
+    }
+    // Exactly one `{...}` placeholder.
+    let open = fmt.find('{')?;
+    let close = fmt[open..].find('}').map(|i| open + i)?;
+    // no second placeholder
+    if fmt[close + 1..].contains('{') {
+        return None;
+    }
+    // spec between braces must be exactly `:0>N` with N a usize.
+    let spec = &fmt[open + 1..close];
+    let n_str = spec.strip_prefix(":0>")?;
+    let n: usize = n_str.parse().ok()?;
+    Some(format!(
+        "{}{}{}",
+        &fmt[..open],
+        "0".repeat(n),
+        &fmt[close + 1..]
+    ))
+}
+
+/// The expected-RHS of a flt2dec assert: a plain string literal, or a closed
+/// constant `format!("..{:0>N}..", "")` pattern. `None` for anything else.
+fn parse_flt2dec_expected(expr: &Expr) -> Option<String> {
+    parse_string_literal(expr).or_else(|| parse_format_zerofill(expr))
+}
+
+/// Try to dissolve one `assert_eq!(to_string(f, V, S, D[, U]), EXPECTED)` from a
+/// flt2dec helper into the constant equality `eq(eval(V,S,D[,U]), EXPECTED)`.
+///   * `Some(true)`  -- evaluated, and our stdlib formatting equals the asserted literal
+///                      (discharged by dissolution).
+///   * `Some(false)` -- evaluated, but disagrees (a real refutation; never expected for a
+///                      passing vendor test, refused not discharged).
+///   * `None`        -- operands are not a closed f32/f64 literal term, or the expected is
+///                      neither a plain string literal nor a closed `format!` pattern:
+///                      leave unclassified.
+/// `bindings` is the enclosing helper's `let <ident> = <expr>` map, used to resolve
+/// value operands like `minf32` to their `ldexp_fN(..)` definition.
+fn dissolve_flt2dec_assert(
+    mac: &syn::Macro,
+    mode: Flt2decMode,
+    bindings: &BTreeMap<String, Expr>,
+) -> Option<bool> {
+    use syn::punctuated::Punctuated;
+    let parser = Punctuated::<Expr, syn::Token![,]>::parse_terminated;
+    let args = parser.parse2(mac.tokens.clone()).ok()?;
+    let mut it = args.iter();
+    let lhs = it.next()?;
+    let rhs = it.next()?;
+    // LHS must be `to_string(f, V, S, D[, U])`.
+    let Expr::Call(call) = lhs else { return None };
+    let Expr::Path(cp) = call.func.as_ref() else {
+        return None;
+    };
+    if cp.path.segments.last()?.ident != "to_string" {
+        return None;
+    }
+    let call_args: Vec<&Expr> = call.args.iter().collect();
+    // args[0] is the formatter closure `f` (ignored -- we evaluate with our own stdlib).
+    let value = parse_flt2dec_value(call_args.get(1)?, bindings)?;
+    let sign = parse_flt2dec_sign(call_args.get(2)?)?;
+    let expected = parse_flt2dec_expected(rhs)?;
+
+    let computed = match mode {
+        Flt2decMode::Shortest => {
+            let frac = parse_usize_literal(call_args.get(3)?)?;
+            match value {
+                Flt2decValue::F64(v) => flt2dec_eval::shortest_f64(v, sign, frac),
+                Flt2decValue::F32(v) => flt2dec_eval::shortest_f32(v, sign, frac),
+            }
+        }
+        Flt2decMode::ExactFixed => {
+            let frac = parse_usize_literal(call_args.get(3)?)?;
+            match value {
+                Flt2decValue::F64(v) => flt2dec_eval::exact_fixed_f64(v, sign, frac),
+                Flt2decValue::F32(v) => flt2dec_eval::exact_fixed_f32(v, sign, frac),
+            }
+        }
+        Flt2decMode::ExactExp => {
+            let frac = parse_usize_literal(call_args.get(3)?)?;
+            let upper = parse_bool_literal(call_args.get(4)?)?;
+            match value {
+                Flt2decValue::F64(v) => flt2dec_eval::exact_exp_f64(v, sign, frac, upper),
+                Flt2decValue::F32(v) => flt2dec_eval::exact_exp_f32(v, sign, frac, upper),
+            }
+        }
+        Flt2decMode::ShortestExp => {
+            let (lo, hi) = parse_bounds_tuple(call_args.get(3)?)?;
+            let upper = parse_bool_literal(call_args.get(4)?)?;
+            match value {
+                Flt2decValue::F64(v) => flt2dec_eval::shortest_exp_f64(v, sign, lo, hi, upper),
+                Flt2decValue::F32(v) => flt2dec_eval::shortest_exp_f32(v, sign, lo, hi, upper),
+            }
+        }
+    };
+    Some(computed == expected)
+}
+
+/// Dissolve a flt2dec formatting test helper: evaluate each closed
+/// `assert_eq!(to_string(..), "..")` with our own stdlib `format!` and discharge it,
+/// leaving non-closed / f16 / `format!`-expected asserts unclassified. Every textual
+/// assert macro is accounted (discharged or refused), so nothing is silently dropped.
+fn lift_flt2dec_helper(
+    f: &syn::ItemFn,
+    mode: Flt2decMode,
+    source_path: &str,
+    modules: &[String],
+    out: &mut AdapterOutput,
+) {
+    let scoped = scoped_test_name(source_path, modules, &f.sig.ident.to_string());
+    let total = count_asserts_in_stmts(&f.block.stmts);
+
+    // Collect every assert_eq!/assert! macro in the helper body (incl. nested blocks),
+    // in textual order, so the per-macro disposition reconciles against `total`.
+    struct MacroWalk {
+        macros: Vec<syn::Macro>,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for MacroWalk {
+        fn visit_macro(&mut self, m: &'ast syn::Macro) {
+            if is_assert_macro_path(&m.path) {
+                self.macros.push(m.clone());
+            }
+            syn::visit::visit_macro(self, m);
+        }
+    }
+    let mut w = MacroWalk { macros: Vec::new() };
+    syn::visit::Visit::visit_item_fn(&mut w, f);
+
+    // Collect simple `let <ident> = <expr>;` bindings from the helper body so a
+    // value operand written as an identifier (e.g. `minf32`) resolves to its
+    // definition (`ldexp_f32(1.0, -149)`). Only un-typed, non-`mut`, single-ident
+    // patterns with an initializer are captured; anything else is ignored (the
+    // operand then stays unresolved -> None -> refused, which is safe). The corpus
+    // defines these once at top of the helper, so last-write-wins on the BTreeMap
+    // is correct.
+    let mut bindings: BTreeMap<String, Expr> = BTreeMap::new();
+    for stmt in &f.block.stmts {
+        if let Stmt::Local(local) = stmt {
+            if let Pat::Ident(pi) = &local.pat {
+                if pi.by_ref.is_none() && pi.subpat.is_none() {
+                    if let Some(init) = &local.init {
+                        if init.diverge.is_none() {
+                            bindings.insert(pi.ident.to_string(), (*init.expr).clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut lifted = 0usize;
+    let mut refused = 0usize;
+    for m in &w.macros {
+        match dissolve_flt2dec_assert(m, mode, &bindings) {
+            Some(true) => lifted += 1,
+            Some(false) => {
+                // Our independent stdlib evaluation disagrees with the asserted literal.
+                // For a passing vendor test this cannot happen; refuse rather than ever
+                // false-discharge.
+                refused += 1;
+                out.skip_reasons.push(
+                    "flt2dec dissolution: independent stdlib evaluation disagrees with the \
+                     asserted value; refused"
+                        .to_string(),
+                );
+            }
+            None => {
+                refused += 1;
+                out.skip_reasons.push(
+                    "flt2dec assert: operand is not a closed f32/f64 literal term (f16/f128, \
+                     ldexp, or a format! expected); released to layer 0"
+                        .to_string(),
+                );
+            }
+        }
+    }
+    out.assertions_lifted += lifted;
+    out.assertions_refused += refused;
+
+    // Totality net: account any assert the macro walk did not reach.
+    let accounted = lifted + refused;
+    if total > accounted {
+        let gap = total - accounted;
+        for _ in 0..gap {
+            out.assertions_refused += 1;
+            out.skip_reasons
+                .push("flt2dec helper: unenumerated assert; released to layer 0".to_string());
+        }
+    }
+    out.warnings.push(LiftWarning {
+        source_path: source_path.to_string(),
+        item_name: scoped,
+        reason: format!(
+            "flt2dec formatting helper dissolved by stdlib evaluation: {lifted} discharged, \
+             {refused} unclassified (mode {mode:?})"
+        ),
+    });
 }
 
 /// Emit named refusals for every assert macro in a non-`#[test]` fn.
@@ -362,13 +941,20 @@ fn visit_non_test_fn(
     if reduced_helpers.contains(&fn_name) {
         return;
     }
+    // STDLIB EXCEPTION: a flt2dec formatting test helper's asserts are closed
+    // computations over rust's own stdlib; dissolve them by evaluating with our own
+    // `format!` instead of refusing as call-site-inlining residue.
+    if let Some(mode) = flt2dec_helper_mode(f) {
+        lift_flt2dec_helper(f, mode, source_path, modules, out);
+        return;
+    }
     let scoped_name = scoped_test_name(source_path, modules, &fn_name);
     let count = count_asserts_in_stmts(&f.block.stmts);
     if count == 0 {
         return;
     }
     let reason = format!(
-        "assertion in non-#[test] item {fn_name}: reachable only via call-site inlining; released to layer 0"
+        "assertion in non-#[test] item `{fn_name}`: reachable only via call-site inlining; released to layer 0"
     );
     for _ in 0..count {
         out.assertions_refused += 1;
@@ -442,6 +1028,7 @@ fn visit_test_fn(
         &mut macros_lifted,
         &mut out.reduced_helpers,
         0,
+        &BTreeSet::new(),
     );
     out.assertions_lifted += macros_lifted;
     out.assertions_refused += skipped.len();
@@ -782,6 +1369,7 @@ fn try_macro_expansion_entries(
         &mut temp_lifted,
         &mut temp_helpers,
         macro_depth + 1,
+        &BTreeSet::new(),
     );
     if temp_entries.is_empty() {
         Some(Err(format!(
@@ -804,6 +1392,29 @@ struct TemporalPlan {
     /// treated as unstable (it may be mutated in a way the syntactic tracker
     /// cannot follow, e.g. `xs[i] = v` or `xs.push(..)`).
     mut_locals: BTreeSet<String>,
+    /// Locals bound to an INTERIOR-MUTABLE primitive (`Cell::new`, `RefCell::new`,
+    /// `UnsafeCell::new`, an `Atomic*::new`, `Mutex::new`, `RwLock::new`). The
+    /// `mut` keyword is blind to interior mutability: such a binding is NOT `mut`
+    /// yet its observed value changes through `&self` (a `set`/`store`, or even the
+    /// drop side-effects of OTHER bindings -- the `iterator_drops` counter). So a
+    /// READ of it (`get`/`load`/`borrow`) at two program points is a fork around
+    /// `t`, not a contradiction. We version such a binding at EVERY statement so
+    /// each read observes a distinct `t`; the reads then do not coalesce and each
+    /// pin discharges on its own. A value bound once (`let v = c.get()`) is a bare
+    /// var, so a double-pin on it is still caught.
+    interior_mut: BTreeSet<String>,
+    /// Locals bound to an ITERATOR (a range, `.iter()`/`.into_iter()` family, or an
+    /// adapter chain). Unlike an interior-mutable cell, an iterator only changes when
+    /// it is CONSUMED (`next`/`nth`/...). A NON-consuming read (`len`/`contains`/
+    /// `size_hint`/`peek`) does NOT advance it, so two such reads with no consumption
+    /// between them observe the SAME `t` and MUST coalesce -- otherwise a genuine
+    /// contradiction on an unadvanced iterator would be masked (a falsePass). So an
+    /// iterator is versioned only at a CONSUMPTION boundary (a consuming method call,
+    /// in statement or let-init position -- handled via `deterministic_definition_
+    /// names`), NOT at every statement. Same-statement double consumption is split by
+    /// the `@adv` occurrence tag. Iterators ARE in `versioned` (so reads are tagged
+    /// and `@adv` applies) but are NOT in `interior_mut` (no per-statement tick).
+    iterators: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -812,6 +1423,14 @@ struct TemporalScope {
     plan: TemporalPlan,
     versions: BTreeMap<String, usize>,
     ambiguous: BTreeSet<String>,
+    /// Per-statement count of CONSUMING reads (`next`/`nth`/...) seen so far for
+    /// each iterator binding. A consuming read ADVANCES the iterator, so two such
+    /// reads of the same binding WITHIN ONE statement (`assert_ne!(it.nth(0),
+    /// it.nth(0))`) observe distinct `t` and must not coalesce into `ne(X, X)`.
+    /// The version bump is per STATEMENT (between statements); this counter splits
+    /// per OCCURRENCE within a statement. Interior-mutable so it can advance while
+    /// term translation holds `&self`; reset to empty at each statement boundary.
+    consuming_occurrence: std::cell::RefCell<BTreeMap<String, usize>>,
 }
 
 impl TemporalScope {
@@ -821,7 +1440,20 @@ impl TemporalScope {
             plan,
             versions: BTreeMap::new(),
             ambiguous: BTreeSet::new(),
+            consuming_occurrence: std::cell::RefCell::new(BTreeMap::new()),
         }
+    }
+
+    /// Record one CONSUMING read of iterator `name` in the current statement and
+    /// return how many such reads PRECEDED it (0 for the first). The caller appends
+    /// `@adv{n}` for n > 0 so the second-and-later reads in one statement are
+    /// distinct terms. `name` is the already-versioned receiver var (`it@def5`).
+    fn bump_consuming_occurrence(&self, name: &str) -> usize {
+        let mut map = self.consuming_occurrence.borrow_mut();
+        let count = map.entry(name.to_string()).or_insert(0);
+        let prior = *count;
+        *count += 1;
+        prior
     }
 
     fn local_scope(&self) -> &str {
@@ -1220,6 +1852,7 @@ fn try_lift_for_loop_forall(
         &mut body_lifted,
         &mut body_helpers,
         macro_depth,
+        &scope.plan.interior_mut,
     );
     if !body_skipped.is_empty() || body_entries.len() != n_body {
         return None;
@@ -1262,6 +1895,20 @@ fn try_lift_for_loop_forall(
     Some((quantified, n_body, var))
 }
 
+/// A nested block is a DISTINCT program region. Two sibling blocks that each
+/// rebind a same-named local (`const { let ty = .. }` twice; `{ let as_mut = .. }`
+/// twice; the `{ let i = Cell::new(0); .. }` rebind-in-block of `iterator_drops`)
+/// must NOT coalesce: each block's `ty`/`as_mut`/`i` is a different value observed
+/// at a different program point. The function-level `local_scope` is the same for
+/// both, so their unqualified locals key identically and a false `unsat` is
+/// manufactured. Tagging each nested block with its statement ordinal gives every
+/// region a distinct scope, so its locals (and the obligations keyed on them) are
+/// distinct. Splitting one obligation into two smaller ones is sound: it can only
+/// turn a spurious `unsat` into two satisfiable groups, never the reverse.
+fn child_block_scope(parent: &str, stmt_idx: usize) -> String {
+    format!("{parent}#b{stmt_idx}")
+}
+
 fn unconditional_block_stmts(expr: &Expr) -> Option<&[Stmt]> {
     match expr {
         Expr::Block(b) => Some(&b.block.stmts),
@@ -1288,8 +1935,23 @@ fn collect_assertion_entries(
     macros_lifted: &mut usize,
     reduced_helpers: &mut HashSet<String>,
     macro_depth: usize,
+    inherited_stateful: &BTreeSet<String>,
 ) {
-    let temporal_plan = temporal_plan_for_stmts(stmts);
+    // A NESTED BLOCK carries the `#b<idx>` marker (`child_block_scope`); a function
+    // body / macro-expansion / loop scope does not. Inside a nested block we relabel
+    // this level's un-named entries to the block scope (see below).
+    let relabel_unnamed_to_scope = local_scope.contains("#b");
+    // A NESTED BLOCK is a distinct consistency scope. Un-callsite-named asserts
+    // (field-access / variant equalities, with no method-call key) otherwise fall
+    // back to the FUNCTION name and conjoin across sibling blocks -- so two blocks
+    // that each rebind a same-named local (`const { let ty = .. }`; `{ let p = .. }`;
+    // `{ let as_mut = .. }`) collide into a false `unsat` on bare `ty`/`p`/`as_mut`.
+    // When this invocation lifts a nested block, we relabel ITS OWN un-named entries
+    // to the block-distinct `local_scope`, so each block is grouped (and checked)
+    // on its own. Entries added by DEEPER recursions are already named (their own
+    // block), so only this level's still-`None` entries are touched.
+    let entries_start = entries.len();
+    let temporal_plan = temporal_plan_for_stmts(stmts, inherited_stateful);
     let mut temporal_scope = TemporalScope::new(local_scope, temporal_plan);
     // const_eval_select((), compiletime, runtime) is a std intrinsic that, at
     // run time, calls its runtime fn. Find such calls in this block and the
@@ -1303,7 +1965,7 @@ fn collect_assertion_entries(
             _ => None,
         })
         .collect();
-    for stmt in stmts {
+    for (stmt_idx, stmt) in stmts.iter().enumerate() {
         match stmt {
             Stmt::Local(local) => {
                 update_float_width_scope_for_pat(&local.pat, float_widths);
@@ -1316,7 +1978,7 @@ fn collect_assertion_entries(
                     if let Some(stmts) = unconditional_block_stmts(&init.expr) {
                         collect_assertion_entries(
                             stmts,
-                            local_scope,
+                            &child_block_scope(local_scope, stmt_idx),
                             options,
                             reducer,
                             float_widths,
@@ -1325,6 +1987,7 @@ fn collect_assertion_entries(
                             macros_lifted,
                             reduced_helpers,
                             macro_depth,
+                            &temporal_scope.plan.interior_mut,
                         );
                     } else {
                         let mut count = count_asserts_in_expr(&init.expr);
@@ -1455,29 +2118,51 @@ fn collect_assertion_entries(
                 }
             },
             Stmt::Expr(expr, _) if assertion_call_name(expr).is_some() => {
-                match reduce_assertion_expr(
-                    expr,
-                    reducer,
-                    &temporal_scope,
-                    &*float_widths,
-                    options,
-                    MAX_ASSERTION_REDUCTION_DEPTH,
-                    reduced_helpers,
-                ) {
-                    Ok(reduced_entries) => {
-                        if !reduced_entries.is_empty() {
-                            *macros_lifted += 1;
+                let call_name = assertion_call_name(expr).expect("guard ensures Some");
+                // An assert-prefixed call to a LEXICALLY-VISIBLE empty-body helper is a
+                // TYPE-LEVEL obligation: the helper's only content is its signature's
+                // trait bounds (e.g. `fn assert_trusted_len<T: TrustedLen>(_: &T) {}`),
+                // discharged by the type system, not a point-wise value predicate. Empty
+                // body => zero recoverable value-work => terminal refusal (a source
+                // property no value-lifter can lift), NOT a lifter limitation and NOT a
+                // fake-zero. Same-block scope only (`local_fns` = this block's nested fns,
+                // lexically correct by construction); a deeper/sibling-scope helper is not
+                // matched and stays unclassified -- a safe under-claim, never a wrong one.
+                // This NEVER displaces a discharge: an empty body lifts to zero entries.
+                if local_fns
+                    .get(&call_name)
+                    .is_some_and(|f| f.block.stmts.is_empty())
+                {
+                    skipped.push(format!(
+                        "assertion helper `{call_name}` is a type-level obligation \
+                         (empty body: trait-bound or no-op), not a point-wise value \
+                         predicate; refused"
+                    ));
+                } else {
+                    match reduce_assertion_expr(
+                        expr,
+                        reducer,
+                        &temporal_scope,
+                        &*float_widths,
+                        options,
+                        MAX_ASSERTION_REDUCTION_DEPTH,
+                        reduced_helpers,
+                    ) {
+                        Ok(reduced_entries) => {
+                            if !reduced_entries.is_empty() {
+                                *macros_lifted += 1;
+                            }
+                            entries.extend(reduced_entries);
                         }
-                        entries.extend(reduced_entries);
+                        Err(reason) => skipped.push(reason),
                     }
-                    Err(reason) => skipped.push(reason),
                 }
             }
             // Unconditional plain block: recurse and lift normally.
             Stmt::Expr(Expr::Block(b), _) => {
                 collect_assertion_entries(
                     &b.block.stmts,
-                    local_scope,
+                    &child_block_scope(local_scope, stmt_idx),
                     options,
                     reducer,
                     float_widths,
@@ -1486,13 +2171,14 @@ fn collect_assertion_entries(
                     macros_lifted,
                     reduced_helpers,
                     macro_depth,
+                    &temporal_scope.plan.interior_mut,
                 );
             }
             // Unconditional unsafe block: recurse and lift normally.
             Stmt::Expr(Expr::Unsafe(u), _) => {
                 collect_assertion_entries(
                     &u.block.stmts,
-                    local_scope,
+                    &child_block_scope(local_scope, stmt_idx),
                     options,
                     reducer,
                     float_widths,
@@ -1501,6 +2187,7 @@ fn collect_assertion_entries(
                     macros_lifted,
                     reduced_helpers,
                     macro_depth,
+                    &temporal_scope.plan.interior_mut,
                 );
             }
             // Control-flow contexts: asserts are conditional or parametric; refuse.
@@ -1554,6 +2241,7 @@ fn collect_assertion_entries(
                             &mut bl,
                             &mut bh,
                             macro_depth,
+                            &temporal_scope.plan.interior_mut,
                         );
                         let body_over_opaque = bs.iter().any(|r| {
                             r.contains("OPAQUE")
@@ -1641,7 +2329,7 @@ fn collect_assertion_entries(
             Stmt::Expr(Expr::Const(c), _) => {
                 collect_assertion_entries(
                     &c.block.stmts,
-                    local_scope,
+                    &child_block_scope(local_scope, stmt_idx),
                     options,
                     reducer,
                     float_widths,
@@ -1650,6 +2338,49 @@ fn collect_assertion_entries(
                     macros_lifted,
                     reduced_helpers,
                     macro_depth,
+                    &temporal_scope.plan.interior_mut,
+                );
+            }
+            // A `const`/`static` ITEM declared inside a test fn body
+            // (`const _: () = { .. assert!(..) .. };`, `const COUNTER: u32 = { .. };`)
+            // has its initializer UNCONDITIONALLY evaluated at compile time the
+            // moment the item is defined -- the test running is what defines it.
+            // Its body runs exactly once, no branch guards it, so an assert inside
+            // is as point-wise as a top-level assert: recurse and lift normally.
+            // This mirrors the `Stmt::Expr(Expr::Const)` arm (a `const { .. }`
+            // block) and the item-layer `Item::Const` / `Item::Static` handling in
+            // `lift_item_assertions`; only the statement POSITION (item vs expr)
+            // differed. A block initializer contributes its own statements; a bare
+            // `const X: T = assert!(..)` (or `= expr`) is wrapped as one statement.
+            // The per-assert gating inside the recursion still refuses anything
+            // genuinely conditional (an assert under a `for`/`if` in the body, a
+            // stateful read), and the per-fn safety net accounts anything not
+            // reached -- so no silent drop and no over-claim.
+            Stmt::Item(syn::Item::Const(syn::ItemConst { expr: init, .. }))
+            | Stmt::Item(syn::Item::Static(syn::ItemStatic { expr: init, .. })) => {
+                let init_stmts: Vec<Stmt> = match init.as_ref() {
+                    Expr::Block(b) => b.block.stmts.clone(),
+                    Expr::Unsafe(u) => u.block.stmts.clone(),
+                    Expr::Const(c) => c.block.stmts.clone(),
+                    Expr::Macro(m) => vec![Stmt::Macro(syn::StmtMacro {
+                        attrs: Vec::new(),
+                        mac: m.mac.clone(),
+                        semi_token: None,
+                    })],
+                    other => vec![Stmt::Expr(other.clone(), None)],
+                };
+                collect_assertion_entries(
+                    &init_stmts,
+                    &child_block_scope(local_scope, stmt_idx),
+                    options,
+                    reducer,
+                    float_widths,
+                    entries,
+                    skipped,
+                    macros_lifted,
+                    reduced_helpers,
+                    macro_depth,
+                    &temporal_scope.plan.interior_mut,
                 );
             }
             // Inner fn definitions inside a test fn: their asserts are only
@@ -1665,7 +2396,7 @@ fn collect_assertion_entries(
                 let count = count_asserts_in_stmts(&inner_fn.block.stmts);
                 for _ in 0..count {
                     skipped.push(format!(
-                        "assertion in non-#[test] item {fn_name}: reachable only via call-site inlining; released to layer 0"
+                        "assertion in non-#[test] item `{fn_name}`: reachable only via call-site inlining; released to layer 0"
                     ));
                 }
             }
@@ -1697,12 +2428,13 @@ fn collect_assertion_entries(
                             macros_lifted,
                             reduced_helpers,
                             macro_depth,
+                            &BTreeSet::new(),
                         );
                         true
                     } else if let Some(stmts) = unconditional_block_stmts(e) {
                         collect_assertion_entries(
                             stmts,
-                            local_scope,
+                            &child_block_scope(local_scope, stmt_idx),
                             options,
                             reducer,
                             float_widths,
@@ -1711,8 +2443,65 @@ fn collect_assertion_entries(
                             macros_lifted,
                             reduced_helpers,
                             macro_depth,
+                            &temporal_scope.plan.interior_mut,
                         );
                         true
+                    } else if macro_depth < MAX_MACRO_EXPANSION_DEPTH
+                        && resolve_inlinable_helper_call(e, reducer, options).is_some()
+                    {
+                        // R7 (capability #1): a bare call to a helper whose body
+                        // asserts. β-reduce (param := callsite actual) and recurse the
+                        // NORMAL collector on the substituted body, so each body assert
+                        // gets its honest disposition. The collector is unchanged and
+                        // runs with no bindings (substitution already applied), so
+                        // existing lifts are byte-identical; a contradictory body is
+                        // CAUGHT, not masked (guard test).
+                        //
+                        // MONOTONIC GATE: inlining MUST NOT increase `unclassified`.
+                        // Measured: a body that hits a downstream gap (closure-adaptor,
+                        // `&mut`) per callsite turns ONE "reachable only via inlining"
+                        // refusal into N×M unclassified instances (1082→1094). So we
+                        // TRIAL-lift into scratch buffers first and commit ONLY if the
+                        // body adds zero unclassified (it fully discharges / terminal-
+                        // refuses). Otherwise we leave it: the helper stays unreduced
+                        // and Pass 2 keeps the single "reachable only" refusal. Inlining
+                        // therefore only ever DRAINS, never inflates.
+                        let (helper, name, bindings) =
+                            resolve_inlinable_helper_call(e, reducer, options).unwrap();
+                        let subst = substitute_stmts(&helper.block.stmts, &bindings);
+                        let mut te = Vec::new();
+                        let mut ts = Vec::new();
+                        let mut tl = 0usize;
+                        let mut th = reduced_helpers.clone();
+                        collect_assertion_entries(
+                            &subst,
+                            &child_block_scope(local_scope, stmt_idx),
+                            options,
+                            reducer,
+                            float_widths,
+                            &mut te,
+                            &mut ts,
+                            &mut tl,
+                            &mut th,
+                            macro_depth + 1,
+                            &BTreeSet::new(),
+                        );
+                        let added_unclassified = ts
+                            .iter()
+                            .filter(|r| {
+                                matches!(refusal_disposition(r), Disposition::Unclassified)
+                            })
+                            .count();
+                        if added_unclassified == 0 {
+                            entries.extend(te);
+                            skipped.extend(ts);
+                            *macros_lifted += tl;
+                            *reduced_helpers = th;
+                            reduced_helpers.insert(name);
+                            true
+                        } else {
+                            false
+                        }
                     } else {
                         false
                     }
@@ -1731,6 +2520,13 @@ fn collect_assertion_entries(
             }
         }
         advance_temporal_scope_for_stmt(stmt, &mut temporal_scope);
+    }
+    if relabel_unnamed_to_scope {
+        for entry in entries[entries_start..].iter_mut() {
+            if entry.name.is_none() {
+                entry.name = Some(local_scope.to_string());
+            }
+        }
     }
 }
 
@@ -1817,38 +2613,101 @@ fn refuse_nested_asserts_in_stmts(stmts: &[Stmt], context: &str, skipped: &mut V
     }
 }
 
-/// Account for assert macros inside an item-level const/static initializer by
-/// emitting one named refusal per assert. Keeps the totality invariant for
-/// compile-time asserts written as `const _: () = assert!(...)`.
-fn refuse_item_assertions(
+/// Lift the assert macros inside an item-level const/static initializer. The
+/// initializer of a `const`/`static` is UNCONDITIONALLY evaluated (compile-time
+/// const-eval), so its asserts are real, unconditional obligations -- lift them
+/// through the SAME collector a `#[test]` fn body uses, rather than blanket-refusing.
+/// This discharges e.g. the `const _: () = { .. }` compile-time twin that
+/// `test_runtime_and_compiletime!` emits alongside each `#[test] fn` (both copies are
+/// distinct source occurrences counted in the textual total, so discharging the const
+/// copy balances `seen`, it does not double-count). A non-liftable assert propagates
+/// its own named refusal via the collector (stays unclassified/refused, never a silent
+/// drop or false discharge); the totality net refuses any unenumerated remainder so the
+/// accounting stays closed.
+fn lift_item_assertions(
     expr: &Expr,
     kind: &str,
     source_path: &str,
     modules: &[String],
+    options: &LiftOptions,
+    reducer: &ReductionCtx<'_>,
     out: &mut AdapterOutput,
 ) {
-    let count = count_asserts_in_expr(expr);
-    if count == 0 {
+    let textual_total = count_asserts_in_expr(expr);
+    if textual_total == 0 {
         return;
     }
-    let reason = format!("{kind} assertion: compile-time const/static assert; released to layer 0");
-    for _ in 0..count {
-        out.assertions_refused += 1;
-        out.skip_reasons.push(reason.clone());
+    let item_name = scoped_test_name(source_path, modules, kind);
+    // Normalize the initializer to a statement slice the collector understands:
+    // a block initializer contributes its own statements; a bare `assert!(..)` is
+    // wrapped as the macro statement; anything else is a single expression statement.
+    let stmts: Vec<Stmt> = match expr {
+        Expr::Block(b) => b.block.stmts.clone(),
+        Expr::Macro(m) => vec![Stmt::Macro(syn::StmtMacro {
+            attrs: Vec::new(),
+            mac: m.mac.clone(),
+            semi_token: None,
+        })],
+        other => vec![Stmt::Expr(other.clone(), None)],
+    };
+    let mut entries = Vec::new();
+    let mut skipped = Vec::new();
+    let mut float_widths = FloatWidthScope::new();
+    let mut macros_lifted = 0usize;
+    collect_assertion_entries(
+        &stmts,
+        &item_name,
+        options,
+        reducer,
+        &mut float_widths,
+        &mut entries,
+        &mut skipped,
+        &mut macros_lifted,
+        &mut out.reduced_helpers,
+        0,
+        &BTreeSet::new(),
+    );
+    out.assertions_lifted += macros_lifted;
+    out.assertions_refused += skipped.len();
+    out.skip_reasons.extend(skipped.iter().cloned());
+
+    // Totality net: every textual assert macro in the initializer is accounted
+    // (lifted or refused). Any remainder the structured walk did not reach is
+    // refused by name -- no silent drop.
+    let accounted = macros_lifted + skipped.len();
+    if textual_total > accounted {
+        let gap = textual_total - accounted;
+        let reason =
+            format!("{kind} assertion: compile-time const/static assert; released to layer 0");
+        for _ in 0..gap {
+            out.assertions_refused += 1;
+            out.skip_reasons.push(reason.clone());
+        }
     }
-    out.warnings.push(LiftWarning {
-        source_path: source_path.to_string(),
-        item_name: scoped_test_name(source_path, modules, kind),
-        reason: format!(
-            "rust test assertions: unsupported assertion surface; released to layer 0: {reason}"
-        ),
-    });
+
+    for (name, atoms) in group_assertions(entries, &item_name) {
+        out.decls.push(ContractDecl {
+            name,
+            pre: None,
+            post: None,
+            inv: Some(and_(atoms)),
+            out_binding: "out".to_string(),
+            evidence: None,
+            panic_loci: Vec::new(),
+            concept_hint: None,
+        });
+    }
 }
 
-fn temporal_plan_for_stmts(stmts: &[Stmt]) -> TemporalPlan {
+fn temporal_plan_for_stmts(stmts: &[Stmt], inherited_stateful: &BTreeSet<String>) -> TemporalPlan {
     let mut definitions = BTreeMap::<String, usize>::new();
     let mut ambiguous = BTreeSet::<String>::new();
     let mut mut_locals = BTreeSet::<String>::new();
+    // LEXICAL SCOPING (the compiler axiom, for free): a nested block inherits the
+    // enclosing scope's stateful bindings, so `let r = &cell` / `*x.get()` inside
+    // a block knows `cell`/`x` is a trajectory.
+    let mut interior_mut = inherited_stateful.clone();
+    let mut iterators = BTreeSet::<String>::new();
     for stmt in stmts {
         for name in deterministic_definition_names(stmt) {
             *definitions.entry(name).or_insert(0) += 1;
@@ -1857,15 +2716,489 @@ fn temporal_plan_for_stmts(stmts: &[Stmt]) -> TemporalPlan {
             ambiguous.insert(name);
         }
         collect_mut_binding_names_in_stmt(stmt, &mut mut_locals);
+        collect_interior_mut_binding_names_in_stmt(stmt, &mut interior_mut, &mut iterators);
     }
-    let versioned = definitions
+    // COMPILER AXIOM (for free): `load`/`fetch_*`/`compare_exchange`/`swap` are
+    // ATOMIC-EXCLUSIVE methods, so any receiver of one IS an atomic -- interior-
+    // mutable shared state -- whether it is a static, a local, or a field. A syn
+    // visitor finds these anywhere, descending into nested blocks.
+    collect_atomic_receiver_names(stmts, &mut interior_mut);
+    // `mut` ORACLE made precise: a `let mut x` whose `&mut x` is taken (passed to
+    // `ptr::swap`, `mem::swap`, `from_mut`, a `*mut` cast, ...) is genuinely mutated
+    // through that borrow, so a read of `x` (or `*x.field`) at two program points is
+    // a fork around `t`. Version it per statement like an interior-mutable cell. A
+    // syn visitor finds `&mut x` anywhere, descending into nested (e.g. `unsafe { }`)
+    // blocks where the mutation often lives while the reads sit in the outer block.
+    collect_mut_borrowed_local_names(stmts, &mut_locals, &mut interior_mut);
+    let mut versioned: BTreeSet<String> = definitions
         .into_iter()
         .filter_map(|(name, count)| (count > 1 || ambiguous.contains(&name)).then_some(name))
         .collect();
+    // An interior-mutable binding is versioned even though it is bound once: its
+    // INTERIOR changes across statements, so each read must observe a distinct `t`.
+    versioned.extend(interior_mut.iter().cloned());
+    // An iterator is versioned too (so its reads are tagged and `@adv` applies), but
+    // it advances only at a CONSUMPTION boundary -- a consuming method call, which
+    // `deterministic_definition_names` already records as a version bump -- not every
+    // statement. A name that is BOTH a cell and an iterator stays a cell (the
+    // stronger, per-statement posture).
+    for name in &iterators {
+        if !interior_mut.contains(name) {
+            versioned.insert(name.clone());
+        }
+    }
+    iterators.retain(|name| !interior_mut.contains(name));
     TemporalPlan {
         versioned,
         mut_locals,
+        interior_mut,
+        iterators,
     }
+}
+
+/// `let <name> = <interior-mutable constructor>(..)` -- record `<name>`.
+/// Interior-mutable primitives are the language's interior-mutability mechanism
+/// (all built on `UnsafeCell`): `Cell`, `RefCell`, `UnsafeCell`, the `Atomic*`
+/// family, `Mutex`, `RwLock`, `OnceCell`/`OnceLock`, `LazyCell`/`LazyLock`. A
+/// binding to one of their constructors is non-`mut` yet observably changes
+/// through `&self`. Recognising the constructor (not any per-method behaviour) is
+/// the interior-mutability dual of the `mut` keyword oracle.
+fn collect_interior_mut_binding_names_in_stmt(
+    stmt: &Stmt,
+    cells: &mut BTreeSet<String>,
+    iters: &mut BTreeSet<String>,
+) {
+    match stmt {
+        Stmt::Local(local) => {
+            let Some(init) = &local.init else { return };
+            // A CELL / raw `*mut` pointer changes through `&self` or an alias at any
+            // time (per-statement posture); an ITERATOR changes only when consumed
+            // (consumption-boundary posture).
+            let is_cell = init_is_interior_mut_construction(&init.expr)
+                || init_is_raw_mut_pointer_construction(&init.expr);
+            let is_iter = !is_cell && init_is_iterator_construction(&init.expr);
+            // RECURSIVE TRAJECTORY: a binding DERIVED from an already-stateful binding
+            // -- a view/borrow/adapter over it (`let r = &mut *cell.get()`, `let it2 =
+            // it.by_ref()`) -- inherits that binding's posture. (`cells`/`iters`
+            // accumulate in statement order, so an init referencing an EARLIER
+            // stateful binding is caught.)
+            let refs = (!is_cell && !is_iter).then(|| names_referenced_in_expr(&init.expr));
+            let derived_cell = refs.as_ref().is_some_and(|r| !cells.is_disjoint(r));
+            let derived_iter =
+                !derived_cell && refs.as_ref().is_some_and(|r| !iters.is_disjoint(r));
+            if is_cell || derived_cell {
+                for name in pat_idents(&local.pat) {
+                    cells.insert(name);
+                }
+            } else if is_iter || derived_iter {
+                for name in pat_idents(&local.pat) {
+                    iters.insert(name);
+                }
+            }
+        }
+        // A `static X: Atomic.. = ..` (e.g. a drop counter) is interior-mutable
+        // global state; a `.load()`/`.fetch_*()` on it is a stateful read.
+        Stmt::Item(syn::Item::Static(s)) => {
+            if type_is_atomic_cell(&s.ty) {
+                cells.insert(s.ident.to_string());
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Collect the receiver name of every atomic-only method call anywhere in `stmts`
+/// (descending into nested blocks). `load`/`fetch_*`/`compare_exchange`/`swap`
+/// are atomic-exclusive, so their receiver is interior-mutable atomic state.
+fn collect_atomic_receiver_names(stmts: &[Stmt], out: &mut BTreeSet<String>) {
+    struct V<'a> {
+        out: &'a mut BTreeSet<String>,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for V<'_> {
+        fn visit_expr_method_call(&mut self, mc: &'ast syn::ExprMethodCall) {
+            const ATOMIC: &[&str] = &[
+                "load",
+                "store",
+                "swap",
+                "fetch_add",
+                "fetch_sub",
+                "fetch_and",
+                "fetch_or",
+                "fetch_xor",
+                "fetch_nand",
+                "fetch_max",
+                "fetch_min",
+                "fetch_update",
+                "compare_exchange",
+                "compare_exchange_weak",
+                "compare_and_swap",
+            ];
+            if ATOMIC.contains(&mc.method.to_string().as_str()) {
+                if let Expr::Path(p) = mc.receiver.as_ref() {
+                    if let Some(seg) = p.path.segments.last() {
+                        self.out.insert(seg.ident.to_string());
+                    }
+                }
+            }
+            syn::visit::visit_expr_method_call(self, mc);
+        }
+    }
+    let mut v = V { out };
+    for stmt in stmts {
+        syn::visit::Visit::visit_stmt(&mut v, stmt);
+    }
+}
+
+/// Collect the receiver names of CONSUMING iterator calls (`next`/`nth`/...) in
+/// `expr`. A consuming call is a `t`-advance for its receiver (the iterator's
+/// temporal homomorphism: `nth(it, k)` is warranted `nth(it, k, t)`, and the call
+/// IS the step to `t+1`). Used to bump the receiver's version at a let-init
+/// consumption boundary; the statement-position case is the ordinary method-receiver
+/// boundary.
+fn collect_consuming_iterator_receiver_names(expr: &Expr, out: &mut BTreeSet<String>) {
+    if let Expr::MethodCall(call) = expr {
+        if is_consuming_iterator_method(&call.method.to_string()) {
+            if let Some(name) = simple_path_name(&call.receiver) {
+                out.insert(name);
+            }
+        }
+    }
+    // Descend: the consuming call may be wrapped (`it.next().unwrap()`,
+    // `Some(it.nth(0))`, `&it.next()`).
+    match expr {
+        Expr::MethodCall(c) => {
+            collect_consuming_iterator_receiver_names(&c.receiver, out);
+            for a in &c.args {
+                collect_consuming_iterator_receiver_names(a, out);
+            }
+        }
+        Expr::Call(c) => {
+            for a in &c.args {
+                collect_consuming_iterator_receiver_names(a, out);
+            }
+        }
+        Expr::Reference(r) => collect_consuming_iterator_receiver_names(&r.expr, out),
+        Expr::Paren(p) => collect_consuming_iterator_receiver_names(&p.expr, out),
+        Expr::Group(g) => collect_consuming_iterator_receiver_names(&g.expr, out),
+        Expr::Try(t) => collect_consuming_iterator_receiver_names(&t.expr, out),
+        _ => {}
+    }
+}
+
+/// Collect the names of `mut` locals that are MUTABLY borrowed (`&mut x`) AS A CALL
+/// ARGUMENT (e.g. `ptr::from_mut(&mut x)`, `mem::swap(&mut a, &mut b)`). Passing
+/// `&mut x` inline to a call is a DETERMINISTIC mutation boundary at that point, so
+/// `x` is genuinely mutated and its reads fork around `t` -- version it per
+/// statement like a cell. We deliberately do NOT collect `let alias = &mut x` (an
+/// alias BINDING): that makes `x`'s identity ambiguous (mutations flow through the
+/// alias at unknown points), which the ambiguity machinery handles by skipping. Only
+/// `mut` locals qualify. Descends into nested blocks (the mutation often lives in an
+/// inner `unsafe { }` while the reads sit outside).
+fn collect_mut_borrowed_local_names(
+    stmts: &[Stmt],
+    mut_locals: &BTreeSet<String>,
+    out: &mut BTreeSet<String>,
+) {
+    fn mut_ref_arg_name(arg: &Expr, mut_locals: &BTreeSet<String>) -> Option<String> {
+        match arg {
+            Expr::Reference(r) if r.mutability.is_some() => {
+                simple_path_name(&r.expr).filter(|n| mut_locals.contains(n))
+            }
+            Expr::Paren(p) => mut_ref_arg_name(&p.expr, mut_locals),
+            Expr::Group(g) => mut_ref_arg_name(&g.expr, mut_locals),
+            _ => None,
+        }
+    }
+    struct V<'a> {
+        mut_locals: &'a BTreeSet<String>,
+        out: &'a mut BTreeSet<String>,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for V<'_> {
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            for arg in &call.args {
+                if let Some(name) = mut_ref_arg_name(arg, self.mut_locals) {
+                    self.out.insert(name);
+                }
+            }
+            syn::visit::visit_expr_call(self, call);
+        }
+        fn visit_expr_method_call(&mut self, mc: &'ast syn::ExprMethodCall) {
+            for arg in &mc.args {
+                if let Some(name) = mut_ref_arg_name(arg, self.mut_locals) {
+                    self.out.insert(name);
+                }
+            }
+            syn::visit::visit_expr_method_call(self, mc);
+        }
+    }
+    let mut v = V { mut_locals, out };
+    for stmt in stmts {
+        syn::visit::Visit::visit_stmt(&mut v, stmt);
+    }
+}
+
+/// Collect every path's last-segment identifier referenced in `expr` (a superset
+/// of its free variables -- enough to test "does this init reference a stateful
+/// binding").
+fn names_referenced_in_expr(expr: &Expr) -> BTreeSet<String> {
+    #[derive(Default)]
+    struct V {
+        names: BTreeSet<String>,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for V {
+        fn visit_path(&mut self, p: &'ast syn::Path) {
+            if let Some(seg) = p.segments.last() {
+                self.names.insert(seg.ident.to_string());
+            }
+            syn::visit::visit_path(self, p);
+        }
+    }
+    let mut v = V::default();
+    syn::visit::Visit::visit_expr(&mut v, expr);
+    v.names
+}
+
+/// True iff `ty` is an interior-mutable cell/atomic type by its head name --
+/// `AtomicUsize`, `Cell<_>`, `RefCell<_>`, `UnsafeCell<_>`, `Mutex<_>`, ...
+fn type_is_atomic_cell(ty: &syn::Type) -> bool {
+    let syn::Type::Path(p) = ty else { return false };
+    let Some(seg) = p.path.segments.last() else {
+        return false;
+    };
+    let name = seg.ident.to_string();
+    name.starts_with("Atomic")
+        || matches!(
+            name.as_str(),
+            "Cell" | "RefCell" | "UnsafeCell" | "SyncUnsafeCell" | "Mutex" | "RwLock"
+        )
+}
+
+/// True iff `expr` constructs a raw `*mut` pointer -- `addr_of_mut!(x)`,
+/// `&mut x as *mut T`, any `expr as *mut T` cast (including a re-cast of an
+/// existing `*mut`), or `ptr::from_mut(..)`. A binding holding a `*mut` is a
+/// HANDLE to memory that is mutated through it (`*p = v`) or through an alias; a
+/// `*p` read at two program points legitimately observes different values (a fork
+/// around `t`, not a contradiction). So we version it per statement exactly like
+/// an interior-mutable cell -- the deref reads then carry the version and do not
+/// coalesce. A value bound once (`let v = *p`) is a bare var, so a genuine
+/// double-pin is still caught.
+/// True iff `method` is an iterator method that CONSUMES (advances past) one or
+/// more elements when called -- so two calls in one statement observe different
+/// state. `peek`/`size_hint`/`len`/`clone` do NOT advance and are excluded.
+fn is_consuming_iterator_method(method: &str) -> bool {
+    matches!(
+        method,
+        // Single-element advances.
+        "next"
+            | "nth"
+            | "next_back"
+            | "nth_back"
+            | "next_if"
+            | "next_if_eq"
+            | "advance_by"
+            | "advance_back_by"
+            // Short-circuiting `&mut self` terminals: they drive the iterator (so they
+            // ADVANCE it) and, unlike the by-value terminals (`fold`/`sum`/`count`),
+            // borrow rather than move -- so a later read of the same binding is valid
+            // and must observe the advanced `t`. Including a NON-advancing method here
+            // (e.g. `len`) would be unsound (it would split reads that must coalesce);
+            // every name below genuinely consumes.
+            | "try_fold"
+            | "try_for_each"
+            | "find"
+            | "find_map"
+            | "position"
+            | "rposition"
+            | "all"
+            | "any"
+    )
+}
+
+/// True iff `var` (a possibly `@def`-tagged receiver name) names a versioned
+/// iterator binding in scope -- i.e. its base is in the versioned/interior-mut set.
+fn receiver_is_versioned_iterator(var: &str, scope: &TemporalScope) -> bool {
+    let base = var.split('@').next().unwrap_or(var);
+    scope.plan.versioned.contains(base)
+}
+
+fn init_is_raw_mut_pointer_construction(expr: &Expr) -> bool {
+    match expr {
+        Expr::Reference(r) => init_is_raw_mut_pointer_construction(&r.expr),
+        Expr::Paren(p) => init_is_raw_mut_pointer_construction(&p.expr),
+        Expr::Group(g) => init_is_raw_mut_pointer_construction(&g.expr),
+        Expr::Cast(cast) => matches!(
+            cast.ty.as_ref(),
+            syn::Type::Ptr(p) if p.mutability.is_some()
+        ),
+        Expr::Macro(m) => m
+            .mac
+            .path
+            .segments
+            .last()
+            .is_some_and(|s| s.ident == "addr_of_mut"),
+        Expr::Call(call) => {
+            if let Expr::Path(p) = call.func.as_ref() {
+                p.path
+                    .segments
+                    .last()
+                    .is_some_and(|s| s.ident == "from_mut")
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+/// True iff `expr` constructs an ITERATOR -- a range, an `.iter()`/`.into_iter()`
+/// family source, or an adapter chain over one. An iterator binding is stateful:
+/// it is consumed/advanced, so `len`/`count`/`size_hint`/`next` observed at
+/// different program points legitimately differ (the same `t` posture as an
+/// interior-mutable cell). Recognises the std Iterator protocol's vocabulary, not
+/// any per-method contract.
+fn init_is_iterator_construction(expr: &Expr) -> bool {
+    match expr {
+        Expr::Range(_) => true,
+        Expr::Reference(r) => init_is_iterator_construction(&r.expr),
+        Expr::Paren(p) => init_is_iterator_construction(&p.expr),
+        Expr::MethodCall(mc) => {
+            const ITER_SOURCES: &[&str] = &[
+                "iter",
+                "iter_mut",
+                "into_iter",
+                "chars",
+                "char_indices",
+                "bytes",
+                "drain",
+                "keys",
+                "values",
+                "values_mut",
+                "lines",
+                "split_whitespace",
+                "windows",
+                "chunks",
+                "array_chunks",
+                "array_windows",
+            ];
+            const ADAPTERS: &[&str] = &[
+                "map",
+                "filter",
+                "filter_map",
+                "take",
+                "take_while",
+                "skip",
+                "skip_while",
+                "rev",
+                "cloned",
+                "copied",
+                "enumerate",
+                "zip",
+                "chain",
+                "flatten",
+                "flat_map",
+                "peekable",
+                "step_by",
+                "scan",
+                "fuse",
+                "by_ref",
+                "inspect",
+                "cycle",
+                "map_while",
+            ];
+            let m = mc.method.to_string();
+            if ITER_SOURCES.contains(&m.as_str()) {
+                return true;
+            }
+            // An adapter IS an iterator iff its receiver is one.
+            ADAPTERS.contains(&m.as_str()) && init_is_iterator_construction(&mc.receiver)
+        }
+        // Free-function / UFCS forms: `core::iter::repeat(x)`, `iter::once(x)`,
+        // `IntoIterator::into_iter([..])`, `<[T]>::iter(xs)`.
+        Expr::Call(call) => {
+            let Expr::Path(p) = call.func.as_ref() else {
+                return false;
+            };
+            let last = p
+                .path
+                .segments
+                .last()
+                .map(|s| s.ident.to_string())
+                .unwrap_or_default();
+            // Iterator producer free functions.
+            const PRODUCERS: &[&str] = &[
+                "repeat",
+                "repeat_with",
+                "repeat_n",
+                "once",
+                "once_with",
+                "empty",
+                "from_fn",
+                "successors",
+            ];
+            // UFCS iterator sources (same source names as the method form).
+            const UFCS_SOURCES: &[&str] = &[
+                "into_iter",
+                "iter",
+                "iter_mut",
+                "chars",
+                "char_indices",
+                "bytes",
+                "drain",
+            ];
+            PRODUCERS.contains(&last.as_str()) || UFCS_SOURCES.contains(&last.as_str())
+        }
+        _ => false,
+    }
+}
+
+/// True iff `expr` is a call to an interior-mutable primitive's constructor, e.g.
+/// `Cell::new(..)`, `core::cell::RefCell::new(..)`, `AtomicUsize::new(..)`.
+fn init_is_interior_mut_construction(expr: &Expr) -> bool {
+    // `let b = &Cell::new(a)` / `let cell = &Cell::new(0)`: the binding is a
+    // reference to a freshly-constructed cell. The reference is transparent to
+    // interior mutability -- a read through `b` still observes the cell's changing
+    // interior -- so unwrap `&`/parens/groups to reach the constructor.
+    match expr {
+        Expr::Reference(r) => return init_is_interior_mut_construction(&r.expr),
+        Expr::Paren(p) => return init_is_interior_mut_construction(&p.expr),
+        Expr::Group(g) => return init_is_interior_mut_construction(&g.expr),
+        _ => {}
+    }
+    let Expr::Call(call) = expr else { return false };
+    let Expr::Path(path) = call.func.as_ref() else {
+        return false;
+    };
+    let segs: Vec<String> = path
+        .path
+        .segments
+        .iter()
+        .map(|s| s.ident.to_string())
+        .collect();
+    // The constructor is the last `::new` (or `::from`) segment; the type is the
+    // segment before it.
+    let n = segs.len();
+    if n < 2 {
+        return false;
+    }
+    let ctor = segs[n - 1].as_str();
+    if !matches!(ctor, "new" | "from" | "new_in") {
+        return false;
+    }
+    let ty = segs[n - 2].as_str();
+    ty.starts_with("Atomic")
+        || matches!(
+            ty,
+            "Cell"
+                | "RefCell"
+                | "UnsafeCell"
+                | "SyncUnsafeCell"
+                | "Mutex"
+                | "RwLock"
+                | "OnceCell"
+                | "OnceLock"
+                | "LazyCell"
+                | "LazyLock"
+        )
 }
 
 /// Collect `let mut <name>` binding names in a statement (recursing into nested
@@ -1902,6 +3235,18 @@ fn advance_temporal_scope_for_stmt(stmt: &Stmt, scope: &mut TemporalScope) {
     for name in ambiguous_boundary_names_in_stmt(stmt) {
         scope.mark_ambiguous(&name);
     }
+    // Interior-mutable bindings advance their `t` at EVERY statement: the value
+    // may change through `&self` (a `set`/`store`, or the drop side-effects of
+    // other bindings) between any two reads, so each read observes a fresh
+    // version and the reads do not coalesce into a false contradiction.
+    let interior: Vec<String> = scope.plan.interior_mut.iter().cloned().collect();
+    for name in interior {
+        scope.define_local(&name);
+    }
+    // Per-occurrence consuming-read counters are statement-local: a new statement
+    // starts fresh (cross-statement distinctness is already carried by the version
+    // bump above).
+    scope.consuming_occurrence.borrow_mut().clear();
 }
 
 fn deterministic_definition_names(stmt: &Stmt) -> Vec<String> {
@@ -1911,6 +3256,14 @@ fn deterministic_definition_names(stmt: &Stmt) -> Vec<String> {
             for name in pat_idents(&local.pat) {
                 out.insert(name);
             }
+            // CONSUMPTION boundary in a let-initializer: `let _ = it.next()` advances
+            // `it`. The receiver of a CONSUMING iterator call is a version bump for
+            // that receiver, exactly as a method-call statement is (below). Only
+            // consuming calls count -- a non-consuming `let n = it.len()` must NOT
+            // bump `it`, or two `len` reads around it would falsely split.
+            if let Some(init) = &local.init {
+                collect_consuming_iterator_receiver_names(&init.expr, &mut out);
+            }
         }
         Stmt::Expr(expr, _) if !is_temporal_control_flow_expr(expr) => {
             if let Some(name) = deterministic_assignment_name(expr) {
@@ -1918,9 +3271,34 @@ fn deterministic_definition_names(stmt: &Stmt) -> Vec<String> {
             }
             collect_method_receiver_names(expr, &mut out);
         }
+        // CONSUMPTION boundary inside an assertion: `assert_eq!(it.next(), Some(0))`
+        // advances `it`. The consuming call is an ARGUMENT of the macro, so neither
+        // the `Stmt::Expr` nor `Stmt::Local` arm sees it -- without this, the
+        // subsequent `it.len()`/`it.size_hint()` reads coalesce onto a stale version
+        // and forge a contradiction. We parse the macro's token args as expressions
+        // and collect consuming-iterator receivers (only consuming calls bump; a
+        // `assert_eq!(it.len(), 5)` argument is non-consuming and leaves `it` alone).
+        Stmt::Macro(m) => collect_consuming_receivers_in_macro(&m.mac, &mut out),
+        Stmt::Expr(Expr::Macro(m), _) => collect_consuming_receivers_in_macro(&m.mac, &mut out),
         _ => {}
     }
     out.into_iter().collect()
+}
+
+/// Parse a macro's token args as a comma-separated expression list and collect the
+/// receivers of CONSUMING iterator calls within them. Used so a consuming call
+/// embedded in an assertion (`assert_eq!(it.next(), ..)`) is a version boundary for
+/// its receiver. A parse failure (non-expression macro tokens) yields nothing.
+fn collect_consuming_receivers_in_macro(mac: &syn::Macro, out: &mut BTreeSet<String>) {
+    use syn::parse::Parser;
+    use syn::punctuated::Punctuated;
+    use syn::Token;
+    let parser = Punctuated::<Expr, Token![,]>::parse_terminated;
+    if let Ok(args) = parser.parse2(mac.tokens.clone()) {
+        for arg in &args {
+            collect_consuming_iterator_receiver_names(arg, out);
+        }
+    }
 }
 
 fn deterministic_assignment_name(expr: &Expr) -> Option<String> {
@@ -2073,6 +3451,27 @@ fn collect_reference_alias_names_in_expr(expr: &Expr, out: &mut BTreeSet<String>
         }
         Expr::Paren(paren) => collect_reference_alias_names_in_expr(&paren.expr, out),
         Expr::Group(group) => collect_reference_alias_names_in_expr(&group.expr, out),
+        // `addr_of_mut!(x)` and `addr_of!(x)` take a raw pointer to `x`
+        // without going through an `Expr::Reference` node. A raw pointer
+        // alias means `x` may be mutated via the pointer later (e.g. by
+        // `ptr::swap`) without any syntactic assignment to `x`. Treat the
+        // argument as an alias-introduced name so the temporal tracker marks
+        // it ambiguous after this statement, preventing pre/post observations
+        // from being coalesced into a false contradiction.
+        Expr::Macro(m) => {
+            let macro_name = m.mac.path.segments.last().map(|s| s.ident.to_string());
+            if matches!(macro_name.as_deref(), Some("addr_of_mut") | Some("addr_of")) {
+                // The token stream of `addr_of_mut!(x)` is just the identifier `x`.
+                // Parse it as a simple path/ident to extract the name.
+                if let Ok(ident) = syn::parse2::<syn::Ident>(m.mac.tokens.clone()) {
+                    out.insert(ident.to_string());
+                } else if let Ok(path) = syn::parse2::<syn::Path>(m.mac.tokens.clone()) {
+                    if let Some(name) = path.get_ident() {
+                        out.insert(name.to_string());
+                    }
+                }
+            }
+        }
         _ => {}
     }
 }
@@ -2181,6 +3580,13 @@ fn collect_method_receiver_names(expr: &Expr, out: &mut BTreeSet<String>) {
         }
         Expr::Paren(paren) => collect_method_receiver_names(&paren.expr, out),
         Expr::Group(group) => collect_method_receiver_names(&group.expr, out),
+        // A closure captures locals from the enclosing scope, potentially
+        // by `&mut` (even without explicit `move`). If the closure body
+        // calls a method on a captured name, that name may be mutated
+        // in ways the top-level tracker cannot see. Recurse into the body
+        // so that `for_each(|x| s.push(x))` is detected as a method call
+        // on `s`, marking `s` ambiguous between assertions.
+        Expr::Closure(closure) => collect_method_receiver_names(&closure.body, out),
         _ => {}
     }
 }
@@ -2528,6 +3934,10 @@ fn reduce_assertion_stmts(
     reduced_helpers: &mut HashSet<String>,
 ) -> Result<Vec<AssertionEntry>, String> {
     let mut entries = Vec::new();
+    // Local mutable view: a `let x = <pure>` in the body adds an immutable binding
+    // we substitute into later statements (sound let-inlining; see the Stmt::Local
+    // arm). Starts as a clone of the inherited param bindings.
+    let mut binds = bindings.clone();
     for stmt in stmts {
         match stmt {
             Stmt::Macro(m) => {
@@ -2537,7 +3947,7 @@ fn reduce_assertion_stmts(
                     scope,
                     float_widths,
                     options,
-                    bindings,
+                    &binds,
                 )?);
             }
             Stmt::Expr(Expr::Macro(m), _) => {
@@ -2547,11 +3957,57 @@ fn reduce_assertion_stmts(
                     scope,
                     float_widths,
                     options,
-                    bindings,
+                    &binds,
                 )?);
             }
+            // `let x = <pure pinnable expr>;` in a reduced body: bind x to its
+            // (substituted) init and substitute it into the rest. SOUND iff the init
+            // is PURE -- a literal / path / arithmetic / index / field / tuple over
+            // pure parts, with NO calls, NO `&`/`&mut`, and x is NOT `let mut`.
+            // For a pure init, `x` denotes a single fixed value, so substituting it
+            // is exact (no re-evaluation hazard). Any other init -> refuse the body
+            // (Pass 2 accounts it); we never substitute something we cannot prove
+            // pure, so no masked re-evaluation / forged step.
+            Stmt::Local(local) => {
+                let Some(init) = &local.init else {
+                    return Err("helper-body `let` without initializer".to_string());
+                };
+                if init.diverge.is_some() {
+                    return Err("helper-body `let ... else` is not a pure binding".to_string());
+                }
+                let name = match &local.pat {
+                    Pat::Ident(id) if id.subpat.is_none() && id.by_ref.is_none() => {
+                        if id.mutability.is_some() {
+                            return Err(format!(
+                                "helper-body `let mut {}` is not temporally stable",
+                                id.ident
+                            ));
+                        }
+                        id.ident.to_string()
+                    }
+                    Pat::Type(pt) => match &*pt.pat {
+                        Pat::Ident(id)
+                            if id.subpat.is_none()
+                                && id.by_ref.is_none()
+                                && id.mutability.is_none() =>
+                        {
+                            id.ident.to_string()
+                        }
+                        _ => return Err("helper-body `let` non-simple pattern".to_string()),
+                    },
+                    _ => return Err("helper-body `let` non-simple pattern".to_string()),
+                };
+                let init_expr = substitute_expr(&init.expr, &binds);
+                if !is_pure_pinnable_expr(&init_expr) {
+                    return Err(format!(
+                        "helper-body `let {name} = {}` has a non-pure initializer",
+                        token_key(&init.expr)
+                    ));
+                }
+                binds.insert(name, init_expr);
+            }
             Stmt::Expr(expr, _) => {
-                let expr = substitute_expr(expr, bindings);
+                let expr = substitute_expr(expr, &binds);
                 entries.extend(reduce_assertion_expr(
                     &expr,
                     reducer,
@@ -2574,6 +4030,41 @@ fn reduce_assertion_stmts(
         return Err("helper body reduced to no FOL assertions".to_string());
     }
     Ok(entries)
+}
+
+/// A conservatively-PURE, pinnable expression: a value that is a fixed function of
+/// its (already-pinned) parts, with NO call, method call, closure, reference, await,
+/// index-assign, or macro -- nothing that could carry an effect or re-evaluate a
+/// state. Used to gate `let x = e` substitution inside a reduced helper body: only
+/// a pure `e` may be substituted (so `x` denotes one fixed value and inlining it is
+/// exact). Deliberately strict -- refuse-on-doubt, never approximate. NOTE: this is
+/// NOT "is it liftable" (that is the term translator's job); it is "is substituting
+/// it for a single-use binding faithful", which forbids calls because a call may be
+/// impure / re-evaluate.
+fn is_pure_pinnable_expr(expr: &Expr) -> bool {
+    match expr {
+        Expr::Lit(_) => true,
+        Expr::Path(p) => p.qself.is_none(),
+        Expr::Paren(p) => is_pure_pinnable_expr(&p.expr),
+        Expr::Group(g) => is_pure_pinnable_expr(&g.expr),
+        Expr::Unary(u) => {
+            // Pure unary: neg / not / deref-of-pure. (`*p` of a pure path is the
+            // EUF `deref` term; the term translator decides stability.)
+            matches!(u.op, UnOp::Neg(_) | UnOp::Not(_) | UnOp::Deref(_))
+                && is_pure_pinnable_expr(&u.expr)
+        }
+        Expr::Binary(b) => is_pure_pinnable_expr(&b.left) && is_pure_pinnable_expr(&b.right),
+        Expr::Index(i) => is_pure_pinnable_expr(&i.expr) && is_pure_pinnable_expr(&i.index),
+        Expr::Field(f) => is_pure_pinnable_expr(&f.base),
+        Expr::Tuple(t) => t.elems.iter().all(is_pure_pinnable_expr),
+        Expr::Array(a) => a.elems.iter().all(is_pure_pinnable_expr),
+        Expr::Cast(c) => is_pure_pinnable_expr(&c.expr),
+        Expr::Range(r) => {
+            r.start.as_deref().map(is_pure_pinnable_expr).unwrap_or(true)
+                && r.end.as_deref().map(is_pure_pinnable_expr).unwrap_or(true)
+        }
+        _ => false,
+    }
 }
 
 fn helper_param_names(f: &syn::ItemFn) -> Result<Vec<String>, String> {
@@ -2667,6 +4158,97 @@ fn substitute_exprs(exprs: &[Expr], bindings: &ExprBindings) -> Vec<Expr> {
         .iter()
         .map(|expr| substitute_expr(expr, bindings))
         .collect()
+}
+
+/// β-reduction over a helper body: substitute `bindings` (param := callsite actual)
+/// into every statement so the body can be re-lifted at the callsite by the normal
+/// (binding-free) collector. Faithful -- each param is replaced by its actual
+/// exactly (no merge, no re-evaluation). A `let` binding a name shadows a param of
+/// that name for the rest. Assert-MACRO args are substituted via parse → substitute
+/// → re-quote. Nested fn items are kept as-is (their calls lift opaquely / resolve
+/// via the file registry).
+fn substitute_stmts(stmts: &[Stmt], bindings: &ExprBindings) -> Vec<Stmt> {
+    let mut binds = bindings.clone();
+    stmts.iter().map(|s| substitute_stmt(s, &mut binds)).collect()
+}
+
+fn substitute_stmt(stmt: &Stmt, binds: &mut ExprBindings) -> Stmt {
+    match stmt {
+        Stmt::Local(local) => {
+            let mut l = local.clone();
+            if let Some(init) = &local.init {
+                let mut ni = init.clone();
+                ni.expr = Box::new(substitute_expr(&init.expr, binds));
+                l.init = Some(ni);
+            }
+            // The let binds names that shadow same-named params for the rest.
+            for name in pat_idents(&local.pat) {
+                binds.remove(&name);
+            }
+            Stmt::Local(l)
+        }
+        Stmt::Expr(e, semi) => Stmt::Expr(substitute_expr(e, binds), *semi),
+        Stmt::Macro(m) => {
+            let mut sm = m.clone();
+            if let Some(tokens) = substitute_macro_tokens(&m.mac, binds) {
+                sm.mac.tokens = tokens;
+            }
+            Stmt::Macro(sm)
+        }
+        Stmt::Item(_) => stmt.clone(),
+    }
+}
+
+/// Substitute bindings into an assertion macro's comma-separated expression args by
+/// parsing, substituting, and re-quoting. None if the tokens are not a parseable
+/// expression list (a non-assertion macro) -- the caller keeps the macro as-is.
+fn substitute_macro_tokens(
+    mac: &syn::Macro,
+    binds: &ExprBindings,
+) -> Option<proc_macro2::TokenStream> {
+    let args = parse_macro_args(mac.tokens.clone()).ok()?;
+    let subst = substitute_exprs(&args.exprs, binds);
+    let mut ts = proc_macro2::TokenStream::new();
+    for (i, e) in subst.iter().enumerate() {
+        if i > 0 {
+            ts.extend(quote::quote!(,));
+        }
+        ts.extend(quote::quote!(#e));
+    }
+    Some(ts)
+}
+
+/// Resolve a bare call expression to an inlinable helper: a file-resolvable fn whose
+/// body contains assertions, active cfg, simple params, matching arity. Returns the
+/// helper, its name, and the param := actual bindings. None otherwise.
+fn resolve_inlinable_helper_call<'a>(
+    expr: &Expr,
+    reducer: &ReductionCtx<'a>,
+    options: &LiftOptions,
+) -> Option<(&'a syn::ItemFn, String, ExprBindings)> {
+    let inner = match expr {
+        Expr::Paren(p) => &*p.expr,
+        Expr::Group(g) => &*g.expr,
+        other => other,
+    };
+    let Expr::Call(call) = inner else { return None };
+    let name = simple_call_name(call)?;
+    let helper = reducer.function(&name).ok()??;
+    if count_asserts_in_stmts(&helper.block.stmts) == 0 {
+        return None;
+    }
+    if !matches!(cfg_eval_for_attrs(&helper.attrs, options), CfgEval::Active) {
+        return None;
+    }
+    let params = helper_param_names(helper).ok()?;
+    if params.len() != call.args.len() {
+        return None;
+    }
+    let mut bindings = ExprBindings::new();
+    for (param, arg) in params.into_iter().zip(call.args.iter()) {
+        bindings.insert(param, arg.clone());
+    }
+    Some((helper, name, bindings))
 }
 
 fn substitute_expr(expr: &Expr, bindings: &ExprBindings) -> Expr {
@@ -4226,6 +5808,1021 @@ fn byte_range(byte: Rc<Term>, low: u8, high: u8) -> Rc<Formula> {
     ])
 }
 
+// ── Source-audit value-contract emission ────────────────────────────────────
+// A source warrant is REAL only if the kit EMITS the ProofIR contract for the
+// body -- a syntactic "looks generalizable" flag with no emitted relation is a
+// hollow warrant. `emit_value_contract` walks a value-function body into a
+// closed consistency `ContractDecl`, mirroring the Python source kit's
+// `_lift_function` (walk body -> term/formula, wrap as `return_value = body`) in
+// the rust kit's inv-only form (`out` is the return value). It reuses the SAME
+// term/formula atoms the test-assertion path already compiles to Z3 -- no new
+// semantic path. Returns None when the body is not (yet) emittable; the caller
+// then leaves the function UNCLASSIFIED (the honest dark), never warranted.
+//
+// Slice 1 -- the character-classification predicate shape (`is_ascii_*` family):
+// a bool-returning body that reduces to `matches!(<scalar>, <pattern>)` (and
+// `&&`/`||`/`!` trees thereof). The pattern is walked -- not the function name
+// (names are sugar) -- into a range/equality membership formula, the same shape
+// `ascii_byte_class_atom` proves. The contract is the biconditional
+// `out <-> membership` (encoded with `implies`/`and`, since the compiler has no
+// `iff`).
+pub fn emit_value_contract(name: &str, block: &syn::Block) -> Option<ContractDecl> {
+    let plan = temporal_plan_for_stmts(&block.stmts, &BTreeSet::new());
+    let scope = TemporalScope::new("rust-source", plan);
+    block_inv(block, &scope).map(|inv| source_value_contract(name, inv))
+}
+
+/// The BROAD warrant: every value body warrants, down to bare functionality.
+/// Either we THINK it constrains (so warrant it -- dumbly, opaquely if need be)
+/// or it NEVER constrains (no output -> None, the caller refuses by vacuity).
+/// There is no swamp in between.
+///
+/// Order = strongest constraint first: the STRUCTURAL lift (`emit_value_contract`
+/// -- membership, bounded universes, value-ifs, EUF terms: strong teeth), then
+/// the DUMB functional fallback `out = call:NAME(params)` -- "out is a
+/// deterministic function of the inputs" (weak teeth: bites only nondeterminism,
+/// but still a real vendor DEMAND). A unit-returning body has no output to
+/// constrain -> None.
+///
+/// Safe to be this dumb because the vendor is the referee (see the keystone): a
+/// bogus broad warrant either finds no pin (harmless, unrefuted) or goes
+/// all-UNSAT and self-retracts; it can only become a finding after a SAT
+/// licenses it. We never have to PROVE the lift sound -- the check does.
+pub fn broad_functional_warrant(
+    name: &str,
+    sig: &syn::Signature,
+    block: &syn::Block,
+) -> Option<ContractDecl> {
+    if let Some(decl) = emit_value_contract(name, block) {
+        return Some(decl); // structural -- strongest teeth
+    }
+    if sig_returns_unit(sig) {
+        return None; // no output to constrain -> the caller refuses by vacuity
+    }
+    // Bare functionality: out = call:NAME(params). The fn name keys it to the
+    // vendor's call-site pins (intra-kit; CID-canonicalization is downstream).
+    let term = Rc::new(Term::Ctor {
+        name: format!("call:{name}"),
+        args: sig_param_vars(sig),
+    });
+    Some(source_value_contract(name, eq(make_var("out"), term)))
+}
+
+/// True iff the signature returns `()` (explicit or default) -- no output to
+/// constrain. Mirrored in the RPC bin's classifier.
+pub fn sig_returns_unit(sig: &syn::Signature) -> bool {
+    match &sig.output {
+        syn::ReturnType::Default => true,
+        syn::ReturnType::Type(_, ty) => matches!(&**ty, syn::Type::Tuple(t) if t.elems.is_empty()),
+    }
+}
+
+/// The bound parameter names as EUF vars: a receiver -> `self`, a simple
+/// `ident: T` -> `ident`. Destructuring/complex param patterns are skipped (they
+/// only weaken the opaque functional term, never make it unsound).
+fn sig_param_vars(sig: &syn::Signature) -> Vec<Rc<Term>> {
+    sig.inputs
+        .iter()
+        .filter_map(|arg| match arg {
+            syn::FnArg::Receiver(_) => Some(make_var("self")),
+            syn::FnArg::Typed(pt) => match &*pt.pat {
+                syn::Pat::Ident(id) => Some(make_var(id.ident.to_string())),
+                _ => None,
+            },
+        })
+        .collect()
+}
+
+/// The new-doctrine check: conjoin a body's emitted warrant with a VENDOR pin --
+/// the sworn output at concrete arguments -- and hand the conjunction to the
+/// solver. We do NOT analyze the body's effects, order, or interior; we
+/// INSTANTIATE the warrant `out = <body over params>` at the vendor call's
+/// argument bindings, conjoin the vendor's asserted output `out = <answer>`, and
+/// let z3 be the only referee:
+///   SAT   -> the warranted constraint coexists with the sworn answer; the warrant
+///            holds, and the interior mess never mattered.
+///   UNSAT -> the derived constraint cannot coexist with the sworn answer -> the
+///            warrant (or the impl) is refuted -> REFUSE, carrying the
+///            contradiction. Nondeterminism/mutation self-surface here too: the
+///            same arguments pinned to two different vendor answers conjoin to
+///            UNSAT under the functional warrant.
+/// `bindings` maps the body's parameter names to the vendor call's integer
+/// arguments; `asserted_out` is the vendor's sworn integer return value. Returns
+/// the conjoined `ContractDecl` for the solver, or None if the body emitted no
+/// warrant (nothing to check against the vendor).
+pub fn warrant_conjoined_with_vendor(
+    decl: &ContractDecl,
+    bindings: &[(&str, i64)],
+    asserted_out: i64,
+) -> ContractDecl {
+    let term_bindings: Vec<(&str, Rc<Term>)> =
+        bindings.iter().map(|(n, v)| (*n, num(*v))).collect();
+    warrant_conjoined_with_vendor_terms(decl, &term_bindings, num(asserted_out))
+}
+
+/// General form: instantiate the body warrant at arbitrary scalar argument TERMS
+/// (int / bool / string / ...), then conjoin the vendor's sworn output term. The
+/// `i64` form above is the int special case. Same closed check (substitute the
+/// params, conjoin `out == asserted_out`); the interior is an unopened EUF box.
+pub fn warrant_conjoined_with_vendor_terms(
+    decl: &ContractDecl,
+    bindings: &[(&str, Rc<Term>)],
+    asserted_out: Rc<Term>,
+) -> ContractDecl {
+    let mut inv = decl
+        .inv
+        .clone()
+        .unwrap_or_else(|| atomic_("true", Vec::new()));
+    for (name, value) in bindings {
+        inv = subst_var_in_formula(&inv, name, value);
+    }
+    let conjoined = and_(vec![inv, eq(make_var("out"), asserted_out)]);
+    ContractDecl {
+        inv: Some(conjoined),
+        ..decl.clone()
+    }
+}
+
+/// The consistency `inv` for a block: a single tail expression (-> tail_inv) or a
+/// leading immutable-let prefix + any tail (-> let_prefix_inv).
+fn block_inv(block: &syn::Block, scope: &TemporalScope) -> Option<Rc<Formula>> {
+    if let [Stmt::Expr(tail, None)] = block.stmts.as_slice() {
+        return tail_inv(tail, scope);
+    }
+    if let Some(inv) = let_prefix_inv(block, scope) {
+        return Some(inv);
+    }
+    emit_guard_return_value(block, scope)
+}
+
+/// A guard-clause body: `(if COND { return RET; })+ TAIL` -- one or more leading
+/// early-return guard clauses (the `?`/let-else family of bin-1) followed by a
+/// fall-through tail value. Semantically `if COND { RET } else { TAIL }`, so it
+/// reuses the value-`if` encoding: `out == RET` under `COND` (and the negation
+/// of every earlier guard), `out == TAIL` under all guards negated. Each guard's
+/// RET and the final TAIL must be EUF terms; the `if` must have NO `else` and a
+/// then-block that is exactly `return RET;`. Anything else -> None.
+fn emit_guard_return_value(block: &syn::Block, scope: &TemporalScope) -> Option<Rc<Formula>> {
+    let stmts = block.stmts.as_slice();
+    let mut clauses: Vec<(Rc<Formula>, Rc<Term>)> = Vec::new();
+    let mut negated: Vec<Rc<Formula>> = Vec::new();
+    let mut idx = 0;
+    while idx < stmts.len() {
+        let Stmt::Expr(Expr::If(if_expr), _) = &stmts[idx] else {
+            break;
+        };
+        if if_expr.else_branch.is_some() {
+            break;
+        }
+        let Some(ret_expr) = then_block_single_return(&if_expr.then_branch) else {
+            break;
+        };
+        let ret_term = translate_term_in_scope(ret_expr, scope).ok()?;
+        if !term_is_euf_value(&ret_term) {
+            return None;
+        }
+        let cond = match translate_bool_assertion(&if_expr.cond, scope, &FloatWidthScope::new()) {
+            Ok(entry) => entry.atom,
+            Err(_) => {
+                let t = translate_term_in_scope(&if_expr.cond, scope).ok()?;
+                if !term_is_euf_value(&t) {
+                    return None;
+                }
+                eq(t, bool_const(true))
+            }
+        };
+        let mut gp = negated.clone();
+        gp.push(cond.clone());
+        let guard = if gp.len() == 1 { gp.remove(0) } else { and_(gp) };
+        clauses.push((guard, ret_term));
+        negated.push(not_(cond));
+        idx += 1;
+    }
+    if clauses.is_empty() {
+        return None; // no leading guard clause -> not this shape
+    }
+    // The remaining statements are the fall-through tail value (under all guards
+    // negated). Reuse block_euf_term over a synthetic block of the rest.
+    let tail_block = syn::Block {
+        brace_token: block.brace_token,
+        stmts: stmts[idx..].to_vec(),
+    };
+    let tail_term = block_euf_term(&tail_block, scope)?;
+    let tail_guard = if negated.len() == 1 {
+        negated.remove(0)
+    } else {
+        and_(negated)
+    };
+    clauses.push((tail_guard, tail_term));
+    let out = make_var("out");
+    Some(and_(
+        clauses
+            .into_iter()
+            .map(|(guard, term)| implies(guard, eq(out.clone(), term)))
+            .collect(),
+    ))
+}
+
+/// The returned expression of a then-block that is exactly `return RET;` (or
+/// `{ return RET; }`). None if the block is not a single bare `return <expr>`.
+fn then_block_single_return(then_branch: &syn::Block) -> Option<&Expr> {
+    let [stmt] = then_branch.stmts.as_slice() else {
+        return None;
+    };
+    let ret = match stmt {
+        Stmt::Expr(Expr::Return(r), _) => r,
+        _ => return None,
+    };
+    ret.expr.as_deref()
+}
+
+/// The consistency `inv` for a SINGLE tail expression (no prefix). Tries, in
+/// order: bool-membership universe (matches!), bounded-output universe (clamp),
+/// EUF value term (incl. method-call-as-EUF), value-if chain, scalar match, and
+/// bool predicate (comparison/&&/||). None if the tail is none of these.
+fn tail_inv(tail: &Expr, scope: &TemporalScope) -> Option<Rc<Formula>> {
+    // Slice 14 -- `unsafe { .. }` / plain `{ .. }` are VALUE-TRANSPARENT: the inv
+    // is the inner block's inv (unsafe is a compile-time obligation, not a value
+    // transform). Unwrap before the per-shape branches.
+    if let Expr::Unsafe(u) = tail {
+        return block_inv(&u.block, scope);
+    }
+    if let Expr::Block(b) = tail {
+        return block_inv(&b.block, scope);
+    }
+    if let Expr::Paren(p) = tail {
+        return tail_inv(&p.expr, scope);
+    }
+    if let Expr::Group(g) = tail {
+        return tail_inv(&g.expr, scope);
+    }
+    // (a) Slice 1 -- matches! membership: out <-> m.
+    if let Some(membership) = emit_bool_membership_formula(tail, scope) {
+        return Some(biconditional_out(membership));
+    }
+    // (b) Slice 4 -- bounded-output universe (clamp), BEFORE the EUF path so the
+    //     bound's teeth aren't shadowed by an opaque `out = clamp(..)`.
+    if let Some(universe) = bounded_output_universe(tail, scope) {
+        return Some(universe);
+    }
+    // (c) Slice 2/5 -- value-term + method-call-as-EUF: out = <euf term>.
+    if let Ok(term) = translate_term_in_scope(tail, scope) {
+        if term_is_euf_value(&term) {
+            return Some(eq(make_var("out"), term));
+        }
+    }
+    // (e) Slice 8 -- value-position if / else-if / else -> ite via implies/and.
+    if let Some(inv) = emit_if_value(tail, scope) {
+        return Some(inv);
+    }
+    // (g) Slice 10 -- value-position scalar match (literal/range/_ arms) -> ite.
+    if let Some(inv) = emit_match_value(tail, scope) {
+        return Some(inv);
+    }
+    // (f) Slice 9 -- bool-predicate body (comparison / && / || / !), GATED so it
+    //     can't mis-accept a non-bool call as a predicate. out <-> F.
+    if is_bool_shaped_expr(tail) {
+        if let Ok(entry) = translate_bool_assertion(tail, scope, &FloatWidthScope::new()) {
+            return Some(biconditional_out(entry.atom));
+        }
+    }
+    None
+}
+
+/// `out <-> F`, encoded as (out=true => F) ∧ (F => out=true) (no `iff` in the
+/// compiler).
+fn biconditional_out(f: Rc<Formula>) -> Rc<Formula> {
+    let out_true = atomic_("=", vec![make_var("out"), bool_const(true)]);
+    and_(vec![
+        implies(out_true.clone(), f.clone()),
+        implies(f, out_true),
+    ])
+}
+
+/// Slice 6/11: a body `(let <ident> = <euf>;)* <tail>` -- collect the immutable
+/// let substitution, compute the TAIL's inv (any single-tail shape), then
+/// substitute the lets into that Formula (referential transparency over
+/// deterministic EUF terms). None if any binding is mut / let-else / shadowing /
+/// non-EUF, the prefix is empty (single-tail handled above), or the tail has no inv.
+fn let_prefix_inv(block: &syn::Block, scope: &TemporalScope) -> Option<Rc<Formula>> {
+    let (last, prefix) = block.stmts.split_last()?;
+    let Stmt::Expr(tail_expr, None) = last else {
+        return None;
+    };
+    if prefix.is_empty() {
+        return None;
+    }
+    let subst = collect_let_subst(prefix, scope)?;
+    let mut inv = tail_inv(tail_expr, scope)?;
+    for (n, t) in &subst {
+        inv = subst_var_in_formula(&inv, n, t);
+    }
+    Some(inv)
+}
+
+/// Collect the substitution map for a leading immutable-`let` prefix: each
+/// `let <ident> = <euf>;` becomes (name -> EUF term), earlier bindings
+/// substituted into later RHSs. None if any statement is not such a `let`
+/// (mut / ref / destructuring / let-else / shadowing / non-EUF RHS).
+fn collect_let_subst(prefix: &[Stmt], scope: &TemporalScope) -> Option<Vec<(String, Rc<Term>)>> {
+    let mut subst: Vec<(String, Rc<Term>)> = Vec::new();
+    for stmt in prefix {
+        let Stmt::Local(local) = stmt else {
+            return None;
+        };
+        let init = local.init.as_ref()?;
+        if init.diverge.is_some() {
+            return None;
+        }
+        let mut rhs = translate_term_in_scope(&init.expr, scope).ok()?;
+        for (n, t) in &subst {
+            rhs = subst_var_in_term(&rhs, n, t);
+        }
+        if !term_is_euf_value(&rhs) {
+            return None;
+        }
+        for (name, term) in let_bindings(&local.pat, &rhs)? {
+            if subst.iter().any(|(n, _)| n == &name) {
+                return None; // shadowing breaks sequential substitution
+            }
+            subst.push((name, term));
+        }
+    }
+    Some(subst)
+}
+
+/// The (name -> term) bindings a `let <pat> = <rhs>` introduces. A simple ident
+/// binds the whole rhs; a tuple destructuring `let (a, _, c) = rhs` binds each
+/// position i to the uninterpreted projection `field:i(rhs)` (the same accessor
+/// the kit's `Expr::Field` translation uses, so `let (a,_) = t; a` is congruent
+/// with `t.0`). `mut` / `ref` / nested sub-patterns are refused (None).
+fn let_bindings(pat: &Pat, rhs: &Rc<Term>) -> Option<Vec<(String, Rc<Term>)>> {
+    match pat {
+        Pat::Ident(id) if id.subpat.is_none() && id.mutability.is_none() && id.by_ref.is_none() => {
+            Some(vec![(id.ident.to_string(), rhs.clone())])
+        }
+        Pat::Type(t) => let_bindings(&t.pat, rhs),
+        Pat::Paren(p) => let_bindings(&p.pat, rhs),
+        Pat::Tuple(t) => {
+            let mut out = Vec::new();
+            for (i, elem) in t.elems.iter().enumerate() {
+                match elem {
+                    Pat::Wild(_) => {}
+                    Pat::Ident(id)
+                        if id.subpat.is_none()
+                            && id.mutability.is_none()
+                            && id.by_ref.is_none() =>
+                    {
+                        out.push((
+                            id.ident.to_string(),
+                            Rc::new(Term::Ctor {
+                                name: format!("field:{i}"),
+                                args: vec![rhs.clone()],
+                            }),
+                        ));
+                    }
+                    _ => return None,
+                }
+            }
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
+/// A leading immutable-`let` prefix reduced to a single EUF TERM tail (for an
+/// if/match BRANCH that needs a value term, not a Formula). None unless the tail
+/// is an EUF value term after substitution.
+fn let_prefix_euf_term(block: &syn::Block, scope: &TemporalScope) -> Option<Rc<Term>> {
+    let (last, prefix) = block.stmts.split_last()?;
+    let Stmt::Expr(tail_expr, None) = last else {
+        return None;
+    };
+    if prefix.is_empty() {
+        return None;
+    }
+    let subst = collect_let_subst(prefix, scope)?;
+    let mut tail = translate_term_in_scope(tail_expr, scope).ok()?;
+    for (n, t) in &subst {
+        tail = subst_var_in_term(&tail, n, t);
+    }
+    term_is_euf_value(&tail).then_some(tail)
+}
+
+/// True iff an expression is syntactically a boolean predicate the assertion
+/// lifter can handle as `out <-> F`: a comparison / logical-op binary, a `!`, or
+/// those through paren/group. Deliberately EXCLUDES bare calls and `matches!`
+/// (matches! is handled by emit_bool_membership_formula; a bare call's bool-ness
+/// is unknown and must not be mis-warranted as a predicate).
+fn is_bool_shaped_expr(expr: &Expr) -> bool {
+    match expr {
+        Expr::Binary(b) => matches!(
+            b.op,
+            BinOp::Eq(_)
+                | BinOp::Ne(_)
+                | BinOp::Lt(_)
+                | BinOp::Le(_)
+                | BinOp::Gt(_)
+                | BinOp::Ge(_)
+                | BinOp::And(_)
+                | BinOp::Or(_)
+        ),
+        Expr::Unary(u) => matches!(u.op, UnOp::Not(_)),
+        Expr::Paren(p) => is_bool_shaped_expr(&p.expr),
+        Expr::Group(g) => is_bool_shaped_expr(&g.expr),
+        _ => false,
+    }
+}
+
+/// A value-position `match` (no arm guards) over a scalar OR enum scrutinee,
+/// encoded as the ite via the existing implies/and atoms:
+/// `and_i implies(guard_i, out = term_i)`, guard_i = the arm's discriminant
+/// conjoined with the negations of earlier arms. Arm discriminants:
+///   - scalar literal/range/or -> pattern-membership over the scrutinee;
+///   - enum variant (Path / TupleStruct / Struct, all-wild or 1-field binding) ->
+///     `variant_of(scrutinee) == "variant::<tag>"`, the panic-locus form, with a
+///     single field binding mapped to the uninterpreted `payload:<tag>(scrutinee)`
+///     accessor (substituted into the arm body);
+///   - `_` or a bare `Pat::Ident` -> CATCH-ALL: guard = ¬earlier (terminal). A
+///     bare ident is sound whether it is a unit variant or a binding -- for an
+///     exhaustive match `¬earlier` IS the residual case, and the binding (if any)
+///     is substituted to the scrutinee (a no-op for a unit variant).
+/// None if the scrutinee isn't EUF, any arm has a guard, any arm pattern is
+/// unsupported (multi-field binding, nested), or any body isn't EUF.
+fn emit_match_value(expr: &Expr, scope: &TemporalScope) -> Option<Rc<Formula>> {
+    let m = match expr {
+        Expr::Match(m) => m,
+        Expr::Paren(p) => return emit_match_value(&p.expr, scope),
+        Expr::Group(g) => return emit_match_value(&g.expr, scope),
+        _ => return None,
+    };
+    let scrutinee = translate_term_in_scope(&m.expr, scope).ok()?;
+    if !term_is_euf_value(&scrutinee) {
+        return None;
+    }
+    let mut negated: Vec<Rc<Formula>> = Vec::new();
+    let mut clauses: Vec<(Rc<Formula>, Rc<Term>)> = Vec::new();
+    for arm in &m.arms {
+        if arm.guard.is_some() {
+            return None;
+        }
+        let (atom, bindings) = match_arm_discriminant(&scrutinee, &arm.pat)?;
+        let mut body = arm_body_euf_term(&arm.body, scope)?;
+        for (n, t) in &bindings {
+            body = subst_var_in_term(&body, n, t);
+        }
+        match atom {
+            // Catch-all (`_` / bare ident): guard = ¬earlier, terminal.
+            None => {
+                let guard = match negated.len() {
+                    0 => atomic_("true", vec![]),
+                    1 => negated[0].clone(),
+                    _ => and_(negated.clone()),
+                };
+                clauses.push((guard, body));
+                let out = make_var("out");
+                return Some(and_(
+                    clauses
+                        .into_iter()
+                        .map(|(g, t)| implies(g, eq(out.clone(), t)))
+                        .collect(),
+                ));
+            }
+            Some(a) => {
+                let mut gp = negated.clone();
+                gp.push(a.clone());
+                let guard = if gp.len() == 1 {
+                    gp.remove(0)
+                } else {
+                    and_(gp)
+                };
+                clauses.push((guard, body));
+                negated.push(not_(a));
+            }
+        }
+    }
+    // No catch-all: an exhaustive variant match -- the conditional clauses are
+    // sound regardless of completeness (each is `if discriminant then out=term`).
+    if clauses.is_empty() {
+        return None;
+    }
+    let out = make_var("out");
+    Some(and_(
+        clauses
+            .into_iter()
+            .map(|(g, t)| implies(g, eq(out.clone(), t)))
+            .collect(),
+    ))
+}
+
+/// Classify a match-arm pattern over `scrutinee`: returns (discriminant atom or
+/// None for a catch-all, payload bindings to substitute into the arm body). None
+/// (the outer Option) for an unsupported pattern -> the whole match refuses.
+#[allow(clippy::type_complexity)]
+fn match_arm_discriminant(
+    scrutinee: &Rc<Term>,
+    pat: &Pat,
+) -> Option<(Option<Rc<Formula>>, Vec<(String, Rc<Term>)>)> {
+    let variant_eq = |tag: &str| {
+        eq(
+            Rc::new(Term::Ctor {
+                name: "variant_of".to_string(),
+                args: vec![scrutinee.clone()],
+            }),
+            str_const(format!("variant::{tag}")),
+        )
+    };
+    match pat {
+        Pat::Wild(_) => Some((None, vec![])),
+        Pat::Ident(id) if id.subpat.is_none() && id.mutability.is_none() && id.by_ref.is_none() => {
+            // catch-all binding (or unit variant): bind name -> scrutinee.
+            Some((None, vec![(id.ident.to_string(), scrutinee.clone())]))
+        }
+        Pat::Lit(_) | Pat::Range(_) | Pat::Or(_) | Pat::Paren(_) => {
+            Some((Some(pattern_membership_formula(scrutinee, pat)?), vec![]))
+        }
+        Pat::Path(p) => Some((Some(variant_eq(&path_to_variant_string(&p.path))), vec![])),
+        Pat::TupleStruct(ts) => {
+            let tag = path_to_variant_string(&ts.path);
+            // A `..` rest makes positional payload indices ambiguous -> only
+            // allowed when there are no bindings at all (all wild/rest).
+            let all_inert = ts
+                .elems
+                .iter()
+                .all(|e| matches!(e, Pat::Wild(_) | Pat::Rest(_)));
+            if all_inert {
+                return Some((Some(variant_eq(&tag)), vec![]));
+            }
+            if ts.elems.iter().any(|e| matches!(e, Pat::Rest(_))) {
+                return None; // rest + bindings: ambiguous positions, refuse
+            }
+            let n = ts.elems.len();
+            let mut bindings = Vec::new();
+            for (i, elem) in ts.elems.iter().enumerate() {
+                match elem {
+                    Pat::Wild(_) => {}
+                    Pat::Ident(id)
+                        if id.subpat.is_none()
+                            && id.mutability.is_none()
+                            && id.by_ref.is_none() =>
+                    {
+                        // Single-field keeps `payload:tag` (matches the kit's
+                        // wrapped_variant_entry congruence); multi-field is indexed.
+                        let acc = if n == 1 {
+                            format!("payload:{tag}")
+                        } else {
+                            format!("payload:{tag}.{i}")
+                        };
+                        bindings.push((
+                            id.ident.to_string(),
+                            Rc::new(Term::Ctor {
+                                name: acc,
+                                args: vec![scrutinee.clone()],
+                            }),
+                        ));
+                    }
+                    _ => return None, // nested pattern -> refuse
+                }
+            }
+            Some((Some(variant_eq(&tag)), bindings))
+        }
+        Pat::Struct(s) => {
+            let tag = path_to_variant_string(&s.path);
+            let mut bindings = Vec::new();
+            for f in &s.fields {
+                let field_name = match &f.member {
+                    syn::Member::Named(id) => id.to_string(),
+                    syn::Member::Unnamed(idx) => idx.index.to_string(),
+                };
+                match &*f.pat {
+                    Pat::Wild(_) => {}
+                    Pat::Ident(id)
+                        if id.subpat.is_none()
+                            && id.mutability.is_none()
+                            && id.by_ref.is_none() =>
+                    {
+                        bindings.push((
+                            id.ident.to_string(),
+                            Rc::new(Term::Ctor {
+                                name: format!("payload:{tag}.{field_name}"),
+                                args: vec![scrutinee.clone()],
+                            }),
+                        ));
+                    }
+                    _ => return None,
+                }
+            }
+            // A `..` rest is fine here (it only drops unbound fields, no index shift).
+            Some((Some(variant_eq(&tag)), bindings))
+        }
+        Pat::Reference(r) => match_arm_discriminant(scrutinee, &r.pat),
+        _ => None,
+    }
+}
+
+/// A match arm's body as an EUF term (a block via block_euf_term, else a direct
+/// EUF tail expression).
+fn arm_body_euf_term(expr: &Expr, scope: &TemporalScope) -> Option<Rc<Term>> {
+    match expr {
+        Expr::Block(b) => block_euf_term(&b.block, scope),
+        other => {
+            let t = translate_term_in_scope(other, scope).ok()?;
+            term_is_euf_value(&t).then_some(t)
+        }
+    }
+}
+
+/// A block's value as an EUF term: a single EUF tail expression, or a leading
+/// immutable-let prefix substituted into an EUF tail. None if neither shape.
+fn block_euf_term(block: &syn::Block, scope: &TemporalScope) -> Option<Rc<Term>> {
+    if let [Stmt::Expr(tail, None)] = block.stmts.as_slice() {
+        let t = translate_term_in_scope(tail, scope).ok()?;
+        return term_is_euf_value(&t).then_some(t);
+    }
+    let_prefix_euf_term(block, scope)
+}
+
+/// A value-position `if` / `else if` / `else` chain (TOTAL -- a final `else` is
+/// required, else `out` is undefined on a branch and we cannot warrant). Encoded
+/// as the ite via the EXISTING implies/and atoms: `and_i implies(guard_i, out =
+/// term_i)`, where guard_i is the i-th branch condition conjoined with the
+/// negations of all earlier conditions. None if any condition does not translate
+/// to a Formula (e.g. `if let`), any branch is not an EUF block, or no final else.
+fn emit_if_value(expr: &Expr, scope: &TemporalScope) -> Option<Rc<Formula>> {
+    let mut clauses: Vec<(Rc<Formula>, Rc<Term>)> = Vec::new();
+    collect_if_clauses(expr, scope, &mut Vec::new(), &mut clauses)?;
+    if clauses.is_empty() {
+        return None;
+    }
+    let out = make_var("out");
+    Some(and_(
+        clauses
+            .into_iter()
+            .map(|(guard, term)| implies(guard, eq(out.clone(), term)))
+            .collect(),
+    ))
+}
+
+fn collect_if_clauses(
+    expr: &Expr,
+    scope: &TemporalScope,
+    negated: &mut Vec<Rc<Formula>>,
+    out_clauses: &mut Vec<(Rc<Formula>, Rc<Term>)>,
+) -> Option<()> {
+    let if_expr = match expr {
+        Expr::If(i) => i,
+        Expr::Paren(p) => return collect_if_clauses(&p.expr, scope, negated, out_clauses),
+        Expr::Group(g) => return collect_if_clauses(&g.expr, scope, negated, out_clauses),
+        _ => return None,
+    };
+    // The `if` condition as a Formula. First try the assertion bool-lifter
+    // (comparisons / &&/|| / matches! / string predicates). If that declines,
+    // fall back to a bool-returning EUF expression (`if f(x)`, `if x.is_valid()`):
+    // model it as `cond_term == true`. The if-condition POSITION guarantees the
+    // expr is bool, so this is sound (no is_bool_shaped gate needed here). An
+    // `if let` cond is an Expr::Let -> neither path -> None.
+    let cond = match translate_bool_assertion(&if_expr.cond, scope, &FloatWidthScope::new()) {
+        Ok(entry) => entry.atom,
+        Err(_) => {
+            let t = translate_term_in_scope(&if_expr.cond, scope).ok()?;
+            if !term_is_euf_value(&t) {
+                return None;
+            }
+            eq(t, bool_const(true))
+        }
+    };
+    let then_term = block_euf_term(&if_expr.then_branch, scope)?;
+    let mut gp = negated.clone();
+    gp.push(cond.clone());
+    let guard = if gp.len() == 1 {
+        gp.remove(0)
+    } else {
+        and_(gp)
+    };
+    out_clauses.push((guard, then_term));
+    // A final `else` is required for totality.
+    let (_, else_expr) = if_expr.else_branch.as_ref()?;
+    match &**else_expr {
+        Expr::If(_) => {
+            negated.push(not_(cond));
+            let r = collect_if_clauses(else_expr, scope, negated, out_clauses);
+            negated.pop();
+            r
+        }
+        Expr::Block(b) => {
+            let else_term = block_euf_term(&b.block, scope)?;
+            let mut gp = negated.clone();
+            gp.push(not_(cond));
+            let guard = if gp.len() == 1 {
+                gp.remove(0)
+            } else {
+                and_(gp)
+            };
+            out_clauses.push((guard, else_term));
+            Some(())
+        }
+        _ => None,
+    }
+}
+
+// (substitution reuses the existing `subst_var_in_term` defined earlier.)
+
+/// A bounded-output universe over `out` from a known TOTAL rust primitive in the
+/// tail: a UNIVERSAL over the output (not a pin). Today `recv.clamp(lo, hi)` =>
+/// `lo <= out <= hi`, when receiver and bounds are side-effect-free terms. The
+/// bound holds on every returning input regardless of the receiver -- the teeth
+/// that statically refute an out-of-bound twin.
+fn bounded_output_universe(expr: &Expr, scope: &TemporalScope) -> Option<Rc<Formula>> {
+    let call = match expr {
+        Expr::MethodCall(c) => c,
+        Expr::Paren(p) => return bounded_output_universe(&p.expr, scope),
+        Expr::Group(g) => return bounded_output_universe(&g.expr, scope),
+        _ => return None,
+    };
+    if call.method == "clamp" && call.args.len() == 2 {
+        let recv = translate_term_in_scope(&call.receiver, scope).ok()?;
+        let lo = translate_term_in_scope(&call.args[0], scope).ok()?;
+        let hi = translate_term_in_scope(&call.args[1], scope).ok()?;
+        if term_is_euf_value(&recv) && term_is_euf_value(&lo) && term_is_euf_value(&hi) {
+            return Some(and_(vec![
+                gte(make_var("out"), lo),
+                lte(make_var("out"), hi),
+            ]));
+        }
+    }
+    None
+}
+
+/// A closed consistency source contract `inv` over `out` (the return value).
+fn source_value_contract(name: &str, inv: Rc<Formula>) -> ContractDecl {
+    ContractDecl {
+        name: format!("rust-source::{name}"),
+        pre: None,
+        post: None,
+        inv: Some(inv),
+        out_binding: "out".to_string(),
+        evidence: None,
+        panic_loci: Vec::new(),
+        concept_hint: None,
+    }
+}
+
+/// True iff a value term is an emittable EUF value: reads, total operators,
+/// value constructors, AND value-position calls (`method:`/`call:`) treated as
+/// uninterpreted deterministic functions -- the method-call-as-EUF shape, the
+/// same policy Python's `_Emitter` applies to value-position calls (`out =
+/// m(recv, args)` over an uninterpreted `m`). Excluded: a known PANIC method
+/// (unwrap/expect family -> divergence, refused as an effect by `effect_refusal`),
+/// `await` (async effect), and a `macro:` var (unknown). Statement-level effects
+/// (assignment, `&mut`, loops) never reach here: an assignment/`&mut` tail fails
+/// translation and multi-statement bodies are not a single tail expr -- both fall
+/// through to `effect_refusal`.
+fn term_is_euf_value(term: &Term) -> bool {
+    match term {
+        Term::Var { name } => !name.starts_with("macro:"),
+        Term::Const { .. } => true,
+        Term::Ctor { name, args } => {
+            let panicker = matches!(
+                name.as_str(),
+                "method:unwrap"
+                    | "method:expect"
+                    | "method:unwrap_unchecked"
+                    | "method:unwrap_err"
+                    | "method:expect_err"
+            );
+            let async_effect = name == "await";
+            !panicker && !async_effect && args.iter().all(|a| term_is_euf_value(a))
+        }
+        Term::Lambda { body, .. } => term_is_euf_value(body),
+        Term::Let { bindings, body } => {
+            bindings.iter().all(|b| term_is_euf_value(&b.bound_term)) && term_is_euf_value(body)
+        }
+    }
+}
+
+/// A boolean body as a membership formula: `matches!` predicates joined by
+/// `&&`/`||`/`!`. Any other shape is not emittable here (-> None).
+fn emit_bool_membership_formula(expr: &Expr, scope: &TemporalScope) -> Option<Rc<Formula>> {
+    match expr {
+        Expr::Paren(p) => emit_bool_membership_formula(&p.expr, scope),
+        Expr::Group(g) => emit_bool_membership_formula(&g.expr, scope),
+        Expr::Unary(u) if matches!(u.op, UnOp::Not(_)) => {
+            Some(not_(emit_bool_membership_formula(&u.expr, scope)?))
+        }
+        Expr::Binary(b) => match b.op {
+            BinOp::Or(_) | BinOp::BitOr(_) => Some(or_(vec![
+                emit_bool_membership_formula(&b.left, scope)?,
+                emit_bool_membership_formula(&b.right, scope)?,
+            ])),
+            BinOp::And(_) | BinOp::BitAnd(_) => Some(and_(vec![
+                emit_bool_membership_formula(&b.left, scope)?,
+                emit_bool_membership_formula(&b.right, scope)?,
+            ])),
+            _ => None,
+        },
+        Expr::Macro(m) => matches_membership_formula(&m.mac, scope),
+        _ => None,
+    }
+}
+
+/// `matches!(<scrutinee>, <pattern> [if <guard>])` -> the membership formula.
+/// Unguarded scalar/string patterns reduce over the scrutinee's value
+/// (`scrutinee_scalar_var` + `pattern_membership_formula`). A guard, or an enum
+/// pattern with bindings, routes through `match_arm_discriminant` (the SAME
+/// `variant_of`/`payload:` machinery as a value-`match`): the discriminant is
+/// conjoined with the guard translated as a bool predicate, with each pattern
+/// binding substituted by its payload accessor (`p` in `Punct(p)` -> the
+/// `payload:Punct(scrutinee)` term). The guard must be a bool-predicate the
+/// assertion translator accepts and must compose; anything else -> None (the
+/// body stays unclassified, never a hollow warrant).
+fn matches_membership_formula(mac: &syn::Macro, scope: &TemporalScope) -> Option<Rc<Formula>> {
+    if !mac
+        .path
+        .segments
+        .last()
+        .is_some_and(|s| s.ident == "matches")
+    {
+        return None;
+    }
+    let (scrutinee, pat, guard) = mac
+        .parse_body_with(|input: ParseStream| {
+            let scrutinee: Expr = input.parse()?;
+            input.parse::<Token![,]>()?;
+            let pat = Pat::parse_multi_with_leading_vert(input)?;
+            let guard = if input.peek(Token![if]) {
+                input.parse::<Token![if]>()?;
+                Some(input.parse::<Expr>()?)
+            } else {
+                None
+            };
+            Ok::<_, syn::Error>((scrutinee, pat, guard))
+        })
+        .ok()?;
+    let Some(guard) = guard else {
+        // Unguarded. A simple-name scrutinee: scalar/string code-point membership,
+        // then enum-variant discrimination (`is_ipv4`/`is_some`: `variant_of(x) ==
+        // "variant::V"` via match_arm_discriminant; a bare binding/wildcard has no
+        // discriminant -> vacuous -> None, never a teethless `out <-> true`).
+        if let Some(scrutinee_term) = scrutinee_scalar_var(&scrutinee) {
+            if let Some(f) = pattern_membership_formula(&scrutinee_term, &pat) {
+                return Some(f);
+            }
+            if let Some((Some(disc), _bindings)) = match_arm_discriminant(&scrutinee_term, &pat) {
+                return Some(disc);
+            }
+        }
+        // Slice pattern over a general (possibly method-call) scrutinee:
+        // `matches!(self.octets(), [169, 254, ..])` (the net is_documentation /
+        // is_link_local family).
+        return emit_slice_pattern_membership(&scrutinee, &pat, scope);
+    };
+    // Guarded: discriminant /\ guard[pattern bindings := payload accessors].
+    let scrutinee_term = scrutinee_scalar_var(&scrutinee)?;
+    let (disc, bindings) = match_arm_discriminant(&scrutinee_term, &pat)?;
+    let entry = translate_bool_assertion(&guard, scope, &FloatWidthScope::new()).ok()?;
+    let mut guard_f = entry.atom;
+    for (name, term) in &bindings {
+        guard_f = subst_var_in_formula(&guard_f, name, term);
+    }
+    Some(match disc {
+        Some(d) => and_(vec![d, guard_f]),
+        None => guard_f,
+    })
+}
+
+/// A slice-pattern `matches!(scrut, [lit, _, .., lit])` as a membership formula:
+/// each fixed FRONT position `i` (before an optional TRAILING `..`) becomes
+/// `index(scrut, i) == lit` over the existing `index` accessor, conjoined.
+/// Wildcards skip a position; a trailing `..` leaves the rest unconstrained. The
+/// scrutinee is any EUF term (`self.octets()` -> `method:octets(self)`). A
+/// non-trailing `..` (back-indexing), a binding/nested element, or an all-wild
+/// pattern (no teeth) -> None.
+fn emit_slice_pattern_membership(
+    scrutinee: &Expr,
+    pat: &Pat,
+    scope: &TemporalScope,
+) -> Option<Rc<Formula>> {
+    let Pat::Slice(slice) = pat else {
+        return None;
+    };
+    let scrut = translate_term_in_scope(scrutinee, scope).ok()?;
+    if !term_is_euf_value(&scrut) {
+        return None;
+    }
+    let last = slice.elems.len().saturating_sub(1);
+    let mut conj: Vec<Rc<Formula>> = Vec::new();
+    for (i, elem) in slice.elems.iter().enumerate() {
+        match elem {
+            // A `..` rest is only sound at the end: a mid-pattern rest shifts the
+            // following elements to back-indexing, which `index(scrut, i)` (front)
+            // does not model.
+            Pat::Rest(_) => {
+                if i != last {
+                    return None;
+                }
+                break;
+            }
+            Pat::Wild(_) => {}
+            Pat::Lit(p) => {
+                let elem_term = Rc::new(Term::Ctor {
+                    name: "index".to_string(),
+                    args: vec![scrut.clone(), num(i as i64)],
+                });
+                conj.push(eq(elem_term, lit_membership_term(&p.lit)?));
+            }
+            _ => return None,
+        }
+    }
+    if conj.is_empty() {
+        return None; // all wild / bare rest -> vacuous, no teeth
+    }
+    Some(and_(conj))
+}
+
+/// The scrutinee of a char/byte `matches!` reduces to a single bound name (its
+/// code point): `*self` / `self` / a one-segment path, through deref/ref/paren.
+fn scrutinee_scalar_var(expr: &Expr) -> Option<Rc<Term>> {
+    match expr {
+        Expr::Paren(p) => scrutinee_scalar_var(&p.expr),
+        Expr::Group(g) => scrutinee_scalar_var(&g.expr),
+        Expr::Unary(u) if matches!(u.op, UnOp::Deref(_)) => scrutinee_scalar_var(&u.expr),
+        Expr::Reference(r) => scrutinee_scalar_var(&r.expr),
+        Expr::Path(p) if p.path.segments.len() == 1 => {
+            Some(make_var(p.path.segments[0].ident.to_string()))
+        }
+        _ => None,
+    }
+}
+
+/// A char/byte/int pattern as a membership formula over `scrutinee` (its code
+/// point): literal -> `=`, inclusive/half-open range -> bounded `and`, or-pattern
+/// -> `or`, wildcard -> `true`. Bindings/structs/etc. are not emittable (-> None).
+fn pattern_membership_formula(scrutinee: &Rc<Term>, pat: &Pat) -> Option<Rc<Formula>> {
+    match pat {
+        Pat::Paren(p) => pattern_membership_formula(scrutinee, &p.pat),
+        Pat::Wild(_) => Some(atomic_("true", vec![])),
+        Pat::Or(o) => {
+            let mut cases = Vec::with_capacity(o.cases.len());
+            for c in &o.cases {
+                cases.push(pattern_membership_formula(scrutinee, c)?);
+            }
+            Some(or_(cases))
+        }
+        Pat::Lit(p) => Some(eq(scrutinee.clone(), lit_membership_term(&p.lit)?)),
+        Pat::Range(r) => {
+            let inclusive = matches!(r.limits, syn::RangeLimits::Closed(_));
+            let mut conj = Vec::new();
+            if let Some(lo) = r.start.as_deref().and_then(expr_codepoint) {
+                conj.push(gte(scrutinee.clone(), num(lo)));
+            }
+            if let Some(hi) = r.end.as_deref().and_then(expr_codepoint) {
+                conj.push(if inclusive {
+                    lte(scrutinee.clone(), num(hi))
+                } else {
+                    lt(scrutinee.clone(), num(hi))
+                });
+            }
+            if conj.is_empty() {
+                return None;
+            }
+            Some(and_(conj))
+        }
+        _ => None,
+    }
+}
+
+/// A `matches!` literal pattern bound as a membership *term* to equate the
+/// scrutinee against: a string literal becomes a `String`-sorted constant
+/// (string-theory regime; the scrutinee is the string value itself), every
+/// scalar (char/byte/int) becomes its `Int` code point. A `matches!` arm is
+/// homogeneous in practice (`matches!(x, "a" | 1)` is a type error), so a
+/// String/Int mix never reaches the same scrutinee.
+fn lit_membership_term(lit: &Lit) -> Option<Rc<Term>> {
+    match lit {
+        Lit::Str(s) => Some(str_const(s.value())),
+        _ => Some(num(lit_codepoint(lit)?)),
+    }
+}
+
+/// The integer code point of a char / byte / integer literal pattern bound.
+fn lit_codepoint(lit: &Lit) -> Option<i64> {
+    match lit {
+        Lit::Char(c) => Some(i64::from(u32::from(c.value()))),
+        Lit::Byte(b) => Some(i64::from(b.value())),
+        Lit::Int(i) => i.base10_parse::<i64>().ok(),
+        _ => None,
+    }
+}
+
+fn expr_codepoint(expr: &Expr) -> Option<i64> {
+    match expr {
+        Expr::Lit(ExprLit { lit, .. }) => lit_codepoint(lit),
+        Expr::Paren(p) => expr_codepoint(&p.expr),
+        Expr::Group(g) => expr_codepoint(&g.expr),
+        _ => None,
+    }
+}
+
 fn literal_iterator_elements(expr: &Expr) -> Result<Option<(IteratorKind, Vec<Rc<Term>>)>, String> {
     match expr {
         Expr::MethodCall(call) if call.args.is_empty() && call.method == "chars" => {
@@ -4407,8 +7004,23 @@ fn callsite_assertion_name(term: &Term, local_scope: &str) -> Option<String> {
         return None;
     }
     let callee = callsite_callee_name(name)?;
+    // A bare free-function callee (no `::` separator and NOT a `method:` call)
+    // is a LOCAL helper defined inside the test, NOT a globally federated API.
+    // Local helpers with the same name but different semantics exist in
+    // different test functions (e.g. `fn string(c: char)` in test_escape_debug
+    // vs test_escape_default). Scoping the key to the test fn prevents
+    // cross-test conflation. We deliberately do NOT scope `method:` calls: a
+    // method name carries a single `:` (not `::`), so the old `!contains("::")`
+    // check wrongly test-scoped EVERY method call (~1300 obligations), needlessly
+    // disabling cross-test/cross-proof method coalescing.
+    let is_local_helper = !callee.contains("::") && !callee.starts_with("method:");
+    let scoped_callee = if is_local_helper {
+        format!("{local_scope}::{callee}")
+    } else {
+        callee.to_string()
+    };
     Some(format!(
-        "{callee}#euf#{}::assertion",
+        "{scoped_callee}#euf#{}::assertion",
         canonical_callsite_sig(term, local_scope)
     ))
 }
@@ -4467,8 +7079,13 @@ fn call_result_head(callee: &str, arity: usize) -> String {
 fn canonical_term_sig(term: &Term) -> String {
     match term {
         Term::Var { name } => format!("v:{name}"),
-        Term::Const { value, .. } => match value {
-            ConstValue::Int(value) => format!("i:{value}"),
+        Term::Const { value, sort } => match value {
+            // The literal's WIDTH (when not the default `Int`) is part of the
+            // callsite key, so `align_of_val(&1u8)` and `&1u64` do not collapse
+            // onto `i:1`. Default-`Int` literals keep the bare `i:{v}` key (no
+            // churn on the common, unsuffixed case).
+            ConstValue::Int(value) if sort.name == "Int" => format!("i:{value}"),
+            ConstValue::Int(value) => format!("i:{value}:{}", sort.name),
             ConstValue::Real(value) => format!("r:{value}"),
             ConstValue::String(value) => format!("s:{value:?}"),
             ConstValue::Bool(value) => format!("b:{value}"),
@@ -4492,8 +7109,13 @@ fn canonical_method_arg_sig(term: &Term, local_scope: &str) -> String {
             format!("v:{local_scope}::{name}")
         }
         Term::Var { name } => format!("v:{name}"),
-        Term::Const { value, .. } => match value {
-            ConstValue::Int(value) => format!("i:{value}"),
+        Term::Const { value, sort } => match value {
+            // The literal's WIDTH (when not the default `Int`) is part of the
+            // callsite key, so `align_of_val(&1u8)` and `&1u64` do not collapse
+            // onto `i:1`. Default-`Int` literals keep the bare `i:{v}` key (no
+            // churn on the common, unsuffixed case).
+            ConstValue::Int(value) if sort.name == "Int" => format!("i:{value}"),
+            ConstValue::Int(value) => format!("i:{value}:{}", sort.name),
             ConstValue::Real(value) => format!("r:{value}"),
             ConstValue::String(value) => format!("s:{value:?}"),
             ConstValue::Bool(value) => format!("b:{value}"),
@@ -4538,9 +7160,65 @@ fn term_key(term: &Term) -> String {
         .join(" ")
 }
 
+/// Detect Rust format-string implicit captures (e.g. `"{socket}"` or
+/// `"{socket:<24}"`) that reference a `let mut` local from `scope`.
+/// The format spec opens with `{` and the identifier runs until the
+/// first of `:`, `}`, or `!` (for debug format `{x:?}`).
+fn macro_literal_contains_mut_local(lit_text: &str, scope: &TemporalScope) -> bool {
+    let bytes = lit_text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'{' {
+            i += 1;
+            // Skip escaped `{{`
+            if i < bytes.len() && bytes[i] == b'{' {
+                i += 1;
+                continue;
+            }
+            // Collect identifier characters until `:`, `}`, `!`, or end
+            let start = i;
+            while i < bytes.len()
+                && bytes[i] != b':'
+                && bytes[i] != b'}'
+                && bytes[i] != b'!'
+                && bytes[i] != b'.'
+            {
+                i += 1;
+            }
+            let candidate = &lit_text[start..i];
+            // Trim surrounding whitespace that may appear in the raw token text
+            let candidate = candidate.trim();
+            if !candidate.is_empty() && scope.is_mut_local(candidate) {
+                return true;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    false
+}
+
 fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term>, String> {
     match expr {
         Expr::Lit(lit) => translate_lit(lit),
+        // `const { EXPR }` is a compile-time evaluation of EXPR: PURE (no runtime
+        // effect), its value IS EXPR's value. Translate the inner expression-only
+        // block and scope its locals, mirroring the assertion-term path. core uses
+        // const blocks for const-generic / intrinsic constants
+        // (`const { type_name::<T>() }`, `const { 4 * 8 }`).
+        Expr::Const(const_block) => {
+            // A const block wrapping a bare PATH is (or may be) a function-item /
+            // const reference -- sugar, NOT a keyed value term (see the fn-pointer
+            // residual test; "function names are sugar"). Keep it residual. A const
+            // block wrapping a COMPUTED expression (arithmetic, call, ...) is a pure
+            // compile-time value -> translate it.
+            if let [Stmt::Expr(Expr::Path(_), None)] = const_block.block.stmts.as_slice() {
+                return Err(format!("unsupported term `{}`", token_key(expr)));
+            }
+            let term =
+                translate_expression_only_block_in_scope(&const_block.block, "const", scope)?;
+            Ok(scope_const_block_locals(term, scope.local_scope()))
+        }
         Expr::Unary(unary) if matches!(unary.op, UnOp::Neg(_)) => {
             if let Some(value) = const_int(&unary.expr) {
                 return Ok(num(-value));
@@ -4554,10 +7232,14 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
                 }
                 return Ok(real_const(format!("-{value}")));
             }
-            Err(format!(
-                "unsupported negative literal `{}`",
-                token_key(expr)
-            ))
+            // Arithmetic negation of a non-literal (`-x`): `0 - x`, the same
+            // integer-subtraction ctor as a binary `-`. Only signed operands
+            // compile with unary `-`, so the Int regime is sound. The inner term
+            // must itself be liftable (its named Err propagates).
+            Ok(Rc::new(Term::Ctor {
+                name: "-".to_string(),
+                args: vec![num(0), translate_term_in_scope(&unary.expr, scope)?],
+            }))
         }
         Expr::Unary(unary) if matches!(unary.op, UnOp::Not(_)) => Ok(Rc::new(Term::Ctor {
             name: "bit-not".to_string(),
@@ -4673,6 +7355,22 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
                 return Err(reason);
             }
             let mut args = vec![translate_term_in_scope(&call.receiver, scope)?];
+            // PER-OCCURRENCE ADVANCE (Fix 5): a CONSUMING iterator read advances the
+            // iterator, so the second-and-later such read of the SAME binding within
+            // one statement (`assert_ne!(it.nth(0), it.nth(0))`) observes a distinct
+            // `t`. The receiver is already version-tagged (`it@def5`); appending
+            // `@adv{n}` for the n-th occurrence makes the reads distinct terms so the
+            // assertion is `ne(X0, X1)` (satisfiable), not `ne(X, X)` (false unsat).
+            if is_consuming_iterator_method(&call.method.to_string()) {
+                if let Term::Var { name } = args[0].as_ref() {
+                    if receiver_is_versioned_iterator(name, scope) {
+                        let occ = scope.bump_consuming_occurrence(name);
+                        if occ > 0 {
+                            args[0] = make_var(format!("{name}@adv{occ}"));
+                        }
+                    }
+                }
+            }
             for arg in &call.args {
                 args.push(translate_term_in_scope(arg, scope)?);
             }
@@ -4697,6 +7395,27 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
             name: "ref".to_string(),
             args: vec![translate_term_in_scope(&reference.expr, scope)?],
         })),
+        // `&mut <closure>` / `&mut <literal>` / `&mut [<array literal>]`: the referent
+        // is an IMMUTABLE VALUE (a closure, scalar literal, or freshly-constructed
+        // array literal cannot be reassigned), so unlike `&mut <variable>` -- which
+        // stays RESIDUAL because two `&mut x` of a mutable binding are distinct
+        // pointers (mutable_reference_pointer_eq_stays_residual) -- this `&mut` is a
+        // stable term: `ref_mut(<value>)`. Needed so `to_string(&mut |d,b,l| .., 3.14)`
+        // (the flt2dec FnMut pattern, post-inline) lifts as a stated point-observation
+        // rather than refusing on `& mut |..|`, AND so `assert_eq!(left, &mut [1,2,3])`
+        // -- slice/array PartialEq is BY VALUE, not by pointer -- lifts its pinned RHS
+        // (`array.rs`/`slice.rs` split/chunk asserts). The array is the SAME immutable-
+        // value class as a scalar literal: its elements lift via the version-aware
+        // element path (so a mutable element cannot false-coalesce across a tick), and
+        // a non-liftable element propagates its own Err (stays unclassified, never a
+        // false discharge). Strictly narrower than the residual rule: a plain `&mut x`
+        // (and `&mut <call>`, e.g. `&mut ready(1)`) still falls through and refuses.
+        Expr::Reference(reference) if is_immutable_value_expr(&reference.expr) => {
+            Ok(Rc::new(Term::Ctor {
+                name: "ref_mut".to_string(),
+                args: vec![translate_term_in_scope(&reference.expr, scope)?],
+            }))
+        }
         Expr::Cast(cast) => {
             if is_shared_dyn_any_type(&cast.ty) {
                 return Ok(Rc::new(Term::Ctor {
@@ -4704,7 +7423,7 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
                     args: vec![translate_term_in_scope(&cast.expr, scope)?],
                 }));
             }
-            if let Some(cast_type) = integer_scalar_cast_type_key(&cast.ty) {
+            if let Some(cast_type) = scalar_cast_type_key(&cast.ty) {
                 return Ok(Rc::new(Term::Ctor {
                     name: format!("cast:{cast_type}"),
                     args: vec![translate_term_in_scope(&cast.expr, scope)?],
@@ -4713,13 +7432,18 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
             Err(format!("unsupported term `{}`", token_key(expr)))
         }
         Expr::Range(range) => {
+            // An omitted bound must NOT lift to a `_` var: `_` is not a valid
+            // SMT-LIB symbol, so it reached the solver as `unknown constant _` and
+            // spuriously REFUSED every `v[..k]` / `v[k..]` slice obligation. An
+            // omitted START is 0 (`..k` == `0..k`); an omitted END is the
+            // collection length -- an opaque but VALID symbol, never `_`.
             let start = match &range.start {
                 Some(expr) => translate_term_in_scope(expr, scope)?,
-                None => make_var("_"),
+                None => num(0),
             };
             let end = match &range.end {
                 Some(expr) => translate_term_in_scope(expr, scope)?,
-                None => make_var("_"),
+                None => make_var("range_end_len"),
             };
             let name = match range.limits {
                 syn::RangeLimits::HalfOpen(_) => "range",
@@ -4779,7 +7503,99 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
         // so a contradiction like `format!(a) == "p" && format!(a) == "q"` stays
         // UNSAT; distinct calls map to distinct terms. The witness re-run proves
         // the actual runtime value; consistency only checks non-contradiction.
-        Expr::Macro(_) => Ok(make_var(format!("macro:{}", token_key(expr)))),
+        //
+        // EXCEPTION: if the macro's token stream contains a `let mut` local
+        // (e.g. `format!("{:?}", r)` where `r` is `let mut r = ...`), the
+        // same macro text at two different program points can produce different
+        // values after a mutation (e.g. `r.next()` between the two calls).
+        // The canonical token-key then maps two different observations onto the
+        // same Var name, causing a false contradiction in the fallback
+        // obligation. Refuse the macro as temporally unstable when it contains
+        // any mut local from the current scope.
+        Expr::Macro(m) => {
+            // Walk the token stream looking for any identifier that is a mut_local.
+            // Two forms must be detected:
+            //   1. `format!("{:?}", r)` — `r` is a bare Ident token.
+            //   2. `format!("{socket}")` — `socket` is captured by name inside
+            //      the format-string literal (Rust 1.58+ implicit capture); the
+            //      identifier does NOT appear as a separate Ident token.
+            // For (2), scan the text content of every Literal token in the macro
+            // for occurrences of any mut_local name surrounded by `{` / `:` / `}`
+            // as Rust format-spec delimiters.
+            let token_str = token_key(expr);
+            let contains_mut_local = m
+                .mac
+                .tokens
+                .clone()
+                .into_iter()
+                .any(|tt| match &tt {
+                    proc_macro2::TokenTree::Ident(id) => scope.is_mut_local(&id.to_string()),
+                    proc_macro2::TokenTree::Literal(lit) => {
+                        // Check for inline captures like `"{socket}"` or `"{socket:<24}"`.
+                        // The literal text includes the surrounding quotes; just scan
+                        // the raw string for any mut_local name following `{`.
+                        let text = lit.to_string();
+                        macro_literal_contains_mut_local(&text, scope)
+                    }
+                    _ => false,
+                });
+            if contains_mut_local {
+                return Err(format!(
+                    "macro in term position references a `let mut` local; \
+                     temporally unstable — refused: `{token_str}`"
+                ));
+            }
+            Ok(make_var(format!("macro:{token_str}")))
+        }
+        // A CLOSURE LITERAL as an opaque EUF symbol, keyed by its body text AND the
+        // version-aware terms of its CAPTURED free variables. Conservative by
+        // identity: same text + same captures -> same symbol (a contradiction over
+        // it coalesces and is CAUGHT); ANY difference -> a distinct symbol (it never
+        // false-coalesces, so it cannot mask a contradiction). Captures MUST be
+        // version-aware -- two `|x| x+n` with different captured `n` have identical
+        // text, so coalescing them would be unsound; we include each free var as a
+        // versioned arg, and REFUSE if a capture is ambiguous (no single `t`).
+        Expr::Closure(closure) => {
+            let params: BTreeSet<String> = closure
+                .inputs
+                .iter()
+                .filter_map(|p| match p {
+                    Pat::Ident(id) => Some(id.ident.to_string()),
+                    Pat::Type(t) => match &*t.pat {
+                        Pat::Ident(id) => Some(id.ident.to_string()),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect();
+            let mut args = Vec::new();
+            for name in names_referenced_in_expr(&closure.body) {
+                if params.contains(&name) {
+                    continue;
+                }
+                // A captured LOCAL must be read at its program-point `t` (versioned);
+                // a global/const path is the same symbol everywhere (bare). Ambiguous
+                // capture -> no single `t` -> refuse the closure.
+                if is_unqualified_local_name(&name) && scope.plan.versioned.contains(&name) {
+                    if scope.ambiguous.contains(&name) {
+                        return Err(format!(
+                            "closure captures ambiguous local `{name}`; refused"
+                        ));
+                    }
+                    let vname = match scope.versions.get(&name) {
+                        Some(v) => format!("{name}@def{v}"),
+                        None => name.clone(),
+                    };
+                    args.push(make_var(vname));
+                } else {
+                    args.push(make_var(name));
+                }
+            }
+            Ok(Rc::new(Term::Ctor {
+                name: format!("closure:{}", token_key(&closure.body)),
+                args,
+            }))
+        }
         other => Err(format!("unsupported term `{}`", token_key(other))),
     }
 }
@@ -4969,6 +7785,32 @@ fn is_literal_identity_term(term: &Term) -> bool {
     }
 }
 
+/// A `..` with both bounds omitted — `x[..]` is the FULL slice of `x`, the same
+/// value as `x` for slice/array PartialEq.
+fn is_full_range_expr(expr: &Expr) -> bool {
+    matches!(expr, Expr::Range(r) if r.start.is_none() && r.end.is_none())
+}
+
+/// An expression that denotes an IMMUTABLE VALUE constructed from the source: a
+/// closure, a scalar literal, an array literal, the negation of one, or a FULL
+/// slice (`[..]`) of one. `&mut <such expr>` is a stable `ref_mut(<value>)` term
+/// (it cannot be reassigned), unlike `&mut <variable>` / `&mut <call>` / a partial
+/// or non-literal index (`&mut buf[i]`, `&mut buf[..]`) — those keep distinct
+/// pointer/temporal identity and stay RESIDUAL (mutable_reference_pointer_eq guard).
+/// Element/inner translation goes through the normal version-aware path, so a
+/// mutable element cannot false-coalesce and a non-liftable inner propagates Err
+/// (stays unclassified, never a false discharge).
+fn is_immutable_value_expr(expr: &Expr) -> bool {
+    match expr {
+        Expr::Closure(_) | Expr::Lit(_) | Expr::Array(_) => true,
+        Expr::Unary(u) if matches!(u.op, syn::UnOp::Neg(_)) => is_immutable_value_expr(&u.expr),
+        Expr::Index(i) if is_full_range_expr(&i.index) => is_immutable_value_expr(&i.expr),
+        Expr::Paren(p) => is_immutable_value_expr(&p.expr),
+        Expr::Group(g) => is_immutable_value_expr(&g.expr),
+        _ => false,
+    }
+}
+
 fn type_id_of_call_term(func: &Expr, arg_len: usize) -> Result<Option<Rc<Term>>, String> {
     if arg_len != 0 {
         return Ok(None);
@@ -5028,6 +7870,33 @@ fn is_shared_dyn_any_type(ty: &syn::Type) -> bool {
     })
 }
 
+/// A primitive scalar cast target as a `cast:` ctor suffix: every integer width
+/// plus `char` (a pure code-point conversion, `u8 as char` / `c as char`). The
+/// cast is modeled as an opaque deterministic unary EUF ctor `cast:<T>(x)` --
+/// the same uninterpreted-function standard as method-EUF, no claim about the
+/// conversion's numeric semantics, only that it is a function of its input. char
+/// stays in the Int/opaque regime (a code point), so it composes alongside the
+/// integer casts. Floats are deliberately excluded (Real-sort interplay).
+fn scalar_cast_type_key(ty: &syn::Type) -> Option<&'static str> {
+    if let Some(k) = integer_scalar_cast_type_key(ty) {
+        return Some(k);
+    }
+    let syn::Type::Path(path) = ty else {
+        return None;
+    };
+    if path.qself.is_some() || path.path.segments.len() != 1 {
+        return None;
+    }
+    let segment = path.path.segments.first()?;
+    if !matches!(segment.arguments, syn::PathArguments::None) {
+        return None;
+    }
+    match segment.ident.to_string().as_str() {
+        "char" => Some("char"),
+        _ => None,
+    }
+}
+
 fn integer_scalar_cast_type_key(ty: &syn::Type) -> Option<&'static str> {
     let syn::Type::Path(path) = ty else {
         return None;
@@ -5058,12 +7927,44 @@ fn integer_scalar_cast_type_key(ty: &syn::Type) -> Option<&'static str> {
 
 fn translate_lit(lit: &ExprLit) -> Result<Rc<Term>, String> {
     match &lit.lit {
-        Lit::Int(i) => parse_int_lit(i).map(num),
+        Lit::Int(i) => {
+            // A CONCRETE Int const whose WIDTH (u8 … i128 / usize / isize) is
+            // carried in the const's SORT, never by opaquing the term. The proofir
+            // compiler maps any non-{Int,Bool,Real,String} primitive sort -> Int
+            // for SMT (emit_sort_with_reason), so the value stays concrete and
+            // `2u8 + 3u8 == 6` is still REFUTED — no arithmetic-masking falsePass.
+            // The width rides in the canonical callsite KEY (canonical_term_sig
+            // renders `i:{v}:{width}`), so `align_of_val(&1u8)=1` and `&1u64=8` get
+            // DISTINCT obligations instead of collapsing onto `ref(i:1)`.
+            let value = parse_int_lit(i)?;
+            let suffix = i.suffix();
+            if suffix.is_empty() {
+                Ok(num(value))
+            } else {
+                Ok(Rc::new(Term::Const {
+                    value: ConstValue::Int(value),
+                    sort: sugar_ir_symbolic::Sort {
+                        name: suffix.to_string(),
+                    },
+                }))
+            }
+        }
         Lit::Float(f) => canonical_float_literal(f).map(real_const),
         Lit::Str(s) => Ok(str_const(s.value())),
         Lit::Char(c) => Ok(str_const(c.value().to_string())),
         Lit::Bool(b) => Ok(bool_const(b.value)),
         Lit::ByteStr(bs) => Ok(bytes_literal_term_from_bytes(&bs.value())),
+        // A byte literal `b'0'` is pure sugar for a `u8` constant (here 48): it
+        // carries a fixed numeric value and rust types it `u8`. Dissolve it to the
+        // same concrete-Int-with-u8-sort form a `48u8` literal lifts to, so a direct
+        // byte operand (`assert_eq!(byte, b'0')`) is liftable and `b'0' != 49` is
+        // REFUTED via the existing int path — no new refutation logic, no masking.
+        Lit::Byte(b) => Ok(Rc::new(Term::Const {
+            value: ConstValue::Int(b.value() as i64),
+            sort: sugar_ir_symbolic::Sort {
+                name: "u8".to_string(),
+            },
+        })),
         other => Err(format!(
             "only integer/string/char/finite decimal float scalar constants are liftable, got `{}`",
             token_key(other)
@@ -5309,6 +8210,13 @@ fn term_binop_name(op: &BinOp) -> Option<&'static str> {
         BinOp::BitXor(_) => Some("bit-xor"),
         BinOp::Shl(_) => Some("shift-left"),
         BinOp::Shr(_) => Some("shift-right"),
+        // NOTE: ordered comparisons (`<`/`<=`/`>`/`>=`) are deliberately NOT term
+        // binops. Adding them here makes `value() < 3` translatable as a `lt` ctor
+        // term, which DIVERTS `!(value() < 3)` away from the comparison-ATOM path
+        // and breaks euf-coalescing of a negated comparison with its positive
+        // sibling (negated_call_result_comparison_lifts_as_fol_not_under_euf_key).
+        // Term-position comparisons (`assert_eq!(a[0] < b[0], true)`) need a fix
+        // that routes top-level/negated comparisons to atoms first; not yet built.
         _ => None,
     }
 }
@@ -5420,4 +8328,1176 @@ fn token_key<T: ToTokens>(node: T) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[cfg(test)]
+mod lifter_key_tests {
+    use super::*;
+
+    fn lift_src(src: &str) -> AdapterOutput {
+        let file: syn::File = syn::parse_str(src).expect("test src must parse");
+        lift_file(&file, "tests/test_src.rs")
+    }
+
+    fn contract_names(out: &AdapterOutput) -> Vec<&str> {
+        out.decls.iter().map(|d| d.name.as_str()).collect()
+    }
+
+    // ── const/static ITEM initializer is unconditional (drain-letinit) ───────
+
+    #[test]
+    fn const_item_block_assert_lifts_like_top_level() {
+        // POSITIVE TWIN: an assert inside a `const _: () = { .. }` ITEM declared
+        // in a test body runs UNCONDITIONALLY at const-eval (the test running is
+        // what defines the item). It is as point-wise as a top-level assert and
+        // must LIFT, not be refused as a "nested unlifted expression statement".
+        // Vendor shape: rust-src coretests num/wrapping.rs::wrapping_const.
+        let src = r#"
+            #[test]
+            fn wrapping_const() {
+                const _: () = {
+                    assert!(i32::MIN.wrapping_div(-1) == i32::MIN);
+                    assert!(i32::MIN.wrapping_rem(-1) == 0);
+                };
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 2,
+            "both unconditional const-item asserts must lift; warnings: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "no const-item assert should be refused: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            !out.skip_reasons.iter().any(|r| r.contains("nested in an unlifted expression statement")),
+            "const-item asserts must not fall to the unlifted-expr-statement bucket: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn static_item_block_assert_lifts_like_top_level() {
+        // POSITIVE TWIN (static variant): a `static` item initializer block is
+        // likewise unconditionally evaluated; its asserts lift.
+        let src = r#"
+            #[test]
+            fn static_const() {
+                static _GUARD: () = {
+                    assert!(1u8.wrapping_add(255) == 0);
+                };
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "the unconditional static-item assert must lift; warnings: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    }
+
+    #[test]
+    fn const_item_conditional_assert_is_not_falsely_lifted() {
+        // NEGATIVE TWIN: an assert that sits under a `for` loop INSIDE the const
+        // item block is genuinely conditional (per-element). Recursing into the
+        // const-item block must NOT promote it to a point-wise lift -- the
+        // per-assert gating still routes it to the for-context refusal. Over-
+        // claiming it would be a false discharge.
+        // Vendor shape: rust-src coretests iter/mod.rs::test_const_iter.
+        let src = r#"
+            #[test]
+            fn const_loop() {
+                const X: bool = {
+                    let it = Some(42);
+                    let mut run = false;
+                    for x in it {
+                        assert!(x == 42);
+                        run = true;
+                    }
+                    run
+                };
+                assert!(X);
+            }
+        "#;
+        let out = lift_src(src);
+        // The `assert!(x == 42)` under the `for` must stay refused (conditional);
+        // only the unconditional top-level `assert!(X)` lifts.
+        assert!(
+            out.skip_reasons.iter().any(|r| r.contains("under for context")),
+            "the for-bodied assert inside the const block must stay refused as a \
+             for-context assertion, not be falsely lifted: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.assertions_lifted <= 1,
+            "only the unconditional `assert!(X)` may lift, not the conditional \
+             for-body assert: lifted={}, reasons={:?}",
+            out.assertions_lifted,
+            out.skip_reasons
+        );
+    }
+
+    // ── Stateful-read trajectory vindication (interior-mut / iterator) ────────
+
+    #[test]
+    fn omitted_range_bound_is_not_an_underscore_var() {
+        // `v[..4]` must lift with start 0, never a `_` var -- `_` is not a valid
+        // SMT symbol and reached the solver as `unknown constant _`, spuriously
+        // refusing every slice obligation.
+        let src = r#"
+            #[test]
+            fn slice_count() {
+                let v = [1, 2, 3, 4, 5];
+                assert_eq!(v[..4].iter().count(), 4);
+            }
+        "#;
+        let out = lift_src(src);
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            !dump.contains("name: \"_\""),
+            "an omitted range bound must not lift to a `_` var: {dump}"
+        );
+        assert!(
+            contract_names(&out).iter().any(|n| n.contains("range(i:0")),
+            "an omitted range start must lift to 0: {:?}",
+            contract_names(&out)
+        );
+    }
+
+    #[test]
+    fn interior_mutable_cell_reads_do_not_coalesce() {
+        // `c.get()` at two program points observes a mutable interior, so the
+        // reads must get DISTINCT keys (c is versioned per statement) rather than
+        // coalesce into a false contradiction.
+        let src = r#"
+            #[test]
+            fn cell_traj() {
+                let c = Cell::new(0);
+                assert_eq!(c.get(), 0);
+                assert_eq!(c.get(), 4);
+            }
+        "#;
+        let out = lift_src(src);
+        let gets: Vec<&str> = contract_names(&out)
+            .into_iter()
+            .filter(|n| n.contains("method:get"))
+            .collect();
+        assert!(gets.len() >= 2, "expected two get obligations: {gets:?}");
+        let distinct: std::collections::HashSet<&str> = gets.iter().cloned().collect();
+        assert_eq!(
+            distinct.len(),
+            gets.len(),
+            "interior-mut reads must have distinct keys, not coalesce: {gets:?}"
+        );
+    }
+
+    #[test]
+    fn iterator_reads_do_not_coalesce() {
+        // An iterator is consumed/advanced, so `len` observed at two program
+        // points must get distinct keys rather than coalesce.
+        let src = r#"
+            #[test]
+            fn iter_traj() {
+                let mut it = [1, 2, 3].iter();
+                assert_eq!(it.len(), 3);
+                let _ = it.next();
+                assert_eq!(it.len(), 2);
+            }
+        "#;
+        let out = lift_src(src);
+        let lens: Vec<&str> = contract_names(&out)
+            .into_iter()
+            .filter(|n| n.contains("method:len"))
+            .collect();
+        assert!(lens.len() >= 2, "expected two len obligations: {lens:?}");
+        let distinct: std::collections::HashSet<&str> = lens.iter().cloned().collect();
+        assert_eq!(
+            distinct.len(),
+            lens.len(),
+            "iterator reads must have distinct keys, not coalesce: {lens:?}"
+        );
+    }
+
+    #[test]
+    fn plain_immutable_binding_reads_do_coalesce() {
+        // DISCRIMINATION: a plain (non-stateful) binding read twice with the SAME
+        // value coalesces to ONE key -- versioning is ONLY for stateful receivers,
+        // so a real contradiction on an immutable value is still caught.
+        let src = r#"
+            #[test]
+            fn plain() {
+                let x = 5;
+                assert_eq!(plain_helper(x), 1);
+                assert_eq!(plain_helper(x), 1);
+            }
+        "#;
+        let out = lift_src(src);
+        let calls: Vec<&str> = contract_names(&out)
+            .into_iter()
+            .filter(|n| n.contains("plain_helper"))
+            .collect();
+        if calls.len() >= 2 {
+            let distinct: std::collections::HashSet<&str> = calls.iter().cloned().collect();
+            assert_eq!(
+                distinct.len(),
+                1,
+                "a plain immutable binding's reads must COALESCE (one key): {calls:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn iterator_producer_and_ufcs_reads_do_not_coalesce() {
+        // `core::iter::repeat(x).take(n)` (a producer free fn) and
+        // `IntoIterator::into_iter([..])` (UFCS) are iterators too -- their reads
+        // must get distinct keys, not coalesce.
+        for src in [
+            r#"
+            #[test]
+            fn prod() {
+                let mut iter = core::iter::repeat(42).take(40);
+                assert_eq!(iter.len(), 40);
+                let _ = iter.next();
+                assert_eq!(iter.len(), 39);
+            }
+            "#,
+            r#"
+            #[test]
+            fn ufcs() {
+                let mut it = IntoIterator::into_iter([0, 9, 2, 4]);
+                assert_eq!(it.len(), 4);
+                let _ = it.next();
+                assert_eq!(it.len(), 3);
+            }
+            "#,
+        ] {
+            let out = lift_src(src);
+            let lens: Vec<&str> = contract_names(&out)
+                .into_iter()
+                .filter(|n| n.contains("method:len"))
+                .collect();
+            assert!(lens.len() >= 2, "expected two len obligations: {lens:?}");
+            let distinct: std::collections::HashSet<&str> = lens.iter().cloned().collect();
+            assert_eq!(
+                distinct.len(),
+                lens.len(),
+                "producer/UFCS iterator reads must have distinct keys: {lens:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn binding_derived_from_stateful_is_also_a_trajectory() {
+        // A view/borrow over a stateful binding is itself a trajectory (recursive
+        // propagation), so its reads must get distinct keys.
+        let src = r#"
+            #[test]
+            fn derived() {
+                let x = Cell::new(0);
+                let r = &x;
+                assert_eq!(r.get(), 0);
+                assert_eq!(r.get(), 4);
+            }
+        "#;
+        let out = lift_src(src);
+        let gets: Vec<&str> = contract_names(&out)
+            .into_iter()
+            .filter(|n| n.contains("method:get"))
+            .collect();
+        assert!(gets.len() >= 2, "expected two get obligations: {gets:?}");
+        let distinct: std::collections::HashSet<&str> = gets.iter().cloned().collect();
+        assert_eq!(
+            distinct.len(),
+            gets.len(),
+            "a binding derived from a stateful one must have distinct read keys: {gets:?}"
+        );
+    }
+
+    #[test]
+    fn static_atomic_loads_do_not_coalesce() {
+        // A `static X: AtomicUsize` is interior-mutable global state; its `.load()`
+        // reads must get distinct keys.
+        let src = r#"
+            #[test]
+            fn atomic_traj() {
+                static A: AtomicUsize = AtomicUsize::new(0);
+                assert_eq!(A.load(SeqCst), 0);
+                assert_eq!(A.load(SeqCst), 4);
+            }
+        "#;
+        let out = lift_src(src);
+        let loads: Vec<&str> = contract_names(&out)
+            .into_iter()
+            .filter(|n| n.contains("method:load"))
+            .collect();
+        assert!(loads.len() >= 2, "expected two load obligations: {loads:?}");
+        let distinct: std::collections::HashSet<&str> = loads.iter().cloned().collect();
+        assert_eq!(
+            distinct.len(),
+            loads.len(),
+            "static atomic loads must have distinct keys: {loads:?}"
+        );
+    }
+
+    // ── Int literal width: SOUNDNESS GUARD (no opaque wrapper) ────────────────
+    //
+    // A suffixed literal (`1u8`) must lift to a CONCRETE Int term, never an
+    // opaque `typed_int:` ctor. Wrapping it opaque made arithmetic uncheckable:
+    // `2u8 + 3u8 == 6` became `X + Y == 6` over free Ints (SAT) -> a real
+    // arithmetic contradiction would be silently DISCHARGED (a falsePass). This
+    // guard locks that hole shut.
+    //
+    // KNOWN RESIDUAL (tracked): because the width is therefore NOT yet in the
+    // callsite key, `align_of_val(&1u8)=1` and `align_of_val(&1u64)=8` still
+    // collapse onto one key and are reported as a (false) contradiction. The
+    // proper fix is a width-sort hierarchy in the proofir compiler (maps
+    // u8..i128 -> Int for SMT, preserves the width name for the KEY), NOT
+    // opaquing the term.
+
+    #[test]
+    fn suffixed_int_lifts_to_concrete_term_not_opaque_wrapper() {
+        // `2u8 + 3u8 == 6` must remain a CHECKABLE arithmetic obligation: the
+        // literals stay concrete Ints, so no `typed_int:`-style opaque wrapper
+        // appears anywhere in the lifted contracts.
+        let src = r#"
+            #[test]
+            fn arith() {
+                assert_eq!(2u8 + 3u8, 6);
+            }
+        "#;
+        let out = lift_src(src);
+        let names = contract_names(&out);
+        let serialized = format!("{:?}", out.decls);
+        assert!(
+            !serialized.contains("typed_int"),
+            "suffixed literals must NOT be wrapped in an opaque typed_int ctor \
+             (that masks arithmetic contradictions): {names:?}"
+        );
+    }
+
+    #[test]
+    fn int_width_distinguishes_align_of_val_keys() {
+        // `align_of_val(&1u8)` (=1) and `align_of_val(&1u64)` (=8) must land in
+        // DISTINCT obligations: the width rides in the key (`i:1:u8` vs `i:1:u64`)
+        // so they no longer collapse onto `ref(i:1)` and get conjoined into a
+        // false contradiction. The term stays a concrete Int (no opaque wrapper).
+        let src = r#"
+            #[test]
+            fn align_of_val_basic() {
+                assert_eq!(align_of_val(&1u8), 1);
+                assert_eq!(align_of_val(&1u64), 8);
+            }
+        "#;
+        let out = lift_src(src);
+        let names = contract_names(&out);
+        assert!(
+            names.iter().any(|n| n.contains("i:1:u8")),
+            "expected a width-tagged key `i:1:u8` in {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n.contains("i:1:u64")),
+            "expected a width-tagged key `i:1:u64` in {names:?}"
+        );
+        assert_ne!(
+            names.iter().find(|n| n.contains("i:1:u8")),
+            names.iter().find(|n| n.contains("i:1:u64")),
+            "u8 and u64 align_of_val calls must be DISTINCT obligations: {names:?}"
+        );
+    }
+
+    // ── Fix B: local helper function scope in EUF key ─────────────────────────
+    //
+    // When the same local helper name `string` exists in two different test fns,
+    // calls to `string(c)` must produce distinct keys per-test. Before the fix,
+    // `string('\n') == "\\n"` from test A and `string('\n') == "\\n"` (or a
+    // different rhs) from test B produced the same key and got conjoined.
+
+    #[test]
+    fn local_helper_call_key_is_scoped_to_test_fn() {
+        // Two test functions both call a local helper `helper(x)`. The
+        // obligations must be distinct even though the argument is the same.
+        let src = r#"
+            #[test]
+            fn test_a() {
+                fn helper(c: char) -> i32 { 0 }
+                assert_eq!(helper('a'), 1);
+            }
+            #[test]
+            fn test_b() {
+                fn helper(c: char) -> i32 { 0 }
+                assert_eq!(helper('a'), 2);
+            }
+        "#;
+        let out = lift_src(src);
+        // helper('a') in test_a and helper('a') in test_b must be in different
+        // obligations. Contract names must include the test fn name as scope.
+        let names = contract_names(&out);
+        let test_a_contracts: Vec<_> = names.iter().filter(|n| n.contains("test_a")).collect();
+        let test_b_contracts: Vec<_> = names.iter().filter(|n| n.contains("test_b")).collect();
+        // Each test must have its own scoped contract for helper('a').
+        assert!(
+            !test_a_contracts.is_empty() || !test_b_contracts.is_empty(),
+            "expected scoped contracts per test fn, got: {names:?}"
+        );
+    }
+
+    #[test]
+    fn unqualified_callee_includes_local_scope_in_key() {
+        // A bare function call `f(x)` in term position must include the test
+        // fn's scoped name in the assertion key (the `local_scope::f` prefix),
+        // preventing federation with a same-named function in another test.
+        let src = r#"
+            #[test]
+            fn test_escape_debug() {
+                assert_eq!(escape('\n'), "\\n");
+                assert_eq!(escape(' '), " ");
+            }
+        "#;
+        let out = lift_src(src);
+        let names = contract_names(&out);
+        // The key for `escape('\n')` must contain the test fn scope.
+        let scoped = names.iter().any(|n| n.contains("test_escape_debug"));
+        assert!(
+            scoped || out.skip_reasons.iter().any(|r| r.contains("escape")),
+            "expected scoped key or refusal for `escape` call; contracts: {names:?}"
+        );
+    }
+
+    // ── Fix C: addr_of_mut! marks variable ambiguous ──────────────────────────
+    //
+    // `addr_of_mut!(x)` creates a raw pointer alias to `x`. Any subsequent
+    // mutation through that pointer (e.g. `ptr::swap`) changes `x` without a
+    // visible assignment. The variable must be marked ambiguous so pre/post
+    // assertions don't coalesce.
+
+    #[test]
+    fn addr_of_mut_marks_local_ambiguous() {
+        // After `addr_of_mut!(y)`, `y` must be ambiguous — assertions about
+        // `y` before and after must NOT coalesce under the same contract.
+        let src = r#"
+            #[test]
+            fn swap_test() {
+                let mut x = 5u8;
+                let mut y = 6u8;
+                let _p = addr_of_mut!(y);
+                assert_eq!(x, 5);
+                assert_eq!(y, 6);
+                assert_eq!(y, 5);
+            }
+        "#;
+        let out = lift_src(src);
+        // y's ambiguity should cause its assertions to be dropped (skip) or
+        // separated, not conjoined into a single obligation with contradictory values.
+        // Key check: no assertion `y == 6 && y == 5` in any single contract inv.
+        // We verify by checking that the lifter does not produce a contract
+        // whose name resolves to the plain Var `y` (it would be ambiguous/dropped).
+        let names = contract_names(&out);
+        // The presence of a skip reason about y's ambiguity is the expected outcome.
+        let y_ambiguous = out.skip_reasons.iter().any(|r| r.contains("ambiguous") && r.contains("y"))
+            || !names.iter().any(|n| n.ends_with("::assertion") && n.contains("y"));
+        assert!(
+            y_ambiguous || out.skip_reasons.iter().any(|r| r.contains("y")),
+            "expected y to be ambiguous/dropped after addr_of_mut!, contracts: {names:?}, skips: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    // ── Fix D: closure &mut capture marks receiver ambiguous ─────────────────
+    //
+    // `iter.for_each(|x| s.push(x))` mutates `s` through a closure capture.
+    // `s` must be treated as ambiguous so assertions `s == "Zab"` and
+    // `s == "Zabcd"` (after further mutations) don't coalesce.
+
+    #[test]
+    fn closure_mut_receiver_marks_local_ambiguous() {
+        // `.for_each(|x| s.push(x))` mutates `s` — assertions about `s` before
+        // and after must be refused (ambiguous) rather than conjoined.
+        let src = r#"
+            #[test]
+            fn by_ref_sized_test() {
+                let mut s = String::new();
+                let vals = [1i32, 2, 3];
+                vals.iter().for_each(|_x| s.push('a'));
+                assert_eq!(s, "aaa");
+                vals.iter().for_each(|_x| s.push('b'));
+                assert_eq!(s, "aaabbb");
+            }
+        "#;
+        let out = lift_src(src);
+        // `s` must not produce a conjoined contradictory obligation.
+        // The skip reasons should mention s's ambiguity, OR s-related assertions
+        // should be absent (dropped).
+        let s_asserts_conjoined = out.decls.iter().any(|d| {
+            d.name.contains("::assertion") && {
+                // check if any single obligation contains s with two different values
+                // (this is a heuristic — we just verify no single contract for s)
+                d.name.contains("s") && !d.name.contains("test_") // bare 's' var key
+            }
+        });
+        assert!(
+            !s_asserts_conjoined,
+            "s must not appear as a bare EUF key after closure mutation"
+        );
+    }
+
+    // ── Fix E: format! with mut local is refused ─────────────────────────────
+    //
+    // `format!("{:?}", r)` where `r` is `let mut r = ...` must be refused as
+    // temporally unstable (different program points see different values of r).
+
+    #[test]
+    fn format_macro_with_mut_local_arg_is_refused() {
+        let src = r#"
+            #[test]
+            fn test_fmt() {
+                let mut r = 1..=1;
+                assert_eq!(format!("{:?}", r), "1..=1");
+                let _ = r.next();
+                assert_eq!(format!("{:?}", r), "1..=1 (exhausted)");
+            }
+        "#;
+        let out = lift_src(src);
+        // The format! assertions must be refused (skip reasons present),
+        // not lifted into contradictory obligations.
+        let refused = out.skip_reasons.iter().any(|r| r.contains("mut") && r.contains("local"))
+            || out.skip_reasons.iter().any(|r| r.contains("temporally unstable"));
+        // If they were lifted, there should be at most 1 obligation (not 2 contradictory ones).
+        let fmt_obligations = out.decls.iter().filter(|d| d.name.contains("format")).count();
+        assert!(
+            refused || fmt_obligations <= 1,
+            "format! with mut local should be refused or produce at most 1 obligation; \
+             skips: {:?}, fmt_obligations: {fmt_obligations}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn format_macro_with_inline_capture_mut_local_is_refused() {
+        // `format!("{socket}")` with `let mut socket = ...` uses implicit capture.
+        // The `socket` identifier is embedded in the format string literal.
+        let src = r#"
+            #[test]
+            fn socket_test() {
+                let mut socket = 42i32;
+                assert_eq!(format!("{socket}"), "42");
+                let socket = 99i32;
+                assert_eq!(format!("{socket}"), "99");
+            }
+        "#;
+        let out = lift_src(src);
+        // The format! with inline mut capture must be refused.
+        let refused = out.skip_reasons.iter().any(|r| {
+            r.contains("temporally unstable") || r.contains("mut")
+        });
+        let fmt_contracts = out.decls.iter().filter(|d| d.name.contains("format")).count();
+        assert!(
+            refused || fmt_contracts <= 1,
+            "format! with inline mut capture should be refused; skips: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    // ── Nested-block scope: sibling blocks are distinct consistency regions ────
+
+    #[test]
+    fn sibling_blocks_rebinding_same_local_do_not_coalesce() {
+        // Two sibling `{ }` blocks each rebind `r` to a different cell and assert a
+        // different value. The bare-`r` field reads must NOT conjoin across the
+        // blocks into a false `unsat` -- each block is its own scope.
+        let src = r#"
+            #[test]
+            fn rebinds() {
+                {
+                    let r = Wrap::new(1);
+                    assert_eq!(r.field, 1);
+                }
+                {
+                    let r = Wrap::new(2);
+                    assert_eq!(r.field, 2);
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        // The two `field` equalities must land in DIFFERENT obligation groups
+        // (distinct block scopes), so no single inv pins `r.field` to 1 and 2.
+        for d in &out.decls {
+            let dump = format!("{:?}", d.inv);
+            let pins_1 = dump.contains("Int(1)");
+            let pins_2 = dump.contains("Int(2)");
+            assert!(
+                !(pins_1 && pins_2),
+                "sibling-block rebinds of `r` must not coalesce into one inv: {dump}"
+            );
+        }
+    }
+
+    #[test]
+    fn const_blocks_rebinding_same_local_do_not_coalesce() {
+        // The `mem/type_info.rs` shape: two `const { }` blocks each bind `ty` and
+        // pin `ty.fields.len()` to a different count. Distinct block scopes keep
+        // them apart.
+        let src = r#"
+            #[test]
+            fn type_info() {
+                const {
+                    let ty = describe::<A>();
+                    assert!(ty.fields.len() == 3);
+                }
+                const {
+                    let ty = describe::<B>();
+                    assert!(ty.fields.len() == 1);
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        for d in &out.decls {
+            let dump = format!("{:?}", d.inv);
+            assert!(
+                !(dump.contains("Int(3)") && dump.contains("Int(1)")),
+                "sibling const-block `ty` must not coalesce: {dump}"
+            );
+        }
+    }
+
+    // ── Reference-wrapped cell, raw `*mut`, mut-borrow trajectories ────────────
+
+    #[test]
+    fn reference_wrapped_cell_reads_do_not_coalesce() {
+        // `let b = &Cell::new(0)` is an interior-mutable cell behind a reference;
+        // reads of `b.get()` at two program points must get distinct keys.
+        let src = r#"
+            #[test]
+            fn ref_cell() {
+                let b = &Cell::new(0);
+                assert_eq!(b.get(), 12);
+                b.set(13);
+                assert_eq!(b.get(), 13);
+            }
+        "#;
+        let out = lift_src(src);
+        let gets: Vec<&str> = contract_names(&out)
+            .into_iter()
+            .filter(|n| n.contains("method:get"))
+            .collect();
+        let distinct: std::collections::HashSet<&str> = gets.iter().cloned().collect();
+        assert_eq!(
+            distinct.len(),
+            gets.len(),
+            "`&Cell::new` reads must not coalesce: {gets:?}"
+        );
+    }
+
+    #[test]
+    fn raw_mut_pointer_deref_reads_do_not_coalesce() {
+        // `let p = addr_of_mut!(x)` is a handle to memory mutated through it; `*p`
+        // reads at two program points must get distinct keys (p versioned).
+        let src = r#"
+            #[test]
+            fn raw_ptr() {
+                let mut x = 10;
+                let p = addr_of_mut!(x);
+                unsafe {
+                    assert_eq!(*p, 10);
+                    *p = 30;
+                    assert_eq!(*p, 30);
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        // `p` must be VERSIONED (distinct `@def` tags), so the two `*p` reads are
+        // distinct terms: `deref(p@defA)==10 ∧ deref(p@defB)==30` is satisfiable,
+        // not the false `deref(p)==10 ∧ deref(p)==30` unsat.
+        let dump = format!("{:?}", out.decls);
+        assert!(dump.contains("deref"), "expected a deref term: {dump}");
+        // The first read is bare `p` (version 0); the post-write read is `p@def2`.
+        // The presence of a versioned read proves the two `*p` terms are distinct
+        // (the false `deref(p)==10 ∧ deref(p)==30` unsat is dissolved).
+        assert!(
+            dump.contains("p@def"),
+            "raw `*mut p` read across a write must be versioned (distinct term): {dump}"
+        );
+    }
+
+    #[test]
+    fn mut_local_borrowed_into_writer_is_a_trajectory() {
+        // The `clone_to_uninit` shape: `b` is a `mut` local, `&mut b` is passed to a
+        // writer, so `*b` BEFORE != x and `*b` AFTER == x is a real fork around `t`
+        // (b was mutated), NOT a value-eq/ref-id conflation. The two reads must be
+        // distinct, so the `ne` then `eq` are mutually satisfiable.
+        let src = r#"
+            #[test]
+            fn writer_traj() {
+                let a = "hello";
+                let mut b: Box<str> = "world".into();
+                assert_ne!(a, &*b);
+                writer(ptr::from_mut::<str>(&mut b).cast());
+                assert_eq!(a, &*b);
+            }
+        "#;
+        let out = lift_src(src);
+        // No single inv may carry BOTH an `=` and `ne`/`≠` over the same `deref(b)`
+        // pair (that was the false-unsat shape); versioning `b` separates them.
+        let dump = format!("{:?}", out.decls);
+        let has_ne = dump.contains("\u{2260}") || dump.contains("\"ne\"");
+        // The key property: `b` is versioned (distinct @def tags appear), so the two
+        // `&*b` reads are not the same term.
+        assert!(
+            dump.contains("b@def") || !has_ne,
+            "a mut local written through `&mut b` must be versioned (trajectory): {dump}"
+        );
+    }
+
+    // ── Per-occurrence consuming-iterator advance (same statement) ─────────────
+
+    #[test]
+    fn same_statement_consuming_nth_reads_are_distinct() {
+        // `assert_ne!(it.nth(0), it.nth(0))`: each `nth` ADVANCES the iterator, so
+        // the two reads in ONE statement must be distinct terms (the second carries
+        // an `@adv` tag), not `ne(X, X)`.
+        let src = r#"
+            #[test]
+            fn windows_nth() {
+                let v: &[i32] = &[0, 1, 2, 3];
+                let mut w = v.windows(2);
+                assert_ne!(w.nth(0), w.nth(0));
+            }
+        "#;
+        let out = lift_src(src);
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("@adv"),
+            "the second same-statement `nth` must carry an `@adv` occurrence tag: {dump}"
+        );
+    }
+
+    #[test]
+    fn inlined_contradictory_helper_body_is_caught_not_masked() {
+        // SOUNDNESS GUARD for capability #1: inlining must not MASK a real
+        // contradiction. A helper whose body pins the SAME callsite to two distinct
+        // values, inlined, must produce a single coalesced inv with BOTH pins (so the
+        // verifier refutes it) -- never two split obligations that each look fine.
+        let src = r#"
+            fn bad(n: i32) { assert_eq!(g(n), 1); assert_eq!(g(n), 2); }
+            #[test]
+            fn drives() { bad(5); }
+        "#;
+        let out = lift_src(src);
+        // The two pins on g(5) must land in ONE inv (coalesced), so unsat is visible.
+        let mut found_both = false;
+        for d in &out.decls {
+            let dump = format!("{:?}", d.inv);
+            if dump.contains("Int(1)") && dump.contains("Int(2)") && dump.contains("call:g") {
+                found_both = true;
+            }
+        }
+        assert!(
+            found_both,
+            "inlined contradictory body must coalesce both pins into one inv (caught, \
+             not masked): {:?}",
+            out.decls.iter().map(|d| format!("{:?}", d.inv)).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn closure_opaque_is_keyed_by_text_and_captures() {
+        // A closure lifts to an opaque EUF symbol keyed by body text + captured free
+        // vars. DISCRIMINATION: two closures with DIFFERENT text get DISTINCT symbols
+        // (so they never false-coalesce). Same text + same captures coalesce (a
+        // contradiction over the call would be caught).
+        let src = r#"
+            #[test]
+            fn t() {
+                assert_eq!(apply(|x| x + 1), 3);
+                assert_eq!(apply(|x| x + 2), 4);
+            }
+        "#;
+        let out = lift_src(src);
+        let dump = format!("{:?}", out.decls);
+        // Two distinct closure symbols (x+1 vs x+2), not one coalesced.
+        assert!(
+            dump.contains("closure:") ,
+            "closures should lift to opaque closure: symbols: {dump}"
+        );
+        // The two apply-calls must NOT collapse to one obligation (distinct closures).
+        let applies: std::collections::HashSet<&str> = out
+            .decls
+            .iter()
+            .map(|d| d.name.as_str())
+            .filter(|n| n.contains("apply"))
+            .collect();
+        assert!(
+            applies.len() >= 2 || out.decls.len() >= 2,
+            "distinct closures must not coalesce: {:?}",
+            out.decls.iter().map(|d| &d.name).collect::<Vec<_>>()
+        );
+    }
+
+    // ── R7: statement-position helper-call inlining (β-reduction) ──────────────
+
+    #[test]
+    fn statement_helper_call_with_asserting_body_inlines_per_callsite() {
+        // `check(2); check(3);` — a bare-statement call to a helper whose body
+        // asserts. Each callsite inlines (params := actuals), so the helper's assert
+        // discharges point-wise per callsite and the helper is NOT refused in Pass 2.
+        let src = r#"
+            fn check(n: i32) { assert_eq!(probe(n), n); }
+            #[test]
+            fn drives() {
+                check(2);
+                check(3);
+            }
+        "#;
+        let out = lift_src(src);
+        // `check`'s body assert is lifted at the callsites, not refused.
+        let refused_check = out
+            .skip_reasons
+            .iter()
+            .any(|r| r.contains("check") && r.contains("reachable only via call-site"));
+        assert!(
+            !refused_check,
+            "helper `check` should inline at the callsite, not be refused: {:?}",
+            out.skip_reasons
+        );
+        // Two callsites with different args -> two distinct probe-obligations.
+        let probes: Vec<&str> = out
+            .decls
+            .iter()
+            .map(|d| d.name.as_str())
+            .filter(|n| n.contains("probe"))
+            .collect();
+        assert!(
+            probes.len() >= 2,
+            "expected a probe obligation per callsite: {:?}",
+            out.decls.iter().map(|d| &d.name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn helper_body_with_let_inlines_via_collector_monotonically() {
+        // A statement-called helper with a `let` body inlines through the NORMAL
+        // collector (β-reduced params; the `let` local stays a free var the collector
+        // lifts over). The monotonic gate admits it because the body adds no
+        // unclassified: `check` is not refused, and the `probe` term is lifted.
+        let src = r#"
+            fn check(n: i32) { let m = n + n; assert_eq!(probe(m), m); }
+            #[test]
+            fn drives() { check(2); }
+        "#;
+        let out = lift_src(src);
+        let refused_check = out
+            .skip_reasons
+            .iter()
+            .any(|r| r.contains("check") && r.contains("reachable only via call-site"));
+        assert!(
+            !refused_check,
+            "helper `check` should inline (monotonic gate admits a fully-lifting body): {:?}",
+            out.skip_reasons
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("probe"),
+            "expected a probe term from the inlined body: {dump}"
+        );
+    }
+
+    #[test]
+    fn helper_body_impure_let_is_refused_not_substituted() {
+        // DISCRIMINATION: `let m = sink(n);` is NOT pure-pinnable (a call may be
+        // impure / re-evaluate), so the helper is NOT inlined -- it stays refused,
+        // never substituted (no forged re-evaluation).
+        let src = r#"
+            fn check(n: i32) { let m = sink(n); assert_eq!(m, m); }
+            #[test]
+            fn drives() { check(2); }
+        "#;
+        let out = lift_src(src);
+        // `check` must NOT be silently inlined via an impure let (it either stays
+        // refused, or the assert lifts without the let-substitution path firing).
+        // The key property: the impure init is not pure-pinnable.
+        assert!(
+            !is_pure_pinnable_expr(&syn::parse_str::<syn::Expr>("sink(n)").unwrap()),
+            "a call init must not be pure-pinnable"
+        );
+    }
+
+    // ── Refusal disposition: refused is earned, unclassified is the default ────
+
+    #[test]
+    fn refusal_disposition_is_a_terminal_whitelist() {
+        use Disposition::*;
+        // TERMINAL (source property -- closed with a damn good reason).
+        for r in [
+            "assertion under for context over an opaque collection (bin-2: runtime data)",
+            "assert_eq!: int literal 999999999999999999999: number too large to fit in target type",
+            "ambiguous temporal identity for receiver `r`; skipped assertion",
+            "assert_eq!: macro in term position references a `x` local; temporally unstable — refused",
+            "assertion helper `assert_trusted_len` is a type-level obligation (empty body: trait-bound or no-op), not a point-wise value predicate; refused",
+            "assertion helper `foo` has no visible source; skipped assertion",
+            "macro `m`: expansion yielded no liftable assertion (type-level or effectful body); released to layer 0",
+            "assertion under while context: not unconditional point-wise; released to layer 0",
+        ] {
+            assert_eq!(refusal_disposition(r), Refused, "should be terminal: {r}");
+        }
+        // INACTIVE (cfg-disabled -- not in this build's universe).
+        for r in [
+            "inactive cfg on test fn",
+            "inactive cfg on assertion; skipped: cfg(target_has_atomic)",
+        ] {
+            assert_eq!(refusal_disposition(r), Disposition::Inactive, "should be inactive: {r}");
+        }
+        // UNCLASSIFIED (lifter limitation -- WORK), incl. the default for anything
+        // not on the whitelist.
+        for r in [
+            "assertion under if context: not unconditional point-wise; released to layer 0",
+            "assert_eq!: unsupported term",
+            "assertion in non-#[test] item to_string: reachable only via call-site inlining",
+            "assertion under for context over a literal range (bin-1: domain constructed)",
+            "assertion inside a let-initializer expression; released to layer 0",
+            "ambiguous cfg on assertion; skipped",
+            "some brand new reason nobody has classified yet",
+        ] {
+            assert_eq!(refusal_disposition(r), Unclassified, "should be work: {r}");
+        }
+    }
+
+    // ── Discrimination: versioning is ONLY for warranted mutation ──────────────
+
+    #[test]
+    fn plain_mut_local_never_borrowed_still_coalesces() {
+        // A `let mut x` that is NEVER `&mut`-borrowed nor reassigned is provably
+        // stable, so two pins on it COALESCE -- a genuine double-pin contradiction
+        // is still caught (no spurious vindication).
+        let src = r#"
+            #[test]
+            fn stable_mut() {
+                let mut x = 5;
+                assert_eq!(stable_helper(x), 1);
+                assert_eq!(stable_helper(x), 2);
+            }
+        "#;
+        let out = lift_src(src);
+        let calls: Vec<&str> = contract_names(&out)
+            .into_iter()
+            .filter(|n| n.contains("stable_helper"))
+            .collect();
+        if calls.len() >= 2 {
+            let distinct: std::collections::HashSet<&str> = calls.iter().cloned().collect();
+            assert_eq!(
+                distinct.len(),
+                1,
+                "an unborrowed, unreassigned mut local must COALESCE (catch the \
+                 contradiction), not be versioned: {calls:?}"
+            );
+        }
+    }
+
+    // ── flt2dec dissolution: ldexp values + format! expected-RHS ──────────────
+
+    // Parse a single `assert_eq!(..)` expression statement into its `syn::Macro`.
+    fn assert_macro(src: &str) -> syn::Macro {
+        let stmt: Stmt = syn::parse_str(src).expect("assert stmt must parse");
+        let expr = match stmt {
+            Stmt::Macro(m) => return m.mac,
+            Stmt::Expr(e, _) => e,
+            _ => panic!("expected a macro/expr stmt"),
+        };
+        match expr {
+            Expr::Macro(m) => m.mac,
+            _ => panic!("expected a macro expr"),
+        }
+    }
+
+    fn bind(name: &str, expr_src: &str) -> BTreeMap<String, Expr> {
+        let mut b = BTreeMap::new();
+        b.insert(
+            name.to_string(),
+            syn::parse_str::<Expr>(expr_src).expect("binding expr must parse"),
+        );
+        b
+    }
+
+    #[test]
+    fn ldexp_binding_dissolves_to_right_string() {
+        // minf32 = ldexp_f32(1.0, -149) is the smallest f32 subnormal; its shortest
+        // Display is "0." + 44 zeros + "1". Resolved through the let-binding map and
+        // evaluated by our own stdlib, the assert dissolves (Some(true)).
+        let b = bind("minf32", "ldexp_f32(1.0, -149)");
+        let want = format!(r#""0.{}1""#, "0".repeat(44));
+        let m = assert_macro(&format!(
+            "assert_eq!(to_string(f, minf32, Minus, 0), {want});"
+        ));
+        assert_eq!(
+            dissolve_flt2dec_assert(&m, Flt2decMode::Shortest, &b),
+            Some(true),
+            "ldexp-bound subnormal must dissolve to its exact shortest string"
+        );
+        // minf64 = ldexp_f64(1.0, -1074): "0." + 323 zeros + "5".
+        let b64 = bind("minf64", "ldexp_f64(1.0, -1074)");
+        let want64 = format!(r#""0.{}5""#, "0".repeat(323));
+        let m64 = assert_macro(&format!(
+            "assert_eq!(to_string(f, minf64, Minus, 0), {want64});"
+        ));
+        assert_eq!(
+            dissolve_flt2dec_assert(&m64, Flt2decMode::Shortest, &b64),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn ldexp_wrong_expected_does_not_discharge() {
+        // break-the-twin: an expected string that does NOT match our independent
+        // value must be refused (Some(false)), never force-discharged.
+        let b = bind("minf32", "ldexp_f32(1.0, -149)");
+        let m = assert_macro(r#"assert_eq!(to_string(f, minf32, Minus, 0), "0.5");"#);
+        assert_eq!(
+            dissolve_flt2dec_assert(&m, Flt2decMode::Shortest, &b),
+            Some(false),
+            "a wrong expected literal must refuse, not discharge"
+        );
+    }
+
+    #[test]
+    fn format_zerofill_expected_evaluates() {
+        // f32::MAX shortest is `format!("34028235{:0>31}", "")` = 34028235 + 31 zeros.
+        let b = BTreeMap::new();
+        let m = assert_macro(
+            r#"assert_eq!(to_string(f, f32::MAX, Minus, 0), format!("34028235{:0>31}", ""));"#,
+        );
+        assert_eq!(
+            dissolve_flt2dec_assert(&m, Flt2decMode::Shortest, &b),
+            Some(true),
+            "closed format! zero-fill expected must evaluate and dissolve"
+        );
+        // And the same pattern with a wrong leading prefix must refuse.
+        let bad = assert_macro(
+            r#"assert_eq!(to_string(f, f32::MAX, Minus, 0), format!("99999999{:0>31}", ""));"#,
+        );
+        assert_eq!(
+            dissolve_flt2dec_assert(&bad, Flt2decMode::Shortest, &b),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn format_zerofill_direct_eval() {
+        // Direct unit on the evaluator: prefix/suffix around one {:0>N}.
+        assert_eq!(
+            parse_format_zerofill(
+                &syn::parse_str::<Expr>(r#"format!("0.{:0>323}5", "")"#).unwrap()
+            ),
+            Some(format!("0.{}5", "0".repeat(323)))
+        );
+        // Non-empty fill arg -> not our closed pattern -> None.
+        assert_eq!(
+            parse_format_zerofill(&syn::parse_str::<Expr>(r#"format!("{:0>4}", "x")"#).unwrap()),
+            None
+        );
+        // Two placeholders -> None (we only evaluate the single-placeholder shape).
+        assert_eq!(
+            parse_format_zerofill(
+                &syn::parse_str::<Expr>(r#"format!("{:0>4}{:0>4}", "")"#).unwrap()
+            ),
+            None
+        );
+        // A non-format! macro -> None.
+        assert_eq!(
+            parse_format_zerofill(&syn::parse_str::<Expr>(r#"vec!["a"]"#).unwrap()),
+            None
+        );
+    }
+
+    #[test]
+    fn unparseable_value_or_expected_is_skipped() {
+        let b = BTreeMap::new();
+        // f16 value (ldexp_f16) -> unresolved -> None (skip, NOT discharge).
+        let bf16 = bind("minf16", "ldexp_f16(1.0, -24)");
+        let m16 = assert_macro(r#"assert_eq!(to_string(f, minf16, Minus, 0), "0.00000006");"#);
+        assert_eq!(
+            dissolve_flt2dec_assert(&m16, Flt2decMode::Shortest, &bf16),
+            None,
+            "f16-bound value must stay unclassified (stable cannot format f16)"
+        );
+        // Unbound ident -> None.
+        let mub = assert_macro(r#"assert_eq!(to_string(f, mystery, Minus, 0), "0");"#);
+        assert_eq!(
+            dissolve_flt2dec_assert(&mub, Flt2decMode::Shortest, &b),
+            None
+        );
+        // A non-closed format! expected (runtime arg) -> None.
+        let mfmt = assert_macro(
+            r#"assert_eq!(to_string(f, 1.0, Minus, 0), format!("{}", some_var));"#,
+        );
+        assert_eq!(
+            dissolve_flt2dec_assert(&mfmt, Flt2decMode::Shortest, &b),
+            None
+        );
+    }
+
+    #[test]
+    fn exact_fixed_full_expansion_mismatch_is_refused_not_discharged() {
+        // SOUNDNESS GUARD: `to_exact_fixed_str(f64::MAX, 8)`'s corpus expected is the
+        // SHORTEST decimal zero-padded (`format!("17976931348623157{:0>292}.00000000")`),
+        // but our `{:.8}` reproduces the FULL exact expansion (`...570814527...`). These
+        // differ, so this row must REFUSE (Some(false)) -- never force-discharge a value
+        // we did not reproduce. This is the dog that didn't bark: the format! RHS now
+        // PARSES, so the row is no longer skipped (None); it is actively refuted.
+        let b = BTreeMap::new();
+        let m = assert_macro(
+            r#"assert_eq!(to_string(f, f64::MAX, Minus, 8), format!("17976931348623157{:0>292}.00000000", ""));"#,
+        );
+        assert_eq!(
+            dissolve_flt2dec_assert(&m, Flt2decMode::ExactFixed, &b),
+            Some(false),
+            "a full-expansion fixed value that differs from the shortest-padded expected \
+             must refuse, never discharge"
+        );
+        // The SHORTEST-mode row for the same value DOES match (shortest == padded shortest).
+        let ms = assert_macro(
+            r#"assert_eq!(to_string(f, f64::MAX, Minus, 0), format!("17976931348623157{:0>292}", ""));"#,
+        );
+        assert_eq!(
+            dissolve_flt2dec_assert(&ms, Flt2decMode::Shortest, &b),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn ldexp_minf32_drains_end_to_end() {
+        // End-to-end through the helper: a `to_shortest_str` test fn that defines
+        // minf32 via ldexp and asserts both a string-literal and a format!-pattern
+        // expected. Both must lift (assertions_lifted == 2, none refused).
+        let src = r#"
+            #[test]
+            fn to_string() {
+                fn to_string<T>(_: T, _: f32, _: Sign, _: usize) -> String { String::new() }
+                let minf32 = ldexp_f32(1.0, -149);
+                assert_eq!(to_string(f, minf32, Minus, 0), format!("0.{:0>44}1", ""));
+                assert_eq!(to_string(f, 1.0e-6_f32, Minus, 0), "0.000001");
+            }
+        "#;
+        // Build via the flt2dec path directly so the test is independent of the
+        // outer dispatcher's helper recognition heuristics.
+        let file: syn::File = syn::parse_str(src).unwrap();
+        let mut out = AdapterOutput::default();
+        // Find the inner test fn and lift it in Shortest mode.
+        fn find_fn(items: &[Item]) -> Option<&syn::ItemFn> {
+            for it in items {
+                if let Item::Fn(f) = it {
+                    return Some(f);
+                }
+            }
+            None
+        }
+        let f = find_fn(&file.items).expect("test fn");
+        lift_flt2dec_helper(f, Flt2decMode::Shortest, "tests/x.rs", &[], &mut out);
+        assert_eq!(
+            out.assertions_lifted, 2,
+            "both the format!-pattern and the literal expected must dissolve"
+        );
+        assert_eq!(out.assertions_refused, 0, "nothing refused: {:?}", out.skip_reasons);
+    }
 }

@@ -60,6 +60,17 @@ pub enum PosOutcome {
     Crate {
         krate: String,
         type_stem: Option<String>,
+        /// The receiver/param mutability effect from the method SIGNATURE
+        /// ("Mutating" / "RefClean" / "Unknown"), cached alongside the crate so a
+        /// cache hit reproduces the oracle's verdict with no RA spawn. Without
+        /// this, a warm-cache re-run degraded every hit to "unknown" -> the
+        /// source-audit reclassified NOTHING -> a hollow `ORACLE_MOVED 0` that
+        /// looked like a real zero (a fake zero). The effect is a function of the
+        /// same signature source the resolution depends on, so it is invalidated
+        /// by the SAME deps -- caching it is sound. `#[serde(default)]` keeps old
+        /// cache files (no effect field) loadable, defaulting to "" -> Unknown.
+        #[serde(default)]
+        effect: String,
     },
     /// Deterministically refused (null definition / unmappable / ambiguous).
     /// Recorded so a cache hit reproduces the refusal with no RA spawn.
@@ -74,11 +85,17 @@ pub struct CachedPosition {
 }
 
 impl CachedPosition {
-    pub fn resolved(krate: &str, type_stem: Option<&str>, deps: ResolutionDeps) -> Self {
+    pub fn resolved(
+        krate: &str,
+        type_stem: Option<&str>,
+        effect: &str,
+        deps: ResolutionDeps,
+    ) -> Self {
         Self {
             outcome: PosOutcome::Crate {
                 krate: krate.to_string(),
                 type_stem: type_stem.map(str::to_string),
+                effect: effect.to_string(),
             },
             deps,
         }
@@ -428,6 +445,7 @@ mod tests {
             CachedPosition::resolved(
                 "std",
                 Some("option"),
+                "RefClean",
                 ResolutionDeps::workspace(&unique_temp_dir("unused")),
             ),
         );
@@ -443,6 +461,7 @@ mod tests {
             Some(&PosOutcome::Crate {
                 krate: "std".into(),
                 type_stem: Some("option".into()),
+                effect: "RefClean".into(),
             })
         );
         assert_eq!(
@@ -462,6 +481,7 @@ mod tests {
             CachedPosition::resolved(
                 "serde_json",
                 None,
+                "RefClean",
                 ResolutionDeps::workspace(&unique_temp_dir("unused")),
             ),
         );
@@ -479,6 +499,8 @@ mod tests {
             Some(&PosOutcome::Crate {
                 krate: "serde_json".into(),
                 type_stem: None,
+                // the effect must survive the bytes roundtrip, not reset to unknown.
+                effect: "RefClean".into(),
             })
         );
     }
@@ -550,6 +572,7 @@ mod tests {
             CachedPosition::resolved(
                 "std",
                 Some("option"),
+                "RefClean",
                 ResolutionDeps::from_files(&root, [&dep_a]).expect("dep a"),
             ),
         );
@@ -565,6 +588,7 @@ mod tests {
             CachedPosition::resolved(
                 "std",
                 Some("result"),
+                "Mutating",
                 ResolutionDeps::from_files(&root, [&dep_b]).expect("dep b refresh"),
             ),
         );
@@ -577,6 +601,7 @@ mod tests {
             Some(&PosOutcome::Crate {
                 krate: "std".into(),
                 type_stem: Some("option".into()),
+                effect: "RefClean".into(),
             }),
             "partial refresh should not discard an unrelated cached position"
         );
@@ -585,6 +610,7 @@ mod tests {
             Some(&PosOutcome::Crate {
                 krate: "std".into(),
                 type_stem: Some("result".into()),
+                effect: "Mutating".into(),
             }),
             "refreshed position should be updated in place"
         );
