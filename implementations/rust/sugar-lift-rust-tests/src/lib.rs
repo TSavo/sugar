@@ -15,6 +15,7 @@ use std::rc::Rc;
 
 mod macro_expand;
 pub mod flt2dec_eval;
+pub mod closed_eval;
 
 use quote::ToTokens;
 use sugar_ir_symbolic::{
