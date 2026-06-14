@@ -1281,7 +1281,7 @@ def test_structural_package_accounting_warrants_literal_container_terms(
     ), literal_loci
 
 
-def test_structural_package_accounting_leaves_computed_literal_container_unclassified(
+def test_structural_package_accounting_warrants_computed_call_term_literal_container(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("SUGAR_PY_PACKAGE_ACCOUNTING_MODE", "structural")
@@ -1337,11 +1337,15 @@ def test_structural_package_accounting_leaves_computed_literal_container_unclass
         and locus.get("ast_kind") in {"List", "Call"}
     ]
     assert computed_loci
-    assert {
-        locus.get("ast_kind")
+    assert not [
+        locus for locus in computed_loci if locus["status"] == "unclassified"
+    ], computed_loci
+    assert any(
+        locus["status"] == "warranted"
+        and locus.get("ast_kind") == "List"
+        and "call-term value expression" in locus.get("reason", "")
         for locus in computed_loci
-        if locus["status"] == "unclassified"
-    } == {"List", "Call"}
+    ), computed_loci
 
 
 def test_structural_package_accounting_warrants_known_pure_call_value_terms(
@@ -2246,7 +2250,7 @@ def test_structural_package_accounting_refuses_kwargs_splat_dynamic_call(
     ), keyword_loci
 
 
-def test_structural_package_accounting_keeps_unknown_calls_unclassified_next_to_pure_calls(
+def test_structural_package_accounting_warrants_local_call_terms_next_to_pure_calls(
     tmp_path,
     monkeypatch,
 ):
@@ -2311,14 +2315,18 @@ def test_structural_package_accounting_keeps_unknown_calls_unclassified_next_to_
         and locus.get("ast_kind") == "Call"
     ]
     assert call_loci
+    assert not [
+        locus for locus in call_loci if locus["status"] == "unclassified"
+    ], call_loci
     assert any(
         locus["status"] == "warranted"
-        and "known pure call value term" in locus.get("reason", "")
-        and locus["line"] == pure_line
+        and "call-term value expression" in locus.get("reason", "")
+        and locus["line"] == return_line
         for locus in call_loci
     ), call_loci
     assert any(
-        locus["status"] == "unclassified" and locus["line"] == return_line
+        locus["status"] == "warranted"
+        and locus["line"] == pure_line
         for locus in call_loci
     ), call_loci
 
@@ -3098,6 +3106,91 @@ def test_structural_package_accounting_warrants_call_term_starred_conditional_ar
         and "call-term" in locus.get("reason", "")
         for locus in call_loci
     ), call_loci
+
+
+def test_structural_package_accounting_warrants_composite_call_term_value_exprs(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("SUGAR_PY_PACKAGE_ACCOUNTING_MODE", "structural")
+    pkg = tmp_path / "vendpkg_call_term_value_exprs"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    module_path = pkg / "encoding.py"
+    module_path.write_text(
+        textwrap.dedent(
+            """
+            class Timestamp:
+                def __init__(self, value):
+                    self._value = value
+
+            def b64e(s):
+                return s.rstrip(b"=")
+
+            def build(start, other):
+                start_i8 = Timestamp(start)._value
+                delta = Timestamp(other)._value - start_i8
+                return Timestamp(other)._value + delta
+            """
+        ),
+        encoding="utf-8",
+    )
+    assignment_lines = {
+        line_no
+        for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
+        if "Timestamp(start)._value" in line
+        or "Timestamp(other)._value - start_i8" in line
+    }
+    return_line = next(
+        line_no
+        for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
+        if "return Timestamp(other)._value + delta" in line
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    translate_universe_for_callee.cache_clear()
+
+    lifted = _lift_source_from_disk(
+        tmp_path,
+        "test_mod.py",
+        """
+        import vendpkg_call_term_value_exprs.encoding as enc
+
+        def test_token():
+            assert enc.b64e(b"abc=") == b"abc"
+        """,
+    )
+
+    audit = next(
+        audit
+        for audit in lifted["sourceAudits"]
+        if audit.get("role") == "python.package-source"
+        and audit.get("package") == "vendpkg_call_term_value_exprs"
+    )
+    value_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith("vendpkg_call_term_value_exprs/encoding.py")
+        and locus.get("line") in {*assignment_lines, return_line}
+        and locus.get("ast_kind")
+        in {"Assign", "Return", "BinOp", "Attribute", "Call", "Name"}
+    ]
+    assert value_loci
+    assert not [
+        locus for locus in value_loci if locus["status"] == "unclassified"
+    ], value_loci
+    assert any(
+        locus["status"] == "warranted"
+        and locus.get("ast_kind") == "BinOp"
+        and "call-term value expression" in locus.get("reason", "")
+        for locus in value_loci
+    ), value_loci
+    assert any(
+        locus["status"] == "warranted"
+        and locus.get("ast_kind") == "Return"
+        and locus.get("line") == return_line
+        and "call-term value expression" in locus.get("reason", "")
+        for locus in value_loci
+    ), value_loci
 
 
 def test_structural_package_accounting_refuses_runtime_environment_probes(
@@ -9336,6 +9429,96 @@ def test_structural_package_accounting_warrants_subscript_and_slice_terms(
     ), selector_loci
 
 
+def test_structural_package_accounting_warrants_tuple_axis_subscript_terms(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("SUGAR_PY_PACKAGE_ACCOUNTING_MODE", "structural")
+    pkg = tmp_path / "vendpkg_structural_tuple_axis_subscript_terms"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    module_path = pkg / "signer.py"
+    module_path.write_text(
+        textwrap.dedent(
+            '''
+            def skipped(values, start, stop, mask):
+                head = values[:, 0]
+                window = values[start:stop, :2]
+                masked = values[mask == 0]
+                return head
+
+            def b64e(s):
+                return s.rstrip(b"=")
+            '''
+        ),
+        encoding="utf-8",
+    )
+    tuple_selector_lines = {
+        line_no
+        for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
+        if line.strip().startswith(("head =", "window ="))
+    }
+    masked_line = next(
+        line_no
+        for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
+        if line.strip().startswith("masked =")
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    lifted = _lift_source_from_disk(
+        tmp_path,
+        "test_mod.py",
+        """
+        import vendpkg_structural_tuple_axis_subscript_terms.signer as signer
+
+        def test_token():
+            assert signer.b64e(b"abc") == b"abc"
+        """,
+    )
+
+    audit = next(
+        audit
+        for audit in lifted["sourceAudits"]
+        if audit.get("role") == "python.package-source"
+    )
+    tuple_selector_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith(
+            "vendpkg_structural_tuple_axis_subscript_terms/signer.py"
+        )
+        and locus["line"] in tuple_selector_lines
+        and locus.get("ast_kind")
+        in {"Assign", "Subscript", "Slice", "Tuple", "Name", "Constant"}
+    ]
+    assert tuple_selector_loci
+    assert not [
+        locus for locus in tuple_selector_loci if locus["status"] == "unclassified"
+    ], tuple_selector_loci
+    assert any(
+        locus["status"] == "warranted"
+        and locus.get("ast_kind") == "Tuple"
+        and "subscript/slice" in locus.get("reason", "")
+        for locus in tuple_selector_loci
+    ), tuple_selector_loci
+
+    masked_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith(
+            "vendpkg_structural_tuple_axis_subscript_terms/signer.py"
+        )
+        and locus["line"] == masked_line
+        and locus.get("ast_kind") in {"Subscript", "Compare"}
+    ]
+    assert masked_loci
+    assert not [
+        locus
+        for locus in masked_loci
+        if locus["status"] == "warranted"
+        and "subscript/slice" in locus.get("reason", "")
+    ], masked_loci
+
+
 def test_structural_package_accounting_warrants_ifexp_value_terms(
     tmp_path,
     monkeypatch,
@@ -9761,6 +9944,160 @@ def test_package_accounting_warrants_tuple_unpack_call_projection(
         and "tuple-unpack" in locus.get("reason", "")
         for locus in unpack_loci
     ), unpack_loci
+
+
+def test_structural_package_accounting_warrants_tuple_unpack_call_projection(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("SUGAR_PY_PACKAGE_ACCOUNTING_MODE", "structural")
+    pkg = tmp_path / "vendpkg_structural_tuple_unpack_call"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "timed.py").write_text(
+        textwrap.dedent(
+            '''
+            def unsign(result, sep):
+                value, ts_bytes = result.rsplit(sep, 1)
+                return value
+
+            def b64e(s):
+                return s.rstrip(b"=")
+            '''
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    lifted = _lift_source_from_disk(
+        tmp_path,
+        "test_mod.py",
+        """
+        import vendpkg_structural_tuple_unpack_call.timed as timed
+
+        def test_token():
+            assert timed.b64e(b"abc") == b"abc"
+        """,
+    )
+
+    audit = next(
+        audit
+        for audit in lifted["sourceAudits"]
+        if audit.get("role") == "python.package-source"
+    )
+    unpack_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith("vendpkg_structural_tuple_unpack_call/timed.py")
+        and locus["line"] == 3
+    ]
+    assert unpack_loci
+    assert not [
+        locus for locus in unpack_loci if locus["status"] == "unclassified"
+    ], unpack_loci
+    assert any(
+        locus["status"] == "warranted"
+        and locus.get("ast_kind") == "Tuple"
+        and "tuple-unpack" in locus.get("reason", "")
+        for locus in unpack_loci
+    ), unpack_loci
+
+
+def test_structural_package_accounting_warrants_tuple_unpack_fixed_sequences(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("SUGAR_PY_PACKAGE_ACCOUNTING_MODE", "structural")
+    pkg = tmp_path / "vendpkg_structural_tuple_unpack_fixed_sequences"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    module_path = pkg / "signer.py"
+    module_path.write_text(
+        textwrap.dedent(
+            '''
+            def skipped(left_values, right_values, key, args, buffers):
+                lv, rv = left_values, right_values
+                results, keys = [], []
+                start, stop, step = key.start, key.stop, key.step
+                data, index = args
+                data_buff, data_dtype = buffers["data"]
+                return lv
+
+            def b64e(s):
+                return s.rstrip(b"=")
+            '''
+        ),
+        encoding="utf-8",
+    )
+    fixed_lines = {
+        line_no
+        for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
+        if line.strip().startswith(
+            (
+                "lv, rv =",
+                "results, keys =",
+                "start, stop, step =",
+            )
+        )
+    }
+    runtime_lines = {
+        line_no
+        for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
+        if line.strip().startswith(("data, index =", "data_buff, data_dtype ="))
+    }
+    monkeypatch.syspath_prepend(str(tmp_path))
+    lifted = _lift_source_from_disk(
+        tmp_path,
+        "test_mod.py",
+        """
+        import vendpkg_structural_tuple_unpack_fixed_sequences.signer as signer
+
+        def test_token():
+            assert signer.b64e(b"abc") == b"abc"
+        """,
+    )
+
+    audit = next(
+        audit
+        for audit in lifted["sourceAudits"]
+        if audit.get("role") == "python.package-source"
+    )
+    fixed_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith(
+            "vendpkg_structural_tuple_unpack_fixed_sequences/signer.py"
+        )
+        and locus["line"] in fixed_lines
+        and locus.get("ast_kind")
+        in {"Assign", "Tuple", "List", "Name", "Attribute"}
+    ]
+    assert fixed_loci
+    assert not [
+        locus for locus in fixed_loci if locus["status"] == "unclassified"
+    ], fixed_loci
+    assert any(
+        locus["status"] == "warranted"
+        and locus.get("ast_kind") == "Tuple"
+        and "fixed-sequence" in locus.get("reason", "")
+        for locus in fixed_loci
+    ), fixed_loci
+
+    runtime_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith(
+            "vendpkg_structural_tuple_unpack_fixed_sequences/signer.py"
+        )
+        and locus["line"] in runtime_lines
+        and locus.get("ast_kind") in {"Assign", "Tuple", "Subscript", "Name"}
+    ]
+    assert runtime_loci
+    assert not [
+        locus
+        for locus in runtime_loci
+        if locus["status"] == "warranted"
+        and "fixed-sequence" in locus.get("reason", "")
+    ], runtime_loci
 
 
 def test_package_accounting_warrants_computed_receiver_call_binding(

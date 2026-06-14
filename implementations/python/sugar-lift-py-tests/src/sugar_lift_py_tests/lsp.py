@@ -796,6 +796,15 @@ def _package_locus_classification(
     )
     if tuple_unpack_call_status is not None:
         return tuple_unpack_call_status
+    tuple_unpack_fixed_sequence_status = _local_tuple_unpack_fixed_sequence_status(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if tuple_unpack_fixed_sequence_status is not None:
+        return tuple_unpack_fixed_sequence_status
     translate_body_status = _translate_body_status(
         node,
         ancestors,
@@ -1077,6 +1086,24 @@ def _package_locus_structural_classification(
     )
     if call_term_assignment_status is not None:
         return call_term_assignment_status
+    tuple_unpack_call_status = _local_tuple_unpack_call_status(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if tuple_unpack_call_status is not None:
+        return tuple_unpack_call_status
+    tuple_unpack_fixed_sequence_status = _local_tuple_unpack_fixed_sequence_status(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if tuple_unpack_fixed_sequence_status is not None:
+        return tuple_unpack_fixed_sequence_status
     return_call_term_status = _return_call_term_status(
         node,
         ancestors,
@@ -1086,6 +1113,15 @@ def _package_locus_structural_classification(
     )
     if return_call_term_status is not None:
         return return_call_term_status
+    call_term_value_status = _call_term_value_expression_status(
+        node,
+        ancestors,
+        call_aliases,
+        module_name,
+        tree,
+    )
+    if call_term_value_status is not None:
+        return call_term_value_status
     return_local_status = _return_through_local_binding_status(
         node,
         ancestors,
@@ -4575,6 +4611,62 @@ def _local_tuple_unpack_call_statement_for_locus(
     return stmt, stmt.value
 
 
+def _local_tuple_unpack_fixed_sequence_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[tuple[str, str]]:
+    stmt = _local_tuple_unpack_fixed_sequence_statement_for_locus(node, ancestors)
+    if stmt is None:
+        return None
+    assign_stmt, value = stmt
+    if not any(descendant is node for descendant in ast.walk(assign_stmt)):
+        return None
+    if not all(
+        _is_call_term_arg(elt, ancestors + (node,), call_aliases, module_name, tree)
+        for elt in value.elts
+    ):
+        return None
+    return (
+        "warranted",
+        "local tuple-unpack fixed-sequence projection admitted as compiler equality",
+    )
+
+
+def _local_tuple_unpack_fixed_sequence_statement_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[ast.Assign, ast.Tuple | ast.List]]:
+    chain = ancestors + (node,)
+    stmt_index: Optional[int] = None
+    stmt: Optional[ast.Assign] = None
+    for index in range(len(chain) - 1, -1, -1):
+        item = chain[index]
+        if isinstance(item, ast.Assign):
+            stmt_index = index
+            stmt = item
+            break
+    if stmt is None or stmt_index is None:
+        return None
+    owner = _nearest_enclosing_function(chain[:stmt_index])
+    if owner is None:
+        return None
+    if len(stmt.targets) != 1 or not isinstance(stmt.targets[0], ast.Tuple):
+        return None
+    target = stmt.targets[0]
+    if not target.elts or not all(isinstance(elt, ast.Name) for elt in target.elts):
+        return None
+    if not isinstance(stmt.value, (ast.Tuple, ast.List)):
+        return None
+    if any(isinstance(elt, ast.Starred) for elt in stmt.value.elts):
+        return None
+    if len(target.elts) != len(stmt.value.elts):
+        return None
+    return stmt, stmt.value
+
+
 def _return_call_term_status(
     node: ast.AST,
     ancestors: tuple[ast.AST, ...],
@@ -4635,6 +4727,100 @@ def _return_call_term_statement_for_locus(
     if not isinstance(stmt.value, ast.Call):
         return None
     return stmt
+
+
+def _call_term_value_expression_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> Optional[tuple[str, str]]:
+    expr = _call_term_value_expression_for_locus(node, ancestors)
+    if expr is None:
+        return None
+    chain = ancestors + (node,)
+    if not _is_call_term_value_expression(expr, chain, call_aliases, module_name, tree):
+        return None
+    return (
+        "warranted",
+        "call-term value expression admitted as compiler equality",
+    )
+
+
+def _call_term_value_expression_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[ast.expr]:
+    chain = ancestors + (node,)
+    for index in range(len(chain) - 1, -1, -1):
+        item = chain[index]
+        if isinstance(item, ast.Return):
+            if item.value is None or isinstance(item.value, ast.Call):
+                return None
+            if node is item or any(candidate is node for candidate in ast.walk(item.value)):
+                return item.value
+            return None
+        if isinstance(item, (ast.Assign, ast.AnnAssign)):
+            if _nearest_enclosing_function(chain[:index]) is None:
+                return None
+            value = item.value
+            if value is None or isinstance(value, ast.Call):
+                return None
+            if isinstance(item, ast.Assign):
+                if len(item.targets) != 1 or not isinstance(item.targets[0], ast.Name):
+                    return None
+            elif not isinstance(item.target, ast.Name):
+                return None
+            if node is item or any(candidate is node for candidate in ast.walk(value)):
+                return value
+            return None
+    return None
+
+
+def _is_call_term_value_expression(
+    node: ast.expr,
+    chain: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> bool:
+    return _is_call_term_arg(
+        node,
+        chain,
+        call_aliases,
+        module_name,
+        tree,
+    ) and _contains_statically_nameable_call_term(
+        node,
+        chain,
+        call_aliases,
+        module_name,
+        tree,
+    )
+
+
+def _contains_statically_nameable_call_term(
+    node: ast.AST,
+    chain: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+    module_name: str,
+    tree: ast.Module,
+) -> bool:
+    for candidate in ast.walk(node):
+        if not isinstance(candidate, ast.Call):
+            continue
+        if _is_known_pure_call_value_expr(candidate):
+            continue
+        if _is_statically_nameable_call_term(
+            candidate,
+            chain,
+            call_aliases,
+            module_name,
+            tree,
+        ):
+            return True
+    return False
 
 
 def _return_through_local_binding_status(
@@ -5844,6 +6030,7 @@ _KNOWN_PURE_OPTIONAL_ONE_ARG_METHODS = frozenset(
 )
 _KNOWN_PURE_ONE_ARG_METHODS = frozenset({"join"})
 _KNOWN_PURE_TWO_OR_THREE_ARG_METHODS = frozenset({"replace"})
+_KNOWN_PURE_ZERO_TO_TWO_ARG_METHODS = frozenset({"rsplit", "split"})
 _KNOWN_PURE_ONE_TO_THREE_ARG_METHODS = frozenset({"endswith", "startswith"})
 
 
@@ -5872,6 +6059,10 @@ def _is_known_pure_method_call_value_expr(node: ast.Call) -> bool:
         return len(node.args) == 1 and _is_known_pure_call_arg(node.args[0])
     if method in _KNOWN_PURE_TWO_OR_THREE_ARG_METHODS:
         return 2 <= len(node.args) <= 3 and all(
+            _is_known_pure_call_arg(arg) for arg in node.args
+        )
+    if method in _KNOWN_PURE_ZERO_TO_TWO_ARG_METHODS:
+        return len(node.args) <= 2 and all(
             _is_known_pure_call_arg(arg) for arg in node.args
         )
     if method in _KNOWN_PURE_ONE_TO_THREE_ARG_METHODS:
@@ -5911,6 +6102,8 @@ def _is_known_pure_call_slice(node: ast.AST) -> bool:
             part is None or _is_known_pure_call_arg(part)
             for part in (node.lower, node.upper, node.step)
         )
+    if isinstance(node, ast.Tuple):
+        return all(_is_known_pure_call_slice(elt) for elt in node.elts)
     return _is_known_pure_call_arg(node)
 
 
