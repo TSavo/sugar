@@ -37,6 +37,27 @@ cfg-gated asserts read as ambiguous — a measurement artifact, now fixed).
   in-code NOTE; needs a fix that routes top-level/negated comparisons to atoms
   before the term ctor.
 
+**UNIFYING FINDING — the 9 surface rungs collapse to ~3 body-level capabilities.**
+The loop lifter (`try_lift_for_loop_forall`) already unrolls literal arrays /
+quantifies ranges and substitutes the loop var; it refuses (→ bin-1) only when the
+BODY hits `body_skipped` — i.e. the body contains a non-liftable term. Likewise the
+helper-inline refuses when the body won't reduce, and the branch/let/nested buckets
+are the same. So bin-1 loops (60), complex helpers (517), branch (45), nested (38)
+are NOT independent rungs — they are **downstream consumers** that drain
+automatically once the body-level gaps close. The whole ~1071 bottoms out in THREE
+body-level lifting capabilities:
+  1. **Higher-order inlining** (closures `|x| ..` as adapter args / helper params,
+     generic+closure helper bodies) — the dominant mass (≈670), the hard core.
+  2. **Term vocabulary** (non-closure `unsupported term`/operator — the genuinely
+     missing lowerings, e.g. term-position comparisons done right).
+  3. **let / nested-expr handling** in a reduced body (`let x = e;` substitution,
+     asserts nested in expression statements).
+Close those three at the BODY level and the surface rungs follow. All three are
+shared-path, regression-prone (cf. the comparison-op revert), and a mis-lift here
+is a MASKED-CONTRADICTION falsePass the consistency sweep does NOT catch (it catches
+false-unsat, not false-discharge). So they must be done SUPERVISED, one capability
+at a time, gated on the full guard-test suite — not forged unsupervised.
+
 **Empirical finding — the remaining ~1071 is mostly HIGHER-ORDER, not micro-lowerings.**
 The two biggest buckets (517 complex helpers + ~150 closures-in-term-position) are
 the SAME core: lifting requires inlining closures / generic+closure helper bodies
