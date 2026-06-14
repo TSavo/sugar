@@ -1,0 +1,70 @@
+# Goal: stdlib `unclassified` → 0
+
+## The target (closure invariant)
+
+For the stdlib (rust 1.96.0 coretests) corpus, drive **`unclassified = 0`**. Not
+`refused = 0` (terminal refusals are earned and stay), not `discharged = 100%`
+(some asserts genuinely refuse). The endgame is the **totally-classified ledger**:
+
+```
+total  =  discharged  ⊎  refused(terminal)  ⊎  inactive
+          unclassified = 0          (no load-bearing AST node un-judged)
+          unaccounted  = 0          (no silent drop; tighten the current -51)
+```
+
+A CID over that ledger is the closure artifact: every door labelled, no junk
+drawer. Until `unclassified = 0`, the ledger CID certifies a completeness it does
+not have.
+
+## Where we are (sweep, commit ef1bb4d7c)
+
+```
+discharged   4990   78.2%
+refused       171    2.7%   (terminal: bin-2 runtime 103, ambiguous-temporal 49, bignum 19)
+unclassified 1267   19.9%   <-- this document drains this to 0
+unaccounted   -51           (no silent drops; inlining over-count, to be tightened to 0)
+```
+
+Each rung is a transformation φ (the homomorphism catalog) that moves a bucket OUT
+of `unclassified` into `{discharged | refused(terminal) | inactive}` by its pinning
+gate. Draining ≠ all-discharge: a rung splits its bucket — pinned inputs discharge,
+genuinely runtime/effectful/dynamic residue becomes a *terminal* refusal.
+
+## The rungs, by leverage (count drained, cumulative)
+
+| # | drains | cum | rung | φ | gate → outcome |
+|---|--------|-----|------|---|----------------|
+| 1 | **521** | 41% | **R7 call-disappearance → queued dig** | `z=h(x); g(z)` keep `z=h(x), result=g(z)`, **queue h,g**; AST walk done when queue empty | helper body source-resolvable → discharge; dynamic-receiver dispatch / known effect → terminal refuse. (These are the `to_*_str_test` / `check` / `next` helpers "reachable only via call-site inlining" — pure TODO today.) |
+| 2 | **258** | 62% | **TERM vocab** | teach the missing term/operator a lowering (incl. term-position macro results) | expressible op → discharge; genuinely non-FOL surface → terminal refuse. Per-operator grind, no single switch. |
+| 3 | **178** | 76% | **CFG pin (static-env)** | supply the target triple; resolve `cfg!`/target-gated asserts | a missing INPUT, not a lifter feature — cheapest bang. Pinned cfg → discharge; truly target-divergent → per-target verdict. |
+| 4 | **64** | 81% | **R4f loop finite-domain body** | `for x in <literal domain>` → `∀x.(guard ⇒ body)` (the forall lifter already exists; body not yet point-wise) | body lifts → discharge; opaque element data → terminal (bin-2). |
+| 5 | **45** | 82% | **R4 branch partitioning** | `if g {A} else {B}` → `g ⇒ out=A ∧ ¬g ⇒ out=B`; with pinned `self.mode` the branch collapses at callsite | guard pinned → discharge; opaque-runtime guard → terminal refuse. |
+| 6 | **39** | 86% | **R8 macro type/effect split** | classify `macro expanded to no liftable`: type-level → inactive; effectful → terminal | removes a mixed bucket; no value asserts lost. |
+| 7 | **38** | 88% | **R1 nested-expr walk** | lift asserts nested in an expression statement (fluent pinning into the enclosing term) | sub-expression pinned → discharge. |
+| 8 | **32** | 91% | **R5 let-init projection** | `let x = <expr>; ..x..` → bind/project `x` to its pinned term | pinned init → discharge; opaque/mutated → refuse. |
+| 9 | **31** | 93% | **MAC teach** | lower the remaining assertion macros (`assert_almost_eq!`, `assert_chunks!`, ...) | one accounting unit per source macro. |
+| — | **111** | 100% | **tail** | SRC resolve helper source (20, or prove terminal-external) · WALK totality-gap (11) · FLT float refine (9, several already ok) · R5p closure-predicate (8) · CON const-block (6) · PAT pattern (5) · R2 alias/SSA (4) | each small, mostly an existing rung's edge case. |
+
+**Three rungs (R7 + TERM + CFG) = 76% of all remaining work.** R7 alone is 41% and
+is the most mechanical — it's the queued-dig you already named.
+
+## Order (leverage × tractability)
+
+1. **CFG (178)** first — cheapest, it's an input not a feature; clears 14% by
+   supplying a target triple and resolving cfg-gated asserts.
+2. **R7 call-queueing (521)** — the dominant lever; build the dig worklist
+   (resolve helper source → inline at callsite → lift body → recurse until queue
+   empty), with dynamic dispatch as the terminal-refuse leaf.
+3. **TERM (235)** — grind the operator vocabulary; each unsupported term either
+   gets a lowering (discharge) or a "not expressible in FOL" terminal refusal.
+4. **R4 family (110)** — branch partitioning + finite-domain loop bodies (one
+   mechanism: `guard ⇒ out`, finite/non-quantified case of the forall lifter).
+5. **Tail (193)** — R8 split, R1 nested, R5 let-init, MAC, then the long edge cases.
+
+## Done means
+
+After every rung, re-run `coretests_sweep`. The milestone is met when it prints
+`unclassified 0` with `unaccounted 0`, and `refused` is a *short, debunk-proof*
+list of source-property reasons (runtime data, dynamic dispatch, values outside the
+sort). At that point the ledger CID is a real closure artifact: 64 bytes over a
+house with every door labelled.

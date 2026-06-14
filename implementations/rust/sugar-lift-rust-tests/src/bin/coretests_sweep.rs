@@ -103,8 +103,12 @@ fn bucket(reason: &str) -> String {
     if head.is_empty() {
         reason.trim().to_lowercase()
     } else {
-        // Cap length so near-identical long reasons still merge.
-        head.chars().take(72).collect()
+        // NO TRUNCATION. The full normalized shape is the bucket key. Merging is
+        // done by erasing backtick-quoted SPECIFICS (above), not by cutting the
+        // string -- truncating split the call-site-inlining family across dozens
+        // of per-helper-name keys and hid a 521-strong rung. Variable parts belong
+        // in backticks at the emission site so they are erased here, not chopped.
+        head.to_string()
     }
 }
 

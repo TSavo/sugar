@@ -361,7 +361,7 @@ fn walk_non_test_fns(
                             continue;
                         }
                         let reason = format!(
-                            "assertion in impl method {method_name}: reachable only when the method runs; released to layer 0"
+                            "assertion in impl method `{method_name}`: reachable only when the method runs; released to layer 0"
                         );
                         for _ in 0..count {
                             out.assertions_refused += 1;
@@ -415,7 +415,7 @@ fn visit_non_test_fn(
         return;
     }
     let reason = format!(
-        "assertion in non-#[test] item {fn_name}: reachable only via call-site inlining; released to layer 0"
+        "assertion in non-#[test] item `{fn_name}`: reachable only via call-site inlining; released to layer 0"
     );
     for _ in 0..count {
         out.assertions_refused += 1;
@@ -1793,7 +1793,7 @@ fn collect_assertion_entries(
                 let count = count_asserts_in_stmts(&inner_fn.block.stmts);
                 for _ in 0..count {
                     skipped.push(format!(
-                        "assertion in non-#[test] item {fn_name}: reachable only via call-site inlining; released to layer 0"
+                        "assertion in non-#[test] item `{fn_name}`: reachable only via call-site inlining; released to layer 0"
                     ));
                 }
             }
