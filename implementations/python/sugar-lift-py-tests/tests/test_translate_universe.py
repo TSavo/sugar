@@ -3649,6 +3649,99 @@ def test_lift_source_classifies_static_assignments_as_warranted_compiler_facts(
     ), audit
 
 
+def test_lift_source_classifies_static_container_constructor_bindings_as_warranted(
+    tmp_path,
+    monkeypatch,
+):
+    pkg = tmp_path / "vendpkg_static_container_constructors"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    module_path = pkg / "encoding.py"
+    module_path.write_text(
+        textwrap.dedent(
+            '''
+            class Base:
+                _hidden_attrs = frozenset(["base"])
+
+            _names = ["_mgr", "_flags"]
+            _name_set = set(_names)
+            _axis_tuple = tuple(["index", "columns"])
+            _axis_list = list(_axis_tuple)
+            _axis_map = dict(index=0, columns=1)
+            _window = range(0, 3)
+            _head = slice(None)
+
+            class Frame(Base):
+                _hidden_attrs = Base._hidden_attrs | frozenset([])
+                _axis_set = set(_axis_tuple)
+
+            def b64e(s):
+                return s.rstrip(b"=")
+            '''
+        ),
+        encoding="utf-8",
+    )
+    static_lines = {
+        line_no
+        for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
+        if line.strip().startswith(
+            (
+                "_hidden_attrs =",
+                "_name_set =",
+                "_axis_tuple =",
+                "_axis_list =",
+                "_axis_map =",
+                "_window =",
+                "_head =",
+                "_axis_set =",
+            )
+        )
+    }
+    monkeypatch.syspath_prepend(str(tmp_path))
+    translate_universe_for_callee.cache_clear()
+
+    lifted = _lift_source_from_disk(
+        tmp_path,
+        "test_mod.py",
+        """
+        import vendpkg_static_container_constructors.encoding as enc
+
+        def test_token():
+            assert enc.b64e(b"abc") == b"abc"
+        """,
+    )
+
+    audit = next(
+        audit
+        for audit in lifted["sourceAudits"]
+        if audit.get("role") == "python.package-source"
+    )
+    static_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith("vendpkg_static_container_constructors/encoding.py")
+        and locus["line"] in static_lines
+        and locus.get("ast_kind")
+        in {
+            "Assign",
+            "Attribute",
+            "BinOp",
+            "Call",
+            "Constant",
+            "List",
+            "Name",
+            "Tuple",
+            "keyword",
+        }
+    ]
+    assert static_loci
+    assert not [
+        locus for locus in static_loci if locus["status"] == "unclassified"
+    ], static_loci
+    assert {locus["status"] for locus in static_loci} == {"warranted"}
+    assert all("static binding" in locus.get("reason", "") for locus in static_loci)
+
+
 def test_lift_source_warrants_local_name_assignment_accounting(
     tmp_path, monkeypatch
 ):

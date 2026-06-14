@@ -1962,11 +1962,18 @@ def _is_known_static_assignment_call(
         "Decimal",
         "complex",
         "decimal.Decimal",
+        "dict",
         "float",
+        "frozenset",
         "int",
+        "list",
+        "range",
+        "set",
+        "slice",
         "struct.Struct",
         "t.cast",
         "typing.cast",
+        "tuple",
         "staticmethod",
     } or callee in _KNOWN_STDLIB_CONSTRUCTOR_CALLS
 
