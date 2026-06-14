@@ -1897,11 +1897,81 @@ fn temporal_plan_for_stmts(stmts: &[Stmt]) -> TemporalPlan {
 fn collect_interior_mut_binding_names_in_stmt(stmt: &Stmt, out: &mut BTreeSet<String>) {
     let Stmt::Local(local) = stmt else { return };
     let Some(init) = &local.init else { return };
-    if !init_is_interior_mut_construction(&init.expr) {
+    // A STATEFUL binding: an interior-mutable cell, OR an iterator (which is
+    // consumed/advanced, so `len`/`count`/`size_hint`/`next` observations change).
+    if !(init_is_interior_mut_construction(&init.expr)
+        || init_is_iterator_construction(&init.expr))
+    {
         return;
     }
     for name in pat_idents(&local.pat) {
         out.insert(name);
+    }
+}
+
+/// True iff `expr` constructs an ITERATOR -- a range, an `.iter()`/`.into_iter()`
+/// family source, or an adapter chain over one. An iterator binding is stateful:
+/// it is consumed/advanced, so `len`/`count`/`size_hint`/`next` observed at
+/// different program points legitimately differ (the same `t` posture as an
+/// interior-mutable cell). Recognises the std Iterator protocol's vocabulary, not
+/// any per-method contract.
+fn init_is_iterator_construction(expr: &Expr) -> bool {
+    match expr {
+        Expr::Range(_) => true,
+        Expr::Reference(r) => init_is_iterator_construction(&r.expr),
+        Expr::Paren(p) => init_is_iterator_construction(&p.expr),
+        Expr::MethodCall(mc) => {
+            const ITER_SOURCES: &[&str] = &[
+                "iter",
+                "iter_mut",
+                "into_iter",
+                "chars",
+                "char_indices",
+                "bytes",
+                "drain",
+                "keys",
+                "values",
+                "values_mut",
+                "lines",
+                "split_whitespace",
+                "windows",
+                "chunks",
+                "array_chunks",
+                "array_windows",
+            ];
+            const ADAPTERS: &[&str] = &[
+                "map",
+                "filter",
+                "filter_map",
+                "take",
+                "take_while",
+                "skip",
+                "skip_while",
+                "rev",
+                "cloned",
+                "copied",
+                "enumerate",
+                "zip",
+                "chain",
+                "flatten",
+                "flat_map",
+                "peekable",
+                "step_by",
+                "scan",
+                "fuse",
+                "by_ref",
+                "inspect",
+                "cycle",
+                "map_while",
+            ];
+            let m = mc.method.to_string();
+            if ITER_SOURCES.contains(&m.as_str()) {
+                return true;
+            }
+            // An adapter IS an iterator iff its receiver is one.
+            ADAPTERS.contains(&m.as_str()) && init_is_iterator_construction(&mc.receiver)
+        }
+        _ => false,
     }
 }
 
