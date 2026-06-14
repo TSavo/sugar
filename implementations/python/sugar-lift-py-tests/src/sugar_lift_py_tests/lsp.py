@@ -663,7 +663,7 @@ def _package_locus_classification(
     module_metadata_status = _public_module_metadata_status(node, ancestors)
     if module_metadata_status is not None:
         return module_metadata_status
-    static_binding_status = _static_binding_status(node, ancestors)
+    static_binding_status = _static_binding_status(node, ancestors, call_aliases)
     if static_binding_status is not None:
         return static_binding_status
     guarded_default_status = _guarded_default_value_flow_status(node, ancestors)
@@ -936,7 +936,7 @@ def _package_locus_structural_classification(
     constructor_field_status = _constructor_field_syntax_status(node, ancestors)
     if constructor_field_status is not None:
         return constructor_field_status
-    static_binding_status = _static_binding_status(node, ancestors)
+    static_binding_status = _static_binding_status(node, ancestors, call_aliases)
     if static_binding_status is not None:
         return static_binding_status
     transparent_cast_status = _transparent_typing_cast_status(node, ancestors)
@@ -971,6 +971,13 @@ def _package_locus_structural_classification(
     collection_lambda_status = _collection_lambda_flow_refusal_status(node, ancestors)
     if collection_lambda_status is not None:
         return collection_lambda_status
+    stdlib_constructor_status = _stdlib_constructor_value_term_status(
+        node,
+        ancestors,
+        call_aliases,
+    )
+    if stdlib_constructor_status is not None:
+        return stdlib_constructor_status
     dynamic_receiver_status = _dynamic_receiver_method_dispatch_refusal_status(
         node,
         ancestors,
@@ -1637,6 +1644,7 @@ def _node_calls_option_registry_outside_nested_scope(node: ast.AST) -> bool:
 def _static_binding_status(
     node: ast.AST,
     ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
 ) -> Optional[tuple[str, str]]:
     stmt = _static_binding_statement_for_locus(node, ancestors)
     if stmt is None:
@@ -1644,7 +1652,7 @@ def _static_binding_status(
     value = stmt.value if isinstance(stmt, ast.AnnAssign) else stmt.value
     if value is None:
         return "support", "annotation-only binding carries no runtime value"
-    if _is_static_assignment_value(value):
+    if _is_static_assignment_value(value, call_aliases):
         return "warranted", "static binding admitted as timeless compiler fact"
     return None
 
@@ -1764,60 +1772,84 @@ def _static_binding_statement_for_locus(
     return stmt
 
 
-def _is_static_assignment_value(node: ast.AST) -> bool:
+def _is_static_assignment_value(
+    node: ast.AST,
+    call_aliases: Optional[Dict[str, str]] = None,
+) -> bool:
     if isinstance(node, ast.Constant):
         return True
     if isinstance(node, ast.Name):
         return True
     if isinstance(node, ast.Attribute):
-        return _is_static_assignment_value(node.value)
+        return _is_static_assignment_value(node.value, call_aliases)
     if isinstance(node, ast.JoinedStr):
-        return all(_is_static_assignment_value(value) for value in node.values)
+        return all(
+            _is_static_assignment_value(value, call_aliases) for value in node.values
+        )
     if isinstance(node, ast.FormattedValue):
-        return _is_static_assignment_value(node.value)
+        return _is_static_assignment_value(node.value, call_aliases)
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
-        return _is_static_assignment_value(node.operand)
+        return _is_static_assignment_value(node.operand, call_aliases)
     if isinstance(node, ast.BinOp):
-        return _is_static_assignment_value(node.left) and _is_static_assignment_value(
-            node.right
+        return _is_static_assignment_value(
+            node.left,
+            call_aliases,
+        ) and _is_static_assignment_value(
+            node.right,
+            call_aliases,
         )
     if isinstance(node, ast.Subscript):
-        return _is_static_assignment_value(node.value) and _is_static_slice(node.slice)
+        return _is_static_assignment_value(
+            node.value,
+            call_aliases,
+        ) and _is_static_slice(node.slice, call_aliases)
     if isinstance(node, ast.Starred):
-        return _is_static_assignment_value(node.value)
+        return _is_static_assignment_value(node.value, call_aliases)
     if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
-        return all(_is_static_assignment_value(value) for value in node.elts)
+        return all(
+            _is_static_assignment_value(value, call_aliases) for value in node.elts
+        )
     if isinstance(node, ast.Dict):
         return all(
-            (key is None or _is_static_assignment_value(key))
-            and _is_static_assignment_value(value)
+            (key is None or _is_static_assignment_value(key, call_aliases))
+            and _is_static_assignment_value(value, call_aliases)
             for key, value in zip(node.keys, node.values)
         )
     if isinstance(node, ast.Call):
-        return _is_known_static_assignment_call(node)
+        return _is_known_static_assignment_call(node, call_aliases)
     return False
 
 
-def _is_static_slice(node: ast.AST) -> bool:
+def _is_static_slice(
+    node: ast.AST,
+    call_aliases: Optional[Dict[str, str]] = None,
+) -> bool:
     if isinstance(node, ast.Slice):
         return all(
-            part is None or _is_static_assignment_value(part)
+            part is None or _is_static_assignment_value(part, call_aliases)
             for part in (node.lower, node.upper, node.step)
         )
-    return _is_static_assignment_value(node)
+    return _is_static_assignment_value(node, call_aliases)
 
 
-def _is_known_static_assignment_call(node: ast.Call) -> bool:
+def _is_known_static_assignment_call(
+    node: ast.Call,
+    call_aliases: Optional[Dict[str, str]] = None,
+) -> bool:
     if any(isinstance(arg, ast.Starred) for arg in node.args):
         return False
-    if not all(_is_static_assignment_value(arg) for arg in node.args):
+    if any(kw.arg is None for kw in node.keywords):
         return False
-    if not all(_is_static_assignment_value(kw.value) for kw in node.keywords):
+    if not all(_is_static_assignment_value(arg, call_aliases) for arg in node.args):
+        return False
+    if not all(
+        _is_static_assignment_value(kw.value, call_aliases) for kw in node.keywords
+    ):
         return False
     func = node.func
     if isinstance(func, ast.Attribute) and func.attr == "encode":
-        return _is_static_assignment_value(func.value)
-    callee = _static_call_name(func)
+        return _is_static_assignment_value(func.value, call_aliases)
+    callee = _resolved_static_call_name(func, call_aliases or {})
     return callee in {
         "Decimal",
         "complex",
@@ -1828,7 +1860,101 @@ def _is_known_static_assignment_call(node: ast.Call) -> bool:
         "t.cast",
         "typing.cast",
         "staticmethod",
+    } or callee in _KNOWN_STDLIB_CONSTRUCTOR_CALLS
+
+
+_KNOWN_STDLIB_CONSTRUCTOR_CALLS = frozenset(
+    {
+        "datetime.date",
+        "datetime.datetime",
+        "datetime.time",
+        "datetime.timedelta",
+        "datetime.timezone",
     }
+)
+
+
+def _stdlib_constructor_value_term_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+) -> Optional[tuple[str, str]]:
+    call = _nearest_stdlib_constructor_value_for_locus(
+        node,
+        ancestors,
+        call_aliases,
+    )
+    if call is None:
+        return None
+    return (
+        "warranted",
+        "imported stdlib constructor value term admitted as compiler construction fact",
+    )
+
+
+def _nearest_stdlib_constructor_value_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+) -> Optional[ast.Call]:
+    chain = ancestors + (node,)
+    for item in reversed(chain):
+        if not isinstance(item, ast.Call):
+            continue
+        if not _is_imported_stdlib_constructor_value_expr(item, call_aliases):
+            return None
+        if node is item or any(candidate is node for candidate in ast.walk(item)):
+            return item
+        return None
+    return None
+
+
+def _is_imported_stdlib_constructor_value_expr(
+    node: ast.Call,
+    call_aliases: Dict[str, str],
+) -> bool:
+    if _has_store_or_del_context(node):
+        return False
+    if any(isinstance(arg, ast.Starred) for arg in node.args):
+        return False
+    if any(keyword.arg is None for keyword in node.keywords):
+        return False
+    callee = _resolved_static_call_name(node.func, call_aliases)
+    if callee not in _KNOWN_STDLIB_CONSTRUCTOR_CALLS:
+        return False
+    return all(
+        _is_stdlib_constructor_value_arg(arg, call_aliases) for arg in node.args
+    ) and all(
+        _is_stdlib_constructor_value_arg(keyword.value, call_aliases)
+        for keyword in node.keywords
+    )
+
+
+def _is_stdlib_constructor_value_arg(
+    node: ast.AST,
+    call_aliases: Dict[str, str],
+) -> bool:
+    if isinstance(node, ast.Call):
+        return _is_known_pure_call_value_expr(
+            node
+        ) or _is_imported_stdlib_constructor_value_expr(node, call_aliases)
+    return _is_known_pure_call_arg(node)
+
+
+def _resolved_static_call_name(
+    node: ast.AST,
+    call_aliases: Dict[str, str],
+) -> str:
+    static_name = _static_call_name(node)
+    if not static_name:
+        return ""
+    root, sep, suffix = static_name.partition(".")
+    resolved_root = call_aliases.get(root)
+    if not resolved_root:
+        return static_name
+    if not sep:
+        return resolved_root
+    return f"{resolved_root}.{suffix}"
 
 
 def _guarded_default_value_flow_status(
