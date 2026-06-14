@@ -921,6 +921,96 @@ fn lift_flt2dec_helper(
     });
 }
 
+/// A trait bound that makes a parameter carry RUNTIME behaviour/data that is not a
+/// source literal: a closure/fn-pointer (`Fn`/`FnMut`/`FnOnce`) or an iterator
+/// (`Iterator`/`IntoIterator`/`DoubleEndedIterator`/`ExactSizeIterator`). A helper
+/// parameterised over such a value asserts over runtime data -- bin-2 (not constructible
+/// from source literals at any call site), categorically not a point-wise value claim.
+fn trait_bound_is_runtime_opaque(b: &syn::TypeParamBound) -> bool {
+    if let syn::TypeParamBound::Trait(t) = b {
+        if let Some(seg) = t.path.segments.last() {
+            return matches!(
+                seg.ident.to_string().as_str(),
+                "Fn" | "FnMut"
+                    | "FnOnce"
+                    | "Iterator"
+                    | "IntoIterator"
+                    | "DoubleEndedIterator"
+                    | "ExactSizeIterator"
+            );
+        }
+    }
+    false
+}
+
+fn param_type_is_runtime_opaque(
+    ty: &syn::Type,
+    runtime_generics: &HashSet<String>,
+) -> bool {
+    match ty {
+        // `impl Fn(..)` / `impl Iterator` parameter.
+        syn::Type::ImplTrait(it) => it.bounds.iter().any(trait_bound_is_runtime_opaque),
+        // `&dyn Trait` / `dyn Trait` trait object -- runtime dynamic dispatch.
+        syn::Type::TraitObject(_) => true,
+        syn::Type::Reference(r) => param_type_is_runtime_opaque(&r.elem, runtime_generics),
+        syn::Type::Paren(p) => param_type_is_runtime_opaque(&p.elem, runtime_generics),
+        // a generic type param bound by a runtime-opaque trait (`fn f<I: Iterator>(it: I)`).
+        syn::Type::Path(p) => p
+            .path
+            .get_ident()
+            .map(|i| runtime_generics.contains(&i.to_string()))
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+/// A non-`#[test]` helper is RUNTIME-PARAMETRIC iff some parameter is a closure/
+/// fn-pointer, an iterator, or a trait object (by impl-Trait, generic bound, or `dyn`).
+/// Its asserts then read runtime data that no call site can supply as source literals,
+/// so they are bin-2 (genuinely terminal) -- distinct from a scalar-parameter helper
+/// (`fn lower(c: char)`) whose asserts a closed-literal call site CAN pin (left to
+/// dissolution / call-site inlining, which the exact partition credits).
+fn helper_is_runtime_parametric(f: &syn::ItemFn) -> bool {
+    let mut runtime_generics: HashSet<String> = HashSet::new();
+    for gp in &f.sig.generics.params {
+        if let syn::GenericParam::Type(tp) = gp {
+            if tp.bounds.iter().any(trait_bound_is_runtime_opaque) {
+                runtime_generics.insert(tp.ident.to_string());
+            }
+        }
+    }
+    if let Some(wc) = &f.sig.generics.where_clause {
+        for pred in &wc.predicates {
+            if let syn::WherePredicate::Type(pt) = pred {
+                if pt.bounds.iter().any(trait_bound_is_runtime_opaque) {
+                    if let syn::Type::Path(p) = &pt.bounded_ty {
+                        if let Some(id) = p.path.get_ident() {
+                            runtime_generics.insert(id.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    f.sig.inputs.iter().any(|arg| match arg {
+        syn::FnArg::Typed(pt) => param_type_is_runtime_opaque(&pt.ty, &runtime_generics),
+        syn::FnArg::Receiver(_) => false,
+    })
+}
+
+/// The refusal reason for a runtime-parametric helper's asserts: bin-2 terminal.
+fn callsite_inlining_reason(fn_name: &str, f: &syn::ItemFn) -> String {
+    if helper_is_runtime_parametric(f) {
+        format!(
+            "assertion in non-#[test] item `{fn_name}` over a runtime iterator/closure/dyn parameter (bin-2: runtime data, not constructible from source literals at any call site); refused"
+        )
+    } else {
+        format!(
+            "assertion in non-#[test] item `{fn_name}`: reachable only via call-site inlining; released to layer 0"
+        )
+    }
+}
+
 /// Emit named refusals for every assert macro in a non-`#[test]` fn.
 /// These assertions are only reachable via call-site inlining and depend on
 /// the fn's parameters: lifting them as unconditional facts would be a false-pass.
@@ -951,9 +1041,7 @@ fn visit_non_test_fn(
     if count == 0 {
         return;
     }
-    let reason = format!(
-        "assertion in non-#[test] item `{fn_name}`: reachable only via call-site inlining; released to layer 0"
-    );
+    let reason = callsite_inlining_reason(&fn_name, f);
     for _ in 0..count {
         out.assertions_refused += 1;
         out.skip_reasons.push(reason.clone());
@@ -2392,10 +2480,9 @@ fn collect_assertion_entries(
                     continue;
                 }
                 let count = count_asserts_in_stmts(&inner_fn.block.stmts);
+                let reason = callsite_inlining_reason(&fn_name, inner_fn);
                 for _ in 0..count {
-                    skipped.push(format!(
-                        "assertion in non-#[test] item `{fn_name}`: reachable only via call-site inlining; released to layer 0"
-                    ));
+                    skipped.push(reason.clone());
                 }
             }
             // Totality fallback: any other statement shape (a bare method-call
@@ -9259,6 +9346,52 @@ mod lifter_key_tests {
         ] {
             assert_eq!(refusal_disposition(r), Unclassified, "should be work: {r}");
         }
+    }
+
+    #[test]
+    fn runtime_parametric_helper_is_bin2_but_scalar_or_slice_helper_stays_unclassified() {
+        use Disposition::*;
+        fn pf(src: &str) -> syn::ItemFn {
+            syn::parse_str(src).expect("parse fn")
+        }
+        // RUNTIME-PARAMETRIC -> bin-2 terminal (refused):
+        // closure param (the iter.rs `check(xs, p: impl Fn(..))` shape)
+        let closure_helper =
+            pf("fn check(xs: &mut [i32], p: impl Fn(&i32) -> bool, n: usize) { assert_eq!(xs.iter().filter(|x| p(x)).count(), n); }");
+        assert!(helper_is_runtime_parametric(&closure_helper));
+        assert_eq!(
+            refusal_disposition(&callsite_inlining_reason("check", &closure_helper)),
+            Refused,
+            "closure-param helper is bin-2 terminal"
+        );
+        // generic Iterator param
+        let iter_helper = pf("fn drive<I: Iterator<Item = u32>>(mut it: I) { assert_eq!(it.next(), Some(1)); }");
+        assert!(helper_is_runtime_parametric(&iter_helper));
+        assert_eq!(
+            refusal_disposition(&callsite_inlining_reason("drive", &iter_helper)),
+            Refused,
+            "iterator-param helper is bin-2 terminal"
+        );
+        // NOT runtime-parametric -> stays UNCLASSIFIED (dissolution/inlining can close it):
+        // scalar param -- a literal at the call site pins it
+        let scalar_helper =
+            pf("fn lower(c: char) -> String { assert_eq!(c.to_lowercase().count(), 1); c.to_lowercase().collect() }");
+        assert!(!helper_is_runtime_parametric(&scalar_helper));
+        assert_eq!(
+            refusal_disposition(&callsite_inlining_reason("lower", &scalar_helper)),
+            Unclassified,
+            "scalar-param helper must NOT be falsely refused"
+        );
+        // slice-only param -- a literal slice CAN be closed at the call site, so we do NOT
+        // claim it terminal (safe under-claim); dissolution + the exact partition own it.
+        let slice_helper =
+            pf("fn test_chain(xs: &[i32], ys: &[i32]) { assert_eq!(xs.iter().chain(ys).count(), 6); }");
+        assert!(!helper_is_runtime_parametric(&slice_helper));
+        assert_eq!(
+            refusal_disposition(&callsite_inlining_reason("test_chain", &slice_helper)),
+            Unclassified,
+            "slice-param helper stays unclassified (not falsely refused)"
+        );
     }
 
     // ── Discrimination: versioning is ONLY for warranted mutation ──────────────
