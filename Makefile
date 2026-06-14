@@ -131,6 +131,7 @@ build-python:
 	# (python3 -m sugar_lift_py_tests...). Install the lift packages into the
 	# same interpreter so those cross-language tests find it.
 	$(PYTHON_KIT_PIP) install --quiet --no-cache-dir \
+		blake3 \
 		-e implementations/python/sugar-build-witness \
 		-e implementations/python/sugar-lift-py-tests \
 		-e implementations/python/sugar-lift-python-source \
