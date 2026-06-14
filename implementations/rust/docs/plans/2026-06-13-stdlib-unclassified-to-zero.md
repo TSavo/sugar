@@ -1,5 +1,68 @@
 # Goal: stdlib `unclassified` → 0
 
+> **COMPLETE CENSUS 2026-06-14 (every one of the 883 enumerated by concrete class
+> + per-class soundness verdict; ground truth from the sweep's own classifier with
+> the reason-sample cap temporarily raised 12→5000, captured, reverted — NOT regex
+> inference).** unclassified=883, discharged=5287, refused(terminal)=201, inactive=58,
+> SILENT=0, falsePass=0. The 883 partition exhaustively into SIX classes, **none of
+> which is a clean scalar win** (those four — byte/mut-ref-pinned/const-item/immutable-
+> value — were already drained, 1082→883). Each remaining class carries either a
+> masked-contradiction risk the consistency sweep CANNOT catch, an R4-proven vacuous-SAT
+> false-pass risk, or would require a fake-zero reclassification. Map:
+>
+> 1. **Higher-order / closure / iterator helper bodies — 516 (58%).** Dispositioned
+>    "non-#[test] item, reachable only via call-site inlining." DOMINATED by
+>    `num/flt2dec/mod.rs` float→decimal formatting helpers: `to_exact_fixed_str_test`
+>    (133), `to_exact_exp_str_test` (130), `to_shortest_exp_str_test` (68),
+>    `to_shortest_str_test` (57) = **388 alone**. Rest: `chain.rs::test_chain` (26,
+>    `Unfuse::chain().advance_by()`), `iterator.rs::check` (6, `partition_in_place`
+>    over a closure), `char.rs::check/lower/upper/string` (24, case mapping),
+>    `slice.rs::test/test_mut/case` (28), `ptr.rs` (6), `hint.rs::do_test` (6),
+>    `num/mod.rs` (6), `unicode.rs` (6), tail. **Call-site inlining is NOT the wall** —
+>    even with literal args substituted, these bodies need float-formatting / iterator-
+>    state / closure-application semantics that are not point-wise liftable. Modeling
+>    Grisu/Dragon float formatting (388) is the textbook masked-contradiction tier:
+>    a subtly-wrong model false-discharges and the sweep is blind to it. SUPERVISED.
+> 2. **Conditional / loop / match context — ~106.** `for` over literal range (44) +
+>    literal array (16) + opaque-body (1), `while` (30), `if` (8), `match` (7). R4
+>    (commit c99d78922) PROVED `if g { assert!(P) }` → `implies(g,P)` is faithful ONLY
+>    if g is PINNED; corpus guards reference free params (`if i==0||i==xs.len()`), so
+>    `implies(free_guard,P)` is vacuously SAT → sweep-blind false-pass. `for`/`while`
+>    need loop-unrolling over the pinned range (real machinery, masked-contradiction
+>    risk). SUPERVISED.
+> 3. **Float / NaN / bit-pattern refinement — ~80.** `assert_almost_eq!` (22, flt2dec
+>    tolerance), `assert_float_result_bits_eq` (23, dec2flt parser-under-test + closure),
+>    `assert_eq_const_safe` in carryless_mul (16, GF(2) clmul bits), `a[0]<b[0]` (8 —
+>    actually `[NaN]<[1.0f64]` IEEE compares nested in `a.iter().lt(b.iter())==…`),
+>    signed-zero -0.0 (7), infinity (4), float-width predicates (2). Float/IEEE
+>    semantics — SUPERVISED.
+> 4. **Structural nesting — ~81.** Nested in unlifted expr-stmt (38), let-initializer
+>    (32), unenumerated stmt position (11). Need statement-graph restructure. SUPERVISED.
+> 5. **Unsafe / transmute / raw-ptr / mut-ref terms — 35.** `unsafe{transmute_copy(&1)}`,
+>    `unsafe{*p.as_ptr()}`, `unsafe{assume_init()}`, `&mut cx`, `&raw const x`, `const{…}`
+>    type-level. Reclassifying to "refused/terminal" would be a FAKE-ZERO —
+>    `transmute_copy(&1)` IS finitely constructible (bit reinterpretation of a literal),
+>    so it is honestly a lifter limitation, not a terminal source property. Stays
+>    unclassified. SUPERVISED (needs raw-memory/transmute term modeling).
+> 6. **Cross-file / no-visible-source helpers + small tail — ~65.** `assertion helper
+>    has no visible source` (20: `assert_predicates_exact`, `assert_trusted_len`,
+>    `assert_send_and_sync` — type-level trait markers we cannot SEE the def of, so
+>    cannot safely classify), `macro yielded no liftable assertion` type-level (39),
+>    `all`/`any` closure predicate (8), `matches!` non-qualified-variant (3),
+>    `starts_with` (2), `array-repeat non-literal length` (1), mutable-container (4).
+>    Cross-file resolution + type-level — SUPERVISED.
+>
+> **VERDICT: 883 is the ground-truth-verified sound autonomous floor.** Every remaining
+> case requires T at the soundness edge (the sweep catches false-UNSAT and silent drops
+> but NOT masked contradictions / false-discharge). The resume order for the supervised
+> campaign, by leverage: (1) flt2dec float-formatting body lift (388, the single biggest
+> lever — but the highest masked-contradiction risk, model against a re-walkable oracle);
+> (2) pinned-guard branch-partitioning + loop-unrolling (~106 — gate on guard PINNEDNESS,
+> not effect-freedom, per R4); (3) float/IEEE refinement (~80); (4) statement-graph
+> restructure (~81); (5) transmute/raw-term modeling (35); (6) cross-file def resolution
+> (~65). NONE is drainable without watching the false-discharge edge — driving any of
+> them blind would make the 64 bytes lie.
+
 > **STATUS 2026-06-14 (commits 3cbf69936..df1e1cd04, all pushed, all verified
 > falsePass=0 / SILENT=0).** Capability work LANDED, driving unclassified
 > **1082 → 883** (−199, discharged 5088→5287). LATEST (commit df1e1cd04, −6):
