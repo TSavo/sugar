@@ -480,15 +480,32 @@ list of source-property reasons (runtime data, dynamic dispatch, values outside 
 sort). At that point the ledger CID is a real closure artifact: 64 bytes over a
 house with every door labelled.
 
-> **AGENTS LANDED (2026-06-14, integrated + pushed `d2288f6ff`).** Both parallel drains merged onto
-> `kit/rust-source-ledger`: (A) call-site arg-inlining `3debf6070` (+13, `closed_eval.rs`); (B) flt2dec
-> ldexp + closed-`format!`-RHS `d2288f6ff`/`c4d62cb8c` (flt2dec bucket 105→52, `flt2dec_eval.rs`+`lib.rs`).
-> Combined sweep: **discharged 5831→5884, unclassified 332→279, refused 208 (unchanged), SILENT 0,
-> unaccounted −52, assertion CID conserved, 276 tests green, zero false-discharge.** NOTE: `dissolved`
-> jitters run-to-run (261–293) from transient `rustup run nightly` harness-compile failures under load —
-> always a *safe under-claim* (drops a true dissolvable, never false-discharges; never moves
-> SILENT/unaccounted). FIX flagged by A (worth doing): retry-on-transient-compile-error in the harness
-> driver — recovers the flakily-dropped asserts AND makes the headline reproducible.
+> **AGENTS LANDED + VERIFIED (2026-06-14, pushed through `2a531a105`).** Both parallel drains merged onto
+> `kit/rust-source-ledger`, then the metric was made reproducible and the deltas independently re-measured.
+> *Reproducible* numbers (3/3 byte-identical runs after the reproducibility fix below):
+>
+> | tree | discharged | unclassified | dissolved | refused | SILENT | unaccounted |
+> |---|---|---|---|---|---|---|
+> | baseline `8b95e84b9` | 5831 | **332** | 261 | 208 | 0 | −52 |
+> | integrated A+B+fix | 5884 | **279** | 261 | 208 | 0 | −52 |
+>
+> **The real, reproducible drain is −53, and it is ENTIRELY B's flt2dec lifter** (flt2dec bucket 105→52).
+> `dissolved` is *unchanged* at 261 — so the −53 went via the symbolic LIFTER (real FOL), not evaluation.
+> **A's call-site-inlining commit `3debf6070` drains 0 on the real corpus.** Its branch-reported "+13
+> (332→319)" was an artifact of the *flaky* dissolved metric (jittered 261–293 before the fix); under the
+> now-reproducible metric A contributes nothing. char.rs (A's apparent win) is identical baseline-vs-
+> integrated (dissolved 28, unclassified 0) — it was already fully accounted, so it could not have
+> drained. The corpus still has **128 [unclassified] "reachable only via call-site inlining"** asserts
+> (emitted by the lifter at `lib.rs:938`); A's `collect_helper_call_inlinings` does NOT fire on them.
+> A's machinery is sound + unit-tested + causes no regression (SILENT 0, unaccounted −52, CID conserved),
+> but is presently 0-drain infra. OPEN: is the 128-bucket wireable (the single biggest lever) or
+> legitimately excused? — under investigation; do not re-claim A's +13.
+>
+> **Reproducibility fix `2a531a105` (kept, real win for verification integrity):** the dissolve dir reused
+> fixed harness filenames, so a sequential sweep hit ETXTBSY overwrite races → non-reproducible dissolved
+> count (261–293). Fix = per-source-hash unique filenames + 3-try compile retry + cleanup. Count unchanged
+> vs pre-fix integrated tree; jitter gone. SOUND: real `error[E####]` never retried; successful compile of
+> exact source is ground truth; double-run guard intact. 276 tests green.
 >
 > **NEXT LEVERS (designed 2026-06-14 PM).**
 > Floor now 279. Post-integration levers (all
