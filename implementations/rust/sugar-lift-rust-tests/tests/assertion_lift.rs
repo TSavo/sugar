@@ -570,6 +570,74 @@ fn scalar_contradiction() {
     assert_eq_atom(&operands[1], 7);
 }
 
+// A byte literal `b'0'` is pure sugar for a u8 constant (48). It must dissolve to
+// the SAME concrete-Int-with-u8-sort form `48u8` lifts to — value-faithful, and
+// distinct byte literals must stay distinct so a false twin cannot coalesce into a
+// vacuous discharge (the masked-contradiction failure mode the sweep can't catch).
+fn byte_literal_eq_atom_value_and_sort(formula: &Formula) -> (i64, String) {
+    match formula {
+        Formula::Atomic { name, args } => {
+            assert_eq!(name, "=");
+            assert_eq!(args.len(), 2);
+            match args[1].as_ref() {
+                Term::Const {
+                    value: ConstValue::Int(value),
+                    sort,
+                } => (*value, sort.name.clone()),
+                other => panic!("expected int-const byte-literal rhs, got {other:?}"),
+            }
+        }
+        other => panic!("expected equality atom, got {other:?}"),
+    }
+}
+
+#[test]
+fn byte_literal_dissolves_to_u8_constant() {
+    // Positive: `b'0'` lifts to the int value 48 with u8 sort (sugar in, constraint
+    // out). `byte_val()` is the EUF call-result LHS; the byte literal is the RHS.
+    let src = r#"
+fn byte_val() -> u8 { 48 }
+
+#[test]
+fn byte_is_zero() {
+    assert_eq!(byte_val(), b'0');
+}
+"#;
+    let out = lift_file(&parse(src), "src/lib.rs");
+    assert_eq!(out.seen, 1);
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    let operands = inv_operands(&out.decls[0]);
+    assert_eq!(operands.len(), 1);
+    let (value, sort) = byte_literal_eq_atom_value_and_sort(&operands[0]);
+    assert_eq!(value, 48, "b'0' must lift to its u8 value 48");
+    assert_eq!(sort, "u8", "byte literal carries u8 sort");
+}
+
+#[test]
+fn distinct_byte_literals_stay_distinct_no_coalesce() {
+    // Break-the-twin: `b'0'` (48) and `b'1'` (49) must lift to DISTINCT constants so
+    // the conjoined obligation is genuinely refutable (a single receiver cannot equal
+    // both) — not silently coalesced into a vacuously-satisfiable claim.
+    let src = r#"
+fn byte_val() -> u8 { 48 }
+
+#[test]
+fn byte_contradiction() {
+    assert_eq!(byte_val(), b'0');
+    assert_eq!(byte_val(), b'1');
+}
+"#;
+    let out = lift_file(&parse(src), "tests/byte_contradiction.rs");
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    let operands = inv_operands(&out.decls[0]);
+    assert_eq!(operands.len(), 2, "two distinct byte-literal atoms");
+    let (v0, _) = byte_literal_eq_atom_value_and_sort(&operands[0]);
+    let (v1, _) = byte_literal_eq_atom_value_and_sort(&operands[1]);
+    assert_eq!(v0, 48);
+    assert_eq!(v1, 49);
+    assert_ne!(v0, v1, "distinct byte literals must not coalesce");
+}
+
 #[test]
 fn transparent_assert_helper_reduces_to_assert_eq_base_lifter() {
     let src = r#"

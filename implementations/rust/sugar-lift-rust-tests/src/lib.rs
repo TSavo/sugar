@@ -7287,6 +7287,17 @@ fn translate_lit(lit: &ExprLit) -> Result<Rc<Term>, String> {
         Lit::Char(c) => Ok(str_const(c.value().to_string())),
         Lit::Bool(b) => Ok(bool_const(b.value)),
         Lit::ByteStr(bs) => Ok(bytes_literal_term_from_bytes(&bs.value())),
+        // A byte literal `b'0'` is pure sugar for a `u8` constant (here 48): it
+        // carries a fixed numeric value and rust types it `u8`. Dissolve it to the
+        // same concrete-Int-with-u8-sort form a `48u8` literal lifts to, so a direct
+        // byte operand (`assert_eq!(byte, b'0')`) is liftable and `b'0' != 49` is
+        // REFUTED via the existing int path — no new refutation logic, no masking.
+        Lit::Byte(b) => Ok(Rc::new(Term::Const {
+            value: ConstValue::Int(b.value() as i64),
+            sort: sugar_ir_symbolic::Sort {
+                name: "u8".to_string(),
+            },
+        })),
         other => Err(format!(
             "only integer/string/char/finite decimal float scalar constants are liftable, got `{}`",
             token_key(other)
