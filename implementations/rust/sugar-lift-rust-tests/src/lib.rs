@@ -1895,18 +1895,72 @@ fn temporal_plan_for_stmts(stmts: &[Stmt]) -> TemporalPlan {
 /// through `&self`. Recognising the constructor (not any per-method behaviour) is
 /// the interior-mutability dual of the `mut` keyword oracle.
 fn collect_interior_mut_binding_names_in_stmt(stmt: &Stmt, out: &mut BTreeSet<String>) {
-    let Stmt::Local(local) = stmt else { return };
-    let Some(init) = &local.init else { return };
-    // A STATEFUL binding: an interior-mutable cell, OR an iterator (which is
-    // consumed/advanced, so `len`/`count`/`size_hint`/`next` observations change).
-    if !(init_is_interior_mut_construction(&init.expr)
-        || init_is_iterator_construction(&init.expr))
-    {
-        return;
+    match stmt {
+        Stmt::Local(local) => {
+            let Some(init) = &local.init else { return };
+            // DIRECT: an interior-mutable cell, or an iterator (consumed/advanced).
+            let direct = init_is_interior_mut_construction(&init.expr)
+                || init_is_iterator_construction(&init.expr);
+            // RECURSIVE TRAJECTORY: a binding DERIVED from an already-stateful
+            // binding -- a view/borrow/adapter over it (`let ref_mut = &mut
+            // *cell.get()`, `let it2 = it.by_ref()`) -- is itself a trajectory, so
+            // its observations change too. (`out` accumulates in statement order,
+            // so an init referencing an EARLIER stateful binding is caught.)
+            let derived = !direct && {
+                let refs = names_referenced_in_expr(&init.expr);
+                !out.is_disjoint(&refs)
+            };
+            if direct || derived {
+                for name in pat_idents(&local.pat) {
+                    out.insert(name);
+                }
+            }
+        }
+        // A `static X: Atomic.. = ..` (e.g. a drop counter) is interior-mutable
+        // global state; a `.load()`/`.fetch_*()` on it is a stateful read.
+        Stmt::Item(syn::Item::Static(s)) => {
+            if type_is_atomic_cell(&s.ty) {
+                out.insert(s.ident.to_string());
+            }
+        }
+        _ => {}
     }
-    for name in pat_idents(&local.pat) {
-        out.insert(name);
+}
+
+/// Collect every path's last-segment identifier referenced in `expr` (a superset
+/// of its free variables -- enough to test "does this init reference a stateful
+/// binding").
+fn names_referenced_in_expr(expr: &Expr) -> BTreeSet<String> {
+    #[derive(Default)]
+    struct V {
+        names: BTreeSet<String>,
     }
+    impl<'ast> syn::visit::Visit<'ast> for V {
+        fn visit_path(&mut self, p: &'ast syn::Path) {
+            if let Some(seg) = p.segments.last() {
+                self.names.insert(seg.ident.to_string());
+            }
+            syn::visit::visit_path(self, p);
+        }
+    }
+    let mut v = V::default();
+    syn::visit::Visit::visit_expr(&mut v, expr);
+    v.names
+}
+
+/// True iff `ty` is an interior-mutable cell/atomic type by its head name --
+/// `AtomicUsize`, `Cell<_>`, `RefCell<_>`, `UnsafeCell<_>`, `Mutex<_>`, ...
+fn type_is_atomic_cell(ty: &syn::Type) -> bool {
+    let syn::Type::Path(p) = ty else { return false };
+    let Some(seg) = p.path.segments.last() else {
+        return false;
+    };
+    let name = seg.ident.to_string();
+    name.starts_with("Atomic")
+        || matches!(
+            name.as_str(),
+            "Cell" | "RefCell" | "UnsafeCell" | "SyncUnsafeCell" | "Mutex" | "RwLock"
+        )
 }
 
 /// True iff `expr` constructs an ITERATOR -- a range, an `.iter()`/`.into_iter()`
@@ -7004,6 +7058,59 @@ mod lifter_key_tests {
                 "producer/UFCS iterator reads must have distinct keys: {lens:?}"
             );
         }
+    }
+
+    #[test]
+    fn binding_derived_from_stateful_is_also_a_trajectory() {
+        // A view/borrow over a stateful binding is itself a trajectory (recursive
+        // propagation), so its reads must get distinct keys.
+        let src = r#"
+            #[test]
+            fn derived() {
+                let x = Cell::new(0);
+                let r = &x;
+                assert_eq!(r.get(), 0);
+                assert_eq!(r.get(), 4);
+            }
+        "#;
+        let out = lift_src(src);
+        let gets: Vec<&str> = contract_names(&out)
+            .into_iter()
+            .filter(|n| n.contains("method:get"))
+            .collect();
+        assert!(gets.len() >= 2, "expected two get obligations: {gets:?}");
+        let distinct: std::collections::HashSet<&str> = gets.iter().cloned().collect();
+        assert_eq!(
+            distinct.len(),
+            gets.len(),
+            "a binding derived from a stateful one must have distinct read keys: {gets:?}"
+        );
+    }
+
+    #[test]
+    fn static_atomic_loads_do_not_coalesce() {
+        // A `static X: AtomicUsize` is interior-mutable global state; its `.load()`
+        // reads must get distinct keys.
+        let src = r#"
+            #[test]
+            fn atomic_traj() {
+                static A: AtomicUsize = AtomicUsize::new(0);
+                assert_eq!(A.load(SeqCst), 0);
+                assert_eq!(A.load(SeqCst), 4);
+            }
+        "#;
+        let out = lift_src(src);
+        let loads: Vec<&str> = contract_names(&out)
+            .into_iter()
+            .filter(|n| n.contains("method:load"))
+            .collect();
+        assert!(loads.len() >= 2, "expected two load obligations: {loads:?}");
+        let distinct: std::collections::HashSet<&str> = loads.iter().cloned().collect();
+        assert_eq!(
+            distinct.len(),
+            loads.len(),
+            "static atomic loads must have distinct keys: {loads:?}"
+        );
     }
 
     // ── Int literal width: SOUNDNESS GUARD (no opaque wrapper) ────────────────
