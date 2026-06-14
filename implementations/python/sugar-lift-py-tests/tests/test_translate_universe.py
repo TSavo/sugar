@@ -2170,7 +2170,7 @@ def test_structural_package_accounting_warrants_keyword_argument_bindings(
     ), keyword_loci
 
 
-def test_structural_package_accounting_leaves_kwargs_splat_unclassified(
+def test_structural_package_accounting_refuses_kwargs_splat_dynamic_call(
     tmp_path,
     monkeypatch,
 ):
@@ -2239,7 +2239,9 @@ def test_structural_package_accounting_leaves_kwargs_splat_unclassified(
         for locus in keyword_loci
     ), keyword_loci
     assert any(
-        locus["line"] == splat_line and locus["status"] == "unclassified"
+        locus["line"] == splat_line
+        and locus["status"] == "refused"
+        and "runtime callable dispatch" in locus.get("reason", "")
         for locus in keyword_loci
     ), keyword_loci
 
@@ -2319,6 +2321,98 @@ def test_structural_package_accounting_keeps_unknown_calls_unclassified_next_to_
         locus["status"] == "unclassified" and locus["line"] == return_line
         for locus in call_loci
     ), call_loci
+
+
+def test_structural_package_accounting_refuses_dynamic_callable_invocations(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("SUGAR_PY_PACKAGE_ACCOUNTING_MODE", "structural")
+    pkg = tmp_path / "vendpkg_dynamic_callable_invocations"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    module_path = pkg / "api.py"
+    module_path.write_text(
+        textwrap.dedent(
+            """
+            def skipped(func, op, value, kwargs):
+                result = func(value)
+                pair, rc = op(value, **kwargs)
+                return result
+
+            def ok():
+                return "ok"
+            """
+        ),
+        encoding="utf-8",
+    )
+    func_line = next(
+        line_no
+        for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
+        if "result = func(value)" in line
+    )
+    op_line = next(
+        line_no
+        for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
+        if "pair, rc = op(value" in line
+    )
+    return_line = next(
+        line_no
+        for line_no, line in enumerate(module_path.read_text().splitlines(), 1)
+        if "return result" in line
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    constant_universe_for_callee_clear()
+
+    lifted = _lift_source_from_disk(
+        tmp_path,
+        "test_mod.py",
+        """
+        import vendpkg_dynamic_callable_invocations.api as api
+
+        def test_ok():
+            assert api.ok() == "ok"
+        """,
+    )
+
+    audit = next(
+        audit
+        for audit in lifted["sourceAudits"]
+        if audit.get("role") == "python.package-source"
+        and audit.get("package") == "vendpkg_dynamic_callable_invocations"
+    )
+    dynamic_loci = [
+        locus
+        for locus in audit["loci"]
+        if locus["file"].endswith("vendpkg_dynamic_callable_invocations/api.py")
+        and locus["line"] in {func_line, op_line, return_line}
+        and locus.get("ast_kind") in {"Assign", "Call", "Name", "Return", "keyword"}
+    ]
+    assert dynamic_loci
+    assert not [
+        locus for locus in dynamic_loci if locus["status"] == "unclassified"
+    ], dynamic_loci
+    assert any(
+        locus["status"] == "refused"
+        and locus.get("ast_kind") == "Call"
+        and locus["line"] == func_line
+        and "runtime callable dispatch" in locus.get("reason", "")
+        for locus in dynamic_loci
+    ), dynamic_loci
+    assert any(
+        locus["status"] == "refused"
+        and locus.get("ast_kind") == "keyword"
+        and locus["line"] == op_line
+        and "runtime callable dispatch" in locus.get("reason", "")
+        for locus in dynamic_loci
+    ), dynamic_loci
+    assert any(
+        locus["status"] == "refused"
+        and locus.get("ast_kind") == "Return"
+        and locus["line"] == return_line
+        and "runtime callable dispatch binding" in locus.get("reason", "")
+        for locus in dynamic_loci
+    ), dynamic_loci
 
 
 def test_structural_package_accounting_refuses_with_context_flow(
@@ -4110,7 +4204,7 @@ def test_lift_source_warrants_local_name_assignment_accounting(
         ), local_loci
 
 
-def test_structural_package_accounting_warrants_local_binding_node_without_hiding_rhs(
+def test_structural_package_accounting_warrants_local_binding_node_and_refuses_dynamic_rhs(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("SUGAR_PY_PACKAGE_ACCOUNTING_MODE", "structural")
@@ -4170,13 +4264,14 @@ def test_structural_package_accounting_warrants_local_binding_node_without_hidin
         for locus in binding_loci
     ), binding_loci
     assert any(
-        locus["status"] == "unclassified"
+        locus["status"] == "refused"
         and locus.get("ast_kind") == "Call"
+        and "runtime callable dispatch" in locus.get("reason", "")
         for locus in binding_loci
     ), binding_loci
 
 
-def test_structural_package_accounting_warrants_chained_local_binding_targets(
+def test_structural_package_accounting_warrants_chained_binding_targets_and_refuses_dynamic_rhs(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("SUGAR_PY_PACKAGE_ACCOUNTING_MODE", "structural")
@@ -4241,8 +4336,9 @@ def test_structural_package_accounting_warrants_chained_local_binding_targets(
         for locus in target_loci
     ), target_loci
     assert any(
-        locus["status"] == "unclassified"
+        locus["status"] == "refused"
         and locus.get("ast_kind") == "Call"
+        and "runtime callable dispatch" in locus.get("reason", "")
         for locus in binding_loci
     ), binding_loci
 
