@@ -2322,6 +2322,48 @@ fn collect_assertion_entries(
                     &temporal_scope.plan.interior_mut,
                 );
             }
+            // A `const`/`static` ITEM declared inside a test fn body
+            // (`const _: () = { .. assert!(..) .. };`, `const COUNTER: u32 = { .. };`)
+            // has its initializer UNCONDITIONALLY evaluated at compile time the
+            // moment the item is defined -- the test running is what defines it.
+            // Its body runs exactly once, no branch guards it, so an assert inside
+            // is as point-wise as a top-level assert: recurse and lift normally.
+            // This mirrors the `Stmt::Expr(Expr::Const)` arm (a `const { .. }`
+            // block) and the item-layer `Item::Const` / `Item::Static` handling in
+            // `lift_item_assertions`; only the statement POSITION (item vs expr)
+            // differed. A block initializer contributes its own statements; a bare
+            // `const X: T = assert!(..)` (or `= expr`) is wrapped as one statement.
+            // The per-assert gating inside the recursion still refuses anything
+            // genuinely conditional (an assert under a `for`/`if` in the body, a
+            // stateful read), and the per-fn safety net accounts anything not
+            // reached -- so no silent drop and no over-claim.
+            Stmt::Item(syn::Item::Const(syn::ItemConst { expr: init, .. }))
+            | Stmt::Item(syn::Item::Static(syn::ItemStatic { expr: init, .. })) => {
+                let init_stmts: Vec<Stmt> = match init.as_ref() {
+                    Expr::Block(b) => b.block.stmts.clone(),
+                    Expr::Unsafe(u) => u.block.stmts.clone(),
+                    Expr::Const(c) => c.block.stmts.clone(),
+                    Expr::Macro(m) => vec![Stmt::Macro(syn::StmtMacro {
+                        attrs: Vec::new(),
+                        mac: m.mac.clone(),
+                        semi_token: None,
+                    })],
+                    other => vec![Stmt::Expr(other.clone(), None)],
+                };
+                collect_assertion_entries(
+                    &init_stmts,
+                    &child_block_scope(local_scope, stmt_idx),
+                    options,
+                    reducer,
+                    float_widths,
+                    entries,
+                    skipped,
+                    macros_lifted,
+                    reduced_helpers,
+                    macro_depth,
+                    &temporal_scope.plan.interior_mut,
+                );
+            }
             // Inner fn definitions inside a test fn: their asserts are only
             // reachable via a call inside the test body; refuse them.
             Stmt::Item(syn::Item::Fn(inner_fn)) => {
@@ -8288,6 +8330,104 @@ mod lifter_key_tests {
 
     fn contract_names(out: &AdapterOutput) -> Vec<&str> {
         out.decls.iter().map(|d| d.name.as_str()).collect()
+    }
+
+    // ── const/static ITEM initializer is unconditional (drain-letinit) ───────
+
+    #[test]
+    fn const_item_block_assert_lifts_like_top_level() {
+        // POSITIVE TWIN: an assert inside a `const _: () = { .. }` ITEM declared
+        // in a test body runs UNCONDITIONALLY at const-eval (the test running is
+        // what defines the item). It is as point-wise as a top-level assert and
+        // must LIFT, not be refused as a "nested unlifted expression statement".
+        // Vendor shape: rust-src coretests num/wrapping.rs::wrapping_const.
+        let src = r#"
+            #[test]
+            fn wrapping_const() {
+                const _: () = {
+                    assert!(i32::MIN.wrapping_div(-1) == i32::MIN);
+                    assert!(i32::MIN.wrapping_rem(-1) == 0);
+                };
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 2,
+            "both unconditional const-item asserts must lift; warnings: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "no const-item assert should be refused: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            !out.skip_reasons.iter().any(|r| r.contains("nested in an unlifted expression statement")),
+            "const-item asserts must not fall to the unlifted-expr-statement bucket: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn static_item_block_assert_lifts_like_top_level() {
+        // POSITIVE TWIN (static variant): a `static` item initializer block is
+        // likewise unconditionally evaluated; its asserts lift.
+        let src = r#"
+            #[test]
+            fn static_const() {
+                static _GUARD: () = {
+                    assert!(1u8.wrapping_add(255) == 0);
+                };
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "the unconditional static-item assert must lift; warnings: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    }
+
+    #[test]
+    fn const_item_conditional_assert_is_not_falsely_lifted() {
+        // NEGATIVE TWIN: an assert that sits under a `for` loop INSIDE the const
+        // item block is genuinely conditional (per-element). Recursing into the
+        // const-item block must NOT promote it to a point-wise lift -- the
+        // per-assert gating still routes it to the for-context refusal. Over-
+        // claiming it would be a false discharge.
+        // Vendor shape: rust-src coretests iter/mod.rs::test_const_iter.
+        let src = r#"
+            #[test]
+            fn const_loop() {
+                const X: bool = {
+                    let it = Some(42);
+                    let mut run = false;
+                    for x in it {
+                        assert!(x == 42);
+                        run = true;
+                    }
+                    run
+                };
+                assert!(X);
+            }
+        "#;
+        let out = lift_src(src);
+        // The `assert!(x == 42)` under the `for` must stay refused (conditional);
+        // only the unconditional top-level `assert!(X)` lifts.
+        assert!(
+            out.skip_reasons.iter().any(|r| r.contains("under for context")),
+            "the for-bodied assert inside the const block must stay refused as a \
+             for-context assertion, not be falsely lifted: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.assertions_lifted <= 1,
+            "only the unconditional `assert!(X)` may lift, not the conditional \
+             for-body assert: lifted={}, reasons={:?}",
+            out.assertions_lifted,
+            out.skip_reasons
+        );
     }
 
     // ── Stateful-read trajectory vindication (interior-mut / iterator) ────────
