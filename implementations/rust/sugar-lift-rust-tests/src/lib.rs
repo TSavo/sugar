@@ -444,6 +444,7 @@ fn visit_test_fn(
         &mut macros_lifted,
         &mut out.reduced_helpers,
         0,
+        &BTreeSet::new(),
     );
     out.assertions_lifted += macros_lifted;
     out.assertions_refused += skipped.len();
@@ -784,6 +785,7 @@ fn try_macro_expansion_entries(
         &mut temp_lifted,
         &mut temp_helpers,
         macro_depth + 1,
+        &BTreeSet::new(),
     );
     if temp_entries.is_empty() {
         Some(Err(format!(
@@ -1233,6 +1235,7 @@ fn try_lift_for_loop_forall(
         &mut body_lifted,
         &mut body_helpers,
         macro_depth,
+        &scope.plan.interior_mut,
     );
     if !body_skipped.is_empty() || body_entries.len() != n_body {
         return None;
@@ -1301,8 +1304,9 @@ fn collect_assertion_entries(
     macros_lifted: &mut usize,
     reduced_helpers: &mut HashSet<String>,
     macro_depth: usize,
+    inherited_stateful: &BTreeSet<String>,
 ) {
-    let temporal_plan = temporal_plan_for_stmts(stmts);
+    let temporal_plan = temporal_plan_for_stmts(stmts, inherited_stateful);
     let mut temporal_scope = TemporalScope::new(local_scope, temporal_plan);
     // const_eval_select((), compiletime, runtime) is a std intrinsic that, at
     // run time, calls its runtime fn. Find such calls in this block and the
@@ -1338,6 +1342,7 @@ fn collect_assertion_entries(
                             macros_lifted,
                             reduced_helpers,
                             macro_depth,
+                            &temporal_scope.plan.interior_mut,
                         );
                     } else {
                         let mut count = count_asserts_in_expr(&init.expr);
@@ -1499,6 +1504,7 @@ fn collect_assertion_entries(
                     macros_lifted,
                     reduced_helpers,
                     macro_depth,
+                    &temporal_scope.plan.interior_mut,
                 );
             }
             // Unconditional unsafe block: recurse and lift normally.
@@ -1514,6 +1520,7 @@ fn collect_assertion_entries(
                     macros_lifted,
                     reduced_helpers,
                     macro_depth,
+                    &temporal_scope.plan.interior_mut,
                 );
             }
             // Control-flow contexts: asserts are conditional or parametric; refuse.
@@ -1567,6 +1574,7 @@ fn collect_assertion_entries(
                             &mut bl,
                             &mut bh,
                             macro_depth,
+                            &temporal_scope.plan.interior_mut,
                         );
                         let body_over_opaque = bs.iter().any(|r| {
                             r.contains("OPAQUE")
@@ -1663,6 +1671,7 @@ fn collect_assertion_entries(
                     macros_lifted,
                     reduced_helpers,
                     macro_depth,
+                    &temporal_scope.plan.interior_mut,
                 );
             }
             // Inner fn definitions inside a test fn: their asserts are only
@@ -1710,6 +1719,7 @@ fn collect_assertion_entries(
                             macros_lifted,
                             reduced_helpers,
                             macro_depth,
+                            &BTreeSet::new(),
                         );
                         true
                     } else if let Some(stmts) = unconditional_block_stmts(e) {
@@ -1724,6 +1734,7 @@ fn collect_assertion_entries(
                             macros_lifted,
                             reduced_helpers,
                             macro_depth,
+                            &temporal_scope.plan.interior_mut,
                         );
                         true
                     } else {
@@ -1858,11 +1869,14 @@ fn refuse_item_assertions(
     });
 }
 
-fn temporal_plan_for_stmts(stmts: &[Stmt]) -> TemporalPlan {
+fn temporal_plan_for_stmts(stmts: &[Stmt], inherited_stateful: &BTreeSet<String>) -> TemporalPlan {
     let mut definitions = BTreeMap::<String, usize>::new();
     let mut ambiguous = BTreeSet::<String>::new();
     let mut mut_locals = BTreeSet::<String>::new();
-    let mut interior_mut = BTreeSet::<String>::new();
+    // LEXICAL SCOPING (the compiler axiom, for free): a nested block inherits the
+    // enclosing scope's stateful bindings, so `let r = &cell` / `*x.get()` inside
+    // a block knows `cell`/`x` is a trajectory.
+    let mut interior_mut = inherited_stateful.clone();
     for stmt in stmts {
         for name in deterministic_definition_names(stmt) {
             *definitions.entry(name).or_insert(0) += 1;
@@ -1873,6 +1887,11 @@ fn temporal_plan_for_stmts(stmts: &[Stmt]) -> TemporalPlan {
         collect_mut_binding_names_in_stmt(stmt, &mut mut_locals);
         collect_interior_mut_binding_names_in_stmt(stmt, &mut interior_mut);
     }
+    // COMPILER AXIOM (for free): `load`/`fetch_*`/`compare_exchange`/`swap` are
+    // ATOMIC-EXCLUSIVE methods, so any receiver of one IS an atomic -- interior-
+    // mutable shared state -- whether it is a static, a local, or a field. A syn
+    // visitor finds these anywhere, descending into nested blocks.
+    collect_atomic_receiver_names(stmts, &mut interior_mut);
     let mut versioned: BTreeSet<String> = definitions
         .into_iter()
         .filter_map(|(name, count)| (count > 1 || ambiguous.contains(&name)).then_some(name))
@@ -1924,6 +1943,48 @@ fn collect_interior_mut_binding_names_in_stmt(stmt: &Stmt, out: &mut BTreeSet<St
             }
         }
         _ => {}
+    }
+}
+
+/// Collect the receiver name of every atomic-only method call anywhere in `stmts`
+/// (descending into nested blocks). `load`/`fetch_*`/`compare_exchange`/`swap`
+/// are atomic-exclusive, so their receiver is interior-mutable atomic state.
+fn collect_atomic_receiver_names(stmts: &[Stmt], out: &mut BTreeSet<String>) {
+    struct V<'a> {
+        out: &'a mut BTreeSet<String>,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for V<'_> {
+        fn visit_expr_method_call(&mut self, mc: &'ast syn::ExprMethodCall) {
+            const ATOMIC: &[&str] = &[
+                "load",
+                "store",
+                "swap",
+                "fetch_add",
+                "fetch_sub",
+                "fetch_and",
+                "fetch_or",
+                "fetch_xor",
+                "fetch_nand",
+                "fetch_max",
+                "fetch_min",
+                "fetch_update",
+                "compare_exchange",
+                "compare_exchange_weak",
+                "compare_and_swap",
+            ];
+            if ATOMIC.contains(&mc.method.to_string().as_str()) {
+                if let Expr::Path(p) = mc.receiver.as_ref() {
+                    if let Some(seg) = p.path.segments.last() {
+                        self.out.insert(seg.ident.to_string());
+                    }
+                }
+            }
+            syn::visit::visit_expr_method_call(self, mc);
+        }
+    }
+    let mut v = V { out };
+    for stmt in stmts {
+        syn::visit::Visit::visit_stmt(&mut v, stmt);
     }
 }
 
@@ -4517,7 +4578,7 @@ fn byte_range(byte: Rc<Term>, low: u8, high: u8) -> Rc<Formula> {
 // `out <-> membership` (encoded with `implies`/`and`, since the compiler has no
 // `iff`).
 pub fn emit_value_contract(name: &str, block: &syn::Block) -> Option<ContractDecl> {
-    let plan = temporal_plan_for_stmts(&block.stmts);
+    let plan = temporal_plan_for_stmts(&block.stmts, &BTreeSet::new());
     let scope = TemporalScope::new("rust-source", plan);
     block_inv(block, &scope).map(|inv| source_value_contract(name, inv))
 }
