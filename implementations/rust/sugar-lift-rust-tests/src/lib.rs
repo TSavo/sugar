@@ -419,6 +419,7 @@ enum Flt2decMode {
     Shortest,
     ExactFixed,
     ExactExp,
+    ShortestExp,
 }
 
 /// Detect whether `f` is a flt2dec string-formatting test helper, by which core
@@ -428,7 +429,6 @@ enum Flt2decMode {
 fn flt2dec_helper_mode(f: &syn::ItemFn) -> Option<Flt2decMode> {
     struct V {
         mode: Option<Flt2decMode>,
-        shortest_exp: bool,
     }
     impl<'ast> syn::visit::Visit<'ast> for V {
         fn visit_path(&mut self, p: &'ast syn::Path) {
@@ -437,21 +437,15 @@ fn flt2dec_helper_mode(f: &syn::ItemFn) -> Option<Flt2decMode> {
                     "to_shortest_str" => self.mode = Some(Flt2decMode::Shortest),
                     "to_exact_fixed_str" => self.mode = Some(Flt2decMode::ExactFixed),
                     "to_exact_exp_str" => self.mode = Some(Flt2decMode::ExactExp),
-                    "to_shortest_exp_str" => self.shortest_exp = true,
+                    "to_shortest_exp_str" => self.mode = Some(Flt2decMode::ShortestExp),
                     _ => {}
                 }
             }
             syn::visit::visit_path(self, p);
         }
     }
-    let mut v = V {
-        mode: None,
-        shortest_exp: false,
-    };
+    let mut v = V { mode: None };
     syn::visit::Visit::visit_item_fn(&mut v, f);
-    if v.shortest_exp {
-        return None;
-    }
     v.mode
 }
 
@@ -569,6 +563,36 @@ fn parse_bool_literal(expr: &Expr) -> Option<bool> {
     }
 }
 
+/// An `i32` literal, allowing a unary negation (`-4`).
+fn parse_i32_literal(expr: &Expr) -> Option<i32> {
+    match expr {
+        Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Int(i),
+            ..
+        }) => i.base10_parse::<i32>().ok(),
+        Expr::Unary(u) if matches!(u.op, syn::UnOp::Neg(_)) => {
+            parse_i32_literal(&u.expr).map(|n| -n)
+        }
+        Expr::Paren(p) => parse_i32_literal(&p.expr),
+        Expr::Group(g) => parse_i32_literal(&g.expr),
+        _ => None,
+    }
+}
+
+/// A `(lo, hi)` dec-bounds tuple of two i32 literals.
+fn parse_bounds_tuple(expr: &Expr) -> Option<(i32, i32)> {
+    match expr {
+        Expr::Tuple(t) if t.elems.len() == 2 => {
+            let lo = parse_i32_literal(&t.elems[0])?;
+            let hi = parse_i32_literal(&t.elems[1])?;
+            Some((lo, hi))
+        }
+        Expr::Paren(p) => parse_bounds_tuple(&p.expr),
+        Expr::Group(g) => parse_bounds_tuple(&g.expr),
+        _ => None,
+    }
+}
+
 /// A plain string-literal RHS -> its value. Anything else (e.g. a `format!(..)`
 /// expected) returns `None`, leaving that assert unclassified.
 fn parse_string_literal(expr: &Expr) -> Option<String> {
@@ -610,23 +634,37 @@ fn dissolve_flt2dec_assert(mac: &syn::Macro, mode: Flt2decMode) -> Option<bool> 
     // args[0] is the formatter closure `f` (ignored -- we evaluate with our own stdlib).
     let value = parse_flt2dec_value(call_args.get(1)?)?;
     let sign = parse_flt2dec_sign(call_args.get(2)?)?;
-    let frac = parse_usize_literal(call_args.get(3)?)?;
     let expected = parse_string_literal(rhs)?;
 
     let computed = match mode {
-        Flt2decMode::Shortest => match value {
-            Flt2decValue::F64(v) => flt2dec_eval::shortest_f64(v, sign, frac),
-            Flt2decValue::F32(v) => flt2dec_eval::shortest_f32(v, sign, frac),
-        },
-        Flt2decMode::ExactFixed => match value {
-            Flt2decValue::F64(v) => flt2dec_eval::exact_fixed_f64(v, sign, frac),
-            Flt2decValue::F32(v) => flt2dec_eval::exact_fixed_f32(v, sign, frac),
-        },
+        Flt2decMode::Shortest => {
+            let frac = parse_usize_literal(call_args.get(3)?)?;
+            match value {
+                Flt2decValue::F64(v) => flt2dec_eval::shortest_f64(v, sign, frac),
+                Flt2decValue::F32(v) => flt2dec_eval::shortest_f32(v, sign, frac),
+            }
+        }
+        Flt2decMode::ExactFixed => {
+            let frac = parse_usize_literal(call_args.get(3)?)?;
+            match value {
+                Flt2decValue::F64(v) => flt2dec_eval::exact_fixed_f64(v, sign, frac),
+                Flt2decValue::F32(v) => flt2dec_eval::exact_fixed_f32(v, sign, frac),
+            }
+        }
         Flt2decMode::ExactExp => {
+            let frac = parse_usize_literal(call_args.get(3)?)?;
             let upper = parse_bool_literal(call_args.get(4)?)?;
             match value {
                 Flt2decValue::F64(v) => flt2dec_eval::exact_exp_f64(v, sign, frac, upper),
                 Flt2decValue::F32(v) => flt2dec_eval::exact_exp_f32(v, sign, frac, upper),
+            }
+        }
+        Flt2decMode::ShortestExp => {
+            let (lo, hi) = parse_bounds_tuple(call_args.get(3)?)?;
+            let upper = parse_bool_literal(call_args.get(4)?)?;
+            match value {
+                Flt2decValue::F64(v) => flt2dec_eval::shortest_exp_f64(v, sign, lo, hi, upper),
+                Flt2decValue::F32(v) => flt2dec_eval::shortest_exp_f32(v, sign, lo, hi, upper),
             }
         }
     };

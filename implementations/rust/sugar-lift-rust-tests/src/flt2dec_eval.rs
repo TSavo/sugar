@@ -137,6 +137,42 @@ pub fn exact_exp_f32(v: f32, sign: FmtSign, ndigits: usize, upper: bool) -> Stri
     format!("{}{}", sign_prefix(v.is_sign_negative(), sign), body)
 }
 
+/// `to_shortest_exp_str`: shortest digits rendered FIXED when the leading-digit
+/// decimal exponent `K` is in `[lo, hi)`, else EXPONENTIAL. `K` is read exactly from
+/// `{:e}`'s exponent field (avoids float-log imprecision at powers of ten). Fixed form
+/// is `Display`; exp form is `{:e}` (uppercased `E` if `upper`).
+pub fn shortest_exp_f64(v: f64, sign: FmtSign, lo: i32, hi: i32, upper: bool) -> String {
+    if let Some(x) = special_f64(v, sign) {
+        return x;
+    }
+    let se = format!("{:e}", v.abs());
+    let k: i32 = se.split('e').nth(1).and_then(|e| e.parse().ok()).unwrap_or(0);
+    let body = if lo <= k && k < hi {
+        format!("{}", v.abs())
+    } else if upper {
+        se.replace('e', "E")
+    } else {
+        se
+    };
+    format!("{}{}", sign_prefix(v.is_sign_negative(), sign), body)
+}
+
+pub fn shortest_exp_f32(v: f32, sign: FmtSign, lo: i32, hi: i32, upper: bool) -> String {
+    if let Some(x) = special_f32(v, sign) {
+        return x;
+    }
+    let se = format!("{:e}", v.abs());
+    let k: i32 = se.split('e').nth(1).and_then(|e| e.parse().ok()).unwrap_or(0);
+    let body = if lo <= k && k < hi {
+        format!("{}", v.abs())
+    } else if upper {
+        se.replace('e', "E")
+    } else {
+        se
+    };
+    format!("{}{}", sign_prefix(v.is_sign_negative(), sign), body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::FmtSign::*;
@@ -229,6 +265,35 @@ mod tests {
         ];
         for (v, s, n, u, want) in cases {
             assert_eq!(&exact_exp_f64(*v, *s, *n, *u), want, "exact_exp({v},{s:?},{n},{u})");
+        }
+    }
+
+    #[test]
+    fn shortest_exp_matches_corpus() {
+        let cases: &[(f64, FmtSign, i32, i32, bool, &str)] = &[
+            (0.0, Minus, -4, 16, false, "0"),
+            (0.0, MinusPlus, -4, 16, false, "+0"),
+            (0.0, Minus, 0, 0, true, "0E0"),
+            (0.0, Minus, 0, 0, false, "0e0"),
+            (0.0, MinusPlus, 5, 9, false, "+0e0"),
+            (3.14, Minus, -4, 16, false, "3.14"),
+            (3.14, MinusPlus, -4, 16, false, "+3.14"),
+            (3.14, Minus, 0, 0, true, "3.14E0"),
+            (3.14, Minus, 0, 0, false, "3.14e0"),
+            (3.14, MinusPlus, 5, 9, false, "+3.14e0"),
+            (0.1, Minus, -4, 16, false, "0.1"),
+            (0.1, Minus, 0, 0, true, "1E-1"),
+            (0.1, Minus, 0, 0, false, "1e-1"),
+            (1.0e23, Minus, 22, 23, false, "1e23"),
+            (1.0e23, Minus, 23, 24, false, "100000000000000000000000"),
+            (1.0e23, Minus, 24, 25, false, "1e23"),
+        ];
+        for (v, s, lo, hi, u, want) in cases {
+            assert_eq!(
+                &shortest_exp_f64(*v, *s, *lo, *hi, *u),
+                want,
+                "shortest_exp({v},{s:?},({lo},{hi}),{u})"
+            );
         }
     }
 
