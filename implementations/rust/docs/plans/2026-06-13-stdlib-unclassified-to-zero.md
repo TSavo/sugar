@@ -20,17 +20,19 @@
 > construction-semantics/higher-order bodies (bin-1 for 69, const-item 6 — Wall A);
 > macro-engine gaps (2026-06-14, inspected): **`assert_float_result_bits_eq` (23)** body
 > = `dec2flt::<ty>(str).map(|x| x.to_bits())` (cross-file parser-under-test + closure →
-> Wall A/B, held); **`assert_eq_const_safe` (16)** operands ARE pinned
-> (`(1 as i32).abs()`, `A.count_ones()`, `$T::BITS-3`); the macro DOES expand (reason is
-> "expansion yielded no liftable assertion", so the matcher worked) to the
-> `const_eval_select((), compiletime, runtime)` block whose `runtime()` body is
-> `assert_eq!($left, $right)`. The downstream gap is one of: (a) the const_eval_select
-> runtime-branch inlining not firing for this macro-expanded BLOCK-expr-in-assert-
-> position form, or (b) the integer-method operands (`.abs()`/`.signum()`/`.count_ones()`)
-> not lifting (would need EUF-method terms). (a) is a stays-unclassified-safe structural
-> fix worth a supervised look; (b) is EUF-method coverage. NEEDS A TRACE to tell which —
-> not taken unsupervised because the const_eval_select-in-block recursion touches the
-> shared inliner;
+> Wall A/B, held); **`assert_eq_const_safe` (16)** — LIVE-DIAGNOSED 2026-06-14 (throwaway test, then
+> reverted): the mechanism FULLY WORKS in isolation. Lifting a file with the macro
+> defined + `assert_eq_const_safe!(u32: 5u32, 5u32, "m")` (3-arg), the recursive 2-arg
+> form, AND every real operand shape (`A.count_ones()`, `7u32.count_ones()`,
+> `(-1 as i32).abs()`, `u32::BITS - 3`) ALL give `seen=1 lifted=1` no warnings. So the
+> `const_eval_select` handoff, the recursive arm-1→arm-2 expansion, and the
+> EUF-method/cast/const-arith operands ALL lift. The 16 corpus failures are therefore a
+> CONTEXT-SPECIFIC edge, not the mechanism — most likely the OUTER `$T`-generic
+> `macro_rules!` wrapper (int_macros.rs) interacting with the inner 2-level expansion
+> (depth, or a `$T`-monomorphized operand shape like a float arm), or undefined idents
+> in the expansion scope. Needs corpus archaeology to locate the exact 16; failure mode
+> is stays-unclassified (already not lifting), so it is residual work, not a soundness
+> risk — but locating + fixing the macro-nesting edge is a supervised task;
 > regression-prone comparison ops (`a[0]<b[0]` 16, `false==false` 2 — the lt/lte/gt/gte
 > shared path); and correctly-held conditional/`-0.0`-IEEE/mutable-container cases.
 > DIAGNOSTIC (JSON `all_reasons` dump, 2026-06-14): the 73-now-48 "unsupported term"
