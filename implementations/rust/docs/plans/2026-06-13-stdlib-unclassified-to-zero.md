@@ -27,14 +27,19 @@
 > `(-1 as i32).abs()`, `u32::BITS - 3`) ALL give `seen=1 lifted=1` no warnings. So the
 > `const_eval_select` handoff, the recursive arm-1→arm-2 expansion, and the
 > EUF-method/cast/const-arith operands ALL lift. The 16 corpus failures are therefore a
-> CONTEXT-SPECIFIC edge, not the mechanism — it is the TRIPLE-macro nesting in
-> int_macros.rs: `int_module!($T,$U)` → `test_runtime_and_compiletime! { fn …{
-> assert_eq_const_safe!($T: …) } }` → the inner macro → recursion → const_eval_select.
-> NOT a depth cap (`MAX_MACRO_EXPANSION_DEPTH=16`, nesting is ~5). The drop is somewhere
-> in that triple-nest (likely the `test_runtime_and_compiletime!` expansion shape or a
-> `$T`-monomorphized assoc-const operand like `i32::MIN` in context). Pinpointing needs
-> reproducing both outer macro layers — corpus archaeology. Failure mode is
-> stays-unclassified (already not lifting), so residual work, not a soundness risk;
+> CONTEXT-SPECIFIC edge, not the mechanism — GROUND-TRUTH (reproduced 2026-06-14):
+> `test_runtime_and_compiletime!` (coretests/lib.rs:156) emits each `fn $test() $block`
+> TWICE — `#[test] fn $test() $block` AND `const _: () = $block`. So every
+> `assert_eq_const_safe!` appears twice: the #[test]-fn copy LIFTS (discharged, per the
+> isolation diagnostic), and the **`const _: ()` copy is the unclassified one** (16). The
+> 16 are therefore CONST-ITEM DUPLICATES of already-discharged runtime asserts. Lifting
+> them would DOUBLE-COUNT the same logical obligation (inflate discharged past `seen`).
+> Their honest disposition is a JUDGMENT CALL (T owns): (a) lift + dedup the obligation,
+> (b) refuse-with-reason "compile-time duplicate of the discharged runtime assert" (an
+> HONEST terminal, not laundering — it IS a re-statement), or (c) hold. This is the SAME
+> question as the const-item bucket (6, `const _: () = assert!(S(1)==S(1))`). Not a
+> mechanical fix — a duplicate-obligation policy decision. Failure mode of the wrong
+> call: double-count (sweep-visible) or a mislabeled-duplicate. Stays-unclassified now;
 > regression-prone comparison ops (`a[0]<b[0]` 16, `false==false` 2 — the lt/lte/gt/gte
 > shared path); and correctly-held conditional/`-0.0`-IEEE/mutable-container cases.
 > DIAGNOSTIC (JSON `all_reasons` dump, 2026-06-14): the 73-now-48 "unsupported term"
