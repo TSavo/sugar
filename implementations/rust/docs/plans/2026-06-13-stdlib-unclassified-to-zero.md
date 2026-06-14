@@ -74,6 +74,54 @@ A CID over that ledger is the closure artifact: every door labelled, no junk
 drawer. Until `unclassified = 0`, the ledger CID certifies a completeness it does
 not have.
 
+## Terrain re-confirmation (2026-06-14) — per-bucket dead-end map
+
+Re-measured (`coretests_sweep <toolchain>/library/coretests/tests --rustc-cfg`):
+discharged 5220 / unclassified **950** / inactive 58, `genuinely unreached
+(SILENT): 0` — the floor (no silent drop) is intact. Walked every top
+unclassified bucket against the corpus + lifter source. **Every remaining bucket
+routes through exactly one of three walls; none has a sound, mechanically-isolated,
+autonomous-safe path to *discharge*. Logged here so the supervised campaign targets,
+not re-surveys.**
+
+**Wall A — higher-order body (closures / `format!` / formatter output).** A
+shared-path term/body change; a mis-lift here is a MASKED-CONTRADICTION the sweep
+cannot catch (it only catches false-UNSAT + silent drops). Buckets:
+- `38` *nested in an unlifted expression statement* — the `other` arm already
+  recurses unconditional blocks + monotonic helper-inlines (lib.rs:1820-1930); the
+  residue is `recv.method(|x| { assert..})` closure/method-chain forms.
+- `73` *assert_eq!: unsupported term* (largest non-cross-file) — adding the missing
+  term operator is the SAME shared-path edit that regressed `negated_call_result_…`
+  when comparison-ops were added to `term_binop_name` (reverted). Regression-prone.
+- `44`+`16`+`6`+`3` *for/adaptor over a literal range/array (bin-1)* — domain IS
+  pinned (precondition met), but the bodies are `format!("{i:.p$e}", …)` formatter
+  output (e.g. `fmt/num.rs:274`) → needs the formatter/closure body lifter.
+
+**Wall B — cross-file inlining (needs corpus-wide accounting, the M1 restructure).**
+- `516` *reachable only via call-site inlining* — the architectural bucket (see
+  STATUS header; def-site Pass-2 refusal is per-file, FnRegistry-alone drained 0).
+- `22` `assert_almost_eq!` + `9` `assert_chunks!` *unsupported assertion macro* —
+  NOT a registry-scan gap. Both macros are defined nested-in-fn
+  (`num/flt2dec/estimator.rs:7`, `str_lossy.rs:3`). Even once expanded they
+  dead-end: `assert_almost_eq!(estimate_scaling_factor(1,0), 0)` →
+  `assert!(expected == actual || expected == actual+1)` where `actual` is an
+  **unpinned cross-file fn call** (Wall B in disguise); `assert_chunks!` →
+  `$string.utf8_chunks()` iterator over **runtime bytes** (bin-2). Expanding them
+  relabels unclassified→unclassified, no discharge. **Do not chase the registry
+  scan — it buys nothing.**
+
+**Wall C — genuinely conditional / runtime (correctly held; refusing is right).**
+- `32` *let-initializer expression* — the unconditional-block case already recurses
+  (lib.rs:1453); these are genuinely conditional/closure inits.
+- `30` while / `8` if / `7` match contexts — not unconditional point-wise.
+- the bin-2 *opaque collection* refusals — runtime data, not source literals.
+
+**Net:** no sound discharge win is isolable from (A) a regression-prone shared-path
+term/closure-body change whose failure mode is an un-catchable masked contradiction,
+or (B) the cross-file corpus-wide-accounting restructure. Both are the supervised
+steps already named in the STATUS header. Holding at 950 rather than push an
+unsupervised masked-contradiction risk to main — the 64 bytes must not lie.
+
 ## Progress log (2026-06-13 overnight, --rustc-cfg baseline)
 
 Measured with `coretests_sweep --rustc-cfg` (the canonical config; without it 178
