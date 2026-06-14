@@ -601,7 +601,7 @@ def _package_locus_classification(
             module_name,
             tree,
         )
-    overload_status = _overload_declaration_status(node, ancestors)
+    overload_status = _overload_declaration_status(node, ancestors, call_aliases)
     if overload_status is not None:
         return overload_status
     import_probe_status = _top_level_import_probe_refusal_status(node, ancestors)
@@ -645,6 +645,13 @@ def _package_locus_classification(
     type_checking_status = _type_checking_block_status(node, ast_path, ancestors)
     if type_checking_status is not None:
         return type_checking_status
+    typing_metadata_status = _typing_metadata_assignment_status(
+        node,
+        ancestors,
+        call_aliases,
+    )
+    if typing_metadata_status is not None:
+        return typing_metadata_status
     delete_status = _delete_mutation_refusal_status(node, ancestors)
     if delete_status is not None:
         return delete_status
@@ -669,7 +676,11 @@ def _package_locus_classification(
     guarded_default_status = _guarded_default_value_flow_status(node, ancestors)
     if guarded_default_status is not None:
         return guarded_default_status
-    transparent_cast_status = _transparent_typing_cast_status(node, ancestors)
+    transparent_cast_status = _transparent_typing_cast_status(
+        node,
+        ancestors,
+        call_aliases,
+    )
     if transparent_cast_status is not None:
         return transparent_cast_status
     regex_universe_status = _regex_universe_source_status(
@@ -862,7 +873,7 @@ def _package_locus_structural_classification(
     module_name: str,
     tree: ast.Module,
 ) -> tuple[str, str]:
-    overload_status = _overload_declaration_status(node, ancestors)
+    overload_status = _overload_declaration_status(node, ancestors, call_aliases)
     if overload_status is not None:
         return overload_status
     import_probe_status = _top_level_import_probe_refusal_status(node, ancestors)
@@ -909,6 +920,13 @@ def _package_locus_structural_classification(
     type_checking_status = _type_checking_block_status(node, ast_path, ancestors)
     if type_checking_status is not None:
         return type_checking_status
+    typing_metadata_status = _typing_metadata_assignment_status(
+        node,
+        ancestors,
+        call_aliases,
+    )
+    if typing_metadata_status is not None:
+        return typing_metadata_status
     delete_status = _delete_mutation_refusal_status(node, ancestors)
     if delete_status is not None:
         return delete_status
@@ -942,7 +960,11 @@ def _package_locus_structural_classification(
     static_binding_status = _static_binding_status(node, ancestors, call_aliases)
     if static_binding_status is not None:
         return static_binding_status
-    transparent_cast_status = _transparent_typing_cast_status(node, ancestors)
+    transparent_cast_status = _transparent_typing_cast_status(
+        node,
+        ancestors,
+        call_aliases,
+    )
     if transparent_cast_status is not None:
         return transparent_cast_status
     regex_universe_status = _regex_universe_source_status(
@@ -1147,8 +1169,9 @@ def _resolved_import_from_module(
 def _overload_declaration_status(
     node: ast.AST,
     ancestors: tuple[ast.AST, ...],
+    call_aliases: Optional[Dict[str, str]] = None,
 ) -> Optional[tuple[str, str]]:
-    fn = _nearest_overload_function(node, ancestors)
+    fn = _nearest_overload_function(node, ancestors, call_aliases or {})
     if fn is None:
         return None
     if _node_is_in_function_body(node, fn):
@@ -1159,19 +1182,98 @@ def _overload_declaration_status(
 def _nearest_overload_function(
     node: ast.AST,
     ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
 ) -> Optional[ast.FunctionDef | ast.AsyncFunctionDef]:
     chain = ancestors + (node,)
     for item in reversed(chain):
         if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
-            _is_overload_decorator(decorator)
+            _is_overload_decorator(decorator, call_aliases)
             for decorator in item.decorator_list
         ):
             return item
     return None
 
 
-def _is_overload_decorator(node: ast.AST) -> bool:
-    return _static_call_name(node) in {"t.overload", "typing.overload"}
+def _is_overload_decorator(
+    node: ast.AST,
+    call_aliases: Dict[str, str],
+) -> bool:
+    return _resolved_static_call_name(node, call_aliases) == "typing.overload"
+
+
+_TYPING_METADATA_CALLS = frozenset(
+    {
+        "typing.NewType",
+        "typing.ParamSpec",
+        "typing.TypeVar",
+        "typing_extensions.NewType",
+        "typing_extensions.ParamSpec",
+        "typing_extensions.TypeVar",
+    }
+)
+
+
+def _typing_metadata_assignment_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+) -> Optional[tuple[str, str]]:
+    stmt = _nearest_typing_metadata_assignment(node, ancestors, call_aliases)
+    if stmt is None:
+        return None
+    if node is stmt or any(descendant is node for descendant in ast.walk(stmt)):
+        return (
+            "support",
+            "typing metadata assignment (TypeVar/ParamSpec/NewType/TypeAlias) supports source accounting only",
+        )
+    return None
+
+
+def _nearest_typing_metadata_assignment(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+    call_aliases: Dict[str, str],
+) -> Optional[ast.Assign | ast.AnnAssign]:
+    chain = ancestors + (node,)
+    for item in reversed(chain):
+        value: Optional[ast.AST]
+        if isinstance(item, ast.Assign):
+            value = item.value
+        elif isinstance(item, ast.AnnAssign):
+            value = item.value
+        else:
+            continue
+        if isinstance(value, ast.Call) and _is_typing_metadata_call(
+            value,
+            call_aliases,
+        ):
+            return item
+        if isinstance(item, ast.AnnAssign) and _is_type_alias_annotation(
+            item.annotation,
+            call_aliases,
+        ):
+            return item
+    return None
+
+
+def _is_typing_metadata_call(
+    node: ast.Call,
+    call_aliases: Dict[str, str],
+) -> bool:
+    return (
+        not node.keywords
+        or all(keyword.arg is not None for keyword in node.keywords)
+    ) and _resolved_static_call_name(node.func, call_aliases) in _TYPING_METADATA_CALLS
+
+
+def _is_type_alias_annotation(
+    node: ast.AST,
+    call_aliases: Dict[str, str],
+) -> bool:
+    return _resolved_static_call_name(node, call_aliases) in {
+        "typing.TypeAlias",
+        "typing_extensions.TypeAlias",
+    }
 
 
 def _node_is_in_function_body(
@@ -2050,10 +2152,11 @@ def _guarded_default_attribute_root(node: ast.Attribute) -> str:
 def _transparent_typing_cast_status(
     node: ast.AST,
     ancestors: tuple[ast.AST, ...],
+    call_aliases: Optional[Dict[str, str]] = None,
 ) -> Optional[tuple[str, str]]:
     chain = ancestors + (node,)
     for item in reversed(chain):
-        if not _is_transparent_typing_cast_call(item):
+        if not _is_transparent_typing_cast_call(item, call_aliases or {}):
             continue
         if item is node:
             return (
@@ -2074,12 +2177,16 @@ def _transparent_typing_cast_status(
     return None
 
 
-def _is_transparent_typing_cast_call(node: ast.AST) -> bool:
+def _is_transparent_typing_cast_call(
+    node: ast.AST,
+    call_aliases: Optional[Dict[str, str]] = None,
+) -> bool:
     return (
         isinstance(node, ast.Call)
         and not node.keywords
         and len(node.args) == 2
-        and _static_call_name(node.func) in {"t.cast", "typing.cast"}
+        and _resolved_static_call_name(node.func, call_aliases or {})
+        in {"typing.cast"}
     )
 
 
