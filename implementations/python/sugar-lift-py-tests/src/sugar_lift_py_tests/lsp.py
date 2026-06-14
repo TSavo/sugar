@@ -1016,6 +1016,9 @@ def _package_locus_structural_classification(
     pure_branch_status = _pure_branch_predicate_status(node, ancestors)
     if pure_branch_status is not None:
         return pure_branch_status
+    runtime_branch_status = _runtime_branch_predicate_refusal_status(node, ancestors)
+    if runtime_branch_status is not None:
+        return runtime_branch_status
     formatted_string_status = _formatted_string_status(node, ancestors)
     if formatted_string_status is not None:
         return formatted_string_status
@@ -5594,6 +5597,39 @@ def _pure_branch_predicate_status(
         "warranted",
         "pure branch predicate admitted as timeless value constraint",
     )
+
+
+def _runtime_branch_predicate_refusal_status(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[tuple[str, str]]:
+    branch = _nearest_runtime_branch_predicate_for_locus(node, ancestors)
+    if branch is None:
+        return None
+    return (
+        "refused",
+        "runtime branch predicate refused until a branch/path universe is emitted",
+    )
+
+
+def _nearest_runtime_branch_predicate_for_locus(
+    node: ast.AST,
+    ancestors: tuple[ast.AST, ...],
+) -> Optional[ast.If]:
+    chain = ancestors + (node,)
+    if _nearest_enclosing_function(chain) is None:
+        return None
+    for item in reversed(chain):
+        if not isinstance(item, ast.If):
+            continue
+        if _is_pure_branch_predicate_expr(item.test):
+            return None
+        if node is item:
+            return item
+        if any(candidate is node for candidate in ast.walk(item.test)):
+            return item
+        return None
+    return None
 
 
 def _nearest_pure_branch_predicate_for_locus(
