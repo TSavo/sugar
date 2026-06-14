@@ -3,8 +3,8 @@
   "silent": 0,
   "unaccounted": -52,
   "discharged": 5626,
-  "refused": 278,
-  "unclassified": 465,
+  "refused": 288,
+  "unclassified": 455,
   "prev_unclassified": 465,
-  "note": "HERMETIC (no --dissolve) snapshot of the rust 1.96.0 coretests accounting sweep, gated in CI. Each lifter-moving push updates this pin to its predicted snapshot; CI asserts an EXACT match. CORRECTION: the prior pin (452/refused 291) wrongly counted 13 'has no visible source' asserts as terminal-refused; that reason is UNCLASSIFIED work (the helper's source may be loadable from a dep), enforced by nonempty_assert_helper_is_not_terminal_refused_the_twin. Reverted -> unclassified 465 / refused 278 (prev set to 465 as the corrected baseline). unclassified here is lifter-only; --dissolve mode credits further by evaluation (not gated). Drive unclassified -> 0."
+  "note": "HERMETIC (no --dissolve) snapshot of the rust 1.96.0 coretests accounting sweep, gated in CI. Each lifter-moving push updates this pin to its predicted snapshot; CI asserts an EXACT match. This push: runtime-parametric helper asserts (closure/iterator/dyn params -> bin-2, not constructible from source literals at any call site) reclassified from 'reachable only via call-site inlining' (unclassified) to terminal-refused -> unclassified 465->455, refused 278->288 (discharged unchanged). prev_unclassified 465 = prior baseline. unclassified here is lifter-only; --dissolve mode credits further by evaluation (not gated). Drive unclassified -> 0."
 }
