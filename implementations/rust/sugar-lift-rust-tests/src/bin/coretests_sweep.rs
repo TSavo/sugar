@@ -126,6 +126,7 @@ struct Totals {
     // limitation, i.e. WORK. `refused + unclassified` is the old "refused" count.
     refused: usize,
     unclassified: usize,
+    inactive: usize,
 }
 
 fn main() {
@@ -278,32 +279,34 @@ fn main() {
         // counted without a reason string, or any unrecognized reason, defaults to
         // Unclassified -- the only way into `refused` is to earn it.
         let mut file_terminal = 0usize;
+        let mut file_inactive = 0usize;
         for reason in &out.skip_reasons {
-            match refusal_disposition(reason) {
+            let (tag, disp) = match refusal_disposition(reason) {
                 Disposition::Refused => {
                     file_terminal += 1;
-                    let b = format!("[refused] {}", bucket(reason));
-                    *reasons.entry(b.clone()).or_insert(0) += 1;
-                    let samples = reason_samples.entry(b).or_default();
-                    if samples.len() < 12 {
-                        samples.push(format!("{}: {}", rel, reason));
-                    }
+                    ("[refused]", ())
                 }
-                Disposition::Unclassified => {
-                    let b = format!("[unclassified] {}", bucket(reason));
-                    *reasons.entry(b.clone()).or_insert(0) += 1;
-                    let samples = reason_samples.entry(b).or_default();
-                    if samples.len() < 12 {
-                        samples.push(format!("{}: {}", rel, reason));
-                    }
+                Disposition::Inactive => {
+                    file_inactive += 1;
+                    ("[inactive]", ())
                 }
+                Disposition::Unclassified => ("[unclassified]", ()),
+            };
+            let _ = disp;
+            let b = format!("{} {}", tag, bucket(reason));
+            *reasons.entry(b.clone()).or_insert(0) += 1;
+            let samples = reason_samples.entry(b).or_default();
+            if samples.len() < 12 {
+                samples.push(format!("{}: {}", rel, reason));
             }
             all_reasons.push(reason.clone());
         }
         // Reconcile against the count: any refused-without-a-reason is unclassified.
         let file_terminal = file_terminal.min(refused_total);
-        let file_unclassified = refused_total - file_terminal;
+        let file_inactive = file_inactive.min(refused_total - file_terminal);
+        let file_unclassified = refused_total - file_terminal - file_inactive;
         totals.refused += file_terminal;
+        totals.inactive += file_inactive;
         totals.unclassified += file_unclassified;
         let refused = refused_total;
 
@@ -316,7 +319,7 @@ fn main() {
     // Headline reconciliation at macro granularity. `refused + unclassified` is the
     // full named non-discharged set; only their sum reconciles against the textual
     // macro count.
-    let named_non_discharged = totals.refused + totals.unclassified;
+    let named_non_discharged = totals.refused + totals.unclassified + totals.inactive;
     let unaccounted = totals.assert_macros as i64
         - totals.discharged as i64
         - named_non_discharged as i64;
@@ -357,6 +360,11 @@ fn main() {
         "  unclassified (lifter WORK):  {:>6}  ({:.1}%)   <-- the real roadmap; drive to 0",
         totals.unclassified,
         pct(totals.unclassified)
+    );
+    println!(
+        "  inactive (cfg-disabled):     {:>6}  ({:.1}%)   <-- not in this target's universe",
+        totals.inactive,
+        pct(totals.inactive)
     );
     println!(
         "  unaccounted (net):           {:>6}  ({:.1}%)",
@@ -462,6 +470,7 @@ fn build_ledger_json(
     obj.insert("discharged".into(), totals.discharged.into());
     obj.insert("refused".into(), totals.refused.into());
     obj.insert("unclassified".into(), totals.unclassified.into());
+    obj.insert("inactive".into(), totals.inactive.into());
     obj.insert("unaccounted".into(), unaccounted.into());
     obj.insert(
         "assertion_multiset_cid".into(),
@@ -536,6 +545,7 @@ mod tests {
             discharged: 3,
             refused: 1,
             unclassified: 1,
+            inactive: 0,
         };
         let reasons = BTreeMap::from([("closure argument".to_string(), 2usize)]);
         let samples = BTreeMap::from([(

@@ -143,8 +143,14 @@ pub fn lift_file(file: &syn::File, source_path: &str) -> AdapterOutput {
 /// verdict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Disposition {
+    /// Terminal: closed with a damn good reason (a source property).
     Refused,
+    /// A lifter limitation -- WORK. The only thing the goal drives to zero.
     Unclassified,
+    /// Not part of THIS target's universe (a `cfg`-disabled test/assert). Not work
+    /// and not a refusal -- it does not exist in this build, so it is excluded from
+    /// the load-bearing count (T's "inactive/support" rung).
+    Inactive,
 }
 
 /// Classify a refusal reason string as a terminal Refusal or Unclassified work.
@@ -164,9 +170,17 @@ pub enum Disposition {
 /// positions, unsupported macros, and `ambiguous cfg` (a missing target input,
 /// recoverable by pinning the cfg). Default = Unclassified.
 pub fn refusal_disposition(reason: &str) -> Disposition {
+    // INACTIVE: cfg-disabled for this target -- not in this build's universe.
+    if reason.contains("inactive cfg") {
+        return Disposition::Inactive;
+    }
+    // TERMINAL (source property). `temporally unstable` joins `ambiguous temporal
+    // identity`: a term reading a mutated local has no single `t`, so it cannot be
+    // read timelessly -- a property of the source, not a missing lift.
     let terminal = reason.contains("bin-2")
         || reason.contains("number too large")
-        || reason.contains("ambiguous temporal identity");
+        || reason.contains("ambiguous temporal identity")
+        || reason.contains("temporally unstable");
     if terminal {
         Disposition::Refused
     } else {
@@ -7987,8 +8001,16 @@ mod lifter_key_tests {
             "assertion under for context over an opaque collection (bin-2: runtime data)",
             "assert_eq!: int literal 999999999999999999999: number too large to fit in target type",
             "ambiguous temporal identity for receiver `r`; skipped assertion",
+            "assert_eq!: macro in term position references a `x` local; temporally unstable — refused",
         ] {
             assert_eq!(refusal_disposition(r), Refused, "should be terminal: {r}");
+        }
+        // INACTIVE (cfg-disabled -- not in this build's universe).
+        for r in [
+            "inactive cfg on test fn",
+            "inactive cfg on assertion; skipped: cfg(target_has_atomic)",
+        ] {
+            assert_eq!(refusal_disposition(r), Disposition::Inactive, "should be inactive: {r}");
         }
         // UNCLASSIFIED (lifter limitation -- WORK), incl. the default for anything
         // not on the whitelist.
