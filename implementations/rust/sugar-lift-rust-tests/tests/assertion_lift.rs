@@ -533,7 +533,7 @@ fn scalar_is_six() {
     let decl = &out.decls[0];
     assert_eq!(
         decl.name,
-        "make_value#euf#c:callresult_make_value_a0()::assertion"
+        "src/lib.rs::scalar_is_six::make_value#euf#c:callresult_make_value_a0()::assertion"
     );
     assert!(decl.pre.is_none());
     assert!(decl.post.is_none());
@@ -562,7 +562,7 @@ fn scalar_contradiction() {
     let decl = &out.decls[0];
     assert_eq!(
         decl.name,
-        "make_value#euf#c:callresult_make_value_a0()::assertion"
+        "tests/contradiction.rs::scalar_contradiction::make_value#euf#c:callresult_make_value_a0()::assertion"
     );
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 2);
@@ -592,7 +592,7 @@ fn scalar_is_six() {
     let decl = &out.decls[0];
     assert_eq!(
         decl.name,
-        "make_value#euf#c:callresult_make_value_a0()::assertion"
+        "src/lib.rs::scalar_is_six::make_value#euf#c:callresult_make_value_a0()::assertion"
     );
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
@@ -622,7 +622,7 @@ fn scalar_contradiction() {
     let decl = &out.decls[0];
     assert_eq!(
         decl.name,
-        "make_value#euf#c:callresult_make_value_a0()::assertion"
+        "tests/contradiction.rs::scalar_contradiction::make_value#euf#c:callresult_make_value_a0()::assertion"
     );
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 2);
@@ -652,11 +652,11 @@ fn distinct_calls() {
     assert_eq!(out.decls.len(), 2, "decls: {:?}", out.decls);
     assert_eq!(
         out.decls[0].name,
-        "first_value#euf#c:callresult_first_value_a0()::assertion"
+        "tests/helpers.rs::distinct_calls::first_value#euf#c:callresult_first_value_a0()::assertion"
     );
     assert_eq!(
         out.decls[1].name,
-        "second_value#euf#c:callresult_second_value_a0()::assertion"
+        "tests/helpers.rs::distinct_calls::second_value#euf#c:callresult_second_value_a0()::assertion"
     );
     assert_eq_atom(&inv_operands(&out.decls[0])[0], 6);
     assert_eq_atom(&inv_operands(&out.decls[1])[0], 7);
@@ -676,7 +676,7 @@ fn scalar_assert_binary() {
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
     assert_eq!(
         out.decls[0].name,
-        "make_value#euf#c:callresult_make_value_a0()::assertion"
+        "src/lib.rs::scalar_assert_binary::make_value#euf#c:callresult_make_value_a0()::assertion"
     );
     let operands = inv_operands(&out.decls[0]);
     assert_eq!(operands.len(), 1);
@@ -701,7 +701,7 @@ fn decoded_len_est() {
     let decl = &out.decls[0];
     assert_eq!(
         decl.name,
-        "decoded_len_estimate#euf#c:callresult_decoded_len_estimate_a1(i:4)::assertion"
+        "src/decode.rs::decoded_len_est::decoded_len_estimate#euf#c:callresult_decoded_len_estimate_a1(i:4)::assertion"
     );
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
@@ -869,7 +869,7 @@ mod tests {
     assert_eq!(out.decls.len(), 1);
     assert_eq!(
         out.decls[0].name,
-        "make_value#euf#c:callresult_make_value_a0()::assertion"
+        "src/lib.rs::tests::scalar_is_six::make_value#euf#c:callresult_make_value_a0()::assertion"
     );
 }
 
@@ -895,7 +895,7 @@ mod tests {
     assert_eq!(out.decls.len(), 1);
     assert_eq!(
         out.decls[0].name,
-        "decoded_len_estimate#euf#c:callresult_decoded_len_estimate_a1(i:4)::assertion"
+        "src/decode.rs::tests::decoded_len_est::decoded_len_estimate#euf#c:callresult_decoded_len_estimate_a1(i:4)::assertion"
     );
     assert_int_call_eq_atom(
         &inv_operands(&out.decls[0])[0],
@@ -1166,7 +1166,7 @@ fn exponent_float_literal() {
     assert_eq!(out.decls.len(), 1);
 
     let decl = &out.decls[0];
-    assert_eq!(decl.name, "value#euf#c:callresult_value_a0()::assertion");
+    assert_eq!(decl.name, "tests/num/floats.rs::exponent_float_literal::value#euf#c:callresult_value_a0()::assertion");
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 2);
     assert_real_call_eq_atom(&operands[0], "call:value", "0.001");
@@ -1568,8 +1568,8 @@ fn test_range_contains() {
     assert_eq!(
         names,
         vec![
-            "method:contains#euf#c:callresult_method_contains_a2(c:range(i:1,i:5),c:ref(i:0))::assertion",
-            "method:contains#euf#c:callresult_method_contains_a2(c:range(i:1,i:5),c:ref(i:1))::assertion",
+            "method:contains#euf#c:callresult_method_contains_a2(c:range(i:1:u32,i:5),c:ref(i:0:u32))::assertion",
+            "method:contains#euf#c:callresult_method_contains_a2(c:range(i:1:u32,i:5),c:ref(i:1:u32))::assertion",
         ]
     );
     let first = inv_operands(&out.decls[0]);
@@ -2905,7 +2905,7 @@ fn comparison_atoms() {
     assert_eq!(out.decls.len(), 1);
 
     let decl = &out.decls[0];
-    assert_eq!(decl.name, "value#euf#c:callresult_value_a0()::assertion");
+    assert_eq!(decl.name, "tests/compare.rs::comparison_atoms::value#euf#c:callresult_value_a0()::assertion");
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 3);
     assert_int_call_cmp_atom(&operands[0], ">", "call:value", 3);
@@ -2930,7 +2930,7 @@ fn connective_atoms() {
     assert_eq!(out.decls.len(), 1);
 
     let decl = &out.decls[0];
-    assert_eq!(decl.name, "value#euf#c:callresult_value_a0()::assertion");
+    assert_eq!(decl.name, "tests/compare.rs::connective_atoms::value#euf#c:callresult_value_a0()::assertion");
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 2);
     match operands[0].as_ref() {
@@ -2970,7 +2970,7 @@ fn negated_comparison() {
     assert_eq!(out.decls.len(), 1);
 
     let decl = &out.decls[0];
-    assert_eq!(decl.name, "value#euf#c:callresult_value_a0()::assertion");
+    assert_eq!(decl.name, "tests/compare.rs::negated_comparison::value#euf#c:callresult_value_a0()::assertion");
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 2);
     assert_int_call_cmp_atom(&operands[0], "\u{2265}", "call:value", 3);

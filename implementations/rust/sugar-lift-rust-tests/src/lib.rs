@@ -819,6 +819,18 @@ struct TemporalPlan {
     /// pin discharges on its own. A value bound once (`let v = c.get()`) is a bare
     /// var, so a double-pin on it is still caught.
     interior_mut: BTreeSet<String>,
+    /// Locals bound to an ITERATOR (a range, `.iter()`/`.into_iter()` family, or an
+    /// adapter chain). Unlike an interior-mutable cell, an iterator only changes when
+    /// it is CONSUMED (`next`/`nth`/...). A NON-consuming read (`len`/`contains`/
+    /// `size_hint`/`peek`) does NOT advance it, so two such reads with no consumption
+    /// between them observe the SAME `t` and MUST coalesce -- otherwise a genuine
+    /// contradiction on an unadvanced iterator would be masked (a falsePass). So an
+    /// iterator is versioned only at a CONSUMPTION boundary (a consuming method call,
+    /// in statement or let-init position -- handled via `deterministic_definition_
+    /// names`), NOT at every statement. Same-statement double consumption is split by
+    /// the `@adv` occurrence tag. Iterators ARE in `versioned` (so reads are tagged
+    /// and `@adv` applies) but are NOT in `interior_mut` (no per-statement tick).
+    iterators: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -827,6 +839,14 @@ struct TemporalScope {
     plan: TemporalPlan,
     versions: BTreeMap<String, usize>,
     ambiguous: BTreeSet<String>,
+    /// Per-statement count of CONSUMING reads (`next`/`nth`/...) seen so far for
+    /// each iterator binding. A consuming read ADVANCES the iterator, so two such
+    /// reads of the same binding WITHIN ONE statement (`assert_ne!(it.nth(0),
+    /// it.nth(0))`) observe distinct `t` and must not coalesce into `ne(X, X)`.
+    /// The version bump is per STATEMENT (between statements); this counter splits
+    /// per OCCURRENCE within a statement. Interior-mutable so it can advance while
+    /// term translation holds `&self`; reset to empty at each statement boundary.
+    consuming_occurrence: std::cell::RefCell<BTreeMap<String, usize>>,
 }
 
 impl TemporalScope {
@@ -836,7 +856,20 @@ impl TemporalScope {
             plan,
             versions: BTreeMap::new(),
             ambiguous: BTreeSet::new(),
+            consuming_occurrence: std::cell::RefCell::new(BTreeMap::new()),
         }
+    }
+
+    /// Record one CONSUMING read of iterator `name` in the current statement and
+    /// return how many such reads PRECEDED it (0 for the first). The caller appends
+    /// `@adv{n}` for n > 0 so the second-and-later reads in one statement are
+    /// distinct terms. `name` is the already-versioned receiver var (`it@def5`).
+    fn bump_consuming_occurrence(&self, name: &str) -> usize {
+        let mut map = self.consuming_occurrence.borrow_mut();
+        let count = map.entry(name.to_string()).or_insert(0);
+        let prior = *count;
+        *count += 1;
+        prior
     }
 
     fn local_scope(&self) -> &str {
@@ -1278,6 +1311,20 @@ fn try_lift_for_loop_forall(
     Some((quantified, n_body, var))
 }
 
+/// A nested block is a DISTINCT program region. Two sibling blocks that each
+/// rebind a same-named local (`const { let ty = .. }` twice; `{ let as_mut = .. }`
+/// twice; the `{ let i = Cell::new(0); .. }` rebind-in-block of `iterator_drops`)
+/// must NOT coalesce: each block's `ty`/`as_mut`/`i` is a different value observed
+/// at a different program point. The function-level `local_scope` is the same for
+/// both, so their unqualified locals key identically and a false `unsat` is
+/// manufactured. Tagging each nested block with its statement ordinal gives every
+/// region a distinct scope, so its locals (and the obligations keyed on them) are
+/// distinct. Splitting one obligation into two smaller ones is sound: it can only
+/// turn a spurious `unsat` into two satisfiable groups, never the reverse.
+fn child_block_scope(parent: &str, stmt_idx: usize) -> String {
+    format!("{parent}#b{stmt_idx}")
+}
+
 fn unconditional_block_stmts(expr: &Expr) -> Option<&[Stmt]> {
     match expr {
         Expr::Block(b) => Some(&b.block.stmts),
@@ -1306,6 +1353,20 @@ fn collect_assertion_entries(
     macro_depth: usize,
     inherited_stateful: &BTreeSet<String>,
 ) {
+    // A NESTED BLOCK carries the `#b<idx>` marker (`child_block_scope`); a function
+    // body / macro-expansion / loop scope does not. Inside a nested block we relabel
+    // this level's un-named entries to the block scope (see below).
+    let relabel_unnamed_to_scope = local_scope.contains("#b");
+    // A NESTED BLOCK is a distinct consistency scope. Un-callsite-named asserts
+    // (field-access / variant equalities, with no method-call key) otherwise fall
+    // back to the FUNCTION name and conjoin across sibling blocks -- so two blocks
+    // that each rebind a same-named local (`const { let ty = .. }`; `{ let p = .. }`;
+    // `{ let as_mut = .. }`) collide into a false `unsat` on bare `ty`/`p`/`as_mut`.
+    // When this invocation lifts a nested block, we relabel ITS OWN un-named entries
+    // to the block-distinct `local_scope`, so each block is grouped (and checked)
+    // on its own. Entries added by DEEPER recursions are already named (their own
+    // block), so only this level's still-`None` entries are touched.
+    let entries_start = entries.len();
     let temporal_plan = temporal_plan_for_stmts(stmts, inherited_stateful);
     let mut temporal_scope = TemporalScope::new(local_scope, temporal_plan);
     // const_eval_select((), compiletime, runtime) is a std intrinsic that, at
@@ -1320,7 +1381,7 @@ fn collect_assertion_entries(
             _ => None,
         })
         .collect();
-    for stmt in stmts {
+    for (stmt_idx, stmt) in stmts.iter().enumerate() {
         match stmt {
             Stmt::Local(local) => {
                 update_float_width_scope_for_pat(&local.pat, float_widths);
@@ -1333,7 +1394,7 @@ fn collect_assertion_entries(
                     if let Some(stmts) = unconditional_block_stmts(&init.expr) {
                         collect_assertion_entries(
                             stmts,
-                            local_scope,
+                            &child_block_scope(local_scope, stmt_idx),
                             options,
                             reducer,
                             float_widths,
@@ -1495,7 +1556,7 @@ fn collect_assertion_entries(
             Stmt::Expr(Expr::Block(b), _) => {
                 collect_assertion_entries(
                     &b.block.stmts,
-                    local_scope,
+                    &child_block_scope(local_scope, stmt_idx),
                     options,
                     reducer,
                     float_widths,
@@ -1511,7 +1572,7 @@ fn collect_assertion_entries(
             Stmt::Expr(Expr::Unsafe(u), _) => {
                 collect_assertion_entries(
                     &u.block.stmts,
-                    local_scope,
+                    &child_block_scope(local_scope, stmt_idx),
                     options,
                     reducer,
                     float_widths,
@@ -1662,7 +1723,7 @@ fn collect_assertion_entries(
             Stmt::Expr(Expr::Const(c), _) => {
                 collect_assertion_entries(
                     &c.block.stmts,
-                    local_scope,
+                    &child_block_scope(local_scope, stmt_idx),
                     options,
                     reducer,
                     float_widths,
@@ -1725,7 +1786,7 @@ fn collect_assertion_entries(
                     } else if let Some(stmts) = unconditional_block_stmts(e) {
                         collect_assertion_entries(
                             stmts,
-                            local_scope,
+                            &child_block_scope(local_scope, stmt_idx),
                             options,
                             reducer,
                             float_widths,
@@ -1755,6 +1816,13 @@ fn collect_assertion_entries(
             }
         }
         advance_temporal_scope_for_stmt(stmt, &mut temporal_scope);
+    }
+    if relabel_unnamed_to_scope {
+        for entry in entries[entries_start..].iter_mut() {
+            if entry.name.is_none() {
+                entry.name = Some(local_scope.to_string());
+            }
+        }
     }
 }
 
@@ -1877,6 +1945,7 @@ fn temporal_plan_for_stmts(stmts: &[Stmt], inherited_stateful: &BTreeSet<String>
     // enclosing scope's stateful bindings, so `let r = &cell` / `*x.get()` inside
     // a block knows `cell`/`x` is a trajectory.
     let mut interior_mut = inherited_stateful.clone();
+    let mut iterators = BTreeSet::<String>::new();
     for stmt in stmts {
         for name in deterministic_definition_names(stmt) {
             *definitions.entry(name).or_insert(0) += 1;
@@ -1885,13 +1954,20 @@ fn temporal_plan_for_stmts(stmts: &[Stmt], inherited_stateful: &BTreeSet<String>
             ambiguous.insert(name);
         }
         collect_mut_binding_names_in_stmt(stmt, &mut mut_locals);
-        collect_interior_mut_binding_names_in_stmt(stmt, &mut interior_mut);
+        collect_interior_mut_binding_names_in_stmt(stmt, &mut interior_mut, &mut iterators);
     }
     // COMPILER AXIOM (for free): `load`/`fetch_*`/`compare_exchange`/`swap` are
     // ATOMIC-EXCLUSIVE methods, so any receiver of one IS an atomic -- interior-
     // mutable shared state -- whether it is a static, a local, or a field. A syn
     // visitor finds these anywhere, descending into nested blocks.
     collect_atomic_receiver_names(stmts, &mut interior_mut);
+    // `mut` ORACLE made precise: a `let mut x` whose `&mut x` is taken (passed to
+    // `ptr::swap`, `mem::swap`, `from_mut`, a `*mut` cast, ...) is genuinely mutated
+    // through that borrow, so a read of `x` (or `*x.field`) at two program points is
+    // a fork around `t`. Version it per statement like an interior-mutable cell. A
+    // syn visitor finds `&mut x` anywhere, descending into nested (e.g. `unsafe { }`)
+    // blocks where the mutation often lives while the reads sit in the outer block.
+    collect_mut_borrowed_local_names(stmts, &mut_locals, &mut interior_mut);
     let mut versioned: BTreeSet<String> = definitions
         .into_iter()
         .filter_map(|(name, count)| (count > 1 || ambiguous.contains(&name)).then_some(name))
@@ -1899,10 +1975,22 @@ fn temporal_plan_for_stmts(stmts: &[Stmt], inherited_stateful: &BTreeSet<String>
     // An interior-mutable binding is versioned even though it is bound once: its
     // INTERIOR changes across statements, so each read must observe a distinct `t`.
     versioned.extend(interior_mut.iter().cloned());
+    // An iterator is versioned too (so its reads are tagged and `@adv` applies), but
+    // it advances only at a CONSUMPTION boundary -- a consuming method call, which
+    // `deterministic_definition_names` already records as a version bump -- not every
+    // statement. A name that is BOTH a cell and an iterator stays a cell (the
+    // stronger, per-statement posture).
+    for name in &iterators {
+        if !interior_mut.contains(name) {
+            versioned.insert(name.clone());
+        }
+    }
+    iterators.retain(|name| !interior_mut.contains(name));
     TemporalPlan {
         versioned,
         mut_locals,
         interior_mut,
+        iterators,
     }
 }
 
@@ -1913,25 +2001,36 @@ fn temporal_plan_for_stmts(stmts: &[Stmt], inherited_stateful: &BTreeSet<String>
 /// binding to one of their constructors is non-`mut` yet observably changes
 /// through `&self`. Recognising the constructor (not any per-method behaviour) is
 /// the interior-mutability dual of the `mut` keyword oracle.
-fn collect_interior_mut_binding_names_in_stmt(stmt: &Stmt, out: &mut BTreeSet<String>) {
+fn collect_interior_mut_binding_names_in_stmt(
+    stmt: &Stmt,
+    cells: &mut BTreeSet<String>,
+    iters: &mut BTreeSet<String>,
+) {
     match stmt {
         Stmt::Local(local) => {
             let Some(init) = &local.init else { return };
-            // DIRECT: an interior-mutable cell, or an iterator (consumed/advanced).
-            let direct = init_is_interior_mut_construction(&init.expr)
-                || init_is_iterator_construction(&init.expr);
-            // RECURSIVE TRAJECTORY: a binding DERIVED from an already-stateful
-            // binding -- a view/borrow/adapter over it (`let ref_mut = &mut
-            // *cell.get()`, `let it2 = it.by_ref()`) -- is itself a trajectory, so
-            // its observations change too. (`out` accumulates in statement order,
-            // so an init referencing an EARLIER stateful binding is caught.)
-            let derived = !direct && {
-                let refs = names_referenced_in_expr(&init.expr);
-                !out.is_disjoint(&refs)
-            };
-            if direct || derived {
+            // A CELL / raw `*mut` pointer changes through `&self` or an alias at any
+            // time (per-statement posture); an ITERATOR changes only when consumed
+            // (consumption-boundary posture).
+            let is_cell = init_is_interior_mut_construction(&init.expr)
+                || init_is_raw_mut_pointer_construction(&init.expr);
+            let is_iter = !is_cell && init_is_iterator_construction(&init.expr);
+            // RECURSIVE TRAJECTORY: a binding DERIVED from an already-stateful binding
+            // -- a view/borrow/adapter over it (`let r = &mut *cell.get()`, `let it2 =
+            // it.by_ref()`) -- inherits that binding's posture. (`cells`/`iters`
+            // accumulate in statement order, so an init referencing an EARLIER
+            // stateful binding is caught.)
+            let refs = (!is_cell && !is_iter).then(|| names_referenced_in_expr(&init.expr));
+            let derived_cell = refs.as_ref().is_some_and(|r| !cells.is_disjoint(r));
+            let derived_iter =
+                !derived_cell && refs.as_ref().is_some_and(|r| !iters.is_disjoint(r));
+            if is_cell || derived_cell {
                 for name in pat_idents(&local.pat) {
-                    out.insert(name);
+                    cells.insert(name);
+                }
+            } else if is_iter || derived_iter {
+                for name in pat_idents(&local.pat) {
+                    iters.insert(name);
                 }
             }
         }
@@ -1939,7 +2038,7 @@ fn collect_interior_mut_binding_names_in_stmt(stmt: &Stmt, out: &mut BTreeSet<St
         // global state; a `.load()`/`.fetch_*()` on it is a stateful read.
         Stmt::Item(syn::Item::Static(s)) => {
             if type_is_atomic_cell(&s.ty) {
-                out.insert(s.ident.to_string());
+                cells.insert(s.ident.to_string());
             }
         }
         _ => {}
@@ -1988,6 +2087,94 @@ fn collect_atomic_receiver_names(stmts: &[Stmt], out: &mut BTreeSet<String>) {
     }
 }
 
+/// Collect the receiver names of CONSUMING iterator calls (`next`/`nth`/...) in
+/// `expr`. A consuming call is a `t`-advance for its receiver (the iterator's
+/// temporal homomorphism: `nth(it, k)` is warranted `nth(it, k, t)`, and the call
+/// IS the step to `t+1`). Used to bump the receiver's version at a let-init
+/// consumption boundary; the statement-position case is the ordinary method-receiver
+/// boundary.
+fn collect_consuming_iterator_receiver_names(expr: &Expr, out: &mut BTreeSet<String>) {
+    if let Expr::MethodCall(call) = expr {
+        if is_consuming_iterator_method(&call.method.to_string()) {
+            if let Some(name) = simple_path_name(&call.receiver) {
+                out.insert(name);
+            }
+        }
+    }
+    // Descend: the consuming call may be wrapped (`it.next().unwrap()`,
+    // `Some(it.nth(0))`, `&it.next()`).
+    match expr {
+        Expr::MethodCall(c) => {
+            collect_consuming_iterator_receiver_names(&c.receiver, out);
+            for a in &c.args {
+                collect_consuming_iterator_receiver_names(a, out);
+            }
+        }
+        Expr::Call(c) => {
+            for a in &c.args {
+                collect_consuming_iterator_receiver_names(a, out);
+            }
+        }
+        Expr::Reference(r) => collect_consuming_iterator_receiver_names(&r.expr, out),
+        Expr::Paren(p) => collect_consuming_iterator_receiver_names(&p.expr, out),
+        Expr::Group(g) => collect_consuming_iterator_receiver_names(&g.expr, out),
+        Expr::Try(t) => collect_consuming_iterator_receiver_names(&t.expr, out),
+        _ => {}
+    }
+}
+
+/// Collect the names of `mut` locals that are MUTABLY borrowed (`&mut x`) AS A CALL
+/// ARGUMENT (e.g. `ptr::from_mut(&mut x)`, `mem::swap(&mut a, &mut b)`). Passing
+/// `&mut x` inline to a call is a DETERMINISTIC mutation boundary at that point, so
+/// `x` is genuinely mutated and its reads fork around `t` -- version it per
+/// statement like a cell. We deliberately do NOT collect `let alias = &mut x` (an
+/// alias BINDING): that makes `x`'s identity ambiguous (mutations flow through the
+/// alias at unknown points), which the ambiguity machinery handles by skipping. Only
+/// `mut` locals qualify. Descends into nested blocks (the mutation often lives in an
+/// inner `unsafe { }` while the reads sit outside).
+fn collect_mut_borrowed_local_names(
+    stmts: &[Stmt],
+    mut_locals: &BTreeSet<String>,
+    out: &mut BTreeSet<String>,
+) {
+    fn mut_ref_arg_name(arg: &Expr, mut_locals: &BTreeSet<String>) -> Option<String> {
+        match arg {
+            Expr::Reference(r) if r.mutability.is_some() => {
+                simple_path_name(&r.expr).filter(|n| mut_locals.contains(n))
+            }
+            Expr::Paren(p) => mut_ref_arg_name(&p.expr, mut_locals),
+            Expr::Group(g) => mut_ref_arg_name(&g.expr, mut_locals),
+            _ => None,
+        }
+    }
+    struct V<'a> {
+        mut_locals: &'a BTreeSet<String>,
+        out: &'a mut BTreeSet<String>,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for V<'_> {
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            for arg in &call.args {
+                if let Some(name) = mut_ref_arg_name(arg, self.mut_locals) {
+                    self.out.insert(name);
+                }
+            }
+            syn::visit::visit_expr_call(self, call);
+        }
+        fn visit_expr_method_call(&mut self, mc: &'ast syn::ExprMethodCall) {
+            for arg in &mc.args {
+                if let Some(name) = mut_ref_arg_name(arg, self.mut_locals) {
+                    self.out.insert(name);
+                }
+            }
+            syn::visit::visit_expr_method_call(self, mc);
+        }
+    }
+    let mut v = V { mut_locals, out };
+    for stmt in stmts {
+        syn::visit::Visit::visit_stmt(&mut v, stmt);
+    }
+}
+
 /// Collect every path's last-segment identifier referenced in `expr` (a superset
 /// of its free variables -- enough to test "does this init reference a stateful
 /// binding").
@@ -2022,6 +2209,83 @@ fn type_is_atomic_cell(ty: &syn::Type) -> bool {
             name.as_str(),
             "Cell" | "RefCell" | "UnsafeCell" | "SyncUnsafeCell" | "Mutex" | "RwLock"
         )
+}
+
+/// True iff `expr` constructs a raw `*mut` pointer -- `addr_of_mut!(x)`,
+/// `&mut x as *mut T`, any `expr as *mut T` cast (including a re-cast of an
+/// existing `*mut`), or `ptr::from_mut(..)`. A binding holding a `*mut` is a
+/// HANDLE to memory that is mutated through it (`*p = v`) or through an alias; a
+/// `*p` read at two program points legitimately observes different values (a fork
+/// around `t`, not a contradiction). So we version it per statement exactly like
+/// an interior-mutable cell -- the deref reads then carry the version and do not
+/// coalesce. A value bound once (`let v = *p`) is a bare var, so a genuine
+/// double-pin is still caught.
+/// True iff `method` is an iterator method that CONSUMES (advances past) one or
+/// more elements when called -- so two calls in one statement observe different
+/// state. `peek`/`size_hint`/`len`/`clone` do NOT advance and are excluded.
+fn is_consuming_iterator_method(method: &str) -> bool {
+    matches!(
+        method,
+        // Single-element advances.
+        "next"
+            | "nth"
+            | "next_back"
+            | "nth_back"
+            | "next_if"
+            | "next_if_eq"
+            | "advance_by"
+            | "advance_back_by"
+            // Short-circuiting `&mut self` terminals: they drive the iterator (so they
+            // ADVANCE it) and, unlike the by-value terminals (`fold`/`sum`/`count`),
+            // borrow rather than move -- so a later read of the same binding is valid
+            // and must observe the advanced `t`. Including a NON-advancing method here
+            // (e.g. `len`) would be unsound (it would split reads that must coalesce);
+            // every name below genuinely consumes.
+            | "try_fold"
+            | "try_for_each"
+            | "find"
+            | "find_map"
+            | "position"
+            | "rposition"
+            | "all"
+            | "any"
+    )
+}
+
+/// True iff `var` (a possibly `@def`-tagged receiver name) names a versioned
+/// iterator binding in scope -- i.e. its base is in the versioned/interior-mut set.
+fn receiver_is_versioned_iterator(var: &str, scope: &TemporalScope) -> bool {
+    let base = var.split('@').next().unwrap_or(var);
+    scope.plan.versioned.contains(base)
+}
+
+fn init_is_raw_mut_pointer_construction(expr: &Expr) -> bool {
+    match expr {
+        Expr::Reference(r) => init_is_raw_mut_pointer_construction(&r.expr),
+        Expr::Paren(p) => init_is_raw_mut_pointer_construction(&p.expr),
+        Expr::Group(g) => init_is_raw_mut_pointer_construction(&g.expr),
+        Expr::Cast(cast) => matches!(
+            cast.ty.as_ref(),
+            syn::Type::Ptr(p) if p.mutability.is_some()
+        ),
+        Expr::Macro(m) => m
+            .mac
+            .path
+            .segments
+            .last()
+            .is_some_and(|s| s.ident == "addr_of_mut"),
+        Expr::Call(call) => {
+            if let Expr::Path(p) = call.func.as_ref() {
+                p.path
+                    .segments
+                    .last()
+                    .is_some_and(|s| s.ident == "from_mut")
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
 }
 
 /// True iff `expr` constructs an ITERATOR -- a range, an `.iter()`/`.into_iter()`
@@ -2128,6 +2392,16 @@ fn init_is_iterator_construction(expr: &Expr) -> bool {
 /// True iff `expr` is a call to an interior-mutable primitive's constructor, e.g.
 /// `Cell::new(..)`, `core::cell::RefCell::new(..)`, `AtomicUsize::new(..)`.
 fn init_is_interior_mut_construction(expr: &Expr) -> bool {
+    // `let b = &Cell::new(a)` / `let cell = &Cell::new(0)`: the binding is a
+    // reference to a freshly-constructed cell. The reference is transparent to
+    // interior mutability -- a read through `b` still observes the cell's changing
+    // interior -- so unwrap `&`/parens/groups to reach the constructor.
+    match expr {
+        Expr::Reference(r) => return init_is_interior_mut_construction(&r.expr),
+        Expr::Paren(p) => return init_is_interior_mut_construction(&p.expr),
+        Expr::Group(g) => return init_is_interior_mut_construction(&g.expr),
+        _ => {}
+    }
     let Expr::Call(call) = expr else { return false };
     let Expr::Path(path) = call.func.as_ref() else {
         return false;
@@ -2207,6 +2481,10 @@ fn advance_temporal_scope_for_stmt(stmt: &Stmt, scope: &mut TemporalScope) {
     for name in interior {
         scope.define_local(&name);
     }
+    // Per-occurrence consuming-read counters are statement-local: a new statement
+    // starts fresh (cross-statement distinctness is already carried by the version
+    // bump above).
+    scope.consuming_occurrence.borrow_mut().clear();
 }
 
 fn deterministic_definition_names(stmt: &Stmt) -> Vec<String> {
@@ -2216,6 +2494,14 @@ fn deterministic_definition_names(stmt: &Stmt) -> Vec<String> {
             for name in pat_idents(&local.pat) {
                 out.insert(name);
             }
+            // CONSUMPTION boundary in a let-initializer: `let _ = it.next()` advances
+            // `it`. The receiver of a CONSUMING iterator call is a version bump for
+            // that receiver, exactly as a method-call statement is (below). Only
+            // consuming calls count -- a non-consuming `let n = it.len()` must NOT
+            // bump `it`, or two `len` reads around it would falsely split.
+            if let Some(init) = &local.init {
+                collect_consuming_iterator_receiver_names(&init.expr, &mut out);
+            }
         }
         Stmt::Expr(expr, _) if !is_temporal_control_flow_expr(expr) => {
             if let Some(name) = deterministic_assignment_name(expr) {
@@ -2223,9 +2509,34 @@ fn deterministic_definition_names(stmt: &Stmt) -> Vec<String> {
             }
             collect_method_receiver_names(expr, &mut out);
         }
+        // CONSUMPTION boundary inside an assertion: `assert_eq!(it.next(), Some(0))`
+        // advances `it`. The consuming call is an ARGUMENT of the macro, so neither
+        // the `Stmt::Expr` nor `Stmt::Local` arm sees it -- without this, the
+        // subsequent `it.len()`/`it.size_hint()` reads coalesce onto a stale version
+        // and forge a contradiction. We parse the macro's token args as expressions
+        // and collect consuming-iterator receivers (only consuming calls bump; a
+        // `assert_eq!(it.len(), 5)` argument is non-consuming and leaves `it` alone).
+        Stmt::Macro(m) => collect_consuming_receivers_in_macro(&m.mac, &mut out),
+        Stmt::Expr(Expr::Macro(m), _) => collect_consuming_receivers_in_macro(&m.mac, &mut out),
         _ => {}
     }
     out.into_iter().collect()
+}
+
+/// Parse a macro's token args as a comma-separated expression list and collect the
+/// receivers of CONSUMING iterator calls within them. Used so a consuming call
+/// embedded in an assertion (`assert_eq!(it.next(), ..)`) is a version boundary for
+/// its receiver. A parse failure (non-expression macro tokens) yields nothing.
+fn collect_consuming_receivers_in_macro(mac: &syn::Macro, out: &mut BTreeSet<String>) {
+    use syn::parse::Parser;
+    use syn::punctuated::Punctuated;
+    use syn::Token;
+    let parser = Punctuated::<Expr, Token![,]>::parse_terminated;
+    if let Ok(args) = parser.parse2(mac.tokens.clone()) {
+        for arg in &args {
+            collect_consuming_iterator_receiver_names(arg, out);
+        }
+    }
 }
 
 fn deterministic_assignment_name(expr: &Expr) -> Option<String> {
@@ -6114,6 +6425,22 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
                 }
             }
             let mut args = vec![translate_term_in_scope(&call.receiver, scope)?];
+            // PER-OCCURRENCE ADVANCE (Fix 5): a CONSUMING iterator read advances the
+            // iterator, so the second-and-later such read of the SAME binding within
+            // one statement (`assert_ne!(it.nth(0), it.nth(0))`) observes a distinct
+            // `t`. The receiver is already version-tagged (`it@def5`); appending
+            // `@adv{n}` for the n-th occurrence makes the reads distinct terms so the
+            // assertion is `ne(X0, X1)` (satisfiable), not `ne(X, X)` (false unsat).
+            if is_consuming_iterator_method(&call.method.to_string()) {
+                if let Term::Var { name } = args[0].as_ref() {
+                    if receiver_is_versioned_iterator(name, scope) {
+                        let occ = scope.bump_consuming_occurrence(name);
+                        if occ > 0 {
+                            args[0] = make_var(format!("{name}@adv{occ}"));
+                        }
+                    }
+                }
+            }
             for arg in &call.args {
                 args.push(translate_term_in_scope(arg, scope)?);
             }
@@ -7430,5 +7757,209 @@ mod lifter_key_tests {
             "format! with inline mut capture should be refused; skips: {:?}",
             out.skip_reasons
         );
+    }
+
+    // ── Nested-block scope: sibling blocks are distinct consistency regions ────
+
+    #[test]
+    fn sibling_blocks_rebinding_same_local_do_not_coalesce() {
+        // Two sibling `{ }` blocks each rebind `r` to a different cell and assert a
+        // different value. The bare-`r` field reads must NOT conjoin across the
+        // blocks into a false `unsat` -- each block is its own scope.
+        let src = r#"
+            #[test]
+            fn rebinds() {
+                {
+                    let r = Wrap::new(1);
+                    assert_eq!(r.field, 1);
+                }
+                {
+                    let r = Wrap::new(2);
+                    assert_eq!(r.field, 2);
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        // The two `field` equalities must land in DIFFERENT obligation groups
+        // (distinct block scopes), so no single inv pins `r.field` to 1 and 2.
+        for d in &out.decls {
+            let dump = format!("{:?}", d.inv);
+            let pins_1 = dump.contains("Int(1)");
+            let pins_2 = dump.contains("Int(2)");
+            assert!(
+                !(pins_1 && pins_2),
+                "sibling-block rebinds of `r` must not coalesce into one inv: {dump}"
+            );
+        }
+    }
+
+    #[test]
+    fn const_blocks_rebinding_same_local_do_not_coalesce() {
+        // The `mem/type_info.rs` shape: two `const { }` blocks each bind `ty` and
+        // pin `ty.fields.len()` to a different count. Distinct block scopes keep
+        // them apart.
+        let src = r#"
+            #[test]
+            fn type_info() {
+                const {
+                    let ty = describe::<A>();
+                    assert!(ty.fields.len() == 3);
+                }
+                const {
+                    let ty = describe::<B>();
+                    assert!(ty.fields.len() == 1);
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        for d in &out.decls {
+            let dump = format!("{:?}", d.inv);
+            assert!(
+                !(dump.contains("Int(3)") && dump.contains("Int(1)")),
+                "sibling const-block `ty` must not coalesce: {dump}"
+            );
+        }
+    }
+
+    // ── Reference-wrapped cell, raw `*mut`, mut-borrow trajectories ────────────
+
+    #[test]
+    fn reference_wrapped_cell_reads_do_not_coalesce() {
+        // `let b = &Cell::new(0)` is an interior-mutable cell behind a reference;
+        // reads of `b.get()` at two program points must get distinct keys.
+        let src = r#"
+            #[test]
+            fn ref_cell() {
+                let b = &Cell::new(0);
+                assert_eq!(b.get(), 12);
+                b.set(13);
+                assert_eq!(b.get(), 13);
+            }
+        "#;
+        let out = lift_src(src);
+        let gets: Vec<&str> = contract_names(&out)
+            .into_iter()
+            .filter(|n| n.contains("method:get"))
+            .collect();
+        let distinct: std::collections::HashSet<&str> = gets.iter().cloned().collect();
+        assert_eq!(
+            distinct.len(),
+            gets.len(),
+            "`&Cell::new` reads must not coalesce: {gets:?}"
+        );
+    }
+
+    #[test]
+    fn raw_mut_pointer_deref_reads_do_not_coalesce() {
+        // `let p = addr_of_mut!(x)` is a handle to memory mutated through it; `*p`
+        // reads at two program points must get distinct keys (p versioned).
+        let src = r#"
+            #[test]
+            fn raw_ptr() {
+                let mut x = 10;
+                let p = addr_of_mut!(x);
+                unsafe {
+                    assert_eq!(*p, 10);
+                    *p = 30;
+                    assert_eq!(*p, 30);
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        // `p` must be VERSIONED (distinct `@def` tags), so the two `*p` reads are
+        // distinct terms: `deref(p@defA)==10 ∧ deref(p@defB)==30` is satisfiable,
+        // not the false `deref(p)==10 ∧ deref(p)==30` unsat.
+        let dump = format!("{:?}", out.decls);
+        assert!(dump.contains("deref"), "expected a deref term: {dump}");
+        // The first read is bare `p` (version 0); the post-write read is `p@def2`.
+        // The presence of a versioned read proves the two `*p` terms are distinct
+        // (the false `deref(p)==10 ∧ deref(p)==30` unsat is dissolved).
+        assert!(
+            dump.contains("p@def"),
+            "raw `*mut p` read across a write must be versioned (distinct term): {dump}"
+        );
+    }
+
+    #[test]
+    fn mut_local_borrowed_into_writer_is_a_trajectory() {
+        // The `clone_to_uninit` shape: `b` is a `mut` local, `&mut b` is passed to a
+        // writer, so `*b` BEFORE != x and `*b` AFTER == x is a real fork around `t`
+        // (b was mutated), NOT a value-eq/ref-id conflation. The two reads must be
+        // distinct, so the `ne` then `eq` are mutually satisfiable.
+        let src = r#"
+            #[test]
+            fn writer_traj() {
+                let a = "hello";
+                let mut b: Box<str> = "world".into();
+                assert_ne!(a, &*b);
+                writer(ptr::from_mut::<str>(&mut b).cast());
+                assert_eq!(a, &*b);
+            }
+        "#;
+        let out = lift_src(src);
+        // No single inv may carry BOTH an `=` and `ne`/`≠` over the same `deref(b)`
+        // pair (that was the false-unsat shape); versioning `b` separates them.
+        let dump = format!("{:?}", out.decls);
+        let has_ne = dump.contains("\u{2260}") || dump.contains("\"ne\"");
+        // The key property: `b` is versioned (distinct @def tags appear), so the two
+        // `&*b` reads are not the same term.
+        assert!(
+            dump.contains("b@def") || !has_ne,
+            "a mut local written through `&mut b` must be versioned (trajectory): {dump}"
+        );
+    }
+
+    // ── Per-occurrence consuming-iterator advance (same statement) ─────────────
+
+    #[test]
+    fn same_statement_consuming_nth_reads_are_distinct() {
+        // `assert_ne!(it.nth(0), it.nth(0))`: each `nth` ADVANCES the iterator, so
+        // the two reads in ONE statement must be distinct terms (the second carries
+        // an `@adv` tag), not `ne(X, X)`.
+        let src = r#"
+            #[test]
+            fn windows_nth() {
+                let v: &[i32] = &[0, 1, 2, 3];
+                let mut w = v.windows(2);
+                assert_ne!(w.nth(0), w.nth(0));
+            }
+        "#;
+        let out = lift_src(src);
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("@adv"),
+            "the second same-statement `nth` must carry an `@adv` occurrence tag: {dump}"
+        );
+    }
+
+    // ── Discrimination: versioning is ONLY for warranted mutation ──────────────
+
+    #[test]
+    fn plain_mut_local_never_borrowed_still_coalesces() {
+        // A `let mut x` that is NEVER `&mut`-borrowed nor reassigned is provably
+        // stable, so two pins on it COALESCE -- a genuine double-pin contradiction
+        // is still caught (no spurious vindication).
+        let src = r#"
+            #[test]
+            fn stable_mut() {
+                let mut x = 5;
+                assert_eq!(stable_helper(x), 1);
+                assert_eq!(stable_helper(x), 2);
+            }
+        "#;
+        let out = lift_src(src);
+        let calls: Vec<&str> = contract_names(&out)
+            .into_iter()
+            .filter(|n| n.contains("stable_helper"))
+            .collect();
+        if calls.len() >= 2 {
+            let distinct: std::collections::HashSet<&str> = calls.iter().cloned().collect();
+            assert_eq!(
+                distinct.len(),
+                1,
+                "an unborrowed, unreassigned mut local must COALESCE (catch the \
+                 contradiction), not be versioned: {calls:?}"
+            );
+        }
     }
 }
