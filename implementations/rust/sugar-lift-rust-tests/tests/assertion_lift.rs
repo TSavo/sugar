@@ -7906,3 +7906,192 @@ fn t() {
         "no rfold obligation may be minted over a runtime array (no fake-dig)"
     );
 }
+
+// ── DIG WAVE: for-loop-body cursor -- index-read unroll over a LITERAL-INT range ──
+//
+// `for i in 0..n { assert_eq!(v[i], ys[i]) }` over a LITERAL int range and IMMUTABLE
+// literal `v`/`ys` is the value-in-scope dig applied to the loop body: the iteration
+// domain is the FINITE set of concrete positions {0..n-1} (a literal in scope, exactly
+// as a literal array's elements are), so the loop is the finite conjunction of the
+// per-position claims with `i` threaded to each concrete `num(k)` and each `v[i]`/`ys[i]`
+// resolved to its literal element. EXACT-OR-BAIL: a runtime endpoint (`0..v.len()`), a
+// mutable container, a runtime-indexed read, or a mutated/conditional body stays
+// unclassified, never fake-dug.
+
+#[test]
+fn forloop_index_read_over_literal_range_digs_exact_elements() {
+    // POSITIVE: `for i in 0..3 { assert_eq!(v[i], ys[i]) }` over literal v/ys. Each
+    // unrolled i (0,1,2) resolves v[i]=ys[i] to the EXACT literal pair (10,10) etc.
+    let src = r#"
+#[test]
+fn t() {
+    let v = [10, 20, 30];
+    let ys = [10, 20, 30];
+    for i in 0..3 {
+        assert_eq!(v[i], ys[i]);
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/forloop_index.rs");
+    assert!(
+        !out.skip_reasons.iter().any(|r| r.contains("for context")),
+        "the literal-range index-read loop must dig point-wise, not stay a for-context refusal: {:?}",
+        out.skip_reasons
+    );
+    let loop_decl = out
+        .decls
+        .iter()
+        .find(|d| d.name.contains("loop"))
+        .expect("a loop decl must be emitted");
+    let pairs = dug_eq_int_pairs(loop_decl);
+    assert_eq!(
+        pairs,
+        vec![(10, 10), (20, 20), (30, 30)],
+        "each unrolled position must dig to the EXACT (v[i], ys[i]) literal pair"
+    );
+}
+
+#[test]
+fn forloop_index_read_bad_twin_is_refutable_carrying_real_elements() {
+    // TEETH (break-the-twin): `v` and `ys` DISAGREE element-wise. The dug formula must
+    // carry the REAL element values on both sides -- a z3-REFUTABLE `10 == 99` claim,
+    // NOT a vacuously satisfiable `index(v,k) == index(ys,k)`. A fake-dig would have left
+    // the uninterpreted EUF accessors (always SAT over distinct arrays); the real
+    // literals make the false claim UNSAT.
+    let src = r#"
+#[test]
+fn t() {
+    let v = [10, 20, 30];
+    let ys = [99, 99, 99];
+    for i in 0..3 {
+        assert_eq!(v[i], ys[i]);
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/forloop_index_twin.rs");
+    let loop_decl = out
+        .decls
+        .iter()
+        .find(|d| d.name.contains("loop"))
+        .expect("a loop decl must be emitted");
+    let pairs = dug_eq_int_pairs(loop_decl);
+    assert_eq!(
+        pairs,
+        vec![(10, 99), (20, 99), (30, 99)],
+        "the bad twin must lift to refutable pairs carrying the REAL elements (both sides resolved)"
+    );
+    assert!(
+        pairs.iter().all(|(a, b)| a != b),
+        "every bad-twin claim must be a real (refutable) inequality: {pairs:?}"
+    );
+}
+
+#[test]
+fn forloop_simple_counter_step_over_literal_range_is_not_dug_as_universal() {
+    // BAIL (guardrail #1, simple-counter accumulator): a body that MUTATES an
+    // accumulator (`sum += v[i]`) is NOT a clean universal over the loop variable --
+    // `loop_body_mutates` gates it. The for-loop lift MUST refuse (the post-loop
+    // `assert_eq!(sum, 60)` reads the mutated accumulator, which the loop body lifter
+    // does not thread). It must NOT mint a per-position obligation that fake-claims the
+    // running sum. EFFECT-OR-LEAVE: an accumulator-mutating body stays unclassified.
+    let src = r#"
+#[test]
+fn t() {
+    let v = [10, 20, 30];
+    let mut sum = 0;
+    for i in 0..3 {
+        sum += v[i];
+    }
+    assert_eq!(sum, 60);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/forloop_accum.rs");
+    // The loop body itself has no assert (the assert is the post-loop one); the loop is
+    // not lifted as a universal, and the mutating body must not be dug. The only assert
+    // is `sum == 60`; `sum` is a mutated local, so it must NOT be fake-resolved to 60.
+    let claims_sum_eq_60_as_closed = out.decls.iter().any(|d| {
+        let dump = format!("{:?}", d.inv);
+        // a fabricated dig would emit a bare `60 == 60` (both sides const) with no `sum` var.
+        dump.contains("Int(60)")
+            && dump.matches("Int(60)").count() >= 2
+            && !dump.contains("sum")
+    });
+    assert!(
+        !claims_sum_eq_60_as_closed,
+        "a mutated accumulator must not be fake-resolved to its final literal: {:?}",
+        out.decls.iter().map(|d| format!("{:?}", d.inv)).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn forloop_index_read_over_runtime_length_range_is_not_unrolled() {
+    // BAIL (guardrail #3, runtime domain): `for i in 0..v.len()` has a RUNTIME endpoint
+    // (`v.len()` is not a literal int), so the domain is NOT a finite literal
+    // construction. `term_as_int(end)` is None -> the unroll declines and the loop falls
+    // to the guarded-FORALL path (where the body lifts as a sound uninterpreted EUF
+    // obligation -- the established floor for a literal-array `v` indexed at the
+    // quantified `i`). The cardinal point: the runtime range MUST NOT be UNROLLED into
+    // concrete per-position literal pairs (no fabricated finite count over `v.len()`).
+    // The lift is a `forall`, never a finite conjunction of resolved `(elem, elem)`.
+    let src = r#"
+#[test]
+fn t() {
+    let v = [0, 1, 2, 3, 4];
+    for i in 0..v.len() {
+        assert_eq!(v[i], v[i]);
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/forloop_runtime_len.rs");
+    if let Some(loop_decl) = out.decls.iter().find(|d| d.name.contains("loop")) {
+        // It must remain a quantified universal (NOT an unrolled finite conjunction of
+        // resolved literal pairs). A fake-dig would have unrolled `0..v.len()` to a
+        // hallucinated count and emitted concrete `(0,0),(1,1),..` pairs.
+        assert!(
+            contains_forall(&inv_formula(loop_decl)),
+            "a runtime-length range must lift as a forall, never be unrolled to literal pairs: {:?}",
+            format!("{:?}", loop_decl.inv)
+        );
+        let pairs = dug_eq_int_pairs(loop_decl);
+        assert!(
+            pairs.is_empty(),
+            "no concrete index-pair may be minted over a runtime-length range (no fake-dig): {pairs:?}"
+        );
+    }
+}
+
+#[test]
+fn forloop_index_read_over_mutable_array_stays_uninterpreted_not_dug() {
+    // BAIL (guardrail #2, mutable container): `let mut buf = [..]` is index-assignable, so
+    // its value at a later point is not the written literal. A body `index(buf, k)` read
+    // must STAY the uninterpreted EUF accessor (the established floor), never resolve to a
+    // literal element -- the mut-gate in `ForAllSugar::desugar` excludes `buf`. We verify
+    // no fabricated literal pair is minted for the mutable array.
+    let src = r#"
+#[test]
+fn t() {
+    let mut buf = [0, 0, 0];
+    let ys = [10, 20, 30];
+    for i in 0..3 {
+        buf[i] = ys[i];
+    }
+    assert_eq!(buf[0], 10);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/forloop_mut_array.rs");
+    // `buf[i] = ys[i]` mutates `buf`, so the loop body mutates -> the loop is not lifted
+    // as a universal. The post-loop `assert_eq!(buf[0], 10)` reads the mutable `buf`; it
+    // must NOT be fake-resolved to a closed `10 == 10` over the written literal (which was
+    // [0,0,0], not [10,20,30] -- a fabrication either way).
+    let claims_buf0_as_closed_literal = out.decls.iter().any(|d| {
+        let dump = format!("{:?}", d.inv);
+        // a fabricated dig over the literal `[0,0,0]` would emit `0 == 10` or over a
+        // hallucinated post-state `10 == 10`; either is a fake-dig of a mutable array.
+        (dump.contains("Int(10)") && dump.matches("Int(10)").count() >= 2 && !dump.contains("buf") && !dump.contains("index"))
+    });
+    assert!(
+        !claims_buf0_as_closed_literal,
+        "a mutable array's index read must stay uninterpreted, not fake-resolved: {:?}",
+        out.decls.iter().map(|d| format!("{:?}", d.inv)).collect::<Vec<_>>()
+    );
+}
