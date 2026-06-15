@@ -50,6 +50,18 @@ pub(crate) fn recognize_composite(expr: &Expr, _fcx: &FactoryCtx) -> Option<Box<
     }
 }
 
+/// MATCH-position recognizer ([`MatchScrutineeSugar`] via [`decompose_match_scrutinee`]):
+/// `Some` only for an `Expr::Match` over a RUNTIME call-result scrutinee, else `None`. This
+/// is the shape the verdict-reading factory entry (`build_match_scrutinee`) walks for the two
+/// `Expr::Match` callsites (the statement-context residue and the `translate_bool_assertion`
+/// half-refuse) — DISTINCT from `recognize_composite`, which owns the method-call-chain
+/// placeholder slot. The verdict is purely SYNTACTIC, so this recognizer takes no
+/// `FactoryCtx` and returns the CONCRETE node (the factory entry reduces it via the node's
+/// ctx-free reduction, not a `Box<dyn Sugar>` registry walk).
+pub(crate) fn recognize(expr: &Expr) -> Option<MatchScrutineeSugar> {
+    decompose_match_scrutinee(expr)
+}
+
 /// The `match <runtime call> { .. }` whose asserted value is the arm taken by a runtime
 /// non-scalar result, composed as a node whose `desugar` makes the runtime-match-scrutinee
 /// verdict at its single LEAF (the scrutinee). See the module header.

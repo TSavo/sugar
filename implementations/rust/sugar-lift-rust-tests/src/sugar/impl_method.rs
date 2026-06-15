@@ -27,9 +27,23 @@
 // unreachable tail kept to mirror the node shape -- a `Hit` the fall-through router would
 // discard exactly as the old `None`, never a fake-refuse.
 
-use syn::ItemImpl;
+use syn::{Item, ItemImpl};
 
+use crate::sugar::factory::FactoryCtx;
 use crate::{impl_block_method_name, Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON};
+
+/// ITEM-position recognizer ([`ImplMethodSugar`] via [`decompose_impl_method`]): `Some` only
+/// for a statement-nested `impl` block whose first method body carries an assertion, else
+/// `None`. The item factory entry (`build_item`) walks a one-recognizer registry over this;
+/// the node owns the impl-method-reachability verdict in its own `desugar`. An `impl` operates
+/// on a `syn::Item`/`ItemImpl`, not an `Expr`, so this is the item-registry analogue of the
+/// term/composite `recognize` shape. Ctx-independent (the verdict is purely structural).
+pub(crate) fn recognize(item: &Item, _fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    let Item::Impl(imp) = item else {
+        return None;
+    };
+    decompose_impl_method(imp).map(|node| Box::new(node) as Box<dyn Sugar>)
+}
 
 /// The statement-nested `impl` block whose method body carries an assertion, composed as a
 /// node whose `desugar` makes the impl-method-reachability verdict at its single LEAF (the

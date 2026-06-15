@@ -55,16 +55,18 @@
 
 use std::collections::BTreeMap;
 
-use syn::Expr;
+use syn::{Expr, Item};
 
 use crate::sugar::{
     array_repeat, array_term, await_term, binop, block_term, call, cast_term, closure_adaptor,
-    closure_term, conditional, const_block, control_flow_term, field_term, fold, forall, index,
-    literal, macro_term, match_node, match_scrutinee, method_call_term, path, range_term,
-    raw_addr_term, reference_term, repeat_term, struct_term, term_literal, transparent_term,
-    tuple_term, unary,
+    closure_term, conditional, const_block, control_flow_term, field_term, fold, forall,
+    impl_method, index, literal, macro_term, match_node, match_scrutinee, method_call_term, path,
+    range_term, raw_addr_term, reference_term, repeat_term, statement_position, struct_term,
+    term_literal, transparent_term, tuple_term, unary,
 };
-use crate::{LiftOptions, Outcome, Sugar, SugarCtx, TemporalScope};
+use crate::{
+    Effect, LiftOptions, Outcome, Sugar, SugarCtx, TemporalScope, STRUCTURAL_BACKSTOP_REASON,
+};
 
 /// What a recognizer needs from its environment to construct a node: the temporal
 /// `scope` (binding / mutability oracle), the lift `options`, and the in-scope `let`
@@ -152,6 +154,77 @@ pub(crate) fn build_composite(expr: &Expr, fcx: &FactoryCtx) -> Box<dyn Sugar> {
         }
     }
     unsupported()
+}
+
+/// The type of an ITEM-shape recognizer: an `&syn::Item`-position recognizer. `Some(node)`
+/// if the shape matches, else `None`. The `Item` analogue of [`Recognizer`] — an `impl` block
+/// is a `syn::Item`/`ItemImpl`, not an `Expr`, so it cannot go through `build_term`/
+/// `build_composite`; it gets its own tiny registry walked by [`build_item`].
+type ItemRecognizer = fn(&Item, &FactoryCtx) -> Option<Box<dyn Sugar>>;
+
+/// The ITEM-position recognizers, in dispatch precedence order. Currently the single
+/// statement-nested-`impl` REFUSE node; faithfully reproduces the former
+/// `Stmt::Item(Item::Impl)` router arm's `decompose_impl_method` call.
+const ITEM_RECOGNIZERS: &[ItemRecognizer] = &[
+    impl_method::recognize, // Item::Impl (statement-nested asserting impl method)
+];
+
+/// The recursive Sugar factory for ITEM-position constructs: the third dispatch the
+/// collector's statement-nested-`impl` site consumes. DISTINCT from `build_term` /
+/// `build_composite` because its input is a `syn::Item`, not an `Expr`. Same shape: walk the
+/// item registry and return the first recognizer's node, else the structural backstop. Total:
+/// a pure / assert-free `impl` becomes the [`UnsupportedSugar`] backstop, which the
+/// verdict-reading router discards exactly as the old `decompose_impl_method` `None`.
+pub(crate) fn build_item(item: &Item, fcx: &FactoryCtx) -> Box<dyn Sugar> {
+    for recognize in ITEM_RECOGNIZERS {
+        if let Some(node) = recognize(item, fcx) {
+            return node;
+        }
+    }
+    unsupported()
+}
+
+/// Build the closure-adaptor REFUSE node for a statement expr (the [`closure_adaptor`] node),
+/// walking its single-recognizer registry. The verdict-reading routers
+/// (`closure_method_terminal_effect`) `desugar` this and read the named order-loss `Effect`;
+/// a non-recognized shape returns the [`UnsupportedSugar`] backstop, which those routers
+/// discard exactly as the old `decompose_closure_adaptor` `None`. This is the SAME node the
+/// composite registry's `closure_adaptor::recognize_composite` slot produces in the method-call
+/// chain; this entry is the verdict-reader's dedicated single-shape walk (it never competes
+/// with `fold`/`for_each` precedence — the router wants the closure-adaptor verdict alone).
+pub(crate) fn build_closure_adaptor(expr: &Expr, fcx: &FactoryCtx) -> Box<dyn Sugar> {
+    closure_adaptor::recognize_composite(expr, fcx).unwrap_or_else(unsupported)
+}
+
+/// Build the statement-position REFUSE node for a bare statement expr (the
+/// [`statement_position`] node), walking its single-recognizer registry. The verdict-reading
+/// router (`statement_position_terminal_effect`) `desugar`s this and reads the named
+/// value-NOT-in-scope `Effect`; a non-asserting statement returns the [`UnsupportedSugar`]
+/// backstop, discarded exactly as the old `decompose_statement_position` `None`.
+pub(crate) fn build_statement_position(expr: &Expr, fcx: &FactoryCtx) -> Box<dyn Sugar> {
+    statement_position::recognize(expr, fcx).unwrap_or_else(unsupported)
+}
+
+/// Build the match-scrutinee REFUSE node for an `Expr::Match` (the [`match_scrutinee`] node),
+/// walking its single-recognizer registry. The verdict-reading router
+/// (`runtime_match_scrutinee_effect`) `desugar`s this and reads the runtime-match-scrutinee
+/// `Effect`; a non-`match` / constructed-scrutinee `match` returns the [`UnsupportedSugar`]
+/// backstop, discarded exactly as the old `decompose_match_scrutinee` `None`. The verdict is
+/// purely SYNTACTIC (the recognizer and node ignore the build/desugar env), so this entry is
+/// ctx-FREE — it needs no `FactoryCtx` and no `SugarCtx`. It both BUILDS the node and reduces
+/// it through the node's own ctx-free reduction, returning the `Outcome` directly: a
+/// recognized `Expr::Match` over a runtime scrutinee `Hit`s `RuntimeMatchScrutinee`; a
+/// non-recognized shape is the structural backstop (`from_opt(None)` =
+/// `Hit(Unsupported{STRUCTURAL_BACKSTOP_REASON})`), discarded by the verdict-reading router
+/// exactly as the old `decompose_match_scrutinee` `None`. This is what lets the ctx-less
+/// `translate_bool_assertion` callsite route through the factory unchanged.
+pub(crate) fn build_match_scrutinee(expr: &Expr) -> Outcome {
+    match match_scrutinee::recognize(expr) {
+        Some(node) => node.desugar_ctx_free(),
+        None => Outcome::Hit(Effect::Unsupported {
+            reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
+        }),
+    }
 }
 
 /// Box a recognized concrete node, or fall to the structural backstop when a decomposer
