@@ -4389,7 +4389,7 @@ fn collect_assertion_entries<'a>(
             Stmt::Expr(Expr::Loop(l), _) => {
                 refuse_nested_asserts_in_stmts(&l.body.stmts, "loop", skipped);
             }
-            Stmt::Expr(Expr::If(i), _) => {
+            Stmt::Expr(e @ Expr::If(i), _) => {
                 // Panic locus: `if let PAT = e { .. } else { panic!() }` asserts
                 // e matches PAT. Lift it; otherwise try the guarded-implication
                 // (`ConditionalSugar`); otherwise refuse the conditional.
@@ -4409,7 +4409,12 @@ fn collect_assertion_entries<'a>(
                         float_widths,
                         macro_depth,
                     );
-                    decompose_if(i).and_then(|s| s.desugar(&ctx).dug())
+                    let fcx = sugar::factory::FactoryCtx {
+                        scope: &temporal_scope,
+                        options,
+                        let_inits: &let_inits,
+                    };
+                    sugar::factory::build(e, &fcx).desugar(&ctx).dug()
                 } {
                     emit_desugared(desugared, entries, macros_lifted);
                 } else {
@@ -4441,7 +4446,7 @@ fn collect_assertion_entries<'a>(
                     }
                 }
             }
-            Stmt::Expr(Expr::Match(m), _) => {
+            Stmt::Expr(e @ Expr::Match(m), _) => {
                 // OPAQUE-REFLECTION qualified continue path (value NOT in scope): a
                 // `match Type::of::<T>().kind { TypeKind::X(b) => assert_eq!(b.field, ..) }`
                 // reads its asserted values out of compile-time reflection over runtime
@@ -4491,7 +4496,12 @@ fn collect_assertion_entries<'a>(
                         float_widths,
                         macro_depth,
                     );
-                    decompose_match(m, &temporal_scope, options).and_then(|s| s.desugar(&ctx).dug())
+                    let fcx = sugar::factory::FactoryCtx {
+                        scope: &temporal_scope,
+                        options,
+                        let_inits: &let_inits,
+                    };
+                    sugar::factory::build(e, &fcx).desugar(&ctx).dug()
                 } {
                     emit_desugared(desugared, entries, macros_lifted);
                     // `decompose_match` dropped any arm gated by an INACTIVE `#[cfg(..)]`
