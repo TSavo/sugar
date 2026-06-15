@@ -11297,3 +11297,332 @@ fn t() {
         other => panic!("an unexpandable macro must lift to the opaque `macro:` var, got {other:?}"),
     }
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// TERM-POSITION VALUE-CALL INLINING (capability #1) — the value teeth.
+//
+// `assert_eq!(h(2), 3)` with `fn h(n: i32) -> i32 { n + 1 }` in source must not lift
+// the LHS to the HOLLOW opaque `Term::Ctor { name: "call:h", args: [Int(2)] }` (a
+// bucket-B discharge with NO value teeth -- `assert_eq!(h(2), 99)` would discharge
+// identically). It must PEEL: resolve `h` to its in-source body, β-reduce `n := 2`,
+// re-build the return expr `n + 1` -> `+(2,1)`, and ground `+(2,1) == 3` with REAL value
+// teeth (a wrong anchor -> z3-UNSAT). EXACT-OR-BAIL: a body that does not ground all the
+// way out (a no-source call, an effect, a `&mut`, a rebind puncture) leaves the honest
+// opaque `call:h` ctor unchanged -- a bail is correct, never an inflation.
+//
+// DISCIPLINE (mirrored from the python value_pins doctrine, built rust-native): admission
+// not detection -- VALUES pin, NAMES are provenance only; an inadmissible body yields NO
+// grounded pin (the opaque leaf stays), never a wrong-grounded one. Verified by the
+// BAD-TWIN FLIP (a wrong anchor goes z3-UNSAT), not by trusting the green discharge.
+// ───────────────────────────────────────────────────────────────────────────
+
+/// The `+`/`-`/`*`/... arithmetic ctor name + its two CONST operand values of a fully
+/// grounded `=( <arith>(a, b), rhs )` atom's LHS. Panics if the LHS is not a binary
+/// arithmetic ctor over two int consts (i.e. it did NOT peel to grounded arith).
+fn grounded_arith_lhs(decl: &sugar_ir_symbolic::ContractDecl) -> (String, i128, i128) {
+    let (lhs, _rhs) = single_eq_atom(decl);
+    match lhs.as_ref() {
+        Term::Ctor { name, args } if args.len() == 2 => {
+            let a = int_const_value(&args[0]);
+            let b = int_const_value(&args[1]);
+            (name.clone(), a, b)
+        }
+        other => panic!("expected a grounded binary arith LHS, got {other:?}"),
+    }
+}
+
+fn int_const_value(t: &Term) -> i128 {
+    match t {
+        Term::Const {
+            value: ConstValue::Int(v),
+            ..
+        } => *v,
+        other => panic!("expected an int const, got {other:?}"),
+    }
+}
+
+/// True iff any term in the decl's inv is an opaque `call:`/`method:` ctor leaf (the
+/// hollow under-claim). Used to assert a PEEL eliminated it, or a BAIL retained it.
+fn inv_has_opaque_call_leaf(decl: &sugar_ir_symbolic::ContractDecl) -> bool {
+    fn walk(t: &Term) -> bool {
+        match t {
+            Term::Ctor { name, args } => {
+                name.starts_with("call:")
+                    || name.starts_with("method:")
+                    || args.iter().any(|a| walk(a))
+            }
+            _ => false,
+        }
+    }
+    fn walk_f(f: &Formula) -> bool {
+        match f {
+            Formula::Atomic { args, .. } => args.iter().any(|a| walk(a)),
+            Formula::Connective { operands, .. } => operands.iter().any(|o| walk_f(o)),
+            Formula::Quantifier { body, .. } => walk_f(body),
+            _ => false,
+        }
+    }
+    decl.inv.as_deref().is_some_and(walk_f)
+}
+
+#[test]
+fn value_call_peels_to_grounded_arith_with_value_teeth() {
+    // `fn h(n) { n + 1 }`; `assert_eq!(h(2), 3)` grounds to `+(2,1) == 3` (SAT, a good
+    // dig) -- NOT the hollow opaque `call:h(2)`. The helper `h` is recorded as a
+    // discharged support fn (a universe member), not its own contract.
+    let src = r#"
+fn h(n: i32) -> i32 { n + 1 }
+
+#[test]
+fn calls_h() {
+    assert_eq!(h(2), 3);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/inline.rs");
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    assert_eq!(out.decls.len(), 1);
+    let (op, a, b) = grounded_arith_lhs(&out.decls[0]);
+    assert_eq!(op, "+");
+    assert_eq!((a, b), (2, 1), "LHS must be the β-reduced body `+(2,1)`");
+    assert!(
+        !inv_has_opaque_call_leaf(&out.decls[0]),
+        "the peel must eliminate the opaque `call:h` leaf, not relocate it"
+    );
+    assert!(
+        out.reduced_helpers.contains("h"),
+        "a fully-peeled value helper must be recorded as a universe/support member"
+    );
+    // Value teeth: the grounded contract is SAT (good dig).
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "inline_h_good") {
+        assert!(sat, "grounded `+(2,1) == 3` must be SAT (a real dig)");
+    }
+}
+
+#[test]
+fn value_call_bad_twin_anchor_is_z3_unsat() {
+    // THE TEETH BITE: the SAME body `h(n) { n + 1 }`, the WRONG anchor `== 4`. Hollow
+    // `call:h(2) == 4` would discharge identically to the good twin (no teeth); the
+    // grounded `+(2,1) == 4` is z3-UNSAT -- a wrong anchor is REFUTED.
+    let src = r#"
+fn h(n: i32) -> i32 { n + 1 }
+
+#[test]
+fn calls_h_wrong() {
+    assert_eq!(h(2), 4);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/inline.rs");
+    assert_eq!(out.decls.len(), 1);
+    let (op, a, b) = grounded_arith_lhs(&out.decls[0]);
+    assert_eq!((op.as_str(), a, b), ("+", 2, 1));
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "inline_h_bad") {
+        assert!(!sat, "grounded `+(2,1) == 4` must be z3-UNSAT (teeth bite the bad twin)");
+    }
+}
+
+#[test]
+fn nested_value_calls_peel_through_to_literals() {
+    // `g(n) { n*2 }`, `h(n) { g(n)+1 }`; `assert_eq!(h(3), 7)` peels h -> g -> literals,
+    // grounding to `+(*(3,2), 1) == 7` (SAT). Both g and h dissolve into the universe.
+    let src = r#"
+fn g(n: i32) -> i32 { n * 2 }
+fn h(n: i32) -> i32 { g(n) + 1 }
+
+#[test]
+fn calls_h() {
+    assert_eq!(h(3), 7);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/inline.rs");
+    assert_eq!(out.decls.len(), 1);
+    let (lhs, _rhs) = single_eq_atom(&out.decls[0]);
+    // LHS = +( *(3,2), 1 )
+    match lhs.as_ref() {
+        Term::Ctor { name, args } if name == "+" && args.len() == 2 => {
+            match args[0].as_ref() {
+                Term::Ctor { name, args } if name == "*" && args.len() == 2 => {
+                    assert_eq!(int_const_value(&args[0]), 3);
+                    assert_eq!(int_const_value(&args[1]), 2);
+                }
+                other => panic!("expected `*(3,2)`, got {other:?}"),
+            }
+            assert_eq!(int_const_value(&args[1]), 1);
+        }
+        other => panic!("expected `+(*(3,2), 1)`, got {other:?}"),
+    }
+    assert!(!inv_has_opaque_call_leaf(&out.decls[0]), "no opaque leaf after nested peel");
+    assert!(out.reduced_helpers.contains("g") && out.reduced_helpers.contains("h"));
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "inline_nested_good") {
+        assert!(sat, "grounded `+(*(3,2),1) == 7` must be SAT");
+    }
+}
+
+#[test]
+fn nested_value_calls_bad_twin_is_z3_unsat() {
+    // Same nested body, wrong anchor `== 8`: `+(*(3,2),1) == 8` is z3-UNSAT.
+    let src = r#"
+fn g(n: i32) -> i32 { n * 2 }
+fn h(n: i32) -> i32 { g(n) + 1 }
+
+#[test]
+fn calls_h_wrong() {
+    assert_eq!(h(3), 8);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/inline.rs");
+    assert_eq!(out.decls.len(), 1);
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "inline_nested_bad") {
+        assert!(!sat, "grounded `+(*(3,2),1) == 8` must be z3-UNSAT (nested teeth bite)");
+    }
+}
+
+#[test]
+fn ssa_rebind_let_chain_peels_through() {
+    // `h(x) { let x = other(x); x }` is a REBIND (x@2 = other(x@1)), not a fixpoint
+    // `x == other(x)`. Peel h(5) -> other(5) -> its body `x + 10` -> `+(5, 10)`.
+    let src = r#"
+fn other(x: i32) -> i32 { x + 10 }
+fn h(x: i32) -> i32 { let x = other(x); x }
+
+#[test]
+fn calls_h() {
+    assert_eq!(h(5), 15);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/inline.rs");
+    assert_eq!(out.decls.len(), 1);
+    let (op, a, b) = grounded_arith_lhs(&out.decls[0]);
+    assert_eq!((op.as_str(), a, b), ("+", 5, 10), "SSA rebind must substitute the VALUE");
+    assert!(out.reduced_helpers.contains("h") && out.reduced_helpers.contains("other"));
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "inline_ssa_good") {
+        assert!(sat, "grounded `+(5,10) == 15` must be SAT");
+    }
+}
+
+#[test]
+fn no_source_call_stays_opaque_call_ctor() {
+    // A call to a fn with NO in-source body has nothing to peel: it stays the honest
+    // opaque `call:` ctor under its EUF callsite key, and is NOT recorded as support.
+    let src = r#"
+#[test]
+fn calls_extern() {
+    assert_eq!(extern_fn(2), 3);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/inline.rs");
+    assert_eq!(out.decls.len(), 1);
+    let (lhs, _rhs) = single_eq_atom(&out.decls[0]);
+    match lhs.as_ref() {
+        Term::Ctor { name, .. } => assert_eq!(
+            name, "call:extern_fn",
+            "a no-source call must stay the opaque `call:` ctor"
+        ),
+        other => panic!("expected opaque `call:extern_fn`, got {other:?}"),
+    }
+    assert!(
+        !out.reduced_helpers.contains("extern_fn"),
+        "a no-source call peels nothing -> not a support member"
+    );
+}
+
+#[test]
+fn effect_body_bails_to_opaque_call_ctor() {
+    // A helper whose body has an EFFECT (a `Vec::push` mutation) does not ground to a
+    // value: the peel BAILS, leaving the opaque `call:h` ctor. The helper is NOT
+    // recorded as support (it was not inlined) -- so it keeps its own broad contract.
+    let src = r#"
+fn h(n: i32) -> i32 { let mut v = Vec::new(); v.push(n); v.len() as i32 }
+
+#[test]
+fn calls_h() {
+    assert_eq!(h(2), 1);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/inline.rs");
+    assert_eq!(out.decls.len(), 1);
+    let (lhs, _rhs) = single_eq_atom(&out.decls[0]);
+    match lhs.as_ref() {
+        Term::Ctor { name, .. } => assert_eq!(
+            name, "call:h",
+            "an effect-body helper must BAIL to the opaque `call:h` ctor"
+        ),
+        other => panic!("expected opaque `call:h`, got {other:?}"),
+    }
+    assert!(
+        !out.reduced_helpers.contains("h"),
+        "a BAILED helper is NOT a support member (it keeps its own contract)"
+    );
+}
+
+#[test]
+fn async_fn_call_bails_value_peel_keeps_await_boundary() {
+    // SOUNDNESS: an `async fn`'s body is the future's awaited output, NOT the call's
+    // value. A non-awaited call to an async fn must NOT peel its body (that would
+    // collapse the `.await` boundary) -- it stays the opaque `call:` ctor.
+    let src = r#"
+async fn h(n: i32) -> i32 { n + 1 }
+
+#[test]
+fn calls_h() {
+    let _ = h(2);
+    assert_eq!(awaited(), 3);
+}
+
+fn awaited() -> i32 { opaque() }
+"#;
+    let out = lift_file(&parse(src), "tests/inline.rs");
+    // `h` must not be peeled to support (async body is not the call's value).
+    assert!(
+        !out.reduced_helpers.contains("h"),
+        "an async fn must not be value-peeled (its body is the awaited output)"
+    );
+}
+
+#[test]
+fn recursive_fn_call_bails_to_opaque_via_depth_guard() {
+    // A self-recursive fn cannot ground (it never bottoms out in literals); the inline
+    // depth guard bails it to the opaque `call:` ctor rather than looping.
+    let src = r#"
+fn rec(n: i32) -> i32 { rec(n) + 1 }
+
+#[test]
+fn calls_rec() {
+    assert_eq!(rec(2), 3);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/inline.rs");
+    assert_eq!(out.decls.len(), 1);
+    assert!(
+        inv_has_opaque_call_leaf(&out.decls[0]),
+        "a recursive fn must bail to the opaque `call:` ctor (depth guard)"
+    );
+    assert!(!out.reduced_helpers.contains("rec"));
+}
+
+#[test]
+fn term_inline_contradictory_anchors_are_caught_not_masked() {
+    // MASKED-CONTRADICTION GUARD (term-path port of the headstart statement-path guard).
+    // Two asserts pin the SAME peeled value `h(2) = +(2,1)` to DISTINCT anchors (3 and
+    // 4). Both must land in ONE coalesced inv so the conjunction is z3-UNSAT (CAUGHT) --
+    // never two split obligations that each look fine on their own.
+    let src = r#"
+fn h(n: i32) -> i32 { n + 1 }
+
+#[test]
+fn contradiction() {
+    assert_eq!(h(2), 3);
+    assert_eq!(h(2), 4);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/inline.rs");
+    assert_eq!(out.decls.len(), 1, "both pins must coalesce into one inv");
+    let operands = inv_operands(&out.decls[0]);
+    assert_eq!(operands.len(), 2, "both contradictory pins must be present (not masked)");
+    // The whole conjoined contract is z3-UNSAT: `+(2,1)==3 && +(2,1)==4` cannot hold.
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "inline_contradiction") {
+        assert!(
+            !sat,
+            "the conjoined `+(2,1)==3 && +(2,1)==4` must be z3-UNSAT (contradiction caught)"
+        );
+    }
+}
