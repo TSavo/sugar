@@ -16,6 +16,7 @@ use std::rc::Rc;
 mod macro_expand;
 pub mod flt2dec_eval;
 pub mod closed_eval;
+mod try_fold_eval;
 
 // The `Sugar` decorator classes each live in their own self-contained module under
 // `src/sugar/`. Each is a child of the crate root, so it can see the crate-root-private
@@ -2193,6 +2194,15 @@ struct TemporalScope {
     /// literals are captured (a non-literal element omits the binding, so the
     /// quantifier path declines rather than over-claims).
     literal_arrays: BTreeMap<String, Vec<Expr>>,
+    /// In-scope simple `let <id> = <init>;` initializer EXPRS for this block, owned.
+    /// Used ONLY by the closed `try_fold` value-evaluator (`try_fold_eval`) to resolve
+    /// a `let`-bound fold closure (`let f = &|..| ..;` then `xs.try_fold(7, f)`) or a
+    /// `let`-bound receiver chain back to its source. Resolution is gated on
+    /// `!is_mut_local` (a `let mut` binding could be reassigned, so its later value is
+    /// not the written init -- such a name is NOT resolved). EXACT-OR-BAIL: an absent
+    /// / unresolvable binding makes the evaluator decline (the operand stays in its
+    /// existing refusal -- a safe under-claim).
+    let_bindings: BTreeMap<String, Expr>,
 }
 
 impl TemporalScope {
@@ -2204,6 +2214,7 @@ impl TemporalScope {
             ambiguous: BTreeSet::new(),
             consuming_occurrence: std::cell::RefCell::new(BTreeMap::new()),
             literal_arrays: BTreeMap::new(),
+            let_bindings: BTreeMap::new(),
         }
     }
 
@@ -2211,6 +2222,23 @@ impl TemporalScope {
     fn with_literal_arrays(mut self, arrays: BTreeMap<String, Vec<Expr>>) -> Self {
         self.literal_arrays = arrays;
         self
+    }
+
+    /// The `let`-bound initializer expr for `name` in this scope, or `None`. Used by
+    /// the closed `try_fold` evaluator to resolve a bound closure / receiver chain.
+    fn let_binding(&self, name: &str) -> Option<&Expr> {
+        self.let_bindings.get(name)
+    }
+
+    /// Record a `let <name> = <init>;` binding reached at the CURRENT statement, so a
+    /// later assertion sees the lexically-in-effect initializer (shadowing-correct: a
+    /// re-`let` of the same name OVERWRITES). The lift loop advances this as it passes
+    /// each `Stmt::Local`, so a `try_fold` operand resolves the binding in effect at
+    /// its position, never a later shadow. A `let mut` name is recorded too, but the
+    /// evaluator gates resolution on `!is_mut_local` (a mutable binding's later value
+    /// is not its written init).
+    fn record_let_binding(&mut self, name: &str, init: Expr) {
+        self.let_bindings.insert(name.to_string(), init);
     }
 
     /// The closed scalar-literal elements of `name` if it is a `let`-bound literal
@@ -5592,6 +5620,10 @@ fn collect_assertion_entries<'a>(
     let temporal_plan = temporal_plan_for_stmts(stmts, inherited_stateful);
     let mut temporal_scope = TemporalScope::new(local_scope, temporal_plan)
         .with_literal_arrays(capture_scalar_literal_arrays(stmts));
+    // `let_bindings` is advanced INCREMENTALLY in the statement loop below (see
+    // `record_let_binding`), so a `try_fold` operand resolves the binding in EFFECT at
+    // its position -- shadowing-correct. (A block-wide capture would let a LATER
+    // `let f = ..` shadow leak back to an EARLIER assert's `f`, mis-grounding it.)
     // const_eval_select((), compiletime, runtime) is a std intrinsic that, at
     // run time, calls its runtime fn. Find such calls in this block and the
     // inner fns they select, so the runtime branch is inlined (its asserts
@@ -5706,6 +5738,18 @@ fn collect_assertion_entries<'a>(
                         for _ in 0..count {
                             skipped.push(reason.clone());
                         }
+                    }
+                }
+                // Advance the in-effect `let` bindings AFTER this local's own init is
+                // processed, so a SUBSEQUENT `try_fold` operand resolves this binding
+                // (shadowing-correct: a re-`let` of the same name overwrites). Only a
+                // simple immutable binding is recorded (the evaluator gates resolution
+                // on `!is_mut_local` regardless, so a `let mut` left out is harmless).
+                if let (Some(name), Some(init)) =
+                    (let_simple_binding(&local.pat), local.init.as_ref())
+                {
+                    if init.diverge.is_none() {
+                        temporal_scope.record_let_binding(&name, (*init.expr).clone());
                     }
                 }
             }
@@ -12084,6 +12128,30 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
             }))
         }
         Expr::MethodCall(call) => {
+            // CLOSED `try_fold` / `try_rfold` VALUE (the construction axiom for a fold
+            // RESULT): `<closed-literal-chain>.try_fold(<lit>, <pure checked closure>)`
+            // is a FINITE construction from source literals, so it reduces to ONE
+            // concrete `Option<i*>`. Ground it to a `Some(n)` / `None` literal and
+            // translate THAT through the ordinary path: `Some(11250)` lifts to
+            // `Ctor("call:Some", [Int(11250)])`, so the outer `assert_eq!` becomes a
+            // grounded `Some(a) == Some(b)`. The teeth follow from ctor-equality: a
+            // bad-twin side grounding to a different `Some(b)` is `call:Some[a] ==
+            // call:Some[b]` (a != b) -- z3-UNSAT. EXACT-OR-BAIL: `None` here falls
+            // through to the existing (unclassified) refusal (a safe under-claim).
+            // CLOSED `try_fold` / `try_rfold` VALUE: ground it to a `Some(n)` / `None`
+            // literal when (and ONLY when) the WHOLE chain is closed-evaluable. On a
+            // bail (a mutable / runtime receiver -- e.g. `iter.try_fold(0, ..)` over a
+            // `let mut iter`), fall THROUGH to the existing path so the prior
+            // (bin-2 / opaque) classification of that row is preserved UNCHANGED -- this
+            // hook only DRAINS the closed-literal rows, it never reclassifies a runtime
+            // one. (Grounding both sides is verified for the 6 closed targets, so no
+            // mixed grounded/opaque `assert_eq!` atom arises; a runtime row's two
+            // operands BOTH stay on the existing path.)
+            if matches!(call.method.to_string().as_str(), "try_fold" | "try_rfold") {
+                if let Some(grounded) = try_fold_eval::eval_try_fold_operand(expr, scope) {
+                    return translate_term_in_scope(&grounded, scope);
+                }
+            }
             // A closure-bearing iterator/Option adaptor in TERM position (e.g.
             // `assert_eq!(opt.map(|v| ..), x)`) refuses with the collection
             // provenance, not a bare "unsupported term `|v|`" -- so the bin sort is
