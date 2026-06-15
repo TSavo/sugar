@@ -9247,3 +9247,262 @@ fn t() {
     );
     assert_eq!(out.decls.len(), 1, "the two invocations must coalesce");
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLOSED `try_fold` / `try_rfold` VALUE grounding (the 6 coretests rows in
+// `iter/adapters/{map,enumerate,filter_map}.rs`). A `<closed-chain>.try_fold(<lit>,
+// <pure checked closure>)` operand is reduced EXACTLY to a `Some(n)` / `None` literal
+// and lifted through the ordinary ctor path, so `assert_eq!(LHS, RHS)` becomes a
+// GROUNDED `call:eq:Some[call:Some[a], call:Some[b]]`. The teeth: the bad-twin (a side
+// with a genuinely different fold) grounds to `Some(b)` with `b != a`, so
+// `call:Some[a] == call:Some[b]` is z3-UNSAT (a real refutation). 3 tests per case:
+// positive (grounds + equal), discrimination (bad-twin grounds UNEQUAL), structural
+// (the operand is a grounded literal, not the opaque `method:try_fold` ctor).
+
+/// Extract the two inner `call:Some` integer args of a single grounded
+/// `assert_eq!`-over-`Option` decl: the inv is `[call:eq:Some[call:Some[a],
+/// call:Some[b]] == true]`. Panics if the shape is not the grounded ctor-equality
+/// (e.g. if a side stayed an opaque `method:try_fold` -- which is exactly the
+/// fake-discharge the structural tests forbid).
+fn try_fold_some_pair(out: &sugar_lift_rust_tests::AdapterOutput) -> (i128, i128) {
+    assert_eq!(out.lifted, 1, "must discharge; reasons={:?}", out.skip_reasons);
+    assert_eq!(out.decls.len(), 1);
+    let operands = inv_operands(&out.decls[0]);
+    assert_eq!(operands.len(), 1, "one grounded equality atom");
+    let Formula::Atomic { name, args } = operands[0].as_ref() else {
+        panic!("expected equality atom, got {:?}", operands[0]);
+    };
+    assert_eq!(name, "=");
+    // args[0] = call:eq:Some[call:Some[a], call:Some[b]]; args[1] = Bool(true).
+    let Term::Ctor { name: eqname, args: eqargs } = args[0].as_ref() else {
+        panic!("expected operator-dispatch ctor, got {:?}", args[0]);
+    };
+    assert_eq!(eqname, "call:eq:Some", "both sides must be grounded Some(_)");
+    assert_eq!(eqargs.len(), 2);
+    let some_int = |t: &Term| -> i128 {
+        let Term::Ctor { name, args } = t else {
+            panic!("expected call:Some ctor (a GROUNDED literal, NOT an opaque \
+                    method:try_fold), got {t:?}");
+        };
+        assert_eq!(name, "call:Some", "the fold result must be a grounded Some(n)");
+        assert_eq!(args.len(), 1);
+        let Term::Const { value: ConstValue::Int(v), .. } = args[0].as_ref() else {
+            panic!("expected int inside Some, got {:?}", args[0]);
+        };
+        *v
+    };
+    (some_int(&eqargs[0]), some_int(&eqargs[1]))
+}
+
+fn lift_one(src: &str) -> sugar_lift_rust_tests::AdapterOutput {
+    lift_file(&parse(src), "tests/try_fold.rs")
+}
+
+// ── map.rs:6 / map.rs:7 ──────────────────────────────────────────────────────
+
+#[test]
+fn try_fold_map_row_grounds_both_sides_equal() {
+    // map.rs:6  (0..10).map(|x| x+3).try_fold(7, f) == (3..13).try_fold(7, f)
+    let out = lift_one(
+        r#"#[test] fn t() { let f = &|acc, x| i32::checked_add(2 * acc, x);
+        assert_eq!((0..10).map(|x| x + 3).try_fold(7, f), (3..13).try_fold(7, f)); }"#,
+    );
+    let (a, b) = try_fold_some_pair(&out);
+    assert_eq!((a, b), (11250, 11250), "both sides ground to the real Rust value");
+}
+
+#[test]
+fn try_fold_map_row_bad_twin_refutes() {
+    // BAD-TWIN: RHS init 7 -> 8 so the folds genuinely differ. Grounds to
+    // `Some(11250) == Some(12274)` -> a != b -> z3-UNSAT (refutes).
+    let out = lift_one(
+        r#"#[test] fn t() { let f = &|acc, x| i32::checked_add(2 * acc, x);
+        assert_eq!((0..10).map(|x| x + 3).try_fold(7, f), (3..13).try_fold(8, f)); }"#,
+    );
+    let (a, b) = try_fold_some_pair(&out);
+    assert_eq!((a, b), (11250, 12274), "bad-twin grounds to UNEQUAL literals");
+    assert_ne!(a, b, "Some(a) == Some(b) with a != b is z3-UNSAT (refutes)");
+}
+
+#[test]
+fn try_rfold_map_row_grounds_both_sides_equal() {
+    let out = lift_one(
+        r#"#[test] fn t() { let f = &|acc, x| i32::checked_add(2 * acc, x);
+        assert_eq!((0..10).map(|x| x + 3).try_rfold(7, f), (3..13).try_rfold(7, f)); }"#,
+    );
+    assert_eq!(try_fold_some_pair(&out), (18431, 18431));
+}
+
+#[test]
+fn try_rfold_map_row_bad_twin_refutes() {
+    let out = lift_one(
+        r#"#[test] fn t() { let f = &|acc, x| i32::checked_add(2 * acc, x);
+        assert_eq!((0..10).map(|x| x + 3).try_rfold(7, f), (3..13).try_rfold(8, f)); }"#,
+    );
+    let (a, b) = try_fold_some_pair(&out);
+    assert_eq!(a, 18431);
+    assert_ne!(a, b, "bad-twin refutes (z3-UNSAT)");
+}
+
+// ── enumerate.rs:100 / enumerate.rs:101 ──────────────────────────────────────
+
+#[test]
+fn try_fold_enumerate_row_grounds_both_sides_equal() {
+    // enumerate.rs:100
+    let out = lift_one(
+        r#"#[test] fn t() { let f = &|acc, (i, x)| usize::checked_add(2 * acc, x / (i + 1) + i);
+        assert_eq!((9..18).enumerate().try_fold(7, f), (0..9).map(|i| (i, i + 9)).try_fold(7, f)); }"#,
+    );
+    assert_eq!(try_fold_some_pair(&out), (7379, 7379));
+}
+
+#[test]
+fn try_fold_enumerate_row_bad_twin_refutes() {
+    // BAD-TWIN: RHS pairs `(i, i + 9)` -> `(i, i + 8)` so the values differ.
+    let out = lift_one(
+        r#"#[test] fn t() { let f = &|acc, (i, x)| usize::checked_add(2 * acc, x / (i + 1) + i);
+        assert_eq!((9..18).enumerate().try_fold(7, f), (0..9).map(|i| (i, i + 8)).try_fold(7, f)); }"#,
+    );
+    let (a, b) = try_fold_some_pair(&out);
+    assert_eq!(a, 7379);
+    assert_ne!(a, b, "bad-twin refutes (z3-UNSAT)");
+}
+
+#[test]
+fn try_rfold_enumerate_row_grounds_both_sides_equal() {
+    // enumerate.rs:101
+    let out = lift_one(
+        r#"#[test] fn t() { let f = &|acc, (i, x)| usize::checked_add(2 * acc, x / (i + 1) + i);
+        assert_eq!((9..18).enumerate().try_rfold(7, f), (0..9).map(|i| (i, i + 9)).try_rfold(7, f)); }"#,
+    );
+    assert_eq!(try_fold_some_pair(&out), (7961, 7961));
+}
+
+#[test]
+fn try_rfold_enumerate_row_bad_twin_refutes() {
+    let out = lift_one(
+        r#"#[test] fn t() { let f = &|acc, (i, x)| usize::checked_add(2 * acc, x / (i + 1) + i);
+        assert_eq!((9..18).enumerate().try_rfold(7, f), (0..9).map(|i| (i, i + 8)).try_rfold(7, f)); }"#,
+    );
+    let (a, b) = try_fold_some_pair(&out);
+    assert_eq!(a, 7961);
+    assert_ne!(a, b, "bad-twin refutes (z3-UNSAT)");
+}
+
+// ── filter_map.rs:32 / filter_map.rs:33 ──────────────────────────────────────
+
+#[test]
+fn try_fold_filter_map_row_grounds_both_sides_equal() {
+    // filter_map.rs:32
+    let out = lift_one(
+        r#"#[test] fn t() { let mp = &|x| if 0 <= x && x < 10 { Some(x * 2) } else { None };
+        let f = &|acc, x| i32::checked_add(2 * acc, x);
+        assert_eq!((-9..20).filter_map(mp).try_fold(7, f), (0..10).map(|x| 2 * x).try_fold(7, f)); }"#,
+    );
+    assert_eq!(try_fold_some_pair(&out), (9194, 9194));
+}
+
+#[test]
+fn try_fold_filter_map_row_bad_twin_refutes() {
+    // BAD-TWIN: RHS map `2 * x` -> `2 * x + 1` so the kept values differ.
+    let out = lift_one(
+        r#"#[test] fn t() { let mp = &|x| if 0 <= x && x < 10 { Some(x * 2) } else { None };
+        let f = &|acc, x| i32::checked_add(2 * acc, x);
+        assert_eq!((-9..20).filter_map(mp).try_fold(7, f), (0..10).map(|x| 2 * x + 1).try_fold(7, f)); }"#,
+    );
+    let (a, b) = try_fold_some_pair(&out);
+    assert_eq!(a, 9194);
+    assert_ne!(a, b, "bad-twin refutes (z3-UNSAT)");
+}
+
+#[test]
+fn try_rfold_filter_map_row_grounds_both_sides_equal() {
+    // filter_map.rs:33
+    let out = lift_one(
+        r#"#[test] fn t() { let mp = &|x| if 0 <= x && x < 10 { Some(x * 2) } else { None };
+        let f = &|acc, x| i32::checked_add(2 * acc, x);
+        assert_eq!((-9..20).filter_map(mp).try_rfold(7, f), (0..10).map(|x| 2 * x).try_rfold(7, f)); }"#,
+    );
+    assert_eq!(try_fold_some_pair(&out), (23556, 23556));
+}
+
+#[test]
+fn try_rfold_filter_map_row_bad_twin_refutes() {
+    let out = lift_one(
+        r#"#[test] fn t() { let mp = &|x| if 0 <= x && x < 10 { Some(x * 2) } else { None };
+        let f = &|acc, x| i32::checked_add(2 * acc, x);
+        assert_eq!((-9..20).filter_map(mp).try_rfold(7, f), (0..10).map(|x| 2 * x + 1).try_rfold(7, f)); }"#,
+    );
+    let (a, b) = try_fold_some_pair(&out);
+    assert_eq!(a, 23556);
+    assert_ne!(a, b, "bad-twin refutes (z3-UNSAT)");
+}
+
+// ── STRUCTURAL: a RUNTIME (mutable-iterator) try_fold must NOT be grounded ─────
+
+#[test]
+fn runtime_iterator_try_fold_is_not_grounded() {
+    // SOUNDNESS guardrail: `iter.try_fold(0, i8::checked_add)` over a `let mut iter`
+    // is RUNTIME data -- the evaluator MUST bail, so the row keeps its existing
+    // (non-grounded) classification. It must NEVER fabricate a `Some(n)` for an
+    // advanced iterator. Asserting the WHOLE `test_map_try_folds` fn: the 2 closed
+    // rows discharge, the runtime rows do not (they are refused / opaque, never a
+    // fabricated grounded literal).
+    let out = lift_one(
+        r#"#[test]
+fn test_map_try_folds() {
+    let f = &|acc, x| i32::checked_add(2 * acc, x);
+    assert_eq!((0..10).map(|x| x + 3).try_fold(7, f), (3..13).try_fold(7, f));
+    assert_eq!((0..10).map(|x| x + 3).try_rfold(7, f), (3..13).try_rfold(7, f));
+
+    let mut iter = (0..40).map(|x| x + 10);
+    assert_eq!(iter.try_fold(0, i8::checked_add), None);
+    assert_eq!(iter.next(), Some(20));
+    assert_eq!(iter.try_rfold(0, i8::checked_add), None);
+    assert_eq!(iter.next_back(), Some(46));
+}"#,
+    );
+    // The closed rows (6,7) discharge to grounded `Some(_)`; the runtime rows (10,12)
+    // keep their OPAQUE `method:try_fold` term, paired with the REAL asserted `None`
+    // (`call:eq:None[method:try_fold[..], call:None]`) -- never a FABRICATED `Some(n)`.
+    // The fake-discharge we forbid is a single ATOM that pairs an opaque
+    // `method:try_fold` ctor with a grounded `call:Some(<int>)` (then z3 could pick the
+    // opaque term = that Some, a vacuous pass). Walk EACH atom and assert no such
+    // pairing. (Two distinct atoms in the coalesced decl -- one grounded row, one
+    // opaque runtime row -- is FINE; the guardrail is per-atom.)
+    let mut saw_opaque_runtime = false;
+    let mut saw_grounded = false;
+    for d in &out.decls {
+        for op in inv_operands(d) {
+            let Formula::Atomic { args, .. } = op.as_ref() else { continue };
+            // args[0] is the operator-dispatch ctor `call:eq:Some|None[lhs, rhs]`.
+            let Term::Ctor { args: pair, .. } = args[0].as_ref() else { continue };
+            let names: Vec<String> = pair
+                .iter()
+                .map(|t| match t.as_ref() {
+                    Term::Ctor { name, .. } => name.clone(),
+                    _ => String::new(),
+                })
+                .collect();
+            let has_opaque =
+                names.iter().any(|n| n == "method:try_fold" || n == "method:try_rfold");
+            let has_some = names.iter().any(|n| n == "call:Some");
+            assert!(
+                !(has_opaque && has_some),
+                "an opaque runtime try_fold paired with a fabricated grounded Some(_) \
+                 in ONE atom is a vacuous fake-discharge: {names:?}"
+            );
+            if has_opaque {
+                saw_opaque_runtime = true;
+            }
+            if names.iter().filter(|n| *n == "call:Some").count() == 2 {
+                saw_grounded = true;
+            }
+        }
+    }
+    assert!(saw_grounded, "the 2 closed rows must ground to Some(_)==Some(_)");
+    assert!(
+        saw_opaque_runtime,
+        "the runtime rows must STAY opaque method:try_fold (not fabricated)"
+    );
+}
