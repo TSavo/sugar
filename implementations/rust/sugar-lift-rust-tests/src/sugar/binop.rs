@@ -19,11 +19,61 @@
 // report's preamble note). This node composes its two pre-built children and emits the
 // arithmetic ctor over their terms, propagating a child `Hit` verbatim.
 
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use sugar_ir_symbolic::Term;
+use sugar_ir_symbolic::{str_const, Term};
+use syn::Expr;
 
-use crate::{Desugared, Outcome, Sugar, SugarCtx};
+use crate::sugar::compare::CompareSugar;
+use crate::sugar::factory::{build_term, FactoryCtx};
+use crate::sugar::format::{stable_let_bindings, try_resolve_format};
+use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
+use crate::{
+    bool_const, const_eval, relation_from_binop, term_binop_name, token_key, ConstVal, Desugared,
+    Outcome, Sugar, SugarCtx,
+};
+
+/// TERM recognizer for `Expr::Binary`. Mirrors the source-of-truth arm in order: the
+/// FormatSugar string-`+` hook FIRST (only for `Add`; a resolved `str_const`, or a
+/// reasoned-Hit on `Err`), then the comparison branch (const-fold to a Bool, else the
+/// `cmp:*` [`CompareSugar`]), then the arithmetic-op [`BinOpSugar`] (or the
+/// `term_binop_name`-`None` "unsupported term operator" reasoned-Hit).
+pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    let Expr::Binary(binary) = expr else {
+        return None;
+    };
+    let scope = fcx.scope;
+    if matches!(binary.op, syn::BinOp::Add(_)) {
+        let stable = stable_let_bindings(scope);
+        match try_resolve_format(expr, &stable) {
+            Ok(Some(s)) => return Some(resolved_term(str_const(s))),
+            Err(reason) => return Some(reasoned_hit(reason)),
+            Ok(None) => {}
+        }
+    }
+    if let Some(rel) = relation_from_binop(&binary.op) {
+        if let Some(ConstVal::Bool(b)) = const_eval(expr, &BTreeMap::new()) {
+            return Some(resolved_term(bool_const(b)));
+        }
+        return Some(Box::new(CompareSugar {
+            left: build_term(&binary.left, fcx),
+            right: build_term(&binary.right, fcx),
+            rel,
+        }));
+    }
+    let Some(op) = term_binop_name(&binary.op) else {
+        return Some(reasoned_hit(format!(
+            "unsupported term operator `{}`",
+            token_key(expr)
+        )));
+    };
+    Some(Box::new(BinOpSugar {
+        left: build_term(&binary.left, fcx),
+        right: build_term(&binary.right, fcx),
+        op_name: op,
+    }))
+}
 
 /// The constructive arithmetic-term node. `left`/`right` are the pre-built operand
 /// children (the factory desugars each operand expr into a `Sugar`); `op_name` is the

@@ -45,8 +45,37 @@
 use std::rc::Rc;
 
 use sugar_ir_symbolic::Term;
+use syn::Expr;
 
-use crate::{Desugared, Outcome, Sugar, SugarCtx};
+use crate::sugar::factory::{build_term, FactoryCtx};
+use crate::sugar::temporal_read::decompose_temporal_read;
+use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
+use crate::{const_index_term_in_scope, Desugared, Effect, Outcome, Sugar, SugarCtx};
+
+/// TERM recognizer for `Expr::Index`. Mirrors the source-of-truth arm in order: the
+/// const-index preamble FIRST (a digit-index resolved term, or a reasoned-Hit on
+/// `Err`), then the `TemporalRead` refuse-shape, then the general constructive `index`
+/// ctor over `[container, idx]` ([`IndexSugar`]).
+pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    let Expr::Index(index) = expr else {
+        return None;
+    };
+    let scope = fcx.scope;
+    match const_index_term_in_scope(index, scope) {
+        Ok(Some(term)) => return Some(resolved_term(term)),
+        Ok(None) => {}
+        Err(reason) => return Some(reasoned_hit(reason)),
+    }
+    if let Some(node) = decompose_temporal_read(expr, scope) {
+        if let Outcome::Hit(effect @ Effect::TemporalRead { .. }) = node.desugar_ctx_free() {
+            return Some(reasoned_hit(effect.reason()));
+        }
+    }
+    Some(Box::new(IndexSugar::new(
+        build_term(&index.expr, fcx),
+        build_term(&index.index, fcx),
+    )))
+}
 
 /// A general index read `a[i]` in term position, composed as a node whose `desugar`
 /// emits the `index` ctor over its container and index child terms (the constructive

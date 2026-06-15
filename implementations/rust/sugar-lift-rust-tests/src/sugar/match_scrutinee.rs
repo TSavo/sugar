@@ -31,10 +31,24 @@
 
 use syn::Expr;
 
+use crate::sugar::factory::FactoryCtx;
 use crate::{
     expr_is_runtime_call_result, token_key, Effect, Outcome, Sugar, SugarCtx,
     STRUCTURAL_BACKSTOP_REASON,
 };
+
+/// COMPOSITE method-call recognizer for a match-scrutinee method shape
+/// ([`MatchScrutineeSugar`] via [`decompose_match_scrutinee`]): `Some` only for a
+/// recognized shape, else `None`. Mirrors the LAST arm of the old
+/// `build_method_call_composite` chain — AFTER `closure_adaptor`.
+pub(crate) fn recognize_composite(expr: &Expr, _fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    match expr {
+        Expr::MethodCall(_) => {
+            decompose_match_scrutinee(expr).map(|node| Box::new(node) as Box<dyn Sugar>)
+        }
+        _ => None,
+    }
+}
 
 /// The `match <runtime call> { .. }` whose asserted value is the arm taken by a runtime
 /// non-scalar result, composed as a node whose `desugar` makes the runtime-match-scrutinee

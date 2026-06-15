@@ -53,9 +53,28 @@
 // the atomic name-resolution floor that `BoundSugar` composes OVER, never the
 // reverse.
 
-use syn::ExprPath;
+use std::rc::Rc;
 
-use crate::{make_var, Effect, Outcome, Desugared, Sugar, SugarCtx};
+use sugar_ir_symbolic::Term;
+use syn::{Expr, ExprPath};
+
+use crate::sugar::factory::FactoryCtx;
+use crate::sugar::term_leaf::resolved_term;
+use crate::{make_var, Desugared, Effect, Outcome, Sugar, SugarCtx};
+
+/// TERM recognizer for `Expr::Path`. Mirrors the two source-of-truth arms in order:
+/// the `is_ident("None")` unit-ctor guard (a `call:None` ctor) FIRST, then the general
+/// `make_var(scope.path_name(..))` name read ([`PathSugar`]).
+pub(crate) fn recognize(expr: &Expr, _fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    match expr {
+        Expr::Path(path) if path.path.is_ident("None") => Some(resolved_term(Rc::new(Term::Ctor {
+            name: "call:None".to_string(),
+            args: Vec::new(),
+        }))),
+        Expr::Path(path) => Some(Box::new(PathSugar { path: path.clone() })),
+        _ => None,
+    }
+}
 
 /// A path read in TERM position (`x`, `Foo::BAR`). LEAF: produces a `Term::Var`
 /// directly from the held `ExprPath` + `ctx.scope.path_name`, with NO child

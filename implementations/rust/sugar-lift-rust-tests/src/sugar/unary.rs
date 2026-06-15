@@ -78,10 +78,26 @@ use std::rc::Rc;
 use sugar_ir_symbolic::Term;
 use syn::{Expr, UnOp};
 
+use crate::sugar::factory::{build_term, FactoryCtx};
 use crate::{
     const_float, const_int, num, real_const, real_literal_is_zero, token_key, Desugared, Effect,
     Outcome, Sugar, SugarCtx,
 };
+
+/// TERM recognizer for `Expr::Unary`: news a [`UnarySugar`] over the operand child.
+/// Byte-identical to the `Expr::Unary` arm — `UnarySugar` owns the per-`UnOp` arm
+/// selection + the Neg literal fast-paths.
+pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    match expr {
+        Expr::Unary(unary) => Some(Box::new(UnarySugar {
+            op: unary.op,
+            operand: (*unary.expr).clone(),
+            whole: expr.clone(),
+            inner: build_term(&unary.expr, fcx),
+        })),
+        _ => None,
+    }
+}
 
 /// A unary operator in TERM position (`-x` / `!x` / `*p`). Composes ONE child
 /// `Sugar` (the operand) and mirrors the matching `Expr::Unary` arm of

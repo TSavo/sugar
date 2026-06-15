@@ -10,10 +10,24 @@ use std::collections::BTreeMap;
 
 use syn::Expr;
 
+use crate::sugar::factory::FactoryCtx;
 use crate::{
     bounded_domain_from_expr, const_eval, strip_refs_groups, term_as_int, BoundedDomain, ConstVal,
     Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP,
 };
+
+/// COMPOSITE recognizer for `Expr::Array` / `Expr::Range`: the SEQUENCE-floor
+/// [`LiteralSugar`] (a finite literal domain `-> Seq`). Byte-identical to the
+/// `Expr::Array(_) | Expr::Range(_) => Box::new(LiteralSugar { base: expr.clone() })`
+/// arm of the old fat `build_composite`. DISTINCT from the TERM-position `Expr::Array`
+/// (`literal_aggregate_term` ctor) — the two roles genuinely differ (a `Seq` domain vs
+/// a term aggregate).
+pub(crate) fn recognize_composite(expr: &Expr, _fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    match expr {
+        Expr::Array(_) | Expr::Range(_) => Some(Box::new(LiteralSugar { base: expr.clone() })),
+        _ => None,
+    }
+}
 
 /// BASE CASE: a finite literal domain (a literal array `[e0, e1, ...]` or a closed
 /// integer range `a..b` / `a..=b`). `desugar` materializes the element sequence in

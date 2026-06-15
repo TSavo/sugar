@@ -43,7 +43,25 @@ use std::rc::Rc;
 use sugar_ir_symbolic::Term;
 use syn::Expr;
 
-use crate::{expr_head_key, Desugared, Outcome, Sugar, SugarCtx};
+use crate::sugar::factory::{build_term, FactoryCtx};
+use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
+use crate::{expr_head_key, type_id_of_call_term, Desugared, Outcome, Sugar, SugarCtx};
+
+/// TERM recognizer for `Expr::Call`. Mirrors the source-of-truth arm in order: the
+/// `TypeId::of` const-fold preamble FIRST (a resolved term, or a reasoned-Hit on
+/// `Err`), then the constructive `call:<head>` ctor over the arg children ([`CallSugar`]).
+pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    match type_id_of_call_term(&call.func, call.args.len()) {
+        Ok(Some(term)) => return Some(resolved_term(term)),
+        Ok(None) => {}
+        Err(reason) => return Some(reasoned_hit(reason)),
+    }
+    let args = call.args.iter().map(|arg| build_term(arg, fcx)).collect();
+    Some(Box::new(CallSugar::from_func(&call.func, args)))
+}
 
 /// A free-function call `f(a, b, ...)` in term position, composed as a node whose
 /// `desugar` emits the `call:<head>` ctor over its argument child terms (the

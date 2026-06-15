@@ -31,7 +31,41 @@
 
 use syn::Expr;
 
+use crate::sugar::factory::{boxed, FactoryCtx};
+use crate::sugar::term_leaf::reasoned_hit;
 use crate::{token_key, Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON};
+
+/// TERM recognizer for effectful control-flow (`Expr::TryBlock`/`Async`/`Try`): the
+/// `ControlFlowTermSugar` refuse-shape, surfaced as a reasoned-Hit carrying the
+/// `Effect::ControlFlow` reason (or the term catch-all on a non-`ControlFlow` verdict).
+/// Byte-identical to the `Expr::TryBlock | Expr::Async | Expr::Try` TERM arm of the old
+/// fat factory. DISTINCT from the COMPOSITE recognizer, which boxes the node directly.
+pub(crate) fn recognize_term(expr: &Expr, _fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    match expr {
+        Expr::TryBlock(_) | Expr::Async(_) | Expr::Try(_) => Some(match decompose_control_flow_term(expr) {
+            Some(node) => match node.desugar_ctx_free() {
+                Outcome::Hit(effect @ Effect::ControlFlow { .. }) => reasoned_hit(effect.reason()),
+                _ => reasoned_hit(format!("unsupported term `{}`", token_key(expr))),
+            },
+            None => reasoned_hit(format!("unsupported term `{}`", token_key(expr))),
+        }),
+        _ => None,
+    }
+}
+
+/// COMPOSITE recognizer for effectful control-flow (`Expr::TryBlock`/`Async`/`Try`):
+/// boxes the `ControlFlowTermSugar` refuse-shape directly (the collector's `.dug()`
+/// site reads its `Effect::ControlFlow` Hit). Byte-identical to the
+/// `Expr::TryBlock | Expr::Async | Expr::Try => boxed(decompose_control_flow_term(expr))`
+/// COMPOSITE arm of the old fat factory.
+pub(crate) fn recognize_composite(expr: &Expr, _fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    match expr {
+        Expr::TryBlock(_) | Expr::Async(_) | Expr::Try(_) => {
+            Some(boxed(decompose_control_flow_term(expr)))
+        }
+        _ => None,
+    }
+}
 
 /// The effectful control-flow construct in term position (`try`/`async`/`?`), composed as a
 /// node whose `desugar` makes the control-flow verdict at its single LEAF. See the module header.

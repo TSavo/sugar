@@ -26,7 +26,20 @@
 
 use syn::Expr;
 
+use crate::sugar::factory::{boxed, FactoryCtx};
 use crate::{repeat_count_literal, token_key, Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON};
+
+/// COMPOSITE recognizer for `Expr::Repeat`: the `ArrayRepeatSugar` refuse-shape (via
+/// [`decompose_array_repeat`]). Byte-identical to the
+/// `Expr::Repeat(_) => boxed(decompose_array_repeat(expr))` arm of the old fat
+/// `build_composite`. DISTINCT from the TERM-position `Expr::Repeat` (which expands a
+/// literal-count aggregate); the two roles genuinely differ.
+pub(crate) fn recognize_composite(expr: &Expr, _fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    match expr {
+        Expr::Repeat(_) => Some(boxed(decompose_array_repeat(expr))),
+        _ => None,
+    }
+}
 
 /// The non-literal-length `[elem; N]` array-repeat, composed as a node whose `desugar` makes
 /// the array-repeat verdict at its single LEAF (the length). See the module header.

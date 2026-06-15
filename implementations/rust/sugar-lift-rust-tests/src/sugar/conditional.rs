@@ -12,11 +12,22 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{and_, eq, implies, not_, Formula};
 use syn::{Expr, Stmt};
 
+use crate::sugar::factory::{boxed, FactoryCtx};
 use crate::{
     bool_const, closure_body_is_side_effecting, collect_assertion_entries, const_fold_bool_guard,
     count_asserts_in_stmts, loop_body_mutates, lower_assert_condition, Desugared, Outcome, Sugar,
     SugarCtx, Warrant,
 };
+
+/// COMPOSITE recognizer for `Expr::If`: the implication composite ([`ConditionalSugar`]
+/// via [`decompose_if`]). Byte-identical to the `Expr::If(i) => boxed(decompose_if(i))`
+/// arm of the old fat `build_composite`.
+pub(crate) fn recognize_composite(expr: &Expr, _fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    match expr {
+        Expr::If(i) => Some(boxed(decompose_if(i))),
+        _ => None,
+    }
+}
 
 /// EXACT-OR-BAIL: the guard must translate to a Formula via the SAME path an
 /// `assert!(guard)` would take (`translate_bool_assertion`); the then/else asserts

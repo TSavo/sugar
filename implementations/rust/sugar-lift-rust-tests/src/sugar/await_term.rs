@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// TERM recognizer for `Expr::Await` (`base.await`): the `await` ctor over the base
+// child. Byte-identical to the `Expr::Await` arm of the old fat factory.
+
+use crate::sugar::ctor_term::CtorSugar;
+use crate::sugar::factory::{build_term, FactoryCtx};
+use crate::Sugar;
+use syn::Expr;
+
+/// TERM recognizer for `Expr::Await`.
+pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    match expr {
+        Expr::Await(await_expr) => Some(Box::new(CtorSugar::new(
+            "await",
+            vec![build_term(&await_expr.base, fcx)],
+        ))),
+        _ => None,
+    }
+}

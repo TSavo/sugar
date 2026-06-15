@@ -14,12 +14,24 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{and_, eq, implies, not_, or_, str_const, Formula, Term};
 use syn::{Arm, Expr, Lit, Pat, Path, Stmt};
 
+use crate::sugar::factory::{boxed, FactoryCtx};
 use crate::{
     bool_const, cfg_eval_for_attrs, closure_body_is_side_effecting, collect_assertion_entries,
     count_asserts_in_stmts, loop_body_mutates, path_to_variant_string, strict_variant_path,
     translate_lit, translate_term_in_scope, wrapped_variant, CfgEval, Desugared, LiftOptions,
     Outcome, Sugar, SugarCtx, TemporalScope, Warrant,
 };
+
+/// COMPOSITE recognizer for `Expr::Match`: the conjunction composite ([`MatchSugar`]
+/// via [`decompose_match`]). Byte-identical to the
+/// `Expr::Match(m) => boxed(decompose_match(m, fcx.scope, fcx.options))` arm of the old
+/// fat `build_composite`.
+pub(crate) fn recognize_composite(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    match expr {
+        Expr::Match(m) => Some(boxed(decompose_match(m, fcx.scope, fcx.options))),
+        _ => None,
+    }
+}
 
 /// A match arm reduced to its discriminant guard + body statements. The guard is
 /// the FOL predicate the arm's pattern states over the scrutinee (a literal `1 =>`
