@@ -29,6 +29,7 @@ mod try_fold_eval;
 // then that adaptor's exact transform.
 pub mod sugar {
     pub mod array_repeat;
+    pub mod bound;
     pub mod callsite;
     pub mod closure_adaptor;
     pub mod conditional;
