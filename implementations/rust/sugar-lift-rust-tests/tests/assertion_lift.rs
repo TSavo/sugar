@@ -4522,15 +4522,18 @@ fn t() {
 //     let (a, b) = ($a, $b);
 //     if a != b { assert!((a-b).abs() < Duration::from_micros(200)); }
 //   }}
-// Decision: HONEST NAMED REFUSAL -- tolerance comparison, not exact equality.
+// Doctrine (post-ConditionalSugar): a guarded assert is the implication it
+// literally states. The expander walks into the real definition, finds the
+// assert under an `if a != b { .. }` guard, and lifts it as
+// `(a != b) => (a - b < 200)` -- a FAITHFUL EUF implication over the
+// opaque-but-pure runtime terms (`a` = elapsed_ns()). It is NEVER asserted bare
+// (that would be a fake-discharge), the runtime values stay uninterpreted, and
+// the solver decides. A sound (if weak) DIG -- lift the conditional, emit the
+// implication, get out of the way.
+// (Mirror: conditional_opaque_pure_guard_lifts_faithfully_under_euf.)
 
 #[test]
-fn assert_almost_eq_is_honest_named_refusal() {
-    // Source-based: with the real tolerance definition in scope, the expander
-    // walks into it and finds the assert lives under an `if a != b { .. }`
-    // guard -- a conditional, not a point-wise equality. It is refused (not
-    // lifted as a == b, which would be a false-pass). The reason is derived
-    // from the real body, not a hardcoded string.
+fn assert_almost_eq_lifts_as_guarded_euf_implication() {
     let src = r#"
 macro_rules! assert_almost_eq {
     ($a:expr, $b:expr) => {
@@ -4550,20 +4553,25 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/almost_eq.rs");
     assert_eq!(
-        out.lifted, 0,
-        "assert_almost_eq! must NOT lift (tolerance comparison under a guard)"
+        out.lifted, 1,
+        "assert_almost_eq! lifts as a guarded EUF implication (guard => claim), \
+         never bare: warnings {:?}",
+        out.warnings
     );
+    // GUARDED, never bare: the tolerance claim is the consequent of `a != b`.
+    let dump = format!("{:?}", out.decls);
     assert!(
-        !out.skip_reasons.is_empty(),
-        "assert_almost_eq! must be a named refusal, not silent: {:?}",
-        out.skip_reasons
+        dump.contains("Implies") || dump.contains("implies") || dump.contains("=>"),
+        "the tolerance claim must stay guarded by `a != b` (an implication), \
+         never asserted unconditionally: {dump}"
     );
 }
 
 #[test]
 fn assert_almost_eq_discrimination_does_not_affect_assert_eq() {
-    // assert_eq! in the same source must still lift normally; the almost_eq
-    // refusal arm must not bleed into neighbouring macros.
+    // assert_eq! in the same source must still lift as a plain point-wise
+    // equality; the almost_eq guarded-implication arm must not bleed into
+    // neighbouring macros.
     let src = r#"
 fn get_val() -> i32 { 5 }
 
@@ -4659,9 +4667,12 @@ fn loop_test() {
 }
 
 #[test]
-fn assert_in_if_branch_is_refused_not_lifted() {
-    // Soundness: a conditional assert only holds under the guard; lifting it
-    // unconditionally would be a false-pass. It must be refused.
+fn assert_in_if_branch_lifts_as_guarded_implication() {
+    // Doctrine (ConditionalSugar): a conditional assert is the implication it
+    // literally states -- `if c { assert_eq!(1, 2) }` lifts as `c => (1 == 2)`,
+    // the claim GUARDED by `c`, never bare. We do not refuse on if-context; we
+    // lift the conditional and let the solver decide (under the guard it refutes
+    // `1 == 2`). Emitting bare `1 == 2` would be a fake-discharge.
     let src = r#"
 #[test]
 fn cond_test() {
@@ -4672,17 +4683,19 @@ fn cond_test() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/cond.rs");
-    assert_eq!(out.assertions_lifted, 0, "conditional assert must not lift");
-    assert!(
-        out.decls.is_empty(),
-        "no discharged row for a conditional assert"
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "conditional assert lifts as a guarded implication: {:?}",
+        refusal_reasons(&out)
     );
     assert!(
-        refusal_reasons(&out)
-            .iter()
-            .any(|r| r.contains("if context")),
-        "if-branch assert must be a named refusal: {:?}",
-        refusal_reasons(&out)
+        !out.decls.is_empty(),
+        "a guarded implication is a discharged row"
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Implies") || dump.contains("implies") || dump.contains("=>"),
+        "the conditional must emit `c => (1 == 2)` (an implication), never bare: {dump}"
     );
 }
 
@@ -4998,23 +5011,27 @@ fn t() {
 
 #[test]
 fn deeply_nested_assert_is_accounted_by_safety_net() {
-    // An assert in an AST position no specific arm enumerates (here, inside a
-    // method-call closure argument as a statement) must still be accounted via
-    // the exhaustive counter + totality safety net, never silent.
+    // An assert in an AST position no specific Sugar arm enumerates (here, inside
+    // a closure passed to a NON-iterator function) must still be accounted via the
+    // exhaustive syn-visit counter + per-fn totality safety net -- refused, never
+    // silent. (A closure over a LITERAL iterator domain, e.g. `(0..3).for_each(..)`,
+    // is instead enumerated by the defolder and lifts as a finite conjunction; this
+    // fixture deliberately uses an un-enumerable position to exercise the net.)
     let src = r#"
 #[test]
 fn nested() {
-    (0..3).for_each(|i| { assert_eq!(i, i); });
+    invoke(|i: i64| { assert_eq!(i, i); });
 }
 "#;
     let out = lift_file(&parse(src), "tests/iter.rs");
     assert_eq!(
         out.assertions_lifted, 0,
-        "nested closure assert must not lift"
+        "an un-enumerated closure-arg assert must not lift: {:?}",
+        out.skip_reasons
     );
     assert!(
         !out.skip_reasons.is_empty(),
-        "nested closure assert must be accounted (refused), not silent: {:?}",
+        "un-enumerated closure assert must be accounted (refused), not silent: {:?}",
         out.skip_reasons
     );
 }
