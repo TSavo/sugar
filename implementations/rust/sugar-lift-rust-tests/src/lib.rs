@@ -31,6 +31,7 @@ pub mod sugar {
     pub mod array_repeat;
     pub mod callsite;
     pub mod closure_adaptor;
+    pub mod control_flow_term;
     pub mod enumerate;
     pub mod filter;
     pub mod identity;
@@ -12565,10 +12566,19 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
         // `assert!(Option::is_none(&try { join!(maybe_fut?, async { unreachable!() }) }))`
         // row unclassified -> refused (a named refuse, never a silent shrug).
         Expr::TryBlock(_) | Expr::Async(_) | Expr::Try(_) => {
-            let effect = Effect::ControlFlow {
-                boundary: token_key(expr),
-            };
-            Err(effect.reason())
+            // THIN NODE-ROUTER: the term-position control-flow verdict is owned by the
+            // `ControlFlowTermSugar` node, which `Hit`s `Effect::ControlFlow` in its own
+            // `desugar`; this arm renders `effect.reason()` to the `Err` exactly as before
+            // (byte-identical). `decompose_control_flow_term` recognizes ONLY this refuse-shape
+            // (a `try`/`async`/`?` construct); any other expr returns `None` and never reaches
+            // here (this arm matches only those three).
+            match sugar::control_flow_term::decompose_control_flow_term(expr) {
+                Some(node) => match node.desugar_ctx_free() {
+                    Outcome::Hit(effect @ Effect::ControlFlow { .. }) => Err(effect.reason()),
+                    _ => Err(format!("unsupported term `{}`", token_key(expr))),
+                },
+                None => Err(format!("unsupported term `{}`", token_key(expr))),
+            }
         }
         other => Err(format!("unsupported term `{}`", token_key(other))),
     }
