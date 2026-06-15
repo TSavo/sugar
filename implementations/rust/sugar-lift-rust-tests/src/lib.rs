@@ -17,6 +17,36 @@ mod macro_expand;
 pub mod flt2dec_eval;
 pub mod closed_eval;
 
+// ── The Sugar / SideEffect class catalog, one file per class (file-split
+// refactor). Each module holds one construct's struct + impl + decompose
+// helper; lib.rs keeps the traits + shared spine + dispatch + the black-box
+// `lifter_key_tests` integration suite (which exercises the public `lift_file`
+// API, not individual classes, so it stays with the spine). ──
+mod effects;
+mod sugar;
+// Re-export the moved class types/helpers the dispatch spine in this file names
+// directly. Symbols used only WITHIN a submodule (e.g. `LiteralSugar`,
+// `AdaptorSugar`, the `Adaptor` arms, `SUGAR_SEQ_CAP`, `FoldItemBinder`) are not
+// re-exported here -- they resolve inside their own module tree.
+// `IoEffect` is constructed at exactly one site that the dead-code pass treats
+// as unreachable (the same reason the trunk reports `IoEffect is never
+// constructed`), so the re-export reads as unused even though removing it would
+// break that site's compile. Suppress the false-flag; the import is load-bearing.
+#[allow(unused_imports)]
+pub(crate) use effects::io::IoEffect;
+pub(crate) use effects::iter_advance::IterAdvanceEffect;
+pub(crate) use effects::mutation::MutationEffect;
+pub(crate) use effects::opaque_runtime::OpaqueRuntimeEffect;
+pub(crate) use effects::temporal_read::TemporalReadEffect;
+pub(crate) use effects::tls::TlsEffect;
+pub(crate) use effects::SideEffect;
+pub(crate) use sugar::adaptor::peel_fold_adaptors;
+pub(crate) use sugar::conditional::decompose_if;
+pub(crate) use sugar::fold::decompose_fold;
+pub(crate) use sugar::foreach::decompose_for_each;
+pub(crate) use sugar::forall::decompose_for_loop;
+
+
 use quote::ToTokens;
 use sugar_ir_symbolic::{
     and_, atomic_, eq, forall, gt, gte, implies, lt, lte, make_var, ne, not_, num, or_, real_const,
@@ -1248,12 +1278,12 @@ fn scoped_test_name(source_path: &str, modules: &[String], fn_name: &str) -> Str
     }
 }
 
-struct AssertionEntry {
-    name: Option<String>,
-    atom: Rc<Formula>,
+pub(crate) struct AssertionEntry {
+    pub(crate) name: Option<String>,
+    pub(crate) atom: Rc<Formula>,
 }
 
-struct ReductionCtx<'a> {
+pub(crate) struct ReductionCtx<'a> {
     functions: BTreeMap<String, &'a syn::ItemFn>,
     ambiguous_functions: BTreeSet<String>,
     /// In-source `macro_rules!` definitions, by name, parsed into rules. These
@@ -1548,7 +1578,7 @@ fn try_macro_expansion_entries(
 type ExprBindings = BTreeMap<String, Expr>;
 
 #[derive(Debug, Clone, Default)]
-struct TemporalPlan {
+pub(crate) struct TemporalPlan {
     versioned: BTreeSet<String>,
     /// Locals bound with `let mut` anywhere in the scope. Rust's `mut` keyword
     /// is the mutability oracle: a non-mut local cannot be reassigned,
@@ -1567,7 +1597,7 @@ struct TemporalPlan {
     /// each read observes a distinct `t`; the reads then do not coalesce and each
     /// pin discharges on its own. A value bound once (`let v = c.get()`) is a bare
     /// var, so a double-pin on it is still caught.
-    interior_mut: BTreeSet<String>,
+    pub(crate) interior_mut: BTreeSet<String>,
     /// Locals bound to an ITERATOR (a range, `.iter()`/`.into_iter()` family, or an
     /// adapter chain). Unlike an interior-mutable cell, an iterator only changes when
     /// it is CONSUMED (`next`/`nth`/...). A NON-consuming read (`len`/`contains`/
@@ -1583,9 +1613,9 @@ struct TemporalPlan {
 }
 
 #[derive(Debug, Clone)]
-struct TemporalScope {
+pub(crate) struct TemporalScope {
     local_scope: String,
-    plan: TemporalPlan,
+    pub(crate) plan: TemporalPlan,
     versions: BTreeMap<String, usize>,
     ambiguous: BTreeSet<String>,
     /// Per-statement count of CONSUMING reads (`next`/`nth`/...) seen so far for
@@ -1621,13 +1651,13 @@ impl TemporalScope {
         prior
     }
 
-    fn local_scope(&self) -> &str {
+    pub(crate) fn local_scope(&self) -> &str {
         &self.local_scope
     }
 
     /// Whether `name` is a `let mut` local in this scope (conservatively
     /// unstable). A non-mut local is provably immutable and stable.
-    fn is_mut_local(&self, name: &str) -> bool {
+    pub(crate) fn is_mut_local(&self, name: &str) -> bool {
         self.plan.mut_locals.contains(name)
     }
 
@@ -1708,7 +1738,7 @@ impl<'ast> syn::visit::Visit<'ast> for NestedAssertCounter {
     }
 }
 
-fn count_asserts_in_stmts(stmts: &[Stmt]) -> usize {
+pub(crate) fn count_asserts_in_stmts(stmts: &[Stmt]) -> usize {
     let mut counter = NestedAssertCounter::default();
     for stmt in stmts {
         syn::visit::Visit::visit_stmt(&mut counter, stmt);
@@ -1822,7 +1852,7 @@ fn const_eval_select_runtime_targets(stmts: &[Stmt]) -> BTreeSet<String> {
 /// True if a block of statements mutates anything: an assignment / compound
 /// assignment, a `let mut` binding, or a `&mut` borrow. A loop whose body
 /// mutates is not a clean universal over the loop variable, so it is gutter.
-fn loop_body_mutates(stmts: &[Stmt]) -> bool {
+pub(crate) fn loop_body_mutates(stmts: &[Stmt]) -> bool {
     #[derive(Default)]
     struct MutScan {
         mutates: bool,
@@ -1887,7 +1917,7 @@ fn subst_var_in_term(term: &Rc<Term>, name: &str, repl: &Rc<Term>) -> Rc<Term> {
 
 /// Substitute `name` with `repl` throughout a formula (respecting quantifier
 /// shadowing: a nested quantifier binding the same name is left untouched).
-fn subst_var_in_formula(formula: &Rc<Formula>, name: &str, repl: &Rc<Term>) -> Rc<Formula> {
+pub(crate) fn subst_var_in_formula(formula: &Rc<Formula>, name: &str, repl: &Rc<Term>) -> Rc<Formula> {
     match formula.as_ref() {
         Formula::Atomic { name: rel, args } => Rc::new(Formula::Atomic {
             name: rel.clone(),
@@ -1937,7 +1967,7 @@ fn subst_var_in_formula(formula: &Rc<Formula>, name: &str, repl: &Rc<Term>) -> R
 /// `[e0, e1, ...]` (unrolled over its constructed element terms). A runtime
 /// collection is NOT constructed from source literals and is NOT a `BoundedDomain`.
 #[derive(Clone)]
-enum BoundedDomain {
+pub(crate) enum BoundedDomain {
     Range {
         start: Rc<Term>,
         end: Rc<Term>,
@@ -1952,7 +1982,7 @@ enum BoundedDomain {
 /// `.for_each(|x| ..)` adaptor: both iterate exactly the same constructed domains,
 /// so both discriminate it identically here. An empty array is None (the loop
 /// never runs -> vacuous; leave to the refusal path, never emit a vacuous `true`).
-fn bounded_domain_from_expr(expr: &Expr, scope: &TemporalScope) -> Option<BoundedDomain> {
+pub(crate) fn bounded_domain_from_expr(expr: &Expr, scope: &TemporalScope) -> Option<BoundedDomain> {
     match expr {
         Expr::Range(range) => {
             let (Some(start_expr), Some(end_expr)) = (&range.start, &range.end) else {
@@ -1990,7 +2020,7 @@ fn bounded_domain_from_expr(expr: &Expr, scope: &TemporalScope) -> Option<Bounde
 /// formula and the number of body assert macros it accounts for, or None to
 /// refuse (mutation, body not point-wise, or count mismatch).
 #[allow(clippy::too_many_arguments)]
-fn lift_bounded_forall(
+pub(crate) fn lift_bounded_forall(
     var: &str,
     domain: BoundedDomain,
     body_stmts: &[Stmt],
@@ -2073,101 +2103,6 @@ fn lift_bounded_forall(
     Some((quantified, n_body))
 }
 
-/// One iterator adaptor in a `.fold`/`.rfold` receiver chain. STDLIB sugar over the
-/// element sequence: the transforming kinds carry the closure we const-evaluate over each
-/// concrete element. Only EXACT-replicable adaptors are represented; an unrepresentable
-/// adaptor (filter_map / flat_map / flatten / a windowing/stateful one) makes the peel
-/// return None -> bail (honest, never a fake-dig).
-enum Adaptor {
-    Identity,                    // iter / into_iter / cloned / copied / fuse
-    Rev,                         // reverse the sequence
-    Enumerate,                   // pair each element with its position (i, e)
-    Filter(syn::ExprClosure),    // keep where the closure const-evaluates true
-    Map(syn::ExprClosure),       // replace each element with the closure's const value
-    Skip(usize),                 // drop the first n
-    Take(usize),                 // keep the first n
-    SkipWhile(syn::ExprClosure), // drop the leading run where the closure is true
-    TakeWhile(syn::ExprClosure), // keep the leading run where the closure is true
-}
-
-/// Peel iterator adaptors off a `.fold`/`.rfold` receiver and RESOLVE `let`-bound
-/// receivers through `let_inits`, reaching the base literal-domain expression PLUS the
-/// ordered adaptor chain (in APPLICATION order: base -> ... -> fold). Returns
-/// (base, adaptors) or None on an unrepresentable adaptor / unresolvable binding /
-/// non-literal `n` for skip/take (-> bail). Stdlib sugar over written literals -> dig;
-/// monkey business -> the const-evaluator that runs the closures will itself bail.
-fn peel_fold_adaptors<'a>(
-    expr: &'a Expr,
-    let_inits: &BTreeMap<String, &'a Expr>,
-    depth: usize,
-) -> Option<(&'a Expr, Vec<Adaptor>)> {
-    const MAX_DEPTH: usize = 8;
-    if depth > MAX_DEPTH {
-        return None;
-    }
-    let mut cur = expr;
-    // Collected OUTERMOST-first (we walk from the fold receiver inward); reverse at the
-    // end to get APPLICATION order (base-first).
-    let mut adaptors_rev: Vec<Adaptor> = Vec::new();
-    loop {
-        match cur {
-            Expr::MethodCall(m) => {
-                let name = m.method.to_string();
-                let ad = match (name.as_str(), m.args.len()) {
-                    ("iter" | "into_iter" | "cloned" | "copied" | "fuse", 0) => Adaptor::Identity,
-                    ("rev", 0) => Adaptor::Rev,
-                    ("enumerate", 0) => Adaptor::Enumerate,
-                    ("filter", 1) => match &m.args[0] {
-                        Expr::Closure(c) => Adaptor::Filter(c.clone()),
-                        _ => return None,
-                    },
-                    ("map", 1) => match &m.args[0] {
-                        Expr::Closure(c) => Adaptor::Map(c.clone()),
-                        _ => return None,
-                    },
-                    ("skip_while", 1) => match &m.args[0] {
-                        Expr::Closure(c) => Adaptor::SkipWhile(c.clone()),
-                        _ => return None,
-                    },
-                    ("take_while", 1) => match &m.args[0] {
-                        Expr::Closure(c) => Adaptor::TakeWhile(c.clone()),
-                        _ => return None,
-                    },
-                    ("skip", 1) => Adaptor::Skip(const_int(&m.args[0])?.try_into().ok()?),
-                    ("take", 1) => Adaptor::Take(const_int(&m.args[0])?.try_into().ok()?),
-                    // filter_map / flat_map / flatten (Option / sub-sequence const-eval),
-                    // and every other adaptor: not yet provably exact -> bail.
-                    _ => return None,
-                };
-                adaptors_rev.push(ad);
-                cur = &m.receiver;
-            }
-            Expr::Paren(p) => cur = &p.expr,
-            Expr::Group(g) => cur = &g.expr,
-            Expr::Reference(r) => cur = &r.expr,
-            // A bare ident bound in this block: resolve to its initializer and re-peel,
-            // PREPENDING the inner chain (it applies first, nearer the base).
-            Expr::Path(p) => {
-                if let Some(id) = p.path.get_ident() {
-                    if let Some(init) = let_inits.get(&id.to_string()) {
-                        let (inner_base, mut inner_adaptors) =
-                            peel_fold_adaptors(init, let_inits, depth + 1)?;
-                        // inner_adaptors are already base-first; our outer adaptors_rev are
-                        // outermost-first, so reversed they are application-order and come
-                        // AFTER the inner chain.
-                        adaptors_rev.reverse();
-                        inner_adaptors.extend(adaptors_rev);
-                        return Some((inner_base, inner_adaptors));
-                    }
-                }
-                break;
-            }
-            _ => break,
-        }
-    }
-    adaptors_rev.reverse();
-    Some((cur, adaptors_rev))
-}
 
 /// An EXACT const value the defolder is willing to compute for a transforming-adaptor
 /// closure (`.filter`/`.map`/`.skip_while`/...). DELIBERATELY NARROW: only the value
@@ -2177,7 +2112,7 @@ fn peel_fold_adaptors<'a>(
 /// evaluator is exact-or-None everywhere: the instant an expression is outside this
 /// closed set, `const_eval` returns None and the whole defold bails.
 #[derive(Clone, Debug, PartialEq)]
-enum ConstVal {
+pub(crate) enum ConstVal {
     Int(i64),
     Bool(bool),
     Char(char),
@@ -2187,7 +2122,7 @@ enum ConstVal {
 impl ConstVal {
     /// Reconstruct a Rust literal EXPR for this value, so a `.map`-produced element can be
     /// fed back through the normal term translator. Exact round-trip for the closed set.
-    fn to_expr(&self) -> Option<Expr> {
+    pub(crate) fn to_expr(&self) -> Option<Expr> {
         let s = match self {
             ConstVal::Int(n) => n.to_string(),
             ConstVal::Bool(b) => b.to_string(),
@@ -2199,13 +2134,13 @@ impl ConstVal {
         };
         syn::parse_str::<Expr>(&s).ok()
     }
-    fn as_int(&self) -> Option<i64> {
+    pub(crate) fn as_int(&self) -> Option<i64> {
         match self {
             ConstVal::Int(n) => Some(*n),
             _ => None,
         }
     }
-    fn as_bool(&self) -> Option<bool> {
+    pub(crate) fn as_bool(&self) -> Option<bool> {
         match self {
             ConstVal::Bool(b) => Some(*b),
             _ => None,
@@ -2219,7 +2154,7 @@ impl ConstVal {
 /// a non-literal leaf, a float, a string, a method/fn call, an index into a runtime value,
 /// an unbound ident, an integer overflow, a division by zero. UNDER-evaluating is a safe
 /// under-claim; a wrong evaluation would be a fake-discharge, so we never guess.
-fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal> {
+pub(crate) fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal> {
     match expr {
         Expr::Lit(ExprLit { lit, .. }) => match lit {
             Lit::Int(i) => parse_int_lit(i).ok().map(ConstVal::Int),
@@ -2330,7 +2265,7 @@ fn const_cmp(l: &ConstVal, r: &ConstVal) -> Option<std::cmp::Ordering> {
 /// The body may be a bare expr or a block whose final expr is the value (no statements
 /// with side effects -- a `let` in the body is not modeled, so bail). Returns the
 /// resulting `ConstVal` or None (bail). Used to apply a transforming adaptor's closure.
-fn const_eval_unary_closure(closure: &syn::ExprClosure, arg: &ConstVal) -> Option<ConstVal> {
+pub(crate) fn const_eval_unary_closure(closure: &syn::ExprClosure, arg: &ConstVal) -> Option<ConstVal> {
     if closure.inputs.len() != 1 {
         return None;
     }
@@ -2349,7 +2284,7 @@ fn const_eval_unary_closure(closure: &syn::ExprClosure, arg: &ConstVal) -> Optio
 
 /// The single bound ident of a closure parameter pattern (`x`, `&x`), or None for any
 /// other pattern (tuple / wildcard / typed-with-subpattern) -> bail.
-fn closure_single_param_ident(pat: &Pat) -> Option<String> {
+pub(crate) fn closure_single_param_ident(pat: &Pat) -> Option<String> {
     match pat {
         Pat::Ident(p) if p.subpat.is_none() => Some(p.ident.to_string()),
         Pat::Reference(r) => closure_single_param_ident(&r.pat),
@@ -2364,38 +2299,12 @@ fn closure_single_param_ident(pat: &Pat) -> Option<String> {
 /// `i64` (the accumulator regime). Any shape / unbound ident / non-int value -> None
 /// (bail the defold -- a non-const-foldable accumulator is honest unclassified, never a
 /// fake-dig).
-fn const_fold_acc_update(tail: &Expr, env: &BTreeMap<String, i64>) -> Option<i64> {
+pub(crate) fn const_fold_acc_update(tail: &Expr, env: &BTreeMap<String, i64>) -> Option<i64> {
     let cv_env: BTreeMap<String, ConstVal> =
         env.iter().map(|(k, v)| (k.clone(), ConstVal::Int(*v))).collect();
     const_eval(tail, &cv_env)?.as_int()
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The `Sugar` hierarchy (T 2026-06-14). The doctrine reified as types.
-//
-// stdlib IS sugar; a method-call chain / for-loop is a COMPOSITE TREE of `Sugar`
-// nodes, each owning its own `.desugar()` (Interpreter pattern; the chain of
-// responsibility falls out of the composition). `decompose` builds the tree by
-// recursively decomposing a node's children into inner Sugars; `.desugar()` walks
-// inward until `LiteralSugar` bottoms out OR some node returns `None` (BAIL). The
-// structure ENFORCES the one predicate: the only way to produce a `Desugared` is
-// to reach literals through every layer (no fake-discharge); any layer's `None`
-// is the happy refuse.
-//
-// `Desugared` is a (value, warrant) pair. There are two value flavors, glued to
-// the SAME warrant rope:
-//   * `Seq` -- a finite element sequence (the literal floor, possibly synthetic:
-//     a filter/map output the vendor never typed, warranted by the composed
-//     sugar that minted it). Each element keeps BOTH its source `Expr` (for EUF
-//     term translation / faithful substitution) AND its `ConstVal` when exactly
-//     evaluable; a transforming adaptor REQUIRES the `ConstVal` or it bails.
-//   * `Constraints` -- the emitted finite conjunction (a fold/for_each/for-loop
-//     terminal), the assert-macro count it accounts, and its warrant (the memento
-//     name). This is the lift; the warrant ties it back to the sugar.
-//
-// EXACT-OR-BAIL is structural: `ConstVal` has no Float/Str variant, so a
-// non-const element bails; `Option<Desugared>` IS the bail. A wrong BAIL is a
-// safe under-claim; a wrong DIG would be a fake-discharge, so we never guess.
 
 /// One element of a desugared finite sequence: the value glued to its warrant.
 /// `expr` is the source expression (carries spans / EUF identity, faithful for
@@ -2403,9 +2312,9 @@ fn const_fold_acc_update(tail: &Expr, env: &BTreeMap<String, i64>) -> Option<i64
 /// an opaque-but-constructed element (a non-transforming pass-through can keep an
 /// opaque element; a transforming adaptor that must inspect it bails on `None`).
 #[derive(Clone)]
-struct DesugaredElem {
-    expr: Expr,
-    value: Option<ConstVal>,
+pub(crate) struct DesugaredElem {
+    pub(crate) expr: Expr,
+    pub(crate) value: Option<ConstVal>,
 }
 
 /// The warrant for a desugared lift: the memento name that ties the emitted
@@ -2413,13 +2322,13 @@ struct DesugaredElem {
 /// enclosing function scope at the emit site (mirrors the trunk's un-named
 /// `AssertionEntry`). This is the rope; every emit carries one.
 #[derive(Clone)]
-struct Warrant {
-    name: Option<String>,
+pub(crate) struct Warrant {
+    pub(crate) name: Option<String>,
 }
 
 /// The output of `Sugar::desugar`: a (value, warrant) pair. `Seq` is the literal
 /// floor (a finite element sequence); `Constraints` is the emitted obligation.
-enum Desugared {
+pub(crate) enum Desugared {
     /// A finite element sequence -- the desugared literal floor (written or
     /// synthetic-but-warranted). Produced by `LiteralSugar` and the sequence
     /// adaptors (`IterSugar`/`FilterSugar`/`MapSugar`/...).
@@ -2436,7 +2345,7 @@ enum Desugared {
 impl Desugared {
     /// The sequence payload, or None (bail) if this is a constraint terminal --
     /// used when an outer sequence adaptor expects an inner sequence.
-    fn into_seq(self) -> Option<Vec<DesugaredElem>> {
+    pub(crate) fn into_seq(self) -> Option<Vec<DesugaredElem>> {
         match self {
             Desugared::Seq(s) => Some(s),
             Desugared::Constraints { .. } => None,
@@ -2448,869 +2357,22 @@ impl Desugared {
 /// `fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared>` (the doctrine's exact
 /// signature). `float_widths` is interior-mutable (a `RefCell`) because the body
 /// collector advances it while desugaring a constraint terminal.
-struct SugarCtx<'a, 'c> {
-    scope: &'a TemporalScope,
-    options: &'a LiftOptions,
-    reducer: &'a ReductionCtx<'c>,
-    float_widths: std::cell::RefCell<&'a mut FloatWidthScope>,
-    macro_depth: usize,
+pub(crate) struct SugarCtx<'a, 'c> {
+    pub(crate) scope: &'a TemporalScope,
+    pub(crate) options: &'a LiftOptions,
+    pub(crate) reducer: &'a ReductionCtx<'c>,
+    pub(crate) float_widths: std::cell::RefCell<&'a mut FloatWidthScope>,
+    pub(crate) macro_depth: usize,
 }
 
 /// A node in the desugaring tree. `desugar` recurses inward (each child is a
 /// `Sugar` whose `desugar` we call) until `LiteralSugar` bottoms out or some node
 /// returns `None` (BAIL). Adding a construct = adding one class with one
 /// `desugar`.
-trait Sugar {
+pub(crate) trait Sugar {
     fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared>;
 }
 
-// ── The typed BAIL: a `SideEffect` hierarchy (the mirror of `Sugar`) ─────────
-//
-// `Sugar::desugar` is the DIG side -- it walks inward until it reaches literal
-// truth (`Dug`). When the walk hits MONKEY BUSINESS -- a side effect, an opaque
-// runtime value, an iterator advance, a mutable read -- the desugar bails. Today
-// that bail is an untyped `None` + a reason STRING handled downstream by
-// `refusal_disposition` (terminal-whitelist -> Refused, else Unclassified).
-//
-// `SideEffect` RETYPES that bail. A `SideEffect` is a NAMED, WARRANTED order-loss
-// boundary: a structural property of the SOURCE (not a missing lift) that destroys
-// the single timeless `t` a point-wise value claim needs. Each kind owns its own
-// `reason()` (the proto refusal string, recognized as terminal by
-// `refusal_disposition`) and its own `boundary()` (a `SourceMemento` -- the bail-side
-// rope, mirroring the dig-side `Warrant`). The reason string is the wire format the
-// existing collector emits into `skip_reasons`; minting it from a typed effect makes
-// the BAIL a claim with a cause, not a bare string.
-//
-// SOUNDNESS (the critical line, do NOT cross it): a `SideEffect` is ONLY for a
-// PROVABLE order-loss effect -- a syntactic mutation / `iter.next()` / `&mut` /
-// `.push` on captured state, a genuinely runtime/opaque value (param, runtime call
-// result, TLS, IO), a mutable-container read. A PURE-BUT-UNTRANSLATED term (a pure
-// stdlib method we have not transcribed yet) is NOT a `SideEffect`: it stays
-// UNCLASSIFIED (honest future work for a `Sugar`/`const_eval` arm). Reclassifying a
-// pure-untranslated term as a `SideEffect` would be a FAKE-REFUSE -- mislabeling our
-// own work as a source property. EFFECT-OR-LEAVE: if we cannot PROVE it is an
-// order-loss effect, we leave it unclassified.
-
-/// The bail-side rope: a `SourceMemento` ties a refusal to the source boundary that
-/// warrants it (the span / token-key of the offending construct). The mirror of the
-/// dig-side `Warrant` (which ropes a discharged constraint to the sugar that minted
-/// it). `boundary` is the rendered token-key / description of the order-loss site.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct SourceMemento {
-    /// The source construct that is the order-loss boundary (token-key / description).
-    boundary: String,
-}
-
-/// A typed order-loss boundary -- the typed BAIL, mirror of `Sugar`. `reason()`
-/// returns the terminal refusal string (recognized by `refusal_disposition`);
-/// `boundary()` returns the `SourceMemento` warranting that the bail names a SOURCE
-/// property. Each implementor is a single NAMED effect (a mutation, an iterator
-/// advance, an opaque runtime value, TLS, IO, a mutable read). Adding an effect =
-/// adding one struct with `reason()` + `boundary()`.
-trait SideEffect {
-    fn reason(&self) -> String;
-    fn boundary(&self) -> SourceMemento;
-}
-
-/// The outcome of a desugar attempt, typed both ways. `Dug` reached truth (a
-/// discharged `Desugared`); `Hit` struck a NAMED, WARRANTED order-loss boundary (a
-/// terminal, loud refusal with a cause). This is the typed form of "Option<Desugared>
-/// + reason string"; the collector unwraps it to the existing entries / skip_reasons
-/// emission so the wire format (and thus the CID + counts) is unchanged.
-#[allow(dead_code)]
-enum Outcome {
-    /// Reached truth: the desugared literal floor / emitted obligation. -> discharged.
-    Dug(Desugared),
-    /// Struck a named order-loss boundary. -> refused (terminal, loud, with cause).
-    Hit(Box<dyn SideEffect>),
-}
-
-/// MUTATION: the closure / loop body MUTATES captured or local state (`+=`, `&mut`,
-/// `.push`, an assignment). The asserted value varies per iteration independently of
-/// the bound var, so a single universal over it would be a false claim. A source
-/// property -- no value lifter could read a single timeless `t`. (HALF 2 of the
-/// fold-closure bucket.)
-struct MutationEffect {
-    boundary: String,
-}
-
-impl SideEffect for MutationEffect {
-    fn reason(&self) -> String {
-        // The proto string the collector already emits for this case (kept verbatim
-        // so `refusal_disposition` classifies it terminal and the CID is conserved).
-        "assertion in a side-effecting closure body (mutates captured state / \
-         advances an iterator); not a pure point-wise claim; refused"
-            .to_string()
-    }
-    fn boundary(&self) -> SourceMemento {
-        SourceMemento {
-            boundary: self.boundary.clone(),
-        }
-    }
-}
-
-/// ITER-ADVANCE: the body advances a captured iterator (`iter.next()` / `nth += 1`),
-/// a sequence/position-dependent side effect. Distinct CAUSE from `MutationEffect`
-/// (no captured-state assignment is needed), but the SAME terminal class -- the
-/// observed value is per-iteration, not timeless. (Carried under the side-effecting
-/// closure-body proto reason today; typed here as its own named boundary.)
-struct IterAdvanceEffect {
-    boundary: String,
-}
-
-impl SideEffect for IterAdvanceEffect {
-    fn reason(&self) -> String {
-        "assertion in a side-effecting closure body (mutates captured state / \
-         advances an iterator); not a pure point-wise claim; refused"
-            .to_string()
-    }
-    fn boundary(&self) -> SourceMemento {
-        SourceMemento {
-            boundary: self.boundary.clone(),
-        }
-    }
-}
-
-/// OPAQUE-RUNTIME (bin-2): the iterated / asserted value is RUNTIME data -- a param, a
-/// runtime call result, an opaque receiver -- not constructible from source literals.
-/// There is no construction to walk, so no finite universe to emit. A source property.
-struct OpaqueRuntimeEffect {
-    boundary: String,
-    /// True for an effectful ACCESSOR (`.with` / `.with_unfilled_buf`) over opaque
-    /// state; false for a plain opaque RECEIVER (`coll.iter().for_each(..)` where
-    /// `coll` is runtime). Selects the matching proto reason (both `bin-2` terminal).
-    accessor: bool,
-}
-
-impl SideEffect for OpaqueRuntimeEffect {
-    fn reason(&self) -> String {
-        if self.accessor {
-            "assertion in a closure over an opaque/effectful accessor (bin-2: runtime \
-             data, not constructible from source literals); refused"
-                .to_string()
-        } else {
-            "assertion in a closure over an opaque runtime receiver (bin-2: runtime data, \
-             not constructible from source literals); refused"
-                .to_string()
-        }
-    }
-    fn boundary(&self) -> SourceMemento {
-        SourceMemento {
-            boundary: self.boundary.clone(),
-        }
-    }
-}
-
-/// TLS: a `thread_local!` `.with(|x| ..)` -- the closure ranges over thread-local
-/// runtime state, an opaque non-constructed value. A specialization of the opaque
-/// accessor boundary (its proto reason). Named so the catalog records the TLS cause.
-struct TlsEffect {
-    boundary: String,
-}
-
-impl SideEffect for TlsEffect {
-    fn reason(&self) -> String {
-        "assertion in a closure over an opaque/effectful accessor (bin-2: runtime \
-         data, not constructible from source literals); refused"
-            .to_string()
-    }
-    fn boundary(&self) -> SourceMemento {
-        SourceMemento {
-            boundary: self.boundary.clone(),
-        }
-    }
-}
-
-/// IO: the body performs IO (a `write` / `send` to a runtime sink). The observed
-/// value is a runtime effect, not a constructed literal. A source property; carried
-/// under the opaque-accessor proto reason. (`write`/`send` are in
-/// `CLOSURE_BODY_MUTATING_METHODS`, so an IO closure body is caught as a mutation
-/// today; named here so the catalog records the IO cause.)
-struct IoEffect {
-    boundary: String,
-}
-
-impl SideEffect for IoEffect {
-    fn reason(&self) -> String {
-        "assertion in a closure over an opaque/effectful accessor (bin-2: runtime \
-         data, not constructible from source literals); refused"
-            .to_string()
-    }
-    fn boundary(&self) -> SourceMemento {
-        SourceMemento {
-            boundary: self.boundary.clone(),
-        }
-    }
-}
-
-/// TEMPORAL-READ: a read of a MUTABLE container (`a[i]` where `a` is a provably-`mut`
-/// local that the `mut` oracle flags). The container may be index-assigned or
-/// method-mutated between program points, so `index(a, i)` has no single timeless `t`
-/// -- the read is sequence/position dependent. The mirror, for an index READ, of the
-/// already-terminal `temporally unstable` reason (a term reading a MUTATED local).
-///
-/// THE DRAIN: this boundary fell to the silent-shrug (unclassified) pile because its
-/// reason ("mutable container is not temporally stable") was never added to the
-/// terminal whitelist, even though it is the SAME provable order-loss effect as the
-/// whitelisted `temporally unstable`. Typing it as a `SideEffect` (and whitelisting
-/// its reason) moves these effect-shaped cases unclassified -> refused.
-///
-/// SOUNDNESS: emitted ONLY when the `mut` oracle (`scope.is_mut_local`) PROVES the
-/// container is a mutable local. A non-`mut` (provably-immutable) container reads as a
-/// stable `index(a,i)` term and never reaches here -- so this can only refuse a
-/// genuinely-mutable read, never a pure one.
-struct TemporalReadEffect {
-    boundary: String,
-}
-
-impl SideEffect for TemporalReadEffect {
-    fn reason(&self) -> String {
-        // Carries the existing index-read substring so a single whitelist entry
-        // ("mutable container is not temporally stable") recognizes it; the
-        // `unsupported term` prefix the term path already attaches is preserved by
-        // the emit site, so this is the bare boundary clause.
-        format!(
-            "unsupported term `{}`: mutable container is not temporally stable",
-            self.boundary
-        )
-    }
-    fn boundary(&self) -> SourceMemento {
-        SourceMemento {
-            boundary: self.boundary.clone(),
-        }
-    }
-}
-
-/// BASE CASE: a finite literal domain (a literal array `[e0, e1, ...]` or a closed
-/// integer range `a..b` / `a..=b`). `desugar` materializes the element sequence in
-/// iterated order, each element its source `Expr` + its `ConstVal` when evaluable.
-/// May be SYNTHETIC under an adaptor, but a `LiteralSugar` is the vendor's written
-/// construction. The floor: `desugar` = `Some(Seq(literals))`.
-struct LiteralSugar {
-    base: Expr,
-}
-
-/// Maximum desugared sequence length (a finite-construction guard shared by every
-/// sequence class). Mirrors the defolder's `CAP`.
-const SUGAR_SEQ_CAP: i64 = 4096;
-
-impl Sugar for LiteralSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared> {
-        // Discriminate the domain EXACTLY as the defolder does (construction axiom:
-        // a literal array unrolls over its element terms; a closed range enumerates
-        // its integers). A runtime collection is not a `BoundedDomain` -> None.
-        let domain = bounded_domain_from_expr(&self.base, ctx.scope)?;
-        let seq: Vec<DesugaredElem> = match domain {
-            BoundedDomain::Array(_) => match strip_refs_groups(&self.base) {
-                Expr::Array(arr) => {
-                    if arr.elems.len() as i64 > SUGAR_SEQ_CAP {
-                        return None;
-                    }
-                    arr.elems
-                        .iter()
-                        .map(|e| DesugaredElem {
-                            expr: e.clone(),
-                            value: const_eval(e, &BTreeMap::new()),
-                        })
-                        .collect()
-                }
-                _ => return None,
-            },
-            BoundedDomain::Range {
-                start,
-                end,
-                inclusive,
-            } => {
-                let (Some(s), Some(e)) = (term_as_int(&start), term_as_int(&end)) else {
-                    return None;
-                };
-                let e = if inclusive { e + 1 } else { e };
-                if e < s || e - s > SUGAR_SEQ_CAP {
-                    return None;
-                }
-                (s..e)
-                    .map(|n| DesugaredElem {
-                        expr: syn::parse_str::<Expr>(&n.to_string()).unwrap(),
-                        value: Some(ConstVal::Int(n)),
-                    })
-                    .collect()
-            }
-        };
-        if seq.is_empty() {
-            return None;
-        }
-        Some(Desugared::Seq(seq))
-    }
-}
-
-/// A sequence adaptor: wraps an inner sequence-`Sugar` and applies one stdlib
-/// iterator-adaptor's EXACT semantics over the inner element sequence. The
-/// transforming kinds carry a closure we const-evaluate on each concrete element
-/// (synthetic-but-warranted output). Bails (None) on any inexactness -- an opaque
-/// element under a transforming adaptor, an overflowing/runtime closure, a tuple
-/// it cannot materialize -- never a fake-dig. This IS `apply_adaptors`, one arm
-/// per class, recursing through `inner.desugar()`.
-struct AdaptorSugar {
-    inner: Box<dyn Sugar>,
-    adaptor: Adaptor,
-}
-
-impl Sugar for AdaptorSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared> {
-        let seq = self.inner.desugar(ctx)?.into_seq()?;
-        let out = apply_one_adaptor(seq, &self.adaptor)?;
-        Some(Desugared::Seq(out))
-    }
-}
-
-/// Apply ONE adaptor's exact stdlib semantics over a desugared element sequence.
-/// Extracted from `apply_adaptors` (one arm), operating on `DesugaredElem` (the
-/// typed sequence element). Any inexactness -> None (bail).
-fn apply_one_adaptor(
-    seq: Vec<DesugaredElem>,
-    adaptor: &Adaptor,
-) -> Option<Vec<DesugaredElem>> {
-    let out = match adaptor {
-        Adaptor::Identity => seq,
-        Adaptor::Rev => {
-            let mut s = seq;
-            s.reverse();
-            s
-        }
-        Adaptor::Skip(n) => seq.into_iter().skip(*n).collect(),
-        Adaptor::Take(n) => seq.into_iter().take(*n).collect(),
-        Adaptor::Enumerate => {
-            let mut out = Vec::with_capacity(seq.len());
-            for (i, elem) in seq.into_iter().enumerate() {
-                // Pair value: (i, elem). The EXPR pair `(i, <expr>)` is always
-                // materializable for EUF; the pair VALUE needs the element const.
-                let e = &elem.expr;
-                let pair_expr: Expr =
-                    syn::parse_str(&format!("({}, {})", i, quote::quote!(#e))).ok()?;
-                let pair_cv = elem
-                    .value
-                    .map(|c| ConstVal::Tuple(vec![ConstVal::Int(i as i64), c]));
-                out.push(DesugaredElem {
-                    expr: pair_expr,
-                    value: pair_cv,
-                });
-            }
-            out
-        }
-        Adaptor::Filter(closure) => {
-            let mut out = Vec::new();
-            for elem in seq {
-                let v = elem.value.as_ref()?; // opaque element under a filter -> bail
-                if const_eval_unary_closure(closure, v)?.as_bool()? {
-                    out.push(elem);
-                }
-            }
-            out
-        }
-        Adaptor::SkipWhile(closure) => {
-            let mut out = Vec::new();
-            let mut still_skipping = true;
-            for elem in seq {
-                if still_skipping {
-                    let v = elem.value.as_ref()?;
-                    if const_eval_unary_closure(closure, v)?.as_bool()? {
-                        continue;
-                    }
-                    still_skipping = false;
-                }
-                out.push(elem);
-            }
-            out
-        }
-        Adaptor::TakeWhile(closure) => {
-            let mut out = Vec::new();
-            for elem in seq {
-                let v = elem.value.as_ref()?;
-                if const_eval_unary_closure(closure, v)?.as_bool()? {
-                    out.push(elem);
-                } else {
-                    break;
-                }
-            }
-            out
-        }
-        Adaptor::Map(closure) => {
-            let mut out = Vec::with_capacity(seq.len());
-            for elem in seq {
-                let v = elem.value.as_ref()?; // opaque element under a map -> bail
-                let mapped = const_eval_unary_closure(closure, v)?;
-                let mexpr = mapped.to_expr()?; // materialize for EUF translation
-                out.push(DesugaredElem {
-                    expr: mexpr,
-                    value: Some(mapped),
-                });
-            }
-            out
-        }
-    };
-    Some(out)
-}
-
-/// Build the sequence-`Sugar` tree for a fold/for_each RECEIVER: a base literal
-/// domain wrapped by the ordered adaptor chain (`LiteralSugar` innermost, each
-/// `AdaptorSugar` applied in base->terminal order). This is `peel_fold_adaptors`
-/// in reverse-construction: peel to (base, adaptors), then nest. Resolving
-/// `let`-bound receivers through `let_inits` is delegated to `peel_fold_adaptors`.
-/// `extra_rev` appends a final `Rev` (for `.rfold`). None on an unrepresentable
-/// adaptor / unresolvable binding (-> bail).
-fn decompose_seq(
-    expr: &Expr,
-    let_inits: &BTreeMap<String, &Expr>,
-    extra_rev: bool,
-) -> Option<Box<dyn Sugar>> {
-    let (base, mut adaptors) = peel_fold_adaptors(expr, let_inits, 0)?;
-    if extra_rev {
-        adaptors.push(Adaptor::Rev);
-    }
-    let mut node: Box<dyn Sugar> = Box::new(LiteralSugar { base: base.clone() });
-    for adaptor in adaptors {
-        node = Box::new(AdaptorSugar {
-            inner: node,
-            adaptor,
-        });
-    }
-    Some(node)
-}
-
-/// The item-binder of a `fold`/`rfold` closure's second parameter: a plain ident
-/// binds the WHOLE element; a 2-tuple binds `(comp0, comp1)` of a tuple element.
-enum FoldItemBinder {
-    Whole(String),
-    Pair(String, String),
-}
-
-/// `FoldSugar` / `RFoldSugar` (and `ForEachSugar` as the `acc = ()` degenerate):
-/// `<seq-sugar>.fold(init, |acc, item| { <asserts>; <tail> })` over a FINITE
-/// literal domain is the finite conjunction of the per-iteration body with `acc`
-/// threaded as a CONST-FOLDED integer and `item`/index bound to the concrete
-/// element -- the construction axiom (desugar fold WITH fold). `.rfold` reverses
-/// the element order (the inner seq-sugar already carries the `Rev`). `desugar`
-/// recurses on `inner` for the element sequence, then threads + substitutes;
-/// EXACT-OR-BAIL throughout (a non-const-foldable accumulator / side-effecting
-/// body / opaque element -> None).
-struct FoldSugar {
-    inner: Box<dyn Sugar>,
-    acc_var: String,
-    item_binder: FoldItemBinder,
-    acc_0: i64,
-    body_stmts: Vec<Stmt>,
-    tail: Expr,
-    method: String,
-    /// The FULL closure body expr (block including the acc-update tail). The
-    /// purity gate scans this whole body -- byte-identical to the procedural
-    /// defolder, which checked `&closure.body` (tail included).
-    closure_body: Expr,
-}
-
-impl Sugar for FoldSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared> {
-        // The post-adaptor element sequence (the inner seq-sugar bottoms out at a
-        // literal domain or bails).
-        let seq = self.inner.desugar(ctx)?.into_seq()?;
-        if seq.is_empty() {
-            // The adaptor chain emptied the sequence (`.filter` kept nothing /
-            // `.take(0)`): the fold body never runs -> vacuous. None rather than a
-            // vacuous `true`.
-            return None;
-        }
-        if seq.len() as i64 > SUGAR_SEQ_CAP {
-            return None;
-        }
-        let n_body = count_asserts_in_stmts(&self.body_stmts);
-        if n_body == 0 {
-            return None;
-        }
-        // Purity: the closure body must not mutate external state / advance an
-        // iterator (a side-effecting body makes each iteration observe a varying
-        // value, so the finite conjunction would be a false claim). HALF 2 then
-        // makes it terminal. Scan the FULL closure body (tail included), exactly as
-        // the procedural defolder did.
-        if closure_body_is_side_effecting(&self.closure_body) {
-            return None;
-        }
-        // Lift the body ONCE, free in acc_var / elem_var / idx_var. All-or-nothing.
-        let mut body_entries = Vec::new();
-        let mut body_skipped = Vec::new();
-        let mut body_lifted = 0usize;
-        let mut body_helpers = HashSet::new();
-        collect_assertion_entries(
-            &self.body_stmts,
-            ctx.scope.local_scope(),
-            ctx.options,
-            ctx.reducer,
-            *ctx.float_widths.borrow_mut(),
-            &mut body_entries,
-            &mut body_skipped,
-            &mut body_lifted,
-            &mut body_helpers,
-            ctx.macro_depth,
-            &ctx.scope.plan.interior_mut,
-        );
-        if !body_skipped.is_empty() || body_entries.len() != n_body {
-            return None;
-        }
-        let body_conj = and_(body_entries.iter().map(|e| e.atom.clone()).collect());
-
-        // Thread the accumulator over the RESULTING element sequence: substitute the
-        // concrete acc_k + the item binder's component(s) into the body formula, and
-        // const-fold the tail to acc_{k+1} given those same bindings.
-        let mut instances = Vec::with_capacity(seq.len());
-        let mut acc = self.acc_0;
-        for elem in &seq {
-            let mut inst = subst_var_in_formula(&body_conj, &self.acc_var, &num(acc));
-            let mut tail_env: BTreeMap<String, i64> = BTreeMap::new();
-            tail_env.insert(self.acc_var.clone(), acc);
-            match &self.item_binder {
-                FoldItemBinder::Whole(var) => {
-                    let t = translate_term_in_scope(&elem.expr, ctx.scope).ok()?;
-                    inst = subst_var_in_formula(&inst, var, &t);
-                    if let Some(n) = elem.value.as_ref().and_then(ConstVal::as_int) {
-                        tail_env.insert(var.clone(), n);
-                    }
-                }
-                FoldItemBinder::Pair(c0, c1) => {
-                    let comps = tuple_components(&elem.expr)?;
-                    if comps.len() != 2 {
-                        return None;
-                    }
-                    let t0 = translate_term_in_scope(comps[0], ctx.scope).ok()?;
-                    let t1 = translate_term_in_scope(comps[1], ctx.scope).ok()?;
-                    inst = subst_var_in_formula(&inst, c0, &t0);
-                    inst = subst_var_in_formula(&inst, c1, &t1);
-                    if let Some(ConstVal::Tuple(parts)) = &elem.value {
-                        if let Some(n) = parts.first().and_then(ConstVal::as_int) {
-                            tail_env.insert(c0.clone(), n);
-                        }
-                        if let Some(n) = parts.get(1).and_then(ConstVal::as_int) {
-                            tail_env.insert(c1.clone(), n);
-                        }
-                    }
-                }
-            }
-            instances.push(inst);
-            acc = const_fold_acc_update(&self.tail, &tail_env)?;
-        }
-        let conj = and_(instances);
-        let warrant = Warrant {
-            name: Some(format!("{}::{}", ctx.scope.local_scope(), self.method)),
-        };
-        Some(Desugared::Constraints {
-            atom: conj,
-            n: n_body,
-            warrant,
-        })
-    }
-}
-
-/// `ForEachSugar` / `ForAllSugar`: a bounded universal over a finite-construction
-/// domain. `for v in <lit> { body }` and `<lit>.iter().for_each(|v| body)` assert
-/// the SAME universal (a finite conjunction over a literal array; a guarded forall
-/// over a closed range) -- `for_each` is `fold` with the unit accumulator, so the
-/// construction is one piece of code (`lift_bounded_forall`, the shared verified
-/// core). `desugar` reduces to that conjunction or bails (mutation / non-point-wise
-/// body / count mismatch). `kind` only flavors the warrant name (`for_each`/`loop`).
-struct ForAllSugar {
-    var: String,
-    domain: BoundedDomain,
-    body_stmts: Vec<Stmt>,
-    /// The warrant-name flavor: `"for_each"` (adaptor) or `"loop"` (for-loop).
-    kind: &'static str,
-}
-
-impl Sugar for ForAllSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared> {
-        // `lift_bounded_forall` is the shared verified core: it const-checks the
-        // domain (range -> guarded forall; array -> finite conjunction), lifts the
-        // body all-or-nothing through the normal collector, and gates purity. We
-        // re-discriminate the domain here (it is consumed by value) by re-reading;
-        // pass the already-resolved `BoundedDomain`.
-        let (quantified, n_body) = lift_bounded_forall(
-            &self.var,
-            self.domain.clone(),
-            &self.body_stmts,
-            ctx.scope,
-            ctx.options,
-            ctx.reducer,
-            *ctx.float_widths.borrow_mut(),
-            ctx.macro_depth,
-        )?;
-        let warrant = Warrant {
-            name: Some(format!(
-                "{}::{}::{}",
-                ctx.scope.local_scope(),
-                self.kind,
-                self.var
-            )),
-        };
-        Some(Desugared::Constraints {
-            atom: quantified,
-            n: n_body,
-            warrant,
-        })
-    }
-}
-
-/// `ConditionalSugar`: the CLAIM-side atom (mirror of `LiteralSugar`, the
-/// value-side atom). A guarded assertion `if <guard> { <then-asserts> }
-/// [else { <else-asserts> }]` is the implication it literally states:
-/// `guard => then` (and `not guard => else` when the else branch carries asserts).
-///
-/// SOUNDNESS LINE: we emit `guard => claim`, NEVER bare `claim`. Asserting the
-/// body unconditionally when it is guarded would be a fake-discharge (the assert
-/// only fires when the guard holds). `match` is nested conditionals; a bare
-/// `assert!(P)` is the trivial `true => P` (handled by the normal unconditional
-/// path, so `ConditionalSugar` engages only on the genuinely-guarded contexts the
-/// trunk previously refused).
-///
-/// EXACT-OR-BAIL: the guard must translate to a Formula via the SAME path an
-/// `assert!(guard)` would take (`translate_bool_assertion`); the then/else asserts
-/// must lift all-or-nothing through the normal collector; the guard / body must be
-/// pure (no mutation / iterator-advance -- a side-effecting branch is not a
-/// timeless point-wise claim). Any miss -> None (bail; the existing if-context
-/// refusal stands).
-struct ConditionalSugar {
-    cond: Expr,
-    then_stmts: Vec<Stmt>,
-    else_stmts: Vec<Stmt>,
-}
-
-impl Sugar for ConditionalSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared> {
-        // An `if let PAT = e { .. }` is a pattern-match guard, not a boolean
-        // predicate -- the panic-locus path handles the diverging-else shape;
-        // anything else here bails (we do not model the bound bindings).
-        if matches!(&self.cond, Expr::Let(_)) {
-            return None;
-        }
-        // The guard must not mutate / advance state (a side-effecting condition is
-        // not a timeless predicate). Reuse the verified closure-body scanner over
-        // the condition expression.
-        if closure_body_is_side_effecting(&self.cond) {
-            return None;
-        }
-        let then_count = count_asserts_in_stmts(&self.then_stmts);
-        let else_count = count_asserts_in_stmts(&self.else_stmts);
-        // At least one branch must carry an assertion (else nothing to classify --
-        // leave it to the existing handling).
-        if then_count + else_count == 0 {
-            return None;
-        }
-        // Neither branch may mutate captured state: a single guarded implication is
-        // a point-wise claim only if the branch body is pure.
-        if loop_body_mutates(&self.then_stmts) || loop_body_mutates(&self.else_stmts) {
-            return None;
-        }
-        // The guard formula -- lifted EXACTLY as `assert!(guard)` would lift it. A
-        // guard outside the liftable predicate set (an opaque method call, a float
-        // refinement we cannot width, ...) -> bail.
-        let guard = lower_assert_condition(&self.cond, ctx.scope, &ctx.float_widths.borrow())
-            .ok()?
-            .atom;
-
-        let mut conjuncts: Vec<Rc<Formula>> = Vec::new();
-        if then_count > 0 {
-            let then_conj = self.lift_branch_conj(&self.then_stmts, then_count, ctx)?;
-            // guard => then.
-            conjuncts.push(implies(guard.clone(), then_conj));
-        }
-        if else_count > 0 {
-            let else_conj = self.lift_branch_conj(&self.else_stmts, else_count, ctx)?;
-            // not guard => else (the else branch fires when the guard is false).
-            conjuncts.push(implies(not_(guard.clone()), else_conj));
-        }
-        let atom = and_(conjuncts);
-        let warrant = Warrant {
-            name: Some(format!("{}::if", ctx.scope.local_scope())),
-        };
-        Some(Desugared::Constraints {
-            atom,
-            n: then_count + else_count,
-            warrant,
-        })
-    }
-}
-
-impl ConditionalSugar {
-    /// Lift a branch's statements all-or-nothing through the normal collector,
-    /// returning the conjunction of its assert atoms or None (bail) if any branch
-    /// assert refuses / is missing (truth-table-or-gutter, mirroring
-    /// `lift_bounded_forall`'s body lift).
-    fn lift_branch_conj(
-        &self,
-        branch_stmts: &[Stmt],
-        expected: usize,
-        ctx: &SugarCtx,
-    ) -> Option<Rc<Formula>> {
-        let mut body_entries = Vec::new();
-        let mut body_skipped = Vec::new();
-        let mut body_lifted = 0usize;
-        let mut body_helpers = HashSet::new();
-        collect_assertion_entries(
-            branch_stmts,
-            ctx.scope.local_scope(),
-            ctx.options,
-            ctx.reducer,
-            *ctx.float_widths.borrow_mut(),
-            &mut body_entries,
-            &mut body_skipped,
-            &mut body_lifted,
-            &mut body_helpers,
-            ctx.macro_depth,
-            &ctx.scope.plan.interior_mut,
-        );
-        if !body_skipped.is_empty() || body_entries.len() != expected {
-            return None;
-        }
-        Some(and_(body_entries.iter().map(|e| e.atom.clone()).collect()))
-    }
-}
-
-/// Build a `ConditionalSugar` from a `Stmt::Expr(Expr::If(..))`. The then-branch
-/// statements and the else-branch statements (a plain `else { .. }` block; an
-/// `else if` chains as a nested `Expr::If`, captured as the single else statement)
-/// are the guarded claims. None if the if has no body to classify.
-fn decompose_if(i: &syn::ExprIf) -> Option<ConditionalSugar> {
-    let else_stmts: Vec<Stmt> = match &i.else_branch {
-        Some((_, else_expr)) => match &**else_expr {
-            Expr::Block(b) => b.block.stmts.clone(),
-            // `else if ..` / any other else expr: keep as one statement so its
-            // asserts are counted and lifted (a nested ConditionalSugar reached via
-            // the recursive collector). A non-block else with asserts that does not
-            // fully lift will make the branch lift bail -- honest.
-            other => vec![Stmt::Expr(other.clone(), None)],
-        },
-        None => Vec::new(),
-    };
-    Some(ConditionalSugar {
-        cond: (*i.cond).clone(),
-        then_stmts: i.then_branch.stmts.clone(),
-        else_stmts,
-    })
-}
-
-/// Build a `FoldSugar` (or `RFoldSugar`) from a `.fold`/`.rfold` method call, by
-/// decomposing the receiver into its sequence-`Sugar` tree and capturing the
-/// closure's binders + body + acc-update tail. None (bail) on any shape outside
-/// the represented set -- this IS the front half of `try_lift_fold_forall`
-/// (parsing), with the reduction living in `FoldSugar::desugar`.
-fn decompose_fold(
-    expr: &Expr,
-    let_inits: &BTreeMap<String, &Expr>,
-) -> Option<FoldSugar> {
-    let Expr::MethodCall(call) = expr else {
-        return None;
-    };
-    let method = call.method.to_string();
-    let rev_fold = match method.as_str() {
-        "fold" => false,
-        "rfold" => true,
-        _ => return None,
-    };
-    if call.args.len() != 2 {
-        return None;
-    }
-    let init_expr = &call.args[0];
-    let Expr::Closure(closure) = &call.args[1] else {
-        return None;
-    };
-    if closure.inputs.len() != 2 {
-        return None;
-    }
-    let acc_var = match &closure.inputs[0] {
-        Pat::Ident(p) if p.subpat.is_none() => p.ident.to_string(),
-        _ => return None,
-    };
-    let item_binder = match &closure.inputs[1] {
-        Pat::Tuple(t) if t.elems.len() == 2 => {
-            let c0 = closure_single_param_ident(&t.elems[0])?;
-            let c1 = closure_single_param_ident(&t.elems[1])?;
-            FoldItemBinder::Pair(c0, c1)
-        }
-        other => FoldItemBinder::Whole(closure_single_param_ident(other)?),
-    };
-    let acc_0 = const_int(init_expr)?;
-    let inner = decompose_seq(&call.receiver, let_inits, rev_fold)?;
-    // The closure body: block-bodied (asserts + acc-update tail). The tail is the
-    // final expr-without-semi; the preceding statements are the body.
-    let Expr::Block(body_block) = &*closure.body else {
-        return None;
-    };
-    let stmts = &body_block.block.stmts;
-    let Some((Stmt::Expr(tail, None), body_stmts)) = stmts.split_last() else {
-        return None;
-    };
-    Some(FoldSugar {
-        inner,
-        acc_var,
-        item_binder,
-        acc_0,
-        body_stmts: body_stmts.to_vec(),
-        tail: tail.clone(),
-        method,
-        closure_body: (*closure.body).clone(),
-    })
-}
-
-/// Build a `ForEachSugar` from a `<receiver>.for_each(|v| body)` adaptor: the
-/// receiver (less one element-producing adaptor) must resolve to a finite-
-/// construction domain, the closure must bind one plain ident. None (bail)
-/// otherwise. This is the front half of `try_lift_for_each_forall`.
-fn decompose_for_each(expr: &Expr, scope: &TemporalScope) -> Option<ForAllSugar> {
-    let Expr::MethodCall(call) = expr else {
-        return None;
-    };
-    if call.method != "for_each" || call.args.len() != 1 {
-        return None;
-    }
-    let Expr::Closure(closure) = &call.args[0] else {
-        return None;
-    };
-    if closure.inputs.len() != 1 {
-        return None;
-    }
-    let var = match &closure.inputs[0] {
-        Pat::Ident(p) if p.subpat.is_none() => p.ident.to_string(),
-        Pat::Reference(r) => match &*r.pat {
-            Pat::Ident(p) if p.subpat.is_none() && r.mutability.is_none() => p.ident.to_string(),
-            _ => return None,
-        },
-        _ => return None,
-    };
-    let base = iter_adaptor_base(&call.receiver);
-    let domain = bounded_domain_from_expr(base, scope)?;
-    let body_stmts: Vec<Stmt> = match &*closure.body {
-        Expr::Block(b) => b.block.stmts.clone(),
-        other => vec![Stmt::Expr(other.clone(), None)],
-    };
-    Some(ForAllSugar {
-        var,
-        domain,
-        body_stmts,
-        kind: "for_each",
-    })
-}
-
-/// Build a `ForAllSugar` from a `for <var> in <domain> { body }` loop: the domain
-/// must be a finite construction (closed range / literal array). None (bail)
-/// otherwise. This is the front half of `try_lift_for_loop_forall`.
-fn decompose_for_loop(f: &syn::ExprForLoop, scope: &TemporalScope) -> Option<ForAllSugar> {
-    let var = match &*f.pat {
-        Pat::Ident(p) if p.subpat.is_none() => p.ident.to_string(),
-        _ => return None,
-    };
-    let domain = bounded_domain_from_expr(&f.expr, scope)?;
-    Some(ForAllSugar {
-        var,
-        domain,
-        body_stmts: f.body.stmts.clone(),
-        kind: "loop",
-    })
-}
 
 /// Build a `SugarCtx` from the collector's loose arguments. Centralizes the
 /// `RefCell` wrap of `float_widths` so the call sites stay terse.
@@ -3355,7 +2417,7 @@ fn emit_desugared(
 
 /// The component sub-expressions of a 2+-tuple expression (`(a, b)`), or None if `expr`
 /// is not a tuple. Strips parens/groups/refs first.
-fn tuple_components(expr: &Expr) -> Option<Vec<&Expr>> {
+pub(crate) fn tuple_components(expr: &Expr) -> Option<Vec<&Expr>> {
     match strip_refs_groups(expr) {
         Expr::Tuple(t) => Some(t.elems.iter().collect()),
         _ => None,
@@ -3364,7 +2426,7 @@ fn tuple_components(expr: &Expr) -> Option<Vec<&Expr>> {
 
 /// Strip references / parens / groups to reveal an underlying expression (used to
 /// re-read a domain array's element literals for accumulator const-folding).
-fn strip_refs_groups(expr: &Expr) -> &Expr {
+pub(crate) fn strip_refs_groups(expr: &Expr) -> &Expr {
     match expr {
         Expr::Reference(r) => strip_refs_groups(&r.expr),
         Expr::Paren(p) => strip_refs_groups(&p.expr),
@@ -3375,7 +2437,7 @@ fn strip_refs_groups(expr: &Expr) -> &Expr {
 
 /// Read a Term as an i64 when it is a literal integer constant (`num`), for closed
 /// range enumeration in the defolder. None for any non-literal-int term.
-fn term_as_int(t: &Rc<Term>) -> Option<i64> {
+pub(crate) fn term_as_int(t: &Rc<Term>) -> Option<i64> {
     match t.as_ref() {
         Term::Const {
             value: ConstValue::Int(n),
@@ -3388,7 +2450,7 @@ fn term_as_int(t: &Rc<Term>) -> Option<i64> {
 /// Mutating method names: a call to one of these on a CAPTURED binding inside a
 /// closure body advances / mutates external state (a side effect), so a single
 /// universal over the closure parameter is not a timeless point-wise claim.
-const CLOSURE_BODY_MUTATING_METHODS: &[&str] = &[
+pub(crate) const CLOSURE_BODY_MUTATING_METHODS: &[&str] = &[
     "next", "next_back", "nth", "nth_back", "push", "push_back", "push_front",
     "pop", "pop_back", "pop_front", "insert", "remove", "clear", "set", "replace",
     "swap", "truncate", "extend", "append", "drain", "store", "fetch_add",
@@ -3414,7 +2476,7 @@ const PURE_CLOSURE_ADAPTORS: &[&str] = &[
 /// iterator-advancing method (`iter.next()`, `v.push(..)`, ...). A side-effecting
 /// body is not a pure point-wise claim, so a universal over the closure parameter
 /// would be a false claim -- it is TERMINAL, not dissolvable / liftable.
-fn closure_body_is_side_effecting(body: &Expr) -> bool {
+pub(crate) fn closure_body_is_side_effecting(body: &Expr) -> bool {
     let stmts: Vec<Stmt> = match body {
         Expr::Block(b) => b.block.stmts.clone(),
         other => vec![Stmt::Expr(other.clone(), None)],
@@ -3623,7 +2685,7 @@ fn unconditional_block_stmts(expr: &Expr) -> Option<&[Stmt]> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn collect_assertion_entries(
+pub(crate) fn collect_assertion_entries(
     stmts: &[Stmt],
     local_scope: &str,
     options: &LiftOptions,
@@ -4401,7 +3463,7 @@ fn closure_adaptor_refusal(expr: &Expr) -> Option<String> {
 /// Strip a trailing element-producing adaptor (`.iter()`, `.into_iter()`,
 /// `.iter_mut()`, `.chars()`, `.bytes()`, `.keys()`, `.values()`) to reveal the
 /// underlying collection expression, so its literal/opaque provenance can be read.
-fn iter_adaptor_base(expr: &Expr) -> &Expr {
+pub(crate) fn iter_adaptor_base(expr: &Expr) -> &Expr {
     if let Expr::MethodCall(c) = expr {
         if c.args.is_empty()
             && matches!(
@@ -5956,7 +5018,7 @@ fn lower_assert_ne(
     ))
 }
 
-fn lower_assert_condition(
+pub(crate) fn lower_assert_condition(
     expr: &Expr,
     scope: &TemporalScope,
     float_widths: &FloatWidthScope,
@@ -6425,7 +5487,7 @@ fn parse_macro_args(tokens: proc_macro2::TokenStream) -> syn::Result<MacroArgs> 
     syn::parse2(tokens)
 }
 
-fn translate_bool_assertion(
+pub(crate) fn translate_bool_assertion(
     expr: &Expr,
     scope: &TemporalScope,
     float_widths: &FloatWidthScope,
@@ -6672,7 +5734,7 @@ fn translate_infinity_eq_assertion(
     Ok(Some(AssertionEntry { name, atom }))
 }
 
-type FloatWidthScope = BTreeMap<String, &'static str>;
+pub(crate) type FloatWidthScope = BTreeMap<String, &'static str>;
 
 fn update_float_width_scope_for_pat(pat: &Pat, out: &mut FloatWidthScope) {
     remove_float_width_idents(pat, out);
@@ -9009,7 +8071,7 @@ fn macro_literal_contains_mut_local(lit_text: &str, scope: &TemporalScope) -> bo
     false
 }
 
-fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term>, String> {
+pub(crate) fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term>, String> {
     match expr {
         Expr::Lit(lit) => translate_lit(lit),
         // `const { EXPR }` is a compile-time evaluation of EXPR: PURE (no runtime
@@ -9836,7 +8898,7 @@ fn bytes_literal_term(expr: &Expr) -> Option<Rc<Term>> {
     }
 }
 
-fn parse_int_lit(lit: &syn::LitInt) -> Result<i64, String> {
+pub(crate) fn parse_int_lit(lit: &syn::LitInt) -> Result<i64, String> {
     let mut text = lit.to_string();
     let suffix = lit.suffix();
     if !suffix.is_empty() && text.ends_with(suffix) {
@@ -10004,7 +9066,7 @@ fn real_literal_is_zero(text: &str) -> bool {
     saw_digit
 }
 
-fn const_int(expr: &Expr) -> Option<i64> {
+pub(crate) fn const_int(expr: &Expr) -> Option<i64> {
     match expr {
         Expr::Lit(ExprLit {
             lit: Lit::Int(i), ..
