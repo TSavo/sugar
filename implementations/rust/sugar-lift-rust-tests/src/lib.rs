@@ -6830,7 +6830,7 @@ fn for_iter_domain(expr: &Expr) -> &'static str {
 /// the receiver's ELEMENTS, which are runtime data when the receiver is opaque; the
 /// provenance makes that bin-2 PROVEN rather than presumed from the bare `|x|` shape.
 /// Returns None for any non-adaptor call (handled by the ordinary term path).
-fn closure_adaptor_refusal(expr: &Expr) -> Option<String> {
+fn closure_adaptor_refusal(expr: &Expr, scope: &TemporalScope) -> Option<String> {
     let Expr::MethodCall(call) = expr else {
         return None;
     };
@@ -6849,10 +6849,81 @@ fn closure_adaptor_refusal(expr: &Expr) -> Option<String> {
     }
     let collection = iter_adaptor_base(&call.receiver);
     let domain = for_iter_domain(collection);
+    // TERMINAL (bin-2 BODY READ over a literal domain): the DOMAIN is a finite literal
+    // construction, but the closure body READS a provably-MUTABLE captured local
+    // (`assert!([..].iter().any(|v| &xs == *v))` where `let mut xs = [0; 6]` is mutated
+    // by `xs.iter_mut().map(|x| *x += 1)` -- the corpus `iter/adapters/zip.rs`
+    // ::test_zip_map_sideffectful). The asserted boolean ranges over `xs`'s RUNTIME
+    // contents, not a value constructed from source literals -- the same proven order-loss
+    // as the for-context "(B) RUNTIME BODY READ over a literal domain" terminal. EARNED
+    // ONLY when `is_mut_local` PROVES a captured (non-closure-param) name is mutable; a
+    // PURE body (`|x| x > 3`) or an immutable captured local reads as stable terms and
+    // STAYS the UNCLASSIFIED bin-1 reason below (the fake-refuse guardrail -- a genuinely
+    // drainable point-wise body is never refused to zero the count).
+    if for_iter_domain_is_literal(collection)
+        && call
+            .args
+            .iter()
+            .any(|a| closure_body_reads_mut_local(a, scope))
+    {
+        return Some(format!(
+            "iterator/option adaptor `.{method}(|..| ..)` over {domain} whose closure body \
+             READS a MUTABLE-local capture (bin-2: runtime data mutated by side-effecting \
+             iteration, not constructed from source literals); refused"
+        ));
+    }
     Some(format!(
         "iterator/option adaptor `.{method}(|..| ..)` over {domain}; not yet lifted; \
          released to layer 0"
     ))
+}
+
+/// True if `expr` is a closure whose BODY references a name that `scope` proves is a
+/// MUTABLE local, where that name is NOT one of the closure's own parameters (a capture).
+/// The mutable-capture read makes the body's value runtime (bin-2). A non-closure expr,
+/// or a closure that only reads its params / immutable names / literals, returns false.
+fn closure_body_reads_mut_local(expr: &Expr, scope: &TemporalScope) -> bool {
+    let Expr::Closure(cl) = expr else {
+        return false;
+    };
+    // The closure's own bound parameters are NOT captures -- exclude them.
+    let mut param_vec: Vec<String> = Vec::new();
+    for pat in &cl.inputs {
+        collect_pat_idents(pat, &mut param_vec);
+    }
+    let params: BTreeSet<String> = param_vec.into_iter().collect();
+    struct V<'a> {
+        scope: &'a TemporalScope,
+        params: &'a BTreeSet<String>,
+        found: bool,
+    }
+    impl<'ast, 'a> syn::visit::Visit<'ast> for V<'a> {
+        fn visit_expr_path(&mut self, p: &'ast syn::ExprPath) {
+            if let Some(name) = p.path.get_ident().map(|i| i.to_string()) {
+                if !self.params.contains(&name) && self.scope.is_mut_local(&name) {
+                    self.found = true;
+                }
+            }
+            syn::visit::visit_expr_path(self, p);
+        }
+        // A nested closure introduces its own params, but for our corpus shapes a single
+        // level suffices; descend normally (the mut-local capture is still a mut read).
+    }
+    let mut v = V {
+        scope,
+        params: &params,
+        found: false,
+    };
+    syn::visit::Visit::visit_expr(&mut v, &cl.body);
+    v.found
+}
+
+/// True if `for_iter_domain` would name `collection` a finite LITERAL construction (a
+/// closed range or a literal array/repeat), i.e. the bin-1 (drainable) domain class --
+/// as opposed to an OPAQUE (bin-2) collection. The single source of truth is
+/// `for_iter_domain`'s own string, so the two never drift.
+fn for_iter_domain_is_literal(collection: &Expr) -> bool {
+    for_iter_domain(collection).contains("bin-1")
 }
 
 /// Strip a trailing element-producing adaptor (`.iter()`, `.into_iter()`,
@@ -9092,7 +9163,7 @@ fn translate_bool_assertion(
             // CONSTRUCTION (literal -> bin-1, drainable by unroll) or RUNTIME data
             // (opaque -> bin-2, the membrane), so the bin sort is structural rather
             // than presumed from the bare `|x|` shape.
-            if let Some(reason) = closure_adaptor_refusal(expr) {
+            if let Some(reason) = closure_adaptor_refusal(expr, scope) {
                 return Err(reason);
             }
             let term = translate_term_in_scope(expr, scope)?;
@@ -10027,6 +10098,27 @@ fn translate_string_predicate_assertion(
                     // method's existence proves stringness. The PATTERN must still be
                     // a literal (the known prefix/suffix). `prefix-of(pattern, recv)`
                     // is the faithful FOL, teethed against a contradicting claim.
+                    // TERMINAL (bin-2): a `starts_with`/`ends_with` whose RECEIVER is a
+                    // provably-MUTABLE local (`let mut a = Vec::new()`). The slice/string
+                    // its contents form is produced by side-effecting mutation between
+                    // program points (`a.push(n)` driven by `iter.next()` -- the corpus
+                    // `iter/adapters/zip.rs` tail-side-effect tests), so the receiver has no
+                    // single timeless `t`: the asserted prefix is over runtime data, NOT a
+                    // value constructed from source literals (kin to `mutable container is
+                    // not temporally stable` / `bin-2`). EARNED ONLY under `is_mut_local`;
+                    // a non-`mut`, provably-immutable receiver (`cid.starts_with("..")` over
+                    // a computed-but-immutable value) is NOT flagged and STAYS the bare
+                    // "needs a string/char literal pattern" UNCLASSIFIED reason below (the
+                    // fake-refuse guardrail -- never refuse a stable receiver to zero a count).
+                    if let Some(recv_name) = simple_path_name(&call.receiver) {
+                        if scope.is_mut_local(&recv_name) {
+                            return Err(format!(
+                                "{method} predicate over a MUTABLE-local receiver `{recv_name}` \
+                                 (bin-2: a slice/string mutated by side-effecting iteration, not \
+                                 constructed from source literals); refused"
+                            ));
+                        }
+                    }
                     let Ok(receiver) = translate_term_in_scope(&call.receiver, scope) else {
                         return Ok(None);
                     };
@@ -11997,7 +12089,7 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
             // provenance, not a bare "unsupported term `|v|`" -- so the bin sort is
             // PROVEN (opaque receiver -> bin-2), not presumed. Same rigor the
             // bool-assertion path already applies to `.all`/`.any`.
-            if let Some(reason) = closure_adaptor_refusal(expr) {
+            if let Some(reason) = closure_adaptor_refusal(expr, scope) {
                 return Err(reason);
             }
             let mut args = vec![translate_term_in_scope(&call.receiver, scope)?];
@@ -15826,5 +15918,200 @@ mod lifter_key_tests {
             "both the format!-pattern and the literal expected must dissolve"
         );
         assert_eq!(out.assertions_refused, 0, "nothing refused: {:?}", out.skip_reasons);
+    }
+
+    // ── starts_with over a MUTABLE-local receiver is a runtime (bin-2) refusal ──
+    // Corpus: iter/adapters/zip.rs::test_zip_next_back_side_effects_exhausted and
+    // ::test_zip_nth_back_side_effects_exhausted -- `let mut a = Vec::new()` pushed
+    // by a side-effecting `.map(|n| { a.push(n); n*10 })` driven by `iter.next()`,
+    // then `assert!(a.starts_with(&[1, 2, 3]))`. `a`'s contents are runtime side
+    // effects, not a value constructed from source literals.
+
+    #[test]
+    fn starts_with_over_mut_local_receiver_is_refused_bin2() {
+        // POSITIVE: a `let mut` receiver mutated by iteration -> bin-2 terminal refuse.
+        let src = r#"
+            #[test]
+            fn t() {
+                let mut a = Vec::new();
+                let mut iter = [1, 2, 3, 4, 5, 6].iter().cloned().map(|n| { a.push(n); n * 10 });
+                iter.next();
+                iter.next();
+                iter.next();
+                assert!(a.starts_with(&[1, 2, 3]));
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(out.assertions_lifted, 0, "no fake-discharge: {:?}", contract_names(&out));
+        assert!(
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("starts_with predicate over a MUTABLE-local receiver")),
+            "the mut-receiver bin-2 reason must be emitted; got {:?}",
+            out.skip_reasons
+        );
+        // TEETH: the reason carries `bin-2`, so its DISPOSITION is terminal (refused),
+        // NOT unclassified -- this is honest progress, not a parked roadmap item.
+        assert!(
+            out.skip_reasons.iter().all(|r| matches!(
+                refusal_disposition(r),
+                Disposition::Refused | Disposition::Inactive
+            )),
+            "mut-receiver starts_with must be TERMINAL: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn starts_with_over_immutable_string_receiver_still_digs() {
+        // DISCRIMINATION (fake-refuse guard #1): a NON-mut, immutable string receiver
+        // with a STRING literal pattern is the faithful prefix-of FOL -- it must still
+        // DIG (lift), never get swept into the mut-receiver refuse.
+        let src = r#"
+            #[test]
+            fn t() {
+                let cid = format!("blake3-512:{}", 0);
+                assert!(cid.starts_with("blake3-512:"));
+            }
+        "#;
+        let out = lift_src(src);
+        assert!(
+            !out.skip_reasons
+                .iter()
+                .any(|r| r.contains("MUTABLE-local receiver")),
+            "an immutable receiver must NOT trip the mut-receiver refuse: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "the immutable string prefix predicate must lift; warnings: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn starts_with_slice_pattern_over_immutable_receiver_stays_unclassified() {
+        // DISCRIMINATION (fake-refuse guard #2): a NON-mut receiver with a SLICE pattern
+        // (`&[1, 2, 3]`, not a string/char literal) is a lifter-reach gap, NOT a proven
+        // source property. It must STAY the UNCLASSIFIED "needs a string/char literal
+        // pattern" reason -- never terminalized by the mut-receiver path.
+        let src = r#"
+            #[test]
+            fn t() {
+                let a = [1, 2, 3, 4];
+                assert!(a.starts_with(&[1, 2, 3]));
+            }
+        "#;
+        let out = lift_src(src);
+        assert!(
+            !out.skip_reasons
+                .iter()
+                .any(|r| r.contains("MUTABLE-local receiver")),
+            "an immutable receiver must NOT trip the mut-receiver refuse: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.skip_reasons.iter().any(|r| {
+                r.contains("needs a string/char literal pattern")
+                    && matches!(refusal_disposition(r), Disposition::Unclassified)
+            }),
+            "an immutable slice-pattern starts_with must stay UNCLASSIFIED work: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    // ── `.any()`/adaptor over a LITERAL domain whose closure body reads a MUTABLE
+    // capture is a runtime (bin-2) refusal ──
+    // Corpus: iter/adapters/zip.rs::test_zip_map_sideffectful -- `let mut xs = [0; 6]`
+    // mutated by `xs.iter_mut().map(|x| *x += 1)`, then
+    // `assert!([&[..], &[..]].iter().any(|v| &xs == *v))`. The DOMAIN is a literal array
+    // but the body reads runtime-mutated `xs`.
+
+    #[test]
+    fn any_over_literal_domain_with_mut_capture_body_is_refused_bin2() {
+        // POSITIVE: a literal-array `.any` whose body reads a `let mut` capture -> bin-2.
+        let src = r#"
+            #[test]
+            fn t() {
+                let mut xs = [0; 6];
+                for _ in xs.iter_mut().map(|x| *x += 1) {}
+                assert!([&[1, 1, 1, 1, 1, 0], &[1, 1, 1, 1, 0, 0]].iter().any(|v| &xs == *v));
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(out.assertions_lifted, 0, "no fake-discharge: {:?}", contract_names(&out));
+        assert!(
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("READS a MUTABLE-local capture")),
+            "the mut-capture body bin-2 reason must be emitted; got {:?}",
+            out.skip_reasons
+        );
+        // TEETH: `bin-2` -> terminal (refused), not parked unclassified.
+        assert!(
+            out.skip_reasons.iter().all(|r| matches!(
+                refusal_disposition(r),
+                Disposition::Refused | Disposition::Inactive
+            )),
+            "mut-capture `.any` must be TERMINAL: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn any_over_literal_domain_with_pure_body_is_not_mut_refused() {
+        // DISCRIMINATION (fake-refuse guard): a literal-array `.any` whose body is PURE
+        // (reads only the closure param + literals) is a genuine bounded-quantifier the
+        // forall lifter DISCHARGES. It must NEVER be swept into the mut-capture bin-2
+        // refuse -- a pure body has no runtime capture to read.
+        let src = r#"
+            #[test]
+            fn t() {
+                assert!([1, 2, 3, 4].iter().any(|v| *v > 3));
+            }
+        "#;
+        let out = lift_src(src);
+        assert!(
+            !out.skip_reasons
+                .iter()
+                .any(|r| r.contains("READS a MUTABLE-local capture")),
+            "a pure body must NOT trip the mut-capture refuse: {:?}",
+            out.skip_reasons
+        );
+        // No bin-2 terminal refusal manufactured for the pure case (it discharges or
+        // stays non-terminal); the mut-capture path leaves the pure dig path untouched.
+        assert!(
+            !out.skip_reasons.iter().any(|r| r.contains("bin-2")),
+            "a pure literal-array `.any` must not be terminalized as bin-2: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn any_over_literal_domain_with_immutable_capture_stays_unclassified() {
+        // DISCRIMINATION (fake-refuse guard #2): a literal-array `.any` whose body reads a
+        // NON-mut (immutable) captured local is NOT a proven runtime read -- it stays the
+        // UNCLASSIFIED bin-1 reason, never terminalized by the mut-capture path.
+        let src = r#"
+            #[test]
+            fn t() {
+                let ys = [1, 1, 1, 1];
+                assert!([&[1, 1, 1, 1], &[0, 0, 0, 0]].iter().any(|v| &ys == *v));
+            }
+        "#;
+        let out = lift_src(src);
+        assert!(
+            !out.skip_reasons
+                .iter()
+                .any(|r| r.contains("READS a MUTABLE-local capture")),
+            "an immutable capture must NOT trip the mut-capture refuse: {:?}",
+            out.skip_reasons
+        );
+        // And it is never fake-discharged as a bin-2 contradiction either.
+        assert!(
+            out.skip_reasons.iter().all(|r| !r.contains("READS a MUTABLE-local capture")),
+            "immutable-capture body stays off the mut-capture path: {:?}",
+            out.skip_reasons
+        );
     }
 }
