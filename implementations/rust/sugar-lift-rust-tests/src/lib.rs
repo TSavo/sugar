@@ -2171,6 +2171,23 @@ struct TemporalPlan {
     /// the `@adv` occurrence tag. Iterators ARE in `versioned` (so reads are tagged
     /// and `@adv` applies) but are NOT in `interior_mut` (no per-statement tick).
     iterators: BTreeSet<String>,
+    /// Locals bound to an array of NON-literal element constructions (`let xs =
+    /// [CountClone::new(), ..]`) that are subsequently consumed by a `.cloned()`
+    /// adaptor in a side-effecting `for`-loop (`for _ in xs.iter().cloned().zip(..) {}`).
+    /// `.cloned()` invokes `Clone::clone(&elem)` per element; for a user type whose
+    /// `Clone` impl has a side effect through `&self` (interior mutability -- the
+    /// `CountClone(Cell<i32>)` whose clone bumps a counter), the element VALUES change
+    /// during iteration. The `mut` keyword and the `Cell::new` constructor oracle are
+    /// both BLIND to this: `xs` is a non-`mut` `let` and its elements are user
+    /// constructor calls, not `Cell::new(..)` directly. So a subsequent
+    /// `assert!([..].any(|v| &xs == *v))` reads `xs`'s RUNTIME (clone-mutated) contents,
+    /// not a value constructed from source literals -- the same proven order-loss as the
+    /// `let mut`-capture terminal. Detected ONLY when BOTH (a) the array elements are
+    /// NON-literal constructions AND (b) `xs` is the base of a `.cloned()`/`.copied()`
+    /// adaptor in a bare side-effecting `for`-loop in the block. A PURE `.any` over a
+    /// plain `[1, 2, 3]` literal array (scalar-literal elements, no side-effecting
+    /// `.cloned()` loop) never enters this set -- the fake-refuse guardrail.
+    sideeffecting_clone_locals: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -2267,6 +2284,10 @@ impl TemporalScope {
     /// unstable). A non-mut local is provably immutable and stable.
     fn is_mut_local(&self, name: &str) -> bool {
         self.plan.mut_locals.contains(name)
+    }
+
+    fn is_sideeffecting_clone_local(&self, name: &str) -> bool {
+        self.plan.sideeffecting_clone_locals.contains(name)
     }
 
     fn define_local(&mut self, name: &str) {
@@ -5667,6 +5688,31 @@ fn collect_assertion_entries<'a>(
     // fns still NOT in `reduced_helpers` -- the block-local mirror of the file-level
     // Pass1/Pass2 split. (count, reason) per still-refused inner fn.
     let mut deferred_inner_fn_refusals: Vec<(String, usize, String)> = Vec::new();
+    // BLOCK-LOCAL reduction tracking (the name-collision fix). `reduced_helpers` is the
+    // FILE-level set: it dedups TOP-level helpers reduced by some test fn vs the same
+    // helper visited standalone (`visit_non_test_fn`). But a NESTED `fn` is lexically
+    // local to ITS enclosing block: two different test fns may each declare a distinct
+    // `fn zero_byte` / `fn check` with the SAME name but DIFFERENT bodies (rust-src
+    // hash/sip.rs has `zero_byte` in both `_64` and `_32`; char.rs has FIVE distinct
+    // nested `check`s). Keying the deferred-inner-fn drain off the GLOBAL set conflated
+    // them: once test A reduced its `zero_byte`, test B's distinct `zero_byte` was
+    // skipped at BOTH the inline-attempt AND the refusal drain, so its asserts were
+    // never enumerated -> they fell to the "unenumerated statement position" safety net
+    // (a FALSE unclassified, not real work). "Reduced during THIS block's processing"
+    // is computed two ways, unioned, so EVERY reduction path is covered: (1) the
+    // explicit `reduced_in_block` inserts at the bare-statement / arg-position commit
+    // sites below; (2) a SET DIFF against the snapshot of `reduced_helpers` taken at
+    // entry -- this catches reductions that happen DEEPER (e.g. `reduce_assertion_expr`
+    // inserting the helper name into `reduced_helpers` from inside a recursive desugar)
+    // without an explicit insert here. A name added to `reduced_helpers` during this
+    // call but absent at entry was reduced HERE. (The explicit set ALSO covers the
+    // collision case where a same-named helper was inherited at entry AND reduced here:
+    // the set-diff alone would miss it, the explicit insert catches it.) The deferred
+    // drain consults the union instead of the raw file-global set, so each block's
+    // nested fns are judged on their OWN reduction; the global set is still updated for
+    // cross-test/file TOP-level dedup.
+    let reduced_at_entry: HashSet<String> = reduced_helpers.clone();
+    let mut reduced_in_block: HashSet<String> = HashSet::new();
     for (stmt_idx, stmt) in stmts.iter().enumerate() {
         match stmt {
             Stmt::Local(local) => {
@@ -6355,7 +6401,8 @@ fn collect_assertion_entries<'a>(
                                 skipped.extend(commit.skipped);
                                 *macros_lifted += commit.macros_lifted;
                                 *reduced_helpers = commit.reduced_helpers;
-                                reduced_helpers.insert(commit.name);
+                                reduced_helpers.insert(commit.name.clone());
+                                reduced_in_block.insert(commit.name);
                                 true
                             }
                             // BAIL: the body did not fully reduce (honest unclassified
@@ -6423,6 +6470,17 @@ fn collect_assertion_entries<'a>(
         }
         advance_temporal_scope_for_stmt(stmt, &mut temporal_scope);
     }
+    // "Reduced in this block" = explicit commit-site inserts UNION the set-diff of
+    // `reduced_helpers` against its entry snapshot (covers deeper reduce paths). A
+    // closure recomputes it on demand so it reflects reductions made by the
+    // arg-position drain below as well.
+    let reduced_here = |explicit: &HashSet<String>, current: &HashSet<String>| -> HashSet<String> {
+        let mut s = explicit.clone();
+        for name in current.difference(&reduced_at_entry) {
+            s.insert(name.clone());
+        }
+        s
+    };
     // ARG-POSITION CALL-SITE INLINING (the second drain). A nested helper that is
     // never called as a BARE statement -- only in argument / reference / macro-arg
     // position (`assert_ne!(hash(&val), hash(&zero_byte(val, 0)))`) -- was not inlined
@@ -6436,8 +6494,12 @@ fn collect_assertion_entries<'a>(
     // refusal -- never fake-dug. Distinct sites with distinct literal actuals produce
     // distinct point-wise obligations (no collapse); inlining N sites of one source
     // assert is N obligations (accounted in `unaccounted`, never a silent drop).
+    let already_reduced_here = reduced_here(&reduced_in_block, reduced_helpers);
     for (fn_name, _count, reason) in &deferred_inner_fn_refusals {
-        if reduced_helpers.contains(fn_name) {
+        // Skip ONLY if THIS block's own processing already inlined this nested fn
+        // (block-local, not the raw file-global set -- a same-named nested fn reduced
+        // by a DIFFERENT test fn must not suppress this block's attempt).
+        if already_reduced_here.contains(fn_name) {
             continue;
         }
         // SOUNDNESS GATE: only attempt to inline a helper whose deferred refusal is
@@ -6514,15 +6576,21 @@ fn collect_assertion_entries<'a>(
             // ALSO refuse (double-count). A site that bailed contributed nothing; its
             // path is the outer runtime assertion (already accounted elsewhere).
             reduced_helpers.insert(fn_name.clone());
+            reduced_in_block.insert(fn_name.clone());
         }
     }
     // Drain the deferred nested-fn refusals: emit "reachable only via call-site
     // inlining" ONLY for inner fns NOT inlined by some call site in this block. A
-    // helper inlined at any callsite is in `reduced_helpers` (its asserts already
+    // helper inlined at any callsite is in `reduced_in_block` (its asserts already
     // discharged / terminal-refused point-wise), so re-refusing it here would
-    // double-count. This is the block-local Pass-2.
+    // double-count. Keyed BLOCK-LOCAL, not file-global: a same-named nested fn reduced
+    // in a DIFFERENT test fn must NOT suppress THIS block's refusal (else its distinct
+    // body's asserts silently vanish into the unenumerated safety net). This is the
+    // block-local Pass-2. Recompute the block-local reduction set (the arg-position
+    // drain above may have added reductions).
+    let reduced_here_final = reduced_here(&reduced_in_block, reduced_helpers);
     for (fn_name, count, reason) in &deferred_inner_fn_refusals {
-        if reduced_helpers.contains(fn_name) {
+        if reduced_here_final.contains(fn_name) {
             continue;
         }
         for _ in 0..*count {
@@ -6916,10 +6984,77 @@ fn closure_adaptor_refusal(expr: &Expr, scope: &TemporalScope) -> Option<String>
              iteration, not constructed from source literals); refused"
         ));
     }
+    // TERMINAL (bin-2 SIDE-EFFECTING-CLONE READ over a literal domain): the DOMAIN is a
+    // finite literal construction, but the closure body READS a captured local proven (by
+    // the temporal plan) to be a SIDE-EFFECTING-CLONE source -- an array of non-literal
+    // element constructions consumed by a `.cloned()` adaptor in a side-effecting
+    // `for`-loop (`let xs = [CountClone::new(); ..]; for _ in xs.iter().cloned()... {};
+    // assert!([..].any(|v| &xs == *v))`, rust-src `iter/adapters/zip.rs`
+    // ::test_zip_cloned_sideffectful). `.cloned()` invokes a user `Clone` impl through
+    // `&self`; for `CountClone(Cell<i32>)` that bumps an interior counter, so `xs`'s
+    // element values change DURING iteration. The asserted boolean ranges over `xs`'s
+    // RUNTIME (clone-mutated) contents, NOT a value constructed from source literals --
+    // the same proven order-loss as the `let mut`-capture terminal above, surfaced through
+    // interior mutability the `mut` keyword + the `Cell::new` constructor oracle are both
+    // blind to. EARNED ONLY when the temporal plan proved the side-effecting-clone trajectory
+    // (both the non-literal-element array AND the `.cloned()` side-effecting loop); a PURE
+    // `.any` over a plain `[1, 2, 3]` scalar-literal array reads as stable terms and STAYS
+    // the UNCLASSIFIED bin-1 reason below (the fake-refuse guardrail).
+    if for_iter_domain_is_literal(collection)
+        && call
+            .args
+            .iter()
+            .any(|a| closure_body_reads_sideeffecting_clone_local(a, scope))
+    {
+        return Some(format!(
+            "iterator/option adaptor `.{method}(|..| ..)` over {domain} whose closure body \
+             READS a SIDE-EFFECTING-CLONE-local capture (bin-2: an array whose elements' \
+             interior state was mutated by a `.cloned()` side-effecting `Clone` impl during \
+             iteration, not constructed from source literals); refused"
+        ));
+    }
     Some(format!(
         "iterator/option adaptor `.{method}(|..| ..)` over {domain}; not yet lifted; \
          released to layer 0"
     ))
+}
+
+/// True if `expr` is a closure whose BODY references a captured name that `scope`
+/// proves is a SIDE-EFFECTING-CLONE local (see `TemporalPlan::sideeffecting_clone_locals`),
+/// where that name is NOT one of the closure's own parameters. Mirror of
+/// `closure_body_reads_mut_local` for the interior-mutability-via-side-effecting-Clone
+/// trajectory.
+fn closure_body_reads_sideeffecting_clone_local(expr: &Expr, scope: &TemporalScope) -> bool {
+    let Expr::Closure(cl) = expr else {
+        return false;
+    };
+    let mut param_vec: Vec<String> = Vec::new();
+    for pat in &cl.inputs {
+        collect_pat_idents(pat, &mut param_vec);
+    }
+    let params: BTreeSet<String> = param_vec.into_iter().collect();
+    struct V<'a> {
+        scope: &'a TemporalScope,
+        params: &'a BTreeSet<String>,
+        found: bool,
+    }
+    impl<'ast, 'a> syn::visit::Visit<'ast> for V<'a> {
+        fn visit_expr_path(&mut self, p: &'ast syn::ExprPath) {
+            if let Some(name) = p.path.get_ident().map(|i| i.to_string()) {
+                if !self.params.contains(&name) && self.scope.is_sideeffecting_clone_local(&name) {
+                    self.found = true;
+                }
+            }
+            syn::visit::visit_expr_path(self, p);
+        }
+    }
+    let mut v = V {
+        scope,
+        params: &params,
+        found: false,
+    };
+    syn::visit::Visit::visit_expr(&mut v, &cl.body);
+    v.found
 }
 
 /// True if `expr` is a closure whose BODY references a name that `scope` proves is a
@@ -7132,12 +7267,121 @@ fn temporal_plan_for_stmts(stmts: &[Stmt], inherited_stateful: &BTreeSet<String>
         }
     }
     iterators.retain(|name| !interior_mut.contains(name));
+    let sideeffecting_clone_locals = collect_sideeffecting_clone_locals(stmts);
     TemporalPlan {
         versioned,
         mut_locals,
         interior_mut,
         iterators,
+        sideeffecting_clone_locals,
     }
+}
+
+/// Locals bound to an array of NON-literal element constructions that are then
+/// consumed by a `.cloned()`/`.copied()` adaptor inside a bare side-effecting
+/// `for`-loop statement. See `TemporalPlan::sideeffecting_clone_locals`. Sound BAIL
+/// signal for the `iter/adapters/zip.rs::test_zip_cloned_sideffectful` shape, where
+/// `let xs = [CountClone::new(); ..]; for _ in xs.iter().cloned().zip(..) {}` mutates
+/// `xs`'s interior counts via a side-effecting `Clone` impl the lifter cannot see.
+fn collect_sideeffecting_clone_locals(stmts: &[Stmt]) -> BTreeSet<String> {
+    // (a) Candidate locals: `let L = [<elems>]` where the elements are NON-literal
+    //     constructions (so a plain `[1, 2, 3]` scalar-literal array is excluded). We
+    //     require at least one element and that they are NOT all closed scalar literals.
+    let mut candidates: BTreeSet<String> = BTreeSet::new();
+    for stmt in stmts {
+        let Stmt::Local(local) = stmt else { continue };
+        let Some(init) = &local.init else { continue };
+        if init.diverge.is_some() {
+            continue;
+        }
+        if !init_is_nonliteral_element_array(&init.expr) {
+            continue;
+        }
+        for name in pat_idents(&local.pat) {
+            candidates.insert(name);
+        }
+    }
+    if candidates.is_empty() {
+        return BTreeSet::new();
+    }
+    // (b) Of those, keep only the ones that are the BASE of a `.cloned()`/`.copied()`
+    //     adaptor inside a bare side-effecting `for`-loop statement.
+    let mut consumed: BTreeSet<String> = BTreeSet::new();
+    for stmt in stmts {
+        // `for <pat> in <expr> <block>` (any block, including empty `{}`) is the
+        // side-effecting drive of the iterator chain.
+        let for_expr = match stmt {
+            Stmt::Expr(Expr::ForLoop(f), _) => Some(f),
+            _ => None,
+        };
+        let Some(f) = for_expr else { continue };
+        collect_cloned_adaptor_bases(&f.expr, &candidates, &mut consumed);
+    }
+    consumed
+}
+
+/// `let L = [<e0>, <e1>, ..]` (optionally `&`/`Box::new`-wrapped) whose elements are
+/// present and NOT all closed scalar literals -- i.e. element CONSTRUCTIONS (user
+/// `T::new()` calls, struct/tuple literals). Returns false for an empty array, a
+/// scalar-literal array (`[1, 2, 3]`), or a non-array init.
+fn init_is_nonliteral_element_array(expr: &Expr) -> bool {
+    let inner = strip_refs_groups(expr);
+    let Expr::Array(arr) = inner else {
+        // `Box::new([..])` -- unwrap one Box::new layer.
+        if let Expr::Call(c) = inner {
+            if let Expr::Path(p) = c.func.as_ref() {
+                let is_box_new = p.path.segments.last().is_some_and(|s| s.ident == "new")
+                    && p.path.segments.iter().any(|s| s.ident == "Box");
+                if is_box_new && c.args.len() == 1 {
+                    return init_is_nonliteral_element_array(&c.args[0]);
+                }
+            }
+        }
+        return false;
+    };
+    if arr.elems.is_empty() {
+        return false;
+    }
+    // At least one non-literal element AND not ALL scalar literals: a pure literal
+    // array (`[1, 2, 3]`) is the discrimination case and must NOT qualify.
+    arr.elems.iter().any(|e| !is_closed_scalar_literal(e))
+        && arr.elems.iter().all(|e| !is_closed_scalar_literal(e))
+}
+
+/// Walk `expr` for any `<base>.cloned()` / `<base>.copied()` method call whose
+/// underlying collection (after stripping `.iter()`/`.into_iter()` etc.) is a bare
+/// candidate local name; record that name in `consumed`.
+fn collect_cloned_adaptor_bases(
+    expr: &Expr,
+    candidates: &BTreeSet<String>,
+    consumed: &mut BTreeSet<String>,
+) {
+    struct V<'a> {
+        candidates: &'a BTreeSet<String>,
+        consumed: &'a mut BTreeSet<String>,
+    }
+    impl<'ast, 'a> syn::visit::Visit<'ast> for V<'a> {
+        fn visit_expr_method_call(&mut self, m: &'ast syn::ExprMethodCall) {
+            if (m.method == "cloned" || m.method == "copied") && m.args.is_empty() {
+                // The receiver is `<base>.iter()` / `<base>.into_iter()` etc.; strip
+                // the element-producing adaptor to reach the bare collection name.
+                let base = iter_adaptor_base(&m.receiver);
+                if let Expr::Path(p) = base {
+                    if let Some(name) = p.path.get_ident().map(|i| i.to_string()) {
+                        if self.candidates.contains(&name) {
+                            self.consumed.insert(name);
+                        }
+                    }
+                }
+            }
+            syn::visit::visit_expr_method_call(self, m);
+        }
+    }
+    let mut v = V {
+        candidates,
+        consumed,
+    };
+    syn::visit::Visit::visit_expr(&mut v, expr);
 }
 
 /// `let <name> = <interior-mutable constructor>(..)` -- record `<name>`.
