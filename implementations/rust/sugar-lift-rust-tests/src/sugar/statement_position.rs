@@ -34,11 +34,21 @@
 
 use syn::{BinOp, Expr};
 
+use crate::sugar::factory::FactoryCtx;
 use crate::{
     closure_body_advances_iterator, count_asserts_in_expr, expr_contains_await,
     is_free_fn_block_on_async, reflection_scrutinee, strip_const_block, token_key, Effect, Outcome,
     Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON,
 };
+
+/// REFUSE-side statement-position recognizer ([`StatementPositionSugar`] via
+/// [`decompose_statement_position`]): `Some` only for a bare statement expr that carries an
+/// assertion, else `None`. The verdict-reading factory entry (`build_statement_position`)
+/// walks a one-recognizer registry over this; the node owns the runtime-continuation verdict
+/// in its own `desugar`. Ctx-independent (the build env is unused).
+pub(crate) fn recognize(expr: &Expr, _fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    decompose_statement_position(expr).map(|node| Box::new(node) as Box<dyn Sugar>)
+}
 
 /// The bare expression-statement whose asserted value flows through an out-of-scope runtime
 /// continuation, composed as a node whose `desugar` makes every statement-position terminal
