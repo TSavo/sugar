@@ -6679,6 +6679,23 @@ fn translate_bool_assertion(
                     atom: not_(entry.atom),
                 });
             }
+            // `!(<lhs> <cmp> <rhs>)` is a NEGATED comparison. Route it to the
+            // relation-ATOM path (`not_` over the `lt`/`ge`/... atom) BEFORE the
+            // term fallback below. BinaryOpSugar made `translate_term_in_scope`
+            // succeed on a term-position comparison (emitting a `cmp:*` bool ctor),
+            // which would otherwise divert this to `eq(cmp:lt(..), false)` and break
+            // EUF-coalescing of a negated comparison with its positive sibling
+            // (`assert!(x >= 3); assert!(!(x < 3))` must share the `lt`/`ge` atom
+            // shape -- see negated_call_result_comparison_lifts_as_fol_not_under_euf_key).
+            if let Expr::Binary(binary) = unwrap_paren_group(&unary.expr) {
+                if relation_from_binop(&binary.op).is_some() {
+                    let entry = translate_binary_bool_assertion(binary, scope, float_widths)?;
+                    return Ok(AssertionEntry {
+                        name: entry.name,
+                        atom: not_(entry.atom),
+                    });
+                }
+            }
             if let Ok(term) = translate_term_in_scope(&unary.expr, scope) {
                 Ok(assertion_entry_from_eq(term, bool_const(false), scope))
             } else {
@@ -7444,6 +7461,23 @@ impl RelationOp {
 
     fn operator_asserted_result(self) -> bool {
         !matches!(self, RelationOp::Ne)
+    }
+
+    /// The bool-valued comparison-CTOR tag used when a comparison sits in TERM
+    /// position (`assert!(x == (a[0] < b[0]))`). Distinct per variant -- including
+    /// `eq` vs `neq` (unlike `operator_call_name`, which collapses Eq/Ne and relies
+    /// on a separate asserted-result bool to disambiguate). Distinctness is the
+    /// teeth: `cmp:lt(x,y)` and `cmp:gt(x,y)` are different terms, so claiming both
+    /// equal `true` over the same operands is UNSAT.
+    fn cmp_ctor_name(self) -> &'static str {
+        match self {
+            RelationOp::Eq => "eq",
+            RelationOp::Ne => "neq",
+            RelationOp::Lt => "lt",
+            RelationOp::Le => "le",
+            RelationOp::Gt => "gt",
+            RelationOp::Ge => "ge",
+        }
     }
 }
 
@@ -9508,6 +9542,38 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
             }))
         }
         Expr::Binary(binary) => {
+            // BinaryOpSugar: a COMPARISON in term position (`a[0] < b[0]` as the
+            // operand of an outer `==`, or the LHS of `assert_eq!(false == false,
+            // true)`) is the bool-VALUED FOL fact it states -- not an arithmetic
+            // Ctor. `term_binop_name` deliberately keeps the ordered comparisons
+            // OUT of the arithmetic ctor set (so a TOP-LEVEL/negated comparison
+            // routes to the relation-ATOM path and EUF-coalesces with its negated
+            // sibling). Here, in genuine TERM position, we lift the comparison as a
+            // bool value so the surrounding equality can reason over it.
+            if let Some(rel) = relation_from_binop(&binary.op) {
+                // const operands -> fold the comparison to its Bool literal, EXACT
+                // (`false == false` -> Bool(true)). `const_eval` is exact-or-None
+                // over the closed Int/Bool/Char set; a non-const operand returns
+                // None and falls through to the symbolic comparison ctor below.
+                if let Some(ConstVal::Bool(b)) = const_eval(expr, &BTreeMap::new()) {
+                    return Ok(bool_const(b));
+                }
+                // non-const but STABLE operands -> a bool-valued comparison ctor
+                // over the translated operand terms. Keyed per relation
+                // (`cmp:lt`/`cmp:le`/.../`cmp:eq`/`cmp:ne`) so two contradictory
+                // comparisons over the same operands are DISTINCT terms (the
+                // teeth): `cmp:lt(x,y)` and `cmp:gt(x,y)` cannot both equal `true`.
+                // EXACT-OR-BAIL: each operand translates through the same sound
+                // term path, so a `mut` container / effectful operand propagates
+                // its own named Err via `?` (the index/mut oracle still BAILS); we
+                // never emit a comparison over a temporally-unstable operand.
+                let lhs = translate_term_in_scope(&binary.left, scope)?;
+                let rhs = translate_term_in_scope(&binary.right, scope)?;
+                return Ok(Rc::new(Term::Ctor {
+                    name: format!("cmp:{}", rel.cmp_ctor_name()),
+                    args: vec![lhs, rhs],
+                }));
+            }
             let Some(op) = term_binop_name(&binary.op) else {
                 return Err(format!("unsupported term operator `{}`", token_key(expr)));
             };
@@ -10222,6 +10288,17 @@ fn const_int(expr: &Expr) -> Option<i64> {
     }
 }
 
+/// Peel transparent `(..)` / proc-macro `Group` wrappers off an expression so the
+/// inner shape can be matched. Source `(a[0] < b[0])` parses to `Paren(Binary)`;
+/// callers that branch on the binary op need the unwrapped node.
+fn unwrap_paren_group(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(p) => unwrap_paren_group(&p.expr),
+        Expr::Group(g) => unwrap_paren_group(&g.expr),
+        other => other,
+    }
+}
+
 fn term_binop_name(op: &BinOp) -> Option<&'static str> {
     match op {
         BinOp::Add(_) => Some("+"),
@@ -10234,13 +10311,16 @@ fn term_binop_name(op: &BinOp) -> Option<&'static str> {
         BinOp::BitXor(_) => Some("bit-xor"),
         BinOp::Shl(_) => Some("shift-left"),
         BinOp::Shr(_) => Some("shift-right"),
-        // NOTE: ordered comparisons (`<`/`<=`/`>`/`>=`) are deliberately NOT term
-        // binops. Adding them here makes `value() < 3` translatable as a `lt` ctor
-        // term, which DIVERTS `!(value() < 3)` away from the comparison-ATOM path
-        // and breaks euf-coalescing of a negated comparison with its positive
-        // sibling (negated_call_result_comparison_lifts_as_fol_not_under_euf_key).
-        // Term-position comparisons (`assert_eq!(a[0] < b[0], true)`) need a fix
-        // that routes top-level/negated comparisons to atoms first; not yet built.
+        // NOTE: comparisons (`==`/`!=`/`<`/`<=`/`>`/`>=`) are deliberately NOT
+        // arithmetic term binops -- they are bool-VALUED, not Int-valued. A
+        // TOP-LEVEL or negated comparison must route to the relation-ATOM path
+        // (`lt`/`ge` formulas) so a negated comparison EUF-coalesces with its
+        // positive sibling (negated_call_result_comparison_lifts_as_fol_not_under_euf_key).
+        // A comparison in genuine TERM position (operand of an outer `==`, or an
+        // `assert_eq!` arg) is handled SEPARATELY in `translate_term_in_scope`'s
+        // `Expr::Binary` arm (BinaryOpSugar): const-folded to a Bool literal, or
+        // emitted as a bool-valued `cmp:*` ctor -- never reaching this arithmetic
+        // table. Keeping comparisons out HERE is what preserves the atom routing.
         _ => None,
     }
 }

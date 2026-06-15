@@ -3169,6 +3169,155 @@ fn negated_comparison() {
     }
 }
 
+// ---- BinaryOpSugar: a comparison in TERM position ----------------------------
+// `assert_eq!(false == false, true)` carries a comparison as the LHS *term*; the
+// marquee `assert!(a.iter().lt(b.iter()) == (a[0] < b[0]))` carries `(a[0] < b[0])`
+// as the RHS operand of an outer `==`. Both reached `translate_term_in_scope` and
+// died on "unsupported term operator". They now lift: const-foldable comparisons
+// fold to a Bool literal; non-const stable comparisons become a `cmp:*` bool ctor.
+
+fn bool_const_value(formula_arg: &Term) -> bool {
+    match formula_arg {
+        Term::Const {
+            value: ConstValue::Bool(b),
+            ..
+        } => *b,
+        other => panic!("expected bool const, got {other:?}"),
+    }
+}
+
+#[test]
+fn const_comparison_in_term_position_folds_to_bool_literal() {
+    // POSITIVE: `false == false` is the LHS *term* of an assert_eq!; it const-folds
+    // EXACTLY to Bool(true), equated to the asserted RHS `true`. The atom is
+    // `= (Bool(true), Bool(true))` -- a true, satisfiable fact (sugar in, Bool out).
+    let src = r#"
+#[test]
+fn const_eq_folds() {
+    assert_eq!(false == false, true);
+}
+"#;
+    let out = lift_file(&parse(src), "src/lib.rs");
+    assert_eq!(out.seen, 1);
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    assert_eq!(out.decls.len(), 1);
+    let operands = inv_operands(&out.decls[0]);
+    assert_eq!(operands.len(), 1);
+    match operands[0].as_ref() {
+        Formula::Atomic { name, args } => {
+            assert_eq!(name, "=");
+            assert_eq!(args.len(), 2);
+            assert!(bool_const_value(&args[0]), "lhs `false == false` -> Bool(true)");
+            assert!(bool_const_value(&args[1]), "rhs `true` -> Bool(true)");
+        }
+        other => panic!("expected equality atom, got {other:?}"),
+    }
+}
+
+#[test]
+fn wrong_const_comparison_lifts_to_refutable_formula_not_fake_green() {
+    // TEETH: `assert_eq!(1 < 2, false)` is a WRONG assertion. The lifter must NOT
+    // fake-discharge it: the LHS `1 < 2` const-folds to its REAL value Bool(true),
+    // equated to the asserted-wrong RHS Bool(false). The lifted atom is
+    // `= (Bool(true), Bool(false))` -- a REFUTABLE (UNSAT) formula carrying the real
+    // value, exactly what a bad twin must produce.
+    let src = r#"
+#[test]
+fn wrong_const_cmp() {
+    assert_eq!(1 < 2, false);
+}
+"#;
+    let out = lift_file(&parse(src), "src/lib.rs");
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    let operands = inv_operands(&out.decls[0]);
+    assert_eq!(operands.len(), 1);
+    match operands[0].as_ref() {
+        Formula::Atomic { name, args } => {
+            assert_eq!(name, "=");
+            assert_eq!(args.len(), 2);
+            // The REAL value of `1 < 2` is true; the asserted RHS is false.
+            assert!(bool_const_value(&args[0]), "lhs `1 < 2` -> REAL Bool(true)");
+            assert!(
+                !bool_const_value(&args[1]),
+                "rhs `false` -> Bool(false); the formula is refutable, not green"
+            );
+        }
+        other => panic!("expected equality atom, got {other:?}"),
+    }
+}
+
+#[test]
+fn stable_comparison_in_term_position_lifts_as_cmp_ctor_over_index_terms() {
+    // POSITIVE (marquee shape): `assert!(lhs == (a[0] < b[0]))` over IMMUTABLE array
+    // locals. The outer `==` lifts to an equality atom; the RHS operand
+    // `(a[0] < b[0])` lifts to the bool-valued ctor `cmp:lt(index(a,0), index(b,0))`
+    // -- the comparison emitted AS the FOL atom it states, over stable index terms.
+    let src = r#"
+#[test]
+fn cmp_term() {
+    let a = [1, 2, 3];
+    let b = [4, 5, 6];
+    let flag = true;
+    assert!(flag == (a[0] < b[0]));
+}
+"#;
+    let out = lift_file(&parse(src), "src/lib.rs");
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    let operands = inv_operands(&out.decls[0]);
+    assert_eq!(operands.len(), 1);
+    // Find the `cmp:lt` ctor among the equality atom's args.
+    match operands[0].as_ref() {
+        Formula::Atomic { name, args } => {
+            assert_eq!(name, "=");
+            assert_eq!(args.len(), 2);
+            let cmp = args
+                .iter()
+                .find_map(|t| match t.as_ref() {
+                    Term::Ctor { name, args } if name == "cmp:lt" => Some(args.clone()),
+                    _ => None,
+                })
+                .expect("RHS `(a[0] < b[0])` lifts to a `cmp:lt` ctor");
+            assert_eq!(cmp.len(), 2, "cmp:lt over two operand terms");
+            // Each operand is `index(<container>, 0)` over an immutable local.
+            for (i, operand) in cmp.iter().enumerate() {
+                match operand.as_ref() {
+                    Term::Ctor { name, args } => {
+                        assert_eq!(name, "index", "operand {i} is an index term");
+                        assert_eq!(args.len(), 2);
+                    }
+                    other => panic!("expected index term, got {other:?}"),
+                }
+            }
+        }
+        other => panic!("expected equality atom, got {other:?}"),
+    }
+}
+
+#[test]
+fn comparison_over_mut_container_still_bails_not_fake_dig() {
+    // STRUCTURAL / BAIL: the same shape but `a` is `let mut` -- a mutable container
+    // is NOT temporally stable, so `a[0]` (an order-dependent read) must BAIL via
+    // the index/mut oracle. The comparison must NOT become a fake-dig over a
+    // stale value: the whole assertion is REFUSED (lifted == 0), not discharged.
+    let src = r#"
+#[test]
+fn cmp_over_mut() {
+    let mut a = [1, 2, 3];
+    let b = [4, 5, 6];
+    let flag = true;
+    assert!(flag == (a[0] < b[0]));
+}
+"#;
+    let out = lift_file(&parse(src), "src/lib.rs");
+    assert_eq!(out.seen, 1);
+    assert_eq!(
+        out.lifted, 0,
+        "a `mut` container operand is not temporally stable -> the comparison must \
+         BAIL, never fake-dig; warnings: {:?}",
+        out.warnings
+    );
+}
+
 #[test]
 fn non_call_assertions_stay_location_keyed() {
     let src = r#"
