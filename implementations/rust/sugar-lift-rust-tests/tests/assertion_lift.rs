@@ -9081,33 +9081,13 @@ fn t(io: X) {
     );
 }
 
-#[test]
-fn iter_next_over_literal_is_not_value_grounded_stays_opaque() {
-    // HONEST BOUNDARY: `.next()` returns `Option<&T>`; `assert_eq!(.., Some(&1))` lifts as
-    // the opaque federated `call:eq:Some(..) == true` (a user-type `PartialEq` dispatch we
-    // do NOT interpret). A standalone bad twin would stay z3-SAT, so value-grounding it
-    // would be a FAKE-DIG. The terminal therefore does NOT recognize `.next()`: the LHS
-    // stays the opaque `method:next` ctor (the established under-claim), NOT a grounded
-    // `Some(1)`. This pins the deliberate non-grounding so a future fake-dig regresses red.
-    let src = r#"
-#[test]
-fn t() {
-    assert_eq!([1, 2, 3].iter().next(), Some(&1));
-}
-"#;
-    let out = lift_file(&parse(src), "tests/iter_next.rs");
-    // No grounded int-pair is minted for `.next()` (it would be the fake-dig we refuse).
-    assert!(
-        dug_eq_int_pairs(&out.decls[0]).is_empty(),
-        "`.next()` must NOT ground to a value-level int pair (that would be a fake-dig)"
-    );
-    // The LHS receiver stays the opaque `method:next` ctor.
-    let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&out.decls[0]));
-    assert!(
-        doc.contains("method:next"),
-        "`.next()` must remain the opaque `method:next` ctor (no fake value-grounding): {doc}"
-    );
-}
+// TODO (MonadicSugar): `.next()` over a literal domain must GROUND, not stay opaque — no
+// opaque sugar. `assert_eq!([1,2,3].iter().next(), Some(&1))` is sugar all the way to
+// literals: unwrap the `Some` (an Option ctor over a literal, structural `==`) + positional
+// `.next` unroll -> `1 == 1`, bad-twin `Some(&2)` -> z3-UNSAT (real teeth, NOT a fake-dig —
+// the SAT-only behavior was a consequence of leaving it opaque). The grounded teeth test
+// lands with `MonadicSugar`; this opaque-pinning test was removed because its premise
+// ("grounding would be a fake-dig") is false.
 
 // ── DIG WAVE: for-loop-body cursor -- index-read unroll over a LITERAL-INT range ──
 //
