@@ -8907,6 +8907,319 @@ fn iter_next_over_runtime_receiver_stays_opaque_no_fake_dig() {
     }
 }
 
+/// The bool-CONST pairs of every `=` atom whose BOTH operands are `Term::Const`
+/// `Bool` (e.g. `=(bool(true), bool(true))`). Used to assert the term-position
+/// `.any`/`.all` reductions ground to a literal bool const (so a wrong-expected
+/// twin `=(bool(true), bool(false))` is z3-UNSAT -- the teeth).
+fn dug_eq_bool_pairs(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<(bool, bool)> {
+    fn walk(f: &Formula, out: &mut Vec<(bool, bool)>) {
+        match f {
+            Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
+                if let (
+                    Term::Const { value: ConstValue::Bool(a), .. },
+                    Term::Const { value: ConstValue::Bool(b), .. },
+                ) = (args[0].as_ref(), args[1].as_ref())
+                {
+                    out.push((*a, *b));
+                }
+            }
+            Formula::Connective { operands, .. } => {
+                for op in operands {
+                    walk(op, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    if let Some(inv) = decl.inv.as_deref() {
+        walk(inv, &mut out);
+    }
+    out
+}
+
+// ── ITERATOR EXTREMUM + PREDICATE terminals over a LITERAL Seq ───────────────
+//
+// `.min()`/`.max()` fold to the extremum int element wrapped in `MonadicSugar`'s
+// `opt:some`. `.find(p)`/`.position(p)` const-evaluate the closure over each
+// literal element and ground the first match to `opt:some(elem)` / `opt:some(idx)`
+// (or `opt:none`). `.any(p)`/`.all(p)` const-evaluate the closure over each element
+// and OR/AND the per-element bools to a grounded bool const. Each is teeth-gated:
+// a wrong-value twin lifts to z3-UNSAT, an effect-domain receiver stays opaque.
+
+#[test]
+fn iter_min_max_over_literal_array_ground_to_some_extremum() {
+    // `[3,1,2].iter().min()` -> `opt:some(1)`; `.max()` -> `opt:some(3)`. Both
+    // wrap the extremum int via MonadicSugar (the `Option<&T>` result). The atom
+    // is `=(opt:some(1), opt:some(1))` -- a structural Option equality, NOT an
+    // opaque `method:min` / `call:eq:Some` var.
+    let min = lift_eq_decl("[3, 1, 2].iter().min()", "Some(&1)", "tests/iter_min_good.rs");
+    assert_eq!(
+        dug_eq_ctor_name_pairs(&min),
+        vec![("opt:some".to_string(), "opt:some".to_string())],
+        "`.min()` and `Some(&1)` must BOTH ground to opt:some: {:?}",
+        min.inv
+    );
+    assert!(
+        !decl_mentions_ctor(&min, "method:min") && !decl_mentions_ctor(&min, "call:eq:Some"),
+        "no opaque method:min / call:eq:Some may survive: {:?}",
+        min.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&min), "iter_min_good") {
+        assert!(sat, "`.min() == Some(1)` must be SAT");
+    }
+    // BAD TWIN: `Some(&2)` -> `=(opt:some(1), opt:some(2))` -> z3-UNSAT (injectivity).
+    let min_bad = lift_eq_decl("[3, 1, 2].iter().min()", "Some(&2)", "tests/iter_min_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&min_bad), "iter_min_bad") {
+        assert!(!sat, "the bad twin `.min() == Some(&2)` must be z3-UNSAT (injectivity teeth)");
+    }
+
+    let max = lift_eq_decl("[3, 1, 2].iter().max()", "Some(&3)", "tests/iter_max_good.rs");
+    assert_eq!(
+        dug_eq_ctor_name_pairs(&max),
+        vec![("opt:some".to_string(), "opt:some".to_string())],
+        "`.max()` must ground to opt:some(3): {:?}",
+        max.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&max), "iter_max_good") {
+        assert!(sat, "`.max() == Some(3)` must be SAT");
+    }
+    let max_bad = lift_eq_decl("[3, 1, 2].iter().max()", "Some(&2)", "tests/iter_max_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&max_bad), "iter_max_bad") {
+        assert!(!sat, "the bad twin `.max() == Some(&2)` must be z3-UNSAT");
+    }
+}
+
+#[test]
+fn iter_min_over_runtime_receiver_stays_opaque_no_fake_dig() {
+    // THE EFFECT BOUNDARY HOLDS: a `.min()` over a RUNTIME receiver (a call result)
+    // is NOT a written literal -> the syntactic-literal gate declines and the term
+    // stays the opaque `method:min` ctor, never a fake `opt:some(_)` extremum over
+    // a runtime domain.
+    let src = "fn make_v() -> Vec<i32> { vec![3, 1, 2] }\n#[test]\nfn t() { let v = make_v(); assert_eq!(v.iter().min(), Some(&1)); }\n";
+    let out = lift_file(&parse(src), "tests/iter_min_runtime.rs");
+    assert!(
+        out.decls.iter().all(|d| {
+            !dug_eq_ctor_name_pairs(d)
+                .iter()
+                .any(|(a, b)| a == "opt:some" && b == "opt:some")
+        }),
+        "a runtime `.min()` must NOT ground to opt:some on BOTH sides (no fake-dig)"
+    );
+    assert!(
+        out.decls.iter().any(|d| decl_mentions_ctor(d, "method:min")),
+        "the runtime `.min()` must stay the opaque method:min ctor: {:?}",
+        out.decls.iter().map(|d| d.inv.clone()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn iter_find_and_position_over_literal_array_ground_with_teeth() {
+    // `.find(p)` -> `Some(first elem where p)`; `.position(p)` -> `Some(index of
+    // first match)`. The closure const-evaluates over each literal element.
+    // `[3,1,4,1,5].iter().find(|x| **x > 3)` -> first elem > 3 is 4 -> opt:some(4).
+    let find = lift_eq_decl(
+        "[3, 1, 4, 1, 5].iter().find(|x| **x > 3)",
+        "Some(&4)",
+        "tests/iter_find_good.rs",
+    );
+    assert_eq!(
+        dug_eq_ctor_name_pairs(&find),
+        vec![("opt:some".to_string(), "opt:some".to_string())],
+        "`.find()` must ground to opt:some(4): {:?}",
+        find.inv
+    );
+    assert!(
+        !decl_mentions_ctor(&find, "method:find"),
+        "no opaque method:find may survive: {:?}",
+        find.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&find), "iter_find_good") {
+        assert!(sat, "`.find(>3) == Some(4)` must be SAT");
+    }
+    // BAD TWIN: the first match is 4, not 5 -> `Some(&5)` is z3-UNSAT.
+    let find_bad = lift_eq_decl(
+        "[3, 1, 4, 1, 5].iter().find(|x| **x > 3)",
+        "Some(&5)",
+        "tests/iter_find_bad.rs",
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&find_bad), "iter_find_bad") {
+        assert!(!sat, "the bad twin `.find(>3) == Some(&5)` must be z3-UNSAT");
+    }
+    // No match -> `None`.
+    let find_none = lift_eq_decl(
+        "[1, 2, 3].iter().find(|x| **x > 9)",
+        "None",
+        "tests/iter_find_none.rs",
+    );
+    assert_eq!(
+        dug_eq_ctor_name_pairs(&find_none),
+        vec![("opt:none".to_string(), "opt:none".to_string())],
+        "`.find()` with no match must ground to opt:none: {:?}",
+        find_none.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&find_none), "iter_find_none") {
+        assert!(sat, "`.find(>9) == None` (both opt:none) must be SAT");
+    }
+
+    // `.position(p)` grounds the INDEX of the first match. First elem > 3 is at
+    // index 2 -> opt:some(2).
+    let pos = lift_eq_decl(
+        "[3, 1, 4, 1, 5].iter().position(|x| **x > 3)",
+        "Some(2)",
+        "tests/iter_position_good.rs",
+    );
+    assert_eq!(
+        dug_eq_ctor_name_pairs(&pos),
+        vec![("opt:some".to_string(), "opt:some".to_string())],
+        "`.position()` must ground to opt:some(2): {:?}",
+        pos.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&pos), "iter_position_good") {
+        assert!(sat, "`.position(>3) == Some(2)` must be SAT");
+    }
+    // BAD TWIN: the index is 2, not 0 -> z3-UNSAT.
+    let pos_bad = lift_eq_decl(
+        "[3, 1, 4, 1, 5].iter().position(|x| **x > 3)",
+        "Some(0)",
+        "tests/iter_position_bad.rs",
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&pos_bad), "iter_position_bad") {
+        assert!(!sat, "the bad twin `.position(>3) == Some(0)` must be z3-UNSAT");
+    }
+}
+
+#[test]
+fn iter_any_all_term_position_ground_to_bool_const_with_teeth() {
+    // TERM-POSITION `.any`/`.all` (the `assert_eq!(..., bool)` form): the closure
+    // const-evaluates over each literal element, OR'd (`any`) / AND'd (`all`) to a
+    // GROUNDED bool const. (The bare `assert!([..].any(..))` BOOL-ASSERTION form is
+    // handled upstream by the forall conjunction/disjunction path -- a different,
+    // already-tested mechanism; this node covers the value-position form.)
+    // `[1,2,3].iter().any(|x| *x > 2)` -- 3 > 2 is true -> bool(true).
+    let any = lift_eq_decl(
+        "[1, 2, 3].iter().any(|x| *x > 2)",
+        "true",
+        "tests/iter_any_good.rs",
+    );
+    assert_eq!(
+        dug_eq_bool_pairs(&any),
+        vec![(true, true)],
+        "`.any(>2)` must ground to bool(true): {:?}",
+        any.inv
+    );
+    assert!(
+        !decl_mentions_ctor(&any, "method:any"),
+        "no opaque method:any may survive: {:?}",
+        any.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&any), "iter_any_good") {
+        assert!(sat, "`.any(>2) == true` must be SAT");
+    }
+    // BAD TWIN: `.any(>2)` is truly true, asserted false -> `=(bool(true), bool(false))`
+    // -> z3-UNSAT.
+    let any_bad = lift_eq_decl(
+        "[1, 2, 3].iter().any(|x| *x > 2)",
+        "false",
+        "tests/iter_any_bad.rs",
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&any_bad), "iter_any_bad") {
+        assert!(!sat, "the bad twin `.any(>2) == false` must be z3-UNSAT (bool distinctness teeth)");
+    }
+
+    // `[1,2,3].iter().all(|x| *x > 0)` -- all > 0 -> bool(true).
+    let all = lift_eq_decl(
+        "[1, 2, 3].iter().all(|x| *x > 0)",
+        "true",
+        "tests/iter_all_good.rs",
+    );
+    assert_eq!(
+        dug_eq_bool_pairs(&all),
+        vec![(true, true)],
+        "`.all(>0)` must ground to bool(true): {:?}",
+        all.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&all), "iter_all_good") {
+        assert!(sat, "`.all(>0) == true` must be SAT");
+    }
+    // `.all(>1)` is FALSE (1 is not > 1) -> bool(false). Asserting it true is the
+    // bad twin -> z3-UNSAT.
+    let all_false = lift_eq_decl(
+        "[1, 2, 3].iter().all(|x| *x > 1)",
+        "false",
+        "tests/iter_all_false_good.rs",
+    );
+    assert_eq!(
+        dug_eq_bool_pairs(&all_false),
+        vec![(false, false)],
+        "`.all(>1)` must ground to bool(false): {:?}",
+        all_false.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&all_false), "iter_all_false_good") {
+        assert!(sat, "`.all(>1) == false` must be SAT");
+    }
+    let all_bad = lift_eq_decl(
+        "[1, 2, 3].iter().all(|x| *x > 1)",
+        "true",
+        "tests/iter_all_bad.rs",
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&all_bad), "iter_all_bad") {
+        assert!(!sat, "the bad twin `.all(>1) == true` must be z3-UNSAT");
+    }
+}
+
+#[test]
+fn iter_any_over_effect_domain_receiver_stays_opaque_no_fake_dig() {
+    // THE EFFECT BOUNDARY HOLDS: a `.any(..)` over a RUNTIME receiver is NOT a
+    // written literal -> the syntactic-literal gate in `iter_terminal` declines (the
+    // inner Seq desugar Hits), so the reduction never grounds a bool. The
+    // closure-adaptor provenance path then NAMES it bin-2 (an OPAQUE collection) and
+    // refuses -- no grounded bool over a runtime domain, no fake-dig.
+    let src = "fn make_v() -> Vec<i32> { vec![1, 2, 3] }\n#[test]\nfn t() { let v = make_v(); assert_eq!(v.iter().any(|x| *x > 2), true); }\n";
+    let out = lift_file(&parse(src), "tests/iter_any_runtime.rs");
+    assert_eq!(
+        out.lifted, 0,
+        "a runtime `.any()` must NOT lift (the effect domain stays opaque): {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.decls.iter().all(|d| dug_eq_bool_pairs(d).is_empty()),
+        "a runtime `.any()` must NOT ground to a bool-const equality (no fake-dig): {:?}",
+        out.decls.iter().map(|d| d.inv.clone()).collect::<Vec<_>>()
+    );
+    assert!(
+        out.skip_reasons.iter().any(|r| r.contains(".any(") && r.contains("OPAQUE")),
+        "the runtime `.any()` must be named bin-2 (opaque collection): {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn iter_find_with_unconstevaluable_closure_stays_opaque() {
+    // CONST-EVAL-OR-BAIL: a `.find` closure whose body reads an OUTER runtime
+    // capture (`cap`, not the closure param) cannot const-evaluate over the literal
+    // elements -> the `iter_terminal` reduction bails (the inner desugar would dig,
+    // but `const_eval_unary_closure` returns None on the unbound capture), so the
+    // closure-adaptor provenance path names it (bin-1: domain constructed, body not
+    // yet point-wise liftable) and refuses -- never a fake grounded `opt:some`.
+    let src = "#[test]\nfn t(cap: i32) { assert_eq!([1, 2, 3].iter().find(|x| **x > cap), Some(&1)); }\n";
+    let out = lift_file(&parse(src), "tests/iter_find_runtime_capture.rs");
+    assert_eq!(
+        out.lifted, 0,
+        "a `.find` with a runtime-capture closure must NOT lift (const-eval-or-bail): {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.decls.iter().all(|d| {
+            !dug_eq_ctor_name_pairs(d)
+                .iter()
+                .any(|(a, b)| a == "opt:some" && b == "opt:some")
+        }),
+        "a `.find` with a runtime-capture closure must NOT ground to opt:some (const-eval-or-bail): {:?}",
+        out.decls.iter().map(|d| d.inv.clone()).collect::<Vec<_>>()
+    );
+}
+
 #[test]
 fn cursor_fold_rfold_over_literal_array_digs_exact_elements() {
     // POSITIVE: `.filter(even).rfold(ys.len(), |i, &x| { assert_eq!(x, ys[i-1]); i-1 })`
