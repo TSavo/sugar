@@ -3403,6 +3403,253 @@ fn decompose_if(i: &syn::ExprIf) -> Option<ConditionalSugar> {
     })
 }
 
+/// A match arm reduced to its discriminant guard + body statements. The guard is
+/// the FOL predicate the arm's pattern states over the scrutinee (a literal `1 =>`
+/// is `scrut == 1`; a qualified variant `Poll::Ready(_) =>` is
+/// `variant_of(scrut) == "variant::Poll::Ready"`); the final wildcard `_ =>`
+/// carries `None`, signaling "the negation of every prior arm's guard".
+struct MatchArmLift {
+    /// `Some(guard)` for a discriminant arm; `None` for the catch-all `_` arm.
+    guard: Option<Rc<Formula>>,
+    body_stmts: Vec<Stmt>,
+}
+
+/// A `match scrut { pat_i => body_i }` reduced to its scrutinee term + per-arm
+/// discriminant guards. The conjunction it states is `⋀_i (guard_i ⇒ conj(A_i))`,
+/// guard_i = the discriminant predicate pat_i states over scrut; the trailing `_`
+/// arm's guard is the negation of the disjunction of all prior arm guards. This IS
+/// `ConditionalSugar` generalized from two branches (the bool guard `c` and its
+/// negation) to N arms (each pattern's discriminant). SOUNDNESS: a value reaching
+/// arm i's body matched pat_i, so guard_i holds there -- we emit `guard_i ⇒ A_i`,
+/// never bare `A_i`.
+struct MatchSugar {
+    arms: Vec<MatchArmLift>,
+}
+
+/// Build the discriminant guard a single match arm's pattern states over the
+/// scrutinee term, or None (BAIL) for any pattern outside the represented set:
+///   - a literal `1 =>`  ->  `scrut == 1` (reuses `translate_lit`);
+///   - a qualified variant `Poll::Ready(_) =>` / `Ok(_) =>` (a known prelude
+///     wrapper)  ->  `variant_of(scrut) == "variant::<tag>"` (reuses the SAME
+///     construction-semantics atom as panic-locus / `matches!` lifting);
+///   - the final wildcard `_ =>`  ->  `Ok(None)` (the caller substitutes the
+///     negation of all prior guards).
+/// BAILS (Err analog = `Ok(None)` is the wildcard, `None` is the bail) on:
+///   - a binding `x =>` that binds the scrutinee (single-segment `Pat::Ident`):
+///     a binding always matches and re-names the scrutinee -- not a discriminant;
+///   - an or-pattern `A | B =>`: a disjunction is not a single discriminant;
+///   - range patterns, ref/struct/tuple binding patterns, and anything else we do
+///     not translate to an unambiguous discriminant.
+/// Returns `Some(Some(guard))` for a discriminant arm, `Some(None)` for the final
+/// wildcard, `None` to BAIL (refusal stands).
+fn match_arm_guard(
+    pat: &syn::Pat,
+    scrut: &Rc<Term>,
+    is_last: bool,
+    scope: &TemporalScope,
+) -> Option<Option<Rc<Formula>>> {
+    match pat {
+        // The catch-all wildcard. Only the LAST arm may be a bare `_` (a non-final
+        // wildcard would shadow later arms -- not a shape we model); the caller
+        // fills its guard with the negation of all prior arm guards.
+        syn::Pat::Wild(_) if is_last => Some(None),
+        // A literal pattern: `1 =>`, `'a' =>`, `"s" =>`, `true =>`. The discriminant
+        // is `scrut == <lit>`, lifted via the SAME literal translator the equality
+        // assertion path uses (concrete value + width sort -- no masking).
+        syn::Pat::Lit(lit) => {
+            let lit_term = translate_lit(lit).ok()?;
+            Some(Some(eq(scrut.clone(), lit_term)))
+        }
+        // A qualified variant (`Type::Variant`, with or without a value subpattern)
+        // or a known prelude wrapper (`Some`/`Ok`/`Err`). The discriminant is
+        // `variant_of(scrut) == "variant::<tag>"` -- the construction-semantics atom
+        // panic-locus / `matches!` lifting emits, with the same teeth (two variants
+        // are distinct string constants). REUSE `strict_variant_path` (qualified
+        // path) and the prelude-wrapper check.
+        syn::Pat::TupleStruct(_) | syn::Pat::Struct(_) | syn::Pat::Path(_) => {
+            let tag = strict_variant_path(pat).or_else(|| {
+                // A single-segment prelude wrapper `Some`/`Ok`/`Err` as a guard is
+                // an unambiguous variant tag (same allow-list `wrapped_variant`
+                // uses); a unit `Ok =>` likewise.
+                wrapped_variant(pat).map(|(w, _)| w).or_else(|| {
+                    if let syn::Pat::Path(p) = pat {
+                        let name = path_to_variant_string(&p.path);
+                        matches!(
+                            p.path.segments.last().map(|s| s.ident.to_string()).as_deref(),
+                            Some("None")
+                        )
+                        .then_some(name)
+                    } else {
+                        None
+                    }
+                })
+            })?;
+            let variant_of = Rc::new(Term::Ctor {
+                name: "variant_of".to_string(),
+                args: vec![scrut.clone()],
+            });
+            Some(Some(eq(variant_of, str_const(format!("variant::{tag}")))))
+        }
+        // A reference pattern peels the `&` and re-asks (mirrors the variant/wrapper
+        // helpers, which all strip `Pat::Reference`).
+        syn::Pat::Reference(r) => match_arm_guard(&r.pat, scrut, is_last, scope),
+        syn::Pat::Paren(p) => match_arm_guard(&p.pat, scrut, is_last, scope),
+        // Everything else BAILS: a binding `x =>` (always matches, re-names the
+        // scrutinee), an or-pattern `A | B =>` (a disjunction, not a single
+        // discriminant), a range pattern, a tuple/struct binding pattern, a
+        // non-final wildcard. EXACT-OR-BAIL.
+        _ => None,
+    }
+}
+
+/// The statements of a match arm body: a block `{ .. }` contributes its own
+/// statements; any other body expression (a bare `assert_eq!(..)`, a value) is
+/// wrapped as one expression statement so the normal collector lifts it.
+fn arm_body_stmts(body: &Expr) -> Vec<Stmt> {
+    match body {
+        Expr::Block(b) => b.block.stmts.clone(),
+        Expr::Unsafe(u) => u.block.stmts.clone(),
+        other => vec![Stmt::Expr(other.clone(), None)],
+    }
+}
+
+/// Build a `MatchSugar` from a `Stmt::Expr(Expr::Match(..))`: the scrutinee must
+/// translate as a stable term (no mut local, no effect -- reuse the term
+/// translator, which bails on an opaque/effectful scrutinee), and every arm
+/// pattern must reduce to a discriminant guard (or the final `_`). None (BAIL,
+/// refusal stands) on any arm with a guard `if cond =>` (which value reaches the
+/// arm is genuinely guard-dependent), a binding/or/range/struct-binding pattern,
+/// or a non-translatable scrutinee. The body lift (all-or-nothing) happens in
+/// `MatchSugar::desugar`.
+fn decompose_match(m: &syn::ExprMatch, scope: &TemporalScope) -> Option<MatchSugar> {
+    // The scrutinee must NOT mutate / advance state and must translate to a stable
+    // term (a side-effecting scrutinee is not a timeless value).
+    if closure_body_is_side_effecting(&m.expr) {
+        return None;
+    }
+    let scrut = translate_term_in_scope(&m.expr, scope).ok()?;
+    let last_idx = m.arms.len().checked_sub(1)?;
+    let mut arms = Vec::with_capacity(m.arms.len());
+    for (i, arm) in m.arms.iter().enumerate() {
+        // An arm guard `pat if cond =>` changes which values reach the arm; the
+        // discriminant `pat` alone no longer characterizes the arm. BAIL.
+        if arm.guard.is_some() {
+            return None;
+        }
+        let guard = match_arm_guard(&arm.pat, &scrut, i == last_idx, scope)?;
+        arms.push(MatchArmLift {
+            guard,
+            body_stmts: arm_body_stmts(&arm.body),
+        });
+    }
+    Some(MatchSugar { arms })
+}
+
+impl Sugar for MatchSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared> {
+        // At least one arm must carry an assertion (else nothing to classify --
+        // leave it to the existing handling, e.g. a non-asserting `match p { A =>
+        // do_a(), B => do_b() }`). Mirrors `ConditionalSugar`'s `then+else == 0`.
+        let total: usize = self
+            .arms
+            .iter()
+            .map(|a| count_asserts_in_stmts(&a.body_stmts))
+            .sum();
+        if total == 0 {
+            return None;
+        }
+        // No arm body may mutate captured state: a single guarded implication is a
+        // point-wise claim only if the body is pure (mirrors `ConditionalSugar`).
+        if self.arms.iter().any(|a| loop_body_mutates(&a.body_stmts)) {
+            return None;
+        }
+        let mut conjuncts: Vec<Rc<Formula>> = Vec::new();
+        // Running disjunction of prior arms' discriminant guards -- the wildcard's
+        // guard is its negation (`_` fires iff no prior arm matched).
+        let mut prior_guards: Vec<Rc<Formula>> = Vec::new();
+        for arm in &self.arms {
+            let arm_guard = match &arm.guard {
+                Some(g) => {
+                    prior_guards.push(g.clone());
+                    g.clone()
+                }
+                // The final `_`: guard = negation of the disjunction of all prior
+                // arm guards. (`decompose_match` guarantees only the last arm is a
+                // bare `_`, so `prior_guards` is every preceding discriminant.)
+                None => {
+                    if prior_guards.is_empty() {
+                        // `match scrut { _ => .. }` -- a single catch-all is
+                        // unconditional; its guard is vacuous. Lift the body bare
+                        // (the asserts are point-wise). Use `true` antecedent so the
+                        // emit stays a uniform implication shape.
+                        eq(bool_const(true), bool_const(true))
+                    } else if prior_guards.len() == 1 {
+                        not_(prior_guards[0].clone())
+                    } else {
+                        not_(or_(prior_guards.clone()))
+                    }
+                }
+            };
+            let count = count_asserts_in_stmts(&arm.body_stmts);
+            if count == 0 {
+                // A diverging / non-asserting arm (`panic!()`, `do_a()`) carries no
+                // claim -- it contributes no implication, only its guard to the
+                // wildcard's negation (already pushed above). Skip.
+                continue;
+            }
+            let body_conj = self.lift_arm_conj(&arm.body_stmts, count, ctx)?;
+            conjuncts.push(implies(arm_guard, body_conj));
+        }
+        // If every asserting arm bailed there'd be nothing here -- but `total > 0`
+        // and each asserting arm either lifts (push) or returns None above, so a
+        // non-empty `conjuncts` is guaranteed when we reach here.
+        let atom = and_(conjuncts);
+        let warrant = Warrant {
+            name: Some(format!("{}::match", ctx.scope.local_scope())),
+        };
+        Some(Desugared::Constraints {
+            atom,
+            n: total,
+            warrant,
+        })
+    }
+}
+
+impl MatchSugar {
+    /// Lift an arm body's statements all-or-nothing through the normal collector,
+    /// returning the conjunction of its assert atoms or None (BAIL) if any assert
+    /// refuses / is missing (truth-table-or-gutter -- IDENTICAL to
+    /// `ConditionalSugar::lift_branch_conj`).
+    fn lift_arm_conj(
+        &self,
+        body_stmts: &[Stmt],
+        expected: usize,
+        ctx: &SugarCtx,
+    ) -> Option<Rc<Formula>> {
+        let mut body_entries = Vec::new();
+        let mut body_skipped = Vec::new();
+        let mut body_lifted = 0usize;
+        let mut body_helpers = HashSet::new();
+        collect_assertion_entries(
+            body_stmts,
+            ctx.scope.local_scope(),
+            ctx.options,
+            ctx.reducer,
+            *ctx.float_widths.borrow_mut(),
+            &mut body_entries,
+            &mut body_skipped,
+            &mut body_lifted,
+            &mut body_helpers,
+            ctx.macro_depth,
+            &ctx.scope.plan.interior_mut,
+        );
+        if !body_skipped.is_empty() || body_entries.len() != expected {
+            return None;
+        }
+        Some(and_(body_entries.iter().map(|e| e.atom.clone()).collect()))
+    }
+}
+
 /// Build a `FoldSugar` (or `RFoldSugar`) from a `.fold`/`.rfold` method call, by
 /// decomposing the receiver into its sequence-`Sugar` tree and capturing the
 /// closure's binders + body + acc-update tail. None (bail) on any shape outside
@@ -4289,11 +4536,30 @@ fn collect_assertion_entries(
             }
             Stmt::Expr(Expr::Match(m), _) => {
                 // Panic locus: a match whose every arm but one diverges asserts
-                // the scrutinee matches the surviving arm. Lift it; otherwise
-                // refuse the conditional.
+                // the scrutinee matches the surviving arm. Lift it FIRST (it pins
+                // the scrutinee's variant with no body asserts to carry).
                 if let Some(entry) = panic_locus_match_entry(m, &temporal_scope) {
                     entries.push(entry);
                     *macros_lifted += 1;
+                } else if let Some(desugared) = {
+                    // `MatchSugar`: `match scrut { pat_i => A_i }` is the conjunction
+                    // `⋀_i (guard_i => A_i)` -- each arm's discriminant guard implies
+                    // its arm asserts (a match IS nested conditionals; this generalizes
+                    // `ConditionalSugar` from a bool guard to N pattern discriminants).
+                    // EXACT-OR-BAIL: scrutinee must translate, every pattern must
+                    // reduce to a discriminant (binding/guard/or/range arms bail), and
+                    // the arm asserts must fully lift; a bail keeps the refusal below.
+                    // SOUNDNESS: never bare `A_i` -- always guarded by `guard_i`.
+                    let ctx = sugar_ctx(
+                        &temporal_scope,
+                        options,
+                        reducer,
+                        float_widths,
+                        macro_depth,
+                    );
+                    decompose_match(m, &temporal_scope).and_then(|s| s.desugar(&ctx))
+                } {
+                    emit_desugared(desugared, entries, macros_lifted);
                 } else {
                     let count: usize = m.arms.iter().map(|a| count_asserts_in_expr(&a.body)).sum();
                     for _ in 0..count {
