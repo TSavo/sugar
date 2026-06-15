@@ -14,6 +14,7 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{and_, forall, implies, lt, lte, num, Formula, Sort, Term};
 use syn::{Expr, Pat, Stmt};
 
+use crate::sugar::factory::{boxed, FactoryCtx};
 use crate::{
     bounded_domain_from_expr, capture_literal_arrays, collect_assertion_entries,
     count_asserts_in_stmts, iter_adaptor_base, loop_body_mutates, resolve_index_in_formula,
@@ -21,6 +22,31 @@ use crate::{
     FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant,
     SUGAR_SEQ_CAP,
 };
+
+/// COMPOSITE recognizer for `Expr::ForLoop`: the universal-quantifier composite
+/// ([`ForAllSugar`] via [`decompose_for_loop`]). Byte-identical to the
+/// `Expr::ForLoop(f) => boxed(decompose_for_loop(f, fcx.scope, fcx.let_inits))` arm of
+/// the old fat `build_composite`.
+pub(crate) fn recognize_for_loop(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    match expr {
+        Expr::ForLoop(f) => Some(boxed(decompose_for_loop(f, fcx.scope, fcx.let_inits))),
+        _ => None,
+    }
+}
+
+/// COMPOSITE method-call recognizer for a `.for_each(|v| body)` quantifier terminal
+/// ([`ForAllSugar`] via [`decompose_for_each`]): `Some` only for a recognized `for_each`
+/// shape, else `None` (the walk falls through to the next method-call recognizer).
+/// Mirrors the second arm of the old `build_method_call_composite` chain — AFTER
+/// `fold`, BEFORE `closure_adaptor`.
+pub(crate) fn recognize_for_each(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    match expr {
+        Expr::MethodCall(_) => {
+            decompose_for_each(expr, fcx.scope, fcx.let_inits).map(|node| Box::new(node) as Box<dyn Sugar>)
+        }
+        _ => None,
+    }
+}
 
 /// and `try_lift_for_each_forall` (a `.for_each(|var| body)` adaptor): a `for`
 /// loop and a `.for_each` over the SAME constructed domain assert the SAME

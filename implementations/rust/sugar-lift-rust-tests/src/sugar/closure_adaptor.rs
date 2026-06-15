@@ -30,11 +30,25 @@ use std::collections::BTreeMap;
 
 use syn::{Expr, visit::Visit};
 
+use crate::sugar::factory::FactoryCtx;
 use crate::{
     bounded_domain_from_expr, closure_body_advances_iterator, closure_body_is_side_effecting,
     count_asserts_in_expr, peel_fold_adaptors, token_key, Effect, Outcome, Sugar, SugarCtx,
     PURE_CLOSURE_ADAPTORS, STRUCTURAL_BACKSTOP_REASON,
 };
+
+/// COMPOSITE method-call recognizer for a closure-bearing adaptor ([`ClosureAdaptorSugar`]
+/// via [`decompose_closure_adaptor`]): `Some` only for a recognized closure-adaptor
+/// shape, else `None` (the walk falls through to the next method-call recognizer).
+/// Mirrors the THIRD arm of the old `build_method_call_composite` chain — AFTER
+/// `for_each`, BEFORE `match_scrutinee`.
+pub(crate) fn recognize_composite(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    match expr {
+        Expr::MethodCall(_) => decompose_closure_adaptor(expr, fcx.let_inits)
+            .map(|node| Box::new(node) as Box<dyn Sugar>),
+        _ => None,
+    }
+}
 
 /// The closure-bearing method statement, composed as a node whose `desugar` makes every
 /// order-loss verdict at the LEAVES (accessor / body / receiver). See the module header.

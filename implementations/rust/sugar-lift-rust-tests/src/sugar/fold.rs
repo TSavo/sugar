@@ -15,6 +15,7 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{and_, num, Term};
 use syn::{Expr, Pat, Stmt};
 
+use crate::sugar::factory::FactoryCtx;
 use crate::sugar::literal::LiteralSugar;
 use crate::{
     closure_body_is_side_effecting, closure_single_param_ident, collect_assertion_entries,
@@ -23,6 +24,19 @@ use crate::{
     tuple_components, wrap_rev, ConstVal, Desugared, Outcome, Sugar, SugarCtx, Warrant,
     SUGAR_SEQ_CAP,
 };
+
+/// COMPOSITE method-call recognizer for a `fold` terminal ([`FoldSugar`] via
+/// [`decompose_fold`]): `Some` only for a recognized `fold` shape, else `None` (the
+/// walk falls through to the next method-call recognizer). Mirrors the FIRST arm of the
+/// old `build_method_call_composite` chain — BEFORE `for_each`.
+pub(crate) fn recognize_composite(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    match expr {
+        Expr::MethodCall(_) => {
+            decompose_fold(expr, fcx.let_inits).map(|node| Box::new(node) as Box<dyn Sugar>)
+        }
+        _ => None,
+    }
+}
 
 /// Build the sequence-`Sugar` tree for a fold/for_each RECEIVER: a base literal
 /// domain wrapped by the ordered adaptor chain (`LiteralSugar` innermost, each

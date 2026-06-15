@@ -48,9 +48,19 @@
 // bare-`b"..."` operand recognizers stay where they are; this node owns the scalar
 // `Expr::Lit` term shape via `translate_lit`.)
 
-use syn::ExprLit;
+use syn::{Expr, ExprLit};
 
+use crate::sugar::factory::FactoryCtx;
 use crate::{translate_lit, Desugared, Effect, Outcome, Sugar, SugarCtx};
+
+/// TERM recognizer for `Expr::Lit`: a scalar literal news a [`TermLiteralSugar`].
+/// Byte-identical to the `Expr::Lit(lit) => translate_lit(lit)` arm.
+pub(crate) fn recognize(expr: &Expr, _fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    match expr {
+        Expr::Lit(lit) => Some(Box::new(TermLiteralSugar { lit: lit.clone() })),
+        _ => None,
+    }
+}
 
 /// A scalar literal in TERM position (`42u8`, `3.14`, `"s"`, `'c'`, `true`,
 /// `b"bytes"`, `b'0'`). LEAF: produces a single `Desugared::Term` directly from the

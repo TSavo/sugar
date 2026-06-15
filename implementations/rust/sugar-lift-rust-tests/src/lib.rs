@@ -28,16 +28,24 @@ mod try_fold_eval;
 // then that adaptor's exact transform.
 pub mod sugar {
     pub mod array_repeat;
+    pub mod array_term;
+    pub mod await_term;
     pub mod binop;
+    pub mod block_term;
     pub mod bound;
     pub mod call;
     pub mod callsite;
+    pub mod cast_term;
     pub mod closure_adaptor;
+    pub mod closure_term;
     pub mod compare;
     pub mod conditional;
+    pub mod const_block;
     pub mod control_flow_term;
+    pub mod ctor_term;
     pub mod enumerate;
     pub mod factory;
+    pub mod field_term;
     pub mod filter;
     pub mod filter_map;
     pub mod fold;
@@ -47,20 +55,29 @@ pub mod sugar {
     pub mod impl_method;
     pub mod index;
     pub mod literal;
+    pub mod macro_term;
     pub mod map;
     pub mod match_node;
     pub mod match_scrutinee;
+    pub mod method_call_term;
     pub mod path;
+    pub mod range_term;
+    pub mod raw_addr_term;
+    pub mod reference_term;
     pub mod regex_match;
+    pub mod repeat_term;
     pub mod rev;
     pub mod skip;
     pub mod skip_while;
     pub mod statement_position;
+    pub mod struct_term;
     pub mod take;
     pub mod take_while;
     pub mod temporal_read;
     pub mod term_leaf;
     pub mod term_literal;
+    pub mod transparent_term;
+    pub mod tuple_term;
     pub mod unary;
 }
 
@@ -10731,7 +10748,7 @@ fn macro_literal_contains_mut_local(lit_text: &str, scope: &TemporalScope) -> bo
     false
 }
 
-/// The THIN ADAPTER over the recursive term factory (`sugar::factory::build`). The
+/// The THIN ADAPTER over the recursive term factory (`sugar::factory::build_term`). The
 /// fat 30-arm `match` over `Expr` that used to live here has been RELOCATED, arm for
 /// arm, into `build` (which is now the COMPLETE term lifter); this function survives
 /// only to keep the name + signature its many callers depend on. It builds a
@@ -10753,7 +10770,7 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
         options: &options,
         let_inits: &let_inits,
     };
-    let node = sugar::factory::build(expr, &fcx);
+    let node = sugar::factory::build_term(expr, &fcx);
     let items: Vec<Item> = Vec::new();
     let reducer = ReductionCtx::from_items(&items);
     let mut float_widths = FloatWidthScope::new();

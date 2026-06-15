@@ -64,3 +64,17 @@ impl Sugar for ReasonedHitSugar {
         })
     }
 }
+
+/// Box an already-built `Rc<Term>` as the term-floor "resolved term" leaf. The shared
+/// constructor the term recognizers use for an arm whose preamble computed a concrete
+/// term (a folded literal, a const-index, a `TypeId::of` ctor, a dissolved `format!`
+/// string, an array/tuple aggregate, a closure / macro EUF symbol, ...).
+pub(crate) fn resolved_term(term: Rc<Term>) -> Box<dyn Sugar> {
+    Box::new(ResolvedTermSugar { term })
+}
+
+/// Box a verbatim refusal string as the term-floor "reasoned-Hit" leaf. The shared
+/// constructor the term recognizers use for an arm that produced an `Err(reason)`.
+pub(crate) fn reasoned_hit(reason: String) -> Box<dyn Sugar> {
+    Box::new(ReasonedHitSugar { reason })
+}

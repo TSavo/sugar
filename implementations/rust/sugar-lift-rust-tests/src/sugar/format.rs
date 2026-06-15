@@ -945,6 +945,20 @@ pub(crate) fn try_resolve_format(
     resolve_format_string(expr, let_bindings)
 }
 
+/// The in-scope IMMUTABLE `let` bindings (`name -> init`), the map the FormatSugar
+/// hooks (`a + b`, `format!`, `.to_string()`) resolve operands against: a `let mut` is
+/// excluded so a mutated operand is never mis-dissolved. Byte-identical to the inline
+/// `stable` map the source-of-truth factory arms built from `scope.let_bindings`.
+pub(crate) fn stable_let_bindings(
+    scope: &crate::TemporalScope,
+) -> BTreeMap<String, Expr> {
+    scope
+        .let_bindings_iter()
+        .filter(|(name, _)| !scope.is_mut_local(name))
+        .map(|(name, init)| (name.clone(), init.clone()))
+        .collect()
+}
+
 // ─────────────────────────────────────────────────────────────────────────────────
 // FLOAT-FORMATTING ENGINE (subsumes the former `flt2dec_eval.rs`).
 //
