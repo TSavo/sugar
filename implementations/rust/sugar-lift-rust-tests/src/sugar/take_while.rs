@@ -6,7 +6,7 @@
 // non-bool / runtime closure result. Lifted verbatim from the
 // `Adaptor::TakeWhile(closure)` arm of the former `apply_one_adaptor` match.
 
-use crate::{const_eval_unary_closure, Desugared, Sugar, SugarCtx};
+use crate::{const_eval_unary_closure, Desugared, Outcome, Sugar, SugarCtx};
 
 /// Keep the leading run of elements where `pred` const-evaluates true.
 pub(crate) struct TakeWhileSugar {
@@ -15,17 +15,19 @@ pub(crate) struct TakeWhileSugar {
 }
 
 impl Sugar for TakeWhileSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared> {
-        let seq = self.inner.desugar(ctx)?.into_seq()?;
-        let mut out = Vec::new();
-        for elem in seq {
-            let v = elem.value.as_ref()?;
-            if const_eval_unary_closure(&self.pred, v)?.as_bool()? {
-                out.push(elem);
-            } else {
-                break;
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        Outcome::from_opt((|| {
+            let seq = self.inner.desugar(ctx).dug()?.into_seq()?;
+            let mut out = Vec::new();
+            for elem in seq {
+                let v = elem.value.as_ref()?;
+                if const_eval_unary_closure(&self.pred, v)?.as_bool()? {
+                    out.push(elem);
+                } else {
+                    break;
+                }
             }
-        }
-        Some(Desugared::Seq(out))
+            Some(Desugared::Seq(out))
+        })())
     }
 }

@@ -30,7 +30,7 @@
 // inflates. This reproduces the old gate byte-for-byte (so the assertion-multiset
 // CID and the discharged/refused/unclassified counts are conserved); the change is
 // that the gate now lives in a typed Sugar, and that `desugar` NAMES why a bail
-// happened (the typed `Outcome`/`SideEffect` machinery) for the STEP-1 census.
+// happened (the typed `Outcome`/`Effect` machinery) for the STEP-1 census.
 
 use std::collections::{BTreeSet, HashSet};
 
@@ -85,7 +85,7 @@ pub(crate) struct InlineCommit {
 ///     "reachable only via call-site inlining" refusal. HONEST: a pure-but-
 ///     untranslated body stays unclassified -- never fake-dug, never fake-refused.
 ///
-/// There is deliberately NO callsite-level `Hit(SideEffect)` variant that COMMITS a
+/// There is deliberately NO callsite-level `Hit(Effect)` variant that COMMITS a
 /// differently-shaped result: a body whose asserts are ALL order-loss effects
 /// already has `added_unclassified == 0`, so it reaches `Dug` and commits-as-refused
 /// through the normal collector (the effect asserts become terminal-refused entries

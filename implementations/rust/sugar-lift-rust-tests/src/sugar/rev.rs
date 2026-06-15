@@ -5,7 +5,7 @@
 // element sequence. Lifted verbatim from the `Adaptor::Rev` arm of the former
 // `apply_one_adaptor` match.
 
-use crate::{Desugared, Sugar, SugarCtx};
+use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
 /// Reverse the inner element sequence.
 pub(crate) struct RevSugar {
@@ -13,10 +13,12 @@ pub(crate) struct RevSugar {
 }
 
 impl Sugar for RevSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared> {
-        let seq = self.inner.desugar(ctx)?.into_seq()?;
-        let mut s = seq;
-        s.reverse();
-        Some(Desugared::Seq(s))
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        Outcome::from_opt((|| {
+            let seq = self.inner.desugar(ctx).dug()?.into_seq()?;
+            let mut s = seq;
+            s.reverse();
+            Some(Desugared::Seq(s))
+        })())
     }
 }
