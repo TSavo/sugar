@@ -7035,3 +7035,188 @@ fn emit_value_contract_if_with_call_condition() {
         }
     }
 }
+
+// ── TermBreadth: float casts + unsafe-block transparency + try/async refuse ──
+
+// (A) FLOAT CAST -- `x as f32` lifts to the OPAQUE EUF ctor `cast:f32(x)`, the same
+// standard as the integer/char casts. The `num/mod.rs::test_f32f64` round-trip rows
+// (`assert_eq!(max as f32, f32::MAX)`, ...) fell out at the cast fallthrough; now
+// the LHS lifts and the row pins as a structural equality.
+#[test]
+fn float_cast_lifts_as_opaque_euf_ctor() {
+    let src = r#"
+#[test]
+fn cast_f32() {
+    let x: f64 = 1.0;
+    assert_eq!(x as f32, 1.0f32);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/num.rs");
+    assert_eq!(out.seen, 1);
+    assert_eq!(out.lifted, 1, "float-cast assert must lift: {:?}", out.warnings);
+    let operands = inv_operands(&out.decls[0]);
+    assert_eq!(operands.len(), 1);
+    match operands[0].as_ref() {
+        Formula::Atomic { name, args } => {
+            assert_eq!(name, "=");
+            match args[0].as_ref() {
+                Term::Ctor { name, args } => {
+                    assert_eq!(name, "cast:f32", "LHS is the opaque float-cast ctor");
+                    assert_eq!(args.len(), 1);
+                    match args[0].as_ref() {
+                        // `x` is an immutable local -> a versioned var under the cast.
+                        Term::Var { name } => assert!(
+                            name.starts_with('x'),
+                            "cast operand is the receiver var, got {name}"
+                        ),
+                        other => panic!("expected receiver var under cast, got {other:?}"),
+                    }
+                }
+                other => panic!("expected cast:f32 lhs, got {other:?}"),
+            }
+        }
+        other => panic!("expected cast equality atom, got {other:?}"),
+    }
+}
+
+// (A) ADVERSARIAL bad-twin: the SAME `cast:f32(x)` term cannot equal two distinct
+// pinned floats. A test that asserts `x as f32 == 1.0` AND `x as f32 == 2.0` lifts a
+// conjunction that is z3-UNSAT -- the structural equality has teeth, a wrong-expected
+// twin is REFUTED (it is not opaqued into a free pass).
+#[test]
+fn float_cast_contradictory_expected_is_unsat() {
+    let src = r#"
+#[test]
+fn cast_f32_contradiction() {
+    let x: f64 = 1.0;
+    assert_eq!(x as f32, 1.0f32);
+    assert_eq!(x as f32, 2.0f32);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/num.rs");
+    assert_eq!(out.lifted, 1, "both casted asserts lift into one row: {:?}", out.warnings);
+    // Two operands over the SAME cast term, pinned to two different reals.
+    assert_eq!(inv_operands(&out.decls[0]).len(), 2);
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "float_cast_contra") {
+        assert!(!sat, "cast:f32(x)==1.0 AND ==2.0 must be UNSAT (the teeth)");
+    }
+}
+
+// (A) DISCRIMINATION: a pointer-target cast still REFUSES (the float widening did not
+// loosen the residual rule). Guards against over-widening `scalar_cast_type_key`.
+#[test]
+fn float_cast_does_not_loosen_pointer_target_residual() {
+    let src = r#"
+#[test]
+fn ptr_cast() {
+    assert_eq!(source() as *const f32, source());
+}
+"#;
+    let out = lift_file(&parse(src), "tests/num.rs");
+    assert_eq!(out.lifted, 0);
+    assert!(
+        out.warnings.iter().any(|w| w.reason.contains("unsupported term")),
+        "pointer-target cast must stay residual: {:?}",
+        out.warnings
+    );
+}
+
+// (B) UNSAFE-BLOCK TRANSPARENCY -- a single-tail `unsafe { <expr> }` in term position
+// lifts to the SAME term as the bare `<expr>`: the `unsafe` wrapper is congruent. The
+// `result.rs`/`cell.rs`/`mem.rs` rows (`assert_eq!(unsafe { ok.unwrap_unchecked() },
+// 100)`, ...) fell out at the wrapper; now they lift via the inner method-call EUF.
+#[test]
+fn unsafe_block_is_value_transparent_congruent_to_bare_expr() {
+    let wrapped = r#"
+#[test]
+fn t() {
+    assert_eq!(unsafe { ok.unwrap_unchecked() }, 100);
+}
+"#;
+    let bare = r#"
+#[test]
+fn t() {
+    assert_eq!(ok.unwrap_unchecked(), 100);
+}
+"#;
+    let ow = lift_file(&parse(wrapped), "tests/result.rs");
+    let ob = lift_file(&parse(bare), "tests/result.rs");
+    assert_eq!(ow.lifted, 1, "unsafe-wrapped assert must lift: {:?}", ow.warnings);
+    assert_eq!(ob.lifted, 1, "bare assert must lift: {:?}", ob.warnings);
+    // CONGRUENCE: the unsafe wrapper introduces no new shape -- the two invs are
+    // byte-identical (same canonical FOL).
+    assert_eq!(
+        format!("{:?}", inv_operands(&ow.decls[0])),
+        format!("{:?}", inv_operands(&ob.decls[0])),
+        "unsafe {{ e }} must lift to the same term as bare e (transparency)"
+    );
+}
+
+// (B) ADVERSARIAL bad-twin: the transparent unsafe row still has teeth -- the same
+// inner value cannot equal two distinct pins, so a wrong-expected twin is UNSAT.
+#[test]
+fn unsafe_block_transparent_row_refutes_wrong_expected() {
+    let src = r#"
+#[test]
+fn t() {
+    let r = id();
+    assert_eq!(unsafe { r.get() }, 1);
+    assert_eq!(unsafe { r.get() }, 2);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/cell.rs");
+    assert_eq!(out.lifted, 1, "both unsafe asserts lift: {:?}", out.warnings);
+    assert_eq!(inv_operands(&out.decls[0]).len(), 2);
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "unsafe_contra") {
+        assert!(!sat, "transparent unsafe row must refute a contradictory pin (UNSAT)");
+    }
+}
+
+// (B) STRUCTURAL discrimination: only the WRAPPER is transparent. A temporally-unstable
+// inner read (`&mut *cell.get()` -- `&mut` of a deref, not an immutable value) still
+// BAILS through the ordinary operand path. No fake-dig: the unsafe wrapper does not
+// launder a mutable-raw deref into a discharge.
+#[test]
+fn unsafe_block_mutable_raw_deref_still_bails() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(unsafe { &mut *cell.get() }, comp);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/cell.rs");
+    assert_eq!(out.lifted, 0, "mutable-raw deref under unsafe must NOT lift");
+    assert!(
+        out.warnings.iter().any(|w| w.reason.contains("unsupported term")),
+        "the inner `&mut *p` must stay residual (only the wrapper is transparent): {:?}",
+        out.warnings
+    );
+}
+
+// (C) TRY/ASYNC BLOCK -> TERMINAL refuse. `assert!(Option::is_none(&try { join!(...) }))`
+// (future.rs) is effectful control-flow -- a `try` block / `async` block / `?` is not a
+// timeless point-wise value. It is a NAMED refusal whose disposition is TERMINAL
+// (Refused), never Unclassified work.
+#[test]
+fn try_async_block_assert_is_terminal_refusal() {
+    let src = r#"
+#[test]
+fn join_try() {
+    assert!(Option::is_none(&try { join!(maybe_fut?, async { unreachable!() }) }));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/future.rs");
+    assert_eq!(out.assertions_lifted, 0, "try-block assert must not lift");
+    let reason = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains("effectful control-flow block"))
+        .unwrap_or_else(|| {
+            panic!("expected an effectful-control-flow refusal, got {:?}", out.skip_reasons)
+        });
+    assert_eq!(
+        sugar_lift_rust_tests::refusal_disposition(reason),
+        sugar_lift_rust_tests::Disposition::Refused,
+        "try/async control-flow block must classify TERMINAL refused, not unclassified work"
+    );
+}
