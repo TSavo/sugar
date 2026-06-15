@@ -9506,3 +9506,336 @@ fn test_map_try_folds() {
         "the runtime rows must STAY opaque method:try_fold (not fabricated)"
     );
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// FINAL THREE: the last three coretests `unclassified` asserts, driven to 0.
+//   1. iter/adapters/zip.rs::test_zip_cloned_sideffectful  -> BAIL (SideEffect)
+//   2. hash/sip.rs::test_hash_no_bytes_dropped_32          -> DIG (finite conj + teeth)
+//   3. char.rs::test_decode_utf16_size_hint                -> BAIL (runtime iterator)
+// ════════════════════════════════════════════════════════════════════════════
+
+/// The single decl whose name ends with `suffix`.
+fn decl_named<'a>(
+    out: &'a sugar_lift_rust_tests::AdapterOutput,
+    suffix: &str,
+) -> &'a sugar_ir_symbolic::ContractDecl {
+    out.decls
+        .iter()
+        .find(|d| d.name.ends_with(suffix))
+        .unwrap_or_else(|| {
+            panic!(
+                "no decl named *{suffix}; decls = {:?}",
+                out.decls.iter().map(|d| &d.name).collect::<Vec<_>>()
+            )
+        })
+}
+
+/// The single `<lhs> <op> <rhs>` integer comparison atom of a decl whose `inv` is
+/// `and(<one comparison atom>)`, returned as `(op, lhs, rhs)`.
+fn int_cmp_atom(decl: &sugar_ir_symbolic::ContractDecl) -> (String, i128, i128) {
+    let ops = inv_operands(decl);
+    assert_eq!(ops.len(), 1, "expected a single-atom conjunction: {ops:?}");
+    let Formula::Atomic { name, args } = ops[0].as_ref() else {
+        panic!("expected comparison atom, got {:?}", ops[0]);
+    };
+    let int_of = |t: &Term| -> i128 {
+        match t {
+            Term::Const { value: ConstValue::Int(v), .. } => *v,
+            other => panic!("expected int operand, got {other:?}"),
+        }
+    };
+    (name.clone(), int_of(&args[0]), int_of(&args[1]))
+}
+
+// ── CASE 2 (DIG): nested `fn zero_byte(val, byte) { assert!(byte < 4); .. }` is
+//    inlined at its literal-actual call sites 0..3, emitting the finite conjunction
+//    `0<4 ∧ 1<4 ∧ 2<4 ∧ 3<4`. The 64-bit twin (`byte < 8`, actuals 0..7) already
+//    worked; the 32-bit twin was lost ONLY to a global-name-collision with the
+//    64-bit `zero_byte` (now keyed block-local). ───────────────────────────────
+
+#[test]
+fn case2_zero_byte_inlines_to_finite_conjunction_dig() {
+    // Both test fns, each with its OWN distinct nested `zero_byte` -- the real
+    // corpus shape (rust-src hash/sip.rs). Before the block-local fix, the 32-bit
+    // `byte < 4` fell to the unenumerated safety net (false unclassified).
+    let src = r#"
+        #[test]
+        fn test_hash_no_bytes_dropped_64() {
+            let val = 0xdeadbeef_deadbeef_u64;
+            assert_ne!(hash(&val), hash(&zero_byte(val, 0)));
+            assert_ne!(hash(&val), hash(&zero_byte(val, 1)));
+            fn zero_byte(val: u64, byte: usize) -> u64 { assert!(byte < 8); val }
+        }
+        #[test]
+        fn test_hash_no_bytes_dropped_32() {
+            let val = 0xdeadbeef_u32;
+            assert_ne!(hash(&val), hash(&zero_byte(val, 0)));
+            assert_ne!(hash(&val), hash(&zero_byte(val, 1)));
+            assert_ne!(hash(&val), hash(&zero_byte(val, 2)));
+            assert_ne!(hash(&val), hash(&zero_byte(val, 3)));
+            fn zero_byte(val: u32, byte: usize) -> u32 { assert!(byte < 4); val }
+        }
+    "#;
+    let out = lift_file(&parse(src), "tests/sip.rs");
+    // NO unclassified safety-net refusal: the 32-bit byte<4 is DUG, not lost.
+    assert!(
+        !out.skip_reasons
+            .iter()
+            .any(|r| r.contains("unenumerated statement position")),
+        "byte<4 must be DUG, not fall to the unenumerated safety net: {:?}",
+        out.skip_reasons
+    );
+    // The 4 argsite decls for the 32-bit zero_byte ground to 0<4, 1<4, 2<4, 3<4.
+    let mut seen: Vec<i128> = Vec::new();
+    for site in 0..4 {
+        let decl = decl_named(
+            &out,
+            &format!("test_hash_no_bytes_dropped_32::argsite::zero_byte#b{site}"),
+        );
+        let (op, lhs, rhs) = int_cmp_atom(decl);
+        assert_eq!(op, "<", "the inlined atom is a `<` comparison");
+        assert_eq!(rhs, 4, "the bound is < 4");
+        seen.push(lhs);
+        // Each ground atom `site < 4` (site in 0..3) is TRUE -> SAT (teeth: real,
+        // not vacuous). z3_verdict: Some(true)=SAT, Some(false)=UNSAT, None=z3 absent.
+        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("case2_good_b{site}")) {
+            assert!(sat, "ground `{lhs} < 4` must be satisfiable (true)");
+        }
+    }
+    seen.sort();
+    assert_eq!(seen, vec![0, 1, 2, 3], "the finite conjunction 0<4 ∧ 1<4 ∧ 2<4 ∧ 3<4");
+}
+
+#[test]
+fn case2_zero_byte_bad_twin_byte_lt_3_refutes_z3_unsat() {
+    // BAD-TWIN: `assert!(byte < 3)` over the SAME actuals 0..3. Site 3 grounds to
+    // `3 < 3`, which is FALSE: the conjunction over all sites is z3-UNSAT (refutes).
+    let src = r#"
+        #[test]
+        fn test_hash_no_bytes_dropped_32() {
+            let val = 0xdeadbeef_u32;
+            assert_ne!(hash(&val), hash(&zero_byte(val, 0)));
+            assert_ne!(hash(&val), hash(&zero_byte(val, 1)));
+            assert_ne!(hash(&val), hash(&zero_byte(val, 2)));
+            assert_ne!(hash(&val), hash(&zero_byte(val, 3)));
+            fn zero_byte(val: u32, byte: usize) -> u32 { assert!(byte < 3); val }
+        }
+    "#;
+    let out = lift_file(&parse(src), "tests/sip_twin.rs");
+    let decl = decl_named(&out, "test_hash_no_bytes_dropped_32::argsite::zero_byte#b3");
+    let (op, lhs, rhs) = int_cmp_atom(decl);
+    assert_eq!((op.as_str(), lhs, rhs), ("<", 3, 3), "bad-twin site 3 grounds to `3 < 3` (false)");
+    // z3_verdict: Some(true)=SAT, Some(false)=UNSAT, None=z3 absent.
+    if let Some(sat) = z3_verdict(&inv_json(decl), "case2_bad_twin_b3") {
+        assert!(!sat, "bad-twin `3 < 3` is z3-UNSAT (refutes)");
+    }
+}
+
+// ── CASE 1 (BAIL): `.any` over a literal array whose closure reads a captured
+//    local mutated via a side-effecting `.cloned()` is refused; a PURE `.any` over
+//    a plain `[1,2,3]` literal is NOT refused by the new guard. ─────────────────
+
+const SIDEEFFECT_CLONE_REASON: &str = "READS a SIDE-EFFECTING-CLONE-local capture";
+
+#[test]
+fn case1_cloned_sideeffectful_any_is_refused_bail() {
+    // rust-src iter/adapters/zip.rs::test_zip_cloned_sideffectful shape: `xs` is a
+    // non-`mut` array of constructor calls consumed by `for _ in xs.iter().cloned()
+    // .zip(..) {}`; the asserted `.any(|v| &xs == *v)` reads `xs`'s clone-mutated
+    // interior -- not constructible from source literals.
+    let src = r#"
+        #[test]
+        fn test_zip_cloned_sideffectful() {
+            let xs = [CountClone::new(), CountClone::new(), CountClone::new(), CountClone::new()];
+            let ys = [CountClone::new(), CountClone::new()];
+            for _ in xs.iter().cloned().zip(ys.iter().cloned()) {}
+            assert!([&[1, 1, 1, 0], &[1, 1, 0, 0]].iter().any(|v| &xs == *v));
+        }
+    "#;
+    let out = lift_file(&parse(src), "tests/zip.rs");
+    assert!(
+        out.skip_reasons.iter().any(|r| r.contains(SIDEEFFECT_CLONE_REASON)),
+        "the side-effecting-clone `.any` must BAIL with its named reason: {:?}",
+        out.skip_reasons
+    );
+    use sugar_lift_rust_tests::{refusal_disposition, Disposition};
+    let r = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains(SIDEEFFECT_CLONE_REASON))
+        .unwrap();
+    assert_eq!(
+        refusal_disposition(r),
+        Disposition::Refused,
+        "side-effecting-clone read is a TERMINAL (bin-2) refusal"
+    );
+}
+
+#[test]
+fn case1_discrimination_pure_any_over_int_literal_array_not_refused() {
+    // GUARDRAIL: a PURE `.any` over a plain `[1, 2, 3]` scalar-literal array (no
+    // side-effecting `.cloned()` loop, no constructor-call elements) must NOT be
+    // touched by the new side-effecting-clone guard. It stays the EXISTING bin-1
+    // "not yet lifted" UNCLASSIFIED reason -- the fake-refuse guard.
+    let src = r#"
+        #[test]
+        fn t() {
+            let xs = [1, 2, 3];
+            assert!(xs.iter().any(|v| *v == 2));
+        }
+    "#;
+    let out = lift_file(&parse(src), "tests/pure_any.rs");
+    assert!(
+        !out.skip_reasons.iter().any(|r| r.contains(SIDEEFFECT_CLONE_REASON)),
+        "a pure `.any` over an int-literal array must NOT be refused by the \
+         side-effecting-clone guard (fake-refuse guard): {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn case1_discrimination_cloned_loop_over_int_literals_not_refused() {
+    // GUARDRAIL 2: even WITH a `.cloned()` loop, a `[1,2,3]` SCALAR-LITERAL array is
+    // pure (i32 Clone is the identity, no side effect) -- the array elements are
+    // closed literals, so it is NOT a side-effecting-clone source. Must NOT be
+    // refused by the new guard (only NON-literal-element arrays qualify).
+    let src = r#"
+        #[test]
+        fn t() {
+            let xs = [1, 2, 3];
+            for _ in xs.iter().cloned() {}
+            assert!([&[1, 2, 3]].iter().any(|v| &xs == *v));
+        }
+    "#;
+    let out = lift_file(&parse(src), "tests/cloned_lits.rs");
+    assert!(
+        !out.skip_reasons.iter().any(|r| r.contains(SIDEEFFECT_CLONE_REASON)),
+        "a `.cloned()` loop over a SCALAR-LITERAL array is pure and must NOT trigger \
+         the side-effecting-clone guard: {:?}",
+        out.skip_reasons
+    );
+}
+
+// ── CASE 3 (BAIL): a nested `fn check` that builds a runtime iterator
+//    (`let mut iter = char::decode_utf16(..)`) and asserts over its per-iteration
+//    `size_hint()` in a `loop` is refused (runtime iterator construct, bin-2). The
+//    block-local-keying fix EXPOSES it (it was hidden behind a name-collision with
+//    the other char.rs `check`s); the discrimination test proves the change does
+//    NOT reclassify a CONCRETE-literal nested-fn assert. ─────────────────────────
+
+#[test]
+fn case3_decode_utf16_size_hint_loop_is_refused_bail() {
+    // rust-src char.rs::test_decode_utf16_size_hint, plus a SECOND test fn that ALSO
+    // declares a nested `fn check` (the name-collision that masked this one). The
+    // loop-bearing `check` must be REFUSED as a runtime iterator, NOT lost to the
+    // unenumerated safety net (which is unclassified).
+    let src = r#"
+        #[test]
+        fn other_check() {
+            fn check(input: char, expect: u32) { assert_eq!(input as u32, expect); }
+            check('A', 65);
+            check('B', 66);
+        }
+        #[test]
+        fn test_decode_utf16_size_hint() {
+            fn check(s: &[u16]) {
+                let mut iter = char::decode_utf16(s.iter().cloned());
+                loop {
+                    let count = iter.clone().count();
+                    let (lower, upper) = iter.size_hint();
+                    assert!(lower <= count && count <= upper.unwrap());
+                    if let None = iter.next() { break; }
+                }
+            }
+            check(&[0xD800, 0xD800, 0xDC00]);
+            check(&[0xD800, 0]);
+        }
+    "#;
+    let out = lift_file(&parse(src), "tests/char.rs");
+    use sugar_lift_rust_tests::{refusal_disposition, Disposition};
+    // The loop `check` assert is REFUSED (terminal), not unclassified.
+    assert!(
+        !out.skip_reasons
+            .iter()
+            .any(|r| r.contains("unenumerated statement position")),
+        "the loop-bearing `check` must be REFUSED, not lost to the unenumerated \
+         safety net: {:?}",
+        out.skip_reasons
+    );
+    let check_refusal = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains("`check`") && r.contains("runtime iterator"))
+        .unwrap_or_else(|| panic!("expected a runtime-iterator refusal for `check`: {:?}", out.skip_reasons));
+    assert_eq!(
+        refusal_disposition(check_refusal),
+        Disposition::Refused,
+        "the runtime-iterator `check` is a TERMINAL (bin-2) refusal"
+    );
+    // DISCRIMINATION: the OTHER nested `check` (concrete `input as u32 == expect`
+    // over literal actuals) is NOT reclassified -- the block-local keying preserves
+    // the deferred-inner-fn drain for non-loop nested fns. Its asserts DISCHARGE
+    // (inlined at the literal call sites), and crucially it does NOT acquire a
+    // runtime-iterator / unenumerated refusal.
+    assert!(
+        out.skip_reasons
+            .iter()
+            .all(|r| !(r.contains("other_check") || r.contains("input as u32"))),
+        "the concrete nested `check` in other_check must NOT be wrongly refused: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn case3_discrimination_concrete_nested_fn_still_inlines_not_refused() {
+    // GUARDRAIL: a CONCRETE nested fn with literal actuals (no runtime iterator,
+    // no loop) must still DIG via call-site inlining after the block-local-keying
+    // change -- the deferred-inner-fn drain is preserved for non-loop nested fns.
+    // Two test fns each declaring a same-named `fn inner` with DISTINCT bodies: both
+    // must dig on their OWN bodies (no collision suppression).
+    let src = r#"
+        #[test]
+        fn a() {
+            fn inner(x: i32) { assert!(x < 10); }
+            inner(3);
+            inner(7);
+        }
+        #[test]
+        fn b() {
+            fn inner(x: i32) { assert!(x < 100); }
+            inner(50);
+            inner(90);
+        }
+    "#;
+    let out = lift_file(&parse(src), "tests/nested.rs");
+    assert!(
+        !out.skip_reasons
+            .iter()
+            .any(|r| r.contains("unenumerated statement position")
+                || r.contains("reachable only via call-site inlining")),
+        "both same-named-but-distinct nested `inner` fns must DIG on their own \
+         bodies (no collision suppression): {:?}",
+        out.skip_reasons
+    );
+    // Each `inner` body's `assert!(x < N)` digs at its literal call sites. Crucially
+    // `a`'s inner uses its OWN `< 10` and `b`'s its OWN `< 100` -- the block-local
+    // keying did NOT cross-contaminate the two same-named-but-distinct bodies.
+    let mut a_bounds: Vec<i128> = out
+        .decls
+        .iter()
+        .filter(|d| d.name.contains("nested.rs::a#"))
+        .map(|d| int_cmp_atom(d).2)
+        .collect();
+    let mut b_bounds: Vec<i128> = out
+        .decls
+        .iter()
+        .filter(|d| d.name.contains("nested.rs::b#"))
+        .map(|d| int_cmp_atom(d).2)
+        .collect();
+    a_bounds.sort();
+    a_bounds.dedup();
+    b_bounds.sort();
+    b_bounds.dedup();
+    assert_eq!(a_bounds, vec![10], "a's inner digs with ITS OWN `< 10`: {:?}", out.decls.iter().map(|d| &d.name).collect::<Vec<_>>());
+    assert_eq!(b_bounds, vec![100], "b's inner digs with ITS OWN `< 100`");
+}
