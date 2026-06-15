@@ -33,6 +33,7 @@ pub mod sugar {
     pub mod enumerate;
     pub mod filter;
     pub mod identity;
+    pub mod impl_method;
     pub mod map;
     pub mod rev;
     pub mod skip;
@@ -5284,6 +5285,41 @@ fn statement_position_terminal_effect(
     }
 }
 
+/// Thin node-router: a statement-nested `impl` block whose method body carries an assertion is
+/// classified by the `ImplMethodSugar` node. It names the impl-method-reachability verdict in
+/// its own `desugar` -- an assertion lexically inside an impl method body is reachable ONLY at
+/// call time, over the receiver's RUNTIME state, so there is no single timeless `t` (the
+/// `ImplMethodEffect` boundary is `impl method `{name}``). The caller renders `effect.reason()`
+/// into `skipped`, which `refusal_disposition` classifies terminal. This is the same terminal
+/// cause as the top-level `Item::Impl` bucket, surfaced here because the impl is a statement.
+///
+/// SOUNDNESS (the discrimination guardrail): the node fires ONLY on a DETECTED asserting method
+/// (`impl_block_method_name` finds a method body with an assert). A pure / assert-free impl
+/// block matches none -> the node declines to RECOGNIZE (the build arm returns `None`), which
+/// this router maps to `None` (the old fall-through), leaving the statement on the generic
+/// unclassified path -- never terminalized by position.
+fn impl_method_terminal_effect(
+    imp: &syn::ItemImpl,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+    reducer: &ReductionCtx,
+    float_widths: &mut FloatWidthScope,
+    macro_depth: usize,
+) -> Option<Effect> {
+    let node = sugar::impl_method::decompose_impl_method(imp)?;
+    let ctx = sugar_ctx(scope, options, reducer, float_widths, macro_depth);
+    match node.desugar(&ctx) {
+        // The STRUCTURAL backstop = the honest-unclassified fall-through (the old `None`).
+        Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {
+            None
+        }
+        // A NAMED impl-method boundary -- the verdict the caller renders to skipped.
+        Outcome::Hit(effect) => Some(effect),
+        // A bail-side node never reaches truth; `Dug` is unreachable here.
+        Outcome::Dug(_) => None,
+    }
+}
+
 /// Strip a `const { .. }` wrapper (and parens/groups) off a match scrutinee to reveal
 /// the underlying reflection call (`match const { Type::of::<T>() }.kind { .. }`).
 fn strip_const_block(expr: &Expr) -> &Expr {
@@ -6201,12 +6237,16 @@ fn collect_assertion_entries<'a>(
                         // method-body asserts are reachable ONLY when the method runs, with
                         // the receiver's runtime state -- the SAME terminal cause as the
                         // top-level `Item::Impl` bucket, surfaced here because the impl is a
-                        // statement, not a top-level Item. Typed as `ImplMethodEffect`.
-                        Stmt::Item(syn::Item::Impl(imp)) => {
-                            impl_block_method_name(imp).map(|name| Effect::ImplMethod {
-                                boundary: format!("impl method `{name}`"),
-                            })
-                        }
+                        // statement, not a top-level Item. Typed as `ImplMethodEffect`. The
+                        // node (`ImplMethodSugar`) owns the verdict; this arm is a thin router.
+                        Stmt::Item(syn::Item::Impl(imp)) => impl_method_terminal_effect(
+                            imp,
+                            &temporal_scope,
+                            options,
+                            reducer,
+                            float_widths,
+                            macro_depth,
+                        ),
                         _ => None,
                     }
                     .map(|e| e.reason())
