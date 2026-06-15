@@ -1407,6 +1407,23 @@ impl<'a> ReductionCtx<'a> {
         }
         self.imported.lookup(name)
     }
+
+    /// A `MacroRegistry` snapshot of EVERY `macro_rules!` definition this reducer can
+    /// expand (the dependency-source `imported` registry overlaid with the in-file
+    /// definitions, which take precedence). Carried on the `TemporalScope` so the thin
+    /// `translate_term_in_scope` adapter -- which fabricates an empty reducer -- can
+    /// rebuild a reducer that still knows the macros, enabling term-position expansion.
+    /// In-file ambiguous names are NOT included (the reducer refuses to expand them).
+    fn macro_registry_snapshot(&self) -> MacroRegistry {
+        let mut reg = self.imported.clone();
+        for (name, rules) in &self.macros {
+            if self.ambiguous_macros.contains(name) {
+                continue;
+            }
+            reg.insert_rules(name, rules.clone());
+        }
+        reg
+    }
 }
 
 /// A registry of `macro_rules!` definitions gathered from source: the crate
@@ -1418,6 +1435,18 @@ impl<'a> ReductionCtx<'a> {
 pub struct MacroRegistry {
     macros: BTreeMap<String, std::rc::Rc<Vec<macro_expand::MacroRule>>>,
     ambiguous: BTreeSet<String>,
+}
+
+// `MacroRule` is not `Debug` (it holds raw token streams); a `MacroRegistry` is carried
+// on the `Debug`-deriving `TemporalScope`, so expose only the macro names it holds --
+// enough to debug a scope without dragging `Debug` through the token grammar.
+impl std::fmt::Debug for MacroRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MacroRegistry")
+            .field("macros", &self.macros.keys().collect::<Vec<_>>())
+            .field("ambiguous", &self.ambiguous)
+            .finish()
+    }
 }
 
 impl MacroRegistry {
@@ -1480,6 +1509,19 @@ impl MacroRegistry {
                     .insert(name.to_string(), std::rc::Rc::new(rules));
             }
         }
+    }
+
+    /// Insert a PRE-PARSED rule set (the in-file definitions a `ReductionCtx` already
+    /// parsed), with in-file PRECEDENCE: a name already present from dependency source
+    /// is OVERWRITTEN by the in-file definition (the same in-file-first precedence
+    /// `ReductionCtx::macro_rules` applies). Used by `macro_registry_snapshot` to overlay
+    /// the reducer's in-file macros onto its imported registry; never marks ambiguous
+    /// (the reducer already filtered its ambiguous in-file names out).
+    fn insert_rules(&mut self, name: &str, rules: std::rc::Rc<Vec<macro_expand::MacroRule>>) {
+        if self.ambiguous.contains(name) {
+            self.ambiguous.remove(name);
+        }
+        self.macros.insert(name.to_string(), rules);
     }
 
     fn lookup(&self, name: &str) -> Option<std::rc::Rc<Vec<macro_expand::MacroRule>>> {
@@ -1757,6 +1799,16 @@ pub(crate) struct TemporalScope {
     /// / unresolvable binding makes the evaluator decline (the operand stays in its
     /// existing refusal -- a safe under-claim).
     let_bindings: BTreeMap<String, Expr>,
+    /// A snapshot of the `macro_rules!` definitions VISIBLE at this scope (in-file +
+    /// dependency-source), so a TERM-POSITION macro invocation can be EXPANDED at
+    /// desugar time. The desugar-time registry hangs off `ReductionCtx`, but the thin
+    /// `translate_term_in_scope` adapter fabricates an EMPTY reducer (it only receives
+    /// `scope`, not the collector's real `reducer`). Riding the registry on the scope --
+    /// which IS threaded to every term-translation call site -- lets that adapter rebuild
+    /// a reducer that still knows the macros, so `add2!(2,3)` in `assert_eq!(add2!(2,3),
+    /// 5)` expands to its body `2 + 3` (a grounded `+(2,3)`) instead of going opaque.
+    /// Empty by default (no macros visible -> opaque, the prior behavior).
+    macro_registry: MacroRegistry,
 }
 
 impl TemporalScope {
@@ -1769,7 +1821,21 @@ impl TemporalScope {
             consuming_occurrence: std::cell::RefCell::new(BTreeMap::new()),
             literal_arrays: BTreeMap::new(),
             let_bindings: BTreeMap::new(),
+            macro_registry: MacroRegistry::new(),
         }
+    }
+
+    /// Record the `macro_rules!` registry visible at this scope (see field doc), so a
+    /// term-position macro invocation can be expanded at desugar time even through the
+    /// thin `translate_term_in_scope` adapter (which only receives the scope).
+    fn with_macro_registry(mut self, registry: MacroRegistry) -> Self {
+        self.macro_registry = registry;
+        self
+    }
+
+    /// The `macro_rules!` registry visible at this scope (in-file + dependency source).
+    fn macro_registry(&self) -> &MacroRegistry {
+        &self.macro_registry
     }
 
     /// Record the in-scope literal-array bindings for this block (see field doc).
@@ -4030,7 +4096,11 @@ fn collect_assertion_entries<'a>(
     let entries_start = entries.len();
     let temporal_plan = temporal_plan_for_stmts(stmts, inherited_stateful);
     let mut temporal_scope = TemporalScope::new(local_scope, temporal_plan)
-        .with_literal_arrays(capture_scalar_literal_arrays(stmts));
+        .with_literal_arrays(capture_scalar_literal_arrays(stmts))
+        // Carry the reducer's macro registry so a TERM-POSITION macro (`assert_eq!(
+        // add2!(2,3), 5)`) expands at desugar time even through the thin
+        // `translate_term_in_scope` adapter (which only gets the scope, not the reducer).
+        .with_macro_registry(reducer.macro_registry_snapshot());
     // `let_bindings` is advanced INCREMENTALLY in the statement loop below (see
     // `record_let_binding`), so a `try_fold` operand resolves the binding in EFFECT at
     // its position -- shadowing-correct. (A block-wide capture would let a LATER
@@ -10795,7 +10865,11 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
     };
     let node = sugar::factory::build_term(expr, &fcx);
     let items: Vec<Item> = Vec::new();
-    let reducer = ReductionCtx::from_items(&items);
+    // Seed the reducer from the macro registry the scope carries, so a TERM-POSITION
+    // macro invocation (`add2!(2,3)` in `assert_eq!(add2!(2,3), 5)`) can be EXPANDED at
+    // desugar time (`MacroSugar::desugar` reads `ctx.reducer.macro_rules(..)`). Without
+    // this seed the adapter's reducer is empty and every term-position macro goes opaque.
+    let reducer = ReductionCtx::from_items_with_imports(&items, scope.macro_registry());
     let mut float_widths = FloatWidthScope::new();
     let ctx = sugar_ctx(scope, &options, &reducer, &mut float_widths, 0);
     match node.desugar(&ctx) {
