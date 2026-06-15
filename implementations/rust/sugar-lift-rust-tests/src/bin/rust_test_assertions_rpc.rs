@@ -201,6 +201,18 @@ fn lift(params: &Value) -> Value {
                     Some(w) => ("silent", Some(format!("vendor pin not liftable: {}", w.reason))),
                     None => ("warranted", None),
                 }
+            } else if out.reduced_helpers.contains(&name) {
+                // A non-test fn the reducer INLINED to discharge a test (a bare-statement
+                // R7 inline, an arg-position inline, OR -- capability #1 -- a TERM-POSITION
+                // value-call peel that grounded `h(2)` to `+(2,1)`). It backs a warrant as a
+                // UNIVERSE member, so it is `support`. CHECKED BEFORE `broad_functional_warrant`
+                // (which returns Some for ANY value-returning body): a fully-inlined value
+                // helper must NOT also be minted as its OWN standalone `out=call:h` contract --
+                // that re-introduces the exact opaque `call:h` symbol the peel just killed
+                // (hollow-B relocated from the assertion to a top-level contract, not eliminated).
+                // A helper that BAILED the peel is NOT in `reduced_helpers`, so it correctly
+                // falls through to its own broad-functional contract below.
+                ("support", None)
             } else if let Some(decl) =
                 sugar_lift_rust_tests::broad_functional_warrant(&name, fr.sig, fr.block)
             {
@@ -214,10 +226,6 @@ fn lift(params: &Value) -> Value {
                 // decl flows into the IR; the universe is built from these demands.
                 value_decls.push(decl);
                 ("warranted", None)
-            } else if out.reduced_helpers.contains(&name) {
-                // a non-test fn the reducer inlined to discharge a test: it backs
-                // a warrant, so it is `support`.
-                ("support", None)
             } else {
                 // It NEVER constrains: a unit-returning body has no output to
                 // demand anything about. REFUSED BY VACUITY -- "adds no constraint"

@@ -1916,6 +1916,16 @@ pub(crate) struct TemporalScope {
     /// preamble to reach them. Empty by default (no fns visible -> the opaque `call:`
     /// ctor, the prior behavior).
     fn_registry: FnRegistry,
+    /// Names of value helpers PEELED to ground literals by a term-position inline during
+    /// this scope's desugar (capability #1). Resolution flows IN (the `fn_registry`); the
+    /// support-record must flow OUT, so the classifier DEMOTES a fully-inlined helper to
+    /// the universe (status "support", no standalone `out=call:NAME` contract) instead of
+    /// re-minting the exact opaque `call:` symbol the peel just killed. Interior-mutable
+    /// because the inline records while term-translation holds `&self`; drained by the
+    /// collector into `out.reduced_helpers` after the block is lifted. ONLY a FULLY-
+    /// GROUNDED peel records here -- a BAILED helper (still its own opaque contract) does
+    /// not (it was not inlined).
+    inlined_value_helpers: std::cell::RefCell<BTreeSet<String>>,
 }
 
 impl TemporalScope {
@@ -1930,7 +1940,24 @@ impl TemporalScope {
             let_bindings: BTreeMap::new(),
             macro_registry: MacroRegistry::new(),
             fn_registry: FnRegistry::new(),
+            inlined_value_helpers: std::cell::RefCell::new(BTreeSet::new()),
         }
+    }
+
+    /// Record that a value helper was PEELED to ground literals by a term-position
+    /// inline at this scope (see `inlined_value_helpers`). Called from
+    /// `try_inline_value_call` on a fully-grounded commit; the collector drains these
+    /// into `out.reduced_helpers` so the classifier demotes them to the universe.
+    fn record_inlined_value_helper(&self, name: &str) {
+        self.inlined_value_helpers
+            .borrow_mut()
+            .insert(name.to_string());
+    }
+
+    /// Drain the set of value helpers peeled to ground literals at this scope (consumes
+    /// the recorded names). The collector folds these into `out.reduced_helpers`.
+    fn take_inlined_value_helpers(&self) -> BTreeSet<String> {
+        std::mem::take(&mut self.inlined_value_helpers.borrow_mut())
     }
 
     /// Record the `macro_rules!` registry visible at this scope (see field doc), so a
@@ -3658,11 +3685,32 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
         };
         // EXACT-OR-BAIL: commit the peel only if it grounded all the way out.
         if is_fully_grounded_term(&term) {
+            // Record this helper (and any it transitively peeled) as a UNIVERSE member,
+            // so the classifier demotes it to "support" rather than re-minting a
+            // standalone `out=call:NAME` contract -- the hollow-B symbol we just killed.
+            if let Some(name) = value_call_head_name(func) {
+                self.scope.record_inlined_value_helper(&name);
+            }
             Some(term)
         } else {
             None
         }
     }
+}
+
+/// The simple head ident of a value call (`f` in `f(args)`), peeling `Paren`/`Group`.
+/// `None` for a non-path / qualified head. Used to record a peeled helper's name.
+fn value_call_head_name(func: &Expr) -> Option<String> {
+    let inner = match func {
+        Expr::Paren(p) => &*p.expr,
+        Expr::Group(g) => &*g.expr,
+        other => other,
+    };
+    let Expr::Path(path) = inner else { return None };
+    if path.qself.is_some() {
+        return None;
+    }
+    path.path.get_ident().map(|i| i.to_string())
 }
 
 /// The exact-or-bail predicate for term-position value-call inlining: a term is FULLY
@@ -5185,6 +5233,17 @@ fn collect_assertion_entries<'a>(
             }
         }
         advance_temporal_scope_for_stmt(stmt, &mut temporal_scope);
+    }
+    // TERM-POSITION INLINE SUPPORT-RECORD (capability #1, the flow-OUT). A value helper
+    // PEELED to ground literals by a term-position inline during this block's desugar
+    // (`assert_eq!(h(2), 3)` digging `h`'s body `n+1` to `+(2,1)`) is now a UNIVERSE
+    // member, NOT its own fixedpoint contract. Fold its name into `reduced_helpers` so the
+    // RPC classifier demotes it to "support" -- emitting NO standalone `out=call:h`
+    // contract, which would re-introduce the exact opaque `call:h` symbol the peel killed.
+    // Resolution flowed IN via `fn_registry`; the support-record flows OUT here. Only
+    // FULLY-GROUNDED peels are recorded (a bailed helper stays its own broad contract).
+    for name in temporal_scope.take_inlined_value_helpers() {
+        reduced_helpers.insert(name);
     }
     // "Reduced in this block" = explicit commit-site inserts UNION the set-diff of
     // `reduced_helpers` against its entry snapshot (covers deeper reduce paths). A
