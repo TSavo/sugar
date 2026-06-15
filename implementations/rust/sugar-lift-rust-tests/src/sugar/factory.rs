@@ -60,9 +60,9 @@ use syn::{Expr, Item};
 use crate::sugar::{
     array_repeat, array_term, await_term, binop, block_term, call, cast_term, closure_adaptor,
     closure_term, conditional, const_block, control_flow_term, field_term, fold, forall,
-    impl_method, index, literal, macro_term, match_node, match_scrutinee, method_call_term, path,
-    range_term, raw_addr_term, reference_term, repeat_term, statement_position, struct_term,
-    term_literal, transparent_term, tuple_term, unary,
+    impl_method, index, iter_terminal, literal, macro_term, match_node, match_scrutinee,
+    method_call_term, path, range_term, raw_addr_term, reference_term, repeat_term,
+    statement_position, struct_term, term_literal, transparent_term, tuple_term, unary,
 };
 use crate::{
     Effect, LiftOptions, Outcome, Sugar, SugarCtx, TemporalScope, STRUCTURAL_BACKSTOP_REASON,
@@ -96,6 +96,11 @@ const TERM_RECOGNIZERS: &[Recognizer] = &[
     tuple_term::recognize,             // Expr::Tuple
     repeat_term::recognize,            // Expr::Repeat (literal-count aggregate / refuse)
     struct_term::recognize,            // Expr::Struct
+    // Expr::MethodCall iterator reduction/advance terminal over a LITERAL Seq -- BEFORE
+    // the opaque `method:` ctor, so a literal-domain `.sum()`/`.next()`/... grounds to
+    // its value; a non-literal / unrecognized receiver returns `None` and falls through
+    // to `method_call_term` (the opaque ctor, the established sound under-claim).
+    iter_terminal::recognize,
     method_call_term::recognize,       // Expr::MethodCall (method: ctor)
     await_term::recognize,             // Expr::Await
     reference_term::recognize,         // Expr::Reference (ref / ref_mut / refuse)
