@@ -4317,7 +4317,7 @@ fn collect_assertion_entries<'a>(
                 );
             }
             // Control-flow contexts: asserts are conditional or parametric; refuse.
-            Stmt::Expr(Expr::ForLoop(f), _) => {
+            Stmt::Expr(e @ Expr::ForLoop(f), _) => {
                 // A bounded loop is the universal it states: `ForAllSugar` reads the
                 // range as a guard and lifts forall x. (guard => body) (or the finite
                 // conjunction over a literal array). If the body does not wholly
@@ -4330,7 +4330,19 @@ fn collect_assertion_entries<'a>(
                         float_widths,
                         macro_depth,
                     );
-                    decompose_for_loop(f, &temporal_scope, &let_inits).and_then(|s| s.desugar(&ctx).dug())
+                    // FACTORY WIRING (slice 1): the recursive `build` factory
+                    // dispatches `Expr::ForLoop` to `decompose_for_loop` (its arm is
+                    // `boxed(decompose_for_loop(f, scope, let_inits))`), so this is the
+                    // byte-identical drop-in for the former inline call -- `boxed(Some)
+                    // .desugar().dug()` == the old `.and_then(|s| s.desugar().dug())`,
+                    // and `boxed(None)` -> `Hit(Unsupported)` -> `.dug()` == the old
+                    // `None`. First site where `build()` goes live in the collector.
+                    let fcx = sugar::factory::FactoryCtx {
+                        scope: &temporal_scope,
+                        options,
+                        let_inits: &let_inits,
+                    };
+                    sugar::factory::build(e, &fcx).desugar(&ctx).dug()
                 };
                 if let Some(desugared) = lifted {
                     // The loop memento is named `<test>::loop::<var>` by the
