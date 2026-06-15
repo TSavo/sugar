@@ -1915,6 +1915,7 @@ fn subst_var_in_formula(formula: &Rc<Formula>, name: &str, repl: &Rc<Term>) -> R
 /// `a..b` / `a..=b` (transcribed as a forall guard) or a literal array
 /// `[e0, e1, ...]` (unrolled over its constructed element terms). A runtime
 /// collection is NOT constructed from source literals and is NOT a `BoundedDomain`.
+#[derive(Clone)]
 enum BoundedDomain {
     Range {
         start: Rc<Term>,
@@ -2051,116 +2052,6 @@ fn lift_bounded_forall(
     Some((quantified, n_body))
 }
 
-/// Read a `for <ident> in <range> { body }` loop as the bounded universal it
-/// literally states: forall x. (range_guard(x) => body(x)). Delegates the domain
-/// discrimination and body lift to the shared `lift_bounded_forall`.
-#[allow(clippy::too_many_arguments)]
-fn try_lift_for_loop_forall(
-    f: &syn::ExprForLoop,
-    scope: &TemporalScope,
-    options: &LiftOptions,
-    reducer: &ReductionCtx<'_>,
-    float_widths: &mut FloatWidthScope,
-    macro_depth: usize,
-) -> Option<(Rc<Formula>, usize, String)> {
-    // The loop variable must be a plain ident (the bound variable).
-    let var = match &*f.pat {
-        Pat::Ident(p) if p.subpat.is_none() => p.ident.to_string(),
-        _ => return None,
-    };
-    // The iterator domain must be a FINITE CONSTRUCTION: a closed integer range
-    // `a..b` (transcribed as a forall guard) or a literal array `[e0, e1, ...]`
-    // (unrolled over its constructed element terms). A runtime collection
-    // (`for x in v`) is NOT constructed from source literals -- it is left to the
-    // for-context refusal (named bin-2 by `for_iter_domain`).
-    let domain = bounded_domain_from_expr(&f.expr, scope)?;
-    let (quantified, n_body) = lift_bounded_forall(
-        &var,
-        domain,
-        &f.body.stmts,
-        scope,
-        options,
-        reducer,
-        float_widths,
-        macro_depth,
-    )?;
-    Some((quantified, n_body, var))
-}
-
-/// Read a `<domain>.iter().for_each(|v| body)` / `<domain>.into_iter().for_each(..)`
-/// / `(a..b).for_each(..)` adaptor as the bounded universal it literally states,
-/// IDENTICALLY to the equivalent `for v in <domain> { body }` loop. The closure
-/// body executes exactly once per element of `<domain>`, so a finite-construction
-/// domain (literal array / closed range) makes the `.for_each` a finite
-/// conjunction (construction axiom) -- sound. A RUNTIME / opaque receiver
-/// (`v.iter()` for a binding `v`, a method result) is NOT constructed from source
-/// literals: `bounded_domain_from_expr` returns None and we refuse, leaving the
-/// assert in its existing bin-2 refusal. Mutation / non-point-wise body refuses
-/// (the shared `lift_bounded_forall` gate). Returns the quantified formula, the
-/// number of body assert macros it accounts for, and the bound var name, or None.
-#[allow(clippy::too_many_arguments)]
-fn try_lift_for_each_forall(
-    expr: &Expr,
-    scope: &TemporalScope,
-    options: &LiftOptions,
-    reducer: &ReductionCtx<'_>,
-    float_widths: &mut FloatWidthScope,
-    macro_depth: usize,
-) -> Option<(Rc<Formula>, usize, String)> {
-    // Must be `<receiver>.for_each(<closure>)` with exactly one closure argument.
-    let Expr::MethodCall(call) = expr else {
-        return None;
-    };
-    if call.method != "for_each" || call.args.len() != 1 {
-        return None;
-    }
-    let Expr::Closure(closure) = &call.args[0] else {
-        return None;
-    };
-    // The closure must bind exactly one parameter, a plain ident (the bound
-    // variable). A tuple pattern (`.enumerate().for_each(|(i, v)| ..)`) or any
-    // other pattern is not this clean single-binder shape: refuse.
-    if closure.inputs.len() != 1 {
-        return None;
-    }
-    let var = match &closure.inputs[0] {
-        Pat::Ident(p) if p.subpat.is_none() => p.ident.to_string(),
-        // `|&x|` / `|&mut x|` reference-elision patterns bind a value; strip a
-        // single leading reference pattern to the inner ident, otherwise refuse.
-        Pat::Reference(r) => match &*r.pat {
-            Pat::Ident(p) if p.subpat.is_none() && r.mutability.is_none() => p.ident.to_string(),
-            _ => return None,
-        },
-        _ => return None,
-    };
-    // Discriminate the domain EXACTLY as the for-loop does. The receiver is the
-    // collection, possibly wrapped in a single element-producing adaptor
-    // (`.iter()` / `.into_iter()`). `iter_adaptor_base` strips one such no-arg
-    // adaptor; `(a..b).for_each` has no adaptor (the range IS the receiver). A
-    // binding / runtime collection / method result is not a finite construction:
-    // `bounded_domain_from_expr` returns None and the whole lift refuses.
-    let base = iter_adaptor_base(&call.receiver);
-    let domain = bounded_domain_from_expr(base, scope)?;
-    // The closure body is one expression (block or bare). Reuse the for-loop body
-    // machinery: a block contributes its statements; a bare body expr is one
-    // statement.
-    let body_stmts: Vec<Stmt> = match &*closure.body {
-        Expr::Block(b) => b.block.stmts.clone(),
-        other => vec![Stmt::Expr(other.clone(), None)],
-    };
-    let (quantified, n_body) = lift_bounded_forall(
-        &var,
-        domain,
-        &body_stmts,
-        scope,
-        options,
-        reducer,
-        float_widths,
-        macro_depth,
-    )?;
-    Some((quantified, n_body, var))
-}
-
 /// One iterator adaptor in a `.fold`/`.rfold` receiver chain. STDLIB sugar over the
 /// element sequence: the transforming kinds carry the closure we const-evaluate over each
 /// concrete element. Only EXACT-replicable adaptors are represented; an unrepresentable
@@ -2255,97 +2146,6 @@ fn peel_fold_adaptors<'a>(
     }
     adaptors_rev.reverse();
     Some((cur, adaptors_rev))
-}
-
-/// Apply the ordered adaptor chain over the base element sequence, EXACTLY. Each element
-/// is `(Expr, Option<ConstVal>)` -- its source expr (for EUF term translation) and its
-/// const value when evaluable. A transforming adaptor REQUIRES every element it inspects
-/// to have a `ConstVal` (else bail -- we cannot filter/map an opaque element exactly).
-/// Enumerate replaces each element with a `(index, elem)` tuple value + a synthesized
-/// tuple expr. Returns the resulting sequence or None (bail) on any inexactness.
-fn apply_adaptors(
-    base: Vec<(Expr, Option<ConstVal>)>,
-    adaptors: &[Adaptor],
-) -> Option<Vec<(Expr, Option<ConstVal>)>> {
-    let mut seq = base;
-    for ad in adaptors {
-        seq = match ad {
-            Adaptor::Identity => seq,
-            Adaptor::Rev => {
-                let mut s = seq;
-                s.reverse();
-                s
-            }
-            Adaptor::Skip(n) => seq.into_iter().skip(*n).collect(),
-            Adaptor::Take(n) => seq.into_iter().take(*n).collect(),
-            Adaptor::Enumerate => {
-                let mut out = Vec::with_capacity(seq.len());
-                for (i, (expr, cv)) in seq.into_iter().enumerate() {
-                    // Pair value: (i, elem). The element MUST be const for the pair value;
-                    // but the EXPR pair `(i, <expr>)` is always materializable for EUF.
-                    let pair_expr: Expr = syn::parse_str(&format!(
-                        "({}, {})",
-                        i,
-                        quote::quote!(#expr)
-                    ))
-                    .ok()?;
-                    let pair_cv = cv.map(|c| ConstVal::Tuple(vec![ConstVal::Int(i as i64), c]));
-                    out.push((pair_expr, pair_cv));
-                }
-                out
-            }
-            Adaptor::Filter(closure) => {
-                let mut out = Vec::new();
-                for (expr, cv) in seq {
-                    let v = cv.as_ref()?; // opaque element under a filter -> bail
-                    match const_eval_unary_closure(closure, v)?.as_bool()? {
-                        true => out.push((expr, cv)),
-                        false => {}
-                    }
-                }
-                out
-            }
-            Adaptor::SkipWhile(closure) => {
-                let mut out = Vec::new();
-                let mut still_skipping = true;
-                for (expr, cv) in seq {
-                    if still_skipping {
-                        let v = cv.as_ref()?;
-                        if const_eval_unary_closure(closure, v)?.as_bool()? {
-                            continue;
-                        }
-                        still_skipping = false;
-                    }
-                    out.push((expr, cv));
-                }
-                out
-            }
-            Adaptor::TakeWhile(closure) => {
-                let mut out = Vec::new();
-                for (expr, cv) in seq {
-                    let v = cv.as_ref()?;
-                    if const_eval_unary_closure(closure, v)?.as_bool()? {
-                        out.push((expr, cv));
-                    } else {
-                        break;
-                    }
-                }
-                out
-            }
-            Adaptor::Map(closure) => {
-                let mut out = Vec::with_capacity(seq.len());
-                for (_expr, cv) in seq {
-                    let v = cv.as_ref()?; // opaque element under a map -> bail
-                    let mapped = const_eval_unary_closure(closure, v)?;
-                    // Materialize the mapped value back to an Expr (for EUF translation).
-                    let mexpr = mapped.to_expr()?;
-                    out.push((mexpr, Some(mapped)));
-                }
-                out
-            }
-        };
-    }
-    Some(seq)
 }
 
 /// An EXACT const value the defolder is willing to compute for a transforming-adaptor
@@ -2549,32 +2349,621 @@ fn const_fold_acc_update(tail: &Expr, env: &BTreeMap<String, i64>) -> Option<i64
     const_eval(tail, &cv_env)?.as_int()
 }
 
-/// DEFOLDER (T 2026-06-14). `fold`'s definition IS its desugaring:
-///   `let mut acc = init; while let Some(x) = it.next() { acc = f(acc, x); }`
-/// so a `<lit-domain>.<seq-adaptors>.fold(init, |acc, item| { <asserts>; <tail> })`
-/// over a FINITE literal domain is the finite conjunction of the per-iteration body,
-/// with `acc` threaded as a CONST-FOLDED integer and `item`/index bound to the concrete
-/// element. `for_each` is `fold` with `acc = ()`; this is that, plus the accumulator.
-/// `.rfold` reverses the element order.
-///
-/// Lifts iff: (1) the receiver peels (seq-preserving adaptors only) to a finite literal
-/// array / closed range; (2) `init` is a literal int; (3) the closure binds `|acc, item|`
-/// (item a plain ident, or `(idx, elem)` under `.enumerate()`); (4) the closure body's
-/// tail const-folds to the next `acc` each step (`acc`, `acc+1`, `acc+<lit>`, ...); (5)
-/// the body asserts lift all-or-nothing and the body is otherwise pure. The result is
-/// `body[acc:=acc_0, item:=e_0] ∧ body[acc:=acc_1, item:=e_1] ∧ ...` -- the construction
-/// axiom. Any miss -> None (refuse; stays unclassified / terminal as classified
-/// elsewhere). Returns (conjunction, static body assert-macro count, "fold"/"rfold").
-#[allow(clippy::too_many_arguments)]
-fn try_lift_fold_forall(
-    expr: &Expr,
-    scope: &TemporalScope,
-    options: &LiftOptions,
-    reducer: &ReductionCtx<'_>,
-    float_widths: &mut FloatWidthScope,
+// ─────────────────────────────────────────────────────────────────────────────
+// The `Sugar` hierarchy (T 2026-06-14). The doctrine reified as types.
+//
+// stdlib IS sugar; a method-call chain / for-loop is a COMPOSITE TREE of `Sugar`
+// nodes, each owning its own `.desugar()` (Interpreter pattern; the chain of
+// responsibility falls out of the composition). `decompose` builds the tree by
+// recursively decomposing a node's children into inner Sugars; `.desugar()` walks
+// inward until `LiteralSugar` bottoms out OR some node returns `None` (BAIL). The
+// structure ENFORCES the one predicate: the only way to produce a `Desugared` is
+// to reach literals through every layer (no fake-discharge); any layer's `None`
+// is the happy refuse.
+//
+// `Desugared` is a (value, warrant) pair. There are two value flavors, glued to
+// the SAME warrant rope:
+//   * `Seq` -- a finite element sequence (the literal floor, possibly synthetic:
+//     a filter/map output the vendor never typed, warranted by the composed
+//     sugar that minted it). Each element keeps BOTH its source `Expr` (for EUF
+//     term translation / faithful substitution) AND its `ConstVal` when exactly
+//     evaluable; a transforming adaptor REQUIRES the `ConstVal` or it bails.
+//   * `Constraints` -- the emitted finite conjunction (a fold/for_each/for-loop
+//     terminal), the assert-macro count it accounts, and its warrant (the memento
+//     name). This is the lift; the warrant ties it back to the sugar.
+//
+// EXACT-OR-BAIL is structural: `ConstVal` has no Float/Str variant, so a
+// non-const element bails; `Option<Desugared>` IS the bail. A wrong BAIL is a
+// safe under-claim; a wrong DIG would be a fake-discharge, so we never guess.
+
+/// One element of a desugared finite sequence: the value glued to its warrant.
+/// `expr` is the source expression (carries spans / EUF identity, faithful for
+/// term translation); `value` is the exact `ConstVal` when evaluable, `None` for
+/// an opaque-but-constructed element (a non-transforming pass-through can keep an
+/// opaque element; a transforming adaptor that must inspect it bails on `None`).
+#[derive(Clone)]
+struct DesugaredElem {
+    expr: Expr,
+    value: Option<ConstVal>,
+}
+
+/// The warrant for a desugared lift: the memento name that ties the emitted
+/// constraint back to the sugar that warrants it. `None` falls back to the
+/// enclosing function scope at the emit site (mirrors the trunk's un-named
+/// `AssertionEntry`). This is the rope; every emit carries one.
+#[derive(Clone)]
+struct Warrant {
+    name: Option<String>,
+}
+
+/// The output of `Sugar::desugar`: a (value, warrant) pair. `Seq` is the literal
+/// floor (a finite element sequence); `Constraints` is the emitted obligation.
+enum Desugared {
+    /// A finite element sequence -- the desugared literal floor (written or
+    /// synthetic-but-warranted). Produced by `LiteralSugar` and the sequence
+    /// adaptors (`IterSugar`/`FilterSugar`/`MapSugar`/...).
+    Seq(Vec<DesugaredElem>),
+    /// An emitted finite conjunction (a fold/for_each/for-loop terminal): the
+    /// formula, the static assert-macro count it accounts, and its warrant.
+    Constraints {
+        atom: Rc<Formula>,
+        n: usize,
+        warrant: Warrant,
+    },
+}
+
+impl Desugared {
+    /// The sequence payload, or None (bail) if this is a constraint terminal --
+    /// used when an outer sequence adaptor expects an inner sequence.
+    fn into_seq(self) -> Option<Vec<DesugaredElem>> {
+        match self {
+            Desugared::Seq(s) => Some(s),
+            Desugared::Constraints { .. } => None,
+        }
+    }
+}
+
+/// What `desugar` needs from its environment, bundled so the trait method stays
+/// `fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared>` (the doctrine's exact
+/// signature). `float_widths` is interior-mutable (a `RefCell`) because the body
+/// collector advances it while desugaring a constraint terminal.
+struct SugarCtx<'a, 'c> {
+    scope: &'a TemporalScope,
+    options: &'a LiftOptions,
+    reducer: &'a ReductionCtx<'c>,
+    float_widths: std::cell::RefCell<&'a mut FloatWidthScope>,
     macro_depth: usize,
+}
+
+/// A node in the desugaring tree. `desugar` recurses inward (each child is a
+/// `Sugar` whose `desugar` we call) until `LiteralSugar` bottoms out or some node
+/// returns `None` (BAIL). Adding a construct = adding one class with one
+/// `desugar`.
+trait Sugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared>;
+}
+
+/// BASE CASE: a finite literal domain (a literal array `[e0, e1, ...]` or a closed
+/// integer range `a..b` / `a..=b`). `desugar` materializes the element sequence in
+/// iterated order, each element its source `Expr` + its `ConstVal` when evaluable.
+/// May be SYNTHETIC under an adaptor, but a `LiteralSugar` is the vendor's written
+/// construction. The floor: `desugar` = `Some(Seq(literals))`.
+struct LiteralSugar {
+    base: Expr,
+}
+
+/// Maximum desugared sequence length (a finite-construction guard shared by every
+/// sequence class). Mirrors the defolder's `CAP`.
+const SUGAR_SEQ_CAP: i64 = 4096;
+
+impl Sugar for LiteralSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared> {
+        // Discriminate the domain EXACTLY as the defolder does (construction axiom:
+        // a literal array unrolls over its element terms; a closed range enumerates
+        // its integers). A runtime collection is not a `BoundedDomain` -> None.
+        let domain = bounded_domain_from_expr(&self.base, ctx.scope)?;
+        let seq: Vec<DesugaredElem> = match domain {
+            BoundedDomain::Array(_) => match strip_refs_groups(&self.base) {
+                Expr::Array(arr) => {
+                    if arr.elems.len() as i64 > SUGAR_SEQ_CAP {
+                        return None;
+                    }
+                    arr.elems
+                        .iter()
+                        .map(|e| DesugaredElem {
+                            expr: e.clone(),
+                            value: const_eval(e, &BTreeMap::new()),
+                        })
+                        .collect()
+                }
+                _ => return None,
+            },
+            BoundedDomain::Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                let (Some(s), Some(e)) = (term_as_int(&start), term_as_int(&end)) else {
+                    return None;
+                };
+                let e = if inclusive { e + 1 } else { e };
+                if e < s || e - s > SUGAR_SEQ_CAP {
+                    return None;
+                }
+                (s..e)
+                    .map(|n| DesugaredElem {
+                        expr: syn::parse_str::<Expr>(&n.to_string()).unwrap(),
+                        value: Some(ConstVal::Int(n)),
+                    })
+                    .collect()
+            }
+        };
+        if seq.is_empty() {
+            return None;
+        }
+        Some(Desugared::Seq(seq))
+    }
+}
+
+/// A sequence adaptor: wraps an inner sequence-`Sugar` and applies one stdlib
+/// iterator-adaptor's EXACT semantics over the inner element sequence. The
+/// transforming kinds carry a closure we const-evaluate on each concrete element
+/// (synthetic-but-warranted output). Bails (None) on any inexactness -- an opaque
+/// element under a transforming adaptor, an overflowing/runtime closure, a tuple
+/// it cannot materialize -- never a fake-dig. This IS `apply_adaptors`, one arm
+/// per class, recursing through `inner.desugar()`.
+struct AdaptorSugar {
+    inner: Box<dyn Sugar>,
+    adaptor: Adaptor,
+}
+
+impl Sugar for AdaptorSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared> {
+        let seq = self.inner.desugar(ctx)?.into_seq()?;
+        let out = apply_one_adaptor(seq, &self.adaptor)?;
+        Some(Desugared::Seq(out))
+    }
+}
+
+/// Apply ONE adaptor's exact stdlib semantics over a desugared element sequence.
+/// Extracted from `apply_adaptors` (one arm), operating on `DesugaredElem` (the
+/// typed sequence element). Any inexactness -> None (bail).
+fn apply_one_adaptor(
+    seq: Vec<DesugaredElem>,
+    adaptor: &Adaptor,
+) -> Option<Vec<DesugaredElem>> {
+    let out = match adaptor {
+        Adaptor::Identity => seq,
+        Adaptor::Rev => {
+            let mut s = seq;
+            s.reverse();
+            s
+        }
+        Adaptor::Skip(n) => seq.into_iter().skip(*n).collect(),
+        Adaptor::Take(n) => seq.into_iter().take(*n).collect(),
+        Adaptor::Enumerate => {
+            let mut out = Vec::with_capacity(seq.len());
+            for (i, elem) in seq.into_iter().enumerate() {
+                // Pair value: (i, elem). The EXPR pair `(i, <expr>)` is always
+                // materializable for EUF; the pair VALUE needs the element const.
+                let e = &elem.expr;
+                let pair_expr: Expr =
+                    syn::parse_str(&format!("({}, {})", i, quote::quote!(#e))).ok()?;
+                let pair_cv = elem
+                    .value
+                    .map(|c| ConstVal::Tuple(vec![ConstVal::Int(i as i64), c]));
+                out.push(DesugaredElem {
+                    expr: pair_expr,
+                    value: pair_cv,
+                });
+            }
+            out
+        }
+        Adaptor::Filter(closure) => {
+            let mut out = Vec::new();
+            for elem in seq {
+                let v = elem.value.as_ref()?; // opaque element under a filter -> bail
+                if const_eval_unary_closure(closure, v)?.as_bool()? {
+                    out.push(elem);
+                }
+            }
+            out
+        }
+        Adaptor::SkipWhile(closure) => {
+            let mut out = Vec::new();
+            let mut still_skipping = true;
+            for elem in seq {
+                if still_skipping {
+                    let v = elem.value.as_ref()?;
+                    if const_eval_unary_closure(closure, v)?.as_bool()? {
+                        continue;
+                    }
+                    still_skipping = false;
+                }
+                out.push(elem);
+            }
+            out
+        }
+        Adaptor::TakeWhile(closure) => {
+            let mut out = Vec::new();
+            for elem in seq {
+                let v = elem.value.as_ref()?;
+                if const_eval_unary_closure(closure, v)?.as_bool()? {
+                    out.push(elem);
+                } else {
+                    break;
+                }
+            }
+            out
+        }
+        Adaptor::Map(closure) => {
+            let mut out = Vec::with_capacity(seq.len());
+            for elem in seq {
+                let v = elem.value.as_ref()?; // opaque element under a map -> bail
+                let mapped = const_eval_unary_closure(closure, v)?;
+                let mexpr = mapped.to_expr()?; // materialize for EUF translation
+                out.push(DesugaredElem {
+                    expr: mexpr,
+                    value: Some(mapped),
+                });
+            }
+            out
+        }
+    };
+    Some(out)
+}
+
+/// Build the sequence-`Sugar` tree for a fold/for_each RECEIVER: a base literal
+/// domain wrapped by the ordered adaptor chain (`LiteralSugar` innermost, each
+/// `AdaptorSugar` applied in base->terminal order). This is `peel_fold_adaptors`
+/// in reverse-construction: peel to (base, adaptors), then nest. Resolving
+/// `let`-bound receivers through `let_inits` is delegated to `peel_fold_adaptors`.
+/// `extra_rev` appends a final `Rev` (for `.rfold`). None on an unrepresentable
+/// adaptor / unresolvable binding (-> bail).
+fn decompose_seq(
+    expr: &Expr,
     let_inits: &BTreeMap<String, &Expr>,
-) -> Option<(Rc<Formula>, usize, String)> {
+    extra_rev: bool,
+) -> Option<Box<dyn Sugar>> {
+    let (base, mut adaptors) = peel_fold_adaptors(expr, let_inits, 0)?;
+    if extra_rev {
+        adaptors.push(Adaptor::Rev);
+    }
+    let mut node: Box<dyn Sugar> = Box::new(LiteralSugar { base: base.clone() });
+    for adaptor in adaptors {
+        node = Box::new(AdaptorSugar {
+            inner: node,
+            adaptor,
+        });
+    }
+    Some(node)
+}
+
+/// The item-binder of a `fold`/`rfold` closure's second parameter: a plain ident
+/// binds the WHOLE element; a 2-tuple binds `(comp0, comp1)` of a tuple element.
+enum FoldItemBinder {
+    Whole(String),
+    Pair(String, String),
+}
+
+/// `FoldSugar` / `RFoldSugar` (and `ForEachSugar` as the `acc = ()` degenerate):
+/// `<seq-sugar>.fold(init, |acc, item| { <asserts>; <tail> })` over a FINITE
+/// literal domain is the finite conjunction of the per-iteration body with `acc`
+/// threaded as a CONST-FOLDED integer and `item`/index bound to the concrete
+/// element -- the construction axiom (desugar fold WITH fold). `.rfold` reverses
+/// the element order (the inner seq-sugar already carries the `Rev`). `desugar`
+/// recurses on `inner` for the element sequence, then threads + substitutes;
+/// EXACT-OR-BAIL throughout (a non-const-foldable accumulator / side-effecting
+/// body / opaque element -> None).
+struct FoldSugar {
+    inner: Box<dyn Sugar>,
+    acc_var: String,
+    item_binder: FoldItemBinder,
+    acc_0: i64,
+    body_stmts: Vec<Stmt>,
+    tail: Expr,
+    method: String,
+    /// The FULL closure body expr (block including the acc-update tail). The
+    /// purity gate scans this whole body -- byte-identical to the procedural
+    /// defolder, which checked `&closure.body` (tail included).
+    closure_body: Expr,
+}
+
+impl Sugar for FoldSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared> {
+        // The post-adaptor element sequence (the inner seq-sugar bottoms out at a
+        // literal domain or bails).
+        let seq = self.inner.desugar(ctx)?.into_seq()?;
+        if seq.is_empty() {
+            // The adaptor chain emptied the sequence (`.filter` kept nothing /
+            // `.take(0)`): the fold body never runs -> vacuous. None rather than a
+            // vacuous `true`.
+            return None;
+        }
+        if seq.len() as i64 > SUGAR_SEQ_CAP {
+            return None;
+        }
+        let n_body = count_asserts_in_stmts(&self.body_stmts);
+        if n_body == 0 {
+            return None;
+        }
+        // Purity: the closure body must not mutate external state / advance an
+        // iterator (a side-effecting body makes each iteration observe a varying
+        // value, so the finite conjunction would be a false claim). HALF 2 then
+        // makes it terminal. Scan the FULL closure body (tail included), exactly as
+        // the procedural defolder did.
+        if closure_body_is_side_effecting(&self.closure_body) {
+            return None;
+        }
+        // Lift the body ONCE, free in acc_var / elem_var / idx_var. All-or-nothing.
+        let mut body_entries = Vec::new();
+        let mut body_skipped = Vec::new();
+        let mut body_lifted = 0usize;
+        let mut body_helpers = HashSet::new();
+        collect_assertion_entries(
+            &self.body_stmts,
+            ctx.scope.local_scope(),
+            ctx.options,
+            ctx.reducer,
+            *ctx.float_widths.borrow_mut(),
+            &mut body_entries,
+            &mut body_skipped,
+            &mut body_lifted,
+            &mut body_helpers,
+            ctx.macro_depth,
+            &ctx.scope.plan.interior_mut,
+        );
+        if !body_skipped.is_empty() || body_entries.len() != n_body {
+            return None;
+        }
+        let body_conj = and_(body_entries.iter().map(|e| e.atom.clone()).collect());
+
+        // Thread the accumulator over the RESULTING element sequence: substitute the
+        // concrete acc_k + the item binder's component(s) into the body formula, and
+        // const-fold the tail to acc_{k+1} given those same bindings.
+        let mut instances = Vec::with_capacity(seq.len());
+        let mut acc = self.acc_0;
+        for elem in &seq {
+            let mut inst = subst_var_in_formula(&body_conj, &self.acc_var, &num(acc));
+            let mut tail_env: BTreeMap<String, i64> = BTreeMap::new();
+            tail_env.insert(self.acc_var.clone(), acc);
+            match &self.item_binder {
+                FoldItemBinder::Whole(var) => {
+                    let t = translate_term_in_scope(&elem.expr, ctx.scope).ok()?;
+                    inst = subst_var_in_formula(&inst, var, &t);
+                    if let Some(n) = elem.value.as_ref().and_then(ConstVal::as_int) {
+                        tail_env.insert(var.clone(), n);
+                    }
+                }
+                FoldItemBinder::Pair(c0, c1) => {
+                    let comps = tuple_components(&elem.expr)?;
+                    if comps.len() != 2 {
+                        return None;
+                    }
+                    let t0 = translate_term_in_scope(comps[0], ctx.scope).ok()?;
+                    let t1 = translate_term_in_scope(comps[1], ctx.scope).ok()?;
+                    inst = subst_var_in_formula(&inst, c0, &t0);
+                    inst = subst_var_in_formula(&inst, c1, &t1);
+                    if let Some(ConstVal::Tuple(parts)) = &elem.value {
+                        if let Some(n) = parts.first().and_then(ConstVal::as_int) {
+                            tail_env.insert(c0.clone(), n);
+                        }
+                        if let Some(n) = parts.get(1).and_then(ConstVal::as_int) {
+                            tail_env.insert(c1.clone(), n);
+                        }
+                    }
+                }
+            }
+            instances.push(inst);
+            acc = const_fold_acc_update(&self.tail, &tail_env)?;
+        }
+        let conj = and_(instances);
+        let warrant = Warrant {
+            name: Some(format!("{}::{}", ctx.scope.local_scope(), self.method)),
+        };
+        Some(Desugared::Constraints {
+            atom: conj,
+            n: n_body,
+            warrant,
+        })
+    }
+}
+
+/// `ForEachSugar` / `ForAllSugar`: a bounded universal over a finite-construction
+/// domain. `for v in <lit> { body }` and `<lit>.iter().for_each(|v| body)` assert
+/// the SAME universal (a finite conjunction over a literal array; a guarded forall
+/// over a closed range) -- `for_each` is `fold` with the unit accumulator, so the
+/// construction is one piece of code (`lift_bounded_forall`, the shared verified
+/// core). `desugar` reduces to that conjunction or bails (mutation / non-point-wise
+/// body / count mismatch). `kind` only flavors the warrant name (`for_each`/`loop`).
+struct ForAllSugar {
+    var: String,
+    domain: BoundedDomain,
+    body_stmts: Vec<Stmt>,
+    /// The warrant-name flavor: `"for_each"` (adaptor) or `"loop"` (for-loop).
+    kind: &'static str,
+}
+
+impl Sugar for ForAllSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared> {
+        // `lift_bounded_forall` is the shared verified core: it const-checks the
+        // domain (range -> guarded forall; array -> finite conjunction), lifts the
+        // body all-or-nothing through the normal collector, and gates purity. We
+        // re-discriminate the domain here (it is consumed by value) by re-reading;
+        // pass the already-resolved `BoundedDomain`.
+        let (quantified, n_body) = lift_bounded_forall(
+            &self.var,
+            self.domain.clone(),
+            &self.body_stmts,
+            ctx.scope,
+            ctx.options,
+            ctx.reducer,
+            *ctx.float_widths.borrow_mut(),
+            ctx.macro_depth,
+        )?;
+        let warrant = Warrant {
+            name: Some(format!(
+                "{}::{}::{}",
+                ctx.scope.local_scope(),
+                self.kind,
+                self.var
+            )),
+        };
+        Some(Desugared::Constraints {
+            atom: quantified,
+            n: n_body,
+            warrant,
+        })
+    }
+}
+
+/// `ConditionalSugar`: the CLAIM-side atom (mirror of `LiteralSugar`, the
+/// value-side atom). A guarded assertion `if <guard> { <then-asserts> }
+/// [else { <else-asserts> }]` is the implication it literally states:
+/// `guard => then` (and `not guard => else` when the else branch carries asserts).
+///
+/// SOUNDNESS LINE: we emit `guard => claim`, NEVER bare `claim`. Asserting the
+/// body unconditionally when it is guarded would be a fake-discharge (the assert
+/// only fires when the guard holds). `match` is nested conditionals; a bare
+/// `assert!(P)` is the trivial `true => P` (handled by the normal unconditional
+/// path, so `ConditionalSugar` engages only on the genuinely-guarded contexts the
+/// trunk previously refused).
+///
+/// EXACT-OR-BAIL: the guard must translate to a Formula via the SAME path an
+/// `assert!(guard)` would take (`translate_bool_assertion`); the then/else asserts
+/// must lift all-or-nothing through the normal collector; the guard / body must be
+/// pure (no mutation / iterator-advance -- a side-effecting branch is not a
+/// timeless point-wise claim). Any miss -> None (bail; the existing if-context
+/// refusal stands).
+struct ConditionalSugar {
+    cond: Expr,
+    then_stmts: Vec<Stmt>,
+    else_stmts: Vec<Stmt>,
+}
+
+impl Sugar for ConditionalSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared> {
+        // An `if let PAT = e { .. }` is a pattern-match guard, not a boolean
+        // predicate -- the panic-locus path handles the diverging-else shape;
+        // anything else here bails (we do not model the bound bindings).
+        if matches!(&self.cond, Expr::Let(_)) {
+            return None;
+        }
+        // The guard must not mutate / advance state (a side-effecting condition is
+        // not a timeless predicate). Reuse the verified closure-body scanner over
+        // the condition expression.
+        if closure_body_is_side_effecting(&self.cond) {
+            return None;
+        }
+        let then_count = count_asserts_in_stmts(&self.then_stmts);
+        let else_count = count_asserts_in_stmts(&self.else_stmts);
+        // At least one branch must carry an assertion (else nothing to classify --
+        // leave it to the existing handling).
+        if then_count + else_count == 0 {
+            return None;
+        }
+        // Neither branch may mutate captured state: a single guarded implication is
+        // a point-wise claim only if the branch body is pure.
+        if loop_body_mutates(&self.then_stmts) || loop_body_mutates(&self.else_stmts) {
+            return None;
+        }
+        // The guard formula -- lifted EXACTLY as `assert!(guard)` would lift it. A
+        // guard outside the liftable predicate set (an opaque method call, a float
+        // refinement we cannot width, ...) -> bail.
+        let guard = lower_assert_condition(&self.cond, ctx.scope, &ctx.float_widths.borrow())
+            .ok()?
+            .atom;
+
+        let mut conjuncts: Vec<Rc<Formula>> = Vec::new();
+        if then_count > 0 {
+            let then_conj = self.lift_branch_conj(&self.then_stmts, then_count, ctx)?;
+            // guard => then.
+            conjuncts.push(implies(guard.clone(), then_conj));
+        }
+        if else_count > 0 {
+            let else_conj = self.lift_branch_conj(&self.else_stmts, else_count, ctx)?;
+            // not guard => else (the else branch fires when the guard is false).
+            conjuncts.push(implies(not_(guard.clone()), else_conj));
+        }
+        let atom = and_(conjuncts);
+        let warrant = Warrant {
+            name: Some(format!("{}::if", ctx.scope.local_scope())),
+        };
+        Some(Desugared::Constraints {
+            atom,
+            n: then_count + else_count,
+            warrant,
+        })
+    }
+}
+
+impl ConditionalSugar {
+    /// Lift a branch's statements all-or-nothing through the normal collector,
+    /// returning the conjunction of its assert atoms or None (bail) if any branch
+    /// assert refuses / is missing (truth-table-or-gutter, mirroring
+    /// `lift_bounded_forall`'s body lift).
+    fn lift_branch_conj(
+        &self,
+        branch_stmts: &[Stmt],
+        expected: usize,
+        ctx: &SugarCtx,
+    ) -> Option<Rc<Formula>> {
+        let mut body_entries = Vec::new();
+        let mut body_skipped = Vec::new();
+        let mut body_lifted = 0usize;
+        let mut body_helpers = HashSet::new();
+        collect_assertion_entries(
+            branch_stmts,
+            ctx.scope.local_scope(),
+            ctx.options,
+            ctx.reducer,
+            *ctx.float_widths.borrow_mut(),
+            &mut body_entries,
+            &mut body_skipped,
+            &mut body_lifted,
+            &mut body_helpers,
+            ctx.macro_depth,
+            &ctx.scope.plan.interior_mut,
+        );
+        if !body_skipped.is_empty() || body_entries.len() != expected {
+            return None;
+        }
+        Some(and_(body_entries.iter().map(|e| e.atom.clone()).collect()))
+    }
+}
+
+/// Build a `ConditionalSugar` from a `Stmt::Expr(Expr::If(..))`. The then-branch
+/// statements and the else-branch statements (a plain `else { .. }` block; an
+/// `else if` chains as a nested `Expr::If`, captured as the single else statement)
+/// are the guarded claims. None if the if has no body to classify.
+fn decompose_if(i: &syn::ExprIf) -> Option<ConditionalSugar> {
+    let else_stmts: Vec<Stmt> = match &i.else_branch {
+        Some((_, else_expr)) => match &**else_expr {
+            Expr::Block(b) => b.block.stmts.clone(),
+            // `else if ..` / any other else expr: keep as one statement so its
+            // asserts are counted and lifted (a nested ConditionalSugar reached via
+            // the recursive collector). A non-block else with asserts that does not
+            // fully lift will make the branch lift bail -- honest.
+            other => vec![Stmt::Expr(other.clone(), None)],
+        },
+        None => Vec::new(),
+    };
+    Some(ConditionalSugar {
+        cond: (*i.cond).clone(),
+        then_stmts: i.then_branch.stmts.clone(),
+        else_stmts,
+    })
+}
+
+/// Build a `FoldSugar` (or `RFoldSugar`) from a `.fold`/`.rfold` method call, by
+/// decomposing the receiver into its sequence-`Sugar` tree and capturing the
+/// closure's binders + body + acc-update tail. None (bail) on any shape outside
+/// the represented set -- this IS the front half of `try_lift_fold_forall`
+/// (parsing), with the reduction living in `FoldSugar::desugar`.
+fn decompose_fold(
+    expr: &Expr,
+    let_inits: &BTreeMap<String, &Expr>,
+) -> Option<FoldSugar> {
     let Expr::MethodCall(call) = expr else {
         return None;
     };
@@ -2584,7 +2973,6 @@ fn try_lift_fold_forall(
         "rfold" => true,
         _ => return None,
     };
-    // fold(init, closure): exactly two args, the second a closure.
     if call.args.len() != 2 {
         return None;
     }
@@ -2592,8 +2980,6 @@ fn try_lift_fold_forall(
     let Expr::Closure(closure) = &call.args[1] else {
         return None;
     };
-    // |acc, item| -- exactly two params; acc a plain ident; item a plain ident or a
-    // 2-tuple `(idx, elem)` (from `.enumerate()` or a literal-tuple domain).
     if closure.inputs.len() != 2 {
         return None;
     }
@@ -2601,181 +2987,132 @@ fn try_lift_fold_forall(
         Pat::Ident(p) if p.subpat.is_none() => p.ident.to_string(),
         _ => return None,
     };
-    // The item binder: a plain ident binds the WHOLE element; a 2-tuple binds (comp0,
-    // comp1) of a tuple element. `(idx, elem)` and `(i, &x)` reference-elision supported.
-    enum ItemBinder {
-        Whole(String),
-        Pair(String, String),
-    }
     let item_binder = match &closure.inputs[1] {
         Pat::Tuple(t) if t.elems.len() == 2 => {
             let c0 = closure_single_param_ident(&t.elems[0])?;
             let c1 = closure_single_param_ident(&t.elems[1])?;
-            ItemBinder::Pair(c0, c1)
+            FoldItemBinder::Pair(c0, c1)
         }
-        other => ItemBinder::Whole(closure_single_param_ident(other)?),
+        other => FoldItemBinder::Whole(closure_single_param_ident(other)?),
     };
-    // init must be a literal integer accumulator (the threaded value is int-only for now).
     let acc_0 = const_int(init_expr)?;
-
-    // Peel the receiver to the base literal domain + the ordered adaptor chain (resolving
-    // `let`-bound receivers through `let_inits`). `.rfold` reverses the FINAL sequence, so
-    // append a Rev after every other adaptor.
-    let (base, mut adaptors) = peel_fold_adaptors(&call.receiver, let_inits, 0)?;
-    if rev_fold {
-        adaptors.push(Adaptor::Rev);
-    }
-
-    // Build the BASE element sequence as (source Expr, const value if evaluable), in
-    // iterated order, from the literal domain.
-    const CAP: i64 = 4096;
-    let domain = bounded_domain_from_expr(base, scope)?;
-    let base_seq: Vec<(Expr, Option<ConstVal>)> = match domain {
-        BoundedDomain::Array(_) => match strip_refs_groups(base) {
-            Expr::Array(arr) => {
-                if arr.elems.len() as i64 > CAP {
-                    return None;
-                }
-                arr.elems
-                    .iter()
-                    .map(|e| (e.clone(), const_eval(e, &BTreeMap::new())))
-                    .collect()
-            }
-            _ => return None,
-        },
-        BoundedDomain::Range {
-            start,
-            end,
-            inclusive,
-        } => {
-            let (Some(s), Some(e)) = (term_as_int(&start), term_as_int(&end)) else {
-                return None;
-            };
-            let e = if inclusive { e + 1 } else { e };
-            if e < s || e - s > CAP {
-                return None;
-            }
-            (s..e)
-                .map(|n| {
-                    (
-                        syn::parse_str::<Expr>(&n.to_string()).unwrap(),
-                        Some(ConstVal::Int(n)),
-                    )
-                })
-                .collect()
-        }
-    };
-    if base_seq.is_empty() {
-        return None;
-    }
-    // Apply the stdlib adaptor semantics EXACTLY over the literal element sequence
-    // (const-evaluating each transforming closure on the concrete elements). Any
-    // inexactness -> None (bail: honest unclassified, never a fake-dig).
-    let seq = apply_adaptors(base_seq, &adaptors)?;
-    if seq.is_empty() {
-        // The adaptor chain emptied the sequence (`.filter` kept nothing / `.take(0)`):
-        // the fold body never runs -> nothing asserted (vacuous). Leave it (None) rather
-        // than emit a vacuous `true`.
-        return None;
-    }
-    if seq.len() as i64 > CAP {
-        return None;
-    }
-
-    // The closure body: block-bodied (the asserts + the acc-update tail). A bare-expr body
-    // has no asserts -> nothing in this bucket.
+    let inner = decompose_seq(&call.receiver, let_inits, rev_fold)?;
+    // The closure body: block-bodied (asserts + acc-update tail). The tail is the
+    // final expr-without-semi; the preceding statements are the body.
     let Expr::Block(body_block) = &*closure.body else {
         return None;
     };
     let stmts = &body_block.block.stmts;
-    // The tail is the final expr-without-semi (the acc update). The preceding statements
-    // are the body (asserts + any pure body lets). A `fold` whose closure does not END in
-    // a value expression is not a clean acc update -> refuse.
     let Some((Stmt::Expr(tail, None), body_stmts)) = stmts.split_last() else {
         return None;
     };
-    let n_body = count_asserts_in_stmts(body_stmts);
-    if n_body == 0 {
+    Some(FoldSugar {
+        inner,
+        acc_var,
+        item_binder,
+        acc_0,
+        body_stmts: body_stmts.to_vec(),
+        tail: tail.clone(),
+        method,
+        closure_body: (*closure.body).clone(),
+    })
+}
+
+/// Build a `ForEachSugar` from a `<receiver>.for_each(|v| body)` adaptor: the
+/// receiver (less one element-producing adaptor) must resolve to a finite-
+/// construction domain, the closure must bind one plain ident. None (bail)
+/// otherwise. This is the front half of `try_lift_for_each_forall`.
+fn decompose_for_each(expr: &Expr, scope: &TemporalScope) -> Option<ForAllSugar> {
+    let Expr::MethodCall(call) = expr else {
+        return None;
+    };
+    if call.method != "for_each" || call.args.len() != 1 {
         return None;
     }
-    // Purity: the closure body must not mutate external state -- no assignment / `&mut` /
-    // `let mut`, AND no iterator-advancing / mutating method call (`other.next()`,
-    // `v.push(..)`), INCLUDING inside an assert macro's tokens (the intersperse shape
-    // `assert_eq!(Some(&x), other.next())` mutates the captured `other`). The acc-update
-    // tail's own `acc + 1` arithmetic is pure and unaffected. A side-effecting body makes
-    // each iteration observe a varying external value, so the finite conjunction would be a
-    // false claim -- refuse (HALF 2 then makes it terminal).
-    if closure_body_is_side_effecting(&closure.body) {
+    let Expr::Closure(closure) = &call.args[0] else {
+        return None;
+    };
+    if closure.inputs.len() != 1 {
         return None;
     }
-    // Lift the body ONCE, free in acc_var / elem_var / idx_var. All-or-nothing.
-    let mut body_entries = Vec::new();
-    let mut body_skipped = Vec::new();
-    let mut body_lifted = 0usize;
-    let mut body_helpers = HashSet::new();
-    collect_assertion_entries(
+    let var = match &closure.inputs[0] {
+        Pat::Ident(p) if p.subpat.is_none() => p.ident.to_string(),
+        Pat::Reference(r) => match &*r.pat {
+            Pat::Ident(p) if p.subpat.is_none() && r.mutability.is_none() => p.ident.to_string(),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let base = iter_adaptor_base(&call.receiver);
+    let domain = bounded_domain_from_expr(base, scope)?;
+    let body_stmts: Vec<Stmt> = match &*closure.body {
+        Expr::Block(b) => b.block.stmts.clone(),
+        other => vec![Stmt::Expr(other.clone(), None)],
+    };
+    Some(ForAllSugar {
+        var,
+        domain,
         body_stmts,
-        scope.local_scope(),
+        kind: "for_each",
+    })
+}
+
+/// Build a `ForAllSugar` from a `for <var> in <domain> { body }` loop: the domain
+/// must be a finite construction (closed range / literal array). None (bail)
+/// otherwise. This is the front half of `try_lift_for_loop_forall`.
+fn decompose_for_loop(f: &syn::ExprForLoop, scope: &TemporalScope) -> Option<ForAllSugar> {
+    let var = match &*f.pat {
+        Pat::Ident(p) if p.subpat.is_none() => p.ident.to_string(),
+        _ => return None,
+    };
+    let domain = bounded_domain_from_expr(&f.expr, scope)?;
+    Some(ForAllSugar {
+        var,
+        domain,
+        body_stmts: f.body.stmts.clone(),
+        kind: "loop",
+    })
+}
+
+/// Build a `SugarCtx` from the collector's loose arguments. Centralizes the
+/// `RefCell` wrap of `float_widths` so the call sites stay terse.
+fn sugar_ctx<'a, 'c>(
+    scope: &'a TemporalScope,
+    options: &'a LiftOptions,
+    reducer: &'a ReductionCtx<'c>,
+    float_widths: &'a mut FloatWidthScope,
+    macro_depth: usize,
+) -> SugarCtx<'a, 'c> {
+    SugarCtx {
+        scope,
         options,
         reducer,
-        float_widths,
-        &mut body_entries,
-        &mut body_skipped,
-        &mut body_lifted,
-        &mut body_helpers,
+        float_widths: std::cell::RefCell::new(float_widths),
         macro_depth,
-        &scope.plan.interior_mut,
-    );
-    if !body_skipped.is_empty() || body_entries.len() != n_body {
-        return None;
     }
-    let body_conj = and_(body_entries.iter().map(|e| e.atom.clone()).collect());
+}
 
-    // Thread the accumulator over the RESULTING (post-adaptor) element sequence: for each
-    // element substitute the concrete acc_k + the item binder's component(s) into the body
-    // formula, and const-fold the tail to acc_{k+1} given those same bindings.
-    let mut instances = Vec::with_capacity(seq.len());
-    let mut acc = acc_0;
-    for (elem_expr, elem_cv) in &seq {
-        // Per-iteration term + int bindings from the item binder.
-        let mut inst = subst_var_in_formula(&body_conj, &acc_var, &num(acc));
-        let mut tail_env: BTreeMap<String, i64> = BTreeMap::new();
-        tail_env.insert(acc_var.clone(), acc);
-        match &item_binder {
-            ItemBinder::Whole(var) => {
-                let t = translate_term_in_scope(elem_expr, scope).ok()?;
-                inst = subst_var_in_formula(&inst, var, &t);
-                if let Some(n) = elem_cv.as_ref().and_then(ConstVal::as_int) {
-                    tail_env.insert(var.clone(), n);
-                }
-            }
-            ItemBinder::Pair(c0, c1) => {
-                // The element must be a 2-tuple (from `.enumerate()` or a literal tuple).
-                let comps = tuple_components(elem_expr)?;
-                if comps.len() != 2 {
-                    return None;
-                }
-                let t0 = translate_term_in_scope(comps[0], scope).ok()?;
-                let t1 = translate_term_in_scope(comps[1], scope).ok()?;
-                inst = subst_var_in_formula(&inst, c0, &t0);
-                inst = subst_var_in_formula(&inst, c1, &t1);
-                if let Some(ConstVal::Tuple(parts)) = elem_cv {
-                    if let Some(n) = parts.first().and_then(ConstVal::as_int) {
-                        tail_env.insert(c0.clone(), n);
-                    }
-                    if let Some(n) = parts.get(1).and_then(ConstVal::as_int) {
-                        tail_env.insert(c1.clone(), n);
-                    }
-                }
-            }
+/// Emit a desugared constraint terminal into the collector's `entries` (the
+/// warranted-emission path), accounting its assert-macro count. Returns true if a
+/// constraint was emitted (the statement is accounted), false if `desugared` was a
+/// bare sequence (a sequence sugar at statement position is not an emit). The
+/// warrant name becomes the `AssertionEntry.name` (the memento handle).
+fn emit_desugared(
+    desugared: Desugared,
+    entries: &mut Vec<AssertionEntry>,
+    macros_lifted: &mut usize,
+) -> bool {
+    match desugared {
+        Desugared::Constraints { atom, n, warrant } => {
+            entries.push(AssertionEntry {
+                name: warrant.name,
+                atom,
+            });
+            *macros_lifted += n;
+            true
         }
-        instances.push(inst);
-        // acc_{k+1} = const-fold(tail) under {acc, item-components}. If the tail needs a
-        // binding we could not supply as an int, this returns None -> bail (honest).
-        acc = const_fold_acc_update(tail, &tail_env)?;
+        Desugared::Seq(_) => false,
     }
-    let conj = and_(instances);
-    Some((conj, n_body, method))
 }
 
 /// The component sub-expressions of a 2+-tuple expression (`(a, b)`), or None if `expr`
@@ -3081,49 +3418,29 @@ fn collect_assertion_entries(
                             macro_depth,
                             &temporal_scope.plan.interior_mut,
                         );
-                    } else if let Some((quantified, n, method)) = try_lift_fold_forall(
-                        &init.expr,
-                        &temporal_scope,
-                        options,
-                        reducer,
-                        float_widths,
-                        macro_depth,
-                        &let_inits,
-                    ) {
-                        // DEFOLDER: `let i = <lit>.iter().fold(0, |i, &x| { assert..; i+1 });`
-                        // is the finite conjunction of its per-iteration body with `i`
-                        // threaded as a const-folded accumulator -- the construction axiom.
-                        entries.push(AssertionEntry {
-                            name: Some(format!(
-                                "{}::{}",
-                                temporal_scope.local_scope(),
-                                method
-                            )),
-                            atom: quantified,
-                        });
-                        *macros_lifted += n;
-                    } else if let Some((quantified, n, var)) = try_lift_for_each_forall(
-                        &init.expr,
-                        &temporal_scope,
-                        options,
-                        reducer,
-                        float_widths,
-                        macro_depth,
-                    ) {
-                        // `let _ = <lit>.iter().for_each(|v| assert!(..));` is the
-                        // SAME bounded universal as `for v in <lit> { assert!(..) }`
-                        // -- a finite conjunction over the constructed domain.
-                        // Account its body asserts (no silent drop) and add the
-                        // named universal memento (mirrors the for-loop caller).
-                        entries.push(AssertionEntry {
-                            name: Some(format!(
-                                "{}::for_each::{}",
-                                temporal_scope.local_scope(),
-                                var
-                            )),
-                            atom: quantified,
-                        });
-                        *macros_lifted += n;
+                    } else if let Some(desugared) = {
+                        // DESUGAR (the typed `Sugar` spine): a `.fold`/`.rfold`
+                        // (`FoldSugar`) or a `.for_each` (`ForEachSugar`) over a
+                        // finite literal domain desugars to its finite conjunction
+                        // (the construction axiom: desugar fold with fold). The
+                        // `Sugar` tree is built by `decompose_*` (node + children)
+                        // and walked by `desugar()`; the warranted emission drains
+                        // its output. A bail (`None`) at any layer falls through.
+                        let ctx = sugar_ctx(
+                            &temporal_scope,
+                            options,
+                            reducer,
+                            float_widths,
+                            macro_depth,
+                        );
+                        decompose_fold(&init.expr, &let_inits)
+                            .and_then(|s| s.desugar(&ctx))
+                            .or_else(|| {
+                                decompose_for_each(&init.expr, &temporal_scope)
+                                    .and_then(|s| s.desugar(&ctx))
+                            })
+                    } {
+                        emit_desugared(desugared, entries, macros_lifted);
                     } else {
                         let mut count = count_asserts_in_expr(&init.expr);
                         if let Some((_, diverge)) = &init.diverge {
@@ -3336,25 +3653,26 @@ fn collect_assertion_entries(
             }
             // Control-flow contexts: asserts are conditional or parametric; refuse.
             Stmt::Expr(Expr::ForLoop(f), _) => {
-                // A bounded loop is the universal it states: read the range as a
-                // guard and lift forall x. (guard => body). If the body does not
-                // wholly compute to truth values, gutter the loop (refuse).
-                if let Some((quantified, n, var)) = try_lift_for_loop_forall(
-                    f,
-                    &temporal_scope,
-                    options,
-                    reducer,
-                    float_widths,
-                    macro_depth,
-                ) {
-                    // Name the loop memento `<test>::loop::<var>`, mirroring the
-                    // Python reference (layer2.py PATTERN 1). A named universal is
-                    // federatable and the engine conjoins it ambiently.
-                    entries.push(AssertionEntry {
-                        name: Some(format!("{}::loop::{}", temporal_scope.local_scope(), var)),
-                        atom: quantified,
-                    });
-                    *macros_lifted += n;
+                // A bounded loop is the universal it states: `ForAllSugar` reads the
+                // range as a guard and lifts forall x. (guard => body) (or the finite
+                // conjunction over a literal array). If the body does not wholly
+                // compute to truth values, the desugar bails (refuse below).
+                let lifted = {
+                    let ctx = sugar_ctx(
+                        &temporal_scope,
+                        options,
+                        reducer,
+                        float_widths,
+                        macro_depth,
+                    );
+                    decompose_for_loop(f, &temporal_scope).and_then(|s| s.desugar(&ctx))
+                };
+                if let Some(desugared) = lifted {
+                    // The loop memento is named `<test>::loop::<var>` by the
+                    // `ForAllSugar` warrant, mirroring the Python reference
+                    // (layer2.py PATTERN 1). A named universal is federatable and
+                    // the engine conjoins it ambiently.
+                    emit_desugared(desugared, entries, macros_lifted);
                 } else {
                     // Provenance for the bin-1/bin-2 sort: a refused for-loop is
                     // either over a CONSTRUCTED domain (literal range/array -- the
@@ -3562,43 +3880,26 @@ fn collect_assertion_entries(
                     // and add the named universal; the body asserts are accounted by
                     // `n`. An OPAQUE receiver makes `try_lift_for_each_forall` None,
                     // so the assert stays in its existing bin-2 refusal below.
-                    if let Some((quantified, n, method)) = try_lift_fold_forall(
-                        e,
-                        &temporal_scope,
-                        options,
-                        reducer,
-                        float_widths,
-                        macro_depth,
-                        &let_inits,
-                    ) {
-                        // DEFOLDER over a literal domain (bare `.fold`/`.rfold` statement).
-                        entries.push(AssertionEntry {
-                            name: Some(format!(
-                                "{}::{}",
-                                temporal_scope.local_scope(),
-                                method
-                            )),
-                            atom: quantified,
-                        });
-                        *macros_lifted += n;
-                        true
-                    } else if let Some((quantified, n, var)) = try_lift_for_each_forall(
-                        e,
-                        &temporal_scope,
-                        options,
-                        reducer,
-                        float_widths,
-                        macro_depth,
-                    ) {
-                        entries.push(AssertionEntry {
-                            name: Some(format!(
-                                "{}::for_each::{}",
-                                temporal_scope.local_scope(),
-                                var
-                            )),
-                            atom: quantified,
-                        });
-                        *macros_lifted += n;
+                    let desugared = {
+                        let ctx = sugar_ctx(
+                            &temporal_scope,
+                            options,
+                            reducer,
+                            float_widths,
+                            macro_depth,
+                        );
+                        // DEFOLDER over a literal domain (bare `.fold`/`.rfold`
+                        // statement), or a bare `.for_each` (the same bounded
+                        // universal as the equivalent for-loop).
+                        decompose_fold(e, &let_inits)
+                            .and_then(|s| s.desugar(&ctx))
+                            .or_else(|| {
+                                decompose_for_each(e, &temporal_scope)
+                                    .and_then(|s| s.desugar(&ctx))
+                            })
+                    };
+                    if let Some(desugared) = desugared {
+                        emit_desugared(desugared, entries, macros_lifted);
                         true
                     } else {
                     // const_eval_select((), compiletime, runtime): inline the
