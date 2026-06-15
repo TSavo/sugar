@@ -5411,12 +5411,13 @@ fn wrapping() {
 }
 
 #[test]
-fn effectful_scrutinee_match_stays_refused_not_dug() {
-    // DISCRIMINATION (bucket 2, the bad direction): a match whose scrutinee ADVANCES
-    // an iterator (`it.next()`) is effectful -- the scrutinee is not a timeless value,
-    // so the whole match BAILS and the arm asserts STAY refused (under-match-context),
-    // never fake-dug. Corpus: option.rs::test_iterator (`match it.next() { Some(..)
-    // => { assert_eq!(..); *interior = .. } None => assert!(false) }`).
+fn effectful_scrutinee_match_is_refused_not_dug() {
+    // DISCRIMINATION (bucket 2, the bad direction) + RESOLVE-THEN-CLASSIFY: a match whose
+    // scrutinee ADVANCES an iterator (`it.next()`) is a RUNTIME call result -- the
+    // scrutinee is not a timeless value, the arm asserts read the runtime arm taken, so
+    // the whole match is terminal-REFUSED (runtime non-scalar result), never fake-dug.
+    // Corpus: option.rs::test_mut_iter (`match it.next() { Some(interior) =>
+    // { assert_eq!(*interior, val); *interior = .. } None => assert!(false) }`).
     let src = r#"
 #[test]
 fn eff() {
@@ -5436,10 +5437,43 @@ fn eff() {
         refusal_reasons(&out)
     );
     assert!(
+        refusal_reasons(&out).iter().all(|r| {
+            sugar_lift_rust_tests::refusal_disposition(r)
+                == sugar_lift_rust_tests::Disposition::Refused
+                && r.contains("runtime non-scalar result")
+        }),
+        "both arm asserts must be terminal-REFUSED as a runtime-scrutinee match: {:?}",
+        refusal_reasons(&out)
+    );
+}
+
+#[test]
+fn constructed_scrutinee_match_does_not_fake_refuse() {
+    // DISCRIMINATION (the fake-refuse guardrail for the match-context tail): a match whose
+    // scrutinee is a CONSTRUCTED literal/path (NOT a runtime call result) must NOT be
+    // terminal-refused as a runtime-scrutinee match -- it stays the generic UNCLASSIFIED
+    // "under match context" reason (a lifter limitation, recoverable work). This proves
+    // the runtime-scrutinee refusal is EARNED by the runtime call shape, not a blanket
+    // relabel of every match-context residue.
+    let src = r#"
+#[test]
+fn ctor() {
+    let pair = (1i64, 2i64);
+    match pair {
+        (a, _b) => {
+            assert_eq!(a, 1i64);
+        }
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/ctor.rs");
+    // Whatever the dig outcome, NO reason may be the runtime-scrutinee terminal: a
+    // constructed scrutinee is not a runtime call result.
+    assert!(
         refusal_reasons(&out)
             .iter()
-            .all(|r| r.contains("under match context")),
-        "both arm asserts must stay in the match-context bucket: {:?}",
+            .all(|r| !r.contains("runtime non-scalar result")),
+        "a constructed-scrutinee match must NOT be fake-refused as runtime: {:?}",
         refusal_reasons(&out)
     );
 }

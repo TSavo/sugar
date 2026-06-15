@@ -222,6 +222,7 @@ impl<'a> CallsiteSugar<'a> {
             &mut th,
             macro_depth + 1,
             &BTreeSet::new(),
+            &BTreeMap::new(),
         );
         let unclassified: Vec<&String> = ts
             .iter()
@@ -574,13 +575,16 @@ mod tests {
         );
     }
 
-    // ── BUCKET 1 BAD-TWIN (honest non-dig): a nested `assert_*` helper whose body is
-    // EFFECTFUL/runtime (a mutable accumulator) must NOT be fake-dug. It resolves
-    // lexically but its body does not reduce, so it stays accounted-and-unclassified --
-    // never laundered to discharged. (Mirrors the real corpus `assert_predicates_exact`
-    // / `assert_exact_exp`, whose HashSet-collect / fmt::write bodies stay unclassified.) ──
+    // ── BUCKET 1 BAD-TWIN (RESOLVE-THEN-CLASSIFY, honest non-dig): a nested `assert_*`
+    // helper whose body is RUNTIME (a `let mut` mutable-local trajectory) must NOT be
+    // fake-dug. It resolves lexically (its source is now SHOWN), and its `let mut`
+    // trajectory is a SOURCE property (a mutated local has no single timeless `t`, kin to
+    // `temporally unstable`) -- so it is terminal-REFUSED with a named effect, never
+    // discharged. (Mirrors the real corpus `assert_exact_exp`'s `let mut writer`; the
+    // `assert_predicates_exact` collection twin is covered below.) The KEY guarantee: the
+    // body is accounted and NOT discharged (no fake-dig). ──
     #[test]
-    fn nested_assert_prefixed_helper_with_runtime_body_stays_unclassified() {
+    fn nested_assert_prefixed_helper_with_runtime_body_is_refused_not_fake_dug() {
         let out = lift(
             r#"
             #[test]
@@ -596,11 +600,80 @@ mod tests {
         );
         let accounted = out.assertions_lifted + out.assertions_refused;
         assert!(accounted >= 1, "the assert must be accounted, not dropped");
+        assert_eq!(
+            discharged(&out),
+            0,
+            "a runtime `let mut` body must NOT be fake-dug: {:?}",
+            out.skip_reasons
+        );
         assert!(
             out.skip_reasons
                 .iter()
-                .any(|r| matches!(refusal_disposition(r), Disposition::Unclassified)),
-            "a runtime-body nested helper must stay UNCLASSIFIED (no fake-dig): {:?}",
+                .any(|r| matches!(refusal_disposition(r), Disposition::Refused)),
+            "a resolved runtime-body nested helper must be terminal-REFUSED (named effect): {:?}",
+            out.skip_reasons
+        );
+    }
+
+    // ── BUCKET 1 COLLECTION TWIN (RESOLVE-THEN-CLASSIFY): a nested helper whose body is a
+    // RUNTIME ITERATOR/COLLECTION construct (`xs.iter().map(..).collect()`) resolves
+    // lexically and is terminal-REFUSED (bin-2 runtime aggregate data), never fake-dug.
+    // Mirrors the real corpus `mem/type_info.rs::assert_predicates_exact`. ──
+    #[test]
+    fn nested_assert_prefixed_helper_with_collection_body_is_refused_not_fake_dug() {
+        let out = lift(
+            r#"
+            #[test]
+            fn t() {
+                fn assert_collected(xs: &[u32]) {
+                    let ys: Vec<u32> = xs.iter().copied().collect();
+                    assert_eq!(xs.len(), ys.len());
+                }
+                let data = [1u32, 2u32, 3u32];
+                assert_collected(&data);
+            }
+            "#,
+        );
+        let accounted = out.assertions_lifted + out.assertions_refused;
+        assert!(accounted >= 1, "the assert must be accounted, not dropped");
+        assert_eq!(
+            discharged(&out),
+            0,
+            "a runtime collection body must NOT be fake-dug: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.skip_reasons
+                .iter()
+                .any(|r| matches!(refusal_disposition(r), Disposition::Refused)
+                    && r.contains("collection")),
+            "a resolved collection-body nested helper must be terminal-REFUSED (bin-2): {:?}",
+            out.skip_reasons
+        );
+    }
+
+    // ── DISCRIMINATION (the fake-refuse guardrail): a nested helper whose body is PURE
+    // (no `let mut`, no collection construct) still DIGS when resolved -- a pure `let`
+    // binding folds and the assert discharges. This proves the runtime-body refusal is
+    // EARNED by the runtime shape, not a blanket relabel of every resolved helper. ──
+    #[test]
+    fn nested_assert_prefixed_helper_with_pure_let_body_digs() {
+        let out = lift(
+            r#"
+            #[test]
+            fn t() {
+                fn assert_doubled(n: i32) {
+                    let twice = n + n;
+                    assert_eq!(twice, n * 2);
+                }
+                assert_doubled(4);
+            }
+            "#,
+        );
+        assert!(
+            discharged(&out) >= 1,
+            "a pure-let nested helper body must DIG (no fake-refuse): {} / {:?}",
+            discharged(&out),
             out.skip_reasons
         );
     }
