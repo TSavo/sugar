@@ -197,9 +197,18 @@ pub enum Disposition {
 ///                            unstable f-width (f16 / parse-unwrap chain).
 /// Everything else is a LIFTER limitation -> Unclassified: `if`/`while`/`match`
 /// (branch partitioning), `unsupported term`, `reachable only via call-site
-/// inlining` (call queueing), `bin-1` literal domains, let-init/nested/unenumerated
-/// positions, unsupported macros, and `ambiguous cfg` (a missing target input,
-/// recoverable by pinning the cfg). Default = Unclassified.
+/// inlining` for a CONCRETE scalar/slice helper (call queueing -- a closed-literal
+/// call site CAN pin it), `bin-1` literal domains, let-init/nested/unenumerated
+/// positions, unsupported macros, `has no visible source` (the helper's body may be
+/// loadable by better resolution -- e.g. a fn-local helper nested in a `#[test]` fn
+/// the reducer does not yet register, so it is reach, not a source property), and
+/// `ambiguous cfg` (a missing target input, recoverable by pinning the cfg).
+/// Default = Unclassified.
+///   * `reachable only via monomorphization of a generic` -- a GENERIC type/const-
+///                            parametric helper has no single concrete instantiation
+///                            to read (its truth is per-monomorphization); a SOURCE
+///                            property, terminal. (Distinct from the concrete-helper
+///                            `reachable only via call-site inlining`, which stays work.)
 pub fn refusal_disposition(reason: &str) -> Disposition {
     // INACTIVE: cfg-disabled for this target -- not in this build's universe.
     if reason.contains("inactive cfg") {
@@ -380,7 +389,23 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // the `None` arm of `float_refinement_receiver_width` -- a known-f32/f64 receiver
         // resolves a width and lifts, never reaching this reason (the fake-refuse
         // guardrail). Typed as `UnknownFloatWidthEffect`.
-        || reason.contains("requires known f32/f64 receiver width");
+        || reason.contains("requires known f32/f64 receiver width")
+        // TERMINAL: a GENERIC type/const-parametric helper (`fn test_num<T: Add..>`,
+        // `fn check_size_hint<const N: usize>`, `fn inner<SuppressConstPromotion>`,
+        // `fn test_parse<T: FromStr>`). Its asserts are written over the type/const
+        // parameter, so walked as a standalone item there is NO single concrete
+        // monomorphization to read -- its truth is per-instantiation. Every call site
+        // instantiates it at a runtime type/const (`::<i8>`, `::<2>`, `::<()>`, or a
+        // macro `$T`), so lifting would require type-directed MONOMORPHIZATION (resolving
+        // `T::add` etc. per type) -- a typing judgment, not a construction from source
+        // literals. A SOURCE property (the helper IS generic), not a missing value-lifter.
+        // EARNED by `helper_is_generic_parametric` at the SOLE `callsite_inlining_reason`
+        // choke point (top-level Pass-2 + nested deferred-fn drain). DISCRIMINATION: a
+        // CONCRETE scalar/slice helper (`fn lower(c: char)`, `fn zero_byte(v: u64, b: usize)`)
+        // has no type/const param -- its closed-literal call site a value-lifter CAN pin, so
+        // it STAYS the unclassified "reachable only via call-site inlining" reason (the
+        // fake-refuse guardrail; left to dissolution / the exact partition).
+        || reason.contains("reachable only via monomorphization of a generic");
     if terminal {
         Disposition::Refused
     } else {
@@ -1360,11 +1385,45 @@ fn helper_is_runtime_parametric(f: &syn::ItemFn) -> bool {
     })
 }
 
-/// The refusal reason for a runtime-parametric helper's asserts: bin-2 terminal.
+/// A helper is GENERIC-PARAMETRIC iff its signature carries a generic TYPE or CONST
+/// parameter (lifetimes do not count -- they erase to nothing at runtime and never
+/// change a value claim). Such a helper's body asserts are written over the type/const
+/// parameter (`assert_eq!(ten.add(two), ten + two)` for `<T: Add>`, `offset_of!(Foo<P>,
+/// ..)` for `<P>`, `map_windows(|_: &[_; N]|)` for `<const N: usize>`). Walked as a
+/// standalone item it has NO monomorphization: every call site instantiates it at a
+/// concrete type/const (`test_parse::<i8>`, `check_size_hint::<2>`, `inner::<()>`,
+/// `num::n(10 as $T, ..)` under a macro `$T`), so its truth is per-monomorphization, not
+/// a single timeless point-wise value. Lifting it would require type-directed
+/// MONOMORPHIZATION (resolving `T::add` etc. per instantiation) -- a typing judgment, not
+/// a construction from source literals. That is a SOURCE property of the helper being
+/// generic, not a missing value-lifter: terminal. (Distinct from a CONCRETE scalar/slice
+/// helper whose closed-literal call site a value-lifter CAN pin -- that stays
+/// unclassified, owned by dissolution / call-site inlining.)
+fn helper_is_generic_parametric(f: &syn::ItemFn) -> bool {
+    f.sig.generics.params.iter().any(|gp| {
+        matches!(
+            gp,
+            syn::GenericParam::Type(_) | syn::GenericParam::Const(_)
+        )
+    })
+}
+
+/// The refusal reason for a non-`#[test]` helper's asserts that survived Pass-1 inlining.
+///   * runtime iterator/closure/dyn parameter  -> bin-2 terminal (runtime data).
+///   * generic type/const parameter            -> monomorphization terminal (no single
+///                                                concrete instantiation to read).
+///   * otherwise (concrete scalar/slice params) -> UNCLASSIFIED: a closed-literal call
+///     site CAN pin it; the inability to lift is call-queueing reach (dissolution / the
+///     exact partition own it), NOT a source property. Left unclassified to avoid a
+///     fake-refuse of a carryable concrete call.
 fn callsite_inlining_reason(fn_name: &str, f: &syn::ItemFn) -> String {
     if helper_is_runtime_parametric(f) {
         format!(
             "assertion in non-#[test] item `{fn_name}` over a runtime iterator/closure/dyn parameter (bin-2: runtime data, not constructible from source literals at any call site); refused"
+        )
+    } else if helper_is_generic_parametric(f) {
+        format!(
+            "assertion in non-#[test] item `{fn_name}` reachable only via monomorphization of a generic type/const parameter (runtime instantiation: no single concrete type to read; not statically constructible at any call site); refused"
         )
     } else {
         format!(
@@ -14137,6 +14196,7 @@ mod lifter_key_tests {
             "signed zero float literal remains an IEEE refinement `- 0.0`",
             "assert_eq!: signed zero float literal remains an IEEE refinement `- 0.0f32`",
             "float refinement predicate `is_nan` requires known f32/f64 receiver width `\"NaN\" . parse :: < f16 > () . unwrap () . is_nan ()`",
+            "assertion in non-#[test] item `test_num` reachable only via monomorphization of a generic type/const parameter (runtime instantiation: no single concrete type to read; not statically constructible at any call site); refused",
         ] {
             assert_eq!(refusal_disposition(r), Refused, "should be terminal: {r}");
         }
@@ -14156,6 +14216,10 @@ mod lifter_key_tests {
             "assertion under for context over a literal range (bin-1: domain constructed)",
             "assertion inside a let-initializer expression; released to layer 0",
             "ambiguous cfg on assertion; skipped",
+            // A no-visible-source helper is WORK, not a source property: the body may be
+            // loadable by better resolution (e.g. a fn-local helper nested in a `#[test]`
+            // fn the reducer does not yet register). Refusing it would be a fake-refuse.
+            "assertion helper `assert_exact_exp` has no visible source; skipped assertion",
             "some brand new reason nobody has classified yet",
         ] {
             assert_eq!(refusal_disposition(r), Unclassified, "should be work: {r}");
@@ -14479,6 +14543,98 @@ mod lifter_key_tests {
             refusal_disposition(&callsite_inlining_reason("test_chain", &slice_helper)),
             Unclassified,
             "slice-param helper stays unclassified (not falsely refused)"
+        );
+    }
+
+    // ── Refuse parametric call-site tail: a GENERIC type/const helper is terminal,
+    //    a CONCRETE scalar/slice / a no-visible-source helper STAYS unclassified ──
+    //
+    // The Hit side of Outcome{Dug|Hit}: a helper reachable only at RUNTIME
+    // INSTANTIATION (monomorphization of a generic type/const parameter) is a NAMED
+    // terminal Effect, accounted not silent. Each corpus shape pairs the REFUSE
+    // direction (a detected generic cause) with the DISCRIMINATION direction (a
+    // concrete-param / no-visible-source shape that STAYS UNCLASSIFIED -- the
+    // inverse-sin guardrail against fake-refuse).
+    #[test]
+    fn generic_parametric_helper_is_monomorphization_terminal_but_concrete_or_invisible_stays_unclassified() {
+        use Disposition::*;
+        fn pf(src: &str) -> syn::ItemFn {
+            syn::parse_str(src).expect("parse fn")
+        }
+        // REFUSE: a generic TYPE param bound by value traits (coretests num/mod.rs
+        // `test_num<T: Add+Sub+..>`, called only as `num::n(10 as $T, 2 as $T)`).
+        let test_num =
+            pf("fn test_num<T: PartialEq + Add<Output = T> + Copy>(ten: T, two: T) { assert_eq!(ten.add(two), ten + two); }");
+        assert!(helper_is_generic_parametric(&test_num));
+        assert!(!helper_is_runtime_parametric(&test_num));
+        assert_eq!(
+            refusal_disposition(&callsite_inlining_reason("test_num", &test_num)),
+            Refused,
+            "generic type-param helper is monomorphization terminal"
+        );
+        // REFUSE: a generic TYPE param via a `where` clause (num/mod.rs
+        // `test_parse<T>` where T: FromStr, called only via `test_parse::<i8>(..)`).
+        let test_parse =
+            pf("fn test_parse<T>(num_str: &str, expected: Result<T, IntErrorKind>) where T: FromStr { assert_eq!(num_str.parse::<T>().ok(), expected.ok()); }");
+        assert!(helper_is_generic_parametric(&test_parse));
+        assert_eq!(
+            refusal_disposition(&callsite_inlining_reason("test_parse", &test_parse)),
+            Refused,
+            "where-clause generic helper is monomorphization terminal"
+        );
+        // REFUSE: a CONST generic param (map_windows.rs `check_size_hint<const N: usize>`,
+        // called only via `check_size_hint::<1>(..)` / `::<2>` / `::<5>`).
+        let check_size_hint =
+            pf("fn check_size_hint<const N: usize>(a: (usize, Option<usize>), b: (usize, Option<usize>)) { assert_eq!(a, b); }");
+        assert!(helper_is_generic_parametric(&check_size_hint));
+        assert_eq!(
+            refusal_disposition(&callsite_inlining_reason("check_size_hint", &check_size_hint)),
+            Refused,
+            "const-generic helper is monomorphization terminal"
+        );
+        // REFUSE: a generic MARKER type param with NO param of that type (mem.rs
+        // `inner<SuppressConstPromotion>()`, called only via `inner::<()>()`).
+        let inner = pf("fn inner<SuppressConstPromotion>() { assert_eq!(1, 1); }");
+        assert!(helper_is_generic_parametric(&inner));
+        assert_eq!(
+            refusal_disposition(&callsite_inlining_reason("inner", &inner)),
+            Refused,
+            "marker-type-param helper is monomorphization terminal"
+        );
+        // DISCRIMINATION 1 -- a CONCRETE scalar helper (hash/sip.rs `zero_byte(val: u64,
+        // byte: usize)`): no type/const param. Its `val`/`byte` call-site args ARE source
+        // literals (`zero_byte(0xdead.., 0)`), so a closed-literal call site CAN pin it; the
+        // inability to lift is call-queueing (only-in-macro-arg-position) reach, NOT a source
+        // property. Must STAY unclassified (refusing it would be fake-refuse of a carryable
+        // concrete call -- left for the dig path).
+        let zero_byte = pf("fn zero_byte(val: u64, byte: usize) -> u64 { assert!(byte < 8); val }");
+        assert!(!helper_is_generic_parametric(&zero_byte));
+        assert!(!helper_is_runtime_parametric(&zero_byte));
+        assert_eq!(
+            refusal_disposition(&callsite_inlining_reason("zero_byte", &zero_byte)),
+            Unclassified,
+            "concrete scalar helper (zero_byte) must NOT be falsely refused"
+        );
+        // DISCRIMINATION 2 -- a LIFETIME-only generic is NOT type/const-parametric: it
+        // erases at runtime and never changes a value claim, so a concrete call site CAN
+        // pin it. Must STAY unclassified (lifetimes are not a monomorphization barrier).
+        let lifetime_only =
+            pf("fn pred<'a>(preds: &'a [u8], want: u8) { assert_eq!(preds[0], want); }");
+        assert!(!helper_is_generic_parametric(&lifetime_only));
+        assert_eq!(
+            refusal_disposition(&callsite_inlining_reason("pred", &lifetime_only)),
+            Unclassified,
+            "lifetime-only helper stays unclassified (lifetime is not a mono barrier)"
+        );
+        // DISCRIMINATION 3 -- a no-visible-source helper stays UNCLASSIFIED. The body may
+        // be loadable by better resolution (the coretests `assert_predicates_exact` /
+        // `assert_exact_exp` are fn-local helpers nested in a `#[test]` fn whose source IS
+        // present, just not registered by the reducer). Refusing it would launder a fixable
+        // resolution gap as a source property -- the inverse sin (fake-refuse).
+        assert_eq!(
+            refusal_disposition("assertion helper `assert_predicates_exact` has no visible source; skipped assertion"),
+            Unclassified,
+            "no-visible-source helper stays unclassified (resolution reach, not a source property)"
         );
     }
 
