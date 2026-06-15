@@ -196,14 +196,30 @@ pub enum Disposition {
 ///   * `requires known f32/f64 receiver width` -- a float refinement over an unknown/
 ///                            unstable f-width (f16 / parse-unwrap chain).
 /// Everything else is a LIFTER limitation -> Unclassified: `if`/`while`/`match`
-/// (branch partitioning), `unsupported term`, `reachable only via call-site
+/// (branch partitioning), a BARE `unsupported term` (a PURE untranslated value like
+/// `1i32 as f64` -- distinct from the EFFECTFUL `&mut`/raw-pointer/`const{<path>}`
+/// shapes, which are terminal below), `reachable only via call-site
 /// inlining` for a CONCRETE scalar/slice helper (call queueing -- a closed-literal
 /// call site CAN pin it), `bin-1` literal domains, let-init/nested/unenumerated
-/// positions, unsupported macros, `has no visible source` (the helper's body may be
+/// positions, unsupported macros (incl. `no rule matched` when the matcher SHOULD match
+/// but our matcher's grammar coverage missed it -- a fixable matcher gap, not a non-match),
+/// `has no visible source` (the helper's body may be
 /// loadable by better resolution -- e.g. a fn-local helper nested in a `#[test]` fn
 /// the reducer does not yet register, so it is reach, not a source property), and
 /// `ambiguous cfg` (a missing target input, recoverable by pinning the cfg).
 /// Default = Unclassified.
+///   * `effectful / raw-pointer / mutable-reference term` -- an `unsupported term` whose
+///                            SHAPE is a `&mut` borrow, a raw pointer (`&raw const`/`&raw mut`),
+///                            or a `const { <path> }` block (a name is sugar): no single
+///                            timeless value constructible from source literals. (DISTINCT from
+///                            a bare `unsupported term`, which stays Unclassified work.)
+///   * `operand is a runtime non-scalar result` -- an `assert!(match <runtime call> { .. })`
+///                            whose scrutinee is a runtime non-scalar method/fn result
+///                            (`b.binary_search(&3)`): the arm taken is the algorithm's runtime
+///                            output, not a constructible scalar.
+///   * `has a non-literal length -- not a finite` -- an array-repeat `[elem; N]` with a
+///                            NON-literal length (const-generic / const expr): the universe
+///                            size is symbolic, no finite construction from source literals.
 ///   * `reachable only via monomorphization of a generic` -- a GENERIC type/const-
 ///                            parametric helper has no single concrete instantiation
 ///                            to read (its truth is per-monomorphization); a SOURCE
@@ -405,7 +421,37 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // has no type/const param -- its closed-literal call site a value-lifter CAN pin, so
         // it STAYS the unclassified "reachable only via call-site inlining" reason (the
         // fake-refuse guardrail; left to dissolution / the exact partition).
-        || reason.contains("reachable only via monomorphization of a generic");
+        || reason.contains("reachable only via monomorphization of a generic")
+        // TERMINAL: an `unsupported term` whose SHAPE is genuinely effectful / non-constructible
+        // -- a `&mut` borrow, a raw pointer (`&raw const`/`&raw mut`), or a `const { <path> }`
+        // block (a name is sugar). None is a single timeless value constructible from source
+        // literals (kin to `mutable container is not temporally stable` / `bin-2` / "function
+        // names are sugar"). EARNED by `UnsupportedTermEffect` at the specific term arm (the
+        // `&mut` fall-through, `Expr::RawAddr`, and `const { <path> }`); a PURE untranslated
+        // term (`1i32 as f64`, an untranscribed pure method) has NONE of these shapes and STAYS
+        // the bare `unsupported term` reason -- UNCLASSIFIED work (the fake-refuse guardrail).
+        // (THE DRAIN: the `ptr.rs`/`cell.rs`/`option.rs`/`async_iter`/`array.rs`/`waker.rs`
+        // `&mut`/`&raw`/`const{Zst}` rows fell to unclassified only because the bare reason was
+        // not whitelisted; not a fake-zero -- the effectful shape is detected syntactically.)
+        || reason.contains("effectful / raw-pointer / mutable-reference term")
+        // TERMINAL: an `assert!(match <runtime call> { .. })` whose scrutinee is a RUNTIME
+        // non-scalar result (`b.binary_search(&3)`). The asserted boolean is the arm taken by
+        // a runtime search result, not a scalar equality over constructible values -- no single
+        // timeless `t` (kin to `bin-2`). EARNED by `runtime_match_scrutinee_effect`; a `match`
+        // over a CONSTRUCTED literal scrutinee matches None and STAYS the unclassified `only
+        // scalar equality` reason (the fake-refuse guardrail). Typed `RuntimeMatchScrutineeEffect`.
+        || reason.contains("operand is a runtime non-scalar result")
+        // TERMINAL: an array-repeat `[elem; N]` whose length `N` is NOT a plain literal -- a
+        // const-generic param or const expr (`[0u8; SIZE]`, `[(); SIZE - 1]`). The universe
+        // size is symbolic, so there is no finite construction from the written literal to
+        // materialize -- no aggregate term can be pinned. A SOURCE property (not a finite
+        // construction from source literals), not a lifter gap. EARNED by the `None` arm of
+        // `repeat_count_literal` (`ArrayRepeatNonLiteralEffect`); a LITERAL length lifts the
+        // unrolled array and never reaches here (the fake-refuse guardrail). (THE DRAIN: the
+        // `mem.rs`/`slice.rs` non-literal-repeat rows fell to unclassified only because the
+        // "refused by name" reason was not whitelisted; not a fake-zero -- the non-literal
+        // length is detected by `repeat_count_literal`.)
+        || reason.contains("has a non-literal length -- not a finite");
     if terminal {
         Disposition::Refused
     } else {
@@ -3433,6 +3479,128 @@ impl SideEffect for RuntimeExprStmtEffect {
         format!(
             "assertion in a runtime expression-statement `{}` (value read through a \
              `&mut` borrow / mutation, not constructible from source literals); refused",
+            self.boundary
+        )
+    }
+    fn boundary(&self) -> SourceMemento {
+        SourceMemento {
+            boundary: self.boundary.clone(),
+        }
+    }
+}
+
+/// UNSUPPORTED-TERM-EFFECT: an `unsupported term` whose SHAPE is a genuinely effectful /
+/// non-constructible place, not a pure-but-untranslated value. Three detected causes, all
+/// the SAME terminal class (no single timeless `t` constructible from source literals):
+///   * a `&mut` BORROW of a non-immutable-value place (`&mut x`, `&mut cx`, `&mut *cell.get()`,
+///     `&mut ready(1)`): a mutable reference is an order-loss place -- two `&mut x` of a
+///     mutable binding are distinct pointers (`mutable_reference_pointer_eq_stays_residual`),
+///     so the term has no single value to read. Kin to `mutable container is not temporally
+///     stable`.
+///   * a RAW POINTER (`&raw const garlic` / `&raw mut p`, `Expr::RawAddr`): a raw address is
+///     a runtime value, not a construction from source literals. Kin to `bin-2`.
+///   * a `const { <bare path> }` block (`const { Zst }`): a const block wrapping a bare PATH
+///     is a function-item / const reference -- a NAME, which is sugar ("function names are
+///     sugar"), not a keyed value term. There is no constructible value to read.
+/// Detection is EARNED at the specific term arm (the `&mut` fall-through, `Expr::RawAddr`, and
+/// the `const { <path> }` arm); a PURE untranslated term (`1i32 as f64`, an untranscribed pure
+/// method) has NONE of these shapes and STAYS the bare `unsupported term` reason -- UNCLASSIFIED
+/// work (the inverse-sin guardrail against fake-refuse). Typed as `UnsupportedTermEffect`.
+struct UnsupportedTermEffect {
+    boundary: String,
+    cause: UnsupportedTermCause,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum UnsupportedTermCause {
+    /// `&mut <place>`: a mutable borrow of a non-immutable-value referent.
+    MutableReference,
+    /// `&raw const`/`&raw mut`: a raw pointer (runtime address).
+    RawPointer,
+    /// `const { <bare path> }`: a const-block over a bare name (a ZST/fn-item reference; sugar).
+    ConstBlockPath,
+}
+
+impl UnsupportedTermCause {
+    fn clause(self) -> &'static str {
+        match self {
+            UnsupportedTermCause::MutableReference => "a `&mut` borrow",
+            UnsupportedTermCause::RawPointer => "a raw pointer (`&raw const`/`&raw mut`)",
+            UnsupportedTermCause::ConstBlockPath => "a `const { <path> }` block (a name is sugar)",
+        }
+    }
+}
+
+impl SideEffect for UnsupportedTermEffect {
+    fn reason(&self) -> String {
+        // Carries the existing `unsupported term` prefix verbatim so the term path's prior
+        // emission shape is conserved, plus the named effectful cause that earns the terminal
+        // whitelist entry "effectful / raw-pointer / mutable-reference term".
+        format!(
+            "unsupported term `{}`: effectful / raw-pointer / mutable-reference term \
+             ({}) is not a constructible timeless value; refused",
+            self.boundary,
+            self.cause.clause()
+        )
+    }
+    fn boundary(&self) -> SourceMemento {
+        SourceMemento {
+            boundary: self.boundary.clone(),
+        }
+    }
+}
+
+/// RUNTIME-MATCH-SCRUTINEE: an `assert!(match <runtime call> { .. })` whose scrutinee is a
+/// RUNTIME non-scalar method/function result (the corpus `match b.binary_search(&3) { Ok(1..=3)
+/// => true, _ => false }`). The asserted boolean is the arm taken by a runtime search result,
+/// not a scalar equality over constructible values -- there is no single timeless `t` to read
+/// (the `Ok`/`Err`+index is the algorithm's runtime output, kin to `bin-2`). A SOURCE property,
+/// not a lifter gap. Detection is EARNED by `runtime_match_scrutinee_effect`: the `only scalar
+/// equality` fall-through hit an `Expr::Match` whose scrutinee is a runtime call/method-call. A
+/// `match` over a CONSTRUCTED literal scrutinee has no runtime call and matches None -> stays
+/// the bare `only scalar equality` reason (UNCLASSIFIED -- the inverse-sin guardrail). Typed as
+/// `RuntimeMatchScrutineeEffect`.
+struct RuntimeMatchScrutineeEffect {
+    boundary: String,
+}
+
+impl SideEffect for RuntimeMatchScrutineeEffect {
+    fn reason(&self) -> String {
+        format!(
+            "only scalar equality is liftable; operand is a runtime non-scalar result \
+             `{}` (a `match` over a runtime call result, not constructible from source \
+             literals); refused",
+            self.boundary
+        )
+    }
+    fn boundary(&self) -> SourceMemento {
+        SourceMemento {
+            boundary: self.boundary.clone(),
+        }
+    }
+}
+
+/// ARRAY-REPEAT-NON-LITERAL: an array-repeat `[elem; N]` whose length `N` is NOT a plain
+/// literal -- a const-generic param or a const expression (the corpus `[0u8; SIZE]`,
+/// `[(); SIZE - 1]`). With a literal count the repeat unrolls to the exact N-fold array
+/// (`repeat_count_literal` -> Some); with a NON-literal count there is no finite construction
+/// from the written literal to materialize -- the universe size is symbolic, so no aggregate
+/// term can be pinned. A SOURCE property (the construction is not finite from source literals),
+/// not a lifter gap. Detection is EARNED by the `None` arm of `repeat_count_literal`; a literal
+/// length lifts the unrolled array and never reaches here (the inverse-sin guardrail). Typed as
+/// `ArrayRepeatNonLiteralEffect`.
+struct ArrayRepeatNonLiteralEffect {
+    boundary: String,
+}
+
+impl SideEffect for ArrayRepeatNonLiteralEffect {
+    fn reason(&self) -> String {
+        // Carries the existing "array-repeat ... non-literal length ... refused by name"
+        // substring verbatim so a single whitelist entry recognizes it; the emit site's
+        // `assert_eq!:` / `assert!:` prefix is preserved by the caller.
+        format!(
+            "array-repeat `[_; N]` has a non-literal length -- not a finite \
+             construction from the literal; refused by name: `{}`",
             self.boundary
         )
     }
@@ -8594,10 +8762,54 @@ fn translate_bool_assertion(
         }
         Expr::Paren(paren) => translate_bool_assertion(&paren.expr, scope, float_widths),
         Expr::Group(group) => translate_bool_assertion(&group.expr, scope, float_widths),
-        other => Err(format!(
-            "only scalar equality is liftable, got `{}`",
-            token_key(other)
-        )),
+        other => {
+            // REFUSE HALF: a `match <runtime call> { .. }` scrutinee (the corpus
+            // `match b.binary_search(&3) { Ok(1..=3) => true, _ => false }`) asserts the arm
+            // taken by a RUNTIME non-scalar result -- no single timeless `t`, kin to `bin-2`.
+            // EARNED by `runtime_match_scrutinee_effect`; a `match` over a CONSTRUCTED literal
+            // scrutinee (no runtime call) matches None and STAYS the bare `only scalar equality`
+            // reason below -- UNCLASSIFIED (the inverse-sin guardrail against fake-refuse).
+            if let Some(effect) = runtime_match_scrutinee_effect(other) {
+                return Err(effect.reason());
+            }
+            Err(format!(
+                "only scalar equality is liftable, got `{}`",
+                token_key(other)
+            ))
+        }
+    }
+}
+
+/// Detect a `match <scrutinee> { .. }` whose SCRUTINEE is a RUNTIME non-scalar result -- a
+/// method call (`b.binary_search(&3)`) or a free function call. The asserted value is the arm
+/// taken by that runtime result, not a scalar equality over constructible values, so there is
+/// no single timeless `t`. Returns the typed effect ONLY for that detected shape; `None` for a
+/// non-`match` expr OR a `match` over a constructible scrutinee (a literal / path / index), so
+/// the caller refuses by name ONLY a detected runtime cause and leaves everything else
+/// UNCLASSIFIED (the fake-refuse guardrail).
+fn runtime_match_scrutinee_effect(expr: &Expr) -> Option<RuntimeMatchScrutineeEffect> {
+    let Expr::Match(m) = expr else {
+        return None;
+    };
+    if !expr_is_runtime_call_result(&m.expr) {
+        return None;
+    }
+    Some(RuntimeMatchScrutineeEffect {
+        boundary: token_key(expr),
+    })
+}
+
+/// Is `expr` a RUNTIME call result -- a method call (`x.binary_search(..)`) or a free function
+/// call (`f(..)`), looking through parens/groups/references? These produce a value only when
+/// run; they are not constructible from source literals. A literal / path / index / cast is
+/// NOT a runtime call result (it stays diggable -> the caller keeps it unclassified).
+fn expr_is_runtime_call_result(expr: &Expr) -> bool {
+    match expr {
+        Expr::MethodCall(_) | Expr::Call(_) => true,
+        Expr::Paren(p) => expr_is_runtime_call_result(&p.expr),
+        Expr::Group(g) => expr_is_runtime_call_result(&g.expr),
+        Expr::Reference(r) => expr_is_runtime_call_result(&r.expr),
+        _ => false,
     }
 }
 
@@ -11288,7 +11500,15 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
             // block wrapping a COMPUTED expression (arithmetic, call, ...) is a pure
             // compile-time value -> translate it.
             if let [Stmt::Expr(Expr::Path(_), None)] = const_block.block.stmts.as_slice() {
-                return Err(format!("unsupported term `{}`", token_key(expr)));
+                // A const block wrapping a bare PATH (`const { Zst }`) is a function-item /
+                // const reference -- a NAME, which is sugar, not a keyed value term. There is
+                // no constructible value to read: a SOURCE property (kin to "function names are
+                // sugar"), not a lifter gap. Typed as `UnsupportedTermEffect`.
+                let effect = UnsupportedTermEffect {
+                    boundary: token_key(expr),
+                    cause: UnsupportedTermCause::ConstBlockPath,
+                };
+                return Err(effect.reason());
             }
             let term =
                 translate_expression_only_block_in_scope(&const_block.block, "const", scope)?;
@@ -11360,11 +11580,14 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
             // construction from the written literal, so it is REFUSED BY NAME; an
             // element that does not translate propagates its own named Err.
             let Some(count) = repeat_count_literal(&repeat.len) else {
-                return Err(format!(
-                    "array-repeat `[_; N]` has a non-literal length -- not a finite \
-                     construction from the literal; refused by name: `{}`",
-                    token_key(expr)
-                ));
+                // A non-literal count (`[0u8; SIZE]`, `[(); SIZE - 1]`) is not a finite
+                // construction from the written literal: the universe size is symbolic
+                // (const-generic / const expr), so no aggregate term can be pinned. A SOURCE
+                // property, not a lifter gap. Typed as `ArrayRepeatNonLiteralEffect`.
+                let effect = ArrayRepeatNonLiteralEffect {
+                    boundary: token_key(expr),
+                };
+                return Err(effect.reason());
             };
             // Bound the expansion so a pathological literal length cannot blow up the
             // term; an over-bound repeat is named, not silently truncated.
@@ -11490,6 +11713,30 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
                 name: "ref_mut".to_string(),
                 args: vec![translate_term_in_scope(&reference.expr, scope)?],
             }))
+        }
+        // A `&mut <place>` of a NON-immutable-value referent (`&mut x`, `&mut cx`,
+        // `&mut *cell.get()`, `&mut ready(1)`): a mutable borrow is an order-loss place --
+        // two `&mut x` of a mutable binding are distinct pointers, so the term has no single
+        // timeless value to read. EARNED here ONLY after the immutable-value arm above has
+        // claimed the stable `&mut <literal/closure/array>` cases (a non-mutable `&` already
+        // lifted as `ref`), so this can only refuse a genuinely-mutable borrow. Typed as
+        // `UnsupportedTermEffect`.
+        Expr::Reference(reference) if reference.mutability.is_some() => {
+            let effect = UnsupportedTermEffect {
+                boundary: token_key(expr),
+                cause: UnsupportedTermCause::MutableReference,
+            };
+            Err(effect.reason())
+        }
+        // A raw pointer `&raw const <place>` / `&raw mut <place>` (`Expr::RawAddr`): a raw
+        // address is a runtime value, not a construction from source literals. Kin to `bin-2`.
+        // Typed as `UnsupportedTermEffect`.
+        Expr::RawAddr(_) => {
+            let effect = UnsupportedTermEffect {
+                boundary: token_key(expr),
+                cause: UnsupportedTermCause::RawPointer,
+            };
+            Err(effect.reason())
         }
         Expr::Cast(cast) => {
             if is_shared_dyn_any_type(&cast.ty) {
@@ -14506,6 +14753,11 @@ mod lifter_key_tests {
             "assert_eq!: signed zero float literal remains an IEEE refinement `- 0.0f32`",
             "float refinement predicate `is_nan` requires known f32/f64 receiver width `\"NaN\" . parse :: < f16 > () . unwrap () . is_nan ()`",
             "assertion in non-#[test] item `test_num` reachable only via monomorphization of a generic type/const parameter (runtime instantiation: no single concrete type to read; not statically constructible at any call site); refused",
+            "assert_eq!: unsupported term `& mut x`: effectful / raw-pointer / mutable-reference term (a `&mut` borrow) is not a constructible timeless value; refused",
+            "assert_eq!: unsupported term `& raw const garlic`: effectful / raw-pointer / mutable-reference term (a raw pointer (`&raw const`/`&raw mut`)) is not a constructible timeless value; refused",
+            "assert_eq!: unsupported term `const { Zst }`: effectful / raw-pointer / mutable-reference term (a `const { <path> }` block (a name is sugar)) is not a constructible timeless value; refused",
+            "assert!: only scalar equality is liftable; operand is a runtime non-scalar result `match b . binary_search (& 3) { Ok (1 ..= 3) => true , _ => false , }` (a `match` over a runtime call result, not constructible from source literals); refused",
+            "assert_eq!: array-repeat `[_; N]` has a non-literal length -- not a finite construction from the literal; refused by name: `[0u8 ; SIZE]`",
         ] {
             assert_eq!(refusal_disposition(r), Refused, "should be terminal: {r}");
         }
@@ -14529,6 +14781,28 @@ mod lifter_key_tests {
             // loadable by better resolution (e.g. a fn-local helper nested in a `#[test]`
             // fn the reducer does not yet register). Refusing it would be a fake-refuse.
             "assertion helper `assert_exact_exp` has no visible source; skipped assertion",
+            // The corpus `assert_predicates_exact` / `assert_typeid_set_eq` helpers (mem/
+            // type_info.rs) are fn-local in the test body: their source IS present but the
+            // reducer does not yet register a test-nested helper, so the reason is RESOLUTION
+            // REACH, not a source property. Even though the body is runtime (HashSet-collect
+            // over TypeId reflection), the *unresolved* body cannot be inspected to detect a
+            // cause -- refusing on the reach reason would be a fake-refuse. Stays WORK.
+            "assertion helper `assert_predicates_exact` has no visible source; skipped assertion",
+            // A BARE `unsupported term` (a PURE untranslated value -- a cast / untranscribed
+            // pure method) is honest future work, NOT an effectful shape. It must NOT be
+            // laundered into the `&mut`/raw-pointer/`const{<path>}` terminal: no effectful
+            // clause -> stays Unclassified (the inverse-sin guardrail).
+            "assert_eq!: unsupported term `1i32 as f64`",
+            "assert_eq!: unsupported term `Foo::ITER_CONST`",
+            // The `assert_chunks` macro `no rule matched` is a MATCHER GAP, not a genuine
+            // non-match: the matcher `( $string:expr, $(($valid:expr, $invalid:expr)),* $(,)? )`
+            // SHOULD match `(b"hello", ("hello", b""))`, but our matcher does not recurse into a
+            // non-`$(..)` delimiter group to match the metavars inside `($valid:expr, $invalid:expr)`.
+            // Fixable lifter work -> stays Unclassified (refusing it would be a fake-refuse).
+            "macro `assert_chunks`: macro expansion: no rule matched the invocation; released to layer 0",
+            // A `match` over a CONSTRUCTED literal scrutinee is NOT a runtime call result -- it is
+            // diggable (branch partitioning), so the bare `only scalar equality` reason stays work.
+            "assert!: only scalar equality is liftable, got `match SOME_CONST { 1 => true, _ => false, }`",
             "some brand new reason nobody has classified yet",
         ] {
             assert_eq!(refusal_disposition(r), Unclassified, "should be work: {r}");

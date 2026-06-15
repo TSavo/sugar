@@ -8777,3 +8777,203 @@ fn t() {
         );
     }
 }
+
+// ── Residual runtime-term refusal (residual-refuse2): each bucket REFUSE + DISCRIMINATION ──
+//
+// The Hit side of Outcome{Dug|Hit}: a runtime / non-constructible value is a NAMED terminal
+// Effect (refused), accounted not silent. Each test pairs the REFUSE direction (a detected
+// runtime/non-constructible cause) with the DISCRIMINATION direction (a computable / matcher-
+// gap / reach case that STAYS UNCLASSIFIED -- the inverse-sin guardrail against fake-refuse).
+
+fn disp2(r: &str) -> sugar_lift_rust_tests::Disposition {
+    sugar_lift_rust_tests::refusal_disposition(r)
+}
+
+#[test]
+fn mutable_reference_term_is_refused_effectful_shape() {
+    // REFUSE: `&mut s` / `&mut *cell.get()` -- a mutable borrow is an order-loss place, no
+    // single timeless value. (corpus: ptr.rs `&mut s`, cell.rs `&mut *cell.get()`, option.rs
+    // `&mut val`, async_iter `&mut cx`.)
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(&mut s, &mut s);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/mutref.rs");
+    let r = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains("effectful / raw-pointer / mutable-reference term"))
+        .unwrap_or_else(|| panic!("expected a mutable-reference terminal, got {:?}", out.skip_reasons));
+    assert_eq!(disp2(r), sugar_lift_rust_tests::Disposition::Refused, "must be terminal: {r}");
+    assert_eq!(out.assertions_lifted, 0, "a `&mut` term must not lift: {:?}", out.skip_reasons);
+}
+
+#[test]
+fn raw_pointer_term_is_refused_effectful_shape() {
+    // REFUSE: `&raw const garlic` -- a raw pointer is a runtime address, not a construction
+    // from source literals. (corpus: mem/trait_info_of.rs.)
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(&raw const garlic, &raw const garlic);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/rawptr.rs");
+    let r = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains("effectful / raw-pointer / mutable-reference term") && r.contains("raw pointer"))
+        .unwrap_or_else(|| panic!("expected a raw-pointer terminal, got {:?}", out.skip_reasons));
+    assert_eq!(disp2(r), sugar_lift_rust_tests::Disposition::Refused, "must be terminal: {r}");
+}
+
+#[test]
+fn const_block_bare_path_term_is_refused_name_is_sugar() {
+    // REFUSE: `const { Zst }` -- a const block over a bare PATH is a name (sugar), not a keyed
+    // value term. (corpus: array.rs `assert_eq!(.., Some([const { Zst }; 10]))` -- the const
+    // block is the array-repeat element; its Err propagates through the literal-count unroll.)
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(x, [const { Zst }; 3]);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/constzst.rs");
+    let r = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains("effectful / raw-pointer / mutable-reference term") && r.contains("const { <path> }"))
+        .unwrap_or_else(|| panic!("expected a const-block-path terminal, got {:?}", out.skip_reasons));
+    assert_eq!(disp2(r), sugar_lift_rust_tests::Disposition::Refused, "must be terminal: {r}");
+}
+
+#[test]
+fn pure_untranslated_term_stays_unclassified_not_fake_refused() {
+    // DISCRIMINATION: a PURE untranslated term (`1i32 as f64` -- a cast we have not transcribed)
+    // is honest future work, NOT an effectful shape. It must NOT be laundered into the terminal:
+    // it carries a bare `unsupported term` with no effectful clause -> Unclassified.
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(1i32 as f64, x);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/purecast.rs");
+    // No effectful-term terminal must appear for a pure cast.
+    assert!(
+        !out.skip_reasons.iter().any(|r| r.contains("effectful / raw-pointer / mutable-reference term")),
+        "a pure cast must NOT be fake-refused as an effectful term: {:?}",
+        out.skip_reasons
+    );
+    if let Some(r) = out.skip_reasons.iter().find(|r| r.contains("unsupported term")) {
+        assert_eq!(
+            disp2(r),
+            sugar_lift_rust_tests::Disposition::Unclassified,
+            "a bare unsupported-term cast must be UNCLASSIFIED work: {r}"
+        );
+    }
+}
+
+#[test]
+fn immutable_reference_still_lifts_not_refused() {
+    // DISCRIMINATION: a plain `&x` (immutable borrow) is a STABLE term and still lifts via the
+    // `ref` ctor -- the mutable-reference terminal must not catch it.
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(&a, &a);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/imref.rs");
+    assert!(
+        !out.skip_reasons.iter().any(|r| r.contains("effectful / raw-pointer / mutable-reference term")),
+        "an immutable `&` must not be refused as an effectful term: {:?}",
+        out.skip_reasons
+    );
+    assert_eq!(out.assertions_lifted, 1, "an immutable `&a == &a` must lift: {:?}", out.skip_reasons);
+}
+
+#[test]
+fn runtime_match_scrutinee_is_refused_runtime_nonscalar() {
+    // REFUSE: `assert!(match b.binary_search(&3) { Ok(1..=3) => true, _ => false })` -- the arm
+    // is taken by a RUNTIME non-scalar search result, not a constructible scalar. (corpus: slice.rs.)
+    let src = r#"
+#[test]
+fn t() {
+    assert!(match b.binary_search(&3) { Ok(1..=3) => true, _ => false, });
+}
+"#;
+    let out = lift_file(&parse(src), "tests/binsearch.rs");
+    let r = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains("operand is a runtime non-scalar result"))
+        .unwrap_or_else(|| panic!("expected a runtime-match-scrutinee terminal, got {:?}", out.skip_reasons));
+    assert_eq!(disp2(r), sugar_lift_rust_tests::Disposition::Refused, "must be terminal: {r}");
+}
+
+#[test]
+fn match_over_constructed_scrutinee_stays_unclassified() {
+    // DISCRIMINATION: a `match` over a CONSTRUCTED scrutinee (a path/const, no runtime call) is
+    // diggable (branch partitioning) -- it must STAY the unclassified `only scalar equality`
+    // reason, never the runtime terminal.
+    let src = r#"
+#[test]
+fn t() {
+    assert!(match SOME_CONST { 1 => true, _ => false, });
+}
+"#;
+    let out = lift_file(&parse(src), "tests/matchconst.rs");
+    assert!(
+        !out.skip_reasons.iter().any(|r| r.contains("operand is a runtime non-scalar result")),
+        "a match over a constructed scrutinee must NOT be fake-refused: {:?}",
+        out.skip_reasons
+    );
+    if let Some(r) = out.skip_reasons.iter().find(|r| r.contains("only scalar equality")) {
+        assert_eq!(
+            disp2(r),
+            sugar_lift_rust_tests::Disposition::Unclassified,
+            "a constructed-scrutinee match must be UNCLASSIFIED work: {r}"
+        );
+    }
+}
+
+#[test]
+fn array_repeat_non_literal_length_is_refused_not_finite() {
+    // REFUSE: `[0u8; SIZE]` / `[(); SIZE - 1]` -- a non-literal length is not a finite
+    // construction from source literals. (corpus: mem.rs, slice.rs.)
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(x, [0u8; SIZE]);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/arrrepeat.rs");
+    let r = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains("has a non-literal length -- not a finite"))
+        .unwrap_or_else(|| panic!("expected an array-repeat terminal, got {:?}", out.skip_reasons));
+    assert_eq!(disp2(r), sugar_lift_rust_tests::Disposition::Refused, "must be terminal: {r}");
+}
+
+#[test]
+fn array_repeat_literal_length_still_lifts_not_refused() {
+    // DISCRIMINATION: a LITERAL length `[0xab; 3]` unrolls to the exact 3-fold array and lifts;
+    // the non-literal terminal must not catch a literal repeat.
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!([0xabu8, 0xab, 0xab], [0xabu8; 3]);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/arrrepeatlit.rs");
+    assert!(
+        !out.skip_reasons.iter().any(|r| r.contains("has a non-literal length -- not a finite")),
+        "a literal-length repeat must not be refused: {:?}",
+        out.skip_reasons
+    );
+    assert_eq!(out.assertions_lifted, 1, "a literal-length repeat must lift: {:?}", out.skip_reasons);
+}

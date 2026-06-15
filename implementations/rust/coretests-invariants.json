@@ -2,9 +2,9 @@
   "assertion_multiset_cid": "blake3-512:ee0c6d92a4aa44f2f43bb657b70d9b87ba202392a6ea5c2aee519197e02aa59f6a3a425b49f7aa00191688e57c48bb795b58f74b35a2518cb6d4465eeb000a50",
   "silent": 0,
   "discharged": 6188,
-  "refused": 687,
-  "unclassified": 59,
-  "prev_unclassified": 65,
-  "note": "ConditionalMatchDig on main(65): const if-guard fold (const_fold_bool_guard: !false/!true/cfg!(target_pointer_width) \u2192 guard_const => P) + Expr::Lit(LitBool) assert arm + decompose_match cfg-arm resolution. discharged 6182->6188 (+6: bool.rs if!false/!true x4, fmt cfg! x2), unclassified 65->59 (-6), refused held, unaccounted -617, SILENT 0, CID ee0c6d92...0a50 CONSERVED. lib 130/0, assertion_lift 251/0 (+7). HONEST: 5 if/match residue (step.rs, wrapping.rs x4) stay unclassified \u2014 gated by a separate large-int-literal limitation (u128/u64-as-isize -> number too large), bodies fail standalone so BAIL (lifting=fake-dig); option.rs x2 stay refused (effectful iterator-advance scrutinee + mutating body). prev_unclassified 65.",
+  "refused": 701,
+  "unclassified": 45,
+  "prev_unclassified": 59,
+  "note": "residual-refuse2: refuse residual runtime/non-constructible terms by detected cause (typed Effects, whitelisted in refusal_disposition). discharged 6188->6188 (HELD), refused 687->701 (+14), unclassified 59->45 (-14), unaccounted -617, SILENT 0, CID ee0c6d92...0a50 CONSERVED. lib 130/0, assertion_lift 260/0 (+9). REFUSED (per cause): UnsupportedTermEffect &mut borrow x8 (ptr/cell/option/async_iter), raw pointer &raw const x1 (mem/trait_info_of), const{<path>} ZST/name-is-sugar x1 (array.rs repeat element); RuntimeMatchScrutineeEffect match-over-binary_search x2 (slice.rs); ArrayRepeatNonLiteralEffect [e;SIZE] non-literal length x2 (mem.rs/slice.rs). STAYED UNCLASSIFIED (honest WORK, NOT refused): macro `assert_chunks` 'no rule matched' x9 (str_lossy.rs) = MATCHER GAP \u2014 matcher ( $string:expr, $(($valid:expr,$invalid:expr)),* $(,)? ) SHOULD match but match_prefix does not recurse into a non-$(..) delimiter group to bind metavars inside ($valid,$invalid); fixable lifter work. assertion helper `assert_predicates_exact` 'has no visible source' x8 (mem/type_info.rs) = RESOLUTION REACH \u2014 the fn-local helper's source IS present but the reducer does not register test-nested helpers; doctrine forbids refusing 'has no visible source' (body may be loadable). prev_unclassified 59.",
   "unaccounted": -617
 }
