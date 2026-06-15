@@ -2,9 +2,9 @@
   "assertion_multiset_cid": "blake3-512:ee0c6d92a4aa44f2f43bb657b70d9b87ba202392a6ea5c2aee519197e02aa59f6a3a425b49f7aa00191688e57c48bb795b58f74b35a2518cb6d4465eeb000a50",
   "silent": 0,
   "unaccounted": -98,
-  "discharged": 5694,
-  "refused": 327,
-  "unclassified": 394,
-  "prev_unclassified": 416,
-  "note": "HERMETIC (no --dissolve) snapshot of the rust 1.96.0 coretests accounting sweep, gated in CI. Each lifter-moving push updates this pin to its predicted snapshot; CI asserts an EXACT match. This push: FN-LOCAL MACRO EXPANSION -- the lifter now walks a fn's private macro_rules! (e.g. estimator.rs assert_almost_eq!, str_lossy.rs assert_chunks!) the same way it walks file/dep macros, so they expand from their real definitions instead of dead-ending at 'unsupported assertion macro'. unclassified 416->394; discharged 5626->5694. unaccounted -52->-98 is INFLATION, not a silent drop (SILENT stays 0): one source macro (e.g. one assert_chunks! call) legitimately expands to several assert_eq! point-claims (one per chunk-pair), so discharged gains entries beyond the source-macro count -- the same legit inflation as helper-inlining. CID conserved (the assertion *sites* in source are unchanged; expansion is internal). prev_unclassified 416. unclassified here is lifter-only; --dissolve mode credits further by evaluation (not gated). Drive unclassified -> 0."
+  "discharged": 5699,
+  "refused": 359,
+  "unclassified": 357,
+  "prev_unclassified": 394,
+  "note": "HERMETIC snapshot, gated in CI. This push: the DEFOLDER -- the fold-closure bucket worked as the one predicate (bottoms-out-in-desugared-literals -> DIG; monkey business -> BAIL). (1) for_each/fold/rfold over a literal array/range + seq-preserving AND transforming adaptors (filter/map/skip/take/skip_while/take_while) read as a finite conjunction: stdlib's own reduction applied over the literal element sequence (desugar fold with fold), accumulator threaded, EXACT-OR-BAIL const_eval (Int/Bool/Char/Tuple; checked arith bail-on-overflow/divzero; no float/str/value-changing-cast). filter_map/flat_map/flatten deferred (bail, honest). (2) side-effecting body / opaque-runtime-receiver / opaque-effectful-accessor closures -> TERMINAL refused (happy refuse; bin-2 / temporal-stability family). vs #2161 (5694/327/394/-98): discharged +5 (defolded literal-domain folds), refused +32 (closure happy-refuses), unclassified -37. The refused count reflects an HONESTY CORRECTION over an intermediate floor: filter-over-literal receivers whose literal base resolves are dug or honestly-unclassified, NEVER over-terminalized as opaque. EXACT-OR-BAIL verified adversarially: a wrong-expected ys lifts to a REFUTABLE conjunction carrying the actual element values (not fake-green); a runtime-predicate filter BAILS; an i64-overflowing map BAILS. CID conserved; SILENT 0. prev_unclassified 394 (#2161). Drive -> 0."
 }
