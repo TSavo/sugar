@@ -14,7 +14,6 @@ use std::fmt;
 use std::rc::Rc;
 
 mod macro_expand;
-pub mod flt2dec_eval;
 pub mod closed_eval;
 mod try_fold_eval;
 
@@ -39,6 +38,7 @@ pub mod sugar {
     pub mod filter_map;
     pub mod fold;
     pub mod forall;
+    pub mod format;
     pub mod identity;
     pub mod impl_method;
     pub mod literal;
@@ -897,511 +897,6 @@ fn walk_non_test_fns(
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-enum Flt2decMode {
-    Shortest,
-    ExactFixed,
-    ExactExp,
-    ShortestExp,
-}
-
-/// Detect whether `f` is a flt2dec string-formatting test helper, by which core
-/// `flt2dec` entry point its body calls. Returns `None` for `to_shortest_exp_str`
-/// (bounds-driven fixed-vs-exp, no single `format!` equivalent -- left unclassified)
-/// and for non-flt2dec fns.
-fn flt2dec_helper_mode(f: &syn::ItemFn) -> Option<Flt2decMode> {
-    struct V {
-        mode: Option<Flt2decMode>,
-    }
-    impl<'ast> syn::visit::Visit<'ast> for V {
-        fn visit_path(&mut self, p: &'ast syn::Path) {
-            if let Some(seg) = p.segments.last() {
-                match seg.ident.to_string().as_str() {
-                    "to_shortest_str" => self.mode = Some(Flt2decMode::Shortest),
-                    "to_exact_fixed_str" => self.mode = Some(Flt2decMode::ExactFixed),
-                    "to_exact_exp_str" => self.mode = Some(Flt2decMode::ExactExp),
-                    "to_shortest_exp_str" => self.mode = Some(Flt2decMode::ShortestExp),
-                    _ => {}
-                }
-            }
-            syn::visit::visit_path(self, p);
-        }
-    }
-    let mut v = V { mode: None };
-    syn::visit::Visit::visit_item_fn(&mut v, f);
-    v.mode
-}
-
-/// A concrete float value parsed from a closed source operand, tagged with its
-/// width so we evaluate at the right precision (f32 vs f64 shortest digits differ).
-enum Flt2decValue {
-    F64(f64),
-    F32(f32),
-}
-
-/// Parse a flt2dec value operand into a concrete f32/f64. Bare float literals are
-/// f64 (the corpus only ever types f32/f16 values explicitly via `fN::CONST` /
-/// `ldexp_fN`). `ldexp_f32(m, e)` / `ldexp_f64(m, e)` are computed exactly via
-/// stepwise scaling (`flt2dec_eval::ldexp_*`). A bare identifier is resolved
-/// through `bindings` (the enclosing helper's `let` map), e.g. `minf32` ->
-/// `ldexp_f32(1.0, -149)`. Returns `None` for anything not a closed f32/f64 term
-/// (f16/f128 -- including `ldexp_f16` and idents bound to them, unknown consts,
-/// unbound idents) -- those stay unclassified (safe under-claim).
-fn parse_flt2dec_value(expr: &Expr, bindings: &BTreeMap<String, Expr>) -> Option<Flt2decValue> {
-    match expr {
-        // bare / suffixed float literal
-        Expr::Lit(syn::ExprLit {
-            lit: syn::Lit::Float(lf),
-            ..
-        }) => {
-            let s = lf.suffix();
-            if s == "f32" {
-                lf.base10_parse::<f32>().ok().map(Flt2decValue::F32)
-            } else {
-                // "" or "f64"
-                lf.base10_parse::<f64>().ok().map(Flt2decValue::F64)
-            }
-        }
-        // negation of a literal: -0.0, -3.14
-        Expr::Unary(u) if matches!(u.op, syn::UnOp::Neg(_)) => {
-            match parse_flt2dec_value(&u.expr, bindings)? {
-                Flt2decValue::F64(v) => Some(Flt2decValue::F64(-v)),
-                Flt2decValue::F32(v) => Some(Flt2decValue::F32(-v)),
-            }
-        }
-        // division of two literals: 1.0/0.0 = inf, 0.0/0.0 = NaN, -1.0/0.0 = -inf
-        Expr::Binary(b) if matches!(b.op, syn::BinOp::Div(_)) => {
-            match (
-                parse_flt2dec_value(&b.left, bindings)?,
-                parse_flt2dec_value(&b.right, bindings)?,
-            ) {
-                (Flt2decValue::F64(l), Flt2decValue::F64(r)) => Some(Flt2decValue::F64(l / r)),
-                (Flt2decValue::F32(l), Flt2decValue::F32(r)) => Some(Flt2decValue::F32(l / r)),
-                _ => None,
-            }
-        }
-        // `ldexp_f32(m, e)` / `ldexp_f64(m, e)` = m * 2^e (computed exactly).
-        // `ldexp_f16` (unstable) is intentionally NOT handled -> None.
-        Expr::Call(c) => {
-            let Expr::Path(fp) = c.func.as_ref() else {
-                return None;
-            };
-            let fname = fp.path.segments.last()?.ident.to_string();
-            let (is_f32, is_f64) = (fname == "ldexp_f32", fname == "ldexp_f64");
-            if !(is_f32 || is_f64) {
-                return None;
-            }
-            let mut a = c.args.iter();
-            let m_expr = a.next()?;
-            let e_expr = a.next()?;
-            if a.next().is_some() {
-                return None;
-            }
-            // mantissa: a closed f32/f64 value (commonly the literal `1.0`).
-            let m = parse_flt2dec_value(m_expr, bindings)?;
-            let e = parse_i32_literal(e_expr)?;
-            match m {
-                Flt2decValue::F64(mv) if is_f64 => {
-                    Some(Flt2decValue::F64(flt2dec_eval::ldexp_f64(mv, e)))
-                }
-                // The mantissa literal `1.0` parses as F64; for `ldexp_f32` cast it.
-                Flt2decValue::F64(mv) if is_f32 => {
-                    Some(Flt2decValue::F32(flt2dec_eval::ldexp_f32(mv as f32, e)))
-                }
-                Flt2decValue::F32(mv) if is_f32 => {
-                    Some(Flt2decValue::F32(flt2dec_eval::ldexp_f32(mv, e)))
-                }
-                _ => None,
-            }
-        }
-        // known associated consts: f64::MAX / f32::INFINITY / ...
-        Expr::Path(p) => {
-            // single-segment ident -> resolve via the enclosing helper's `let` map.
-            if p.path.segments.len() == 1 {
-                let name = p.path.segments[0].ident.to_string();
-                let bound = bindings.get(&name)?;
-                // Guard against a binding that refers to itself (shadowing): drop
-                // the just-resolved name so resolution strictly shrinks.
-                let mut narrowed = bindings.clone();
-                narrowed.remove(&name);
-                return parse_flt2dec_value(bound, &narrowed);
-            }
-            let segs: Vec<String> = p.path.segments.iter().map(|s| s.ident.to_string()).collect();
-            if segs.len() != 2 {
-                return None;
-            }
-            let val = match segs[1].as_str() {
-                "MAX" => 1.0,
-                "MIN" => -1.0,
-                "INFINITY" => f64::INFINITY,
-                "NEG_INFINITY" => f64::NEG_INFINITY,
-                "NAN" => f64::NAN,
-                _ => return None,
-            };
-            match segs[0].as_str() {
-                // MAX/MIN of f32/f64 are huge magnitudes whose shortest form the corpus
-                // writes via `format!`; only the INFINITY/NAN consts evaluate cleanly to a
-                // small string. Hand MAX/MIN back as the real const so the eval is correct,
-                // but only if the RHS is a plain string literal (caller gates that).
-                "f64" => match segs[1].as_str() {
-                    "MAX" => Some(Flt2decValue::F64(f64::MAX)),
-                    "MIN" => Some(Flt2decValue::F64(f64::MIN)),
-                    _ => Some(Flt2decValue::F64(val)),
-                },
-                "f32" => match segs[1].as_str() {
-                    "MAX" => Some(Flt2decValue::F32(f32::MAX)),
-                    "MIN" => Some(Flt2decValue::F32(f32::MIN)),
-                    "INFINITY" => Some(Flt2decValue::F32(f32::INFINITY)),
-                    "NEG_INFINITY" => Some(Flt2decValue::F32(f32::NEG_INFINITY)),
-                    "NAN" => Some(Flt2decValue::F32(f32::NAN)),
-                    _ => None,
-                },
-                _ => None,
-            }
-        }
-        Expr::Paren(p) => parse_flt2dec_value(&p.expr, bindings),
-        Expr::Group(g) => parse_flt2dec_value(&g.expr, bindings),
-        _ => None,
-    }
-}
-
-/// `Minus` / `MinusPlus` path operand -> `FmtSign`.
-fn parse_flt2dec_sign(expr: &Expr) -> Option<flt2dec_eval::FmtSign> {
-    let Expr::Path(p) = expr else { return None };
-    match p.path.segments.last()?.ident.to_string().as_str() {
-        "Minus" => Some(flt2dec_eval::FmtSign::Minus),
-        "MinusPlus" => Some(flt2dec_eval::FmtSign::MinusPlus),
-        _ => None,
-    }
-}
-
-fn parse_usize_literal(expr: &Expr) -> Option<usize> {
-    match expr {
-        Expr::Lit(syn::ExprLit {
-            lit: syn::Lit::Int(i),
-            ..
-        }) => i.base10_parse::<usize>().ok(),
-        Expr::Paren(p) => parse_usize_literal(&p.expr),
-        Expr::Group(g) => parse_usize_literal(&g.expr),
-        _ => None,
-    }
-}
-
-fn parse_bool_literal(expr: &Expr) -> Option<bool> {
-    match expr {
-        Expr::Lit(syn::ExprLit {
-            lit: syn::Lit::Bool(b),
-            ..
-        }) => Some(b.value),
-        Expr::Paren(p) => parse_bool_literal(&p.expr),
-        Expr::Group(g) => parse_bool_literal(&g.expr),
-        _ => None,
-    }
-}
-
-/// An `i32` literal, allowing a unary negation (`-4`).
-fn parse_i32_literal(expr: &Expr) -> Option<i32> {
-    match expr {
-        Expr::Lit(syn::ExprLit {
-            lit: syn::Lit::Int(i),
-            ..
-        }) => i.base10_parse::<i32>().ok(),
-        Expr::Unary(u) if matches!(u.op, syn::UnOp::Neg(_)) => {
-            parse_i32_literal(&u.expr).map(|n| -n)
-        }
-        Expr::Paren(p) => parse_i32_literal(&p.expr),
-        Expr::Group(g) => parse_i32_literal(&g.expr),
-        _ => None,
-    }
-}
-
-/// A `(lo, hi)` dec-bounds tuple of two i32 literals.
-fn parse_bounds_tuple(expr: &Expr) -> Option<(i32, i32)> {
-    match expr {
-        Expr::Tuple(t) if t.elems.len() == 2 => {
-            let lo = parse_i32_literal(&t.elems[0])?;
-            let hi = parse_i32_literal(&t.elems[1])?;
-            Some((lo, hi))
-        }
-        Expr::Paren(p) => parse_bounds_tuple(&p.expr),
-        Expr::Group(g) => parse_bounds_tuple(&g.expr),
-        _ => None,
-    }
-}
-
-/// A plain string-literal RHS -> its value. Anything else (e.g. a `format!(..)`
-/// expected) returns `None`, leaving that assert unclassified.
-fn parse_string_literal(expr: &Expr) -> Option<String> {
-    match expr {
-        Expr::Lit(syn::ExprLit {
-            lit: syn::Lit::Str(s),
-            ..
-        }) => Some(s.value()),
-        Expr::Paren(p) => parse_string_literal(&p.expr),
-        Expr::Group(g) => parse_string_literal(&g.expr),
-        _ => None,
-    }
-}
-
-/// Evaluate a CLOSED, CONSTANT `format!` expected-RHS into its string value.
-///
-/// The coretests corpus expresses the huge-magnitude / tiny-subnormal expected
-/// strings as `format!("..{:0>N}..", "")` -- a format string with exactly one
-/// zero-fill placeholder `{:0>N}` whose argument is the empty string literal, so
-/// it expands to `N` literal `'0'` characters at that position. We reproduce that
-/// expansion EXACTLY (verified against `f32::MAX`/`f64::MAX`/`minf32`/`minf64`):
-///   * exactly one positional argument, the string literal `""`;
-///   * the format string contains exactly one `{...}` placeholder, of the form
-///     `{:0>N}` (zero fill, right-align, fixed width `N`, no other spec), and no
-///     escaped braces (`{{`/`}}`);
-///   * the result is `prefix + "0".repeat(N) + suffix`.
-///
-/// Anything outside this exact closed shape -> `None` (skip, safe under-claim).
-/// Note `""` right-aligned into a `0`-filled width of `N` is `N` zeros for ANY
-/// fill char/alignment, but we still require `0>` so we never silently accept a
-/// spec whose meaning we have not reasoned through.
-fn parse_format_zerofill(expr: &Expr) -> Option<String> {
-    let mac = match expr {
-        Expr::Macro(m) => &m.mac,
-        Expr::Paren(p) => return parse_format_zerofill(&p.expr),
-        Expr::Group(g) => return parse_format_zerofill(&g.expr),
-        _ => return None,
-    };
-    if mac.path.segments.last()?.ident != "format" {
-        return None;
-    }
-    let parser = Punctuated::<Expr, Token![,]>::parse_terminated;
-    let args = parser.parse2(mac.tokens.clone()).ok()?;
-    let mut it = args.iter();
-    // arg 0: the format string literal.
-    let fmt = parse_string_literal(it.next()?)?;
-    // arg 1: must be exactly the empty string literal `""`.
-    let fill = parse_string_literal(it.next()?)?;
-    if !fill.is_empty() {
-        return None;
-    }
-    // no further args.
-    if it.next().is_some() {
-        return None;
-    }
-    // Reject any escaped braces -- they complicate placeholder counting and never
-    // appear in the corpus patterns.
-    if fmt.contains("{{") || fmt.contains("}}") {
-        return None;
-    }
-    // Exactly one `{...}` placeholder.
-    let open = fmt.find('{')?;
-    let close = fmt[open..].find('}').map(|i| open + i)?;
-    // no second placeholder
-    if fmt[close + 1..].contains('{') {
-        return None;
-    }
-    // spec between braces must be exactly `:0>N` with N a usize.
-    let spec = &fmt[open + 1..close];
-    let n_str = spec.strip_prefix(":0>")?;
-    let n: usize = n_str.parse().ok()?;
-    Some(format!(
-        "{}{}{}",
-        &fmt[..open],
-        "0".repeat(n),
-        &fmt[close + 1..]
-    ))
-}
-
-/// The expected-RHS of a flt2dec assert: a plain string literal, or a closed
-/// constant `format!("..{:0>N}..", "")` pattern. `None` for anything else.
-fn parse_flt2dec_expected(expr: &Expr) -> Option<String> {
-    parse_string_literal(expr).or_else(|| parse_format_zerofill(expr))
-}
-
-/// Try to dissolve one `assert_eq!(to_string(f, V, S, D[, U]), EXPECTED)` from a
-/// flt2dec helper into the constant equality `eq(eval(V,S,D[,U]), EXPECTED)`.
-///   * `Some(true)`  -- evaluated, and our stdlib formatting equals the asserted literal
-///                      (discharged by dissolution).
-///   * `Some(false)` -- evaluated, but disagrees (a real refutation; never expected for a
-///                      passing vendor test, refused not discharged).
-///   * `None`        -- operands are not a closed f32/f64 literal term, or the expected is
-///                      neither a plain string literal nor a closed `format!` pattern:
-///                      leave unclassified.
-/// `bindings` is the enclosing helper's `let <ident> = <expr>` map, used to resolve
-/// value operands like `minf32` to their `ldexp_fN(..)` definition.
-fn dissolve_flt2dec_assert(
-    mac: &syn::Macro,
-    mode: Flt2decMode,
-    bindings: &BTreeMap<String, Expr>,
-) -> Option<bool> {
-    use syn::punctuated::Punctuated;
-    let parser = Punctuated::<Expr, syn::Token![,]>::parse_terminated;
-    let args = parser.parse2(mac.tokens.clone()).ok()?;
-    let mut it = args.iter();
-    let lhs = it.next()?;
-    let rhs = it.next()?;
-    // LHS must be `to_string(f, V, S, D[, U])`.
-    let Expr::Call(call) = lhs else { return None };
-    let Expr::Path(cp) = call.func.as_ref() else {
-        return None;
-    };
-    if cp.path.segments.last()?.ident != "to_string" {
-        return None;
-    }
-    let call_args: Vec<&Expr> = call.args.iter().collect();
-    // args[0] is the formatter closure `f` (ignored -- we evaluate with our own stdlib).
-    let value = parse_flt2dec_value(call_args.get(1)?, bindings)?;
-    let sign = parse_flt2dec_sign(call_args.get(2)?)?;
-    let expected = parse_flt2dec_expected(rhs)?;
-
-    let computed = match mode {
-        Flt2decMode::Shortest => {
-            let frac = parse_usize_literal(call_args.get(3)?)?;
-            match value {
-                Flt2decValue::F64(v) => flt2dec_eval::shortest_f64(v, sign, frac),
-                Flt2decValue::F32(v) => flt2dec_eval::shortest_f32(v, sign, frac),
-            }
-        }
-        Flt2decMode::ExactFixed => {
-            let frac = parse_usize_literal(call_args.get(3)?)?;
-            match value {
-                Flt2decValue::F64(v) => flt2dec_eval::exact_fixed_f64(v, sign, frac),
-                Flt2decValue::F32(v) => flt2dec_eval::exact_fixed_f32(v, sign, frac),
-            }
-        }
-        Flt2decMode::ExactExp => {
-            let frac = parse_usize_literal(call_args.get(3)?)?;
-            let upper = parse_bool_literal(call_args.get(4)?)?;
-            match value {
-                Flt2decValue::F64(v) => flt2dec_eval::exact_exp_f64(v, sign, frac, upper),
-                Flt2decValue::F32(v) => flt2dec_eval::exact_exp_f32(v, sign, frac, upper),
-            }
-        }
-        Flt2decMode::ShortestExp => {
-            let (lo, hi) = parse_bounds_tuple(call_args.get(3)?)?;
-            let upper = parse_bool_literal(call_args.get(4)?)?;
-            match value {
-                Flt2decValue::F64(v) => flt2dec_eval::shortest_exp_f64(v, sign, lo, hi, upper),
-                Flt2decValue::F32(v) => flt2dec_eval::shortest_exp_f32(v, sign, lo, hi, upper),
-            }
-        }
-    };
-    Some(computed == expected)
-}
-
-/// Dissolve a flt2dec formatting test helper: evaluate each closed
-/// `assert_eq!(to_string(..), "..")` with our own stdlib `format!` and discharge it,
-/// leaving non-closed / f16 / `format!`-expected asserts unclassified. Every textual
-/// assert macro is accounted (discharged or refused), so nothing is silently dropped.
-fn lift_flt2dec_helper(
-    f: &syn::ItemFn,
-    mode: Flt2decMode,
-    source_path: &str,
-    modules: &[String],
-    out: &mut AdapterOutput,
-) {
-    let scoped = scoped_test_name(source_path, modules, &f.sig.ident.to_string());
-    let total = count_asserts_in_stmts(&f.block.stmts);
-
-    // Collect every assert_eq!/assert! macro in the helper body (incl. nested blocks),
-    // in textual order, so the per-macro disposition reconciles against `total`.
-    struct MacroWalk {
-        macros: Vec<syn::Macro>,
-    }
-    impl<'ast> syn::visit::Visit<'ast> for MacroWalk {
-        fn visit_macro(&mut self, m: &'ast syn::Macro) {
-            if is_assert_macro_path(&m.path) {
-                self.macros.push(m.clone());
-            }
-            syn::visit::visit_macro(self, m);
-        }
-    }
-    let mut w = MacroWalk { macros: Vec::new() };
-    syn::visit::Visit::visit_item_fn(&mut w, f);
-
-    // Collect simple `let <ident> = <expr>;` bindings from the helper body so a
-    // value operand written as an identifier (e.g. `minf32`) resolves to its
-    // definition (`ldexp_f32(1.0, -149)`). Only un-typed, non-`mut`, single-ident
-    // patterns with an initializer are captured; anything else is ignored (the
-    // operand then stays unresolved -> None -> refused, which is safe). The corpus
-    // defines these once at top of the helper, so last-write-wins on the BTreeMap
-    // is correct.
-    let mut bindings: BTreeMap<String, Expr> = BTreeMap::new();
-    for stmt in &f.block.stmts {
-        if let Stmt::Local(local) = stmt {
-            if let Pat::Ident(pi) = &local.pat {
-                if pi.by_ref.is_none() && pi.subpat.is_none() {
-                    if let Some(init) = &local.init {
-                        if init.diverge.is_none() {
-                            bindings.insert(pi.ident.to_string(), (*init.expr).clone());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    let mut lifted = 0usize;
-    let mut refused = 0usize;
-    for m in &w.macros {
-        match dissolve_flt2dec_assert(m, mode, &bindings) {
-            Some(true) => lifted += 1,
-            Some(false) => {
-                // Our independent stdlib evaluation disagrees with the asserted literal.
-                // For a passing vendor test this cannot happen; refuse rather than ever
-                // false-discharge.
-                refused += 1;
-                out.skip_reasons.push(
-                    "flt2dec dissolution: independent stdlib evaluation disagrees with the \
-                     asserted value; refused"
-                        .to_string(),
-                );
-            }
-            None => {
-                refused += 1;
-                let toks = m.tokens.to_string();
-                if toks.contains("f16") || toks.contains("f128") {
-                    // TERMINAL: f16/f128 formatting. These are UNSTABLE float types; the
-                    // stable toolchain the lifter ships cannot format them (no stable
-                    // Display/flt2dec for f16/f128), so the value cannot be dissolved by
-                    // evaluation, and we do NOT model the flt2dec algorithm (no-model
-                    // axiom). The assert tests an unstable API not expressible as a
-                    // point-wise claim over the stable surface -- a source/environment
-                    // property, not a lifter gap. (Refused, stated plainly; not a fake-zero.)
-                    out.skip_reasons.push(
-                        "flt2dec assert: f16/f128 formatting is unstable -- unformattable on \
-                         the stable toolchain the lifter ships and not modellable as a \
-                         point-wise claim; refused"
-                            .to_string(),
-                    );
-                } else {
-                    out.skip_reasons.push(
-                        "flt2dec assert: operand is not a closed f32/f64 literal term (ldexp \
-                         or a format! expected); released to layer 0"
-                            .to_string(),
-                    );
-                }
-            }
-        }
-    }
-    out.assertions_lifted += lifted;
-    out.assertions_refused += refused;
-
-    // Totality net: account any assert the macro walk did not reach.
-    let accounted = lifted + refused;
-    if total > accounted {
-        let gap = total - accounted;
-        for _ in 0..gap {
-            out.assertions_refused += 1;
-            out.skip_reasons
-                .push("flt2dec helper: unenumerated assert; released to layer 0".to_string());
-        }
-    }
-    out.warnings.push(LiftWarning {
-        source_path: source_path.to_string(),
-        item_name: scoped,
-        reason: format!(
-            "flt2dec formatting helper dissolved by stdlib evaluation: {lifted} discharged, \
-             {refused} unclassified (mode {mode:?})"
-        ),
-    });
-}
 
 /// A trait bound that makes a parameter carry RUNTIME behaviour/data that is not a
 /// source literal: a closure/fn-pointer (`Fn`/`FnMut`/`FnOnce`) or an iterator
@@ -1584,9 +1079,10 @@ fn visit_non_test_fn(
     }
     // STDLIB EXCEPTION: a flt2dec formatting test helper's asserts are closed
     // computations over rust's own stdlib; dissolve them by evaluating with our own
-    // `format!` instead of refusing as call-site-inlining residue.
-    if let Some(mode) = flt2dec_helper_mode(f) {
-        lift_flt2dec_helper(f, mode, source_path, modules, out);
+    // `format!` instead of refusing as call-site-inlining residue. The whole feature
+    // (recognition + reconstruction + render) is OWNED by FormatSugar (`sugar::format`).
+    if let Some(mode) = sugar::format::flt2dec_helper_mode(f) {
+        sugar::format::lift_flt2dec_helper(f, mode, source_path, modules, out);
         return;
     }
     let scoped_name = scoped_test_name(source_path, modules, &fn_name);
@@ -1745,7 +1241,7 @@ fn has_test_attr(attrs: &[syn::Attribute]) -> bool {
     })
 }
 
-fn scoped_test_name(source_path: &str, modules: &[String], fn_name: &str) -> String {
+pub(crate) fn scoped_test_name(source_path: &str, modules: &[String], fn_name: &str) -> String {
     if modules.is_empty() {
         format!("{source_path}::{fn_name}")
     } else {
@@ -2386,7 +1882,7 @@ impl<'ast> syn::visit::Visit<'ast> for NestedAssertCounter {
     }
 }
 
-fn count_asserts_in_stmts(stmts: &[Stmt]) -> usize {
+pub(crate) fn count_asserts_in_stmts(stmts: &[Stmt]) -> usize {
     let mut counter = NestedAssertCounter::default();
     for stmt in stmts {
         syn::visit::Visit::visit_stmt(&mut counter, stmt);
@@ -2437,7 +1933,7 @@ fn count_asserts_in_expr(expr: &Expr) -> usize {
     counter.total
 }
 
-fn is_assert_macro_path(path: &syn::Path) -> bool {
+pub(crate) fn is_assert_macro_path(path: &syn::Path) -> bool {
     if let Some(seg) = path.segments.last() {
         // The lifter treats any macro whose name starts with assert / debug_assert
         // as an assertion (the standard six plus stdlib custom macros like
@@ -11346,6 +10842,24 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
                     return translate_term_in_scope(&grounded, scope);
                 }
             }
+            // FORMATSUGAR: `<literal>.to_string()` dissolves to its Display string, lowered
+            // as a REAL `str_const` (teeth), instead of the opaque `method:to_string`
+            // ctor below. Only an IMMUTABLE-bound literal receiver resolves; a runtime
+            // receiver returns `Ok(None)` and falls through unchanged (a safe
+            // under-claim). f16/f128 surfaces the named terminal.
+            if call.method == "to_string" && call.args.is_empty() {
+                let stable: BTreeMap<String, Expr> = scope
+                    .let_bindings
+                    .iter()
+                    .filter(|(name, _)| !scope.is_mut_local(name))
+                    .map(|(name, init)| (name.clone(), init.clone()))
+                    .collect();
+                match sugar::format::try_resolve_format(expr, &stable) {
+                    Ok(Some(s)) => return Ok(str_const(s)),
+                    Err(reason) => return Err(reason),
+                    Ok(None) => {}
+                }
+            }
             // A closure-bearing iterator/Option adaptor in TERM position (e.g.
             // `assert_eq!(opt.map(|v| ..), x)`) refuses with the collection
             // provenance, not a bare "unsupported term `|v|`" -- so the bin sort is
@@ -11517,6 +11031,26 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
             }))
         }
         Expr::Binary(binary) => {
+            // FORMATSUGAR (string concatenation): `a + b` where BOTH sides resolve to
+            // WRITTEN string literals (a `&str`/`String` literal, a bound one, or a
+            // nested `format!`/`concat!`/`.to_string()`) dissolves to the concatenated
+            // string, lowered as a REAL `str_const` (teeth). A NUMERIC `+` (or any
+            // operand that does not resolve to a string) returns `Ok(None)` and falls
+            // THROUGH to the arithmetic-ctor path below, UNCHANGED -- this hook can only
+            // ever drain a genuine literal string `+`, never reclassify arithmetic.
+            if matches!(binary.op, syn::BinOp::Add(_)) {
+                let stable: BTreeMap<String, Expr> = scope
+                    .let_bindings
+                    .iter()
+                    .filter(|(name, _)| !scope.is_mut_local(name))
+                    .map(|(name, init)| (name.clone(), init.clone()))
+                    .collect();
+                match sugar::format::try_resolve_format(expr, &stable) {
+                    Ok(Some(s)) => return Ok(str_const(s)),
+                    Err(reason) => return Err(reason),
+                    Ok(None) => {}
+                }
+            }
             // BinaryOpSugar: a COMPARISON in term position (`a[0] < b[0]` as the
             // operand of an outer `==`, or the LHS of `assert_eq!(false == false,
             // true)`) is the bool-VALUED FOL fact it states -- not an arithmetic
@@ -11578,6 +11112,34 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
         // obligation. Refuse the macro as temporally unstable when it contains
         // any mut local from the current scope.
         Expr::Macro(m) => {
+            // FORMATSUGAR (the teeth dig): a `format!`/`concat!` over operands that all
+            // resolve to WRITTEN LITERALS is sugar for ONE reproducible string. Compute
+            // it with the lifter's own stdlib `format!` (recompute-don't-reimplement) and
+            // lower the result as the REAL `str_const`, so `assert_eq!(format!(…), "…")`
+            // becomes the constant equality `eq(str_const(computed), str_const(expected))`
+            // — z3-checkable WITH TEETH (a wrong expected string is z3-UNSAT), instead of
+            // the opaque `macro:format!(…)` EUF var below (which the solver satisfies
+            // tautologically). Only IMMUTABLE bindings resolve a literal operand (a `let
+            // mut` could be reassigned), so a mutated operand is never mis-dissolved; that
+            // case falls through to the temporally-unstable refusal below.
+            let seg = m.mac.path.segments.last().map(|s| s.ident.to_string());
+            if matches!(seg.as_deref(), Some("format") | Some("concat")) {
+                let stable: BTreeMap<String, Expr> = scope
+                    .let_bindings
+                    .iter()
+                    .filter(|(name, _)| !scope.is_mut_local(name))
+                    .map(|(name, init)| (name.clone(), init.clone()))
+                    .collect();
+                match sugar::format::try_resolve_format(expr, &stable) {
+                    // DIG: the format dissolved to a concrete string literal.
+                    Ok(Some(s)) => return Ok(str_const(s)),
+                    // NAMED TERMINAL: f16/f128 Display unsupported (carries its k-remedy).
+                    Err(reason) => return Err(reason),
+                    // BAIL: a genuinely runtime operand / unsupported spec -> fall through
+                    // to the conservative opaque path (the EUF var), a safe under-claim.
+                    Ok(None) => {}
+                }
+            }
             // Walk the token stream looking for any identifier that is a mut_local.
             // Two forms must be detected:
             //   1. `format!("{:?}", r)` — `r` is a bare Ident token.
@@ -14988,211 +14550,6 @@ mod lifter_key_tests {
         }
     }
 
-    // ── flt2dec dissolution: ldexp values + format! expected-RHS ──────────────
-
-    // Parse a single `assert_eq!(..)` expression statement into its `syn::Macro`.
-    fn assert_macro(src: &str) -> syn::Macro {
-        let stmt: Stmt = syn::parse_str(src).expect("assert stmt must parse");
-        let expr = match stmt {
-            Stmt::Macro(m) => return m.mac,
-            Stmt::Expr(e, _) => e,
-            _ => panic!("expected a macro/expr stmt"),
-        };
-        match expr {
-            Expr::Macro(m) => m.mac,
-            _ => panic!("expected a macro expr"),
-        }
-    }
-
-    fn bind(name: &str, expr_src: &str) -> BTreeMap<String, Expr> {
-        let mut b = BTreeMap::new();
-        b.insert(
-            name.to_string(),
-            syn::parse_str::<Expr>(expr_src).expect("binding expr must parse"),
-        );
-        b
-    }
-
-    #[test]
-    fn ldexp_binding_dissolves_to_right_string() {
-        // minf32 = ldexp_f32(1.0, -149) is the smallest f32 subnormal; its shortest
-        // Display is "0." + 44 zeros + "1". Resolved through the let-binding map and
-        // evaluated by our own stdlib, the assert dissolves (Some(true)).
-        let b = bind("minf32", "ldexp_f32(1.0, -149)");
-        let want = format!(r#""0.{}1""#, "0".repeat(44));
-        let m = assert_macro(&format!(
-            "assert_eq!(to_string(f, minf32, Minus, 0), {want});"
-        ));
-        assert_eq!(
-            dissolve_flt2dec_assert(&m, Flt2decMode::Shortest, &b),
-            Some(true),
-            "ldexp-bound subnormal must dissolve to its exact shortest string"
-        );
-        // minf64 = ldexp_f64(1.0, -1074): "0." + 323 zeros + "5".
-        let b64 = bind("minf64", "ldexp_f64(1.0, -1074)");
-        let want64 = format!(r#""0.{}5""#, "0".repeat(323));
-        let m64 = assert_macro(&format!(
-            "assert_eq!(to_string(f, minf64, Minus, 0), {want64});"
-        ));
-        assert_eq!(
-            dissolve_flt2dec_assert(&m64, Flt2decMode::Shortest, &b64),
-            Some(true)
-        );
-    }
-
-    #[test]
-    fn ldexp_wrong_expected_does_not_discharge() {
-        // break-the-twin: an expected string that does NOT match our independent
-        // value must be refused (Some(false)), never force-discharged.
-        let b = bind("minf32", "ldexp_f32(1.0, -149)");
-        let m = assert_macro(r#"assert_eq!(to_string(f, minf32, Minus, 0), "0.5");"#);
-        assert_eq!(
-            dissolve_flt2dec_assert(&m, Flt2decMode::Shortest, &b),
-            Some(false),
-            "a wrong expected literal must refuse, not discharge"
-        );
-    }
-
-    #[test]
-    fn format_zerofill_expected_evaluates() {
-        // f32::MAX shortest is `format!("34028235{:0>31}", "")` = 34028235 + 31 zeros.
-        let b = BTreeMap::new();
-        let m = assert_macro(
-            r#"assert_eq!(to_string(f, f32::MAX, Minus, 0), format!("34028235{:0>31}", ""));"#,
-        );
-        assert_eq!(
-            dissolve_flt2dec_assert(&m, Flt2decMode::Shortest, &b),
-            Some(true),
-            "closed format! zero-fill expected must evaluate and dissolve"
-        );
-        // And the same pattern with a wrong leading prefix must refuse.
-        let bad = assert_macro(
-            r#"assert_eq!(to_string(f, f32::MAX, Minus, 0), format!("99999999{:0>31}", ""));"#,
-        );
-        assert_eq!(
-            dissolve_flt2dec_assert(&bad, Flt2decMode::Shortest, &b),
-            Some(false)
-        );
-    }
-
-    #[test]
-    fn format_zerofill_direct_eval() {
-        // Direct unit on the evaluator: prefix/suffix around one {:0>N}.
-        assert_eq!(
-            parse_format_zerofill(
-                &syn::parse_str::<Expr>(r#"format!("0.{:0>323}5", "")"#).unwrap()
-            ),
-            Some(format!("0.{}5", "0".repeat(323)))
-        );
-        // Non-empty fill arg -> not our closed pattern -> None.
-        assert_eq!(
-            parse_format_zerofill(&syn::parse_str::<Expr>(r#"format!("{:0>4}", "x")"#).unwrap()),
-            None
-        );
-        // Two placeholders -> None (we only evaluate the single-placeholder shape).
-        assert_eq!(
-            parse_format_zerofill(
-                &syn::parse_str::<Expr>(r#"format!("{:0>4}{:0>4}", "")"#).unwrap()
-            ),
-            None
-        );
-        // A non-format! macro -> None.
-        assert_eq!(
-            parse_format_zerofill(&syn::parse_str::<Expr>(r#"vec!["a"]"#).unwrap()),
-            None
-        );
-    }
-
-    #[test]
-    fn unparseable_value_or_expected_is_skipped() {
-        let b = BTreeMap::new();
-        // f16 value (ldexp_f16) -> unresolved -> None (skip, NOT discharge).
-        let bf16 = bind("minf16", "ldexp_f16(1.0, -24)");
-        let m16 = assert_macro(r#"assert_eq!(to_string(f, minf16, Minus, 0), "0.00000006");"#);
-        assert_eq!(
-            dissolve_flt2dec_assert(&m16, Flt2decMode::Shortest, &bf16),
-            None,
-            "f16-bound value must stay unclassified (stable cannot format f16)"
-        );
-        // Unbound ident -> None.
-        let mub = assert_macro(r#"assert_eq!(to_string(f, mystery, Minus, 0), "0");"#);
-        assert_eq!(
-            dissolve_flt2dec_assert(&mub, Flt2decMode::Shortest, &b),
-            None
-        );
-        // A non-closed format! expected (runtime arg) -> None.
-        let mfmt = assert_macro(
-            r#"assert_eq!(to_string(f, 1.0, Minus, 0), format!("{}", some_var));"#,
-        );
-        assert_eq!(
-            dissolve_flt2dec_assert(&mfmt, Flt2decMode::Shortest, &b),
-            None
-        );
-    }
-
-    #[test]
-    fn exact_fixed_full_expansion_mismatch_is_refused_not_discharged() {
-        // SOUNDNESS GUARD: `to_exact_fixed_str(f64::MAX, 8)`'s corpus expected is the
-        // SHORTEST decimal zero-padded (`format!("17976931348623157{:0>292}.00000000")`),
-        // but our `{:.8}` reproduces the FULL exact expansion (`...570814527...`). These
-        // differ, so this row must REFUSE (Some(false)) -- never force-discharge a value
-        // we did not reproduce. This is the dog that didn't bark: the format! RHS now
-        // PARSES, so the row is no longer skipped (None); it is actively refuted.
-        let b = BTreeMap::new();
-        let m = assert_macro(
-            r#"assert_eq!(to_string(f, f64::MAX, Minus, 8), format!("17976931348623157{:0>292}.00000000", ""));"#,
-        );
-        assert_eq!(
-            dissolve_flt2dec_assert(&m, Flt2decMode::ExactFixed, &b),
-            Some(false),
-            "a full-expansion fixed value that differs from the shortest-padded expected \
-             must refuse, never discharge"
-        );
-        // The SHORTEST-mode row for the same value DOES match (shortest == padded shortest).
-        let ms = assert_macro(
-            r#"assert_eq!(to_string(f, f64::MAX, Minus, 0), format!("17976931348623157{:0>292}", ""));"#,
-        );
-        assert_eq!(
-            dissolve_flt2dec_assert(&ms, Flt2decMode::Shortest, &b),
-            Some(true)
-        );
-    }
-
-    #[test]
-    fn ldexp_minf32_drains_end_to_end() {
-        // End-to-end through the helper: a `to_shortest_str` test fn that defines
-        // minf32 via ldexp and asserts both a string-literal and a format!-pattern
-        // expected. Both must lift (assertions_lifted == 2, none refused).
-        let src = r#"
-            #[test]
-            fn to_string() {
-                fn to_string<T>(_: T, _: f32, _: Sign, _: usize) -> String { String::new() }
-                let minf32 = ldexp_f32(1.0, -149);
-                assert_eq!(to_string(f, minf32, Minus, 0), format!("0.{:0>44}1", ""));
-                assert_eq!(to_string(f, 1.0e-6_f32, Minus, 0), "0.000001");
-            }
-        "#;
-        // Build via the flt2dec path directly so the test is independent of the
-        // outer dispatcher's helper recognition heuristics.
-        let file: syn::File = syn::parse_str(src).unwrap();
-        let mut out = AdapterOutput::default();
-        // Find the inner test fn and lift it in Shortest mode.
-        fn find_fn(items: &[Item]) -> Option<&syn::ItemFn> {
-            for it in items {
-                if let Item::Fn(f) = it {
-                    return Some(f);
-                }
-            }
-            None
-        }
-        let f = find_fn(&file.items).expect("test fn");
-        lift_flt2dec_helper(f, Flt2decMode::Shortest, "tests/x.rs", &[], &mut out);
-        assert_eq!(
-            out.assertions_lifted, 2,
-            "both the format!-pattern and the literal expected must dissolve"
-        );
-        assert_eq!(out.assertions_refused, 0, "nothing refused: {:?}", out.skip_reasons);
-    }
 
     // ── starts_with over a MUTABLE-local receiver is a runtime (bin-2) refusal ──
     // Corpus: iter/adapters/zip.rs::test_zip_next_back_side_effects_exhausted and
