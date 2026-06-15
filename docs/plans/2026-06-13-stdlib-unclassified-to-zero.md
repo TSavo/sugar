@@ -112,6 +112,29 @@ layer's `None` is a happy refuse. **Adding a construct = adding one class with o
 `Desugared` is a **(value, warrant)** pair, not a bare value — synthetic literals
 carry the composed SourceMemento of the sugar that minted them.
 
+### 3.1 Two invariants the design holds
+
+**Breadth, not depth.** Exact-or-bail has no middle — a class either fully reduces
+to literals (dig) or names its order-loss boundary (refuse); there is no "handle
+80%, special-case the rest," and that partial-handling path is exactly where
+lifters usually accrete depth. So complexity has nowhere to pool. The only growth
+vector is breadth: a new construct is one new bounded class on the same
+`decompose → desugar()` spine, touching no existing class (O(1) per class, no
+O(n²) entanglement). The worst case is "not enough sugar added yet," never "the
+sugar tangled into something we can't reason about." This makes the campaign a
+breadth problem (enumerate constructs, add a class each) and safe to
+parallelize / hand to agents — each class is small, exact-or-bail, adversarially
+testable, warranted; the structure raises the floor instead of trusting the
+contributor.
+
+**Lift and replace — one engine, never parallel.** Each `Sugar`/`SideEffect` class
+SUBSUMES the existing procedural lifting for its construct, and the old procedural
+code is DELETED (the defolder port removed ~430 lines of `try_lift_*`). We do not
+run a Sugar engine alongside the old procedural lifter — we migrate the lifter
+INTO the hierarchy. End state: the whole lifter IS the `Sugar`/`SideEffect`
+decomposition; everything procedural becomes a class; nothing lifts twice. Drain
+the whole swamp until every construct decomposes into sugar.
+
 ---
 
 ## 4. It generalizes (this will be fun)
