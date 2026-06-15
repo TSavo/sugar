@@ -45,6 +45,7 @@ use std::collections::BTreeMap;
 
 use syn::{Expr, ExprLit, Lit};
 
+use crate::sugar::bound::BoundSugar;
 use crate::{strip_refs_groups, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx};
 
 /// A recognized rust regex-match assertion: the pattern operand built into an
@@ -226,7 +227,25 @@ struct PatternSugar {
 }
 
 impl Sugar for PatternSugar {
-    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        // A `let p = "pat";` / `const PAT: &str = "pat";` reference resolves through a
+        // first-class `BoundSugar` node, NOT an ad-hoc `let_bindings.get(name)`
+        // recursion inlined here: the binding reference is a composed `Sugar` whose
+        // outcome is whatever the bound init's `Sugar` (another `PatternSugar` over the
+        // init) collapses to, with the binding `name` carried as provenance. The
+        // resolved string is byte-identical to recursing the init directly -- the
+        // binding reference is transparent. Shadowing is handled UPSTREAM: `let_bindings`
+        // is the binding in effect at the reference's program point.
+        if let Some((name, bound)) = self.let_bound_reference() {
+            return BoundSugar::new(
+                name,
+                Box::new(PatternSugar {
+                    pattern: bound,
+                    let_bindings: self.let_bindings.clone(),
+                }),
+            )
+            .desugar(ctx);
+        }
         match resolve_string_literal(&self.pattern, &self.let_bindings) {
             Some(s) => Outcome::Dug(Desugared::Seq(vec![DesugaredElem {
                 expr: string_literal_expr(&s),
@@ -239,19 +258,48 @@ impl Sugar for PatternSugar {
     }
 }
 
+impl PatternSugar {
+    /// If the pattern operand is a bare `let`/`const`-bound NAME in scope, return the
+    /// `(name, bound-init-expr)` so the resolution routes through `BoundSugar`. `None`
+    /// for an inline literal, a `concat!`, an unbound path, or any non-path operand --
+    /// those resolve directly through `resolve_string_literal` (the literal/concat
+    /// base cases), never through a binding node. This is the SINGLE binding-reference
+    /// recognizer for the pattern operand (lifted out of `resolve_string_literal`'s
+    /// inlined path arm, so the binding resolution is now a uniform composed node).
+    fn let_bound_reference(&self) -> Option<(String, Expr)> {
+        match strip_refs_groups(&self.pattern) {
+            Expr::Path(path) if path.qself.is_none() => {
+                let name = path.path.get_ident()?.to_string();
+                let bound = self.let_bindings.get(&name)?;
+                Some((name, bound.clone()))
+            }
+            _ => None,
+        }
+    }
+}
+
 /// Resolve a pattern operand expr to its string-literal value, composing the
-/// resolvers that exist today: inline `&str` literal, `let`/`const`-bound name,
-/// and `concat!(<string literals>)`. Returns `None` for a runtime / unsupported
-/// producer — the floor must be a WRITTEN literal (reached through any number of
-/// pure resolver indirections), never runtime data.
+/// resolvers that exist today: inline `&str` literal, `let`/`const`-bound name, and
+/// `concat!(<string literals>)`. This is the FRAGMENT-LEVEL resolver: it is the base
+/// case the operand-level `BoundSugar` ultimately delegates to (via a `PatternSugar`
+/// over a bound init), and it also resolves nested `concat!` fragments that may
+/// themselves be bound names. The TOP-LEVEL operand binding reference is intercepted
+/// in `PatternSugar::desugar` and routed through `BoundSugar` BEFORE reaching here, so
+/// the operand's binding resolution is the uniform composed node; the path arm here
+/// only fires for fragments NESTED inside a `concat!` (and for the in-isolation unit
+/// tests of this pure resolver). Returns `None` for a runtime / unsupported producer —
+/// the floor must be a WRITTEN literal (reached through any number of pure resolver
+/// indirections), never runtime data.
 fn resolve_string_literal(expr: &Expr, let_bindings: &BTreeMap<String, Expr>) -> Option<String> {
     match strip_refs_groups(expr) {
         // Inline `&str` literal — the base case (LiteralSugar of String kind).
         Expr::Lit(ExprLit {
             lit: Lit::Str(s), ..
         }) => Some(s.value()),
-        // `let p = "pat";` / `const PAT: &str = "pat";` then `Regex::new(p)` — one
-        // (or more) pure indirections to the written literal.
+        // `let p = "pat";` / `const PAT: &str = "pat";` — a fragment-level (or
+        // unit-test) binding indirection to the written literal. (The TOP-LEVEL
+        // operand binding reference is routed through `BoundSugar` upstream; this arm
+        // resolves a binding NESTED inside a `concat!` fragment.)
         Expr::Path(path) if path.qself.is_none() => {
             let name = path.path.get_ident()?.to_string();
             let bound = let_bindings.get(&name)?;
@@ -410,5 +458,52 @@ mod tests {
     #[test]
     fn declines_unbound_path_receiver() {
         assert!(recognize_regex_match(&parse(r#"re.is_match(s)"#), &no_bindings()).is_none());
+    }
+
+    // ── let_bound_reference: the operand-level binding recognizer (routes through
+    //    BoundSugar). Three tests per the discrimination discipline: positive,
+    //    discrimination (the shapes that must NOT be treated as a binding reference),
+    //    structural (an in-shape path that is unbound). ──
+
+    fn pattern_sugar(src: &str, binds: BTreeMap<String, Expr>) -> PatternSugar {
+        PatternSugar {
+            pattern: parse(src),
+            let_bindings: binds,
+        }
+    }
+
+    #[test]
+    fn let_bound_reference_recognizes_bound_path() {
+        // POSITIVE: a bare name bound in scope -> (name, bound-init) so resolution
+        // routes through `BoundSugar`.
+        let mut binds = BTreeMap::new();
+        binds.insert("p".to_string(), parse(r#""a.c""#));
+        let ps = pattern_sugar("p", binds);
+        let (name, bound) = ps.let_bound_reference().expect("bound path recognized");
+        assert_eq!(name, "p");
+        // The bound init is the written literal expr.
+        assert_eq!(
+            resolve_string_literal(&bound, &BTreeMap::new()).as_deref(),
+            Some("a.c")
+        );
+    }
+
+    #[test]
+    fn let_bound_reference_declines_inline_literal_and_concat() {
+        // DISCRIMINATION: an inline literal and a `concat!` are NOT binding references
+        // -- they resolve directly through `resolve_string_literal`, never `BoundSugar`.
+        let ps_lit = pattern_sugar(r#""^[a-z]+$""#, BTreeMap::new());
+        assert!(ps_lit.let_bound_reference().is_none());
+        let ps_concat = pattern_sugar(r#"concat!("^", "x")"#, BTreeMap::new());
+        assert!(ps_concat.let_bound_reference().is_none());
+    }
+
+    #[test]
+    fn let_bound_reference_declines_unbound_path() {
+        // STRUCTURAL: a bare path of the right SHAPE but NOT bound in scope is declined
+        // (no init to wrap) -- the operand falls through to `resolve_string_literal`,
+        // which also declines it (a runtime variable). No `BoundSugar` is built.
+        let ps = pattern_sugar("user_input", BTreeMap::new());
+        assert!(ps.let_bound_reference().is_none());
     }
 }
