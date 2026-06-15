@@ -846,7 +846,7 @@ fn walk_non_test_fns(
                         // not a missing lifter. Detection is STRUCTURAL: the assert is
                         // lexically inside an `impl` method body, which only executes at
                         // call time. Typed as `ImplMethodEffect`.
-                        let reason = (ImplMethodEffect {
+                        let reason = (Effect::ImplMethod {
                             boundary: format!("impl method `{method_name}`"),
                         })
                         .reason();
@@ -3347,7 +3347,7 @@ impl Desugared {
 }
 
 /// What `desugar` needs from its environment, bundled so the trait method stays
-/// `fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared>` (the doctrine's exact
+/// `fn desugar(&self, ctx: &SugarCtx) -> Outcome` (the doctrine's exact
 /// signature). `float_widths` is interior-mutable (a `RefCell`) because the body
 /// collector advances it while desugaring a constraint terminal.
 struct SugarCtx<'a, 'c> {
@@ -3359,39 +3359,42 @@ struct SugarCtx<'a, 'c> {
 }
 
 /// A node in the desugaring tree. `desugar` recurses inward (each child is a
-/// `Sugar` whose `desugar` we call) until `LiteralSugar` bottoms out or some node
-/// returns `None` (BAIL). Adding a construct = adding one class with one
-/// `desugar`.
+/// `Sugar` whose `desugar` we call) until `LiteralSugar` bottoms out, or the walk
+/// strikes an order-loss boundary (`Hit`). The reduction is TOTAL: it ALWAYS returns
+/// an `Outcome` -- `Dug` (reached truth) or `Hit` (a named effect). There is no
+/// `Option`/`None` bail and no unclassified return path. Adding a construct = adding
+/// one class with one `desugar`.
 trait Sugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared>;
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome;
 }
 
-// ── The typed BAIL: a `SideEffect` hierarchy (the mirror of `Sugar`) ─────────
+// ── The total reduction: `Outcome { Dug | Hit }` ─────────────────────────────
 //
 // `Sugar::desugar` is the DIG side -- it walks inward until it reaches literal
 // truth (`Dug`). When the walk hits MONKEY BUSINESS -- a side effect, an opaque
-// runtime value, an iterator advance, a mutable read -- the desugar bails. Today
-// that bail is an untyped `None` + a reason STRING handled downstream by
-// `refusal_disposition` (terminal-whitelist -> Refused, else Unclassified).
+// runtime value, an iterator advance, a mutable read -- it `Hit`s a named `Effect`.
+// `Outcome` is TOTAL (two cases, no third): every reduction is `Dug` or `Hit`,
+// nothing else. The old untyped `None` bail + downstream reason STRING is gone; the
+// bail is now a typed `Hit(Effect)` carrying the SAME reason string the collector
+// emits into `skip_reasons` (recognized as terminal by `refusal_disposition`). The
+// wire format -- and thus the CID + counts -- is unchanged.
 //
-// `SideEffect` RETYPES that bail. A `SideEffect` is a NAMED, WARRANTED order-loss
-// boundary: a structural property of the SOURCE (not a missing lift) that destroys
-// the single timeless `t` a point-wise value claim needs. Each kind owns its own
-// `reason()` (the proto refusal string, recognized as terminal by
-// `refusal_disposition`) and its own `boundary()` (a `SourceMemento` -- the bail-side
-// rope, mirroring the dig-side `Warrant`). The reason string is the wire format the
-// existing collector emits into `skip_reasons`; minting it from a typed effect makes
-// the BAIL a claim with a cause, not a bare string.
+// `Effect` is a FLAT enum of named order-loss boundaries (a mutation, an iterator
+// advance, an opaque runtime value, TLS, IO, a mutable read, ...), each a structural
+// property of the SOURCE (not a missing lift) that destroys the single timeless `t` a
+// point-wise value claim needs. `Effect::reason()` is the proto refusal string;
+// `Effect::boundary()` is the `SourceMemento` (the bail-side rope, mirroring the
+// dig-side `Warrant`). Adding an effect = adding one variant + one `reason()` arm.
 //
-// SOUNDNESS (the critical line, do NOT cross it): a `SideEffect` is ONLY for a
-// PROVABLE order-loss effect -- a syntactic mutation / `iter.next()` / `&mut` /
-// `.push` on captured state, a genuinely runtime/opaque value (param, runtime call
-// result, TLS, IO), a mutable-container read. A PURE-BUT-UNTRANSLATED term (a pure
-// stdlib method we have not transcribed yet) is NOT a `SideEffect`: it stays
-// UNCLASSIFIED (honest future work for a `Sugar`/`const_eval` arm). Reclassifying a
-// pure-untranslated term as a `SideEffect` would be a FAKE-REFUSE -- mislabeling our
-// own work as a source property. EFFECT-OR-LEAVE: if we cannot PROVE it is an
-// order-loss effect, we leave it unclassified.
+// SOUNDNESS (the critical line, do NOT cross it): an `Effect` is ONLY for a PROVABLE
+// order-loss effect -- a syntactic mutation / `iter.next()` / `&mut` / `.push` on
+// captured state, a genuinely runtime/opaque value (param, runtime call result, TLS,
+// IO), a mutable-container read. A PURE-BUT-UNTRANSLATED term (a pure stdlib method we
+// have not transcribed yet) is NOT an `Effect` we should NAME: it stays a STRUCTURAL
+// backstop (`Effect::Unsupported`, the byte-identical generic reason at its emit site),
+// honest future work for a `Sugar`/`const_eval` arm. Reclassifying a pure-untranslated
+// term as a SPECIFIC named effect would be a FAKE-REFUSE -- mislabeling our own work as
+// a source property.
 
 /// The bail-side rope: a `SourceMemento` ties a refusal to the source boundary that
 /// warrants it (the span / token-key of the offending construct). The mirror of the
@@ -3403,382 +3406,178 @@ struct SourceMemento {
     boundary: String,
 }
 
-/// A typed order-loss boundary -- the typed BAIL, mirror of `Sugar`. `reason()`
-/// returns the terminal refusal string (recognized by `refusal_disposition`);
-/// `boundary()` returns the `SourceMemento` warranting that the bail names a SOURCE
-/// property. Each implementor is a single NAMED effect (a mutation, an iterator
-/// advance, an opaque runtime value, TLS, IO, a mutable read). Adding an effect =
-/// adding one struct with `reason()` + `boundary()`.
-trait SideEffect {
-    fn reason(&self) -> String;
-    fn boundary(&self) -> SourceMemento;
-}
-
-/// The outcome of a desugar attempt, typed both ways. `Dug` reached truth (a
-/// discharged `Desugared`); `Hit` struck a NAMED, WARRANTED order-loss boundary (a
-/// terminal, loud refusal with a cause). This is the typed form of "Option<Desugared>
-/// + reason string"; the collector unwraps it to the existing entries / skip_reasons
+/// The outcome of a desugar attempt -- the TOTAL reduction. `Dug` reached truth (a
+/// discharged `Desugared`); `Hit` struck a NAMED, WARRANTED order-loss boundary (an
+/// `Effect`, a terminal loud refusal with a cause). There is no third case: the
+/// reduction is total. The collector unwraps it to the existing entries / skip_reasons
 /// emission so the wire format (and thus the CID + counts) is unchanged.
-#[allow(dead_code)]
 enum Outcome {
     /// Reached truth: the desugared literal floor / emitted obligation. -> discharged.
     Dug(Desugared),
     /// Struck a named order-loss boundary. -> refused (terminal, loud, with cause).
-    Hit(Box<dyn SideEffect>),
+    Hit(Effect),
 }
 
-/// MUTATION: the closure / loop body MUTATES captured or local state (`+=`, `&mut`,
-/// `.push`, an assignment). The asserted value varies per iteration independently of
-/// the bound var, so a single universal over it would be a false claim. A source
-/// property -- no value lifter could read a single timeless `t`. (HALF 2 of the
-/// fold-closure bucket.)
-struct MutationEffect {
-    boundary: String,
-}
-
-impl SideEffect for MutationEffect {
-    fn reason(&self) -> String {
-        // The proto string the collector already emits for this case (kept verbatim
-        // so `refusal_disposition` classifies it terminal and the CID is conserved).
-        "assertion in a side-effecting closure body (mutates captured state / \
-         advances an iterator); not a pure point-wise claim; refused"
-            .to_string()
+impl Outcome {
+    /// Lift the legacy `Option<Desugared>` into the total `Outcome`: `Some(d)` reached
+    /// truth (`Dug`); a `None` bail is the STRUCTURAL backstop (`Hit(Effect::Unsupported)`
+    /// carrying the byte-identical generic skip reason -- a bare structural bail that the
+    /// fall-through consumer discards exactly as it discarded `None`, then emits its own
+    /// site-specific generic reason). This is the ONE place the legacy `?`/`Option` body of
+    /// a `Sugar` becomes total. There is no longer any unclassified return path from
+    /// `desugar`.
+    fn from_opt(opt: Option<Desugared>) -> Outcome {
+        match opt {
+            Some(d) => Outcome::Dug(d),
+            None => Outcome::Hit(Effect::Unsupported {
+                reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
+            }),
+        }
     }
-    fn boundary(&self) -> SourceMemento {
-        SourceMemento {
-            boundary: self.boundary.clone(),
+
+    /// The discharged payload, or `None` if this struck a boundary (`Hit`). The dual
+    /// of `from_opt`: a consumer that wants the legacy `Option<Desugared>` fall-through
+    /// (`.and_then` / `?`) reads through this. A `Hit` is discarded exactly as the old
+    /// `None` was -- the consumer's own site-specific reason classification is unchanged.
+    fn dug(self) -> Option<Desugared> {
+        match self {
+            Outcome::Dug(d) => Some(d),
+            Outcome::Hit(_) => None,
         }
     }
 }
 
-/// ITER-ADVANCE: the body advances a captured iterator (`iter.next()` / `nth += 1`),
-/// a sequence/position-dependent side effect. Distinct CAUSE from `MutationEffect`
-/// (no captured-state assignment is needed), but the SAME terminal class -- the
-/// observed value is per-iteration, not timeless. (Carried under the side-effecting
-/// closure-body proto reason today; typed here as its own named boundary.)
-struct IterAdvanceEffect {
-    boundary: String,
-}
+/// The STRUCTURAL backstop reason: the bare structural bail of a `Sugar::desugar`
+/// (the old `None`). It is NEVER emitted to `skip_reasons` -- a `Hit(Effect::Unsupported)`
+/// from a `Sugar` bail is discarded by the fall-through consumer (via `Outcome::dug`)
+/// exactly as the old `None` was, and that consumer emits its OWN site-specific reason.
+/// This string exists only so `Effect` is total over the structural bail; it is the
+/// in-code name of "the dig walk did not reach truth here" with no wire footprint.
+const STRUCTURAL_BACKSTOP_REASON: &str =
+    "structural bail: the desugar dig did not reach truth (no named effect); fall through";
 
-impl SideEffect for IterAdvanceEffect {
-    fn reason(&self) -> String {
-        "assertion in a side-effecting closure body (mutates captured state / \
-         advances an iterator); not a pure point-wise claim; refused"
-            .to_string()
-    }
-    fn boundary(&self) -> SourceMemento {
-        SourceMemento {
-            boundary: self.boundary.clone(),
-        }
-    }
-}
-
-/// OPAQUE-RUNTIME (bin-2): the iterated / asserted value is RUNTIME data -- a param, a
-/// runtime call result, an opaque receiver -- not constructible from source literals.
-/// There is no construction to walk, so no finite universe to emit. A source property.
-struct OpaqueRuntimeEffect {
-    boundary: String,
-    /// True for an effectful ACCESSOR (`.with` / `.with_unfilled_buf`) over opaque
-    /// state; false for a plain opaque RECEIVER (`coll.iter().for_each(..)` where
+/// A typed order-loss boundary -- the `Hit` side of `Outcome`. A FLAT enum: one variant
+/// per named effect (a mutation, an iterator advance, an opaque runtime value, TLS, IO, a
+/// mutable read, ...), plus the `Unsupported` STRUCTURAL backstop (a bare structural bail,
+/// or a term-shaped `unsupported term`). `reason()` returns the terminal refusal string
+/// (recognized by `refusal_disposition`); `boundary()` returns the `SourceMemento`
+/// warranting that the bail names a SOURCE property. Adding an effect = adding one variant
+/// + one `reason()` arm.
+///
+/// Each variant carries its `boundary` (the token-key / description of the order-loss
+/// site). The reason strings are kept BYTE-IDENTICAL to the proto strings the collector
+/// emitted before this enum existed, so `refusal_disposition` classifies them terminal and
+/// the CID is conserved.
+enum Effect {
+    /// MUTATION: the closure / loop body MUTATES captured or local state (`+=`, `&mut`,
+    /// `.push`, an assignment). The asserted value varies per iteration independently of
+    /// the bound var, so a single universal over it would be a false claim. A source
+    /// property -- no value lifter could read a single timeless `t`. (HALF 2 of the
+    /// fold-closure bucket.)
+    Mutation { boundary: String },
+    /// ITER-ADVANCE: the body advances a captured iterator (`iter.next()` / `nth += 1`), a
+    /// sequence/position-dependent side effect. Distinct CAUSE from `Mutation` (no
+    /// captured-state assignment is needed), but the SAME terminal class -- the observed
+    /// value is per-iteration, not timeless. (Carried under the side-effecting closure-body
+    /// proto reason today; typed here as its own named boundary.)
+    IterAdvance { boundary: String },
+    /// OPAQUE-RUNTIME (bin-2): the iterated / asserted value is RUNTIME data -- a param, a
+    /// runtime call result, an opaque receiver -- not constructible from source literals.
+    /// There is no construction to walk, so no finite universe to emit. A source property.
+    /// `accessor` is true for an effectful ACCESSOR (`.with` / `.with_unfilled_buf`) over
+    /// opaque state; false for a plain opaque RECEIVER (`coll.iter().for_each(..)` where
     /// `coll` is runtime). Selects the matching proto reason (both `bin-2` terminal).
-    accessor: bool,
+    OpaqueRuntime { boundary: String, accessor: bool },
+    /// TLS: a `thread_local!` `.with(|x| ..)` -- the closure ranges over thread-local
+    /// runtime state, an opaque non-constructed value. A specialization of the opaque
+    /// accessor boundary (its proto reason). Named so the catalog records the TLS cause.
+    Tls { boundary: String },
+    /// IO: the body performs IO (a `write` / `send` to a runtime sink). The observed value
+    /// is a runtime effect, not a constructed literal. A source property; carried under the
+    /// opaque-accessor proto reason. (`write`/`send` are in `CLOSURE_BODY_MUTATING_METHODS`,
+    /// so an IO closure body is caught as a mutation today; named here so the catalog
+    /// records the IO cause.)
+    Io { boundary: String },
+    /// TEMPORAL-READ: a read of a MUTABLE container (`a[i]` where `a` is a provably-`mut`
+    /// local that the `mut` oracle flags). The container may be index-assigned or
+    /// method-mutated between program points, so `index(a, i)` has no single timeless `t`
+    /// -- the read is sequence/position dependent. The mirror, for an index READ, of the
+    /// already-terminal `temporally unstable` reason (a term reading a MUTATED local).
+    /// SOUNDNESS: emitted ONLY when the `mut` oracle (`scope.is_mut_local`) PROVES the
+    /// container is a mutable local -- so this can only refuse a genuinely-mutable read.
+    TemporalRead { boundary: String },
+    /// CONTROL-FLOW: a `try { .. }` / `async { .. }` block or a `?` operator in term
+    /// position. None of these is a single timeless point-wise VALUE: a `try` block
+    /// short-circuits on `Err` (control flow), an `async` block is a deferred future, and
+    /// `?` is a conditional early-return. There is no finite construction-from-literals to
+    /// walk -- a SOURCE/effect property, not a lifter gap. (Drains the `future.rs`
+    /// join!-over-`try` row unclassified -> refused; the block is held + named.)
+    ControlFlow { boundary: String },
+    /// REFLECTION: the asserted value flows through OPAQUE COMPILE-TIME REFLECTION over
+    /// runtime type identity -- `Type::of::<T>()` / a `TypeId::of::<T>()` comparison, read
+    /// through `.kind` and a `match` arm binding. A `TypeId` is an opaque, target-determined
+    /// identity, not a value constructed from source literals; there is no finite literal
+    /// construction to walk -- a SOURCE property (the `bin-2` class). A `match` over a
+    /// CONSTRUCTED literal scrutinee never reaches here, so this only refuses a reflective read.
+    Reflection { boundary: String },
+    /// LOOP-ADVANCE: the asserted value flows through a `loop { .. }` over a RUNTIME iterator
+    /// the loop body itself ADVANCES (`iter.next()` to drive / break) and reads
+    /// non-deterministically (`iter.size_hint()`). Per-iteration runtime bounds, no finite
+    /// literal construction (unlike a closed-`for`). A source/effect property of the same
+    /// class as `under while context`. Detected ONLY when the loop body advances an iterator.
+    LoopAdvance { boundary: String },
+    /// IMPL-METHOD: an assertion in an `impl` method BODY (a top-level `Item::Impl`, or a
+    /// nested `impl` declared as a statement inside a test fn). The method runs only when
+    /// INVOKED, observing the receiver's RUNTIME state. There is no single timeless `t` at
+    /// which to read the assert: its truth depends on how many times / in what order the
+    /// method was driven. A SOURCE property (the runtime-reachability class). Detection is
+    /// STRUCTURAL -- the assert is lexically inside a method body, with no value at definition
+    /// time -- so this only refuses a genuine impl-method assert.
+    ImplMethod { boundary: String },
+    /// IF-GUARD-RUNTIME: a `ConditionalSugar` BAIL whose guard reads a RUNTIME value -- a
+    /// `&mut` borrow / mutation in the condition, or a method call on a runtime receiver. The
+    /// implication `guard => then` is not a constructible point-wise predicate, because the
+    /// guard's truth is not fixed from source literals. A SOURCE property. Detection is EARNED
+    /// by `if_guard_is_runtime`; a CONST/cfg/literal guard STAYS UNCLASSIFIED (the
+    /// discrimination guardrail against fake-refuse).
+    IfGuardRuntime { boundary: String },
+    /// RUNTIME-EXPR-STMT: a bare expression-statement whose asserted value is read through a
+    /// `&mut` borrow or a mutation. A mutably-aliased read has no single timeless `t` (kin to
+    /// `mutable container is not temporally stable`). A SOURCE property. Detection is EARNED by
+    /// `runtime_expr_statement_effect`; a statement over a CONSTRUCTED literal value stays
+    /// unclassified.
+    RuntimeExprStmt { boundary: String },
+    /// RUNTIME-MATCH-SCRUTINEE: an `assert!(match <runtime call> { .. })` whose scrutinee is a
+    /// RUNTIME non-scalar method/function result. The asserted boolean is the arm taken by a
+    /// runtime result, not a scalar equality over constructible values -- no single timeless
+    /// `t` (kin to `bin-2`). A SOURCE property. Detection is EARNED by
+    /// `runtime_match_scrutinee_effect`; a `match` over a CONSTRUCTED literal scrutinee stays
+    /// the bare `only scalar equality` reason (UNCLASSIFIED -- the inverse-sin guardrail).
+    RuntimeMatchScrutinee { boundary: String },
+    /// ARRAY-REPEAT (non-literal): an array-repeat `[elem; N]` whose length `N` is NOT a plain
+    /// literal -- a const-generic param or a const expression (`[0u8; SIZE]`, `[(); SIZE - 1]`).
+    /// With a NON-literal count there is no finite construction from the written literal to
+    /// materialize -- the universe size is symbolic. A SOURCE property. Detection is EARNED by
+    /// the `None` arm of `repeat_count_literal`; a literal length lifts the unrolled array and
+    /// never reaches here (the inverse-sin guardrail).
+    ArrayRepeat { boundary: String },
+    /// UNSUPPORTED: the STRUCTURAL backstop. Two shapes, both carrying their OWN reason string
+    /// verbatim:
+    ///   * a term-shaped `unsupported term` whose SHAPE is a genuinely effectful /
+    ///     non-constructible place (a `&mut` borrow of a non-immutable-value place, a raw
+    ///     pointer `&raw const`/`&raw mut`, a `const { <bare path> }` block). EARNED at the
+    ///     specific term arm; a PURE untranslated term is NOT given this reason.
+    ///   * the bare structural bail of a `Sugar::desugar` dig that did not reach truth (the
+    ///     old `None`), with `STRUCTURAL_BACKSTOP_REASON` -- NEVER emitted to `skip_reasons`
+    ///     (the fall-through consumer discards it via `Outcome::dug` and emits its own reason).
+    /// This is the ONE catch-all variant: it carries a pre-built `reason` string so the emit
+    /// site's wire format is conserved.
+    Unsupported { reason: String },
 }
 
-impl SideEffect for OpaqueRuntimeEffect {
-    fn reason(&self) -> String {
-        if self.accessor {
-            "assertion in a closure over an opaque/effectful accessor (bin-2: runtime \
-             data, not constructible from source literals); refused"
-                .to_string()
-        } else {
-            "assertion in a closure over an opaque runtime receiver (bin-2: runtime data, \
-             not constructible from source literals); refused"
-                .to_string()
-        }
-    }
-    fn boundary(&self) -> SourceMemento {
-        SourceMemento {
-            boundary: self.boundary.clone(),
-        }
-    }
-}
-
-/// TLS: a `thread_local!` `.with(|x| ..)` -- the closure ranges over thread-local
-/// runtime state, an opaque non-constructed value. A specialization of the opaque
-/// accessor boundary (its proto reason). Named so the catalog records the TLS cause.
-struct TlsEffect {
-    boundary: String,
-}
-
-impl SideEffect for TlsEffect {
-    fn reason(&self) -> String {
-        "assertion in a closure over an opaque/effectful accessor (bin-2: runtime \
-         data, not constructible from source literals); refused"
-            .to_string()
-    }
-    fn boundary(&self) -> SourceMemento {
-        SourceMemento {
-            boundary: self.boundary.clone(),
-        }
-    }
-}
-
-/// IO: the body performs IO (a `write` / `send` to a runtime sink). The observed
-/// value is a runtime effect, not a constructed literal. A source property; carried
-/// under the opaque-accessor proto reason. (`write`/`send` are in
-/// `CLOSURE_BODY_MUTATING_METHODS`, so an IO closure body is caught as a mutation
-/// today; named here so the catalog records the IO cause.)
-struct IoEffect {
-    boundary: String,
-}
-
-impl SideEffect for IoEffect {
-    fn reason(&self) -> String {
-        "assertion in a closure over an opaque/effectful accessor (bin-2: runtime \
-         data, not constructible from source literals); refused"
-            .to_string()
-    }
-    fn boundary(&self) -> SourceMemento {
-        SourceMemento {
-            boundary: self.boundary.clone(),
-        }
-    }
-}
-
-/// TEMPORAL-READ: a read of a MUTABLE container (`a[i]` where `a` is a provably-`mut`
-/// local that the `mut` oracle flags). The container may be index-assigned or
-/// method-mutated between program points, so `index(a, i)` has no single timeless `t`
-/// -- the read is sequence/position dependent. The mirror, for an index READ, of the
-/// already-terminal `temporally unstable` reason (a term reading a MUTATED local).
-///
-/// THE DRAIN: this boundary fell to the silent-shrug (unclassified) pile because its
-/// reason ("mutable container is not temporally stable") was never added to the
-/// terminal whitelist, even though it is the SAME provable order-loss effect as the
-/// whitelisted `temporally unstable`. Typing it as a `SideEffect` (and whitelisting
-/// its reason) moves these effect-shaped cases unclassified -> refused.
-///
-/// SOUNDNESS: emitted ONLY when the `mut` oracle (`scope.is_mut_local`) PROVES the
-/// container is a mutable local. A non-`mut` (provably-immutable) container reads as a
-/// stable `index(a,i)` term and never reaches here -- so this can only refuse a
-/// genuinely-mutable read, never a pure one.
-struct TemporalReadEffect {
-    boundary: String,
-}
-
-/// CONTROL-FLOW: a `try { .. }` / `async { .. }` block or a `?` operator in term
-/// position. None of these is a single timeless point-wise VALUE: a `try` block
-/// short-circuits on `Err` (control flow), an `async` block is a deferred future
-/// evaluated elsewhere (a runtime, not a constructed literal), and `?` is a
-/// conditional early-return. There is no finite construction-from-literals to walk,
-/// so no value lifter could read a single `t` -- a SOURCE/effect property, not a
-/// lifter gap. The mirror, for a control-flow/effectful block, of the `await`
-/// async-effect family already recognized statement-level. (THE DRAIN: the
-/// `future.rs` join!-over-`try` row fell to unclassified only because nothing
-/// classified the block; typing it + whitelisting the reason moves it
-/// unclassified -> refused. Not a fake-zero -- the block is held + named.)
-struct ControlFlowEffect {
-    boundary: String,
-}
-
-impl SideEffect for ControlFlowEffect {
-    fn reason(&self) -> String {
-        format!(
-            "unsupported term `{}`: effectful control-flow block (try/async/`?`) is not a \
-             timeless point-wise value; refused",
-            self.boundary
-        )
-    }
-    fn boundary(&self) -> SourceMemento {
-        SourceMemento {
-            boundary: self.boundary.clone(),
-        }
-    }
-}
-
-impl SideEffect for TemporalReadEffect {
-    fn reason(&self) -> String {
-        // Carries the existing index-read substring so a single whitelist entry
-        // ("mutable container is not temporally stable") recognizes it; the
-        // `unsupported term` prefix the term path already attaches is preserved by
-        // the emit site, so this is the bare boundary clause.
-        format!(
-            "unsupported term `{}`: mutable container is not temporally stable",
-            self.boundary
-        )
-    }
-    fn boundary(&self) -> SourceMemento {
-        SourceMemento {
-            boundary: self.boundary.clone(),
-        }
-    }
-}
-
-/// REFLECTION: the asserted value flows through OPAQUE COMPILE-TIME REFLECTION over
-/// runtime type identity -- `Type::of::<T>()` / a `TypeId::of::<T>()` comparison, read
-/// through `.kind` and a `match` arm binding (`TypeKind::Array(array) => assert_eq!(
-/// array.len, 4)`). A `TypeId` is an opaque, target/compiler-determined identity, not a
-/// value constructed from source literals; the arm binder (`array`/`tup`/`reference`/
-/// `pointer`) is reflection metadata read out of that opaque value. There is no
-/// finite literal construction to walk, so no value lifter could read a single timeless
-/// `t` -- a SOURCE property (the SAME class as the existing `bin-2` "runtime data, not
-/// constructed from source literals" terminal), not a lifter gap. The qualified continue
-/// path is the reflection scrutinee (`Type::of::<T>()`), detected structurally; a `match`
-/// over a CONSTRUCTED literal scrutinee never reaches here (it digs / stays unclassified),
-/// so this can only refuse a genuinely-reflective read.
-struct ReflectionEffect {
-    boundary: String,
-}
-
-impl SideEffect for ReflectionEffect {
-    fn reason(&self) -> String {
-        format!(
-            "assertion over opaque compile-time reflection `{}` (Type::of/TypeId: \
-             runtime type identity, not constructed from source literals); refused",
-            self.boundary
-        )
-    }
-    fn boundary(&self) -> SourceMemento {
-        SourceMemento {
-            boundary: self.boundary.clone(),
-        }
-    }
-}
-
-/// LOOP-ADVANCE: the asserted value flows through a `loop { .. }` over a RUNTIME
-/// iterator that the loop body itself ADVANCES (`iter.next()` to drive / break) and
-/// reads non-deterministically (`iter.size_hint()` / `iter.clone().count()`). The
-/// observed bounds are per-iteration over a runtime decode/parse iterator, not a single
-/// timeless point-wise value, and the `loop` has no finite literal construction to
-/// enumerate (unlike a closed-`for`). A source/effect property of the same class as the
-/// already-terminal `under while context` (a loop over a runtime iterator) -- not a
-/// lifter gap. Detected ONLY when the loop body advances an iterator; a `loop` whose
-/// body is a pure unconditional value never reaches here.
-struct LoopAdvanceEffect {
-    boundary: String,
-}
-
-impl SideEffect for LoopAdvanceEffect {
-    fn reason(&self) -> String {
-        format!(
-            "assertion inside a loop over a runtime-advanced iterator `{}` \
-             (size_hint/next: per-iteration runtime bounds, no finite literal \
-             construction); refused",
-            self.boundary
-        )
-    }
-    fn boundary(&self) -> SourceMemento {
-        SourceMemento {
-            boundary: self.boundary.clone(),
-        }
-    }
-}
-
-/// IMPL-METHOD: an assertion in an `impl` method BODY (a top-level `Item::Impl`, or a
-/// nested `impl` declared as a statement inside a test fn). The method runs only when
-/// INVOKED, observing the receiver's RUNTIME state -- a mutated field, an atomic
-/// `.load(..)`, an accumulator advanced per call (`self.total_len += 1`), a `&mut self`
-/// counter (`self.done`, `self.exhausted`). There is no single timeless `t` at which to
-/// read the assert: its truth depends on how many times / in what order the method was
-/// driven. A SOURCE property (the runtime-reachability class, kin to `temporally
-/// unstable` and `under while context`), not a missing lifter. Detection is STRUCTURAL --
-/// the assert is lexically inside a method body, which has no value at definition time --
-/// so this can only refuse a genuine impl-method assert, never a top-level point-wise one.
-struct ImplMethodEffect {
-    boundary: String,
-}
-
-impl SideEffect for ImplMethodEffect {
-    fn reason(&self) -> String {
-        format!(
-            "assertion in an impl method, reachable only at runtime when the method is \
-             invoked ({}); the receiver's state has no single timeless `t`; refused",
-            self.boundary
-        )
-    }
-    fn boundary(&self) -> SourceMemento {
-        SourceMemento {
-            boundary: self.boundary.clone(),
-        }
-    }
-}
-
-/// IF-GUARD-RUNTIME: a `ConditionalSugar` BAIL whose guard reads a RUNTIME value -- a
-/// `&mut` borrow / mutation in the condition, or a method call on a runtime receiver
-/// (`it.peek_mut()`, `x.is_none()` on a runtime local). The implication `guard => then`
-/// is not a constructible point-wise predicate, because the guard's truth is not fixed
-/// from source literals; it varies with runtime state. A SOURCE property, not a lifter
-/// gap. Detection is EARNED by `if_guard_is_runtime`; a CONST/cfg/literal guard (`!false`,
-/// `cfg!(target_pointer_width = "64")`) is COMPUTABLE-but-unimplemented and STAYS
-/// UNCLASSIFIED -- the discrimination guardrail against fake-refuse.
-struct IfGuardRuntimeEffect {
-    boundary: String,
-}
-
-impl SideEffect for IfGuardRuntimeEffect {
-    fn reason(&self) -> String {
-        format!(
-            "assertion under an if-guard over a runtime value `{}` (not a constructible \
-             predicate; the guard's truth is not fixed from source literals); refused",
-            self.boundary
-        )
-    }
-    fn boundary(&self) -> SourceMemento {
-        SourceMemento {
-            boundary: self.boundary.clone(),
-        }
-    }
-}
-
-/// RUNTIME-EXPR-STMT: a bare expression-statement whose asserted value is read through a
-/// `&mut` borrow or a mutation -- e.g. the borrow/drop-scoping test
-/// `(assert_matches!(*MutRefWithDrop(&mut val).0, 0), std::mem::take(&mut val))`, where the
-/// asserted value is dereferenced from a mutable borrow and the sibling tuple element
-/// `mem::take`s the same local. A mutably-aliased read has no single timeless `t` (kin to
-/// `mutable container is not temporally stable` / `temporally unstable`). A SOURCE
-/// property, not a lifter gap. Detection is EARNED by `runtime_expr_statement_effect`
-/// (a `&mut` reference / compound-assignment / assignment in the statement); a statement
-/// over a CONSTRUCTED literal value matches none -> None -> stays unclassified.
-struct RuntimeExprStmtEffect {
-    boundary: String,
-}
-
-impl SideEffect for RuntimeExprStmtEffect {
-    fn reason(&self) -> String {
-        format!(
-            "assertion in a runtime expression-statement `{}` (value read through a \
-             `&mut` borrow / mutation, not constructible from source literals); refused",
-            self.boundary
-        )
-    }
-    fn boundary(&self) -> SourceMemento {
-        SourceMemento {
-            boundary: self.boundary.clone(),
-        }
-    }
-}
-
-/// UNSUPPORTED-TERM-EFFECT: an `unsupported term` whose SHAPE is a genuinely effectful /
-/// non-constructible place, not a pure-but-untranslated value. Three detected causes, all
-/// the SAME terminal class (no single timeless `t` constructible from source literals):
-///   * a `&mut` BORROW of a non-immutable-value place (`&mut x`, `&mut cx`, `&mut *cell.get()`,
-///     `&mut ready(1)`): a mutable reference is an order-loss place -- two `&mut x` of a
-///     mutable binding are distinct pointers (`mutable_reference_pointer_eq_stays_residual`),
-///     so the term has no single value to read. Kin to `mutable container is not temporally
-///     stable`.
-///   * a RAW POINTER (`&raw const garlic` / `&raw mut p`, `Expr::RawAddr`): a raw address is
-///     a runtime value, not a construction from source literals. Kin to `bin-2`.
-///   * a `const { <bare path> }` block (`const { Zst }`): a const block wrapping a bare PATH
-///     is a function-item / const reference -- a NAME, which is sugar ("function names are
-///     sugar"), not a keyed value term. There is no constructible value to read.
-/// Detection is EARNED at the specific term arm (the `&mut` fall-through, `Expr::RawAddr`, and
-/// the `const { <path> }` arm); a PURE untranslated term (`1i32 as f64`, an untranscribed pure
-/// method) has NONE of these shapes and STAYS the bare `unsupported term` reason -- UNCLASSIFIED
-/// work (the inverse-sin guardrail against fake-refuse). Typed as `UnsupportedTermEffect`.
-struct UnsupportedTermEffect {
-    boundary: String,
-    cause: UnsupportedTermCause,
-}
-
+/// The named effectful CAUSE of an `Effect::Unsupported` term-shaped bail (selects the
+/// reason clause). A PURE untranslated term has NONE of these shapes and STAYS the bare
+/// `unsupported term` reason -- UNCLASSIFIED work (the inverse-sin guardrail).
 #[derive(Debug, Clone, Copy)]
 enum UnsupportedTermCause {
     /// `&mut <place>`: a mutable borrow of a non-immutable-value referent.
@@ -3797,84 +3596,132 @@ impl UnsupportedTermCause {
             UnsupportedTermCause::ConstBlockPath => "a `const { <path> }` block (a name is sugar)",
         }
     }
-}
 
-impl SideEffect for UnsupportedTermEffect {
-    fn reason(&self) -> String {
-        // Carries the existing `unsupported term` prefix verbatim so the term path's prior
-        // emission shape is conserved, plus the named effectful cause that earns the terminal
-        // whitelist entry "effectful / raw-pointer / mutable-reference term".
+    /// Build the term-shaped `Effect::Unsupported` reason for this cause over `boundary`.
+    /// Carries the existing `unsupported term` prefix verbatim so the term path's prior
+    /// emission shape is conserved, plus the named effectful cause that earns the terminal
+    /// whitelist entry "effectful / raw-pointer / mutable-reference term".
+    fn unsupported_term_reason(self, boundary: &str) -> String {
         format!(
             "unsupported term `{}`: effectful / raw-pointer / mutable-reference term \
              ({}) is not a constructible timeless value; refused",
-            self.boundary,
-            self.cause.clause()
+            boundary,
+            self.clause()
         )
     }
-    fn boundary(&self) -> SourceMemento {
-        SourceMemento {
-            boundary: self.boundary.clone(),
+}
+
+impl Effect {
+    /// The terminal refusal string (recognized terminal by `refusal_disposition`), kept
+    /// BYTE-IDENTICAL to the proto string the collector emitted before this enum existed.
+    fn reason(&self) -> String {
+        match self {
+            // The proto string the collector already emits for a side-effecting / iterator-
+            // advancing closure body (kept verbatim so the CID is conserved). `Mutation` and
+            // `IterAdvance` carry the SAME terminal class; typed apart records the cause.
+            Effect::Mutation { .. } | Effect::IterAdvance { .. } => {
+                "assertion in a side-effecting closure body (mutates captured state / \
+                 advances an iterator); not a pure point-wise claim; refused"
+                    .to_string()
+            }
+            Effect::OpaqueRuntime { accessor, .. } => {
+                if *accessor {
+                    "assertion in a closure over an opaque/effectful accessor (bin-2: runtime \
+                     data, not constructible from source literals); refused"
+                        .to_string()
+                } else {
+                    "assertion in a closure over an opaque runtime receiver (bin-2: runtime data, \
+                     not constructible from source literals); refused"
+                        .to_string()
+                }
+            }
+            // TLS / IO are specializations of the opaque-accessor boundary (same proto reason).
+            Effect::Tls { .. } | Effect::Io { .. } => {
+                "assertion in a closure over an opaque/effectful accessor (bin-2: runtime \
+                 data, not constructible from source literals); refused"
+                    .to_string()
+            }
+            // Carries the existing index-read substring so a single whitelist entry ("mutable
+            // container is not temporally stable") recognizes it; the `unsupported term` prefix
+            // the term path attaches is preserved by the emit site, so this is the bare clause.
+            Effect::TemporalRead { boundary } => format!(
+                "unsupported term `{boundary}`: mutable container is not temporally stable"
+            ),
+            Effect::ControlFlow { boundary } => format!(
+                "unsupported term `{boundary}`: effectful control-flow block (try/async/`?`) is not a \
+                 timeless point-wise value; refused"
+            ),
+            Effect::Reflection { boundary } => format!(
+                "assertion over opaque compile-time reflection `{boundary}` (Type::of/TypeId: \
+                 runtime type identity, not constructed from source literals); refused"
+            ),
+            Effect::LoopAdvance { boundary } => format!(
+                "assertion inside a loop over a runtime-advanced iterator `{boundary}` \
+                 (size_hint/next: per-iteration runtime bounds, no finite literal \
+                 construction); refused"
+            ),
+            Effect::ImplMethod { boundary } => format!(
+                "assertion in an impl method, reachable only at runtime when the method is \
+                 invoked ({boundary}); the receiver's state has no single timeless `t`; refused"
+            ),
+            Effect::IfGuardRuntime { boundary } => format!(
+                "assertion under an if-guard over a runtime value `{boundary}` (not a constructible \
+                 predicate; the guard's truth is not fixed from source literals); refused"
+            ),
+            Effect::RuntimeExprStmt { boundary } => format!(
+                "assertion in a runtime expression-statement `{boundary}` (value read through a \
+                 `&mut` borrow / mutation, not constructible from source literals); refused"
+            ),
+            Effect::RuntimeMatchScrutinee { boundary } => format!(
+                "only scalar equality is liftable; operand is a runtime non-scalar result \
+                 `{boundary}` (a `match` over a runtime call result, not constructible from source \
+                 literals); refused"
+            ),
+            // Carries the existing "array-repeat ... non-literal length ... refused by name"
+            // substring verbatim so a single whitelist entry recognizes it; the emit site's
+            // `assert_eq!:` / `assert!:` prefix is preserved by the caller.
+            Effect::ArrayRepeat { boundary } => format!(
+                "array-repeat `[_; N]` has a non-literal length -- not a finite \
+                 construction from the literal; refused by name: `{boundary}`"
+            ),
+            // The structural backstop carries its OWN pre-built reason verbatim (a term-shaped
+            // `unsupported term` cause, or the never-emitted `STRUCTURAL_BACKSTOP_REASON`).
+            Effect::Unsupported { reason } => reason.clone(),
         }
     }
-}
 
-/// RUNTIME-MATCH-SCRUTINEE: an `assert!(match <runtime call> { .. })` whose scrutinee is a
-/// RUNTIME non-scalar method/function result (the corpus `match b.binary_search(&3) { Ok(1..=3)
-/// => true, _ => false }`). The asserted boolean is the arm taken by a runtime search result,
-/// not a scalar equality over constructible values -- there is no single timeless `t` to read
-/// (the `Ok`/`Err`+index is the algorithm's runtime output, kin to `bin-2`). A SOURCE property,
-/// not a lifter gap. Detection is EARNED by `runtime_match_scrutinee_effect`: the `only scalar
-/// equality` fall-through hit an `Expr::Match` whose scrutinee is a runtime call/method-call. A
-/// `match` over a CONSTRUCTED literal scrutinee has no runtime call and matches None -> stays
-/// the bare `only scalar equality` reason (UNCLASSIFIED -- the inverse-sin guardrail). Typed as
-/// `RuntimeMatchScrutineeEffect`.
-struct RuntimeMatchScrutineeEffect {
-    boundary: String,
-}
-
-impl SideEffect for RuntimeMatchScrutineeEffect {
-    fn reason(&self) -> String {
-        format!(
-            "only scalar equality is liftable; operand is a runtime non-scalar result \
-             `{}` (a `match` over a runtime call result, not constructible from source \
-             literals); refused",
-            self.boundary
-        )
-    }
+    /// The `SourceMemento` warranting that the bail names a SOURCE property -- the bail-side
+    /// rope (mirror of the dig-side `Warrant`). For `Unsupported`, the boundary is the reason
+    /// itself (the backstop carries no separate token-key; the reason names the construct).
     fn boundary(&self) -> SourceMemento {
-        SourceMemento {
-            boundary: self.boundary.clone(),
-        }
+        let boundary = match self {
+            Effect::Mutation { boundary }
+            | Effect::IterAdvance { boundary }
+            | Effect::OpaqueRuntime { boundary, .. }
+            | Effect::Tls { boundary }
+            | Effect::Io { boundary }
+            | Effect::TemporalRead { boundary }
+            | Effect::ControlFlow { boundary }
+            | Effect::Reflection { boundary }
+            | Effect::LoopAdvance { boundary }
+            | Effect::ImplMethod { boundary }
+            | Effect::IfGuardRuntime { boundary }
+            | Effect::RuntimeExprStmt { boundary }
+            | Effect::RuntimeMatchScrutinee { boundary }
+            | Effect::ArrayRepeat { boundary } => boundary.clone(),
+            Effect::Unsupported { reason } => reason.clone(),
+        };
+        SourceMemento { boundary }
     }
-}
 
-/// ARRAY-REPEAT-NON-LITERAL: an array-repeat `[elem; N]` whose length `N` is NOT a plain
-/// literal -- a const-generic param or a const expression (the corpus `[0u8; SIZE]`,
-/// `[(); SIZE - 1]`). With a literal count the repeat unrolls to the exact N-fold array
-/// (`repeat_count_literal` -> Some); with a NON-literal count there is no finite construction
-/// from the written literal to materialize -- the universe size is symbolic, so no aggregate
-/// term can be pinned. A SOURCE property (the construction is not finite from source literals),
-/// not a lifter gap. Detection is EARNED by the `None` arm of `repeat_count_literal`; a literal
-/// length lifts the unrolled array and never reaches here (the inverse-sin guardrail). Typed as
-/// `ArrayRepeatNonLiteralEffect`.
-struct ArrayRepeatNonLiteralEffect {
-    boundary: String,
-}
-
-impl SideEffect for ArrayRepeatNonLiteralEffect {
-    fn reason(&self) -> String {
-        // Carries the existing "array-repeat ... non-literal length ... refused by name"
-        // substring verbatim so a single whitelist entry recognizes it; the emit site's
-        // `assert_eq!:` / `assert!:` prefix is preserved by the caller.
-        format!(
-            "array-repeat `[_; N]` has a non-literal length -- not a finite \
-             construction from the literal; refused by name: `{}`",
-            self.boundary
-        )
-    }
-    fn boundary(&self) -> SourceMemento {
-        SourceMemento {
-            boundary: self.boundary.clone(),
+    /// Build the term-shaped `Effect::Unsupported` for a genuinely effectful / non-
+    /// constructible TERM (a `&mut` borrow, a raw pointer, a `const { <path> }` block). The
+    /// reason carries the `unsupported term` prefix + named cause verbatim (the term path's
+    /// prior emission shape). A PURE untranslated term is NOT given this -- it keeps its bare
+    /// `unsupported term` reason elsewhere (the inverse-sin guardrail).
+    fn unsupported_term(boundary: &str, cause: UnsupportedTermCause) -> Effect {
+        Effect::Unsupported {
+            reason: cause.unsupported_term_reason(boundary),
         }
     }
 }
@@ -3893,7 +3740,12 @@ struct LiteralSugar {
 const SUGAR_SEQ_CAP: i64 = 4096;
 
 impl Sugar for LiteralSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared> {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        // TOTAL: the dig body computes the legacy `Option<Desugared>` (every inner `?`
+        // is a structural bail); `Outcome::from_opt` lifts it -- `Some` -> `Dug`, the
+        // structural bail -> `Hit(Effect::Unsupported)` (discarded by the fall-through
+        // consumer exactly as the old `None` was). No unclassified return path.
+        Outcome::from_opt((|| {
         // Discriminate the domain EXACTLY as the defolder does (construction axiom:
         // a literal array unrolls over its element terms; a closed range enumerates
         // its integers). A runtime collection is not a `BoundedDomain` -> None.
@@ -3941,6 +3793,7 @@ impl Sugar for LiteralSugar {
             return None;
         }
         Some(Desugared::Seq(seq))
+        })())
     }
 }
 
@@ -4010,10 +3863,14 @@ struct FoldSugar {
 }
 
 impl Sugar for FoldSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared> {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        // TOTAL: the dig body computes the legacy `Option<Desugared>`; `Outcome::from_opt`
+        // lifts it (the structural bail -> `Hit(Effect::Unsupported)`, discarded by the
+        // fall-through consumer exactly as the old `None` was).
+        Outcome::from_opt((|| {
         // The post-adaptor element sequence (the inner seq-sugar bottoms out at a
         // literal domain or bails).
-        let seq = self.inner.desugar(ctx)?.into_seq()?;
+        let seq = self.inner.desugar(ctx).dug()?.into_seq()?;
         if seq.is_empty() {
             // The adaptor chain emptied the sequence (`.filter` kept nothing /
             // `.take(0)`): the fold body never runs -> vacuous. None rather than a
@@ -4158,6 +4015,7 @@ impl Sugar for FoldSugar {
             n: n_body,
             warrant,
         })
+        })())
     }
 }
 
@@ -4189,7 +4047,11 @@ struct ForAllSugar {
 }
 
 impl Sugar for ForAllSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared> {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        // TOTAL: the dig body computes the legacy `Option<Desugared>`; `Outcome::from_opt`
+        // lifts it (the structural bail -> `Hit(Effect::Unsupported)`, discarded by the
+        // fall-through consumer exactly as the old `None` was).
+        Outcome::from_opt((|| {
         // Translate the captured literal arrays' element exprs to TERMS so the body's
         // `index(ys, <const>)` reads (the LITERAL-INT RANGE unroll) can resolve to
         // concrete elements. SOUNDNESS: only an IMMUTABLE literal array may have its
@@ -4249,6 +4111,7 @@ impl Sugar for ForAllSugar {
             n: n_body,
             warrant,
         })
+        })())
     }
 }
 
@@ -4277,7 +4140,11 @@ struct ConditionalSugar {
 }
 
 impl Sugar for ConditionalSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared> {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        // TOTAL: the dig body computes the legacy `Option<Desugared>`; `Outcome::from_opt`
+        // lifts it (the structural bail -> `Hit(Effect::Unsupported)`, discarded by the
+        // fall-through consumer exactly as the old `None` was).
+        Outcome::from_opt((|| {
         // An `if let PAT = e { .. }` is a pattern-match guard, not a boolean
         // predicate -- the panic-locus path handles the diverging-else shape;
         // anything else here bails (we do not model the bound bindings).
@@ -4342,6 +4209,7 @@ impl Sugar for ConditionalSugar {
             n: then_count + else_count,
             warrant,
         })
+        })())
     }
 }
 
@@ -4579,7 +4447,11 @@ fn decompose_match(
 }
 
 impl Sugar for MatchSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared> {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        // TOTAL: the dig body computes the legacy `Option<Desugared>`; `Outcome::from_opt`
+        // lifts it (the structural bail -> `Hit(Effect::Unsupported)`, discarded by the
+        // fall-through consumer exactly as the old `None` was).
+        Outcome::from_opt((|| {
         // At least one arm must carry an assertion (else nothing to classify --
         // leave it to the existing handling, e.g. a non-asserting `match p { A =>
         // do_a(), B => do_b() }`). Mirrors `ConditionalSugar`'s `then+else == 0`.
@@ -4645,6 +4517,7 @@ impl Sugar for MatchSugar {
             n: total,
             warrant,
         })
+        })())
     }
 }
 
@@ -5141,7 +5014,7 @@ fn closure_method_terminal_effect(
     expr: &Expr,
     scope: &TemporalScope,
     let_inits: &BTreeMap<String, &Expr>,
-) -> Option<Box<dyn SideEffect>> {
+) -> Option<Effect> {
     // Find the closure-bearing method call (anywhere along the chain), its closure, and
     // its receiver (for the literal-domain resolution).
     struct Find {
@@ -5182,21 +5055,21 @@ fn closure_method_terminal_effect(
         // `.with` is the thread-local accessor (TlsEffect); any other effectful
         // accessor is the generic opaque-accessor boundary.
         if method == "with" {
-            return Some(Box::new(TlsEffect { boundary }));
+            return Some(Effect::Tls { boundary });
         }
-        return Some(Box::new(OpaqueRuntimeEffect {
+        return Some(Effect::OpaqueRuntime {
             boundary,
             accessor: true,
-        }));
+        });
     }
     if closure_body_is_side_effecting(&closure.body) {
         // Distinguish the iterator-advance cause (`iter.next()`) from a captured-state
         // mutation (`+=`, `&mut`, `.push`). Both are the SAME terminal class; typing
         // them apart records the cause in the catalog.
         if closure_body_advances_iterator(&closure.body) {
-            return Some(Box::new(IterAdvanceEffect { boundary }));
+            return Some(Effect::IterAdvance { boundary });
         }
-        return Some(Box::new(MutationEffect { boundary }));
+        return Some(Effect::Mutation { boundary });
     }
     // Pure adaptor, pure body: does the RECEIVER resolve to a finite literal domain? If
     // not, the iterated/threaded values are runtime data -- bin-2 terminal. If yes, this
@@ -5206,10 +5079,10 @@ fn closure_method_terminal_effect(
         .and_then(|(base, _)| bounded_domain_from_expr(base, scope))
         .is_some();
     if !resolves_literal {
-        return Some(Box::new(OpaqueRuntimeEffect {
+        return Some(Effect::OpaqueRuntime {
             boundary,
             accessor: false,
-        }));
+        });
     }
     None
 }
@@ -5415,7 +5288,7 @@ fn const_fold_bool_guard(cond: &Expr, options: &LiftOptions) -> Option<bool> {
 /// DISCRIMINATION GUARDRAIL: detection is by a positive `&mut` / assignment signal in the
 /// statement; a statement over a CONSTRUCTED literal value (no `&mut`, no mutation) returns
 /// None -> stays unclassified. Only fires when the statement actually carries an assert.
-fn runtime_expr_statement_effect(expr: &Expr) -> Option<Box<dyn SideEffect>> {
+fn runtime_expr_statement_effect(expr: &Expr) -> Option<Effect> {
     if count_asserts_in_expr(expr) == 0 {
         return None;
     }
@@ -5455,9 +5328,9 @@ fn runtime_expr_statement_effect(expr: &Expr) -> Option<Box<dyn SideEffect>> {
     let mut scan = Scan::default();
     syn::visit::Visit::visit_expr(&mut scan, expr);
     if scan.runtime {
-        Some(Box::new(RuntimeExprStmtEffect {
+        Some(Effect::RuntimeExprStmt {
             boundary: token_key(expr),
-        }))
+        })
     } else {
         None
     }
@@ -5493,7 +5366,7 @@ fn impl_block_method_name(imp: &syn::ItemImpl) -> Option<String> {
 /// CONSTRUCTED literal value (an unconditional block over literals, a `match` over a
 /// literal scrutinee, a `loop` over a pure value) matches NONE of these -> returns None,
 /// leaving it to DIG or stay unclassified -- never terminalized by position.
-fn statement_position_terminal_effect(expr: &Expr) -> Option<Box<dyn SideEffect>> {
+fn statement_position_terminal_effect(expr: &Expr) -> Option<Effect> {
     // The expr must actually carry an assertion (else nothing to classify).
     if count_asserts_in_expr(expr) == 0 {
         return None;
@@ -5501,14 +5374,14 @@ fn statement_position_terminal_effect(expr: &Expr) -> Option<Box<dyn SideEffect>
     let boundary = token_key(expr);
     // FUTURE CONTINUATION: an `.await` anywhere, or a free-fn `block_on(async{..})`.
     if expr_contains_await(expr) || is_free_fn_block_on_async(expr) {
-        return Some(Box::new(ControlFlowEffect { boundary }));
+        return Some(Effect::ControlFlow { boundary });
     }
     // OPAQUE REFLECTION: a `match <reflection> { .. }` whose scrutinee is `Type::of`/
     // `.info()`. Strip a `const { .. }` / paren wrapper off the scrutinee first.
     if let Expr::Match(m) = expr {
         let scrut = strip_const_block(&m.expr);
         if let Some(b) = reflection_scrutinee(scrut) {
-            return Some(Box::new(ReflectionEffect { boundary: b }));
+            return Some(Effect::Reflection { boundary: b });
         }
     }
     // RUNTIME LOOP: a `loop { .. }` whose body advances an iterator (`iter.next()` /
@@ -5521,7 +5394,7 @@ fn statement_position_terminal_effect(expr: &Expr) -> Option<Box<dyn SideEffect>
             block: l.body.clone(),
         });
         if loop_body_advances_runtime_iterator(&body) {
-            return Some(Box::new(LoopAdvanceEffect { boundary }));
+            return Some(Effect::LoopAdvance { boundary });
         }
     }
     None
@@ -5754,10 +5627,10 @@ fn collect_assertion_entries<'a>(
                             macro_depth,
                         );
                         decompose_fold(&init.expr, &let_inits)
-                            .and_then(|s| s.desugar(&ctx))
+                            .and_then(|s| s.desugar(&ctx).dug())
                             .or_else(|| {
                                 decompose_for_each(&init.expr, &temporal_scope, &let_inits)
-                                    .and_then(|s| s.desugar(&ctx))
+                                    .and_then(|s| s.desugar(&ctx).dug())
                             })
                     } {
                         emit_desugared(desugared, entries, macros_lifted);
@@ -6003,7 +5876,7 @@ fn collect_assertion_entries<'a>(
                         float_widths,
                         macro_depth,
                     );
-                    decompose_for_loop(f, &temporal_scope, &let_inits).and_then(|s| s.desugar(&ctx))
+                    decompose_for_loop(f, &temporal_scope, &let_inits).and_then(|s| s.desugar(&ctx).dug())
                 };
                 if let Some(desugared) = lifted {
                     // The loop memento is named `<test>::loop::<var>` by the
@@ -6070,7 +5943,7 @@ fn collect_assertion_entries<'a>(
                         float_widths,
                         macro_depth,
                     );
-                    decompose_if(i).and_then(|s| s.desugar(&ctx))
+                    decompose_if(i).and_then(|s| s.desugar(&ctx).dug())
                 } {
                     emit_desugared(desugared, entries, macros_lifted);
                 } else {
@@ -6089,7 +5962,7 @@ fn collect_assertion_entries<'a>(
                     //     It STAYS UNCLASSIFIED -- refusing it would be FAKE-REFUSE (the inverse
                     //     sin of fake-dig). This is the discrimination guardrail.
                     let reason = if if_guard_is_runtime(&i.cond) {
-                        (IfGuardRuntimeEffect {
+                        (Effect::IfGuardRuntime {
                             boundary: token_key(&i.cond),
                         })
                         .reason()
@@ -6121,7 +5994,7 @@ fn collect_assertion_entries<'a>(
                         .filter(|a| !expr_diverges(&a.body))
                         .map(|a| count_asserts_in_expr(&a.body))
                         .sum();
-                    let reason = (ReflectionEffect { boundary: b.clone() }).reason();
+                    let reason = (Effect::Reflection { boundary: b.clone() }).reason();
                     for _ in 0..body_asserts {
                         skipped.push(reason.clone());
                     }
@@ -6152,7 +6025,7 @@ fn collect_assertion_entries<'a>(
                         float_widths,
                         macro_depth,
                     );
-                    decompose_match(m, &temporal_scope, options).and_then(|s| s.desugar(&ctx))
+                    decompose_match(m, &temporal_scope, options).and_then(|s| s.desugar(&ctx).dug())
                 } {
                     emit_desugared(desugared, entries, macros_lifted);
                     // `decompose_match` dropped any arm gated by an INACTIVE `#[cfg(..)]`
@@ -6318,10 +6191,10 @@ fn collect_assertion_entries<'a>(
                         // statement), or a bare `.for_each` (the same bounded
                         // universal as the equivalent for-loop).
                         decompose_fold(e, &let_inits)
-                            .and_then(|s| s.desugar(&ctx))
+                            .and_then(|s| s.desugar(&ctx).dug())
                             .or_else(|| {
                                 decompose_for_each(e, &temporal_scope, &let_inits)
-                                    .and_then(|s| s.desugar(&ctx))
+                                    .and_then(|s| s.desugar(&ctx).dug())
                             })
                     };
                     if let Some(desugared) = desugared {
@@ -6450,10 +6323,8 @@ fn collect_assertion_entries<'a>(
                         // top-level `Item::Impl` bucket, surfaced here because the impl is a
                         // statement, not a top-level Item. Typed as `ImplMethodEffect`.
                         Stmt::Item(syn::Item::Impl(imp)) => {
-                            impl_block_method_name(imp).map(|name| {
-                                Box::new(ImplMethodEffect {
-                                    boundary: format!("impl method `{name}`"),
-                                }) as Box<dyn SideEffect>
+                            impl_block_method_name(imp).map(|name| Effect::ImplMethod {
+                                boundary: format!("impl method `{name}`"),
                             })
                         }
                         _ => None,
@@ -9490,14 +9361,14 @@ fn translate_bool_assertion(
 /// non-`match` expr OR a `match` over a constructible scrutinee (a literal / path / index), so
 /// the caller refuses by name ONLY a detected runtime cause and leaves everything else
 /// UNCLASSIFIED (the fake-refuse guardrail).
-fn runtime_match_scrutinee_effect(expr: &Expr) -> Option<RuntimeMatchScrutineeEffect> {
+fn runtime_match_scrutinee_effect(expr: &Expr) -> Option<Effect> {
     let Expr::Match(m) = expr else {
         return None;
     };
     if !expr_is_runtime_call_result(&m.expr) {
         return None;
     }
-    Some(RuntimeMatchScrutineeEffect {
+    Some(Effect::RuntimeMatchScrutinee {
         boundary: token_key(expr),
     })
 }
@@ -12231,11 +12102,11 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
                 // A const block wrapping a bare PATH (`const { Zst }`) is a function-item /
                 // const reference -- a NAME, which is sugar, not a keyed value term. There is
                 // no constructible value to read: a SOURCE property (kin to "function names are
-                // sugar"), not a lifter gap. Typed as `UnsupportedTermEffect`.
-                let effect = UnsupportedTermEffect {
-                    boundary: token_key(expr),
-                    cause: UnsupportedTermCause::ConstBlockPath,
-                };
+                // sugar"), not a lifter gap. Typed as `Effect::Unsupported` (term-shaped).
+                let effect = Effect::unsupported_term(
+                    &token_key(expr),
+                    UnsupportedTermCause::ConstBlockPath,
+                );
                 return Err(effect.reason());
             }
             let term =
@@ -12311,8 +12182,8 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
                 // A non-literal count (`[0u8; SIZE]`, `[(); SIZE - 1]`) is not a finite
                 // construction from the written literal: the universe size is symbolic
                 // (const-generic / const expr), so no aggregate term can be pinned. A SOURCE
-                // property, not a lifter gap. Typed as `ArrayRepeatNonLiteralEffect`.
-                let effect = ArrayRepeatNonLiteralEffect {
+                // property, not a lifter gap. Typed as `Effect::ArrayRepeat`.
+                let effect = Effect::ArrayRepeat {
                     boundary: token_key(expr),
                 };
                 return Err(effect.reason());
@@ -12472,22 +12343,22 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
         // timeless value to read. EARNED here ONLY after the immutable-value arm above has
         // claimed the stable `&mut <literal/closure/array>` cases (a non-mutable `&` already
         // lifted as `ref`), so this can only refuse a genuinely-mutable borrow. Typed as
-        // `UnsupportedTermEffect`.
+        // `Effect::Unsupported` (term-shaped).
         Expr::Reference(reference) if reference.mutability.is_some() => {
-            let effect = UnsupportedTermEffect {
-                boundary: token_key(expr),
-                cause: UnsupportedTermCause::MutableReference,
-            };
+            let effect = Effect::unsupported_term(
+                &token_key(expr),
+                UnsupportedTermCause::MutableReference,
+            );
             Err(effect.reason())
         }
         // A raw pointer `&raw const <place>` / `&raw mut <place>` (`Expr::RawAddr`): a raw
         // address is a runtime value, not a construction from source literals. Kin to `bin-2`.
-        // Typed as `UnsupportedTermEffect`.
+        // Typed as `Effect::Unsupported` (term-shaped).
         Expr::RawAddr(_) => {
-            let effect = UnsupportedTermEffect {
-                boundary: token_key(expr),
-                cause: UnsupportedTermCause::RawPointer,
-            };
+            let effect = Effect::unsupported_term(
+                &token_key(expr),
+                UnsupportedTermCause::RawPointer,
+            );
             Err(effect.reason())
         }
         Expr::Cast(cast) => {
@@ -12547,10 +12418,10 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
                     // TYPED BAIL: the `mut` oracle PROVED the container is a mutable
                     // local, so `index(a,i)` is a sequence/position-dependent read with
                     // no single timeless `t`. Mint the refusal from the typed
-                    // `TemporalReadEffect` (a named, warranted order-loss boundary) -- the
+                    // `Effect::TemporalRead` (a named, warranted order-loss boundary) -- the
                     // reason it produces is whitelisted terminal by `refusal_disposition`,
                     // draining this effect-shaped case unclassified -> refused.
-                    let effect = TemporalReadEffect {
+                    let effect = Effect::TemporalRead {
                         boundary: token_key(expr),
                     };
                     return Err(effect.reason());
@@ -12737,12 +12608,12 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
         // `async` block is a future evaluated elsewhere, a `?` is a conditional
         // early-return). There is no construction-from-literals to walk, so no value
         // lifter could read a single `t`: a SOURCE property, not a missing lift. TYPED
-        // as a `ControlFlowEffect` whose reason is whitelisted TERMINAL by
+        // as an `Effect::ControlFlow` whose reason is whitelisted TERMINAL by
         // `refusal_disposition` -- this drains the `future.rs`
         // `assert!(Option::is_none(&try { join!(maybe_fut?, async { unreachable!() }) }))`
         // row unclassified -> refused (a named refuse, never a silent shrug).
         Expr::TryBlock(_) | Expr::Async(_) | Expr::Try(_) => {
-            let effect = ControlFlowEffect {
+            let effect = Effect::ControlFlow {
                 boundary: token_key(expr),
             };
             Err(effect.reason())
@@ -14340,25 +14211,25 @@ mod lifter_key_tests {
 
     #[test]
     fn typed_side_effect_catalog_reasons_are_all_terminal() {
-        // Every typed `SideEffect`'s `reason()` is recognized terminal by
+        // Every named `Effect`'s `reason()` is recognized terminal by
         // `refusal_disposition` (the bail is a CLAIM, earned). `boundary()` ropes the
         // refusal to the source construct that warrants it (the bail-side `SourceMemento`,
         // mirror of the dig-side `Warrant`).
-        let effects: Vec<Box<dyn SideEffect>> = vec![
-            Box::new(MutationEffect { boundary: "v.push(x)".to_string() }),
-            Box::new(IterAdvanceEffect { boundary: "iter.next()".to_string() }),
-            Box::new(OpaqueRuntimeEffect { boundary: "p.iter().for_each(..)".to_string(), accessor: false }),
-            Box::new(OpaqueRuntimeEffect { boundary: "buf.with_unfilled_buf(..)".to_string(), accessor: true }),
-            Box::new(TlsEffect { boundary: "DROPS.with(..)".to_string() }),
-            Box::new(IoEffect { boundary: "out.write(..)".to_string() }),
-            Box::new(TemporalReadEffect { boundary: "a[i]".to_string() }),
-            Box::new(ControlFlowEffect { boundary: "try { maybe_fut? }".to_string() }),
+        let effects: Vec<Effect> = vec![
+            Effect::Mutation { boundary: "v.push(x)".to_string() },
+            Effect::IterAdvance { boundary: "iter.next()".to_string() },
+            Effect::OpaqueRuntime { boundary: "p.iter().for_each(..)".to_string(), accessor: false },
+            Effect::OpaqueRuntime { boundary: "buf.with_unfilled_buf(..)".to_string(), accessor: true },
+            Effect::Tls { boundary: "DROPS.with(..)".to_string() },
+            Effect::Io { boundary: "out.write(..)".to_string() },
+            Effect::TemporalRead { boundary: "a[i]".to_string() },
+            Effect::ControlFlow { boundary: "try { maybe_fut? }".to_string() },
         ];
         for e in &effects {
             assert_eq!(
                 refusal_disposition(&e.reason()),
                 Disposition::Refused,
-                "typed SideEffect reason must be terminal: {}",
+                "typed Effect reason must be terminal: {}",
                 e.reason()
             );
             // The boundary memento carries the source construct (non-empty rope).
