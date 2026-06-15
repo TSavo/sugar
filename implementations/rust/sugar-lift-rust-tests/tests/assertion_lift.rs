@@ -3169,6 +3169,155 @@ fn negated_comparison() {
     }
 }
 
+// ---- BinaryOpSugar: a comparison in TERM position ----------------------------
+// `assert_eq!(false == false, true)` carries a comparison as the LHS *term*; the
+// marquee `assert!(a.iter().lt(b.iter()) == (a[0] < b[0]))` carries `(a[0] < b[0])`
+// as the RHS operand of an outer `==`. Both reached `translate_term_in_scope` and
+// died on "unsupported term operator". They now lift: const-foldable comparisons
+// fold to a Bool literal; non-const stable comparisons become a `cmp:*` bool ctor.
+
+fn bool_const_value(formula_arg: &Term) -> bool {
+    match formula_arg {
+        Term::Const {
+            value: ConstValue::Bool(b),
+            ..
+        } => *b,
+        other => panic!("expected bool const, got {other:?}"),
+    }
+}
+
+#[test]
+fn const_comparison_in_term_position_folds_to_bool_literal() {
+    // POSITIVE: `false == false` is the LHS *term* of an assert_eq!; it const-folds
+    // EXACTLY to Bool(true), equated to the asserted RHS `true`. The atom is
+    // `= (Bool(true), Bool(true))` -- a true, satisfiable fact (sugar in, Bool out).
+    let src = r#"
+#[test]
+fn const_eq_folds() {
+    assert_eq!(false == false, true);
+}
+"#;
+    let out = lift_file(&parse(src), "src/lib.rs");
+    assert_eq!(out.seen, 1);
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    assert_eq!(out.decls.len(), 1);
+    let operands = inv_operands(&out.decls[0]);
+    assert_eq!(operands.len(), 1);
+    match operands[0].as_ref() {
+        Formula::Atomic { name, args } => {
+            assert_eq!(name, "=");
+            assert_eq!(args.len(), 2);
+            assert!(bool_const_value(&args[0]), "lhs `false == false` -> Bool(true)");
+            assert!(bool_const_value(&args[1]), "rhs `true` -> Bool(true)");
+        }
+        other => panic!("expected equality atom, got {other:?}"),
+    }
+}
+
+#[test]
+fn wrong_const_comparison_lifts_to_refutable_formula_not_fake_green() {
+    // TEETH: `assert_eq!(1 < 2, false)` is a WRONG assertion. The lifter must NOT
+    // fake-discharge it: the LHS `1 < 2` const-folds to its REAL value Bool(true),
+    // equated to the asserted-wrong RHS Bool(false). The lifted atom is
+    // `= (Bool(true), Bool(false))` -- a REFUTABLE (UNSAT) formula carrying the real
+    // value, exactly what a bad twin must produce.
+    let src = r#"
+#[test]
+fn wrong_const_cmp() {
+    assert_eq!(1 < 2, false);
+}
+"#;
+    let out = lift_file(&parse(src), "src/lib.rs");
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    let operands = inv_operands(&out.decls[0]);
+    assert_eq!(operands.len(), 1);
+    match operands[0].as_ref() {
+        Formula::Atomic { name, args } => {
+            assert_eq!(name, "=");
+            assert_eq!(args.len(), 2);
+            // The REAL value of `1 < 2` is true; the asserted RHS is false.
+            assert!(bool_const_value(&args[0]), "lhs `1 < 2` -> REAL Bool(true)");
+            assert!(
+                !bool_const_value(&args[1]),
+                "rhs `false` -> Bool(false); the formula is refutable, not green"
+            );
+        }
+        other => panic!("expected equality atom, got {other:?}"),
+    }
+}
+
+#[test]
+fn stable_comparison_in_term_position_lifts_as_cmp_ctor_over_index_terms() {
+    // POSITIVE (marquee shape): `assert!(lhs == (a[0] < b[0]))` over IMMUTABLE array
+    // locals. The outer `==` lifts to an equality atom; the RHS operand
+    // `(a[0] < b[0])` lifts to the bool-valued ctor `cmp:lt(index(a,0), index(b,0))`
+    // -- the comparison emitted AS the FOL atom it states, over stable index terms.
+    let src = r#"
+#[test]
+fn cmp_term() {
+    let a = [1, 2, 3];
+    let b = [4, 5, 6];
+    let flag = true;
+    assert!(flag == (a[0] < b[0]));
+}
+"#;
+    let out = lift_file(&parse(src), "src/lib.rs");
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    let operands = inv_operands(&out.decls[0]);
+    assert_eq!(operands.len(), 1);
+    // Find the `cmp:lt` ctor among the equality atom's args.
+    match operands[0].as_ref() {
+        Formula::Atomic { name, args } => {
+            assert_eq!(name, "=");
+            assert_eq!(args.len(), 2);
+            let cmp = args
+                .iter()
+                .find_map(|t| match t.as_ref() {
+                    Term::Ctor { name, args } if name == "cmp:lt" => Some(args.clone()),
+                    _ => None,
+                })
+                .expect("RHS `(a[0] < b[0])` lifts to a `cmp:lt` ctor");
+            assert_eq!(cmp.len(), 2, "cmp:lt over two operand terms");
+            // Each operand is `index(<container>, 0)` over an immutable local.
+            for (i, operand) in cmp.iter().enumerate() {
+                match operand.as_ref() {
+                    Term::Ctor { name, args } => {
+                        assert_eq!(name, "index", "operand {i} is an index term");
+                        assert_eq!(args.len(), 2);
+                    }
+                    other => panic!("expected index term, got {other:?}"),
+                }
+            }
+        }
+        other => panic!("expected equality atom, got {other:?}"),
+    }
+}
+
+#[test]
+fn comparison_over_mut_container_still_bails_not_fake_dig() {
+    // STRUCTURAL / BAIL: the same shape but `a` is `let mut` -- a mutable container
+    // is NOT temporally stable, so `a[0]` (an order-dependent read) must BAIL via
+    // the index/mut oracle. The comparison must NOT become a fake-dig over a
+    // stale value: the whole assertion is REFUSED (lifted == 0), not discharged.
+    let src = r#"
+#[test]
+fn cmp_over_mut() {
+    let mut a = [1, 2, 3];
+    let b = [4, 5, 6];
+    let flag = true;
+    assert!(flag == (a[0] < b[0]));
+}
+"#;
+    let out = lift_file(&parse(src), "src/lib.rs");
+    assert_eq!(out.seen, 1);
+    assert_eq!(
+        out.lifted, 0,
+        "a `mut` container operand is not temporally stable -> the comparison must \
+         BAIL, never fake-dig; warnings: {:?}",
+        out.warnings
+    );
+}
+
 #[test]
 fn non_call_assertions_stay_location_keyed() {
     let src = r#"
@@ -4522,15 +4671,18 @@ fn t() {
 //     let (a, b) = ($a, $b);
 //     if a != b { assert!((a-b).abs() < Duration::from_micros(200)); }
 //   }}
-// Decision: HONEST NAMED REFUSAL -- tolerance comparison, not exact equality.
+// Doctrine (post-ConditionalSugar): a guarded assert is the implication it
+// literally states. The expander walks into the real definition, finds the
+// assert under an `if a != b { .. }` guard, and lifts it as
+// `(a != b) => (a - b < 200)` -- a FAITHFUL EUF implication over the
+// opaque-but-pure runtime terms (`a` = elapsed_ns()). It is NEVER asserted bare
+// (that would be a fake-discharge), the runtime values stay uninterpreted, and
+// the solver decides. A sound (if weak) DIG -- lift the conditional, emit the
+// implication, get out of the way.
+// (Mirror: conditional_opaque_pure_guard_lifts_faithfully_under_euf.)
 
 #[test]
-fn assert_almost_eq_is_honest_named_refusal() {
-    // Source-based: with the real tolerance definition in scope, the expander
-    // walks into it and finds the assert lives under an `if a != b { .. }`
-    // guard -- a conditional, not a point-wise equality. It is refused (not
-    // lifted as a == b, which would be a false-pass). The reason is derived
-    // from the real body, not a hardcoded string.
+fn assert_almost_eq_lifts_as_guarded_euf_implication() {
     let src = r#"
 macro_rules! assert_almost_eq {
     ($a:expr, $b:expr) => {
@@ -4550,20 +4702,25 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/almost_eq.rs");
     assert_eq!(
-        out.lifted, 0,
-        "assert_almost_eq! must NOT lift (tolerance comparison under a guard)"
+        out.lifted, 1,
+        "assert_almost_eq! lifts as a guarded EUF implication (guard => claim), \
+         never bare: warnings {:?}",
+        out.warnings
     );
+    // GUARDED, never bare: the tolerance claim is the consequent of `a != b`.
+    let dump = format!("{:?}", out.decls);
     assert!(
-        !out.skip_reasons.is_empty(),
-        "assert_almost_eq! must be a named refusal, not silent: {:?}",
-        out.skip_reasons
+        dump.contains("Implies") || dump.contains("implies") || dump.contains("=>"),
+        "the tolerance claim must stay guarded by `a != b` (an implication), \
+         never asserted unconditionally: {dump}"
     );
 }
 
 #[test]
 fn assert_almost_eq_discrimination_does_not_affect_assert_eq() {
-    // assert_eq! in the same source must still lift normally; the almost_eq
-    // refusal arm must not bleed into neighbouring macros.
+    // assert_eq! in the same source must still lift as a plain point-wise
+    // equality; the almost_eq guarded-implication arm must not bleed into
+    // neighbouring macros.
     let src = r#"
 fn get_val() -> i32 { 5 }
 
@@ -4659,9 +4816,12 @@ fn loop_test() {
 }
 
 #[test]
-fn assert_in_if_branch_is_refused_not_lifted() {
-    // Soundness: a conditional assert only holds under the guard; lifting it
-    // unconditionally would be a false-pass. It must be refused.
+fn assert_in_if_branch_lifts_as_guarded_implication() {
+    // Doctrine (ConditionalSugar): a conditional assert is the implication it
+    // literally states -- `if c { assert_eq!(1, 2) }` lifts as `c => (1 == 2)`,
+    // the claim GUARDED by `c`, never bare. We do not refuse on if-context; we
+    // lift the conditional and let the solver decide (under the guard it refutes
+    // `1 == 2`). Emitting bare `1 == 2` would be a fake-discharge.
     let src = r#"
 #[test]
 fn cond_test() {
@@ -4672,22 +4832,30 @@ fn cond_test() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/cond.rs");
-    assert_eq!(out.assertions_lifted, 0, "conditional assert must not lift");
-    assert!(
-        out.decls.is_empty(),
-        "no discharged row for a conditional assert"
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "conditional assert lifts as a guarded implication: {:?}",
+        refusal_reasons(&out)
     );
     assert!(
-        refusal_reasons(&out)
-            .iter()
-            .any(|r| r.contains("if context")),
-        "if-branch assert must be a named refusal: {:?}",
-        refusal_reasons(&out)
+        !out.decls.is_empty(),
+        "a guarded implication is a discharged row"
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Implies") || dump.contains("implies") || dump.contains("=>"),
+        "the conditional must emit `c => (1 == 2)` (an implication), never bare: {dump}"
     );
 }
 
 #[test]
-fn assert_in_match_arm_is_refused() {
+fn assert_in_match_arm_lifts_as_guarded_implication() {
+    // Doctrine (MatchSugar): a match IS nested conditionals. Each arm assert is the
+    // implication it states -- `match n { 1 => assert_eq!(n,1), _ => assert_eq!(n,0) }`
+    // lifts as `(n==1 => n==1) AND (not(n==1) => n==0)`, each arm GUARDED by its
+    // discriminant, never bare. We do not refuse on match-context; we lift the
+    // conditional and let the solver decide. Emitting bare `n==0` would be a
+    // fake-discharge (it is only claimed when the wildcard fires).
     let src = r#"
 #[test]
 fn match_test() {
@@ -4699,13 +4867,210 @@ fn match_test() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/m.rs");
-    assert_eq!(out.assertions_lifted, 0);
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "both arm asserts lift as guarded implications: {:?}",
+        refusal_reasons(&out)
+    );
+    assert!(
+        !out.decls.is_empty(),
+        "a guarded implication is a discharged row"
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Implies") || dump.contains("implies") || dump.contains("=>"),
+        "the match must emit guarded implications, never bare: {dump}"
+    );
+    assert!(
+        dump.contains("not") || dump.contains("Not"),
+        "the wildcard arm's guard must be the negation of the prior arm: {dump}"
+    );
+}
+
+#[test]
+fn match_variant_arm_lifts_as_guarded_implication() {
+    // Positive (variant arm): a qualified-variant pattern's discriminant is
+    // `variant_of(scrut) == "variant::<tag>"` -- the SAME construction-semantics
+    // atom panic-locus / matches! lifting emits -- guarding the arm asserts.
+    let src = r#"
+#[test]
+fn variant_match() {
+    let p = compute();
+    match p {
+        Poll::Ready(_) => assert_eq!(1, 1),
+        _ => assert_eq!(2, 2),
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/v.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "both variant-guarded arm asserts lift: {:?}",
+        refusal_reasons(&out)
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("variant_of"),
+        "the discriminant must be variant_of(scrut): {dump}"
+    );
+    assert!(
+        dump.contains("Poll::Ready") || dump.contains("variant::Poll::Ready"),
+        "the discriminant must carry the variant tag: {dump}"
+    );
+    assert!(
+        dump.contains("Implies") || dump.contains("implies") || dump.contains("=>"),
+        "must be a guarded implication, never bare: {dump}"
+    );
+}
+
+#[test]
+fn match_wrong_arm_assert_lifts_to_refutable_formula() {
+    // Teeth: a match whose literal arm carries a WRONG assert must lift to a
+    // REFUTABLE formula carrying the real scrutinee/arm values, not get masked.
+    // `1 => assert_eq!(n, 2)` lifts as `(n == 1) => (n == 2)`. Under the guard
+    // `n == 1`, the consequent `n == 2` is FALSE -- the solver refutes it. The
+    // lifted formula must carry both literals so the contradiction is visible.
+    let src = r#"
+#[test]
+fn bad_twin() {
+    let n = 1;
+    match n {
+        1 => assert_eq!(n, 2),
+        _ => assert_eq!(n, 0),
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "the (refutable) guarded implications still lift: {:?}",
+        refusal_reasons(&out)
+    );
+    let dump = format!("{:?}", out.decls);
+    // The arm-0 implication `(n == 1) => (n == 2)` must carry BOTH literals so the
+    // contradiction is real (a masking lift that dropped the `2` would be a
+    // fake-discharge). 1 is both a guard literal and the let value; 2 is the wrong
+    // assert literal that makes the consequent refutable under the guard.
+    assert!(
+        dump.contains('2'),
+        "the wrong-arm consequent literal `2` must survive into the formula (teeth): {dump}"
+    );
+    assert!(
+        dump.contains("Implies") || dump.contains("implies") || dump.contains("=>"),
+        "must be a guarded implication carrying the real values: {dump}"
+    );
+}
+
+#[test]
+fn match_binding_arm_bails_to_match_context_refusal() {
+    // Structural: a binding arm `x =>` re-names the scrutinee (always matches --
+    // not a discriminant), an arm guard `n if .. =>`, and an or-pattern `A | B =>`
+    // each BAIL the whole match. The asserts fall to the existing match-context
+    // refusal, never to a (wrong) bare lift.
+    let binding = r#"
+#[test]
+fn bind() {
+    let n = 1;
+    match n {
+        x => assert_eq!(x, 1),
+    }
+}
+"#;
+    let out = lift_file(&parse(binding), "tests/bind.rs");
+    assert_eq!(out.assertions_lifted, 0, "a binding arm must not lift");
     assert!(
         refusal_reasons(&out)
             .iter()
             .any(|r| r.contains("match context")),
-        "match-arm assert must be a named refusal: {:?}",
+        "binding-arm assert must be a named match-context refusal: {:?}",
         refusal_reasons(&out)
+    );
+
+    let guarded = r#"
+#[test]
+fn guarded() {
+    let n = 1;
+    match n {
+        m if m > 0 => assert_eq!(n, 1),
+        _ => assert_eq!(n, 0),
+    }
+}
+"#;
+    let out = lift_file(&parse(guarded), "tests/g.rs");
+    assert_eq!(out.assertions_lifted, 0, "an arm guard must bail the match");
+    assert!(
+        refusal_reasons(&out)
+            .iter()
+            .any(|r| r.contains("match context")),
+        "guarded-arm assert must be a named match-context refusal: {:?}",
+        refusal_reasons(&out)
+    );
+
+    let or_pat = r#"
+#[test]
+fn orpat() {
+    let n = 1;
+    match n {
+        1 | 2 => assert_eq!(n, 1),
+        _ => assert_eq!(n, 0),
+    }
+}
+"#;
+    let out = lift_file(&parse(or_pat), "tests/or.rs");
+    assert_eq!(out.assertions_lifted, 0, "an or-pattern arm must bail the match");
+    assert!(
+        refusal_reasons(&out)
+            .iter()
+            .any(|r| r.contains("match context")),
+        "or-pattern-arm assert must be a named match-context refusal: {:?}",
+        refusal_reasons(&out)
+    );
+}
+
+#[test]
+fn match_payload_binding_over_bound_var_bails_no_free_var_discharge() {
+    // SOUNDNESS / corpus shape: the live coretests `match context` sites are
+    // `match a { Some(val) => assert_eq!(val.get(), 42), None => panic!(..) }` --
+    // a payload-BINDING arm whose body asserts over the pattern-bound `val`. `val`
+    // is bound BY the pattern, NOT a stable term in the outer scope, so lifting
+    // `variant_of(a)=="Some" => val.get()==42` would introduce a FREE `val` -- a
+    // fake-discharge. MatchSugar must BAIL (the body assert over the bound payload
+    // does not lift cleanly), leaving the existing match-context refusal. This is
+    // exactly why this bucket does not drain: every site is an EXACT-OR-BAIL refusal.
+    let src = r#"
+#[test]
+fn payload_bind() {
+    let a = Some(thing());
+    match a {
+        Some(val) => assert_eq!(val.get(), 42),
+        None => panic!("no"),
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/pb.rs");
+    // Panic-locus fires FIRST (the `None => panic!()` arm diverges, `Some(val)`
+    // survives), lifting ONLY the variant discriminant `variant_of(a)=="Some"` and
+    // accounting the macro -- it never enters MatchSugar, and never lifts the body
+    // over the bound `val`. The emitted formula must be the discriminant with NO
+    // free `val`/`get` (the soundness line: no payload-binding fake-discharge).
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "panic-locus lifts the variant discriminant: {:?}",
+        refusal_reasons(&out)
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("variant_of") && dump.contains("variant::Some"),
+        "must be the variant discriminant variant_of(a)==Some: {dump}"
+    );
+    // The pattern-bound payload must NOT leak: no free `val` variable, no `get`
+    // method term, no `payload:` accessor over the bound value. (Substring `val`
+    // would false-match `value:` in the Const dump, so check the precise leak
+    // signatures instead.)
+    assert!(
+        !dump.contains("get") && !dump.contains("payload:") && !dump.contains("Var { name: \"val\""),
+        "the pattern-bound payload `val.get()` must NOT leak into the formula \
+         (no free-var fake-discharge): {dump}"
     );
 }
 
@@ -4998,23 +5363,27 @@ fn t() {
 
 #[test]
 fn deeply_nested_assert_is_accounted_by_safety_net() {
-    // An assert in an AST position no specific arm enumerates (here, inside a
-    // method-call closure argument as a statement) must still be accounted via
-    // the exhaustive counter + totality safety net, never silent.
+    // An assert in an AST position no specific Sugar arm enumerates (here, inside
+    // a closure passed to a NON-iterator function) must still be accounted via the
+    // exhaustive syn-visit counter + per-fn totality safety net -- refused, never
+    // silent. (A closure over a LITERAL iterator domain, e.g. `(0..3).for_each(..)`,
+    // is instead enumerated by the defolder and lifts as a finite conjunction; this
+    // fixture deliberately uses an un-enumerable position to exercise the net.)
     let src = r#"
 #[test]
 fn nested() {
-    (0..3).for_each(|i| { assert_eq!(i, i); });
+    invoke(|i: i64| { assert_eq!(i, i); });
 }
 "#;
     let out = lift_file(&parse(src), "tests/iter.rs");
     assert_eq!(
         out.assertions_lifted, 0,
-        "nested closure assert must not lift"
+        "an un-enumerated closure-arg assert must not lift: {:?}",
+        out.skip_reasons
     );
     assert!(
         !out.skip_reasons.is_empty(),
-        "nested closure assert must be accounted (refused), not silent: {:?}",
+        "un-enumerated closure assert must be accounted (refused), not silent: {:?}",
         out.skip_reasons
     );
 }
@@ -7017,4 +7386,189 @@ fn emit_value_contract_if_with_call_condition() {
             assert!(so.contains("sat"), "satisfiable: {src}:\n{so}");
         }
     }
+}
+
+// ── TermBreadth: float casts + unsafe-block transparency + try/async refuse ──
+
+// (A) FLOAT CAST -- `x as f32` lifts to the OPAQUE EUF ctor `cast:f32(x)`, the same
+// standard as the integer/char casts. The `num/mod.rs::test_f32f64` round-trip rows
+// (`assert_eq!(max as f32, f32::MAX)`, ...) fell out at the cast fallthrough; now
+// the LHS lifts and the row pins as a structural equality.
+#[test]
+fn float_cast_lifts_as_opaque_euf_ctor() {
+    let src = r#"
+#[test]
+fn cast_f32() {
+    let x: f64 = 1.0;
+    assert_eq!(x as f32, 1.0f32);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/num.rs");
+    assert_eq!(out.seen, 1);
+    assert_eq!(out.lifted, 1, "float-cast assert must lift: {:?}", out.warnings);
+    let operands = inv_operands(&out.decls[0]);
+    assert_eq!(operands.len(), 1);
+    match operands[0].as_ref() {
+        Formula::Atomic { name, args } => {
+            assert_eq!(name, "=");
+            match args[0].as_ref() {
+                Term::Ctor { name, args } => {
+                    assert_eq!(name, "cast:f32", "LHS is the opaque float-cast ctor");
+                    assert_eq!(args.len(), 1);
+                    match args[0].as_ref() {
+                        // `x` is an immutable local -> a versioned var under the cast.
+                        Term::Var { name } => assert!(
+                            name.starts_with('x'),
+                            "cast operand is the receiver var, got {name}"
+                        ),
+                        other => panic!("expected receiver var under cast, got {other:?}"),
+                    }
+                }
+                other => panic!("expected cast:f32 lhs, got {other:?}"),
+            }
+        }
+        other => panic!("expected cast equality atom, got {other:?}"),
+    }
+}
+
+// (A) ADVERSARIAL bad-twin: the SAME `cast:f32(x)` term cannot equal two distinct
+// pinned floats. A test that asserts `x as f32 == 1.0` AND `x as f32 == 2.0` lifts a
+// conjunction that is z3-UNSAT -- the structural equality has teeth, a wrong-expected
+// twin is REFUTED (it is not opaqued into a free pass).
+#[test]
+fn float_cast_contradictory_expected_is_unsat() {
+    let src = r#"
+#[test]
+fn cast_f32_contradiction() {
+    let x: f64 = 1.0;
+    assert_eq!(x as f32, 1.0f32);
+    assert_eq!(x as f32, 2.0f32);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/num.rs");
+    assert_eq!(out.lifted, 1, "both casted asserts lift into one row: {:?}", out.warnings);
+    // Two operands over the SAME cast term, pinned to two different reals.
+    assert_eq!(inv_operands(&out.decls[0]).len(), 2);
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "float_cast_contra") {
+        assert!(!sat, "cast:f32(x)==1.0 AND ==2.0 must be UNSAT (the teeth)");
+    }
+}
+
+// (A) DISCRIMINATION: a pointer-target cast still REFUSES (the float widening did not
+// loosen the residual rule). Guards against over-widening `scalar_cast_type_key`.
+#[test]
+fn float_cast_does_not_loosen_pointer_target_residual() {
+    let src = r#"
+#[test]
+fn ptr_cast() {
+    assert_eq!(source() as *const f32, source());
+}
+"#;
+    let out = lift_file(&parse(src), "tests/num.rs");
+    assert_eq!(out.lifted, 0);
+    assert!(
+        out.warnings.iter().any(|w| w.reason.contains("unsupported term")),
+        "pointer-target cast must stay residual: {:?}",
+        out.warnings
+    );
+}
+
+// (B) UNSAFE-BLOCK TRANSPARENCY -- a single-tail `unsafe { <expr> }` in term position
+// lifts to the SAME term as the bare `<expr>`: the `unsafe` wrapper is congruent. The
+// `result.rs`/`cell.rs`/`mem.rs` rows (`assert_eq!(unsafe { ok.unwrap_unchecked() },
+// 100)`, ...) fell out at the wrapper; now they lift via the inner method-call EUF.
+#[test]
+fn unsafe_block_is_value_transparent_congruent_to_bare_expr() {
+    let wrapped = r#"
+#[test]
+fn t() {
+    assert_eq!(unsafe { ok.unwrap_unchecked() }, 100);
+}
+"#;
+    let bare = r#"
+#[test]
+fn t() {
+    assert_eq!(ok.unwrap_unchecked(), 100);
+}
+"#;
+    let ow = lift_file(&parse(wrapped), "tests/result.rs");
+    let ob = lift_file(&parse(bare), "tests/result.rs");
+    assert_eq!(ow.lifted, 1, "unsafe-wrapped assert must lift: {:?}", ow.warnings);
+    assert_eq!(ob.lifted, 1, "bare assert must lift: {:?}", ob.warnings);
+    // CONGRUENCE: the unsafe wrapper introduces no new shape -- the two invs are
+    // byte-identical (same canonical FOL).
+    assert_eq!(
+        format!("{:?}", inv_operands(&ow.decls[0])),
+        format!("{:?}", inv_operands(&ob.decls[0])),
+        "unsafe {{ e }} must lift to the same term as bare e (transparency)"
+    );
+}
+
+// (B) ADVERSARIAL bad-twin: the transparent unsafe row still has teeth -- the same
+// inner value cannot equal two distinct pins, so a wrong-expected twin is UNSAT.
+#[test]
+fn unsafe_block_transparent_row_refutes_wrong_expected() {
+    let src = r#"
+#[test]
+fn t() {
+    let r = id();
+    assert_eq!(unsafe { r.get() }, 1);
+    assert_eq!(unsafe { r.get() }, 2);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/cell.rs");
+    assert_eq!(out.lifted, 1, "both unsafe asserts lift: {:?}", out.warnings);
+    assert_eq!(inv_operands(&out.decls[0]).len(), 2);
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "unsafe_contra") {
+        assert!(!sat, "transparent unsafe row must refute a contradictory pin (UNSAT)");
+    }
+}
+
+// (B) STRUCTURAL discrimination: only the WRAPPER is transparent. A temporally-unstable
+// inner read (`&mut *cell.get()` -- `&mut` of a deref, not an immutable value) still
+// BAILS through the ordinary operand path. No fake-dig: the unsafe wrapper does not
+// launder a mutable-raw deref into a discharge.
+#[test]
+fn unsafe_block_mutable_raw_deref_still_bails() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(unsafe { &mut *cell.get() }, comp);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/cell.rs");
+    assert_eq!(out.lifted, 0, "mutable-raw deref under unsafe must NOT lift");
+    assert!(
+        out.warnings.iter().any(|w| w.reason.contains("unsupported term")),
+        "the inner `&mut *p` must stay residual (only the wrapper is transparent): {:?}",
+        out.warnings
+    );
+}
+
+// (C) TRY/ASYNC BLOCK -> TERMINAL refuse. `assert!(Option::is_none(&try { join!(...) }))`
+// (future.rs) is effectful control-flow -- a `try` block / `async` block / `?` is not a
+// timeless point-wise value. It is a NAMED refusal whose disposition is TERMINAL
+// (Refused), never Unclassified work.
+#[test]
+fn try_async_block_assert_is_terminal_refusal() {
+    let src = r#"
+#[test]
+fn join_try() {
+    assert!(Option::is_none(&try { join!(maybe_fut?, async { unreachable!() }) }));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/future.rs");
+    assert_eq!(out.assertions_lifted, 0, "try-block assert must not lift");
+    let reason = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains("effectful control-flow block"))
+        .unwrap_or_else(|| {
+            panic!("expected an effectful-control-flow refusal, got {:?}", out.skip_reasons)
+        });
+    assert_eq!(
+        sugar_lift_rust_tests::refusal_disposition(reason),
+        sugar_lift_rust_tests::Disposition::Refused,
+        "try/async control-flow block must classify TERMINAL refused, not unclassified work"
+    );
 }
