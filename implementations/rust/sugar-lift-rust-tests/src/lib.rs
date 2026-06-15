@@ -4076,12 +4076,12 @@ fn collect_assertion_entries<'a>(
                             float_widths,
                             macro_depth,
                         );
-                        decompose_fold(&init.expr, &let_inits)
-                            .and_then(|s| s.desugar(&ctx).dug())
-                            .or_else(|| {
-                                decompose_for_each(&init.expr, &temporal_scope, &let_inits)
-                                    .and_then(|s| s.desugar(&ctx).dug())
-                            })
+                        let fcx = sugar::factory::FactoryCtx {
+                            scope: &temporal_scope,
+                            options,
+                            let_inits: &let_inits,
+                        };
+                        sugar::factory::build(&init.expr, &fcx).desugar(&ctx).dug()
                     } {
                         emit_desugared(desugared, entries, macros_lifted);
                     } else {
@@ -4666,12 +4666,12 @@ fn collect_assertion_entries<'a>(
                         // DEFOLDER over a literal domain (bare `.fold`/`.rfold`
                         // statement), or a bare `.for_each` (the same bounded
                         // universal as the equivalent for-loop).
-                        decompose_fold(e, &let_inits)
-                            .and_then(|s| s.desugar(&ctx).dug())
-                            .or_else(|| {
-                                decompose_for_each(e, &temporal_scope, &let_inits)
-                                    .and_then(|s| s.desugar(&ctx).dug())
-                            })
+                        let fcx = sugar::factory::FactoryCtx {
+                            scope: &temporal_scope,
+                            options,
+                            let_inits: &let_inits,
+                        };
+                        sugar::factory::build(e, &fcx).desugar(&ctx).dug()
                     };
                     if let Some(desugared) = desugared {
                         emit_desugared(desugared, entries, macros_lifted);
