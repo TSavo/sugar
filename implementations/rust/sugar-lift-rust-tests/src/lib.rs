@@ -35,6 +35,7 @@ pub mod sugar {
     pub mod identity;
     pub mod impl_method;
     pub mod map;
+    pub mod match_scrutinee;
     pub mod rev;
     pub mod skip;
     pub mod skip_while;
@@ -9274,30 +9275,46 @@ fn translate_bool_assertion(
     }
 }
 
-/// Detect a `match <scrutinee> { .. }` whose SCRUTINEE is a RUNTIME non-scalar result -- a
-/// method call (`b.binary_search(&3)`) or a free function call. The asserted value is the arm
-/// taken by that runtime result, not a scalar equality over constructible values, so there is
-/// no single timeless `t`. Returns the typed effect ONLY for that detected shape; `None` for a
-/// non-`match` expr OR a `match` over a constructible scrutinee (a literal / path / index), so
-/// the caller refuses by name ONLY a detected runtime cause and leaves everything else
-/// UNCLASSIFIED (the fake-refuse guardrail).
+/// Thin node-router: a `match <runtime call> { .. }` is classified by the `MatchScrutineeSugar`
+/// node, which names the runtime-match-scrutinee verdict in its own `desugar` -- the asserted
+/// value is the arm taken by a RUNTIME non-scalar result (a method call `b.binary_search(&3)`
+/// or a free-function call), not a scalar equality over constructible values, so there is no
+/// single timeless `t` (the `RuntimeMatchScrutinee` boundary is the match's token-key). BOTH
+/// callsites route through this ONE router: the statement-context `Stmt::Expr(Expr::Match)`
+/// residue and the expression-position `translate_bool_assertion` half-refuse. Each caller
+/// renders `effect.reason()` (which `refusal_disposition` classifies terminal) on a `Some`,
+/// and on `None` keeps its OWN site-specific generic reason (the "under match context" /
+/// "only scalar equality" string) -- byte-identical to before.
+///
+/// The verdict is purely SYNTACTIC (the node's `desugar` ignores its `SugarCtx`), so this
+/// router needs no scope/options -- which is why the ctx-less `translate_bool_assertion`
+/// caller can route through it unchanged. It builds the node and inspects its single verdict
+/// leaf; the node's STRUCTURAL backstop maps to `None` (the old fall-through), exactly as the
+/// other thin node-routers do.
+///
+/// SOUNDNESS (the fake-refuse guardrail): the node fires ONLY on a DETECTED runtime-call
+/// scrutinee. A non-`match` expr OR a `match` over a CONSTRUCTED literal / path / index
+/// scrutinee declines to RECOGNIZE (the build arm returns `None`), which this router maps to
+/// `None` -- leaving everything else UNCLASSIFIED, never terminalized by position.
 fn runtime_match_scrutinee_effect(expr: &Expr) -> Option<Effect> {
-    let Expr::Match(m) = expr else {
-        return None;
-    };
-    if !expr_is_runtime_call_result(&m.expr) {
-        return None;
+    let node = sugar::match_scrutinee::decompose_match_scrutinee(expr)?;
+    match node.desugar_ctx_free() {
+        // The STRUCTURAL backstop = the honest-unclassified fall-through (the old `None`).
+        Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {
+            None
+        }
+        // A NAMED runtime-match-scrutinee boundary -- the verdict the caller renders.
+        Outcome::Hit(effect) => Some(effect),
+        // A bail-side node never reaches truth; `Dug` is unreachable here.
+        Outcome::Dug(_) => None,
     }
-    Some(Effect::RuntimeMatchScrutinee {
-        boundary: token_key(expr),
-    })
 }
 
 /// Is `expr` a RUNTIME call result -- a method call (`x.binary_search(..)`) or a free function
 /// call (`f(..)`), looking through parens/groups/references? These produce a value only when
 /// run; they are not constructible from source literals. A literal / path / index / cast is
 /// NOT a runtime call result (it stays diggable -> the caller keeps it unclassified).
-fn expr_is_runtime_call_result(expr: &Expr) -> bool {
+pub(crate) fn expr_is_runtime_call_result(expr: &Expr) -> bool {
     match expr {
         Expr::MethodCall(_) | Expr::Call(_) => true,
         Expr::Paren(p) => expr_is_runtime_call_result(&p.expr),
