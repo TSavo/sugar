@@ -3008,6 +3008,125 @@ fn test_is_ascii() {
 }
 
 #[test]
+fn vendor_all_any_over_boxed_literal_array_unrolls_to_arithmetic() {
+    // Vendor source: coretests/tests/iter/traits/iterator.rs::test_all / test_any.
+    // `let v: Box<[isize]> = Box::new([1,2,3,4,5]); v.iter().all(|&x| x < 10)` --
+    // resolve the `let`-bound boxed scalar-literal array, accept the `|&x|`
+    // reference param, unroll the quantifier, lift the body `x < 10` as the real
+    // `<` relation per element. The reference param previously refused; the body
+    // previously refused (not a method call).
+    let src = r#"
+#[test]
+fn t() {
+    let v: Box<[isize]> = Box::new([1, 2, 3, 4, 5]);
+    assert!(v.iter().all(|&x| x < 10));
+    assert!(!v.iter().all(|&x| x % 2 == 0));
+    assert!(v.iter().any(|&x| x % 2 == 0));
+}
+"#;
+    let out = lift_file(&parse(src), "coretests/tests/iter/traits/iterator.rs");
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    assert_eq!(
+        out.assertions_lifted, 3,
+        "all three quantifiers must lift; reasons: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.skip_reasons.is_empty(),
+        "no residue expected: {:?}",
+        out.skip_reasons
+    );
+    // The body lowers to real arithmetic comparison atoms over the element
+    // literals (a `<` relation), not an opaque iterator term.
+    assert!(
+        out.decls.iter().any(|decl| {
+            decl.inv
+                .as_deref()
+                .is_some_and(|inv| formula_contains_relation_name(inv, "<"))
+        }),
+        "quantifier body must lower to a `<` relation: {:?}",
+        out.decls
+    );
+}
+
+#[test]
+fn vendor_all_any_inline_array_distinct_bound_is_distinct_claim() {
+    // Teeth: `[1,2,3].iter().all(|&x| x < 10)` and `... x < 2` unroll to DIFFERENT
+    // conjunctions (the per-element bounds differ), so the lifted decls differ.
+    let a = r#"
+#[test]
+fn t() { assert!([1, 2, 3].iter().all(|&x| x < 10)); }
+"#;
+    let b = r#"
+#[test]
+fn t() { assert!([1, 2, 3].iter().all(|&x| x < 2)); }
+"#;
+    let da = format!("{:?}", lift_file(&parse(a), "src/x.rs").decls[0]);
+    let db = format!("{:?}", lift_file(&parse(b), "src/x.rs").decls[0]);
+    assert_ne!(da, db, "distinct per-element bounds must lift distinctly (teeth)");
+}
+
+#[test]
+fn all_over_literal_domain_with_unstable_body_read_bails_whole_quantifier() {
+    // EXACT-OR-BAIL: a closure over a LITERAL domain whose BODY indexes a `let mut`
+    // container (`buf[x]`, temporally unstable per the mut oracle) must NOT lift a
+    // partial/over-claim. The substituted body propagates its own named refusal
+    // through the sound term path, so the WHOLE quantifier bails -- a wrong DIG
+    // here would be a fake-discharge.
+    let src = r#"
+#[test]
+fn t() {
+    let mut buf = make();
+    assert!([0, 1, 2].iter().all(|&x| buf[x] < 9));
+}
+"#;
+    let out = lift_file(&parse(src), "src/x.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "an unstable (mut-container) body read must bail the whole quantifier; \
+         reasons: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn all_over_runtime_sliced_domain_with_wildcard_bails() {
+    // BAIL: `v[..0].iter().all(|_| panic!())` -- the domain `v[..0]` is a runtime
+    // slice (not a recognized literal construction) and the param is a wildcard
+    // (no name to substitute) with an effectful body. Must not lift.
+    let src = r#"
+#[test]
+fn t() {
+    let v: Box<[isize]> = Box::new([1, 2, 3, 4, 5]);
+    assert!(v[..0].iter().all(|_| panic!()));
+}
+"#;
+    let out = lift_file(&parse(src), "src/x.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "a runtime sliced domain + wildcard param must bail"
+    );
+}
+
+#[test]
+fn all_over_opaque_runtime_collection_bails() {
+    // BAIL: a closure over an opaque runtime receiver (not a literal array, not a
+    // captured `let`-bound literal) -- bin-2, named provenance, never unrolled.
+    let src = r#"
+#[test]
+fn t() {
+    let data = fetch();
+    assert!(data.iter().all(|&x| x < 10));
+}
+"#;
+    let out = lift_file(&parse(src), "src/x.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "an opaque runtime collection must bail, not unroll"
+    );
+}
+
+#[test]
 fn vendor_assert_all_and_assert_none_macros_expand_to_bounded_claims() {
     // Vendor macro shape: rust-src library/coretests/tests/ascii.rs.
     let src = r#"
@@ -5797,6 +5916,107 @@ fn t() {
     let (lhs, rhs) = panic_locus_lhs_rhs(&out);
     assert!(lhs.contains("variant_of"), "lhs: {lhs}");
     assert!(rhs.contains("variant::Some"), "rhs must tag Some: {rhs}");
+}
+
+// --- matches! TUPLE-pattern tranche (assert!(matches!(s, (V, 1)))) ---
+
+#[test]
+fn matches_macro_tuple_pattern_pins_variant_and_literal() {
+    // `matches!((..1u32).bound(), (OneSidedRangeBound::End, 1))` (coretests ops.rs):
+    // pin component 0's discriminant (variant_of(field:0(subj))) AND component 1's
+    // literal value (field:1(subj) == 1) -- a conjunction over the SAME subject term.
+    let src = r#"
+#[test]
+fn t() {
+    assert!(matches!((..1u32).bound(), (OneSidedRangeBound::End, 1)));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/ops.rs");
+    assert_eq!(out.assertions_lifted, 1, "warnings: {:?}", out.skip_reasons);
+    let decl = format!("{:?}", out.decls[0]);
+    assert!(decl.contains("variant_of"), "must carry variant_of: {decl}");
+    assert!(
+        decl.contains("OneSidedRangeBound::End"),
+        "must tag component-0 variant: {decl}"
+    );
+    assert!(decl.contains("field:0"), "must read component 0: {decl}");
+    assert!(decl.contains("field:1"), "must read component 1: {decl}");
+}
+
+#[test]
+fn matches_macro_tuple_pattern_distinct_variant_is_contradiction() {
+    // Teeth: the same subject claimed in two distinct tuple-pattern variants
+    // yields two atoms over the SAME variant_of(field:0(subject)) with distinct
+    // string tags -- UNSAT.
+    let a = r#"
+#[test]
+fn t() { let s = mk(); assert!(matches!(s, (Bound::End, 1))); }
+"#;
+    let b = r#"
+#[test]
+fn t() { let s = mk(); assert!(matches!(s, (Bound::Start, 1))); }
+"#;
+    let da = format!("{:?}", lift_file(&parse(a), "tests/ops.rs").decls[0]);
+    let db = format!("{:?}", lift_file(&parse(b), "tests/ops.rs").decls[0]);
+    assert!(da.contains("Bound::End"), "a tags End: {da}");
+    assert!(db.contains("Bound::Start"), "b tags Start: {db}");
+    assert_ne!(da, db, "distinct tuple variants must be distinct terms (teeth)");
+}
+
+#[test]
+fn matches_macro_tuple_pattern_distinct_literal_is_contradiction() {
+    // Teeth on the literal component: same subject, same variant, distinct literal
+    // -> distinct field:1 equality -> distinct decl.
+    let a = r#"
+#[test]
+fn t() { let s = mk(); assert!(matches!(s, (Bound::End, 1))); }
+"#;
+    let b = r#"
+#[test]
+fn t() { let s = mk(); assert!(matches!(s, (Bound::End, 2))); }
+"#;
+    let da = format!("{:?}", lift_file(&parse(a), "tests/ops.rs").decls[0]);
+    let db = format!("{:?}", lift_file(&parse(b), "tests/ops.rs").decls[0]);
+    assert_ne!(da, db, "distinct literal components must be distinct terms (teeth)");
+}
+
+#[test]
+fn matches_macro_tuple_pattern_binding_component_bails() {
+    // EXACT-OR-BAIL: a binding component (`x`) is not a closed pin -> the whole
+    // tuple bails. It must NOT lift a partial claim; refused by name.
+    let src = r#"
+#[test]
+fn t() {
+    let s = mk();
+    assert!(matches!(s, (Bound::End, x)));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/ops.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "a binding component must bail, not partially lift"
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("unambiguous qualified variant")),
+        "refusal must name the ambiguity: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn matches_macro_tuple_pattern_all_wildcard_has_no_teeth_bails() {
+    // A `(_, _)` tuple pins nothing -> no teeth -> bail (never a vacuous lift).
+    let src = r#"
+#[test]
+fn t() {
+    let s = mk();
+    assert!(matches!(s, (_, _)));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/ops.rs");
+    assert_eq!(out.assertions_lifted, 0, "all-wildcard tuple must not lift");
 }
 
 // --- array-repeat literal tranche (assert_eq!(x, [elem; N])) ---

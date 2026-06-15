@@ -1867,6 +1867,13 @@ struct TemporalScope {
     /// per OCCURRENCE within a statement. Interior-mutable so it can advance while
     /// term translation holds `&self`; reset to empty at each statement boundary.
     consuming_occurrence: std::cell::RefCell<BTreeMap<String, usize>>,
+    /// In-scope LITERAL arrays captured from this block's `let <id> = [e0, e1, ..]`
+    /// (and `Box::new([..])`), so a `.iter().all(|x| ..)` / `.any(..)` quantifier
+    /// over a `let`-bound finite domain can resolve its receiver to the element
+    /// literals and unroll. Only arrays whose elements are ALL closed scalar
+    /// literals are captured (a non-literal element omits the binding, so the
+    /// quantifier path declines rather than over-claims).
+    literal_arrays: BTreeMap<String, Vec<Expr>>,
 }
 
 impl TemporalScope {
@@ -1877,7 +1884,20 @@ impl TemporalScope {
             versions: BTreeMap::new(),
             ambiguous: BTreeSet::new(),
             consuming_occurrence: std::cell::RefCell::new(BTreeMap::new()),
+            literal_arrays: BTreeMap::new(),
         }
+    }
+
+    /// Record the in-scope literal-array bindings for this block (see field doc).
+    fn with_literal_arrays(mut self, arrays: BTreeMap<String, Vec<Expr>>) -> Self {
+        self.literal_arrays = arrays;
+        self
+    }
+
+    /// The closed scalar-literal elements of `name` if it is a `let`-bound literal
+    /// array in this scope; else `None`.
+    fn literal_array(&self, name: &str) -> Option<&[Expr]> {
+        self.literal_arrays.get(name).map(Vec::as_slice)
     }
 
     /// Record one CONSUMING read of iterator `name` in the current statement and
@@ -4193,6 +4213,100 @@ fn capture_literal_arrays(let_inits: &BTreeMap<String, &Expr>) -> BTreeMap<Strin
     literal_arrays
 }
 
+/// Capture this block's `let <id> = <array>` bindings whose array is a finite
+/// construction of CLOSED SCALAR LITERALS (`[1, 2, 3]`, `[0xab, 0xcd]`), through a
+/// `Box::new([..])` wrapper and `&`/group wrappers. A NON-mut binding only (a
+/// `let mut` array can be reassigned, so its identity at the assertion point is
+/// not the literal). A non-literal or non-scalar element omits the binding so the
+/// quantifier path declines rather than over-claims. Used by the
+/// `.iter().all/.any(|x| ..)` quantifier to resolve a `let`-bound receiver to its
+/// element literals and unroll soundly.
+fn capture_scalar_literal_arrays(stmts: &[Stmt]) -> BTreeMap<String, Vec<Expr>> {
+    let mut arrays: BTreeMap<String, Vec<Expr>> = BTreeMap::new();
+    for stmt in stmts {
+        let Stmt::Local(local) = stmt else { continue };
+        // Unwrap a type ascription (`let v: Box<[isize]> = ..`): the binding name
+        // is inside the `Pat::Type`. A `let mut` / `ref` / sub-pattern binding is
+        // not a stable literal identity, so it is skipped.
+        let Some(pi) = let_simple_binding(&local.pat) else {
+            continue;
+        };
+        let Some(init) = local.init.as_ref().filter(|i| i.diverge.is_none()) else {
+            continue;
+        };
+        if let Some(elems) = scalar_literal_array_elems(&init.expr) {
+            arrays.insert(pi, elems);
+        }
+    }
+    arrays
+}
+
+/// The binding name of a simple immutable `let` pattern (`x` or `x: T`), through a
+/// type ascription. `None` for `mut`/`ref`/sub-pattern/destructuring binders.
+fn let_simple_binding(pat: &Pat) -> Option<String> {
+    match pat {
+        Pat::Ident(pi)
+            if pi.mutability.is_none() && pi.by_ref.is_none() && pi.subpat.is_none() =>
+        {
+            Some(pi.ident.to_string())
+        }
+        Pat::Type(t) => let_simple_binding(&t.pat),
+        _ => None,
+    }
+}
+
+/// The closed scalar-literal elements of an array-literal expression (`[1, 2, 3]`)
+/// or a `Box::new([..])` of one, through `&`/paren/group wrappers. `None` if it is
+/// not an array literal or ANY element is not a closed scalar literal (int/char/
+/// byte/bool, allowing a unary `-` on a numeric literal). Strict by design: a
+/// single non-literal element bails the whole array (never a partial domain).
+fn scalar_literal_array_elems(expr: &Expr) -> Option<Vec<Expr>> {
+    match strip_refs_groups(expr) {
+        Expr::Array(arr) => {
+            for e in &arr.elems {
+                if !is_closed_scalar_literal(e) {
+                    return None;
+                }
+            }
+            Some(arr.elems.iter().cloned().collect())
+        }
+        // `Box::new([..])` -- the boxed array is the same finite construction.
+        Expr::Call(c) => {
+            let Expr::Path(p) = c.func.as_ref() else {
+                return None;
+            };
+            let is_box_new = p.path.segments.len() == 2
+                && p.path.segments[0].ident == "Box"
+                && p.path.segments[1].ident == "new"
+                || p.path.segments.last().is_some_and(|s| s.ident == "new")
+                    && p.path.segments.iter().any(|s| s.ident == "Box");
+            if !is_box_new || c.args.len() != 1 {
+                return None;
+            }
+            scalar_literal_array_elems(&c.args[0])
+        }
+        _ => None,
+    }
+}
+
+/// A CLOSED scalar literal: an int / char / byte / bool literal, or a unary `-`
+/// over a numeric literal. (Floats are deliberately excluded -- the quantifier
+/// unroll emits Int/Char/Bool comparison atoms, not Real refinements.)
+fn is_closed_scalar_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::Lit(ExprLit { lit, .. }) => matches!(
+            lit,
+            Lit::Int(_) | Lit::Char(_) | Lit::Byte(_) | Lit::Bool(_)
+        ),
+        Expr::Unary(u) if matches!(u.op, UnOp::Neg(_)) => {
+            matches!(&*u.expr, Expr::Lit(ExprLit { lit: Lit::Int(_), .. }))
+        }
+        Expr::Paren(p) => is_closed_scalar_literal(&p.expr),
+        Expr::Group(g) => is_closed_scalar_literal(&g.expr),
+        _ => false,
+    }
+}
+
 /// Build a `ForAllSugar` from a `for <var> in <domain> { body }` loop: the domain
 /// must be a finite construction (closed range / literal array). None (bail)
 /// otherwise. This is the front half of `try_lift_for_loop_forall`.
@@ -4868,7 +4982,8 @@ fn collect_assertion_entries(
     // block), so only this level's still-`None` entries are touched.
     let entries_start = entries.len();
     let temporal_plan = temporal_plan_for_stmts(stmts, inherited_stateful);
-    let mut temporal_scope = TemporalScope::new(local_scope, temporal_plan);
+    let mut temporal_scope = TemporalScope::new(local_scope, temporal_plan)
+        .with_literal_arrays(capture_scalar_literal_arrays(stmts));
     // const_eval_select((), compiletime, runtime) is a std intrinsic that, at
     // run time, calls its runtime fn. Find such calls in this block and the
     // inner fns they select, so the runtime branch is inlined (its asserts
@@ -7986,7 +8101,7 @@ fn translate_bool_assertion(
     if let Some(entry) = translate_string_predicate_assertion(expr, scope)? {
         return Ok(entry);
     }
-    if let Some(entry) = translate_literal_iterator_assertion(expr, scope.local_scope())? {
+    if let Some(entry) = translate_literal_iterator_assertion(expr, scope, float_widths)? {
         return Ok(entry);
     }
     if let Some(entry) = translate_float_refinement_assertion(expr, scope, float_widths)? {
@@ -8625,6 +8740,20 @@ fn translate_matches_assertion(
                 scope,
             ));
         }
+        // TUPLE PATTERN: `matches!(subj, (Type::Variant, 1))` pins each tuple
+        // COMPONENT of the subject -- a qualified variant via its discriminant
+        // (`variant_of(field:i(subj)) == "variant::Type::Variant"`) and a literal
+        // by value (`field:i(subj) == <lit>`). `field:i(subj)` is a congruent
+        // uninterpreted accessor, so two claims about the same subject's i-th
+        // component coalesce and a contradicting claim is UNSAT (the teeth). EXACT-
+        // OR-BAIL: every component must be a strict qualified variant or a closed
+        // literal (a binding / range / nested / non-literal component bails the
+        // whole pattern -- we never lift a partially-pinned tuple); a `_` wildcard
+        // simply contributes no constraint, and the entry refuses if NOTHING is
+        // pinned (no teeth).
+        if let Some(entry) = tuple_pattern_entry(&subject, &pat, scope) {
+            return Ok(Some(entry));
+        }
         return Err(format!(
             "matches! pattern is not an unambiguous qualified variant \
              (binding/wildcard/single-segment/or-pattern); refused by name: `{}`",
@@ -8702,6 +8831,72 @@ fn wrapped_variant_entry(
         name: outer.name,
         atom: and_(vec![outer.atom, inner_atom]),
     })
+}
+
+/// `matches!(subject, (C0, C1, ...))` over a TUPLE pattern: pin each component
+/// of the subject. The i-th component is read via the congruent uninterpreted
+/// accessor `field:i(subject_term)`; a qualified-variant component pins its
+/// discriminant (`variant_of(field:i(subj)) == "variant::C"`), a literal
+/// component pins its value (`field:i(subj) == <lit>`). A `_` wildcard adds no
+/// constraint. ANY other component shape (binding, range, nested struct, a
+/// non-literal expr) BAILS the whole pattern (`None`) -- a partially-pinned
+/// tuple is never lifted. Returns `None` (not the lifted entry) when the
+/// pattern is not a tuple, the subject is not a liftable term, or nothing is
+/// pinned (a `(_, _)` pattern has no teeth). The conjunction's NAME keys on the
+/// subject, so sibling claims about the same subject conjoin.
+fn tuple_pattern_entry(
+    subject: &Expr,
+    pat: &syn::Pat,
+    scope: &TemporalScope,
+) -> Option<AssertionEntry> {
+    let tuple = match strip_pat_ref_paren(pat) {
+        syn::Pat::Tuple(t) => t,
+        _ => return None,
+    };
+    let subject_term = translate_term_in_scope(subject, scope).ok()?;
+    let mut atoms: Vec<Rc<Formula>> = Vec::new();
+    for (i, elem) in tuple.elems.iter().enumerate() {
+        let elem = strip_pat_ref_paren(elem);
+        if matches!(elem, syn::Pat::Wild(_)) {
+            continue;
+        }
+        let field = Rc::new(Term::Ctor {
+            name: format!("field:{i}"),
+            args: vec![subject_term.clone()],
+        });
+        if let Some(variant) = strict_variant_path(elem) {
+            let lhs = Rc::new(Term::Ctor {
+                name: "variant_of".to_string(),
+                args: vec![field],
+            });
+            atoms.push(assertion_entry_from_eq(lhs, str_const(format!("variant::{variant}")), scope).atom);
+        } else if let syn::Pat::Lit(lit) = elem {
+            let rhs = lit_membership_term(&lit.lit)?;
+            atoms.push(assertion_entry_from_eq(field, rhs, scope).atom);
+        } else {
+            // A binding / range / nested / non-literal component: not a closed
+            // pin. Bail the WHOLE tuple rather than lift a partial claim.
+            return None;
+        }
+    }
+    if atoms.is_empty() {
+        // `(_, _)` -- no teeth.
+        return None;
+    }
+    let name = callsite_assertion_name(subject_term.as_ref(), scope.local_scope());
+    Some(AssertionEntry {
+        name,
+        atom: and_(atoms),
+    })
+}
+
+/// Strip leading `&pat` / `(pat)` wrappers from a pattern, returning the inner.
+fn strip_pat_ref_paren(pat: &syn::Pat) -> &syn::Pat {
+    match pat {
+        syn::Pat::Reference(r) => strip_pat_ref_paren(&r.pat),
+        syn::Pat::Paren(p) => strip_pat_ref_paren(&p.pat),
+        other => other,
+    }
 }
 
 /// Strict variant-path extraction for `matches!` discriminant lifting: a
@@ -9030,7 +9225,8 @@ fn ascii_char_class_assertion(
 
 fn translate_literal_iterator_assertion(
     expr: &Expr,
-    _local_scope: &str,
+    scope: &TemporalScope,
+    float_widths: &FloatWidthScope,
 ) -> Result<Option<AssertionEntry>, String> {
     let Expr::MethodCall(call) = expr else {
         return Ok(None);
@@ -9051,28 +9247,75 @@ fn translate_literal_iterator_assertion(
     if closure.inputs.len() != 1 {
         return Err(format!("{method} predicate expects one closure parameter"));
     }
-    let param_name = closure
-        .inputs
-        .first()
-        .and_then(|pat| match pat {
-            syn::Pat::Ident(ident) => Some(ident.ident.to_string()),
-            _ => None,
-        })
-        .ok_or_else(|| format!("{method} predicate requires a simple identifier parameter"))?;
+    // The bound parameter, accepting a plain `|x|` AND a reference pattern `|&x|`
+    // (the dominant `.iter()` shape -- `.iter()` yields `&T`, so the closure
+    // binds `&x` to read the element by value). A wildcard `|_|` or a destructuring
+    // pattern is NOT a simple binding -> we have no name to substitute, so this
+    // path declines (it falls through to the closure-adaptor refusal, which names
+    // the collection provenance).
+    let Some(param_name) = closure_simple_param_name(closure) else {
+        // The string char/byte ascii-predicate path is a closed shape that does
+        // not need a substitutable parameter (its body is a fixed method call);
+        // keep its historical refusal for a non-ident param there. For the general
+        // arithmetic body we simply decline (Ok(None)) so provenance is named.
+        if literal_iterator_elements(&call.receiver)?.is_some() {
+            return Err(format!("{method} predicate requires a simple identifier parameter"));
+        }
+        return Ok(None);
+    };
 
-    let Some((iter_kind, elements)) = literal_iterator_elements(&call.receiver)? else {
+    // PATH 1 (closed, historical): a STRING-literal `.chars()`/`.bytes()` domain
+    // whose body is a fixed ascii-class method call. Unchanged.
+    if let Some((iter_kind, elements)) = literal_iterator_elements(&call.receiver)? {
+        let mut atoms = Vec::new();
+        for element in elements {
+            atoms.push(iterator_element_predicate_atom(
+                closure.body.as_ref(),
+                &param_name,
+                element,
+                iter_kind,
+            )?);
+        }
+        let atom = quantifier_join(&method, atoms);
+        return Ok(Some(AssertionEntry { name: None, atom }));
+    }
+
+    // PATH 2 (general): a SCALAR-LITERAL array domain (`[1,2,3].iter()` or a
+    // `let v = Box::new([1,2,3])` resolved via scope) with a PURE body. We unroll
+    // the quantifier over the finite, source-constructed domain: substitute the
+    // bound parameter with each element literal and lift the body through the
+    // ordinary bool-assertion path (so a comparison `x < 10` becomes the real
+    // `lt`/`ge` atom, EXACT-OR-BAIL -- a non-liftable body propagates its own Err
+    // and the whole quantifier refuses, never a partial/over-claim). `all` ->
+    // conjunction, `any` -> disjunction. The domain is finite and pinned from
+    // written literals (the construction axiom); a RUNTIME receiver (an opaque
+    // collection, a sliced `v[..i]`, a non-literal binding) does NOT resolve here
+    // and falls through to the closure-adaptor refusal (bin-2, named).
+    let Some(elements) = scalar_iter_domain_elems(&call.receiver, scope) else {
         return Ok(None);
     };
     let mut atoms = Vec::new();
     for element in elements {
-        atoms.push(iterator_element_predicate_atom(
-            closure.body.as_ref(),
-            &param_name,
-            element,
-            iter_kind,
-        )?);
+        // Substitute the bound parameter with the concrete element literal in a
+        // CLONE of the body, then lift via the ordinary path. Substitution is by
+        // identifier name (reusing the helper-inlining substitutor); the closure
+        // body reads its own parameter, never an outer binding of the same name
+        // (shadowing), so this is sound.
+        let mut binds = ExprBindings::new();
+        binds.insert(param_name.clone(), element);
+        let body = substitute_expr(closure.body.as_ref(), &binds);
+        let entry = translate_bool_assertion(&body, scope, float_widths)?;
+        atoms.push(entry.atom);
     }
-    let atom = if method == "all" {
+    let atom = quantifier_join(&method, atoms);
+    Ok(Some(AssertionEntry { name: None, atom }))
+}
+
+/// `all` -> the conjunction of the per-element atoms (empty domain -> vacuously
+/// true); `any` -> the disjunction (empty domain -> false). The empty cases are
+/// the IEEE-of-quantifiers identities (`∀∅ = ⊤`, `∃∅ = ⊥`).
+fn quantifier_join(method: &str, atoms: Vec<Rc<Formula>>) -> Rc<Formula> {
+    if method == "all" {
         if atoms.is_empty() {
             eq(bool_const(true), bool_const(true))
         } else {
@@ -9082,8 +9325,46 @@ fn translate_literal_iterator_assertion(
         eq(bool_const(true), bool_const(false))
     } else {
         or_(atoms)
-    };
-    Ok(Some(AssertionEntry { name: None, atom }))
+    }
+}
+
+/// The bound parameter name of a single-parameter closure, accepting `|x|` and a
+/// reference pattern `|&x|` (and `|&mut x|`), through a type ascription `|x: T|`.
+/// `None` for a wildcard `|_|` or any destructuring pattern (no single name to
+/// substitute).
+fn closure_simple_param_name(closure: &syn::ExprClosure) -> Option<String> {
+    fn ident_of(pat: &syn::Pat) -> Option<String> {
+        match pat {
+            syn::Pat::Ident(id) if id.subpat.is_none() => Some(id.ident.to_string()),
+            syn::Pat::Reference(r) => ident_of(&r.pat),
+            syn::Pat::Paren(p) => ident_of(&p.pat),
+            syn::Pat::Type(t) => ident_of(&t.pat),
+            _ => None,
+        }
+    }
+    ident_of(closure.inputs.first()?)
+}
+
+/// The element expressions of a `.iter()`/`.into_iter()` receiver IF the underlying
+/// collection is a finite SCALAR-LITERAL array -- either an inline `[1,2,3]` literal
+/// or a `let`-bound array captured in `scope` (`let v = Box::new([1,2,3])`). `None`
+/// for a runtime/opaque receiver (a sliced `v[..i]`, an opaque collection, a
+/// non-captured binding), so the quantifier declines and provenance is named
+/// elsewhere. The elements are returned as `Expr` (closed scalar literals) for
+/// substitution into the closure body.
+fn scalar_iter_domain_elems(receiver: &Expr, scope: &TemporalScope) -> Option<Vec<Expr>> {
+    let base = iter_adaptor_base(receiver);
+    // Inline array literal: `[1, 2, 3].iter()`.
+    if let Some(elems) = scalar_literal_array_elems(base) {
+        return Some(elems);
+    }
+    // A `let`-bound scalar-literal array captured in scope.
+    if let Some(name) = simple_path_name(base) {
+        if let Some(elems) = scope.literal_array(&name) {
+            return Some(elems.to_vec());
+        }
+    }
+    None
 }
 
 #[derive(Clone, Copy)]
