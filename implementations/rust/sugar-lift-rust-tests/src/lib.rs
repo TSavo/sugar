@@ -2765,6 +2765,15 @@ enum Desugared {
         n: usize,
         warrant: Warrant,
     },
+    /// The TERM FLOOR: a single reified `Term` (an EUF/FOL term object). Produced
+    /// by the term-sublanguage Sugar nodes (`CompareSugar`/`BinOpSugar`/`CallSugar`/
+    /// `PathSugar`/`IndexSugar`/`UnarySugar`/term-`LiteralSugar`) — the third
+    /// reduction layer alongside `Seq` (the sequence floor) and `Constraints` (the
+    /// formula terminal). A composite term node builds its operands via the factory
+    /// and reads each child's term back out through `into_term`. Mirrors exactly the
+    /// `Rc<Term>` the `translate_term_in_scope` shard for that shape produces today,
+    /// so wiring a node is byte-identical by construction.
+    Term(Rc<Term>),
 }
 
 impl Desugared {
@@ -2773,6 +2782,19 @@ impl Desugared {
     fn into_seq(self) -> Option<Vec<DesugaredElem>> {
         match self {
             Desugared::Seq(s) => Some(s),
+            Desugared::Constraints { .. } => None,
+            Desugared::Term(_) => None,
+        }
+    }
+
+    /// The reified term payload, or `None` if this is a sequence / constraint
+    /// terminal. The dual of `into_seq` for the term floor: a composite term Sugar
+    /// (a `CompareSugar` building its `lhs`/`rhs`) reads each child's term back out
+    /// through this, exactly as a sequence adaptor reads `into_seq`.
+    fn into_term(self) -> Option<Rc<Term>> {
+        match self {
+            Desugared::Term(t) => Some(t),
+            Desugared::Seq(_) => None,
             Desugared::Constraints { .. } => None,
         }
     }
@@ -2789,6 +2811,7 @@ impl Desugared {
         let seq = match self {
             Desugared::Seq(s) => s,
             Desugared::Constraints { .. } => return None,
+            Desugared::Term(_) => return None,
         };
         let [only] = seq.as_slice() else {
             return None;
@@ -3367,6 +3390,9 @@ fn emit_desugared(
             true
         }
         Desugared::Seq(_) => false,
+        // A bare term at statement position is not an emit (a term floor must be
+        // wrapped by an asserting node to become a `Constraints`); mirrors `Seq`.
+        Desugared::Term(_) => false,
     }
 }
 
