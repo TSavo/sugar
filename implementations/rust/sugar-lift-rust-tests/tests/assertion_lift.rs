@@ -4700,7 +4700,13 @@ fn cond_test() {
 }
 
 #[test]
-fn assert_in_match_arm_is_refused() {
+fn assert_in_match_arm_lifts_as_guarded_implication() {
+    // Doctrine (MatchSugar): a match IS nested conditionals. Each arm assert is the
+    // implication it states -- `match n { 1 => assert_eq!(n,1), _ => assert_eq!(n,0) }`
+    // lifts as `(n==1 => n==1) AND (not(n==1) => n==0)`, each arm GUARDED by its
+    // discriminant, never bare. We do not refuse on match-context; we lift the
+    // conditional and let the solver decide. Emitting bare `n==0` would be a
+    // fake-discharge (it is only claimed when the wildcard fires).
     let src = r#"
 #[test]
 fn match_test() {
@@ -4712,13 +4718,210 @@ fn match_test() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/m.rs");
-    assert_eq!(out.assertions_lifted, 0);
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "both arm asserts lift as guarded implications: {:?}",
+        refusal_reasons(&out)
+    );
+    assert!(
+        !out.decls.is_empty(),
+        "a guarded implication is a discharged row"
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Implies") || dump.contains("implies") || dump.contains("=>"),
+        "the match must emit guarded implications, never bare: {dump}"
+    );
+    assert!(
+        dump.contains("not") || dump.contains("Not"),
+        "the wildcard arm's guard must be the negation of the prior arm: {dump}"
+    );
+}
+
+#[test]
+fn match_variant_arm_lifts_as_guarded_implication() {
+    // Positive (variant arm): a qualified-variant pattern's discriminant is
+    // `variant_of(scrut) == "variant::<tag>"` -- the SAME construction-semantics
+    // atom panic-locus / matches! lifting emits -- guarding the arm asserts.
+    let src = r#"
+#[test]
+fn variant_match() {
+    let p = compute();
+    match p {
+        Poll::Ready(_) => assert_eq!(1, 1),
+        _ => assert_eq!(2, 2),
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/v.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "both variant-guarded arm asserts lift: {:?}",
+        refusal_reasons(&out)
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("variant_of"),
+        "the discriminant must be variant_of(scrut): {dump}"
+    );
+    assert!(
+        dump.contains("Poll::Ready") || dump.contains("variant::Poll::Ready"),
+        "the discriminant must carry the variant tag: {dump}"
+    );
+    assert!(
+        dump.contains("Implies") || dump.contains("implies") || dump.contains("=>"),
+        "must be a guarded implication, never bare: {dump}"
+    );
+}
+
+#[test]
+fn match_wrong_arm_assert_lifts_to_refutable_formula() {
+    // Teeth: a match whose literal arm carries a WRONG assert must lift to a
+    // REFUTABLE formula carrying the real scrutinee/arm values, not get masked.
+    // `1 => assert_eq!(n, 2)` lifts as `(n == 1) => (n == 2)`. Under the guard
+    // `n == 1`, the consequent `n == 2` is FALSE -- the solver refutes it. The
+    // lifted formula must carry both literals so the contradiction is visible.
+    let src = r#"
+#[test]
+fn bad_twin() {
+    let n = 1;
+    match n {
+        1 => assert_eq!(n, 2),
+        _ => assert_eq!(n, 0),
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "the (refutable) guarded implications still lift: {:?}",
+        refusal_reasons(&out)
+    );
+    let dump = format!("{:?}", out.decls);
+    // The arm-0 implication `(n == 1) => (n == 2)` must carry BOTH literals so the
+    // contradiction is real (a masking lift that dropped the `2` would be a
+    // fake-discharge). 1 is both a guard literal and the let value; 2 is the wrong
+    // assert literal that makes the consequent refutable under the guard.
+    assert!(
+        dump.contains('2'),
+        "the wrong-arm consequent literal `2` must survive into the formula (teeth): {dump}"
+    );
+    assert!(
+        dump.contains("Implies") || dump.contains("implies") || dump.contains("=>"),
+        "must be a guarded implication carrying the real values: {dump}"
+    );
+}
+
+#[test]
+fn match_binding_arm_bails_to_match_context_refusal() {
+    // Structural: a binding arm `x =>` re-names the scrutinee (always matches --
+    // not a discriminant), an arm guard `n if .. =>`, and an or-pattern `A | B =>`
+    // each BAIL the whole match. The asserts fall to the existing match-context
+    // refusal, never to a (wrong) bare lift.
+    let binding = r#"
+#[test]
+fn bind() {
+    let n = 1;
+    match n {
+        x => assert_eq!(x, 1),
+    }
+}
+"#;
+    let out = lift_file(&parse(binding), "tests/bind.rs");
+    assert_eq!(out.assertions_lifted, 0, "a binding arm must not lift");
     assert!(
         refusal_reasons(&out)
             .iter()
             .any(|r| r.contains("match context")),
-        "match-arm assert must be a named refusal: {:?}",
+        "binding-arm assert must be a named match-context refusal: {:?}",
         refusal_reasons(&out)
+    );
+
+    let guarded = r#"
+#[test]
+fn guarded() {
+    let n = 1;
+    match n {
+        m if m > 0 => assert_eq!(n, 1),
+        _ => assert_eq!(n, 0),
+    }
+}
+"#;
+    let out = lift_file(&parse(guarded), "tests/g.rs");
+    assert_eq!(out.assertions_lifted, 0, "an arm guard must bail the match");
+    assert!(
+        refusal_reasons(&out)
+            .iter()
+            .any(|r| r.contains("match context")),
+        "guarded-arm assert must be a named match-context refusal: {:?}",
+        refusal_reasons(&out)
+    );
+
+    let or_pat = r#"
+#[test]
+fn orpat() {
+    let n = 1;
+    match n {
+        1 | 2 => assert_eq!(n, 1),
+        _ => assert_eq!(n, 0),
+    }
+}
+"#;
+    let out = lift_file(&parse(or_pat), "tests/or.rs");
+    assert_eq!(out.assertions_lifted, 0, "an or-pattern arm must bail the match");
+    assert!(
+        refusal_reasons(&out)
+            .iter()
+            .any(|r| r.contains("match context")),
+        "or-pattern-arm assert must be a named match-context refusal: {:?}",
+        refusal_reasons(&out)
+    );
+}
+
+#[test]
+fn match_payload_binding_over_bound_var_bails_no_free_var_discharge() {
+    // SOUNDNESS / corpus shape: the live coretests `match context` sites are
+    // `match a { Some(val) => assert_eq!(val.get(), 42), None => panic!(..) }` --
+    // a payload-BINDING arm whose body asserts over the pattern-bound `val`. `val`
+    // is bound BY the pattern, NOT a stable term in the outer scope, so lifting
+    // `variant_of(a)=="Some" => val.get()==42` would introduce a FREE `val` -- a
+    // fake-discharge. MatchSugar must BAIL (the body assert over the bound payload
+    // does not lift cleanly), leaving the existing match-context refusal. This is
+    // exactly why this bucket does not drain: every site is an EXACT-OR-BAIL refusal.
+    let src = r#"
+#[test]
+fn payload_bind() {
+    let a = Some(thing());
+    match a {
+        Some(val) => assert_eq!(val.get(), 42),
+        None => panic!("no"),
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/pb.rs");
+    // Panic-locus fires FIRST (the `None => panic!()` arm diverges, `Some(val)`
+    // survives), lifting ONLY the variant discriminant `variant_of(a)=="Some"` and
+    // accounting the macro -- it never enters MatchSugar, and never lifts the body
+    // over the bound `val`. The emitted formula must be the discriminant with NO
+    // free `val`/`get` (the soundness line: no payload-binding fake-discharge).
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "panic-locus lifts the variant discriminant: {:?}",
+        refusal_reasons(&out)
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("variant_of") && dump.contains("variant::Some"),
+        "must be the variant discriminant variant_of(a)==Some: {dump}"
+    );
+    // The pattern-bound payload must NOT leak: no free `val` variable, no `get`
+    // method term, no `payload:` accessor over the bound value. (Substring `val`
+    // would false-match `value:` in the Const dump, so check the precise leak
+    // signatures instead.)
+    assert!(
+        !dump.contains("get") && !dump.contains("payload:") && !dump.contains("Var { name: \"val\""),
+        "the pattern-bound payload `val.get()` must NOT leak into the formula \
+         (no free-var fake-discharge): {dump}"
     );
 }
 

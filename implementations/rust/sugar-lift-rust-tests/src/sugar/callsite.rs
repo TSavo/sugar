@@ -351,20 +351,24 @@ mod tests {
     // is the bail direction of the monotonic gate (`added_unclassified == 0` to
     // commit). EFFECT-OR-LEAVE: an un-digging body is left unclassified, never fake-dug.
     //
-    // The body's assert lives under a `match` arm -- branch-partitioned, NOT an
-    // unconditional point-wise claim, so the hierarchy classifies it UNCLASSIFIED
-    // (a lifter-limitation: we do not yet partition branches; an honest WORK item,
-    // not a source property). This is the SAME blocker the live corpus census reports
-    // for the un-drained nested helpers (`test`/`test_chain`/`test_mut`/... -- a body
-    // assert under a for/branch construct the dig does not yet enter point-wise). The
-    // gate refuses to commit, so the helper is unreduced and the single "reachable
-    // only via call-site inlining" refusal survives. Soundness: the assert is
-    // accounted (no silent drop) and NOT laundered to a fake discharge.
+    // The body's assert lives under a `closure` -- a closure body is NOT
+    // unconditionally evaluated (it may never run, or runs per-call), so the
+    // hierarchy classifies it UNCLASSIFIED (an honest WORK item, not a source
+    // property). This is the SAME blocker the live corpus census reports for the
+    // un-drained nested helpers (a body assert under a construct the dig does not
+    // yet enter point-wise). The gate refuses to commit, so the helper is unreduced
+    // and the single "reachable only via call-site inlining" refusal survives.
+    // Soundness: the assert is accounted (no silent drop) and NOT laundered to a
+    // fake discharge.
+    //
+    // NOTE: a `match`-arm body is NO LONGER such a residue -- `MatchSugar` partitions
+    // the arms into `⋀_i (guard_i => A_i)` and discharges them. This test now uses a
+    // closure body (still un-entered) to exercise the BAIL direction of the gate.
     #[test]
     fn helper_with_unclassified_body_residue_bails_to_reachable_only() {
         let out = lift(
             r#"
-            fn check(n: i32) { match n { 0 => assert!(n == 0), _ => assert!(n > 0) } }
+            fn check(n: i32) { let f = || assert!(n > 0); f(); }
             #[test]
             fn t() { check(5); }
             "#,
