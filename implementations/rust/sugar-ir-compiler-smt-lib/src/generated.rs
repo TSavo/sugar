@@ -1529,8 +1529,19 @@ pub fn collect_free_vars_formula(
             // `Int`. Atoms with no Real const collect exactly as before, so all
             // pre-existing (Real-free) formulas are byte-for-byte identical.
             let real_ctx = args.iter().any(term_has_real_const);
+            // A var in an `=` atom whose OTHER operand is a monadic Option/Result
+            // value (`opt:some`/.../`res:err`) must declare with that ADT sort, not
+            // `Int` (`const A: Option = ...; assert_eq!(A, Some(2))` -> `A` must be
+            // `SugarOption` to meet `opt:some(2)` well-sortedly). This mirrors the
+            // `real_ctx` override above; absent any monadic operand it is `None`, so
+            // all pre-existing formulas are byte-for-byte identical.
+            let adt_ctx = if name == "=" {
+                args.iter().find_map(monadic_operand_sort)
+            } else {
+                None
+            };
             for a in args {
-                collect_free_vars_term_ctx(a, out, bound, real_ctx);
+                collect_free_vars_term_ctx_adt(a, out, bound, real_ctx, adt_ctx);
             }
         }
         Formula::And { operands } => {
@@ -1612,11 +1623,31 @@ fn term_has_real_const(term: &Term) -> bool {
     }
 }
 
+/// The ADT sort a monadic operand carries (`SugarOption` / `SugarResult`), or
+/// `None` for any non-monadic term. Used as the `=`-atom var-sort context.
+fn monadic_operand_sort(term: &Term) -> Option<&'static str> {
+    match term {
+        Term::Ctor { name, .. } if name == OPT_SOME || name == OPT_NONE => Some("SugarOption"),
+        Term::Ctor { name, .. } if name == RES_OK || name == RES_ERR => Some("SugarResult"),
+        _ => None,
+    }
+}
+
 fn collect_free_vars_term_ctx(
     term: &Term,
     out: &mut BTreeMap<String, String>,
     bound: &BTreeSet<String>,
     real_ctx: bool,
+) {
+    collect_free_vars_term_ctx_adt(term, out, bound, real_ctx, None);
+}
+
+fn collect_free_vars_term_ctx_adt(
+    term: &Term,
+    out: &mut BTreeMap<String, String>,
+    bound: &BTreeSet<String>,
+    real_ctx: bool,
+    adt_ctx: Option<&str>,
 ) {
     match term {
         Term::Var { name, .. } => {
@@ -1625,6 +1656,11 @@ fn collect_free_vars_term_ctx(
                     // Real dominates Int: a var used as a real operand anywhere is
                     // declared Real regardless of collection order.
                     out.insert(name.clone(), "Real".to_string());
+                } else if let Some(adt) = adt_ctx {
+                    // A var compared `=` against a monadic Option/Result value
+                    // declares with that ADT sort (overrides the Int default), so
+                    // the equality is well-sorted. ADT dominates Int like Real does.
+                    out.insert(name.clone(), adt.to_string());
                 } else {
                     out.entry(name.clone()).or_insert_with(|| "Int".to_string());
                 }
@@ -1638,8 +1674,15 @@ fn collect_free_vars_term_ctx(
                     return;
                 }
             }
+            // The ADT context applies ONLY to a var sitting DIRECTLY as an `=`
+            // operand (`assert_eq!(A, Some(2))` -> `A: SugarOption`). It must NOT
+            // propagate into ANY ctor's args: a monadic ctor's field is Int
+            // (`opt:some(x)` -> `x: Int`), and an opaque call's args
+            // (`method:compare_exchange(a, ..)`) are Int (the receiver/operands are
+            // opaque), NOT the call RESULT's ADT sort. Drop adt_ctx for all nested
+            // ctor args.
             for a in args {
-                collect_free_vars_term_ctx(a, out, bound, real_ctx);
+                collect_free_vars_term_ctx_adt(a, out, bound, real_ctx, None);
             }
         }
         Term::Lambda {
@@ -1650,15 +1693,15 @@ fn collect_free_vars_term_ctx(
         } => {
             let mut nb = bound.clone();
             nb.insert(param_name.clone());
-            collect_free_vars_term_ctx(body, out, &nb, real_ctx);
+            collect_free_vars_term_ctx_adt(body, out, &nb, real_ctx, adt_ctx);
         }
         Term::Let { bindings, body, .. } => {
             let mut current_bound = bound.clone();
             for b in bindings {
-                collect_free_vars_term_ctx(&b.bound_term, out, &current_bound, real_ctx);
+                collect_free_vars_term_ctx_adt(&b.bound_term, out, &current_bound, real_ctx, adt_ctx);
                 current_bound.insert(b.name.clone());
             }
-            collect_free_vars_term_ctx(body, out, &current_bound, real_ctx);
+            collect_free_vars_term_ctx_adt(body, out, &current_bound, real_ctx, adt_ctx);
         }
     }
 }
@@ -1755,6 +1798,18 @@ fn known_term_sort(term: &Term) -> Option<String> {
         }
         Term::Var { .. } => Some("Int".to_string()),
         Term::Ctor { name, .. } if name == "str.len" => Some("Int".to_string()),
+        // A monadic Option/Result ctor IS its ADT sort. Returning it lets a `=`
+        // between a monadic value and an OPAQUE call result (`x.and(Some(2)) ==
+        // Some(2)`) declare the opaque call with the matching ADT return sort, so
+        // the script stays well-sorted and the two sides meet structurally
+        // (`SugarOption`/`SugarResult` -- not the default `Int`, which would be
+        // ill-sorted against the ADT and z3-reject the script).
+        Term::Ctor { name, .. } if name == OPT_SOME || name == OPT_NONE => {
+            Some("SugarOption".to_string())
+        }
+        Term::Ctor { name, .. } if name == RES_OK || name == RES_ERR => {
+            Some("SugarResult".to_string())
+        }
         Term::Ctor { .. } => None,
         Term::Lambda { .. } => None,
         Term::Let { body, .. } => known_term_sort(body),
@@ -1877,6 +1932,122 @@ fn is_builtin_term_operator(name: &str) -> bool {
     matches!(name, "+" | "-" | "*" | "str.len" | "str.++")
 }
 
+// ── Monadic Option/Result algebraic datatypes ──────────────────────────────
+//
+// The Rust lifter grounds the std `Option`/`Result` CONSTRUCTORS (`Some(x)`,
+// `None`, `Ok(x)`, `Err(x)`) to reserved ctor names -- `opt:some`/`opt:none`/
+// `res:ok`/`res:err` (see `sugar-lift-rust-tests/src/sugar/monadic.rs`). They
+// ARE algebraic datatypes, so we declare them to z3 as such via
+// `declare-datatypes` rather than as plain uninterpreted functions. The ADT
+// gives constructor INJECTIVITY (`Some a = Some b <=> a = b`) and DISTINCTNESS
+// (`Some _ != None`, `Ok _ != Err _`) for free -- the structural-equality teeth:
+// `Some(1) == Some(2)` is UNSAT, `Some(1) == None` is UNSAT, `Ok(a) == Err(b)`
+// is false. A bare uninterpreted `Some` would let z3 model `Some(1) = Some(2)`
+// (no injectivity) -> SAT -> a fake-dig. Monomorphic over `Int` (the lifter's
+// inner is always a grounded int literal here); a nested-monadic inner would be
+// ill-sorted and surface as a loud z3 error (sound under-claim, never a false
+// pass).
+const OPT_SOME: &str = "opt:some";
+const OPT_NONE: &str = "opt:none";
+const RES_OK: &str = "res:ok";
+const RES_ERR: &str = "res:err";
+
+/// True iff `name` is one of the reserved monadic ctor names -- declared as an
+/// ADT constructor, NOT as an uninterpreted function.
+fn is_monadic_ctor(name: &str) -> bool {
+    matches!(name, OPT_SOME | OPT_NONE | RES_OK | RES_ERR)
+}
+
+/// Which monadic ADTs a formula references, so the preamble declares ONLY the
+/// datatypes actually used (no unused `declare-datatypes` churn).
+#[derive(Default, Clone, Copy)]
+struct MonadicAdtsUsed {
+    option: bool,
+    result: bool,
+}
+
+fn collect_monadic_adts_formula(formula: &Formula, used: &mut MonadicAdtsUsed) {
+    match formula {
+        Formula::Atomic { args, .. } => {
+            for arg in args {
+                collect_monadic_adts_term(arg, used);
+            }
+        }
+        Formula::And { operands } | Formula::Or { operands } | Formula::Implies { operands } => {
+            for operand in operands {
+                collect_monadic_adts_formula(operand, used);
+            }
+        }
+        Formula::Not { operands } => {
+            for operand in operands {
+                collect_monadic_adts_formula(operand, used);
+            }
+        }
+        Formula::Forall { body, .. }
+        | Formula::Exists { body, .. }
+        | Formula::Choice { body, .. } => {
+            collect_monadic_adts_formula(body, used);
+        }
+        Formula::Substitute { .. } | Formula::Apply { .. } => {}
+        Formula::DivergenceBetween { source, target } => {
+            collect_monadic_adts_formula(source, used);
+            collect_monadic_adts_formula(target, used);
+        }
+    }
+}
+
+fn collect_monadic_adts_term(term: &Term, used: &mut MonadicAdtsUsed) {
+    match term {
+        Term::Ctor { name, args } => {
+            match name.as_str() {
+                OPT_SOME | OPT_NONE => used.option = true,
+                RES_OK | RES_ERR => used.result = true,
+                _ => {}
+            }
+            for arg in args {
+                collect_monadic_adts_term(arg, used);
+            }
+        }
+        Term::Lambda { body, .. } => collect_monadic_adts_term(body, used),
+        Term::Let { bindings, body } => {
+            for binding in bindings {
+                collect_monadic_adts_term(&binding.bound_term, used);
+            }
+            collect_monadic_adts_term(body, used);
+        }
+        Term::Var { .. } | Term::Const { .. } => {}
+    }
+}
+
+/// The `(declare-datatypes ...)` preamble lines for whichever monadic ADTs the
+/// formula uses. Constructor names are `smt_quote`d so they MATCH the ctor
+/// application `emit_term` renders (`(|opt:some| x)`). Monomorphic over `Int`.
+fn monadic_adt_preamble(used: MonadicAdtsUsed) -> String {
+    // Each constructor declares a field accessor `<ctor>#0`; the WHOLE accessor
+    // name is `smt_quote`d (`|opt:some#0|`), not the bare ctor + a trailing `#0`
+    // outside the quotes (`|opt:some|#0`, which z3 rejects).
+    let field = |ctor: &str| smt_quote(&format!("{ctor}#0"));
+    let mut out = String::new();
+    if used.option {
+        out.push_str(&format!(
+            "(declare-datatypes ((SugarOption 0)) ((({some} ({some_f} Int)) ({none}))))\n",
+            some = smt_quote(OPT_SOME),
+            some_f = field(OPT_SOME),
+            none = smt_quote(OPT_NONE),
+        ));
+    }
+    if used.result {
+        out.push_str(&format!(
+            "(declare-datatypes ((SugarResult 0)) ((({ok} ({ok_f} Int)) ({err} ({err_f} Int)))))\n",
+            ok = smt_quote(RES_OK),
+            ok_f = field(RES_OK),
+            err = smt_quote(RES_ERR),
+            err_f = field(RES_ERR),
+        ));
+    }
+    out
+}
+
 fn collect_ctor_decls_term(
     term: &Term,
     expected_ret: Option<&str>,
@@ -1890,10 +2061,16 @@ fn collect_ctor_decls_term(
                 .collect();
             // Arithmetic theory operators stay interpreted: declaring them as
             // uninterpreted functions would shadow the SMT theory and let the
-            // solver pick a counterexample interpretation. Still recurse into
-            // the arguments so any genuine non-builtin ctor nested underneath
-            // (e.g. `Ok`, `method:foo`) is declared.
-            if !is_builtin_term_operator(name) {
+            // solver pick a counterexample interpretation. The monadic
+            // Option/Result ctors (`opt:some`/`opt:none`/`res:ok`/`res:err`) are
+            // declared as ALGEBRAIC DATATYPES (`declare-datatypes`, see
+            // `monadic_adt_preamble`), NOT uninterpreted functions -- a second
+            // `(declare-fun opt:some ...)` would shadow the ADT constructor and
+            // strip its injectivity/distinctness teeth. Both are EXCLUDED from
+            // the uninterpreted-fn pass. Still recurse into the arguments so any
+            // genuine non-builtin ctor nested underneath (e.g. `method:foo`) is
+            // declared.
+            if !is_builtin_term_operator(name) && !is_monadic_ctor(name) {
                 out.entry(name.clone()).or_insert_with(|| CtorSignature {
                     args: arg_sorts.clone(),
                     ret: expected_ret.unwrap_or("Int").to_string(),
@@ -2261,6 +2438,15 @@ pub fn compile_formula(formula: &Formula) -> CompiledFormula {
     let has_outlives = has_outlives_predicate(formula);
     let mut preamble = String::new();
     preamble.push_str("(set-logic ALL)\n");
+    // Declare the monadic Option/Result ADTs (if used) BEFORE any constant /
+    // ctor declaration, so a `SugarOption`/`SugarResult`-sorted symbol can refer
+    // to the datatype. The ADT enforces constructor injectivity + distinctness
+    // (the structural-equality teeth for `Some`/`None`/`Ok`/`Err`).
+    {
+        let mut monadic = MonadicAdtsUsed::default();
+        collect_monadic_adts_formula(formula, &mut monadic);
+        preamble.push_str(&monadic_adt_preamble(monadic));
+    }
     if has_outlives {
         // Declare the Region sort and Outlives predicate.
         preamble.push_str("(declare-sort Region 0)\n");
@@ -2393,6 +2579,13 @@ pub fn compile_asserted_formula(formula: &Formula) -> CompiledFormula {
     let has_outlives = has_outlives_predicate(formula);
     let mut preamble = String::new();
     preamble.push_str("(set-logic ALL)\n");
+    // Declare the monadic Option/Result ADTs (if used) BEFORE any constant /
+    // ctor declaration (see the matching block in `compile_formula`).
+    {
+        let mut monadic = MonadicAdtsUsed::default();
+        collect_monadic_adts_formula(formula, &mut monadic);
+        preamble.push_str(&monadic_adt_preamble(monadic));
+    }
     if has_outlives {
         preamble.push_str("(declare-sort Region 0)\n");
         preamble.push_str("(declare-fun Outlives (Region Region) Bool)\n");

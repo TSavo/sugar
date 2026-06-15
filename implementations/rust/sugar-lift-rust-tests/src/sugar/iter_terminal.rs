@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// `IterTerminalSugar`: the iterator REDUCTION terminals (`.sum()` / `.product()` /
-// `.count()`) over a FINITE LITERAL domain. Each writes the EQUIVALENT FOL of its
-// operation over the inner literal `Seq` -- the construction axiom applied to a terminal
-// that collapses a sequence to a single SCALAR value:
+// `IterTerminalSugar`: the iterator REDUCTION + POSITIONAL terminals over a FINITE
+// LITERAL domain. Each writes the EQUIVALENT FOL of its operation over the inner literal
+// `Seq` -- the construction axiom applied to a terminal that collapses a sequence to a
+// single value:
 //
 //   * `.sum()`     -> `num(Σ elements)`   (`[1,2,3,4,5].iter().sum()` -> `num(15)`)
 //   * `.product()` -> `num(Π elements)`   (`[1,2,3,4,5].iter().product()` -> `num(120)`)
 //   * `.count()`   -> `num(len)`          (`[1,2,3].iter().count()` -> `num(3)`)
+//   * `.next()`    -> `Some(elem[0])`     (`[1,2,3].iter().next()` -> `opt:some(1)`)
+//   * `.nth(k)`    -> `Some(elem[k])` or `None` past the end
+//   * `.last()`    -> `Some(elem[len-1])` (or `None` for the empty Seq)
 //
 // This is the TERM-position node -- it sits in the term registry BEFORE
 // `method_call_term::recognize`, so a recognized literal-domain reduction grounds to its
@@ -17,17 +20,16 @@
 // to a literal) is NOT recognized -> falls through to the opaque `method:` ctor (the
 // established sound under-claim).
 //
-// WHY ONLY THE SCALAR REDUCTIONS (and not `.next()`/`.nth()`/`.min()`/`.max()`). The
-// positional / extremal terminals return `Option<&T>`; `assert_eq!(<term>, Some(&1))`
-// is lifted by `assertion_entry_from_relation` as the FEDERATED user-type-equality
-// shape `call:eq:Some(lhs, rhs) == true` (a `Some(_)` operand is a user `PartialEq`
-// dispatch we do NOT interpret -- an opaque EUF call). A standalone bad twin
-// (`Some(&2)`) then stays z3-SAT (the opaque `eq:Some` call can equal `true`), so the
-// dig would NOT meet the HARD SOUNDNESS bad-twin-UNSAT bar -- it would be a FAKE-DIG.
-// Those forms therefore stay REFUSED (the opaque `method:` ctor), honest future work for
-// when the lifter gains value-level `Option` equality. The scalar reductions compare
-// against a bare int literal, so `=( Σ, k )` IS value-refutable (a wrong `k` is z3-UNSAT)
-// -- the only forms grounded here.
+// THE POSITIONAL TERMINALS GROUND VIA `MonadicSugar`. The positional terminals return
+// `Option<&T>`; we GROUND them to a `MonadicSugar` `Some(element)` / `None` constructed
+// value (the reserved `opt:some`/`opt:none` ctor, an ALGEBRAIC DATATYPE in the IR->SMT
+// compiler). `assert_eq!([1,2,3].iter().next(), Some(&1))` then composes as
+// `eq(opt:some(1), opt:some(1))` -- both sides STRUCTURAL `Option` values, so z3 enforces
+// constructor injectivity + distinctness. The bad twin `Some(&2)` is `eq(opt:some(1),
+// opt:some(2))` -> z3-UNSAT (the teeth). This SUPERSEDES the old refusal: when `Some(_)`
+// was lifted as the federated `call:eq:Some` EUF, a bad twin stayed z3-SAT (a FAKE-DIG),
+// so the positional terminals had to stay opaque; with `MonadicSugar`'s ADT-backed
+// `Option`/`Result` the bad-twin-UNSAT bar is met, so they ground honestly.
 //
 // THE HARD SOUNDNESS LINE. The node Digs ONLY when the WHOLE receiver chain bottoms out
 // in a LITERAL `Seq`. `desugar` recurses on the pre-built inner seq-`Sugar` (a
@@ -45,14 +47,24 @@ use syn::Expr;
 use crate::sugar::factory::FactoryCtx;
 use crate::sugar::literal::LiteralSugar;
 use crate::sugar::method_call_term;
-use crate::{peel_fold_adaptors, strip_refs_groups, ConstVal, Desugared, Outcome, Sugar, SugarCtx};
+use crate::sugar::monadic;
+use crate::{
+    parse_int_lit, peel_fold_adaptors, strip_refs_groups, ConstVal, Desugared, Outcome, Sugar,
+    SugarCtx,
+};
 
-/// Which reduction this node performs -- captured at construction from the method name.
+/// Which terminal this node performs -- captured at construction from the method name.
 #[derive(Clone, Copy)]
 enum Terminal {
     Sum,
     Product,
     Count,
+    /// `.next()` -- the element at position 0 (or `None` for the empty Seq).
+    Next,
+    /// `.nth(k)` -- the element at position `k` (or `None` past the end).
+    Nth(usize),
+    /// `.last()` -- the element at position `len-1` (or `None` for the empty Seq).
+    Last,
 }
 
 /// TERM recognizer for the iterator scalar-reduction terminals. `Some` only when the
@@ -76,13 +88,27 @@ pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>>
     let Expr::MethodCall(call) = expr else {
         return None;
     };
-    if !call.args.is_empty() {
-        return None;
-    }
     let terminal = match call.method.to_string().as_str() {
-        "sum" => Terminal::Sum,
-        "product" => Terminal::Product,
-        "count" => Terminal::Count,
+        // Scalar reductions and the nullary positional terminals take no args.
+        "sum" if call.args.is_empty() => Terminal::Sum,
+        "product" if call.args.is_empty() => Terminal::Product,
+        "count" if call.args.is_empty() => Terminal::Count,
+        "next" if call.args.is_empty() => Terminal::Next,
+        "last" if call.args.is_empty() => Terminal::Last,
+        // `.nth(k)` takes exactly one int-literal index. A non-literal / wide
+        // index is NOT recognized -> fall through to the opaque ctor.
+        "nth" if call.args.len() == 1 => {
+            let Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Int(k),
+                ..
+            }) = strip_refs_groups(&call.args[0])
+            else {
+                return None;
+            };
+            let k = parse_int_lit(k).ok()?;
+            let k = usize::try_from(k).ok()?;
+            Terminal::Nth(k)
+        }
         _ => return None,
     };
     // Peel the receiver adaptor chain to (base, ordered wrappers) EXACTLY as
@@ -129,7 +155,7 @@ struct IterTerminalSugar {
 }
 
 impl IterTerminalSugar {
-    /// Reduce the literal `Seq` to the scalar value term, or `None` if it does not cleanly
+    /// Reduce the literal `Seq` to the value term, or `None` if it does not cleanly
     /// ground (the caller then emits the opaque fallback). Never a guessed value: every
     /// `Some` carries the EXACT reduction.
     fn reduce(&self, ctx: &SugarCtx) -> Option<Desugared> {
@@ -139,13 +165,34 @@ impl IterTerminalSugar {
         if matches!(self.terminal, Terminal::Count) {
             return Some(Desugared::Term(num(seq.len() as i128)));
         }
+        // POSITIONAL terminals (`.next()`/`.nth(k)`/`.last()`): index the literal Seq and
+        // GROUND to a `MonadicSugar` `Some(element)` / `None` (the ADT-backed `opt:some`/
+        // `opt:none` ctor). An in-range element must be an EXACT integer const (the ADT
+        // field sort is `Int`); a non-int element bails to the opaque fallback (never a
+        // guessed value). An out-of-range index grounds to the structural `None`.
+        if let Some(idx) = match self.terminal {
+            Terminal::Next => Some(0usize),
+            Terminal::Nth(k) => Some(k),
+            Terminal::Last => seq.len().checked_sub(1),
+            _ => None,
+        } {
+            return Some(match seq.get(idx) {
+                Some(elem) => {
+                    let n = elem.value.as_ref().and_then(ConstVal::as_int)?;
+                    Desugared::Term(monadic::some_term(num(n)))
+                }
+                // Past the end (or `.last()` on the empty Seq) -- the value IS `None`.
+                None => Desugared::Term(monadic::none_term()),
+            });
+        }
         // `.sum()` / `.product()`: fold over the elements' EXACT integer const values.
         // EXACT-OR-BAIL: a non-integer / opaque element (a float / string / unresolved
         // element) -> `None` (emit the opaque fallback), never a guessed value.
         let init: i128 = match self.terminal {
             Terminal::Sum => 0,
             Terminal::Product => 1,
-            Terminal::Count => return None, // handled above
+            // count / positional handled above.
+            Terminal::Count | Terminal::Next | Terminal::Nth(_) | Terminal::Last => return None,
         };
         let mut acc = init;
         for elem in &seq {
@@ -154,7 +201,7 @@ impl IterTerminalSugar {
             acc = match self.terminal {
                 Terminal::Sum => acc.checked_add(n)?,
                 Terminal::Product => acc.checked_mul(n)?,
-                Terminal::Count => return None,
+                _ => return None,
             };
         }
         Some(Desugared::Term(num(acc)))

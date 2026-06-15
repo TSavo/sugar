@@ -61,7 +61,7 @@ use crate::sugar::{
     array_repeat, array_term, await_term, binop, block_term, call, cast_term, closure_adaptor,
     closure_term, conditional, const_block, control_flow_term, field_term, fold, forall,
     impl_method, index, iter_terminal, literal, macro_term, match_node, match_scrutinee,
-    method_call_term, path, range_term, raw_addr_term, reference_term, repeat_term,
+    method_call_term, monadic, path, range_term, raw_addr_term, reference_term, repeat_term,
     statement_position, struct_term, term_literal, transparent_term, tuple_term, unary,
 };
 use crate::{
@@ -87,6 +87,12 @@ type Recognizer = fn(&Expr, &FactoryCtx) -> Option<Box<dyn Sugar>>;
 /// `Expr` variant (or a guarded split of one); the walk returns the first `Some`.
 /// Faithfully reproduces the former `build` match's arm order.
 const TERM_RECOGNIZERS: &[Recognizer] = &[
+    // The std Option/Result CONSTRUCTORS (`Some(x)`/`Ok(x)`/`Err(x)`/`None`) --
+    // BEFORE `path` and `call`, so a monadic constructor grounds to its
+    // ADT-backed `opt:some`/`res:ok`/... value (structural equality teeth)
+    // instead of the generic `call:Some` / `call:None` ctor that would route
+    // the equality through the federated, teeth-less `call:eq:Some` EUF path.
+    monadic::recognize,                // Expr::Call(Some/Ok/Err) / Expr::Path(None)
     term_literal::recognize,           // Expr::Lit
     const_block::recognize,            // Expr::Const
     unary::recognize,                  // Expr::Unary
