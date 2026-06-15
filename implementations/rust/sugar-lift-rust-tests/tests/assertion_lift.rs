@@ -10310,3 +10310,148 @@ fn format_runtime_arg_does_not_overfire() {
         "a runtime-arg format! must NOT forge a reconstructed string literal: {doc}"
     );
 }
+
+// ── Term-position macro_rules expansion (the deferred dig in `macro_term`) ──────────
+//
+// A fn-local `macro_rules!` invoked in TERM position used to go opaque: `add2!(2, 3)`
+// in `assert_eq!(add2!(2, 3), 5)` lifted to a coarse `macro:add2!(2,3)` EUF var the
+// solver satisfied tautologically (no teeth). Now `macro_term`'s `MacroSugar` expands
+// the invocation against the held definition at desugar time and feeds the expansion
+// (`2 + 3`) back to the factory, so the LHS digs to a GROUNDED `+(2, 3)` arithmetic
+// term. The grounded form has teeth: `== 5` is z3-SAT (consistent), the bad twin `== 6`
+// is z3-UNSAT (refutable) -- where the old opaque var made BOTH satisfiable.
+
+/// The lifted (lhs, rhs) of the single `assert_eq!` in a one-assert fn: the inv is an
+/// `and` connective with one `= (lhs, rhs)` operand (the conjoined-asserts shape).
+fn single_eq_atom(decl: &sugar_ir_symbolic::ContractDecl) -> (std::rc::Rc<Term>, std::rc::Rc<Term>) {
+    let operands = inv_operands(decl);
+    assert_eq!(
+        operands.len(),
+        1,
+        "expected exactly one assertion operand, got {operands:?}"
+    );
+    match operands[0].as_ref() {
+        Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
+            (args[0].clone(), args[1].clone())
+        }
+        other => panic!("expected a single `=` atom operand, got {other:?}"),
+    }
+}
+
+/// Run z3 over a lifted decl's asserted inv; returns Some(true)=sat, Some(false)=unsat,
+/// None if z3 is absent (skip-when-absent: a host-tool test must not fail without it).
+fn z3_sat_of_inv(decl: &sugar_ir_symbolic::ContractDecl, tag: &str) -> Option<bool> {
+    let z3 = "/usr/local/bin/z3";
+    if !std::path::Path::new(z3).exists() {
+        return None;
+    }
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(decl));
+    let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+    let inv = parsed[0]["inv"].clone();
+    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
+        .expect("expanded macro inv must compile to SMT-LIB");
+    let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+    let path = std::env::temp_dir().join(format!("sugar_macro_term_{tag}.smt2"));
+    std::fs::write(&path, &script).expect("write smt2");
+    let out = std::process::Command::new(z3).arg(&path).output().expect("run z3");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
+        "expanded macro relation must be well-sorted for z3:\n{stdout}\n--- script ---\n{script}"
+    );
+    Some(stdout.contains("sat") && !stdout.contains("unsat"))
+}
+
+#[test]
+fn term_position_macro_rules_expands_to_grounded_arith_with_teeth() {
+    // The macro `add2!` is held (fn-local `macro_rules!`); its term-position invocation
+    // expands to its body `$a + $b` and digs to a GROUNDED `+(2, 3)` -- NOT opaque.
+    let good = r#"
+#[test]
+fn t() {
+    macro_rules! add2 { ($a:expr, $b:expr) => { $a + $b }; }
+    assert_eq!(add2!(2, 3), 5);
+}
+"#;
+    let out = lift_file(&parse(good), "tests/macro_term.rs");
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    assert_eq!(out.decls.len(), 1, "warnings: {:?}", out.warnings);
+
+    // GROUNDED dig: LHS is `+(2, 3)`, RHS is the int const 5. No `macro:` var anywhere.
+    let (lhs, rhs) = single_eq_atom(&out.decls[0]);
+    match lhs.as_ref() {
+        Term::Ctor { name, args } => {
+            assert_eq!(name, "+", "term-position macro must expand to a `+` ctor, got {lhs:?}");
+            assert_eq!(args.len(), 2);
+            assert!(
+                matches!(args[0].as_ref(), Term::Const { value: ConstValue::Int(2), .. }),
+                "first operand must be the literal 2, got {:?}",
+                args[0]
+            );
+            assert!(
+                matches!(args[1].as_ref(), Term::Const { value: ConstValue::Int(3), .. }),
+                "second operand must be the literal 3, got {:?}",
+                args[1]
+            );
+        }
+        other => panic!("expected grounded `+(2,3)` ctor LHS, got {other:?}"),
+    }
+    assert!(
+        matches!(rhs.as_ref(), Term::Const { value: ConstValue::Int(5), .. }),
+        "RHS must be the int const 5, got {rhs:?}"
+    );
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        !doc.contains("macro:"),
+        "an EXPANDABLE term-position macro must NOT go opaque (no `macro:` var): {doc}"
+    );
+
+    // TEETH (good twin): `+(2,3) == 5` is z3-SAT (consistent).
+    if let Some(sat) = z3_sat_of_inv(&out.decls[0], "good") {
+        assert!(sat, "grounded `+(2,3) == 5` must be z3-SAT (consistent)");
+    }
+
+    // TEETH (bad twin): `+(2,3) == 6` is z3-UNSAT -- the grounded form REFUTES it,
+    // where the old opaque `macro:` var made it satisfiable (no teeth).
+    let bad = r#"
+#[test]
+fn t() {
+    macro_rules! add2 { ($a:expr, $b:expr) => { $a + $b }; }
+    assert_eq!(add2!(2, 3), 6);
+}
+"#;
+    let bad_out = lift_file(&parse(bad), "tests/macro_term.rs");
+    assert_eq!(bad_out.decls.len(), 1, "warnings: {:?}", bad_out.warnings);
+    let (bad_lhs, _) = single_eq_atom(&bad_out.decls[0]);
+    assert!(
+        matches!(bad_lhs.as_ref(), Term::Ctor { name, .. } if name == "+"),
+        "bad twin LHS must also be the grounded `+` ctor, got {bad_lhs:?}"
+    );
+    if let Some(sat) = z3_sat_of_inv(&bad_out.decls[0], "bad") {
+        assert!(!sat, "grounded `+(2,3) == 6` must be z3-UNSAT (teeth: the bad twin is refuted)");
+    }
+}
+
+#[test]
+fn unexpandable_term_position_macro_still_falls_back_to_opaque_var() {
+    // REGRESSION GUARD: a macro we hold NO definition for (a builtin / opaque macro,
+    // here `line!`) in term position must STILL fall back to the coarse opaque
+    // `macro:<tokens>` EUF var -- the deferred-dig expansion path declines (no held
+    // definition) and `MacroSugar::desugar` digs the pre-built opaque var unchanged.
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(line!(), 0);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/macro_term.rs");
+    assert_eq!(out.decls.len(), 1, "warnings: {:?}", out.warnings);
+    let (lhs, _) = single_eq_atom(&out.decls[0]);
+    match lhs.as_ref() {
+        Term::Var { name } => assert!(
+            name.starts_with("macro:line"),
+            "an unexpandable macro must stay the opaque `macro:` var, got `{name}`"
+        ),
+        other => panic!("an unexpandable macro must lift to the opaque `macro:` var, got {other:?}"),
+    }
+}
