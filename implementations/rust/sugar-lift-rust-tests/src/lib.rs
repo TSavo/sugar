@@ -1936,6 +1936,22 @@ fn try_macro_expansion_entries(
             )))
         }
     };
+    // TERMINAL (runtime-local expansion): if the expansion binds a local to a
+    // RUNTIME ITERATOR/SEARCHER accessor (`$s.utf8_chunks()`, `.into_searcher()`,
+    // an `iter.next()`), the assertions over that local pin a source literal
+    // against bin-2 runtime data, not a finite construction from source literals.
+    // Lifting them produces an EUF accessor over a bare local var; because the
+    // local is RE-BOUND identically across every sibling invocation in one fn,
+    // they coalesce onto ONE var and a distinct literal per invocation makes the
+    // merged invariant CONTRADICTORY (ex-falso). Refuse the whole expansion as
+    // one accounting unit -- the same outcome the lifter gives a hand-written
+    // `assert_eq!(lit, it.next().valid())` over a runtime iterator. exact-or-bail.
+    if let Some(local) = expansion_binds_runtime_iterator_local(&block.stmts) {
+        return Some(Err(format!(
+            "macro `{name}`: expansion binds a runtime iterator/searcher local `{local}` \
+             (bin-2: runtime data, not constructible from source literals); released to layer 0"
+        )));
+    }
     let mut temp_entries = Vec::new();
     let mut temp_skipped = Vec::new();
     let mut temp_lifted = 0usize;
@@ -1960,6 +1976,94 @@ fn try_macro_expansion_entries(
     } else {
         Some(Ok(temp_entries))
     }
+}
+
+/// Methods whose result is a RUNTIME ITERATOR / SEARCHER / stateful cursor: a
+/// value driven by `next()`-style consumption, never a finite construction from
+/// source literals. A local bound to such a result is bin-2 runtime data.
+fn is_runtime_iterator_producing_method(method: &str) -> bool {
+    matches!(
+        method,
+        "utf8_chunks"
+            | "into_searcher"
+            | "searcher"
+            | "iter"
+            | "iter_mut"
+            | "into_iter"
+            | "chars"
+            | "char_indices"
+            | "bytes"
+            | "split"
+            | "rsplit"
+            | "splitn"
+            | "lines"
+            | "matches"
+            | "match_indices"
+            | "next"
+            | "next_back"
+            | "nth"
+            | "nth_back"
+    )
+}
+
+/// Does any method call in `expr`'s receiver chain produce a runtime iterator /
+/// searcher? Walks the `recv.m1().m2()...` chain (and through parens/refs) so a
+/// `$string.utf8_chunks()` or `'a'.into_searcher($h)` initializer is detected.
+fn expr_chain_has_runtime_iterator(expr: &Expr) -> bool {
+    match expr {
+        Expr::MethodCall(mc) => {
+            is_runtime_iterator_producing_method(&mc.method.to_string())
+                || expr_chain_has_runtime_iterator(&mc.receiver)
+        }
+        Expr::Paren(p) => expr_chain_has_runtime_iterator(&p.expr),
+        Expr::Group(g) => expr_chain_has_runtime_iterator(&g.expr),
+        Expr::Reference(r) => expr_chain_has_runtime_iterator(&r.expr),
+        Expr::Try(t) => expr_chain_has_runtime_iterator(&t.expr),
+        Expr::Await(a) => expr_chain_has_runtime_iterator(&a.base),
+        Expr::Field(f) => expr_chain_has_runtime_iterator(&f.base),
+        // An array of runtime-stepped elements (`[Step::from(s.next()), ..]`) is
+        // itself runtime data when any element steps an iterator.
+        Expr::Array(a) => a.elems.iter().any(expr_chain_has_runtime_iterator),
+        Expr::Call(c) => c.args.iter().any(expr_chain_has_runtime_iterator),
+        _ => false,
+    }
+}
+
+/// If the expanded block binds a `let <id> = <init>` whose initializer is (or
+/// chains through) a runtime iterator/searcher accessor, return `<id>`. Such a
+/// local is bin-2 runtime data; asserts pinning a source literal against it must
+/// refuse, not EUF-discharge (and must never coalesce across invocations). The
+/// scan recurses into nested blocks because a macro body wrapped in `{{ .. }}`
+/// re-parses as a single `Stmt::Expr(Block)`, with the `let`s one level down.
+fn expansion_binds_runtime_iterator_local(stmts: &[syn::Stmt]) -> Option<String> {
+    for stmt in stmts {
+        match stmt {
+            syn::Stmt::Local(local) => {
+                if let Some(init) = &local.init {
+                    if expr_chain_has_runtime_iterator(&init.expr) {
+                        return Some(
+                            local
+                                .pat
+                                .to_token_stream()
+                                .to_string()
+                                .replace("mut ", "")
+                                .trim()
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+            // Recurse into a nested block (`{{ .. }}` expansion wrapper, or a
+            // bare `{ .. }` statement) so a `let` inside it is still seen.
+            syn::Stmt::Expr(Expr::Block(b), _) => {
+                if let Some(found) = expansion_binds_runtime_iterator_local(&b.block.stmts) {
+                    return Some(found);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 type ExprBindings = BTreeMap<String, Expr>;

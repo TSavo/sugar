@@ -9079,3 +9079,137 @@ fn t() {
     );
     assert_eq!(out.assertions_lifted, 1, "a literal-length repeat must lift: {:?}", out.skip_reasons);
 }
+
+#[test]
+fn assert_chunks_style_macro_matcher_matches_but_runtime_local_body_bails() {
+    // The `str_lossy.rs` shape: an in-source `macro_rules!` whose matcher has a
+    // metavar-bearing delimiter group inside a separated repetition with an
+    // OPTIONAL trailing comma. Two things are checked together:
+    //  (1) the MATCHER must match -- recurse into the `(..)` group to bind the
+    //      inner metavars, and the trailing comma must not break the match (the
+    //      refusal is NOT "no rule matched");
+    //  (2) the expanded BODY binds a runtime iterator local (`let mut iter =
+    //      $string.utf8_chunks(); let chunk = iter.next()`), so the asserts pin a
+    //      source literal against bin-2 runtime data -- exact-or-BAIL. Lifting
+    //      them would coalesce the per-invocation `chunk` onto ONE EUF var and a
+    //      distinct literal per invocation makes the merged invariant
+    //      CONTRADICTORY (ex-falso). The expansion must REFUSE as runtime data.
+    let src = r#"
+macro_rules! assert_chunks {
+    ( $string:expr, $(($valid:expr, $invalid:expr)),* $(,)? ) => {{
+        let mut iter = $string.utf8_chunks();
+        $(
+            let chunk = iter.next().expect("missing chunk");
+            assert_eq!($valid, chunk.valid());
+        )*
+    }};
+}
+
+#[test]
+fn t() {
+    assert_chunks!(b"hello", ("hello", b""));
+    assert_chunks!(b"world", ("world", b""));
+    assert_chunks!(b"AB", ("A", b"\xC2"), ("B", b""),);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/chunks.rs");
+    // (1) The matcher matched: no unsupported-grammar / "no rule matched" refusal.
+    assert!(
+        !out.skip_reasons.iter().any(|r| r.contains("no rule matched")),
+        "the metavar-group / trailing-comma matcher shape must MATCH (no 'no rule matched'): {:?}",
+        out.skip_reasons
+    );
+    // (2) The runtime-iterator-local body bails with the named runtime cause.
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("binds a runtime iterator/searcher local")),
+        "a runtime-iterator-local expansion must refuse as bin-2 runtime data: {:?}",
+        out.skip_reasons
+    );
+    // No fake-discharge: nothing lifted, and in particular NO `valid(chunk)` EUF
+    // atom (which would coalesce across invocations into an ex-falso contract).
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "a runtime-local expansion must NOT discharge: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        !out.decls.iter().any(|d| d.name.contains("method:valid")),
+        "no EUF `valid(chunk)` decl may be minted from a runtime-local expansion"
+    );
+}
+
+#[test]
+fn search_asserts_style_macro_with_runtime_searcher_bails() {
+    // The `pattern.rs` shape: a `$(($func:ident),*)`-style repetition body that
+    // builds an array from a runtime searcher (`$needle.into_searcher($hay)` then
+    // `searcher.$func()`), compared against a literal expectation. The matcher
+    // (now handling the bracket/array metavar group) must match, but the body is
+    // a runtime searcher -> exact-or-BAIL.
+    let src = r#"
+macro_rules! search_asserts {
+    ($haystack:expr, $needle:expr, [$($func:ident),*], $result:expr) => {
+        let mut searcher = $needle.into_searcher($haystack);
+        let arr = [$( Step::from(searcher.$func()) ),*];
+        assert_eq!(&arr[..], &$result);
+    }
+}
+#[test]
+fn t() {
+    search_asserts!("abc", 'a', [next, next], [Matches(0,1), Rejects(1,2)]);
+    search_asserts!("xyz", 'x', [next, next], [Matches(0,1), Rejects(1,2)]);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/search.rs");
+    // `search_asserts` is not an `assert`-prefixed macro, so a non-FOL expansion
+    // is ignored rather than recorded as an assertion refusal (it is not in the
+    // assertion denominator). The SOUND property to pin is the absence of a
+    // FAKE-DISCHARGE: the runtime-searcher body must NOT lift, and in particular
+    // must not mint a `&arr[..] = &<literal>` EUF decl that would coalesce across
+    // invocations into an ex-falso contract.
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "a runtime-searcher expansion must NOT discharge: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.decls.is_empty(),
+        "no EUF decl may be minted from a runtime-searcher expansion, got: {:?}",
+        out.decls.iter().map(|d| d.name.clone()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn const_safe_pure_call_expansion_still_coalesces_and_lifts() {
+    // DISCRIMINATION (non-regression): a macro that does NOT bind a runtime
+    // iterator local -- its body compares a PURE free-function call to a literal
+    // -- must still expand and lift, coalescing across invocations so a genuine
+    // contradiction stays UNSAT teeth (see assert_eq_const_safe_contradiction_is_
+    // unsat). The runtime-local guard must NOT catch this `let`-free body.
+    let src = r#"
+macro_rules! assert_eq_const_safe {
+    ($t:ty: $left:expr, $right:expr) => { assert_eq!($left, $right) };
+}
+fn make_val() -> u8 { 42 }
+#[test]
+fn t() {
+    assert_eq_const_safe!(u8: make_val(), 42);
+    assert_eq_const_safe!(u8: make_val(), 99);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/const_safe_guard.rs");
+    assert!(
+        !out.skip_reasons
+            .iter()
+            .any(|r| r.contains("binds a runtime iterator/searcher local")),
+        "a pure-call (let-free) expansion must NOT be caught by the runtime-local guard: {:?}",
+        out.skip_reasons
+    );
+    assert_eq!(
+        out.lifted, 1,
+        "the pure-call contradiction pair must still lift to one coalesced decl: {:?}",
+        out.skip_reasons
+    );
+    assert_eq!(out.decls.len(), 1, "the two invocations must coalesce");
+}
