@@ -316,7 +316,30 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // later iteration is a runtime quantity and a single universal would be false. EARNED
         // by `loop_body_mutates && !loop_mutation_is_simple_counter_only` (a genuine simple
         // counter does not reach here -- it digs or lifts as a forall).
-        || reason.contains("RUNTIME-VALUED accumulator");
+        || reason.contains("RUNTIME-VALUED accumulator")
+        // TERMINAL: an assertion in an `impl` METHOD body (top-level `Item::Impl` or a
+        // nested impl declared as a statement). It runs only when the method is INVOKED,
+        // observing the receiver's RUNTIME state (a mutated field, an atomic `.load`, a
+        // per-call accumulator, a `&mut self` counter). No single timeless `t` -- a SOURCE
+        // property (runtime-reachability class). EARNED structurally (the assert is inside
+        // a method body, which has no value at definition time). Typed as `ImplMethodEffect`.
+        || reason.contains("reachable only at runtime when the method is invoked")
+        // TERMINAL (REFUSE HALF of the if-context classification): an `if`-guard over a
+        // RUNTIME value (`&mut` borrow / mutation / runtime method call in the condition).
+        // `guard => then` is not a constructible predicate because the guard's truth is not
+        // fixed from source literals. EARNED by `if_guard_is_runtime`; a CONST/cfg/literal
+        // guard (`!false`, `cfg!(..)`) has NONE of these signals and STAYS the unclassified
+        // "under if context" reason (the fake-refuse guardrail). Typed `IfGuardRuntimeEffect`.
+        || reason.contains("under an if-guard over a runtime value")
+        // TERMINAL (REFUSE HALF of the expr-statement classification): a bare expression-
+        // statement whose asserted value is read through a `&mut` borrow / mutation (the
+        // `(assert_matches!(*MutRefWithDrop(&mut val).0, 0), mem::take(&mut val))` borrow/
+        // drop-scoping shape). A mutably-aliased read has no single timeless `t` -- a SOURCE
+        // property (kin to `mutable container is not temporally stable`). EARNED by
+        // `runtime_expr_statement_effect`; a statement over a CONSTRUCTED literal value has
+        // no `&mut`/mutation signal and STAYS the unclassified "unlifted expression
+        // statement" reason (the fake-refuse guardrail). Typed `RuntimeExprStmtEffect`.
+        || reason.contains("runtime expression-statement");
     if terminal {
         Disposition::Refused
     } else {
@@ -672,9 +695,19 @@ fn walk_non_test_fns(
                         if count == 0 {
                             continue;
                         }
-                        let reason = format!(
-                            "assertion in impl method `{method_name}`: reachable only when the method runs; released to layer 0"
-                        );
+                        // TERMINAL (NAMED Effect): an assertion in an impl method body
+                        // is reachable ONLY when the method runs, observing the receiver's
+                        // RUNTIME state (`self.done`, `self.exhausted`, an atomic `.load`,
+                        // a mutated field). There is no single timeless `t` at which to
+                        // read it -- the value depends on how many times the method has
+                        // been driven. A source property (kin to `temporally unstable`),
+                        // not a missing lifter. Detection is STRUCTURAL: the assert is
+                        // lexically inside an `impl` method body, which only executes at
+                        // call time. Typed as `ImplMethodEffect`.
+                        let reason = (ImplMethodEffect {
+                            boundary: format!("impl method `{method_name}`"),
+                        })
+                        .reason();
                         for _ in 0..count {
                             out.assertions_refused += 1;
                             out.skip_reasons.push(reason.clone());
@@ -3206,6 +3239,90 @@ impl SideEffect for LoopAdvanceEffect {
     }
 }
 
+/// IMPL-METHOD: an assertion in an `impl` method BODY (a top-level `Item::Impl`, or a
+/// nested `impl` declared as a statement inside a test fn). The method runs only when
+/// INVOKED, observing the receiver's RUNTIME state -- a mutated field, an atomic
+/// `.load(..)`, an accumulator advanced per call (`self.total_len += 1`), a `&mut self`
+/// counter (`self.done`, `self.exhausted`). There is no single timeless `t` at which to
+/// read the assert: its truth depends on how many times / in what order the method was
+/// driven. A SOURCE property (the runtime-reachability class, kin to `temporally
+/// unstable` and `under while context`), not a missing lifter. Detection is STRUCTURAL --
+/// the assert is lexically inside a method body, which has no value at definition time --
+/// so this can only refuse a genuine impl-method assert, never a top-level point-wise one.
+struct ImplMethodEffect {
+    boundary: String,
+}
+
+impl SideEffect for ImplMethodEffect {
+    fn reason(&self) -> String {
+        format!(
+            "assertion in an impl method, reachable only at runtime when the method is \
+             invoked ({}); the receiver's state has no single timeless `t`; refused",
+            self.boundary
+        )
+    }
+    fn boundary(&self) -> SourceMemento {
+        SourceMemento {
+            boundary: self.boundary.clone(),
+        }
+    }
+}
+
+/// IF-GUARD-RUNTIME: a `ConditionalSugar` BAIL whose guard reads a RUNTIME value -- a
+/// `&mut` borrow / mutation in the condition, or a method call on a runtime receiver
+/// (`it.peek_mut()`, `x.is_none()` on a runtime local). The implication `guard => then`
+/// is not a constructible point-wise predicate, because the guard's truth is not fixed
+/// from source literals; it varies with runtime state. A SOURCE property, not a lifter
+/// gap. Detection is EARNED by `if_guard_is_runtime`; a CONST/cfg/literal guard (`!false`,
+/// `cfg!(target_pointer_width = "64")`) is COMPUTABLE-but-unimplemented and STAYS
+/// UNCLASSIFIED -- the discrimination guardrail against fake-refuse.
+struct IfGuardRuntimeEffect {
+    boundary: String,
+}
+
+impl SideEffect for IfGuardRuntimeEffect {
+    fn reason(&self) -> String {
+        format!(
+            "assertion under an if-guard over a runtime value `{}` (not a constructible \
+             predicate; the guard's truth is not fixed from source literals); refused",
+            self.boundary
+        )
+    }
+    fn boundary(&self) -> SourceMemento {
+        SourceMemento {
+            boundary: self.boundary.clone(),
+        }
+    }
+}
+
+/// RUNTIME-EXPR-STMT: a bare expression-statement whose asserted value is read through a
+/// `&mut` borrow or a mutation -- e.g. the borrow/drop-scoping test
+/// `(assert_matches!(*MutRefWithDrop(&mut val).0, 0), std::mem::take(&mut val))`, where the
+/// asserted value is dereferenced from a mutable borrow and the sibling tuple element
+/// `mem::take`s the same local. A mutably-aliased read has no single timeless `t` (kin to
+/// `mutable container is not temporally stable` / `temporally unstable`). A SOURCE
+/// property, not a lifter gap. Detection is EARNED by `runtime_expr_statement_effect`
+/// (a `&mut` reference / compound-assignment / assignment in the statement); a statement
+/// over a CONSTRUCTED literal value matches none -> None -> stays unclassified.
+struct RuntimeExprStmtEffect {
+    boundary: String,
+}
+
+impl SideEffect for RuntimeExprStmtEffect {
+    fn reason(&self) -> String {
+        format!(
+            "assertion in a runtime expression-statement `{}` (value read through a \
+             `&mut` borrow / mutation, not constructible from source literals); refused",
+            self.boundary
+        )
+    }
+    fn boundary(&self) -> SourceMemento {
+        SourceMemento {
+            boundary: self.boundary.clone(),
+        }
+    }
+}
+
 /// BASE CASE: a finite literal domain (a literal array `[e0, e1, ...]` or a closed
 /// integer range `a..b` / `a..=b`). `desugar` materializes the element sequence in
 /// iterated order, each element its source `Expr` + its `ConstVal` when evaluable.
@@ -4466,6 +4583,143 @@ fn reflection_scrutinee(scrut: &Expr) -> Option<String> {
     }
 }
 
+/// Detect whether an `if`/`while` GUARD reads a RUNTIME value -- a `&mut` borrow or a
+/// mutation in the condition (`if let Some(p) = it.peek_mut()`), or an assignment. A
+/// runtime guard's truth is not fixed from source literals, so `guard => then` is not a
+/// constructible point-wise predicate (the `IfGuardRuntimeEffect` cause).
+///
+/// DISCRIMINATION GUARDRAIL: a CONST/cfg/literal guard is NOT runtime. A `cfg!(..)`
+/// macro is a compile-time target predicate (constant per build); a bare literal /
+/// const-folded boolean (`!false`, `!true`) is a constructible value. These return
+/// `false` -> the assert STAYS UNCLASSIFIED (computable-but-unimplemented), never
+/// fake-refused. We detect runtime ONLY by a positive syntactic signal (`&mut` /
+/// assignment); absence of that signal is treated as NOT-runtime (the conservative,
+/// non-draining default).
+fn if_guard_is_runtime(cond: &Expr) -> bool {
+    // A `cfg!(..)` guard is a compile-time constant predicate -- explicitly NOT runtime,
+    // even though it is a macro call. Strip the common `!cfg!(..)` / `cfg!(..)` shapes.
+    if expr_is_cfg_macro(cond) {
+        return false;
+    }
+    #[derive(Default)]
+    struct Scan {
+        runtime: bool,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Scan {
+        fn visit_expr_reference(&mut self, r: &'ast syn::ExprReference) {
+            if r.mutability.is_some() {
+                self.runtime = true;
+            }
+            syn::visit::visit_expr_reference(self, r);
+        }
+        fn visit_expr_assign(&mut self, _: &'ast syn::ExprAssign) {
+            self.runtime = true;
+        }
+        fn visit_expr_binary(&mut self, b: &'ast syn::ExprBinary) {
+            if matches!(
+                b.op,
+                BinOp::AddAssign(_)
+                    | BinOp::SubAssign(_)
+                    | BinOp::MulAssign(_)
+                    | BinOp::DivAssign(_)
+                    | BinOp::RemAssign(_)
+                    | BinOp::BitXorAssign(_)
+                    | BinOp::BitAndAssign(_)
+                    | BinOp::BitOrAssign(_)
+                    | BinOp::ShlAssign(_)
+                    | BinOp::ShrAssign(_)
+            ) {
+                self.runtime = true;
+            }
+            syn::visit::visit_expr_binary(self, b);
+        }
+    }
+    let mut scan = Scan::default();
+    syn::visit::Visit::visit_expr(&mut scan, cond);
+    scan.runtime
+}
+
+/// Is `cond` a `cfg!(..)` / `!cfg!(..)` macro call? A target-config predicate is a
+/// compile-time constant, not a runtime value -- so it must NOT be classified runtime.
+fn expr_is_cfg_macro(cond: &Expr) -> bool {
+    let inner = match cond {
+        Expr::Unary(u) if matches!(u.op, syn::UnOp::Not(_)) => u.expr.as_ref(),
+        other => other,
+    };
+    matches!(inner, Expr::Macro(m) if m.mac.path.segments.last().is_some_and(|s| s.ident == "cfg"))
+}
+
+/// A bare expression-statement carries a RUNTIME read iff its asserted value flows through
+/// a `&mut` borrow or a mutation -- e.g. the borrow/drop-scoping tuple
+/// `(assert_matches!(*MutRefWithDrop(&mut val).0, 0), mem::take(&mut val))`. A mutably
+/// aliased read has no single timeless `t`. Returns the typed `RuntimeExprStmtEffect`.
+///
+/// DISCRIMINATION GUARDRAIL: detection is by a positive `&mut` / assignment signal in the
+/// statement; a statement over a CONSTRUCTED literal value (no `&mut`, no mutation) returns
+/// None -> stays unclassified. Only fires when the statement actually carries an assert.
+fn runtime_expr_statement_effect(expr: &Expr) -> Option<Box<dyn SideEffect>> {
+    if count_asserts_in_expr(expr) == 0 {
+        return None;
+    }
+    #[derive(Default)]
+    struct Scan {
+        runtime: bool,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Scan {
+        fn visit_expr_reference(&mut self, r: &'ast syn::ExprReference) {
+            if r.mutability.is_some() {
+                self.runtime = true;
+            }
+            syn::visit::visit_expr_reference(self, r);
+        }
+        fn visit_expr_assign(&mut self, _: &'ast syn::ExprAssign) {
+            self.runtime = true;
+        }
+        fn visit_expr_binary(&mut self, b: &'ast syn::ExprBinary) {
+            if matches!(
+                b.op,
+                BinOp::AddAssign(_)
+                    | BinOp::SubAssign(_)
+                    | BinOp::MulAssign(_)
+                    | BinOp::DivAssign(_)
+                    | BinOp::RemAssign(_)
+                    | BinOp::BitXorAssign(_)
+                    | BinOp::BitAndAssign(_)
+                    | BinOp::BitOrAssign(_)
+                    | BinOp::ShlAssign(_)
+                    | BinOp::ShrAssign(_)
+            ) {
+                self.runtime = true;
+            }
+            syn::visit::visit_expr_binary(self, b);
+        }
+    }
+    let mut scan = Scan::default();
+    syn::visit::Visit::visit_expr(&mut scan, expr);
+    if scan.runtime {
+        Some(Box::new(RuntimeExprStmtEffect {
+            boundary: token_key(expr),
+        }))
+    } else {
+        None
+    }
+}
+
+/// The first method name in an `impl` block that carries at least one assertion (for the
+/// `ImplMethodEffect` boundary description). Returns None if no method body carries an
+/// assert (so a pure impl block -- e.g. a `const`-only or assert-free impl declared as a
+/// statement -- is NOT refused; it stays on the generic unclassified path).
+fn impl_block_method_name(imp: &syn::ItemImpl) -> Option<String> {
+    imp.items.iter().find_map(|it| {
+        if let syn::ImplItem::Fn(m) = it {
+            if count_asserts_in_stmts(&m.block.stmts) > 0 {
+                return Some(m.sig.ident.to_string());
+            }
+        }
+        None
+    })
+}
+
 /// If a statement-position expression flows the asserted value through a RUNTIME
 /// continuation whose value is NOT IN SCOPE -- a future continuation (`.await` /
 /// free-fn `block_on(async{..})`), opaque compile-time reflection (`match Type::of::<T>()
@@ -5003,11 +5257,27 @@ fn collect_assertion_entries(
                         + i.else_branch
                             .as_ref()
                             .map_or(0, |(_, e)| count_asserts_in_expr(e));
+                    // The `ConditionalSugar` desugar BAILED. Split the residue by CAUSE:
+                    //   * a RUNTIME guard (reads a runtime value -- a mutable/aliased local,
+                    //     a `&mut` borrow, a method call on a runtime receiver) is a NAMED
+                    //     terminal Effect: `guard => then` cannot be a constructible point-wise
+                    //     predicate because the guard's truth is not fixed from source literals.
+                    //     Typed as `IfGuardRuntimeEffect`. (The Hit side.)
+                    //   * a CONST/cfg/literal guard (`!false`, `cfg!(..)`, a const-eq) is
+                    //     COMPUTABLE-but-unimplemented: the implication just is not lifted yet.
+                    //     It STAYS UNCLASSIFIED -- refusing it would be FAKE-REFUSE (the inverse
+                    //     sin of fake-dig). This is the discrimination guardrail.
+                    let reason = if if_guard_is_runtime(&i.cond) {
+                        (IfGuardRuntimeEffect {
+                            boundary: token_key(&i.cond),
+                        })
+                        .reason()
+                    } else {
+                        "assertion under if context: not unconditional point-wise; released to layer 0"
+                            .to_string()
+                    };
                     for _ in 0..count {
-                        skipped.push(
-                            "assertion under if context: not unconditional point-wise; released to layer 0"
-                                .to_string(),
-                        );
+                        skipped.push(reason.clone());
                     }
                 }
             }
@@ -5296,18 +5566,38 @@ fn collect_assertion_entries(
                     // unclassified work. The typed `SideEffect` names the boundary; we render
                     // its `reason()` (the wire format is unchanged). A pure adaptor + pure
                     // body returns None and keeps the generic skip (dissolvable in --dissolve).
-                    let reason = if let Stmt::Expr(e, _) = other {
-                        // First the closure-method bucket (fold/for_each over an opaque
-                        // accessor / side-effecting body). Then the statement-position
-                        // qualified continue paths (value NOT in scope): a future
-                        // continuation (`.await` / free-fn `block_on(async{..})`), opaque
-                        // reflection (`match Type::of::<T>().kind`), or a runtime loop. A
-                        // statement carrying a CONSTRUCTED literal matches none -> None ->
-                        // the generic unclassified skip (the value-IN-scope dig path).
-                        closure_method_terminal_effect(e, &temporal_scope, &let_inits)
-                            .or_else(|| statement_position_terminal_effect(e))
-                    } else {
-                        None
+                    let reason = match other {
+                        Stmt::Expr(e, _) => {
+                            // First the closure-method bucket (fold/for_each over an opaque
+                            // accessor / side-effecting body). Then the statement-position
+                            // qualified continue paths (value NOT in scope): a future
+                            // continuation (`.await` / free-fn `block_on(async{..})`), opaque
+                            // reflection (`match Type::of::<T>().kind`), or a runtime loop.
+                            // Finally a RUNTIME EXPRESSION-STATEMENT (a tuple/expr whose
+                            // asserted value is read through a `&mut` borrow or a mutation --
+                            // e.g. `(assert_matches!(*MutRefWithDrop(&mut val).0, 0),
+                            // mem::take(&mut val))`): mutably aliased, so the read has no single
+                            // timeless `t`. Typed as `RuntimeExprStmtEffect`. A statement
+                            // carrying a CONSTRUCTED literal matches none -> None -> the generic
+                            // unclassified skip (the value-IN-scope dig path).
+                            closure_method_terminal_effect(e, &temporal_scope, &let_inits)
+                                .or_else(|| statement_position_terminal_effect(e))
+                                .or_else(|| runtime_expr_statement_effect(e))
+                        }
+                        // A nested `impl` block declared as a STATEMENT inside the test fn
+                        // (`impl Write for W { fn write_str(..) { assert_eq!(..) } }`). Its
+                        // method-body asserts are reachable ONLY when the method runs, with
+                        // the receiver's runtime state -- the SAME terminal cause as the
+                        // top-level `Item::Impl` bucket, surfaced here because the impl is a
+                        // statement, not a top-level Item. Typed as `ImplMethodEffect`.
+                        Stmt::Item(syn::Item::Impl(imp)) => {
+                            impl_block_method_name(imp).map(|name| {
+                                Box::new(ImplMethodEffect {
+                                    boundary: format!("impl method `{name}`"),
+                                }) as Box<dyn SideEffect>
+                            })
+                        }
+                        _ => None,
                     }
                     .map(|e| e.reason())
                     .unwrap_or_else(|| {
@@ -13518,6 +13808,9 @@ mod lifter_key_tests {
             "assertion in a side-effecting closure body (mutates captured state / advances an iterator); not a pure point-wise claim; refused",
             "assertion in a closure over an opaque/effectful accessor (bin-2: runtime data, not constructible from source literals); refused",
             "unsupported term `buf[i]`: mutable container is not temporally stable",
+            "assertion in an impl method, reachable only at runtime when the method is invoked (impl method `next`); the receiver's state has no single timeless `t`; refused",
+            "assertion under an if-guard over a runtime value `*p = true` (not a constructible predicate; the guard's truth is not fixed from source literals); refused",
+            "assertion in a runtime expression-statement `(assert_matches ! (..) , mem :: take (& mut val))` (value read through a `&mut` borrow / mutation, not constructible from source literals); refused",
         ] {
             assert_eq!(refusal_disposition(r), Refused, "should be terminal: {r}");
         }
@@ -13541,6 +13834,182 @@ mod lifter_key_tests {
         ] {
             assert_eq!(refusal_disposition(r), Unclassified, "should be work: {r}");
         }
+    }
+
+    // ── Runtime-residue refusal: impl-method / runtime if-guard / runtime expr-stmt ──
+    //
+    // The Hit side of Outcome{Dug|Hit}: a runtime/un-nameable value is a NAMED terminal
+    // Effect (refused), accounted not silent. Each test pairs the REFUSE direction (a
+    // detected runtime cause) with the DISCRIMINATION direction (a const/computable shape
+    // that STAYS UNCLASSIFIED -- the inverse-sin guardrail against fake-refuse).
+
+    #[test]
+    fn assertion_in_impl_method_is_refused_runtime_reachability() {
+        // REFUSE: an assert in a top-level `impl` method body reads receiver state that
+        // only exists when the method runs (corpus: iter/adapters/mod.rs `next`,
+        // map_windows.rs `check`). A source property -- reachable only at runtime.
+        let src = r#"
+            struct W { done: bool }
+            impl Iterator for W {
+                type Item = i64;
+                fn next(&mut self) -> Option<i64> {
+                    assert!(!self.done, "already returned None");
+                    None
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(out.assertions_lifted, 0, "an impl-method assert must not lift");
+        assert!(
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("reachable only at runtime when the method is invoked")
+                    && refusal_disposition(r) == Disposition::Refused),
+            "the impl-method assert must be REFUSED with its named runtime cause: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn assertion_in_nested_impl_statement_is_refused_runtime_reachability() {
+        // REFUSE: a nested `impl` declared as a STATEMENT inside a test fn (corpus:
+        // fmt/float.rs `ExactExpWriter::finish`/`write_str`, ptr.rs `set_tag`,
+        // hint.rs `Drop::drop`). Same runtime cause, surfaced at the expr-stmt site.
+        let src = r#"
+            #[test]
+            fn t() {
+                struct W { pos: usize }
+                impl W {
+                    fn finish(self) {
+                        assert_eq!(self.pos, 3);
+                    }
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(out.assertions_lifted, 0, "a nested-impl-method assert must not lift");
+        assert!(
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("reachable only at runtime when the method is invoked")
+                    && refusal_disposition(r) == Disposition::Refused),
+            "the nested-impl-method assert must be REFUSED with its named runtime cause: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn runtime_expr_statement_through_mut_borrow_is_refused() {
+        // REFUSE: the borrow/drop-scoping tuple statement (corpus:
+        // macros.rs::temporary_scope_introduction). The asserted value is read through a
+        // `&mut` borrow and the sibling element `mem::take`s the same local -- mutably
+        // aliased, no single timeless `t`.
+        let src = r#"
+            #[test]
+            fn t() {
+                let mut val = 0;
+                (assert_matches!(*MutRefWithDrop(&mut val).0, 0), std::mem::take(&mut val));
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(out.assertions_lifted, 0, "a mut-borrow expr-stmt assert must not lift");
+        assert!(
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("runtime expression-statement")
+                    && refusal_disposition(r) == Disposition::Refused),
+            "the mut-borrow tuple-statement assert must be REFUSED with its named cause: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn const_if_guard_and_pure_expr_statement_stay_unclassified_not_fake_refused() {
+        // DISCRIMINATION (the fake-refuse guardrail, both directions):
+        //
+        // (1) a CONST/literal if-guard (`!false`, corpus: bool.rs::test_bool_not) and a
+        //     `cfg!(..)` if-guard (corpus: step.rs / fmt/mod.rs) are COMPUTABLE-but-
+        //     unimplemented -- they STAY the unclassified "under if context" reason, never
+        //     the runtime-if-guard refusal.
+        for guard_src in [
+            r#"
+            #[test]
+            fn t() {
+                if !false {
+                    assert!(true);
+                } else {
+                    assert!(false);
+                }
+            }
+            "#,
+            r#"
+            #[test]
+            fn t() {
+                if cfg!(target_pointer_width = "64") {
+                    assert_eq!(1i64, 1i64);
+                }
+            }
+            "#,
+        ] {
+            let out = lift_src(guard_src);
+            assert!(
+                out.skip_reasons
+                    .iter()
+                    .any(|r| r.contains("under if context")),
+                "a const/cfg if-guard must STAY unclassified (not fake-refused): {:?}",
+                out.skip_reasons
+            );
+            assert!(
+                out.skip_reasons
+                    .iter()
+                    .all(|r| !r.contains("under an if-guard over a runtime value")),
+                "a const/cfg if-guard must NOT be runtime-refused (fake-refuse): {:?}",
+                out.skip_reasons
+            );
+        }
+
+        // (2) a PURE expr-statement (a tuple with no `&mut` / mutation) is not runtime --
+        //     it must NOT be runtime-refused as an expression-statement.
+        let pure = r#"
+            #[test]
+            fn t() {
+                (assert_matches!(SOME_CONST, 0), 1);
+            }
+        "#;
+        let out = lift_src(pure);
+        assert!(
+            out.skip_reasons
+                .iter()
+                .all(|r| !r.contains("runtime expression-statement")),
+            "a pure (no-&mut) expr-statement must NOT be runtime-refused (fake-refuse): {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn runtime_if_guard_over_mut_borrow_is_refused() {
+        // REFUSE direction for the if-guard cause: a guard that takes a `&mut` borrow is a
+        // runtime predicate (its truth is not fixed from source literals). This arms the
+        // gate; NO corpus member hits it today (all 7 corpus if-guards are const/cfg), so
+        // it is an EARNED detector, not a count-draining relabel.
+        let src = r#"
+            #[test]
+            fn t() {
+                let mut v = vec![1i64];
+                if take_mut(&mut v) {
+                    assert!(true);
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        assert!(
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("under an if-guard over a runtime value")
+                    && refusal_disposition(r) == Disposition::Refused),
+            "a `&mut`-borrow if-guard must be REFUSED with its named runtime cause: {:?}",
+            out.skip_reasons
+        );
     }
 
     #[test]
