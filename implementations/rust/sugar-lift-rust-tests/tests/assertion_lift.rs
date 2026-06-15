@@ -518,7 +518,7 @@ fn assert_await_call_eq_atom(formula: &Formula, expected_call: &str, expected_rh
 #[test]
 fn lifts_single_assert_eq_as_inv_only_consistency_contract() {
     let src = r#"
-fn make_value() -> i32 { 6 }
+fn make_value() -> i32 { opaque() }
 
 #[test]
 fn scalar_is_six() {
@@ -546,7 +546,7 @@ fn scalar_is_six() {
 #[test]
 fn conjoins_contradictory_assert_eq_atoms_in_one_inv() {
     let src = r#"
-fn make_value() -> i32 { 6 }
+fn make_value() -> i32 { opaque() }
 
 #[test]
 fn scalar_contradiction() {
@@ -864,7 +864,7 @@ fn assert_same(actual: i32, expected: i32) {
     assert_eq!(actual, expected);
 }
 
-fn make_value() -> i32 { 6 }
+fn make_value() -> i32 { opaque() }
 
 #[test]
 fn scalar_is_six() {
@@ -893,7 +893,7 @@ fn assert_same(actual: i32, expected: i32) {
     assert_eq!(actual, expected);
 }
 
-fn make_value() -> i32 { 6 }
+fn make_value() -> i32 { opaque() }
 
 #[test]
 fn scalar_contradiction() {
@@ -924,8 +924,8 @@ fn assert_same(actual: i32, expected: i32) {
     assert_eq!(actual, expected);
 }
 
-fn first_value() -> i32 { 6 }
-fn second_value() -> i32 { 7 }
+fn first_value() -> i32 { opaque() }
+fn second_value() -> i32 { opaque2() }
 
 #[test]
 fn distinct_calls() {
@@ -952,7 +952,7 @@ fn distinct_calls() {
 #[test]
 fn lifts_assert_binary_equality() {
     let src = r#"
-fn make_value() -> i32 { 6 }
+fn make_value() -> i32 { opaque() }
 
 #[test]
 fn scalar_assert_binary() {
@@ -973,7 +973,7 @@ fn scalar_assert_binary() {
 #[test]
 fn direct_call_result_assertion_uses_euf_callsite_key_from_rhs() {
     let src = r#"
-fn decoded_len_estimate(n: usize) -> usize { n - 1 }
+fn decoded_len_estimate(n: usize) -> usize { opaque(n) }
 
 #[test]
 fn decoded_len_est() {
@@ -1137,7 +1137,7 @@ fn size_of_64() {
 #[test]
 fn cfg_test_modules_lift_without_explicit_target_cfg() {
     let src = r#"
-fn make_value() -> i32 { 6 }
+fn make_value() -> i32 { opaque() }
 
 #[cfg(test)]
 mod tests {
@@ -1438,7 +1438,7 @@ fn float_mixed_refinement_gap() {
 #[test]
 fn exponent_float_literals_normalize_to_exact_real_constants() {
     let src = r#"
-fn value() -> f64 { 0.001 }
+fn value() -> f64 { opaque() }
 
 #[test]
 fn exponent_float_literal() {
@@ -3488,10 +3488,16 @@ fn dynamic_or_unicode_macro_sources() {
         .contains("no liftable scalar assertions"));
 }
 
+// NOTE: these three EUF-callsite-key tests use an OPAQUE-bodied `value() { opaque() }`
+// (a call to a no-source fn) deliberately. A pure literal body (`{ 6 }`) would now be
+// PEELED by term-position value-call inlining (capability #1) to the grounded literal
+// `6`, eliminating the `call:value` EUF symbol these tests exist to exercise. The opaque
+// body BAILS the peel (its body bottoms out in a no-source `call:opaque`), so `value()`
+// stays the opaque `call:value` ctor under its EUF callsite key -- exactly the path here.
 #[test]
 fn call_result_comparison_assertions_use_fol_atoms_and_euf_key() {
     let src = r#"
-fn value() -> i32 { 6 }
+fn value() -> i32 { opaque() }
 
 #[test]
 fn comparison_atoms() {
@@ -3517,7 +3523,7 @@ fn comparison_atoms() {
 #[test]
 fn same_callsite_connectives_lift_as_fol_connectives_under_euf_key() {
     let src = r#"
-fn value() -> i32 { 6 }
+fn value() -> i32 { opaque() }
 
 #[test]
 fn connective_atoms() {
@@ -3557,7 +3563,7 @@ fn connective_atoms() {
 #[test]
 fn negated_call_result_comparison_lifts_as_fol_not_under_euf_key() {
     let src = r#"
-fn value() -> i32 { 6 }
+fn value() -> i32 { opaque() }
 
 #[test]
 fn negated_comparison() {
@@ -5934,10 +5940,14 @@ fn let_init_test() {
 #[test]
 fn tuple_with_non_literal_elements_lifts_as_agg_term() {
     // RED before: a tuple with a call element was refused ("contains non-literal
-    // element"). GREEN after: it lifts as agg:Tuple(<element terms>).
+    // element"). GREEN after: it lifts as agg:Tuple(<element terms>). The elements use
+    // OPAQUE-bodied helpers (`{ opaque() }`) so they stay opaque `call:f`/`call:g` terms:
+    // a pure literal body would now be PEELED by term-position value-call inlining
+    // (capability #1) to `(1, 2)`, a grounded literal tuple, which is no longer the
+    // "non-literal element" agg-term path this test exercises.
     let src = r#"
-fn f() -> i32 { 1 }
-fn g() -> i32 { 2 }
+fn f() -> i32 { opaque() }
+fn g() -> i32 { opaque2() }
 
 #[test]
 fn tup() {
