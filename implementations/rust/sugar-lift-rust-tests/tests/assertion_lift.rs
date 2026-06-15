@@ -1937,47 +1937,55 @@ fn bool_compare_exchange() {
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
     assert_eq!(out.decls.len(), 1);
     assert_eq!(out.decls[0].name, "tests/atomic.rs::bool_compare_exchange");
+    // The RHS `Ok(false)` is a std `Result` CONSTRUCTOR -- monadic sugar -- so it
+    // GROUNDS to the ADT-backed `res:ok(false)` ctor; the equality is a FLAT
+    // structural `=` (NOT the old federated `call:eq:Ok(..) == true`). The LHS
+    // `a.compare_exchange(..)` is an opaque `method:compare_exchange` Result-valued
+    // call (declared `SugarResult` by the compiler so it meets the RHS).
     match inv_operands(&out.decls[0])[0].as_ref() {
         Formula::Atomic { name, args } => {
-            assert_eq!(name, "=");
+            assert_eq!(name, "=", "the grounded Result equality is a flat structural `=`");
             assert_eq!(args.len(), 2);
+            // LHS: opaque method call.
             match args[0].as_ref() {
+                Term::Ctor { name, .. } => assert_eq!(name, "method:compare_exchange"),
+                other => panic!("expected the opaque compare_exchange call as lhs, got {other:?}"),
+            }
+            // RHS: grounded res:ok(false).
+            match args[1].as_ref() {
                 Term::Ctor { name, args } => {
-                    assert_eq!(name, "call:eq:Ok");
-                    assert_eq!(args.len(), 2);
+                    assert_eq!(name, "res:ok", "the RHS Ok(false) grounds to the res:ok ctor");
+                    assert_eq!(args.len(), 1);
                     match args[0].as_ref() {
-                        Term::Ctor { name, .. } => assert_eq!(name, "method:compare_exchange"),
-                        other => panic!("expected compare_exchange lhs, got {other:?}"),
-                    }
-                    match args[1].as_ref() {
-                        Term::Ctor { name, args } => {
-                            assert_eq!(name, "call:Ok");
-                            assert_eq!(args.len(), 1);
-                            match args[0].as_ref() {
-                                Term::Const {
-                                    value: ConstValue::Bool(value),
-                                    ..
-                                } => assert!(!*value),
-                                other => panic!("expected bool constructor arg, got {other:?}"),
-                            }
-                        }
-                        other => panic!("expected Ok constructor rhs, got {other:?}"),
+                        Term::Const { value: ConstValue::Bool(value), .. } => assert!(!*value),
+                        other => panic!("expected bool constructor arg, got {other:?}"),
                     }
                 }
-                other => panic!("expected operator call lhs, got {other:?}"),
+                other => panic!("expected res:ok constructor rhs, got {other:?}"),
             }
-            assert_scalar_const(&args[1], ExpectedScalar::Bool(true));
         }
         other => panic!("expected equality atom, got {other:?}"),
+    }
+    assert!(
+        !decl_mentions_ctor(&out.decls[0], "call:eq:Ok") && !decl_mentions_ctor(&out.decls[0], "call:Ok"),
+        "no federated call:eq:Ok / call:Ok may survive: {:?}",
+        out.decls[0].inv
+    );
+    // The opaque Result call meets the grounded Ok(false) well-sortedly -> SAT.
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "compare_exchange_ok") {
+        assert!(sat, "the opaque compare_exchange == Ok(false) must be consistent (SAT)");
     }
 }
 
 #[test]
-fn nullary_option_constructor_expected_value_uses_operator_dispatch() {
+fn nullary_option_constructor_over_literal_range_grounds_to_none() {
     // Vendor shape: rust-src library/coretests/tests/iter/range.rs::test_range_nth.
-    // `None` is the nullary Option constructor, not a local variable. Keeping it
-    // as a constructor lets the user-overridable equality dispatch stay
-    // explicit and location-keyed instead of pretending this is scalar `=`.
+    // `(10..15).nth(5)` is `.nth` over a LITERAL half-open range (elements
+    // 10,11,12,13,14 -- length 5), so index 5 is PAST THE END -> the value IS
+    // `None`. With the positional `.nth` terminal + `MonadicSugar` it GROUNDS to
+    // `opt:none`; the RHS `None` also grounds to `opt:none`. The atom is the FLAT
+    // structural `eq(opt:none, opt:none)` -- an ADT-backed Option equality, not the
+    // old federated `call:eq:None(method:nth(..), call:None) == true` EUF.
     let src = r#"
 #[test]
 fn test_range_nth() {
@@ -1992,37 +2000,42 @@ fn test_range_nth() {
 
     match inv_operands(&out.decls[0])[0].as_ref() {
         Formula::Atomic { name, args } => {
-            assert_eq!(name, "=");
+            assert_eq!(name, "=", "the grounded Option equality is a flat structural `=`");
             assert_eq!(args.len(), 2);
-            match args[0].as_ref() {
-                Term::Ctor { name, args } => {
-                    assert_eq!(name, "call:eq:None");
-                    assert_eq!(args.len(), 2);
-                    match args[0].as_ref() {
-                        Term::Ctor { name, .. } => assert_eq!(name, "method:nth"),
-                        other => panic!("expected nth lhs, got {other:?}"),
+            for side in args {
+                match side.as_ref() {
+                    Term::Ctor { name, args } => {
+                        assert_eq!(name, "opt:none", "both sides ground to opt:none (past-end value)");
+                        assert!(args.is_empty());
                     }
-                    match args[1].as_ref() {
-                        Term::Ctor { name, args } => {
-                            assert_eq!(name, "call:None");
-                            assert!(args.is_empty());
-                        }
-                        other => panic!("expected None constructor rhs, got {other:?}"),
-                    }
+                    other => panic!("expected opt:none ctor, got {other:?}"),
                 }
-                other => panic!("expected operator call lhs, got {other:?}"),
             }
-            assert_scalar_const(&args[1], ExpectedScalar::Bool(true));
         }
         other => panic!("expected equality atom, got {other:?}"),
+    }
+    assert!(
+        !decl_mentions_ctor(&out.decls[0], "method:nth")
+            && !decl_mentions_ctor(&out.decls[0], "call:eq:None"),
+        "no opaque method:nth / federated call:eq:None may survive: {:?}",
+        out.decls[0].inv
+    );
+    // `opt:none == opt:none` is consistent (SAT).
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "range_nth_none") {
+        assert!(sat, "`None == None` (both opt:none) must be SAT");
     }
 }
 
 #[test]
-fn option_test_and_constructor_rows_stay_location_keyed() {
+fn option_test_and_constructor_rows_ground_to_structural_option_equality() {
     // Vendor shape: rust-src library/coretests/tests/option.rs::test_and.
-    // The inputs are immutable Option values; the equality itself is still
-    // Option::eq, so this is one location-keyed operator-dispatch contract.
+    // The RHS values are std `Option` CONSTRUCTORS (`Some(2)`/`None`) -- monadic
+    // sugar -- so with `MonadicSugar` they GROUND to the ADT-backed `opt:some`/
+    // `opt:none` ctor and the equality is a FLAT structural `=` (NOT the old
+    // federated `call:eq:Some(..) == true` EUF). The LHS `x.and(..)` is an opaque
+    // `method:and` call -- declared with the matching `SugarOption` return sort by
+    // the compiler, so it meets the RHS Option value well-sortedly. No federated
+    // `call:eq:*` may survive.
     let src = r#"
 use core::option::*;
 
@@ -2057,25 +2070,33 @@ fn test_and() {
 
     let operands = inv_operands(&out.decls[0]);
     assert_eq!(operands.len(), 8);
+    // Each row is a FLAT structural `=` whose operands are monadic Option ctors
+    // (`opt:some`/`opt:none`) or an opaque `method:`/`call:` Option-valued call.
+    // At least one operand must be a grounded monadic ctor (the RHS), proving the
+    // constructor grounded rather than staying a federated EUF var.
+    let monadic = |t: &Term| matches!(t, Term::Ctor { name, .. } if name == "opt:some" || name == "opt:none");
     for operand in operands {
         match operand.as_ref() {
             Formula::Atomic { name, args } => {
-                assert_eq!(name, "=");
+                assert_eq!(name, "=", "the grounded Option equality is a flat structural `=`");
                 assert_eq!(args.len(), 2);
-                match args[0].as_ref() {
-                    Term::Ctor { name, args } => {
-                        assert!(
-                            name == "call:eq:Some" || name == "call:eq:None",
-                            "unexpected operator-dispatch call: {name}"
-                        );
-                        assert_eq!(args.len(), 2);
-                    }
-                    other => panic!("expected operator-dispatch lhs, got {other:?}"),
-                }
-                assert_scalar_const(&args[1], ExpectedScalar::Bool(true));
+                assert!(
+                    monadic(args[0].as_ref()) || monadic(args[1].as_ref()),
+                    "at least one operand must be a grounded opt:some/opt:none ctor: {operand:?}"
+                );
             }
             other => panic!("expected equality atom, got {other:?}"),
         }
+    }
+    assert!(
+        !decl_mentions_ctor(&out.decls[0], "call:eq:"),
+        "no federated call:eq:* EUF may survive: {:?}",
+        out.decls[0].inv
+    );
+    // The whole conjoined contract must be well-sorted + SAT under z3 (the opaque
+    // `method:and` declared SugarOption meets the Option values).
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "option_test_and") {
+        assert!(sat, "the test_and contract must be consistent (SAT) under z3");
     }
 }
 
@@ -2380,7 +2401,11 @@ fn repeat_take_size_hint() {
             }
             match args[1].as_ref() {
                 Term::Var { name } => {
-                    assert_eq!(name, "literal:Tuple(i:3,c:call:Some(i:3))");
+                    // The tuple's `Some(3)` element grounds to the monadic `opt:some`
+                    // ctor (an Option value over a literal), and a monadic ctor over
+                    // literals is itself a literal identity -- so the tuple stays an
+                    // all-literal `literal:Tuple` aggregate (the EUF key is stable).
+                    assert_eq!(name, "literal:Tuple(i:3,c:opt:some(i:3))");
                 }
                 other => panic!("expected Tuple literal identity, got {other:?}"),
             }
@@ -8604,6 +8629,284 @@ fn dug_eq_int_pairs(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<(i128, i128)>
     out
 }
 
+/// The ctor-NAME pairs of every `=` atom whose BOTH operands are `Term::Ctor`
+/// (e.g. `=(opt:some(1), opt:some(1))` -> `("opt:some","opt:some")`). Used to
+/// assert the monadic `Option`/`Result` constructors GROUND to their reserved
+/// ADT-backed names (not the federated `call:eq:Some` EUF, which would be a
+/// `=(call:eq:Some(..), true)` shape with a Bool-const operand, not two ctors).
+fn dug_eq_ctor_name_pairs(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<(String, String)> {
+    fn ctor_name(t: &Term) -> Option<String> {
+        match t {
+            Term::Ctor { name, .. } => Some(name.clone()),
+            _ => None,
+        }
+    }
+    fn walk(f: &Formula, out: &mut Vec<(String, String)>) {
+        match f {
+            Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
+                if let (Some(a), Some(b)) = (ctor_name(args[0].as_ref()), ctor_name(args[1].as_ref()))
+                {
+                    out.push((a, b));
+                }
+            }
+            Formula::Connective { operands, .. } => {
+                for op in operands {
+                    walk(op, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    if let Some(inv) = decl.inv.as_deref() {
+        walk(inv, &mut out);
+    }
+    out
+}
+
+/// True iff any atom anywhere in the decl names a ctor whose name CONTAINS
+/// `needle` (e.g. `call:eq:Some`, `method:next`, `opt:some`). Walks both the
+/// atom heads and every nested ctor operand.
+fn decl_mentions_ctor(decl: &sugar_ir_symbolic::ContractDecl, needle: &str) -> bool {
+    fn term_has(t: &Term, needle: &str) -> bool {
+        match t {
+            Term::Ctor { name, args } => {
+                name.contains(needle) || args.iter().any(|a| term_has(a, needle))
+            }
+            _ => false,
+        }
+    }
+    fn walk(f: &Formula, needle: &str) -> bool {
+        match f {
+            Formula::Atomic { name, args } => {
+                name.contains(needle) || args.iter().any(|a| term_has(a, needle))
+            }
+            Formula::Connective { operands, .. } => operands.iter().any(|op| walk(op, needle)),
+            Formula::Quantifier { body, .. } | Formula::Choice { body, .. } => walk(body, needle),
+        }
+    }
+    decl.inv.as_deref().is_some_and(|inv| walk(inv, needle))
+}
+
+// ── MONADIC Option/Result constructors -- the structural-equality teeth ──────
+//
+// `Some(x)`/`Ok(x)`/`Err(x)`/`None` are CONSTRUCTORS OVER LITERALS -- sugar, the
+// same family as the `array_term`/`tuple_term`/`struct_term` aggregates. They
+// GROUND to the reserved `opt:some`/`opt:none`/`res:ok`/`res:err` ctor (NOT the
+// federated, teeth-less `call:eq:Some` EUF), and the IR->SMT compiler declares
+// `Option`/`Result` as ALGEBRAIC DATATYPES, so z3 enforces constructor
+// injectivity (`Some a = Some b <=> a = b`) + distinctness (`Some _ != None`,
+// `Ok _ != Err _`). The make-or-break HARD GATE: a bad twin goes z3-UNSAT.
+// (`MonadicSugar`, `src/sugar/monadic.rs`; the ADT, `sugar-ir-compiler-smt-lib`.)
+
+/// Lift a single `assert_eq!(<lhs>, <rhs>)` over no-receiver constants and
+/// return the first decl. Used by the monadic teeth tests, which compare two
+/// written constructor literals (no runtime receiver).
+fn lift_eq_decl(lhs: &str, rhs: &str, file: &str) -> sugar_ir_symbolic::ContractDecl {
+    let src = format!("#[test]\nfn t() {{ assert_eq!({lhs}, {rhs}); }}\n");
+    let out = lift_file(&parse(&src), file);
+    out.decls
+        .into_iter()
+        .next()
+        .expect("the monadic equality must lift to a consistency contract")
+}
+
+#[test]
+fn monadic_some_equal_is_sat_and_bad_twin_is_unsat() {
+    // `Some(1) == Some(1)` is consistent (SAT); the bad twin `Some(1) == Some(2)`
+    // is z3-UNSAT (constructor injectivity -- the teeth).
+    let good = lift_eq_decl("Some(1)", "Some(1)", "tests/monadic_some_good.rs");
+    assert_eq!(
+        dug_eq_ctor_name_pairs(&good),
+        vec![("opt:some".to_string(), "opt:some".to_string())],
+        "Some(1)==Some(1) must ground to two opt:some ctors (NOT the federated call:eq:Some)"
+    );
+    assert!(
+        !decl_mentions_ctor(&good, "call:eq:Some") && !decl_mentions_ctor(&good, "call:Some"),
+        "no opaque federated/call ctor may survive: {:?}",
+        good.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&good), "monadic_some_good") {
+        assert!(sat, "Some(1)==Some(1) must be SAT");
+    }
+
+    let bad = lift_eq_decl("Some(1)", "Some(2)", "tests/monadic_some_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&bad), "monadic_some_bad") {
+        assert!(!sat, "the bad twin Some(1)==Some(2) must be z3-UNSAT (injectivity teeth)");
+    }
+}
+
+#[test]
+fn monadic_some_vs_none_is_unsat() {
+    // `Some(1) == None` is z3-UNSAT (constructor distinctness -- the teeth).
+    let decl = lift_eq_decl("Some(1)", "None", "tests/monadic_some_none.rs");
+    let pairs = dug_eq_ctor_name_pairs(&decl);
+    assert_eq!(
+        pairs,
+        vec![("opt:some".to_string(), "opt:none".to_string())],
+        "Some(1)==None must ground to opt:some vs opt:none ctors: {:?}",
+        decl.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&decl), "monadic_some_none") {
+        assert!(!sat, "Some(1)==None must be z3-UNSAT (distinctness teeth)");
+    }
+}
+
+#[test]
+fn monadic_result_ok_equal_sat_bad_twin_and_cross_variant_unsat() {
+    // `Ok(1)==Ok(1)` SAT; `Ok(1)==Ok(2)` UNSAT (injectivity); `Ok(1)==Err(1)`
+    // UNSAT (cross-variant distinctness).
+    let good = lift_eq_decl("Ok(1)", "Ok(1)", "tests/monadic_ok_good.rs");
+    assert_eq!(
+        dug_eq_ctor_name_pairs(&good),
+        vec![("res:ok".to_string(), "res:ok".to_string())],
+        "Ok(1)==Ok(1) must ground to two res:ok ctors"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&good), "monadic_ok_good") {
+        assert!(sat, "Ok(1)==Ok(1) must be SAT");
+    }
+
+    let bad = lift_eq_decl("Ok(1)", "Ok(2)", "tests/monadic_ok_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&bad), "monadic_ok_bad") {
+        assert!(!sat, "Ok(1)==Ok(2) must be z3-UNSAT (injectivity)");
+    }
+
+    let cross = lift_eq_decl("Ok(1)", "Err(1)", "tests/monadic_ok_err.rs");
+    assert_eq!(
+        dug_eq_ctor_name_pairs(&cross),
+        vec![("res:ok".to_string(), "res:err".to_string())],
+        "Ok(1)==Err(1) must ground to res:ok vs res:err ctors"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&cross), "monadic_ok_err") {
+        assert!(!sat, "Ok(1)==Err(1) must be z3-UNSAT (cross-variant distinctness)");
+    }
+}
+
+#[test]
+fn iter_next_over_literal_array_grounds_to_some_first_element() {
+    // THE MARQUEE: `assert_eq!([1,2,3].iter().next(), Some(&1))` is sugar all the
+    // way to literals. The LHS `.next()` grounds (positional unroll over the
+    // literal Seq) to `opt:some(1)`; the RHS `Some(&1)` grounds (the `&` stripped)
+    // to `opt:some(1)`. The atom is `=(opt:some(1), opt:some(1))` -- an int-level
+    // pinned equality, NOT an opaque `method:next` / `call:eq:Some` var.
+    let good_out = lift_file(
+        &parse("#[test]\nfn t() { assert_eq!([1, 2, 3].iter().next(), Some(&1)); }\n"),
+        "tests/iter_next_good.rs",
+    );
+    assert_eq!(
+        good_out.skip_reasons,
+        Vec::<String>::new(),
+        "the literal-domain `.next()` must dig, not refuse: {:?}",
+        good_out.skip_reasons
+    );
+    let good = &good_out.decls[0];
+    assert_eq!(
+        dug_eq_ctor_name_pairs(good),
+        vec![("opt:some".to_string(), "opt:some".to_string())],
+        "`.next()` and `Some(&1)` must BOTH ground to opt:some (no opaque var): {:?}",
+        good.inv
+    );
+    assert!(
+        !decl_mentions_ctor(good, "method:next") && !decl_mentions_ctor(good, "call:eq:Some"),
+        "no opaque method:next / call:eq:Some may survive: {:?}",
+        good.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(good), "iter_next_good") {
+        assert!(sat, "`Some(1) == Some(1)` (the grounded next) must be SAT");
+    }
+
+    // BAD TWIN: `Some(&2)` -> `opt:some(2)` -> `=(opt:some(1), opt:some(2))` ->
+    // z3-UNSAT (the real teeth; the old opaque form left it SAT).
+    let bad = lift_eq_decl("[1, 2, 3].iter().next()", "Some(&2)", "tests/iter_next_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&bad), "iter_next_bad") {
+        assert!(!sat, "the bad twin `.next() == Some(&2)` must be z3-UNSAT (injectivity teeth)");
+    }
+}
+
+#[test]
+fn iter_nth_and_last_over_literal_array_ground_with_teeth() {
+    // `.nth(k)` -> `Some(elem[k])`; `.last()` -> `Some(elem[len-1])`. Past the end
+    // -> `None`. Each grounds with bad-twin teeth.
+    // `.nth(1)` of [10,20,30] is 20.
+    let nth = lift_eq_decl("[10, 20, 30].iter().nth(1)", "Some(&20)", "tests/iter_nth_good.rs");
+    assert_eq!(
+        dug_eq_ctor_name_pairs(&nth),
+        vec![("opt:some".to_string(), "opt:some".to_string())],
+        "`.nth(1)` must ground to opt:some(20): {:?}",
+        nth.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&nth), "iter_nth_good") {
+        assert!(sat, "`.nth(1) == Some(20)` must be SAT");
+    }
+    let nth_bad = lift_eq_decl("[10, 20, 30].iter().nth(1)", "Some(&21)", "tests/iter_nth_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&nth_bad), "iter_nth_bad") {
+        assert!(!sat, "`.nth(1) == Some(21)` must be z3-UNSAT");
+    }
+
+    // `.last()` of [10,20,30] is 30.
+    let last = lift_eq_decl("[10, 20, 30].iter().last()", "Some(&30)", "tests/iter_last_good.rs");
+    assert_eq!(
+        dug_eq_ctor_name_pairs(&last),
+        vec![("opt:some".to_string(), "opt:some".to_string())],
+        "`.last()` must ground to opt:some(30): {:?}",
+        last.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&last), "iter_last_good") {
+        assert!(sat, "`.last() == Some(30)` must be SAT");
+    }
+
+    // `.nth(9)` past the end -> `None`. Grounds to opt:none; `== None` is SAT,
+    // `== Some(&1)` is z3-UNSAT (distinctness).
+    let past = lift_eq_decl("[10, 20, 30].iter().nth(9)", "None", "tests/iter_nth_past.rs");
+    assert_eq!(
+        dug_eq_ctor_name_pairs(&past),
+        vec![("opt:none".to_string(), "opt:none".to_string())],
+        "`.nth(9)` past the end must ground to opt:none: {:?}",
+        past.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&past), "iter_nth_past") {
+        assert!(sat, "`.nth(9) == None` (both opt:none) must be SAT");
+    }
+    let past_bad = lift_eq_decl("[10, 20, 30].iter().nth(9)", "Some(&1)", "tests/iter_nth_past_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&past_bad), "iter_nth_past_bad") {
+        assert!(!sat, "`.nth(9) == Some(1)` must be z3-UNSAT (None != Some)");
+    }
+}
+
+#[test]
+fn iter_next_over_runtime_receiver_stays_opaque_no_fake_dig() {
+    // THE EFFECT BOUNDARY HOLDS: a `.next()` over a RUNTIME receiver (a call
+    // result / opaque param) is NOT a written literal, so the syntactic-literal
+    // gate declines and the term stays the opaque `method:next` ctor -- never
+    // grounded to `opt:some(_)`. A fake-dig would mint a structural Option over a
+    // runtime domain (the cardinal sin).
+    for (src, file) in [
+        (
+            "fn make_v() -> Vec<i32> { vec![1, 2, 3] }\n#[test]\nfn t() { let v = make_v(); assert_eq!(v.iter().next(), Some(&1)); }\n",
+            "tests/iter_next_runtime.rs",
+        ),
+        (
+            "#[test]\nfn t(io: X) { assert_eq!(io.iter().next(), Some(&1)); }\n",
+            "tests/iter_next_opaque.rs",
+        ),
+    ] {
+        let out = lift_file(&parse(src), file);
+        assert!(
+            out.decls.iter().all(|d| {
+                !dug_eq_ctor_name_pairs(d)
+                    .iter()
+                    .any(|(a, b)| a == "opt:some" && b == "opt:some")
+            }),
+            "{file}: a runtime `.next()` must NOT ground to opt:some on BOTH sides (no fake-dig)"
+        );
+        assert!(
+            out.decls.iter().any(|d| decl_mentions_ctor(d, "method:next")),
+            "{file}: the runtime `.next()` must stay the opaque method:next ctor: {:?}",
+            out.decls.iter().map(|d| d.inv.clone()).collect::<Vec<_>>()
+        );
+    }
+}
+
 #[test]
 fn cursor_fold_rfold_over_literal_array_digs_exact_elements() {
     // POSITIVE: `.filter(even).rfold(ys.len(), |i, &x| { assert_eq!(x, ys[i-1]); i-1 })`
@@ -9785,18 +10088,21 @@ fn t() {
 // CLOSED `try_fold` / `try_rfold` VALUE grounding (the 6 coretests rows in
 // `iter/adapters/{map,enumerate,filter_map}.rs`). A `<closed-chain>.try_fold(<lit>,
 // <pure checked closure>)` operand is reduced EXACTLY to a `Some(n)` / `None` literal
-// and lifted through the ordinary ctor path, so `assert_eq!(LHS, RHS)` becomes a
-// GROUNDED `call:eq:Some[call:Some[a], call:Some[b]]`. The teeth: the bad-twin (a side
-// with a genuinely different fold) grounds to `Some(b)` with `b != a`, so
-// `call:Some[a] == call:Some[b]` is z3-UNSAT (a real refutation). 3 tests per case:
-// positive (grounds + equal), discrimination (bad-twin grounds UNEQUAL), structural
-// (the operand is a grounded literal, not the opaque `method:try_fold` ctor).
+// and lifted through the ordinary ctor path. With `MonadicSugar` the two `Some`
+// operands ground to the ADT-backed `opt:some` ctor, so `assert_eq!(LHS, RHS)`
+// becomes a STRUCTURAL `eq(opt:some(a), opt:some(b))` -- z3 enforces constructor
+// injectivity directly (NOT the old federated `call:eq:Some(..) == true` EUF). The
+// teeth: the bad-twin (a side with a genuinely different fold) grounds to `Some(b)`
+// with `b != a`, so `opt:some(a) == opt:some(b)` is z3-UNSAT (a real refutation). 3
+// tests per case: positive (grounds + equal), discrimination (bad-twin grounds
+// UNEQUAL), structural (the operand is a grounded literal, not the opaque
+// `method:try_fold` ctor).
 
-/// Extract the two inner `call:Some` integer args of a single grounded
-/// `assert_eq!`-over-`Option` decl: the inv is `[call:eq:Some[call:Some[a],
-/// call:Some[b]] == true]`. Panics if the shape is not the grounded ctor-equality
-/// (e.g. if a side stayed an opaque `method:try_fold` -- which is exactly the
-/// fake-discharge the structural tests forbid).
+/// Extract the two inner integer args of a single grounded `assert_eq!`-over-
+/// `Option` decl: the inv is now `[eq(opt:some(a), opt:some(b))]` (the structural
+/// ADT-backed shape, NOT the old federated `call:eq:Some[..] == true`). Panics if
+/// either side is not a grounded `opt:some(<int>)` (e.g. if a side stayed an opaque
+/// `method:try_fold` -- exactly the fake-discharge the structural tests forbid).
 fn try_fold_some_pair(out: &sugar_lift_rust_tests::AdapterOutput) -> (i128, i128) {
     assert_eq!(out.lifted, 1, "must discharge; reasons={:?}", out.skip_reasons);
     assert_eq!(out.decls.len(), 1);
@@ -9805,26 +10111,39 @@ fn try_fold_some_pair(out: &sugar_lift_rust_tests::AdapterOutput) -> (i128, i128
     let Formula::Atomic { name, args } = operands[0].as_ref() else {
         panic!("expected equality atom, got {:?}", operands[0]);
     };
-    assert_eq!(name, "=");
-    // args[0] = call:eq:Some[call:Some[a], call:Some[b]]; args[1] = Bool(true).
-    let Term::Ctor { name: eqname, args: eqargs } = args[0].as_ref() else {
-        panic!("expected operator-dispatch ctor, got {:?}", args[0]);
-    };
-    assert_eq!(eqname, "call:eq:Some", "both sides must be grounded Some(_)");
-    assert_eq!(eqargs.len(), 2);
+    assert_eq!(name, "=", "the grounded Option equality is a plain structural `=`");
+    assert_eq!(args.len(), 2);
     let some_int = |t: &Term| -> i128 {
         let Term::Ctor { name, args } = t else {
-            panic!("expected call:Some ctor (a GROUNDED literal, NOT an opaque \
+            panic!("expected opt:some ctor (a GROUNDED literal, NOT an opaque \
                     method:try_fold), got {t:?}");
         };
-        assert_eq!(name, "call:Some", "the fold result must be a grounded Some(n)");
+        assert_eq!(name, "opt:some", "the fold result must be a grounded opt:some(n)");
         assert_eq!(args.len(), 1);
         let Term::Const { value: ConstValue::Int(v), .. } = args[0].as_ref() else {
-            panic!("expected int inside Some, got {:?}", args[0]);
+            panic!("expected int inside opt:some, got {:?}", args[0]);
         };
         *v
     };
-    (some_int(&eqargs[0]), some_int(&eqargs[1]))
+    let pair = (some_int(&args[0]), some_int(&args[1]));
+    // CONFIRM THE TEETH END-TO-END: equal sides -> SAT; unequal -> z3-UNSAT (the
+    // ADT injectivity refutes a wrong fold). Mirrors the int-scalar reductions. The
+    // z3 label MUST be unique per call: cargo runs these tests in parallel and
+    // `z3_verdict` writes a per-label temp file, so a shared label would race.
+    static TF_LABEL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = TF_LABEL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let label = format!("try_fold_some_pair_{n}");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), &label) {
+        assert_eq!(
+            sat,
+            pair.0 == pair.1,
+            "opt:some({}) == opt:some({}) must be {} under z3",
+            pair.0,
+            pair.1,
+            if pair.0 == pair.1 { "SAT" } else { "UNSAT" }
+        );
+    }
+    pair
 }
 
 fn lift_one(src: &str) -> sugar_lift_rust_tests::AdapterOutput {
@@ -9995,22 +10314,26 @@ fn test_map_try_folds() {
     assert_eq!(iter.next_back(), Some(46));
 }"#,
     );
-    // The closed rows (6,7) discharge to grounded `Some(_)`; the runtime rows (10,12)
-    // keep their OPAQUE `method:try_fold` term, paired with the REAL asserted `None`
-    // (`call:eq:None[method:try_fold[..], call:None]`) -- never a FABRICATED `Some(n)`.
-    // The fake-discharge we forbid is a single ATOM that pairs an opaque
-    // `method:try_fold` ctor with a grounded `call:Some(<int>)` (then z3 could pick the
-    // opaque term = that Some, a vacuous pass). Walk EACH atom and assert no such
-    // pairing. (Two distinct atoms in the coalesced decl -- one grounded row, one
-    // opaque runtime row -- is FINE; the guardrail is per-atom.)
+    // The closed rows (6,7) discharge to grounded `opt:some(_)==opt:some(_)`; the
+    // runtime rows (10,12) keep their OPAQUE `method:try_fold` term, paired with the
+    // REAL asserted `None` (`eq(method:try_fold[..], opt:none)`) -- never a FABRICATED
+    // `Some(n)`. With `MonadicSugar` the equality is now a FLAT structural `=` atom
+    // (not the old federated `call:eq:Some|None[..] == true` wrapper). The
+    // fake-discharge we forbid is a single ATOM that pairs an opaque
+    // `method:try_fold`/`method:try_rfold` ctor with a grounded `opt:some(<int>)`
+    // (then z3 could pick the opaque term = that Some, a vacuous pass). Walk EACH atom
+    // and assert no such pairing. (Two distinct atoms in the coalesced decl -- one
+    // grounded row, one opaque runtime row -- is FINE; the guardrail is per-atom.)
     let mut saw_opaque_runtime = false;
     let mut saw_grounded = false;
     for d in &out.decls {
         for op in inv_operands(d) {
-            let Formula::Atomic { args, .. } = op.as_ref() else { continue };
-            // args[0] is the operator-dispatch ctor `call:eq:Some|None[lhs, rhs]`.
-            let Term::Ctor { args: pair, .. } = args[0].as_ref() else { continue };
-            let names: Vec<String> = pair
+            let Formula::Atomic { name, args } = op.as_ref() else { continue };
+            if name != "=" || args.len() != 2 {
+                continue;
+            }
+            // The two operands of the flat structural equality.
+            let names: Vec<String> = args
                 .iter()
                 .map(|t| match t.as_ref() {
                     Term::Ctor { name, .. } => name.clone(),
@@ -10019,21 +10342,27 @@ fn test_map_try_folds() {
                 .collect();
             let has_opaque =
                 names.iter().any(|n| n == "method:try_fold" || n == "method:try_rfold");
-            let has_some = names.iter().any(|n| n == "call:Some");
+            // A fabricated grounded `opt:some(<int>)` operand.
+            let has_grounded_some = args.iter().any(|t| {
+                matches!(t.as_ref(), Term::Ctor { name, args }
+                    if name == "opt:some"
+                        && matches!(args.first().map(|a| a.as_ref()),
+                                    Some(Term::Const { value: ConstValue::Int(_), .. })))
+            });
             assert!(
-                !(has_opaque && has_some),
-                "an opaque runtime try_fold paired with a fabricated grounded Some(_) \
+                !(has_opaque && has_grounded_some),
+                "an opaque runtime try_fold paired with a fabricated grounded opt:some(_) \
                  in ONE atom is a vacuous fake-discharge: {names:?}"
             );
             if has_opaque {
                 saw_opaque_runtime = true;
             }
-            if names.iter().filter(|n| *n == "call:Some").count() == 2 {
+            if names.iter().filter(|n| *n == "opt:some").count() == 2 {
                 saw_grounded = true;
             }
         }
     }
-    assert!(saw_grounded, "the 2 closed rows must ground to Some(_)==Some(_)");
+    assert!(saw_grounded, "the 2 closed rows must ground to opt:some(_)==opt:some(_)");
     assert!(
         saw_opaque_runtime,
         "the runtime rows must STAY opaque method:try_fold (not fabricated)"

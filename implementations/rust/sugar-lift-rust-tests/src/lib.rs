@@ -61,6 +61,7 @@ pub mod sugar {
     pub mod match_node;
     pub mod match_scrutinee;
     pub mod method_call_term;
+    pub mod monadic;
     pub mod path;
     pub mod range_term;
     pub mod raw_addr_term;
@@ -10929,10 +10930,22 @@ fn translate_assertion_term_in_scope(
                 translate_expression_only_block_in_scope(&const_block.block, "const", scope)?;
             Ok(scope_const_block_locals(term, scope.local_scope()))
         }
-        Expr::Path(path) if path.path.is_ident("None") => Ok(Rc::new(Term::Ctor {
-            name: "call:None".to_string(),
-            args: Vec::new(),
-        })),
+        // `None` is the std `Option` unit constructor -- a MONADIC value, the same
+        // family as `Some(x)`. It grounds to the reserved `opt:none` ctor (the
+        // ADT-backed `Option` value), NOT the federated `call:None` EUF, so an
+        // `assert_eq!(opt, None)` meets `opt:some(_)`/`opt:none` structurally (the
+        // teeth: `Some(1) == None` is z3-UNSAT). Byte-aligned with `MonadicSugar`
+        // in the term factory, which owns the `Some`/`Ok`/`Err` arms (reached via
+        // the `_ =>` delegation below). Matches the FINAL segment ident so a
+        // turbofish (`None::<isize>`) / qualified path grounds too.
+        Expr::Path(path)
+            if path.path.segments.last().is_some_and(|seg| seg.ident == "None") =>
+        {
+            Ok(Rc::new(Term::Ctor {
+                name: sugar::monadic::OPT_NONE.to_string(),
+                args: Vec::new(),
+            }))
+        }
         Expr::Paren(paren) => translate_assertion_term_in_scope(&paren.expr, scope),
         Expr::Group(group) => translate_assertion_term_in_scope(&group.expr, scope),
         _ => translate_term_in_scope(expr, scope),
@@ -11059,6 +11072,16 @@ fn is_literal_identity_term(term: &Term) -> bool {
     match term {
         Term::Const { .. } => true,
         Term::Var { name } => name.starts_with("literal:"),
+        // A MONADIC Option/Result ctor over literal-identity args IS a literal
+        // identity (a constructed value over literals -- the whole point of
+        // `MonadicSugar`). So `(3, Some(3))` stays an all-literal `literal:Tuple`
+        // aggregate (a ground value), keeping the EUF callsite key stable, instead
+        // of degrading to a non-literal `agg:`.
+        Term::Ctor { name, args }
+            if matches!(name.as_str(), "opt:some" | "opt:none" | "res:ok" | "res:err") =>
+        {
+            args.iter().all(|arg| is_literal_identity_term(arg))
+        }
         Term::Ctor { name, args } if constructor_operator_tag(term).is_some() => {
             name.starts_with("call:") && args.iter().all(|arg| is_literal_identity_term(arg))
         }
