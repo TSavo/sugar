@@ -28,8 +28,10 @@ mod try_fold_eval;
 // `decompose_seq`). One engine: each decorator's `desugar` is `inner.desugar(ctx)?`
 // then that adaptor's exact transform.
 pub mod sugar {
+    pub mod array_repeat;
     pub mod callsite;
     pub mod closure_adaptor;
+    pub mod control_flow_term;
     pub mod enumerate;
     pub mod filter;
     pub mod identity;
@@ -42,6 +44,7 @@ pub mod sugar {
     pub mod statement_position;
     pub mod take;
     pub mod take_while;
+    pub mod temporal_read;
 }
 
 use quote::ToTokens;
@@ -2195,7 +2198,7 @@ struct TemporalPlan {
 }
 
 #[derive(Debug, Clone)]
-struct TemporalScope {
+pub(crate) struct TemporalScope {
     local_scope: String,
     plan: TemporalPlan,
     versions: BTreeMap<String, usize>,
@@ -2286,7 +2289,7 @@ impl TemporalScope {
 
     /// Whether `name` is a `let mut` local in this scope (conservatively
     /// unstable). A non-mut local is provably immutable and stable.
-    fn is_mut_local(&self, name: &str) -> bool {
+    pub(crate) fn is_mut_local(&self, name: &str) -> bool {
         self.plan.mut_locals.contains(name)
     }
 
@@ -7937,7 +7940,7 @@ fn collect_pat_idents(pat: &Pat, out: &mut Vec<String>) {
     }
 }
 
-fn simple_path_name(expr: &Expr) -> Option<String> {
+pub(crate) fn simple_path_name(expr: &Expr) -> Option<String> {
     match expr {
         Expr::Path(path) if path.qself.is_none() => {
             path.path.get_ident().map(|ident| ident.to_string())
@@ -12119,11 +12122,21 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
                 // A non-literal count (`[0u8; SIZE]`, `[(); SIZE - 1]`) is not a finite
                 // construction from the written literal: the universe size is symbolic
                 // (const-generic / const expr), so no aggregate term can be pinned. A SOURCE
-                // property, not a lifter gap. Typed as `Effect::ArrayRepeat`.
-                let effect = Effect::ArrayRepeat {
-                    boundary: token_key(expr),
+                // property, not a lifter gap. THIN NODE-ROUTER: the non-literal-length verdict
+                // is owned by the `ArrayRepeatSugar` node, which `Hit`s `Effect::ArrayRepeat`
+                // in its own `desugar`; this arm renders `effect.reason()` to the `Err` exactly
+                // as before (byte-identical). `decompose_array_repeat` recognizes ONLY this
+                // refuse-shape (it returns `None` for a literal-count repeat, which never
+                // reaches here -- the `let-else` succeeds and the constructive expansion below
+                // runs); on the unreachable structural backstop the term path keeps its own
+                // `unsupported term` cause.
+                return match sugar::array_repeat::decompose_array_repeat(expr) {
+                    Some(node) => match node.desugar_ctx_free() {
+                        Outcome::Hit(effect @ Effect::ArrayRepeat { .. }) => Err(effect.reason()),
+                        _ => Err(format!("unsupported term `{}`", token_key(expr))),
+                    },
+                    None => Err(format!("unsupported term `{}`", token_key(expr))),
                 };
-                return Err(effect.reason());
             };
             // Bound the expansion so a pathological literal length cannot blow up the
             // term; an over-bound repeat is named, not silently truncated.
@@ -12350,17 +12363,20 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
             // local may be index-assigned or method-mutated in ways the tracker
             // cannot follow, so it stays residual. Non-local containers (a call
             // result, a field) translate through their own EUF terms.
-            if let Some(name) = simple_path_name(&index.expr) {
-                if scope.is_mut_local(&name) {
-                    // TYPED BAIL: the `mut` oracle PROVED the container is a mutable
-                    // local, so `index(a,i)` is a sequence/position-dependent read with
-                    // no single timeless `t`. Mint the refusal from the typed
-                    // `Effect::TemporalRead` (a named, warranted order-loss boundary) -- the
-                    // reason it produces is whitelisted terminal by `refusal_disposition`,
-                    // draining this effect-shaped case unclassified -> refused.
-                    let effect = Effect::TemporalRead {
-                        boundary: token_key(expr),
-                    };
+            // TYPED BAIL: when the `mut` oracle PROVES the container is a mutable local,
+            // `index(a,i)` is a sequence/position-dependent read with no single timeless `t`.
+            // THIN NODE-ROUTER: that verdict is owned by the `TemporalReadSugar` node, which
+            // `Hit`s `Effect::TemporalRead` in its own `desugar`; this arm renders
+            // `effect.reason()` to the `Err` exactly as before (byte-identical), and the reason
+            // it produces is whitelisted terminal by `refusal_disposition`, draining this
+            // effect-shaped case unclassified -> refused. `decompose_temporal_read` recognizes
+            // ONLY this refuse-shape (an `Index` over a `mut`-local simple-path container): a
+            // non-`mut` / non-simple-path container returns `None`, and the read falls through
+            // to the constructive `index(a, i)` term below (the discrimination twin's
+            // soundness gate -- a stable read is never terminalized).
+            if let Some(node) = sugar::temporal_read::decompose_temporal_read(expr, scope) {
+                if let Outcome::Hit(effect @ Effect::TemporalRead { .. }) = node.desugar_ctx_free()
+                {
                     return Err(effect.reason());
                 }
             }
@@ -12550,10 +12566,19 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
         // `assert!(Option::is_none(&try { join!(maybe_fut?, async { unreachable!() }) }))`
         // row unclassified -> refused (a named refuse, never a silent shrug).
         Expr::TryBlock(_) | Expr::Async(_) | Expr::Try(_) => {
-            let effect = Effect::ControlFlow {
-                boundary: token_key(expr),
-            };
-            Err(effect.reason())
+            // THIN NODE-ROUTER: the term-position control-flow verdict is owned by the
+            // `ControlFlowTermSugar` node, which `Hit`s `Effect::ControlFlow` in its own
+            // `desugar`; this arm renders `effect.reason()` to the `Err` exactly as before
+            // (byte-identical). `decompose_control_flow_term` recognizes ONLY this refuse-shape
+            // (a `try`/`async`/`?` construct); any other expr returns `None` and never reaches
+            // here (this arm matches only those three).
+            match sugar::control_flow_term::decompose_control_flow_term(expr) {
+                Some(node) => match node.desugar_ctx_free() {
+                    Outcome::Hit(effect @ Effect::ControlFlow { .. }) => Err(effect.reason()),
+                    _ => Err(format!("unsupported term `{}`", token_key(expr))),
+                },
+                None => Err(format!("unsupported term `{}`", token_key(expr))),
+            }
         }
         other => Err(format!("unsupported term `{}`", token_key(other))),
     }
@@ -12691,7 +12716,7 @@ fn find_const_expr(expr: &Expr) -> Option<&Expr> {
 /// The length of an array-repeat `[elem; N]` as a `usize`, iff `N` is a plain
 /// integer literal (the only finitely-constructible case). A `const`/path length
 /// (`[0; LEN]`) returns None and is refused by name upstream.
-fn repeat_count_literal(len: &Expr) -> Option<usize> {
+pub(crate) fn repeat_count_literal(len: &Expr) -> Option<usize> {
     match len {
         Expr::Lit(ExprLit {
             lit: Lit::Int(i), ..
