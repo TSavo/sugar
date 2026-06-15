@@ -29,6 +29,7 @@ mod try_fold_eval;
 // then that adaptor's exact transform.
 pub mod sugar {
     pub mod callsite;
+    pub mod closure_adaptor;
     pub mod enumerate;
     pub mod filter;
     pub mod identity;
@@ -5001,90 +5002,39 @@ fn closure_body_advances_iterator(body: &Expr) -> bool {
 }
 
 /// If `expr` is a CLOSURE-BEARING method call whose closure asserts but is NOT a
-/// dissolvable/liftable pure point-wise iteration, return the TYPED `SideEffect`
-/// naming the order-loss boundary (the typed BAIL). The caller renders
-/// `effect.reason()` into `skip_reasons` -- the wire format is unchanged, but the bail
-/// is now a NAMED, WARRANTED claim (a mutation / iterator-advance / opaque-runtime /
-/// TLS boundary) instead of a bare string. HALF 2 of the fold-closure bucket.
+/// dissolvable/liftable pure point-wise iteration, return the NAMED `Effect` the
+/// `ClosureAdaptorSugar` node's `desugar` `Hit`s (a mutation / iterator-advance /
+/// opaque-runtime / TLS boundary). A THIN ADAPTER over the node, which lives in
+/// `sugar::closure_adaptor`: it `build`s the node (`decompose_closure_adaptor`), `desugar`s
+/// it once, and reads the verdict -- mapping the node's STRUCTURAL backstop `Hit` back to
+/// `None` (the honest-unclassified fall-through, the old `None`). The caller renders
+/// `effect.reason()` into `skip_reasons` -- the wire format is unchanged.
 ///
-/// Returns `None` for a PURE adaptor over a PURE body over a LITERAL-resolvable
-/// receiver (the defoldable / for_each-liftable case -- honest UNCLASSIFIED work, never
-/// fake-refused) and for any non-closure-method statement.
+/// Returns `None` for a PURE adaptor over a PURE body over a LITERAL-resolvable receiver
+/// (the defoldable / for_each-liftable case -- honest UNCLASSIFIED work, never fake-refused)
+/// and for any non-closure-method statement. The order-loss VERDICT is made entirely in the
+/// node's `desugar` (and its accessor/body/receiver leaves), never here.
 fn closure_method_terminal_effect(
     expr: &Expr,
     scope: &TemporalScope,
+    options: &LiftOptions,
+    reducer: &ReductionCtx,
+    float_widths: &mut FloatWidthScope,
+    macro_depth: usize,
     let_inits: &BTreeMap<String, &Expr>,
 ) -> Option<Effect> {
-    // Find the closure-bearing method call (anywhere along the chain), its closure, and
-    // its receiver (for the literal-domain resolution).
-    struct Find {
-        method: Option<String>,
-        closure: Option<syn::ExprClosure>,
-        receiver: Option<Expr>,
-    }
-    impl<'ast> syn::visit::Visit<'ast> for Find {
-        fn visit_expr_method_call(&mut self, m: &'ast syn::ExprMethodCall) {
-            if self.closure.is_none() {
-                if let Some(Expr::Closure(c)) = m.args.iter().find(|a| matches!(a, Expr::Closure(_)))
-                {
-                    self.method = Some(m.method.to_string());
-                    self.closure = Some(c.clone());
-                    self.receiver = Some((*m.receiver).clone());
-                }
-            }
-            syn::visit::visit_expr_method_call(self, m);
+    let node = sugar::closure_adaptor::decompose_closure_adaptor(expr, let_inits)?;
+    let ctx = sugar_ctx(scope, options, reducer, float_widths, macro_depth);
+    match node.desugar(&ctx) {
+        // The STRUCTURAL backstop = the honest-unclassified fall-through (the old `None`).
+        Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {
+            None
         }
+        // A NAMED order-loss boundary -- the verdict the caller renders to skip_reasons.
+        Outcome::Hit(effect) => Some(effect),
+        // A bail-side node never reaches truth; `Dug` is unreachable here.
+        Outcome::Dug(_) => None,
     }
-    let mut f = Find {
-        method: None,
-        closure: None,
-        receiver: None,
-    };
-    syn::visit::Visit::visit_expr(&mut f, expr);
-    let (method, closure, receiver) = (f.method?, f.closure?, f.receiver?);
-    // The closure body must actually carry an assertion (else this is not a
-    // fold-closure-bucket statement -- nothing to classify; leave it alone).
-    if count_asserts_in_expr(&closure.body) == 0 {
-        return None;
-    }
-    let boundary = token_key(expr);
-    let is_pure_adaptor = PURE_CLOSURE_ADAPTORS.contains(&method.as_str());
-    if !is_pure_adaptor {
-        // An effectful / opaque accessor (`.with`, `.with_unfilled_buf`, ...): the
-        // receiver is runtime/opaque state, not a constructed literal domain -- bin-2.
-        // `.with` is the thread-local accessor (TlsEffect); any other effectful
-        // accessor is the generic opaque-accessor boundary.
-        if method == "with" {
-            return Some(Effect::Tls { boundary });
-        }
-        return Some(Effect::OpaqueRuntime {
-            boundary,
-            accessor: true,
-        });
-    }
-    if closure_body_is_side_effecting(&closure.body) {
-        // Distinguish the iterator-advance cause (`iter.next()`) from a captured-state
-        // mutation (`+=`, `&mut`, `.push`). Both are the SAME terminal class; typing
-        // them apart records the cause in the catalog.
-        if closure_body_advances_iterator(&closure.body) {
-            return Some(Effect::IterAdvance { boundary });
-        }
-        return Some(Effect::Mutation { boundary });
-    }
-    // Pure adaptor, pure body: does the RECEIVER resolve to a finite literal domain? If
-    // not, the iterated/threaded values are runtime data -- bin-2 terminal. If yes, this
-    // is a defoldable/for_each-liftable case the symbolic lifter handles (or declined for
-    // a recoverable reason) -- leave it UNCLASSIFIED (honest work), never fake-refuse.
-    let resolves_literal = peel_fold_adaptors(&receiver, let_inits, 0)
-        .and_then(|(base, _)| bounded_domain_from_expr(base, scope))
-        .is_some();
-    if !resolves_literal {
-        return Some(Effect::OpaqueRuntime {
-            boundary,
-            accessor: false,
-        });
-    }
-    None
 }
 
 /// True if `expr` (or anything inside it) is an `.await` -- the asserted value flows
@@ -5648,6 +5598,10 @@ fn collect_assertion_entries<'a>(
                         let reason = closure_method_terminal_effect(
                             &init.expr,
                             &temporal_scope,
+                            options,
+                            reducer,
+                            float_widths,
+                            macro_depth,
                             &let_inits,
                         )
                         .map(|e| e.reason())
@@ -6312,9 +6266,17 @@ fn collect_assertion_entries<'a>(
                             // timeless `t`. Typed as `RuntimeExprStmtEffect`. A statement
                             // carrying a CONSTRUCTED literal matches none -> None -> the generic
                             // unclassified skip (the value-IN-scope dig path).
-                            closure_method_terminal_effect(e, &temporal_scope, &let_inits)
-                                .or_else(|| statement_position_terminal_effect(e))
-                                .or_else(|| runtime_expr_statement_effect(e))
+                            closure_method_terminal_effect(
+                                e,
+                                &temporal_scope,
+                                options,
+                                reducer,
+                                float_widths,
+                                macro_depth,
+                                &let_inits,
+                            )
+                            .or_else(|| statement_position_terminal_effect(e))
+                            .or_else(|| runtime_expr_statement_effect(e))
                         }
                         // A nested `impl` block declared as a STATEMENT inside the test fn
                         // (`impl Write for W { fn write_str(..) { assert_eq!(..) } }`). Its
