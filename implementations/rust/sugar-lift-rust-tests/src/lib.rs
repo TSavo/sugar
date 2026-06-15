@@ -17,13 +17,26 @@ mod macro_expand;
 pub mod flt2dec_eval;
 pub mod closed_eval;
 
-// CallsiteSugar lives in its own self-contained module (the call-site-inlining
-// Sugar). It is a child of the crate root, so it can see the crate-root-private
-// Sugar hierarchy / collector / resolver it lifts-and-replaces. Reconciliation hook
-// for the concurrent lib.rs -> src/sugar/*.rs split: this is the ONE `mod` decl for
-// the new class.
+// The `Sugar` decorator classes each live in their own self-contained module under
+// `src/sugar/`. Each is a child of the crate root, so it can see the crate-root-private
+// `Sugar` trait / `Desugared` / `SugarCtx` / `DesugaredElem` / `ConstVal` /
+// `const_eval_unary_closure` spine it builds on. `callsite` is the call-site-inlining
+// `Sugar`; `identity`/`rev`/`enumerate`/`filter`/`map`/`skip`/`take`/`skip_while`/
+// `take_while` are the per-class iterator-adaptor decorators (one struct per former
+// `enum Adaptor` arm, applied in base->terminal order by `peel_fold_adaptors` +
+// `decompose_seq`). One engine: each decorator's `desugar` is `inner.desugar(ctx)?`
+// then that adaptor's exact transform.
 pub mod sugar {
     pub mod callsite;
+    pub mod enumerate;
+    pub mod filter;
+    pub mod identity;
+    pub mod map;
+    pub mod rev;
+    pub mod skip;
+    pub mod skip_while;
+    pub mod take;
+    pub mod take_while;
 }
 
 use quote::ToTokens;
@@ -2253,34 +2266,33 @@ fn lift_bounded_forall(
     Some((quantified, n_body))
 }
 
-/// One iterator adaptor in a `.fold`/`.rfold` receiver chain. STDLIB sugar over the
-/// element sequence: the transforming kinds carry the closure we const-evaluate over each
-/// concrete element. Only EXACT-replicable adaptors are represented; an unrepresentable
-/// adaptor (filter_map / flat_map / flatten / a windowing/stateful one) makes the peel
-/// return None -> bail (honest, never a fake-dig).
-enum Adaptor {
-    Identity,                    // iter / into_iter / cloned / copied / fuse
-    Rev,                         // reverse the sequence
-    Enumerate,                   // pair each element with its position (i, e)
-    Filter(syn::ExprClosure),    // keep where the closure const-evaluates true
-    Map(syn::ExprClosure),       // replace each element with the closure's const value
-    Skip(usize),                 // drop the first n
-    Take(usize),                 // keep the first n
-    SkipWhile(syn::ExprClosure), // drop the leading run where the closure is true
-    TakeWhile(syn::ExprClosure), // keep the leading run where the closure is true
+/// A single application-order wrapper in a `.fold`/`.rfold` receiver chain: given the
+/// inner sequence-`Sugar`, it produces the next outer decorator (`IdentitySugar`,
+/// `RevSugar`, ...). One per recognized adaptor; the per-class decorator structs live
+/// in `src/sugar/*.rs`. STDLIB sugar over the element sequence: the transforming kinds
+/// capture the closure we const-evaluate over each concrete element. Only
+/// EXACT-replicable adaptors produce a wrapper; an unrepresentable adaptor (filter_map
+/// / flat_map / flatten / a windowing/stateful one) makes the peel return None -> bail
+/// (honest, never a fake-dig).
+type AdaptorWrap = Box<dyn FnOnce(Box<dyn Sugar>) -> Box<dyn Sugar>>;
+
+/// Wrap `inner` in `RevSugar` (the `.rev()` adaptor, also the synthetic final `Rev`
+/// appended for `.rfold`).
+fn wrap_rev(inner: Box<dyn Sugar>) -> Box<dyn Sugar> {
+    Box::new(sugar::rev::RevSugar { inner })
 }
 
 /// Peel iterator adaptors off a `.fold`/`.rfold` receiver and RESOLVE `let`-bound
 /// receivers through `let_inits`, reaching the base literal-domain expression PLUS the
 /// ordered adaptor chain (in APPLICATION order: base -> ... -> fold). Returns
-/// (base, adaptors) or None on an unrepresentable adaptor / unresolvable binding /
+/// (base, wrappers) or None on an unrepresentable adaptor / unresolvable binding /
 /// non-literal `n` for skip/take (-> bail). Stdlib sugar over written literals -> dig;
 /// monkey business -> the const-evaluator that runs the closures will itself bail.
 fn peel_fold_adaptors<'a>(
     expr: &'a Expr,
     let_inits: &BTreeMap<String, &'a Expr>,
     depth: usize,
-) -> Option<(&'a Expr, Vec<Adaptor>)> {
+) -> Option<(&'a Expr, Vec<AdaptorWrap>)> {
     const MAX_DEPTH: usize = 8;
     if depth > MAX_DEPTH {
         return None;
@@ -2288,33 +2300,61 @@ fn peel_fold_adaptors<'a>(
     let mut cur = expr;
     // Collected OUTERMOST-first (we walk from the fold receiver inward); reverse at the
     // end to get APPLICATION order (base-first).
-    let mut adaptors_rev: Vec<Adaptor> = Vec::new();
+    let mut adaptors_rev: Vec<AdaptorWrap> = Vec::new();
     loop {
         match cur {
             Expr::MethodCall(m) => {
                 let name = m.method.to_string();
-                let ad = match (name.as_str(), m.args.len()) {
-                    ("iter" | "into_iter" | "cloned" | "copied" | "fuse", 0) => Adaptor::Identity,
-                    ("rev", 0) => Adaptor::Rev,
-                    ("enumerate", 0) => Adaptor::Enumerate,
+                let ad: AdaptorWrap = match (name.as_str(), m.args.len()) {
+                    ("iter" | "into_iter" | "cloned" | "copied" | "fuse", 0) => {
+                        Box::new(|inner| Box::new(sugar::identity::IdentitySugar { inner }))
+                    }
+                    ("rev", 0) => Box::new(wrap_rev),
+                    ("enumerate", 0) => {
+                        Box::new(|inner| Box::new(sugar::enumerate::EnumerateSugar { inner }))
+                    }
                     ("filter", 1) => match &m.args[0] {
-                        Expr::Closure(c) => Adaptor::Filter(c.clone()),
+                        Expr::Closure(c) => {
+                            let pred = c.clone();
+                            Box::new(move |inner| {
+                                Box::new(sugar::filter::FilterSugar { inner, pred })
+                            })
+                        }
                         _ => return None,
                     },
                     ("map", 1) => match &m.args[0] {
-                        Expr::Closure(c) => Adaptor::Map(c.clone()),
+                        Expr::Closure(c) => {
+                            let f = c.clone();
+                            Box::new(move |inner| Box::new(sugar::map::MapSugar { inner, f }))
+                        }
                         _ => return None,
                     },
                     ("skip_while", 1) => match &m.args[0] {
-                        Expr::Closure(c) => Adaptor::SkipWhile(c.clone()),
+                        Expr::Closure(c) => {
+                            let pred = c.clone();
+                            Box::new(move |inner| {
+                                Box::new(sugar::skip_while::SkipWhileSugar { inner, pred })
+                            })
+                        }
                         _ => return None,
                     },
                     ("take_while", 1) => match &m.args[0] {
-                        Expr::Closure(c) => Adaptor::TakeWhile(c.clone()),
+                        Expr::Closure(c) => {
+                            let pred = c.clone();
+                            Box::new(move |inner| {
+                                Box::new(sugar::take_while::TakeWhileSugar { inner, pred })
+                            })
+                        }
                         _ => return None,
                     },
-                    ("skip", 1) => Adaptor::Skip(const_int(&m.args[0])?.try_into().ok()?),
-                    ("take", 1) => Adaptor::Take(const_int(&m.args[0])?.try_into().ok()?),
+                    ("skip", 1) => {
+                        let n: usize = const_int(&m.args[0])?.try_into().ok()?;
+                        Box::new(move |inner| Box::new(sugar::skip::SkipSugar { inner, n }))
+                    }
+                    ("take", 1) => {
+                        let n: usize = const_int(&m.args[0])?.try_into().ok()?;
+                        Box::new(move |inner| Box::new(sugar::take::TakeSugar { inner, n }))
+                    }
                     // filter_map / flat_map / flatten (Option / sub-sequence const-eval),
                     // and every other adaptor: not yet provably exact -> bail.
                     _ => return None,
@@ -2953,120 +2993,15 @@ impl Sugar for LiteralSugar {
     }
 }
 
-/// A sequence adaptor: wraps an inner sequence-`Sugar` and applies one stdlib
-/// iterator-adaptor's EXACT semantics over the inner element sequence. The
-/// transforming kinds carry a closure we const-evaluate on each concrete element
-/// (synthetic-but-warranted output). Bails (None) on any inexactness -- an opaque
-/// element under a transforming adaptor, an overflowing/runtime closure, a tuple
-/// it cannot materialize -- never a fake-dig. This IS `apply_adaptors`, one arm
-/// per class, recursing through `inner.desugar()`.
-struct AdaptorSugar {
-    inner: Box<dyn Sugar>,
-    adaptor: Adaptor,
-}
-
-impl Sugar for AdaptorSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared> {
-        let seq = self.inner.desugar(ctx)?.into_seq()?;
-        let out = apply_one_adaptor(seq, &self.adaptor)?;
-        Some(Desugared::Seq(out))
-    }
-}
-
-/// Apply ONE adaptor's exact stdlib semantics over a desugared element sequence.
-/// Extracted from `apply_adaptors` (one arm), operating on `DesugaredElem` (the
-/// typed sequence element). Any inexactness -> None (bail).
-fn apply_one_adaptor(
-    seq: Vec<DesugaredElem>,
-    adaptor: &Adaptor,
-) -> Option<Vec<DesugaredElem>> {
-    let out = match adaptor {
-        Adaptor::Identity => seq,
-        Adaptor::Rev => {
-            let mut s = seq;
-            s.reverse();
-            s
-        }
-        Adaptor::Skip(n) => seq.into_iter().skip(*n).collect(),
-        Adaptor::Take(n) => seq.into_iter().take(*n).collect(),
-        Adaptor::Enumerate => {
-            let mut out = Vec::with_capacity(seq.len());
-            for (i, elem) in seq.into_iter().enumerate() {
-                // Pair value: (i, elem). The EXPR pair `(i, <expr>)` is always
-                // materializable for EUF; the pair VALUE needs the element const.
-                let e = &elem.expr;
-                let pair_expr: Expr =
-                    syn::parse_str(&format!("({}, {})", i, quote::quote!(#e))).ok()?;
-                let pair_cv = elem
-                    .value
-                    .map(|c| ConstVal::Tuple(vec![ConstVal::Int(i as i64), c]));
-                out.push(DesugaredElem {
-                    expr: pair_expr,
-                    value: pair_cv,
-                });
-            }
-            out
-        }
-        Adaptor::Filter(closure) => {
-            let mut out = Vec::new();
-            for elem in seq {
-                let v = elem.value.as_ref()?; // opaque element under a filter -> bail
-                if const_eval_unary_closure(closure, v)?.as_bool()? {
-                    out.push(elem);
-                }
-            }
-            out
-        }
-        Adaptor::SkipWhile(closure) => {
-            let mut out = Vec::new();
-            let mut still_skipping = true;
-            for elem in seq {
-                if still_skipping {
-                    let v = elem.value.as_ref()?;
-                    if const_eval_unary_closure(closure, v)?.as_bool()? {
-                        continue;
-                    }
-                    still_skipping = false;
-                }
-                out.push(elem);
-            }
-            out
-        }
-        Adaptor::TakeWhile(closure) => {
-            let mut out = Vec::new();
-            for elem in seq {
-                let v = elem.value.as_ref()?;
-                if const_eval_unary_closure(closure, v)?.as_bool()? {
-                    out.push(elem);
-                } else {
-                    break;
-                }
-            }
-            out
-        }
-        Adaptor::Map(closure) => {
-            let mut out = Vec::with_capacity(seq.len());
-            for elem in seq {
-                let v = elem.value.as_ref()?; // opaque element under a map -> bail
-                let mapped = const_eval_unary_closure(closure, v)?;
-                let mexpr = mapped.to_expr()?; // materialize for EUF translation
-                out.push(DesugaredElem {
-                    expr: mexpr,
-                    value: Some(mapped),
-                });
-            }
-            out
-        }
-    };
-    Some(out)
-}
-
 /// Build the sequence-`Sugar` tree for a fold/for_each RECEIVER: a base literal
 /// domain wrapped by the ordered adaptor chain (`LiteralSugar` innermost, each
-/// `AdaptorSugar` applied in base->terminal order). This is `peel_fold_adaptors`
-/// in reverse-construction: peel to (base, adaptors), then nest. Resolving
+/// per-class decorator `Sugar` -- `IdentitySugar`/`RevSugar`/`EnumerateSugar`/
+/// `FilterSugar`/`MapSugar`/`SkipSugar`/`TakeSugar`/`SkipWhileSugar`/`TakeWhileSugar`,
+/// each in `src/sugar/*.rs` -- applied in base->terminal order). This is
+/// `peel_fold_adaptors` in reverse-construction: peel to (base, wrappers), then nest
+/// by folding each application-order wrapper over the running node. Resolving
 /// `let`-bound receivers through `let_inits` is delegated to `peel_fold_adaptors`.
-/// `extra_rev` appends a final `Rev` (for `.rfold`). None on an unrepresentable
+/// `extra_rev` appends a final `RevSugar` (for `.rfold`). None on an unrepresentable
 /// adaptor / unresolvable binding (-> bail).
 fn decompose_seq(
     expr: &Expr,
@@ -3075,14 +3010,11 @@ fn decompose_seq(
 ) -> Option<Box<dyn Sugar>> {
     let (base, mut adaptors) = peel_fold_adaptors(expr, let_inits, 0)?;
     if extra_rev {
-        adaptors.push(Adaptor::Rev);
+        adaptors.push(Box::new(wrap_rev));
     }
     let mut node: Box<dyn Sugar> = Box::new(LiteralSugar { base: base.clone() });
-    for adaptor in adaptors {
-        node = Box::new(AdaptorSugar {
-            inner: node,
-            adaptor,
-        });
+    for wrap in adaptors {
+        node = wrap(node);
     }
     Some(node)
 }
