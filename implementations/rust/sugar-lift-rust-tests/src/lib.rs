@@ -36,6 +36,7 @@ pub mod sugar {
     pub mod filter;
     pub mod identity;
     pub mod impl_method;
+    pub mod literal;
     pub mod map;
     pub mod match_scrutinee;
     pub mod rev;
@@ -47,6 +48,7 @@ pub mod sugar {
     pub mod temporal_read;
 }
 
+use crate::sugar::literal::LiteralSugar;
 use quote::ToTokens;
 use sugar_ir_symbolic::{
     and_, atomic_, eq, forall, gt, gte, implies, lt, lte, make_var, ne, not_, num, or_, real_const,
@@ -3733,76 +3735,11 @@ impl Effect {
     }
 }
 
-/// BASE CASE: a finite literal domain (a literal array `[e0, e1, ...]` or a closed
-/// integer range `a..b` / `a..=b`). `desugar` materializes the element sequence in
-/// iterated order, each element its source `Expr` + its `ConstVal` when evaluable.
-/// May be SYNTHETIC under an adaptor, but a `LiteralSugar` is the vendor's written
-/// construction. The floor: `desugar` = `Some(Seq(literals))`.
-struct LiteralSugar {
-    base: Expr,
-}
 
 /// Maximum desugared sequence length (a finite-construction guard shared by every
 /// sequence class). Mirrors the defolder's `CAP`.
 const SUGAR_SEQ_CAP: i64 = 4096;
 
-impl Sugar for LiteralSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        // TOTAL: the dig body computes the legacy `Option<Desugared>` (every inner `?`
-        // is a structural bail); `Outcome::from_opt` lifts it -- `Some` -> `Dug`, the
-        // structural bail -> `Hit(Effect::Unsupported)` (discarded by the fall-through
-        // consumer exactly as the old `None` was). No unclassified return path.
-        Outcome::from_opt((|| {
-        // Discriminate the domain EXACTLY as the defolder does (construction axiom:
-        // a literal array unrolls over its element terms; a closed range enumerates
-        // its integers). A runtime collection is not a `BoundedDomain` -> None.
-        let domain = bounded_domain_from_expr(&self.base, ctx.scope)?;
-        let seq: Vec<DesugaredElem> = match domain {
-            BoundedDomain::Array(_) => match strip_refs_groups(&self.base) {
-                Expr::Array(arr) => {
-                    if arr.elems.len() as i64 > SUGAR_SEQ_CAP {
-                        return None;
-                    }
-                    arr.elems
-                        .iter()
-                        .map(|e| DesugaredElem {
-                            expr: e.clone(),
-                            value: const_eval(e, &BTreeMap::new()),
-                        })
-                        .collect()
-                }
-                _ => return None,
-            },
-            BoundedDomain::Range {
-                start,
-                end,
-                inclusive,
-            } => {
-                let (Some(s), Some(e)) = (term_as_int(&start), term_as_int(&end)) else {
-                    return None;
-                };
-                // `checked_add`: an inclusive end at i128::MAX would overflow.
-                let Some(e) = (if inclusive { e.checked_add(1) } else { Some(e) }) else {
-                    return None;
-                };
-                if e < s || e - s > i128::from(SUGAR_SEQ_CAP) {
-                    return None;
-                }
-                (s..e)
-                    .map(|n| DesugaredElem {
-                        expr: syn::parse_str::<Expr>(&n.to_string()).unwrap(),
-                        value: Some(ConstVal::Int(n)),
-                    })
-                    .collect()
-            }
-        };
-        if seq.is_empty() {
-            return None;
-        }
-        Some(Desugared::Seq(seq))
-        })())
-    }
-}
 
 /// Build the sequence-`Sugar` tree for a fold/for_each RECEIVER: a base literal
 /// domain wrapped by the ordered adaptor chain (`LiteralSugar` innermost, each
