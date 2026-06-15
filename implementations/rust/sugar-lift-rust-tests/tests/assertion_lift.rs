@@ -8095,3 +8095,172 @@ fn t() {
         out.decls.iter().map(|d| format!("{:?}", d.inv)).collect::<Vec<_>>()
     );
 }
+
+// ── REFUSE HALF: a literal-domain for-loop with a RUNTIME domain/body/accumulator is a
+// NAMED terminal Effect (Hit side of Outcome{Dug|Hit}), detection-EARNED. The dig fires
+// first (above); these prove the refuse half names the SPECIFIC runtime cause as a
+// terminal refusal -- AND that a computable-but-unimplemented body STAYS unclassified
+// (the fake-refuse guard, the inverse of fake-dig).
+
+fn disp(reason: &str) -> sugar_lift_rust_tests::Disposition {
+    sugar_lift_rust_tests::refusal_disposition(reason)
+}
+
+#[test]
+fn forloop_runtime_endpoint_refuses_with_named_domain_effect() {
+    // CAUSE A: `for i in 0..v.len()` -- runtime endpoint. The body advances a runtime
+    // iterator (`let mut iter; iter.advance_by(i)` -- the iter/traits/iterator.rs shape),
+    // so the dig declines (loop_body_mutates) and the RUNTIME DOMAIN cause fires FIRST in
+    // the precedence. Must REFUSE (terminal) with the specific "RUNTIME endpoint" reason,
+    // not a generic "not point-wise" unclassified. (The runtime endpoint is detected
+    // before the body cause -- `v.len()` is not a literal int.)
+    let src = r#"
+#[test]
+fn t() {
+    let v = [0, 1, 2, 3, 4];
+    for i in 0..v.len() {
+        let mut iter = v.iter();
+        assert_eq!(iter.advance_by(i), Ok(()));
+        assert_eq!(iter.next().unwrap(), &v[i]);
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/forloop_rt_endpoint.rs");
+    let r = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains("RUNTIME endpoint"))
+        .unwrap_or_else(|| panic!("expected a named RUNTIME-endpoint refusal: {:?}", out.skip_reasons));
+    assert_eq!(
+        disp(r),
+        sugar_lift_rust_tests::Disposition::Refused,
+        "the runtime-endpoint for-loop must be TERMINAL refused, not unclassified"
+    );
+}
+
+#[test]
+fn forloop_runtime_body_read_refuses_with_named_body_effect() {
+    // CAUSE B: literal domain, but the body asserts read RUNTIME DATA via a mutated
+    // builder + runtime accessors (the fmt/mod.rs shape). The mutation taints it, and the
+    // accessors are runtime -> NAMED terminal "body READS RUNTIME DATA" (the mutated
+    // builder triggers cause C; a pure runtime accessor over a non-mut would trigger B --
+    // both are terminal). We assert it is REFUSED (terminal), with a runtime cause named.
+    let src = r#"
+#[test]
+fn t() {
+    for sign in [0, 1, 2] {
+        let mut opts = Builder::new();
+        opts.sign(sign);
+        assert_eq!(opts.get_sign(), sign);
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/forloop_rt_body.rs");
+    let r = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains("RUNTIME-VALUED accumulator") || r.contains("body READS RUNTIME DATA"))
+        .unwrap_or_else(|| panic!("expected a named runtime-cause refusal: {:?}", out.skip_reasons));
+    assert_eq!(
+        disp(r),
+        sugar_lift_rust_tests::Disposition::Refused,
+        "a literal-domain loop over runtime body/accumulator must be TERMINAL refused"
+    );
+}
+
+#[test]
+fn forloop_runtime_valued_accumulator_refuses_with_named_accum_effect() {
+    // CAUSE C: literal range, but a `let mut cur = Big::from(1); mul_pow10(&mut cur, i)`
+    // RUNTIME-VALUED accumulator (the flt2dec dragon.rs shape -- NOT a simple `+= const`
+    // counter). Must REFUSE (terminal) with the named "RUNTIME-VALUED accumulator" reason.
+    let src = r#"
+#[test]
+fn t() {
+    let mut prev = Big::from(1);
+    for i in 1..5 {
+        let mut cur = Big::from(1);
+        mul_pow10(&mut cur, i);
+        assert_eq!(cur, prev.mul(10));
+        prev = cur;
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/forloop_rt_accum.rs");
+    let r = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains("RUNTIME-VALUED accumulator"))
+        .unwrap_or_else(|| panic!("expected a named RUNTIME-VALUED-accumulator refusal: {:?}", out.skip_reasons));
+    assert_eq!(
+        disp(r),
+        sugar_lift_rust_tests::Disposition::Refused,
+        "a runtime-valued (non-counter) accumulator loop must be TERMINAL refused"
+    );
+}
+
+#[test]
+fn forloop_simple_counter_is_not_refused_as_runtime_accumulator() {
+    // FAKE-REFUSE GUARD (the inverse direction): a SIMPLE COUNTER `acc += 1` over a
+    // literal range is NOT a runtime-valued accumulator -- it must NOT be terminal-refused
+    // by cause C. (It either digs, lifts as a forall, or stays unclassified -- but never
+    // gets the runtime-accumulator terminal, which would be a fake-refuse of a computable
+    // counter.) `loop_mutation_is_simple_counter_only` returns true, so cause C declines.
+    let src = r#"
+#[test]
+fn t() {
+    let mut acc = 0;
+    for _i in 0..3 {
+        acc += 1;
+    }
+    assert_eq!(acc, 3);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/forloop_counter.rs");
+    assert!(
+        !out.skip_reasons.iter().any(|r| r.contains("RUNTIME-VALUED accumulator")),
+        "a simple `acc += 1` counter must NOT be refused as a runtime-valued accumulator: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn forloop_computable_but_unimplemented_body_stays_unclassified() {
+    // FAKE-REFUSE GUARD (the load-bearing direction): a body computable-in-principle over
+    // the literal range -- a `let p = base.pow(i)` SSA + `if p >= 10 { .. }` conditional
+    // over the loop var (the int_log.rs ilog10 shape) -- has NO runtime domain, NO runtime
+    // body refusal, NO non-counter mutation. It is in-scope WORK (no lifter yet), NOT a
+    // source property. It MUST STAY UNCLASSIFIED, never refused to zero the count.
+    let src = r#"
+#[test]
+fn t() {
+    for i in 0..=2 {
+        let p = (10u32).pow(i as u32);
+        if p >= 10 {
+            assert_eq!((p - 1).ilog10(), i - 1);
+        }
+        assert_eq!(p.ilog10(), i);
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/forloop_computable.rs");
+    // It must NOT receive any of the three runtime-cause terminals.
+    let wrongly_refused = out.skip_reasons.iter().any(|r| {
+        r.contains("RUNTIME endpoint")
+            || r.contains("body READS RUNTIME DATA")
+            || r.contains("RUNTIME-VALUED accumulator")
+    });
+    assert!(
+        !wrongly_refused,
+        "a computable-but-unimplemented body must STAY unclassified, never fake-refused: {:?}",
+        out.skip_reasons
+    );
+    // If it is in the for-context bucket at all, the disposition is Unclassified (the
+    // existing 'not unconditional point-wise' reason), proving it is WORK not a terminal.
+    if let Some(r) = out.skip_reasons.iter().find(|r| r.contains("for context")) {
+        assert_eq!(
+            disp(r),
+            sugar_lift_rust_tests::Disposition::Unclassified,
+            "the computable for-context body must be UNCLASSIFIED work, not refused: {r}"
+        );
+    }
+}

@@ -290,7 +290,33 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // loop body's iterator advance; a `loop` over a pure value never reaches it.
         // (THE DRAIN: `char.rs::test_decode_utf16_size_hint` fell to the unenumerated
         // safety net.)
-        || reason.contains("loop over a runtime-advanced iterator");
+        || reason.contains("loop over a runtime-advanced iterator")
+        // TERMINAL (REFUSE HALF of the bin-1 for-context classification): a literal-DOMAIN
+        // for-loop whose DOMAIN / BODY / ACCUMULATOR is provably RUNTIME is a NAMED Effect,
+        // the Hit side of Outcome{Dug|Hit}. The DIG already fired first (a literal-domain +
+        // literal-body + simple-counter loop is lifted by `lift_bounded_forall`); these three
+        // reasons are EARNED by a structurally-detected runtime cause in
+        // `for_context_refusal_reason` (never a blanket relabel -- a computable-but-
+        // unimplemented body has NONE of these causes and STAYS the unclassified "not
+        // unconditional point-wise" reason, the fake-refuse guard).
+        //
+        // (A) RUNTIME DOMAIN ENDPOINT (`for i in 0..v.len()`): the universe is not a finite
+        // construction from source literals (runtime count) -- kin to `bin-2`. EARNED by a
+        // non-literal range endpoint (`for_domain_endpoint_is_runtime`); a literal-int range
+        // never matches (it digs / stays unclassified).
+        || reason.contains("domain is over a RUNTIME endpoint")
+        // (B) RUNTIME BODY READ over a literal domain: the iterated values are literals but
+        // the ASSERTED values are runtime (`fmt.flags()&1`, a runtime accessor / temporally-
+        // unstable / mutable-container read). EARNED by the body's OWN refusal reason
+        // (OPAQUE / temporally unstable / mutable container) -- the SAME proven order-loss as
+        // the bin-2 family, surfaced under a literal domain.
+        || reason.contains("body READS RUNTIME DATA")
+        // (C) RUNTIME-VALUED ACCUMULATOR over a literal domain: the body mutates a builder /
+        // non-int accumulator (NOT a simple `acc += <const>` counter), so its value at a
+        // later iteration is a runtime quantity and a single universal would be false. EARNED
+        // by `loop_body_mutates && !loop_mutation_is_simple_counter_only` (a genuine simple
+        // counter does not reach here -- it digs or lifts as a forall).
+        || reason.contains("RUNTIME-VALUED accumulator");
     if terminal {
         Disposition::Refused
     } else {
@@ -4911,56 +4937,27 @@ fn collect_assertion_entries(
                     // the engine conjoins it ambiently.
                     emit_desugared(desugared, entries, macros_lifted);
                 } else {
-                    // Provenance for the bin-1/bin-2 sort: a refused for-loop is
-                    // either over a CONSTRUCTED domain (literal range/array -- the
-                    // forall lift exists, so the refusal is body-side) or over an
-                    // OPAQUE collection (RUNTIME data, bin-2). For a literal domain
-                    // the refusal is body-side -- but the BODY itself may assert over
-                    // OPAQUE runtime data (e.g. `assert_eq!(some_call().get(k), ..)`),
-                    // which is bin-2 EVEN WITH a literal domain: the iterated values
-                    // are literals, but the ASSERTED values are runtime. So re-run the
-                    // body collector and read its own refusal reasons: if any body
-                    // assert refused over OPAQUE data, the loop is bin-2; otherwise it
-                    // is a genuine missing-constructor bin-1 (let-SSA / format! / ...).
-                    let domain = for_iter_domain(&f.expr);
+                    // The DIG declined (literal-body half handled above by
+                    // `lift_bounded_forall`). This is the REFUSE half: a for-loop whose
+                    // DOMAIN / BODY / ACCUMULATOR is provably RUNTIME is a NAMED terminal
+                    // Effect (Hit side of Outcome{Dug|Hit}) -- not unclassified WORK. The
+                    // classification is detection-EARNED (a specific runtime cause), never
+                    // a blanket relabel: a literal-domain + literal-body + simple-counter
+                    // loop DIGS above; a computable-but-unimplemented body (in-scope value,
+                    // no runtime cause detected -- e.g. a `let`-SSA + conditional over the
+                    // loop var) STAYS UNCLASSIFIED here (the inverse of fake-dig is
+                    // fake-REFUSE, equally forbidden -- never refuse to zero the count).
                     let count = count_asserts_in_stmts(&f.body.stmts);
-                    let tag = if domain.contains("LITERAL") {
-                        let mut be = Vec::new();
-                        let mut bs = Vec::new();
-                        let mut bl = 0usize;
-                        let mut bh = HashSet::new();
-                        collect_assertion_entries(
-                            &f.body.stmts,
-                            temporal_scope.local_scope(),
-                            options,
-                            reducer,
-                            float_widths,
-                            &mut be,
-                            &mut bs,
-                            &mut bl,
-                            &mut bh,
-                            macro_depth,
-                            &temporal_scope.plan.interior_mut,
-                        );
-                        let body_over_opaque = bs.iter().any(|r| {
-                            r.contains("OPAQUE")
-                                || r.contains("ambiguous temporal identity")
-                                || r.contains("mutable container")
-                        });
-                        if body_over_opaque {
-                            "a LITERAL array but with a body assertion over OPAQUE runtime data"
-                                .to_string()
-                        } else {
-                            domain.to_string()
-                        }
-                    } else {
-                        domain.to_string()
-                    };
+                    let reason = for_context_refusal_reason(
+                        f,
+                        &temporal_scope,
+                        options,
+                        reducer,
+                        float_widths,
+                        macro_depth,
+                    );
                     for _ in 0..count {
-                        skipped.push(format!(
-                            "assertion under for context over {tag}; \
-                             not unconditional point-wise; released to layer 0"
-                        ));
+                        skipped.push(reason.clone());
                     }
                 }
             }
@@ -5356,6 +5353,242 @@ fn collect_assertion_entries(
 ///   - anything else (`for x in coll`, `for x in v.iter()`, a field, a call): the
 ///     loop ranges over a collection whose ELEMENTS are runtime data, not
 ///     constructed from source literals. No finite construction to walk -> **bin-2**.
+/// True when the iteration domain is a RANGE whose endpoint is NOT a literal int --
+/// `for i in 0..v.len()`, `for i in 0..xs.len()`, `for i in lo..hi` (lo/hi runtime).
+/// The universe is then NOT a finite construction from source literals (the count is a
+/// runtime quantity), so the loop is a Hit(Effect) domain refusal, not unclassified WORK.
+/// A literal-array / literal-int-range domain is NOT runtime (returns false -> the cause
+/// is body-side or the loop is computable-but-unimplemented). EXACT: both endpoints must
+/// const-fold to ints for the domain to be finite-literal; a missing or non-literal end
+/// is runtime. (A `..` open range never reaches a refused for-loop -- it would not parse
+/// as an iterable in the corpus -- but a missing end is treated as runtime for safety.)
+fn for_domain_endpoint_is_runtime(expr: &Expr) -> bool {
+    match strip_refs_groups(expr) {
+        // A literal array / repeat is a finite literal construction -> NOT runtime.
+        Expr::Array(_) | Expr::Repeat(_) => false,
+        Expr::Range(r) => {
+            let start_lit = r
+                .start
+                .as_ref()
+                .map(|e| const_int(e).is_some())
+                .unwrap_or(true); // `..end` start defaults to 0 -- literal.
+            let end_lit = r
+                .end
+                .as_ref()
+                .map(|e| const_int(e).is_some())
+                .unwrap_or(false); // `start..` open end is a runtime/unbounded extent.
+            !(start_lit && end_lit)
+        }
+        // Any other iterable (`coll`, `v.iter()`, a call, a field) is an OPAQUE runtime
+        // collection -- already bin-2 by `for_iter_domain`; not our concern here.
+        _ => false,
+    }
+}
+
+/// True when EVERY mutation in the loop body is a SIMPLE COUNTER step over the literal
+/// domain: an unconditional `acc += <const>` / `acc -= <const>` / `acc = acc (+|-|*) <const>`
+/// whose RHS const-folds to an int literal. A conditional increment (`if c { acc += 1 }`),
+/// a runtime step (`acc += v[i]` where `v[i]` is runtime), or a mutation of a non-int
+/// value (a builder `.sign(..)`, a `Big` accumulator) is NOT a simple counter -> the
+/// accumulator is runtime-valued. The presence of ANY non-simple-counter mutation makes
+/// the whole body's accumulator runtime-valued (we under-claim: one impure mutation
+/// taints it). NO mutation at all returns true (vacuously a simple counter -- the caller
+/// checks `loop_body_mutates` first, so this is only consulted when a mutation exists).
+fn loop_mutation_is_simple_counter_only(stmts: &[Stmt]) -> bool {
+    #[derive(Default)]
+    struct Scan {
+        all_simple: bool,
+        saw_mutation: bool,
+        in_conditional: usize,
+    }
+    impl Scan {
+        fn note_impure(&mut self) {
+            self.saw_mutation = true;
+            self.all_simple = false;
+        }
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Scan {
+        fn visit_expr_if(&mut self, e: &'ast syn::ExprIf) {
+            // A mutation INSIDE a conditional is not unconditional -> not a simple counter.
+            self.in_conditional += 1;
+            syn::visit::visit_expr_if(self, e);
+            self.in_conditional -= 1;
+        }
+        fn visit_expr_match(&mut self, e: &'ast syn::ExprMatch) {
+            self.in_conditional += 1;
+            syn::visit::visit_expr_match(self, e);
+            self.in_conditional -= 1;
+        }
+        fn visit_expr_assign(&mut self, a: &'ast syn::ExprAssign) {
+            self.saw_mutation = true;
+            // `acc = acc (+|-|*) <const>` is a simple counter ONLY if unconditional and
+            // the RHS is exactly that shape.
+            let simple = self.in_conditional == 0
+                && matches!(&*a.left, Expr::Path(_))
+                && match &*a.right {
+                    Expr::Binary(b) => {
+                        matches!(b.op, BinOp::Add(_) | BinOp::Sub(_) | BinOp::Mul(_))
+                            && (const_int(&b.left).is_some() || const_int(&b.right).is_some())
+                            && (matches!(&*b.left, Expr::Path(_)) || matches!(&*b.right, Expr::Path(_)))
+                    }
+                    _ => false,
+                };
+            if !simple {
+                self.all_simple = false;
+            }
+            syn::visit::visit_expr_assign(self, a);
+        }
+        fn visit_expr_binary(&mut self, b: &'ast syn::ExprBinary) {
+            let is_compound = matches!(
+                b.op,
+                BinOp::AddAssign(_)
+                    | BinOp::SubAssign(_)
+                    | BinOp::MulAssign(_)
+                    | BinOp::DivAssign(_)
+                    | BinOp::RemAssign(_)
+                    | BinOp::BitXorAssign(_)
+                    | BinOp::BitAndAssign(_)
+                    | BinOp::BitOrAssign(_)
+                    | BinOp::ShlAssign(_)
+                    | BinOp::ShrAssign(_)
+            );
+            if is_compound {
+                self.saw_mutation = true;
+                // `acc += <const>` / `acc -= <const>` is a simple counter; `*=`/`/=`/...
+                // and a non-const step are NOT. Must be unconditional.
+                let simple = self.in_conditional == 0
+                    && matches!(b.op, BinOp::AddAssign(_) | BinOp::SubAssign(_))
+                    && matches!(&*b.left, Expr::Path(_))
+                    && const_int(&b.right).is_some();
+                if !simple {
+                    self.all_simple = false;
+                }
+            }
+            syn::visit::visit_expr_binary(self, b);
+        }
+        fn visit_expr_reference(&mut self, r: &'ast syn::ExprReference) {
+            // A `&mut` borrow feeds a runtime mutation (`mul_pow10(&mut curpow10, i)`,
+            // a builder `.sign(..)`); not a simple counter.
+            if r.mutability.is_some() {
+                self.note_impure();
+            }
+            syn::visit::visit_expr_reference(self, r);
+        }
+        fn visit_pat_ident(&mut self, p: &'ast syn::PatIdent) {
+            // A `let mut x = ..` inside the body is a fresh runtime accumulator, not a
+            // counter over the domain.
+            if p.mutability.is_some() {
+                self.note_impure();
+            }
+            syn::visit::visit_pat_ident(self, p);
+        }
+    }
+    let mut scan = Scan {
+        all_simple: true,
+        ..Default::default()
+    };
+    for stmt in stmts {
+        syn::visit::Visit::visit_stmt(&mut scan, stmt);
+    }
+    // No mutation -> vacuously simple (caller gates on loop_body_mutates first).
+    !scan.saw_mutation || scan.all_simple
+}
+
+/// Classify a REFUSED literal-domain for-loop into its named terminal Effect (the
+/// REFUSE half of the bin-1 classification), or leave it the existing UNCLASSIFIED
+/// for-context reason when no runtime cause is structurally detected (computable-but-
+/// unimplemented -- in-scope value, just no lifter yet). Detection-EARNED, precedence
+/// runtime-domain > runtime-body-read > runtime-accumulator; the dig already fired
+/// (this is the `else` after `desugar` declined).
+#[allow(clippy::too_many_arguments)]
+fn for_context_refusal_reason(
+    f: &syn::ExprForLoop,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+    reducer: &ReductionCtx<'_>,
+    float_widths: &mut FloatWidthScope,
+    macro_depth: usize,
+) -> String {
+    let domain = for_iter_domain(&f.expr);
+    // OPAQUE collection domain -> already bin-2 (terminal) by `for_iter_domain`; keep it.
+    if !domain.contains("LITERAL") {
+        return format!(
+            "assertion under for context over {domain}; \
+             not unconditional point-wise; released to layer 0"
+        );
+    }
+
+    // (A) RUNTIME DOMAIN ENDPOINT: `for i in 0..v.len()` -- the universe is not a finite
+    // construction from source literals (the count is a runtime quantity). Terminal
+    // Effect, EARNED by the non-literal endpoint (a literal-int range never matches).
+    if for_domain_endpoint_is_runtime(&f.expr) {
+        return "assertion under for context whose domain is over a RUNTIME endpoint \
+                (`a..b` with a runtime bound -- not a finite construction from source \
+                literals); released to layer 0"
+            .to_string();
+    }
+
+    // Re-run the body collector to read its own refusal reasons (the same probe the old
+    // provenance sort used).
+    let mut be = Vec::new();
+    let mut bs = Vec::new();
+    let mut bl = 0usize;
+    let mut bh = HashSet::new();
+    collect_assertion_entries(
+        &f.body.stmts,
+        scope.local_scope(),
+        options,
+        reducer,
+        float_widths,
+        &mut be,
+        &mut bs,
+        &mut bl,
+        &mut bh,
+        macro_depth,
+        &scope.plan.interior_mut,
+    );
+    let body_over_opaque = bs.iter().any(|r| {
+        r.contains("OPAQUE")
+            || r.contains("ambiguous temporal identity")
+            || r.contains("mutable container")
+    });
+
+    // (B) RUNTIME BODY READ: a body assert refused over OPAQUE / temporally-unstable /
+    // mutable-container data (`fmt.flags()&1`, a runtime accessor). The iterated values
+    // are literals but the ASSERTED values are runtime -> the body cannot be a timeless
+    // point-wise claim. Terminal Effect, EARNED by the body's own refusal reason.
+    if body_over_opaque {
+        return "assertion under for context over a LITERAL domain but the body READS \
+                RUNTIME DATA (an opaque/effectful accessor / temporally-unstable / \
+                mutable-container read); not a finite construction from source literals; \
+                released to layer 0"
+            .to_string();
+    }
+
+    // (C) RUNTIME-VALUED ACCUMULATOR: the body mutates, and the mutation is NOT a simple
+    // counter (`acc += <const>`) over the literal domain -- a builder `.sign(..)`, a
+    // `let mut curpow10` + `mul_pow10(&mut ..)`, a `Big`/struct accumulator. Its value at
+    // a later iteration is a runtime quantity, so a single universal would be false.
+    // Terminal Effect, EARNED by the non-counter mutation. (A genuine simple-counter loop
+    // does NOT reach here -- the dig path threads it, or it lifts as a forall.)
+    if loop_body_mutates(&f.body.stmts) && !loop_mutation_is_simple_counter_only(&f.body.stmts) {
+        return "assertion under for context over a LITERAL domain with a RUNTIME-VALUED \
+                accumulator (a mutated builder / non-int accumulator, not a simple counter \
+                over the domain); released to layer 0"
+            .to_string();
+    }
+
+    // ELSE: no runtime cause detected. The body is computable-in-principle over the
+    // literal domain (a `let`-SSA + conditional over the loop var, a pure-but-untranslated
+    // term) -- in-scope WORK, NOT a source property. STAY UNCLASSIFIED (the fake-refuse
+    // guard: never refuse a computable case to zero the count). This is the existing
+    // bin-1 reason, disposition Unclassified.
+    format!(
+        "assertion under for context over {domain}; \
+         not unconditional point-wise; released to layer 0"
+    )
+}
+
 fn for_iter_domain(expr: &Expr) -> &'static str {
     match expr {
         Expr::Range(r) if r.start.is_some() && r.end.is_some() => {
