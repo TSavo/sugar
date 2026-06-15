@@ -188,6 +188,13 @@ pub enum Disposition {
 ///                            CALL: terminal-today; flip to Unclassified if branch
 ///                            partitioning + alias analysis are taught to recover
 ///                            the pinned-branch subset.]
+///   * `is not a closed f32/f64 literal term` -- a flt2dec assert over the algorithm's
+///                            RUNTIME output (no-model axiom), not a source literal.
+///   * `signed zero float literal remains an IEEE refinement` -- a `-0.0` sign-sensitive
+///                            IEEE value; the Real sort collapses ±0, so lifting risks a
+///                            sign-collapse fake-discharge.
+///   * `requires known f32/f64 receiver width` -- a float refinement over an unknown/
+///                            unstable f-width (f16 / parse-unwrap chain).
 /// Everything else is a LIFTER limitation -> Unclassified: `if`/`while`/`match`
 /// (branch partitioning), `unsupported term`, `reachable only via call-site
 /// inlining` (call queueing), `bin-1` literal domains, let-init/nested/unenumerated
@@ -339,7 +346,41 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // `runtime_expr_statement_effect`; a statement over a CONSTRUCTED literal value has
         // no `&mut`/mutation signal and STAYS the unclassified "unlifted expression
         // statement" reason (the fake-refuse guardrail). Typed `RuntimeExprStmtEffect`.
-        || reason.contains("runtime expression-statement");
+        || reason.contains("runtime expression-statement")
+        // TERMINAL (FLOAT TAIL #1 -- flt2dec runtime output): an
+        // `assert!((buf, k) == (..))` against the flt2dec algorithm's RUNTIME output. The
+        // operand is NOT a closed f32/f64 literal term (no `ldexp`/`format!` over a closed
+        // value to dissolve by evaluation), so the asserted value IS the algorithm's
+        // runtime result -- a no-model axiom (we do NOT model flt2dec; see the no-vendor
+        // axiom). There is no constructible timeless FOL form: a SOURCE property, not a
+        // lifter gap. EARNED by the `None` arm of `dissolve_flt2dec_assert` AFTER the
+        // f16/f128-unstable case has already split off above -- a closed literal float
+        // (e.g. `1.5f64`) dissolves to `Some(..)` and never reaches this reason (the
+        // fake-refuse guardrail). Typed as `Flt2decRuntimeEffect`. (THE DRAIN: these fell
+        // to unclassified only because the reason was not whitelisted; not a fake-zero --
+        // the operand's non-closed shape is detected by the dissolver.)
+        || reason.contains("is not a closed f32/f64 literal term")
+        // TERMINAL (FLOAT TAIL #2 -- signed-zero IEEE refinement): a `-0.0` / `-0.0f32`
+        // float literal. IEEE-754 distinguishes `-0.0` from `+0.0` by the sign bit, but our
+        // Real sort is sign-magnitude-collapsing on zero (`-0.0 == +0.0` as reals), so
+        // lifting it as `real_const("-0")` would FAKE-DISCHARGE a sign-sensitive claim by
+        // collapsing the IEEE distinction. ResidueDig confirmed a conservative refusal is
+        // correct. A SOURCE property (sign-sensitive IEEE value), not a lifter gap. EARNED
+        // ONLY when `const_float` parsed a literal AND `real_literal_is_zero` is true under
+        // unary `Neg` -- a NON-zero float literal (`-1.5`) lifts via `real_const` and never
+        // reaches this reason (the fake-refuse guardrail). Typed as `SignedZeroIeeeEffect`.
+        || reason.contains("signed zero float literal remains an IEEE refinement")
+        // TERMINAL (FLOAT TAIL #3 -- unknown/unstable f-width): a float refinement predicate
+        // (`is_nan`/`is_infinite`/..) whose receiver has NO resolvable f32/f64 width -- an
+        // f16/f128 unstable-width receiver or an unresolved parse/unwrap chain
+        // (`"NaN".parse::<f16>().unwrap().is_nan()`). The refinement atom is keyed on the
+        // width (`float.{width}.{method}`); with no known stable width there is no
+        // expressible point-wise predicate -- a SOURCE/environment property mirroring the
+        // existing `f16/f128 formatting is unstable` terminal, not a lifter gap. EARNED by
+        // the `None` arm of `float_refinement_receiver_width` -- a known-f32/f64 receiver
+        // resolves a width and lifts, never reaching this reason (the fake-refuse
+        // guardrail). Typed as `UnknownFloatWidthEffect`.
+        || reason.contains("requires known f32/f64 receiver width");
     if terminal {
         Disposition::Refused
     } else {
@@ -14092,6 +14133,10 @@ mod lifter_key_tests {
             "assertion in an impl method, reachable only at runtime when the method is invoked (impl method `next`); the receiver's state has no single timeless `t`; refused",
             "assertion under an if-guard over a runtime value `*p = true` (not a constructible predicate; the guard's truth is not fixed from source literals); refused",
             "assertion in a runtime expression-statement `(assert_matches ! (..) , mem :: take (& mut val))` (value read through a `&mut` borrow / mutation, not constructible from source literals); refused",
+            "flt2dec assert: operand is not a closed f32/f64 literal term (ldexp or a format! expected); released to layer 0",
+            "signed zero float literal remains an IEEE refinement `- 0.0`",
+            "assert_eq!: signed zero float literal remains an IEEE refinement `- 0.0f32`",
+            "float refinement predicate `is_nan` requires known f32/f64 receiver width `\"NaN\" . parse :: < f16 > () . unwrap () . is_nan ()`",
         ] {
             assert_eq!(refusal_disposition(r), Refused, "should be terminal: {r}");
         }
@@ -14200,6 +14245,104 @@ mod lifter_key_tests {
                 .any(|r| r.contains("runtime expression-statement")
                     && refusal_disposition(r) == Disposition::Refused),
             "the mut-borrow tuple-statement assert must be REFUSED with its named cause: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    // ── FLOAT TAIL refusal: flt2dec runtime output / signed-zero / unknown f-width ──
+    //
+    // The Hit side of Outcome{Dug|Hit}: a float value with no constructible timeless FOL
+    // form is a NAMED terminal Effect (refused), accounted not silent. Each test pairs the
+    // REFUSE direction (a detected runtime / sign-sensitive / unstable-width cause) with the
+    // DISCRIMINATION direction (a CLOSED-literal float that STAYS on its current path --
+    // discharged or its existing reason -- proving the refusal is cause-driven, not a
+    // blanket float refusal: the inverse-sin guardrail against fake-refuse).
+
+    #[test]
+    fn signed_zero_float_literal_is_refused_ieee_refinement() {
+        // REFUSE: a `-0.0` float literal. IEEE-754 distinguishes -0.0 from +0.0 by the
+        // sign bit; our Real sort collapses ±0, so lifting risks a sign-collapse
+        // fake-discharge (corpus: ops.rs / num/mod.rs / time.rs). Sign-sensitive IEEE value.
+        let src = r#"
+            #[test]
+            fn t() {
+                assert_eq!(-0.0f32, x);
+            }
+        "#;
+        let out = lift_src(src);
+        assert!(
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("signed zero float literal remains an IEEE refinement")
+                    && refusal_disposition(r) == Disposition::Refused),
+            "the -0.0 literal must be REFUSED with its named signed-zero cause: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn nonzero_negative_float_literal_is_not_signed_zero_refused() {
+        // DISCRIMINATION: a NON-zero negative float literal (`-1.5`) is NOT sign-collapsing
+        // -- it lifts via `real_const("-1.5")` and must NOT carry the signed-zero refusal.
+        // Proves the refusal is the `real_literal_is_zero` cause, not a blanket float bail.
+        let src = r#"
+            #[test]
+            fn t() {
+                assert_eq!(-1.5f64, -1.5f64);
+            }
+        "#;
+        let out = lift_src(src);
+        assert!(
+            !out.skip_reasons
+                .iter()
+                .any(|r| r.contains("signed zero float literal remains an IEEE refinement")),
+            "a non-zero -1.5 literal must NOT be signed-zero refused: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn float_refinement_over_unknown_width_is_refused() {
+        // REFUSE: `is_nan` over an f16 parse-unwrap chain has no resolvable f32/f64 width
+        // (corpus: num/dec2flt/mod.rs `"NaN".parse::<f16>().unwrap().is_nan()`). With no
+        // stable width the `float.{width}.{method}` atom is inexpressible -- mirrors the
+        // existing f16/f128-unstable terminal.
+        let src = r#"
+            #[test]
+            fn t() {
+                assert!("NaN".parse::<f16>().unwrap().is_nan());
+            }
+        "#;
+        let out = lift_src(src);
+        assert!(
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("requires known f32/f64 receiver width")
+                    && refusal_disposition(r) == Disposition::Refused),
+            "the f16 refinement predicate must be REFUSED with its named unknown-width cause: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn float_refinement_over_known_f64_width_is_not_unknown_width_refused() {
+        // DISCRIMINATION: `is_nan` over a known-f64 receiver (typed local) resolves a width
+        // and lifts as `float.f64.is_nan` -- it must NOT carry the unknown-width refusal.
+        // Proves the refusal is the `float_refinement_receiver_width` None cause, not a
+        // blanket float-refinement bail.
+        let src = r#"
+            #[test]
+            fn t() {
+                let x: f64 = 0.0;
+                assert!(x.is_nan());
+            }
+        "#;
+        let out = lift_src(src);
+        assert!(
+            !out.skip_reasons
+                .iter()
+                .any(|r| r.contains("requires known f32/f64 receiver width")),
+            "a known-f64 refinement receiver must NOT be unknown-width refused: {:?}",
             out.skip_reasons
         );
     }
