@@ -8726,6 +8726,164 @@ fn t() {
     );
 }
 
+// ── DIG: the `.filter_map(|x| <opt>)` composable adaptor (`FilterMapSugar`) ───────
+//
+// `coretests/tests/iter/adapters/filter_map.rs::test_filter_map_fold` is the verbatim
+// shape: `xs.iter().filter_map(|&x| if x%2==0 { Some(x*x) } else { None }).fold(0,
+// |i, x| { assert_eq!(x, ys[i]); i+1 })` (and the `.rfold` twin). The `filter_map`
+// const-evaluates the `Option`-returning closure over each literal element, keeping the
+// `Some` values -- the composable mirror of the closed `try_fold` value-evaluator's
+// `filter_map` arm. The kept+mapped sequence threads through the existing cursor-fold
+// `ys[i]` index resolution, so each step is the EXACT literal pair. EXACT-OR-BAIL: an
+// opaque element under the filter_map / a runtime closure stays unclassified.
+
+#[test]
+fn filter_map_cursor_fold_over_literal_array_digs_exact_elements() {
+    // POSITIVE (the verbatim coretests `test_filter_map_fold` fold half): keep the even
+    // elements squared -> [0,4,16,36,64] = ys; the cursor fold (i 0..4) resolves ys[i]
+    // to each EXACT literal element. A real dig produces the literal pair `(elem, elem)`.
+    let src = r#"
+#[test]
+fn t() {
+    let xs = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+    let ys = [0, 4, 16, 36, 64];
+    let it = xs.iter().filter_map(|&x| if x % 2 == 0 { Some(x * x) } else { None });
+    let i = it.fold(0, |i, &x| { assert_eq!(x, ys[i]); i + 1 });
+    assert_eq!(i, ys.len());
+}
+"#;
+    let out = lift_file(&parse(src), "tests/filter_map_fold.rs");
+    assert!(
+        !out.skip_reasons.iter().any(|r| r.contains("let-initializer")),
+        "the filter_map cursor fold must dig, not stay a let-init refusal: {:?}",
+        out.skip_reasons
+    );
+    let fold_decl = out
+        .decls
+        .iter()
+        .find(|d| d.name.contains("fold"))
+        .expect("a fold decl must be emitted");
+    let pairs = dug_eq_int_pairs(fold_decl);
+    assert_eq!(
+        pairs,
+        vec![(0, 0), (4, 4), (16, 16), (36, 36), (64, 64)],
+        "filter_map(even -> x*x) keeps [0,4,16,36,64] and digs each exact (elem, ys[pos]) pair"
+    );
+    // Each ground equality is true -> SAT (teeth: real, not vacuous).
+    if let Some(sat) = z3_verdict(&inv_json(fold_decl), "filter_map_fold_good") {
+        assert!(sat, "the filter_map dig (0==0 ∧ 4==4 ∧ ..) must be satisfiable");
+    }
+}
+
+#[test]
+fn filter_map_cursor_rfold_over_literal_array_digs_exact_elements() {
+    // POSITIVE (the verbatim coretests `test_filter_map_fold` rfold half): the reversed
+    // kept sequence is 64,36,16,4,0; `ys[i-1]` (i threaded 5,4,3,2,1) resolves to
+    // ys[4..0] = 64,36,16,4,0. Proves the reversal + index resolution under filter_map.
+    let src = r#"
+#[test]
+fn t() {
+    let xs = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+    let ys = [0, 4, 16, 36, 64];
+    let it = xs.iter().filter_map(|&x| if x % 2 == 0 { Some(x * x) } else { None });
+    let i = it.rfold(ys.len(), |i, &x| { assert_eq!(x, ys[i - 1]); i - 1 });
+    assert_eq!(i, 0);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/filter_map_rfold.rs");
+    assert!(
+        !out.skip_reasons.iter().any(|r| r.contains("let-initializer")),
+        "the filter_map cursor rfold must dig: {:?}",
+        out.skip_reasons
+    );
+    let rfold_decl = out
+        .decls
+        .iter()
+        .find(|d| d.name.contains("rfold"))
+        .expect("an rfold decl must be emitted");
+    let pairs = dug_eq_int_pairs(rfold_decl);
+    assert_eq!(
+        pairs,
+        vec![(64, 64), (36, 36), (16, 16), (4, 4), (0, 0)],
+        "filter_map + rfold walks the reversed kept sequence and digs each exact pair"
+    );
+}
+
+#[test]
+fn filter_map_cursor_fold_bad_twin_is_refutable_carrying_real_elements() {
+    // TEETH (break-the-twin): the SAME filter_map keep [0,4,16,36,64] asserted against a
+    // WRONG expected `ys` (all 99). A real dig carries the REAL kept-mapped element on
+    // the LHS and 99 on the RHS -- a z3-REFUTABLE `4 == 99`, NOT a vacuously satisfiable
+    // `4 == index(ys, k)`. A fake-dig (uninterpreted EUF accessor) would be SAT; the real
+    // literal makes the false claim UNSAT.
+    let src = r#"
+#[test]
+fn t() {
+    let xs = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+    let ys = [99, 99, 99, 99, 99];
+    let it = xs.iter().filter_map(|&x| if x % 2 == 0 { Some(x * x) } else { None });
+    let i = it.fold(0, |i, &x| { assert_eq!(x, ys[i]); i + 1 });
+}
+"#;
+    let out = lift_file(&parse(src), "tests/filter_map_fold_twin.rs");
+    let fold_decl = out
+        .decls
+        .iter()
+        .find(|d| d.name.contains("fold"))
+        .expect("a fold decl must be emitted");
+    let pairs = dug_eq_int_pairs(fold_decl);
+    assert_eq!(
+        pairs,
+        vec![(0, 99), (4, 99), (16, 99), (36, 99), (64, 99)],
+        "the bad twin lifts to refutable (kept-elem != 99) pairs carrying the REAL element"
+    );
+    assert!(
+        pairs.iter().filter(|(a, b)| a != b).count() >= 4,
+        "the bad-twin conjunction must contain genuine (refutable) inequalities: {pairs:?}"
+    );
+    // The conjunction (0==99 ∧ 4==99 ∧ ..) is z3-UNSAT (refutes) -- the real teeth.
+    if let Some(sat) = z3_verdict(&inv_json(fold_decl), "filter_map_fold_bad") {
+        assert!(!sat, "the bad-twin filter_map conjunction must be z3-UNSAT (refutes)");
+    }
+}
+
+#[test]
+fn filter_map_over_opaque_element_stays_unclassified_not_dug() {
+    // BAIL (guardrail): the indexed array `xs` is a RUNTIME value (a call result), so the
+    // filter_map's elements are opaque -- no const value to apply the Option-closure to.
+    // The let-init fold MUST stay unclassified (a safe under-claim), never be fake-dug.
+    let src = r#"
+fn make_xs() -> Vec<i32> { vec![0, 1, 2, 3, 4] }
+
+#[test]
+fn t() {
+    let xs = make_xs();
+    let ys = [0, 4, 16];
+    let it = xs.iter().filter_map(|&x| if x % 2 == 0 { Some(x * x) } else { None });
+    let i = it.fold(0, |i, &x| { assert_eq!(x, ys[i]); i + 1 });
+}
+"#;
+    let out = lift_file(&parse(src), "tests/filter_map_opaque.rs");
+    // The opaque (runtime) receiver makes the filter_map elements non-const: the dig
+    // BAILS. It is refused as an opaque-runtime-receiver source property (a terminal
+    // bin-2 refusal), never fake-dug. The exact disposition (terminal-refused here, vs a
+    // let-init structural bail) is unimportant; the LAW is: NOT lifted.
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "a filter_map over a runtime (opaque) array must NOT lift (no fake-dig): {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.skip_reasons.iter().any(|r| r.contains("opaque")),
+        "the opaque filter_map element must be refused as a runtime/opaque source property: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        !out.decls.iter().any(|d| d.name.contains("fold")),
+        "no fold obligation may be minted over an opaque filter_map (no fake-dig)"
+    );
+}
+
 // ── DIG WAVE: for-loop-body cursor -- index-read unroll over a LITERAL-INT range ──
 //
 // `for i in 0..n { assert_eq!(v[i], ys[i]) }` over a LITERAL int range and IMMUTABLE

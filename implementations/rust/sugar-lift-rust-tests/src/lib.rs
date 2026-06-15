@@ -35,6 +35,7 @@ pub mod sugar {
     pub mod control_flow_term;
     pub mod enumerate;
     pub mod filter;
+    pub mod filter_map;
     pub mod fold;
     pub mod forall;
     pub mod identity;
@@ -2767,9 +2768,10 @@ fn bounded_domain_from_expr(expr: &Expr, scope: &TemporalScope) -> Option<Bounde
 /// `RevSugar`, ...). One per recognized adaptor; the per-class decorator structs live
 /// in `src/sugar/*.rs`. STDLIB sugar over the element sequence: the transforming kinds
 /// capture the closure we const-evaluate over each concrete element. Only
-/// EXACT-replicable adaptors produce a wrapper; an unrepresentable adaptor (filter_map
-/// / flat_map / flatten / a windowing/stateful one) makes the peel return None -> bail
-/// (honest, never a fake-dig).
+/// EXACT-replicable adaptors produce a wrapper; an unrepresentable adaptor (flat_map
+/// / flatten / a windowing/stateful one) makes the peel return None -> bail (honest,
+/// never a fake-dig). (`filter_map` IS replicable via the closed Option-eval, so it
+/// produces a `FilterMapSugar` wrapper.)
 type AdaptorWrap = Box<dyn FnOnce(Box<dyn Sugar>) -> Box<dyn Sugar>>;
 
 /// Wrap `inner` in `RevSugar` (the `.rev()` adaptor, also the synthetic final `Rev`
@@ -2825,6 +2827,15 @@ fn peel_fold_adaptors<'a>(
                         }
                         _ => return None,
                     },
+                    ("filter_map", 1) => match &m.args[0] {
+                        Expr::Closure(c) => {
+                            let f = c.clone();
+                            Box::new(move |inner| {
+                                Box::new(sugar::filter_map::FilterMapSugar { inner, f })
+                            })
+                        }
+                        _ => return None,
+                    },
                     ("skip_while", 1) => match &m.args[0] {
                         Expr::Closure(c) => {
                             let pred = c.clone();
@@ -2851,8 +2862,9 @@ fn peel_fold_adaptors<'a>(
                         let n: usize = const_int(&m.args[0])?.try_into().ok()?;
                         Box::new(move |inner| Box::new(sugar::take::TakeSugar { inner, n }))
                     }
-                    // filter_map / flat_map / flatten (Option / sub-sequence const-eval),
-                    // and every other adaptor: not yet provably exact -> bail.
+                    // flat_map / flatten (sub-sequence const-eval) and every other
+                    // adaptor: not yet provably exact -> bail. (`filter_map` digs above
+                    // via the composable `FilterMapSugar` over the closed Option-eval.)
                     _ => return None,
                 };
                 adaptors_rev.push(ad);
@@ -3087,6 +3099,80 @@ fn const_eval_unary_closure(closure: &syn::ExprClosure, arg: &ConstVal) -> Optio
         other => other,
     };
     const_eval(body, &env)
+}
+
+/// Evaluate an `Option`-returning single-parameter closure `|p| <opt-body>` over a
+/// concrete element value, EXACT-OR-BAIL. The body's VALUE is an `Option`: a `None`
+/// constructor, a `Some(<pure>)` call, or an `if <pure-cond> { <opt> } else { <opt> }`
+/// (the `filter_map` / `map_while` shape). Returns `Some(Some(v))` (kept, value `v`),
+/// `Some(None)` (dropped), or `None` (BAIL -- an unmodeled body / opaque element /
+/// non-const-foldable piece). This is the crate-level twin of the closed `try_fold`
+/// value-evaluator's `eval_option_closure` (`try_fold_eval`), sharing the SAME
+/// `const_eval` floor, lifted here so the composable `FilterMapSugar` / `MapWhileSugar`
+/// decorators const-evaluate an `Option`-closure over each element exactly as the
+/// `MapSugar` decorator const-evaluates a value-closure. A wrong BAIL is a safe
+/// under-claim; a wrong VALUE would be a fake-discharge, so we never guess.
+fn const_eval_option_closure(
+    closure: &syn::ExprClosure,
+    arg: &ConstVal,
+) -> Option<Option<ConstVal>> {
+    if closure.inputs.len() != 1 {
+        return None;
+    }
+    let param = closure_single_param_ident(&closure.inputs[0])?;
+    let mut env = BTreeMap::new();
+    env.insert(param, arg.clone());
+    let body: &Expr = match &*closure.body {
+        Expr::Block(b) => match b.block.stmts.as_slice() {
+            [Stmt::Expr(e, None)] => e,
+            _ => return None, // a multi-statement / side-effecting body -> bail.
+        },
+        other => other,
+    };
+    const_eval_option_expr(body, &env)
+}
+
+/// Evaluate an expression whose VALUE is an `Option` to a concrete `Option<ConstVal>`:
+/// `None`, `Some(<pure>)`, or `if <pure-cond> { <opt> } else { <opt> }`. `None` (BAIL)
+/// for any other shape. EXACT-OR-BAIL; the dual of `eval_option_expr` in
+/// `try_fold_eval`, over the canonical `const_eval` floor.
+fn const_eval_option_expr(
+    expr: &Expr,
+    env: &BTreeMap<String, ConstVal>,
+) -> Option<Option<ConstVal>> {
+    match expr {
+        Expr::Paren(p) => const_eval_option_expr(&p.expr, env),
+        Expr::Group(g) => const_eval_option_expr(&g.expr, env),
+        Expr::Block(b) => match b.block.stmts.as_slice() {
+            [Stmt::Expr(e, None)] => const_eval_option_expr(e, env),
+            _ => None,
+        },
+        // `None` constructor.
+        Expr::Path(p) if p.path.is_ident("None") => Some(None),
+        // `Some(<pure>)`.
+        Expr::Call(c) => {
+            let Expr::Path(p) = &*c.func else { return None };
+            if !p.path.is_ident("Some") || c.args.len() != 1 {
+                return None;
+            }
+            Some(Some(const_eval(&c.args[0], env)?))
+        }
+        // `if <pure-cond> { <opt> } else { <opt> }`.
+        Expr::If(if_expr) => {
+            // A `let` condition (a pattern guard) is not a pure boolean: `const_eval`
+            // returns None for `Expr::Let`, so `as_bool()?` below bails -- no separate
+            // shape pre-filter needed.
+            let cond = const_eval(&if_expr.cond, env)?.as_bool()?;
+            let then_opt = match if_expr.then_branch.stmts.as_slice() {
+                [Stmt::Expr(e, None)] => const_eval_option_expr(e, env)?,
+                _ => return None,
+            };
+            let else_branch = if_expr.else_branch.as_ref()?;
+            let else_opt = const_eval_option_expr(&else_branch.1, env)?;
+            Some(if cond { then_opt } else { else_opt })
+        }
+        _ => None,
+    }
 }
 
 /// The single bound ident of a closure parameter pattern (`x`, `&x`), or None for any
