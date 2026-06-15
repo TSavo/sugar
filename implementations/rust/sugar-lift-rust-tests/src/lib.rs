@@ -59,14 +59,11 @@ pub mod sugar {
     pub mod take;
     pub mod take_while;
     pub mod temporal_read;
+    pub mod term_leaf;
     pub mod term_literal;
     pub mod unary;
 }
 
-use crate::sugar::conditional::decompose_if;
-use crate::sugar::fold::decompose_fold;
-use crate::sugar::forall::{decompose_for_each, decompose_for_loop};
-use crate::sugar::match_node::decompose_match;
 use quote::ToTokens;
 use sugar_ir_symbolic::{
     and_, atomic_, eq, forall, gt, gte, implies, lt, lte, make_var, ne, not_, num, or_, real_const,
@@ -1801,6 +1798,35 @@ impl TemporalScope {
 
     fn local_scope(&self) -> &str {
         &self.local_scope
+    }
+
+    /// Whether `name` is a versioned local in the temporal PLAN (`scope.plan.versioned`).
+    /// The factory's `Expr::Closure` term arm reads this to decide whether a captured
+    /// free var needs an `@def<v>` suffix; the inline source-of-truth arm read
+    /// `scope.plan.versioned.contains(&name)` directly.
+    pub(crate) fn plan_versioned_contains(&self, name: &str) -> bool {
+        self.plan.versioned.contains(name)
+    }
+
+    /// Whether `name` has an AMBIGUOUS temporal identity in this scope
+    /// (`scope.ambiguous`). The factory's `Expr::Closure` arm refuses a closure that
+    /// captures an ambiguous local; the inline arm read `scope.ambiguous.contains(..)`.
+    pub(crate) fn ambiguous_contains(&self, name: &str) -> bool {
+        self.ambiguous.contains(name)
+    }
+
+    /// The recorded version (`@def<v>` suffix) of `name`, or `None`. The factory's
+    /// `Expr::Closure` arm threads it into the captured free-var's versioned name;
+    /// the inline arm read `scope.versions.get(&name)`.
+    pub(crate) fn version_of(&self, name: &str) -> Option<usize> {
+        self.versions.get(name).copied()
+    }
+
+    /// The in-scope `let`-binding `(name, init)` pairs (`scope.let_bindings`). The
+    /// factory's FormatSugar hooks build the IMMUTABLE-only `stable` map from this,
+    /// mirroring the inline arms' `scope.let_bindings.iter().filter(..)`.
+    pub(crate) fn let_bindings_iter(&self) -> impl Iterator<Item = (&String, &Expr)> {
+        self.let_bindings.iter()
     }
 
     /// Whether `name` is a `let mut` local in this scope (conservatively
@@ -4081,7 +4107,7 @@ fn collect_assertion_entries<'a>(
                             options,
                             let_inits: &let_inits,
                         };
-                        sugar::factory::build(&init.expr, &fcx).desugar(&ctx).dug()
+                        sugar::factory::build_composite(&init.expr, &fcx).desugar(&ctx).dug()
                     } {
                         emit_desugared(desugared, entries, macros_lifted);
                     } else {
@@ -4342,7 +4368,7 @@ fn collect_assertion_entries<'a>(
                         options,
                         let_inits: &let_inits,
                     };
-                    sugar::factory::build(e, &fcx).desugar(&ctx).dug()
+                    sugar::factory::build_composite(e, &fcx).desugar(&ctx).dug()
                 };
                 if let Some(desugared) = lifted {
                     // The loop memento is named `<test>::loop::<var>` by the
@@ -4414,7 +4440,7 @@ fn collect_assertion_entries<'a>(
                         options,
                         let_inits: &let_inits,
                     };
-                    sugar::factory::build(e, &fcx).desugar(&ctx).dug()
+                    sugar::factory::build_composite(e, &fcx).desugar(&ctx).dug()
                 } {
                     emit_desugared(desugared, entries, macros_lifted);
                 } else {
@@ -4501,7 +4527,7 @@ fn collect_assertion_entries<'a>(
                         options,
                         let_inits: &let_inits,
                     };
-                    sugar::factory::build(e, &fcx).desugar(&ctx).dug()
+                    sugar::factory::build_composite(e, &fcx).desugar(&ctx).dug()
                 } {
                     emit_desugared(desugared, entries, macros_lifted);
                     // `decompose_match` dropped any arm gated by an INACTIVE `#[cfg(..)]`
@@ -4671,7 +4697,7 @@ fn collect_assertion_entries<'a>(
                             options,
                             let_inits: &let_inits,
                         };
-                        sugar::factory::build(e, &fcx).desugar(&ctx).dug()
+                        sugar::factory::build_composite(e, &fcx).desugar(&ctx).dug()
                     };
                     if let Some(desugared) = desugared {
                         emit_desugared(desugared, entries, macros_lifted);
@@ -10705,629 +10731,38 @@ fn macro_literal_contains_mut_local(lit_text: &str, scope: &TemporalScope) -> bo
     false
 }
 
+/// The THIN ADAPTER over the recursive term factory (`sugar::factory::build`). The
+/// fat 30-arm `match` over `Expr` that used to live here has been RELOCATED, arm for
+/// arm, into `build` (which is now the COMPLETE term lifter); this function survives
+/// only to keep the name + signature its many callers depend on. It builds a
+/// `FactoryCtx` + `SugarCtx` from `scope` (the dual build-time / desugar-time envs),
+/// runs `build(expr).desugar(ctx)`, and unwraps the total `Outcome`:
+///   * `Dug(Term)` -> `Ok(term)` (the term floor reached truth);
+///   * `Dug(Seq | Constraints)` -> the structural backstop `Err` (a term-position
+///     operand that dug to a non-term payload -- impossible for the term arms, but
+///     total here via `into_term() -> None`);
+///   * `Hit(effect)` -> `Err(effect.reason())` (a named order-loss boundary / a
+///     reasoned `unsupported term` leaf -- the SAME string the old arm's `Err`
+///     carried, so the wire format / CID / counts are conserved).
+/// There is NO legacy fallback: every shape is owned by a `build` arm.
 fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term>, String> {
-    match expr {
-        Expr::Lit(lit) => translate_lit(lit),
-        // `const { EXPR }` is a compile-time evaluation of EXPR: PURE (no runtime
-        // effect), its value IS EXPR's value. Translate the inner expression-only
-        // block and scope its locals, mirroring the assertion-term path. core uses
-        // const blocks for const-generic / intrinsic constants
-        // (`const { type_name::<T>() }`, `const { 4 * 8 }`).
-        Expr::Const(const_block) => {
-            // A const block wrapping a bare PATH is (or may be) a function-item /
-            // const reference -- sugar, NOT a keyed value term (see the fn-pointer
-            // residual test; "function names are sugar"). Keep it residual. A const
-            // block wrapping a COMPUTED expression (arithmetic, call, ...) is a pure
-            // compile-time value -> translate it.
-            if let [Stmt::Expr(Expr::Path(_), None)] = const_block.block.stmts.as_slice() {
-                // A const block wrapping a bare PATH (`const { Zst }`) is a function-item /
-                // const reference -- a NAME, which is sugar, not a keyed value term. There is
-                // no constructible value to read: a SOURCE property (kin to "function names are
-                // sugar"), not a lifter gap. Typed as `Effect::Unsupported` (term-shaped).
-                let effect = Effect::unsupported_term(
-                    &token_key(expr),
-                    UnsupportedTermCause::ConstBlockPath,
-                );
-                return Err(effect.reason());
-            }
-            let term =
-                translate_expression_only_block_in_scope(&const_block.block, "const", scope)?;
-            Ok(scope_const_block_locals(term, scope.local_scope()))
-        }
-        Expr::Unary(unary) if matches!(unary.op, UnOp::Neg(_)) => {
-            if let Some(value) = const_int(&unary.expr) {
-                return Ok(num(-value));
-            }
-            if let Some(value) = const_float(&unary.expr)? {
-                if real_literal_is_zero(&value) {
-                    return Err(format!(
-                        "signed zero float literal remains an IEEE refinement `{}`",
-                        token_key(expr)
-                    ));
-                }
-                return Ok(real_const(format!("-{value}")));
-            }
-            // Arithmetic negation of a non-literal (`-x`): `0 - x`, the same
-            // integer-subtraction ctor as a binary `-`. Only signed operands
-            // compile with unary `-`, so the Int regime is sound. The inner term
-            // must itself be liftable (its named Err propagates).
-            Ok(Rc::new(Term::Ctor {
-                name: "-".to_string(),
-                args: vec![num(0), translate_term_in_scope(&unary.expr, scope)?],
-            }))
-        }
-        Expr::Unary(unary) if matches!(unary.op, UnOp::Not(_)) => Ok(Rc::new(Term::Ctor {
-            name: "bit-not".to_string(),
-            args: vec![translate_term_in_scope(&unary.expr, scope)?],
-        })),
-        // Dereference: *p is a function of the pointer/reference term, the same
-        // EUF shape as the immutable-reference arm below. `*a == *b` reasons
-        // structurally and a contradiction over one dereferenced term is UNSAT.
-        Expr::Unary(unary) if matches!(unary.op, UnOp::Deref(_)) => Ok(Rc::new(Term::Ctor {
-            name: "deref".to_string(),
-            args: vec![translate_term_in_scope(&unary.expr, scope)?],
-        })),
-        Expr::Path(path) if path.path.is_ident("None") => Ok(Rc::new(Term::Ctor {
-            name: "call:None".to_string(),
-            args: Vec::new(),
-        })),
-        Expr::Path(path) => Ok(make_var(scope.path_name(&path.path)?)),
-        Expr::Call(call) => {
-            if let Some(term) = type_id_of_call_term(&call.func, call.args.len())? {
-                return Ok(term);
-            }
-            let mut args = Vec::new();
-            for arg in &call.args {
-                args.push(translate_term_in_scope(arg, scope)?);
-            }
-            Ok(Rc::new(Term::Ctor {
-                name: format!("call:{}", expr_head_key(&call.func)),
-                args,
-            }))
-        }
-        Expr::Array(array) => {
-            literal_aggregate_term_in_scope("Array", array.elems.iter(), expr, scope)
-        }
-        Expr::Tuple(tuple) => {
-            literal_aggregate_term_in_scope("Tuple", tuple.elems.iter(), expr, scope)
-        }
-        Expr::Repeat(repeat) => {
-            // `[elem; N]` is an N-element array constructor. With a LITERAL count it
-            // is EXACTLY the N-fold explicit array `[elem, elem, ...]`, the same value
-            // and (by construction) the same aggregate term -- so `[0xab; 3]` and
-            // `[0xab, 0xab, 0xab]` are congruent, and two different repeats are
-            // distinct terms (the teeth). A non-literal count is not a finite
-            // construction from the written literal, so it is REFUSED BY NAME; an
-            // element that does not translate propagates its own named Err.
-            let Some(count) = repeat_count_literal(&repeat.len) else {
-                // A non-literal count (`[0u8; SIZE]`, `[(); SIZE - 1]`) is not a finite
-                // construction from the written literal: the universe size is symbolic
-                // (const-generic / const expr), so no aggregate term can be pinned. A SOURCE
-                // property, not a lifter gap. THIN NODE-ROUTER: the non-literal-length verdict
-                // is owned by the `ArrayRepeatSugar` node, which `Hit`s `Effect::ArrayRepeat`
-                // in its own `desugar`; this arm renders `effect.reason()` to the `Err` exactly
-                // as before (byte-identical). `decompose_array_repeat` recognizes ONLY this
-                // refuse-shape (it returns `None` for a literal-count repeat, which never
-                // reaches here -- the `let-else` succeeds and the constructive expansion below
-                // runs); on the unreachable structural backstop the term path keeps its own
-                // `unsupported term` cause.
-                return match sugar::array_repeat::decompose_array_repeat(expr) {
-                    Some(node) => match node.desugar_ctx_free() {
-                        Outcome::Hit(effect @ Effect::ArrayRepeat { .. }) => Err(effect.reason()),
-                        _ => Err(format!("unsupported term `{}`", token_key(expr))),
-                    },
-                    None => Err(format!("unsupported term `{}`", token_key(expr))),
-                };
-            };
-            // Bound the expansion so a pathological literal length cannot blow up the
-            // term; an over-bound repeat is named, not silently truncated.
-            const MAX_REPEAT: usize = 4096;
-            if count > MAX_REPEAT {
-                return Err(format!(
-                    "array-repeat length {count} exceeds the {MAX_REPEAT}-element \
-                     expansion bound; refused by name: `{}`",
-                    token_key(expr)
-                ));
-            }
-            let elem_refs = std::iter::repeat(&*repeat.expr).take(count);
-            literal_aggregate_term_in_scope("Array", elem_refs, expr, scope)
-        }
-        Expr::Struct(s) => {
-            // A struct / enum-struct literal `Path { f: v, ... }` is a constructor.
-            // Lift it to a Ctor keyed by the path, with one `field:<name>` sub-ctor
-            // per field. Fields are SORTED BY NAME so the term is canonical (source
-            // field order is irrelevant: `V { a, b }` and `V { b, a }` are the same
-            // value -> the same term) while field names stay significant
-            // (`V { a: x }` != `V { b: x }`). Two distinct literals are distinct
-            // Ctors -> asserting equality with the wrong one is UNSAT (the teeth).
-            //
-            // A functional-update `..rest` means the value is NOT fully pinned from
-            // the literal, so it is refused by name (not silently approximated).
-            // A field value that does not translate propagates its own named Err.
-            if s.rest.is_some() {
-                return Err(format!(
-                    "struct literal with `..rest` is not fully pinned from the literal: `{}`",
-                    token_key(expr)
-                ));
-            }
-            let mut fields: Vec<(String, Rc<Term>)> = Vec::new();
-            for fv in &s.fields {
-                let fname = match &fv.member {
-                    syn::Member::Named(id) => id.to_string(),
-                    syn::Member::Unnamed(idx) => idx.index.to_string(),
-                };
-                fields.push((fname, translate_term_in_scope(&fv.expr, scope)?));
-            }
-            fields.sort_by(|a, b| a.0.cmp(&b.0));
-            let args = fields
-                .into_iter()
-                .map(|(fname, term)| {
-                    Rc::new(Term::Ctor {
-                        name: format!("field:{fname}"),
-                        args: vec![term],
-                    })
-                })
-                .collect();
-            Ok(Rc::new(Term::Ctor {
-                name: format!("struct:{}", path_to_variant_string(&s.path)),
-                args,
-            }))
-        }
-        Expr::MethodCall(call) => {
-            // CLOSED `try_fold` / `try_rfold` VALUE (the construction axiom for a fold
-            // RESULT): `<closed-literal-chain>.try_fold(<lit>, <pure checked closure>)`
-            // is a FINITE construction from source literals, so it reduces to ONE
-            // concrete `Option<i*>`. Ground it to a `Some(n)` / `None` literal and
-            // translate THAT through the ordinary path: `Some(11250)` lifts to
-            // `Ctor("call:Some", [Int(11250)])`, so the outer `assert_eq!` becomes a
-            // grounded `Some(a) == Some(b)`. The teeth follow from ctor-equality: a
-            // bad-twin side grounding to a different `Some(b)` is `call:Some[a] ==
-            // call:Some[b]` (a != b) -- z3-UNSAT. EXACT-OR-BAIL: `None` here falls
-            // through to the existing (unclassified) refusal (a safe under-claim).
-            // CLOSED `try_fold` / `try_rfold` VALUE: ground it to a `Some(n)` / `None`
-            // literal when (and ONLY when) the WHOLE chain is closed-evaluable. On a
-            // bail (a mutable / runtime receiver -- e.g. `iter.try_fold(0, ..)` over a
-            // `let mut iter`), fall THROUGH to the existing path so the prior
-            // (bin-2 / opaque) classification of that row is preserved UNCHANGED -- this
-            // hook only DRAINS the closed-literal rows, it never reclassifies a runtime
-            // one. (Grounding both sides is verified for the 6 closed targets, so no
-            // mixed grounded/opaque `assert_eq!` atom arises; a runtime row's two
-            // operands BOTH stay on the existing path.)
-            if matches!(call.method.to_string().as_str(), "try_fold" | "try_rfold") {
-                if let Some(grounded) = try_fold_eval::eval_try_fold_operand(expr, scope) {
-                    return translate_term_in_scope(&grounded, scope);
-                }
-            }
-            // FORMATSUGAR: `<literal>.to_string()` dissolves to its Display string, lowered
-            // as a REAL `str_const` (teeth), instead of the opaque `method:to_string`
-            // ctor below. Only an IMMUTABLE-bound literal receiver resolves; a runtime
-            // receiver returns `Ok(None)` and falls through unchanged (a safe
-            // under-claim). f16/f128 surfaces the named terminal.
-            if call.method == "to_string" && call.args.is_empty() {
-                let stable: BTreeMap<String, Expr> = scope
-                    .let_bindings
-                    .iter()
-                    .filter(|(name, _)| !scope.is_mut_local(name))
-                    .map(|(name, init)| (name.clone(), init.clone()))
-                    .collect();
-                match sugar::format::try_resolve_format(expr, &stable) {
-                    Ok(Some(s)) => return Ok(str_const(s)),
-                    Err(reason) => return Err(reason),
-                    Ok(None) => {}
-                }
-            }
-            // A closure-bearing iterator/Option adaptor in TERM position (e.g.
-            // `assert_eq!(opt.map(|v| ..), x)`) refuses with the collection
-            // provenance, not a bare "unsupported term `|v|`" -- so the bin sort is
-            // PROVEN (opaque receiver -> bin-2), not presumed. Same rigor the
-            // bool-assertion path already applies to `.all`/`.any`.
-            if let Some(reason) = closure_adaptor_refusal(expr, scope) {
-                return Err(reason);
-            }
-            let mut args = vec![translate_term_in_scope(&call.receiver, scope)?];
-            // PER-OCCURRENCE ADVANCE (Fix 5): a CONSUMING iterator read advances the
-            // iterator, so the second-and-later such read of the SAME binding within
-            // one statement (`assert_ne!(it.nth(0), it.nth(0))`) observes a distinct
-            // `t`. The receiver is already version-tagged (`it@def5`); appending
-            // `@adv{n}` for the n-th occurrence makes the reads distinct terms so the
-            // assertion is `ne(X0, X1)` (satisfiable), not `ne(X, X)` (false unsat).
-            if is_consuming_iterator_method(&call.method.to_string()) {
-                if let Term::Var { name } = args[0].as_ref() {
-                    if receiver_is_versioned_iterator(name, scope) {
-                        let occ = scope.bump_consuming_occurrence(name);
-                        if occ > 0 {
-                            args[0] = make_var(format!("{name}@adv{occ}"));
-                        }
-                    }
-                }
-            }
-            for arg in &call.args {
-                args.push(translate_term_in_scope(arg, scope)?);
-            }
-            let method = match &call.turbofish {
-                Some(args) => format!("{}{}", call.method, angle_args_key(args)),
-                None => call.method.to_string(),
-            };
-            Ok(Rc::new(Term::Ctor {
-                name: format!("method:{method}"),
-                args,
-            }))
-        }
-        Expr::Await(await_expr) => Ok(Rc::new(Term::Ctor {
-            name: "await".to_string(),
-            args: vec![translate_term_in_scope(&await_expr.base, scope)?],
-        })),
-        // Only the immutable borrow is a stable term. `&mut x` stays residual:
-        // a mutable referent can change between observations (temporal identity),
-        // so coalescing two `&mut x` terms would be unsound. See the
-        // mutable_reference_pointer_eq_stays_residual guard test.
-        Expr::Reference(reference) if reference.mutability.is_none() => Ok(Rc::new(Term::Ctor {
-            name: "ref".to_string(),
-            args: vec![translate_term_in_scope(&reference.expr, scope)?],
-        })),
-        // `&mut <closure>` / `&mut <literal>` / `&mut [<array literal>]`: the referent
-        // is an IMMUTABLE VALUE (a closure, scalar literal, or freshly-constructed
-        // array literal cannot be reassigned), so unlike `&mut <variable>` -- which
-        // stays RESIDUAL because two `&mut x` of a mutable binding are distinct
-        // pointers (mutable_reference_pointer_eq_stays_residual) -- this `&mut` is a
-        // stable term: `ref_mut(<value>)`. Needed so `to_string(&mut |d,b,l| .., 3.14)`
-        // (the flt2dec FnMut pattern, post-inline) lifts as a stated point-observation
-        // rather than refusing on `& mut |..|`, AND so `assert_eq!(left, &mut [1,2,3])`
-        // -- slice/array PartialEq is BY VALUE, not by pointer -- lifts its pinned RHS
-        // (`array.rs`/`slice.rs` split/chunk asserts). The array is the SAME immutable-
-        // value class as a scalar literal: its elements lift via the version-aware
-        // element path (so a mutable element cannot false-coalesce across a tick), and
-        // a non-liftable element propagates its own Err (stays unclassified, never a
-        // false discharge). Strictly narrower than the residual rule: a plain `&mut x`
-        // (and `&mut <call>`, e.g. `&mut ready(1)`) still falls through and refuses.
-        Expr::Reference(reference) if is_immutable_value_expr(&reference.expr) => {
-            Ok(Rc::new(Term::Ctor {
-                name: "ref_mut".to_string(),
-                args: vec![translate_term_in_scope(&reference.expr, scope)?],
-            }))
-        }
-        // A `&mut <place>` of a NON-immutable-value referent (`&mut x`, `&mut cx`,
-        // `&mut *cell.get()`, `&mut ready(1)`): a mutable borrow is an order-loss place --
-        // two `&mut x` of a mutable binding are distinct pointers, so the term has no single
-        // timeless value to read. EARNED here ONLY after the immutable-value arm above has
-        // claimed the stable `&mut <literal/closure/array>` cases (a non-mutable `&` already
-        // lifted as `ref`), so this can only refuse a genuinely-mutable borrow. Typed as
-        // `Effect::Unsupported` (term-shaped).
-        Expr::Reference(reference) if reference.mutability.is_some() => {
-            let effect = Effect::unsupported_term(
-                &token_key(expr),
-                UnsupportedTermCause::MutableReference,
-            );
-            Err(effect.reason())
-        }
-        // A raw pointer `&raw const <place>` / `&raw mut <place>` (`Expr::RawAddr`): a raw
-        // address is a runtime value, not a construction from source literals. Kin to `bin-2`.
-        // Typed as `Effect::Unsupported` (term-shaped).
-        Expr::RawAddr(_) => {
-            let effect = Effect::unsupported_term(
-                &token_key(expr),
-                UnsupportedTermCause::RawPointer,
-            );
-            Err(effect.reason())
-        }
-        Expr::Cast(cast) => {
-            if is_shared_dyn_any_type(&cast.ty) {
-                return Ok(Rc::new(Term::Ctor {
-                    name: format!("cast:{}", type_key(&cast.ty)),
-                    args: vec![translate_term_in_scope(&cast.expr, scope)?],
-                }));
-            }
-            if let Some(cast_type) = scalar_cast_type_key(&cast.ty) {
-                return Ok(Rc::new(Term::Ctor {
-                    name: format!("cast:{cast_type}"),
-                    args: vec![translate_term_in_scope(&cast.expr, scope)?],
-                }));
-            }
-            Err(format!("unsupported term `{}`", token_key(expr)))
-        }
-        Expr::Range(range) => {
-            // An omitted bound must NOT lift to a `_` var: `_` is not a valid
-            // SMT-LIB symbol, so it reached the solver as `unknown constant _` and
-            // spuriously REFUSED every `v[..k]` / `v[k..]` slice obligation. An
-            // omitted START is 0 (`..k` == `0..k`); an omitted END is the
-            // collection length -- an opaque but VALID symbol, never `_`.
-            let start = match &range.start {
-                Some(expr) => translate_term_in_scope(expr, scope)?,
-                None => num(0),
-            };
-            let end = match &range.end {
-                Some(expr) => translate_term_in_scope(expr, scope)?,
-                None => make_var("range_end_len"),
-            };
-            let name = match range.limits {
-                syn::RangeLimits::HalfOpen(_) => "range",
-                syn::RangeLimits::Closed(_) => "range_incl",
-            };
-            Ok(Rc::new(Term::Ctor {
-                name: name.to_string(),
-                args: vec![start, end],
-            }))
-        }
-        Expr::Field(field) => Ok(Rc::new(Term::Ctor {
-            name: format!("field:{}", token_key(&field.member)),
-            args: vec![translate_term_in_scope(&field.base, scope)?],
-        })),
-        Expr::Index(index) => {
-            if let Some(term) = const_index_term_in_scope(index, scope)? {
-                return Ok(term);
-            }
-            // General a[i] is the IR term index(a, i). Sound iff the container is
-            // temporally stable. The `mut` oracle (L4) decides: a non-`mut` local
-            // is provably immutable, so index(a, i) is a stable term; a `mut`
-            // local may be index-assigned or method-mutated in ways the tracker
-            // cannot follow, so it stays residual. Non-local containers (a call
-            // result, a field) translate through their own EUF terms.
-            // TYPED BAIL: when the `mut` oracle PROVES the container is a mutable local,
-            // `index(a,i)` is a sequence/position-dependent read with no single timeless `t`.
-            // THIN NODE-ROUTER: that verdict is owned by the `TemporalReadSugar` node, which
-            // `Hit`s `Effect::TemporalRead` in its own `desugar`; this arm renders
-            // `effect.reason()` to the `Err` exactly as before (byte-identical), and the reason
-            // it produces is whitelisted terminal by `refusal_disposition`, draining this
-            // effect-shaped case unclassified -> refused. `decompose_temporal_read` recognizes
-            // ONLY this refuse-shape (an `Index` over a `mut`-local simple-path container): a
-            // non-`mut` / non-simple-path container returns `None`, and the read falls through
-            // to the constructive `index(a, i)` term below (the discrimination twin's
-            // soundness gate -- a stable read is never terminalized).
-            if let Some(node) = sugar::temporal_read::decompose_temporal_read(expr, scope) {
-                if let Outcome::Hit(effect @ Effect::TemporalRead { .. }) = node.desugar_ctx_free()
-                {
-                    return Err(effect.reason());
-                }
-            }
-            let container = translate_term_in_scope(&index.expr, scope)?;
-            let idx = translate_term_in_scope(&index.index, scope)?;
-            Ok(Rc::new(Term::Ctor {
-                name: "index".to_string(),
-                args: vec![container, idx],
-            }))
-        }
-        Expr::Binary(binary) => {
-            // FORMATSUGAR (string concatenation): `a + b` where BOTH sides resolve to
-            // WRITTEN string literals (a `&str`/`String` literal, a bound one, or a
-            // nested `format!`/`concat!`/`.to_string()`) dissolves to the concatenated
-            // string, lowered as a REAL `str_const` (teeth). A NUMERIC `+` (or any
-            // operand that does not resolve to a string) returns `Ok(None)` and falls
-            // THROUGH to the arithmetic-ctor path below, UNCHANGED -- this hook can only
-            // ever drain a genuine literal string `+`, never reclassify arithmetic.
-            if matches!(binary.op, syn::BinOp::Add(_)) {
-                let stable: BTreeMap<String, Expr> = scope
-                    .let_bindings
-                    .iter()
-                    .filter(|(name, _)| !scope.is_mut_local(name))
-                    .map(|(name, init)| (name.clone(), init.clone()))
-                    .collect();
-                match sugar::format::try_resolve_format(expr, &stable) {
-                    Ok(Some(s)) => return Ok(str_const(s)),
-                    Err(reason) => return Err(reason),
-                    Ok(None) => {}
-                }
-            }
-            // BinaryOpSugar: a COMPARISON in term position (`a[0] < b[0]` as the
-            // operand of an outer `==`, or the LHS of `assert_eq!(false == false,
-            // true)`) is the bool-VALUED FOL fact it states -- not an arithmetic
-            // Ctor. `term_binop_name` deliberately keeps the ordered comparisons
-            // OUT of the arithmetic ctor set (so a TOP-LEVEL/negated comparison
-            // routes to the relation-ATOM path and EUF-coalesces with its negated
-            // sibling). Here, in genuine TERM position, we lift the comparison as a
-            // bool value so the surrounding equality can reason over it.
-            if let Some(rel) = relation_from_binop(&binary.op) {
-                // const operands -> fold the comparison to its Bool literal, EXACT
-                // (`false == false` -> Bool(true)). `const_eval` is exact-or-None
-                // over the closed Int/Bool/Char set; a non-const operand returns
-                // None and falls through to the symbolic comparison ctor below.
-                if let Some(ConstVal::Bool(b)) = const_eval(expr, &BTreeMap::new()) {
-                    return Ok(bool_const(b));
-                }
-                // non-const but STABLE operands -> a bool-valued comparison ctor
-                // over the translated operand terms. Keyed per relation
-                // (`cmp:lt`/`cmp:le`/.../`cmp:eq`/`cmp:ne`) so two contradictory
-                // comparisons over the same operands are DISTINCT terms (the
-                // teeth): `cmp:lt(x,y)` and `cmp:gt(x,y)` cannot both equal `true`.
-                // EXACT-OR-BAIL: each operand translates through the same sound
-                // term path, so a `mut` container / effectful operand propagates
-                // its own named Err via `?` (the index/mut oracle still BAILS); we
-                // never emit a comparison over a temporally-unstable operand.
-                let lhs = translate_term_in_scope(&binary.left, scope)?;
-                let rhs = translate_term_in_scope(&binary.right, scope)?;
-                return Ok(Rc::new(Term::Ctor {
-                    name: format!("cmp:{}", rel.cmp_ctor_name()),
-                    args: vec![lhs, rhs],
-                }));
-            }
-            let Some(op) = term_binop_name(&binary.op) else {
-                return Err(format!("unsupported term operator `{}`", token_key(expr)));
-            };
-            Ok(Rc::new(Term::Ctor {
-                name: op.to_string(),
-                args: vec![
-                    translate_term_in_scope(&binary.left, scope)?,
-                    translate_term_in_scope(&binary.right, scope)?,
-                ],
-            }))
-        }
-        Expr::Paren(paren) => translate_term_in_scope(&paren.expr, scope),
-        Expr::Group(group) => translate_term_in_scope(&group.expr, scope),
-        // A macro invocation in term position (format!, vec!, offset_of!, ...)
-        // is desugared to an uninterpreted function term keyed by its canonical
-        // source tokens. Identical macro calls map to the same term (congruence),
-        // so a contradiction like `format!(a) == "p" && format!(a) == "q"` stays
-        // UNSAT; distinct calls map to distinct terms. The witness re-run proves
-        // the actual runtime value; consistency only checks non-contradiction.
-        //
-        // EXCEPTION: if the macro's token stream contains a `let mut` local
-        // (e.g. `format!("{:?}", r)` where `r` is `let mut r = ...`), the
-        // same macro text at two different program points can produce different
-        // values after a mutation (e.g. `r.next()` between the two calls).
-        // The canonical token-key then maps two different observations onto the
-        // same Var name, causing a false contradiction in the fallback
-        // obligation. Refuse the macro as temporally unstable when it contains
-        // any mut local from the current scope.
-        Expr::Macro(m) => {
-            // FORMATSUGAR (the teeth dig): a `format!`/`concat!` over operands that all
-            // resolve to WRITTEN LITERALS is sugar for ONE reproducible string. Compute
-            // it with the lifter's own stdlib `format!` (recompute-don't-reimplement) and
-            // lower the result as the REAL `str_const`, so `assert_eq!(format!(…), "…")`
-            // becomes the constant equality `eq(str_const(computed), str_const(expected))`
-            // — z3-checkable WITH TEETH (a wrong expected string is z3-UNSAT), instead of
-            // the opaque `macro:format!(…)` EUF var below (which the solver satisfies
-            // tautologically). Only IMMUTABLE bindings resolve a literal operand (a `let
-            // mut` could be reassigned), so a mutated operand is never mis-dissolved; that
-            // case falls through to the temporally-unstable refusal below.
-            let seg = m.mac.path.segments.last().map(|s| s.ident.to_string());
-            if matches!(seg.as_deref(), Some("format") | Some("concat")) {
-                let stable: BTreeMap<String, Expr> = scope
-                    .let_bindings
-                    .iter()
-                    .filter(|(name, _)| !scope.is_mut_local(name))
-                    .map(|(name, init)| (name.clone(), init.clone()))
-                    .collect();
-                match sugar::format::try_resolve_format(expr, &stable) {
-                    // DIG: the format dissolved to a concrete string literal.
-                    Ok(Some(s)) => return Ok(str_const(s)),
-                    // NAMED TERMINAL: f16/f128 Display unsupported (carries its k-remedy).
-                    Err(reason) => return Err(reason),
-                    // BAIL: a genuinely runtime operand / unsupported spec -> fall through
-                    // to the conservative opaque path (the EUF var), a safe under-claim.
-                    Ok(None) => {}
-                }
-            }
-            // Walk the token stream looking for any identifier that is a mut_local.
-            // Two forms must be detected:
-            //   1. `format!("{:?}", r)` — `r` is a bare Ident token.
-            //   2. `format!("{socket}")` — `socket` is captured by name inside
-            //      the format-string literal (Rust 1.58+ implicit capture); the
-            //      identifier does NOT appear as a separate Ident token.
-            // For (2), scan the text content of every Literal token in the macro
-            // for occurrences of any mut_local name surrounded by `{` / `:` / `}`
-            // as Rust format-spec delimiters.
-            let token_str = token_key(expr);
-            let contains_mut_local = m
-                .mac
-                .tokens
-                .clone()
-                .into_iter()
-                .any(|tt| match &tt {
-                    proc_macro2::TokenTree::Ident(id) => scope.is_mut_local(&id.to_string()),
-                    proc_macro2::TokenTree::Literal(lit) => {
-                        // Check for inline captures like `"{socket}"` or `"{socket:<24}"`.
-                        // The literal text includes the surrounding quotes; just scan
-                        // the raw string for any mut_local name following `{`.
-                        let text = lit.to_string();
-                        macro_literal_contains_mut_local(&text, scope)
-                    }
-                    _ => false,
-                });
-            if contains_mut_local {
-                return Err(format!(
-                    "macro in term position references a `let mut` local; \
-                     temporally unstable — refused: `{token_str}`"
-                ));
-            }
-            Ok(make_var(format!("macro:{token_str}")))
-        }
-        // A CLOSURE LITERAL as an opaque EUF symbol, keyed by its body text AND the
-        // version-aware terms of its CAPTURED free variables. Conservative by
-        // identity: same text + same captures -> same symbol (a contradiction over
-        // it coalesces and is CAUGHT); ANY difference -> a distinct symbol (it never
-        // false-coalesces, so it cannot mask a contradiction). Captures MUST be
-        // version-aware -- two `|x| x+n` with different captured `n` have identical
-        // text, so coalescing them would be unsound; we include each free var as a
-        // versioned arg, and REFUSE if a capture is ambiguous (no single `t`).
-        Expr::Closure(closure) => {
-            let params: BTreeSet<String> = closure
-                .inputs
-                .iter()
-                .filter_map(|p| match p {
-                    Pat::Ident(id) => Some(id.ident.to_string()),
-                    Pat::Type(t) => match &*t.pat {
-                        Pat::Ident(id) => Some(id.ident.to_string()),
-                        _ => None,
-                    },
-                    _ => None,
-                })
-                .collect();
-            let mut args = Vec::new();
-            for name in names_referenced_in_expr(&closure.body) {
-                if params.contains(&name) {
-                    continue;
-                }
-                // A captured LOCAL must be read at its program-point `t` (versioned);
-                // a global/const path is the same symbol everywhere (bare). Ambiguous
-                // capture -> no single `t` -> refuse the closure.
-                if is_unqualified_local_name(&name) && scope.plan.versioned.contains(&name) {
-                    if scope.ambiguous.contains(&name) {
-                        return Err(format!(
-                            "closure captures ambiguous local `{name}`; refused"
-                        ));
-                    }
-                    let vname = match scope.versions.get(&name) {
-                        Some(v) => format!("{name}@def{v}"),
-                        None => name.clone(),
-                    };
-                    args.push(make_var(vname));
-                } else {
-                    args.push(make_var(name));
-                }
-            }
-            Ok(Rc::new(Term::Ctor {
-                name: format!("closure:{}", token_key(&closure.body)),
-                args,
-            }))
-        }
-        // VALUE-TRANSPARENT WRAPPERS: an `unsafe { <tail> }` or plain `{ <tail> }`
-        // block in TERM position is the value of its tail expression -- `unsafe` is a
-        // compile-time obligation, not a value transform (the same transparency the
-        // value-contract path applies via `tail_inv`, see
-        // `emit_value_contract_unsafe_and_block_are_value_transparent`). We unwrap ONLY
-        // the single-tail block shape (`{ expr }`, no `;`): the inner expr then lifts
-        // via the existing term paths (method-call EUF, deref, call), so
-        // `assert_eq!(unsafe { ok.unwrap_unchecked() }, 100)` lifts to the SAME term as
-        // `assert_eq!(ok.unwrap_unchecked(), 100)` (the `unsafe` wrapper is congruent).
-        // CRITICALLY this is NOT a free pass: the unwrapped tail still goes through the
-        // ordinary operand translation, so a temporally-unstable inner read still BAILS
-        // -- e.g. `unsafe { &mut *cell.get() }` is `&mut` of a deref (not an immutable
-        // value), which falls through to the catch-all and refuses; only the WRAPPER is
-        // transparent. A multi-statement block (a `let`/effect prefix) is NOT unwrapped
-        // here (it is not a single timeless value) and stays refused by name.
-        Expr::Unsafe(block) => match block.block.stmts.as_slice() {
-            [Stmt::Expr(tail, None)] => translate_term_in_scope(tail, scope),
-            _ => Err(format!("unsupported term `{}`", token_key(expr))),
-        },
-        Expr::Block(block) => match block.block.stmts.as_slice() {
-            [Stmt::Expr(tail, None)] => translate_term_in_scope(tail, scope),
-            _ => Err(format!("unsupported term `{}`", token_key(expr))),
-        },
-        // EFFECTFUL CONTROL-FLOW: a `try { .. }` / `async { .. }` block, or a `?`
-        // (`Expr::Try`), is NOT a single timeless point-wise value -- it is control
-        // flow / a deferred computation (a `try` block early-returns its `Err`, an
-        // `async` block is a future evaluated elsewhere, a `?` is a conditional
-        // early-return). There is no construction-from-literals to walk, so no value
-        // lifter could read a single `t`: a SOURCE property, not a missing lift. TYPED
-        // as an `Effect::ControlFlow` whose reason is whitelisted TERMINAL by
-        // `refusal_disposition` -- this drains the `future.rs`
-        // `assert!(Option::is_none(&try { join!(maybe_fut?, async { unreachable!() }) }))`
-        // row unclassified -> refused (a named refuse, never a silent shrug).
-        Expr::TryBlock(_) | Expr::Async(_) | Expr::Try(_) => {
-            // THIN NODE-ROUTER: the term-position control-flow verdict is owned by the
-            // `ControlFlowTermSugar` node, which `Hit`s `Effect::ControlFlow` in its own
-            // `desugar`; this arm renders `effect.reason()` to the `Err` exactly as before
-            // (byte-identical). `decompose_control_flow_term` recognizes ONLY this refuse-shape
-            // (a `try`/`async`/`?` construct); any other expr returns `None` and never reaches
-            // here (this arm matches only those three).
-            match sugar::control_flow_term::decompose_control_flow_term(expr) {
-                Some(node) => match node.desugar_ctx_free() {
-                    Outcome::Hit(effect @ Effect::ControlFlow { .. }) => Err(effect.reason()),
-                    _ => Err(format!("unsupported term `{}`", token_key(expr))),
-                },
-                None => Err(format!("unsupported term `{}`", token_key(expr))),
-            }
-        }
-        other => Err(format!("unsupported term `{}`", token_key(other))),
+    let options = LiftOptions::default();
+    let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
+    let fcx = sugar::factory::FactoryCtx {
+        scope,
+        options: &options,
+        let_inits: &let_inits,
+    };
+    let node = sugar::factory::build(expr, &fcx);
+    let items: Vec<Item> = Vec::new();
+    let reducer = ReductionCtx::from_items(&items);
+    let mut float_widths = FloatWidthScope::new();
+    let ctx = sugar_ctx(scope, &options, &reducer, &mut float_widths, 0);
+    match node.desugar(&ctx) {
+        Outcome::Dug(d) => d
+            .into_term()
+            .ok_or_else(|| format!("unsupported term `{}`", token_key(expr))),
+        Outcome::Hit(effect) => Err(effect.reason()),
     }
 }
 
