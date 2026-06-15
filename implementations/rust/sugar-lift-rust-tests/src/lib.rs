@@ -1426,6 +1426,26 @@ impl<'a> ReductionCtx<'a> {
         }
         reg
     }
+
+    /// An OWNED `FnRegistry` snapshot of every NON-ambiguous in-source fn this reducer
+    /// holds, so the thin `translate_term_in_scope` adapter -- which fabricates an empty
+    /// reducer -- can resolve a callee to its body for TERM-POSITION value-call inlining
+    /// (`assert_eq!(h(2), 3)` peels `h`'s body `n + 1` to a grounded `+(2,1)`). The
+    /// EXACT mirror of `macro_registry_snapshot`, but for fn items. The borrowed `&'a
+    /// ItemFn`s are cloned into owned `Rc<ItemFn>` so the registry outlives the parsed
+    /// file's lifetime and can ride on the owned scope. Optionally overlaid with extra
+    /// lexically-scoped fns (the collector's `local_fns`: nested helpers an enclosing
+    /// block defines) so a nested value helper resolves too.
+    fn fn_registry_snapshot(&self, extra: &BTreeMap<String, &syn::ItemFn>) -> FnRegistry {
+        let mut reg = FnRegistry::new();
+        for (name, f) in &self.functions {
+            reg.insert(name, std::rc::Rc::new((*f).clone()));
+        }
+        for (name, f) in extra {
+            reg.insert(name, std::rc::Rc::new((*f).clone()));
+        }
+        reg
+    }
 }
 
 /// A registry of `macro_rules!` definitions gathered from source: the crate
@@ -1541,6 +1561,82 @@ impl MacroRegistry {
     pub fn is_empty(&self) -> bool {
         self.macros.is_empty()
     }
+}
+
+/// A registry of in-source, value-returning `fn` definitions gathered from the visible
+/// source, OWNED (cloned `ItemFn`s) so it can ride on the owned `TemporalScope` -- the
+/// exact mirror of `MacroRegistry`, but for fn ITEMS instead of `macro_rules!`. The
+/// `ReductionCtx` holds `&'a ItemFn` borrows tied to the parsed file's lifetime; the
+/// term-position adapter (`translate_term_in_scope`) fabricates an empty reducer and
+/// only receives the scope, so it cannot reach those borrows. This registry carries the
+/// fn bodies the SAME way `macro_registry_snapshot` carries the macros: a clone snapshot
+/// on the scope, so `CallSugar`'s desugar-time inline preamble can resolve a callee to
+/// its body and β-reduce it. A name defined more than once is ambiguous and never
+/// resolved (a sound under-claim -- the call stays opaque).
+#[derive(Default, Clone)]
+pub(crate) struct FnRegistry {
+    fns: BTreeMap<String, std::rc::Rc<syn::ItemFn>>,
+    ambiguous: BTreeSet<String>,
+}
+
+impl std::fmt::Debug for FnRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FnRegistry")
+            .field("fns", &self.fns.keys().collect::<Vec<_>>())
+            .field("ambiguous", &self.ambiguous)
+            .finish()
+    }
+}
+
+impl FnRegistry {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record a fn definition by name, with the same ambiguity discipline as the macro
+    /// and function registries: a name seen with a DIFFERENT body becomes ambiguous and
+    /// is never resolved. A byte-identical re-definition (the same source scanned twice)
+    /// is fine.
+    fn insert(&mut self, name: &str, f: std::rc::Rc<syn::ItemFn>) {
+        if self.ambiguous.contains(name) {
+            return;
+        }
+        match self.fns.get(name) {
+            Some(existing) if fn_signature(existing) == fn_signature(&f) => {}
+            Some(_) => {
+                self.fns.remove(name);
+                self.ambiguous.insert(name.to_string());
+            }
+            None => {
+                self.fns.insert(name.to_string(), f);
+            }
+        }
+    }
+
+    /// Resolve a fn name to its definition, or `None` if absent or ambiguous.
+    fn lookup(&self, name: &str) -> Option<std::rc::Rc<syn::ItemFn>> {
+        if self.ambiguous.contains(name) {
+            return None;
+        }
+        self.fns.get(name).cloned()
+    }
+
+    /// Number of distinct fn definitions held (for reporting).
+    pub(crate) fn len(&self) -> usize {
+        self.fns.len()
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.fns.is_empty()
+    }
+}
+
+/// A stable structural signature of a fn definition (its token stream), used by
+/// `FnRegistry::insert` to tell a byte-identical re-definition from a genuinely
+/// conflicting one.
+fn fn_signature(f: &syn::ItemFn) -> String {
+    use quote::ToTokens;
+    f.to_token_stream().to_string()
 }
 
 const MAX_ASSERTION_REDUCTION_DEPTH: usize = 8;
@@ -1811,6 +1907,15 @@ pub(crate) struct TemporalScope {
     /// 5)` expands to its body `2 + 3` (a grounded `+(2,3)`) instead of going opaque.
     /// Empty by default (no macros visible -> opaque, the prior behavior).
     macro_registry: MacroRegistry,
+    /// A snapshot of the in-source, value-returning `fn` definitions VISIBLE at this
+    /// scope (file-level + lexically-enclosing nested helpers), so a TERM-POSITION value
+    /// call (`h(2)` in `assert_eq!(h(2), 3)`) can be RESOLVED to its body and β-reduced
+    /// at desugar time. Carried on the scope for the same reason as `macro_registry`: the
+    /// thin `translate_term_in_scope` adapter fabricates an EMPTY reducer and only
+    /// receives the scope, so the fn bodies must ride here for `CallSugar`'s inline
+    /// preamble to reach them. Empty by default (no fns visible -> the opaque `call:`
+    /// ctor, the prior behavior).
+    fn_registry: FnRegistry,
 }
 
 impl TemporalScope {
@@ -1824,6 +1929,7 @@ impl TemporalScope {
             literal_arrays: BTreeMap::new(),
             let_bindings: BTreeMap::new(),
             macro_registry: MacroRegistry::new(),
+            fn_registry: FnRegistry::new(),
         }
     }
 
@@ -1838,6 +1944,20 @@ impl TemporalScope {
     /// The `macro_rules!` registry visible at this scope (in-file + dependency source).
     fn macro_registry(&self) -> &MacroRegistry {
         &self.macro_registry
+    }
+
+    /// Record the in-source value-`fn` registry visible at this scope (see field doc),
+    /// so a term-position value call can be resolved to its body and β-reduced at
+    /// desugar time even through the thin `translate_term_in_scope` adapter.
+    fn with_fn_registry(mut self, registry: FnRegistry) -> Self {
+        self.fn_registry = registry;
+        self
+    }
+
+    /// The in-source value-`fn` registry visible at this scope (file-level + enclosing
+    /// nested helpers).
+    fn fn_registry(&self) -> &FnRegistry {
+        &self.fn_registry
     }
 
     /// Record the in-scope literal-array bindings for this block (see field doc).
@@ -3488,6 +3608,88 @@ fn sugar_ctx<'a, 'c>(
     }
 }
 
+/// Bound on TERM-POSITION value-call inline nesting (`h` peels to `g` peels to ...).
+/// A recursive / mutually-recursive fn bails to the opaque `call:` ctor at this depth
+/// rather than looping. Value-call helper chains nest shallowly; this is generous.
+const MAX_VALUE_CALL_INLINE_DEPTH: usize = 16;
+
+impl<'a, 'c> SugarCtx<'a, 'c> {
+    /// TERM-POSITION value-call inlining (capability #1), EXACT-OR-BAIL. Try to PEEL a
+    /// free-function call `func(args...)` to a fully-grounded term by resolving the
+    /// callee to its in-source body (`scope.fn_registry()`), β-reducing it
+    /// (`resolve_value_call_inline`), re-building the substituted RETURN EXPR through the
+    /// term factory, and desugaring that subtree with the inline depth bumped.
+    ///
+    /// Returns `Some(term)` ONLY when the rebuilt term is FULLY GROUNDED -- it re-built
+    /// all the way to literals/arith with NO new opaque `call:`/`method:` leaf and NO
+    /// bare `Var` (an unresolved param/local). That is the exact-or-bail gate: a clean
+    /// arithmetic/literal body converts hollow-`call:h` into a grounded `+(2,1)` with
+    /// REAL value teeth (a wrong anchor goes z3-UNSAT). A body that still bottoms out in
+    /// an opaque leaf (a further no-source call, a runtime method, a `&mut` adaptor)
+    /// returns `None`, so `CallSugar` keeps the honest opaque `call:` ctor UNCHANGED --
+    /// the bail. This can only ever convert hollow-B -> grounded-A; it NEVER inflates a
+    /// discharge into an unclassified.
+    pub(crate) fn try_inline_value_call(&self, func: &Expr, args: &[Expr]) -> Option<Rc<Term>> {
+        if self.macro_depth >= MAX_VALUE_CALL_INLINE_DEPTH {
+            return None; // recursion guard -> bail to opaque
+        }
+        let inlined = resolve_value_call_inline(func, args, self.scope, self.options)?;
+        // Re-build the substituted body's return expr through the term factory and
+        // desugar it with the inline depth bumped (so a nested call re-resolves here,
+        // bounded). The child ctx shares the scope/reducer/options; only the depth grows.
+        let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
+        let fcx = sugar::factory::FactoryCtx {
+            scope: self.scope,
+            options: self.options,
+            let_inits: &let_inits,
+        };
+        let node = sugar::factory::build_term(&inlined, &fcx);
+        let mut fw = self.float_widths.borrow_mut();
+        let child = sugar_ctx(
+            self.scope,
+            self.options,
+            self.reducer,
+            &mut *fw,
+            self.macro_depth + 1,
+        );
+        let term = match node.desugar(&child) {
+            Outcome::Dug(d) => d.into_term()?,
+            Outcome::Hit(_) => return None, // a named effect -> bail to opaque
+        };
+        // EXACT-OR-BAIL: commit the peel only if it grounded all the way out.
+        if is_fully_grounded_term(&term) {
+            Some(term)
+        } else {
+            None
+        }
+    }
+}
+
+/// The exact-or-bail predicate for term-position value-call inlining: a term is FULLY
+/// GROUNDED iff it bottoms out entirely in CONSTANTS under arithmetic / comparison /
+/// structural constructors, with NO bare `Var` (an unresolved param or opaque local) and
+/// NO opaque `call:`/`method:` ctor (a further no-source call or runtime method). A
+/// `Lambda`/`Let` term in this position is also not a grounded scalar value -- reject.
+/// This is the gate that keeps inlining from inflating a discharge into an unclassified:
+/// it commits a peel ONLY when the body re-built to literals/arith.
+fn is_fully_grounded_term(term: &Term) -> bool {
+    match term {
+        Term::Const { .. } => true,
+        // A bare variable is an unresolved param / opaque local -- NOT grounded.
+        Term::Var { .. } => false,
+        // A lambda / let in value position is not a ground scalar value here.
+        Term::Lambda { .. } | Term::Let { .. } => false,
+        Term::Ctor { name, args } => {
+            // The opaque under-claim leaves: a further no-source call or a runtime
+            // method. Their presence means the body did NOT ground all the way out.
+            if name.starts_with("call:") || name.starts_with("method:") {
+                return false;
+            }
+            args.iter().all(|a| is_fully_grounded_term(a))
+        }
+    }
+}
+
 /// Emit a desugared constraint terminal into the collector's `entries` (the
 /// warranted-emission path), accounting its assert-macro count. Returns true if a
 /// constraint was emitted (the statement is accounted), false if `desugared` was a
@@ -4123,6 +4325,14 @@ fn collect_assertion_entries<'a>(
             local_fns.insert(f.sig.ident.to_string(), f);
         }
     }
+    // Carry the in-source value-`fn` registry (file-level fns overlaid with the lexically
+    // in-scope nested helpers) so a TERM-POSITION value call (`h(2)` in `assert_eq!(h(2),
+    // 3)`) can be RESOLVED to its body and β-reduced at desugar time even through the thin
+    // `translate_term_in_scope` adapter (which only gets the scope, not the reducer). The
+    // INLINE is EXACT-OR-BAIL inside `CallSugar`: it commits the peel only when the
+    // β-reduced body re-builds all the way to literals/arith, else leaves the opaque
+    // `call:` ctor untouched -- so this never inflates a discharge into an unclassified.
+    temporal_scope = temporal_scope.with_fn_registry(reducer.fn_registry_snapshot(&local_fns));
     // Map of this block's simple `let <ident> = <init>;` bindings, so the DEFOLDER can
     // resolve a fold receiver that is a binding (`it.fold(..)` where `it = xs.iter()`,
     // `xs = [..]`) back through to its literal-array / range domain. A non-simple pat or
@@ -6937,6 +7147,115 @@ fn simple_call_name(call: &syn::ExprCall) -> Option<String> {
         return None;
     }
     path.path.get_ident().map(|ident| ident.to_string())
+}
+
+/// TERM-POSITION value-call inlining (capability #1). Resolve a free-function call
+/// `f(a, b, ...)` whose callee is an in-source, pure, VALUE-returning fn we hold the
+/// source of (via `scope.fn_registry()`), β-reduce its body with `param := <arg expr>`
+/// (a faithful recompute, NEVER an execution), and return the SUBSTITUTED RETURN EXPR --
+/// the value the call denotes. The caller (`CallSugar::desugar`) re-builds that expr
+/// through `build_term` and applies the EXACT-OR-BAIL gate: it commits the peel only if
+/// the rebuilt term is fully grounded (no new opaque `call:`/`method:` leaf, no Var), so
+/// hollow `call:h` becomes a grounded `+(2,1)` ONLY where the body is clean
+/// arithmetic/literal; otherwise the call stays the opaque `call:` ctor (unchanged).
+///
+/// Returns `None` (fall through to the opaque ctor, unchanged behavior) when:
+///   - the head is not a simple ident, or resolves to no/ambiguous in-source fn;
+///   - the fn has a `self` receiver, a `&mut`/`&` reference param (an EFFECT carrier),
+///     or a non-simple param pattern;
+///   - arity mismatches;
+///   - the body is not a pure value (it ASSERTS -- that is the statement-path's job,
+///     not a value -- or has no single value-returning tail expr we can extract);
+///   - inline depth is exhausted (the recursion guard).
+///
+/// SSA: a `let`-chain body (`let x = g(x); x`) is inlined by substituting each `let`
+/// init into a running binding map (a re-`let` of a name OVERWRITES -- the SSA rebind),
+/// then substituting the tail. A `let mut` / non-simple-pat `let` bails (its later value
+/// is not its written init). A nested call in the returned expr is re-resolved by the
+/// caller's recursion (build_term -> CallSugar -> here again), bounded by `depth`.
+fn resolve_value_call_inline(
+    func: &Expr,
+    args: &[Expr],
+    scope: &TemporalScope,
+    options: &LiftOptions,
+) -> Option<Expr> {
+    let inner = match func {
+        Expr::Paren(p) => &*p.expr,
+        Expr::Group(g) => &*g.expr,
+        other => other,
+    };
+    let Expr::Path(path) = inner else { return None };
+    if path.qself.is_some() {
+        return None;
+    }
+    let name = path.path.get_ident()?.to_string();
+    let helper = scope.fn_registry().lookup(&name)?;
+    if !matches!(cfg_eval_for_attrs(&helper.attrs, options), CfgEval::Active) {
+        return None;
+    }
+    // A value call carries VALUE arguments only: a `self` receiver or a reference param
+    // (`&T`/`&mut T`) is an effect/aliasing carrier, not a recompute-able value -- bail.
+    let mut params = Vec::new();
+    for input in &helper.sig.inputs {
+        let syn::FnArg::Typed(pat_type) = input else {
+            return None; // self receiver
+        };
+        if matches!(pat_type.ty.as_ref(), syn::Type::Reference(_)) {
+            return None; // &T / &mut T param -- aliasing/effect, not a pure value
+        }
+        params.push(simple_pat_name(&pat_type.pat)?);
+    }
+    if params.len() != args.len() {
+        return None;
+    }
+    // The body must CARRY NO ASSERTIONS: an asserting helper is the statement-path's
+    // obligation (R7 inlining at statement position), not a value. Inlining it here
+    // would silently DROP its asserts (it is in value position, where asserts vanish).
+    if count_asserts_in_stmts(&helper.block.stmts) != 0 {
+        return None;
+    }
+    let mut binds = ExprBindings::new();
+    for (param, arg) in params.into_iter().zip(args.iter()) {
+        binds.insert(param, arg.clone());
+    }
+    value_body_tail_substituted(&helper.block, &mut binds)
+}
+
+/// Extract a pure value-returning block's RETURN EXPR with `binds` (param := actual)
+/// substituted, inlining any leading `let`-chain (SSA) into `binds` as it goes. Returns
+/// `None` if the block has no single value tail (it ends in a `;`-terminated stmt, a
+/// nested item, a non-simple `let`, a `let mut`, a `let ... else`, or a diverging init).
+fn value_body_tail_substituted(block: &syn::Block, binds: &mut ExprBindings) -> Option<Expr> {
+    let (tail, leading) = block.stmts.split_last()?;
+    for stmt in leading {
+        match stmt {
+            Stmt::Local(local) => {
+                // `let <id> = <init>;` -- SSA rebind: substitute the init with the
+                // bindings in effect, then OVERWRITE the name (a re-`let` of `x`).
+                let init = local.init.as_ref()?;
+                if init.diverge.is_some() {
+                    return None; // `let ... else { ... }` -- not a pure value chain
+                }
+                let id = match &local.pat {
+                    Pat::Ident(p) if p.subpat.is_none() && p.mutability.is_none() => {
+                        p.ident.to_string()
+                    }
+                    _ => return None, // non-simple / `let mut` -- bail (not a clean SSA rebind)
+                };
+                let value = substitute_expr(&init.expr, binds);
+                binds.insert(id, value);
+            }
+            // Any non-`let` leading statement (a bare effectful expr, a nested fn/macro
+            // item, ...) means this is not a pure single-value body -- bail.
+            _ => return None,
+        }
+    }
+    // The tail must be a value expression (`expr` with NO trailing `;`). A trailing `;`
+    // makes the block evaluate to `()` -- not a value to inline.
+    match tail {
+        Stmt::Expr(e, None) => Some(substitute_expr(e, binds)),
+        _ => None,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

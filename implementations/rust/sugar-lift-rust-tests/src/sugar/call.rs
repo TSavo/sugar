@@ -60,7 +60,15 @@ pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>>
         Err(reason) => return Some(reasoned_hit(reason)),
     }
     let args = call.args.iter().map(|arg| build_term(arg, fcx)).collect();
-    Some(Box::new(CallSugar::from_func(&call.func, args)))
+    // Carry the ORIGINAL func + arg exprs alongside the pre-built arg children: the
+    // desugar-time inline preamble (capability #1) re-resolves the callee to its
+    // in-source body and β-reduces it. The opaque `call:` ctor is the EXACT-OR-BAIL
+    // fallback when the body does not ground all the way out.
+    Some(Box::new(CallSugar::from_func_with_exprs(
+        &call.func,
+        call.args.iter().cloned().collect(),
+        args,
+    )))
 }
 
 /// A free-function call `f(a, b, ...)` in term position, composed as a node whose
@@ -74,6 +82,15 @@ pub(crate) struct CallSugar {
     /// The argument child `Sugar`s, IN SOURCE ORDER. `desugar` digs each, reading its
     /// `Term` back out through `into_term`; the collected terms are the ctor `args`.
     args: Vec<Box<dyn Sugar>>,
+    /// The ORIGINAL func + arg exprs, retained so the desugar-time inline preamble can
+    /// re-resolve the callee to its in-source body and β-reduce it (capability #1). When
+    /// the call resolves to a pure value-returning in-source fn AND the β-reduced body
+    /// grounds all the way to literals/arith (the EXACT-OR-BAIL gate), `desugar` returns
+    /// the grounded term INSTEAD of the opaque `call:` ctor -- hollow-B -> grounded-A.
+    /// `None` when the node was built without the source exprs (the direct constructors
+    /// the unit tests use): no inline is attempted, the opaque ctor is emitted unchanged.
+    func: Option<Expr>,
+    arg_exprs: Option<Vec<Expr>>,
 }
 
 impl CallSugar {
@@ -84,15 +101,34 @@ impl CallSugar {
         CallSugar {
             head_key: head_key.into(),
             args,
+            func: None,
+            arg_exprs: None,
         }
     }
 
     /// Convenience: compute the func-head key from the `func` expr (via the shared
     /// `expr_head_key`) and build the node. Mirrors how the arm computes the name --
     /// `format!("call:{}", expr_head_key(&call.func))` -- so the call site need not
-    /// reach for the helper itself.
+    /// reach for the helper itself. No source exprs are retained, so no inline is
+    /// attempted (the direct/test constructor).
     pub(crate) fn from_func(func: &Expr, args: Vec<Box<dyn Sugar>>) -> Self {
         CallSugar::new(expr_head_key(func), args)
+    }
+
+    /// Build the node retaining the ORIGINAL func + arg exprs, so `desugar` can attempt
+    /// the term-position value-call inline preamble (capability #1) before falling back
+    /// to the opaque `call:` ctor. This is what the `recognize` factory entry uses.
+    pub(crate) fn from_func_with_exprs(
+        func: &Expr,
+        arg_exprs: Vec<Expr>,
+        args: Vec<Box<dyn Sugar>>,
+    ) -> Self {
+        CallSugar {
+            head_key: expr_head_key(func),
+            args,
+            func: Some(func.clone()),
+            arg_exprs: Some(arg_exprs),
+        }
     }
 }
 
@@ -105,6 +141,16 @@ impl Sugar for CallSugar {
     /// the structural backstop (`Outcome::from_opt(None)`, the old `?`-propagated
     /// generic refusal).
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        // INLINE PREAMBLE (capability #1), EXACT-OR-BAIL. If this call resolves to a
+        // pure value-returning in-source fn whose β-reduced body grounds ALL THE WAY to
+        // literals/arith, PEEL to that grounded term (real value teeth) instead of the
+        // opaque `call:` ctor. A no-source / impure / not-fully-grounded body returns
+        // `None` here and falls through to the UNCHANGED opaque ctor (the bail).
+        if let (Some(func), Some(arg_exprs)) = (&self.func, &self.arg_exprs) {
+            if let Some(term) = ctx.try_inline_value_call(func, arg_exprs) {
+                return Outcome::Dug(Desugared::Term(term));
+            }
+        }
         let mut args = Vec::new();
         for arg in &self.args {
             let term = match arg.desugar(ctx) {
