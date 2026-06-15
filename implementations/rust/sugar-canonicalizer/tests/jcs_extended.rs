@@ -28,12 +28,18 @@ fn integer_renders_without_decimal_point() {
 fn integer_negative() {
     assert_eq!(encode_jcs(&Value::integer(-1)), "-1");
     assert_eq!(encode_jcs(&Value::integer(-42)), "-42");
-    assert_eq!(encode_jcs(&Value::integer(i64::MIN)), i64::MIN.to_string());
+    assert_eq!(
+        encode_jcs(&Value::integer(i128::from(i64::MIN))),
+        i64::MIN.to_string()
+    );
 }
 
 #[test]
 fn integer_max_boundaries() {
-    assert_eq!(encode_jcs(&Value::integer(i64::MAX)), i64::MAX.to_string());
+    assert_eq!(
+        encode_jcs(&Value::integer(i128::from(i64::MAX))),
+        i64::MAX.to_string()
+    );
     assert_eq!(encode_jcs(&Value::integer(0x7fff_ffff)), "2147483647");
     assert_eq!(encode_jcs(&Value::integer(0x8000_0000)), "2147483648");
 }

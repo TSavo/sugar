@@ -745,10 +745,10 @@ fn to_cvalue(value: &Json) -> Arc<CValue> {
         Json::Bool(b) => CValue::boolean(*b),
         Json::Number(n) => {
             if let Some(i) = n.as_i64() {
-                CValue::integer(i)
+                CValue::integer(i128::from(i))
             } else if let Some(u) = n.as_u64() {
                 if let Ok(i) = i64::try_from(u) {
-                    CValue::integer(i)
+                    CValue::integer(i128::from(i))
                 } else {
                     CValue::string(u.to_string())
                 }

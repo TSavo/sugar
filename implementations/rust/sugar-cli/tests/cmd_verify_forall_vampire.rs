@@ -32,7 +32,7 @@ fn json_to_canonical_jcs(j: &Json) -> String {
         match j {
             Json::Null => CV::null(),
             Json::Bool(b) => CV::boolean(*b),
-            Json::Number(n) => CV::integer(n.as_i64().unwrap_or(0)),
+            Json::Number(n) => CV::integer(i128::from(n.as_i64().unwrap_or(0))),
             Json::String(s) => CV::string(s.clone()),
             Json::Array(items) => CV::array(items.iter().map(to_cv).collect()),
             Json::Object(map) => CV::object(

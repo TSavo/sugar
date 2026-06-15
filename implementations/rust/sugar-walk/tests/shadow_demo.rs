@@ -380,7 +380,19 @@ fn serialize_value(v: &sugar_canonicalizer::Value) -> serde_json::Value {
     match v {
         V::Null => serde_json::Value::Null,
         V::Bool(b) => serde_json::Value::Bool(*b),
-        V::Integer(n) => serde_json::Value::Number((*n).into()),
+        // Precision-safe i128 -> JSON: serde_json::Number has no From<i128> and a
+        // bare >u64 number would parse back as a lossy f64. A value within i64/u64
+        // stays a Number (byte-identical); a wider value is carried as a decimal
+        // string (mirrors sugar_ir_symbolic::convert::int_to_json).
+        V::Integer(n) => {
+            if let Ok(i) = i64::try_from(*n) {
+                serde_json::Value::Number(i.into())
+            } else if let Ok(u) = u64::try_from(*n) {
+                serde_json::Value::Number(u.into())
+            } else {
+                serde_json::Value::String(n.to_string())
+            }
+        }
         V::String(s) => serde_json::Value::String(s.clone()),
         V::Array(items) => {
             serde_json::Value::Array(items.iter().map(|x| serialize_value(x)).collect())

@@ -2834,11 +2834,11 @@ fn json_to_cvalue(j: &Value) -> Arc<CValue> {
         Value::Bool(b) => CValue::boolean(*b),
         Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                CValue::integer(i)
+                CValue::integer(i128::from(i))
             } else if let Some(u) = n.as_u64() {
-                CValue::integer(u as i64)
+                CValue::integer(i128::from(u))
             } else if let Some(f) = n.as_f64() {
-                CValue::integer(f as i64)
+                CValue::integer(f as i128)
             } else {
                 CValue::integer(0)
             }

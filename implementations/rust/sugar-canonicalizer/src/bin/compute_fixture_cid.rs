@@ -9,7 +9,7 @@ fn to_cvalue(v: &Value) -> Arc<CValue> {
         Value::Bool(b) => CValue::boolean(*b),
         Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                CValue::integer(i)
+                CValue::integer(i128::from(i))
             } else if let Some(f) = n.as_f64() {
                 CValue::string(format!("{}", f))
             } else {

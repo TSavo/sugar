@@ -584,7 +584,7 @@ fn serde_to_cvalue(j: serde_json::Value) -> std::sync::Arc<CValue> {
     match j {
         serde_json::Value::Null => CValue::null(),
         serde_json::Value::Bool(b) => CValue::boolean(b),
-        serde_json::Value::Number(n) => match n.as_i64() {
+        serde_json::Value::Number(n) => match n.as_i64().map(i128::from).or_else(|| n.as_u64().map(i128::from)) {
             Some(i) => CValue::integer(i),
             None => CValue::object(vec![(
                 "__sugar_non_i64_number__".to_string(),

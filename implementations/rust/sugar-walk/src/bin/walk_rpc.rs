@@ -9448,7 +9448,7 @@ fn method_operator_leaf(method_name: &str, arity: usize) -> Arc<CValue> {
     // Canonical content-addressable shape (no text/legacy fields,
     // no op_cid yet — those are derived/auxiliary).
     let canonical = CValue::object([
-        ("arity", CValue::integer(arity as i64)),
+        ("arity", CValue::integer(arity as i128)),
         ("kind", CValue::string("method-operator")),
         ("name", CValue::string(method_name.to_string())),
     ]);
@@ -9457,7 +9457,7 @@ fn method_operator_leaf(method_name: &str, arity: usize) -> Arc<CValue> {
     // kind="method" for backwards compatibility with existing readers
     // (e.g. the java realize plugin's pattern-match on "kind":"method").
     CValue::object([
-        ("arity", CValue::integer(arity as i64)),
+        ("arity", CValue::integer(arity as i128)),
         ("kind", CValue::string("method")),
         ("name", CValue::string(method_name.to_string())),
         ("op_cid", CValue::string(op_cid.to_string())),
@@ -9520,7 +9520,7 @@ fn literal_shape(lit: &syn::Lit) -> Arc<CValue> {
                 ("args", CValue::array(Vec::new())),
                 ("op_cid", CValue::string(op_cid)),
                 ("sort", CValue::string(SORT_INT_CID)),
-                ("value", CValue::integer(decoded)),
+                ("value", CValue::integer(i128::from(decoded))),
                 ("integer_width", CValue::string(integer_width)),
                 ("radix", CValue::string(radix)),
             ])
@@ -9550,7 +9550,7 @@ fn literal_shape(lit: &syn::Lit) -> Arc<CValue> {
             SORT_BYTES_CID,
         ),
         syn::Lit::Byte(value) => {
-            concept_literal_shape(CValue::integer(i64::from(value.value())), SORT_INT_CID)
+            concept_literal_shape(CValue::integer(i128::from(value.value())), SORT_INT_CID)
         }
         // Substrate-canonical char: sort + value (the actual character as a
         // single-char string). Source spelling (`'a'` vs `'\u{61}'`) is kit
@@ -9589,7 +9589,7 @@ fn byte_array_value(bytes: Vec<u8>) -> Arc<CValue> {
     CValue::array(
         bytes
             .into_iter()
-            .map(|byte| CValue::integer(i64::from(byte)))
+            .map(|byte| CValue::integer(i128::from(byte)))
             .collect(),
     )
 }

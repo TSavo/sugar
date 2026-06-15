@@ -91,7 +91,12 @@ pub fn Bool() -> Sort {
 
 #[derive(Debug, Clone)]
 pub enum ConstValue {
-    Int(i64),
+    // i128 carrier: a wide Rust literal (u64::MAX, u128 within i128 range,
+    // large isize) is an EXACT mathematical-Int constant. The FOL/SMT `Int`
+    // sort is unbounded, so the literal IS its exact integer value -- there is
+    // no "too large" for anything representable in i128. Values beyond i128
+    // range are refused upstream ("number too large"), an honest BAIL.
+    Int(i128),
     Real(String),
     String(String),
     Bool(bool),
@@ -131,7 +136,7 @@ pub fn make_var<S: Into<String>>(name: S) -> Rc<Term> {
     Rc::new(Term::Var { name: name.into() })
 }
 
-pub fn num(value: i64) -> Rc<Term> {
+pub fn num(value: i128) -> Rc<Term> {
     Rc::new(Term::Const {
         value: ConstValue::Int(value),
         sort: Sort::int(),

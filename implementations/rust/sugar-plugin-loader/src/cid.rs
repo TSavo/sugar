@@ -79,7 +79,7 @@ pub fn serde_json_to_value(v: &serde_json::Value) -> Arc<Value> {
         serde_json::Value::Bool(b) => Value::boolean(*b),
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                Value::integer(i)
+                Value::integer(i128::from(i))
             } else {
                 Value::string(n.to_string())
             }
@@ -144,7 +144,7 @@ pub fn compute_registry_cid(header: &PluginRegistryMementoHeader) -> String {
 
     let mut fields = vec![(
         "built_in_count",
-        Value::integer(header.built_in_count as i64),
+        Value::integer(header.built_in_count as i128),
     )];
     fields.extend([
         ("failures", Value::array(failures_v)),

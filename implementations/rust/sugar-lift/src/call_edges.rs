@@ -63,14 +63,14 @@ impl CallSiteLocus {
             (
                 "line",
                 match self.line {
-                    Some(n) => Value::integer(n as i64),
+                    Some(n) => Value::integer(n as i128),
                     None => Value::null(),
                 },
             ),
             (
                 "col",
                 match self.col {
-                    Some(n) => Value::integer(n as i64),
+                    Some(n) => Value::integer(n as i128),
                     None => Value::null(),
                 },
             ),

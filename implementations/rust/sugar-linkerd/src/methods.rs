@@ -1163,7 +1163,7 @@ fn json_to_canon_value(v: &Json) -> Option<std::sync::Arc<sugar_canonicalizer::V
         Json::Bool(b) => Value::Bool(*b),
         Json::Number(n) => {
             if let Some(i) = n.as_i64() {
-                Value::Integer(i)
+                Value::Integer(i128::from(i))
             } else {
                 Value::String(n.to_string())
             }
@@ -1326,7 +1326,18 @@ fn value_to_json(v: &sugar_canonicalizer::Value) -> Json {
     match v {
         Value::Null => Json::Null,
         Value::Bool(b) => Json::Bool(*b),
-        Value::Integer(i) => Json::Number((*i).into()),
+        // Precision-safe i128 -> JSON: serde_json::Number has no From<i128>; a
+        // value within i64/u64 stays a Number (byte-identical), a wider value is
+        // carried as a decimal string (mirrors convert::int_to_json).
+        Value::Integer(i) => {
+            if let Ok(v) = i64::try_from(*i) {
+                Json::Number(v.into())
+            } else if let Ok(v) = u64::try_from(*i) {
+                Json::Number(v.into())
+            } else {
+                Json::String(i.to_string())
+            }
+        }
         Value::String(s) => Json::String(s.clone()),
         Value::Array(items) => Json::Array(items.iter().map(|i| value_to_json(i)).collect()),
         Value::Object(kvs) => {

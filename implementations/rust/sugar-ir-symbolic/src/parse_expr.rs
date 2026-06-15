@@ -71,8 +71,8 @@ pub enum ExprParseError {
 enum Token {
     /// Identifier (possibly dotted: "result.is_ok")
     Ident(String),
-    /// Integer literal (signed i64)
-    Int(i64),
+    /// Integer literal (signed i128 -- the kit's Int carrier)
+    Int(i128),
     /// `true` or `false`
     Bool(bool),
     /// `||`
@@ -253,7 +253,7 @@ fn lex(input: &str) -> Result<Vec<Tok>, ExprParseError> {
                 i += 1;
             }
             let n = s
-                .parse::<i64>()
+                .parse::<i128>()
                 .map_err(|_| ExprParseError::InvalidLiteral {
                     position: start_pos,
                     literal: s,
@@ -274,7 +274,7 @@ fn lex(input: &str) -> Result<Vec<Tok>, ExprParseError> {
                 i += 1;
             }
             let n = s
-                .parse::<i64>()
+                .parse::<i128>()
                 .map_err(|_| ExprParseError::InvalidLiteral {
                     position: start_pos,
                     literal: s,

@@ -1288,6 +1288,8 @@ fn json_to_canonical(value: &Json) -> Result<std::sync::Arc<sugar_canonicalizer:
         Json::Bool(b) => Ok(CV::boolean(*b)),
         Json::Number(n) => n
             .as_i64()
+            .map(i128::from)
+            .or_else(|| n.as_u64().map(i128::from))
             .map(CV::integer)
             .ok_or_else(|| format!("unsupported non-integer number in witness payload: {n}")),
         Json::String(s) => Ok(CV::string(s.clone())),

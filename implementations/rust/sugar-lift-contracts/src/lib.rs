@@ -1135,7 +1135,9 @@ fn serde_json_to_cvalue(v: &serde_json::Value) -> Arc<CValue> {
         serde_json::Value::Bool(b) => CValue::boolean(*b),
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                CValue::integer(i)
+                CValue::integer(i128::from(i))
+            } else if let Some(u) = n.as_u64() {
+                CValue::integer(i128::from(u))
             } else {
                 CValue::string(n.to_string())
             }
@@ -1182,8 +1184,8 @@ fn evidence_memento_cid(
 
     fn make_point(p: &SourceLocatorPoint) -> Arc<CValue> {
         Arc::new(CValue::Object(vec![
-            ("col".to_string(), CValue::integer(p.col as i64)),
-            ("line".to_string(), CValue::integer(p.line as i64)),
+            ("col".to_string(), CValue::integer(p.col as i128)),
+            ("line".to_string(), CValue::integer(p.line as i128)),
         ]))
     }
     let span_cv = Arc::new(CValue::Object(vec![
@@ -1201,7 +1203,7 @@ fn evidence_memento_cid(
     let header = CValue::object([
         (
             "confidence_basis_points",
-            CValue::integer(confidence_basis_points as i64),
+            CValue::integer(confidence_basis_points as i128),
         ),
         ("extension_fields", ext_cv),
         ("kind", CValue::string("evidence")),
@@ -1632,7 +1634,7 @@ fn translate_term(expr: &syn::Expr) -> Result<Rc<Term>, String> {
         }
         syn::Expr::Lit(l) => match &l.lit {
             syn::Lit::Int(li) => {
-                let n: i64 = li
+                let n: i128 = li
                     .base10_parse()
                     .map_err(|e| format!("integer literal: {e}"))?;
                 Ok(num(n))
@@ -1662,7 +1664,7 @@ fn translate_term(expr: &syn::Expr) -> Result<Rc<Term>, String> {
             if matches!(u.op, syn::UnOp::Neg(_)) {
                 if let syn::Expr::Lit(l) = &*u.expr {
                     if let syn::Lit::Int(li) = &l.lit {
-                        let n: i64 = li
+                        let n: i128 = li
                             .base10_parse()
                             .map_err(|e| format!("integer literal: {e}"))?;
                         return Ok(num(-n));

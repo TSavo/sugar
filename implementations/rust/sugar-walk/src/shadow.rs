@@ -339,7 +339,7 @@ fn arrival_value(
         ("schemaVersion", Value::string("1")),
         ("kind", Value::string("shadow-arrival")),
         ("fnName", Value::string(fn_name.to_string())),
-        ("sourceIndex", Value::integer(source_index as i64)),
+        ("sourceIndex", Value::integer(source_index as i128)),
         ("calleeName", Value::string(callee_name.to_string())),
         ("preWp", formula_to_canonical(pre_wp.as_formula())),
         ("postWp", formula_to_canonical(post_wp.as_formula())),
@@ -362,7 +362,7 @@ fn slot_value(
         ("schemaVersion", Value::string("1")),
         ("kind", Value::string("shadow-slot")),
         ("fnName", Value::string(fn_name.to_string())),
-        ("sourceIndex", Value::integer(source_index as i64)),
+        ("sourceIndex", Value::integer(source_index as i128)),
         ("sourceKindLabel", Value::string(label.to_string())),
         ("arrivals", Value::array(arrival_cids)),
     ])
@@ -441,7 +441,7 @@ pub fn edge_memento_value(arrival: &ShadowArrival) -> Arc<Value> {
     let evidence = Value::object([
         ("kind", Value::string("walk-arrival")),
         ("fnName", Value::string(arrival.fn_name.clone())),
-        ("sourceIndex", Value::integer(arrival.source_index as i64)),
+        ("sourceIndex", Value::integer(arrival.source_index as i128)),
         ("calleeName", Value::string(arrival.callee_name.clone())),
         (
             "witness",

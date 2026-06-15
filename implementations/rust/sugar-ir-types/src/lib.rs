@@ -1368,9 +1368,17 @@ fn proof_run_json_to_canonical(
         serde_json::Value::Null => Ok(CanonicalValue::null()),
         serde_json::Value::Bool(b) => Ok(CanonicalValue::boolean(*b)),
         serde_json::Value::Number(n) => {
-            let Some(integer) = n.as_i64() else {
+            // i64/u64 widen losslessly into the i128 carrier; a float-tagged
+            // number (the only remaining non-integer shape under default
+            // serde_json) is still rejected -- proof-run mementos carry no
+            // floats and no wide string-encoded ints.
+            let integer = if let Some(i) = n.as_i64() {
+                i128::from(i)
+            } else if let Some(u) = n.as_u64() {
+                i128::from(u)
+            } else {
                 return Err(ProofRunCanonicalizationError::new(format!(
-                    "unsupported non-i64 JSON number in proof-run: {n}"
+                    "unsupported non-integer JSON number in proof-run: {n}"
                 )));
             };
             Ok(CanonicalValue::integer(integer))
@@ -2077,9 +2085,15 @@ fn serde_json_to_canonical_value(
         serde_json::Value::Null => Ok(CanonicalValue::null()),
         serde_json::Value::Bool(b) => Ok(CanonicalValue::boolean(*b)),
         serde_json::Value::Number(n) => {
-            let Some(integer) = n.as_i64() else {
+            // i64/u64 widen losslessly into the i128 carrier; a float-tagged
+            // number is still rejected (promotion decisions carry no floats).
+            let integer = if let Some(i) = n.as_i64() {
+                i128::from(i)
+            } else if let Some(u) = n.as_u64() {
+                i128::from(u)
+            } else {
                 return Err(PromotionDecisionCanonicalizationError::new(format!(
-                    "unsupported non-i64 JSON number in promotion decision: {n}"
+                    "unsupported non-integer JSON number in promotion decision: {n}"
                 )));
             };
             Ok(CanonicalValue::integer(integer))
@@ -4228,7 +4242,9 @@ fn canonical_value_from_json(value: serde_json::Value) -> sugar_canonicalizer::V
         serde_json::Value::Bool(b) => sugar_canonicalizer::Value::Bool(b),
         serde_json::Value::Number(n) => sugar_canonicalizer::Value::Integer(
             n.as_i64()
-                .expect("CompositionRefusalMemento canonical numbers must fit i64"),
+                .map(i128::from)
+                .or_else(|| n.as_u64().map(i128::from))
+                .expect("CompositionRefusalMemento canonical numbers must fit i64/u64"),
         ),
         serde_json::Value::String(s) => sugar_canonicalizer::Value::String(s),
         serde_json::Value::Array(items) => sugar_canonicalizer::Value::Array(
@@ -4579,12 +4595,9 @@ fn migration_json_to_canonical(
         serde_json::Value::Bool(b) => Ok(CanonicalValue::boolean(*b)),
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                Ok(CanonicalValue::integer(i))
+                Ok(CanonicalValue::integer(i128::from(i)))
             } else if let Some(u) = n.as_u64() {
-                let i = i64::try_from(u).map_err(|_| {
-                    MigrationReceiptError::new(format!("unsupported large JSON number {n}"))
-                })?;
-                Ok(CanonicalValue::integer(i))
+                Ok(CanonicalValue::integer(i128::from(u)))
             } else {
                 Err(MigrationReceiptError::new(format!(
                     "unsupported JSON number {n}"

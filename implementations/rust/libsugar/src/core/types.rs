@@ -546,7 +546,7 @@ fn arity_shape_value(shape: &ArityShape) -> Arc<CValue> {
     match shape {
         ArityShape::Positional { arity } => CValue::object([
             ("kind", CValue::string("positional")),
-            ("arity", CValue::integer(*arity as i64)),
+            ("arity", CValue::integer(*arity as i128)),
         ]),
         ArityShape::Named { slots } => CValue::object([
             ("kind", CValue::string("named")),
@@ -1810,15 +1810,10 @@ pub(crate) fn json_to_cvalue(value: JsonValue) -> Arc<CValue> {
         JsonValue::Bool(value) => CValue::boolean(value),
         JsonValue::Number(number) => {
             if let Some(value) = number.as_i64() {
-                CValue::integer(value)
+                CValue::integer(i128::from(value))
             } else if let Some(value) = number.as_u64() {
-                match i64::try_from(value) {
-                    Ok(value) => CValue::integer(value),
-                    Err(_) => CValue::object([(
-                        "__sugar_non_i64_number__",
-                        CValue::string(number.to_string()),
-                    )]),
-                }
+                // u64 always fits the i128 carrier -- no fallback needed.
+                CValue::integer(i128::from(value))
             } else {
                 CValue::object([(
                     "__sugar_non_i64_number__",
@@ -1962,7 +1957,7 @@ fn input_to_value(input: &Input) -> Arc<CValue> {
                 CValue::array(
                     bytes
                         .iter()
-                        .map(|byte| CValue::integer(i64::from(*byte)))
+                        .map(|byte| CValue::integer(i128::from(*byte)))
                         .collect(),
                 ),
             ),
