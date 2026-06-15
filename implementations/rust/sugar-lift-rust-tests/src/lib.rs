@@ -7193,6 +7193,14 @@ fn resolve_value_call_inline(
     if !matches!(cfg_eval_for_attrs(&helper.attrs, options), CfgEval::Active) {
         return None;
     }
+    // SOUNDNESS: an `async fn`'s body is NOT the call's value -- the call returns a
+    // `Future`, and the body expr is the future's eventual `.await` output. Inlining the
+    // body here would equate `make_value()` (a future) with `6` (its awaited output),
+    // collapsing the `.await` boundary. So a call to an `async fn` is NOT a value call:
+    // bail to the opaque `call:` ctor (the `.await` arm lifts `await(call:make_value)`).
+    if helper.sig.asyncness.is_some() {
+        return None;
+    }
     // A value call carries VALUE arguments only: a `self` receiver or a reference param
     // (`&T`/`&mut T`) is an effect/aliasing carrier, not a recompute-able value -- bail.
     let mut params = Vec::new();
