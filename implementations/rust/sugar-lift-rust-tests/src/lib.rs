@@ -37,6 +37,7 @@ pub mod sugar {
     pub mod rev;
     pub mod skip;
     pub mod skip_while;
+    pub mod statement_position;
     pub mod take;
     pub mod take_while;
 }
@@ -378,8 +379,8 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // statement whose asserted value is read through a `&mut` borrow / mutation (the
         // `(assert_matches!(*MutRefWithDrop(&mut val).0, 0), mem::take(&mut val))` borrow/
         // drop-scoping shape). A mutably-aliased read has no single timeless `t` -- a SOURCE
-        // property (kin to `mutable container is not temporally stable`). EARNED by
-        // `runtime_expr_statement_effect`; a statement over a CONSTRUCTED literal value has
+        // property (kin to `mutable container is not temporally stable`). EARNED by the
+        // `StatementPositionSugar` aliased-read leaf; a statement over a CONSTRUCTED literal value has
         // no `&mut`/mutation signal and STAYS the unclassified "unlifted expression
         // statement" reason (the fake-refuse guardrail). Typed `RuntimeExprStmtEffect`.
         || reason.contains("runtime expression-statement")
@@ -3545,8 +3546,8 @@ enum Effect {
     /// RUNTIME-EXPR-STMT: a bare expression-statement whose asserted value is read through a
     /// `&mut` borrow or a mutation. A mutably-aliased read has no single timeless `t` (kin to
     /// `mutable container is not temporally stable`). A SOURCE property. Detection is EARNED by
-    /// `runtime_expr_statement_effect`; a statement over a CONSTRUCTED literal value stays
-    /// unclassified.
+    /// the `StatementPositionSugar` aliased-read leaf; a statement over a CONSTRUCTED literal
+    /// value stays unclassified.
     RuntimeExprStmt { boundary: String },
     /// RUNTIME-MATCH-SCRUTINEE: an `assert!(match <runtime call> { .. })` whose scrutinee is a
     /// RUNTIME non-scalar method/function result. The asserted boolean is the arm taken by a
@@ -5230,62 +5231,6 @@ fn const_fold_bool_guard(cond: &Expr, options: &LiftOptions) -> Option<bool> {
     Some(if negate { !base } else { base })
 }
 
-/// A bare expression-statement carries a RUNTIME read iff its asserted value flows through
-/// a `&mut` borrow or a mutation -- e.g. the borrow/drop-scoping tuple
-/// `(assert_matches!(*MutRefWithDrop(&mut val).0, 0), mem::take(&mut val))`. A mutably
-/// aliased read has no single timeless `t`. Returns the typed `RuntimeExprStmtEffect`.
-///
-/// DISCRIMINATION GUARDRAIL: detection is by a positive `&mut` / assignment signal in the
-/// statement; a statement over a CONSTRUCTED literal value (no `&mut`, no mutation) returns
-/// None -> stays unclassified. Only fires when the statement actually carries an assert.
-fn runtime_expr_statement_effect(expr: &Expr) -> Option<Effect> {
-    if count_asserts_in_expr(expr) == 0 {
-        return None;
-    }
-    #[derive(Default)]
-    struct Scan {
-        runtime: bool,
-    }
-    impl<'ast> syn::visit::Visit<'ast> for Scan {
-        fn visit_expr_reference(&mut self, r: &'ast syn::ExprReference) {
-            if r.mutability.is_some() {
-                self.runtime = true;
-            }
-            syn::visit::visit_expr_reference(self, r);
-        }
-        fn visit_expr_assign(&mut self, _: &'ast syn::ExprAssign) {
-            self.runtime = true;
-        }
-        fn visit_expr_binary(&mut self, b: &'ast syn::ExprBinary) {
-            if matches!(
-                b.op,
-                BinOp::AddAssign(_)
-                    | BinOp::SubAssign(_)
-                    | BinOp::MulAssign(_)
-                    | BinOp::DivAssign(_)
-                    | BinOp::RemAssign(_)
-                    | BinOp::BitXorAssign(_)
-                    | BinOp::BitAndAssign(_)
-                    | BinOp::BitOrAssign(_)
-                    | BinOp::ShlAssign(_)
-                    | BinOp::ShrAssign(_)
-            ) {
-                self.runtime = true;
-            }
-            syn::visit::visit_expr_binary(self, b);
-        }
-    }
-    let mut scan = Scan::default();
-    syn::visit::Visit::visit_expr(&mut scan, expr);
-    if scan.runtime {
-        Some(Effect::RuntimeExprStmt {
-            boundary: token_key(expr),
-        })
-    } else {
-        None
-    }
-}
-
 /// The first method name in an `impl` block that carries at least one assertion (for the
 /// `ImplMethodEffect` boundary description). Returns None if no method body carries an
 /// assert (so a pure impl block -- e.g. a `const`-only or assert-free impl declared as a
@@ -5301,53 +5246,42 @@ fn impl_block_method_name(imp: &syn::ItemImpl) -> Option<String> {
     })
 }
 
-/// If a statement-position expression flows the asserted value through a RUNTIME
-/// continuation whose value is NOT IN SCOPE -- a future continuation (`.await` /
-/// free-fn `block_on(async{..})`), opaque compile-time reflection (`match Type::of::<T>()
-/// .kind { .. }`), or a `loop { .. }` over a runtime-advanced iterator -- return the
-/// TYPED `SideEffect` naming that qualified continue path (the typed BAIL). The caller
-/// renders `effect.reason()` into `skip_reasons`, which `refusal_disposition` classifies
-/// terminal. This is the value-NOT-in-scope half of the statement-position split (the
-/// value-IN-scope half DIGS via the defolder / unconditional-block recursion).
+/// Thin node-router: a bare statement-position expression whose asserted value flows through
+/// a RUNTIME continuation NOT IN SCOPE is classified by the `StatementPositionSugar` node. It
+/// names every value-NOT-in-scope verdict in its own `desugar` -- a future continuation
+/// (`.await` / free-fn `block_on(async{..})`) `ControlFlow`, an opaque `match Type::of::<T>()
+/// .kind`/`.info()` `Reflection`, a `loop { .. }` over a runtime-advanced iterator `LoopAdvance`,
+/// or a `&mut`-aliased / mutated `RuntimeExprStmt` read. The caller renders `effect.reason()`
+/// into `skip_reasons`, which `refusal_disposition` classifies terminal. This is the
+/// value-NOT-in-scope half of the statement-position split (the value-IN-scope half DIGS via
+/// the defolder / unconditional-block recursion).
 ///
-/// SOUNDNESS (the discrimination guardrail): this fires ONLY on a DETECTED runtime
-/// continuation (an `.await`, a free-fn `block_on(async)`, a `Type::of`/`.info()`
-/// reflection scrutinee, a loop body that advances an iterator). A statement carrying a
-/// CONSTRUCTED literal value (an unconditional block over literals, a `match` over a
-/// literal scrutinee, a `loop` over a pure value) matches NONE of these -> returns None,
-/// leaving it to DIG or stay unclassified -- never terminalized by position.
-fn statement_position_terminal_effect(expr: &Expr) -> Option<Effect> {
-    // The expr must actually carry an assertion (else nothing to classify).
-    if count_asserts_in_expr(expr) == 0 {
-        return None;
-    }
-    let boundary = token_key(expr);
-    // FUTURE CONTINUATION: an `.await` anywhere, or a free-fn `block_on(async{..})`.
-    if expr_contains_await(expr) || is_free_fn_block_on_async(expr) {
-        return Some(Effect::ControlFlow { boundary });
-    }
-    // OPAQUE REFLECTION: a `match <reflection> { .. }` whose scrutinee is `Type::of`/
-    // `.info()`. Strip a `const { .. }` / paren wrapper off the scrutinee first.
-    if let Expr::Match(m) = expr {
-        let scrut = strip_const_block(&m.expr);
-        if let Some(b) = reflection_scrutinee(scrut) {
-            return Some(Effect::Reflection { boundary: b });
+/// SOUNDNESS (the discrimination guardrail): each leaf fires ONLY on a DETECTED runtime
+/// signal (an `.await`, a free-fn `block_on(async)`, a `Type::of`/`.info()` reflection
+/// scrutinee, a loop body that advances an iterator, a `&mut` borrow / assignment). A
+/// statement carrying a CONSTRUCTED literal value matches NONE of these -> the node returns
+/// its STRUCTURAL backstop, which this router maps to `None` (the old fall-through), leaving
+/// it to DIG or stay unclassified -- never terminalized by position.
+fn statement_position_terminal_effect(
+    expr: &Expr,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+    reducer: &ReductionCtx,
+    float_widths: &mut FloatWidthScope,
+    macro_depth: usize,
+) -> Option<Effect> {
+    let node = sugar::statement_position::decompose_statement_position(expr)?;
+    let ctx = sugar_ctx(scope, options, reducer, float_widths, macro_depth);
+    match node.desugar(&ctx) {
+        // The STRUCTURAL backstop = the honest-unclassified fall-through (the old `None`).
+        Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {
+            None
         }
+        // A NAMED statement-position boundary -- the verdict the caller renders to skip_reasons.
+        Outcome::Hit(effect) => Some(effect),
+        // A bail-side node never reaches truth; `Dug` is unreachable here.
+        Outcome::Dug(_) => None,
     }
-    // RUNTIME LOOP: a `loop { .. }` whose body advances an iterator (`iter.next()` /
-    // `iter.size_hint()`). A `loop` has no finite literal construction to enumerate, and
-    // an advanced runtime iterator's per-iteration bounds are not a single timeless value.
-    if let Expr::Loop(l) = expr {
-        let body = Expr::Block(syn::ExprBlock {
-            attrs: Vec::new(),
-            label: None,
-            block: l.body.clone(),
-        });
-        if loop_body_advances_runtime_iterator(&body) {
-            return Some(Effect::LoopAdvance { boundary });
-        }
-    }
-    None
 }
 
 /// Strip a `const { .. }` wrapper (and parens/groups) off a match scrutinee to reveal
@@ -5366,30 +5300,6 @@ fn strip_const_block(expr: &Expr) -> &Expr {
         Expr::Group(g) => strip_const_block(&g.expr),
         _ => expr,
     }
-}
-
-/// True if a loop body advances a RUNTIME iterator (`iter.next()` / `.size_hint()` /
-/// `.count()` reads driving the loop). Reuses the iterator-advance scan
-/// (`closure_body_advances_iterator`) plus a `.size_hint()` probe (the size-hint loop
-/// reads non-deterministic per-iteration bounds).
-fn loop_body_advances_runtime_iterator(body: &Expr) -> bool {
-    if closure_body_advances_iterator(body) {
-        return true;
-    }
-    struct Scan {
-        found: bool,
-    }
-    impl<'ast> syn::visit::Visit<'ast> for Scan {
-        fn visit_expr_method_call(&mut self, m: &'ast syn::ExprMethodCall) {
-            if m.method == "size_hint" && m.args.is_empty() {
-                self.found = true;
-            }
-            syn::visit::visit_expr_method_call(self, m);
-        }
-    }
-    let mut s = Scan { found: false };
-    syn::visit::Visit::visit_expr(&mut s, body);
-    s.found
 }
 
 /// A nested block is a DISTINCT program region. Two sibling blocks that each
@@ -6275,8 +6185,16 @@ fn collect_assertion_entries<'a>(
                                 macro_depth,
                                 &let_inits,
                             )
-                            .or_else(|| statement_position_terminal_effect(e))
-                            .or_else(|| runtime_expr_statement_effect(e))
+                            .or_else(|| {
+                                statement_position_terminal_effect(
+                                    e,
+                                    &temporal_scope,
+                                    options,
+                                    reducer,
+                                    float_widths,
+                                    macro_depth,
+                                )
+                            })
                         }
                         // A nested `impl` block declared as a STATEMENT inside the test fn
                         // (`impl Write for W { fn write_str(..) { assert_eq!(..) } }`). Its
