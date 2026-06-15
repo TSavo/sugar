@@ -218,8 +218,29 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // iterator (`iter.next()`, `nth += 1`). Its assert observes a per-iteration
         // varying value, not a single timeless point-wise claim, so no value lifter could
         // lift it -- a source property. (The opaque/effectful-accessor twin carries `bin-2`
-        // above.)
-        || reason.contains("side-effecting closure body");
+        // above.) Typed as `MutationEffect` / `IterAdvanceEffect`.
+        || reason.contains("side-effecting closure body")
+        // TERMINAL: a read of a MUTABLE CONTAINER (`a[i]` where the `mut` oracle PROVES
+        // `a` is a mutable local). The container may be index-assigned / method-mutated
+        // between program points, so `index(a,i)` has no single timeless `t` -- the read
+        // is sequence/position dependent. This is the index-READ sibling of the already-
+        // terminal `temporally unstable` (a term reading a MUTATED local): the SAME
+        // provable order-loss effect, so it earns the SAME terminal verdict. Typed as
+        // `TemporalReadEffect`; emitted ONLY under `scope.is_mut_local` (a non-`mut`,
+        // provably-immutable container reads as a stable term and never reaches here),
+        // so this can only refuse a genuinely-mutable read -- never a pure one. (THE DRAIN:
+        // these effect-shaped cases fell to unclassified only because the reason was not
+        // whitelisted; not a fake-zero -- the mutation is proven syntactically.)
+        //
+        // NOTE (reviewer): adding this whitelist entry is NOT inert w.r.t. `discharged`.
+        // The monotonic inlining gate (`added_unclassified == 0`) reads
+        // `refusal_disposition`, so draining mutable-container reads unclassified ->
+        // refused lets 6 previously-blocked helper inlinings COMMIT, cascading to
+        // discharged 5700 -> 5704 (+4 sound inlining-unblock, no fake-discharge) /
+        // refused 359 -> 371 / unclassified 356 -> 346. Confirmed by negating this clause:
+        // the typed-SideEffect machinery alone reproduces baseline 5700/359/356 exactly,
+        // so the dig path is untouched -- the delta is purely the gate coupling. See report.
+        || reason.contains("mutable container is not temporally stable");
     if terminal {
         Disposition::Refused
     } else {
@@ -2443,6 +2464,223 @@ trait Sugar {
     fn desugar(&self, ctx: &SugarCtx) -> Option<Desugared>;
 }
 
+// ── The typed BAIL: a `SideEffect` hierarchy (the mirror of `Sugar`) ─────────
+//
+// `Sugar::desugar` is the DIG side -- it walks inward until it reaches literal
+// truth (`Dug`). When the walk hits MONKEY BUSINESS -- a side effect, an opaque
+// runtime value, an iterator advance, a mutable read -- the desugar bails. Today
+// that bail is an untyped `None` + a reason STRING handled downstream by
+// `refusal_disposition` (terminal-whitelist -> Refused, else Unclassified).
+//
+// `SideEffect` RETYPES that bail. A `SideEffect` is a NAMED, WARRANTED order-loss
+// boundary: a structural property of the SOURCE (not a missing lift) that destroys
+// the single timeless `t` a point-wise value claim needs. Each kind owns its own
+// `reason()` (the proto refusal string, recognized as terminal by
+// `refusal_disposition`) and its own `boundary()` (a `SourceMemento` -- the bail-side
+// rope, mirroring the dig-side `Warrant`). The reason string is the wire format the
+// existing collector emits into `skip_reasons`; minting it from a typed effect makes
+// the BAIL a claim with a cause, not a bare string.
+//
+// SOUNDNESS (the critical line, do NOT cross it): a `SideEffect` is ONLY for a
+// PROVABLE order-loss effect -- a syntactic mutation / `iter.next()` / `&mut` /
+// `.push` on captured state, a genuinely runtime/opaque value (param, runtime call
+// result, TLS, IO), a mutable-container read. A PURE-BUT-UNTRANSLATED term (a pure
+// stdlib method we have not transcribed yet) is NOT a `SideEffect`: it stays
+// UNCLASSIFIED (honest future work for a `Sugar`/`const_eval` arm). Reclassifying a
+// pure-untranslated term as a `SideEffect` would be a FAKE-REFUSE -- mislabeling our
+// own work as a source property. EFFECT-OR-LEAVE: if we cannot PROVE it is an
+// order-loss effect, we leave it unclassified.
+
+/// The bail-side rope: a `SourceMemento` ties a refusal to the source boundary that
+/// warrants it (the span / token-key of the offending construct). The mirror of the
+/// dig-side `Warrant` (which ropes a discharged constraint to the sugar that minted
+/// it). `boundary` is the rendered token-key / description of the order-loss site.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SourceMemento {
+    /// The source construct that is the order-loss boundary (token-key / description).
+    boundary: String,
+}
+
+/// A typed order-loss boundary -- the typed BAIL, mirror of `Sugar`. `reason()`
+/// returns the terminal refusal string (recognized by `refusal_disposition`);
+/// `boundary()` returns the `SourceMemento` warranting that the bail names a SOURCE
+/// property. Each implementor is a single NAMED effect (a mutation, an iterator
+/// advance, an opaque runtime value, TLS, IO, a mutable read). Adding an effect =
+/// adding one struct with `reason()` + `boundary()`.
+trait SideEffect {
+    fn reason(&self) -> String;
+    fn boundary(&self) -> SourceMemento;
+}
+
+/// The outcome of a desugar attempt, typed both ways. `Dug` reached truth (a
+/// discharged `Desugared`); `Hit` struck a NAMED, WARRANTED order-loss boundary (a
+/// terminal, loud refusal with a cause). This is the typed form of "Option<Desugared>
+/// + reason string"; the collector unwraps it to the existing entries / skip_reasons
+/// emission so the wire format (and thus the CID + counts) is unchanged.
+#[allow(dead_code)]
+enum Outcome {
+    /// Reached truth: the desugared literal floor / emitted obligation. -> discharged.
+    Dug(Desugared),
+    /// Struck a named order-loss boundary. -> refused (terminal, loud, with cause).
+    Hit(Box<dyn SideEffect>),
+}
+
+/// MUTATION: the closure / loop body MUTATES captured or local state (`+=`, `&mut`,
+/// `.push`, an assignment). The asserted value varies per iteration independently of
+/// the bound var, so a single universal over it would be a false claim. A source
+/// property -- no value lifter could read a single timeless `t`. (HALF 2 of the
+/// fold-closure bucket.)
+struct MutationEffect {
+    boundary: String,
+}
+
+impl SideEffect for MutationEffect {
+    fn reason(&self) -> String {
+        // The proto string the collector already emits for this case (kept verbatim
+        // so `refusal_disposition` classifies it terminal and the CID is conserved).
+        "assertion in a side-effecting closure body (mutates captured state / \
+         advances an iterator); not a pure point-wise claim; refused"
+            .to_string()
+    }
+    fn boundary(&self) -> SourceMemento {
+        SourceMemento {
+            boundary: self.boundary.clone(),
+        }
+    }
+}
+
+/// ITER-ADVANCE: the body advances a captured iterator (`iter.next()` / `nth += 1`),
+/// a sequence/position-dependent side effect. Distinct CAUSE from `MutationEffect`
+/// (no captured-state assignment is needed), but the SAME terminal class -- the
+/// observed value is per-iteration, not timeless. (Carried under the side-effecting
+/// closure-body proto reason today; typed here as its own named boundary.)
+struct IterAdvanceEffect {
+    boundary: String,
+}
+
+impl SideEffect for IterAdvanceEffect {
+    fn reason(&self) -> String {
+        "assertion in a side-effecting closure body (mutates captured state / \
+         advances an iterator); not a pure point-wise claim; refused"
+            .to_string()
+    }
+    fn boundary(&self) -> SourceMemento {
+        SourceMemento {
+            boundary: self.boundary.clone(),
+        }
+    }
+}
+
+/// OPAQUE-RUNTIME (bin-2): the iterated / asserted value is RUNTIME data -- a param, a
+/// runtime call result, an opaque receiver -- not constructible from source literals.
+/// There is no construction to walk, so no finite universe to emit. A source property.
+struct OpaqueRuntimeEffect {
+    boundary: String,
+    /// True for an effectful ACCESSOR (`.with` / `.with_unfilled_buf`) over opaque
+    /// state; false for a plain opaque RECEIVER (`coll.iter().for_each(..)` where
+    /// `coll` is runtime). Selects the matching proto reason (both `bin-2` terminal).
+    accessor: bool,
+}
+
+impl SideEffect for OpaqueRuntimeEffect {
+    fn reason(&self) -> String {
+        if self.accessor {
+            "assertion in a closure over an opaque/effectful accessor (bin-2: runtime \
+             data, not constructible from source literals); refused"
+                .to_string()
+        } else {
+            "assertion in a closure over an opaque runtime receiver (bin-2: runtime data, \
+             not constructible from source literals); refused"
+                .to_string()
+        }
+    }
+    fn boundary(&self) -> SourceMemento {
+        SourceMemento {
+            boundary: self.boundary.clone(),
+        }
+    }
+}
+
+/// TLS: a `thread_local!` `.with(|x| ..)` -- the closure ranges over thread-local
+/// runtime state, an opaque non-constructed value. A specialization of the opaque
+/// accessor boundary (its proto reason). Named so the catalog records the TLS cause.
+struct TlsEffect {
+    boundary: String,
+}
+
+impl SideEffect for TlsEffect {
+    fn reason(&self) -> String {
+        "assertion in a closure over an opaque/effectful accessor (bin-2: runtime \
+         data, not constructible from source literals); refused"
+            .to_string()
+    }
+    fn boundary(&self) -> SourceMemento {
+        SourceMemento {
+            boundary: self.boundary.clone(),
+        }
+    }
+}
+
+/// IO: the body performs IO (a `write` / `send` to a runtime sink). The observed
+/// value is a runtime effect, not a constructed literal. A source property; carried
+/// under the opaque-accessor proto reason. (`write`/`send` are in
+/// `CLOSURE_BODY_MUTATING_METHODS`, so an IO closure body is caught as a mutation
+/// today; named here so the catalog records the IO cause.)
+struct IoEffect {
+    boundary: String,
+}
+
+impl SideEffect for IoEffect {
+    fn reason(&self) -> String {
+        "assertion in a closure over an opaque/effectful accessor (bin-2: runtime \
+         data, not constructible from source literals); refused"
+            .to_string()
+    }
+    fn boundary(&self) -> SourceMemento {
+        SourceMemento {
+            boundary: self.boundary.clone(),
+        }
+    }
+}
+
+/// TEMPORAL-READ: a read of a MUTABLE container (`a[i]` where `a` is a provably-`mut`
+/// local that the `mut` oracle flags). The container may be index-assigned or
+/// method-mutated between program points, so `index(a, i)` has no single timeless `t`
+/// -- the read is sequence/position dependent. The mirror, for an index READ, of the
+/// already-terminal `temporally unstable` reason (a term reading a MUTATED local).
+///
+/// THE DRAIN: this boundary fell to the silent-shrug (unclassified) pile because its
+/// reason ("mutable container is not temporally stable") was never added to the
+/// terminal whitelist, even though it is the SAME provable order-loss effect as the
+/// whitelisted `temporally unstable`. Typing it as a `SideEffect` (and whitelisting
+/// its reason) moves these effect-shaped cases unclassified -> refused.
+///
+/// SOUNDNESS: emitted ONLY when the `mut` oracle (`scope.is_mut_local`) PROVES the
+/// container is a mutable local. A non-`mut` (provably-immutable) container reads as a
+/// stable `index(a,i)` term and never reaches here -- so this can only refuse a
+/// genuinely-mutable read, never a pure one.
+struct TemporalReadEffect {
+    boundary: String,
+}
+
+impl SideEffect for TemporalReadEffect {
+    fn reason(&self) -> String {
+        // Carries the existing index-read substring so a single whitelist entry
+        // ("mutable container is not temporally stable") recognizes it; the
+        // `unsupported term` prefix the term path already attaches is preserved by
+        // the emit site, so this is the bare boundary clause.
+        format!(
+            "unsupported term `{}`: mutable container is not temporally stable",
+            self.boundary
+        )
+    }
+    fn boundary(&self) -> SourceMemento {
+        SourceMemento {
+            boundary: self.boundary.clone(),
+        }
+    }
+}
+
 /// BASE CASE: a finite literal domain (a literal array `[e0, e1, ...]` or a closed
 /// integer range `a..b` / `a..=b`). `desugar` materializes the element sequence in
 /// iterated order, each element its source `Expr` + its `ConstVal` when evaluable.
@@ -3237,11 +3475,53 @@ fn closure_body_is_side_effecting(body: &Expr) -> bool {
 ///     forall` already discharged it, or declined for a recoverable reason like a non-
 ///     const-foldable accumulator) -> leave the generic UNCLASSIFIED skip (honest work).
 /// None also for any non-closure-method statement (handled by the existing skip).
-fn closure_method_terminal_reason(
+/// True if a closure body ADVANCES an iterator (`iter.next()` / `next_back` / `nth` /
+/// `nth_back`) -- the sequence/position-dependent cause that types as
+/// `IterAdvanceEffect` (vs a captured-state assignment, which types as
+/// `MutationEffect`). Scans the body and any assert-macro args (the advance frequently
+/// lives in `assert_eq!(Some(x), iter.next())`), mirroring `MethScan`.
+fn closure_body_advances_iterator(body: &Expr) -> bool {
+    const ITER_ADVANCE_METHODS: &[&str] = &["next", "next_back", "nth", "nth_back"];
+    struct Scan {
+        found: bool,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Scan {
+        fn visit_expr_method_call(&mut self, m: &'ast syn::ExprMethodCall) {
+            if ITER_ADVANCE_METHODS.contains(&m.method.to_string().as_str()) {
+                self.found = true;
+            }
+            syn::visit::visit_expr_method_call(self, m);
+        }
+        fn visit_macro(&mut self, m: &'ast syn::Macro) {
+            let parser = Punctuated::<Expr, syn::Token![,]>::parse_terminated;
+            if let Ok(args) = parser.parse2(m.tokens.clone()) {
+                for a in &args {
+                    syn::visit::Visit::visit_expr(self, a);
+                }
+            }
+            syn::visit::visit_macro(self, m);
+        }
+    }
+    let mut s = Scan { found: false };
+    syn::visit::Visit::visit_expr(&mut s, body);
+    s.found
+}
+
+/// If `expr` is a CLOSURE-BEARING method call whose closure asserts but is NOT a
+/// dissolvable/liftable pure point-wise iteration, return the TYPED `SideEffect`
+/// naming the order-loss boundary (the typed BAIL). The caller renders
+/// `effect.reason()` into `skip_reasons` -- the wire format is unchanged, but the bail
+/// is now a NAMED, WARRANTED claim (a mutation / iterator-advance / opaque-runtime /
+/// TLS boundary) instead of a bare string. HALF 2 of the fold-closure bucket.
+///
+/// Returns `None` for a PURE adaptor over a PURE body over a LITERAL-resolvable
+/// receiver (the defoldable / for_each-liftable case -- honest UNCLASSIFIED work, never
+/// fake-refused) and for any non-closure-method statement.
+fn closure_method_terminal_effect(
     expr: &Expr,
     scope: &TemporalScope,
     let_inits: &BTreeMap<String, &Expr>,
-) -> Option<&'static str> {
+) -> Option<Box<dyn SideEffect>> {
     // Find the closure-bearing method call (anywhere along the chain), its closure, and
     // its receiver (for the literal-domain resolution).
     struct Find {
@@ -3274,20 +3554,29 @@ fn closure_method_terminal_reason(
     if count_asserts_in_expr(&closure.body) == 0 {
         return None;
     }
+    let boundary = token_key(expr);
     let is_pure_adaptor = PURE_CLOSURE_ADAPTORS.contains(&method.as_str());
     if !is_pure_adaptor {
         // An effectful / opaque accessor (`.with`, `.with_unfilled_buf`, ...): the
         // receiver is runtime/opaque state, not a constructed literal domain -- bin-2.
-        return Some(
-            "assertion in a closure over an opaque/effectful accessor (bin-2: runtime \
-             data, not constructible from source literals); refused",
-        );
+        // `.with` is the thread-local accessor (TlsEffect); any other effectful
+        // accessor is the generic opaque-accessor boundary.
+        if method == "with" {
+            return Some(Box::new(TlsEffect { boundary }));
+        }
+        return Some(Box::new(OpaqueRuntimeEffect {
+            boundary,
+            accessor: true,
+        }));
     }
     if closure_body_is_side_effecting(&closure.body) {
-        return Some(
-            "assertion in a side-effecting closure body (mutates captured state / \
-             advances an iterator); not a pure point-wise claim; refused",
-        );
+        // Distinguish the iterator-advance cause (`iter.next()`) from a captured-state
+        // mutation (`+=`, `&mut`, `.push`). Both are the SAME terminal class; typing
+        // them apart records the cause in the catalog.
+        if closure_body_advances_iterator(&closure.body) {
+            return Some(Box::new(IterAdvanceEffect { boundary }));
+        }
+        return Some(Box::new(MutationEffect { boundary }));
     }
     // Pure adaptor, pure body: does the RECEIVER resolve to a finite literal domain? If
     // not, the iterated/threaded values are runtime data -- bin-2 terminal. If yes, this
@@ -3297,10 +3586,10 @@ fn closure_method_terminal_reason(
         .and_then(|(base, _)| bounded_domain_from_expr(base, scope))
         .is_some();
     if !resolves_literal {
-        return Some(
-            "assertion in a closure over an opaque runtime receiver (bin-2: runtime data, \
-             not constructible from source literals); refused",
-        );
+        return Some(Box::new(OpaqueRuntimeEffect {
+            boundary,
+            accessor: false,
+        }));
     }
     None
 }
@@ -3448,18 +3737,21 @@ fn collect_assertion_entries(
                         }
                         // HALF 2: a closure-method let-init whose body is side-effecting /
                         // over an opaque accessor is TERMINAL (a source property), not the
-                        // generic unclassified work. A pure adaptor + pure body returns None
-                        // here and keeps the generic skip (dissolvable in --dissolve).
-                        let reason = closure_method_terminal_reason(
+                        // generic unclassified work. The typed `SideEffect` names the
+                        // boundary; we render its `reason()` (the wire format is unchanged).
+                        // A pure adaptor + pure body returns None here and keeps the generic
+                        // skip (dissolvable in --dissolve).
+                        let reason = closure_method_terminal_effect(
                             &init.expr,
                             &temporal_scope,
                             &let_inits,
                         )
-                        .unwrap_or(
-                            "assertion inside a let-initializer expression: not a top-level point-wise assertion; released to layer 0",
-                        );
+                        .map(|e| e.reason())
+                        .unwrap_or_else(|| {
+                            "assertion inside a let-initializer expression: not a top-level point-wise assertion; released to layer 0".to_string()
+                        });
                         for _ in 0..count {
-                            skipped.push(reason.to_string());
+                            skipped.push(reason.clone());
                         }
                     }
                 }
@@ -4020,18 +4312,20 @@ fn collect_assertion_entries(
                     let count = count_asserts_in_stmts(std::slice::from_ref(other));
                     // HALF 2: a bare closure-method statement whose body is side-effecting /
                     // over an opaque accessor is TERMINAL (a source property), not generic
-                    // unclassified work. A pure adaptor + pure body returns None and keeps
-                    // the generic skip (dissolvable verbatim in --dissolve).
+                    // unclassified work. The typed `SideEffect` names the boundary; we render
+                    // its `reason()` (the wire format is unchanged). A pure adaptor + pure
+                    // body returns None and keeps the generic skip (dissolvable in --dissolve).
                     let reason = if let Stmt::Expr(e, _) = other {
-                        closure_method_terminal_reason(e, &temporal_scope, &let_inits)
+                        closure_method_terminal_effect(e, &temporal_scope, &let_inits)
                     } else {
                         None
                     }
-                    .unwrap_or(
-                        "assertion nested in an unlifted expression statement: not a top-level point-wise assertion; released to layer 0",
-                    );
+                    .map(|e| e.reason())
+                    .unwrap_or_else(|| {
+                        "assertion nested in an unlifted expression statement: not a top-level point-wise assertion; released to layer 0".to_string()
+                    });
                     for _ in 0..count {
-                        skipped.push(reason.to_string());
+                        skipped.push(reason.clone());
                     }
                 }
             }
@@ -8987,10 +9281,16 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
             // result, a field) translate through their own EUF terms.
             if let Some(name) = simple_path_name(&index.expr) {
                 if scope.is_mut_local(&name) {
-                    return Err(format!(
-                        "unsupported term `{}`: mutable container is not temporally stable",
-                        token_key(expr)
-                    ));
+                    // TYPED BAIL: the `mut` oracle PROVED the container is a mutable
+                    // local, so `index(a,i)` is a sequence/position-dependent read with
+                    // no single timeless `t`. Mint the refusal from the typed
+                    // `TemporalReadEffect` (a named, warranted order-loss boundary) -- the
+                    // reason it produces is whitelisted terminal by `refusal_disposition`,
+                    // draining this effect-shaped case unclassified -> refused.
+                    let effect = TemporalReadEffect {
+                        boundary: token_key(expr),
+                    };
+                    return Err(effect.reason());
                 }
             }
             let container = translate_term_in_scope(&index.expr, scope)?;
@@ -10568,6 +10868,227 @@ mod lifter_key_tests {
         );
     }
 
+    // ── The typed BAIL: `SideEffect` (the mirror of `Sugar`) ───────────────────
+    //
+    // `Sugar::desugar` reaches truth (Dug). When the walk hits monkey business it
+    // BAILS; a `SideEffect` RETYPES that bail as a NAMED, WARRANTED order-loss
+    // boundary. THE CRITICAL LINE: a `SideEffect` is only for a PROVABLE order-loss
+    // effect (a mutation / iter-advance / opaque-runtime value / mutable read); a
+    // PURE-but-untranslated term STAYS UNCLASSIFIED (honest work), never fake-refused.
+
+    #[test]
+    fn typed_side_effect_catalog_reasons_are_all_terminal() {
+        // Every typed `SideEffect`'s `reason()` is recognized terminal by
+        // `refusal_disposition` (the bail is a CLAIM, earned). `boundary()` ropes the
+        // refusal to the source construct that warrants it (the bail-side `SourceMemento`,
+        // mirror of the dig-side `Warrant`).
+        let effects: Vec<Box<dyn SideEffect>> = vec![
+            Box::new(MutationEffect { boundary: "v.push(x)".to_string() }),
+            Box::new(IterAdvanceEffect { boundary: "iter.next()".to_string() }),
+            Box::new(OpaqueRuntimeEffect { boundary: "p.iter().for_each(..)".to_string(), accessor: false }),
+            Box::new(OpaqueRuntimeEffect { boundary: "buf.with_unfilled_buf(..)".to_string(), accessor: true }),
+            Box::new(TlsEffect { boundary: "DROPS.with(..)".to_string() }),
+            Box::new(IoEffect { boundary: "out.write(..)".to_string() }),
+            Box::new(TemporalReadEffect { boundary: "a[i]".to_string() }),
+        ];
+        for e in &effects {
+            assert_eq!(
+                refusal_disposition(&e.reason()),
+                Disposition::Refused,
+                "typed SideEffect reason must be terminal: {}",
+                e.reason()
+            );
+            // The boundary memento carries the source construct (non-empty rope).
+            assert!(!e.boundary().boundary.is_empty(), "boundary memento must rope to a source construct");
+        }
+    }
+
+    #[test]
+    fn adversarial_a_mutation_and_iter_advance_bodies_are_typed_side_effect_refuse() {
+        // (a) GENUINE MUTATION: a `.for_each` body that mutates captured state (`total +=
+        // x`) -- a `MutationEffect`. The asserted value varies per iteration, no single
+        // timeless `t`. TYPED SIDE-EFFECT refuse, NOT unclassified.
+        let mut_src = r#"
+            #[test]
+            fn mutating_body() {
+                let mut total = 0i32;
+                [1i32, 2, 3].iter().for_each(|x| {
+                    total += x;
+                    assert!(total > 0);
+                });
+            }
+        "#;
+        let out = lift_src(mut_src);
+        assert!(
+            out.skip_reasons.iter().any(|r| r.contains("side-effecting closure body")),
+            "a mutating closure body must be a typed SideEffect refuse: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.skip_reasons
+                .iter()
+                .filter(|r| r.contains("side-effecting closure body"))
+                .all(|r| matches!(refusal_disposition(r), Disposition::Refused)),
+            "the mutation SideEffect must be a terminal disposition (refused): {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.skip_reasons.iter().all(|r| !r.contains("nested in an unlifted expression statement")),
+            "the mutation case must NOT stay generic-unclassified: {:?}",
+            out.skip_reasons
+        );
+
+        // (a') GENUINE ITER-ADVANCE: a body that advances a captured iterator
+        // (`iter.next()`) -- an `IterAdvanceEffect`, the same terminal class, distinct
+        // cause. Also TYPED SIDE-EFFECT refuse.
+        let adv_src = r#"
+            #[test]
+            fn iter_advance_body() {
+                let mut iter = [1i32, 2, 3].iter();
+                iter.clone().for_each(|x| assert_eq!(Some(x), iter.next()));
+            }
+        "#;
+        let out = lift_src(adv_src);
+        assert!(
+            out.skip_reasons.iter().any(|r| r.contains("side-effecting closure body")),
+            "an iterator-advancing closure body must be a typed SideEffect refuse: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.skip_reasons
+                .iter()
+                .filter(|r| r.contains("side-effecting closure body"))
+                .all(|r| matches!(refusal_disposition(r), Disposition::Refused)),
+            "the iter-advance SideEffect must be terminal (refused): {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn adversarial_b_runtime_receiver_is_opaque_runtime_effect_refuse() {
+        // (b) RUNTIME RECEIVER: a `.for_each` over an opaque runtime receiver
+        // (`std::env::args()` -- a runtime call result, not a constructed literal) -- an
+        // `OpaqueRuntimeEffect` (bin-2). The iterated values are runtime data, no
+        // construction to walk. TYPED refuse, NOT unclassified.
+        let src = r#"
+            #[test]
+            fn over_runtime() {
+                std::env::args().for_each(|x| assert!(!x.is_empty()));
+            }
+        "#;
+        let out = lift_src(src);
+        assert!(
+            out.skip_reasons.iter().any(|r| r.contains("bin-2") && r.contains("runtime")),
+            "an opaque runtime receiver must be a typed OpaqueRuntimeEffect refuse (bin-2): {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.skip_reasons
+                .iter()
+                .filter(|r| r.contains("bin-2"))
+                .all(|r| matches!(refusal_disposition(r), Disposition::Refused)),
+            "the opaque-runtime SideEffect must be terminal (refused): {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn adversarial_c_pure_but_untranslated_term_stays_unclassified_not_refused() {
+        // (c) THE CRITICAL LINE: a PURE-but-untranslated term must STAY UNCLASSIFIED
+        // (honest future work for a Sugar/const_eval arm), NEVER reclassified as a
+        // SideEffect. `1i32 as f64` is PURE -- no mutation, no iter-advance, no runtime
+        // value (both operands are literals) -- we simply have not transcribed the
+        // int->float cast term yet. (The EUF term path digs MOST untranslated calls as
+        // uninterpreted symbols -- e.g. `char::from_u32(i).unwrap().to_ascii_uppercase()`
+        // over `0..3` lifts soundly via EUF -- so a genuine term-GAP is rare; this cast
+        // is one. Refusing it as an effect would be a FAKE-REFUSE: mislabeling our own
+        // work as a source property -- the exact trap that put 8 bad terminals in an
+        // earlier floor.)
+        let src = r#"
+            #[test]
+            fn pure_untranslated() {
+                assert_eq!((1i32 as f64), 1.0);
+            }
+        "#;
+        let out = lift_src(src);
+        // It is refused-as-not-discharged (we did not lift it), but its disposition is
+        // UNCLASSIFIED work, NOT a terminal SideEffect refuse.
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "the untranslated pure term must not be (falsely) discharged: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            !out.skip_reasons.is_empty()
+                && out.skip_reasons.iter().all(|r| matches!(refusal_disposition(r), Disposition::Unclassified)),
+            "a PURE-but-untranslated term must STAY UNCLASSIFIED, never a SideEffect refuse: {:?}",
+            out.skip_reasons
+        );
+        // And specifically: it must NOT have been laundered into any effect reason.
+        assert!(
+            out.skip_reasons.iter().all(|r| {
+                !r.contains("side-effecting closure body")
+                    && !r.contains("mutable container is not temporally stable")
+                    && !(r.contains("bin-2") && r.contains("runtime"))
+            }),
+            "EFFECT-OR-LEAVE: a pure term must not wear any SideEffect reason: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn the_drain_mutable_container_read_is_temporal_read_effect_refuse() {
+        // THE DRAIN: a read of a provably-MUTABLE container (`buf[i]` where `buf` is a
+        // `let mut` the `mut` oracle flags) is a `TemporalReadEffect` -- the index-read
+        // sibling of the whitelisted `temporally unstable`. It fell to unclassified only
+        // because its reason was not whitelisted; typing + whitelisting moves it
+        // unclassified -> refused. SOUNDNESS: emitted ONLY under `is_mut_local`.
+        let src = r#"
+            #[test]
+            fn mutable_read() {
+                let mut buf = [0i32, 0, 0];
+                buf[0] = 7;
+                assert_eq!(buf[1], 0);
+            }
+        "#;
+        let out = lift_src(src);
+        assert!(
+            out.skip_reasons.iter().any(|r| r.contains("mutable container is not temporally stable")),
+            "a read of a mutable container must surface the TemporalReadEffect reason: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.skip_reasons
+                .iter()
+                .filter(|r| r.contains("mutable container is not temporally stable"))
+                .all(|r| matches!(refusal_disposition(r), Disposition::Refused)),
+            "THE DRAIN: the mutable-container read must now be TERMINAL refused, not unclassified: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn drain_soundness_immutable_container_read_is_not_a_temporal_read_effect() {
+        // THE DISCRIMINATION TWIN: a read of a NON-`mut` (provably-immutable) container
+        // must NOT be a `TemporalReadEffect`. A non-`mut` local reads as a stable
+        // `index(a,i)` term -- the `is_mut_local` gate is never hit -- so the effect is
+        // never minted. This proves the drain refuses ONLY a genuinely-mutable read,
+        // never a pure/stable one (no over-terminalization).
+        let src = r#"
+            #[test]
+            fn immutable_read() {
+                let buf = [1i32, 2, 3];
+                assert_eq!(buf[1], 2);
+            }
+        "#;
+        let out = lift_src(src);
+        assert!(
+            out.skip_reasons.iter().all(|r| !r.contains("mutable container is not temporally stable")),
+            "an immutable-container read must NEVER wear the TemporalReadEffect reason: {:?}",
+            out.skip_reasons
+        );
+    }
+
     // ── DEFOLDER: hermetic symbolic fold-unroll over a literal domain ─────────
     //
     // `fold`'s definition IS its desugaring (`acc = init; while let Some(x) = it.next()
@@ -11514,6 +12035,7 @@ mod lifter_key_tests {
             "flt2dec assert: f16/f128 formatting is unstable -- unformattable on the stable toolchain the lifter ships and not modellable as a point-wise claim; refused",
             "assertion in a side-effecting closure body (mutates captured state / advances an iterator); not a pure point-wise claim; refused",
             "assertion in a closure over an opaque/effectful accessor (bin-2: runtime data, not constructible from source literals); refused",
+            "unsupported term `buf[i]`: mutable container is not temporally stable",
         ] {
             assert_eq!(refusal_disposition(r), Refused, "should be terminal: {r}");
         }
