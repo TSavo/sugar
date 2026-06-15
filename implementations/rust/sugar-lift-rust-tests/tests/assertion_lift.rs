@@ -5081,6 +5081,268 @@ fn bad_twin() {
 }
 
 #[test]
+fn const_if_guard_digs_as_guarded_implication() {
+    // DIG (bucket 1): a CONST/literal if-guard (`!false`, `!true`) is fixed at
+    // compile time. `if !false { assert!(true) } else { assert!(false) }` lifts as
+    // `(true => true) AND (not true => false)` -- the const guard const-folds to a
+    // constant antecedent, each branch GUARDED, never bare. Corpus: bool.rs::
+    // test_bool_not. Previously refused as "under if context".
+    let src = r#"
+#[test]
+fn test_bool_not() {
+    if !false {
+        assert!(true);
+    } else {
+        assert!(false);
+    }
+    if !true {
+        assert!(false);
+    } else {
+        assert!(true);
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/bool.rs");
+    assert_eq!(
+        out.assertions_lifted, 4,
+        "all four const-guarded branch asserts must dig (2 ifs x 2 branches): {:?}",
+        refusal_reasons(&out)
+    );
+    assert_eq!(
+        out.assertions_refused, 0,
+        "no const-guard branch may stay refused: {:?}",
+        refusal_reasons(&out)
+    );
+    assert!(
+        refusal_reasons(&out).iter().all(|r| !r.contains("under if context")),
+        "no const-guard assert may stay in the if-context bucket: {:?}",
+        refusal_reasons(&out)
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Implies") || dump.contains("implies") || dump.contains("=>"),
+        "a const-folded guard still emits `guard => P` (an implication), never bare: {dump}"
+    );
+}
+
+#[test]
+fn bare_bool_literal_assert_lifts_with_teeth() {
+    // SUB-DIG: a bare boolean LITERAL assert is a constant claim. `assert!(true)`
+    // lifts to the tautology `true == true`; `assert!(false)` lifts to the REFUTABLE
+    // `false == true` (UNSAT). The `false` literal must survive into the formula so
+    // the refutation is real (a masking lift would be a fake-discharge).
+    let src = r#"
+#[test]
+fn bare() {
+    assert!(true);
+    assert!(false);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/bare.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "both bare-bool-literal asserts lift (constant claims): {:?}",
+        refusal_reasons(&out)
+    );
+    assert!(
+        refusal_reasons(&out)
+            .iter()
+            .all(|r| !r.contains("only scalar equality")),
+        "a bare bool literal must NOT fall to the scalar-equality refusal: {:?}",
+        refusal_reasons(&out)
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.to_lowercase().contains("false"),
+        "the `assert!(false)` must lift to a refutable formula carrying `false` (teeth): {dump}"
+    );
+}
+
+#[test]
+fn const_if_guard_bad_twin_is_refutable() {
+    // BAD-TWIN (teeth): a const-guarded WRONG claim must still DIG so the solver can
+    // refute it. `if !false { assert_eq!(1, 2) }` lifts as `true => (1 == 2)` -- under
+    // the const-true guard the consequent `1 == 2` is FALSE (z3-refutable). The lift
+    // must carry BOTH literals; a masking lift would be a fake-discharge.
+    let src = r#"
+#[test]
+fn bad_twin() {
+    if !false {
+        assert_eq!(1, 2);
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/bad_twin.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "the (refutable) const-guarded implication still digs: {:?}",
+        refusal_reasons(&out)
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains('2'),
+        "the wrong consequent literal `2` must survive into the formula (teeth): {dump}"
+    );
+    assert!(
+        dump.contains("Implies") || dump.contains("implies") || dump.contains("=>"),
+        "must be a guarded implication carrying the real values: {dump}"
+    );
+}
+
+#[test]
+fn cfg_if_guard_digs_against_resolved_target() {
+    // DIG (bucket 1, cfg variant): a `cfg!(target_pointer_width=..)` if-guard is a
+    // compile-time target predicate. Resolved against the explicit target facts
+    // (64-bit here), `if cfg!(tpw="32") { A } else { B }` const-folds to
+    // `false => A` (trivially satisfied) AND `true => B` (B asserted). Both asserts
+    // are accounted; neither stays "under if context". Corpus: fmt/mod.rs, step.rs.
+    let src = r#"
+#[test]
+fn cfg_if() {
+    if cfg!(target_pointer_width = "32") {
+        assert_eq!(1i64, 1i64);
+    } else {
+        assert_eq!(2i64, 2i64);
+    }
+}
+"#;
+    let cfg = TargetCfg::from_rustc_cfg_facts(["unix", "target_pointer_width=\"64\""])
+        .expect("valid cfg facts");
+    let out = lift_file_with_options(
+        &parse(src),
+        "tests/cfg_if.rs",
+        &LiftOptions::for_target_cfg(cfg),
+    );
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "both branches of a resolved cfg!-guarded if must dig: {:?}",
+        refusal_reasons(&out)
+    );
+    assert!(
+        refusal_reasons(&out).iter().all(|r| !r.contains("under if context")),
+        "a resolved cfg if-guard must not stay in the if-context bucket: {:?}",
+        refusal_reasons(&out)
+    );
+}
+
+#[test]
+fn runtime_if_guard_stays_refused_not_fake_dug() {
+    // DISCRIMINATION (bucket 1, the bad direction): a RUNTIME if-guard does NOT
+    // const-fold (its truth is not fixed from source). `if it.next().is_some() {
+    // .. }` advances an iterator -- the guard lift bails, the assert STAYS refused
+    // (under-if-context), never fake-dug as a constant.
+    let src = r#"
+#[test]
+fn rt() {
+    let mut it = [1i64, 2, 3].iter();
+    if it.next().is_some() {
+        assert!(true);
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/rt.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "a runtime if-guard must NOT dig (no const fold): {:?}",
+        refusal_reasons(&out)
+    );
+    assert!(
+        refusal_reasons(&out).iter().any(|r| r.contains("under if context")),
+        "the runtime-guarded assert must stay refused under if context: {:?}",
+        refusal_reasons(&out)
+    );
+}
+
+#[test]
+fn match_cfg_inactive_arm_digs_surviving_arm() {
+    // DIG (bucket 2): `match () { #[cfg(tpw="32")] () => A, #[cfg(tpw="64")] () => B }`.
+    // Arm-level cfg resolves against the target (64-bit): the cfg(32) arm is stripped
+    // (it does not exist on this target), the surviving `() => B` unit arm is
+    // unconditional and B digs. The cfg-inactive arm's assert is accounted as a
+    // cfg-inactive refusal (SILENT stays 0). Corpus: num/wrapping.rs.
+    let src = r#"
+#[test]
+fn wrapping() {
+    match () {
+        #[cfg(target_pointer_width = "32")]
+        () => {
+            assert_eq!(1i64, 99i64);
+        }
+        #[cfg(target_pointer_width = "64")]
+        () => {
+            assert_eq!(3i64, 3i64);
+        }
+    }
+}
+"#;
+    let cfg = TargetCfg::from_rustc_cfg_facts(["unix", "target_pointer_width=\"64\""])
+        .expect("valid cfg facts");
+    let out = lift_file_with_options(
+        &parse(src),
+        "tests/wrapping.rs",
+        &LiftOptions::for_target_cfg(cfg),
+    );
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "the surviving (active-cfg) arm's assert must dig: {:?}",
+        refusal_reasons(&out)
+    );
+    assert_eq!(
+        out.assertions_refused, 1,
+        "the cfg-inactive arm's assert must be accounted as refused (not silent): {:?}",
+        refusal_reasons(&out)
+    );
+    assert!(
+        refusal_reasons(&out)
+            .iter()
+            .any(|r| r.contains("cfg-inactive match arm")),
+        "the stripped arm must carry the precise cfg-inactive reason: {:?}",
+        refusal_reasons(&out)
+    );
+    // SILENT=0: exactly the two source asserts are accounted (1 dug + 1 refused).
+    assert_eq!(
+        out.assertions_lifted + out.assertions_refused,
+        2,
+        "every source assert in the match must be accounted (silent=0): {:?}",
+        refusal_reasons(&out)
+    );
+}
+
+#[test]
+fn effectful_scrutinee_match_stays_refused_not_dug() {
+    // DISCRIMINATION (bucket 2, the bad direction): a match whose scrutinee ADVANCES
+    // an iterator (`it.next()`) is effectful -- the scrutinee is not a timeless value,
+    // so the whole match BAILS and the arm asserts STAY refused (under-match-context),
+    // never fake-dug. Corpus: option.rs::test_iterator (`match it.next() { Some(..)
+    // => { assert_eq!(..); *interior = .. } None => assert!(false) }`).
+    let src = r#"
+#[test]
+fn eff() {
+    let mut it = [1i64].iter();
+    match it.next() {
+        Some(interior) => {
+            assert_eq!(*interior, 1i64);
+        }
+        None => assert!(false),
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/eff.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "an effectful-scrutinee match must NOT dig: {:?}",
+        refusal_reasons(&out)
+    );
+    assert!(
+        refusal_reasons(&out)
+            .iter()
+            .all(|r| r.contains("under match context")),
+        "both arm asserts must stay in the match-context bucket: {:?}",
+        refusal_reasons(&out)
+    );
+}
+
+#[test]
 fn match_binding_arm_bails_to_match_context_refusal() {
     // Structural: a binding arm `x =>` re-names the scrutinee (always matches --
     // not a discriminant), an arm guard `n if .. =>`, and an or-pattern `A | B =>`
