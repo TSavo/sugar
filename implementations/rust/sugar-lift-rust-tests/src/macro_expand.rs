@@ -191,6 +191,32 @@ fn match_prefix(
                     _ => return None,
                 }
             }
+            // A delimiter group that itself contains metavariables (e.g. the
+            // `($valid:expr, $invalid:expr)` matcher group). The structural
+            // `token_tree_eq` below would compare the matcher group's stream
+            // (which holds `$valid : expr ...`) against the input group's
+            // stream token-for-token and fail on length. Instead, recurse into
+            // BOTH streams to bind the inner metavars. The delimiter must match,
+            // and the inner matcher must consume the input group's ENTIRE stream
+            // (a delimiter group is a closed boundary in rust's matcher, exactly
+            // like the top-level `match_seq`) -- a partial consume is a mismatch.
+            TokenTree::Group(mg) if matcher_group_has_metavar(mg) => {
+                let inp = input.get(ii)?;
+                let TokenTree::Group(ig) = inp else {
+                    return None;
+                };
+                if mg.delimiter() != ig.delimiter() {
+                    return None;
+                }
+                let inner_matcher: Vec<TokenTree> = mg.stream().into_iter().collect();
+                let inner_input: Vec<TokenTree> = ig.stream().into_iter().collect();
+                let consumed = match_prefix(&inner_matcher, &inner_input, bindings, None)?;
+                if consumed != inner_input.len() {
+                    return None;
+                }
+                ii += 1;
+                mi += 1;
+            }
             // Literal matcher token: must equal the next input token-tree.
             m => {
                 let inp = input.get(ii)?;
@@ -210,6 +236,19 @@ fn match_prefix(
 /// `$( .. )` group.
 fn group_first_token(g: &proc_macro2::Group) -> Option<TokenTree> {
     g.stream().into_iter().next()
+}
+
+/// Does a matcher delimiter group contain a metavariable / repetition (`$`)?
+/// Only such groups need the recursive bind path; a purely-literal matcher
+/// group (e.g. `()` in `foo()`) must still match by exact `token_tree_eq` so we
+/// never over-match a literal-shaped group. The scan recurses into nested
+/// groups so a `$` buried inside (`(($x))`) is still found.
+fn matcher_group_has_metavar(g: &proc_macro2::Group) -> bool {
+    g.stream().into_iter().any(|t| match t {
+        TokenTree::Punct(p) => p.as_char() == '$',
+        TokenTree::Group(inner) => matcher_group_has_metavar(&inner),
+        _ => false,
+    })
 }
 
 /// Parse the `sep? (*|+|?)` suffix that follows a `$( ... )` group.
@@ -254,7 +293,14 @@ fn match_repetition(
         if ii >= input.len() {
             break;
         }
-        // Expect a separator before all but the first round.
+        // Expect a separator before all but the first round. Remember where the
+        // separator started so we can BACKTRACK it: a separator is matched only
+        // BETWEEN elements, so a TRAILING separator (`("a",..), ("b",..),` with a
+        // dangling `,`) must be left unconsumed for a following matcher token
+        // (e.g. the optional `$(,)?` trailing-comma group). Consuming it here and
+        // then failing the next round -- which has no input left -- would fail
+        // the whole match, the `assert_chunks!(.., (..), (..),)` corpus shape.
+        let before_sep = ii;
         if let (Some(sep_tok), false) = (&sep, rounds.is_empty()) {
             match input.get(ii) {
                 Some(t) if token_tree_eq(sep_tok, t) => ii += 1,
@@ -265,12 +311,20 @@ fn match_repetition(
         // Inside a round, a trailing greedy fragment must stop at the separator
         // (if any) or at the repetition's follow token.
         let round_terminator = sep.as_ref().or_else(|| follow.first());
-        let consumed = match_prefix(inner, &input[ii..], &mut round, round_terminator)?;
-        if consumed == 0 {
-            break;
+        // A round that does not match (no input, or the inner matcher declines)
+        // must NOT abort the whole repetition: backtrack any just-consumed
+        // separator and stop cleanly. `?` short-circuits the `?`-operator
+        // propagation that previously failed the match on a trailing separator.
+        match match_prefix(inner, &input[ii..], &mut round, round_terminator) {
+            Some(consumed) if consumed > 0 => {
+                ii += consumed;
+                rounds.push(round);
+            }
+            _ => {
+                ii = before_sep;
+                break;
+            }
         }
-        ii += consumed;
-        rounds.push(round);
     }
     if op == '+' && rounds.is_empty() {
         return None;
@@ -569,11 +623,177 @@ mod tests {
     }
 
     #[test]
+    fn binds_metavars_inside_a_delimiter_group() {
+        // The `assert_chunks!` shape: a `$string:expr` then a repetition whose
+        // inner matcher is a parenthesized group `($valid:expr, $invalid:expr)`.
+        // The matcher must RECURSE into the input's `(...)` group to bind the
+        // inner metavars rather than fail a structural length compare.
+        let def = quote! {
+            ( $string:expr, $(($valid:expr, $invalid:expr)),* $(,)? ) => {{
+                $(
+                    assert_eq!($valid, c.valid());
+                    assert_eq!($invalid, c.invalid());
+                )*
+            }};
+        };
+        let out = expand(
+            &rules_of(def),
+            quote! { b"hello", ("hello", b"") },
+        )
+        .unwrap_or_else(|e| panic!("expand err: {e}"));
+        assert_eq!(
+            out.to_string(),
+            quote! {{
+                assert_eq!("hello", c.valid());
+                assert_eq!(b"", c.invalid());
+            }}
+            .to_string()
+        );
+    }
+
+    #[test]
+    fn binds_metavars_inside_group_across_multiple_rounds() {
+        // Two repetition rounds, each a `(...)` group: confirms the recursive
+        // group bind composes with `match_repetition` round projection.
+        let def = quote! {
+            ( $s:expr, $(($v:expr, $i:expr)),* $(,)? ) => {{
+                $( assert_eq!($v, $i); )*
+            }};
+        };
+        let out = expand(
+            &rules_of(def),
+            quote! { src, ("a", 1), ("b", 2) },
+        )
+        .unwrap_or_else(|e| panic!("expand err: {e}"));
+        assert_eq!(
+            out.to_string(),
+            quote! {{ assert_eq!("a", 1); assert_eq!("b", 2); }}.to_string()
+        );
+    }
+
+    #[test]
+    fn literal_group_still_matches_exactly() {
+        // DISCRIMINATION: a matcher group with NO metavar (`()`) must still
+        // match by exact equality, and a non-empty input group must NOT match
+        // it -- the recursive path is gated on `matcher_group_has_metavar`.
+        let def = quote! { ((), $e:expr) => { assert!($e) }; };
+        let ok = expand(&rules_of(def.clone()), quote! { (), foo() }).expect("expand");
+        assert_eq!(ok.to_string(), quote! { assert!(foo()) }.to_string());
+        // `(x)` is a non-empty group: it must NOT match the literal `()` group.
+        assert!(expand(&rules_of(def), quote! { (x), foo() }).is_err());
+    }
+
+    #[test]
+    fn group_arity_mismatch_bails() {
+        // DISCRIMINATION: a `($a:expr, $b:expr)` matcher group must NOT match a
+        // single-element input group `(x)` -- the inner match must consume the
+        // ENTIRE input group stream, so a 1-element group is a mismatch.
+        let def = quote! {
+            ( $(($a:expr, $b:expr)),* ) => {{ $( assert_eq!($a, $b); )* }};
+        };
+        assert!(expand(&rules_of(def), quote! { (x) }).is_err());
+    }
+
+    #[test]
+    fn group_delimiter_mismatch_bails() {
+        // DISCRIMINATION: a parenthesized matcher group must NOT match a
+        // bracketed input group even when the inner metavars would otherwise
+        // bind.
+        let def = quote! {
+            ( $(($a:expr, $b:expr)),* ) => {{ $( assert_eq!($a, $b); )* }};
+        };
+        assert!(expand(&rules_of(def), quote! { [x, y] }).is_err());
+    }
+
+    #[test]
     fn strips_dollar_crate_in_transcription() {
         // assert_ready_eq!($e:expr, $expect:expr) => { $crate::assert_ready!($e) ... }
         let def = quote! { ($e:expr) => { $crate::assert_ready!($e) }; };
         let out = expand(&rules_of(def), quote! { foo() }).expect("expand");
         // $crate:: is stripped entirely; the macro resolves by name.
         assert_eq!(out.to_string(), quote! { assert_ready!(foo()) }.to_string());
+    }
+}
+
+#[cfg(test)]
+mod trailing_separator_tests {
+    use super::*;
+    use quote::quote;
+
+    fn rules_of(def: TokenStream) -> Vec<MacroRule> {
+        parse_rules(def).expect("rules parse")
+    }
+
+    // The exact `assert_chunks!` matcher: a leading expr, then a separated
+    // repetition of `(expr, expr)` groups, then an OPTIONAL trailing comma.
+    fn chunks_def() -> TokenStream {
+        quote! {
+            ( $string:expr, $(($valid:expr, $invalid:expr)),* $(,)? ) => {{
+                $(
+                    assert_eq!($valid, $invalid);
+                )*
+            }};
+        }
+    }
+
+    #[test]
+    fn repetition_groups_with_trailing_comma_expand() {
+        // The corpus shape: three `(.., ..)` groups AND a trailing comma. The
+        // repetition must NOT swallow the trailing comma as a separator (which
+        // would leave a round with no input and fail the match); `$(,)?` eats it.
+        let out = expand(
+            &rules_of(chunks_def()),
+            quote! { b"H", ("Hello", 1), (" There", 2), (" Goodbye", 3), },
+        )
+        .unwrap_or_else(|e| panic!("trailing-comma multi-group expand err: {e}"));
+        assert_eq!(
+            out.to_string(),
+            quote! {{
+                assert_eq!("Hello", 1);
+                assert_eq!(" There", 2);
+                assert_eq!(" Goodbye", 3);
+            }}
+            .to_string()
+        );
+    }
+
+    #[test]
+    fn repetition_groups_without_trailing_comma_expand() {
+        // Same matcher, no trailing comma: the `$(,)?` simply matches zero.
+        let out = expand(
+            &rules_of(chunks_def()),
+            quote! { b"H", ("a", 1), ("b", 2) },
+        )
+        .unwrap_or_else(|e| panic!("no-trailing-comma expand err: {e}"));
+        assert_eq!(
+            out.to_string(),
+            quote! {{ assert_eq!("a", 1); assert_eq!("b", 2); }}.to_string()
+        );
+    }
+
+    #[test]
+    fn single_group_with_trailing_comma_expands() {
+        // The `assert_chunks!(b"hello", ("hello", b""))` / `(.., ..),` minimal
+        // shape: one group, optional trailing comma both present and absent.
+        let no_comma = expand(&rules_of(chunks_def()), quote! { b"h", ("hello", 0) })
+            .expect("single group no comma");
+        let with_comma = expand(&rules_of(chunks_def()), quote! { b"h", ("hello", 0), })
+            .expect("single group trailing comma");
+        assert_eq!(no_comma.to_string(), with_comma.to_string());
+        assert_eq!(
+            no_comma.to_string(),
+            quote! {{ assert_eq!("hello", 0); }}.to_string()
+        );
+    }
+
+    #[test]
+    fn doubled_trailing_separator_does_not_match() {
+        // DISCRIMINATION: `$(,)?` matches AT MOST ONE trailing comma. A doubled
+        // trailing `,,` leaves an unconsumed token, so the whole input is not
+        // consumed -> no rule matches (we must not over-accept malformed input).
+        assert!(
+            expand(&rules_of(chunks_def()), quote! { b"h", ("a", 1),, }).is_err(),
+            "a doubled trailing separator must not match"
+        );
     }
 }
