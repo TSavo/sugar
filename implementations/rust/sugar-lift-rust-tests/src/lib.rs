@@ -43,6 +43,7 @@ pub mod sugar {
     pub mod statement_position;
     pub mod take;
     pub mod take_while;
+    pub mod temporal_read;
 }
 
 use quote::ToTokens;
@@ -2196,7 +2197,7 @@ struct TemporalPlan {
 }
 
 #[derive(Debug, Clone)]
-struct TemporalScope {
+pub(crate) struct TemporalScope {
     local_scope: String,
     plan: TemporalPlan,
     versions: BTreeMap<String, usize>,
@@ -2287,7 +2288,7 @@ impl TemporalScope {
 
     /// Whether `name` is a `let mut` local in this scope (conservatively
     /// unstable). A non-mut local is provably immutable and stable.
-    fn is_mut_local(&self, name: &str) -> bool {
+    pub(crate) fn is_mut_local(&self, name: &str) -> bool {
         self.plan.mut_locals.contains(name)
     }
 
@@ -7938,7 +7939,7 @@ fn collect_pat_idents(pat: &Pat, out: &mut Vec<String>) {
     }
 }
 
-fn simple_path_name(expr: &Expr) -> Option<String> {
+pub(crate) fn simple_path_name(expr: &Expr) -> Option<String> {
     match expr {
         Expr::Path(path) if path.qself.is_none() => {
             path.path.get_ident().map(|ident| ident.to_string())
@@ -12361,17 +12362,20 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
             // local may be index-assigned or method-mutated in ways the tracker
             // cannot follow, so it stays residual. Non-local containers (a call
             // result, a field) translate through their own EUF terms.
-            if let Some(name) = simple_path_name(&index.expr) {
-                if scope.is_mut_local(&name) {
-                    // TYPED BAIL: the `mut` oracle PROVED the container is a mutable
-                    // local, so `index(a,i)` is a sequence/position-dependent read with
-                    // no single timeless `t`. Mint the refusal from the typed
-                    // `Effect::TemporalRead` (a named, warranted order-loss boundary) -- the
-                    // reason it produces is whitelisted terminal by `refusal_disposition`,
-                    // draining this effect-shaped case unclassified -> refused.
-                    let effect = Effect::TemporalRead {
-                        boundary: token_key(expr),
-                    };
+            // TYPED BAIL: when the `mut` oracle PROVES the container is a mutable local,
+            // `index(a,i)` is a sequence/position-dependent read with no single timeless `t`.
+            // THIN NODE-ROUTER: that verdict is owned by the `TemporalReadSugar` node, which
+            // `Hit`s `Effect::TemporalRead` in its own `desugar`; this arm renders
+            // `effect.reason()` to the `Err` exactly as before (byte-identical), and the reason
+            // it produces is whitelisted terminal by `refusal_disposition`, draining this
+            // effect-shaped case unclassified -> refused. `decompose_temporal_read` recognizes
+            // ONLY this refuse-shape (an `Index` over a `mut`-local simple-path container): a
+            // non-`mut` / non-simple-path container returns `None`, and the read falls through
+            // to the constructive `index(a, i)` term below (the discrimination twin's
+            // soundness gate -- a stable read is never terminalized).
+            if let Some(node) = sugar::temporal_read::decompose_temporal_read(expr, scope) {
+                if let Outcome::Hit(effect @ Effect::TemporalRead { .. }) = node.desugar_ctx_free()
+                {
                     return Err(effect.reason());
                 }
             }
