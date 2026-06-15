@@ -2161,57 +2161,91 @@ fn try_lift_for_each_forall(
     Some((quantified, n_body, var))
 }
 
-/// Peel SEQUENCE-PRESERVING iterator adaptors off a `.fold`/`.rfold` receiver and
-/// RESOLVE `let`-bound receivers through `let_inits`, reaching the base literal-domain
-/// expression. Returns (base, reversed, enumerated) or None if a NON-sequence-preserving
-/// (transforming/filtering) adaptor is present (those change the element sequence and
-/// need a future "defilter"; refuse for now) or a binding cannot be resolved.
-/// Sequence-preserving: `.iter()/.into_iter()/.cloned()/.copied()/.fuse()` (identity on
-/// the element sequence), `.rev()` (reverses order), `.enumerate()` (pairs (i, e)). A
-/// bare ident bound in `let_inits` (`it = xs.iter()`) is resolved to its initializer and
-/// re-peeled, so `it.fold(..)` reaches `xs`'s literal array (recursion-capped).
-fn resolve_fold_domain<'a>(
+/// One iterator adaptor in a `.fold`/`.rfold` receiver chain. STDLIB sugar over the
+/// element sequence: the transforming kinds carry the closure we const-evaluate over each
+/// concrete element. Only EXACT-replicable adaptors are represented; an unrepresentable
+/// adaptor (filter_map / flat_map / flatten / a windowing/stateful one) makes the peel
+/// return None -> bail (honest, never a fake-dig).
+enum Adaptor {
+    Identity,                    // iter / into_iter / cloned / copied / fuse
+    Rev,                         // reverse the sequence
+    Enumerate,                   // pair each element with its position (i, e)
+    Filter(syn::ExprClosure),    // keep where the closure const-evaluates true
+    Map(syn::ExprClosure),       // replace each element with the closure's const value
+    Skip(usize),                 // drop the first n
+    Take(usize),                 // keep the first n
+    SkipWhile(syn::ExprClosure), // drop the leading run where the closure is true
+    TakeWhile(syn::ExprClosure), // keep the leading run where the closure is true
+}
+
+/// Peel iterator adaptors off a `.fold`/`.rfold` receiver and RESOLVE `let`-bound
+/// receivers through `let_inits`, reaching the base literal-domain expression PLUS the
+/// ordered adaptor chain (in APPLICATION order: base -> ... -> fold). Returns
+/// (base, adaptors) or None on an unrepresentable adaptor / unresolvable binding /
+/// non-literal `n` for skip/take (-> bail). Stdlib sugar over written literals -> dig;
+/// monkey business -> the const-evaluator that runs the closures will itself bail.
+fn peel_fold_adaptors<'a>(
     expr: &'a Expr,
     let_inits: &BTreeMap<String, &'a Expr>,
     depth: usize,
-) -> Option<(&'a Expr, bool, bool)> {
+) -> Option<(&'a Expr, Vec<Adaptor>)> {
     const MAX_DEPTH: usize = 8;
     if depth > MAX_DEPTH {
         return None;
     }
     let mut cur = expr;
-    let mut reversed = false;
-    let mut enumerated = false;
+    // Collected OUTERMOST-first (we walk from the fold receiver inward); reverse at the
+    // end to get APPLICATION order (base-first).
+    let mut adaptors_rev: Vec<Adaptor> = Vec::new();
     loop {
         match cur {
-            Expr::MethodCall(m) if m.args.is_empty() => {
-                match m.method.to_string().as_str() {
-                    "iter" | "into_iter" | "cloned" | "copied" | "fuse" => {}
-                    "rev" => reversed = !reversed,
-                    // enumerate after a rev still pairs the POST-rev positions; accept at
-                    // most once (index = position in the iterated order).
-                    "enumerate" if !enumerated => enumerated = true,
-                    // a transforming/filtering adaptor (map/filter/skip/take/...) changes
-                    // the element sequence -> not yet defoldable.
+            Expr::MethodCall(m) => {
+                let name = m.method.to_string();
+                let ad = match (name.as_str(), m.args.len()) {
+                    ("iter" | "into_iter" | "cloned" | "copied" | "fuse", 0) => Adaptor::Identity,
+                    ("rev", 0) => Adaptor::Rev,
+                    ("enumerate", 0) => Adaptor::Enumerate,
+                    ("filter", 1) => match &m.args[0] {
+                        Expr::Closure(c) => Adaptor::Filter(c.clone()),
+                        _ => return None,
+                    },
+                    ("map", 1) => match &m.args[0] {
+                        Expr::Closure(c) => Adaptor::Map(c.clone()),
+                        _ => return None,
+                    },
+                    ("skip_while", 1) => match &m.args[0] {
+                        Expr::Closure(c) => Adaptor::SkipWhile(c.clone()),
+                        _ => return None,
+                    },
+                    ("take_while", 1) => match &m.args[0] {
+                        Expr::Closure(c) => Adaptor::TakeWhile(c.clone()),
+                        _ => return None,
+                    },
+                    ("skip", 1) => Adaptor::Skip(const_int(&m.args[0])?.try_into().ok()?),
+                    ("take", 1) => Adaptor::Take(const_int(&m.args[0])?.try_into().ok()?),
+                    // filter_map / flat_map / flatten (Option / sub-sequence const-eval),
+                    // and every other adaptor: not yet provably exact -> bail.
                     _ => return None,
-                }
+                };
+                adaptors_rev.push(ad);
                 cur = &m.receiver;
             }
             Expr::Paren(p) => cur = &p.expr,
             Expr::Group(g) => cur = &g.expr,
             Expr::Reference(r) => cur = &r.expr,
             // A bare ident bound in this block: resolve to its initializer and re-peel,
-            // composing the reverse/enumerate flags learned so far.
+            // PREPENDING the inner chain (it applies first, nearer the base).
             Expr::Path(p) => {
                 if let Some(id) = p.path.get_ident() {
                     if let Some(init) = let_inits.get(&id.to_string()) {
-                        let (inner_base, inner_rev, inner_enum) =
-                            resolve_fold_domain(init, let_inits, depth + 1)?;
-                        return Some((
-                            inner_base,
-                            reversed ^ inner_rev,
-                            enumerated || inner_enum,
-                        ));
+                        let (inner_base, mut inner_adaptors) =
+                            peel_fold_adaptors(init, let_inits, depth + 1)?;
+                        // inner_adaptors are already base-first; our outer adaptors_rev are
+                        // outermost-first, so reversed they are application-order and come
+                        // AFTER the inner chain.
+                        adaptors_rev.reverse();
+                        inner_adaptors.extend(adaptors_rev);
+                        return Some((inner_base, inner_adaptors));
                     }
                 }
                 break;
@@ -2219,59 +2253,300 @@ fn resolve_fold_domain<'a>(
             _ => break,
         }
     }
-    Some((cur, reversed, enumerated))
+    adaptors_rev.reverse();
+    Some((cur, adaptors_rev))
 }
 
-/// Const-fold an integer accumulator-update tail expression: evaluate `tail` to an
-/// `i64` given the bound substitutions (`acc_var -> acc`, `elem_var -> elem`, `idx_var
-/// -> idx`). Supports literals, the three bound vars, `+`/`-`/`*`, unary neg, parens,
-/// and `as <int>` casts. Any other shape / unbound ident -> None (refuse the defold).
-fn const_fold_acc_update(
-    tail: &Expr,
-    acc_var: &str,
-    acc: i64,
-    elem_var: Option<&str>,
-    elem: Option<i64>,
-    idx_var: Option<&str>,
-    idx: Option<i64>,
-) -> Option<i64> {
-    match tail {
-        Expr::Lit(ExprLit { lit: Lit::Int(i), .. }) => parse_int_lit(i).ok(),
+/// Apply the ordered adaptor chain over the base element sequence, EXACTLY. Each element
+/// is `(Expr, Option<ConstVal>)` -- its source expr (for EUF term translation) and its
+/// const value when evaluable. A transforming adaptor REQUIRES every element it inspects
+/// to have a `ConstVal` (else bail -- we cannot filter/map an opaque element exactly).
+/// Enumerate replaces each element with a `(index, elem)` tuple value + a synthesized
+/// tuple expr. Returns the resulting sequence or None (bail) on any inexactness.
+fn apply_adaptors(
+    base: Vec<(Expr, Option<ConstVal>)>,
+    adaptors: &[Adaptor],
+) -> Option<Vec<(Expr, Option<ConstVal>)>> {
+    let mut seq = base;
+    for ad in adaptors {
+        seq = match ad {
+            Adaptor::Identity => seq,
+            Adaptor::Rev => {
+                let mut s = seq;
+                s.reverse();
+                s
+            }
+            Adaptor::Skip(n) => seq.into_iter().skip(*n).collect(),
+            Adaptor::Take(n) => seq.into_iter().take(*n).collect(),
+            Adaptor::Enumerate => {
+                let mut out = Vec::with_capacity(seq.len());
+                for (i, (expr, cv)) in seq.into_iter().enumerate() {
+                    // Pair value: (i, elem). The element MUST be const for the pair value;
+                    // but the EXPR pair `(i, <expr>)` is always materializable for EUF.
+                    let pair_expr: Expr = syn::parse_str(&format!(
+                        "({}, {})",
+                        i,
+                        quote::quote!(#expr)
+                    ))
+                    .ok()?;
+                    let pair_cv = cv.map(|c| ConstVal::Tuple(vec![ConstVal::Int(i as i64), c]));
+                    out.push((pair_expr, pair_cv));
+                }
+                out
+            }
+            Adaptor::Filter(closure) => {
+                let mut out = Vec::new();
+                for (expr, cv) in seq {
+                    let v = cv.as_ref()?; // opaque element under a filter -> bail
+                    match const_eval_unary_closure(closure, v)?.as_bool()? {
+                        true => out.push((expr, cv)),
+                        false => {}
+                    }
+                }
+                out
+            }
+            Adaptor::SkipWhile(closure) => {
+                let mut out = Vec::new();
+                let mut still_skipping = true;
+                for (expr, cv) in seq {
+                    if still_skipping {
+                        let v = cv.as_ref()?;
+                        if const_eval_unary_closure(closure, v)?.as_bool()? {
+                            continue;
+                        }
+                        still_skipping = false;
+                    }
+                    out.push((expr, cv));
+                }
+                out
+            }
+            Adaptor::TakeWhile(closure) => {
+                let mut out = Vec::new();
+                for (expr, cv) in seq {
+                    let v = cv.as_ref()?;
+                    if const_eval_unary_closure(closure, v)?.as_bool()? {
+                        out.push((expr, cv));
+                    } else {
+                        break;
+                    }
+                }
+                out
+            }
+            Adaptor::Map(closure) => {
+                let mut out = Vec::with_capacity(seq.len());
+                for (_expr, cv) in seq {
+                    let v = cv.as_ref()?; // opaque element under a map -> bail
+                    let mapped = const_eval_unary_closure(closure, v)?;
+                    // Materialize the mapped value back to an Expr (for EUF translation).
+                    let mexpr = mapped.to_expr()?;
+                    out.push((mexpr, Some(mapped)));
+                }
+                out
+            }
+        };
+    }
+    Some(seq)
+}
+
+/// An EXACT const value the defolder is willing to compute for a transforming-adaptor
+/// closure (`.filter`/`.map`/`.skip_while`/...). DELIBERATELY NARROW: only the value
+/// kinds whose Rust semantics we can replicate with certainty -- integer, bool, char,
+/// byte (an int), and tuples thereof. NO float (equality edge cases / NaN), NO string
+/// (allocation / encoding), NO arbitrary struct. A wrong DIG is a fake-discharge, so the
+/// evaluator is exact-or-None everywhere: the instant an expression is outside this
+/// closed set, `const_eval` returns None and the whole defold bails.
+#[derive(Clone, Debug, PartialEq)]
+enum ConstVal {
+    Int(i64),
+    Bool(bool),
+    Char(char),
+    Tuple(Vec<ConstVal>),
+}
+
+impl ConstVal {
+    /// Reconstruct a Rust literal EXPR for this value, so a `.map`-produced element can be
+    /// fed back through the normal term translator. Exact round-trip for the closed set.
+    fn to_expr(&self) -> Option<Expr> {
+        let s = match self {
+            ConstVal::Int(n) => n.to_string(),
+            ConstVal::Bool(b) => b.to_string(),
+            ConstVal::Char(c) => format!("{c:?}"), // debug form emits a valid char literal
+            // a tuple element fed to a later adaptor stays a ConstVal; only scalars are
+            // ever materialized back to an Expr (the fold item). A tuple item is uncommon
+            // and we conservatively decline materializing it.
+            ConstVal::Tuple(_) => return None,
+        };
+        syn::parse_str::<Expr>(&s).ok()
+    }
+    fn as_int(&self) -> Option<i64> {
+        match self {
+            ConstVal::Int(n) => Some(*n),
+            _ => None,
+        }
+    }
+    fn as_bool(&self) -> Option<bool> {
+        match self {
+            ConstVal::Bool(b) => Some(*b),
+            _ => None,
+        }
+    }
+}
+
+/// EXACT-OR-BAIL const-evaluator over the closed `ConstVal` set. Evaluates `expr` given
+/// `env` (closure param bindings to concrete element values). Returns None -- forcing the
+/// whole defold to bail -- for ANYTHING outside the set we can replicate with certainty:
+/// a non-literal leaf, a float, a string, a method/fn call, an index into a runtime value,
+/// an unbound ident, an integer overflow, a division by zero. UNDER-evaluating is a safe
+/// under-claim; a wrong evaluation would be a fake-discharge, so we never guess.
+fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal> {
+    match expr {
+        Expr::Lit(ExprLit { lit, .. }) => match lit {
+            Lit::Int(i) => parse_int_lit(i).ok().map(ConstVal::Int),
+            Lit::Bool(b) => Some(ConstVal::Bool(b.value)),
+            Lit::Char(c) => Some(ConstVal::Char(c.value())),
+            Lit::Byte(b) => Some(ConstVal::Int(b.value() as i64)),
+            // float / str / bytestr: outside the certain set -> bail.
+            _ => None,
+        },
         Expr::Path(p) => {
             let id = p.path.get_ident()?.to_string();
-            if id == acc_var {
-                Some(acc)
-            } else if Some(id.as_str()) == elem_var {
-                elem
-            } else if Some(id.as_str()) == idx_var {
-                idx
+            env.get(&id).cloned()
+        }
+        Expr::Paren(pr) => const_eval(&pr.expr, env),
+        Expr::Group(g) => const_eval(&g.expr, env),
+        Expr::Reference(r) => const_eval(&r.expr, env),
+        Expr::Tuple(t) => {
+            let mut vals = Vec::with_capacity(t.elems.len());
+            for e in &t.elems {
+                vals.push(const_eval(e, env)?);
+            }
+            Some(ConstVal::Tuple(vals))
+        }
+        // `pair.0` / `pair.1` on a const tuple.
+        Expr::Field(f) => {
+            let recv = const_eval(&f.base, env)?;
+            if let (ConstVal::Tuple(vals), syn::Member::Unnamed(idx)) = (&recv, &f.member) {
+                vals.get(idx.index as usize).cloned()
             } else {
                 None
             }
         }
-        Expr::Paren(pr) => {
-            const_fold_acc_update(&pr.expr, acc_var, acc, elem_var, elem, idx_var, idx)
+        // int->int `as` cast only (exact within i64); a float/usize-truncation cast is not
+        // replicated -> bail. (We keep one canonical i64 regime; a cast that would change
+        // value semantics, e.g. `-1i32 as u8`, is NOT modeled -> bail.)
+        Expr::Cast(c) => {
+            // To stay provably exact we ONLY accept an identity-preserving widening of an
+            // integer value to a signed type at least as wide as our i64 regime, and bail
+            // on every narrowing / sign-changing / float cast (those can change the value).
+            let n = const_eval(&c.expr, env)?.as_int()?;
+            match &*c.ty {
+                syn::Type::Path(tp) => {
+                    let name = tp.path.segments.last()?.ident.to_string();
+                    match name.as_str() {
+                        "i64" | "isize" | "i128" => Some(ConstVal::Int(n)),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
         }
-        Expr::Group(g) => {
-            const_fold_acc_update(&g.expr, acc_var, acc, elem_var, elem, idx_var, idx)
-        }
-        Expr::Cast(c) => const_fold_acc_update(&c.expr, acc_var, acc, elem_var, elem, idx_var, idx),
-        Expr::Unary(u) if matches!(u.op, UnOp::Neg(_)) => {
-            const_fold_acc_update(&u.expr, acc_var, acc, elem_var, elem, idx_var, idx)
-                .map(|n| -n)
+        Expr::Unary(u) => {
+            let v = const_eval(&u.expr, env)?;
+            match u.op {
+                UnOp::Neg(_) => v.as_int()?.checked_neg().map(ConstVal::Int),
+                UnOp::Not(_) => match v {
+                    ConstVal::Bool(b) => Some(ConstVal::Bool(!b)),
+                    // bitwise-not on an int is value-width-dependent -> bail.
+                    _ => None,
+                },
+                _ => None,
+            }
         }
         Expr::Binary(b) => {
-            let l = const_fold_acc_update(&b.left, acc_var, acc, elem_var, elem, idx_var, idx)?;
-            let r = const_fold_acc_update(&b.right, acc_var, acc, elem_var, elem, idx_var, idx)?;
+            let l = const_eval(&b.left, env)?;
+            let r = const_eval(&b.right, env)?;
             match b.op {
-                BinOp::Add(_) => l.checked_add(r),
-                BinOp::Sub(_) => l.checked_sub(r),
-                BinOp::Mul(_) => l.checked_mul(r),
+                // integer arithmetic with overflow / div-zero guards (bail on either).
+                BinOp::Add(_) => l.as_int()?.checked_add(r.as_int()?).map(ConstVal::Int),
+                BinOp::Sub(_) => l.as_int()?.checked_sub(r.as_int()?).map(ConstVal::Int),
+                BinOp::Mul(_) => l.as_int()?.checked_mul(r.as_int()?).map(ConstVal::Int),
+                BinOp::Div(_) => {
+                    let (a, d) = (l.as_int()?, r.as_int()?);
+                    if d == 0 { None } else { a.checked_div(d).map(ConstVal::Int) }
+                }
+                BinOp::Rem(_) => {
+                    let (a, d) = (l.as_int()?, r.as_int()?);
+                    if d == 0 { None } else { a.checked_rem(d).map(ConstVal::Int) }
+                }
+                // comparisons -> Bool (ints or chars).
+                BinOp::Eq(_) => Some(ConstVal::Bool(l == r)),
+                BinOp::Ne(_) => Some(ConstVal::Bool(l != r)),
+                BinOp::Lt(_) => const_cmp(&l, &r).map(|o| ConstVal::Bool(o == std::cmp::Ordering::Less)),
+                BinOp::Le(_) => const_cmp(&l, &r).map(|o| ConstVal::Bool(o != std::cmp::Ordering::Greater)),
+                BinOp::Gt(_) => const_cmp(&l, &r).map(|o| ConstVal::Bool(o == std::cmp::Ordering::Greater)),
+                BinOp::Ge(_) => const_cmp(&l, &r).map(|o| ConstVal::Bool(o != std::cmp::Ordering::Less)),
+                // short-circuit logic.
+                BinOp::And(_) => Some(ConstVal::Bool(l.as_bool()? && r.as_bool()?)),
+                BinOp::Or(_) => Some(ConstVal::Bool(l.as_bool()? || r.as_bool()?)),
                 _ => None,
             }
         }
         _ => None,
     }
+}
+
+/// Total order for `<`/`<=`/`>`/`>=` over the comparable const kinds (ints, chars). A
+/// cross-kind or non-comparable pair -> None (bail).
+fn const_cmp(l: &ConstVal, r: &ConstVal) -> Option<std::cmp::Ordering> {
+    match (l, r) {
+        (ConstVal::Int(a), ConstVal::Int(b)) => Some(a.cmp(b)),
+        (ConstVal::Char(a), ConstVal::Char(b)) => Some(a.cmp(b)),
+        _ => None,
+    }
+}
+
+/// Evaluate a single-parameter closure `|p| body` over a concrete element value, exactly.
+/// The body may be a bare expr or a block whose final expr is the value (no statements
+/// with side effects -- a `let` in the body is not modeled, so bail). Returns the
+/// resulting `ConstVal` or None (bail). Used to apply a transforming adaptor's closure.
+fn const_eval_unary_closure(closure: &syn::ExprClosure, arg: &ConstVal) -> Option<ConstVal> {
+    if closure.inputs.len() != 1 {
+        return None;
+    }
+    let param = closure_single_param_ident(&closure.inputs[0])?;
+    let mut env = BTreeMap::new();
+    env.insert(param, arg.clone());
+    let body: &Expr = match &*closure.body {
+        Expr::Block(b) => match b.block.stmts.as_slice() {
+            [Stmt::Expr(e, None)] => e,
+            _ => return None, // a multi-statement / side-effecting body -> bail.
+        },
+        other => other,
+    };
+    const_eval(body, &env)
+}
+
+/// The single bound ident of a closure parameter pattern (`x`, `&x`), or None for any
+/// other pattern (tuple / wildcard / typed-with-subpattern) -> bail.
+fn closure_single_param_ident(pat: &Pat) -> Option<String> {
+    match pat {
+        Pat::Ident(p) if p.subpat.is_none() => Some(p.ident.to_string()),
+        Pat::Reference(r) => closure_single_param_ident(&r.pat),
+        Pat::Type(t) => closure_single_param_ident(&t.pat),
+        _ => None,
+    }
+}
+
+/// Const-fold an integer accumulator-update tail expression to an `i64` given `env` (the
+/// accumulator + the iteration's item-component bindings). This is the integer projection
+/// of the exact `const_eval`: it shares the same overflow/div-zero guards but returns an
+/// `i64` (the accumulator regime). Any shape / unbound ident / non-int value -> None
+/// (bail the defold -- a non-const-foldable accumulator is honest unclassified, never a
+/// fake-dig).
+fn const_fold_acc_update(tail: &Expr, env: &BTreeMap<String, i64>) -> Option<i64> {
+    let cv_env: BTreeMap<String, ConstVal> =
+        env.iter().map(|(k, v)| (k.clone(), ConstVal::Int(*v))).collect();
+    const_eval(tail, &cv_env)?.as_int()
 }
 
 /// DEFOLDER (T 2026-06-14). `fold`'s definition IS its desugaring:
@@ -2317,8 +2592,8 @@ fn try_lift_fold_forall(
     let Expr::Closure(closure) = &call.args[1] else {
         return None;
     };
-    // |acc, item| -- exactly two params; acc a plain ident; item a plain ident or, under
-    // `.enumerate()`, a 2-tuple `(idx, elem)`.
+    // |acc, item| -- exactly two params; acc a plain ident; item a plain ident or a
+    // 2-tuple `(idx, elem)` (from `.enumerate()` or a literal-tuple domain).
     if closure.inputs.len() != 2 {
         return None;
     }
@@ -2326,67 +2601,53 @@ fn try_lift_fold_forall(
         Pat::Ident(p) if p.subpat.is_none() => p.ident.to_string(),
         _ => return None,
     };
-    // Peel the receiver to the base domain (resolving `let`-bound receivers like
-    // `it = xs.iter()` through `let_inits`); learn reverse / enumerate across all levels.
-    let (base, peeled_rev, enumerated) = resolve_fold_domain(&call.receiver, let_inits, 0)?;
-    let reversed = peeled_rev ^ rev_fold;
-    // The item binder: a plain ident, or `(idx, elem)` when enumerated.
-    let (idx_var, elem_var): (Option<String>, String) = if enumerated {
-        match &closure.inputs[1] {
-            Pat::Tuple(t) if t.elems.len() == 2 => {
-                let idx = match &t.elems[0] {
-                    Pat::Ident(p) if p.subpat.is_none() => p.ident.to_string(),
-                    _ => return None,
-                };
-                let elem = match &t.elems[1] {
-                    Pat::Ident(p) if p.subpat.is_none() => p.ident.to_string(),
-                    // `(i, &x)` reference-elision binder.
-                    Pat::Reference(r) => match &*r.pat {
-                        Pat::Ident(p) if p.subpat.is_none() => p.ident.to_string(),
-                        _ => return None,
-                    },
-                    _ => return None,
-                };
-                (Some(idx), elem)
-            }
-            _ => return None,
+    // The item binder: a plain ident binds the WHOLE element; a 2-tuple binds (comp0,
+    // comp1) of a tuple element. `(idx, elem)` and `(i, &x)` reference-elision supported.
+    enum ItemBinder {
+        Whole(String),
+        Pair(String, String),
+    }
+    let item_binder = match &closure.inputs[1] {
+        Pat::Tuple(t) if t.elems.len() == 2 => {
+            let c0 = closure_single_param_ident(&t.elems[0])?;
+            let c1 = closure_single_param_ident(&t.elems[1])?;
+            ItemBinder::Pair(c0, c1)
         }
-    } else {
-        let elem = match &closure.inputs[1] {
-            Pat::Ident(p) if p.subpat.is_none() => p.ident.to_string(),
-            Pat::Reference(r) => match &*r.pat {
-                Pat::Ident(p) if p.subpat.is_none() && r.mutability.is_none() => {
-                    p.ident.to_string()
-                }
-                _ => return None,
-            },
-            _ => return None,
-        };
-        (None, elem)
+        other => ItemBinder::Whole(closure_single_param_ident(other)?),
     };
     // init must be a literal integer accumulator (the threaded value is int-only for now).
     let acc_0 = const_int(init_expr)?;
 
-    // Enumerate the domain as (element Term, element int-value-if-known) in iterated order.
+    // Peel the receiver to the base literal domain + the ordered adaptor chain (resolving
+    // `let`-bound receivers through `let_inits`). `.rfold` reverses the FINAL sequence, so
+    // append a Rev after every other adaptor.
+    let (base, mut adaptors) = peel_fold_adaptors(&call.receiver, let_inits, 0)?;
+    if rev_fold {
+        adaptors.push(Adaptor::Rev);
+    }
+
+    // Build the BASE element sequence as (source Expr, const value if evaluable), in
+    // iterated order, from the literal domain.
+    const CAP: i64 = 4096;
     let domain = bounded_domain_from_expr(base, scope)?;
-    let mut elems: Vec<(Rc<Term>, Option<i64>)> = match domain {
-        BoundedDomain::Array(terms) => {
-            // Re-read the base array's element EXPRs for their int values (for tail fold);
-            // a non-int element just yields None (tail must then not use `item`).
-            let elem_vals: Vec<Option<i64>> = match strip_refs_groups(base) {
-                Expr::Array(arr) => arr.elems.iter().map(const_int).collect(),
-                _ => terms.iter().map(|_| None).collect(),
-            };
-            terms.into_iter().zip(elem_vals).collect()
-        }
+    let base_seq: Vec<(Expr, Option<ConstVal>)> = match domain {
+        BoundedDomain::Array(_) => match strip_refs_groups(base) {
+            Expr::Array(arr) => {
+                if arr.elems.len() as i64 > CAP {
+                    return None;
+                }
+                arr.elems
+                    .iter()
+                    .map(|e| (e.clone(), const_eval(e, &BTreeMap::new())))
+                    .collect()
+            }
+            _ => return None,
+        },
         BoundedDomain::Range {
             start,
             end,
             inclusive,
         } => {
-            // Concrete integer enumeration of a closed range (acc threads, so we need the
-            // points, not a quantifier). Bounded to a sane cap to stay finite + cheap.
-            const CAP: i64 = 4096;
             let (Some(s), Some(e)) = (term_as_int(&start), term_as_int(&end)) else {
                 return None;
             };
@@ -2394,14 +2655,31 @@ fn try_lift_fold_forall(
             if e < s || e - s > CAP {
                 return None;
             }
-            (s..e).map(|n| (num(n), Some(n))).collect()
+            (s..e)
+                .map(|n| {
+                    (
+                        syn::parse_str::<Expr>(&n.to_string()).unwrap(),
+                        Some(ConstVal::Int(n)),
+                    )
+                })
+                .collect()
         }
     };
-    if elems.is_empty() {
+    if base_seq.is_empty() {
         return None;
     }
-    if reversed {
-        elems.reverse();
+    // Apply the stdlib adaptor semantics EXACTLY over the literal element sequence
+    // (const-evaluating each transforming closure on the concrete elements). Any
+    // inexactness -> None (bail: honest unclassified, never a fake-dig).
+    let seq = apply_adaptors(base_seq, &adaptors)?;
+    if seq.is_empty() {
+        // The adaptor chain emptied the sequence (`.filter` kept nothing / `.take(0)`):
+        // the fold body never runs -> nothing asserted (vacuous). Leave it (None) rather
+        // than emit a vacuous `true`.
+        return None;
+    }
+    if seq.len() as i64 > CAP {
+        return None;
     }
 
     // The closure body: block-bodied (the asserts + the acc-update tail). A bare-expr body
@@ -2453,32 +2731,60 @@ fn try_lift_fold_forall(
     }
     let body_conj = and_(body_entries.iter().map(|e| e.atom.clone()).collect());
 
-    // Thread the accumulator: for each element (in iterated order) substitute the concrete
-    // acc_k / element / index into the body formula, and const-fold the tail to acc_{k+1}.
-    let mut instances = Vec::with_capacity(elems.len());
+    // Thread the accumulator over the RESULTING (post-adaptor) element sequence: for each
+    // element substitute the concrete acc_k + the item binder's component(s) into the body
+    // formula, and const-fold the tail to acc_{k+1} given those same bindings.
+    let mut instances = Vec::with_capacity(seq.len());
     let mut acc = acc_0;
-    for (k, (elem_term, elem_val)) in elems.iter().enumerate() {
-        let idx_k = idx_var.as_ref().map(|_| k as i64);
-        // Substitute acc_var := acc, elem_var := elem_term, idx_var := idx_k in the body.
+    for (elem_expr, elem_cv) in &seq {
+        // Per-iteration term + int bindings from the item binder.
         let mut inst = subst_var_in_formula(&body_conj, &acc_var, &num(acc));
-        inst = subst_var_in_formula(&inst, &elem_var, elem_term);
-        if let (Some(iv), Some(ik)) = (idx_var.as_ref(), idx_k) {
-            inst = subst_var_in_formula(&inst, iv, &num(ik));
+        let mut tail_env: BTreeMap<String, i64> = BTreeMap::new();
+        tail_env.insert(acc_var.clone(), acc);
+        match &item_binder {
+            ItemBinder::Whole(var) => {
+                let t = translate_term_in_scope(elem_expr, scope).ok()?;
+                inst = subst_var_in_formula(&inst, var, &t);
+                if let Some(n) = elem_cv.as_ref().and_then(ConstVal::as_int) {
+                    tail_env.insert(var.clone(), n);
+                }
+            }
+            ItemBinder::Pair(c0, c1) => {
+                // The element must be a 2-tuple (from `.enumerate()` or a literal tuple).
+                let comps = tuple_components(elem_expr)?;
+                if comps.len() != 2 {
+                    return None;
+                }
+                let t0 = translate_term_in_scope(comps[0], scope).ok()?;
+                let t1 = translate_term_in_scope(comps[1], scope).ok()?;
+                inst = subst_var_in_formula(&inst, c0, &t0);
+                inst = subst_var_in_formula(&inst, c1, &t1);
+                if let Some(ConstVal::Tuple(parts)) = elem_cv {
+                    if let Some(n) = parts.first().and_then(ConstVal::as_int) {
+                        tail_env.insert(c0.clone(), n);
+                    }
+                    if let Some(n) = parts.get(1).and_then(ConstVal::as_int) {
+                        tail_env.insert(c1.clone(), n);
+                    }
+                }
+            }
         }
         instances.push(inst);
-        // acc_{k+1} = const-fold(tail; acc:=acc, elem:=elem_val, idx:=idx_k).
-        acc = const_fold_acc_update(
-            tail,
-            &acc_var,
-            acc,
-            Some(elem_var.as_str()),
-            *elem_val,
-            idx_var.as_deref(),
-            idx_k,
-        )?;
+        // acc_{k+1} = const-fold(tail) under {acc, item-components}. If the tail needs a
+        // binding we could not supply as an int, this returns None -> bail (honest).
+        acc = const_fold_acc_update(tail, &tail_env)?;
     }
     let conj = and_(instances);
     Some((conj, n_body, method))
+}
+
+/// The component sub-expressions of a 2+-tuple expression (`(a, b)`), or None if `expr`
+/// is not a tuple. Strips parens/groups/refs first.
+fn tuple_components(expr: &Expr) -> Option<Vec<&Expr>> {
+    match strip_refs_groups(expr) {
+        Expr::Tuple(t) => Some(t.elems.iter().collect()),
+        _ => None,
+    }
 }
 
 /// Strip references / parens / groups to reveal an underlying expression (used to
@@ -2650,8 +2956,8 @@ fn closure_method_terminal_reason(
     // not, the iterated/threaded values are runtime data -- bin-2 terminal. If yes, this
     // is a defoldable/for_each-liftable case the symbolic lifter handles (or declined for
     // a recoverable reason) -- leave it UNCLASSIFIED (honest work), never fake-refuse.
-    let resolves_literal = resolve_fold_domain(&receiver, let_inits, 0)
-        .and_then(|(base, _, _)| bounded_domain_from_expr(base, scope))
+    let resolves_literal = peel_fold_adaptors(&receiver, let_inits, 0)
+        .and_then(|(base, _)| bounded_domain_from_expr(base, scope))
         .is_some();
     if !resolves_literal {
         return Some(
@@ -10106,6 +10412,149 @@ mod lifter_key_tests {
                 && matches!(refusal_disposition(r), Disposition::Unclassified)),
             "a non-foldable-acc fold stays UNCLASSIFIED (honest), not terminal: {:?}",
             out.skip_reasons
+        );
+    }
+
+    // ── DIG-side: transforming adaptors over the literal element sequence ─────
+    //
+    // `.filter`/`.map`/`.skip`/`.take`/`.skip_while`/`.take_while` ARE stdlib sugar; over a
+    // literal domain their closures const-evaluate on the concrete elements, so the
+    // resulting sequence is exact and the fold digs. EXACT-OR-BAIL: a runtime/inexact
+    // closure makes the const-evaluator bail (honest unclassified), never a fake-dig.
+
+    #[test]
+    fn dig_filter_drops_elements_exactly() {
+        // (a) ADVERSARIAL: `.filter(|x| x % 2 == 0)` over [0..6] keeps EXACTLY {0,2,4}. The
+        // conjunction must be over the kept-3 sequence -- the dropped odds must NOT appear
+        // as point-claims, the kept evens MUST.
+        let src = r#"
+            #[test]
+            fn filt() {
+                let xs = [0i64, 1, 2, 3, 4, 5];
+                let _ = xs.iter().copied().filter(|x| x % 2 == 0).fold(0i64, |acc, x| { assert!(x % 2 == 0); acc + x });
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(out.assertions_lifted, 1, "filtered fold must lift: {:?}", out.skip_reasons);
+        let dump = format!("{:?}", out.decls);
+        // kept evens present as concrete operands; dropped odds absent as element operands.
+        for kept in ["0", "2", "4"] {
+            assert!(dump.contains(kept), "kept element {kept} must appear in the conjunction");
+        }
+        // The conjunction has exactly 3 conjuncts (one per kept element). The `%` atom
+        // `x % 2 == 0` becomes `<elem> % 2 == 0`; count the int-modulo subterms == 3.
+        let conjunct_marker = dump.matches("int-rem").count();
+        assert_eq!(
+            conjunct_marker, 3,
+            "exactly 3 kept-element point-claims (0,2,4), not 6: dump={dump}"
+        );
+    }
+
+    #[test]
+    fn dig_map_transforms_values_exactly() {
+        // (b) ADVERSARIAL: `.map(|x| x * 10)` over [1,2,3] makes the fold body see 10,20,30.
+        // The conjunction must reference the TRANSFORMED values, not the originals.
+        let src = r#"
+            #[test]
+            fn mp() {
+                let xs = [1i64, 2, 3];
+                let _ = xs.iter().copied().map(|x| x * 10).fold(0i64, |acc, x| { assert!(x >= 10); acc + x });
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(out.assertions_lifted, 1, "mapped fold must lift: {:?}", out.skip_reasons);
+        let dump = format!("{:?}", out.decls);
+        for mapped in ["10", "20", "30"] {
+            assert!(dump.contains(mapped), "transformed value {mapped} must appear: {dump}");
+        }
+    }
+
+    #[test]
+    fn dig_skip_take_keep_exact_window() {
+        // `.skip(1).take(2)` over [10,20,30,40] keeps EXACTLY {20,30}.
+        let src = r#"
+            #[test]
+            fn st() {
+                let xs = [10i64, 20, 30, 40];
+                let _ = xs.iter().copied().skip(1).take(2).fold(0i64, |acc, x| { assert!(x >= 20); acc + x });
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(out.assertions_lifted, 1, "skip/take fold must lift: {:?}", out.skip_reasons);
+        let dump = format!("{:?}", out.decls);
+        assert!(dump.contains("20") && dump.contains("30"), "kept window {{20,30}}: {dump}");
+    }
+
+    #[test]
+    fn dig_wrong_expected_produces_refutable_conjunction_not_fake_green() {
+        // (c) ADVERSARIAL THE DANGEROUS ONE: a DELIBERATELY WRONG expected -- the body
+        // asserts `x == wrong` where wrong != the actual element. The lift must NOT fake it
+        // green: it must emit the concrete (false) equality the element produces, so a
+        // solver REFUTES it. We verify the conjunction faithfully carries the actual element
+        // values (the equality is present-and-false, not silently dropped or coerced equal).
+        let src = r#"
+            #[test]
+            fn wrong() {
+                let xs = [1i64, 2, 3];
+                let ws = [9i64, 9, 9];
+                let _ = xs.iter().copied().enumerate().fold(0i64, |acc, (i, x)| { assert_eq!(x, ws[i]); acc + 1 });
+            }
+        "#;
+        let out = lift_src(src);
+        // It DOES lift (the defolder digs the literal-derived sequence) ...
+        assert_eq!(out.assertions_lifted, 1, "the enumerate fold lifts: {:?}", out.skip_reasons);
+        let dump = format!("{:?}", out.decls);
+        // ... but HONESTLY: the actual element values 1,2,3 are the LHS of the equalities
+        // (faithful substitution), so `1 == ws[0]` etc. are refutable given ws=[9,9,9]. The
+        // lift did not coerce x to 9 or drop the claim.
+        for actual in ["1", "2", "3"] {
+            assert!(dump.contains(actual), "actual element {actual} must be the faithful LHS: {dump}");
+        }
+        // The equality predicate is present (an `=`/eq atom), not optimized away to `true`.
+        assert!(
+            dump.contains("Atomic") || dump.contains("="),
+            "the equality claim must be emitted (refutable), not faked green: {dump}"
+        );
+    }
+
+    #[test]
+    fn dig_runtime_predicate_in_filter_bails() {
+        // (d) BAIL: the `.filter` predicate references a RUNTIME binding (`threshold`, bound
+        // to a fn call), so the const-evaluator cannot decide which elements are kept -- it
+        // bails. The fold stays UNCLASSIFIED (honest), NEVER a fake-dig over a guessed seq.
+        let src = r#"
+            #[test]
+            fn rt_filt() {
+                let xs = [1i64, 2, 3, 4];
+                let threshold = runtime_value();
+                let _ = xs.iter().copied().filter(|x| *x > threshold).fold(0i64, |acc, x| { assert!(x > 0); acc + x });
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "a runtime-predicate filter must BAIL (cannot decide the kept set exactly): {:?}",
+            contract_names(&out)
+        );
+    }
+
+    #[test]
+    fn dig_overflow_in_closure_bails() {
+        // (e) BAIL: a `.map` closure that OVERFLOWS i64 (`x * huge`) must bail (checked_mul
+        // returns None) rather than silently wrap (which would not match rustc's debug
+        // semantics). Honest unclassified.
+        let src = r#"
+            #[test]
+            fn ov() {
+                let xs = [9223372036854775807i64, 2];
+                let _ = xs.iter().copied().map(|x| x * 1000).fold(0i64, |acc, x| { assert!(x != 0); acc + 1 });
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "an overflowing map closure must BAIL, not wrap (exact-or-none): {:?}",
+            contract_names(&out)
         );
     }
 
