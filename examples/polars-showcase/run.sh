@@ -90,7 +90,17 @@ data = json.loads(text[match.start():])
 rows = data.get("rows") or data.get("obligations") or (data if isinstance(data, list) else [])
 for row in rows:
     prop = row.get("property") or row.get("predicate") or ""
-    if prop.startswith("consistency:") and "witness-package" not in prop:
+    # The TEST-ASSERTION consistency row, NOT the production function's own
+    # `consistency:rust-source::<fn>` value self-contract. The SourceOracle
+    # audit (PR #2138) emits that single-fact production self-contract into the
+    # same report; it is trivially SAT and always discharges, but this receipt
+    # asserts about the TEST's assertion-set consistency (the row carrying the
+    # test source path), so skip the `rust-source::` production prefix.
+    if (
+        prop.startswith("consistency:")
+        and not prop.startswith("consistency:rust-source::")
+        and "witness-package" not in prop
+    ):
         print(row.get("status") or row.get("result") or "")
         raise SystemExit(0)
 print("MISSING")
