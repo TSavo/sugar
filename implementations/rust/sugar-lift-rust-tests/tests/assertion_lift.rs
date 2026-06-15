@@ -7572,3 +7572,160 @@ fn join_try() {
         "try/async control-flow block must classify TERMINAL refused, not unclassified work"
     );
 }
+
+// ── Statement-position qualified continue paths (value NOT in scope) ─────────
+//
+// The statement-position assert buckets split TWO ways. The value-NOT-in-scope half
+// (the asserted value flows through a runtime continuation: a future `.await` /
+// free-fn `block_on(async{..})`, or opaque compile-time reflection) is a SOUND
+// TERMINAL refusal naming that qualified continue path -- the SAME class as the
+// existing `bin-2` "runtime data, not constructed from source literals" terminals.
+// The discrimination guardrail (BOTH directions) is what keeps it from being a
+// position-driven fake-refuse: a statement carrying a CONSTRUCTED literal value
+// (a match over a literal scrutinee, a plain block over literals) is NOT
+// terminalized -- it DIGS.
+
+/// (refuse) An `assert_eq!(x, ..)` where `x = join!(..).await` inside a free-fn
+/// `block_on(async {..})` flows the asserted value through a FUTURE CONTINUATION
+/// (resolved by a runtime executor) -- value NOT in scope. It must classify TERMINAL
+/// refused over that named continuation, NOT discharge (recursing would FAKE-DIG
+/// `x == 0` as a literal, ignoring the runtime await).
+#[test]
+fn await_in_block_on_is_terminal_refusal() {
+    let src = r#"
+#[test]
+fn test_join() {
+    block_on(async move {
+        let x = join!(async { 0 }).await;
+        assert_eq!(x, 0);
+        let x = join!(async { 0 }, async { 1 }).await;
+        assert_eq!(x, (0, 1));
+    });
+}
+"#;
+    let out = lift_file(&parse(src), "tests/future.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "await-bound asserts must NOT discharge (fake-dig risk): {:?}",
+        out.warnings
+    );
+    let reason = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains("effectful control-flow block"))
+        .unwrap_or_else(|| {
+            panic!("expected a future-continuation refusal, got {:?}", out.skip_reasons)
+        });
+    assert_eq!(
+        sugar_lift_rust_tests::refusal_disposition(reason),
+        sugar_lift_rust_tests::Disposition::Refused,
+        "free-fn block_on(async) future continuation must classify TERMINAL refused"
+    );
+}
+
+/// (refuse) An `assert_eq!(b.field, ..)` read out of a `match Type::of::<T>().kind`
+/// arm binder reads compile-time REFLECTION over runtime type identity (`TypeId`) --
+/// not a value constructed from source literals (value NOT in scope). It must classify
+/// TERMINAL refused over the named reflection scrutinee.
+#[test]
+fn reflection_match_body_is_terminal_refusal() {
+    let src = r#"
+#[test]
+fn test_arrays() {
+    match const { Type::of::<[u16; 4]>() }.kind {
+        TypeKind::Array(array) => {
+            assert_eq!(array.element_ty, TypeId::of::<u16>());
+            assert_eq!(array.len, 4);
+        }
+        _ => unreachable!(),
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/mem/type_info.rs");
+    let reason = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains("opaque compile-time reflection"))
+        .unwrap_or_else(|| {
+            panic!("expected an opaque-reflection refusal, got {:?}", out.skip_reasons)
+        });
+    assert_eq!(
+        sugar_lift_rust_tests::refusal_disposition(reason),
+        sugar_lift_rust_tests::Disposition::Refused,
+        "reflection-match body asserts must classify TERMINAL refused, not unclassified"
+    );
+    // Both body asserts are accounted as reflection (none left unenumerated).
+    let refl = out
+        .skip_reasons
+        .iter()
+        .filter(|r| r.contains("opaque compile-time reflection"))
+        .count();
+    assert_eq!(refl, 2, "both reflection body asserts refused: {:?}", out.skip_reasons);
+    assert!(
+        !out
+            .skip_reasons
+            .iter()
+            .any(|r| r.contains("unenumerated statement position")),
+        "no reflection body assert should fall to the unenumerated safety net: {:?}",
+        out.skip_reasons
+    );
+}
+
+/// (boundary/guardrail) A `match` over a CONSTRUCTED LITERAL scrutinee is NOT
+/// reflection -- the value IS in scope. It must NOT be reflection-terminalized; it
+/// digs (or stays unclassified), proving the refusal is qualification-driven (the
+/// reflection scrutinee), not match-position-driven.
+#[test]
+fn literal_scrutinee_match_is_not_reflection_refused() {
+    let src = r#"
+#[test]
+fn t() {
+    let x = 3;
+    match x {
+        3 => assert_eq!(x, 3),
+        _ => unreachable!(),
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/lit_match.rs");
+    assert!(
+        !out
+            .skip_reasons
+            .iter()
+            .any(|r| r.contains("opaque compile-time reflection")),
+        "a literal-scrutinee match must NEVER be reflection-refused: {:?}",
+        out.skip_reasons
+    );
+    assert_eq!(
+        out.lifted, 1,
+        "the literal match digs (panic-locus variant pin): {:?}",
+        out.warnings
+    );
+}
+
+/// (boundary/guardrail) A plain unconditional block over LITERALS carries an
+/// in-scope value -- it must DIG, never be control-flow / await terminalized.
+#[test]
+fn literal_block_is_not_control_flow_refused() {
+    let src = r#"
+#[test]
+fn t() {
+    {
+        let a = 5;
+        assert_eq!(a, 5);
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/lit_block.rs");
+    assert!(
+        !out
+            .skip_reasons
+            .iter()
+            .any(|r| r.contains("effectful control-flow block")
+                || r.contains("opaque compile-time reflection")),
+        "a literal block must NEVER be statement-position terminalized: {:?}",
+        out.skip_reasons
+    );
+    assert_eq!(out.lifted, 1, "the literal block digs: {:?}", out.warnings);
+    assert_eq!(out.assertions_lifted, 1, "the in-scope literal assert lifts");
+}

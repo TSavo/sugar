@@ -271,7 +271,26 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // `ControlFlowEffect`. (THE DRAIN: the `future.rs` join!-over-`try` row fell to
         // unclassified only because the block was not classified; not a fake-zero -- the
         // block is held + named.)
-        || reason.contains("effectful control-flow block");
+        || reason.contains("effectful control-flow block")
+        // TERMINAL: the asserted value flows through OPAQUE COMPILE-TIME REFLECTION
+        // (`Type::of::<T>()` / `TypeId::of::<T>()` read through `.kind` + a `match` arm).
+        // A `TypeId` is a target/compiler-determined identity, not a value constructed
+        // from source literals -- the SAME class as the `bin-2` "runtime data, not
+        // constructed from source literals" terminal. EARNED by detecting the reflection
+        // scrutinee (`statement_position_terminal_effect`); a match over a CONSTRUCTED
+        // literal scrutinee never reaches it (it digs / stays unclassified). (THE DRAIN:
+        // the `mem/type_info.rs` Type::of-match rows fell to the unenumerated safety net;
+        // typing + whitelisting moves them unclassified -> refused. Not a fake-zero -- the
+        // reflective scrutinee is held + named.)
+        || reason.contains("opaque compile-time reflection")
+        // TERMINAL: the asserted value flows through a `loop { .. }` over a RUNTIME
+        // iterator the body advances (`iter.next()` / `iter.size_hint()`). Per-iteration
+        // runtime bounds over a decode/parse iterator, no finite literal construction to
+        // enumerate -- the SAME class as `under while context`. EARNED by detecting the
+        // loop body's iterator advance; a `loop` over a pure value never reaches it.
+        // (THE DRAIN: `char.rs::test_decode_utf16_size_hint` fell to the unenumerated
+        // safety net.)
+        || reason.contains("loop over a runtime-advanced iterator");
     if terminal {
         Disposition::Refused
     } else {
@@ -2931,6 +2950,66 @@ impl SideEffect for TemporalReadEffect {
     }
 }
 
+/// REFLECTION: the asserted value flows through OPAQUE COMPILE-TIME REFLECTION over
+/// runtime type identity -- `Type::of::<T>()` / a `TypeId::of::<T>()` comparison, read
+/// through `.kind` and a `match` arm binding (`TypeKind::Array(array) => assert_eq!(
+/// array.len, 4)`). A `TypeId` is an opaque, target/compiler-determined identity, not a
+/// value constructed from source literals; the arm binder (`array`/`tup`/`reference`/
+/// `pointer`) is reflection metadata read out of that opaque value. There is no
+/// finite literal construction to walk, so no value lifter could read a single timeless
+/// `t` -- a SOURCE property (the SAME class as the existing `bin-2` "runtime data, not
+/// constructed from source literals" terminal), not a lifter gap. The qualified continue
+/// path is the reflection scrutinee (`Type::of::<T>()`), detected structurally; a `match`
+/// over a CONSTRUCTED literal scrutinee never reaches here (it digs / stays unclassified),
+/// so this can only refuse a genuinely-reflective read.
+struct ReflectionEffect {
+    boundary: String,
+}
+
+impl SideEffect for ReflectionEffect {
+    fn reason(&self) -> String {
+        format!(
+            "assertion over opaque compile-time reflection `{}` (Type::of/TypeId: \
+             runtime type identity, not constructed from source literals); refused",
+            self.boundary
+        )
+    }
+    fn boundary(&self) -> SourceMemento {
+        SourceMemento {
+            boundary: self.boundary.clone(),
+        }
+    }
+}
+
+/// LOOP-ADVANCE: the asserted value flows through a `loop { .. }` over a RUNTIME
+/// iterator that the loop body itself ADVANCES (`iter.next()` to drive / break) and
+/// reads non-deterministically (`iter.size_hint()` / `iter.clone().count()`). The
+/// observed bounds are per-iteration over a runtime decode/parse iterator, not a single
+/// timeless point-wise value, and the `loop` has no finite literal construction to
+/// enumerate (unlike a closed-`for`). A source/effect property of the same class as the
+/// already-terminal `under while context` (a loop over a runtime iterator) -- not a
+/// lifter gap. Detected ONLY when the loop body advances an iterator; a `loop` whose
+/// body is a pure unconditional value never reaches here.
+struct LoopAdvanceEffect {
+    boundary: String,
+}
+
+impl SideEffect for LoopAdvanceEffect {
+    fn reason(&self) -> String {
+        format!(
+            "assertion inside a loop over a runtime-advanced iterator `{}` \
+             (size_hint/next: per-iteration runtime bounds, no finite literal \
+             construction); refused",
+            self.boundary
+        )
+    }
+    fn boundary(&self) -> SourceMemento {
+        SourceMemento {
+            boundary: self.boundary.clone(),
+        }
+    }
+}
+
 /// BASE CASE: a finite literal domain (a literal array `[e0, e1, ...]` or a closed
 /// integer range `a..b` / `a..=b`). `desugar` materializes the element sequence in
 /// iterated order, each element its source `Expr` + its `ConstVal` when evaluable.
@@ -3983,6 +4062,183 @@ fn closure_method_terminal_effect(
     None
 }
 
+/// True if `expr` (or anything inside it) is an `.await` -- the asserted value flows
+/// through a FUTURE CONTINUATION (`let x = join!(..).await; assert_eq!(x, ..)`). The
+/// awaited value is produced by a runtime executor, not constructed from source
+/// literals -- value NOT in scope.
+fn expr_contains_await(expr: &Expr) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Scan {
+        fn visit_expr_await(&mut self, _: &'ast syn::ExprAwait) {
+            self.found = true;
+        }
+    }
+    let mut s = Scan { found: false };
+    syn::visit::Visit::visit_expr(&mut s, expr);
+    s.found
+}
+
+/// True if `expr` is a FREE-FN `block_on(async { .. })` / `block_on(async move { .. })`
+/// call -- a future driven to completion by a runtime executor. The
+/// `unconditional_block_stmts` recursion handles `rt.block_on(async{..})` as a METHOD
+/// call (it drives a concrete future synchronously), but a free-fn `block_on(async{..})`
+/// whose async body binds its asserted values from `.await` results is a runtime
+/// continuation -- value NOT in scope. (Recursing it would FAKE-DIG: `assert_eq!(x, 0)`
+/// where `x = join!(async{0}).await` would discharge `x == 0` as a literal, ignoring the
+/// runtime await. Proven empirically.)
+fn is_free_fn_block_on_async(expr: &Expr) -> bool {
+    let Expr::Call(call) = expr else {
+        return false;
+    };
+    let Expr::Path(p) = &*call.func else {
+        return false;
+    };
+    let is_block_on = p
+        .path
+        .segments
+        .last()
+        .is_some_and(|s| s.ident == "block_on");
+    if !is_block_on || call.args.len() != 1 {
+        return false;
+    }
+    matches!(&call.args[0], Expr::Async(_))
+}
+
+/// True if a `match` scrutinee is OPAQUE COMPILE-TIME REFLECTION over runtime type
+/// identity: `Type::of::<T>()` / `<expr>.info()` / a `.kind` read off such, optionally
+/// wrapped in a `const { .. }` block. A `TypeId`/`Type` is a target/compiler-determined
+/// identity, not a value constructed from source literals. Detected structurally so a
+/// `match` over a CONSTRUCTED literal scrutinee never matches (it digs / stays
+/// unclassified). Returns the rendered scrutinee for the boundary, or None.
+fn reflection_scrutinee(scrut: &Expr) -> Option<String> {
+    // A reflection call is `Type::of::<..>()` / `TypeId::of::<..>()` / `<e>.info()`.
+    struct Scan {
+        found: bool,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Scan {
+        fn visit_expr_call(&mut self, c: &'ast syn::ExprCall) {
+            if let Expr::Path(p) = &*c.func {
+                // `Type::of` / `TypeId::of` (segment `of` on a `Type`/`TypeId` path).
+                let segs: Vec<String> =
+                    p.path.segments.iter().map(|s| s.ident.to_string()).collect();
+                if segs.iter().any(|s| s == "Type" || s == "TypeId")
+                    && segs.last().is_some_and(|s| s == "of")
+                {
+                    self.found = true;
+                }
+            }
+            syn::visit::visit_expr_call(self, c);
+        }
+        fn visit_expr_method_call(&mut self, m: &'ast syn::ExprMethodCall) {
+            // `<e>.info()` reads the runtime `Type` metadata of `e`.
+            if m.method == "info" && m.args.is_empty() {
+                self.found = true;
+            }
+            syn::visit::visit_expr_method_call(self, m);
+        }
+    }
+    let mut s = Scan { found: false };
+    syn::visit::Visit::visit_expr(&mut s, scrut);
+    if s.found {
+        Some(token_key(scrut))
+    } else {
+        None
+    }
+}
+
+/// If a statement-position expression flows the asserted value through a RUNTIME
+/// continuation whose value is NOT IN SCOPE -- a future continuation (`.await` /
+/// free-fn `block_on(async{..})`), opaque compile-time reflection (`match Type::of::<T>()
+/// .kind { .. }`), or a `loop { .. }` over a runtime-advanced iterator -- return the
+/// TYPED `SideEffect` naming that qualified continue path (the typed BAIL). The caller
+/// renders `effect.reason()` into `skip_reasons`, which `refusal_disposition` classifies
+/// terminal. This is the value-NOT-in-scope half of the statement-position split (the
+/// value-IN-scope half DIGS via the defolder / unconditional-block recursion).
+///
+/// SOUNDNESS (the discrimination guardrail): this fires ONLY on a DETECTED runtime
+/// continuation (an `.await`, a free-fn `block_on(async)`, a `Type::of`/`.info()`
+/// reflection scrutinee, a loop body that advances an iterator). A statement carrying a
+/// CONSTRUCTED literal value (an unconditional block over literals, a `match` over a
+/// literal scrutinee, a `loop` over a pure value) matches NONE of these -> returns None,
+/// leaving it to DIG or stay unclassified -- never terminalized by position.
+fn statement_position_terminal_effect(expr: &Expr) -> Option<Box<dyn SideEffect>> {
+    // The expr must actually carry an assertion (else nothing to classify).
+    if count_asserts_in_expr(expr) == 0 {
+        return None;
+    }
+    let boundary = token_key(expr);
+    // FUTURE CONTINUATION: an `.await` anywhere, or a free-fn `block_on(async{..})`.
+    if expr_contains_await(expr) || is_free_fn_block_on_async(expr) {
+        return Some(Box::new(ControlFlowEffect { boundary }));
+    }
+    // OPAQUE REFLECTION: a `match <reflection> { .. }` whose scrutinee is `Type::of`/
+    // `.info()`. Strip a `const { .. }` / paren wrapper off the scrutinee first.
+    if let Expr::Match(m) = expr {
+        let scrut = strip_const_block(&m.expr);
+        if let Some(b) = reflection_scrutinee(scrut) {
+            return Some(Box::new(ReflectionEffect { boundary: b }));
+        }
+    }
+    // RUNTIME LOOP: a `loop { .. }` whose body advances an iterator (`iter.next()` /
+    // `iter.size_hint()`). A `loop` has no finite literal construction to enumerate, and
+    // an advanced runtime iterator's per-iteration bounds are not a single timeless value.
+    if let Expr::Loop(l) = expr {
+        let body = Expr::Block(syn::ExprBlock {
+            attrs: Vec::new(),
+            label: None,
+            block: l.body.clone(),
+        });
+        if loop_body_advances_runtime_iterator(&body) {
+            return Some(Box::new(LoopAdvanceEffect { boundary }));
+        }
+    }
+    None
+}
+
+/// Strip a `const { .. }` wrapper (and parens/groups) off a match scrutinee to reveal
+/// the underlying reflection call (`match const { Type::of::<T>() }.kind { .. }`).
+fn strip_const_block(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Const(c) => {
+            // `const { <single tail expr> }` -> that expr; else leave as-is.
+            if let [syn::Stmt::Expr(e, None)] = c.block.stmts.as_slice() {
+                return strip_const_block(e);
+            }
+            expr
+        }
+        Expr::Field(f) => strip_const_block(&f.base),
+        Expr::Paren(p) => strip_const_block(&p.expr),
+        Expr::Group(g) => strip_const_block(&g.expr),
+        _ => expr,
+    }
+}
+
+/// True if a loop body advances a RUNTIME iterator (`iter.next()` / `.size_hint()` /
+/// `.count()` reads driving the loop). Reuses the iterator-advance scan
+/// (`closure_body_advances_iterator`) plus a `.size_hint()` probe (the size-hint loop
+/// reads non-deterministic per-iteration bounds).
+fn loop_body_advances_runtime_iterator(body: &Expr) -> bool {
+    if closure_body_advances_iterator(body) {
+        return true;
+    }
+    struct Scan {
+        found: bool,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Scan {
+        fn visit_expr_method_call(&mut self, m: &'ast syn::ExprMethodCall) {
+            if m.method == "size_hint" && m.args.is_empty() {
+                self.found = true;
+            }
+            syn::visit::visit_expr_method_call(self, m);
+        }
+    }
+    let mut s = Scan { found: false };
+    syn::visit::Visit::visit_expr(&mut s, body);
+    s.found
+}
+
 /// A nested block is a DISTINCT program region. Two sibling blocks that each
 /// rebind a same-named local (`const { let ty = .. }` twice; `{ let as_mut = .. }`
 /// twice; the `{ let i = Cell::new(0); .. }` rebind-in-block of `iterator_drops`)
@@ -4467,12 +4723,39 @@ fn collect_assertion_entries(
                 }
             }
             Stmt::Expr(Expr::Match(m), _) => {
+                // OPAQUE-REFLECTION qualified continue path (value NOT in scope): a
+                // `match Type::of::<T>().kind { TypeKind::X(b) => assert_eq!(b.field, ..) }`
+                // reads its asserted values out of compile-time reflection over runtime
+                // type identity (`TypeId`) -- not a value constructed from source
+                // literals. The surviving arm's BODY asserts (the ones the panic-locus
+                // variant pin does NOT carry) are TERMINAL over that named continuation;
+                // account them here so they do not fall to the unenumerated safety net.
+                // The variant-pin discharge (below) is unchanged. A match over a
+                // CONSTRUCTED literal scrutinee has no reflection call -> None -> the
+                // ordinary path (dig / under-match-context), never reflection-refused.
+                let reflection_boundary = reflection_scrutinee(strip_const_block(&m.expr));
+                if let Some(b) = &reflection_boundary {
+                    let body_asserts: usize = m
+                        .arms
+                        .iter()
+                        .filter(|a| !expr_diverges(&a.body))
+                        .map(|a| count_asserts_in_expr(&a.body))
+                        .sum();
+                    let reason = (ReflectionEffect { boundary: b.clone() }).reason();
+                    for _ in 0..body_asserts {
+                        skipped.push(reason.clone());
+                    }
+                }
                 // Panic locus: a match whose every arm but one diverges asserts
                 // the scrutinee matches the surviving arm. Lift it FIRST (it pins
                 // the scrutinee's variant with no body asserts to carry).
                 if let Some(entry) = panic_locus_match_entry(m, &temporal_scope) {
                     entries.push(entry);
                     *macros_lifted += 1;
+                } else if reflection_boundary.is_some() {
+                    // Reflection match with no panic-locus (no diverging `_` arm): its
+                    // body asserts are already accounted above; do NOT also count them
+                    // under the generic "under match context" path (double-count).
                 } else if let Some(desugared) = {
                     // `MatchSugar`: `match scrut { pat_i => A_i }` is the conjunction
                     // `⋀_i (guard_i => A_i)` -- each arm's discriminant guard implies
@@ -4725,7 +5008,15 @@ fn collect_assertion_entries(
                     // its `reason()` (the wire format is unchanged). A pure adaptor + pure
                     // body returns None and keeps the generic skip (dissolvable in --dissolve).
                     let reason = if let Stmt::Expr(e, _) = other {
+                        // First the closure-method bucket (fold/for_each over an opaque
+                        // accessor / side-effecting body). Then the statement-position
+                        // qualified continue paths (value NOT in scope): a future
+                        // continuation (`.await` / free-fn `block_on(async{..})`), opaque
+                        // reflection (`match Type::of::<T>().kind`), or a runtime loop. A
+                        // statement carrying a CONSTRUCTED literal matches none -> None ->
+                        // the generic unclassified skip (the value-IN-scope dig path).
                         closure_method_terminal_effect(e, &temporal_scope, &let_inits)
+                            .or_else(|| statement_position_terminal_effect(e))
                     } else {
                         None
                     }
