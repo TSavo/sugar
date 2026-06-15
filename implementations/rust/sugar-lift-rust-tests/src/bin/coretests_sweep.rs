@@ -236,6 +236,11 @@ fn main() {
     // `--dissolve`: dissolve gated closed stdlib-sugar unit-test asserts by evaluating
     // them under the pinned toolchain (shells to rustc). Off by default (hermetic).
     let dissolve = args.iter().any(|a| a == "--dissolve");
+    // `--callsite-census`: STEP-1 diagnostic. Tally, per category, why the
+    // call-site-inlining residue ("reachable only via call-site inlining") is
+    // blocked. Pure stderr observation through the real CallsiteSugar engine; does
+    // NOT touch the headline counts / ledger JSON / CID.
+    let callsite_census = args.iter().any(|a| a == "--callsite-census");
     let dissolve_dir = std::env::temp_dir().join("sugar_dissolve_sweep");
     if dissolve {
         let _ = std::fs::create_dir_all(&dissolve_dir);
@@ -348,6 +353,8 @@ fn main() {
     // hashed (dups kept) into one multiset-CID below: the identity of the assertion surface,
     // so a count-preserving swap is still a moved CID.
     let mut all_site_cids: Vec<String> = Vec::new();
+    // STEP-1 census rows (only populated under --callsite-census). (file, row).
+    let mut census_rows: Vec<(String, sugar_lift_rust_tests::CallsiteCensusRow)> = Vec::new();
 
     for entry in walkdir::WalkDir::new(corpus)
         .into_iter()
@@ -386,6 +393,11 @@ fn main() {
         counter.visit_file(&file);
         all_site_cids.extend(counter.site_cids.iter().cloned());
 
+        if callsite_census {
+            for row in sugar_lift_rust_tests::callsite_census(&file, &options, &registry) {
+                census_rows.push((rel.clone(), row));
+            }
+        }
         let out = lift_file_with_macro_imports(&file, &rel, &options, &registry);
         let discharged = out.assertions_lifted;
         let refused_total = out.assertions_refused;
@@ -586,6 +598,10 @@ fn main() {
     ));
     println!("assertion multiset cid: {}", assertion_multiset_cid);
 
+    if callsite_census {
+        report_callsite_census(&census_rows);
+    }
+
     if let Some(out_path) = json_out {
         let json = build_ledger_json(
             corpus,
@@ -610,6 +626,110 @@ fn main() {
             println!("ledger cid: {}", cid);
         }
     }
+}
+
+/// STEP-1 CENSUS REPORT (stderr). For every recognized call-site-inlining site,
+/// report the category of its residue. A helper that COMMITS at any site is drained
+/// (its asserts discharged); a helper that bails at every site is blocked, and the
+/// category names the blocker shape (the roadmap rung). Per-helper rows let us map
+/// the 112 "reachable only" asserts back to their cause.
+fn report_callsite_census(rows: &[(String, sugar_lift_rust_tests::CallsiteCensusRow)]) {
+    use sugar_lift_rust_tests::CallsiteCensusRow;
+    use std::collections::BTreeMap;
+
+    // Per helper: did ANY call site commit it? and the bail categories observed.
+    #[derive(Default)]
+    struct HelperAgg {
+        committed_anywhere: bool,
+        categories: BTreeMap<String, usize>,
+        max_added_unclassified: usize,
+        sample: Vec<String>,
+        sites: usize,
+    }
+    let mut by_helper: BTreeMap<String, HelperAgg> = BTreeMap::new();
+    for (_file, row) in rows {
+        let CallsiteCensusRow {
+            helper,
+            category,
+            added_unclassified,
+            sample_reasons,
+            committed,
+        } = row;
+        let agg = by_helper.entry(helper.clone()).or_default();
+        agg.sites += 1;
+        if *committed {
+            agg.committed_anywhere = true;
+        } else {
+            *agg.categories.entry(format!("{category:?}")).or_insert(0) += 1;
+            agg.max_added_unclassified = agg.max_added_unclassified.max(*added_unclassified);
+            for s in sample_reasons {
+                if agg.sample.len() < 4 && !agg.sample.contains(s) {
+                    agg.sample.push(s.clone());
+                }
+            }
+        }
+    }
+
+    // Headline category tally over BLOCKED helpers (committed-nowhere): one count per
+    // helper, by its dominant bail category (the first observed non-empty bucket).
+    let mut blocked_by_cat: BTreeMap<String, usize> = BTreeMap::new();
+    let mut committed = 0usize;
+    let mut blocked = 0usize;
+    for (_h, agg) in &by_helper {
+        if agg.committed_anywhere {
+            committed += 1;
+            continue;
+        }
+        blocked += 1;
+        if let Some((cat, _)) = agg.categories.iter().max_by_key(|(_, n)| **n) {
+            *blocked_by_cat.entry(cat.clone()).or_insert(0) += 1;
+        }
+    }
+
+    eprintln!();
+    eprintln!("==== STEP-1 callsite-inlining census (diagnostic) ====");
+    eprintln!(
+        "recognized helper call sites: {} (distinct helpers: {})",
+        rows.len(),
+        by_helper.len()
+    );
+    eprintln!("  committed (drained) helpers:  {committed}");
+    eprintln!("  blocked helpers:              {blocked}");
+    eprintln!("  -- blocked-helper category histogram (one per blocked helper) --");
+    for (cat, n) in &blocked_by_cat {
+        eprintln!("     {n:>4}  {cat}");
+    }
+    eprintln!("  -- per-blocked-helper detail --");
+    for (h, agg) in &by_helper {
+        if agg.committed_anywhere {
+            continue;
+        }
+        let cats: Vec<String> = agg
+            .categories
+            .iter()
+            .map(|(c, n)| format!("{c}×{n}"))
+            .collect();
+        eprintln!(
+            "     {h}: sites={} max_added_unclassified={} [{}]",
+            agg.sites,
+            agg.max_added_unclassified,
+            cats.join(", ")
+        );
+        for s in &agg.sample {
+            eprintln!("         · {s}");
+        }
+    }
+    // Also surface helpers committed at one site but with no-arg-call only (drained).
+    let drained: Vec<&String> = by_helper
+        .iter()
+        .filter(|(_, a)| a.committed_anywhere)
+        .map(|(h, _)| h)
+        .collect();
+    eprintln!("  -- committed (drained) helpers: {} --", drained.len());
+    for h in drained {
+        eprintln!("     {h}");
+    }
+    eprintln!("==== end census ====");
 }
 
 /// The sweep ledger as a JSON value: the total accounting (every assertion

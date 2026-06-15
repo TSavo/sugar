@@ -17,6 +17,15 @@ mod macro_expand;
 pub mod flt2dec_eval;
 pub mod closed_eval;
 
+// CallsiteSugar lives in its own self-contained module (the call-site-inlining
+// Sugar). It is a child of the crate root, so it can see the crate-root-private
+// Sugar hierarchy / collector / resolver it lifts-and-replaces. Reconciliation hook
+// for the concurrent lib.rs -> src/sugar/*.rs split: this is the ONE `mod` decl for
+// the new class.
+pub mod sugar {
+    pub mod callsite;
+}
+
 use quote::ToTokens;
 use sugar_ir_symbolic::{
     and_, atomic_, eq, forall, gt, gte, implies, lt, lte, make_var, ne, not_, num, or_, real_const,
@@ -292,6 +301,168 @@ pub fn lift_file_with_macro_imports(
         &mut out,
     );
     out
+}
+
+// ── STEP-1 CENSUS (diagnostic; NEVER affects counts/CID) ─────────────────────
+// Categorize the residue blocking call-site-inlining. Walks the same items the
+// lifter walks, and for every BARE CALL statement inside a `#[test]` fn that
+// `CallsiteSugar::decompose` recognizes, replays `desugar` to observe its
+// `CallsiteOutcome` -- tallying, per helper, what its inlined body hits. Helpers
+// that emit "reachable only" but are never reached by a carryable call are
+// NonClosedArgs. Pure observation through the real engine: no wire change.
+
+/// A per-helper census row: the helper name and the category of its inline
+/// residue. `added_unclassified` is the residue size when the body bailed on
+/// unclassified work (0 for NonClosedArgs / committed).
+#[derive(Debug, Clone)]
+pub struct CallsiteCensusRow {
+    pub helper: String,
+    pub category: sugar::callsite::ResidueCategory,
+    pub added_unclassified: usize,
+    pub sample_reasons: Vec<String>,
+    pub committed: bool,
+}
+
+/// Walk a file's `#[test]` fns, replay `CallsiteSugar` decompose+desugar over every
+/// bare call statement, and return one census row per recognized call site. The
+/// `imported` registry mirrors the production lift so helper resolution is faithful.
+pub fn callsite_census(
+    file: &syn::File,
+    options: &LiftOptions,
+    imported: &MacroRegistry,
+) -> Vec<CallsiteCensusRow> {
+    let reducer = ReductionCtx::from_items_with_imports(&file.items, imported);
+    let mut rows = Vec::new();
+    let reduced: HashSet<String> = HashSet::new();
+    census_walk_items(&file.items, options, &reducer, &reduced, &mut rows);
+    rows
+}
+
+fn census_walk_items(
+    items: &[Item],
+    options: &LiftOptions,
+    reducer: &ReductionCtx<'_>,
+    reduced: &HashSet<String>,
+    rows: &mut Vec<CallsiteCensusRow>,
+) {
+    for item in items {
+        match item {
+            Item::Fn(f) if has_test_attr(&f.attrs) => {
+                if matches!(cfg_eval_for_attrs(&f.attrs, options), CfgEval::Active) {
+                    census_walk_stmts(&f.block.stmts, "census", options, reducer, reduced, rows);
+                }
+            }
+            Item::Mod(m) => {
+                if let Some((_, items)) = &m.content {
+                    if matches!(cfg_eval_for_attrs(&m.attrs, options), CfgEval::Active) {
+                        census_walk_items(items, options, reducer, reduced, rows);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn census_walk_stmts(
+    stmts: &[Stmt],
+    scope: &str,
+    options: &LiftOptions,
+    reducer: &ReductionCtx<'_>,
+    reduced: &HashSet<String>,
+    rows: &mut Vec<CallsiteCensusRow>,
+) {
+    // Nested fns lexically in scope (mirror of the collector's `local_fns`), so the
+    // census resolves nested helpers the same way the live lift does.
+    let local_fns: BTreeMap<String, &syn::ItemFn> = stmts
+        .iter()
+        .filter_map(|s| match s {
+            Stmt::Item(Item::Fn(f)) => Some((f.sig.ident.to_string(), f)),
+            _ => None,
+        })
+        .collect();
+    for (idx, stmt) in stmts.iter().enumerate() {
+        if let Stmt::Expr(e, _) = stmt {
+            if let Some(cs) =
+                sugar::callsite::CallsiteSugar::decompose(e, &local_fns, reducer, options, 0)
+            {
+                let mut fw = FloatWidthScope::new();
+                let outcome =
+                    cs.desugar(scope, idx, options, reducer, &mut fw, reduced, 0);
+                let row = match outcome {
+                    sugar::callsite::CallsiteOutcome::Dug(_) => CallsiteCensusRow {
+                        helper: cs.name.clone(),
+                        category: sugar::callsite::ResidueCategory::PureUntranslatedTerm,
+                        added_unclassified: 0,
+                        sample_reasons: Vec::new(),
+                        committed: true,
+                    },
+                    sugar::callsite::CallsiteOutcome::Bail(cause) => {
+                        census_row_from_bail(cs.name.clone(), cause)
+                    }
+                };
+                rows.push(row);
+            }
+            // Recurse into nested blocks (a bare block expr) to reach calls inside.
+            if let Expr::Block(b) = e {
+                census_walk_stmts(&b.block.stmts, scope, options, reducer, reduced, rows);
+            }
+        }
+    }
+}
+
+fn census_row_from_bail(
+    helper: String,
+    cause: sugar::callsite::BailCause,
+) -> CallsiteCensusRow {
+    use sugar::callsite::{BailCause, ResidueCategory};
+    match cause {
+        BailCause::NotInlinable => CallsiteCensusRow {
+            helper,
+            category: ResidueCategory::NonClosedArgs,
+            added_unclassified: 0,
+            sample_reasons: Vec::new(),
+            committed: false,
+        },
+        BailCause::FullyReduced => CallsiteCensusRow {
+            helper,
+            category: ResidueCategory::PureUntranslatedTerm,
+            added_unclassified: 0,
+            sample_reasons: Vec::new(),
+            committed: true,
+        },
+        BailCause::UnclassifiedResidue {
+            added_unclassified,
+            sample_reasons,
+        } => {
+            // The dominant category across the residue reasons. A body that hits any
+            // genuine effect alongside other work is still blocked by the OTHER work,
+            // so we report the FIRST non-effect shape if present (the actual blocker),
+            // else the effect. Pure-untranslated-term and unsupported-construct are
+            // the real roadmap rungs.
+            let cats: Vec<ResidueCategory> = sample_reasons
+                .iter()
+                .map(|r| sugar::callsite::classify_residue_reason(r))
+                .collect();
+            let category = cats
+                .iter()
+                .copied()
+                .find(|c| *c == ResidueCategory::PureUntranslatedTerm)
+                .or_else(|| {
+                    cats.iter()
+                        .copied()
+                        .find(|c| *c == ResidueCategory::UnsupportedConstruct)
+                })
+                .unwrap_or(ResidueCategory::GenuineEffect);
+            CallsiteCensusRow {
+                helper,
+                category,
+                added_unclassified,
+                sample_reasons,
+                committed: false,
+            }
+        }
+    }
 }
 
 fn walk_items<'a>(
@@ -3683,6 +3854,14 @@ fn collect_assertion_entries(
             _ => None,
         })
         .collect();
+    // Deferred nested-fn-definition refusals. A nested helper's "reachable only via
+    // call-site inlining" refusal must NOT be emitted if a later bare-call statement
+    // in THIS block inlines it (the call sites populate `reduced_helpers` as the loop
+    // advances, and the definition is hit before its calls). So we DEFER the
+    // definition-site refusal and drain it AFTER the loop, emitting only for nested
+    // fns still NOT in `reduced_helpers` -- the block-local mirror of the file-level
+    // Pass1/Pass2 split. (count, reason) per still-refused inner fn.
+    let mut deferred_inner_fn_refusals: Vec<(String, usize, String)> = Vec::new();
     for (stmt_idx, stmt) in stmts.iter().enumerate() {
         match stmt {
             Stmt::Local(local) => {
@@ -4155,7 +4334,12 @@ fn collect_assertion_entries(
                 );
             }
             // Inner fn definitions inside a test fn: their asserts are only
-            // reachable via a call inside the test body; refuse them.
+            // reachable via a call inside the test body. DEFER the refusal: a later
+            // bare-call statement in this block may inline this helper (the CallsiteSugar
+            // dispatch arm, resolving nested fns via `local_fns`), which records it in
+            // `reduced_helpers`. We emit the "reachable only" refusal after the loop
+            // ONLY for inner fns still not reduced -- so a drained nested helper is not
+            // double-counted (discharged at the callsite AND refused at the definition).
             Stmt::Item(syn::Item::Fn(inner_fn)) => {
                 let fn_name = inner_fn.sig.ident.to_string();
                 // An inner fn selected as the runtime branch of const_eval_select
@@ -4166,9 +4350,7 @@ fn collect_assertion_entries(
                 }
                 let count = count_asserts_in_stmts(&inner_fn.block.stmts);
                 let reason = callsite_inlining_reason(&fn_name, inner_fn);
-                for _ in 0..count {
-                    skipped.push(reason.clone());
-                }
+                deferred_inner_fn_refusals.push((fn_name, count, reason));
             }
             // Totality fallback: any other statement shape (a bare method-call
             // statement with a closure argument, an expression statement we do
@@ -4245,61 +4427,51 @@ fn collect_assertion_entries(
                             &temporal_scope.plan.interior_mut,
                         );
                         true
-                    } else if macro_depth < MAX_MACRO_EXPANSION_DEPTH
-                        && resolve_inlinable_helper_call(e, reducer, options).is_some()
-                    {
-                        // R7 (capability #1): a bare call to a helper whose body
-                        // asserts. β-reduce (param := callsite actual) and recurse the
-                        // NORMAL collector on the substituted body, so each body assert
-                        // gets its honest disposition. The collector is unchanged and
-                        // runs with no bindings (substitution already applied), so
-                        // existing lifts are byte-identical; a contradictory body is
-                        // CAUGHT, not masked (guard test).
+                    } else if let Some(cs) = sugar::callsite::CallsiteSugar::decompose(
+                        e,
+                        &local_fns,
+                        reducer,
+                        options,
+                        macro_depth,
+                    ) {
+                        // CALLSITE-SUGAR DISPATCH ARM (lift-and-replace of the old R7
+                        // procedural block; the inlining engine now lives in
+                        // `sugar::callsite`). `decompose` recognized a carryable
+                        // closed-arg call to an inlinable helper; `desugar` β-reduces
+                        // (param := actual) and re-desugars the substituted body
+                        // through THIS SAME hierarchy in scratch buffers, gated on the
+                        // monotonic `added_unclassified == 0` invariant.
                         //
-                        // MONOTONIC GATE: inlining MUST NOT increase `unclassified`.
-                        // Measured: a body that hits a downstream gap (closure-adaptor,
-                        // `&mut`) per callsite turns ONE "reachable only via inlining"
-                        // refusal into N×M unclassified instances (1082→1094). So we
-                        // TRIAL-lift into scratch buffers first and commit ONLY if the
-                        // body adds zero unclassified (it fully discharges / terminal-
-                        // refuses). Otherwise we leave it: the helper stays unreduced
-                        // and Pass 2 keeps the single "reachable only" refusal. Inlining
-                        // therefore only ever DRAINS, never inflates.
-                        let (helper, name, bindings) =
-                            resolve_inlinable_helper_call(e, reducer, options).unwrap();
-                        let subst = substitute_stmts(&helper.block.stmts, &bindings);
-                        let mut te = Vec::new();
-                        let mut ts = Vec::new();
-                        let mut tl = 0usize;
-                        let mut th = reduced_helpers.clone();
-                        collect_assertion_entries(
-                            &subst,
-                            &child_block_scope(local_scope, stmt_idx),
+                        // RECONCILIATION HOOK (concurrent lib.rs split): this is the ONE
+                        // decompose-dispatch arm to add to the central
+                        // `collect_assertion_entries` body. It sits in the bare-expr-
+                        // statement fallthrough, after `for_each`/`const_eval_select`/
+                        // `unconditional_block`, replacing the inline R7 branch.
+                        match cs.desugar(
+                            local_scope,
+                            stmt_idx,
                             options,
                             reducer,
                             float_widths,
-                            &mut te,
-                            &mut ts,
-                            &mut tl,
-                            &mut th,
-                            macro_depth + 1,
-                            &BTreeSet::new(),
-                        );
-                        let added_unclassified = ts
-                            .iter()
-                            .filter(|r| {
-                                matches!(refusal_disposition(r), Disposition::Unclassified)
-                            })
-                            .count();
-                        if added_unclassified == 0 {
-                            entries.extend(te);
-                            skipped.extend(ts);
-                            *macros_lifted += tl;
-                            *reduced_helpers = th;
-                            reduced_helpers.insert(name);
-                            true
-                        } else {
-                            false
+                            reduced_helpers,
+                            macro_depth,
+                        ) {
+                            sugar::callsite::CallsiteOutcome::Dug(commit) => {
+                                // The body fully reduced: COMMIT the trial buffers (the
+                                // asserts lift via the byte-identical dig path). This is
+                                // the blessed inlining-unblock.
+                                entries.extend(commit.entries);
+                                skipped.extend(commit.skipped);
+                                *macros_lifted += commit.macros_lifted;
+                                *reduced_helpers = commit.reduced_helpers;
+                                reduced_helpers.insert(commit.name);
+                                true
+                            }
+                            // BAIL: the body did not fully reduce (honest unclassified
+                            // residue). Leave the helper unreduced; Pass 2 keeps the
+                            // single "reachable only via call-site inlining" refusal.
+                            // Never fake-dug, never fake-refused.
+                            sugar::callsite::CallsiteOutcome::Bail(_) => false,
                         }
                     } else {
                         false
@@ -4331,6 +4503,19 @@ fn collect_assertion_entries(
             }
         }
         advance_temporal_scope_for_stmt(stmt, &mut temporal_scope);
+    }
+    // Drain the deferred nested-fn refusals: emit "reachable only via call-site
+    // inlining" ONLY for inner fns NOT inlined by some call site in this block. A
+    // helper inlined at any callsite is in `reduced_helpers` (its asserts already
+    // discharged / terminal-refused point-wise), so re-refusing it here would
+    // double-count. This is the block-local Pass-2.
+    for (fn_name, count, reason) in &deferred_inner_fn_refusals {
+        if reduced_helpers.contains(fn_name) {
+            continue;
+        }
+        for _ in 0..*count {
+            skipped.push(reason.clone());
+        }
     }
     if relabel_unnamed_to_scope {
         for entry in entries[entries_start..].iter_mut() {
@@ -6032,8 +6217,24 @@ fn substitute_macro_tokens(
 /// Resolve a bare call expression to an inlinable helper: a file-resolvable fn whose
 /// body contains assertions, active cfg, simple params, matching arity. Returns the
 /// helper, its name, and the param := actual bindings. None otherwise.
-fn resolve_inlinable_helper_call<'a>(
+///
+/// Resolves the helper name against the LOCALLY-VISIBLE nested fns first (lexical
+/// scope), then the global reducer.
+///
+/// THE DRAIN: the corpus's dominant call-site-inlining shape is a helper defined
+/// INSIDE a `#[test]` fn body (`fn test<T>(x: T) { .. } test(0u32);`). The global
+/// `ReductionCtx` registers only TOP-LEVEL non-test fns, so a nested helper was
+/// invisible and its body asserts fell to "reachable only via call-site inlining"
+/// unclassified even when the body digs clean. Resolving `local_fns` first makes a
+/// nested closed-arg helper inline exactly like a top-level one. SOUND: a nested fn
+/// is in scope at the call site by construction, lexical shadowing is honored
+/// (local takes precedence), and the SAME monotonic `added_unclassified == 0` gate
+/// guards the commit -- a runtime-parametric / effectful / pure-untranslated body
+/// produces unclassified residue and BAILS, so this can only ever DRAIN a body that
+/// genuinely reduces.
+fn resolve_inlinable_helper_call_scoped<'a>(
     expr: &Expr,
+    local_fns: &BTreeMap<String, &'a syn::ItemFn>,
     reducer: &ReductionCtx<'a>,
     options: &LiftOptions,
 ) -> Option<(&'a syn::ItemFn, String, ExprBindings)> {
@@ -6044,7 +6245,13 @@ fn resolve_inlinable_helper_call<'a>(
     };
     let Expr::Call(call) = inner else { return None };
     let name = simple_call_name(call)?;
-    let helper = reducer.function(&name).ok()??;
+    // Lexical scope: a nested fn shadows a same-named global. `function()` already
+    // declines an ambiguous (re-defined) global; a `local_fns` hit is the single
+    // helper lexically in scope at this call.
+    let helper: &'a syn::ItemFn = match local_fns.get(name.as_str()) {
+        Some(f) => f,
+        None => reducer.function(&name).ok()??,
+    };
     if count_asserts_in_stmts(&helper.block.stmts) == 0 {
         return None;
     }
