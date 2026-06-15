@@ -28,9 +28,12 @@ mod try_fold_eval;
 // then that adaptor's exact transform.
 pub mod sugar {
     pub mod array_repeat;
+    pub mod binop;
     pub mod bound;
+    pub mod call;
     pub mod callsite;
     pub mod closure_adaptor;
+    pub mod compare;
     pub mod conditional;
     pub mod control_flow_term;
     pub mod enumerate;
@@ -42,10 +45,12 @@ pub mod sugar {
     pub mod format;
     pub mod identity;
     pub mod impl_method;
+    pub mod index;
     pub mod literal;
     pub mod map;
     pub mod match_node;
     pub mod match_scrutinee;
+    pub mod path;
     pub mod regex_match;
     pub mod rev;
     pub mod skip;
@@ -54,6 +59,8 @@ pub mod sugar {
     pub mod take;
     pub mod take_while;
     pub mod temporal_read;
+    pub mod term_literal;
+    pub mod unary;
 }
 
 use crate::sugar::conditional::decompose_if;
