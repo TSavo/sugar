@@ -34,6 +34,7 @@ pub mod sugar {
     pub mod conditional;
     pub mod control_flow_term;
     pub mod enumerate;
+    pub mod factory;
     pub mod filter;
     pub mod filter_map;
     pub mod fold;
