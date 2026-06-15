@@ -9,12 +9,18 @@ description = "Sugar Rust test-assertion consistency lifter: lift #[test] scalar
 [lib]
 doctest = false
 
-[dev-dependencies]
-# Step-7 composition check: feed emitted ProofIR through the real prove compiler.
-sugar-ir-compiler-smt-lib = { path = "../sugar-ir-compiler-smt-lib" }
-
 [dependencies]
 sugar-ir-symbolic = { path = "../sugar-ir-symbolic" }
+# RegexSugar: the SINGLE regex→RegLan lowering authority (`regex_regln`). The
+# lifter calls `regex_to_regln` ONLY as a pure regularity GATE at lift time — to
+# REFUSE a non-regular pattern (backreference/lookahead/…) BY NAME before emitting
+# a `str.in-regex` row, mirroring the Java `PatternUniverseWalker` which refuses
+# non-regular patterns at walk time (no row, the floor stands). The actual SMT
+# rendering still happens at prove time in the compiler; this is the same pure
+# function, reused so both languages share ONE regularity verdict (no second
+# regex parser, no drift). The Step-7 composition check also feeds emitted
+# ProofIR through this compiler.
+sugar-ir-compiler-smt-lib = { path = "../sugar-ir-compiler-smt-lib" }
 sugar-canonicalizer = { path = "../sugar-canonicalizer" }
 # Oracle slice: query the resident RA host (sugar-linkerd) for method-call
 # receiver/param mutability over RPC.

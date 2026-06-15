@@ -2937,6 +2937,176 @@ fn contains() {
 }
 
 #[test]
+fn regex_match_lifts_to_str_in_regex_membership_atom() {
+    // RegexSugar: `re.is_match(s)` ⟺ `str.in_re(s, R)`. The pattern literal is
+    // walked from `Regex::new("…")` and carried RAW as a String const; the emitted
+    // atom is byte-identical to the Java `@Pattern` pass's `str.in-regex(subj, pat)`.
+    // Covers the three recognized shapes: inline literal, `find().is_some()`, and a
+    // `let`-bound pattern literal (`let p = "…"; Regex::new(p)`).
+    let src = r#"
+#[test]
+fn inline_is_match() {
+    assert!(Regex::new("^[a-z]+$").unwrap().is_match(s));
+}
+
+#[test]
+fn find_is_some() {
+    assert!(Regex::new("[0-9]+").unwrap().find(s).is_some());
+}
+
+#[test]
+fn let_bound_pattern() {
+    let p = "a.c";
+    assert!(Regex::new(p).unwrap().is_match(s));
+}
+
+#[test]
+fn concat_pattern_composes() {
+    assert!(Regex::new(concat!("^", "[a-z]+", "$")).unwrap().is_match(s));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/regex.rs");
+    assert_eq!(out.seen, 4);
+    assert_eq!(out.lifted, 4, "warnings: {:?}", out.warnings);
+    assert_eq!(out.decls.len(), 4);
+
+    // Each decl carries a single `str.in-regex` membership atom over the subject
+    // term and the verbatim pattern literal (String-sorted const). The `let`-bound
+    // and `concat!` cases prove the pattern came THROUGH a child desugar (a
+    // resolver), not a hardcoded inline literal.
+    assert_regex_membership_atom(&inv_operands(&out.decls[0])[0], "^[a-z]+$");
+    assert_regex_membership_atom(&inv_operands(&out.decls[1])[0], "[0-9]+");
+    assert_regex_membership_atom(&inv_operands(&out.decls[2])[0], "a.c");
+    assert_regex_membership_atom(&inv_operands(&out.decls[3])[0], "^[a-z]+$");
+}
+
+#[test]
+fn regex_match_format_pattern_bails_today_as_composition_frontier() {
+    // COMPOSITION FRONTIER: `Regex::new(format!(…))` IS recognized as a Regex::new
+    // construction, but the pattern operand desugars to `Hit` (runtime — no
+    // FormatSugar yet), so the regex node DECLINES (no str.in-regex row). This is
+    // NOT a refusal-by-name; it is the case that flips to dig FOR FREE the instant
+    // a FormatSugar producer lands, with zero change to RegexSugar.
+    let src = r#"
+#[test]
+fn format_pattern() {
+    assert!(Regex::new(format!("^{}$", prefix)).unwrap().is_match(s));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/regex.rs");
+    for decl in &out.decls {
+        if let Some(Formula::Connective { operands, .. }) = decl.inv.as_deref() {
+            for atom in operands {
+                assert!(
+                    !formula_contains_atomic_name(atom, "str.in-regex"),
+                    "a format!-pattern must not emit a str.in-regex row today (frontier)"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn regex_match_does_not_overfire_on_foreign_is_match() {
+    // DISCRIMINATION (over-fire guard): an `is_match` over a NON-`Regex::new(lit)`
+    // receiver, or a non-literal pattern, must NOT lift to a str.in-regex atom.
+    // (The std/core corpus has no regex; this is the floor protecting that.)
+    let src = r#"
+#[test]
+fn foreign_is_match() {
+    assert!(matcher.is_match(s));
+}
+
+#[test]
+fn runtime_pattern() {
+    assert!(Regex::new(user_input).unwrap().is_match(s));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/regex.rs");
+    // Neither shape produces a str.in-regex atom; they are NOT recognized as regex
+    // membership and fall through to the existing residual machinery.
+    for decl in &out.decls {
+        if let Some(Formula::Connective { operands, .. }) = decl.inv.as_deref() {
+            for atom in operands {
+                assert!(
+                    !formula_contains_atomic_name(atom, "str.in-regex"),
+                    "foreign/runtime is_match must not lift to str.in-regex: {:?}",
+                    decl.name
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn regex_match_refuses_non_regular_pattern_by_name() {
+    // REFUSE BY NAME: a backreference / lookahead is NOT a regular language, so it
+    // is not expressible as RegLan. The lifter refuses at lift time (mirroring the
+    // Java PatternUniverseWalker) — NO str.in-regex row is emitted, and the reason
+    // names the non-regular feature. This is the teeth against a fake-dig: a
+    // non-regular pattern is never silently admitted as a trivially-true membership.
+    let src = r#"
+#[test]
+fn backreference_pattern() {
+    assert!(Regex::new("(a)\\1").unwrap().is_match("aa"));
+}
+
+#[test]
+fn lookahead_pattern() {
+    assert!(Regex::new("foo(?=bar)").unwrap().is_match("foobar"));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/regex.rs");
+    // No str.in-regex row survives in any emitted decl.
+    for decl in &out.decls {
+        if let Some(Formula::Connective { operands, .. }) = decl.inv.as_deref() {
+            for atom in operands {
+                assert!(
+                    !formula_contains_atomic_name(atom, "str.in-regex"),
+                    "non-regular pattern must NOT emit a str.in-regex row"
+                );
+            }
+        }
+    }
+    // The refusal names the non-regular feature.
+    assert!(
+        out.warnings
+            .iter()
+            .any(|w| w.reason.contains("non-regular feature") && w.reason.contains("backreference")),
+        "backreference refusal must name the feature: {:?}",
+        out.warnings
+    );
+    assert!(
+        out.warnings
+            .iter()
+            .any(|w| w.reason.contains("non-regular feature") && w.reason.contains("lookahead")),
+        "lookahead refusal must name the feature: {:?}",
+        out.warnings
+    );
+}
+
+fn assert_regex_membership_atom(formula: &Formula, expected_pattern: &str) {
+    match formula {
+        Formula::Atomic { name, args } => {
+            assert_eq!(name, "str.in-regex", "regex membership atom name");
+            assert_eq!(args.len(), 2, "str.in-regex takes (subject, pattern)");
+            // arg[1] is the verbatim pattern literal, a String-sorted const.
+            match args[1].as_ref() {
+                Term::Const {
+                    value: ConstValue::String(value),
+                    sort,
+                } => {
+                    assert_eq!(value, expected_pattern, "verbatim pattern literal");
+                    assert_eq!(sort.name, "String", "pattern is String-sorted");
+                }
+                other => panic!("expected String-const pattern, got {other:?}"),
+            }
+        }
+        other => panic!("expected str.in-regex atom, got {other:?}"),
+    }
+}
+
+#[test]
 fn vendor_ascii_and_len_predicates_lift_conservatively() {
     // Vendor source: rust-src library/coretests/tests/ascii.rs::test_is_ascii
     // and library/alloctests/tests/str.rs:157.

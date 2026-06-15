@@ -297,6 +297,7 @@ SHOWCASE_RUNS = \
 	examples/build-witness-showcase/run.sh \
 	examples/rust-witness-showcase/run.sh \
 	examples/rust-test-assertion-consistency/run.sh \
+	examples/rust-regex-membership/run.sh \
 	examples/std-core-showcase/run.sh \
 	examples/std-core-bodyguard-precondition/run.sh \
 	examples/tokio-effect-consistency/run.sh \
