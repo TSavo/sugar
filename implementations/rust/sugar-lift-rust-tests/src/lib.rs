@@ -2137,6 +2137,101 @@ fn subst_var_in_formula(formula: &Rc<Formula>, name: &str, repl: &Rc<Term>) -> R
     }
 }
 
+/// Rewrite `index(<lit-array-var>, <const-int>)` terms to the array's concrete
+/// element term, given a map of in-scope LITERAL arrays (name -> element TERMS) and
+/// the constant-folded index. This is THE LAW applied to the indexed read: when the
+/// array is a written literal and the position is a literal (the threaded cursor),
+/// the value at that position IS a literal in scope -> substitute the element. An
+/// out-of-bounds or unknown-array `index` term is left UNTOUCHED (the uninterpreted
+/// EUF accessor -- the established sound floor; the program would have panicked OOB,
+/// outside our claim). Sound only over an IMMUTABLE literal array (the caller passes
+/// only `let`-bound non-`mut` array literals).
+fn resolve_index_in_term(term: &Rc<Term>, arrays: &BTreeMap<String, Vec<Rc<Term>>>) -> Rc<Term> {
+    match term.as_ref() {
+        Term::Ctor { name, args } if name == "index" && args.len() == 2 => {
+            // Resolve children first (a nested index), then this one.
+            let base = resolve_index_in_term(&args[0], arrays);
+            let idx = resolve_index_in_term(&args[1], arrays);
+            // The threaded index is often arithmetic over a literal (`i - 1` with `i`
+            // substituted to a const) -- const-fold it to a literal position first.
+            let idx_k = term_as_int(&idx).or_else(|| const_fold_int_term(&idx));
+            if let (Term::Var { name: arr }, Some(k)) = (base.as_ref(), idx_k) {
+                if let Some(elems) = arrays.get(arr) {
+                    if k >= 0 && (k as usize) < elems.len() {
+                        return elems[k as usize].clone();
+                    }
+                }
+            }
+            Rc::new(Term::Ctor {
+                name: name.clone(),
+                args: vec![base, idx],
+            })
+        }
+        Term::Ctor { name, args } => Rc::new(Term::Ctor {
+            name: name.clone(),
+            args: args.iter().map(|a| resolve_index_in_term(a, arrays)).collect(),
+        }),
+        _ => term.clone(),
+    }
+}
+
+/// Const-fold an integer-valued arithmetic Term (`+`/`-`/`*` over int consts) to its
+/// literal value. Used to reduce a threaded index like `sub(num(4), num(1))` to `3`
+/// before an `index` resolution. None for any non-const / non-arithmetic term -- the
+/// `index` then stays the EUF accessor (sound under-claim).
+fn const_fold_int_term(term: &Rc<Term>) -> Option<i64> {
+    if let Some(n) = term_as_int(term) {
+        return Some(n);
+    }
+    match term.as_ref() {
+        Term::Ctor { name, args } if args.len() == 2 => {
+            let a = const_fold_int_term(&args[0])?;
+            let b = const_fold_int_term(&args[1])?;
+            match name.as_str() {
+                "+" => a.checked_add(b),
+                "-" => a.checked_sub(b),
+                "*" => a.checked_mul(b),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Apply `resolve_index_in_term` throughout a formula's terms (the finite-conjunction
+/// instance for one fold step, after the accumulator/index has been threaded to a
+/// concrete literal). Leaves connective/quantifier structure intact.
+fn resolve_index_in_formula(
+    formula: &Rc<Formula>,
+    arrays: &BTreeMap<String, Vec<Rc<Term>>>,
+) -> Rc<Formula> {
+    match formula.as_ref() {
+        Formula::Atomic { name, args } => Rc::new(Formula::Atomic {
+            name: name.clone(),
+            args: args.iter().map(|a| resolve_index_in_term(a, arrays)).collect(),
+        }),
+        Formula::Connective { kind, operands } => Rc::new(Formula::Connective {
+            kind: kind.clone(),
+            operands: operands
+                .iter()
+                .map(|f| resolve_index_in_formula(f, arrays))
+                .collect(),
+        }),
+        Formula::Quantifier {
+            kind,
+            name,
+            sort,
+            body,
+        } => Rc::new(Formula::Quantifier {
+            kind: kind.clone(),
+            name: name.clone(),
+            sort: sort.clone(),
+            body: resolve_index_in_formula(body, arrays),
+        }),
+        _ => formula.clone(),
+    }
+}
+
 /// Read a `for <ident> in <range> { body }` loop as the bounded universal it
 /// literally states: forall x. (range_guard(x) => body(x)). The range is
 /// transcribed letter for letter (start..end / start..=end); the body is lifted
@@ -2519,6 +2614,11 @@ fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal>
                     // bitwise-not on an int is value-width-dependent -> bail.
                     _ => None,
                 },
+                // `*x` deref of a bound element: the const model holds scalar VALUES
+                // (no pointers), and a `&x`/`&&x` closure param binds the dereferenced
+                // element value directly, so `*x` is the identity on that value
+                // (`|&x| *x < 15`). Faithful: the predicate reads the element it bound.
+                UnOp::Deref(_) => Some(v),
                 _ => None,
             }
         }
@@ -3126,6 +3226,15 @@ struct FoldSugar {
     /// purity gate scans this whole body -- byte-identical to the procedural
     /// defolder, which checked `&closure.body` (tail included).
     closure_body: Expr,
+    /// In-scope LITERAL arrays (`ys -> [13, 15, ..]`), captured from `let_inits` at
+    /// decompose time. Used ONLY to resolve a body `index(ys, <const>)` term to its
+    /// concrete literal element AFTER the accumulator (the index) has been threaded
+    /// to a literal position -- the teeth: the asserted RHS carries the real element
+    /// value, so a wrong-expected twin is z3-REFUTABLE, not vacuously satisfiable.
+    /// Scoped to the fold body so no other (already-discharged) site's lifted form
+    /// changes. A non-literal-array binding is absent -> the `index` term stays the
+    /// uninterpreted EUF accessor (sound under-claim, the established floor).
+    literal_arrays: BTreeMap<String, Vec<Expr>>,
 }
 
 impl Sugar for FoldSugar {
@@ -3177,6 +3286,35 @@ impl Sugar for FoldSugar {
         }
         let body_conj = and_(body_entries.iter().map(|e| e.atom.clone()).collect());
 
+        // Pre-translate the captured literal arrays' element exprs to TERMS so a body
+        // `index(ys, <const>)` can resolve to its concrete element after the index is
+        // threaded. An element that does not translate cleanly drops that array (its
+        // `index` reads stay the EUF accessor -- a sound under-claim, never a fake-dig).
+        let mut array_terms: BTreeMap<String, Vec<Rc<Term>>> = BTreeMap::new();
+        for (arr, elems) in &self.literal_arrays {
+            // SOUNDNESS: only an IMMUTABLE literal array may have its `index(arr, k)`
+            // read resolved to a literal element. A `let mut arr = [..]` could be
+            // index-assigned / mutated, so its value at a later program point is not
+            // the written literal -- leave its `index` reads as the EUF accessor.
+            if ctx.scope.is_mut_local(arr) {
+                continue;
+            }
+            let mut ts = Vec::with_capacity(elems.len());
+            let mut ok = true;
+            for e in elems {
+                match translate_term_in_scope(e, ctx.scope) {
+                    Ok(t) => ts.push(t),
+                    Err(_) => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if ok {
+                array_terms.insert(arr.clone(), ts);
+            }
+        }
+
         // Thread the accumulator over the RESULTING element sequence: substitute the
         // concrete acc_k + the item binder's component(s) into the body formula, and
         // const-fold the tail to acc_{k+1} given those same bindings.
@@ -3212,6 +3350,12 @@ impl Sugar for FoldSugar {
                         }
                     }
                 }
+            }
+            // Resolve `index(<lit-array>, <const>)` reads (the now-threaded index) to
+            // their literal elements -- the teeth: the asserted RHS carries the real
+            // element value, so a wrong-expected twin is z3-refutable.
+            if !array_terms.is_empty() {
+                inst = resolve_index_in_formula(&inst, &array_terms);
             }
             instances.push(inst);
             acc = const_fold_acc_update(&self.tail, &tail_env)?;
@@ -3701,7 +3845,7 @@ fn decompose_fold(
         }
         other => FoldItemBinder::Whole(closure_single_param_ident(other)?),
     };
-    let acc_0 = const_int(init_expr)?;
+    let acc_0 = const_int_acc_init(init_expr, let_inits)?;
     let inner = decompose_seq(&call.receiver, let_inits, rev_fold)?;
     // The closure body: block-bodied (asserts + acc-update tail). The tail is the
     // final expr-without-semi; the preceding statements are the body.
@@ -3712,6 +3856,14 @@ fn decompose_fold(
     let Some((Stmt::Expr(tail, None), body_stmts)) = stmts.split_last() else {
         return None;
     };
+    // Capture the in-scope LITERAL arrays so the fold body's `index(ys, k)` term
+    // (after the index `k` is threaded to a literal) can be resolved to its element.
+    let mut literal_arrays: BTreeMap<String, Vec<Expr>> = BTreeMap::new();
+    for (name, init) in let_inits {
+        if let Expr::Array(arr) = strip_refs_groups(init) {
+            literal_arrays.insert(name.clone(), arr.elems.iter().cloned().collect());
+        }
+    }
     Some(FoldSugar {
         inner,
         acc_var,
@@ -3721,6 +3873,7 @@ fn decompose_fold(
         tail: tail.clone(),
         method,
         closure_body: (*closure.body).clone(),
+        literal_arrays,
     })
 }
 
@@ -10886,6 +11039,66 @@ fn const_int(expr: &Expr) -> Option<i64> {
         }) => parse_int_lit(i).ok(),
         Expr::Paren(paren) => const_int(&paren.expr),
         Expr::Group(group) => const_int(&group.expr),
+        _ => None,
+    }
+}
+
+/// The static element-count of `expr` when it is a LITERAL array (`[e0, e1, ...]`),
+/// resolving a bare binding through `let_inits` (`ys` -> its `[..]` initializer).
+/// A literal array's length IS a literal value in scope -- the cursor extent is the
+/// concrete count, not a runtime quantity. None for a non-literal-array receiver (a
+/// runtime collection / a range / `[x; N]` repeat -- whose length is not a written
+/// element list); the caller then declines (a safe under-claim, never a fake-dig).
+fn literal_array_len_with_lets(expr: &Expr, let_inits: &BTreeMap<String, &Expr>) -> Option<i64> {
+    match strip_refs_groups(expr) {
+        Expr::Array(arr) => Some(arr.elems.len() as i64),
+        Expr::Path(p) => {
+            let id = p.path.get_ident()?;
+            let init = let_inits.get(&id.to_string())?;
+            // One level of binding resolution; the resolved init must itself be a
+            // literal array (no chained `let a = b;` -- that would need the binding's
+            // own len, which `b` resolves the same way, but we keep it to one hop for
+            // determinism. A chain is uncommon for `.len()` receivers in the corpus).
+            literal_array_len_with_lets(init, let_inits)
+        }
+        _ => None,
+    }
+}
+
+/// A scope-aware EXACT integer evaluator for a fold ACCUMULATOR INITIALIZER: a
+/// literal int (`const_int`), the length of a LITERAL array (`ys.len()` ->
+/// element count, resolved through `let_inits`), or `+`/`-`/`*` arithmetic over
+/// those (`xs.len() - 1`). This is THE LAW for the cursor start: when the iterated
+/// domain is a literal array, the start position (`ys.len()`, `xs.len() - 1`) is a
+/// LITERAL value in scope -- it reduces to the concrete count, so the cursor
+/// position is statically determinable. EXACT-OR-BAIL: anything outside this closed
+/// set (a runtime `.len()`, a non-arithmetic op, a div/rem we don't const-fold here)
+/// returns None and the defolder declines -- a safe under-claim, never a fake-dig.
+fn const_int_acc_init(expr: &Expr, let_inits: &BTreeMap<String, &Expr>) -> Option<i64> {
+    if let Some(n) = const_int(expr) {
+        return Some(n);
+    }
+    match expr {
+        Expr::Paren(p) => const_int_acc_init(&p.expr, let_inits),
+        Expr::Group(g) => const_int_acc_init(&g.expr, let_inits),
+        // `<literal-array>.len()` -- the only method we resolve, and only over a
+        // literal array. `.len()` on a runtime receiver is NOT const (returns None).
+        Expr::MethodCall(m) if m.method == "len" && m.args.is_empty() => {
+            literal_array_len_with_lets(&m.receiver, let_inits)
+        }
+        // `a + b` / `a - b` / `a * b` over const-resolvable operands. Saturating
+        // semantics are not modeled here; the operands are small literal positions,
+        // and a non-arithmetic op (`/`, `%`, shift) bails.
+        Expr::Binary(b) => {
+            let lhs = const_int_acc_init(&b.left, let_inits)?;
+            let rhs = const_int_acc_init(&b.right, let_inits)?;
+            match b.op {
+                BinOp::Add(_) => lhs.checked_add(rhs),
+                BinOp::Sub(_) => lhs.checked_sub(rhs),
+                BinOp::Mul(_) => lhs.checked_mul(rhs),
+                _ => None,
+            }
+        }
         _ => None,
     }
 }

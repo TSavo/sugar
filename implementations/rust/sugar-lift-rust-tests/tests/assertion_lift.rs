@@ -7729,3 +7729,180 @@ fn t() {
     assert_eq!(out.lifted, 1, "the literal block digs: {:?}", out.warnings);
     assert_eq!(out.assertions_lifted, 1, "the in-scope literal assert lifts");
 }
+
+// ── DIG WAVE: versioned-cursor / bin-1 body-lift over LITERAL domains ─────────
+//
+// A `<lit-array>.iter().<adaptor>().fold(<init>, |acc, &x| { assert_eq!(x, ys[acc]); .. })`
+// over LITERAL arrays is the finite conjunction of the per-step claims with the
+// accumulator threaded to a concrete cursor position. THE LAW: the value at step k
+// IS in scope -- the element is the literal `xs[..]` walked by the adaptor, and the
+// indexed read `ys[acc]` (acc a literal position) resolves to the literal element.
+// The fold INIT (`ys.len()` / `xs.len() - 1`) over a literal array is itself a
+// literal cursor extent. EXACT-OR-BAIL: a runtime-indexed array or an un-nameable
+// cursor stays unclassified, never fake-dug.
+
+/// Collect every `(lhs, rhs)` int pair from the `=` atoms of a decl's flattened inv
+/// conjunction. Both sides must be int consts (a fully-dug point-wise claim).
+fn dug_eq_int_pairs(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<(i64, i64)> {
+    fn walk(f: &Formula, out: &mut Vec<(i64, i64)>) {
+        match f {
+            Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
+                if let (
+                    Term::Const { value: ConstValue::Int(a), .. },
+                    Term::Const { value: ConstValue::Int(b), .. },
+                ) = (args[0].as_ref(), args[1].as_ref())
+                {
+                    out.push((*a, *b));
+                }
+            }
+            Formula::Connective { operands, .. } => {
+                for op in operands {
+                    walk(op, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    if let Some(inv) = decl.inv.as_deref() {
+        walk(inv, &mut out);
+    }
+    out
+}
+
+#[test]
+fn cursor_fold_rfold_over_literal_array_digs_exact_elements() {
+    // POSITIVE: `.filter(even).rfold(ys.len(), |i, &x| { assert_eq!(x, ys[i-1]); i-1 })`
+    // over LITERAL xs/ys. The fold init `ys.len()` resolves to the literal extent 4;
+    // the filtered+reversed element sequence is 6,4,2,0; `ys[i-1]` (i threaded
+    // 4,3,2,1) resolves to ys[3],ys[2],ys[1],ys[0] = 6,4,2,0. Each claim must be the
+    // EXACT literal pair `(elem, elem)` -- proving the cursor offset + reversal + index
+    // resolution are all correct, not fabricated.
+    let src = r#"
+#[test]
+fn t() {
+    let xs = [0, 1, 2, 3, 4, 5, 6];
+    let ys = [0, 2, 4, 6];
+    let it = xs.iter().filter(|&&x| x % 2 == 0);
+    let i = it.rfold(ys.len(), |i, &x| { assert_eq!(x, ys[i - 1]); i - 1 });
+    assert_eq!(i, 0);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/cursor_rfold.rs");
+    // The cursor rfold (the let-init fold) must dig; the trailing `assert_eq!(i,0)` lifts too.
+    assert!(
+        !out.skip_reasons.iter().any(|r| r.contains("let-initializer")),
+        "the cursor rfold over literal arrays must dig, not stay a let-init refusal: {:?}",
+        out.skip_reasons
+    );
+    let rfold_decl = out
+        .decls
+        .iter()
+        .find(|d| d.name.contains("rfold"))
+        .expect("an rfold decl must be emitted");
+    let pairs = dug_eq_int_pairs(rfold_decl);
+    assert_eq!(
+        pairs,
+        vec![(6, 6), (4, 4), (2, 2), (0, 0)],
+        "each cursor step must dig to the EXACT (element, ys[pos]) literal pair"
+    );
+}
+
+#[test]
+fn cursor_fold_bad_twin_is_refutable_carrying_real_elements() {
+    // TEETH (break-the-twin): assert the element equals the WRONG expected value (ys
+    // all 99). The dug formula must carry the REAL element values (6,4,2,0) on the LHS
+    // and the wrong 99 on the RHS -- a z3-REFUTABLE `6 == 99` claim, NOT a vacuously
+    // satisfiable `6 == index(ys, k)`. A fake-dig would have produced the uninterpreted
+    // EUF accessor (always SAT); the real literal makes the false claim UNSAT.
+    let src = r#"
+#[test]
+fn t() {
+    let xs = [0, 2, 4, 6];
+    let ys = [99, 99, 99, 99];
+    let it = xs.iter().filter(|&&x| x % 2 == 0);
+    let i = it.rfold(ys.len(), |i, &x| { assert_eq!(x, ys[i - 1]); i - 1 });
+}
+"#;
+    let out = lift_file(&parse(src), "tests/cursor_rfold_twin.rs");
+    let rfold_decl = out
+        .decls
+        .iter()
+        .find(|d| d.name.contains("rfold"))
+        .expect("an rfold decl must be emitted");
+    let pairs = dug_eq_int_pairs(rfold_decl);
+    assert_eq!(
+        pairs,
+        vec![(6, 99), (4, 99), (2, 99), (0, 99)],
+        "the bad twin must lift to refutable (elem != 99) pairs carrying the REAL element"
+    );
+    // Every pair is a genuine contradiction (lhs != rhs) -- the obligation is UNSAT,
+    // not coalesced/vacuous. This is the discriminant of a real dig.
+    assert!(
+        pairs.iter().all(|(a, b)| a != b),
+        "every bad-twin claim must be a real (refutable) inequality: {pairs:?}"
+    );
+}
+
+#[test]
+fn cursor_fold_skip_while_deref_predicate_digs() {
+    // POSITIVE: `.skip_while(|&x| *x < 15)` -- the `*x` deref predicate const-evaluates
+    // over the literal element; the kept tail is [15,16,17,19] = ys, dug exactly.
+    let src = r#"
+#[test]
+fn t() {
+    let xs = [0, 1, 2, 3, 5, 13, 15, 16, 17, 19];
+    let ys = [15, 16, 17, 19];
+    let it = xs.iter().skip_while(|&x| *x < 15);
+    let i = it.fold(0, |i, &x| { assert_eq!(x, ys[i]); i + 1 });
+    assert_eq!(i, ys.len());
+}
+"#;
+    let out = lift_file(&parse(src), "tests/cursor_skip_while.rs");
+    assert!(
+        !out.skip_reasons.iter().any(|r| r.contains("let-initializer")),
+        "the skip_while(*x) cursor fold must dig: {:?}",
+        out.skip_reasons
+    );
+    let fold_decl = out
+        .decls
+        .iter()
+        .find(|d| d.name.contains("fold"))
+        .expect("a fold decl must be emitted");
+    let pairs = dug_eq_int_pairs(fold_decl);
+    assert_eq!(
+        pairs,
+        vec![(15, 15), (16, 16), (17, 17), (19, 19)],
+        "skip_while(*x<15) keeps [15,16,17,19] and digs each exactly"
+    );
+}
+
+#[test]
+fn cursor_fold_over_runtime_indexed_array_stays_unclassified_not_dug() {
+    // BAIL (guardrail #1): the indexed array `ys` is a RUNTIME value (a call result),
+    // not a source literal. The fold init `ys.len()` then has no literal extent and the
+    // `ys[i-1]` read cannot resolve to a literal element. This MUST stay unclassified
+    // (a safe under-claim), never be dug -- digging a runtime value is the cardinal sin.
+    let src = r#"
+fn make_ys() -> Vec<i32> { vec![0, 2, 4, 6] }
+
+#[test]
+fn t() {
+    let xs = [0, 2, 4, 6];
+    let ys = make_ys();
+    let it = xs.iter().filter(|&&x| x % 2 == 0);
+    let i = it.rfold(ys.len(), |i, &x| { assert_eq!(x, ys[i - 1]); i - 1 });
+}
+"#;
+    let out = lift_file(&parse(src), "tests/cursor_runtime_ys.rs");
+    // The runtime-init fold is NOT dug; it stays a let-init refusal (honest under-claim).
+    assert!(
+        out.skip_reasons.iter().any(|r| r.contains("let-initializer")),
+        "a runtime-indexed/runtime-extent cursor fold must stay unclassified: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        !out.decls.iter().any(|d| d.name.contains("rfold")),
+        "no rfold obligation may be minted over a runtime array (no fake-dig)"
+    );
+}
