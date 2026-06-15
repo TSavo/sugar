@@ -28,6 +28,7 @@ mod try_fold_eval;
 // `decompose_seq`). One engine: each decorator's `desugar` is `inner.desugar(ctx)?`
 // then that adaptor's exact transform.
 pub mod sugar {
+    pub mod array_repeat;
     pub mod callsite;
     pub mod closure_adaptor;
     pub mod enumerate;
@@ -12119,11 +12120,21 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
                 // A non-literal count (`[0u8; SIZE]`, `[(); SIZE - 1]`) is not a finite
                 // construction from the written literal: the universe size is symbolic
                 // (const-generic / const expr), so no aggregate term can be pinned. A SOURCE
-                // property, not a lifter gap. Typed as `Effect::ArrayRepeat`.
-                let effect = Effect::ArrayRepeat {
-                    boundary: token_key(expr),
+                // property, not a lifter gap. THIN NODE-ROUTER: the non-literal-length verdict
+                // is owned by the `ArrayRepeatSugar` node, which `Hit`s `Effect::ArrayRepeat`
+                // in its own `desugar`; this arm renders `effect.reason()` to the `Err` exactly
+                // as before (byte-identical). `decompose_array_repeat` recognizes ONLY this
+                // refuse-shape (it returns `None` for a literal-count repeat, which never
+                // reaches here -- the `let-else` succeeds and the constructive expansion below
+                // runs); on the unreachable structural backstop the term path keeps its own
+                // `unsupported term` cause.
+                return match sugar::array_repeat::decompose_array_repeat(expr) {
+                    Some(node) => match node.desugar_ctx_free() {
+                        Outcome::Hit(effect @ Effect::ArrayRepeat { .. }) => Err(effect.reason()),
+                        _ => Err(format!("unsupported term `{}`", token_key(expr))),
+                    },
+                    None => Err(format!("unsupported term `{}`", token_key(expr))),
                 };
-                return Err(effect.reason());
             };
             // Bound the expansion so a pathological literal length cannot blow up the
             // term; an over-bound repeat is named, not silently truncated.
@@ -12691,7 +12702,7 @@ fn find_const_expr(expr: &Expr) -> Option<&Expr> {
 /// The length of an array-repeat `[elem; N]` as a `usize`, iff `N` is a plain
 /// integer literal (the only finitely-constructible case). A `const`/path length
 /// (`[0; LEN]`) returns None and is refused by name upstream.
-fn repeat_count_literal(len: &Expr) -> Option<usize> {
+pub(crate) fn repeat_count_literal(len: &Expr) -> Option<usize> {
     match len {
         Expr::Lit(ExprLit {
             lit: Lit::Int(i), ..
