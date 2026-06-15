@@ -3846,12 +3846,25 @@ impl Sugar for ConditionalSugar {
         if loop_body_mutates(&self.then_stmts) || loop_body_mutates(&self.else_stmts) {
             return None;
         }
-        // The guard formula -- lifted EXACTLY as `assert!(guard)` would lift it. A
-        // guard outside the liftable predicate set (an opaque method call, a float
-        // refinement we cannot width, ...) -> bail.
-        let guard = lower_assert_condition(&self.cond, ctx.scope, &ctx.float_widths.borrow())
-            .ok()?
-            .atom;
+        // The guard formula. FIRST try const-folding a compile-time-constant guard
+        // (`!false` -> true, `!true` -> false, `cfg!(target_pointer_width=..)` ->
+        // the resolved cfg bool): such a guard's truth is fixed from the source, so
+        // it lifts as a CONSTANT antecedent `<folded> == true`. The emitted
+        // `guard_const => P` is faithful -- a true guard forces P, a false guard makes
+        // the implication trivially hold (the body never runs). This drains the
+        // const/cfg if-guard bucket (corpus: bool.rs / step.rs / fmt/mod.rs) the
+        // expression-predicate path below cannot reach (a bare bool literal / `cfg!`
+        // is not a translatable comparison). Otherwise fall back to lifting the guard
+        // EXACTLY as `assert!(guard)` would; a guard outside the liftable predicate
+        // set (an opaque method call, a float refinement we cannot width, ...) bails.
+        let guard = match const_fold_bool_guard(&self.cond, ctx.options) {
+            Some(value) => eq(bool_const(value), bool_const(true)),
+            None => {
+                lower_assert_condition(&self.cond, ctx.scope, &ctx.float_widths.borrow())
+                    .ok()?
+                    .atom
+            }
+        };
 
         let mut conjuncts: Vec<Rc<Formula>> = Vec::new();
         if then_count > 0 {
@@ -3984,6 +3997,14 @@ fn match_arm_guard(
         // wildcard would shadow later arms -- not a shape we model); the caller
         // fills its guard with the negation of all prior arm guards.
         syn::Pat::Wild(_) if is_last => Some(None),
+        // A UNIT pattern `() =>` over a `()` scrutinee is irrefutable -- it always
+        // matches (there is exactly one value of type `()`). Like `_`, it is a
+        // catch-all: only valid as the last arm (a non-final `()` would shadow later
+        // arms). The caller fills its guard with the negation of all prior guards
+        // (vacuously `true` when it is the sole arm). Corpus shape: num/wrapping.rs
+        // `match () { #[cfg(..)] () => { assert } .. }` after inactive arms are
+        // stripped -- the single surviving unit arm is unconditional.
+        syn::Pat::Tuple(t) if t.elems.is_empty() && is_last => Some(None),
         // A literal pattern: `1 =>`, `'a' =>`, `"s" =>`, `true =>`. The discriminant
         // is `scrut == <lit>`, lifted via the SAME literal translator the equality
         // assertion path uses (concrete value + width sort -- no masking).
@@ -4052,16 +4073,40 @@ fn arm_body_stmts(body: &Expr) -> Vec<Stmt> {
 /// arm is genuinely guard-dependent), a binding/or/range/struct-binding pattern,
 /// or a non-translatable scrutinee. The body lift (all-or-nothing) happens in
 /// `MatchSugar::desugar`.
-fn decompose_match(m: &syn::ExprMatch, scope: &TemporalScope) -> Option<MatchSugar> {
+fn decompose_match(
+    m: &syn::ExprMatch,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+) -> Option<MatchSugar> {
     // The scrutinee must NOT mutate / advance state and must translate to a stable
     // term (a side-effecting scrutinee is not a timeless value).
     if closure_body_is_side_effecting(&m.expr) {
         return None;
     }
+    // Arm-level `#[cfg(..)]` resolution: an arm gated by an INACTIVE cfg does not
+    // exist on this target (rustc strips it before codegen), so we drop it before
+    // building discriminant guards. A `#[cfg]` whose facts are AMBIGUOUS (no explicit
+    // target facts) -> bail (we cannot know whether the arm is present). Corpus shape:
+    // num/wrapping.rs `match () { #[cfg(target_pointer_width="32")] () => .., #[cfg(
+    // target_pointer_width="64")] () => .. }` -- exactly one arm survives, and the
+    // surviving `() => { assert }` is an unconditional body (unit pattern, no
+    // discriminant). SOUND: stripping an inactive arm matches the compiled program;
+    // an ambiguous cfg bails rather than guess.
+    let active_arms: Vec<&syn::Arm> = {
+        let mut kept = Vec::with_capacity(m.arms.len());
+        for arm in &m.arms {
+            match cfg_eval_for_attrs(&arm.attrs, options) {
+                CfgEval::Active => kept.push(arm),
+                CfgEval::Inactive(_) => {}
+                CfgEval::Ambiguous(_) => return None,
+            }
+        }
+        kept
+    };
     let scrut = translate_term_in_scope(&m.expr, scope).ok()?;
-    let last_idx = m.arms.len().checked_sub(1)?;
-    let mut arms = Vec::with_capacity(m.arms.len());
-    for (i, arm) in m.arms.iter().enumerate() {
+    let last_idx = active_arms.len().checked_sub(1)?;
+    let mut arms = Vec::with_capacity(active_arms.len());
+    for (i, arm) in active_arms.iter().enumerate() {
         // An arm guard `pat if cond =>` changes which values reach the arm; the
         // discriminant `pat` alone no longer characterizes the arm. BAIL.
         if arm.guard.is_some() {
@@ -4863,6 +4908,47 @@ fn expr_is_cfg_macro(cond: &Expr) -> bool {
     matches!(inner, Expr::Macro(m) if m.mac.path.segments.last().is_some_and(|s| s.ident == "cfg"))
 }
 
+/// Const-fold an `if`/match GUARD whose truth is fixed at compile time from the
+/// source: a bare boolean literal (`true`/`false`), a not over a literal (`!false`
+/// -> true, `!true` -> false), or a `cfg!(..)` / `!cfg!(..)` target-config predicate
+/// resolved against `options.target_cfg`. Returns `Some(bool)` for a constant guard,
+/// `None` for anything whose truth is NOT fixed from source (a runtime value, an
+/// opaque predicate, or a `cfg!` with no resolved target facts -- `Ambiguous`).
+///
+/// SOUNDNESS: the returned bool is the EXACT compile-time value of the guard, so the
+/// emitted `guard_const => P` is faithful: a `true` guard forces `P`, a `false` guard
+/// makes the implication trivially satisfied (the body never runs -- exactly the
+/// branch's semantics). DISCRIMINATION: a runtime guard folds to `None` and stays
+/// refused (`if_guard_is_runtime`); only a literal/cfg-constant guard folds here.
+fn const_fold_bool_guard(cond: &Expr, options: &LiftOptions) -> Option<bool> {
+    let (negate, inner) = match cond {
+        Expr::Unary(u) if matches!(u.op, syn::UnOp::Not(_)) => (true, u.expr.as_ref()),
+        Expr::Paren(p) => return const_fold_bool_guard(&p.expr, options),
+        Expr::Group(g) => return const_fold_bool_guard(&g.expr, options),
+        other => (false, other),
+    };
+    let base = match inner {
+        // A bare boolean literal: `true` / `false`.
+        Expr::Lit(ExprLit { lit: Lit::Bool(b), .. }) => b.value,
+        // `(.. )` / `{ .. }` wrapping a literal.
+        Expr::Paren(p) => const_fold_bool_guard(&p.expr, options)?,
+        Expr::Group(g) => const_fold_bool_guard(&g.expr, options)?,
+        // A `cfg!(..)` macro: a compile-time target predicate. Parse its predicate
+        // and resolve against the explicit target cfg facts. Ambiguous (no facts) or
+        // unparseable -> None (bail; stays unclassified, never fake-folded).
+        Expr::Macro(m) if m.mac.path.segments.last().is_some_and(|s| s.ident == "cfg") => {
+            let predicate = m.mac.parse_body::<CfgPredicate>().ok()?;
+            match cfg_eval_predicate(&predicate, options.target_cfg.as_ref()) {
+                CfgEval::Active => true,
+                CfgEval::Inactive(_) => false,
+                CfgEval::Ambiguous(_) => return None,
+            }
+        }
+        _ => return None,
+    };
+    Some(if negate { !base } else { base })
+}
+
 /// A bare expression-statement carries a RUNTIME read iff its asserted value flows through
 /// a `&mut` borrow or a mutation -- e.g. the borrow/drop-scoping tuple
 /// `(assert_matches!(*MutRefWithDrop(&mut val).0, 0), mem::take(&mut val))`. A mutably
@@ -5547,9 +5633,26 @@ fn collect_assertion_entries(
                         float_widths,
                         macro_depth,
                     );
-                    decompose_match(m, &temporal_scope).and_then(|s| s.desugar(&ctx))
+                    decompose_match(m, &temporal_scope, options).and_then(|s| s.desugar(&ctx))
                 } {
                     emit_desugared(desugared, entries, macros_lifted);
+                    // `decompose_match` dropped any arm gated by an INACTIVE `#[cfg(..)]`
+                    // (it does not exist on this target). Those arms' asserts are NOT in
+                    // the emitted conjunction, so account them HERE with a precise reason
+                    // (a cfg-inactive arm, mirroring `account_skipped_module`) -- otherwise
+                    // they fall to the generic per-fn safety net. SILENT stays 0; the
+                    // surviving (active) arm is the one that ran. Corpus: num/wrapping.rs.
+                    for arm in &m.arms {
+                        if matches!(cfg_eval_for_attrs(&arm.attrs, options), CfgEval::Inactive(_)) {
+                            let inactive = count_asserts_in_expr(&arm.body);
+                            for _ in 0..inactive {
+                                skipped.push(
+                                    "assertion in a cfg-inactive match arm (not present on this target); refused"
+                                        .to_string(),
+                                );
+                            }
+                        }
+                    }
                 } else {
                     let count: usize = m.arms.iter().map(|a| count_asserts_in_expr(&a.body)).sum();
                     for _ in 0..count {
@@ -8445,6 +8548,20 @@ fn translate_bool_assertion(
                     atom: not_(entry.atom),
                 })
             }
+        }
+        Expr::Lit(ExprLit { lit: Lit::Bool(b), .. }) => {
+            // A bare boolean LITERAL assert `assert!(true)` / `assert!(false)` is a
+            // CONSTANT claim -- the timeless value is fixed from the source literal.
+            // `assert!(true)` lifts to the tautology `true == true`; `assert!(false)`
+            // lifts to the refutable `false == true` (UNSAT, a real refutation). This
+            // is faithful and teethed: a bare `assert!(false)` is a statement that
+            // always panics, and its lift is UNSAT -- never fake-green. Corpus shape:
+            // bool.rs::test_bool_not (`if !true { assert!(false) }`).
+            Ok(assertion_entry_from_eq(
+                bool_const(b.value),
+                bool_const(true),
+                scope,
+            ))
         }
         Expr::Path(_) => {
             // A bare boolean place `assert!(flag)` asserts the boolean is true:
@@ -12483,6 +12600,16 @@ mod lifter_key_tests {
         lift_file(&file, "tests/test_src.rs")
     }
 
+    fn lift_src_cfg(src: &str) -> AdapterOutput {
+        let file: syn::File = syn::parse_str(src).expect("test src must parse");
+        let target = TargetCfg::from_rustc_cfg_facts([
+            "target_pointer_width=\"64\"",
+            "target_family=\"unix\"",
+        ])
+        .expect("cfg facts");
+        lift_file_with_options(&file, "tests/test_src.rs", &LiftOptions::for_target_cfg(target))
+    }
+
     fn contract_names(out: &AdapterOutput) -> Vec<&str> {
         out.decls.iter().map(|d| d.name.as_str()).collect()
     }
@@ -14594,48 +14721,61 @@ mod lifter_key_tests {
     }
 
     #[test]
-    fn const_if_guard_and_pure_expr_statement_stay_unclassified_not_fake_refused() {
-        // DISCRIMINATION (the fake-refuse guardrail, both directions):
+    fn const_if_guard_digs_and_pure_expr_statement_not_fake_refused() {
+        // DISCRIMINATION + DIG (the const/cfg if-guard, now lifted):
         //
-        // (1) a CONST/literal if-guard (`!false`, corpus: bool.rs::test_bool_not) and a
-        //     `cfg!(..)` if-guard (corpus: step.rs / fmt/mod.rs) are COMPUTABLE-but-
-        //     unimplemented -- they STAY the unclassified "under if context" reason, never
-        //     the runtime-if-guard refusal.
-        for guard_src in [
-            r#"
-            #[test]
-            fn t() {
-                if !false {
-                    assert!(true);
-                } else {
-                    assert!(false);
+        // (1) a CONST/literal if-guard (`!false`, corpus: bool.rs::test_bool_not)
+        //     const-folds to a constant antecedent and DIGS (`true => P`). It must
+        //     NOT stay in the "under if context" bucket and must NEVER be
+        //     runtime-refused (the fake-refuse guardrail still holds: a const guard
+        //     is not a runtime value). See assertion_lift.rs::const_if_guard_digs_*
+        //     for the full DIG + bad-twin + cfg-resolution coverage.
+        {
+            let out = lift_src(
+                r#"
+                #[test]
+                fn t() {
+                    if !false {
+                        assert!(true);
+                    } else {
+                        assert!(false);
+                    }
                 }
-            }
-            "#,
-            r#"
-            #[test]
-            fn t() {
-                if cfg!(target_pointer_width = "64") {
-                    assert_eq!(1i64, 1i64);
-                }
-            }
-            "#,
-        ] {
-            let out = lift_src(guard_src);
+                "#,
+            );
             assert!(
-                out.skip_reasons
-                    .iter()
-                    .any(|r| r.contains("under if context")),
-                "a const/cfg if-guard must STAY unclassified (not fake-refused): {:?}",
+                out.skip_reasons.iter().all(|r| !r.contains("under if context")),
+                "a const if-guard must now DIG (no longer under-if-context): {:?}",
                 out.skip_reasons
             );
             assert!(
                 out.skip_reasons
                     .iter()
                     .all(|r| !r.contains("under an if-guard over a runtime value")),
-                "a const/cfg if-guard must NOT be runtime-refused (fake-refuse): {:?}",
+                "a const if-guard must NEVER be runtime-refused (fake-refuse): {:?}",
                 out.skip_reasons
             );
+            assert_eq!(out.assertions_lifted, 2, "both branch asserts dig: {:?}", out.skip_reasons);
+        }
+        // The cfg!-guard variant resolves only against explicit target facts; with
+        // 64-bit facts it const-folds and digs (it must NOT stay under-if-context).
+        {
+            let out = lift_src_cfg(
+                r#"
+                #[test]
+                fn t() {
+                    if cfg!(target_pointer_width = "64") {
+                        assert_eq!(1i64, 1i64);
+                    }
+                }
+                "#,
+            );
+            assert!(
+                out.skip_reasons.iter().all(|r| !r.contains("under if context")),
+                "a resolved cfg! if-guard must DIG (no longer under-if-context): {:?}",
+                out.skip_reasons
+            );
+            assert_eq!(out.assertions_lifted, 1, "the cfg-active branch digs: {:?}", out.skip_reasons);
         }
 
         // (2) a PURE expr-statement (a tuple with no `&mut` / mutation) is not runtime --
