@@ -11626,3 +11626,138 @@ fn contradiction() {
         );
     }
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// IR-DOCUMENT CONTRACT (capability #1, part C): the peel must surface correctly
+// through the `lift` RPC, not just the term-lift. A fully-inlined value helper is a
+// UNIVERSE member -- the classifier must mark its locus status == "support" AND emit NO
+// standalone `out=call:h` warrant decl into `ir`. Otherwise hollow-B is merely relocated
+// from the assertion to a top-level contract (re-introducing the exact opaque `call:h`
+// symbol the peel killed), not eliminated. A BAILED helper keeps its own broad contract.
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Run the RPC binary against a temp workspace holding one fixture file, returning the
+/// `lift` result (the ir-document). Drives `initialize` + `lift` + `shutdown` over the
+/// line-delimited JSON-RPC stdin protocol the binary speaks.
+fn run_rpc_lift(rel_path: &str, source: &str) -> serde_json::Value {
+    use std::io::Write;
+    let dir = std::env::temp_dir().join(format!(
+        "sugar_rpc_irdoc_{}_{}",
+        std::process::id(),
+        rel_path.replace('/', "_")
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    let file = dir.join(rel_path);
+    std::fs::create_dir_all(file.parent().unwrap()).expect("mkdir");
+    std::fs::write(&file, source).expect("write fixture");
+
+    let req = format!(
+        "{}\n{}\n{}\n",
+        serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}),
+        serde_json::json!({"jsonrpc":"2.0","id":2,"method":"lift","params":{
+            "workspace_root": dir.to_str().unwrap(),
+            "source_paths": [rel_path],
+        }}),
+        serde_json::json!({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}}),
+    );
+
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_rust_test_assertions_rpc"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn rpc bin");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(req.as_bytes())
+        .expect("write rpc req");
+    let out = child.wait_with_output().expect("rpc bin output");
+    let _ = std::fs::remove_dir_all(&dir);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // The `lift` reply is the line carrying `"id":2`.
+    for line in stdout.lines() {
+        let v: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if v.get("id") == Some(&serde_json::json!(2)) {
+            return v["result"].clone();
+        }
+    }
+    panic!("no `lift` (id:2) reply in rpc output:\n{stdout}");
+}
+
+/// The `status` of a named fn locus in a `lift` ir-document, or None if absent.
+fn locus_status<'a>(doc: &'a serde_json::Value, fn_name: &str) -> Option<&'a str> {
+    doc["sourceAudits"]
+        .as_array()?
+        .iter()
+        .flat_map(|a| a["loci"].as_array().into_iter().flatten())
+        .find(|l| l["ast_path"] == serde_json::json!(fn_name))
+        .and_then(|l| l["status"].as_str())
+}
+
+/// True iff any `ir` entry's serialized form mentions the opaque `call:<name>` symbol --
+/// i.e. a standalone `out=call:<name>` warrant decl was minted into the ir-document.
+fn ir_mentions_call_symbol(doc: &serde_json::Value, name: &str) -> bool {
+    let needle = format!("call:{name}");
+    doc["ir"]
+        .as_array()
+        .map(|arr| arr.iter().any(|e| e.to_string().contains(&needle)))
+        .unwrap_or(false)
+}
+
+#[test]
+fn rpc_demotes_fully_inlined_value_helper_to_support_no_standalone_contract() {
+    // `fn h(n) { n + 1 }` + `assert_eq!(h(2), 3)`: h is fully peeled, so its lift-RPC
+    // locus is "support" (a universe member) and the ir-document carries NO `call:h`
+    // warrant decl -- hollow-B is eliminated, not relocated to a top-level contract.
+    let doc = run_rpc_lift(
+        "src/inline.rs",
+        r#"
+fn h(n: i32) -> i32 { n + 1 }
+
+#[test]
+fn calls_h() {
+    assert_eq!(h(2), 3);
+}
+"#,
+    );
+    assert_eq!(
+        locus_status(&doc, "h"),
+        Some("support"),
+        "a fully-inlined value helper must be classified as universe `support`: {doc:#}"
+    );
+    assert!(
+        !ir_mentions_call_symbol(&doc, "h"),
+        "no standalone `out=call:h` warrant decl may be minted (hollow-B relocated): {doc:#}"
+    );
+}
+
+#[test]
+fn rpc_bailed_helper_keeps_its_own_broad_contract() {
+    // CONTRAST: an effect-bodied helper BAILS the peel, so it is NOT a support member --
+    // it keeps its own broad-functional contract (`out=call:h`). This is the correct
+    // non-inlined disposition: we did not inline it, so it stands as its own fixedpoint.
+    let doc = run_rpc_lift(
+        "src/inline_bail.rs",
+        r#"
+fn h(n: i32) -> i32 { let mut v = Vec::new(); v.push(n); v.len() as i32 }
+
+#[test]
+fn calls_h() {
+    assert_eq!(h(2), 1);
+}
+"#,
+    );
+    assert_eq!(
+        locus_status(&doc, "h"),
+        Some("warranted"),
+        "a BAILED helper keeps its own broad-functional warrant: {doc:#}"
+    );
+    assert!(
+        ir_mentions_call_symbol(&doc, "h"),
+        "a BAILED helper's own `out=call:h` contract must remain in the ir-document: {doc:#}"
+    );
+}
