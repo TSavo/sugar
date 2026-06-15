@@ -15,7 +15,7 @@ fn to_cvalue(v: &serde_json::Value) -> Arc<CValue> {
         serde_json::Value::Bool(b) => CValue::boolean(*b),
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                CValue::integer(i)
+                CValue::integer(i128::from(i))
             } else if let Some(f) = n.as_f64() {
                 CValue::string(format!("{}", f))
             } else {

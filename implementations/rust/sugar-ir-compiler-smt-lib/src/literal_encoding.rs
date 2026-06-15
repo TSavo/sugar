@@ -95,7 +95,9 @@ pub struct LiteralConstants {
     /// Distinct concrete Int values present (from Int consts AND bool consts,
     /// the latter mapped True->1 / False->0). Used as the right-hand side of
     /// the distinctness axiom so opaque constants are kept off these values.
-    concrete_ints: BTreeSet<i64>,
+    /// i128 carrier: a wide Int const (u64::MAX .. i128 range) must enter this
+    /// set EXACTLY, or a refutation against an opaque symbol could be masked.
+    concrete_ints: BTreeSet<i128>,
 }
 
 impl LiteralConstants {
@@ -208,33 +210,22 @@ impl LiteralConstants {
             // the byte-for-byte fixture) must still be collected as a concrete
             // int, or the body would emit `1` while the `(distinct ...)` omits
             // it -> sat -> falsePass. Soundness is value-driven here.
-            Term::Const { value, .. } => match value {
-                serde_json::Value::String(s) => {
-                    // OPAQUE: hash-named uninterpreted Int const (see emit).
-                    self.opaque_symbols.insert(string_lit_name(s));
-                }
-                serde_json::Value::Bool(b) => {
-                    // bool IS int: True->1, False->0. CONCRETE Int values that
-                    // constrain the opaque set but are never themselves
-                    // asserted distinct from int (that would be Python-false).
-                    self.concrete_ints.insert(if *b { 1 } else { 0 });
-                }
-                serde_json::Value::Number(_) => {
-                    // Only integer-valued numerics enter the distinctness RHS.
+            Term::Const { value, sort } => {
+                // Concrete-int FIRST (value-driven, now also recovering a wide
+                // Int-sorted decimal string -- see `const_concrete_int`): such
+                // a value enters the distinctness RHS, never the opaque set.
+                if let Some(i) = const_concrete_int(value, sort) {
+                    // Only integer-valued numerics/bools/wide-ints enter the RHS.
                     // A non-integer float is left out (residual): asserting
                     // `strlit != 5.0` would be ill-sorted, and `5.0 != 5` is
-                    // Python-false (`5.0 == 5`). `as_i64`/`as_u64` return None
-                    // for a float-tagged JSON number, so floats fall through.
-                    if let Some(i) = value.as_i64() {
-                        self.concrete_ints.insert(i);
-                    } else if let Some(u) = value.as_u64() {
-                        if let Ok(i) = i64::try_from(u) {
-                            self.concrete_ints.insert(i);
-                        }
-                    }
+                    // Python-false (`5.0 == 5`).
+                    self.concrete_ints.insert(i);
+                } else if let serde_json::Value::String(s) = value {
+                    // OPAQUE: hash-named uninterpreted Int const (see emit).
+                    // (A wide Int-sorted string was already taken above.)
+                    self.opaque_symbols.insert(string_lit_name(s));
                 }
-                _ => {}
-            },
+            }
             Term::Ctor { name, args } => {
                 // None is an opaque literal (nullary `None` ctor). It is the
                 // only ctor treated as a literal here; all other ctors are
@@ -275,24 +266,13 @@ impl LiteralConstants {
                 }
                 self.collect_term_for_legacy_literals(body);
             }
-            Term::Const { value, .. } => match value {
-                serde_json::Value::String(s) => {
+            Term::Const { value, sort } => {
+                if let Some(i) = const_concrete_int(value, sort) {
+                    self.concrete_ints.insert(i);
+                } else if let serde_json::Value::String(s) = value {
                     self.opaque_symbols.insert(string_lit_name(s));
                 }
-                serde_json::Value::Bool(b) => {
-                    self.concrete_ints.insert(if *b { 1 } else { 0 });
-                }
-                serde_json::Value::Number(_) => {
-                    if let Some(i) = value.as_i64() {
-                        self.concrete_ints.insert(i);
-                    } else if let Some(u) = value.as_u64() {
-                        if let Ok(i) = i64::try_from(u) {
-                            self.concrete_ints.insert(i);
-                        }
-                    }
-                }
-                _ => {}
-            },
+            }
             Term::Var { .. } => {}
         }
     }
@@ -499,13 +479,40 @@ fn is_string_theory_atomic_predicate(name: &str) -> bool {
     )
 }
 
-/// Render an i64 as an SMT-LIB v2.6 numeral. Non-negative -> bare digits;
-/// negative -> `(- n)` (SMT-LIB has no negative numeral literal token).
-fn render_int(i: i64) -> String {
+/// Render an i128 as an SMT-LIB v2.6 numeral. Non-negative -> bare digits;
+/// negative -> `(- n)` (SMT-LIB has no negative numeral literal token). The
+/// i128 carrier holds wide Int consts (u64::MAX .. i128 range) exactly.
+fn render_int(i: i128) -> String {
     if i < 0 {
         format!("(- {})", i.unsigned_abs())
     } else {
         i.to_string()
+    }
+}
+
+/// Read a const term's EXACT concrete integer value, if it has one.
+///
+/// Returns `Some(i128)` for: a JSON Number within i64/u64 range; a bool
+/// (True->1, False->0, since bool IS int); and a wide `Int`-sorted const
+/// carried as a decimal STRING (value > u64::MAX, within i128 -- see
+/// `sugar_ir_symbolic::convert::int_to_json`). Returns `None` for a genuine
+/// opaque string literal (a String-sorted const), `None`, and non-integer
+/// numerics (floats). The distinctness-target set is value-driven, so a wide
+/// Int MUST be recovered here or a refutation against an opaque symbol could
+/// be masked (a falsePass).
+fn const_concrete_int(value: &serde_json::Value, sort: &sugar_ir_types::Sort) -> Option<i128> {
+    let sort_is_int =
+        matches!(sort, sugar_ir_types::Sort::Primitive { name } if name == "Int");
+    match value {
+        serde_json::Value::Bool(b) => Some(if *b { 1 } else { 0 }),
+        serde_json::Value::Number(_) => value
+            .as_i64()
+            .map(i128::from)
+            .or_else(|| value.as_u64().map(i128::from)),
+        // A wide Int is a decimal string under an Int sort; a String-sorted
+        // const of the same shape is an opaque literal, NOT an integer.
+        serde_json::Value::String(s) if sort_is_int => s.parse::<i128>().ok(),
+        _ => None,
     }
 }
 

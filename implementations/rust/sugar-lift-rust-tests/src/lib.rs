@@ -2382,8 +2382,14 @@ fn resolve_index_in_term(term: &Rc<Term>, arrays: &BTreeMap<String, Vec<Rc<Term>
             let idx_k = term_as_int(&idx).or_else(|| const_fold_int_term(&idx));
             if let (Term::Var { name: arr }, Some(k)) = (base.as_ref(), idx_k) {
                 if let Some(elems) = arrays.get(arr) {
-                    if k >= 0 && (k as usize) < elems.len() {
-                        return elems[k as usize].clone();
+                    // `usize::try_from` (NOT `as usize`): a wide i128 index must
+                    // never wrap into a spuriously in-range slot -- that would
+                    // resolve to the WRONG element (a fake-dig). Out of usize
+                    // range -> leave the index symbolic.
+                    if let Ok(ki) = usize::try_from(k) {
+                        if ki < elems.len() {
+                            return elems[ki].clone();
+                        }
                     }
                 }
             }
@@ -2404,7 +2410,7 @@ fn resolve_index_in_term(term: &Rc<Term>, arrays: &BTreeMap<String, Vec<Rc<Term>
 /// literal value. Used to reduce a threaded index like `sub(num(4), num(1))` to `3`
 /// before an `index` resolution. None for any non-const / non-arithmetic term -- the
 /// `index` then stays the EUF accessor (sound under-claim).
-fn const_fold_int_term(term: &Rc<Term>) -> Option<i64> {
+fn const_fold_int_term(term: &Rc<Term>) -> Option<i128> {
     if let Some(n) = term_as_int(term) {
         return Some(n);
     }
@@ -2613,10 +2619,20 @@ fn lift_bounded_forall(
             } else {
                 term_as_int(&start)
                     .zip(term_as_int(&end))
-                    .map(|(s, e)| if inclusive { (s, e + 1) } else { (s, e) })
+                    // `checked_add`: an inclusive end at i128::MAX would
+                    // overflow; bail (None) rather than wrap.
+                    .and_then(|(s, e)| {
+                        if inclusive {
+                            e.checked_add(1).map(|hi| (s, hi))
+                        } else {
+                            Some((s, e))
+                        }
+                    })
             };
             match lit_bounds {
-                Some((lo, hi)) if hi > lo && (hi - lo) <= SUGAR_SEQ_CAP => {
+                Some((lo, hi)) if hi > lo && (hi - lo) <= i128::from(SUGAR_SEQ_CAP) => {
+                    // The cap gate bounds `hi - lo` to <= 4096, so `as usize`
+                    // below is in range.
                     let mut instances = Vec::with_capacity((hi - lo) as usize);
                     for k in lo..hi {
                         let mut inst = subst_var_in_formula(&body_conj, var, &num(k));
@@ -2807,7 +2823,9 @@ fn peel_fold_adaptors<'a>(
 /// closed set, `const_eval` returns None and the whole defold bails.
 #[derive(Clone, Debug, PartialEq)]
 enum ConstVal {
-    Int(i64),
+    // i128 carrier -- same widening as the lifted-term Int const: a wide
+    // literal const-folds to its EXACT integer value, never a truncation.
+    Int(i128),
     Bool(bool),
     Char(char),
     Tuple(Vec<ConstVal>),
@@ -2828,7 +2846,7 @@ impl ConstVal {
         };
         syn::parse_str::<Expr>(&s).ok()
     }
-    fn as_int(&self) -> Option<i64> {
+    fn as_int(&self) -> Option<i128> {
         match self {
             ConstVal::Int(n) => Some(*n),
             _ => None,
@@ -2854,7 +2872,7 @@ fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal>
             Lit::Int(i) => parse_int_lit(i).ok().map(ConstVal::Int),
             Lit::Bool(b) => Some(ConstVal::Bool(b.value)),
             Lit::Char(c) => Some(ConstVal::Char(c.value())),
-            Lit::Byte(b) => Some(ConstVal::Int(b.value() as i64)),
+            Lit::Byte(b) => Some(ConstVal::Int(i128::from(b.value()))),
             // float / str / bytestr: outside the certain set -> bail.
             _ => None,
         },
@@ -2893,7 +2911,13 @@ fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal>
                 syn::Type::Path(tp) => {
                     let name = tp.path.segments.last()?.ident.to_string();
                     match name.as_str() {
-                        "i64" | "isize" | "i128" => Some(ConstVal::Int(n)),
+                        // `as i128` is identity for any value the carrier holds.
+                        "i128" => Some(ConstVal::Int(n)),
+                        // `as i64` / `as isize` is identity ONLY when the value fits the
+                        // target; a wide value would TRUNCATE (change value) -> bail
+                        // (EXACT-OR-BAIL; the cast comment's identity-preservation is now
+                        // enforced, not assumed).
+                        "i64" | "isize" => i64::try_from(n).ok().map(|v| ConstVal::Int(i128::from(v))),
                         _ => None,
                     }
                 }
@@ -2920,18 +2944,31 @@ fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal>
         Expr::Binary(b) => {
             let l = const_eval(&b.left, env)?;
             let r = const_eval(&b.right, env)?;
+            // ARITHMETIC RUNS IN THE BOUNDED i64 REGIME. The i128 carrier exists to
+            // hold a wide LITERAL exactly (the wide-int DIG), NOT to relax rust's
+            // width-checked arithmetic: `i64::MAX * 1000` PANICS in rustc debug, so a
+            // const-fold that silently computed it in i128 would model a computation
+            // the vendor's test never performs -- a fake-dig. We do not track each
+            // operand's source width post-erasure, so the canonical regime is i64:
+            // an operand or result outside i64 bails (None). A wide literal entering
+            // defold arithmetic therefore declines -- a safe under-claim, never a
+            // wrong value. (Direct wide-literal assertions still lift via
+            // `translate_lit`; only the defolder's closure arithmetic is bounded.)
+            let as_i64 = |v: &ConstVal| -> Option<i64> { i64::try_from(v.as_int()?).ok() };
+            let int = |n: i64| ConstVal::Int(i128::from(n));
             match b.op {
-                // integer arithmetic with overflow / div-zero guards (bail on either).
-                BinOp::Add(_) => l.as_int()?.checked_add(r.as_int()?).map(ConstVal::Int),
-                BinOp::Sub(_) => l.as_int()?.checked_sub(r.as_int()?).map(ConstVal::Int),
-                BinOp::Mul(_) => l.as_int()?.checked_mul(r.as_int()?).map(ConstVal::Int),
+                // integer arithmetic with overflow / div-zero guards (bail on either),
+                // checked at i64 width to match rustc's debug-mode overflow panic.
+                BinOp::Add(_) => as_i64(&l)?.checked_add(as_i64(&r)?).map(int),
+                BinOp::Sub(_) => as_i64(&l)?.checked_sub(as_i64(&r)?).map(int),
+                BinOp::Mul(_) => as_i64(&l)?.checked_mul(as_i64(&r)?).map(int),
                 BinOp::Div(_) => {
-                    let (a, d) = (l.as_int()?, r.as_int()?);
-                    if d == 0 { None } else { a.checked_div(d).map(ConstVal::Int) }
+                    let (a, d) = (as_i64(&l)?, as_i64(&r)?);
+                    if d == 0 { None } else { a.checked_div(d).map(int) }
                 }
                 BinOp::Rem(_) => {
-                    let (a, d) = (l.as_int()?, r.as_int()?);
-                    if d == 0 { None } else { a.checked_rem(d).map(ConstVal::Int) }
+                    let (a, d) = (as_i64(&l)?, as_i64(&r)?);
+                    if d == 0 { None } else { a.checked_rem(d).map(int) }
                 }
                 // comparisons -> Bool (ints or chars).
                 BinOp::Eq(_) => Some(ConstVal::Bool(l == r)),
@@ -2999,9 +3036,17 @@ fn closure_single_param_ident(pat: &Pat) -> Option<String> {
 /// (bail the defold -- a non-const-foldable accumulator is honest unclassified, never a
 /// fake-dig).
 fn const_fold_acc_update(tail: &Expr, env: &BTreeMap<String, i64>) -> Option<i64> {
-    let cv_env: BTreeMap<String, ConstVal> =
-        env.iter().map(|(k, v)| (k.clone(), ConstVal::Int(*v))).collect();
-    const_eval(tail, &cv_env)?.as_int()
+    let cv_env: BTreeMap<String, ConstVal> = env
+        .iter()
+        .map(|(k, v)| (k.clone(), ConstVal::Int(i128::from(*v))))
+        .collect();
+    // The accumulator stays in the bounded i64 cursor regime: a folded value
+    // beyond i64 is not a representable accumulator position -> bail
+    // (EXACT-OR-BAIL; a truncation would be a fake-dig), mirroring
+    // `const_int_acc_init`.
+    const_eval(tail, &cv_env)?
+        .as_int()
+        .and_then(|n| i64::try_from(n).ok())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3654,8 +3699,11 @@ impl Sugar for LiteralSugar {
                 let (Some(s), Some(e)) = (term_as_int(&start), term_as_int(&end)) else {
                     return None;
                 };
-                let e = if inclusive { e + 1 } else { e };
-                if e < s || e - s > SUGAR_SEQ_CAP {
+                // `checked_add`: an inclusive end at i128::MAX would overflow.
+                let Some(e) = (if inclusive { e.checked_add(1) } else { Some(e) }) else {
+                    return None;
+                };
+                if e < s || e - s > i128::from(SUGAR_SEQ_CAP) {
                     return None;
                 }
                 (s..e)
@@ -3822,14 +3870,22 @@ impl Sugar for FoldSugar {
         let mut instances = Vec::with_capacity(seq.len());
         let mut acc = self.acc_0;
         for elem in &seq {
-            let mut inst = subst_var_in_formula(&body_conj, &self.acc_var, &num(acc));
+            let mut inst = subst_var_in_formula(&body_conj, &self.acc_var, &num(i128::from(acc)));
             let mut tail_env: BTreeMap<String, i64> = BTreeMap::new();
             tail_env.insert(self.acc_var.clone(), acc);
             match &self.item_binder {
                 FoldItemBinder::Whole(var) => {
                     let t = translate_term_in_scope(&elem.expr, ctx.scope).ok()?;
                     inst = subst_var_in_formula(&inst, var, &t);
-                    if let Some(n) = elem.value.as_ref().and_then(ConstVal::as_int) {
+                    // The fold item enters the bounded i64 accumulator env; a wide
+                    // element value is not a representable cursor input -> bail
+                    // (EXACT-OR-BAIL).
+                    if let Some(n) = elem
+                        .value
+                        .as_ref()
+                        .and_then(ConstVal::as_int)
+                        .and_then(|n| i64::try_from(n).ok())
+                    {
                         tail_env.insert(var.clone(), n);
                     }
                 }
@@ -3843,10 +3899,18 @@ impl Sugar for FoldSugar {
                     inst = subst_var_in_formula(&inst, c0, &t0);
                     inst = subst_var_in_formula(&inst, c1, &t1);
                     if let Some(ConstVal::Tuple(parts)) = &elem.value {
-                        if let Some(n) = parts.first().and_then(ConstVal::as_int) {
+                        if let Some(n) = parts
+                            .first()
+                            .and_then(ConstVal::as_int)
+                            .and_then(|n| i64::try_from(n).ok())
+                        {
                             tail_env.insert(c0.clone(), n);
                         }
-                        if let Some(n) = parts.get(1).and_then(ConstVal::as_int) {
+                        if let Some(n) = parts
+                            .get(1)
+                            .and_then(ConstVal::as_int)
+                            .and_then(|n| i64::try_from(n).ok())
+                        {
                             tail_env.insert(c1.clone(), n);
                         }
                     }
@@ -4705,7 +4769,7 @@ fn strip_refs_groups(expr: &Expr) -> &Expr {
 
 /// Read a Term as an i64 when it is a literal integer constant (`num`), for closed
 /// range enumeration in the defolder. None for any non-literal-int term.
-fn term_as_int(t: &Rc<Term>) -> Option<i64> {
+fn term_as_int(t: &Rc<Term>) -> Option<i128> {
     match t.as_ref() {
         Term::Const {
             value: ConstValue::Int(n),
@@ -8597,7 +8661,7 @@ fn assertion_entries_from_ascii_macro(
             });
         }
         for byte in value.as_bytes() {
-            let atom = ascii_byte_class_atom(&predicate, num(i64::from(*byte)))
+            let atom = ascii_byte_class_atom(&predicate, num(i128::from(*byte)))
                 .ok_or_else(|| unsupported_ascii_macro_predicate(&predicate))?;
             entries.push(AssertionEntry {
                 name: None,
@@ -9730,7 +9794,7 @@ fn translate_string_predicate_assertion(
                     };
                     let atoms = bytes
                         .into_iter()
-                        .map(|b| byte_is_ascii_formula(num(i64::from(b))))
+                        .map(|b| byte_is_ascii_formula(num(i128::from(b))))
                         .collect::<Vec<_>>();
                     let atom = if atoms.is_empty() {
                         eq(bool_const(true), bool_const(true))
@@ -10070,7 +10134,7 @@ fn ascii_byte_class_atom(method: &str, byte: Rc<Term>) -> Option<Rc<Formula>> {
         ])),
         "is_ascii_graphic" => Some(byte_range(byte, b'!', b'~')),
         "is_ascii_whitespace" => Some(or_(vec![
-            eq(byte.clone(), num(i64::from(b' '))),
+            eq(byte.clone(), num(i128::from(b' '))),
             eq(byte.clone(), num(9)),
             eq(byte.clone(), num(10)),
             eq(byte.clone(), num(12)),
@@ -10090,8 +10154,8 @@ fn byte_is_ascii_formula(byte: Rc<Term>) -> Rc<Formula> {
 
 fn byte_range(byte: Rc<Term>, low: u8, high: u8) -> Rc<Formula> {
     and_(vec![
-        gte(byte.clone(), num(i64::from(low))),
-        lte(byte, num(i64::from(high))),
+        gte(byte.clone(), num(i128::from(low))),
+        lte(byte, num(i128::from(high))),
     ])
 }
 
@@ -10202,9 +10266,11 @@ pub fn warrant_conjoined_with_vendor(
     bindings: &[(&str, i64)],
     asserted_out: i64,
 ) -> ContractDecl {
-    let term_bindings: Vec<(&str, Rc<Term>)> =
-        bindings.iter().map(|(n, v)| (*n, num(*v))).collect();
-    warrant_conjoined_with_vendor_terms(decl, &term_bindings, num(asserted_out))
+    let term_bindings: Vec<(&str, Rc<Term>)> = bindings
+        .iter()
+        .map(|(n, v)| (*n, num(i128::from(*v))))
+        .collect();
+    warrant_conjoined_with_vendor_terms(decl, &term_bindings, num(i128::from(asserted_out)))
 }
 
 /// General form: instantiate the body warrant at arbitrary scalar argument TERMS
@@ -11013,7 +11079,7 @@ fn emit_slice_pattern_membership(
             Pat::Lit(p) => {
                 let elem_term = Rc::new(Term::Ctor {
                     name: "index".to_string(),
-                    args: vec![scrut.clone(), num(i as i64)],
+                    args: vec![scrut.clone(), num(i as i128)],
                 });
                 conj.push(eq(elem_term, lit_membership_term(&p.lit)?));
             }
@@ -11092,16 +11158,18 @@ fn lit_membership_term(lit: &Lit) -> Option<Rc<Term>> {
 }
 
 /// The integer code point of a char / byte / integer literal pattern bound.
-fn lit_codepoint(lit: &Lit) -> Option<i64> {
+/// i128 carrier: a wide integer pattern (`match x { 0xffff_..._u64 => .. }`)
+/// folds to its EXACT value via `parse_int_lit`, never a truncation.
+fn lit_codepoint(lit: &Lit) -> Option<i128> {
     match lit {
-        Lit::Char(c) => Some(i64::from(u32::from(c.value()))),
-        Lit::Byte(b) => Some(i64::from(b.value())),
-        Lit::Int(i) => i.base10_parse::<i64>().ok(),
+        Lit::Char(c) => Some(i128::from(u32::from(c.value()))),
+        Lit::Byte(b) => Some(i128::from(b.value())),
+        Lit::Int(i) => parse_int_lit(i).ok(),
         _ => None,
     }
 }
 
-fn expr_codepoint(expr: &Expr) -> Option<i64> {
+fn expr_codepoint(expr: &Expr) -> Option<i128> {
     match expr {
         Expr::Lit(ExprLit { lit, .. }) => lit_codepoint(lit),
         Expr::Paren(p) => expr_codepoint(&p.expr),
@@ -11126,7 +11194,7 @@ fn literal_iterator_elements(expr: &Expr) -> Result<Option<(IteratorKind, Vec<Rc
             let Some(bytes) = literal_byte_string_value(&call.receiver) else {
                 return Ok(None);
             };
-            let elements = bytes.into_iter().map(|b| num(i64::from(b))).collect();
+            let elements = bytes.into_iter().map(|b| num(i128::from(b))).collect();
             Ok(Some((IteratorKind::Bytes, elements)))
         }
         Expr::Paren(paren) => literal_iterator_elements(&paren.expr),
@@ -12394,7 +12462,7 @@ fn translate_lit(lit: &ExprLit) -> Result<Rc<Term>, String> {
         // byte operand (`assert_eq!(byte, b'0')`) is liftable and `b'0' != 49` is
         // REFUTED via the existing int path — no new refutation logic, no masking.
         Lit::Byte(b) => Ok(Rc::new(Term::Const {
-            value: ConstValue::Int(b.value() as i64),
+            value: ConstValue::Int(i128::from(b.value())),
             sort: sugar_ir_symbolic::Sort {
                 name: "u8".to_string(),
             },
@@ -12453,7 +12521,13 @@ fn bytes_literal_term(expr: &Expr) -> Option<Rc<Term>> {
     }
 }
 
-fn parse_int_lit(lit: &syn::LitInt) -> Result<i64, String> {
+fn parse_int_lit(lit: &syn::LitInt) -> Result<i128, String> {
+    // i128 carrier: a wide Rust literal (u64::MAX, u128 within i128 range,
+    // large isize) is an EXACT mathematical-Int constant -- the FOL/SMT `Int`
+    // sort is unbounded, so there is no "too large" for anything i128 can
+    // hold. A literal beyond i128 range (e.g. u128::MAX) still fails here and
+    // is refused upstream ("number too large") -- an honest, EXACT-OR-BAIL
+    // refusal, never a silent truncation.
     let mut text = lit.to_string();
     let suffix = lit.suffix();
     if !suffix.is_empty() && text.ends_with(suffix) {
@@ -12470,7 +12544,7 @@ fn parse_int_lit(lit: &syn::LitInt) -> Result<i64, String> {
         } else {
             (10, text.as_str())
         };
-    i64::from_str_radix(digits, radix).map_err(|e| format!("int literal `{}`: {e}", lit))
+    i128::from_str_radix(digits, radix).map_err(|e| format!("int literal `{}`: {e}", lit))
 }
 
 fn string_or_char_literal_term(expr: &Expr) -> Option<Rc<Term>> {
@@ -12621,7 +12695,7 @@ fn real_literal_is_zero(text: &str) -> bool {
     saw_digit
 }
 
-fn const_int(expr: &Expr) -> Option<i64> {
+fn const_int(expr: &Expr) -> Option<i128> {
     match expr {
         Expr::Lit(ExprLit {
             lit: Lit::Int(i), ..
@@ -12665,7 +12739,10 @@ fn literal_array_len_with_lets(expr: &Expr, let_inits: &BTreeMap<String, &Expr>)
 /// returns None and the defolder declines -- a safe under-claim, never a fake-dig.
 fn const_int_acc_init(expr: &Expr, let_inits: &BTreeMap<String, &Expr>) -> Option<i64> {
     if let Some(n) = const_int(expr) {
-        return Some(n);
+        // The accumulator start is a bounded cursor position (i64/usize
+        // domain). A wide literal here is not a representable cursor start ->
+        // bail (EXACT-OR-BAIL; a truncation would be a fake-dig).
+        return i64::try_from(n).ok();
     }
     match expr {
         Expr::Paren(p) => const_int_acc_init(&p.expr, let_inits),

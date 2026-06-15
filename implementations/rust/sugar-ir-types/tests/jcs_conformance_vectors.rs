@@ -25,7 +25,7 @@ fn v1_large_integer_above_js_safe_integer() {
     // This value exceeds Number.MAX_SAFE_INTEGER (9007199254740992 = 2^53).
     // A JS JSON.stringify() silently truncates it to ...000; our encoder must
     // emit all 19 decimal digits verbatim.
-    let v = Value::object([("large_integer", Value::integer(4614253070214989087_i64))]);
+    let v = Value::object([("large_integer", Value::integer(4614253070214989087_i128))]);
     let jcs = encode_jcs(&v);
     assert_eq!(jcs, r#"{"large_integer":4614253070214989087}"#);
 }
@@ -97,7 +97,7 @@ fn v4_nested_object_mixed_types() {
 fn v5_i64_max_integer() {
     // i64::MAX = 9223372036854775807 (2^63 - 1). The encoder must serialize
     // it as all 19 decimal digits with no truncation or overflow.
-    let v = Value::object([("big", Value::integer(i64::MAX))]);
+    let v = Value::object([("big", Value::integer(i128::from(i64::MAX)))]);
     let jcs = encode_jcs(&v);
     assert_eq!(jcs, r#"{"big":9223372036854775807}"#);
 }

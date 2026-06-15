@@ -390,7 +390,7 @@ fn authoring_to_value(a: &Authoring) -> Arc<Value> {
                 ("promptCid".into(), Value::string(prompt_cid.clone())),
                 (
                     "confidence".into(),
-                    Value::integer((confidence * 1000.0) as i64),
+                    Value::integer((confidence * 1000.0) as i128),
                 ),
             ];
             if let Some(r) = rationale {
@@ -761,12 +761,12 @@ fn json_to_cvalue(v: &JsonValue) -> Arc<Value> {
         JsonValue::Bool(b) => Value::boolean(*b),
         JsonValue::Number(n) => {
             if let Some(i) = n.as_i64() {
-                Value::integer(i)
+                Value::integer(i128::from(i))
             } else if let Some(u) = n.as_u64() {
-                Value::integer(u as i64)
+                Value::integer(i128::from(u))
             } else if let Some(f) = n.as_f64() {
                 if f == (f as i64 as f64) {
-                    Value::integer(f as i64)
+                    Value::integer(i128::from(f as i64))
                 } else {
                     Value::string(f.to_string())
                 }
@@ -1184,7 +1184,7 @@ pub fn mint_bridge(args: &MintBridgeArgs) -> MintedEnvelope {
             cs_fields.push(("file", Value::string(f.clone())));
         }
         if let Some(line) = cs.line {
-            cs_fields.push(("start_line", Value::integer(line)));
+            cs_fields.push(("start_line", Value::integer(i128::from(line))));
         }
         if let Some(ref formal_actuals) = cs.formal_actuals {
             cs_fields.push(("formalActuals", formal_actuals.clone()));
@@ -1320,7 +1320,7 @@ pub fn mint_implication(args: &MintImplicationArgs) -> MintedEnvelope {
         ("producedBy".into(), Value::string(args.produced_by.clone())),
         ("producedAt".into(), Value::string(args.produced_at.clone())),
         ("prover".into(), Value::string(args.prover.clone())),
-        ("proverRunMs".into(), Value::integer(args.prover_run_ms)),
+        ("proverRunMs".into(), Value::integer(i128::from(args.prover_run_ms))),
     ];
     if !args.smt_lib_input.is_empty() {
         metadata_kvs.push((
@@ -1462,7 +1462,7 @@ fn effect_site_annotation_content_cid(args: &MintEffectSiteAnnotationArgs, line:
     let content = Value::object([
         ("effectKind", Value::string(args.effect_kind.clone())),
         ("file", Value::string(args.file.clone())),
-        ("line", Value::integer(line)),
+        ("line", Value::integer(i128::from(line))),
         ("callee", Value::string(args.callee.clone())),
         ("status", Value::string(args.status.clone())),
         ("category", Value::string(args.category.clone())),
@@ -1532,7 +1532,7 @@ pub fn mint_effect_site_annotation(
         vec![
             ("effectKind".into(), Value::string(args.effect_kind.clone())),
             ("file".into(), Value::string(args.file.clone())),
-            ("line".into(), Value::integer(line)),
+            ("line".into(), Value::integer(i128::from(line))),
             ("callee".into(), Value::string(args.callee.clone())),
             ("status".into(), Value::string(args.status.clone())),
             ("category".into(), Value::string(args.category.clone())),

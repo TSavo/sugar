@@ -31,9 +31,12 @@ fn encode_value(v: &Value, out: &mut String) {
         Value::Bool(true) => out.push_str("true"),
         Value::Bool(false) => out.push_str("false"),
         Value::Integer(n) => {
-            // i64 toString. Matches ECMA-262 ToString applied to a finite
-            // integer. We do not produce floats from the kit, so this
-            // covers all integer cases.
+            // i128 toString -- plain decimal digits, no exponent/grouping.
+            // Matches ECMA-262 ToString applied to a finite integer and
+            // RFC 8785 integer serialization for the full i128 range. We do
+            // not produce floats from the kit, so this covers all integer
+            // cases; a small value's bytes are identical to the former i64
+            // form (CID conserved).
             out.push_str(&n.to_string());
         }
         Value::String(s) => encode_string(s, out),

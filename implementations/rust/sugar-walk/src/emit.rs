@@ -2585,7 +2585,7 @@ fn build_bundle_value(s: &ShadowSource) -> Arc<Value> {
                 ("memento", edge_value),
                 ("arrivalCid", Value::string(arrival.cid.clone())),
                 ("calleeName", Value::string(arrival.callee_name.clone())),
-                ("sourceIndex", Value::integer(arrival.source_index as i64)),
+                ("sourceIndex", Value::integer(arrival.source_index as i128)),
             ])
         })
         .collect();
@@ -2612,7 +2612,7 @@ fn build_bundle_value(s: &ShadowSource) -> Arc<Value> {
         ("kind", Value::string("walk-bundle")),
         ("shadowSourceCid", Value::string(s.cid.clone())),
         ("fnName", Value::string(s.fn_name.clone())),
-        ("slotCount", Value::integer(s.slots.len() as i64)),
+        ("slotCount", Value::integer(s.slots.len() as i128)),
         ("arrivals", Value::array(arrivals)),
         ("composedChain", composed_chain_value),
     ])

@@ -203,10 +203,9 @@ fn json_to_canonical(value: &JsonValue) -> Arc<CanonValue> {
         JsonValue::Bool(b) => CanonValue::boolean(*b),
         JsonValue::Number(n) => {
             if let Some(i) = n.as_i64() {
-                CanonValue::integer(i)
+                CanonValue::integer(i128::from(i))
             } else if let Some(u) = n.as_u64() {
-                let i = i64::try_from(u).expect("fixture integer fits i64");
-                CanonValue::integer(i)
+                CanonValue::integer(i128::from(u))
             } else {
                 panic!("fixture numbers must be integers")
             }

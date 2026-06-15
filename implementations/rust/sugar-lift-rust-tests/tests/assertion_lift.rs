@@ -12,7 +12,7 @@ fn inv_operands(decl: &sugar_ir_symbolic::ContractDecl) -> &[std::rc::Rc<Formula
     }
 }
 
-fn assert_eq_atom(formula: &Formula, expected_rhs: i64) {
+fn assert_eq_atom(formula: &Formula, expected_rhs: i128) {
     match formula {
         Formula::Atomic { name, args } => {
             assert_eq!(name, "=");
@@ -31,9 +31,9 @@ fn assert_eq_atom(formula: &Formula, expected_rhs: i64) {
 
 fn assert_int_call_eq_atom(
     formula: &Formula,
-    expected_lhs: i64,
+    expected_lhs: i128,
     expected_call: &str,
-    expected_arg: i64,
+    expected_arg: i128,
 ) {
     match formula {
         Formula::Atomic { name, args } => {
@@ -65,7 +65,7 @@ fn assert_int_call_eq_atom(
     }
 }
 
-fn assert_int_zero_arg_call_eq_atom(formula: &Formula, expected_call: &str, expected_rhs: i64) {
+fn assert_int_zero_arg_call_eq_atom(formula: &Formula, expected_call: &str, expected_rhs: i128) {
     match formula {
         Formula::Atomic { name, args } => {
             assert_eq!(name, "=");
@@ -166,7 +166,7 @@ fn assert_int_call_cmp_atom(
     formula: &Formula,
     expected_op: &str,
     expected_call: &str,
-    expected_rhs: i64,
+    expected_rhs: i128,
 ) {
     match formula {
         Formula::Atomic { name, args } => {
@@ -192,8 +192,8 @@ fn assert_method_call_eq_compound_rhs(
     formula: &Formula,
     expected_call: &str,
     expected_rhs_ctor: &str,
-    expected_lhs: i64,
-    expected_rhs: i64,
+    expected_lhs: i128,
+    expected_rhs: i128,
 ) {
     match formula {
         Formula::Atomic { name, args } => {
@@ -255,7 +255,7 @@ fn assert_method_len_cmp_atom(
     formula: &Formula,
     expected_op: &str,
     expected_lhs: &str,
-    expected_rhs: i64,
+    expected_rhs: i128,
 ) {
     match formula {
         Formula::Atomic { name, args } => {
@@ -341,7 +341,7 @@ fn assert_type_id_cmp_atom(
 }
 
 enum ExpectedScalar {
-    Int(i64),
+    Int(i128),
     Bool(bool),
 }
 
@@ -372,8 +372,8 @@ fn assert_scalar_const(term: &Term, expected: ExpectedScalar) {
 fn assert_const_index_eq(
     formula: &Formula,
     expected_base: &str,
-    expected_index: i64,
-    expected: i64,
+    expected_index: i128,
+    expected: i128,
 ) {
     match formula {
         Formula::Atomic { name, args } => {
@@ -484,7 +484,7 @@ fn formula_count_connective_kind(formula: &Formula, expected_kind: &str) -> usiz
     }
 }
 
-fn assert_await_call_eq_atom(formula: &Formula, expected_call: &str, expected_rhs: i64) {
+fn assert_await_call_eq_atom(formula: &Formula, expected_call: &str, expected_rhs: i128) {
     match formula {
         Formula::Atomic { name, args } => {
             assert_eq!(name, "=");
@@ -574,7 +574,7 @@ fn scalar_contradiction() {
 // the SAME concrete-Int-with-u8-sort form `48u8` lifts to — value-faithful, and
 // distinct byte literals must stay distinct so a false twin cannot coalesce into a
 // vacuous discharge (the masked-contradiction failure mode the sweep can't catch).
-fn byte_literal_eq_atom_value_and_sort(formula: &Formula) -> (i64, String) {
+fn byte_literal_eq_atom_value_and_sort(formula: &Formula) -> (i128, String) {
     match formula {
         Formula::Atomic { name, args } => {
             assert_eq!(name, "=");
@@ -636,6 +636,108 @@ fn byte_contradiction() {
     assert_eq!(v0, 48);
     assert_eq!(v1, 49);
     assert_ne!(v0, v1, "distinct byte literals must not coalesce");
+}
+
+#[test]
+fn wide_int_literal_lifts_to_exact_value() {
+    // DIG: a wide Rust literal beyond i64::MAX is a VALID literal and an EXACT
+    // mathematical-Int constant (the FOL/SMT `Int` sort is unbounded). It must
+    // lift to its EXACT i128 value, never refuse with "number too large".
+    //   u64::MAX                 = 18446744073709551615  (0xffffffffffffffff)
+    //   0xfedc_ba98_7654_3217    = 18364758544493064727  (a wrapping.rs fixture)
+    //   u64::MAX + 11            = 18446744073709551626  (a step.rs 0x1_…_000a)
+    //   147808829414345923316083210206383297601  (an int_log.rs u128, < i128::MAX)
+    let src = r#"
+fn k() -> u128 { 0 }
+
+#[test]
+fn wide() {
+    assert_eq!(k(), 0xffffffffffffffff);
+    assert_eq!(k(), 0xfedc_ba98_7654_3217);
+    assert_eq!(k(), 0x1_0000_0000_0000_000a_u128);
+    assert_eq!(k(), 147808829414345923316083210206383297601u128);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/wide.rs");
+    assert_eq!(out.lifted, 1, "all four wide literals lift: {:?}", out.warnings);
+    let operands = inv_operands(&out.decls[0]);
+    assert_eq!(operands.len(), 4, "one atom per wide-literal assert");
+    // EXACT values -- a bad-twin with any wrong value refutes downstream.
+    assert_eq_atom(&operands[0], 18446744073709551615); // u64::MAX
+    assert_eq_atom(&operands[1], 18364758544493064727); // 0xfedc_ba98_7654_3217
+    assert_eq_atom(&operands[2], 18446744073709551626); // 0x1_0000_0000_0000_000a
+    assert_eq_atom(&operands[3], 147808829414345923316083210206383297601i128);
+}
+
+#[test]
+fn wide_int_distinct_values_do_not_coalesce() {
+    // Break-the-twin at the wide scale: u64::MAX and u64::MAX-1 must lift to
+    // DISTINCT i128 constants -- a truncation to a common narrow value would
+    // coalesce them into a vacuous (un-refutable) claim (the fake-discharge).
+    let src = r#"
+fn k() -> u64 { 0 }
+
+#[test]
+fn wide_distinct() {
+    assert_eq!(k(), 0xffffffffffffffff);
+    assert_eq!(k(), 0xfffffffffffffffe);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/wide_distinct.rs");
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    let operands = inv_operands(&out.decls[0]);
+    assert_eq!(operands.len(), 2);
+    // Each assert lifts to `=(call:k, num(V))`; the RHS int is the wide literal.
+    // u64::MAX and u64::MAX-1 must land as DISTINCT exact i128 constants -- a
+    // truncation to a common narrow value would coalesce them into a vacuous,
+    // un-refutable claim (the fake-discharge this twin guards against).
+    let rhs_int = |f: &Formula| -> i128 {
+        match f {
+            Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
+                match args[1].as_ref() {
+                    Term::Const {
+                        value: ConstValue::Int(v),
+                        ..
+                    } => *v,
+                    other => panic!("expected int rhs, got {other:?}"),
+                }
+            }
+            other => panic!("expected equality atom, got {other:?}"),
+        }
+    };
+    let v0 = rhs_int(&operands[0]);
+    let v1 = rhs_int(&operands[1]);
+    assert_eq!(v0, 18446744073709551615, "u64::MAX exact");
+    assert_eq!(v1, 18446744073709551614, "u64::MAX - 1 exact");
+    assert_ne!(
+        v0, v1,
+        "adjacent wide values must not coalesce (no truncation)"
+    );
+}
+
+#[test]
+fn literal_beyond_i128_is_refused_not_truncated() {
+    // BAIL boundary: u128::MAX (340282366920938463463374607431768211455) exceeds
+    // i128::MAX (170141183460469231731687303715884105727), so it is NOT
+    // representable in the i128 carrier. EXACT-OR-BAIL: it must REFUSE with
+    // "number too large" -- never silently truncate to a wrong value.
+    let src = r#"
+fn k() -> u128 { 0 }
+
+#[test]
+fn over() {
+    assert_eq!(k(), 0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffff_u128);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/over.rs");
+    assert_eq!(out.lifted, 0, "a literal beyond i128 must not lift");
+    assert!(
+        out.warnings
+            .iter()
+            .any(|w| w.reason.contains("number too large")),
+        "the over-i128 literal must refuse with a named 'number too large' reason, got: {:?}",
+        out.warnings
+    );
 }
 
 // `assert_eq!(left, &mut [1, 2, 3])`: slice/array PartialEq is BY VALUE, so the
@@ -8256,8 +8358,8 @@ fn t() {
 
 /// Collect every `(lhs, rhs)` int pair from the `=` atoms of a decl's flattened inv
 /// conjunction. Both sides must be int consts (a fully-dug point-wise claim).
-fn dug_eq_int_pairs(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<(i64, i64)> {
-    fn walk(f: &Formula, out: &mut Vec<(i64, i64)>) {
+fn dug_eq_int_pairs(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<(i128, i128)> {
+    fn walk(f: &Formula, out: &mut Vec<(i128, i128)>) {
         match f {
             Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
                 if let (

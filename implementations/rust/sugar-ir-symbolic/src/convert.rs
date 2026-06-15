@@ -52,10 +52,30 @@ impl From<ir::Sort> for Sort {
 // ConstValue ↔ serde_json::Value
 // ---------------------------------------------------------------------------
 
+/// Encode an i128 Int const into a precision-safe serde_json value.
+///
+/// serde_json (default features, no `arbitrary_precision`) parses a bare
+/// integer literal beyond u64::MAX into a LOSSY f64 -- so a wide Int const
+/// (u128 within i128 range) must NOT round-trip as a bare JSON number. The
+/// rule: a value representable as i64 or u64 stays a JSON Number (byte-
+/// identical to the former i64 encoding -- CID conserved for every value the
+/// kit produced before this widening); a value outside u64 is carried as a
+/// decimal STRING. On the proofir Term path the const's SORT (`Int`)
+/// disambiguates that string from a genuine String const (see `term_from_ir`).
+pub(crate) fn int_to_json(n: i128) -> serde_json::Value {
+    if let Ok(i) = i64::try_from(n) {
+        serde_json::Value::Number(i.into())
+    } else if let Ok(u) = u64::try_from(n) {
+        serde_json::Value::Number(u.into())
+    } else {
+        serde_json::Value::String(n.to_string())
+    }
+}
+
 impl From<ConstValue> for serde_json::Value {
     fn from(v: ConstValue) -> Self {
         match v {
-            ConstValue::Int(n) => serde_json::Value::Number(n.into()),
+            ConstValue::Int(n) => int_to_json(n),
             ConstValue::Real(n) => serde_json::Value::String(n),
             ConstValue::String(s) => serde_json::Value::String(s),
             ConstValue::Bool(b) => serde_json::Value::Bool(b),
@@ -66,7 +86,7 @@ impl From<ConstValue> for serde_json::Value {
 impl From<&ConstValue> for serde_json::Value {
     fn from(v: &ConstValue) -> Self {
         match v {
-            ConstValue::Int(n) => serde_json::Value::Number((*n).into()),
+            ConstValue::Int(n) => int_to_json(*n),
             ConstValue::Real(n) => serde_json::Value::String(n.clone()),
             ConstValue::String(s) => serde_json::Value::String(s.clone()),
             ConstValue::Bool(b) => serde_json::Value::Bool(*b),
@@ -77,9 +97,14 @@ impl From<&ConstValue> for serde_json::Value {
 impl TryFrom<serde_json::Value> for ConstValue {
     type Error = String;
     fn try_from(v: serde_json::Value) -> Result<Self, Self::Error> {
+        // Sort-blind fallback. A JSON Number widens to i128 via i64/u64. A
+        // JSON String defaults to a String const here; the wide-Int-as-string
+        // case is resolved in `term_from_ir`, which knows the declared sort.
         match v {
             serde_json::Value::Number(n) => n
                 .as_i64()
+                .map(i128::from)
+                .or_else(|| n.as_u64().map(i128::from))
                 .map(ConstValue::Int)
                 .ok_or_else(|| format!("ConstValue::Int expected, got {n}")),
             serde_json::Value::String(s) => Ok(ConstValue::String(s)),
@@ -129,6 +154,13 @@ pub fn term_from_ir(t: ir::Term) -> Term {
             let sort: Sort = sort.into();
             let value = match (sort.name.as_str(), value) {
                 ("Real", serde_json::Value::String(s)) => ConstValue::Real(s),
+                // A wide Int const is carried as a decimal STRING (see
+                // `int_to_json`); the declared `Int` sort disambiguates it
+                // from a genuine String const. Parse the exact i128 back.
+                ("Int", serde_json::Value::String(s)) => ConstValue::Int(
+                    s.parse::<i128>()
+                        .expect("Int-sorted string const must be a decimal i128"),
+                ),
                 (_, value) => value.try_into().expect("valid const value"),
             };
             Term::Const { value, sort }

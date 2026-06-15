@@ -20,7 +20,12 @@ pub enum ValueKind {
 pub enum Value {
     Null,
     Bool(bool),
-    Integer(i64),
+    // Integer carrier is i128: a wide Rust literal (u64::MAX, u128 within
+    // i128 range, large isize) is an EXACT mathematical-Int constant. JCS
+    // emits plain decimal digits (`to_string`), so any i128 canonicalizes
+    // exactly and a small value's bytes are byte-identical to the former
+    // i64 form (CID conserved).
+    Integer(i128),
     String(String),
     Array(Vec<Arc<Value>>),
     Object(Vec<(String, Arc<Value>)>),
@@ -44,7 +49,7 @@ impl Value {
     pub fn boolean(b: bool) -> Arc<Value> {
         Arc::new(Value::Bool(b))
     }
-    pub fn integer(n: i64) -> Arc<Value> {
+    pub fn integer(n: i128) -> Arc<Value> {
         Arc::new(Value::Integer(n))
     }
     pub fn string<S: Into<String>>(s: S) -> Arc<Value> {

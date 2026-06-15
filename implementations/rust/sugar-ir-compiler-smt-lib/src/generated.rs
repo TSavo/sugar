@@ -1265,6 +1265,23 @@ fn emit_const_value(value: &serde_json::Value, sort_name: &str) -> String {
             };
         }
     }
+    // A wide `Int`-sorted const (value > u64::MAX, within i128) is carried as a
+    // decimal STRING (serde_json's default Number parse would lose precision to
+    // f64). Emit it as the SMT-LIB integer NUMERAL it denotes -- NOT a
+    // hash-named opaque symbol, which `encode_const` would do for any string.
+    // SMT-LIB has no negative integer literal, so a leading "-" renders as the
+    // unary-minus application `(- N)`. An in-range Int still arrives as a
+    // Number and falls through to `encode_const` unchanged (byte-identical).
+    if sort_name == "Int" {
+        if let Some(s) = value.as_str() {
+            if s.parse::<i128>().is_ok() {
+                return match s.strip_prefix('-') {
+                    Some(mag) => format!("(- {mag})"),
+                    None => s.to_string(),
+                };
+            }
+        }
+    }
     // Every other sort: the Int-universe literal encoding (int/bool -> int value,
     // string/None -> hash-named uninterpreted Int const). Unchanged, so every
     // pre-existing (Real-free) formula is byte-for-byte identical.
@@ -1317,7 +1334,9 @@ fn to_cvalue(v: &serde_json::Value) -> Arc<CValue> {
         serde_json::Value::Bool(b) => CValue::boolean(*b),
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                CValue::integer(i)
+                CValue::integer(i128::from(i))
+            } else if let Some(u) = n.as_u64() {
+                CValue::integer(i128::from(u))
             } else if let Some(f) = n.as_f64() {
                 CValue::string(format!("{}", f))
             } else {

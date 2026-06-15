@@ -15,7 +15,7 @@ fn json_to_cvalue(j: &Json) -> Arc<CValue> {
     match j {
         Json::Null => CValue::null(),
         Json::Bool(b) => CValue::boolean(*b),
-        Json::Number(n) => CValue::integer(n.as_i64().expect("fixture integer")),
+        Json::Number(n) => CValue::integer(i128::from(n.as_i64().expect("fixture integer"))),
         Json::String(s) => CValue::string(s.clone()),
         Json::Array(items) => CValue::array(items.iter().map(json_to_cvalue).collect()),
         Json::Object(obj) => {

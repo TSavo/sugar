@@ -201,7 +201,7 @@ impl Effect {
             } => Value::object([
                 ("kind", Value::string("closure_capture")),
                 ("bodyFnCid", Value::string(body_fn_cid.clone())),
-                ("nCaptures", Value::integer(*n_captures as i64)),
+                ("nCaptures", Value::integer(*n_captures as i128)),
             ]),
             Effect::PinnedReference { target } => Value::object([
                 ("kind", Value::string("pinned_reference")),
@@ -337,8 +337,8 @@ impl Locus {
                     None => Value::null(),
                 },
             ),
-            ("line", Value::integer(self.line as i64)),
-            ("col", Value::integer(self.col as i64)),
+            ("line", Value::integer(self.line as i128)),
+            ("col", Value::integer(self.col as i128)),
         ])
     }
 }
@@ -769,7 +769,7 @@ pub fn compose_function_contracts(
                 Value::string(inner.cid.clone()),
             ]),
         ),
-        ("formalIdx", Value::integer(formal_idx as i64)),
+        ("formalIdx", Value::integer(formal_idx as i128)),
         ("pre", formula_to_canonical(&pre)),
         ("post", formula_to_canonical(&post)),
     ]);
@@ -871,7 +871,7 @@ pub fn compose_function_contracts_checked(
                 Value::string(inner.cid.clone()),
             ]),
         ),
-        ("formalIdx", Value::integer(formal_idx as i64)),
+        ("formalIdx", Value::integer(formal_idx as i128)),
         ("pre", formula_to_canonical(&pre)),
         ("post", formula_to_canonical(&post)),
     ]);
@@ -931,7 +931,7 @@ pub fn compose_with_composed(
         ("schemaVersion", Value::string("1")),
         ("kind", Value::string("composed-function-contract")),
         ("components", Value::array(component_values)),
-        ("formalIdx", Value::integer(formal_idx as i64)),
+        ("formalIdx", Value::integer(formal_idx as i128)),
         ("pre", formula_to_canonical(&pre)),
         ("post", formula_to_canonical(&post)),
     ]);
@@ -1378,7 +1378,7 @@ fn serde_to_canonical(j: JsonValue) -> Arc<Value> {
     match j {
         JsonValue::Null => Value::null(),
         JsonValue::Bool(b) => Value::boolean(b),
-        JsonValue::Number(n) => match n.as_i64() {
+        JsonValue::Number(n) => match n.as_i64().map(i128::from).or_else(|| n.as_u64().map(i128::from)) {
             Some(i) => Value::integer(i),
             None => Value::object(vec![(
                 "__sugar_non_i64_number__".to_string(),
@@ -1525,11 +1525,11 @@ fn evidence_cid(
                     Value::object(vec![
                         (
                             "col".to_string(),
-                            Value::integer(i64::from(source_locator.span.end.col)),
+                            Value::integer(i128::from(source_locator.span.end.col)),
                         ),
                         (
                             "line".to_string(),
-                            Value::integer(i64::from(source_locator.span.end.line)),
+                            Value::integer(i128::from(source_locator.span.end.line)),
                         ),
                     ]),
                 ),
@@ -1538,11 +1538,11 @@ fn evidence_cid(
                     Value::object(vec![
                         (
                             "col".to_string(),
-                            Value::integer(i64::from(source_locator.span.start.col)),
+                            Value::integer(i128::from(source_locator.span.start.col)),
                         ),
                         (
                             "line".to_string(),
-                            Value::integer(i64::from(source_locator.span.start.line)),
+                            Value::integer(i128::from(source_locator.span.start.line)),
                         ),
                     ]),
                 ),
@@ -1556,7 +1556,7 @@ fn evidence_cid(
     let header = Value::object(vec![
         (
             "confidence_basis_points".to_string(),
-            Value::integer(i64::from(confidence_basis_points)),
+            Value::integer(i128::from(confidence_basis_points)),
         ),
         ("extension_fields".to_string(), Value::object(ext_entries)),
         ("kind".to_string(), Value::string("evidence".to_string())),
@@ -1604,7 +1604,7 @@ fn compound_cid(
                 ),
                 (
                     "weight_basis_points".to_string(),
-                    Value::integer(i64::from(er.weight_basis_points)),
+                    Value::integer(i128::from(er.weight_basis_points)),
                 ),
             ])
         })

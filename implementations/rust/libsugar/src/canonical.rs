@@ -63,9 +63,17 @@ fn json_to_cvalue(value: &Json) -> Result<Arc<CValue>> {
         Json::Null => CValue::null(),
         Json::Bool(b) => CValue::boolean(*b),
         Json::Number(n) => {
-            let i = n.as_i64().ok_or_else(|| {
-                SugarError::Message(format!("non-i64 JSON number cannot be canonicalized: {n}"))
-            })?;
+            // i64/u64 widen losslessly into the i128 carrier; only a float
+            // (the remaining non-integer shape) is rejected.
+            let i = n
+                .as_i64()
+                .map(i128::from)
+                .or_else(|| n.as_u64().map(i128::from))
+                .ok_or_else(|| {
+                    SugarError::Message(format!(
+                        "non-integer JSON number cannot be canonicalized: {n}"
+                    ))
+                })?;
             CValue::integer(i)
         }
         Json::String(s) => CValue::string(s.clone()),

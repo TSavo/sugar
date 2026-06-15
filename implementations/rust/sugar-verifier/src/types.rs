@@ -816,11 +816,11 @@ pub fn compute_formula_cid(formula: &Json) -> String {
             Json::Bool(b) => Value::boolean(*b),
             Json::Number(n) => {
                 if let Some(i) = n.as_i64() {
-                    Value::integer(i)
+                    Value::integer(i128::from(i))
                 } else if let Some(u) = n.as_u64() {
-                    Value::integer(u as i64)
+                    Value::integer(i128::from(u))
                 } else if let Some(f) = n.as_f64() {
-                    Value::integer(f as i64)
+                    Value::integer(f as i128)
                 } else {
                     Value::integer(0)
                 }

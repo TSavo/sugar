@@ -26,7 +26,7 @@ impl Sugar for EnumerateSugar {
                 syn::parse_str(&format!("({}, {})", i, quote::quote!(#e))).ok()?;
             let pair_cv = elem
                 .value
-                .map(|c| ConstVal::Tuple(vec![ConstVal::Int(i as i64), c]));
+                .map(|c| ConstVal::Tuple(vec![ConstVal::Int(i as i128), c]));
             out.push(DesugaredElem {
                 expr: pair_expr,
                 value: pair_cv,

@@ -633,7 +633,7 @@ fn json_to_canon_value(j: &Json) -> CanonValue {
         Json::Bool(b) => CanonValue::Bool(*b),
         Json::Number(n) => {
             if let Some(i) = n.as_i64() {
-                CanonValue::Integer(i)
+                CanonValue::Integer(i128::from(i))
             } else {
                 CanonValue::String(n.to_string())
             }

@@ -204,11 +204,11 @@ fn json_to_cvalue(v: &Json) -> std::sync::Arc<CValue> {
         Json::Bool(b) => CValue::boolean(*b),
         Json::Number(n) => {
             if let Some(i) = n.as_i64() {
-                CValue::integer(i)
+                CValue::integer(i128::from(i))
             } else if let Some(u) = n.as_u64() {
-                CValue::integer(u as i64)
+                CValue::integer(i128::from(u))
             } else if let Some(f) = n.as_f64() {
-                CValue::integer(f as i64)
+                CValue::integer(f as i128)
             } else {
                 CValue::integer(0)
             }
@@ -379,10 +379,28 @@ fn parse_term_at(v: &Json, path: &str) -> Result<Rc<Term>, ParseError> {
             // reject it here for defense-in-depth.
             let const_value = match (sort.name.as_str(), value_v) {
                 ("Int", Json::Number(n)) => {
-                    let i = n.as_i64().ok_or_else(|| ParseError::Mismatch {
+                    // i64/u64 widen losslessly into the i128 carrier. A wide
+                    // Int (> u64) is NOT carried as a bare number (serde_json
+                    // would parse it lossily to f64); it arrives as a String,
+                    // handled by the next arm.
+                    let i = n
+                        .as_i64()
+                        .map(i128::from)
+                        .or_else(|| n.as_u64().map(i128::from))
+                        .ok_or_else(|| ParseError::Mismatch {
+                            path: format!("{path}.value"),
+                            expected: "i64/u64-representable Int (wide ints carried as string)"
+                                .into(),
+                            actual: n.to_string(),
+                        })?;
+                    ConstValue::Int(i)
+                }
+                // A wide Int const is a decimal string under an Int sort.
+                ("Int", Json::String(s)) => {
+                    let i = s.parse::<i128>().map_err(|_| ParseError::Mismatch {
                         path: format!("{path}.value"),
-                        expected: "i64-representable Int".into(),
-                        actual: n.to_string(),
+                        expected: "decimal i128 for wide Int const".into(),
+                        actual: s.clone(),
                     })?;
                     ConstValue::Int(i)
                 }

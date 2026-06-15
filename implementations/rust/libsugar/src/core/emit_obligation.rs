@@ -137,6 +137,8 @@ pub fn canonical_value_of_json(value: &Value) -> Result<Arc<CanonicalValue>, Str
         Value::Bool(b) => Ok(CanonicalValue::boolean(*b)),
         Value::Number(n) => n
             .as_i64()
+            .map(|v| v as i128)
+            .or_else(|| n.as_u64().map(|v| v as i128))
             .map(CanonicalValue::integer)
             .ok_or_else(|| format!("memento contains non-integer number `{n}`")),
         Value::String(s) => Ok(CanonicalValue::string(s)),

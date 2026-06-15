@@ -25,12 +25,17 @@ fn json_to_value(j: &serde_json::Value) -> Arc<Value> {
         serde_json::Value::Null => Value::null(),
         serde_json::Value::Bool(b) => Value::boolean(*b),
         serde_json::Value::Number(n) => {
+            // i64/u64 widen losslessly into the i128 carrier. A JSON number
+            // that is neither (only a float under default serde_json) keeps
+            // the legacy truncating collapse -- the kit/mint flow never emits
+            // floats here, and a wide INTEGER const is carried as a String
+            // (sort-tagged Int) on the proofir path, not as a bare number.
             if let Some(i) = n.as_i64() {
-                Value::integer(i)
+                Value::integer(i128::from(i))
             } else if let Some(u) = n.as_u64() {
-                Value::integer(u as i64)
+                Value::integer(i128::from(u))
             } else if let Some(f) = n.as_f64() {
-                Value::integer(f as i64)
+                Value::integer(f as i128)
             } else {
                 Value::integer(0)
             }

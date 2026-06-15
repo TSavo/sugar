@@ -243,7 +243,7 @@ fn mint_loop_memento(
         ("schemaVersion", Value::string("1")),
         ("kind", Value::string("loop")),
         ("fnName", Value::string(fn_name.to_string())),
-        ("sourceIndex", Value::integer(source_index as i64)),
+        ("sourceIndex", Value::integer(source_index as i128)),
         ("loopKind", Value::string(kind.label())),
         ("preLoop", formula_to_canonical(pre_loop.as_formula())),
         ("mutatedVars", Value::array(mutated_values)),

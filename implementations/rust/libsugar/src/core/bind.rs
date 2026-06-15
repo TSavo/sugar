@@ -693,7 +693,12 @@ fn json_to_canonical_value(j: &Json) -> std::sync::Arc<sugar_canonicalizer::Valu
     match j {
         Json::Null => CV::null(),
         Json::Bool(b) => CV::boolean(*b),
-        Json::Number(n) => CV::integer(n.as_i64().unwrap_or(0)),
+        Json::Number(n) => CV::integer(
+            n.as_i64()
+                .map(i128::from)
+                .or_else(|| n.as_u64().map(i128::from))
+                .unwrap_or(0),
+        ),
         Json::String(s) => CV::string(s.clone()),
         Json::Array(items) => CV::array(items.iter().map(json_to_canonical_value).collect()),
         Json::Object(map) => CV::object(

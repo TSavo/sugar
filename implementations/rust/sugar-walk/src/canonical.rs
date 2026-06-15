@@ -22,7 +22,7 @@ pub fn serde_to_canonical(j: JsonValue) -> Arc<Value> {
         JsonValue::Null => Value::null(),
         JsonValue::Bool(b) => Value::boolean(b),
         JsonValue::Number(n) => match n.as_i64() {
-            Some(i) => Value::integer(i),
+            Some(i) => Value::integer(i128::from(i)),
             None => {
                 // A float or u64-out-of-i64-range number must NOT be encoded as
                 // a plain string: that would make the numeric constant 42.5 and

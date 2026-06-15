@@ -1,10 +1,10 @@
 {
   "assertion_multiset_cid": "blake3-512:ee0c6d92a4aa44f2f43bb657b70d9b87ba202392a6ea5c2aee519197e02aa59f6a3a425b49f7aa00191688e57c48bb795b58f74b35a2518cb6d4465eeb000a50",
   "silent": 0,
-  "discharged": 6188,
-  "refused": 701,
-  "unclassified": 45,
-  "prev_unclassified": 59,
-  "note": "residual-refuse2: refuse residual runtime/non-constructible terms by detected cause (typed Effects, whitelisted in refusal_disposition). discharged 6188->6188 (HELD), refused 687->701 (+14), unclassified 59->45 (-14), unaccounted -617, SILENT 0, CID ee0c6d92...0a50 CONSERVED. lib 130/0, assertion_lift 260/0 (+9). REFUSED (per cause): UnsupportedTermEffect &mut borrow x8 (ptr/cell/option/async_iter), raw pointer &raw const x1 (mem/trait_info_of), const{<path>} ZST/name-is-sugar x1 (array.rs repeat element); RuntimeMatchScrutineeEffect match-over-binary_search x2 (slice.rs); ArrayRepeatNonLiteralEffect [e;SIZE] non-literal length x2 (mem.rs/slice.rs). STAYED UNCLASSIFIED (honest WORK, NOT refused): macro `assert_chunks` 'no rule matched' x9 (str_lossy.rs) = MATCHER GAP \u2014 matcher ( $string:expr, $(($valid:expr,$invalid:expr)),* $(,)? ) SHOULD match but match_prefix does not recurse into a non-$(..) delimiter group to bind metavars inside ($valid,$invalid); fixable lifter work. assertion helper `assert_predicates_exact` 'has no visible source' x8 (mem/type_info.rs) = RESOLUTION REACH \u2014 the fn-local helper's source IS present but the reducer does not register test-nested helpers; doctrine forbids refusing 'has no visible source' (body may be loadable). prev_unclassified 59.",
-  "unaccounted": -617
+  "discharged": 6240,
+  "refused": 676,
+  "unclassified": 42,
+  "prev_unclassified": 45,
+  "note": "IntWidthDig on main(45): widen integer carrier i64->i128 across IR/canonicalizer/proofir/SMT/lifter (61 files). A wide rust literal (u64::MAX, u128 within i128, large isize) is a VALID exact mathematical-Int constant \u2014 number-too-large was a MIS-refusal (i64-narrow carrier). parse_int_lit via i128::from_str_radix; >i128 still refuses (honest, no truncation). CID CONSERVED via precision-safe encoding: i64/u64 -> JSON Number (byte-identical) ; >u64 within i128 -> decimal String disambiguated by Int sort (avoids serde lossy-f64). 2 self-caught regressions fixed: const_eval defolder stays i64-width-checked (i64::MAX*1000 rustc-panics in debug -> i128 fold = fake-dig), as-i64/as-isize cast bails on truncation. discharged 6188->6240 (+52), refused 701->676 (-25: 16 number-too-large reclassified 19->3 + wide-int-gated wrapping/step bodies lift), unclassified 45->42 (-3), SILENT 0, CID ee0c6d92...0a50 CONSERVED. lib 130/0, assertion_lift 263/0. WORKSPACE: cargo test --workspace green except a load-induced flaky daemon timeout (test_daemon_polyglot_smoke passes 5/5 isolated). 3 remaining number-too-large genuinely >i128::MAX (honest bails). prev_unclassified 45.",
+  "unaccounted": -641
 }

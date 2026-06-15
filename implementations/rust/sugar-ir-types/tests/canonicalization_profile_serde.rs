@@ -24,7 +24,9 @@ fn cvalue_from_json(value: &serde_json::Value) -> Arc<CValue> {
     match value {
         serde_json::Value::Null => CValue::null(),
         serde_json::Value::Bool(b) => CValue::boolean(*b),
-        serde_json::Value::Number(n) => CValue::integer(n.as_i64().expect("test numbers fit i64")),
+        serde_json::Value::Number(n) => {
+            CValue::integer(i128::from(n.as_i64().expect("test numbers fit i64")))
+        }
         serde_json::Value::String(s) => CValue::string(s.clone()),
         serde_json::Value::Array(values) => {
             CValue::array(values.iter().map(cvalue_from_json).collect())

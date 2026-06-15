@@ -1131,9 +1131,9 @@ fn answer_is_42(x: i64) -> i64 {{ x }}
                 ]),
             ),
             ("file", Value::string("src/lib.rs")),
-            ("line", Value::integer(line)),
+            ("line", Value::integer(i128::from(line))),
             ("col", Value::integer(4)),
-            ("panicLine", Value::integer(panic_line)),
+            ("panicLine", Value::integer(i128::from(panic_line))),
             ("panicCol", Value::integer(9)),
             ("callee", Value::string("method:unwrap")),
         ])
