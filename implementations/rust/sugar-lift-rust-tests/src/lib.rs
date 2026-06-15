@@ -249,7 +249,16 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // refused 359 -> 371 / unclassified 356 -> 346. Confirmed by negating this clause:
         // the typed-SideEffect machinery alone reproduces baseline 5700/359/356 exactly,
         // so the dig path is untouched -- the delta is purely the gate coupling. See report.
-        || reason.contains("mutable container is not temporally stable");
+        || reason.contains("mutable container is not temporally stable")
+        // TERMINAL: an `async`/`try` block or a `?` operator in term position. A `try`
+        // block short-circuits on `Err`, an `async` block is a deferred future, and `?`
+        // is a conditional early-return -- none is a single timeless point-wise value
+        // constructible from source literals, so no value lifter could lift it. A source
+        // property, not a lifter gap (kin to the `await` async-effect family). Typed as
+        // `ControlFlowEffect`. (THE DRAIN: the `future.rs` join!-over-`try` row fell to
+        // unclassified only because the block was not classified; not a fake-zero -- the
+        // block is held + named.)
+        || reason.contains("effectful control-flow block");
     if terminal {
         Disposition::Refused
     } else {
@@ -2832,6 +2841,36 @@ impl SideEffect for IoEffect {
 /// genuinely-mutable read, never a pure one.
 struct TemporalReadEffect {
     boundary: String,
+}
+
+/// CONTROL-FLOW: a `try { .. }` / `async { .. }` block or a `?` operator in term
+/// position. None of these is a single timeless point-wise VALUE: a `try` block
+/// short-circuits on `Err` (control flow), an `async` block is a deferred future
+/// evaluated elsewhere (a runtime, not a constructed literal), and `?` is a
+/// conditional early-return. There is no finite construction-from-literals to walk,
+/// so no value lifter could read a single `t` -- a SOURCE/effect property, not a
+/// lifter gap. The mirror, for a control-flow/effectful block, of the `await`
+/// async-effect family already recognized statement-level. (THE DRAIN: the
+/// `future.rs` join!-over-`try` row fell to unclassified only because nothing
+/// classified the block; typing it + whitelisting the reason moves it
+/// unclassified -> refused. Not a fake-zero -- the block is held + named.)
+struct ControlFlowEffect {
+    boundary: String,
+}
+
+impl SideEffect for ControlFlowEffect {
+    fn reason(&self) -> String {
+        format!(
+            "unsupported term `{}`: effectful control-flow block (try/async/`?`) is not a \
+             timeless point-wise value; refused",
+            self.boundary
+        )
+    }
+    fn boundary(&self) -> SourceMemento {
+        SourceMemento {
+            boundary: self.boundary.clone(),
+        }
+    }
 }
 
 impl SideEffect for TemporalReadEffect {
@@ -9686,6 +9725,45 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
                 args,
             }))
         }
+        // VALUE-TRANSPARENT WRAPPERS: an `unsafe { <tail> }` or plain `{ <tail> }`
+        // block in TERM position is the value of its tail expression -- `unsafe` is a
+        // compile-time obligation, not a value transform (the same transparency the
+        // value-contract path applies via `tail_inv`, see
+        // `emit_value_contract_unsafe_and_block_are_value_transparent`). We unwrap ONLY
+        // the single-tail block shape (`{ expr }`, no `;`): the inner expr then lifts
+        // via the existing term paths (method-call EUF, deref, call), so
+        // `assert_eq!(unsafe { ok.unwrap_unchecked() }, 100)` lifts to the SAME term as
+        // `assert_eq!(ok.unwrap_unchecked(), 100)` (the `unsafe` wrapper is congruent).
+        // CRITICALLY this is NOT a free pass: the unwrapped tail still goes through the
+        // ordinary operand translation, so a temporally-unstable inner read still BAILS
+        // -- e.g. `unsafe { &mut *cell.get() }` is `&mut` of a deref (not an immutable
+        // value), which falls through to the catch-all and refuses; only the WRAPPER is
+        // transparent. A multi-statement block (a `let`/effect prefix) is NOT unwrapped
+        // here (it is not a single timeless value) and stays refused by name.
+        Expr::Unsafe(block) => match block.block.stmts.as_slice() {
+            [Stmt::Expr(tail, None)] => translate_term_in_scope(tail, scope),
+            _ => Err(format!("unsupported term `{}`", token_key(expr))),
+        },
+        Expr::Block(block) => match block.block.stmts.as_slice() {
+            [Stmt::Expr(tail, None)] => translate_term_in_scope(tail, scope),
+            _ => Err(format!("unsupported term `{}`", token_key(expr))),
+        },
+        // EFFECTFUL CONTROL-FLOW: a `try { .. }` / `async { .. }` block, or a `?`
+        // (`Expr::Try`), is NOT a single timeless point-wise value -- it is control
+        // flow / a deferred computation (a `try` block early-returns its `Err`, an
+        // `async` block is a future evaluated elsewhere, a `?` is a conditional
+        // early-return). There is no construction-from-literals to walk, so no value
+        // lifter could read a single `t`: a SOURCE property, not a missing lift. TYPED
+        // as a `ControlFlowEffect` whose reason is whitelisted TERMINAL by
+        // `refusal_disposition` -- this drains the `future.rs`
+        // `assert!(Option::is_none(&try { join!(maybe_fut?, async { unreachable!() }) }))`
+        // row unclassified -> refused (a named refuse, never a silent shrug).
+        Expr::TryBlock(_) | Expr::Async(_) | Expr::Try(_) => {
+            let effect = ControlFlowEffect {
+                boundary: token_key(expr),
+            };
+            Err(effect.reason())
+        }
         other => Err(format!("unsupported term `{}`", token_key(other))),
     }
 }
@@ -9971,6 +10049,9 @@ fn scalar_cast_type_key(ty: &syn::Type) -> Option<&'static str> {
     if let Some(k) = integer_scalar_cast_type_key(ty) {
         return Some(k);
     }
+    if let Some(k) = float_scalar_cast_type_key(ty) {
+        return Some(k);
+    }
     let syn::Type::Path(path) = ty else {
         return None;
     };
@@ -9983,6 +10064,38 @@ fn scalar_cast_type_key(ty: &syn::Type) -> Option<&'static str> {
     }
     match segment.ident.to_string().as_str() {
         "char" => Some("char"),
+        _ => None,
+    }
+}
+
+// A FLOAT primitive cast `expr as f16/f32/f64/f128`. Recognized as the OPAQUE EUF
+// ctor `cast:f32(<expr>)` -- the EXACT same standard as the integer/char casts
+// (`scalar_integer_cast_call_result_stays_location_keyed_not_euf`): the substrate
+// adds NO cast/round semantics, the term is a pure structural function of its
+// operand, and the row stays location-keyed (not #euf-federated). Asserting
+// `cast:f32(x) == <pinned float>` is therefore a structural equality whose
+// wrong-expected twin is REFUTED by Ctor inequality. Needed for the `num/mod.rs`
+// `test_f32f64` float<->float round-trip rows (`assert_eq!(max as f32, f32::MAX)`,
+// `epsilon as f32`, `infinity as f32`, ...) which fell out at the cast fallthrough.
+// The IEEE width is carried only in the ctor NAME (`cast:f16`/`cast:f32`/`cast:f64`/
+// `cast:f128`), never as a Real-arithmetic claim -- so no float-rounding semantics
+// are smuggled in (kin to the int-width-in-sort discipline; not a fake-discharge).
+fn float_scalar_cast_type_key(ty: &syn::Type) -> Option<&'static str> {
+    let syn::Type::Path(path) = ty else {
+        return None;
+    };
+    if path.qself.is_some() || path.path.segments.len() != 1 {
+        return None;
+    }
+    let segment = path.path.segments.first()?;
+    if !matches!(segment.arguments, syn::PathArguments::None) {
+        return None;
+    }
+    match segment.ident.to_string().as_str() {
+        "f16" => Some("f16"),
+        "f32" => Some("f32"),
+        "f64" => Some("f64"),
+        "f128" => Some("f128"),
         _ => None,
     }
 }
@@ -11177,6 +11290,7 @@ mod lifter_key_tests {
             Box::new(TlsEffect { boundary: "DROPS.with(..)".to_string() }),
             Box::new(IoEffect { boundary: "out.write(..)".to_string() }),
             Box::new(TemporalReadEffect { boundary: "a[i]".to_string() }),
+            Box::new(ControlFlowEffect { boundary: "try { maybe_fut? }".to_string() }),
         ];
         for e in &effects {
             assert_eq!(
@@ -11283,18 +11397,25 @@ mod lifter_key_tests {
     fn adversarial_c_pure_but_untranslated_term_stays_unclassified_not_refused() {
         // (c) THE CRITICAL LINE: a PURE-but-untranslated term must STAY UNCLASSIFIED
         // (honest future work for a Sugar/const_eval arm), NEVER reclassified as a
-        // SideEffect. `1i32 as f64` is PURE -- no mutation, no iter-advance, no runtime
-        // value (both operands are literals) -- we simply have not transcribed the
-        // int->float cast term yet. (The EUF term path digs MOST untranslated calls as
-        // uninterpreted symbols -- e.g. `char::from_u32(i).unwrap().to_ascii_uppercase()`
-        // over `0..3` lifts soundly via EUF -- so a genuine term-GAP is rare; this cast
-        // is one. Refusing it as an effect would be a FAKE-REFUSE: mislabeling our own
-        // work as a source property -- the exact trap that put 8 bad terminals in an
-        // earlier floor.)
+        // SideEffect. A VALUE-POSITION `if`/`else` term (`if true { 1 } else { 2 }`) is
+        // PURE -- no mutation, no iter-advance, no runtime value (all literals) -- we
+        // simply have not transcribed a term-position `Expr::If` yet (the assertion path
+        // lifts an if-CONDITION, but an if as a TERM operand falls through). (The EUF
+        // term path digs MOST untranslated calls as uninterpreted symbols -- e.g.
+        // `char::from_u32(i).unwrap().to_ascii_uppercase()` over `0..3` lifts soundly via
+        // EUF -- so a genuine term-GAP is rare; this if-term is one. Refusing it as an
+        // effect would be a FAKE-REFUSE: mislabeling our own work as a source property --
+        // the exact trap that put 8 bad terminals in an earlier floor.)
+        //
+        // NOTE: this fixture WAS `(1i32 as f64)`, chosen as a then-untranslated cast.
+        // The TermBreadth float-cast arm now lifts `as f16/f32/f64/f128` to the opaque
+        // `cast:fN(..)` ctor, so that example is no longer a term-gap; the intent (pure
+        // term stays unclassified, never fake-refused) is preserved with a still-untranslated
+        // pure term.
         let src = r#"
             #[test]
             fn pure_untranslated() {
-                assert_eq!((1i32 as f64), 1.0);
+                assert_eq!(if true { 1 } else { 2 }, 1);
             }
         "#;
         let out = lift_src(src);
