@@ -5447,10 +5447,13 @@ fn t() {
 fn nonempty_assert_helper_is_not_terminal_refused_the_twin() {
     // BREAK-THE-TWIN: the SAME nested-helper shape but with a NON-empty body must NOT
     // get the type-level terminal treatment. A real helper body carries value
-    // obligations (recoverable via lexically-scoped inlining we have not built yet);
-    // mislabeling it terminal would be a FAKE-ZERO -- laundering recoverable work as
-    // closed. So it must stay UNCLASSIFIED ("no visible source"), never "type-level
-    // obligation", proving the discrimination is exactly empty-vs-non-empty body.
+    // obligations. Lexically-scoped inlining of a nested `assert_*` helper now EXISTS
+    // (the bucket-1 drain: `reduce_assertion_expr` resolves `local_fns` first), so a
+    // closed-literal bare-statement call to a pure-bodied nested helper INLINES and
+    // discharges its point-wise obligation -- the recoverable work is RECOVERED, never
+    // laundered into a fake type-level zero. The discrimination remains exactly
+    // empty-vs-non-empty body: an empty body is the terminal type-level obligation; a
+    // non-empty pure body is a real value predicate that digs.
     let src = r#"
 #[test]
 fn t() {
@@ -5459,25 +5462,53 @@ fn t() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/flatten.rs");
+    // The pure body `assert_eq!(x, 0u8)` with `x := 0u8` digs to `eq(0, 0)`: a real
+    // point-wise obligation. (Soundness: this is the vendor's stated claim at the closed
+    // call site, lifted as a checkable atom; a contradictory body would be lifted too and
+    // caught by the consistency pass -- never silently dropped, never fake-discharged.)
     assert_eq!(
-        out.assertions_lifted, 0,
-        "a nested non-empty helper does not inline via the module registry: {:?}",
+        out.assertions_lifted, 1,
+        "a closed-literal call to a pure-bodied nested helper inlines and discharges: {:?}",
         out.skip_reasons
     );
+    // It is NEVER mislabeled a type-level obligation (the empty-vs-non-empty discrimination).
     assert!(
         !out.skip_reasons.iter().any(|r| r.contains("type-level obligation")),
         "a non-empty-body helper must NOT be labeled a type-level obligation: {:?}",
         out.skip_reasons
     );
-    // Its refusal stays UNCLASSIFIED (work), not terminal -- the recoverable subset
-    // is not laundered into a fake-zero.
-    for r in &out.skip_reasons {
-        assert_eq!(
-            sugar_lift_rust_tests::refusal_disposition(r),
-            sugar_lift_rust_tests::Disposition::Unclassified,
-            "non-empty helper refusal must stay unclassified work, not terminal: {r}"
-        );
-    }
+}
+
+#[test]
+fn arg_position_drain_does_not_launder_a_generic_terminal_refusal() {
+    // SOUNDNESS GATE for the bucket-2 arg-position inliner. A GENERIC type-parametric
+    // nested helper is refused as TERMINAL ("reachable only via monomorphization": a
+    // SHOWN source property, no single concrete type to read). Even when called with a
+    // concrete literal in argument position, the arg-position drain must NOT inline it --
+    // doing so would launder the architect-owned generic-slice terminal refusal into a
+    // discharge. The drain only ever frees UNCLASSIFIED ("reachable only via call-site
+    // inlining") work, never a terminal.
+    let src = r#"
+#[test]
+fn t() {
+    fn test_num<T: PartialEq + Copy>(a: T, b: T) { assert_eq!(a, b); }
+    let _ = opaque(test_num(1u32, 1u32));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/num.rs");
+    // The generic helper's internal assert stays TERMINAL-refused, not discharged.
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "a generic-parametric helper must NOT be inlined at a concrete arg-position site: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.skip_reasons.iter().any(|r| r.contains("monomorphization")
+            && sugar_lift_rust_tests::refusal_disposition(r)
+                == sugar_lift_rust_tests::Disposition::Refused),
+        "the generic helper's refusal must remain the terminal monomorphization reason: {:?}",
+        out.skip_reasons
+    );
 }
 
 #[test]

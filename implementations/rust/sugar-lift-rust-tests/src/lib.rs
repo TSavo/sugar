@@ -5334,6 +5334,7 @@ fn collect_assertion_entries(
                 } else {
                     match reduce_assertion_expr(
                         expr,
+                        &local_fns,
                         reducer,
                         &temporal_scope,
                         &*float_widths,
@@ -5826,6 +5827,99 @@ fn collect_assertion_entries(
         }
         advance_temporal_scope_for_stmt(stmt, &mut temporal_scope);
     }
+    // ARG-POSITION CALL-SITE INLINING (the second drain). A nested helper that is
+    // never called as a BARE statement -- only in argument / reference / macro-arg
+    // position (`assert_ne!(hash(&val), hash(&zero_byte(val, 0)))`) -- was not inlined
+    // by the bare-statement CallsiteSugar dispatch above, so its INTERNAL asserts
+    // (`assert!(byte < 8)`) fall to the deferred "reachable only via call-site inlining"
+    // refusal. Before refusing, replay the SAME gated `desugar` trial at EVERY distinct
+    // arg-position call site of the helper: extract that site's `param := actual`
+    // bindings, β-reduce the body, and commit the body's asserts point-wise iff the
+    // substituted body adds zero unclassified. A site whose body does not fully dig
+    // (a runtime actual the asserts read, an effectful body) BAILS and is left for the
+    // refusal -- never fake-dug. Distinct sites with distinct literal actuals produce
+    // distinct point-wise obligations (no collapse); inlining N sites of one source
+    // assert is N obligations (accounted in `unaccounted`, never a silent drop).
+    for (fn_name, _count, reason) in &deferred_inner_fn_refusals {
+        if reduced_helpers.contains(fn_name) {
+            continue;
+        }
+        // SOUNDNESS GATE: only attempt to inline a helper whose deferred refusal is
+        // UNCLASSIFIED (the "reachable only via call-site inlining" reason for a CONCRETE
+        // scalar/slice helper). A helper refused as TERMINAL -- a GENERIC type/const-
+        // parametric helper (`reachable only via monomorphization`) or a RUNTIME-
+        // parametric one (`bin-2`) -- is a SHOWN source property, NOT call-queueing reach.
+        // Inlining it at a concrete literal site would launder a deliberate terminal
+        // refusal into a discharge (the architect-owned generic-slice refusal). Leave
+        // terminal helpers alone; the arg-position drain only ever frees UNCLASSIFIED work.
+        if !matches!(refusal_disposition(reason), Disposition::Unclassified) {
+            continue;
+        }
+        let Some(helper) = local_fns.get(fn_name) else {
+            continue;
+        };
+        // The helper must be carryable as a value-helper: active cfg, simple params,
+        // a non-empty assert-bearing body. (An empty/effectful body simply produces no
+        // committing site -> stays refused.)
+        if count_asserts_in_stmts(&helper.block.stmts) == 0 {
+            continue;
+        }
+        if !matches!(cfg_eval_for_attrs(&helper.attrs, options), CfgEval::Active) {
+            continue;
+        }
+        let Ok(params) = helper_param_names(helper) else {
+            continue;
+        };
+        // Collect every distinct arg-position call site of this helper in the block.
+        let sites = collect_arg_position_call_sites(stmts, fn_name, params.len());
+        if sites.is_empty() {
+            continue;
+        }
+        let mut any_committed = false;
+        for (site_idx, args) in sites.into_iter().enumerate() {
+            let mut bindings = ExprBindings::new();
+            for (param, arg) in params.iter().cloned().zip(args.into_iter()) {
+                bindings.insert(param, arg);
+            }
+            let cs = sugar::callsite::CallsiteSugar::from_bindings(
+                helper,
+                fn_name.clone(),
+                bindings,
+            );
+            // A distinct child scope per site so distinct-literal sites do not conjoin
+            // into a false consistency collapse (the discrimination invariant). The
+            // per-helper-per-site scope tag `<scope>::argsite::<helper>#<i>` is unique.
+            let site_scope = format!("{local_scope}::argsite::{fn_name}");
+            match cs.desugar(
+                &site_scope,
+                site_idx,
+                options,
+                reducer,
+                float_widths,
+                reduced_helpers,
+                macro_depth,
+            ) {
+                sugar::callsite::CallsiteOutcome::Dug(commit) => {
+                    if !commit.entries.is_empty() {
+                        *macros_lifted += 1;
+                    }
+                    entries.extend(commit.entries);
+                    skipped.extend(commit.skipped);
+                    *macros_lifted += commit.macros_lifted;
+                    *reduced_helpers = commit.reduced_helpers;
+                    any_committed = true;
+                }
+                sugar::callsite::CallsiteOutcome::Bail(_) => {}
+            }
+        }
+        if any_committed {
+            // At least one site fully dug: the helper's asserts are accounted point-wise
+            // at the committing sites. Mark reduced so the refusal-drain below does not
+            // ALSO refuse (double-count). A site that bailed contributed nothing; its
+            // path is the outer runtime assertion (already accounted elsewhere).
+            reduced_helpers.insert(fn_name.clone());
+        }
+    }
     // Drain the deferred nested-fn refusals: emit "reachable only via call-site
     // inlining" ONLY for inner fns NOT inlined by some call site in this block. A
     // helper inlined at any callsite is in `reduced_helpers` (its asserts already
@@ -5846,6 +5940,73 @@ fn collect_assertion_entries(
             }
         }
     }
+}
+
+/// Collect the actual-argument lists of EVERY call to the simple-named helper
+/// `fn_name` (with arity `arity`) appearing ANYWHERE in `stmts` -- including in
+/// argument / reference position and inside assert-family macro token streams (which
+/// `syn::visit` treats as opaque, so we parse the macro args and visit them). De-dups
+/// identical call sites (same arg tokens) so a helper called N times with the SAME
+/// literal contributes one obligation, not N copies; DISTINCT literal sites stay
+/// distinct (the discrimination invariant). Does NOT descend into nested fn item
+/// bodies (their calls belong to their own block scope). Used by the arg-position
+/// call-site inliner to find sites the bare-statement dispatch missed.
+fn collect_arg_position_call_sites(
+    stmts: &[Stmt],
+    fn_name: &str,
+    arity: usize,
+) -> Vec<Vec<Expr>> {
+    use std::collections::BTreeSet;
+    struct W<'a> {
+        target: &'a str,
+        arity: usize,
+        sites: Vec<Vec<Expr>>,
+        seen: BTreeSet<String>,
+    }
+    impl<'a, 'ast> syn::visit::Visit<'ast> for W<'a> {
+        fn visit_expr_call(&mut self, c: &'ast syn::ExprCall) {
+            if let Some(name) = simple_call_name(c) {
+                if name == self.target && c.args.len() == self.arity {
+                    let args: Vec<Expr> = c.args.iter().cloned().collect();
+                    let key = args
+                        .iter()
+                        .map(|a| quote::quote!(#a).to_string())
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    if self.seen.insert(key) {
+                        self.sites.push(args);
+                    }
+                }
+            }
+            // Keep descending: a call may nest another (`hash(&zero_byte(..))`).
+            syn::visit::visit_expr_call(self, c);
+        }
+        // syn::visit does NOT descend into macro token streams. An assert-family macro
+        // (`assert_ne!(hash(&val), hash(&zero_byte(val, 0)))`) hides the helper call in
+        // its tokens; parse the comma-separated operands and visit them.
+        fn visit_macro(&mut self, m: &'ast syn::Macro) {
+            if is_assert_macro_path(&m.path) {
+                if let Ok(args) = parse_macro_args(m.tokens.clone()) {
+                    for a in &args.exprs {
+                        syn::visit::Visit::visit_expr(self, a);
+                    }
+                }
+            }
+            syn::visit::visit_macro(self, m);
+        }
+        // A nested fn's own body calls belong to its own block; do not hoist them here.
+        fn visit_item_fn(&mut self, _f: &'ast syn::ItemFn) {}
+    }
+    let mut w = W {
+        target: fn_name,
+        arity,
+        sites: Vec::new(),
+        seen: BTreeSet::new(),
+    };
+    for st in stmts {
+        syn::visit::Visit::visit_stmt(&mut w, st);
+    }
+    w.sites
 }
 
 /// Classify a refused for-loop's iterator domain for the bin-1 / bin-2 sort.
@@ -7359,9 +7520,11 @@ fn simple_call_name(call: &syn::ExprCall) -> Option<String> {
     path.path.get_ident().map(|ident| ident.to_string())
 }
 
-fn reduce_assertion_expr(
+#[allow(clippy::too_many_arguments)]
+fn reduce_assertion_expr<'a>(
     expr: &Expr,
-    reducer: &ReductionCtx<'_>,
+    local_fns: &BTreeMap<String, &'a syn::ItemFn>,
+    reducer: &ReductionCtx<'a>,
     scope: &TemporalScope,
     float_widths: &FloatWidthScope,
     options: &LiftOptions,
@@ -7405,9 +7568,22 @@ fn reduce_assertion_expr(
                     "non-assertion helper call `{name}` is not reducible"
                 ));
             }
-            let helper = reducer.function(&name)?.ok_or_else(|| {
-                format!("assertion helper `{name}` has no visible source; skipped assertion")
-            })?;
+            // Resolve the helper LEXICALLY first: a helper defined inside the enclosing
+            // `#[test]` fn (e.g. `fn assert_predicates_exact(..)` nested in the test body)
+            // is invisible to the global `ReductionCtx` registry, but it IS in scope at the
+            // call site. Mirror `resolve_inlinable_helper_call_scoped`: a `local_fns` hit
+            // (the block's nested fns) takes precedence over the global registry; only when
+            // neither resolves does the helper stay "has no visible source" (UNCLASSIFIED
+            // work). The body still digs through the SAME reducer below, so a nested helper
+            // whose body is pure-and-liftable discharges exactly like a top-level one, while
+            // a runtime/effectful body (HashSet collect, `fmt::write`, mutable state) returns
+            // Err here-down and stays UNCLASSIFIED -- never fake-dug.
+            let helper = match local_fns.get(&name) {
+                Some(f) => *f,
+                None => reducer.function(&name)?.ok_or_else(|| {
+                    format!("assertion helper `{name}` has no visible source; skipped assertion")
+                })?,
+            };
             match cfg_eval_for_attrs(&helper.attrs, options) {
                 CfgEval::Active => {}
                 CfgEval::Inactive(reason) => {
@@ -7436,6 +7612,7 @@ fn reduce_assertion_expr(
             let result = reduce_assertion_stmts(
                 &helper.block.stmts,
                 &bindings,
+                local_fns,
                 reducer,
                 scope,
                 float_widths,
@@ -7454,6 +7631,7 @@ fn reduce_assertion_expr(
         }
         Expr::Paren(paren) => reduce_assertion_expr(
             &paren.expr,
+            local_fns,
             reducer,
             scope,
             float_widths,
@@ -7463,6 +7641,7 @@ fn reduce_assertion_expr(
         ),
         Expr::Group(group) => reduce_assertion_expr(
             &group.expr,
+            local_fns,
             reducer,
             scope,
             float_widths,
@@ -7477,10 +7656,12 @@ fn reduce_assertion_expr(
     }
 }
 
-fn reduce_assertion_stmts(
+#[allow(clippy::too_many_arguments)]
+fn reduce_assertion_stmts<'a>(
     stmts: &[Stmt],
     bindings: &ExprBindings,
-    reducer: &ReductionCtx<'_>,
+    local_fns: &BTreeMap<String, &'a syn::ItemFn>,
+    reducer: &ReductionCtx<'a>,
     scope: &TemporalScope,
     float_widths: &FloatWidthScope,
     options: &LiftOptions,
@@ -7564,6 +7745,7 @@ fn reduce_assertion_stmts(
                 let expr = substitute_expr(expr, &binds);
                 entries.extend(reduce_assertion_expr(
                     &expr,
+                    local_fns,
                     reducer,
                     scope,
                     float_widths,

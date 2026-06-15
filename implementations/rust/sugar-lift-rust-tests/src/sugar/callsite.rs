@@ -151,6 +151,39 @@ impl<'a> CallsiteSugar<'a> {
         })
     }
 
+    /// Build a `CallsiteSugar` directly from a helper + an ALREADY-COLLECTED
+    /// `param := actual` binding set, bypassing the bare-statement-call recognizer.
+    ///
+    /// THE ARG-POSITION REACH. The bare-statement `decompose` only fires when the helper
+    /// call IS the whole statement (`helper(arg0, ..);`). The corpus's remaining
+    /// concrete-helper residue calls the helper in ARGUMENT position -- inside another
+    /// call / reference / macro arg (`assert_ne!(hash(&val), hash(&zero_byte(val, 0)))`).
+    /// The helper itself is never a bare statement, so its INTERNAL asserts
+    /// (`assert!(byte < 8)`) were left as the single "reachable only via call-site
+    /// inlining" refusal. This constructor lets the collector, having found such a call
+    /// site and extracted its `param := actual` bindings, replay the SAME gated
+    /// `desugar` trial on the helper body.
+    ///
+    /// SOUND BY THE SAME GATE: nothing about the construction path changes the soundness
+    /// line. `desugar` substitutes the actuals into the body and commits ONLY when the
+    /// substituted body adds zero unclassified. A param bound to a RUNTIME actual that
+    /// the body's asserts actually read produces unclassified residue (an uninterpreted
+    /// term it cannot close) and BAILS; a param bound to a closed literal that the asserts
+    /// read digs to a point-wise FOL obligation. A runtime actual the asserts do NOT read
+    /// (e.g. `zero_byte`'s `val`, used only to compute the unasserted return value) never
+    /// reaches an obligation, so the body still digs -- exactly the intended drain.
+    pub(crate) fn from_bindings(
+        helper: &'a ItemFn,
+        name: String,
+        closed_args: ExprBindings,
+    ) -> CallsiteSugar<'a> {
+        CallsiteSugar {
+            helper,
+            name,
+            closed_args,
+        }
+    }
+
     /// β-reduce + re-desugar through the hierarchy, gated. Substitutes
     /// `closed_args` (param := callsite actual) into the helper body, then runs the
     /// SAME collector (which re-dispatches the body's own Fold/ForAll/Conditional/
@@ -506,6 +539,138 @@ mod tests {
             probes.len() >= 2 || out.decls.len() >= 2,
             "expected a distinct probe obligation per closed call site (no collapse): {:?}",
             out.decls.iter().map(|d| &d.name).collect::<Vec<_>>()
+        );
+    }
+
+    // ── BUCKET 1 (assert-prefixed nested helper resolved lexically): an `assert_*`-
+    // prefixed helper defined INSIDE the `#[test]` fn body, called as a bare statement,
+    // is resolved via `local_fns` (not the global registry) and its body re-digs. A
+    // pure point-wise body discharges -- this is the "has no visible source" drain when
+    // the body is liftable. ──
+    #[test]
+    fn nested_assert_prefixed_helper_resolves_lexically_and_digs() {
+        let out = lift(
+            r#"
+            #[test]
+            fn t() {
+                fn assert_small(n: i32) { assert!(n < 10); }
+                assert_small(3);
+            }
+            "#,
+        );
+        assert!(
+            discharged(&out) >= 1,
+            "a lexically-resolved nested assert_* helper with a pure body must discharge: {} / {:?}",
+            discharged(&out),
+            out.skip_reasons
+        );
+        assert!(
+            !out
+                .skip_reasons
+                .iter()
+                .any(|r| r.contains("has no visible source")),
+            "the nested helper must resolve (no `has no visible source`): {:?}",
+            out.skip_reasons
+        );
+    }
+
+    // ── BUCKET 1 BAD-TWIN (honest non-dig): a nested `assert_*` helper whose body is
+    // EFFECTFUL/runtime (a mutable accumulator) must NOT be fake-dug. It resolves
+    // lexically but its body does not reduce, so it stays accounted-and-unclassified --
+    // never laundered to discharged. (Mirrors the real corpus `assert_predicates_exact`
+    // / `assert_exact_exp`, whose HashSet-collect / fmt::write bodies stay unclassified.) ──
+    #[test]
+    fn nested_assert_prefixed_helper_with_runtime_body_stays_unclassified() {
+        let out = lift(
+            r#"
+            #[test]
+            fn t() {
+                fn assert_built(n: i32) {
+                    let mut acc = 0;
+                    acc += n;
+                    assert_eq!(acc, n);
+                }
+                assert_built(3);
+            }
+            "#,
+        );
+        let accounted = out.assertions_lifted + out.assertions_refused;
+        assert!(accounted >= 1, "the assert must be accounted, not dropped");
+        assert!(
+            out.skip_reasons
+                .iter()
+                .any(|r| matches!(refusal_disposition(r), Disposition::Unclassified)),
+            "a runtime-body nested helper must stay UNCLASSIFIED (no fake-dig): {:?}",
+            out.skip_reasons
+        );
+    }
+
+    // ── BUCKET 2 (arg-position closed-literal inlining): a concrete nested helper called
+    // ONLY in argument position (`outer(helper(LIT))`, never as a bare statement) has its
+    // INTERNAL assert lifted point-wise at the literal call sites. This is the `zero_byte`
+    // shape: `assert_ne!(hash(&val), hash(&zero_byte(val, 0)))` -- the internal
+    // `assert!(byte < 8)` digs with `byte := 0`, even though `val` is runtime (the assert
+    // does not read it). ──
+    #[test]
+    fn arg_position_concrete_helper_internal_assert_digs_at_literal_sites() {
+        let out = lift(
+            r#"
+            #[test]
+            fn t() {
+                let val = some_runtime();
+                assert_ne!(opaque(&val), opaque(&masked(val, 0)));
+                assert_ne!(opaque(&val), opaque(&masked(val, 1)));
+                fn masked(val: u64, byte: usize) -> u64 {
+                    assert!(byte < 8);
+                    val & !(0xff << (byte * 8))
+                }
+            }
+            "#,
+        );
+        // The internal `assert!(byte < 8)` is lifted point-wise at the two literal sites.
+        assert!(
+            discharged(&out) >= 2,
+            "the internal assert must lift at each distinct literal site (>=2): {} / {:?}",
+            discharged(&out),
+            out.skip_reasons
+        );
+        // The helper's body assert is no longer left as a "reachable only" refusal.
+        assert_eq!(
+            reachable_only(&out),
+            0,
+            "an arg-position-inlined concrete helper must not stay reachable-only: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    // ── BUCKET 2 BAD-TWIN (no forged pin): a concrete arg-position helper whose INTERNAL
+    // assert reads a RUNTIME actual must NOT be force-discharged. With `n := runtime`, the
+    // body assert `n == 7` reads an opaque value; it must NOT manufacture a closed `7 == 7`
+    // -- either the site bails (helper stays reachable-only) or `n` lifts as an
+    // uninterpreted obligation, never a fabricated closed truth. ──
+    #[test]
+    fn arg_position_helper_with_runtime_assert_actual_does_not_forge_a_pin() {
+        let out = lift(
+            r#"
+            #[test]
+            fn t() {
+                let runtime = some_call();
+                assert_ne!(opaque(&runtime), opaque(&checked(runtime)));
+                fn checked(n: i32) -> i32 {
+                    assert_eq!(n, 7);
+                    n
+                }
+            }
+            "#,
+        );
+        let claims_seven_as_closed = out.decls.iter().any(|d| {
+            let dump = format!("{:?}", d.inv);
+            dump.contains("Int(7)") && !dump.contains("runtime") && !dump.contains("some_call")
+        });
+        assert!(
+            !claims_seven_as_closed,
+            "a runtime actual the assert reads must not forge a closed `7 == 7`: {:?}",
+            out.decls.iter().map(|d| format!("{:?}", d.inv)).collect::<Vec<_>>()
         );
     }
 
