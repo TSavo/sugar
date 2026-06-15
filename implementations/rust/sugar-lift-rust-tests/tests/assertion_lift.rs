@@ -4754,9 +4754,12 @@ fn eq_lhs_name(formula: &Formula) -> String {
 }
 
 #[test]
-fn format_roundtrip_lifts_as_macro_term() {
-    // RED before: format!(..) in term position is "unsupported term"; lifted=0.
-    // GREEN after: it lifts as an uninterpreted macro: term equal to the literal.
+fn format_over_literal_binding_dissolves_to_str_const() {
+    // SUPERSEDES the old `format_roundtrip_lifts_as_macro_term`: with FormatSugar, a
+    // `format!("{x:?}")` whose implicit-capture `x` is an IMMUTABLE `let`-bound literal
+    // (`x = 5`) is sugar for ONE string. It no longer lifts as an opaque `macro:` EUF
+    // var (which the solver satisfied tautologically -- no teeth); it DISSOLVES to the
+    // real `str_const("5")`, so the obligation is the checkable `eq("5", "5")`.
     let src = r#"
 #[test]
 fn fmt_roundtrip() {
@@ -4767,24 +4770,35 @@ fn fmt_roundtrip() {
     let out = lift_file(&parse(src), "tests/fmt.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.warnings.len(), 0);
     let ops = inv_operands(&out.decls[0]);
     assert_eq!(ops.len(), 1);
-    let lhs = eq_lhs_name(&ops[0]);
-    assert!(
-        lhs.starts_with("macro:") && lhs.contains("format"),
-        "lhs must be a macro term naming format, got {lhs}"
-    );
+    // LHS is the dissolved String const "5", NOT a `macro:` var (the teeth upgrade).
+    match ops[0].as_ref() {
+        Formula::Atomic { name, args } => {
+            assert_eq!(name, "=");
+            match args[0].as_ref() {
+                Term::Const { value: ConstValue::String(s), .. } => {
+                    assert_eq!(s, "5", "format! over a literal binding dissolves to its value")
+                }
+                other => panic!("LHS must be the dissolved str_const, got {other:?}"),
+            }
+        }
+        other => panic!("expected equality atom, got {other:?}"),
+    }
 }
 
 #[test]
-fn identical_format_calls_coalesce_congruence() {
-    // Teeth: two identical format! calls must produce the SAME term, so a
-    // contradiction over them is UNSAT. This is the non-vacuity guarantee.
+fn identical_runtime_format_calls_coalesce_congruence() {
+    // Teeth (the opaque path STILL applies to a RUNTIME arg): two identical
+    // `format!("{x:?}")` over a RUNTIME-bound `x` (`let x = runtime();`, NOT a
+    // resolvable literal) are NOT dissolvable by FormatSugar, so they lift as the SAME
+    // opaque `macro:` term -- a contradiction over them stays UNSAT (the non-vacuity
+    // guarantee for the un-dissolvable case). FormatSugar bails on the runtime binding
+    // and the existing opaque-macro path takes over, exactly as before.
     let src = r#"
 #[test]
 fn fmt_twice() {
-    let x = 5;
+    let x = runtime();
     assert_eq!(format!("{x:?}"), "a");
     assert_eq!(format!("{x:?}"), "b");
 }
@@ -4792,21 +4806,22 @@ fn fmt_twice() {
     let out = lift_file(&parse(src), "tests/fmt.rs");
     let ops = inv_operands(&out.decls[0]);
     assert_eq!(ops.len(), 2);
-    assert_eq!(
-        eq_lhs_name(&ops[0]),
-        eq_lhs_name(&ops[1]),
-        "identical format! calls must coalesce to one term (consistency teeth)"
-    );
+    let lhs0 = eq_lhs_name(&ops[0]);
+    let lhs1 = eq_lhs_name(&ops[1]);
+    assert!(lhs0.starts_with("macro:"), "runtime-arg format! stays opaque: {lhs0}");
+    assert_eq!(lhs0, lhs1, "identical runtime format! calls coalesce (congruence)");
 }
 
 #[test]
-fn distinct_format_calls_do_not_coalesce() {
-    // Distinctness: different macro source must produce different terms.
+fn distinct_runtime_format_calls_do_not_coalesce() {
+    // Distinctness over RUNTIME-bound args: different macro source -> different opaque
+    // terms. Both bindings are runtime (un-dissolvable), so FormatSugar bails and the
+    // opaque path keys them by their (distinct) source text.
     let src = r#"
 #[test]
 fn fmt_distinct() {
-    let x = 5;
-    let y = 5;
+    let x = runtime();
+    let y = runtime();
     assert_eq!(format!("{x:?}"), "a");
     assert_eq!(format!("{y:?}"), "a");
 }
@@ -4817,7 +4832,7 @@ fn fmt_distinct() {
     assert_ne!(
         eq_lhs_name(&ops[0]),
         eq_lhs_name(&ops[1]),
-        "distinct format! calls must not coalesce"
+        "distinct runtime format! calls do not coalesce"
     );
 }
 
@@ -10166,4 +10181,132 @@ fn case3_discrimination_concrete_nested_fn_still_inlines_not_refused() {
     b_bounds.dedup();
     assert_eq!(a_bounds, vec![10], "a's inner digs with ITS OWN `< 10`: {:?}", out.decls.iter().map(|d| &d.name).collect::<Vec<_>>());
     assert_eq!(b_bounds, vec![100], "b's inner digs with ITS OWN `< 100`");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────
+// FORMATSUGAR TEETH: `assert_eq!(format!(…), "lit")` over reconstructable literals now
+// lowers the format LHS to the REAL `str_const(computed)` (recompute with stdlib's own
+// `format!`), so the obligation is the constant string equality `eq(computed, expected)`
+// — z3-CHECKABLE. The GOOD twin (correct expected) is z3-SAT (discharges); the BAD twin
+// (wrong expected) is z3-UNSAT (refuted). This is the soundness upgrade over the prior
+// opaque `macro:format!(…)` EUF var, which the solver satisfied TAUTOLOGICALLY (a wrong
+// expected string would still "pass" — no teeth). One discrimination per Display type.
+
+/// Lift a single `#[test] fn t() { assert_eq!(<lhs>, <rhs>); }` and z3-check its inv.
+/// `Some(true)` = SAT (discharges), `Some(false)` = UNSAT (refuted), `None` = z3 absent.
+fn format_eq_verdict(lhs: &str, rhs: &str, label: &str) -> Option<bool> {
+    let src = format!("#[test]\nfn t() {{ assert_eq!({lhs}, {rhs}); }}\n");
+    let out = lift_file(&parse(&src), "tests/fmt_teeth.rs");
+    assert_eq!(out.decls.len(), 1, "exactly one decl for: {lhs} == {rhs}");
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
+    let inv = parsed[0]["inv"].clone();
+    let z3 = "/usr/local/bin/z3";
+    if !std::path::Path::new(z3).exists() {
+        return None;
+    }
+    let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(&inv)
+        .expect("format equality must compile to SMT-LIB");
+    let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
+    let path = std::env::temp_dir().join(format!("sugar_fmt_teeth_{label}.smt2"));
+    std::fs::write(&path, &script).unwrap();
+    let z3out = std::process::Command::new(z3).arg(&path).output().expect("run z3");
+    let stdout = String::from_utf8_lossy(&z3out.stdout);
+    assert!(
+        !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
+        "format equality must be well-sorted:\n{stdout}\n--- {script}"
+    );
+    Some(stdout.contains("sat") && !stdout.contains("unsat"))
+}
+
+#[test]
+fn format_int_eq_has_teeth() {
+    // Display + hex int. GOOD: correct string SAT; BAD: wrong string UNSAT.
+    if let Some(good) = format_eq_verdict(r#"format!("{}", 42u32)"#, r#""42""#, "int_good") {
+        assert!(good, "format!(\"{{}}\", 42u32) == \"42\" must be SAT (discharges)");
+        let bad = format_eq_verdict(r#"format!("{}", 42u32)"#, r#""99""#, "int_bad").unwrap();
+        assert!(!bad, "a WRONG expected string must be z3-UNSAT (teeth)");
+        // radix spec carries teeth too.
+        let hx = format_eq_verdict(r#"format!("{:x}", 255u32)"#, r#""ff""#, "hex_good").unwrap();
+        assert!(hx, "format!(\"{{:x}}\", 255u32) == \"ff\" must be SAT");
+        let hxbad = format_eq_verdict(r#"format!("{:x}", 255u32)"#, r#""00""#, "hex_bad").unwrap();
+        assert!(!hxbad, "wrong hex string must be z3-UNSAT");
+    }
+}
+
+#[test]
+fn format_char_eq_has_teeth() {
+    if let Some(good) = format_eq_verdict(r#"format!("{}", 'a')"#, r#""a""#, "char_good") {
+        assert!(good, "format!(\"{{}}\", 'a') == \"a\" must be SAT");
+        let bad = format_eq_verdict(r#"format!("{}", 'a')"#, r#""b""#, "char_bad").unwrap();
+        assert!(!bad, "wrong char string must be z3-UNSAT (teeth)");
+    }
+}
+
+#[test]
+fn format_str_eq_has_teeth() {
+    if let Some(good) = format_eq_verdict(r#"format!("{:?}", "hi")"#, r#""\"hi\"""#, "str_good") {
+        assert!(good, "format!(\"{{:?}}\", \"hi\") == \"\\\"hi\\\"\" must be SAT");
+        let bad = format_eq_verdict(r#"format!("{:?}", "hi")"#, r#""hi""#, "str_bad").unwrap();
+        assert!(!bad, "Debug str must quote -> bare \"hi\" is z3-UNSAT (teeth)");
+    }
+}
+
+#[test]
+fn format_bool_eq_has_teeth() {
+    if let Some(good) = format_eq_verdict(r#"format!("{}", true)"#, r#""true""#, "bool_good") {
+        assert!(good, "format!(\"{{}}\", true) == \"true\" must be SAT");
+        let bad = format_eq_verdict(r#"format!("{}", true)"#, r#""false""#, "bool_bad").unwrap();
+        assert!(!bad, "wrong bool string must be z3-UNSAT (teeth)");
+    }
+}
+
+#[test]
+fn format_float_eq_has_teeth() {
+    // Float Display + precision through FormatSugar's float engine (the subsumed
+    // flt2dec compute path), end-to-end with teeth.
+    if let Some(good) = format_eq_verdict(r#"format!("{:.2}", 3.14159)"#, r#""3.14""#, "flt_good") {
+        assert!(good, "format!(\"{{:.2}}\", 3.14159) == \"3.14\" must be SAT");
+        let bad = format_eq_verdict(r#"format!("{:.2}", 3.14159)"#, r#""3.15""#, "flt_bad").unwrap();
+        assert!(!bad, "wrong rounded float string must be z3-UNSAT (teeth)");
+    }
+}
+
+#[test]
+fn format_concat_and_to_string_have_teeth() {
+    // concat! and .to_string() also dissolve to a checkable str_const.
+    if let Some(good) = format_eq_verdict(r#"concat!("a", "b", "c")"#, r#""abc""#, "concat_good") {
+        assert!(good, "concat!(\"a\",\"b\",\"c\") == \"abc\" must be SAT");
+        let bad = format_eq_verdict(r#"concat!("a", "b", "c")"#, r#""abz""#, "concat_bad").unwrap();
+        assert!(!bad, "wrong concat string must be z3-UNSAT (teeth)");
+        let ts = format_eq_verdict(r#"42u8.to_string()"#, r#""42""#, "tostr_good").unwrap();
+        assert!(ts, "42u8.to_string() == \"42\" must be SAT");
+        let tsbad = format_eq_verdict(r#"42u8.to_string()"#, r#""43""#, "tostr_bad").unwrap();
+        assert!(!tsbad, "wrong to_string must be z3-UNSAT (teeth)");
+    }
+}
+
+#[test]
+fn format_runtime_arg_does_not_overfire() {
+    // DISCRIMINATION (fake-dig guard): a `format!` over a RUNTIME arg must NOT dissolve
+    // to a str_const (it has no written-literal value). It falls through to the opaque
+    // path, so the obligation is NOT a `eq(str_const, str_const)` the wrong-twin would
+    // refute -- i.e. FormatSugar does not forge a value it cannot reconstruct.
+    let out = lift_file(
+        &parse("#[test]\nfn t() { assert_eq!(format!(\"{}\", runtime_var), \"0\"); }\n"),
+        "tests/fmt_teeth.rs",
+    );
+    // The lift still produces a decl (opaque EUF var == str_const), but it must NOT
+    // contain a str_const LHS equal to a reconstructed value -- the LHS stays a Var.
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        doc.contains("macro:") || doc.contains("\"name\":\"="),
+        "a runtime-arg format! stays opaque (not a forged literal): {doc}"
+    );
+    // And it must not have dissolved to the literal "0" on the LHS (only the RHS is "0").
+    let lhs_is_forged_zero = doc.matches("\"value\":\"0\"").count() >= 2;
+    assert!(
+        !lhs_is_forged_zero,
+        "a runtime-arg format! must NOT forge a reconstructed string literal: {doc}"
+    );
 }
