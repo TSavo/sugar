@@ -27,8 +27,8 @@ use crate::{
 /// Build the sequence-`Sugar` tree for a fold/for_each RECEIVER: a base literal
 /// domain wrapped by the ordered adaptor chain (`LiteralSugar` innermost, each
 /// per-class decorator `Sugar` -- `IdentitySugar`/`RevSugar`/`EnumerateSugar`/
-/// `FilterSugar`/`MapSugar`/`SkipSugar`/`TakeSugar`/`SkipWhileSugar`/`TakeWhileSugar`,
-/// each in `src/sugar/*.rs` -- applied in base->terminal order). This is
+/// `FilterSugar`/`MapSugar`/`FilterMapSugar`/`SkipSugar`/`TakeSugar`/`SkipWhileSugar`/
+/// `TakeWhileSugar`, each in `src/sugar/*.rs` -- applied in base->terminal order). This is
 /// `peel_fold_adaptors` in reverse-construction: peel to (base, wrappers), then nest
 /// by folding each application-order wrapper over the running node. Resolving
 /// `let`-bound receivers through `let_inits` is delegated to `peel_fold_adaptors`.
