@@ -54,6 +54,7 @@ pub mod sugar {
     pub mod identity;
     pub mod impl_method;
     pub mod index;
+    pub mod iter_terminal;
     pub mod literal;
     pub mod macro_term;
     pub mod map;

@@ -8899,6 +8899,216 @@ fn t() {
     );
 }
 
+// ── DIG WAVE: iterator REDUCTION terminals (`.sum()` / `.product()` / `.count()`) ──
+//
+// `[1,2,3,4,5].iter().sum()` over a LITERAL domain writes the EQUIVALENT FOL of its
+// reduction over the inner literal `Seq` -- the construction axiom applied to a terminal
+// that collapses a sequence to a scalar (`IterTerminalSugar`, `src/sugar/iter_terminal.rs`,
+// a TERM recognizer BEFORE the opaque `method:` ctor). The receiver chain is built by the
+// SAME `peel_fold_adaptors` -> `LiteralSugar` machinery `fold` uses, so it shares the
+// adaptor decorators (`.map`/`.filter`/`.rev`/closed ranges) AND the soundness boundary:
+// an effect / runtime / opaque domain makes the inner desugar `Hit`, propagated verbatim
+// (refuse). The result is a bare scalar compared against a bare int literal, so the dig is
+// VALUE-REFUTABLE -- a wrong-expected twin is z3-UNSAT (the teeth). The Option-returning
+// terminals (`.next()`/`.nth()`/`.min()`/`.max()`) are NOT grounded here: `assert_eq!(x,
+// Some(&v))` lifts as the opaque federated `eq:Some(..) == true`, where a bad twin stays
+// SAT (no value-refutation), so grounding them would be a fake-dig -- they stay refused.
+
+#[test]
+fn iter_sum_over_literal_array_digs_exact_total() {
+    // POSITIVE: `[1,2,3,4,5].iter().sum()` reduces to 15; `assert_eq!(.., 15)` digs the
+    // EXACT `=(15, 15)` pair -- the real total on the LHS, not an opaque `method:sum`.
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!([1, 2, 3, 4, 5].iter().sum::<i32>(), 15);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/iter_sum.rs");
+    assert_eq!(
+        out.skip_reasons, Vec::<String>::new(),
+        "the literal-domain `.sum()` must dig, not refuse: {:?}",
+        out.skip_reasons
+    );
+    let decl = &out.decls[0];
+    assert_eq!(
+        dug_eq_int_pairs(decl),
+        vec![(15, 15)],
+        "the sum terminal must ground the LHS to the EXACT total 15 (not an opaque ctor)"
+    );
+    // The grounded equality is a true fact -> SAT (teeth: real, not vacuous).
+    if let Some(sat) = z3_verdict(&inv_json(decl), "iter_sum_good") {
+        assert!(sat, "the dig `15 == 15` must be satisfiable");
+    }
+}
+
+#[test]
+fn iter_sum_bad_twin_is_z3_unsat() {
+    // TEETH (break-the-twin): assert the WRONG total 16. A real dig carries the REAL
+    // total 15 on the LHS and the wrong 16 on the RHS -- a z3-REFUTABLE `15 == 16`, NOT a
+    // vacuously satisfiable `method:sum(..) == 16`. A fake-dig (opaque ctor) would be SAT.
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!([1, 2, 3, 4, 5].iter().sum::<i32>(), 16);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/iter_sum_twin.rs");
+    let decl = &out.decls[0];
+    assert_eq!(
+        dug_eq_int_pairs(decl),
+        vec![(15, 16)],
+        "the bad twin must carry the REAL total 15 against the wrong 16 (refutable)"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(decl), "iter_sum_bad") {
+        assert!(!sat, "the bad-twin `15 == 16` must be z3-UNSAT (refutes)");
+    }
+}
+
+#[test]
+fn iter_product_over_literal_array_digs_and_bad_twin_refutes() {
+    // POSITIVE: `[1,2,3,4,5].iter().product()` reduces to 120.
+    let good = r#"#[test] fn t() { assert_eq!([1, 2, 3, 4, 5].iter().product::<i32>(), 120); }"#;
+    let out = lift_file(&parse(good), "tests/iter_product.rs");
+    assert_eq!(dug_eq_int_pairs(&out.decls[0]), vec![(120, 120)]);
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "iter_prod_good") {
+        assert!(sat, "`120 == 120` must be SAT");
+    }
+    // TEETH: a wrong product (100) is z3-UNSAT.
+    let bad = r#"#[test] fn t() { assert_eq!([1, 2, 3, 4, 5].iter().product::<i32>(), 100); }"#;
+    let out = lift_file(&parse(bad), "tests/iter_product_twin.rs");
+    assert_eq!(dug_eq_int_pairs(&out.decls[0]), vec![(120, 100)]);
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "iter_prod_bad") {
+        assert!(!sat, "the bad-twin `120 == 100` must be z3-UNSAT (refutes)");
+    }
+}
+
+#[test]
+fn iter_count_over_literal_array_digs_length_and_bad_twin_refutes() {
+    // POSITIVE: `.count()` reduces to the literal LENGTH 3.
+    let good = r#"#[test] fn t() { assert_eq!([1, 2, 3].iter().count(), 3); }"#;
+    let out = lift_file(&parse(good), "tests/iter_count.rs");
+    assert_eq!(dug_eq_int_pairs(&out.decls[0]), vec![(3, 3)]);
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "iter_count_good") {
+        assert!(sat, "`3 == 3` must be SAT");
+    }
+    // TEETH: a wrong length (4) is z3-UNSAT.
+    let bad = r#"#[test] fn t() { assert_eq!([1, 2, 3].iter().count(), 4); }"#;
+    let out = lift_file(&parse(bad), "tests/iter_count_twin.rs");
+    assert_eq!(dug_eq_int_pairs(&out.decls[0]), vec![(3, 4)]);
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "iter_count_bad") {
+        assert!(!sat, "the bad-twin `3 == 4` must be z3-UNSAT (refutes)");
+    }
+}
+
+#[test]
+fn iter_sum_through_map_filter_and_closed_range_digs() {
+    // COMPOSITION: the reduction terminal shares the SAME literal-Seq adaptor decorators
+    // as `fold`. `.filter(even).sum()` keeps [2,4] -> 6; `.map(*2).sum()` -> 12; a closed
+    // range `(1..=4).sum()` -> 10. Each grounds to the EXACT total with teeth.
+    let cases: &[(&str, i128)] = &[
+        (r#"#[test] fn t() { assert_eq!([1,2,3,4].iter().filter(|&&x| x % 2 == 0).sum::<i32>(), 6); }"#, 6),
+        (r#"#[test] fn t() { assert_eq!([1,2,3].iter().map(|x| x * 2).sum::<i32>(), 12); }"#, 12),
+        (r#"#[test] fn t() { assert_eq!((1..=4).sum::<i32>(), 10); }"#, 10),
+    ];
+    for (i, (src, total)) in cases.iter().enumerate() {
+        let out = lift_file(&parse(src), "tests/iter_compose.rs");
+        assert_eq!(
+            dug_eq_int_pairs(&out.decls[0]),
+            vec![(*total, *total)],
+            "case {i}: the composed reduction must ground to the exact total {total}"
+        );
+        if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), &format!("iter_compose_{i}")) {
+            assert!(sat, "case {i}: `{total} == {total}` must be SAT");
+        }
+    }
+}
+
+#[test]
+fn iter_sum_over_runtime_collection_is_not_value_grounded() {
+    // BAIL (the hard soundness line, guardrail #1): the receiver `v` is a RUNTIME value
+    // (a call result), NOT a written literal. The build-time syntactic-literal gate
+    // therefore declines the reduction (the peeled base is not an `Array`/`Range`), and
+    // the term stays the OPAQUE `method:sum` ctor (the established sound under-claim) --
+    // NEVER value-grounded to the total `6`. A fake-dig would have minted `_ == 6` over a
+    // runtime domain (the cardinal sin); the opaque under-claim has no value teeth (an
+    // uninterpreted `method:sum(..)`), exactly as baseline. `someFileIo.iter().sum()` is
+    // the same shape.
+    let src = r#"
+fn make_v() -> Vec<i32> { vec![1, 2, 3] }
+
+#[test]
+fn t() {
+    let v = make_v();
+    assert_eq!(v.iter().sum::<i32>(), 6);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/iter_sum_runtime.rs");
+    // No grounded total is minted: the LHS stays the opaque `method:sum` ctor, so there
+    // is no `=(6, 6)` / `=(_, 6)` ground-int pair (the fake-dig we forbid).
+    assert!(
+        out.decls.iter().all(|d| dug_eq_int_pairs(d).is_empty()),
+        "no grounded int total may be minted over a runtime collection (no fake-dig)"
+    );
+    let dump = format!("{:?}", out.decls.iter().map(|d| d.name.clone()).collect::<Vec<_>>());
+    assert!(
+        dump.contains("method:sum"),
+        "the runtime-domain `.sum()` must stay the opaque `method:sum` ctor: {dump}"
+    );
+}
+
+#[test]
+fn iter_sum_over_opaque_param_receiver_is_not_value_grounded() {
+    // BAIL: an OPAQUE PARAM receiver (`io: X`) is not a written literal -- the syntactic
+    // gate declines and the term stays the opaque `method:sum` ctor. The canonical
+    // effect-domain twin: a `.sum()` over an effect/runtime source is NEVER value-grounded
+    // (it would be the cardinal-sin fake-dig); it stays the opaque under-claim.
+    let src = r#"
+#[test]
+fn t(io: X) {
+    assert_eq!(io.iter().sum::<i32>(), 6);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/iter_sum_opaque.rs");
+    assert!(
+        out.decls.iter().all(|d| dug_eq_int_pairs(d).is_empty()),
+        "no grounded int total may be minted over an opaque param receiver (no fake-dig)"
+    );
+    let dump = format!("{:?}", out.decls.iter().map(|d| d.name.clone()).collect::<Vec<_>>());
+    assert!(
+        dump.contains("method:sum"),
+        "the opaque-param `.sum()` must stay the opaque `method:sum` ctor: {dump}"
+    );
+}
+
+#[test]
+fn iter_next_over_literal_is_not_value_grounded_stays_opaque() {
+    // HONEST BOUNDARY: `.next()` returns `Option<&T>`; `assert_eq!(.., Some(&1))` lifts as
+    // the opaque federated `call:eq:Some(..) == true` (a user-type `PartialEq` dispatch we
+    // do NOT interpret). A standalone bad twin would stay z3-SAT, so value-grounding it
+    // would be a FAKE-DIG. The terminal therefore does NOT recognize `.next()`: the LHS
+    // stays the opaque `method:next` ctor (the established under-claim), NOT a grounded
+    // `Some(1)`. This pins the deliberate non-grounding so a future fake-dig regresses red.
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!([1, 2, 3].iter().next(), Some(&1));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/iter_next.rs");
+    // No grounded int-pair is minted for `.next()` (it would be the fake-dig we refuse).
+    assert!(
+        dug_eq_int_pairs(&out.decls[0]).is_empty(),
+        "`.next()` must NOT ground to a value-level int pair (that would be a fake-dig)"
+    );
+    // The LHS receiver stays the opaque `method:next` ctor.
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&out.decls[0]));
+    assert!(
+        doc.contains("method:next"),
+        "`.next()` must remain the opaque `method:next` ctor (no fake value-grounding): {doc}"
+    );
+}
+
 // ── DIG WAVE: for-loop-body cursor -- index-read unroll over a LITERAL-INT range ──
 //
 // `for i in 0..n { assert_eq!(v[i], ys[i]) }` over a LITERAL int range and IMMUTABLE
