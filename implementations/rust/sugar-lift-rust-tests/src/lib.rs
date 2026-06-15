@@ -3743,10 +3743,27 @@ fn collect_assertion_entries(
             }
             Stmt::Expr(Expr::If(i), _) => {
                 // Panic locus: `if let PAT = e { .. } else { panic!() }` asserts
-                // e matches PAT. Lift it; otherwise refuse the conditional.
+                // e matches PAT. Lift it; otherwise try the guarded-implication
+                // (`ConditionalSugar`); otherwise refuse the conditional.
                 if let Some(entry) = panic_locus_if_entry(i, &temporal_scope) {
                     entries.push(entry);
                     *macros_lifted += 1;
+                } else if let Some(desugared) = {
+                    // `ConditionalSugar`: `if guard { then } [else { else }]` is the
+                    // implication `guard => then` (and `not guard => else`) it states
+                    // -- the claim-side atom. EXACT-OR-BAIL (guard must translate, the
+                    // branch asserts must fully lift, pure body); a bail keeps the
+                    // refusal below. SOUNDNESS: never bare `then` -- always guarded.
+                    let ctx = sugar_ctx(
+                        &temporal_scope,
+                        options,
+                        reducer,
+                        float_widths,
+                        macro_depth,
+                    );
+                    decompose_if(i).and_then(|s| s.desugar(&ctx))
+                } {
+                    emit_desugared(desugared, entries, macros_lifted);
                 } else {
                     let count = count_asserts_in_stmts(&i.then_branch.stmts)
                         + i.else_branch
@@ -10856,6 +10873,247 @@ mod lifter_key_tests {
             out.assertions_lifted, 0,
             "an overflowing map closure must BAIL, not wrap (exact-or-none): {:?}",
             contract_names(&out)
+        );
+    }
+
+    // ── ConditionalSugar: a guarded assert is `guard => claim`, never bare ────
+    //
+    // `if guard { assert P }` is the implication it states (`guard => P`), the
+    // CLAIM-side atom. SOUNDNESS LINE: the body assert only fires when the guard
+    // holds, so the lift MUST be guarded -- emitting bare `P` would be a fake-
+    // discharge (asserting it unconditionally). EXACT-OR-BAIL: a guard that does
+    // not translate, a branch that does not fully lift, or a mutating body bails.
+
+    #[test]
+    fn conditional_if_lifts_as_guarded_implication_not_bare_claim() {
+        // POSITIVE + SOUNDNESS: `if x > 0 { assert!(x < 10) }` lifts as the
+        // implication `x > 0 => x < 10`. The lifted formula must contain the
+        // IMPLICATION (the guard as antecedent), not a bare `x < 10`.
+        let src = r#"
+            #[test]
+            fn guarded() {
+                let x = 5i64;
+                if x > 0 {
+                    assert!(x < 10);
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "a guarded assert must lift as a guarded implication: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "no refusal for a cleanly-guarded assert: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.skip_reasons.iter().all(|r| !r.contains("under if context")),
+            "the guarded assert must NOT stay in the if-context refusal: {:?}",
+            out.skip_reasons
+        );
+        // The emitted formula is an implication (`=>` / Implies connective), not a
+        // bare claim atom: the guard is the antecedent.
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("Implies") || dump.contains("implies") || dump.contains("=>"),
+            "the guarded assert must emit `guard => claim` (an implication), \
+             never a bare claim (that would be a fake-discharge): {dump}"
+        );
+    }
+
+    #[test]
+    fn conditional_else_branch_lifts_under_negated_guard() {
+        // STRUCTURAL: `if c { assert A } else { assert B }` lifts as
+        // `(c => A) and (not c => B)` -- the else branch fires under the negated
+        // guard. Both branches must be present, each under its own guard.
+        let src = r#"
+            #[test]
+            fn both_branches() {
+                let x = 3i64;
+                if x > 0 {
+                    assert!(x > 0);
+                } else {
+                    assert!(x <= 0);
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 2,
+            "both guarded branches must lift (then under c, else under not c): {:?}",
+            out.skip_reasons
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("Not") || dump.contains("not"),
+            "the else branch must be guarded by the NEGATED condition: {dump}"
+        );
+    }
+
+    #[test]
+    fn conditional_opaque_pure_guard_lifts_faithfully_under_euf() {
+        // SOUNDNESS (EUF at callsites): an OPAQUE-but-PURE guard
+        // (`thing.is_ready()`) and an opaque claim translate to uninterpreted EUF
+        // atoms, so `is_ready(thing) => value(thing)==1` is the FAITHFUL implication
+        // the source states -- a sound (if weak) DIG, NOT a fake-discharge (the
+        // claim is GUARDED, never asserted unconditionally). It lifts.
+        let src = r#"
+            #[test]
+            fn rt_guard() {
+                let thing = make_thing();
+                if thing.is_ready() {
+                    assert!(thing.value() == 1);
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "an opaque-but-pure guarded assert lifts as the faithful EUF implication: {:?}",
+            out.skip_reasons
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("Implies") || dump.contains("implies") || dump.contains("=>"),
+            "the claim must stay GUARDED by the opaque predicate, never bare: {dump}"
+        );
+    }
+
+    #[test]
+    fn conditional_side_effecting_guard_bails() {
+        // BAIL (DISCRIMINATION, the real soundness line): the guard ADVANCES a
+        // captured iterator (`it.next().is_some()`) -- a side effect, so the guard
+        // is not a timeless predicate (it changes state each evaluation). The lift
+        // must BAIL, leaving the assert in the if-context refusal, never lifting a
+        // stateful guard as a stable antecedent.
+        let src = r#"
+            #[test]
+            fn se_guard() {
+                let mut it = [1i64, 2, 3].iter();
+                if it.next().is_some() {
+                    assert!(true);
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "a side-effecting (iterator-advancing) guard must BAIL: {:?}",
+            contract_names(&out)
+        );
+        assert!(
+            out.skip_reasons.iter().any(|r| r.contains("under if context")),
+            "the side-effecting-guard assert must stay in the if-context refusal: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn conditional_mutating_branch_bails() {
+        // BAIL (DISCRIMINATION): the then-branch MUTATES an accumulator
+        // (`total += 1`) -- a single guarded implication would not be a timeless
+        // point-wise claim. Must bail, leaving the assert refused.
+        let src = r#"
+            #[test]
+            fn mut_branch() {
+                let x = 1i64;
+                let mut total = 0i64;
+                if x > 0 {
+                    total += 1;
+                    assert!(total > 0);
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "a mutating guarded branch must BAIL (not a timeless point-wise claim): {:?}",
+            contract_names(&out)
+        );
+    }
+
+    // ── ForAllSugar over a CONDITIONAL body: the for-context drain ────────────
+    //
+    // `for v in <literal> { if guard { assert P } }` is the bounded conjunction
+    // `forall k. (k in dom => (guard(k) => P(k)))` -- the wrapper (`ForAllSugar`)
+    // composes the claim-side atom (`ConditionalSugar`). This drains the
+    // for-context unclassified bucket: the loop body is now liftable because the
+    // conditional assert is.
+
+    #[test]
+    fn forall_over_conditional_body_drains_for_context() {
+        // POSITIVE (the drain): a closed-range loop whose body is a guarded assert
+        // now lifts as the bounded universal of the implication -- the cases that
+        // previously sat in "under for context over a literal ... bin-1".
+        let src = r#"
+            #[test]
+            fn loop_guarded() {
+                for i in 0..4 {
+                    if i > 0 {
+                        assert!(i < 4);
+                    }
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "a for-loop over a literal range with a guarded body must drain (lift \
+             as the bounded universal of the implication): {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.skip_reasons.iter().all(|r| !r.contains("under for context")
+                && !r.contains("under if context")),
+            "neither the for-context nor the if-context refusal may remain: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            contract_names(&out).iter().any(|n| n.contains("::loop::i")),
+            "the drained loop is named `<test>::loop::<var>`: {:?}",
+            contract_names(&out)
+        );
+    }
+
+    #[test]
+    fn forall_array_over_conditional_body_is_refutable_for_wrong_claim() {
+        // ADVERSARIAL (the dangerous direction): a literal-array loop with a
+        // guarded but DELIBERATELY WRONG claim must lift HONESTLY -- the finite
+        // conjunction must carry the actual element values under the guard, so a
+        // solver REFUTES it (not fake-green). For `[1,2,3]`, `if v > 1 { assert!(v
+        // == 9) }` is refutable at v=2,3.
+        let src = r#"
+            #[test]
+            fn loop_wrong() {
+                for v in [1i64, 2, 3] {
+                    if v > 1 {
+                        assert!(v == 9);
+                    }
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "the literal-array guarded loop lifts (the conjunction is the universe): {:?}",
+            out.skip_reasons
+        );
+        let dump = format!("{:?}", out.decls);
+        // The actual element values are substituted (faithful), so the false
+        // equality `2 == 9` / `3 == 9` is present and refutable, guarded by `> 1`.
+        for actual in ["2", "3"] {
+            assert!(
+                dump.contains(actual),
+                "actual element {actual} must be the faithful substitution (refutable, \
+                 not faked green): {dump}"
+            );
+        }
+        assert!(
+            dump.contains("Implies") || dump.contains("implies") || dump.contains("=>"),
+            "each instance must remain guarded (`v>1 => v==9`), never bare: {dump}"
         );
     }
 
