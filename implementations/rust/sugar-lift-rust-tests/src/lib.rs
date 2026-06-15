@@ -230,6 +230,15 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
     if reason.contains("inactive cfg") {
         return Disposition::Inactive;
     }
+    // INACTIVE: a `#[cfg(..)]`-INACTIVE match arm (`match () { #[cfg(target_pointer_width
+    // = "32")] () => assert_eq!(..) }` on a 64-bit target). The arm does not exist in
+    // THIS build's universe -- it is not work and not a refusal, the SAME rung as the
+    // other `inactive cfg` cases (the surviving active arm is the one that ran). The
+    // reason string carries `refused` for the human ledger, but its DISPOSITION is
+    // Inactive (a disposition bug: it was counted UNCLASSIFIED). Corpus: num/wrapping.rs.
+    if reason.contains("cfg-inactive match arm") {
+        return Disposition::Inactive;
+    }
     // TERMINAL (source property). `temporally unstable` joins `ambiguous temporal
     // identity`: a term reading a mutated local has no single `t`, so it cannot be
     // read timelessly -- a property of the source, not a missing lift.
@@ -451,7 +460,27 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // `mem.rs`/`slice.rs` non-literal-repeat rows fell to unclassified only because the
         // "refused by name" reason was not whitelisted; not a fake-zero -- the non-literal
         // length is detected by `repeat_count_literal`.)
-        || reason.contains("has a non-literal length -- not a finite");
+        || reason.contains("has a non-literal length -- not a finite")
+        // TERMINAL (RESOLVE-THEN-CLASSIFY -- the test-nested-helper drain): a helper whose
+        // source is now SHOWN (lexically resolved from an enclosing `#[test]` fn scope,
+        // formerly the unresolved "has no visible source" / "reachable only via call-site
+        // inlining" UNCLASSIFIED reach gap) has a RUNTIME body. Two shapes, both SOURCE
+        // properties no value-lifter could lift point-wise:
+        //   (1) a `let mut` MUTABLE-LOCAL TRAJECTORY -- a state machine the body mutates
+        //       step by step (`let mut writer = ..; fmt::write(&mut writer, ..)`), observed
+        //       per-step (kin to `temporally unstable` / `mutable container`); and
+        //   (2) a RUNTIME ITERATOR/COLLECTION construct -- `preds.iter().map(..).collect()`
+        //       into a Vec/HashSet over runtime parameter contents (bin-2 aggregate data,
+        //       not constructed from source literals).
+        // EARNED by the resolved-body reducer (`init_is_runtime_collection` / the `let mut`
+        // arm) AFTER resolution -- a RESOLVED-and-PURE body still digs (the dig path is
+        // untouched), so this can only refuse a body whose runtime cause is SHOWN; never a
+        // fake-refuse (a pure body discharges) and never an unresolved fake-terminal (the
+        // unresolved "has no visible source" stays UNCLASSIFIED below). Corpus:
+        // `mem/type_info.rs::assert_predicates_exact` (collection), `fmt/float.rs::assert_exact_exp`
+        // (mut writer).
+        || reason.contains("runtime iterator/collection construct (bin-2")
+        || reason.contains("mutable-local state machine driven by fmt-write");
     if terminal {
         Disposition::Refused
     } else {
@@ -1454,18 +1483,55 @@ fn helper_is_generic_parametric(f: &syn::ItemFn) -> bool {
     })
 }
 
+/// A helper's BODY contains a provably-RUNTIME construct that the resolved-body reducer
+/// refuses regardless of the call-site actuals: a `let mut` mutable-local trajectory or a
+/// `let` whose init is a runtime iterator/collection construct (`.iter().map(..).collect()`).
+/// Such a body is bin-2/temporally-unstable by SOURCE -- no closed-literal call site could
+/// pin it (the construct reads runtime aggregate / mutated state, not source literals). This
+/// is the resolve-then-classify at the DEFINITION site: a helper called ONLY in nested-scope
+/// (e.g. `assert_typeid_set_eq`, invoked from inside another helper's body, never at a
+/// drainable call site) would otherwise stay the generic UNCLASSIFIED "reachable only via
+/// call-site inlining" reason even though its body is genuinely runtime. We mirror EXACTLY
+/// the two shapes the resolved-body reducer (`reduce_assertion_stmts`) refuses, so flagging
+/// here can only name a body that would also refuse if inlined -- never a fake-refuse. A
+/// pure body (no `let mut`, no collection init) returns false and stays unclassified.
+fn helper_body_is_runtime_terminal(f: &syn::ItemFn) -> bool {
+    f.block.stmts.iter().any(|s| {
+        let Stmt::Local(local) = s else { return false };
+        // `let mut x = ..` mutable-local trajectory.
+        let is_let_mut = matches!(
+            &local.pat,
+            Pat::Ident(id) if id.mutability.is_some()
+        );
+        // `let x = <runtime iterator/collection construct>`.
+        let init_is_collection = local
+            .init
+            .as_ref()
+            .filter(|i| i.diverge.is_none())
+            .map(|i| init_is_runtime_collection(&i.expr))
+            .unwrap_or(false);
+        is_let_mut || init_is_collection
+    })
+}
+
 /// The refusal reason for a non-`#[test]` helper's asserts that survived Pass-1 inlining.
 ///   * runtime iterator/closure/dyn parameter  -> bin-2 terminal (runtime data).
 ///   * generic type/const parameter            -> monomorphization terminal (no single
 ///                                                concrete instantiation to read).
-///   * otherwise (concrete scalar/slice params) -> UNCLASSIFIED: a closed-literal call
-///     site CAN pin it; the inability to lift is call-queueing reach (dissolution / the
+///   * runtime BODY construct (`let mut` / collection init) -> terminal (resolve-then-
+///     classify at the definition site: a body the resolved-body reducer would refuse).
+///   * otherwise (concrete scalar/slice params, pure body) -> UNCLASSIFIED: a closed-literal
+///     call site CAN pin it; the inability to lift is call-queueing reach (dissolution / the
 ///     exact partition own it), NOT a source property. Left unclassified to avoid a
 ///     fake-refuse of a carryable concrete call.
 fn callsite_inlining_reason(fn_name: &str, f: &syn::ItemFn) -> String {
     if helper_is_runtime_parametric(f) {
         format!(
             "assertion in non-#[test] item `{fn_name}` over a runtime iterator/closure/dyn parameter (bin-2: runtime data, not constructible from source literals at any call site); refused"
+        )
+    } else if helper_body_is_runtime_terminal(f) {
+        format!(
+            "assertion in non-#[test] item `{fn_name}` has a runtime iterator/collection construct (bin-2: runtime aggregate data, not constructed from source literals); refused"
         )
     } else if helper_is_generic_parametric(f) {
         format!(
@@ -1582,6 +1648,8 @@ fn visit_test_fn(
         &mut out.reduced_helpers,
         0,
         &BTreeSet::new(),
+        // Top-level `#[test]` fn: no ENCLOSING block, so no inherited nested fns.
+        &BTreeMap::new(),
     );
     out.assertions_lifted += macros_lifted;
     out.assertions_refused += skipped.len();
@@ -1968,6 +2036,7 @@ fn try_macro_expansion_entries(
         &mut temp_helpers,
         macro_depth + 1,
         &BTreeSet::new(),
+        &BTreeMap::new(),
     );
     if temp_entries.is_empty() {
         Some(Err(format!(
@@ -2678,6 +2747,7 @@ fn lift_bounded_forall(
         &mut body_helpers,
         macro_depth,
         &scope.plan.interior_mut,
+        &BTreeMap::new(),
     );
     if !body_skipped.is_empty() || body_entries.len() != n_body {
         return None;
@@ -3933,6 +4003,7 @@ impl Sugar for FoldSugar {
             &mut body_helpers,
             ctx.macro_depth,
             &ctx.scope.plan.interior_mut,
+            &BTreeMap::new(),
         );
         if !body_skipped.is_empty() || body_entries.len() != n_body {
             return None;
@@ -4252,6 +4323,7 @@ impl ConditionalSugar {
             &mut body_helpers,
             ctx.macro_depth,
             &ctx.scope.plan.interior_mut,
+            &BTreeMap::new(),
         );
         if !body_skipped.is_empty() || body_entries.len() != expected {
             return None;
@@ -4554,6 +4626,7 @@ impl MatchSugar {
             &mut body_helpers,
             ctx.macro_depth,
             &ctx.scope.plan.interior_mut,
+            &BTreeMap::new(),
         );
         if !body_skipped.is_empty() || body_entries.len() != expected {
             return None;
@@ -5476,11 +5549,11 @@ fn unconditional_block_stmts(expr: &Expr) -> Option<&[Stmt]> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn collect_assertion_entries(
-    stmts: &[Stmt],
+fn collect_assertion_entries<'a>(
+    stmts: &'a [Stmt],
     local_scope: &str,
     options: &LiftOptions,
-    reducer: &ReductionCtx<'_>,
+    reducer: &ReductionCtx<'a>,
     float_widths: &mut FloatWidthScope,
     entries: &mut Vec<AssertionEntry>,
     skipped: &mut Vec<String>,
@@ -5488,6 +5561,19 @@ fn collect_assertion_entries(
     reduced_helpers: &mut HashSet<String>,
     macro_depth: usize,
     inherited_stateful: &BTreeSet<String>,
+    // LEXICAL SCOPE: nested fns declared in ENCLOSING blocks (the ancestors of this
+    // block). A Rust `fn` item is in scope for the whole enclosing block including all
+    // nested sub-blocks (item hoisting), so a helper defined at the `#[test]` fn level
+    // (`fn assert_predicates_exact(..)`) IS lexically visible at a call inside a bare
+    // `{ .. }` block. We merge these into THIS block's `local_fns` so the call resolves
+    // and its body is RE-LIFTED at the call site -- a pure body digs, a RUNTIME body
+    // (HashSet/Vec collect over TypeId, `fmt::write` over a `let mut` writer) refuses
+    // with a NAMED effect. Without this, such a call fell to the unresolved
+    // "has no visible source" (UNCLASSIFIED) -- a reach gap, not a source property.
+    // SOUND: the SAME reducer re-digs the body, so this can only DRAIN (dig or named-
+    // refuse) a body whose cause is now SHOWN; it never fake-digs (a runtime body bails
+    // / refuses) and never fake-refuses (a pure body discharges through the dig path).
+    enclosing_fns: &BTreeMap<String, &'a syn::ItemFn>,
 ) {
     // A NESTED BLOCK carries the `#b<idx>` marker (`child_block_scope`); a function
     // body / macro-expansion / loop scope does not. Inside a nested block we relabel
@@ -5511,13 +5597,17 @@ fn collect_assertion_entries(
     // inner fns they select, so the runtime branch is inlined (its asserts
     // lift) instead of refused as an unreachable inner fn.
     let runtime_targets = const_eval_select_runtime_targets(stmts);
-    let local_fns: BTreeMap<String, &syn::ItemFn> = stmts
-        .iter()
-        .filter_map(|s| match s {
-            Stmt::Item(Item::Fn(f)) => Some((f.sig.ident.to_string(), f)),
-            _ => None,
-        })
-        .collect();
+    // Start from the lexically-enclosing nested fns (ancestor blocks), then OVERLAY this
+    // block's own `Item::Fn`s -- a same-named inner fn SHADOWS an outer one (Rust scoping).
+    // So a helper defined at the `#[test]` fn level resolves at a call inside a nested
+    // block, while a block-local redefinition still wins. The merged map is what we resolve
+    // calls against AND what we pass down as `enclosing_fns` to deeper recursions.
+    let mut local_fns: BTreeMap<String, &'a syn::ItemFn> = enclosing_fns.clone();
+    for s in stmts.iter() {
+        if let Stmt::Item(Item::Fn(f)) = s {
+            local_fns.insert(f.sig.ident.to_string(), f);
+        }
+    }
     // Map of this block's simple `let <ident> = <init>;` bindings, so the DEFOLDER can
     // resolve a fold receiver that is a binding (`it.fold(..)` where `it = xs.iter()`,
     // `xs = [..]`) back through to its literal-array / range domain. A non-simple pat or
@@ -5568,6 +5658,7 @@ fn collect_assertion_entries(
                             reduced_helpers,
                             macro_depth,
                             &temporal_scope.plan.interior_mut,
+                            &local_fns,
                         );
                     } else if let Some(desugared) = {
                         // DESUGAR (the typed `Sugar` spine): a `.fold`/`.rfold`
@@ -5788,6 +5879,7 @@ fn collect_assertion_entries(
                     reduced_helpers,
                     macro_depth,
                     &temporal_scope.plan.interior_mut,
+                    &local_fns,
                 );
             }
             // Unconditional unsafe block: recurse and lift normally.
@@ -5804,6 +5896,7 @@ fn collect_assertion_entries(
                     reduced_helpers,
                     macro_depth,
                     &temporal_scope.plan.interior_mut,
+                    &local_fns,
                 );
             }
             // Control-flow contexts: asserts are conditional or parametric; refuse.
@@ -5991,11 +6084,27 @@ fn collect_assertion_entries(
                     }
                 } else {
                     let count: usize = m.arms.iter().map(|a| count_asserts_in_expr(&a.body)).sum();
+                    // RESOLVE-THEN-CLASSIFY (the match-context tail): a `match` whose
+                    // SCRUTINEE is a RUNTIME call result (`match it.next() { Some(x) =>
+                    // assert_eq!(*x, ..) }`, `it` a `let mut` iterator) reads its asserted
+                    // values out of the runtime arm taken by a runtime iterator-advance --
+                    // no single timeless `t`, the SAME terminal class as the existing
+                    // `RuntimeMatchScrutineeEffect` (`operand is a runtime non-scalar
+                    // result`). Name it terminal. DISCRIMINATION: a `match` over a
+                    // CONSTRUCTED literal/path scrutinee is NOT a runtime call result
+                    // (`expr_is_runtime_call_result` false), so it STAYS the generic
+                    // UNCLASSIFIED reason -- the fake-refuse guardrail. Corpus:
+                    // option.rs::test_mut_iter (`match it.next()`).
+                    let reason = if let Some(eff) = runtime_match_scrutinee_effect(
+                        &Expr::Match(m.clone()),
+                    ) {
+                        eff.reason()
+                    } else {
+                        "assertion under match context: not unconditional point-wise; released to layer 0"
+                            .to_string()
+                    };
                     for _ in 0..count {
-                        skipped.push(
-                            "assertion under match context: not unconditional point-wise; released to layer 0"
-                                .to_string(),
-                        );
+                        skipped.push(reason.clone());
                     }
                 }
             }
@@ -6023,6 +6132,7 @@ fn collect_assertion_entries(
                     reduced_helpers,
                     macro_depth,
                     &temporal_scope.plan.interior_mut,
+                    &local_fns,
                 );
             }
             // A `const`/`static` ITEM declared inside a test fn body
@@ -6065,6 +6175,7 @@ fn collect_assertion_entries(
                     reduced_helpers,
                     macro_depth,
                     &temporal_scope.plan.interior_mut,
+                    &local_fns,
                 );
             }
             // Inner fn definitions inside a test fn: their asserts are only
@@ -6144,6 +6255,7 @@ fn collect_assertion_entries(
                             reduced_helpers,
                             macro_depth,
                             &BTreeSet::new(),
+                            &local_fns,
                         );
                         true
                     } else if let Some(stmts) = unconditional_block_stmts(e) {
@@ -6159,6 +6271,7 @@ fn collect_assertion_entries(
                             reduced_helpers,
                             macro_depth,
                             &temporal_scope.plan.interior_mut,
+                            &local_fns,
                         );
                         true
                     } else if let Some(cs) = sugar::callsite::CallsiteSugar::decompose(
@@ -6651,6 +6764,7 @@ fn for_context_refusal_reason(
         &mut bh,
         macro_depth,
         &scope.plan.interior_mut,
+        &BTreeMap::new(),
     );
     let body_over_opaque = bs.iter().any(|r| {
         r.contains("OPAQUE")
@@ -6820,6 +6934,7 @@ fn lift_item_assertions(
         &mut out.reduced_helpers,
         0,
         &BTreeSet::new(),
+        &BTreeMap::new(),
     );
     out.assertions_lifted += macros_lifted;
     out.assertions_refused += skipped.len();
@@ -8152,8 +8267,20 @@ fn reduce_assertion_stmts<'a>(
                 let name = match &local.pat {
                     Pat::Ident(id) if id.subpat.is_none() && id.by_ref.is_none() => {
                         if id.mutability.is_some() {
+                            // A `let mut` binding in a RESOLVED helper body is a mutable
+                            // local trajectory: a state machine the body mutates step by
+                            // step (`let mut writer = ..; fmt::write(&mut writer, ..)`),
+                            // observed by asserts over its per-step mutated state. With
+                            // the source now SHOWN (a test-nested helper lexically in
+                            // scope), the mutated local has no single timeless `t` -- a
+                            // SOURCE property, kin to the terminal `mutable container is
+                            // not temporally stable` / `temporally unstable`. Named as a
+                            // runtime helper-body effect (terminal). (Corpus:
+                            // `fmt/float.rs::assert_exact_exp`'s `let mut writer`.)
                             return Err(format!(
-                                "helper-body `let mut {}` is not temporally stable",
+                                "resolved helper body has a runtime `let mut {}` trajectory \
+                                 (mutable-local state machine driven by fmt-write / a mutating \
+                                 method; not temporally stable); refused",
                                 id.ident
                             ));
                         }
@@ -8173,6 +8300,21 @@ fn reduce_assertion_stmts<'a>(
                 };
                 let init_expr = substitute_expr(&init.expr, &binds);
                 if !is_pure_pinnable_expr(&init_expr) {
+                    // RESOLVE-THEN-CLASSIFY: with the helper source now SHOWN, an init that
+                    // is a RUNTIME COLLECTION construct (`preds.iter().map(..).collect()`
+                    // into a Vec/HashSet) is bin-2 runtime aggregate data -- not a finite
+                    // construction from source literals, terminal. A non-pure init that is
+                    // NOT a recognized collection construct (e.g. a const free-fn call a
+                    // future const-eval arm could evaluate) STAYS the generic UNCLASSIFIED
+                    // reason -- the fake-refuse guardrail.
+                    if init_is_runtime_collection(&init_expr) {
+                        return Err(format!(
+                            "resolved helper body `let {name} = {}` is a runtime \
+                             iterator/collection construct (bin-2: runtime aggregate data, \
+                             not constructed from source literals); refused",
+                            token_key(&init.expr)
+                        ));
+                    }
                     return Err(format!(
                         "helper-body `let {name} = {}` has a non-pure initializer",
                         token_key(&init.expr)
@@ -8240,6 +8382,40 @@ fn is_pure_pinnable_expr(expr: &Expr) -> bool {
         }
         _ => false,
     }
+}
+
+/// A RESOLVED helper body's `let`-init is a genuinely-RUNTIME collection construct
+/// (an iterator/collection chain: `.iter()`/`.into_iter()`/`.collect()`/`.map()` over a
+/// slice/Vec/HashSet). The collected value is RUNTIME aggregate data -- a multiset/set
+/// built at run time from the (runtime) parameter contents, not a finite construction
+/// from source literals (kin to `bin-2`). Once the helper is RESOLVED (its source is
+/// now SHOWN -- a test-nested helper lexically in scope), such a body has no point-wise
+/// timeless value to lift, by any value-lifter: a SOURCE property, terminal. EARNED by
+/// detecting the iterator/collection chain SHAPE; a pure non-pinnable init that is NOT a
+/// collection construct (e.g. a const free-fn call a future arm could evaluate) returns
+/// None and STAYS the generic "non-pure initializer" UNCLASSIFIED reason -- the
+/// fake-refuse guardrail. (Corpus: `mem/type_info.rs::assert_predicates_exact`'s
+/// `let actual_pred_ids: Vec<TypeId> = preds.iter().map(..).collect()`.)
+fn init_is_runtime_collection(expr: &Expr) -> bool {
+    fn walk(e: &Expr, depth: usize) -> bool {
+        if depth == 0 {
+            return false;
+        }
+        match e {
+            Expr::MethodCall(mc) => {
+                let m = mc.method.to_string();
+                matches!(
+                    m.as_str(),
+                    "collect" | "iter" | "into_iter" | "iter_mut" | "copied" | "cloned" | "map"
+                ) || walk(&mc.receiver, depth - 1)
+            }
+            Expr::Paren(p) => walk(&p.expr, depth - 1),
+            Expr::Group(g) => walk(&g.expr, depth - 1),
+            Expr::Reference(r) => walk(&r.expr, depth - 1),
+            _ => false,
+        }
+    }
+    walk(expr, 16)
 }
 
 fn helper_param_names(f: &syn::ItemFn) -> Result<Vec<String>, String> {
