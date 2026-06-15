@@ -44,13 +44,17 @@ run_suite() {
   local prove_json="$dir/.prove.json"
   ( cd "$dir" && "$SUGAR" prove . --json ) > "$prove_json" 2>/dev/null || true
 
+  # Select the TEST-ASSERTION consistency row, not the production function's own
+  # `consistency:rust-source::<fn>` value self-contract (a single-fact inv that
+  # is trivially SAT and always discharges). The SourceOracle audit (PR #2138)
+  # began emitting that production self-contract into the same consistency
+  # report; this receipt is about the TEST's assertion-set consistency, which is
+  # the row whose callsite carries the test's source path (`src/lib.rs::...`),
+  # NOT the `rust-source::` production prefix.
+  local row_filter="(r.get('property','') or '').startswith('consistency:') and not (r.get('property','') or '').startswith('consistency:rust-source::') and 'witness-package' not in (r.get('property','') or '')"
   local status reason
-  status="$(pyget "$prove_json" "
-next((r.get('status') for r in d.get('rows',[]) if (r.get('property','') or '').startswith('consistency:')), 'MISSING')
-")"
-  reason="$(pyget "$prove_json" "
-next((r.get('reason') for r in d.get('rows',[]) if (r.get('property','') or '').startswith('consistency:')), 'MISSING')
-")"
+  status="$(pyget "$prove_json" "next((r.get('status') for r in d.get('rows',[]) if $row_filter), 'MISSING')")"
+  reason="$(pyget "$prove_json" "next((r.get('reason') for r in d.get('rows',[]) if $row_filter), 'MISSING')")"
   echo "   consistency row status: $status"
   echo "   reason: $reason"
 

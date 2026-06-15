@@ -1547,6 +1547,109 @@ mod tests {
         assert_eq!(res[0].verdict, ObligationVerdict::Discharged);
     }
 
+    /// CONGRUENCE TEETH on a PURE nullary callsite (the cardinal-sin guard).
+    ///
+    /// This is the exact FOL shape the rust/tokio/polars consistency showcases
+    /// lift for their `bad` fixtures: a PURE deterministic call `make_value()`
+    /// (no args, no effect) asserted equal to two distinct integer literals in
+    /// the SAME conjoined contract. By EUF congruence both `call:make_value()`
+    /// occurrences are the SAME ground term, so `f()==6 ∧ f()==7` is UNSAT and
+    /// the consistency row MUST refuse. A regression here would fake-discharge a
+    /// contradiction -- the cardinal sin. (Root-caused 2026-06-15: the verifier
+    /// teeth were INTACT; the regression was a showcase harness row-selection
+    /// bug after PR #2138 began emitting a separate `rust-source::<fn>` row.)
+    ///
+    /// POSITIVE: the pure contradiction refuses.
+    #[test]
+    fn pure_nullary_callsite_literal_contradiction_refuses() {
+        let (plan, reg) = z3_plan_and_registry();
+        let call = json!({"kind":"ctor","name":"call:make_value","args":[]});
+        let inv = json!({"kind":"and","operands":[
+            eqf(call.clone(), int(6)),
+            eqf(call.clone(), int(7)),
+        ]});
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:pure-contradiction",
+            "make_value#euf#c:callresult_make_value_a0()::assertion",
+            inv,
+        );
+        let res = verify_consistency(&pool, &plan, &reg);
+        assert_eq!(res.len(), 1, "one conjoined obligation: {res:?}");
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Unsatisfied,
+            "PURE f()==6 ∧ f()==7 is UNSAT by congruence -> MUST refuse (cardinal-sin guard): {res:?}"
+        );
+    }
+
+    /// DISCRIMINATION: a `.await` over a pure callsite is lifted as a STRUCTURAL
+    /// deterministic term (`await(call:async_value())`). The tokio showcase
+    /// header documents this: `.await` is a structural await term inside the
+    /// consistency obligation, so two awaited reads of the SAME callsite are the
+    /// SAME ground term and contradictory literals about it still refuse. (The
+    /// intended fork model vindicates a contradiction ONLY when the impurity is
+    /// modeled by DISTINCT terms at distinct program points -- see the next
+    /// test. A structurally-identical await term carries the teeth.)
+    #[test]
+    fn structural_await_callsite_literal_contradiction_refuses() {
+        let (plan, reg) = z3_plan_and_registry();
+        let awaited = json!({"kind":"ctor","name":"await","args":[
+            {"kind":"ctor","name":"call:async_value","args":[]}
+        ]});
+        let inv = json!({"kind":"and","operands":[
+            eqf(awaited.clone(), int(6)),
+            eqf(awaited.clone(), int(7)),
+        ]});
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:await-contradiction",
+            "tokio_await_scalar_contradiction",
+            inv,
+        );
+        let res = verify_consistency(&pool, &plan, &reg);
+        assert_eq!(res.len(), 1, "one conjoined obligation: {res:?}");
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Unsatisfied,
+            "await(f())==6 ∧ await(f())==7 over the SAME structural await term refuses: {res:?}"
+        );
+    }
+
+    /// DISCRIMINATION (the fork boundary -- no false refusal): two DISTINCT
+    /// uninterpreted callsites with NO shared term and NO literal congruence
+    /// (`f()==6 ∧ g()==7`) are always-SAT -- there is no UNSAT to invert -- so
+    /// the consistency row DISCHARGES. This is the "impure read at distinct
+    /// program points = distinct terms = consistent" leg of the fork model: the
+    /// teeth fire ONLY when the two facts share the same ground term. Guards
+    /// against an over-eager refusal that would convict a legitimate trajectory.
+    #[test]
+    fn distinct_callsites_no_shared_term_discharges() {
+        let (plan, reg) = z3_plan_and_registry();
+        let f = json!({"kind":"ctor","name":"call:f","args":[]});
+        let g = json!({"kind":"ctor","name":"call:g","args":[]});
+        let inv = json!({"kind":"and","operands":[
+            eqf(f, int(6)),
+            eqf(g, int(7)),
+        ]});
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:distinct-callsites",
+            "two_distinct_calls#euf#c:callresult_x::assertion",
+            inv,
+        );
+        let res = verify_consistency(&pool, &plan, &reg);
+        assert_eq!(res.len(), 1, "one obligation: {res:?}");
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Discharged,
+            "distinct callsites f()==6 ∧ g()==7 share no term -> SAT -> discharge (no false refusal): {res:?}"
+        );
+    }
+
     /// THE HOLSTER DEMO. A vendor swears `result < X`; a consumer swears
     /// `result < Y` about THE SAME CALLSITE. To Sugar these are not two
     /// contracts that happen to be related -- they are ONE contract, because a
