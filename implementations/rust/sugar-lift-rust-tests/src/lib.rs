@@ -40,6 +40,7 @@ pub mod sugar {
     pub mod closure_term;
     pub mod compare;
     pub mod conditional;
+    pub mod configuration;
     pub mod const_block;
     pub mod control_flow_term;
     pub mod ctor_term;
@@ -83,6 +84,9 @@ pub mod sugar {
     pub mod unary;
 }
 
+use crate::sugar::configuration::{
+    resolve as cfg_resolve, resolve_predicate as cfg_resolve_predicate, CfgDisposition,
+};
 use quote::ToTokens;
 use sugar_ir_symbolic::{
     and_, atomic_, eq, forall, gt, gte, implies, lt, lte, make_var, ne, not_, num, or_, real_const,
@@ -623,13 +627,13 @@ fn census_walk_items(
     for item in items {
         match item {
             Item::Fn(f) if has_test_attr(&f.attrs) => {
-                if matches!(cfg_eval_for_attrs(&f.attrs, options), CfgEval::Active) {
+                if matches!(cfg_resolve(&f.attrs, options), CfgDisposition::Present) {
                     census_walk_stmts(&f.block.stmts, "census", options, reducer, reduced, rows);
                 }
             }
             Item::Mod(m) => {
                 if let Some((_, items)) = &m.content {
-                    if matches!(cfg_eval_for_attrs(&m.attrs, options), CfgEval::Active) {
+                    if matches!(cfg_resolve(&m.attrs, options), CfgDisposition::Present) {
                         census_walk_items(items, options, reducer, reduced, rows);
                     }
                 }
@@ -759,9 +763,9 @@ fn walk_items<'a>(
             Item::Mod(m) => {
                 if let Some((_, items)) = &m.content {
                     let module_name = scoped_test_name(source_path, modules, &m.ident.to_string());
-                    match cfg_eval_for_attrs(&m.attrs, options) {
-                        CfgEval::Active => {}
-                        CfgEval::Inactive(reason) => {
+                    match cfg_resolve(&m.attrs, options) {
+                        CfgDisposition::Present => {}
+                        CfgDisposition::Absent(reason) => {
                             account_skipped_module(
                                 items,
                                 &module_name,
@@ -772,7 +776,7 @@ fn walk_items<'a>(
                             );
                             continue;
                         }
-                        CfgEval::Ambiguous(reason) => {
+                        CfgDisposition::Ambiguous(reason) => {
                             account_skipped_module(
                                 items,
                                 &module_name,
@@ -816,7 +820,7 @@ fn walk_non_test_fns(
                 if let Some((_, items)) = &m.content {
                     // A cfg-skipped module was fully accounted in pass 1; do not
                     // recurse here or its non-test asserts would be double-counted.
-                    if !matches!(cfg_eval_for_attrs(&m.attrs, options), CfgEval::Active) {
+                    if !matches!(cfg_resolve(&m.attrs, options), CfgDisposition::Present) {
                         continue;
                     }
                     modules.push(m.ident.to_string());
@@ -1137,9 +1141,9 @@ fn visit_test_fn(
     out: &mut AdapterOutput,
 ) {
     let test_name = scoped_test_name(source_path, modules, &f.sig.ident.to_string());
-    match cfg_eval_for_attrs(&f.attrs, options) {
-        CfgEval::Active => {}
-        CfgEval::Inactive(reason) => {
+    match cfg_resolve(&f.attrs, options) {
+        CfgDisposition::Present => {}
+        CfgDisposition::Absent(reason) => {
             // Refuse every assert in the fn body so they are not silent drops.
             let assert_count = count_asserts_in_stmts(&f.block.stmts);
             let skip_reason = format!("inactive cfg on test fn; skipped: {reason}");
@@ -1154,7 +1158,7 @@ fn visit_test_fn(
             });
             return;
         }
-        CfgEval::Ambiguous(reason) => {
+        CfgDisposition::Ambiguous(reason) => {
             // Refuse every assert in the fn body so they are not silent drops.
             let assert_count = count_asserts_in_stmts(&f.block.stmts);
             let skip_reason = format!("ambiguous cfg on test fn; skipped: {reason}");
@@ -4142,10 +4146,10 @@ fn const_fold_bool_guard(cond: &Expr, options: &LiftOptions) -> Option<bool> {
         // unparseable -> None (bail; stays unclassified, never fake-folded).
         Expr::Macro(m) if m.mac.path.segments.last().is_some_and(|s| s.ident == "cfg") => {
             let predicate = m.mac.parse_body::<CfgPredicate>().ok()?;
-            match cfg_eval_predicate(&predicate, options.target_cfg.as_ref()) {
-                CfgEval::Active => true,
-                CfgEval::Inactive(_) => false,
-                CfgEval::Ambiguous(_) => return None,
+            match cfg_resolve_predicate(&predicate, options) {
+                CfgDisposition::Present => true,
+                CfgDisposition::Absent(_) => false,
+                CfgDisposition::Ambiguous(_) => return None,
             }
         }
         _ => return None,
@@ -4523,8 +4527,8 @@ fn collect_assertion_entries<'a>(
                     }
                 }
             }
-            Stmt::Macro(m) => match cfg_eval_for_attrs(&m.attrs, options) {
-                CfgEval::Active => {
+            Stmt::Macro(m) => match cfg_resolve(&m.attrs, options) {
+                CfgDisposition::Present => {
                     // Known assertion macros are lowered by their tuned arm
                     // first. If no arm lifts it, walk into the definition: when
                     // we hold the macro's source, expand it and reduce the
@@ -4573,15 +4577,15 @@ fn collect_assertion_entries<'a>(
                         }
                     }
                 }
-                CfgEval::Inactive(reason) => {
+                CfgDisposition::Absent(reason) => {
                     skipped.push(format!("inactive cfg on assertion; skipped: {reason}"));
                 }
-                CfgEval::Ambiguous(reason) => {
+                CfgDisposition::Ambiguous(reason) => {
                     skipped.push(format!("ambiguous cfg on assertion; skipped: {reason}"));
                 }
             },
-            Stmt::Expr(Expr::Macro(m), _) => match cfg_eval_for_attrs(&m.attrs, options) {
-                CfgEval::Active => {
+            Stmt::Expr(Expr::Macro(m), _) => match cfg_resolve(&m.attrs, options) {
+                CfgDisposition::Present => {
                     // Known assertion macros are lowered by their tuned arm
                     // first. If no arm lifts it, walk into the definition: when
                     // we hold the macro's source, expand it and reduce the
@@ -4630,10 +4634,10 @@ fn collect_assertion_entries<'a>(
                         }
                     }
                 }
-                CfgEval::Inactive(reason) => {
+                CfgDisposition::Absent(reason) => {
                     skipped.push(format!("inactive cfg on assertion; skipped: {reason}"));
                 }
-                CfgEval::Ambiguous(reason) => {
+                CfgDisposition::Ambiguous(reason) => {
                     skipped.push(format!("ambiguous cfg on assertion; skipped: {reason}"));
                 }
             },
@@ -4908,7 +4912,7 @@ fn collect_assertion_entries<'a>(
                     // they fall to the generic per-fn safety net. SILENT stays 0; the
                     // surviving (active) arm is the one that ran. Corpus: num/wrapping.rs.
                     for arm in &m.arms {
-                        if matches!(cfg_eval_for_attrs(&arm.attrs, options), CfgEval::Inactive(_)) {
+                        if matches!(cfg_resolve(&arm.attrs, options), CfgDisposition::Absent(_)) {
                             let inactive = count_asserts_in_expr(&arm.body);
                             for _ in 0..inactive {
                                 skipped.push(
@@ -5297,7 +5301,7 @@ fn collect_assertion_entries<'a>(
         if count_asserts_in_stmts(&helper.block.stmts) == 0 {
             continue;
         }
-        if !matches!(cfg_eval_for_attrs(&helper.attrs, options), CfgEval::Active) {
+        if !matches!(cfg_resolve(&helper.attrs, options), CfgDisposition::Present) {
             continue;
         }
         let Ok(params) = helper_param_names(helper) else {
@@ -7249,7 +7253,7 @@ fn resolve_value_call_inline(
     }
     let name = path.path.get_ident()?.to_string();
     let helper = scope.fn_registry().lookup(&name)?;
-    if !matches!(cfg_eval_for_attrs(&helper.attrs, options), CfgEval::Active) {
+    if !matches!(cfg_resolve(&helper.attrs, options), CfgDisposition::Present) {
         return None;
     }
     // SOUNDNESS: an `async fn`'s body is NOT the call's value -- the call returns a
@@ -7389,14 +7393,14 @@ fn reduce_assertion_expr<'a>(
                     format!("assertion helper `{name}` has no visible source; skipped assertion")
                 })?,
             };
-            match cfg_eval_for_attrs(&helper.attrs, options) {
-                CfgEval::Active => {}
-                CfgEval::Inactive(reason) => {
+            match cfg_resolve(&helper.attrs, options) {
+                CfgDisposition::Present => {}
+                CfgDisposition::Absent(reason) => {
                     return Err(format!(
                         "assertion helper `{name}` inactive cfg; skipped: {reason}"
                     ));
                 }
-                CfgEval::Ambiguous(reason) => {
+                CfgDisposition::Ambiguous(reason) => {
                     return Err(format!(
                         "assertion helper `{name}` ambiguous cfg; skipped: {reason}"
                     ));
@@ -7861,7 +7865,7 @@ fn resolve_inlinable_helper_call_scoped<'a>(
     if count_asserts_in_stmts(&helper.block.stmts) == 0 {
         return None;
     }
-    if !matches!(cfg_eval_for_attrs(&helper.attrs, options), CfgEval::Active) {
+    if !matches!(cfg_resolve(&helper.attrs, options), CfgDisposition::Present) {
         return None;
     }
     let params = helper_param_names(helper).ok()?;
@@ -8038,17 +8042,17 @@ fn assertions_from_macro_with_bindings(
         // debug_assertions is NOT confirmed Active we refuse -- overclaiming on a
         // macro that compiles out in release would be a falsePass.
         "debug_assert_eq" => {
-            match cfg_eval_predicate(
+            match cfg_resolve_predicate(
                 &CfgPredicate::Name("debug_assertions".to_string()),
-                options.target_cfg.as_ref(),
+                options,
             ) {
-                CfgEval::Active => {}
-                CfgEval::Inactive(reason) => {
+                CfgDisposition::Present => {}
+                CfgDisposition::Absent(reason) => {
                     return Err(format!(
                         "debug_assert_eq!: cfg(debug_assertions) not active; skipped: {reason}"
                     ));
                 }
-                CfgEval::Ambiguous(reason) => {
+                CfgDisposition::Ambiguous(reason) => {
                     return Err(format!(
                         "debug_assert_eq!: cfg(debug_assertions) ambiguous; skipped: {reason}"
                     ));
@@ -8064,17 +8068,17 @@ fn assertions_from_macro_with_bindings(
                 .map_err(|e| format!("debug_assert_eq!: {e}"))
         }
         "debug_assert" => {
-            match cfg_eval_predicate(
+            match cfg_resolve_predicate(
                 &CfgPredicate::Name("debug_assertions".to_string()),
-                options.target_cfg.as_ref(),
+                options,
             ) {
-                CfgEval::Active => {}
-                CfgEval::Inactive(reason) => {
+                CfgDisposition::Present => {}
+                CfgDisposition::Absent(reason) => {
                     return Err(format!(
                         "debug_assert!: cfg(debug_assertions) not active; skipped: {reason}"
                     ));
                 }
-                CfgEval::Ambiguous(reason) => {
+                CfgDisposition::Ambiguous(reason) => {
                     return Err(format!(
                         "debug_assert!: cfg(debug_assertions) ambiguous; skipped: {reason}"
                     ));
@@ -8090,17 +8094,17 @@ fn assertions_from_macro_with_bindings(
                 .map_err(|e| format!("debug_assert!: {e}"))
         }
         "debug_assert_ne" => {
-            match cfg_eval_predicate(
+            match cfg_resolve_predicate(
                 &CfgPredicate::Name("debug_assertions".to_string()),
-                options.target_cfg.as_ref(),
+                options,
             ) {
-                CfgEval::Active => {}
-                CfgEval::Inactive(reason) => {
+                CfgDisposition::Present => {}
+                CfgDisposition::Absent(reason) => {
                     return Err(format!(
                         "debug_assert_ne!: cfg(debug_assertions) not active; skipped: {reason}"
                     ));
                 }
-                CfgEval::Ambiguous(reason) => {
+                CfgDisposition::Ambiguous(reason) => {
                     return Err(format!(
                         "debug_assert_ne!: cfg(debug_assertions) ambiguous; skipped: {reason}"
                     ));
