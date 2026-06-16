@@ -40,6 +40,7 @@ pub mod sugar {
     pub mod closure_term;
     pub mod compare;
     pub mod conditional;
+    pub mod configuration;
     pub mod const_block;
     pub mod control_flow_term;
     pub mod ctor_term;
