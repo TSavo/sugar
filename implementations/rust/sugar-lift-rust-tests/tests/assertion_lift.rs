@@ -11761,3 +11761,174 @@ fn calls_h() {
         "a BAILED helper's own `out=call:h` contract must remain in the ir-document: {doc:#}"
     );
 }
+
+// --- catch_unwind let-initializer peel (the last coretests unclassified) ---
+//
+// The single coretests `--rustc-cfg` UNCLASSIFIED was an assert inside a
+// `let <pat> = std::panic::catch_unwind(|| { ...; <recv>.map(|x| { assert..; .. }); });`
+// initializer. The closure-adaptor recognizer is gated on the TOP-LEVEL expr being a
+// `MethodCall`, but here the asserting closure-method (`recv.map(|x| { .. })`) is nested
+// INSIDE a free-fn `catch_unwind(|| { .. })` wrapper, so the recognizer never reached it
+// and the asserts fell to the GENERIC "let-initializer ... released to layer 0"
+// UNCLASSIFIED reason (lifter WORK), not their true source-property boundary.
+//
+// `catch_unwind(closure)` invokes its closure UNCONDITIONALLY (it runs the body and
+// catches any panic), so its body statements are reached on the same footing as a plain
+// block: recursing the collector into the closure body gives every inner statement its
+// honest disposition. The inner `let _ = recv.map(|x| { assert.. })` is then a
+// `Stmt::Local` whose init IS a top-level `MethodCall`, so the existing
+// `closure_method_terminal_effect` names the boundary (a side-effecting / runtime closure
+// body) and TERMINALIZES it -- moving unclassified -> refused HONESTLY, never a fake-dig.
+
+#[test]
+fn catch_unwind_letinit_side_effecting_closure_body_terminalizes() {
+    // array.rs::array_map_drop_safety, exact shape. The `.map` closure body does
+    // `nth += 1` (mutates a captured local), so the asserted `nth` is a per-iteration
+    // varying value -- not a single timeless point-wise claim. It must terminalize as a
+    // SIDE-EFFECTING closure body (Disposition::Refused), NOT fake-lift and NOT stay the
+    // generic unclassified let-initializer reason.
+    let src = r#"
+#[test]
+fn t() {
+    let num_to_create = 5;
+    let success = std::panic::catch_unwind(|| {
+        let items = [0; 10];
+        let mut nth = 0;
+        let _ = items.map(|_| {
+            assert!(nth < num_to_create);
+            nth += 1;
+        });
+    });
+}
+"#;
+    let out = lift_file(&parse(src), "tests/array.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "a side-effecting (`nth += 1`) closure body must NOT lift -- the asserted value varies per iteration: {:?}",
+        out.skip_reasons
+    );
+    // The reason must be the NAMED side-effecting-closure-body boundary, NOT the generic
+    // let-initializer unclassified reason.
+    assert!(
+        !out
+            .skip_reasons
+            .iter()
+            .any(|r| r.contains("let-initializer expression: not a top-level point-wise")),
+        "the catch_unwind closure body must be PEELED, not left as the generic let-init unclassified reason: {:?}",
+        out.skip_reasons
+    );
+    let reason = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains("side-effecting closure body"))
+        .unwrap_or_else(|| {
+            panic!("expected a side-effecting-closure-body refusal, got {:?}", out.skip_reasons)
+        });
+    assert_eq!(
+        sugar_lift_rust_tests::refusal_disposition(reason),
+        sugar_lift_rust_tests::Disposition::Refused,
+        "a side-effecting closure body is a TERMINAL source property (refused), not unclassified work: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn catch_unwind_letinit_runtime_receiver_closure_body_terminalizes() {
+    // array.rs::array_map_drops_unmapped_elements_on_panic, shape. The `.map` receiver is
+    // a runtime `array::from_fn(..)` aggregate (not a finite construction from source
+    // literals), so the iterated `x` is runtime data. It must terminalize as a NAMED
+    // runtime boundary (Disposition::Refused) through the catch_unwind peel, NOT fake-lift,
+    // NOT the generic unclassified let-init reason.
+    let src = r#"
+#[test]
+fn t() {
+    let a = core::array::from_fn::<_, 11, _>(|i| i);
+    let success = std::panic::catch_unwind(|| {
+        let _ = a.map(|x| {
+            assert!(x < 5);
+        });
+    });
+}
+"#;
+    let out = lift_file(&parse(src), "tests/array.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "a `.map` over a runtime `from_fn` receiver must NOT lift -- the iterated value is runtime data: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        !out
+            .skip_reasons
+            .iter()
+            .any(|r| r.contains("let-initializer expression: not a top-level point-wise")),
+        "the catch_unwind closure body must be PEELED, not left as the generic let-init unclassified reason: {:?}",
+        out.skip_reasons
+    );
+    // Every refusal it produces must be TERMINAL (a source property), never unclassified work.
+    assert!(
+        !out.skip_reasons.is_empty(),
+        "the runtime closure body must be accounted (refused), not silent: {:?}",
+        out.skip_reasons
+    );
+    for r in &out.skip_reasons {
+        assert_eq!(
+            sugar_lift_rust_tests::refusal_disposition(r),
+            sugar_lift_rust_tests::Disposition::Refused,
+            "every refusal under the peeled catch_unwind must be TERMINAL, not unclassified: {r:?}"
+        );
+    }
+}
+
+#[test]
+fn catch_unwind_letinit_pure_inner_assert_digs_good_twin_and_bad_twin_unsat() {
+    // DISCRIMINATION + TEETH (the bad-twin gate). The catch_unwind peel must be EXACT: a
+    // genuinely point-wise inner assert over a closed literal still DIGS through the peel
+    // (it is not fake-terminalized), and its lifted FOL is z3-refutable in the bad twin.
+    //
+    // GOOD twin: `let v = { 6 }; assert_eq!(v, 6);` inside the catch_unwind closure body --
+    // a pure block-init local + a closed point-wise equality. It must LIFT (the peel does
+    // not block a liftable inner claim), and the lifted atom `eq(6,6)` is SAT under z3.
+    let good = r#"
+#[test]
+fn t() {
+    let _ = std::panic::catch_unwind(|| {
+        let v = { 6i32 };
+        assert_eq!(v, 6i32);
+    });
+}
+"#;
+    let out_good = lift_file(&parse(good), "tests/array.rs");
+    assert_eq!(
+        out_good.assertions_lifted, 1,
+        "a pure point-wise inner assert over a closed literal must DIG through the catch_unwind peel: {:?}",
+        out_good.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out_good.decls[0]), "catch_unwind_good") {
+        assert!(sat, "the lifted `v == 6` (with v := 6) must be SAT under z3");
+    }
+
+    // BAD twin: flip the anchor (`assert_eq!(v, 7)` with the same `v := 6`). The lifted
+    // conjunction `v == 6 AND v == 7` is z3-UNSAT -- the teeth bite.
+    let bad = r#"
+#[test]
+fn t() {
+    let _ = std::panic::catch_unwind(|| {
+        let v = { 6i32 };
+        assert_eq!(v, 6i32);
+        assert_eq!(v, 7i32);
+    });
+}
+"#;
+    let out_bad = lift_file(&parse(bad), "tests/array.rs");
+    assert_eq!(
+        out_bad.assertions_lifted, 2,
+        "both inner asserts must lift through the peel so the contradiction is checkable: {:?}",
+        out_bad.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out_bad.decls[0]), "catch_unwind_bad") {
+        assert!(
+            !sat,
+            "the bad twin `v == 6 AND v == 7` must be UNSAT under z3 (the anchor-flip teeth)"
+        );
+    }
+}

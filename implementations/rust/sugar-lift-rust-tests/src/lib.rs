@@ -4309,6 +4309,47 @@ fn unconditional_block_stmts(expr: &Expr) -> Option<&[Stmt]> {
     }
 }
 
+/// If `expr` is a panic-catching `catch_unwind(|| { .. })` (or `catch_unwind(move || {
+/// .. })`) call, return the closure body's statements. `catch_unwind` INVOKES its closure
+/// UNCONDITIONALLY (it runs the body once and catches any panic), so the body runs on the
+/// same footing as a plain block -- recursing the collector into it gives every inner
+/// statement its honest disposition. (The asserting closure-method statement inside, e.g.
+/// `let _ = recv.map(|x| { assert.. });`, is then a `Stmt::Local` whose init is a
+/// TOP-LEVEL `MethodCall`, so the existing `closure_method_terminal_effect` NAMES its
+/// side-effecting / runtime boundary -- moving the assert from the generic UNCLASSIFIED
+/// let-initializer reason to its true TERMINAL refusal, never a fake-dig.)
+///
+/// Narrow on purpose: only a `catch_unwind` whose SOLE argument is a closure with a BLOCK
+/// body. Any other call (or a closure with a bare-expr body, or extra args) returns `None`
+/// and keeps the existing disposition. The closure parameters are `||` (catch_unwind's
+/// closure takes none), so no parameter binding is shadowed by recursing the body.
+fn catch_unwind_closure_block_stmts(expr: &Expr) -> Option<&[Stmt]> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    let Expr::Path(p) = &*call.func else {
+        return None;
+    };
+    if !p
+        .path
+        .segments
+        .last()
+        .is_some_and(|s| s.ident == "catch_unwind")
+    {
+        return None;
+    }
+    if call.args.len() != 1 {
+        return None;
+    }
+    let Expr::Closure(closure) = &call.args[0] else {
+        return None;
+    };
+    match &*closure.body {
+        Expr::Block(b) => Some(&b.block.stmts),
+        _ => None,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn collect_assertion_entries<'a>(
     stmts: &'a [Stmt],
@@ -4448,6 +4489,29 @@ fn collect_assertion_entries<'a>(
                     // silent drop. Otherwise the asserts (closures, conditionals)
                     // are not top-level point-wise: refuse them.
                     if let Some(stmts) = unconditional_block_stmts(&init.expr) {
+                        collect_assertion_entries(
+                            stmts,
+                            &child_block_scope(local_scope, stmt_idx),
+                            options,
+                            reducer,
+                            float_widths,
+                            entries,
+                            skipped,
+                            macros_lifted,
+                            reduced_helpers,
+                            macro_depth,
+                            &temporal_scope.plan.interior_mut,
+                            &local_fns,
+                        );
+                    } else if let Some(stmts) = catch_unwind_closure_block_stmts(&init.expr) {
+                        // `let <pat> = catch_unwind(|| { .. })`: the closure runs
+                        // UNCONDITIONALLY, so recurse into its body exactly as the
+                        // unconditional-block arm does. The inner asserting statements then
+                        // reach their own dispositions (a side-effecting / runtime closure
+                        // body inside terminalizes with its NAMED reason via the existing
+                        // closure-method path) instead of falling to the generic
+                        // let-initializer UNCLASSIFIED reason. The per-fn safety net still
+                        // accounts anything unreached -- no silent drop.
                         collect_assertion_entries(
                             stmts,
                             &child_block_scope(local_scope, stmt_idx),
