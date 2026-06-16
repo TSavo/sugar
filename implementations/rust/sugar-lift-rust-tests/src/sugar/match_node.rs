@@ -14,12 +14,13 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{and_, eq, implies, not_, or_, str_const, Formula, Term};
 use syn::{Arm, Expr, Lit, Pat, Path, Stmt};
 
+use crate::sugar::configuration::{self, CfgDisposition};
 use crate::sugar::factory::{boxed, FactoryCtx};
 use crate::{
-    bool_const, cfg_eval_for_attrs, closure_body_is_side_effecting, collect_assertion_entries,
-    count_asserts_in_stmts, loop_body_mutates, path_to_variant_string, strict_variant_path,
-    translate_lit, translate_term_in_scope, wrapped_variant, CfgEval, Desugared, LiftOptions,
-    Outcome, Sugar, SugarCtx, TemporalScope, Warrant,
+    bool_const, closure_body_is_side_effecting, collect_assertion_entries, count_asserts_in_stmts,
+    loop_body_mutates, path_to_variant_string, strict_variant_path, translate_lit,
+    translate_term_in_scope, wrapped_variant, Desugared, LiftOptions, Outcome, Sugar, SugarCtx,
+    TemporalScope, Warrant,
 };
 
 /// COMPOSITE recognizer for `Expr::Match`: the conjunction composite ([`MatchSugar`]
@@ -170,10 +171,10 @@ pub(crate) fn decompose_match(
     let active_arms: Vec<&syn::Arm> = {
         let mut kept = Vec::with_capacity(m.arms.len());
         for arm in &m.arms {
-            match cfg_eval_for_attrs(&arm.attrs, options) {
-                CfgEval::Active => kept.push(arm),
-                CfgEval::Inactive(_) => {}
-                CfgEval::Ambiguous(_) => return None,
+            match configuration::resolve(&arm.attrs, options) {
+                CfgDisposition::Present => kept.push(arm),
+                CfgDisposition::Absent(_) => {}
+                CfgDisposition::Ambiguous(_) => return None,
             }
         }
         kept

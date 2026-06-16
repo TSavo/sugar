@@ -25,13 +25,66 @@
 
 use syn::Attribute;
 
-use crate::{cfg_eval_for_attrs, CfgEval, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::{
+    cfg_eval_for_attrs, cfg_eval_predicate, CfgEval, CfgPredicate, Desugared, Effect, LiftOptions,
+    Outcome, Sugar, SugarCtx,
+};
+
+/// The composed disposition of a `#[cfg(..)]`-attributed construct over the pinned target
+/// facts -- the SINGLE three-way vocabulary every cfg-attribution site speaks. It is the
+/// composition of the raw [`CfgEval`] predicate result into "what the engine does with the
+/// wrapped construct", computed in ONE place ([`resolve`]):
+///   * `Present` -- the construct exists on this target (include / desugar it).
+///   * `Absent(reason)` -- rustc strips it before codegen (a no-op: drop it / account it
+///     inactive); `reason` is the inactive predicate, carried verbatim for the emit string.
+///   * `Ambiguous(reason)` -- no pinned facts, so we honestly cannot resolve it (bail / Hit).
+/// Sites match on THIS, never on a re-derived `CfgEval::{Active|Inactive|Ambiguous}` dispatch.
+/// It carries the same two reason strings `CfgEval` did, so a site's emitted skip string is
+/// byte-identical -- this is a 1:1 composition of the predicate result, not a re-decision.
+pub(crate) enum CfgDisposition {
+    Present,
+    Absent(String),
+    Ambiguous(String),
+}
+
+/// Resolve the `#[cfg(..)]` attrs of a construct against the pinned target facts -- the ONE
+/// place the engine turns a cfg predicate into a [`CfgDisposition`]. REUSES the existing
+/// `cfg_eval_for_attrs` (a SEMANTIC predicate evaluation over `options.target_cfg`, never a
+/// syntactic body scan); this only composes its result into the engine's disposition
+/// vocabulary. Every cfg-attribution point routes through here, so the formerly copy-pasted
+/// `match cfg_eval_for_attrs { Active/Inactive/Ambiguous }` dispatch lives in a single body.
+pub(crate) fn resolve(attrs: &[Attribute], options: &LiftOptions) -> CfgDisposition {
+    compose(cfg_eval_for_attrs(attrs, options))
+}
+
+/// Resolve a SINGLE cfg `predicate` (a `cfg!(..)` guard, a synthetic `debug_assertions`
+/// gate) against the pinned target facts -- the predicate analogue of [`resolve`] for the
+/// sites that hold a parsed [`CfgPredicate`] rather than an attribute list. REUSES the
+/// existing `cfg_eval_predicate` verbatim; this only composes its result into the shared
+/// [`CfgDisposition`] vocabulary, so the predicate sites speak the same three-way language
+/// as the attribute sites and the formerly copy-pasted dispatch lives in one body.
+pub(crate) fn resolve_predicate(predicate: &CfgPredicate, options: &LiftOptions) -> CfgDisposition {
+    compose(cfg_eval_predicate(predicate, options.target_cfg.as_ref()))
+}
+
+/// Compose a raw [`CfgEval`] predicate result into the engine's [`CfgDisposition`] -- the ONE
+/// mapping shared by [`resolve`] and [`resolve_predicate`]. A 1:1 translation that carries
+/// both reason strings verbatim (so every site's emit string is byte-identical).
+fn compose(eval: CfgEval) -> CfgDisposition {
+    match eval {
+        CfgEval::Active => CfgDisposition::Present,
+        CfgEval::Inactive(reason) => CfgDisposition::Absent(reason),
+        CfgEval::Ambiguous(reason) => CfgDisposition::Ambiguous(reason),
+    }
+}
 
 /// A cfg-attributed construct: the `#[cfg(..)]` attrs paired with the inner `Sugar` they
-/// gate. `desugar` resolves the predicate ONCE (the single place cfg composes) and either
-/// digs the inner (Active), digs the empty floor (Inactive), or Hits the ambiguous-cfg
-/// boundary (Ambiguous). The wrapped `inner` is built unconditionally by the factory; this
-/// node decides -- purely from the pinned target facts -- whether it CONTRIBUTES.
+/// gate. `desugar` resolves the predicate ONCE (via [`resolve`]) and either digs the inner
+/// (Present), digs the empty floor (Absent), or Hits the ambiguous-cfg boundary. The wrapped
+/// `inner` is built unconditionally by the factory; this node decides -- purely from the
+/// pinned target facts -- whether it CONTRIBUTES. This is the canonical composing form of a
+/// cfg-gated construct; the collector sites that cannot yield a single `Outcome` (they emit
+/// site-specific skip strings / counts) still resolve through [`resolve`], the same body.
 pub(crate) struct ConfigurationSugar {
     attrs: Vec<Attribute>,
     inner: Box<dyn Sugar>,
@@ -46,16 +99,16 @@ impl ConfigurationSugar {
 
 impl Sugar for ConfigurationSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        match cfg_eval_for_attrs(&self.attrs, ctx.options) {
+        match resolve(&self.attrs, ctx.options) {
             // The construct exists on this target: compose straight through to the inner.
-            CfgEval::Active => self.inner.desugar(ctx),
+            CfgDisposition::Present => self.inner.desugar(ctx),
             // Stripped on this target (like rustc pre-codegen): the empty literal floor,
             // a no-op that contributes nothing. NOT a refusal -- inactive is not in this
             // target's universe.
-            CfgEval::Inactive(_) => Outcome::Dug(Desugared::Seq(Vec::new())),
+            CfgDisposition::Absent(_) => Outcome::Dug(Desugared::Seq(Vec::new())),
             // No pinned target facts -> we cannot resolve the predicate. The no-scan law:
             // a named, terminal Hit, never a silent skip.
-            CfgEval::Ambiguous(reason) => Outcome::Hit(Effect::Unsupported {
+            CfgDisposition::Ambiguous(reason) => Outcome::Hit(Effect::Unsupported {
                 reason: format!("ambiguous cfg: {reason}"),
             }),
         }
