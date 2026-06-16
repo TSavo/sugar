@@ -14,7 +14,7 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{and_, eq, implies, not_, or_, str_const, Formula, Term};
 use syn::{Arm, Expr, Lit, Pat, Path, Stmt};
 
-use crate::sugar::configuration::{self, CfgDisposition};
+use crate::sugar::configuration::{CfgDisposition, ConfigurationSugar};
 use crate::sugar::factory::{boxed, FactoryCtx};
 use crate::{
     bool_const, closure_body_is_side_effecting, collect_assertion_entries, count_asserts_in_stmts,
@@ -149,6 +149,16 @@ fn arm_body_stmts(body: &Expr) -> Vec<Stmt> {
 /// arm is genuinely guard-dependent), a binding/or/range/struct-binding pattern,
 /// or a non-translatable scrutinee. The body lift (all-or-nothing) happens in
 /// `MatchSugar::desugar`.
+/// The trivial inner for an arm's `ConfigurationSugar`: the arm-filter asks the node only
+/// for its `disposition` (which never desugars the inner), so this placeholder's `desugar`
+/// is never reached on the filter path. It digs the empty floor for soundness if it ever is.
+struct ArmPresent;
+impl Sugar for ArmPresent {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        Outcome::Dug(Desugared::Seq(Vec::new()))
+    }
+}
+
 pub(crate) fn decompose_match(
     m: &syn::ExprMatch,
     scope: &TemporalScope,
@@ -171,7 +181,13 @@ pub(crate) fn decompose_match(
     let active_arms: Vec<&syn::Arm> = {
         let mut kept = Vec::with_capacity(m.arms.len());
         for arm in &m.arms {
-            match configuration::resolve(&arm.attrs, options) {
+            // cfg COMPOSES as a node: wrap the arm in a `ConfigurationSugar` and ask the
+            // node for its disposition over the pinned facts (build the node, ask it),
+            // rather than re-deriving a `CfgEval` dispatch here. Present -> the arm exists
+            // on this target (keep); Absent -> rustc stripped it (drop); Ambiguous -> no
+            // facts, we cannot know whether the arm is present (bail, refusal stands).
+            let gated = ConfigurationSugar::new(arm.attrs.clone(), Box::new(ArmPresent));
+            match gated.disposition(options) {
                 CfgDisposition::Present => kept.push(arm),
                 CfgDisposition::Absent(_) => {}
                 CfgDisposition::Ambiguous(_) => return None,

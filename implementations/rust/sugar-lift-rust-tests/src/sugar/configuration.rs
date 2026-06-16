@@ -95,11 +95,21 @@ impl ConfigurationSugar {
     pub(crate) fn new(attrs: Vec<Attribute>, inner: Box<dyn Sugar>) -> Self {
         Self { attrs, inner }
     }
+
+    /// This node's [`CfgDisposition`] over the pinned target facts -- the single
+    /// resolution `desugar` composes on. Exposed so a build-time caller that holds only
+    /// `options` (no `SugarCtx`) -- e.g. a `match`-arm filter deciding which arms exist on
+    /// this target -- can ask THE NODE for its disposition (build the node, ask it), rather
+    /// than re-deriving a `CfgEval` dispatch inline. The desugar arms are the disposition's
+    /// composition into an `Outcome`; this is the disposition itself.
+    pub(crate) fn disposition(&self, options: &LiftOptions) -> CfgDisposition {
+        resolve(&self.attrs, options)
+    }
 }
 
 impl Sugar for ConfigurationSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        match resolve(&self.attrs, ctx.options) {
+        match self.disposition(ctx.options) {
             // The construct exists on this target: compose straight through to the inner.
             CfgDisposition::Present => self.inner.desugar(ctx),
             // Stripped on this target (like rustc pre-codegen): the empty literal floor,
