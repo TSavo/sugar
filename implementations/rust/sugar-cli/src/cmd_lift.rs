@@ -220,6 +220,7 @@ struct LiftSourceReport {
     ledger: Value,
     audits: Vec<Value>,
     factory_audits: Vec<Value>,
+    assertion_surface_audits: Vec<Value>,
     source_mementos: Vec<Value>,
     contracts: Vec<Value>,
     vendor_conjoins: Vec<VendorConjoinReport>,
@@ -308,6 +309,8 @@ fn source_report_from_lift_response(
         ledger.clone()
     };
     let factory_audits = matching_report_factory_audits(response, contract_filter);
+    let assertion_surface_audits =
+        matching_report_assertion_surface_audits(response, contract_filter);
     let contracts = matching_report_contracts(response, contract_filter, &filtered_audits);
     let source_mementos =
         matching_report_source_mementos(response, contract_filter, &filtered_audits)?;
@@ -317,6 +320,7 @@ fn source_report_from_lift_response(
         ledger,
         audits: filtered_audits,
         factory_audits,
+        assertion_surface_audits,
         source_mementos,
         contracts,
         vendor_conjoins,
@@ -410,6 +414,55 @@ fn matching_report_factory_audits(response: &Value, contract_filter: Option<&str
         })
         .cloned()
         .collect()
+}
+
+fn matching_report_assertion_surface_audits(
+    response: &Value,
+    contract_filter: Option<&str>,
+) -> Vec<Value> {
+    let Some(rows) = response
+        .get("assertionSurfaceAudits")
+        .or_else(|| response.get("assertion_surface_audits"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    rows.iter()
+        .filter(|row| {
+            contract_filter.is_none_or(|filter| assertion_surface_audit_matches_filter(row, filter))
+        })
+        .cloned()
+        .collect()
+}
+
+fn assertion_surface_audit_matches_filter(row: &Value, filter: &str) -> bool {
+    [
+        row.get("surface").and_then(Value::as_str),
+        row.get("assertionSource")
+            .or_else(|| row.get("assertion_source"))
+            .and_then(Value::as_str),
+        row.get("file").and_then(Value::as_str),
+        row.get("status").and_then(Value::as_str),
+        row.get("sourceStatus")
+            .or_else(|| row.get("source_status"))
+            .and_then(Value::as_str),
+        row.get("reason").and_then(Value::as_str),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|text| text.contains(filter))
+        || row
+            .get("facts")
+            .and_then(Value::as_array)
+            .is_some_and(|facts| {
+                facts.iter().any(|fact| {
+                    fact.get("contract")
+                        .or_else(|| fact.get("contractName"))
+                        .or_else(|| fact.get("contract_name"))
+                        .and_then(Value::as_str)
+                        .is_some_and(|contract| contract.contains(filter))
+                })
+            })
 }
 
 fn factory_audit_matches_filter(row: &Value, filter: &str) -> bool {
@@ -516,6 +569,7 @@ fn source_report_json_value(report: &LiftSourceReport) -> Value {
         "sourceLedger": report.ledger,
         "sourceAudits": report.audits,
         "factoryAudits": report.factory_audits,
+        "assertionSurfaceAudits": report.assertion_surface_audits,
         "sourceMementos": report.source_mementos,
         "contracts": report.contracts,
         "vendorConjoins": vendor_conjoins_to_json(&report.vendor_conjoins),
@@ -603,6 +657,7 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
             ));
         }
     }
+    out.push_str(&render_assertion_surface_accounting(report));
     out.push_str(&render_factory_accounting(&report.factory_audits));
     if report.audits.is_empty() {
         out.push_str("no source audits emitted\n");
@@ -1499,6 +1554,135 @@ fn format_fact_source_locus_ref(locus: &Value) -> String {
         .and_then(Value::as_str)
         .unwrap_or("<unknown locus>");
     format!("{file}:{line} {ast_path} source=audit-locus")
+}
+
+fn render_assertion_surface_accounting(report: &LiftSourceReport) -> String {
+    if report.assertion_surface_audits.is_empty() {
+        return String::new();
+    }
+
+    let facts_by_contract = report
+        .contracts
+        .iter()
+        .filter_map(|contract| contract_value_name(contract).map(|name| (name, contract)))
+        .collect::<BTreeMap<_, _>>();
+    let total_facts = report
+        .assertion_surface_audits
+        .iter()
+        .map(assertion_surface_fact_count)
+        .sum::<usize>();
+    let no_fact_count = report
+        .assertion_surface_audits
+        .iter()
+        .filter(|row| assertion_surface_fact_count(row) == 0)
+        .count();
+    let mut out = format!(
+        "assertion surface accounting: sources={} facts={} no_facts={}\n",
+        report.assertion_surface_audits.len(),
+        total_facts,
+        no_fact_count
+    );
+
+    let mut rows = report.assertion_surface_audits.iter().collect::<Vec<_>>();
+    rows.sort_by_key(|row| {
+        (
+            assertion_surface_fact_count(row) == 0,
+            row.get("file")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            row.get("line").and_then(Value::as_i64).unwrap_or(i64::MAX),
+            assertion_surface_name(row).to_string(),
+        )
+    });
+
+    let emitted = rows
+        .iter()
+        .copied()
+        .filter(|row| assertion_surface_fact_count(row) > 0)
+        .collect::<Vec<_>>();
+    if !emitted.is_empty() {
+        out.push_str("assertion facts emitted:\n");
+        for row in emitted {
+            out.push_str(&format_assertion_surface_row(row));
+            if let Some(facts) = row.get("facts").and_then(Value::as_array) {
+                for fact in facts {
+                    if let Some(contract_name) = assertion_surface_fact_contract(fact) {
+                        if let Some(contract) = facts_by_contract.get(contract_name) {
+                            out.push_str(&format!(
+                                "    - {}\n",
+                                format_contract_asserted_fact(report, contract)
+                                    .unwrap_or_else(|| format_contract_fol(contract))
+                            ));
+                        } else {
+                            out.push_str(&format!("    - contract: {contract_name}\n"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let no_facts = rows
+        .iter()
+        .copied()
+        .filter(|row| assertion_surface_fact_count(row) == 0)
+        .collect::<Vec<_>>();
+    if !no_facts.is_empty() {
+        out.push_str("assertion sources without facts:\n");
+        for row in no_facts {
+            out.push_str(&format_assertion_surface_row(row));
+            if let Some(reason) = row.get("reason").and_then(Value::as_str) {
+                if !reason.is_empty() {
+                    out.push_str(&format!("    reason: {reason}\n"));
+                }
+            }
+        }
+    }
+
+    out
+}
+
+fn assertion_surface_name(row: &Value) -> &str {
+    row.get("assertionSource")
+        .or_else(|| row.get("assertion_source"))
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown assertion source>")
+}
+
+fn assertion_surface_fact_count(row: &Value) -> usize {
+    row.get("facts")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0)
+}
+
+fn assertion_surface_fact_contract(fact: &Value) -> Option<&str> {
+    fact.get("contract")
+        .or_else(|| fact.get("contractName"))
+        .or_else(|| fact.get("contract_name"))
+        .and_then(Value::as_str)
+}
+
+fn format_assertion_surface_row(row: &Value) -> String {
+    let file = row
+        .get("file")
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown file>");
+    let line = row
+        .get("line")
+        .and_then(Value::as_i64)
+        .map(|line| line.to_string())
+        .unwrap_or_else(|| "?".to_string());
+    let status = row
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let facts = assertion_surface_fact_count(row);
+    format!(
+        "  - {file}:{line} {} {status} facts={facts}\n",
+        assertion_surface_name(row)
+    )
 }
 
 fn format_counts(value: &Value) -> String {
@@ -2532,6 +2716,7 @@ mod tests {
                 "loci": []
             })],
             factory_audits: vec![],
+            assertion_surface_audits: vec![],
             source_mementos: vec![],
             contracts: vec![],
             vendor_conjoins: vec![],
@@ -3914,6 +4099,108 @@ mod tests {
     }
 
     #[test]
+    fn human_report_renders_generic_assertion_surface_fact_accounting() {
+        let response = serde_json::json!({
+            "kind": "ir-document",
+            "ir": [
+                {
+                    "kind": "contract",
+                    "name": "src/lib.rs::tests::emits_fact",
+                    "inv": {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [
+                            {"kind": "const", "value": 2, "sort": {"name": "Int"}},
+                            {"kind": "const", "value": 2, "sort": {"name": "Int"}}
+                        ]
+                    }
+                }
+            ],
+            "sourceLedger": {
+                "source_loci": 2,
+                "source_warranted": 1,
+                "source_support": 0,
+                "source_refused": 0,
+                "source_inactive": 0,
+                "source_refuted": 0,
+                "source_unresolved": 1
+            },
+            "sourceAudits": [
+                {
+                    "role": "vendor-assertion-surface",
+                    "universe_kind": "assertion-source",
+                    "loci": []
+                }
+            ],
+            "sourceMementos": [],
+            "assertionSurfaceAudits": [
+                {
+                    "kind": "assertion-surface-audit",
+                    "surface": "example-assertions",
+                    "assertionSource": "src/lib.rs::tests::emits_fact",
+                    "file": "src/lib.rs",
+                    "line": 10,
+                    "status": "facts-emitted",
+                    "sourceMemento": {
+                        "file": "src/lib.rs",
+                        "sourceFunctionName": "emits_fact",
+                        "span": {"start_line": 10, "end_line": 12},
+                        "paramNames": [],
+                        "source_cid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    },
+                    "facts": [
+                        {"contract": "src/lib.rs::tests::emits_fact"}
+                    ]
+                },
+                {
+                    "kind": "assertion-surface-audit",
+                    "surface": "example-assertions",
+                    "assertionSource": "src/lib.rs::tests::no_fact",
+                    "file": "src/lib.rs",
+                    "line": 20,
+                    "status": "no-facts-emitted",
+                    "reason": "no liftable scalar assertions",
+                    "facts": []
+                }
+            ]
+        });
+        let report = source_report_from_lift_response(&response, None).expect("source report");
+        let human = render_source_report_human(&report);
+        let rendered_json = render_report_json(&report, None).expect("json report");
+        let parsed: Value = serde_json::from_str(&rendered_json).expect("valid json");
+
+        assert!(
+            human.contains("assertion surface accounting: sources=2 facts=1 no_facts=1"),
+            "{human}"
+        );
+        assert!(human.contains("assertion facts emitted:"), "{human}");
+        assert!(
+            human.contains("src/lib.rs:10 src/lib.rs::tests::emits_fact facts-emitted facts=1"),
+            "{human}"
+        );
+        assert!(
+            human.contains("src/lib.rs::tests::emits_fact :: 2 = 2"),
+            "{human}"
+        );
+        assert!(
+            human.contains("assertion sources without facts:"),
+            "{human}"
+        );
+        assert!(
+            human.contains("src/lib.rs:20 src/lib.rs::tests::no_fact no-facts-emitted"),
+            "{human}"
+        );
+        assert!(
+            human.contains("reason: no liftable scalar assertions"),
+            "{human}"
+        );
+        assert_eq!(
+            parsed["assertionSurfaceAudits"].as_array().unwrap().len(),
+            2
+        );
+    }
+
+    #[test]
     fn assertion_fact_source_owner_comes_from_test_function_not_callee() {
         let name = "method:is_match#euf#c:callresult_method_is_match_a2(c:method:unwrap(c:call:Regex::new(c:method:x(v:src/lib.rs::tests::regex_from_matcher_method_chain::m,s:\"blah\"))),s:\"blah\")::assertion";
 
@@ -3962,6 +4249,7 @@ mod tests {
                 "loci": []
             })],
             factory_audits: vec![],
+            assertion_surface_audits: vec![],
             source_mementos: vec![],
             contracts: vec![],
             vendor_conjoins: vec![VendorConjoinReport {

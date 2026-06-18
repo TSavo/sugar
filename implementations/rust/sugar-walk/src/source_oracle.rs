@@ -6,9 +6,12 @@
 //! content. Consumers re-read the authoritative source file and recompute the
 //! CIDs to prove the pointer still names the same body.
 
+use std::collections::BTreeMap;
+
 use quote::ToTokens;
 use serde_json::{json, Value};
 use sugar_canonicalizer::blake3_512_of;
+use syn::spanned::Spanned;
 
 /// A source span, 1-based line / 0-based column.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -165,6 +168,352 @@ impl ResolvedSource {
     }
 }
 
+/// Immutable source view used to mint many mementos from the same file.
+///
+/// There is no invalidation path by design: a lift request works over one
+/// parsed source string. If the source changes, the caller constructs a new
+/// view for the next request.
+#[derive(Debug)]
+pub struct SourceTextIndex<'a> {
+    src: &'a str,
+    line_starts: Vec<usize>,
+}
+
+impl<'a> SourceTextIndex<'a> {
+    pub fn new(src: &'a str) -> Self {
+        Self {
+            src,
+            line_starts: line_starts(src),
+        }
+    }
+
+    pub fn source_memento_of(
+        &self,
+        file_rel: &str,
+        span: proc_macro2::Span,
+        name: &str,
+        sig: &syn::Signature,
+        block: &syn::Block,
+    ) -> SourceMemento {
+        self.source_fragment_of(file_rel, span, name, sig, block)
+            .to_memento()
+    }
+
+    pub fn source_memento_of_statement_span(
+        &self,
+        file_rel: &str,
+        span: proc_macro2::Span,
+        owner_name: &str,
+        sig: &syn::Signature,
+        block: &syn::Block,
+    ) -> Option<SourceMemento> {
+        self.source_fragment_of_statement_span(file_rel, span, owner_name, sig, block)
+            .map(|fragment| fragment.to_memento())
+    }
+
+    pub fn source_fragment_of_statement_span(
+        &self,
+        file_rel: &str,
+        span: proc_macro2::Span,
+        owner_name: &str,
+        sig: &syn::Signature,
+        block: &syn::Block,
+    ) -> Option<SourceFragment> {
+        let target = span_to_src_span(span);
+        self.source_fragment_of_statement_src_span(file_rel, &target, owner_name, sig, block)
+    }
+
+    fn source_fragment_of_statement_src_span(
+        &self,
+        file_rel: &str,
+        target: &SrcSpan,
+        owner_name: &str,
+        sig: &syn::Signature,
+        block: &syn::Block,
+    ) -> Option<SourceFragment> {
+        let params = param_names_without_receiver_from_signature(sig);
+        let stmt = find_stmt_by_span(block, target)?;
+        Some(self.source_fragment_of_stmt(file_rel, owner_name, &params, stmt))
+    }
+
+    pub fn source_fragment_of(
+        &self,
+        file_rel: &str,
+        span: proc_macro2::Span,
+        name: &str,
+        sig: &syn::Signature,
+        block: &syn::Block,
+    ) -> SourceFragment {
+        let start = span.start();
+        let end = block.brace_token.span.close().end();
+        let param_names = param_names_without_receiver_from_signature(sig);
+        let body_text = self
+            .block_inner_source(block)
+            .map(canonical_sugar_body_text)
+            .unwrap_or_default()
+            .to_string();
+        let ast_template = block_to_ast_template(block, &param_names);
+        SourceFragment {
+            file: file_rel.to_string(),
+            function_name: name.to_string(),
+            span: SrcSpan {
+                start_line: start.line,
+                start_col: start.column,
+                end_line: end.line,
+                end_col: end.column,
+            },
+            param_names,
+            body_text,
+            ast_template,
+        }
+    }
+
+    pub fn source_fragment_of_stmt(
+        &self,
+        file_rel: &str,
+        owner_name: &str,
+        param_names: &[String],
+        stmt: &syn::Stmt,
+    ) -> SourceFragment {
+        let span = span_to_src_span(stmt.span());
+        let body_text = self
+            .source_slice_between(stmt.span().start(), stmt.span().end())
+            .map(canonical_sugar_body_text)
+            .unwrap_or_default()
+            .to_string();
+        let ast_template = stmt_to_template(stmt, param_names);
+        SourceFragment {
+            file: file_rel.to_string(),
+            function_name: owner_name.to_string(),
+            span,
+            param_names: param_names.to_vec(),
+            body_text,
+            ast_template,
+        }
+    }
+
+    pub fn block_inner_source(&self, block: &syn::Block) -> Option<&'a str> {
+        let open_end = block.brace_token.span.open().end();
+        let close_start = block.brace_token.span.close().start();
+        self.source_slice_between(open_end, close_start)
+    }
+
+    pub fn source_slice_between(
+        &self,
+        start: proc_macro2::LineColumn,
+        end: proc_macro2::LineColumn,
+    ) -> Option<&'a str> {
+        let start = self.line_column_to_byte_offset(start)?;
+        let end = self.line_column_to_byte_offset(end)?;
+        if start <= end {
+            self.src.get(start..end)
+        } else {
+            None
+        }
+    }
+
+    pub fn line_column_to_byte_offset(&self, loc: proc_macro2::LineColumn) -> Option<usize> {
+        line_column_to_byte_offset_with_starts(self.src, &self.line_starts, loc)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CachedSourceFragment {
+    fragment: SourceFragment,
+    source_text: String,
+    line_starts: Vec<usize>,
+}
+
+/// Request-scoped source-fragment cache.
+///
+/// A fragment can be minted from an existing cached fragment when its absolute
+/// source span is contained by the cached fragment's span. The cache is immutable
+/// with respect to source bytes: callers create a fresh cache for each source
+/// snapshot, so there is no invalidation path.
+#[derive(Debug)]
+pub struct SourceFragmentCache<'a> {
+    index: SourceTextIndex<'a>,
+    fragments: BTreeMap<(usize, usize), CachedSourceFragment>,
+}
+
+impl<'a> SourceFragmentCache<'a> {
+    pub fn new(src: &'a str) -> Self {
+        Self {
+            index: SourceTextIndex::new(src),
+            fragments: BTreeMap::new(),
+        }
+    }
+
+    pub fn source_memento_of(
+        &mut self,
+        file_rel: &str,
+        span: proc_macro2::Span,
+        name: &str,
+        sig: &syn::Signature,
+        block: &syn::Block,
+    ) -> SourceMemento {
+        self.source_fragment_of(file_rel, span, name, sig, block)
+            .to_memento()
+    }
+
+    pub fn source_memento_of_statement_span(
+        &mut self,
+        file_rel: &str,
+        span: proc_macro2::Span,
+        owner_name: &str,
+        sig: &syn::Signature,
+        block: &syn::Block,
+    ) -> Option<SourceMemento> {
+        self.source_fragment_of_statement_span(file_rel, span, owner_name, sig, block)
+            .map(|fragment| fragment.to_memento())
+    }
+
+    pub fn source_fragment_of(
+        &mut self,
+        file_rel: &str,
+        span: proc_macro2::Span,
+        name: &str,
+        sig: &syn::Signature,
+        block: &syn::Block,
+    ) -> SourceFragment {
+        let fragment = self
+            .index
+            .source_fragment_of(file_rel, span, name, sig, block);
+        let source_text = self
+            .index
+            .source_slice_between(span.start(), block.brace_token.span.close().end())
+            .unwrap_or_default()
+            .to_string();
+        self.insert_fragment(fragment.clone(), source_text);
+        fragment
+    }
+
+    pub fn source_fragment_of_statement_span(
+        &mut self,
+        file_rel: &str,
+        span: proc_macro2::Span,
+        owner_name: &str,
+        sig: &syn::Signature,
+        block: &syn::Block,
+    ) -> Option<SourceFragment> {
+        let target = span_to_src_span(span);
+        let params = param_names_without_receiver_from_signature(sig);
+        let stmt = find_stmt_by_span(block, &target)?;
+        Some(self.source_fragment_of_stmt(file_rel, owner_name, &params, stmt))
+    }
+
+    pub fn source_fragment_of_stmt(
+        &mut self,
+        file_rel: &str,
+        owner_name: &str,
+        param_names: &[String],
+        stmt: &syn::Stmt,
+    ) -> SourceFragment {
+        let span = span_to_src_span(stmt.span());
+        let source_text = self
+            .source_text_from_cached_fragment(&span)
+            .unwrap_or_else(|| {
+                self.index
+                    .source_slice_between(stmt.span().start(), stmt.span().end())
+                    .unwrap_or_default()
+                    .to_string()
+            });
+        let body_text = canonical_sugar_body_text(&source_text).to_string();
+        let fragment = SourceFragment {
+            file: file_rel.to_string(),
+            function_name: owner_name.to_string(),
+            span,
+            param_names: param_names.to_vec(),
+            body_text,
+            ast_template: stmt_to_template(stmt, param_names),
+        };
+        self.insert_fragment(fragment.clone(), source_text);
+        fragment
+    }
+
+    fn insert_fragment(&mut self, fragment: SourceFragment, source_text: String) {
+        let key = span_start_key(&fragment.span);
+        let cached = CachedSourceFragment {
+            fragment,
+            line_starts: line_starts(&source_text),
+            source_text,
+        };
+        self.fragments.insert(key, cached);
+    }
+
+    fn source_text_from_cached_fragment(&self, target: &SrcSpan) -> Option<String> {
+        for (_, cached) in self.fragments.range(..=span_start_key(target)).rev() {
+            if !span_contains(&cached.fragment.span, target) {
+                continue;
+            }
+            let start =
+                relative_line_column(&cached.fragment.span, target.start_line, target.start_col)?;
+            let end = relative_line_column(&cached.fragment.span, target.end_line, target.end_col)?;
+            let start = line_column_to_byte_offset_with_starts(
+                &cached.source_text,
+                &cached.line_starts,
+                start,
+            )?;
+            let end = line_column_to_byte_offset_with_starts(
+                &cached.source_text,
+                &cached.line_starts,
+                end,
+            )?;
+            if start <= end {
+                return cached.source_text.get(start..end).map(str::to_string);
+            }
+        }
+        None
+    }
+}
+
+fn span_start_key(span: &SrcSpan) -> (usize, usize) {
+    (span.start_line, span.start_col)
+}
+
+fn span_contains(parent: &SrcSpan, child: &SrcSpan) -> bool {
+    span_position_le(
+        parent.start_line,
+        parent.start_col,
+        child.start_line,
+        child.start_col,
+    ) && span_position_le(
+        child.end_line,
+        child.end_col,
+        parent.end_line,
+        parent.end_col,
+    )
+}
+
+fn span_position_le(
+    left_line: usize,
+    left_col: usize,
+    right_line: usize,
+    right_col: usize,
+) -> bool {
+    (left_line, left_col) <= (right_line, right_col)
+}
+
+fn relative_line_column(
+    parent: &SrcSpan,
+    line: usize,
+    column: usize,
+) -> Option<proc_macro2::LineColumn> {
+    if line < parent.start_line {
+        return None;
+    }
+    let relative_line = line - parent.start_line + 1;
+    let relative_column = if line == parent.start_line {
+        column.checked_sub(parent.start_col)?
+    } else {
+        column
+    };
+    Some(proc_macro2::LineColumn {
+        line: relative_line,
+        column: relative_column,
+    })
+}
+
 pub fn source_memento_of(
     file_rel: &str,
     src: &str,
@@ -173,7 +522,34 @@ pub fn source_memento_of(
     sig: &syn::Signature,
     block: &syn::Block,
 ) -> SourceMemento {
-    source_fragment_of(file_rel, src, span, name, sig, block).to_memento()
+    SourceTextIndex::new(src)
+        .source_fragment_of(file_rel, span, name, sig, block)
+        .to_memento()
+}
+
+pub fn source_memento_of_statement_span(
+    file_rel: &str,
+    src: &str,
+    span: proc_macro2::Span,
+    owner_name: &str,
+    sig: &syn::Signature,
+    block: &syn::Block,
+) -> Option<SourceMemento> {
+    SourceTextIndex::new(src)
+        .source_fragment_of_statement_span(file_rel, span, owner_name, sig, block)
+        .map(|fragment| fragment.to_memento())
+}
+
+pub fn source_fragment_of_statement_span(
+    file_rel: &str,
+    src: &str,
+    span: proc_macro2::Span,
+    owner_name: &str,
+    sig: &syn::Signature,
+    block: &syn::Block,
+) -> Option<SourceFragment> {
+    SourceTextIndex::new(src)
+        .source_fragment_of_statement_span(file_rel, span, owner_name, sig, block)
 }
 
 pub fn source_fragment_of(
@@ -184,26 +560,27 @@ pub fn source_fragment_of(
     sig: &syn::Signature,
     block: &syn::Block,
 ) -> SourceFragment {
+    SourceTextIndex::new(src).source_fragment_of(file_rel, span, name, sig, block)
+}
+
+pub fn source_fragment_of_stmt(
+    file_rel: &str,
+    src: &str,
+    owner_name: &str,
+    param_names: &[String],
+    stmt: &syn::Stmt,
+) -> SourceFragment {
+    SourceTextIndex::new(src).source_fragment_of_stmt(file_rel, owner_name, param_names, stmt)
+}
+
+fn span_to_src_span(span: proc_macro2::Span) -> SrcSpan {
     let start = span.start();
-    let end = block.brace_token.span.close().end();
-    let param_names = param_names_without_receiver_from_signature(sig);
-    let body_text = block_inner_source(src, block)
-        .map(canonical_sugar_body_text)
-        .unwrap_or_default()
-        .to_string();
-    let ast_template = block_to_ast_template(block, &param_names);
-    SourceFragment {
-        file: file_rel.to_string(),
-        function_name: name.to_string(),
-        span: SrcSpan {
-            start_line: start.line,
-            start_col: start.column,
-            end_line: end.line,
-            end_col: end.column,
-        },
-        param_names,
-        body_text,
-        ast_template,
+    let end = span.end();
+    SrcSpan {
+        start_line: start.line,
+        start_col: start.column,
+        end_line: end.line,
+        end_col: end.column,
     }
 }
 
@@ -220,7 +597,7 @@ pub fn source_memento_of_named_item_fn(
     source_memento_of(
         file_rel,
         src,
-        item.sig.fn_token.span,
+        function_surface_span(&item.attrs, item.sig.fn_token.span),
         name,
         &item.sig,
         &item.block,
@@ -240,7 +617,7 @@ pub fn source_fragment_of_named_item_fn(
     source_fragment_of(
         file_rel,
         src,
-        item.sig.fn_token.span,
+        function_surface_span(&item.attrs, item.sig.fn_token.span),
         name,
         &item.sig,
         &item.block,
@@ -284,16 +661,38 @@ pub fn resolve_source_memento(
         ),
     })?;
 
-    let fragment = source_fragment_of(
+    let source_index = SourceTextIndex::new(&src);
+    let whole_fragment = source_index.source_fragment_of(
         &memento.file,
-        &src,
-        source_fn.sig.fn_token.span,
+        source_fn.span,
         memento
             .source_function_name()
             .unwrap_or(&source_fn.full_name),
         source_fn.sig,
         source_fn.block,
     );
+    let fragment = if source_span_eq(&memento.span, &whole_fragment.span) {
+        whole_fragment
+    } else {
+        source_index
+            .source_fragment_of_statement_src_span(
+                &memento.file,
+                &memento.span,
+                memento
+                    .source_function_name()
+                    .unwrap_or(&source_fn.full_name),
+                source_fn.sig,
+                source_fn.block,
+            )
+            .ok_or_else(|| SourceOracleRefusal {
+                reason: format!(
+                    "source fragment for `{}` not found in `{}` at line {}",
+                    memento.source_function_name().unwrap_or("<any>"),
+                    memento.file,
+                    memento.span.start_line
+                ),
+            })?
+    };
     let recomputed = fragment.to_memento();
     let recomputed_source_cid = recomputed.source_cid;
     let recomputed_template_cid = recomputed.template_cid;
@@ -327,9 +726,17 @@ pub fn resolve_source_memento(
     })
 }
 
+fn source_span_eq(a: &SrcSpan, b: &SrcSpan) -> bool {
+    a.start_line == b.start_line
+        && a.start_col == b.start_col
+        && a.end_line == b.end_line
+        && a.end_col == b.end_col
+}
+
 struct SourceFnRef<'a> {
     full_name: String,
     leaf_name: String,
+    span: proc_macro2::Span,
     start_line: usize,
     end_line: usize,
     sig: &'a syn::Signature,
@@ -361,6 +768,7 @@ fn locate_source_fn<'a>(
                 return Some(SourceFnRef {
                     full_name: candidate.full_name.clone(),
                     leaf_name: candidate.leaf_name.clone(),
+                    span: candidate.span,
                     start_line: candidate.start_line,
                     end_line: candidate.end_line,
                     sig: candidate.sig,
@@ -373,12 +781,21 @@ fn locate_source_fn<'a>(
 }
 
 fn collect_source_fns<'a>(items: &'a [syn::Item], out: &mut Vec<SourceFnRef<'a>>) {
+    collect_source_fns_in_scope(items, &mut Vec::new(), out);
+}
+
+fn collect_source_fns_in_scope<'a>(
+    items: &'a [syn::Item],
+    modules: &mut Vec<String>,
+    out: &mut Vec<SourceFnRef<'a>>,
+) {
     for item in items {
         match item {
             syn::Item::Fn(item_fn) => {
                 out.push(source_fn_ref(
+                    scoped_source_name(modules, &item_fn.sig.ident.to_string()),
                     item_fn.sig.ident.to_string(),
-                    item_fn.sig.ident.to_string(),
+                    function_surface_span(&item_fn.attrs, item_fn.sig.fn_token.span),
                     &item_fn.sig,
                     &item_fn.block,
                 ));
@@ -391,8 +808,9 @@ fn collect_source_fns<'a>(items: &'a [syn::Item], out: &mut Vec<SourceFnRef<'a>>
                     };
                     let leaf = method.sig.ident.to_string();
                     out.push(source_fn_ref(
-                        format!("{qualifier}::{leaf}"),
+                        scoped_source_name(modules, &format!("{qualifier}::{leaf}")),
                         leaf,
+                        function_surface_span(&method.attrs, method.sig.fn_token.span),
                         &method.sig,
                         &method.block,
                     ));
@@ -400,7 +818,9 @@ fn collect_source_fns<'a>(items: &'a [syn::Item], out: &mut Vec<SourceFnRef<'a>>
             }
             syn::Item::Mod(module) => {
                 if let Some((_, nested)) = &module.content {
-                    collect_source_fns(nested, out);
+                    modules.push(module.ident.to_string());
+                    collect_source_fns_in_scope(nested, modules, out);
+                    modules.pop();
                 }
             }
             syn::Item::Trait(item_trait) => {
@@ -414,8 +834,9 @@ fn collect_source_fns<'a>(items: &'a [syn::Item], out: &mut Vec<SourceFnRef<'a>>
                     };
                     let leaf = method.sig.ident.to_string();
                     out.push(source_fn_ref(
-                        format!("{qualifier}::{leaf}"),
+                        scoped_source_name(modules, &format!("{qualifier}::{leaf}")),
                         leaf,
+                        function_surface_span(&method.attrs, method.sig.fn_token.span),
                         &method.sig,
                         block,
                     ));
@@ -426,20 +847,63 @@ fn collect_source_fns<'a>(items: &'a [syn::Item], out: &mut Vec<SourceFnRef<'a>>
     }
 }
 
+fn scoped_source_name(modules: &[String], name: &str) -> String {
+    if modules.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}::{name}", modules.join("::"))
+    }
+}
+
 fn source_fn_ref<'a>(
     full_name: String,
     leaf_name: String,
+    span: proc_macro2::Span,
     sig: &'a syn::Signature,
     block: &'a syn::Block,
 ) -> SourceFnRef<'a> {
     SourceFnRef {
         full_name,
         leaf_name,
-        start_line: sig.fn_token.span.start().line,
+        span,
+        start_line: span.start().line,
         end_line: block.brace_token.span.close().end().line,
         sig,
         block,
     }
+}
+
+fn function_surface_span(
+    attrs: &[syn::Attribute],
+    fallback: proc_macro2::Span,
+) -> proc_macro2::Span {
+    attrs.first().map_or(fallback, |attr| attr.span())
+}
+
+fn find_stmt_by_span<'a>(block: &'a syn::Block, target: &SrcSpan) -> Option<&'a syn::Stmt> {
+    struct Finder<'a> {
+        target: SrcSpan,
+        found: Option<&'a syn::Stmt>,
+    }
+    impl<'a> syn::visit::Visit<'a> for Finder<'a> {
+        fn visit_stmt(&mut self, stmt: &'a syn::Stmt) {
+            if self.found.is_some() {
+                return;
+            }
+            if source_span_eq(&span_to_src_span(stmt.span()), &self.target) {
+                self.found = Some(stmt);
+                return;
+            }
+            syn::visit::visit_stmt(self, stmt);
+        }
+    }
+
+    let mut finder = Finder {
+        target: target.clone(),
+        found: None,
+    };
+    syn::visit::Visit::visit_block(&mut finder, block);
+    finder.found
 }
 
 fn impl_self_ty_name(ty: &syn::Type) -> String {
@@ -638,25 +1102,20 @@ pub fn source_slice_between(
     start: proc_macro2::LineColumn,
     end: proc_macro2::LineColumn,
 ) -> Option<&str> {
-    let start = line_column_to_byte_offset(src, start)?;
-    let end = line_column_to_byte_offset(src, end)?;
-    if start <= end {
-        src.get(start..end)
-    } else {
-        None
-    }
+    SourceTextIndex::new(src).source_slice_between(start, end)
 }
 
 pub fn line_column_to_byte_offset(src: &str, loc: proc_macro2::LineColumn) -> Option<usize> {
+    SourceTextIndex::new(src).line_column_to_byte_offset(loc)
+}
+
+fn line_column_to_byte_offset_with_starts(
+    src: &str,
+    line_starts: &[usize],
+    loc: proc_macro2::LineColumn,
+) -> Option<usize> {
     if loc.line == 0 {
         return None;
-    }
-
-    let mut line_starts = vec![0usize];
-    for (idx, byte) in src.bytes().enumerate() {
-        if byte == b'\n' {
-            line_starts.push(idx + 1);
-        }
     }
 
     let line_start = *line_starts.get(loc.line - 1)?;
@@ -676,6 +1135,16 @@ pub fn line_column_to_byte_offset(src: &str, loc: proc_macro2::LineColumn) -> Op
         None if line.chars().count() == loc.column => Some(line_end),
         None => None,
     }
+}
+
+fn line_starts(src: &str) -> Vec<usize> {
+    let mut starts = vec![0usize];
+    for (idx, byte) in src.bytes().enumerate() {
+        if byte == b'\n' {
+            starts.push(idx + 1);
+        }
+    }
+    starts
 }
 
 #[cfg(test)]
@@ -718,6 +1187,121 @@ mod tests {
         let memento = fragment.to_memento();
         assert!(memento.to_json().get("body_text").is_none());
         assert!(memento.to_json().get("ast_template").is_none());
+    }
+
+    #[test]
+    fn source_oracle_mints_surface_and_statement_mementos() {
+        use syn::spanned::Spanned;
+
+        let root = std::env::temp_dir().join(format!(
+            "sugar-source-oracle-stmt-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        let src = r#"
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn emits_fact() {
+        assert_eq!(1 + 1, 2);
+    }
+}
+"#;
+        std::fs::write(root.join("src/lib.rs"), src).expect("write source");
+        let file: syn::File = syn::parse_str(src).expect("parses");
+        let syn::Item::Mod(module) = &file.items[0] else {
+            panic!("expected module");
+        };
+        let Some((_, items)) = &module.content else {
+            panic!("expected inline module");
+        };
+        let syn::Item::Fn(item) = &items[0] else {
+            panic!("expected test fn");
+        };
+
+        let surface = source_memento_of_named_item_fn("src/lib.rs", src, "tests::emits_fact", item);
+        assert_eq!(surface.span.start_line, 4);
+        assert_eq!(surface.span.end_line, 7);
+        assert!(surface.to_json().get("body_text").is_none());
+        assert!(surface.to_json().get("ast_template").is_none());
+
+        let statement = source_memento_of_statement_span(
+            "src/lib.rs",
+            src,
+            item.block.stmts[0].span(),
+            "tests::emits_fact",
+            &item.sig,
+            &item.block,
+        )
+        .expect("statement memento");
+        assert_eq!(statement.span.start_line, 6);
+        assert_eq!(statement.span.end_line, 6);
+        assert!(statement.to_json().get("body_text").is_none());
+        assert!(statement.to_json().get("ast_template").is_none());
+
+        let resolved_surface = resolve_source_memento(&root, &surface).expect("surface resolves");
+        assert_eq!(resolved_surface.fragment.span, surface.span);
+        let resolved_statement =
+            resolve_source_memento(&root, &statement).expect("statement resolves");
+        assert_eq!(resolved_statement.fragment.span, statement.span);
+        assert_eq!(
+            resolved_statement.fragment.body_text,
+            "assert_eq!(1 + 1, 2);"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn cached_source_fragment_mints_nested_statement_memento() {
+        use syn::spanned::Spanned;
+
+        let src = r#"
+fn emits_fact(x: i64) {
+    let y = x + 1;
+    assert_eq!(y, 2);
+}
+"#;
+        let file: syn::File = syn::parse_str(src).expect("parses");
+        let syn::Item::Fn(item) = &file.items[0] else {
+            panic!("expected function");
+        };
+        let stmt = &item.block.stmts[1];
+        let direct = source_memento_of_statement_span(
+            "src/lib.rs",
+            src,
+            stmt.span(),
+            "emits_fact",
+            &item.sig,
+            &item.block,
+        )
+        .expect("direct statement memento");
+
+        let mut cache = SourceFragmentCache::new(src);
+        let parent = cache.source_fragment_of(
+            "src/lib.rs",
+            function_surface_span(&item.attrs, item.sig.fn_token.span),
+            "emits_fact",
+            &item.sig,
+            &item.block,
+        );
+        assert!(parent.span.start_line <= direct.span.start_line);
+        assert!(direct.span.start_line <= parent.span.end_line);
+
+        let cached = cache
+            .source_memento_of_statement_span(
+                "src/lib.rs",
+                stmt.span(),
+                "emits_fact",
+                &item.sig,
+                &item.block,
+            )
+            .expect("cached statement memento");
+        assert_eq!(cached, direct);
     }
 
     #[test]

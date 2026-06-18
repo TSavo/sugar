@@ -555,6 +555,18 @@ mod tests {
     }
 
     #[test]
+    fn parenthesized_to_string_prioritizes_to_string_before_transparent_recursion() {
+        let expr: Expr = syn::parse_str("(\"x\".to_string())").unwrap();
+        let selected = selected_candidate_name_for_role(&expr, SugarRole::Term);
+
+        assert_eq!(
+            selected,
+            Some("to_string"),
+            "specific ToStringSugar should outrank generic transparent recursion"
+        );
+    }
+
+    #[test]
     fn string_add_prioritizes_string_add_before_generic_binop_sugar() {
         let expr: Expr = syn::parse_str("\"a\".to_string() + \"b\"").unwrap();
         let names = candidate_names(&expr);

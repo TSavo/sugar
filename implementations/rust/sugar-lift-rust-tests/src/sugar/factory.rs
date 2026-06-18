@@ -55,6 +55,7 @@ use std::collections::BTreeMap;
 use quote::ToTokens;
 use syn::spanned::Spanned;
 use syn::{Expr, Item};
+use tracing::{debug, warn};
 
 use crate::sugar::catalog;
 use crate::sugar::claim::SugarRole;
@@ -273,7 +274,37 @@ impl AccountedSugar {
 impl Sugar for AccountedSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let outcome = self.inner.desugar(ctx);
-        ctx.record_factory_audit(self.seed.audit(&outcome));
+        let audit = self.seed.audit(&outcome);
+        if matches!(
+            audit.disposition,
+            FactoryDisposition::Refused | FactoryDisposition::Unresolved
+        ) {
+            warn!(
+                ast_kind = audit.ast_kind,
+                line = audit.line,
+                requested_role = audit.requested_role.as_str(),
+                selected = audit.selected.unwrap_or("<none>"),
+                disposition = audit.disposition.as_str(),
+                output = audit.output,
+                reason = audit.reason.as_deref().unwrap_or(""),
+                site = audit.site.as_str(),
+                candidates = audit.candidates.len(),
+                "sugar factory terminal"
+            );
+        } else {
+            debug!(
+                ast_kind = audit.ast_kind,
+                line = audit.line,
+                requested_role = audit.requested_role.as_str(),
+                selected = audit.selected.unwrap_or("<none>"),
+                disposition = audit.disposition.as_str(),
+                output = audit.output,
+                site = audit.site.as_str(),
+                candidates = audit.candidates.len(),
+                "sugar factory dispatch"
+            );
+        }
+        ctx.record_factory_audit(audit);
         outcome
     }
 }
