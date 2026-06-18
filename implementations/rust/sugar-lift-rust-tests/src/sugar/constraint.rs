@@ -7,13 +7,13 @@
 // connective, panic locus), not a human method name.
 
 use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
-use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::{
-    cfg_resolve_predicate, lower_assert_condition, lower_assert_eq, lower_assert_ne,
-    parse_macro_args, CfgDisposition, CfgPredicate, Desugared, Effect, Outcome, RelationOp, Sugar,
-    SugarCtx, Warrant,
+    callsite_assertion_name, cfg_resolve_predicate, lower_assert_condition, lower_assert_eq,
+    lower_assert_ne, parse_macro_args, token_key, AssertionFactKind, CfgDisposition, CfgPredicate,
+    Desugared, Effect, Outcome, RelationOp, Sugar, SugarCtx, Warrant,
 };
-use sugar_ir_symbolic::not_;
+use sugar_ir_symbolic::{and_, atomic_, not_, str_const};
 use syn::{Expr, ExprIf, ExprMacro};
 
 pub(crate) const RELATION_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
@@ -31,6 +31,13 @@ pub(crate) const IF_PANIC_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     SugarRole::Constraint,
     SugarPriority::Primary,
     recognize_if_panic,
+);
+
+pub(crate) const NO_PANIC_CALL_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "constraint_no_panic_call",
+    SugarRole::Constraint,
+    SugarPriority::Primary,
+    recognize_no_panic_call,
 );
 
 struct RelationMacroSugar {
@@ -174,9 +181,96 @@ impl Sugar for IfPanicSugar {
         Outcome::Dug(Desugared::Constraints {
             atom,
             n: 1,
+            kind: AssertionFactKind::Warranted,
             warrant: Warrant { name: entry.name },
         })
     }
+}
+
+enum NoPanicKind {
+    ReturnsNormally,
+    UnconditionalPanic,
+}
+
+struct NoPanicCallSugar {
+    site: String,
+    kind: NoPanicKind,
+    term_expr: Option<Expr>,
+}
+
+fn recognize_no_panic_call(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    if !fcx.options().panic_freedom_enabled() {
+        return None;
+    }
+    let kind = match expr {
+        Expr::Call(_) | Expr::MethodCall(_) => NoPanicKind::ReturnsNormally,
+        Expr::Macro(m) if panic_macro(&m.mac) => NoPanicKind::UnconditionalPanic,
+        _ => return None,
+    };
+    let term_expr = match expr {
+        Expr::Call(_) | Expr::MethodCall(_) => Some(expr.clone()),
+        _ => None,
+    };
+    Some(Box::new(NoPanicCallSugar {
+        site: token_key(expr),
+        kind,
+        term_expr,
+    }))
+}
+
+impl Sugar for NoPanicCallSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        let (subject, name) = match &self.term_expr {
+            Some(expr) => {
+                let empty = std::collections::BTreeMap::new();
+                let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &empty);
+                let term = build_term(expr, &fcx);
+                let subject = match term.desugar(ctx) {
+                    Outcome::Dug(d) => match d.into_term() {
+                        Some(term) => term,
+                        None => return Outcome::from_opt(None),
+                    },
+                    Outcome::Hit(effect) => return Outcome::Hit(effect),
+                };
+                let name = callsite_assertion_name(subject.as_ref(), ctx.scope.local_scope());
+                (subject, name)
+            }
+            None => (
+                str_const(format!("{}::{}", ctx.scope.local_scope(), self.site)),
+                None,
+            ),
+        };
+        let atom = atomic_("panic-free", vec![subject]);
+        let atom = match self.kind {
+            NoPanicKind::ReturnsNormally => atom,
+            NoPanicKind::UnconditionalPanic => and_(vec![atom.clone(), not_(atom)]),
+        };
+        let name = name.or_else(|| {
+            Some(format!(
+                "{}::panic-free::{}",
+                ctx.scope.local_scope(),
+                compact_warrant_fragment(&self.site)
+            ))
+        });
+        Outcome::Dug(Desugared::Constraints {
+            atom,
+            n: 0,
+            kind: AssertionFactKind::Support,
+            warrant: Warrant { name },
+        })
+    }
+}
+
+fn compact_warrant_fragment(site: &str) -> String {
+    site.chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '_' | ':' | '.') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 fn block_diverges(if_expr: &ExprIf) -> bool {
@@ -278,6 +372,7 @@ fn constraint_from_entry(entry: crate::AssertionEntry) -> Outcome {
     Outcome::Dug(Desugared::Constraints {
         atom: entry.atom,
         n: 1,
+        kind: AssertionFactKind::Warranted,
         warrant: Warrant { name: entry.name },
     })
 }

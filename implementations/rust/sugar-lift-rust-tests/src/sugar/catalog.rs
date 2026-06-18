@@ -8,15 +8,16 @@ use crate::sugar::backstop::unsupported;
 use crate::sugar::claim::{ExprSugarClaim, ItemSugarClaim, SugarCandidate, SugarRole};
 use crate::sugar::factory::{AccountedSugar, FactoryAuditSeed, SugarBuildCtx};
 use crate::sugar::{
-    array_repeat, array_term, await_term, binop, block_term, call, cast_term,
+    array_repeat, array_term, await_term, binop, block_term, bound_path, call, cast_term,
     closure_iter_advance_body, closure_mutating_body, closure_opaque_accessor,
     closure_runtime_receiver, closure_term, closure_tls_accessor, concat_macro, conditional,
-    const_block, constraint, control_flow_term, enumerate, field_term, filter, filter_map, fold,
-    for_each, forall_loop, format_macro, impl_method, index, iter_terminal, iterator, literal,
-    macro_term, map, match_node, match_scrutinee, method, monadic, path, range_term, raw_addr_term,
-    reference_term, repeat_term, rev, skip, skip_while, statement_control_flow,
-    statement_loop_advance, statement_reflection, statement_runtime_expr, string_add, struct_term,
-    take, take_while, term_literal, to_string, transparent_term, tuple_term, unary,
+    const_block, constraint, control_flow_term, dormant_mut_ref, enumerate, field_term, filter,
+    filter_map, fold, for_each, forall_loop, format_macro, impl_method, index, iter_terminal,
+    iterator, literal, macro_term, map, match_node, match_scrutinee, method, monadic, path,
+    range_term, raw_addr_term, reference_term, repeat_term, rev, skip, skip_while,
+    statement_control_flow, statement_loop_advance, statement_reflection, statement_runtime_expr,
+    string_add, struct_term, take, take_while, term_literal, to_string, transparent_term,
+    tuple_term, unary,
 };
 use crate::{FactoryCandidateAudit, Sugar};
 
@@ -26,10 +27,13 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &constraint::RELATION_MACRO_SUGAR,
     &constraint::BOOL_MACRO_SUGAR,
     &constraint::IF_PANIC_SUGAR,
+    &constraint::NO_PANIC_CALL_SUGAR,
     &monadic::EXPR_SUGAR,
     &term_literal::EXPR_SUGAR,
     &const_block::EXPR_SUGAR,
     &unary::EXPR_SUGAR,
+    &dormant_mut_ref::EXPR_SUGAR,
+    &bound_path::EXPR_SUGAR,
     &path::EXPR_SUGAR,
     &call::EXPR_SUGAR,
     &array_term::EXPR_SUGAR,
@@ -435,8 +439,9 @@ mod tests {
         let term_names = candidate_names_for_role(&expr, SugarRole::Term);
 
         assert!(
-            constraint_names.is_empty(),
-            "method names like `is`/`isnt` are examples, not builtin constraint semantics: {constraint_names:?}"
+            constraint_names == vec!["constraint_no_panic_call"],
+            "method names like `is`/`isnt` are examples, not builtin assertion semantics; \
+             only inert callsite support should claim this shape: {constraint_names:?}"
         );
         assert!(
             term_names.contains(&"method"),

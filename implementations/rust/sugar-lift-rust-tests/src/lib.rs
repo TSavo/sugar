@@ -35,6 +35,7 @@ pub mod sugar {
     pub mod binop;
     pub mod block_term;
     pub mod bound;
+    pub mod bound_path;
     pub mod call;
     pub mod callsite;
     pub mod cast_term;
@@ -55,6 +56,7 @@ pub mod sugar {
     pub mod constraint;
     pub mod control_flow_term;
     pub mod ctor_term;
+    pub mod dormant_mut_ref;
     pub mod enumerate;
     pub mod factory;
     pub mod field_term;
@@ -117,6 +119,7 @@ use sugar_ir_symbolic::{
 use syn::parse::{Parse, ParseStream, Parser};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
+use syn::visit::Visit;
 use syn::{BinOp, Expr, ExprLit, Item, Lit, Pat, Stmt, Token, Type, UnOp};
 
 #[derive(Debug, Clone)]
@@ -131,7 +134,27 @@ pub struct AssertionFactEmission {
     pub source_path: String,
     pub item_name: String,
     pub contract_name: String,
+    pub kind: AssertionFactKind,
     pub fact_spans: Vec<proc_macro2::Span>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssertionFactKind {
+    Warranted,
+    Support,
+}
+
+impl AssertionFactKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AssertionFactKind::Warranted => "warranted",
+            AssertionFactKind::Support => "support",
+        }
+    }
+
+    fn is_warranted(self) -> bool {
+        matches!(self, AssertionFactKind::Warranted)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -204,16 +227,36 @@ pub struct FactoryAudit {
 
 pub type FactoryAuditLog = RefCell<Vec<FactoryAudit>>;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct LiftOptions {
     pub target_cfg: Option<TargetCfg>,
+    panic_freedom: bool,
+}
+
+impl Default for LiftOptions {
+    fn default() -> Self {
+        Self {
+            target_cfg: None,
+            panic_freedom: true,
+        }
+    }
 }
 
 impl LiftOptions {
     pub fn for_target_cfg(target_cfg: TargetCfg) -> Self {
         Self {
             target_cfg: Some(target_cfg),
+            panic_freedom: true,
         }
+    }
+
+    fn without_panic_freedom(mut self) -> Self {
+        self.panic_freedom = false;
+        self
+    }
+
+    fn panic_freedom_enabled(&self) -> bool {
+        self.panic_freedom
     }
 }
 
@@ -1159,8 +1202,8 @@ fn helper_is_generic_parametric(f: &syn::ItemFn) -> bool {
 /// source-body shapes CallsiteSugar cannot make timeless (`let mut`, runtime collection), so
 /// flagging here can only name a terminal body -- never a fake-refuse. A pure body returns
 /// false and stays unclassified.
-fn helper_body_is_runtime_terminal(f: &syn::ItemFn) -> bool {
-    f.block.stmts.iter().any(|s| {
+pub(crate) fn stmts_have_runtime_terminal_body_shape(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(|s| {
         let Stmt::Local(local) = s else { return false };
         // `let mut x = ..` mutable-local trajectory.
         let is_let_mut = matches!(
@@ -1176,6 +1219,16 @@ fn helper_body_is_runtime_terminal(f: &syn::ItemFn) -> bool {
             .unwrap_or(false);
         is_let_mut || init_is_collection
     })
+}
+
+fn helper_body_is_runtime_terminal(f: &syn::ItemFn) -> bool {
+    stmts_have_runtime_terminal_body_shape(&f.block.stmts)
+}
+
+pub(crate) fn helper_body_runtime_terminal_reason(fn_name: &str) -> String {
+    format!(
+        "assertion in non-#[test] item `{fn_name}` has a runtime iterator/collection construct (bin-2: runtime aggregate data, not constructed from source literals); refused"
+    )
 }
 
 /// The refusal reason for a non-`#[test]` helper's asserts that survived Pass-1 inlining.
@@ -1194,9 +1247,7 @@ fn callsite_inlining_reason(fn_name: &str, f: &syn::ItemFn) -> String {
             "assertion in non-#[test] item `{fn_name}` over a runtime iterator/closure/dyn parameter (bin-2: runtime data, not constructible from source literals at any call site); refused"
         )
     } else if helper_body_is_runtime_terminal(f) {
-        format!(
-            "assertion in non-#[test] item `{fn_name}` has a runtime iterator/collection construct (bin-2: runtime aggregate data, not constructed from source literals); refused"
-        )
+        helper_body_runtime_terminal_reason(fn_name)
     } else if helper_is_generic_parametric(f) {
         format!(
             "assertion in non-#[test] item `{fn_name}` reachable only via monomorphization of a generic type/const parameter (runtime instantiation: no single concrete type to read; not statically constructible at any call site); refused"
@@ -1298,6 +1349,14 @@ fn visit_test_fn(
     }
     out.seen += 1;
 
+    let scoped_options;
+    let options = if has_should_panic_attr(&f.attrs) {
+        scoped_options = options.clone().without_panic_freedom();
+        &scoped_options
+    } else {
+        options
+    };
+
     let mut entries = Vec::new();
     let mut skipped = Vec::new();
     let mut float_widths = FloatWidthScope::new();
@@ -1369,12 +1428,7 @@ fn visit_test_fn(
     }
 
     for group in group_assertions(entries, &test_name) {
-        out.assertion_facts.push(AssertionFactEmission {
-            source_path: source_path.to_string(),
-            item_name: test_name.clone(),
-            contract_name: group.name.clone(),
-            fact_spans: group.fact_spans.clone(),
-        });
+        emit_assertion_fact_metadata(out, source_path, &test_name, &group);
         out.decls.push(ContractDecl {
             name: group.name,
             pre: None,
@@ -1398,6 +1452,12 @@ fn has_test_attr(attrs: &[syn::Attribute]) -> bool {
     })
 }
 
+fn has_should_panic_attr(attrs: &[syn::Attribute]) -> bool {
+    attrs
+        .iter()
+        .any(|attr| attr.path().is_ident("should_panic"))
+}
+
 pub(crate) fn scoped_test_name(source_path: &str, modules: &[String], fn_name: &str) -> String {
     if modules.is_empty() {
         format!("{source_path}::{fn_name}")
@@ -1411,12 +1471,42 @@ struct AssertionEntry {
     name: Option<String>,
     atom: Rc<Formula>,
     fact_span: Option<proc_macro2::Span>,
+    kind: AssertionFactKind,
 }
 
 struct AssertionGroup {
     name: String,
     atoms: Vec<Rc<Formula>>,
-    fact_spans: Vec<proc_macro2::Span>,
+    warranted_fact_spans: Vec<proc_macro2::Span>,
+    support_fact_spans: Vec<proc_macro2::Span>,
+    has_warranted: bool,
+    has_support: bool,
+}
+
+fn emit_assertion_fact_metadata(
+    out: &mut AdapterOutput,
+    source_path: &str,
+    item_name: &str,
+    group: &AssertionGroup,
+) {
+    if group.has_warranted {
+        out.assertion_facts.push(AssertionFactEmission {
+            source_path: source_path.to_string(),
+            item_name: item_name.to_string(),
+            contract_name: group.name.clone(),
+            kind: AssertionFactKind::Warranted,
+            fact_spans: group.warranted_fact_spans.clone(),
+        });
+    }
+    if group.has_support {
+        out.assertion_facts.push(AssertionFactEmission {
+            source_path: source_path.to_string(),
+            item_name: item_name.to_string(),
+            contract_name: group.name.clone(),
+            kind: AssertionFactKind::Support,
+            fact_spans: group.support_fact_spans.clone(),
+        });
+    }
 }
 
 struct ReductionCtx<'a> {
@@ -2205,6 +2295,10 @@ pub(crate) struct TemporalScope {
     /// GROUNDED peel records here -- a BAILED helper (still its own opaque contract) does
     /// not (it was not inlined).
     inlined_value_helpers: std::cell::RefCell<BTreeSet<String>>,
+    /// Stdlib-internal `DormantMutRef` trajectories that have been reduced from a
+    /// bounded literal replay. This is a request-local axiom cache; it never infers
+    /// arbitrary unsafe aliasing, only the exact sugar in `sugar/dormant_mut_ref.rs`.
+    dormant_mut_ref: sugar::dormant_mut_ref::DormantMutRefState,
 }
 
 impl TemporalScope {
@@ -2221,6 +2315,7 @@ impl TemporalScope {
             fn_registry: FnRegistry::new(),
             impl_value_registry: ImplValueRegistry::new(),
             inlined_value_helpers: std::cell::RefCell::new(BTreeSet::new()),
+            dormant_mut_ref: sugar::dormant_mut_ref::DormantMutRefState::default(),
         }
     }
 
@@ -2288,6 +2383,17 @@ impl TemporalScope {
     /// the closed `try_fold` evaluator to resolve a bound closure / receiver chain.
     fn let_binding(&self, name: &str) -> Option<&Expr> {
         self.let_bindings.get(name)
+    }
+
+    pub(crate) fn stable_let_binding_for_term(&self, name: &str) -> Option<&Expr> {
+        if self.is_mut_local(name)
+            || self.ambiguous_contains(name)
+            || self.plan.interior_mut.contains(name)
+            || self.plan.iterators.contains(name)
+        {
+            return None;
+        }
+        self.let_binding(name)
     }
 
     /// Record a `let <name> = <init>;` binding reached at the CURRENT statement, so a
@@ -2362,6 +2468,10 @@ impl TemporalScope {
         self.plan.sideeffecting_clone_locals.contains(name)
     }
 
+    pub(crate) fn dormant_mut_ref_term(&self, name: &str) -> Option<Rc<Term>> {
+        self.dormant_mut_ref.term_for(name)
+    }
+
     fn define_local(&mut self, name: &str) {
         if self.plan.versioned.contains(name) {
             let next = self.versions.get(name).copied().unwrap_or(0) + 1;
@@ -2402,21 +2512,51 @@ fn group_assertions(entries: Vec<AssertionEntry>, fallback_name: &str) -> Vec<As
     // this per-language lifter.
     let mut groups: Vec<AssertionGroup> = Vec::new();
     for entry in entries {
-        let name = entry.name.unwrap_or_else(|| fallback_name.to_string());
+        let AssertionEntry {
+            name,
+            atom,
+            fact_span,
+            kind,
+        } = entry;
+        let name = name.unwrap_or_else(|| fallback_name.to_string());
         if let Some(group) = groups.iter_mut().find(|group| group.name == name) {
-            group.atoms.push(entry.atom);
-            if let Some(span) = entry.fact_span {
-                group.fact_spans.push(span);
-            }
+            group.atoms.push(atom);
+            record_assertion_group_kind(group, kind, fact_span);
         } else {
-            groups.push(AssertionGroup {
+            let mut group = AssertionGroup {
                 name,
-                atoms: vec![entry.atom],
-                fact_spans: entry.fact_span.into_iter().collect(),
-            });
+                atoms: vec![atom],
+                warranted_fact_spans: Vec::new(),
+                support_fact_spans: Vec::new(),
+                has_warranted: false,
+                has_support: false,
+            };
+            record_assertion_group_kind(&mut group, kind, fact_span);
+            groups.push(group);
         }
     }
     groups
+}
+
+fn record_assertion_group_kind(
+    group: &mut AssertionGroup,
+    kind: AssertionFactKind,
+    fact_span: Option<proc_macro2::Span>,
+) {
+    match kind {
+        AssertionFactKind::Warranted => {
+            group.has_warranted = true;
+            if let Some(span) = fact_span {
+                group.warranted_fact_spans.push(span);
+            }
+        }
+        AssertionFactKind::Support => {
+            group.has_support = true;
+            if let Some(span) = fact_span {
+                group.support_fact_spans.push(span);
+            }
+        }
+    }
 }
 
 /// Count assert macros reachable anywhere inside a statement list, including
@@ -3340,10 +3480,12 @@ enum Desugared {
     /// adaptors (`IterSugar`/`FilterSugar`/`MapSugar`/...).
     Seq(Vec<DesugaredElem>),
     /// An emitted finite conjunction (a fold/for_each/for-loop terminal): the
-    /// formula, the static assert-macro count it accounts, and its warrant.
+    /// formula, the static assert-macro count it accounts, its fact kind, and
+    /// its warrant.
     Constraints {
         atom: Rc<Formula>,
         n: usize,
+        kind: AssertionFactKind,
         warrant: Warrant,
     },
     /// The TERM FLOOR: a single reified `Term` (an EUF/FOL term object). Produced
@@ -4182,11 +4324,17 @@ fn emit_desugared(
     macros_lifted: &mut usize,
 ) -> bool {
     match desugared {
-        Desugared::Constraints { atom, n, warrant } => {
+        Desugared::Constraints {
+            atom,
+            n,
+            kind,
+            warrant,
+        } => {
             entries.push(AssertionEntry {
                 name: warrant.name,
                 atom,
                 fact_span: None,
+                kind,
             });
             *macros_lifted += n;
             true
@@ -4247,6 +4395,144 @@ fn collect_constraint_expr(
         }
         Outcome::Hit(effect) => skipped.push(effect.reason()),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_panic_freedom_callsites_in_stmt(
+    stmt: &Stmt,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+    reducer: &ReductionCtx<'_>,
+    float_widths: &mut FloatWidthScope,
+    let_inits: &BTreeMap<String, &Expr>,
+    factory_audits: Option<&FactoryAuditLog>,
+    macro_depth: usize,
+    entries: &mut Vec<AssertionEntry>,
+    seen: &mut BTreeSet<String>,
+) {
+    if !options.panic_freedom_enabled() {
+        return;
+    }
+    for expr in callsite_exprs_in_stmt(stmt) {
+        let key = panic_freedom_site_key(&expr);
+        if !seen.insert(key) {
+            continue;
+        }
+        let mut support_entries = Vec::new();
+        let mut support_skipped = Vec::new();
+        let mut support_lifted = 0usize;
+        collect_constraint_expr(
+            &expr,
+            scope,
+            options,
+            reducer,
+            float_widths,
+            let_inits,
+            factory_audits,
+            macro_depth,
+            &mut support_entries,
+            &mut support_skipped,
+            &mut support_lifted,
+        );
+        entries.extend(
+            support_entries
+                .into_iter()
+                .filter(|entry| matches!(entry.kind, AssertionFactKind::Support)),
+        );
+    }
+}
+
+fn expr_is_panic_freedom_callsite(expr: &Expr) -> bool {
+    match expr {
+        Expr::Call(_) | Expr::MethodCall(_) => true,
+        Expr::Paren(p) => expr_is_panic_freedom_callsite(&p.expr),
+        Expr::Group(g) => expr_is_panic_freedom_callsite(&g.expr),
+        _ => false,
+    }
+}
+
+fn panic_freedom_site_key(expr: &Expr) -> String {
+    let start = expr.span().start();
+    format!("{}:{}:{}", start.line, start.column, token_key(expr))
+}
+
+fn callsite_exprs_in_stmt(stmt: &Stmt) -> Vec<Expr> {
+    let mut visitor = PanicFreedomCallsiteVisitor { out: Vec::new() };
+    match stmt {
+        Stmt::Local(local) => {
+            if let Some(init) = &local.init {
+                visitor.visit_expr(&init.expr);
+                if let Some((_, diverge)) = &init.diverge {
+                    visitor.visit_expr(diverge);
+                }
+            }
+        }
+        Stmt::Expr(expr, _) => visitor.visit_expr(expr),
+        Stmt::Macro(stmt_macro) => visitor.visit_macro_args(&stmt_macro.mac),
+        // Item bodies are not executed merely because they are declared. Const/static
+        // item initializers and unconditional blocks are handled by recursive collector
+        // calls, which run their own callsite walk in the correct execution context.
+        Stmt::Item(_) => {}
+    }
+    visitor.out
+}
+
+struct PanicFreedomCallsiteVisitor {
+    out: Vec<Expr>,
+}
+
+impl PanicFreedomCallsiteVisitor {
+    fn visit_macro_args(&mut self, mac: &syn::Macro) {
+        if let Ok(args) = parse_macro_args(mac.tokens.clone()) {
+            for expr in args.exprs {
+                self.visit_expr(&expr);
+            }
+        }
+    }
+}
+
+impl<'ast> syn::visit::Visit<'ast> for PanicFreedomCallsiteVisitor {
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        self.out.push(Expr::Call(call.clone()));
+        syn::visit::visit_expr_call(self, call);
+    }
+
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        self.out.push(Expr::MethodCall(call.clone()));
+        syn::visit::visit_expr_method_call(self, call);
+    }
+
+    fn visit_expr_macro(&mut self, mac: &'ast syn::ExprMacro) {
+        self.visit_macro_args(&mac.mac);
+    }
+
+    fn visit_expr_if(&mut self, expr: &'ast syn::ExprIf) {
+        self.visit_expr(&expr.cond);
+    }
+
+    fn visit_expr_match(&mut self, expr: &'ast syn::ExprMatch) {
+        self.visit_expr(&expr.expr);
+    }
+
+    fn visit_expr_for_loop(&mut self, expr: &'ast syn::ExprForLoop) {
+        self.visit_expr(&expr.expr);
+    }
+
+    fn visit_expr_while(&mut self, expr: &'ast syn::ExprWhile) {
+        self.visit_expr(&expr.cond);
+    }
+
+    fn visit_expr_block(&mut self, _expr: &'ast syn::ExprBlock) {}
+
+    fn visit_expr_unsafe(&mut self, _expr: &'ast syn::ExprUnsafe) {}
+
+    fn visit_expr_const(&mut self, _expr: &'ast syn::ExprConst) {}
+
+    fn visit_expr_loop(&mut self, _expr: &'ast syn::ExprLoop) {}
+
+    fn visit_expr_closure(&mut self, _expr: &'ast syn::ExprClosure) {}
+
+    fn visit_expr_async(&mut self, _expr: &'ast syn::ExprAsync) {}
 }
 
 /// The component sub-expressions of a 2+-tuple expression (`(a, b)`), or None if `expr`
@@ -5035,8 +5321,21 @@ fn collect_assertion_entries<'a>(
     // cross-test/file TOP-level dedup.
     let reduced_at_entry: HashSet<String> = reduced_helpers.clone();
     let mut reduced_in_block: HashSet<String> = HashSet::new();
+    let mut panic_freedom_sites: BTreeSet<String> = BTreeSet::new();
     for (stmt_idx, stmt) in stmts.iter().enumerate() {
         let entries_before_stmt = entries.len();
+        emit_panic_freedom_callsites_in_stmt(
+            stmt,
+            &temporal_scope,
+            options,
+            reducer,
+            float_widths,
+            &let_inits,
+            factory_audits,
+            macro_depth,
+            entries,
+            &mut panic_freedom_sites,
+        );
         match stmt {
             Stmt::Local(local) => {
                 update_float_width_scope_for_pat(&local.pat, float_widths);
@@ -5168,7 +5467,7 @@ fn collect_assertion_entries<'a>(
                     // expansion. One source macro is one accounting unit.
                     let before_e = entries.len();
                     let before_s = skipped.len();
-                    collect_macro(
+                    let lifted = collect_macro(
                         &m.mac.path,
                         m.mac.tokens.clone(),
                         &temporal_scope,
@@ -5179,7 +5478,7 @@ fn collect_assertion_entries<'a>(
                         skipped,
                     );
                     if entries.len() > before_e {
-                        *macros_lifted += 1;
+                        *macros_lifted += lifted;
                     } else {
                         match try_macro_expansion_entries(
                             &m.mac.path,
@@ -5227,7 +5526,7 @@ fn collect_assertion_entries<'a>(
                     // expansion. One source macro is one accounting unit.
                     let before_e = entries.len();
                     let before_s = skipped.len();
-                    collect_macro(
+                    let lifted = collect_macro(
                         &m.mac.path,
                         m.mac.tokens.clone(),
                         &temporal_scope,
@@ -5238,7 +5537,7 @@ fn collect_assertion_entries<'a>(
                         skipped,
                     );
                     if entries.len() > before_e {
-                        *macros_lifted += 1;
+                        *macros_lifted += lifted;
                     } else {
                         match try_macro_expansion_entries(
                             &m.mac.path,
@@ -5279,7 +5578,8 @@ fn collect_assertion_entries<'a>(
                 }
             },
             Stmt::Expr(expr, _)
-                if has_constraint_candidate(expr, &temporal_scope, options, &let_inits) =>
+                if has_constraint_candidate(expr, &temporal_scope, options, &let_inits)
+                    && !expr_is_panic_freedom_callsite(expr) =>
             {
                 collect_constraint_expr(
                     expr,
@@ -6653,12 +6953,7 @@ fn lift_item_assertions(
     }
 
     for group in group_assertions(entries, &item_name) {
-        out.assertion_facts.push(AssertionFactEmission {
-            source_path: source_path.to_string(),
-            item_name: item_name.clone(),
-            contract_name: group.name.clone(),
-            fact_spans: group.fact_spans.clone(),
-        });
+        emit_assertion_fact_metadata(out, source_path, &item_name, &group);
         out.decls.push(ContractDecl {
             name: group.name,
             pre: None,
@@ -7311,6 +7606,7 @@ fn collect_mut_pat_idents(pat: &Pat, out: &mut BTreeSet<String>) {
 }
 
 fn advance_temporal_scope_for_stmt(stmt: &Stmt, scope: &mut TemporalScope) {
+    scope.dormant_mut_ref.advance_stmt(stmt);
     for name in deterministic_definition_names(stmt) {
         scope.define_local(&name);
     }
@@ -8308,7 +8604,7 @@ fn collect_macro(
     factory_audits: Option<&FactoryAuditLog>,
     entries: &mut Vec<AssertionEntry>,
     skipped: &mut Vec<String>,
-) {
+) -> usize {
     let macro_expr: Expr = Expr::Macro(syn::ExprMacro {
         attrs: Vec::new(),
         mac: syn::Macro {
@@ -8333,18 +8629,24 @@ fn collect_macro(
     );
     let node = sugar::factory::build_constraint(&macro_expr, &fcx);
     match node.desugar(&ctx) {
-        Outcome::Dug(Desugared::Constraints { atom, warrant, .. }) => {
+        Outcome::Dug(Desugared::Constraints {
+            atom,
+            n,
+            warrant,
+            kind,
+        }) => {
             entries.push(AssertionEntry {
                 name: warrant.name,
                 atom,
                 fact_span: None,
+                kind,
             });
-            return;
+            return n;
         }
         Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {}
         Outcome::Hit(effect) => {
             skipped.push(effect.reason());
-            return;
+            return 0;
         }
         Outcome::Dug(_) => {}
     }
@@ -8357,8 +8659,15 @@ fn collect_macro(
         options,
         factory_audits,
     ) {
-        Ok(macro_entries) => entries.extend(macro_entries),
-        Err(reason) => skipped.push(reason),
+        Ok(macro_entries) => {
+            let n = usize::from(!macro_entries.is_empty());
+            entries.extend(macro_entries);
+            n
+        }
+        Err(reason) => {
+            skipped.push(reason);
+            0
+        }
     }
 }
 
@@ -8952,6 +9261,7 @@ fn assertion_entries_from_ascii_macro(
                 name: None,
                 atom: if negate { not_(atom) } else { atom },
                 fact_span: None,
+                kind: AssertionFactKind::Warranted,
             });
         }
         if !literal_char_predicate_only(&predicate) {
@@ -8962,6 +9272,7 @@ fn assertion_entries_from_ascii_macro(
                     name: None,
                     atom: if negate { not_(atom) } else { atom },
                     fact_span: None,
+                    kind: AssertionFactKind::Warranted,
                 });
             }
         }
@@ -9038,6 +9349,7 @@ fn translate_bool_assertion_with_audits(
                     name: entry.name,
                     atom: not_(entry.atom),
                     fact_span: entry.fact_span,
+                    kind: entry.kind,
                 });
             }
             if let Some(entry) =
@@ -9047,6 +9359,7 @@ fn translate_bool_assertion_with_audits(
                     name: entry.name,
                     atom: not_(entry.atom),
                     fact_span: entry.fact_span,
+                    kind: entry.kind,
                 });
             }
             // `!matches!(x, Type::Variant)` — negate the discriminant atom. This
@@ -9058,6 +9371,7 @@ fn translate_bool_assertion_with_audits(
                     name: entry.name,
                     atom: not_(entry.atom),
                     fact_span: entry.fact_span,
+                    kind: entry.kind,
                 });
             }
             // `!(<lhs> <cmp> <rhs>)` is a NEGATED comparison. Route it to the
@@ -9080,6 +9394,7 @@ fn translate_bool_assertion_with_audits(
                         name: entry.name,
                         atom: not_(entry.atom),
                         fact_span: entry.fact_span,
+                        kind: entry.kind,
                     });
                 }
             }
@@ -9098,6 +9413,7 @@ fn translate_bool_assertion_with_audits(
                     name: entry.name,
                     atom: not_(entry.atom),
                     fact_span: entry.fact_span,
+                    kind: entry.kind,
                 })
             }
         }
@@ -9256,6 +9572,7 @@ fn translate_float_refinement_assertion(
                 name,
                 atom: atomic_(format!("float.{width}.{method}"), vec![receiver]),
                 fact_span: None,
+                kind: AssertionFactKind::Warranted,
             }))
         }
         Expr::Paren(paren) => {
@@ -9392,6 +9709,7 @@ fn translate_infinity_eq_assertion_with_audits(
         name,
         atom,
         fact_span: None,
+        kind: AssertionFactKind::Warranted,
     }))
 }
 
@@ -9636,6 +9954,11 @@ fn translate_binary_bool_assertion_with_audits(
                 name,
                 atom,
                 fact_span: None,
+                kind: if left.kind.is_warranted() || right.kind.is_warranted() {
+                    AssertionFactKind::Warranted
+                } else {
+                    AssertionFactKind::Support
+                },
             })
         }
         BinOp::Eq(_) | BinOp::Ne(_) | BinOp::Lt(_) | BinOp::Le(_) | BinOp::Gt(_) | BinOp::Ge(_) => {
@@ -9901,6 +10224,7 @@ fn wrapped_variant_entry(
         name: outer.name,
         atom: and_(vec![outer.atom, inner_atom]),
         fact_span: outer.fact_span,
+        kind: outer.kind,
     })
 }
 
@@ -9961,6 +10285,7 @@ fn tuple_pattern_entry(
         name,
         atom: and_(atoms),
         fact_span: None,
+        kind: AssertionFactKind::Warranted,
     })
 }
 
@@ -10153,6 +10478,7 @@ fn translate_string_predicate_assertion(
                         name,
                         atom: atomic_("contains", vec![receiver, pattern]),
                         fact_span: None,
+                        kind: AssertionFactKind::Warranted,
                     }))
                 }
                 "starts_with" | "ends_with" => {
@@ -10210,6 +10536,7 @@ fn translate_string_predicate_assertion(
                         name,
                         atom: atomic_(atom_name, vec![pattern, receiver]),
                         fact_span: None,
+                        kind: AssertionFactKind::Warranted,
                     }))
                 }
                 "is_ascii" => {
@@ -10226,6 +10553,7 @@ fn translate_string_predicate_assertion(
                             name,
                             atom: atomic_("str.is_ascii", vec![receiver]),
                             fact_span: None,
+                            kind: AssertionFactKind::Warranted,
                         }));
                     }
                     let Some(bytes) = literal_byte_string_value(&call.receiver) else {
@@ -10244,6 +10572,7 @@ fn translate_string_predicate_assertion(
                         name: None,
                         atom,
                         fact_span: None,
+                        kind: AssertionFactKind::Warranted,
                     }))
                 }
                 "is_ascii_alphabetic" => {
@@ -10264,6 +10593,7 @@ fn translate_string_predicate_assertion(
                         name,
                         atom: atomic_("str.is_ascii_alphabetic", vec![receiver]),
                         fact_span: None,
+                        kind: AssertionFactKind::Warranted,
                     }))
                 }
                 "is_ascii_digit" => {
@@ -10317,6 +10647,7 @@ fn translate_string_predicate_assertion(
                         name,
                         atom: eq(bool_const(ch.is_alphabetic()), bool_const(true)),
                         fact_span: None,
+                        kind: AssertionFactKind::Warranted,
                     }))
                 }
                 _ => Ok(None),
@@ -10423,6 +10754,7 @@ fn translate_regex_match_assertion(
         name,
         atom: atomic_("str.in-regex", vec![subject, pattern]),
         fact_span: None,
+        kind: AssertionFactKind::Warranted,
     }))
 }
 
@@ -10443,6 +10775,7 @@ fn ascii_char_class_assertion(
         name,
         atom: atomic_(atom_name, vec![receiver]),
         fact_span: None,
+        kind: AssertionFactKind::Warranted,
     }))
 }
 
@@ -10506,6 +10839,7 @@ fn translate_literal_iterator_assertion(
             name: None,
             atom,
             fact_span: None,
+            kind: AssertionFactKind::Warranted,
         }));
     }
 
@@ -10541,6 +10875,7 @@ fn translate_literal_iterator_assertion(
         name: None,
         atom,
         fact_span: None,
+        kind: AssertionFactKind::Warranted,
     }))
 }
 
@@ -11835,6 +12170,7 @@ fn assertion_entry_from_relation(
             name: None,
             atom: constructor_operator_atom(lhs, rhs, op, &tag),
             fact_span: None,
+            kind: AssertionFactKind::Warranted,
         };
     }
 
@@ -11857,6 +12193,7 @@ fn assertion_entry_from_relation(
         name,
         atom,
         fact_span: None,
+        kind: AssertionFactKind::Warranted,
     }
 }
 
@@ -11927,7 +12264,7 @@ fn bool_const(value: bool) -> Rc<Term> {
     })
 }
 
-fn callsite_assertion_name(term: &Term, local_scope: &str) -> Option<String> {
+pub(crate) fn callsite_assertion_name(term: &Term, local_scope: &str) -> Option<String> {
     let Term::Ctor { name, .. } = term else {
         return None;
     };
@@ -13226,6 +13563,173 @@ mod lifter_key_tests {
     }
 
     #[test]
+    fn callsite_lifts_panic_freedom_without_scalar_assertions() {
+        // A bare callsite in a passing test asserts that the call returned normally.
+        // This is panic-freedom vocabulary, not a scalar comparison and not a method
+        // name whitelist.
+        let src = r#"
+            fn check_vendor_surface() {}
+
+            #[test]
+            fn callsite_surface() {
+                check_vendor_surface();
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "panic-freedom facts do not increment the scalar assertion counter: {:?}",
+            out.decls
+        );
+        assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("panic-free") && dump.contains("check_vendor_surface"),
+            "panic-freedom fact should name the callsite: {dump}"
+        );
+    }
+
+    #[test]
+    fn stable_bound_receiver_rewrites_method_subject_through_factory() {
+        // `m` is stable source sugar for the constructor epoch. The assertion's FOL
+        // subject is the rewritten method call over `Maker::new(42)`, not a bare
+        // source-local `m`.
+        let src = r#"
+            #[test]
+            fn bound_receiver_surface() {
+                let m = Maker::new(42);
+                assert_eq!(m.check(), 42);
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "scalar assertion should lift through the bound receiver: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("method:check")
+                && dump.contains("call:Maker::new")
+                && dump.contains("Int(42)"),
+            "method receiver should be temporalized through the stable constructor binding: {dump}"
+        );
+        assert!(
+            !dump.contains("Var { name: \"m\" }"),
+            "stable bound receiver must not freeze as a bare local: {dump}"
+        );
+    }
+
+    #[test]
+    fn panic_free_support_uses_rewritten_method_subject() {
+        // Panic-freedom is just another constraint Sugar. Its subject must be the
+        // same rewritten FOL term any scalar assertion would see for this callsite.
+        let src = r#"
+            #[test]
+            fn bound_receiver_support_surface() {
+                let m = Maker::new(42);
+                m.check();
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "support facts do not increment scalar assertion count: {:?}",
+            out.decls
+        );
+        assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("panic-free")
+                && dump.contains("method:check")
+                && dump.contains("call:Maker::new")
+                && dump.contains("Int(42)"),
+            "panic-freedom support should carry the rewritten method subject: {dump}"
+        );
+        assert!(
+            !dump.contains("bound_receiver_support_surface::m"),
+            "support must not pin the source-local name as the FOL subject: {dump}"
+        );
+    }
+
+    #[test]
+    fn unconditional_panic_macro_emits_contradictory_panic_freedom() {
+        // A test that unconditionally panics contradicts the normal-return claim of
+        // its own assertion surface. The emitted inv must therefore contain both the
+        // panic-freedom atom and its negation, giving the solver a real UNSAT signal.
+        let src = r#"
+            #[test]
+            fn panics() {
+                panic!("bad");
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "panic-freedom contradictions do not increment the scalar assertion counter: {:?}",
+            out.decls
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("panic-free") && dump.contains("not"),
+            "panic! should emit a contradictory panic-freedom formula: {dump}"
+        );
+    }
+
+    #[test]
+    fn should_panic_test_does_not_emit_normal_return_callsite_fact() {
+        // #[should_panic] reverses the test-level guarantee. Calls inside it are not
+        // ordinary green-test no-panic facts unless a more precise panic vocabulary
+        // proves the pre-panic prefix separately.
+        let src = r#"
+            fn may_panic() {}
+
+            #[test]
+            #[should_panic]
+            fn expected_panic() {
+                may_panic();
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "#[should_panic] must suppress default no-panic callsite facts: {:?}",
+            out.decls
+        );
+        assert!(
+            !format!("{:?}", out.decls).contains("panic-free"),
+            "#[should_panic] must not emit normal-return panic-free facts"
+        );
+    }
+
+    #[test]
+    fn nested_callsite_in_assertion_lifts_panic_freedom() {
+        // The scalar assertion and the callsite panic universe are separate facts:
+        // `assert_eq!(answer(), 42)` says both `answer()` returned normally and
+        // the returned value satisfied the equality.
+        let src = r#"
+            fn answer() -> i32 { 42 }
+
+            #[test]
+            fn nested_callsite() {
+                assert_eq!(answer(), 42);
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "scalar assertion plus nested callsite panic-freedom should lift: {:?}",
+            out.skip_reasons
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("panic-free") && dump.contains("answer"),
+            "nested callsite should emit a panic-freedom fact: {dump}"
+        );
+    }
+
+    #[test]
     fn if_return_cfg_guard_is_not_panic_constraint_vocabulary() {
         let src = r#"
             #[test]
@@ -13739,7 +14243,9 @@ mod lifter_key_tests {
             d.name.contains("::assertion") && {
                 // check if any single obligation contains s with two different values
                 // (this is a heuristic — we just verify no single contract for s)
-                d.name.contains("s") && !d.name.contains("test_") // bare 's' var key
+                let inv = format!("{:?}", d.inv);
+                d.name.contains("s") && !d.name.contains("test_") && !inv.contains("panic-free")
+                // inert callsite support is not the scalar pin
             }
         });
         assert!(
@@ -15082,6 +15588,49 @@ mod lifter_key_tests {
             dump.contains("b@def") || !has_ne,
             "a mut local written through `&mut b` must be versioned (trajectory): {dump}"
         );
+    }
+
+    #[test]
+    fn dormant_mut_ref_stack_replay_lifts_final_literal_fact() {
+        // Stdlib axiom: `DormantMutRef::new` captures the same unique mutable reference
+        // and `awaken` returns it after the reborrow ends. Over a bounded literal factor
+        // list and LIFO stack replay, the final `data` value is a constructible literal:
+        // `1 * 7 * 3 * 2 == 42`. The inner loop assert remains non-point-wise; the final
+        // assertion must not be hidden behind an "ambiguous temporal identity" skip.
+        let src = r#"
+            #[test]
+            fn dormant_ref() {
+                let mut data = 1;
+                let mut stack = vec![];
+                let mut rr = &mut data;
+                for factor in [2, 3, 7].iter() {
+                    let (r, dormant_r) = DormantMutRef::new(rr);
+                    rr = r;
+                    assert_eq!(*rr, 1);
+                    stack.push((factor, dormant_r));
+                }
+                while let Some((factor, dormant_r)) = stack.pop() {
+                    let r = unsafe { dormant_r.awaken() };
+                    *r *= factor;
+                }
+                assert_eq!(data, 42);
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "the final literal trajectory fact must lift; skips: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            !out.skip_reasons
+                .iter()
+                .any(|r| r.contains("ambiguous temporal identity for receiver `data`")),
+            "DormantMutRef sugar should explain the final data identity: {:?}",
+            out.skip_reasons
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(dump.contains("Int(42)"), "expected final 42 fact: {dump}");
     }
 
     // ── Per-occurrence consuming-iterator advance (same statement) ─────────────
