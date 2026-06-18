@@ -11,11 +11,12 @@ use crate::sugar::{
     array_repeat, array_term, await_term, binop, block_term, call, cast_term,
     closure_iter_advance_body, closure_mutating_body, closure_opaque_accessor,
     closure_runtime_receiver, closure_term, closure_tls_accessor, conditional, const_block,
-    control_flow_term, enumerate, field_term, filter, filter_map, fold, forall, impl_method, index,
-    iter_terminal, iterator, literal, macro_term, map, match_node, match_scrutinee, method,
-    monadic, path, range_term, raw_addr_term, reference_term, repeat_term, rev, skip, skip_while,
-    statement_control_flow, statement_loop_advance, statement_reflection, statement_runtime_expr,
-    struct_term, take, take_while, term_literal, transparent_term, tuple_term, unary,
+    control_flow_term, enumerate, field_term, filter, filter_map, fold, for_each, forall_loop,
+    impl_method, index, iter_terminal, iterator, literal, macro_term, map, match_node,
+    match_scrutinee, method, monadic, path, range_term, raw_addr_term, reference_term, repeat_term,
+    rev, skip, skip_while, statement_control_flow, statement_loop_advance, statement_reflection,
+    statement_runtime_expr, struct_term, take, take_while, term_literal, transparent_term,
+    tuple_term, unary,
 };
 use crate::Sugar;
 
@@ -50,7 +51,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &transparent_term::COMPOSITE_EXPR_SUGAR,
     &conditional::EXPR_SUGAR,
     &match_node::EXPR_SUGAR,
-    &forall::FOR_LOOP_EXPR_SUGAR,
+    &forall_loop::EXPR_SUGAR,
     &array_repeat::EXPR_SUGAR,
     &control_flow_term::COMPOSITE_EXPR_SUGAR,
     &literal::EXPR_SUGAR,
@@ -65,7 +66,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &skip_while::EXPR_SUGAR,
     &take_while::EXPR_SUGAR,
     &fold::EXPR_SUGAR,
-    &forall::FOR_EACH_EXPR_SUGAR,
+    &for_each::EXPR_SUGAR,
     &closure_tls_accessor::EXPR_SUGAR,
     &closure_opaque_accessor::EXPR_SUGAR,
     &closure_iter_advance_body::EXPR_SUGAR,
@@ -436,6 +437,14 @@ mod tests {
             names.contains(&"for_each"),
             "for_each over literal-derived sequence should be owned by ForEachSugar: {names:?}"
         );
+    }
+
+    #[test]
+    fn for_loop_over_literal_range_is_owned_by_forall_loop_sugar() {
+        let expr: Expr = syn::parse_str("for x in 0..3 { assert!(x >= 0); }").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Composite);
+
+        assert_eq!(names, vec!["forall_loop"]);
     }
 
     #[test]
