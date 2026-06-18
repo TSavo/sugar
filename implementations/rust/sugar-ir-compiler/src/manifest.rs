@@ -5,8 +5,7 @@
 // Walks ~/.config/sugar/ir-compilers/<name>/manifest.toml and
 // returns the parsed entries. Manifest format is intentionally tiny so
 // the loader can hand-parse it without pulling a TOML dep into the
-// workspace; the file is exactly four key-value lines plus a quoted
-// array.
+// workspace; it accepts string fields and quoted arrays.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,8 +16,10 @@ pub struct Manifest {
     pub name: String,
     pub version: String,
     pub protocol_version: String,
-    pub binary: PathBuf,
+    pub command: Vec<String>,
+    pub working_dir: Option<PathBuf>,
     pub dialects: Vec<String>,
+    pub manifest_dir: Option<PathBuf>,
 }
 
 /// Walk a directory of plugin manifests. Missing root is not an error;
@@ -46,7 +47,8 @@ pub fn discover(root: impl AsRef<Path>) -> Vec<Manifest> {
             Ok(b) => b,
             Err(_) => continue,
         };
-        if let Some(m) = parse(&body) {
+        if let Some(mut m) = parse(&body) {
+            m.manifest_dir = Some(p);
             out.push(m);
         }
     }
@@ -74,7 +76,8 @@ pub fn parse(body: &str) -> Option<Manifest> {
     let mut name = None;
     let mut version = None;
     let mut protocol_version = None;
-    let mut binary = None;
+    let mut command = Vec::new();
+    let mut working_dir = None;
     let mut dialects = Vec::new();
 
     for line in body.lines() {
@@ -92,25 +95,37 @@ pub fn parse(body: &str) -> Option<Manifest> {
                 "name" => name = Some(s),
                 "version" => version = Some(s),
                 "protocol_version" => protocol_version = Some(s),
-                "binary" => binary = Some(PathBuf::from(s)),
+                "working_dir" => working_dir = Some(PathBuf::from(s)),
                 _ => {}
             }
-        } else if value.starts_with('[') && value.ends_with(']') && key == "dialects" {
+        } else if value.starts_with('[') && value.ends_with(']') {
             let inner = &value[1..value.len() - 1];
+            let mut values = Vec::new();
             for tok in inner.split(',') {
                 let t = tok.trim();
                 if t.starts_with('"') && t.ends_with('"') && t.len() >= 2 {
-                    dialects.push(t[1..t.len() - 1].to_string());
+                    values.push(t[1..t.len() - 1].to_string());
                 }
             }
+            match key {
+                "command" => command = values,
+                "dialects" => dialects = values,
+                _ => {}
+            }
         }
+    }
+
+    if command.is_empty() {
+        return None;
     }
 
     Some(Manifest {
         name: name?,
         version: version?,
         protocol_version: protocol_version?,
-        binary: binary?,
+        command,
+        working_dir,
         dialects,
+        manifest_dir: None,
     })
 }

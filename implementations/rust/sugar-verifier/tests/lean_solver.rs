@@ -2,9 +2,13 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Arc;
 
+use sugar_ir_compiler::registry::Registry as CompilerRegistry;
+use sugar_ir_compiler_lean::LeanCompiler;
 use sugar_verifier::solvers::{
-    plan::run_plan, registry, LeanSubprocessSolver, Solver, SolverPlan, SolversConfig,
+    plan::run_plan_with_compilers, registry, LeanSubprocessSolver, Solver, SolverPlan,
+    SolversConfig,
 };
 use sugar_verifier::types::ObligationVerdict;
 
@@ -67,7 +71,7 @@ fn registry_recognizes_lean_ir_compiler() {
 default = "lean"
 
 [solvers.lean]
-binary = "lake"
+binary = "/definitely/missing/lake"
 ir_compiler = "lean"
 "#,
     )
@@ -80,13 +84,17 @@ ir_compiler = "lean"
         SolverPlan::Single(name) => assert_eq!(name, "lean"),
         _ => panic!("expected single lean solver"),
     }
-    let result = solver.solve("(check-sat)");
+    let result = solver.solve("theorem sugar_obligation : True := by trivial\n");
     assert_eq!(result.verdict, ObligationVerdict::Undecidable);
-    assert!(result.error.contains("IR-JSON"));
+    assert!(
+        result.error.contains("spawn") && !result.error.contains("IR-JSON"),
+        "Lean solver should consume compiled Lean text, got: {}",
+        result.error
+    );
 }
 
 #[test]
-fn run_plan_feeds_ir_json_to_lean_solver() {
+fn run_plan_compiles_formula_before_lean_solver() {
     let cfg = SolversConfig::from_toml(
         r#"
 [solvers]
@@ -100,13 +108,18 @@ ir_compiler = "lean"
     .expect("parse");
     let plan = SolverPlan::from_config(&cfg);
     let registry = registry::build(&cfg);
+    let mut compilers = CompilerRegistry::new();
+    compilers.register(Arc::new(LeanCompiler::new()));
     let formula = serde_json::json!({"kind": "atomic", "name": "true", "args": []});
-    let (verdict, _reason, invocations) = run_plan(&plan, &registry, "(check-sat)", Some(&formula));
+    let (verdict, _reason, invocations) =
+        run_plan_with_compilers(&plan, &registry, &compilers, &formula);
     assert_eq!(verdict, ObligationVerdict::Undecidable);
     let error = &invocations[0].result.error;
     assert!(
-        error.contains("spawn") && !error.contains("parse IR-JSON"),
-        "Lean should receive formula JSON before spawning lake, got: {error}"
+        error.contains("spawn")
+            && !error.contains("parse IR-JSON")
+            && !error.contains("ir compiler"),
+        "ProofIR should compile to Lean before spawning lake, got: {error}"
     );
 }
 

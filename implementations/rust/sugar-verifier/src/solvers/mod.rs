@@ -46,6 +46,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::Value as Json;
+use sugar_ir_compiler::CompiledFormula;
 
 use crate::types::ObligationVerdict;
 
@@ -81,6 +82,9 @@ pub trait Solver: Send + Sync {
         SolverIdentity::default()
     }
     fn solve(&self, smt: &str) -> SolveResult;
+    fn solve_compiled(&self, compiled: &CompiledFormula) -> SolveResult {
+        self.solve(&compiled.script())
+    }
 }
 
 /// Convenience type alias: trait objects come through the registry as
@@ -105,6 +109,6 @@ pub use coq::CoqSubprocessSolver;
 pub use dispatch::{classify, dispatch_for_formula, FormulaTheory};
 pub use lean::LeanSubprocessSolver;
 pub use maude::MaudeSubprocessSolver;
-pub use plan::{run_plan, SolverInvocation};
+pub use plan::{run_plan, run_plan_with_compilers, SolverInvocation};
 pub use stub::StubSolver;
 pub use subprocess::SubprocessSolver;

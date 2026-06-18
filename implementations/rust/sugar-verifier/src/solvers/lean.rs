@@ -8,8 +8,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value as Json};
 use sugar_canonicalizer::blake3_512_of;
-use sugar_ir_compiler::IrCompiler;
-use sugar_ir_compiler_lean::{LeanCompiler, DIALECT, THEOREM_NAME};
+use sugar_ir_compiler_lean::{DIALECT, THEOREM_NAME};
 
 use crate::solvers::{SolveResult, Solver, SolverIdentity};
 use crate::types::ObligationVerdict;
@@ -177,38 +176,8 @@ impl Solver for LeanSubprocessSolver {
         self.identity.clone()
     }
 
-    fn solve(&self, smt: &str) -> SolveResult {
+    fn solve(&self, source: &str) -> SolveResult {
         let started = Instant::now();
-        let ir: Json = match serde_json::from_str(smt) {
-            Ok(value) => value,
-            Err(error) => {
-                return SolveResult {
-                    verdict: ObligationVerdict::Undecidable,
-                    solver_name: self.name.clone(),
-                    solver_version: self.version.clone(),
-                    error: format!("lean: failed to parse IR-JSON: {error}"),
-                    solver_stdout: String::new(),
-                    wall_clock: started.elapsed(),
-                    timed_out: false,
-                };
-            }
-        };
-
-        let compiler = LeanCompiler::new();
-        let compiled = match compiler.compile(&ir, DIALECT) {
-            Ok(compiled) => compiled,
-            Err(error) => {
-                return SolveResult {
-                    verdict: ObligationVerdict::Undecidable,
-                    solver_name: self.name.clone(),
-                    solver_version: self.version.clone(),
-                    error: format!("lean: compilation error: {error}"),
-                    solver_stdout: String::new(),
-                    wall_clock: started.elapsed(),
-                    timed_out: false,
-                };
-            }
-        };
 
         let tmp_dir = std::env::temp_dir().join(format!(
             "sugar-lean-{}-{}",
@@ -228,9 +197,8 @@ impl Solver for LeanSubprocessSolver {
         }
 
         let lean_file = tmp_dir.join("proof.lean");
-        let source = format!("{}{}", compiled.preamble, compiled.body);
-        let file_cid = Self::lean_file_cid(&source);
-        if let Err(error) = std::fs::write(&lean_file, &source) {
+        let file_cid = Self::lean_file_cid(source);
+        if let Err(error) = std::fs::write(&lean_file, source) {
             let _ = std::fs::remove_dir_all(&tmp_dir);
             return SolveResult {
                 verdict: ObligationVerdict::Undecidable,

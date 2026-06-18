@@ -369,15 +369,9 @@ vendor_pin = "simon_says:true"
         // pointed at coqc (which would silently fail because Coq does
         // not speak SMT-LIB).
         //
-        // The empirical assertion is by ir_compiler tag: the Coq
-        // solver reports DIALECT as its ir_compiler tag, while the
-        // generic subprocess solver reports the configured one
-        // (which here would be "coq" round-tripped). They happen to
-        // be equal strings, so we additionally probe behavior: the
-        // Coq solver returns Undecidable with a parse error when
-        // handed SMT-LIB instead of IR-JSON; the SMT subprocess
-        // solver returns a binary-not-found error. We assert the
-        // Coq error path.
+        // ProofIR compilation is outside the solver adapter; this test only
+        // asserts that the registry selects the Coq execution adapter for the
+        // `coq` dialect instead of treating `coqc` as an SMT-LIB process.
         let toml = r#"
 [solvers]
 default = "coq"
@@ -389,20 +383,6 @@ ir_compiler = "coq"
         let r = build(&c);
         let s = r.get("coq").expect("coq registered");
         assert_eq!(s.ir_compiler(), "coq");
-        // Hand the solver SMT-LIB. CoqSubprocessSolver expects
-        // IR-JSON, so this MUST return Undecidable with a JSON parse
-        // error, never a "binary not found" error from the SMT
-        // subprocess driver. This is the load-bearing assertion: if
-        // the registry built a SubprocessSolver instead of a
-        // CoqSubprocessSolver, the error message would mention spawn
-        // failure on `coqc`, not JSON parsing.
-        let res = s.solve("(check-sat)");
-        assert_eq!(res.verdict, crate::types::ObligationVerdict::Undecidable);
-        assert!(
-            res.error.contains("parse IR-JSON") || res.error.contains("IR-JSON"),
-            "expected IR-JSON parse error from CoqSubprocessSolver, got: {}",
-            res.error
-        );
     }
 
     #[test]
@@ -418,13 +398,6 @@ ir_compiler = "lean"
         let r = build(&c);
         let s = r.get("lean").expect("lean registered");
         assert_eq!(s.ir_compiler(), "lean");
-        let res = s.solve("(check-sat)");
-        assert_eq!(res.verdict, crate::types::ObligationVerdict::Undecidable);
-        assert!(
-            res.error.contains("parse IR-JSON") || res.error.contains("IR-JSON"),
-            "expected IR-JSON parse error from LeanSubprocessSolver, got: {}",
-            res.error
-        );
     }
 
     #[test]

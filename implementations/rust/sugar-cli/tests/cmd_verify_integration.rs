@@ -39,6 +39,28 @@ fn unique_dir(suffix: &str) -> PathBuf {
     p
 }
 
+fn install_smt_compiler_manifest(project: &Path) {
+    let manifest_dir = project.join(".sugar").join("ir-compilers").join("smt-lib");
+    fs::create_dir_all(&manifest_dir).expect("mkdir ir compiler manifest");
+    let rust_workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("sugar-cli has a parent workspace");
+    fs::write(
+        manifest_dir.join("manifest.toml"),
+        format!(
+            r#"name = "smt-lib-reference"
+version = "0.1.0"
+protocol_version = "sugar-ir-compiler/1"
+command = ["cargo", "run", "-p", "sugar-ir-compiler-smt-lib", "--bin", "sugar-ir-smt-lib", "--quiet", "--"]
+working_dir = "{}"
+dialects = ["smt-lib-v2.6"]
+"#,
+            rust_workspace.display()
+        ),
+    )
+    .expect("write ir compiler manifest");
+}
+
 /// Compute the v1.1-flat member CID + canonical bytes for a member
 /// envelope, exactly as `sugar-verifier::load_all_proofs` re-derives
 /// it: strip `cid` / `producerSignature`, JCS-encode, blake3-512.
@@ -82,6 +104,7 @@ fn publish_claim_project(suffix: &str, name: &str, target_pre_body: Json) -> Pat
     let dir = unique_dir(suffix);
     let proof_dir = dir.join(".sugar");
     fs::create_dir_all(&proof_dir).expect("mkdir .sugar");
+    install_smt_compiler_manifest(&dir);
 
     let signer_seed: Ed25519Seed = [0x42u8; 32];
     let declared_at = "2026-04-30T00:00:00.000Z";

@@ -334,6 +334,7 @@ fn init_tracing() {
         tracing_subscriber::EnvFilter::new(
             "warn,\
              sugar_cli=info,\
+             sugar_ir_compiler=info,\
              sugar_verifier=info,\
              sugar_walk=info,\
              sugar_lift=info,\

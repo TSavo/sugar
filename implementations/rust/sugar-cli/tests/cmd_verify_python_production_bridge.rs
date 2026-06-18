@@ -112,6 +112,28 @@ fn unique_dir(suffix: &str) -> PathBuf {
     p
 }
 
+fn install_smt_compiler_manifest(project: &Path) {
+    let manifest_dir = project.join(".sugar").join("ir-compilers").join("smt-lib");
+    fs::create_dir_all(&manifest_dir).expect("mkdir ir compiler manifest");
+    let rust_workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("sugar-cli has a parent workspace");
+    fs::write(
+        manifest_dir.join("manifest.toml"),
+        format!(
+            r#"name = "smt-lib-reference"
+version = "0.1.0"
+protocol_version = "sugar-ir-compiler/1"
+command = ["cargo", "run", "-p", "sugar-ir-compiler-smt-lib", "--bin", "sugar-ir-smt-lib", "--quiet", "--"]
+working_dir = "{}"
+dialects = ["smt-lib-v2.6"]
+"#,
+            rust_workspace.display()
+        ),
+    )
+    .expect("write ir compiler manifest");
+}
+
 /// Write a small wrapper shell script that runs the verify-facing Python lift
 /// surface with THIS checkout's source roots on `PYTHONPATH`, and return its
 /// path. The Go test compiles a Go binary; Python is interpreted, so the analog
@@ -176,6 +198,7 @@ fn stage_python_project(suffix: &str, lift_script: &Path, body_factor: i64) -> P
     // .sugar/config.toml: copied verbatim.
     let sugar = project.join(".sugar");
     fs::create_dir_all(sugar.join("lift").join("python")).expect("mkdir .sugar/lift/python");
+    install_smt_compiler_manifest(&project);
     fs::copy(
         example.join(".sugar").join("config.toml"),
         sugar.join("config.toml"),
@@ -220,6 +243,7 @@ fn stage_python_precondition_project(suffix: &str, lift_script: &Path, arg: i64)
 
     let sugar = project.join(".sugar");
     fs::create_dir_all(sugar.join("lift").join("python")).expect("mkdir .sugar/lift/python");
+    install_smt_compiler_manifest(&project);
     fs::write(
         sugar.join("config.toml"),
         r#"[[plugins]]
@@ -236,6 +260,7 @@ default = "z3"
 
 [solvers.z3]
 binary = "z3"
+ir_compiler = "smt-lib-v2.6"
 flags = ["-smt2", "-in"]
 "#,
     )
@@ -345,6 +370,7 @@ fn python_production_path_uses_checked_in_python_double_registration() {
     )
     .expect("copy test_double.py");
     copy_dir_recursive(&example.join(".sugar"), &project.join(".sugar"));
+    install_smt_compiler_manifest(&project);
     rewrite_manifest_command(
         &project
             .join(".sugar")

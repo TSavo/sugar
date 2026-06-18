@@ -11,6 +11,8 @@ use std::sync::Mutex;
 
 use rayon::prelude::*;
 use serde_json::Value as Json;
+use sugar_ir_compiler::registry::Registry as CompilerRegistry;
+use sugar_ir_compiler::CompiledFormula;
 
 use crate::solvers::{
     dispatch_for_formula, PortfolioMode, SolveResult, Solver, SolverHandle, SolverIdentity,
@@ -35,6 +37,17 @@ pub struct SolverInvocation {
 /// from the SolversConfig.
 pub type Registry = HashMap<String, SolverHandle>;
 
+#[derive(Clone, Copy)]
+enum InputSource<'a> {
+    Precompiled(&'a str),
+    Compilers(&'a CompilerRegistry),
+}
+
+enum PreparedInput {
+    Text(String),
+    Compiled(CompiledFormula),
+}
+
 /// Executor entry point. Returns the chosen verdict + a vec of
 /// per-solver invocations (each its own SolveResult). The caller
 /// (runner) aggregates these into TierStats and the per-solver
@@ -45,15 +58,41 @@ pub fn run_plan(
     smt_script: &str,
     formula: Option<&Json>,
 ) -> (ObligationVerdict, String, Vec<SolverInvocation>) {
+    run_plan_inner(
+        plan,
+        registry,
+        InputSource::Precompiled(smt_script),
+        formula,
+    )
+}
+
+pub fn run_plan_with_compilers(
+    plan: &SolverPlan,
+    registry: &Registry,
+    compilers: &CompilerRegistry,
+    formula: &Json,
+) -> (ObligationVerdict, String, Vec<SolverInvocation>) {
+    run_plan_inner(
+        plan,
+        registry,
+        InputSource::Compilers(compilers),
+        Some(formula),
+    )
+}
+
+fn run_plan_inner(
+    plan: &SolverPlan,
+    registry: &Registry,
+    source: InputSource<'_>,
+    formula: Option<&Json>,
+) -> (ObligationVerdict, String, Vec<SolverInvocation>) {
     match plan {
-        SolverPlan::Single(name) => single(name, registry, smt_script, formula),
-        SolverPlan::Chain(names) => chain(names, registry, smt_script, formula),
-        SolverPlan::Portfolio { names, mode } => {
-            portfolio(names, *mode, registry, smt_script, formula)
-        }
+        SolverPlan::Single(name) => single(name, registry, source, formula),
+        SolverPlan::Chain(names) => chain(names, registry, source, formula),
+        SolverPlan::Portfolio { names, mode } => portfolio(names, *mode, registry, source, formula),
         SolverPlan::Dispatch(d) => match formula {
             Some(f) => match dispatch_for_formula(f, d) {
-                Some(n) => single(n, registry, smt_script, formula),
+                Some(n) => single(n, registry, source, formula),
                 None => (
                     ObligationVerdict::Undecidable,
                     "dispatch: no matching solver and no default".into(),
@@ -78,15 +117,14 @@ fn lookup<'a>(name: &str, registry: &'a Registry) -> Result<&'a Arc<dyn Solver>,
 fn single(
     name: &str,
     registry: &Registry,
-    smt: &str,
+    source: InputSource<'_>,
     formula: Option<&Json>,
 ) -> (ObligationVerdict, String, Vec<SolverInvocation>) {
     match lookup(name, registry) {
         Ok(s) => {
-            let input = solver_input(s.as_ref(), smt, formula);
             let compiler = s.ir_compiler().to_string();
             let identity = s.identity();
-            let r = s.solve(&input);
+            let r = solve_with_input(s.as_ref(), source, formula);
             let verdict = r.verdict;
             let reason = reason_for(&r);
             let inv = SolverInvocation {
@@ -104,7 +142,7 @@ fn single(
 fn chain(
     names: &[String],
     registry: &Registry,
-    smt: &str,
+    source: InputSource<'_>,
     formula: Option<&Json>,
 ) -> (ObligationVerdict, String, Vec<SolverInvocation>) {
     let mut history: Vec<SolverInvocation> = vec![];
@@ -112,10 +150,9 @@ fn chain(
     for (idx, n) in names.iter().enumerate() {
         match lookup(n, registry) {
             Ok(s) => {
-                let input = solver_input(s.as_ref(), smt, formula);
                 let compiler = s.ir_compiler().to_string();
                 let identity = s.identity();
-                let r = s.solve(&input);
+                let r = solve_with_input(s.as_ref(), source, formula);
                 let definitive = matches!(
                     r.verdict,
                     ObligationVerdict::Discharged | ObligationVerdict::Unsatisfied
@@ -170,7 +207,7 @@ fn portfolio(
     names: &[String],
     mode: PortfolioMode,
     registry: &Registry,
-    smt: &str,
+    source: InputSource<'_>,
     formula: Option<&Json>,
 ) -> (ObligationVerdict, String, Vec<SolverInvocation>) {
     // Resolve handles up front; surface lookup misses as Undecidable.
@@ -193,8 +230,11 @@ fn portfolio(
     let results: Vec<(String, SolverIdentity, SolveResult)> = handles
         .par_iter()
         .map(|s| {
-            let input = solver_input(s.as_ref(), smt, formula);
-            (s.ir_compiler().to_string(), s.identity(), s.solve(&input))
+            (
+                s.ir_compiler().to_string(),
+                s.identity(),
+                solve_with_input(s.as_ref(), source, formula),
+            )
         })
         .collect();
 
@@ -349,13 +389,59 @@ fn reason_for(r: &SolveResult) -> String {
     }
 }
 
-fn solver_input(solver: &dyn Solver, smt: &str, formula: Option<&Json>) -> String {
-    if solver.ir_compiler() == "smt-lib-v2.6" {
-        smt.to_string()
-    } else {
-        formula
-            .map(Json::to_string)
-            .unwrap_or_else(|| smt.to_string())
+fn solve_with_input(
+    solver: &dyn Solver,
+    source: InputSource<'_>,
+    formula: Option<&Json>,
+) -> SolveResult {
+    match solver_input(solver, source, formula) {
+        Ok(PreparedInput::Text(text)) => solver.solve(&text),
+        Ok(PreparedInput::Compiled(compiled)) => solver.solve_compiled(&compiled),
+        Err(error) => compile_error_result(solver, error),
+    }
+}
+
+fn solver_input(
+    solver: &dyn Solver,
+    source: InputSource<'_>,
+    formula: Option<&Json>,
+) -> Result<PreparedInput, String> {
+    match source {
+        InputSource::Precompiled(smt) => {
+            if solver.ir_compiler() == "smt-lib-v2.6" {
+                Ok(PreparedInput::Text(smt.to_string()))
+            } else {
+                Ok(PreparedInput::Text(
+                    formula
+                        .map(Json::to_string)
+                        .unwrap_or_else(|| smt.to_string()),
+                ))
+            }
+        }
+        InputSource::Compilers(compilers) => {
+            let formula = formula.ok_or_else(|| {
+                format!(
+                    "no ProofIR formula available for compiler `{}`",
+                    solver.ir_compiler()
+                )
+            })?;
+            compilers
+                .compile(formula, solver.ir_compiler())
+                .map(PreparedInput::Compiled)
+                .map_err(|e| format!("ir compiler `{}`: {e}", solver.ir_compiler()))
+        }
+    }
+}
+
+fn compile_error_result(solver: &dyn Solver, error: String) -> SolveResult {
+    SolveResult {
+        verdict: ObligationVerdict::Undecidable,
+        solver_name: solver.name().to_string(),
+        solver_version: solver.version().to_string(),
+        error,
+        solver_stdout: String::new(),
+        wall_clock: std::time::Duration::ZERO,
+        timed_out: false,
     }
 }
 

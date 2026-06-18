@@ -28,9 +28,13 @@
 #
 # IR-compiler tags
 # ----------------
-# `smt-lib-v2.6` routes to `SubprocessSolver` (generic SMT-LIB-v2.6
-# subprocess); `coq` routes to `CoqSubprocessSolver` (per
-# `registry::is_coq_compiler`); `lean` routes to `LeanSubprocessSolver`.
+# `ir_compiler` names the ProofIR compiler dialect each solver needs.
+# The executable compiler implementation is resolved separately from
+# `.sugar/ir-compilers/<name>/manifest.toml` (or the user-global
+# `~/.config/sugar/ir-compilers` root). Solver execution stays local;
+# ProofIR-to-solver-language compilation crosses the compiler RPC boundary.
+# `smt-lib-v2.6` feeds generic SMT-LIB subprocess solvers; `coq`, `maude`,
+# and `lean` feed their local checker/solver adapters.
 # The v2 spec text uses `gallina` for
 # Coq's IR-compiler tag, but the existing
 # `sugar_ir_compiler_coq::DIALECT` constant is `"coq"`, so we match

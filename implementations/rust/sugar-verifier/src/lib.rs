@@ -37,6 +37,7 @@ pub mod body_discharge;
 pub mod call_edge_loader;
 pub mod callee_purity;
 pub mod cbor_decode;
+pub mod compiler_registry;
 pub mod consistency;
 pub mod domain_claim_verifier;
 pub mod enumerate_callsites;
@@ -63,8 +64,8 @@ pub use runner::{
     VERIFIER_STAGE_VOCABULARY,
 };
 pub use solvers::{
-    classify, dispatch_for_formula, run_plan, DispatchConfig, FormulaTheory, PortfolioMode,
-    SolveResult, Solver, SolverConfig, SolverHandle, SolverInvocation, SolverPlan, SolversConfig,
-    StubSolver, SubprocessSolver,
+    classify, dispatch_for_formula, run_plan, run_plan_with_compilers, DispatchConfig,
+    FormulaTheory, PortfolioMode, SolveResult, Solver, SolverConfig, SolverHandle,
+    SolverInvocation, SolverPlan, SolversConfig, StubSolver, SubprocessSolver,
 };
 pub use types::*;

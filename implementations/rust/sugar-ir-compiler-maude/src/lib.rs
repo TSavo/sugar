@@ -4,8 +4,8 @@
 
 use std::collections::BTreeMap;
 
-use serde::Deserialize;
-use serde_json::Value as Json;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value as Json};
 use sugar_ir_compiler::{
     Capabilities, CompileError, CompiledFormula, FreeVar, IrCompiler, OpacityManifest,
     PROTOCOL_VERSION,
@@ -16,26 +16,26 @@ pub const DIALECT: &str = "maude";
 pub const COMPILER_NAME: &str = "maude-equational-reference";
 pub const COMPILER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MaudeQueries {
     pub lhs_reduce: String,
     pub rhs_reduce: String,
     pub search: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrsRule {
     pub lhs: String,
     pub rhs: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrsOperator {
     pub name: String,
     pub arity: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrsSpec {
     pub name: String,
     pub variables: Vec<String>,
@@ -44,7 +44,7 @@ pub struct TrsSpec {
     pub has_ac_builtin: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompiledMaude {
     pub compiled: CompiledFormula,
     pub module_name: String,
@@ -194,6 +194,15 @@ pub fn compile_artifact(ir: &Json) -> Result<CompiledMaude, CompileError> {
         .collect();
     let trs = trs_spec(&module_name, &raw.theory, &operators)?;
 
+    let metadata = json!({
+        "maude": {
+            "moduleName": module_name.clone(),
+            "moduleSource": module_source.clone(),
+            "queries": queries.clone(),
+            "trs": trs.clone(),
+        }
+    });
+
     Ok(CompiledMaude {
         compiled: CompiledFormula {
             preamble: module_source.clone(),
@@ -205,6 +214,7 @@ pub fn compile_artifact(ir: &Json) -> Result<CompiledMaude, CompileError> {
                 compiler_version: COMPILER_VERSION.to_string(),
                 opacities: vec![],
             },
+            metadata,
         },
         module_name,
         module_source,

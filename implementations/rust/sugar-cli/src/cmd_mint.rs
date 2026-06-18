@@ -2466,7 +2466,8 @@ fn mint_ir_document_with_source_mementos(
                     .get("proverRunMs")
                     .and_then(|v| v.as_i64())
                     .unwrap_or(0),
-                smt_lib_input: optional_str(implication, "smtLibInput")
+                smt_lib_input: optional_str(implication, "solverInput")
+                    .or_else(|| optional_str(implication, "smtLibInput"))
                     .unwrap_or("")
                     .to_string(),
                 proof_witness: optional_str(implication, "proofWitness")

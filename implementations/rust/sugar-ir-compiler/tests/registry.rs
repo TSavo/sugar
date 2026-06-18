@@ -32,6 +32,7 @@ impl IrCompiler for FakeCompiler {
                 compiler_version: "0.0".into(),
                 opacities: vec![],
             },
+            metadata: Json::Null,
         })
     }
     fn capabilities(&self) -> Capabilities {
