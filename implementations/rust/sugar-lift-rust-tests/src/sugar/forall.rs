@@ -18,10 +18,10 @@ use crate::sugar::factory::{build_composite, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::{
     bounded_domain_from_expr, capture_literal_arrays, collect_assertion_entries,
-    count_asserts_in_stmts, loop_body_mutates, resolve_index_in_formula, subst_var_in_formula,
-    term_as_int, translate_term_in_scope, AssertionFactKind, BoundedDomain, Desugared,
-    FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant,
-    SUGAR_SEQ_CAP,
+    const_fold_int_term, count_asserts_in_stmts, loop_body_mutates, resolve_index_in_formula,
+    subst_var_in_formula, term_as_int, translate_term_in_scope, AssertionFactKind, BoundedDomain,
+    Desugared, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx, TemporalScope,
+    Warrant, SUGAR_SEQ_CAP,
 };
 
 /// and `try_lift_for_each_forall` (a `.for_each(|var| body)` adaptor): a `for`
@@ -127,7 +127,8 @@ fn lift_bounded_forall(
                 None
             } else {
                 term_as_int(&start)
-                    .zip(term_as_int(&end))
+                    .or_else(|| const_fold_int_term(&start))
+                    .zip(term_as_int(&end).or_else(|| const_fold_int_term(&end)))
                     // `checked_add`: an inclusive end at i128::MAX would
                     // overflow; bail (None) rather than wrap.
                     .and_then(|(s, e)| {

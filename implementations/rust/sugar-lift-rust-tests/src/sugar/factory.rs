@@ -75,6 +75,7 @@ pub(crate) struct SugarBuildCtx<'a, 'e> {
     options: &'a LiftOptions,
     let_inits: &'a BTreeMap<String, &'e Expr>,
     bound_path_stack: Vec<String>,
+    const_path_stack: Vec<String>,
 }
 
 impl<'a, 'e> SugarBuildCtx<'a, 'e> {
@@ -88,6 +89,7 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
             options,
             let_inits,
             bound_path_stack: Vec::new(),
+            const_path_stack: Vec::new(),
         }
     }
 
@@ -115,6 +117,23 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
             options: self.options,
             let_inits: self.let_inits,
             bound_path_stack,
+            const_path_stack: self.const_path_stack.clone(),
+        }
+    }
+
+    pub(crate) fn resolving_const_path(&self, name: &str) -> bool {
+        self.const_path_stack.iter().any(|current| current == name)
+    }
+
+    pub(crate) fn with_const_path(&self, name: &str) -> Self {
+        let mut const_path_stack = self.const_path_stack.clone();
+        const_path_stack.push(name.to_string());
+        Self {
+            scope: self.scope,
+            options: self.options,
+            let_inits: self.let_inits,
+            bound_path_stack: self.bound_path_stack.clone(),
+            const_path_stack,
         }
     }
 }
