@@ -1312,6 +1312,7 @@ struct AssertionEntry {
 struct ReductionCtx<'a> {
     functions: BTreeMap<String, &'a syn::ItemFn>,
     ambiguous_functions: BTreeSet<String>,
+    impl_values: ImplValueRegistry,
     /// In-source `macro_rules!` definitions, by name, parsed into rules. These
     /// are what lets the lifter walk into a macro's definition and expand it,
     /// the same way it walks into a function. A name defined more than once is
@@ -1334,6 +1335,7 @@ impl<'a> ReductionCtx<'a> {
         let mut ctx = Self {
             functions: BTreeMap::new(),
             ambiguous_functions: BTreeSet::new(),
+            impl_values: ImplValueRegistry::new(),
             macros: BTreeMap::new(),
             ambiguous_macros: BTreeSet::new(),
             imported: imported.clone(),
@@ -1364,12 +1366,39 @@ impl<'a> ReductionCtx<'a> {
                         self.insert_macro(&ident.to_string(), m.mac.tokens.clone());
                     }
                 }
+                Item::Impl(imp) => {
+                    self.insert_impl_values(imp);
+                }
                 Item::Mod(m) => {
                     if let Some((_, items)) = &m.content {
                         self.collect_items(items);
                     }
                 }
                 _ => {}
+            }
+        }
+    }
+
+    fn insert_impl_values(&mut self, imp: &'a syn::ItemImpl) {
+        // Trait impl dispatch needs type/trait resolution we deliberately do not do here.
+        // Inherent impl methods are source-owned value producers and can be resolved by
+        // method name / associated constructor key.
+        if imp.trait_.is_some() {
+            return;
+        }
+        let Some(self_ty) = impl_self_ty_key(&imp.self_ty) else {
+            return;
+        };
+        for item in &imp.items {
+            let syn::ImplItem::Fn(method) = item else {
+                continue;
+            };
+            let name = method.sig.ident.to_string();
+            let method = Rc::new(method.clone());
+            if method.sig.receiver().is_some() {
+                self.impl_values.insert_method(&self_ty, &name, method);
+            } else {
+                self.impl_values.insert_assoc(&self_ty, &name, method);
             }
         }
     }
@@ -1476,6 +1505,10 @@ impl<'a> ReductionCtx<'a> {
             reg.insert(name, std::rc::Rc::new((*f).clone()));
         }
         reg
+    }
+
+    fn impl_value_registry_snapshot(&self) -> ImplValueRegistry {
+        self.impl_values.clone()
     }
 }
 
@@ -1668,6 +1701,105 @@ impl FnRegistry {
 fn fn_signature(f: &syn::ItemFn) -> String {
     use quote::ToTokens;
     f.to_token_stream().to_string()
+}
+
+/// In-source inherent impl VALUE methods, owned so they can ride on `TemporalScope`
+/// and be consulted by `MethodSugar` at desugar time. Receiver methods and associated
+/// functions are keyed by `Type::method`, so `Maker::new(...)` constrains the receiver
+/// construction without a type checker.
+#[derive(Default, Clone)]
+pub(crate) struct ImplValueRegistry {
+    methods: BTreeMap<String, Rc<syn::ImplItemFn>>,
+    ambiguous_methods: BTreeSet<String>,
+    assoc: BTreeMap<String, Rc<syn::ImplItemFn>>,
+    ambiguous_assoc: BTreeSet<String>,
+}
+
+impl std::fmt::Debug for ImplValueRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImplValueRegistry")
+            .field("methods", &self.methods.keys().collect::<Vec<_>>())
+            .field("ambiguous_methods", &self.ambiguous_methods)
+            .field("assoc", &self.assoc.keys().collect::<Vec<_>>())
+            .field("ambiguous_assoc", &self.ambiguous_assoc)
+            .finish()
+    }
+}
+
+impl ImplValueRegistry {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn insert_method(&mut self, self_ty: &str, name: &str, method: Rc<syn::ImplItemFn>) {
+        insert_impl_value(
+            &mut self.methods,
+            &mut self.ambiguous_methods,
+            format!("{self_ty}::{name}"),
+            method,
+        );
+    }
+
+    fn insert_assoc(&mut self, self_ty: &str, name: &str, method: Rc<syn::ImplItemFn>) {
+        insert_impl_value(
+            &mut self.assoc,
+            &mut self.ambiguous_assoc,
+            format!("{self_ty}::{name}"),
+            method,
+        );
+    }
+
+    fn lookup_method(&self, self_ty: &str, name: &str) -> Option<Rc<syn::ImplItemFn>> {
+        let key = format!("{self_ty}::{name}");
+        if self.ambiguous_methods.contains(&key) {
+            return None;
+        }
+        self.methods.get(&key).cloned()
+    }
+
+    fn lookup_assoc(&self, self_ty: &str, name: &str) -> Option<Rc<syn::ImplItemFn>> {
+        let key = format!("{self_ty}::{name}");
+        if self.ambiguous_assoc.contains(&key) {
+            return None;
+        }
+        self.assoc.get(&key).cloned()
+    }
+}
+
+fn insert_impl_value(
+    map: &mut BTreeMap<String, Rc<syn::ImplItemFn>>,
+    ambiguous: &mut BTreeSet<String>,
+    key: String,
+    method: Rc<syn::ImplItemFn>,
+) {
+    if ambiguous.contains(&key) {
+        return;
+    }
+    match map.get(&key) {
+        Some(existing) if impl_method_signature(existing) == impl_method_signature(&method) => {}
+        Some(_) => {
+            map.remove(&key);
+            ambiguous.insert(key);
+        }
+        None => {
+            map.insert(key, method);
+        }
+    }
+}
+
+fn impl_method_signature(method: &syn::ImplItemFn) -> String {
+    use quote::ToTokens;
+    method.to_token_stream().to_string()
+}
+
+fn impl_self_ty_key(ty: &Type) -> Option<String> {
+    match ty {
+        Type::Path(tp) if tp.qself.is_none() => {
+            tp.path.segments.last().map(|seg| seg.ident.to_string())
+        }
+        Type::Reference(r) => impl_self_ty_key(&r.elem),
+        _ => None,
+    }
 }
 
 const MAX_ASSERTION_REDUCTION_DEPTH: usize = 8;
@@ -1947,6 +2079,12 @@ pub(crate) struct TemporalScope {
     /// preamble to reach them. Empty by default (no fns visible -> the opaque `call:`
     /// ctor, the prior behavior).
     fn_registry: FnRegistry,
+    /// In-source inherent impl value methods visible to this scope. `MethodSugar`
+    /// consults this registry the same way `CallSugar` consults `fn_registry`: resolve
+    /// source body, substitute receiver/args, rebuild through the recursive factory, and
+    /// commit only if the result fully grounds. Empty by default keeps every method call
+    /// on the opaque `method:` fallback.
+    impl_value_registry: ImplValueRegistry,
     /// Names of value helpers PEELED to ground literals by a term-position inline during
     /// this scope's desugar (capability #1). Resolution flows IN (the `fn_registry`); the
     /// support-record must flow OUT, so the classifier DEMOTES a fully-inlined helper to
@@ -1971,6 +2109,7 @@ impl TemporalScope {
             let_bindings: BTreeMap::new(),
             macro_registry: MacroRegistry::new(),
             fn_registry: FnRegistry::new(),
+            impl_value_registry: ImplValueRegistry::new(),
             inlined_value_helpers: std::cell::RefCell::new(BTreeSet::new()),
         }
     }
@@ -2016,6 +2155,17 @@ impl TemporalScope {
     /// nested helpers).
     fn fn_registry(&self) -> &FnRegistry {
         &self.fn_registry
+    }
+
+    /// Record the in-source inherent impl value registry visible at this scope.
+    fn with_impl_value_registry(mut self, registry: ImplValueRegistry) -> Self {
+        self.impl_value_registry = registry;
+        self
+    }
+
+    /// The in-source inherent impl value registry visible at this scope.
+    fn impl_value_registry(&self) -> &ImplValueRegistry {
+        &self.impl_value_registry
     }
 
     /// Record the in-scope literal-array bindings for this block (see field doc).
@@ -3621,6 +3771,18 @@ fn let_simple_binding(pat: &Pat) -> Option<String> {
     }
 }
 
+/// The binding name of a simple `let` pattern (`x`, `mut x`, or `x: T`). Unlike
+/// `let_simple_binding`, this admits `mut` so value-method inlining can make a
+/// best-effort attempt before any observed mutation. Later mutation still trips
+/// the temporal version/ambiguity gates before the peel commits.
+fn let_simple_value_binding(pat: &Pat) -> Option<String> {
+    match pat {
+        Pat::Ident(pi) if pi.by_ref.is_none() && pi.subpat.is_none() => Some(pi.ident.to_string()),
+        Pat::Type(t) => let_simple_value_binding(&t.pat),
+        _ => None,
+    }
+}
+
 /// The closed scalar-literal elements of an array-literal expression (`[1, 2, 3]`)
 /// or a `Box::new([..])` of one, through `&`/paren/group wrappers. `None` if it is
 /// not an array literal or ANY element is not a closed scalar literal (int/char/
@@ -3754,6 +3916,41 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
             None
         }
     }
+
+    /// TERM-POSITION method inlining, the method-call sibling of
+    /// `try_inline_value_call`. Resolve an inherent impl method from visible source,
+    /// substitute `self := receiver` and params := args, then rebuild the returned expr
+    /// through the recursive factory. The peel commits only when the rebuilt result fully
+    /// grounds; otherwise `MethodSugar` keeps the opaque `method:` ctor unchanged.
+    pub(crate) fn try_inline_value_method(
+        &self,
+        method: &str,
+        receiver: &Expr,
+        args: &[Expr],
+    ) -> Option<Rc<Term>> {
+        if self.macro_depth >= MAX_VALUE_CALL_INLINE_DEPTH {
+            return None;
+        }
+        let inlined =
+            resolve_value_method_inline(method, receiver, args, self.scope, self.options)?;
+        let inlined = resolve_known_value_projection(&inlined, self.scope, self.options);
+        let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
+        let fcx = sugar::factory::SugarBuildCtx::new(self.scope, self.options, &let_inits);
+        let node = sugar::factory::build_term(&inlined, &fcx);
+        let mut fw = self.float_widths.borrow_mut();
+        let child = sugar_ctx(
+            self.scope,
+            self.options,
+            self.reducer,
+            &mut *fw,
+            self.macro_depth + 1,
+        );
+        let term = match node.desugar(&child) {
+            Outcome::Dug(d) => d.into_term()?,
+            Outcome::Hit(_) => return None,
+        };
+        is_fully_grounded_term(&term).then_some(term)
+    }
 }
 
 /// The simple head ident of a value call (`f` in `f(args)`), peeling `Paren`/`Group`.
@@ -3769,6 +3966,20 @@ fn value_call_head_name(func: &Expr) -> Option<String> {
         return None;
     }
     path.path.get_ident().map(|i| i.to_string())
+}
+
+fn assoc_call_key(path: &syn::Path) -> Option<(String, String)> {
+    if path.segments.len() < 2 {
+        return None;
+    }
+    let method = path.segments.last()?.ident.to_string();
+    let self_ty = path
+        .segments
+        .iter()
+        .rev()
+        .nth(1)
+        .map(|seg| seg.ident.to_string())?;
+    Some((self_ty, method))
 }
 
 /// The exact-or-bail predicate for term-position value-call inlining: a term is FULLY
@@ -4522,6 +4733,8 @@ fn collect_assertion_entries<'a>(
     // β-reduced body re-builds all the way to literals/arith, else leaves the opaque
     // `call:` ctor untouched -- so this never inflates a discharge into an unclassified.
     temporal_scope = temporal_scope.with_fn_registry(reducer.fn_registry_snapshot(&local_fns));
+    temporal_scope =
+        temporal_scope.with_impl_value_registry(reducer.impl_value_registry_snapshot());
     // Map of this block's simple `let <ident> = <init>;` bindings, so the DEFOLDER can
     // resolve a fold receiver that is a binding (`it.fold(..)` where `it = xs.iter()`,
     // `xs = [..]`) back through to its literal-array / range domain. A non-simple pat or
@@ -4670,12 +4883,13 @@ fn collect_assertion_entries<'a>(
                     }
                 }
                 // Advance the in-effect `let` bindings AFTER this local's own init is
-                // processed, so a SUBSEQUENT `try_fold` operand resolves this binding
-                // (shadowing-correct: a re-`let` of the same name overwrites). Only a
-                // simple immutable binding is recorded (the evaluator gates resolution
-                // on `!is_mut_local` regardless, so a `let mut` left out is harmless).
+                // processed, so a SUBSEQUENT recursive sugar operand resolves this
+                // binding (shadowing-correct: a re-`let` of the same name overwrites).
+                // Record simple `let mut` bindings too: value-method inlining may try
+                // them best-effort, but the temporal version/ambiguity gates reject the
+                // peel once actual mutation is observed.
                 if let (Some(name), Some(init)) =
-                    (let_simple_binding(&local.pat), local.init.as_ref())
+                    (let_simple_value_binding(&local.pat), local.init.as_ref())
                 {
                     if init.diverge.is_none() {
                         temporal_scope.record_let_binding(&name, (*init.expr).clone());
@@ -7347,8 +7561,7 @@ fn simple_call_name(call: &syn::ExprCall) -> Option<String> {
 ///
 /// Returns `None` (fall through to the opaque ctor, unchanged behavior) when:
 ///   - the head is not a simple ident, or resolves to no/ambiguous in-source fn;
-///   - the fn has a `self` receiver, a `&mut`/`&` reference param (an EFFECT carrier),
-///     or a non-simple param pattern;
+///   - the fn has a `self` receiver or a non-simple param pattern;
 ///   - arity mismatches;
 ///   - the body is not a pure value (it ASSERTS -- that is the statement-path's job,
 ///     not a value -- or has no single value-returning tail expr we can extract);
@@ -7356,9 +7569,11 @@ fn simple_call_name(call: &syn::ExprCall) -> Option<String> {
 ///
 /// SSA: a `let`-chain body (`let x = g(x); x`) is inlined by substituting each `let`
 /// init into a running binding map (a re-`let` of a name OVERWRITES -- the SSA rebind),
-/// then substituting the tail. A `let mut` / non-simple-pat `let` bails (its later value
-/// is not its written init). A nested call in the returned expr is re-resolved by the
-/// caller's recursion (build_term -> CallSugar -> here again), bounded by `depth`.
+/// then substituting the tail. A non-simple-pat `let` bails. A `let mut` spelling is
+/// admissible until an actual mutating/effect statement appears (then the block is no
+/// longer a pure value chain and we bail). A nested call in the returned expr is
+/// re-resolved by the caller's recursion (build_term -> CallSugar -> here again),
+/// bounded by `depth`.
 fn resolve_value_call_inline(
     func: &Expr,
     args: &[Expr],
@@ -7374,7 +7589,11 @@ fn resolve_value_call_inline(
     if path.qself.is_some() {
         return None;
     }
-    let name = path.path.get_ident()?.to_string();
+    let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) else {
+        let (self_ty, name) = assoc_call_key(&path.path)?;
+        let helper = scope.impl_value_registry().lookup_assoc(&self_ty, &name)?;
+        return resolve_assoc_value_inline(&helper, args, options);
+    };
     let helper = scope.fn_registry().lookup(&name)?;
     if !matches!(cfg_resolve(&helper.attrs, options), CfgDisposition::Present) {
         return None;
@@ -7387,16 +7606,15 @@ fn resolve_value_call_inline(
     if helper.sig.asyncness.is_some() {
         return None;
     }
-    // A value call carries VALUE arguments only: a `self` receiver or a reference param
-    // (`&T`/`&mut T`) is an effect/aliasing carrier, not a recompute-able value -- bail.
+    // A value call carries VALUE arguments only. Reference/mutability spelling is not
+    // by itself an effect: the body extraction below admits it only while the shown
+    // source remains a pure value chain, and the recursive exact-or-bail gate commits
+    // only if the result bottoms out to literals/arith.
     let mut params = Vec::new();
     for input in &helper.sig.inputs {
         let syn::FnArg::Typed(pat_type) = input else {
             return None; // self receiver
         };
-        if matches!(pat_type.ty.as_ref(), syn::Type::Reference(_)) {
-            return None; // &T / &mut T param -- aliasing/effect, not a pure value
-        }
         params.push(simple_pat_name(&pat_type.pat)?);
     }
     if params.len() != args.len() {
@@ -7415,6 +7633,196 @@ fn resolve_value_call_inline(
     value_body_tail_substituted(&helper.block, &mut binds)
 }
 
+fn resolve_assoc_value_inline(
+    helper: &syn::ImplItemFn,
+    args: &[Expr],
+    options: &LiftOptions,
+) -> Option<Expr> {
+    if !matches!(cfg_resolve(&helper.attrs, options), CfgDisposition::Present) {
+        return None;
+    }
+    if helper.sig.asyncness.is_some() {
+        return None;
+    }
+    if count_asserts_in_stmts(&helper.block.stmts) != 0 {
+        return None;
+    }
+    let params = impl_value_param_names(helper, false)?;
+    if params.len() != args.len() {
+        return None;
+    }
+    let mut binds = ExprBindings::new();
+    for (param, arg) in params.into_iter().zip(args.iter()) {
+        binds.insert(param, arg.clone());
+    }
+    value_body_tail_substituted(&helper.block, &mut binds)
+}
+
+fn resolve_value_method_inline(
+    method: &str,
+    receiver: &Expr,
+    args: &[Expr],
+    scope: &TemporalScope,
+    options: &LiftOptions,
+) -> Option<Expr> {
+    let self_ty = receiver_source_type_key(receiver, scope, options, 0)?;
+    let helper = scope
+        .impl_value_registry()
+        .lookup_method(&self_ty, method)?;
+    if !matches!(cfg_resolve(&helper.attrs, options), CfgDisposition::Present) {
+        return None;
+    }
+    if helper.sig.asyncness.is_some() {
+        return None;
+    }
+    if count_asserts_in_stmts(&helper.block.stmts) != 0 {
+        return None;
+    }
+    let params = impl_value_param_names(&helper, true)?;
+    if params.len() != args.len() {
+        return None;
+    }
+    let mut binds = ExprBindings::new();
+    binds.insert("self".to_string(), receiver.clone());
+    for (param, arg) in params.into_iter().zip(args.iter()) {
+        binds.insert(param, arg.clone());
+    }
+    value_body_tail_substituted(&helper.block, &mut binds)
+}
+
+fn receiver_source_type_key(
+    receiver: &Expr,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+    depth: usize,
+) -> Option<String> {
+    if depth >= MAX_VALUE_CALL_INLINE_DEPTH {
+        return None;
+    }
+    match strip_refs_groups(receiver) {
+        Expr::Struct(s) => s.path.segments.last().map(|seg| seg.ident.to_string()),
+        Expr::Path(path) if path.qself.is_none() => {
+            let name = path.path.get_ident()?.to_string();
+            if scope.ambiguous_contains(&name) {
+                return None;
+            }
+            if scope.is_mut_local(&name) && scope.version_of(&name).is_some_and(|v| v > 1) {
+                return None;
+            }
+            let init = scope.let_binding(&name)?;
+            receiver_source_type_key(init, scope, options, depth + 1)
+        }
+        Expr::Call(call) => {
+            let Expr::Path(func_path) = strip_refs_groups(call.func.as_ref()) else {
+                return None;
+            };
+            if func_path.qself.is_some() {
+                return None;
+            }
+            if let Some((self_ty, _)) = assoc_call_key(&func_path.path) {
+                return Some(self_ty);
+            }
+            let args: Vec<Expr> = call.args.iter().cloned().collect();
+            let resolved = resolve_value_call_inline(&call.func, &args, scope, options)?;
+            receiver_source_type_key(&resolved, scope, options, depth + 1)
+        }
+        Expr::Field(field) => {
+            let resolved = resolve_field_projection(field, scope, options, depth + 1)?;
+            receiver_source_type_key(&resolved, scope, options, depth + 1)
+        }
+        _ => None,
+    }
+}
+
+fn impl_value_param_names(method: &syn::ImplItemFn, expect_receiver: bool) -> Option<Vec<String>> {
+    let mut inputs = method.sig.inputs.iter();
+    if expect_receiver {
+        let first = inputs.next()?;
+        let syn::FnArg::Receiver(_) = first else {
+            return None;
+        };
+    } else if method.sig.receiver().is_some() {
+        return None;
+    }
+
+    let mut params = Vec::new();
+    for input in inputs {
+        let syn::FnArg::Typed(pat_type) = input else {
+            return None;
+        };
+        params.push(simple_pat_name(&pat_type.pat)?);
+    }
+    Some(params)
+}
+
+fn resolve_known_value_projection(
+    expr: &Expr,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+) -> Expr {
+    let mut cur = expr.clone();
+    for _ in 0..MAX_VALUE_CALL_INLINE_DEPTH {
+        let Expr::Field(field) = strip_refs_groups(&cur) else {
+            return cur;
+        };
+        let Some(next) = resolve_field_projection(field, scope, options, 0) else {
+            return cur;
+        };
+        cur = next;
+    }
+    cur
+}
+
+fn resolve_field_projection(
+    field: &syn::ExprField,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+    depth: usize,
+) -> Option<Expr> {
+    if depth >= MAX_VALUE_CALL_INLINE_DEPTH {
+        return None;
+    }
+    let base = resolve_struct_source_expr(&field.base, scope, options, depth + 1)?;
+    let Expr::Struct(s) = strip_refs_groups(&base) else {
+        return None;
+    };
+    for fv in &s.fields {
+        if fv.member == field.member {
+            return Some(fv.expr.clone());
+        }
+    }
+    None
+}
+
+fn resolve_struct_source_expr(
+    expr: &Expr,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+    depth: usize,
+) -> Option<Expr> {
+    if depth >= MAX_VALUE_CALL_INLINE_DEPTH {
+        return None;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Struct(_) => Some(expr.clone()),
+        Expr::Path(path) if path.qself.is_none() => {
+            let name = path.path.get_ident()?.to_string();
+            let init = scope.let_binding(&name)?;
+            resolve_struct_source_expr(init, scope, options, depth + 1)
+        }
+        Expr::Call(call) => {
+            let args: Vec<Expr> = call.args.iter().cloned().collect();
+            let resolved = resolve_value_call_inline(&call.func, &args, scope, options)?;
+            resolve_struct_source_expr(&resolved, scope, options, depth + 1)
+        }
+        Expr::Field(field) => {
+            let resolved = resolve_field_projection(field, scope, options, depth + 1)?;
+            resolve_struct_source_expr(&resolved, scope, options, depth + 1)
+        }
+        _ => None,
+    }
+}
+
 /// Extract a pure value-returning block's RETURN EXPR with `binds` (param := actual)
 /// substituted, inlining any leading `let`-chain (SSA) into `binds` as it goes. Returns
 /// `None` if the block has no single value tail (it ends in a `;`-terminated stmt, a
@@ -7431,10 +7839,8 @@ fn value_body_tail_substituted(block: &syn::Block, binds: &mut ExprBindings) -> 
                     return None; // `let ... else { ... }` -- not a pure value chain
                 }
                 let id = match &local.pat {
-                    Pat::Ident(p) if p.subpat.is_none() && p.mutability.is_none() => {
-                        p.ident.to_string()
-                    }
-                    _ => return None, // non-simple / `let mut` -- bail (not a clean SSA rebind)
+                    Pat::Ident(p) if p.subpat.is_none() => p.ident.to_string(),
+                    _ => return None, // non-simple -- bail (not a clean SSA rebind)
                 };
                 let value = substitute_expr(&init.expr, binds);
                 binds.insert(id, value);
@@ -8096,6 +8502,22 @@ fn substitute_expr(expr: &Expr, bindings: &ExprBindings) -> Expr {
                 .map(|elem| substitute_expr(elem, bindings))
                 .collect();
             Expr::Tuple(out)
+        }
+        Expr::Struct(s) => {
+            let mut out = s.clone();
+            out.fields = s
+                .fields
+                .iter()
+                .map(|field| {
+                    let mut field = field.clone();
+                    field.expr = substitute_expr(&field.expr, bindings);
+                    field
+                })
+                .collect();
+            if let Some(rest) = &s.rest {
+                out.rest = Some(Box::new(substitute_expr(rest, bindings)));
+            }
+            Expr::Struct(out)
         }
         _ => expr.clone(),
     }
@@ -15051,6 +15473,169 @@ mod lifter_key_tests {
         assert!(
             dump.contains("str.in-regex") && dump.contains("blah"),
             "regex pattern producer should compose through FormatMacroSugar/factory recursion: {dump}; skips: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn regex_pattern_impl_method_returning_constructed_literal_composes_through_factory() {
+        let src = r#"
+            struct Maker {
+                pattern: &'static str,
+            }
+
+            impl Maker {
+                fn new(pattern: &'static str) -> Self {
+                    Self { pattern }
+                }
+
+                fn get(&self) -> &'static str {
+                    let x = self.pattern;
+                    x
+                }
+            }
+
+            #[test]
+            fn t() {
+                let m = Maker::new("blah");
+                assert!(Regex::new(m.get()).unwrap().is_match("blah"));
+            }
+        "#;
+        let out = lift_src(src);
+        let dump = format!("{:?}", out.decls);
+
+        assert!(
+            dump.contains("str.in-regex") && dump.contains("blah"),
+            "regex pattern producer should compose through impl MethodSugar/factory recursion: {dump}; skips: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn regex_pattern_mut_method_without_observed_mutation_composes_through_factory() {
+        let src = r#"
+            struct Maker {
+                pattern: &'static str,
+            }
+
+            impl Maker {
+                fn new(pattern: &'static str) -> Self {
+                    Self { pattern }
+                }
+
+                fn get(&mut self) -> &'static str {
+                    let mut x = self.pattern;
+                    x
+                }
+            }
+
+            #[test]
+            fn t() {
+                let mut m = Maker::new("blah");
+                assert!(Regex::new(m.get()).unwrap().is_match("blah"));
+            }
+        "#;
+        let out = lift_src(src);
+        let dump = format!("{:?}", out.decls);
+
+        assert!(
+            dump.contains("str.in-regex") && dump.contains("blah"),
+            "mut-spelled but unmutated method source should still compose through MethodSugar/factory recursion: {dump}; skips: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn method_source_peel_requires_receiver_construction_type_and_preserves_bridge_seam() {
+        let src = r#"
+            struct Maker;
+
+            impl Maker {
+                fn get(&self) -> &'static str {
+                    "wrong"
+                }
+            }
+
+            struct Other {
+                pattern: &'static str,
+            }
+
+            impl Other {
+                fn new(pattern: &'static str) -> Self {
+                    Self { pattern }
+                }
+            }
+
+            trait HasGet {
+                fn get(&self) -> &'static str;
+            }
+
+            impl HasGet for Other {
+                fn get(&self) -> &'static str {
+                    self.pattern
+                }
+            }
+
+            #[test]
+            fn t() {
+                let o = Other::new("blah");
+                assert!(Regex::new(o.get()).unwrap().is_match("blah"));
+            }
+        "#;
+        let out = lift_src(src);
+        let dump = format!("{:?}", out.decls);
+
+        assert!(
+            !dump.contains("wrong"),
+            "MethodSugar must not peel a same-named method from the wrong receiver type: {dump}; skips: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            dump.contains("method:get"),
+            "unresolved method source should preserve the method ctor bridge seam for .proof resolution: {dump}; skips: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn method_source_peel_stops_after_observed_receiver_mutation_preserving_bridge_seam() {
+        let src = r#"
+            struct Maker {
+                pattern: &'static str,
+            }
+
+            impl Maker {
+                fn new(pattern: &'static str) -> Self {
+                    Self { pattern }
+                }
+
+                fn get(&self) -> &'static str {
+                    self.pattern
+                }
+
+                fn set(&mut self, pattern: &'static str) {
+                    self.pattern = pattern;
+                }
+            }
+
+            #[test]
+            fn t() {
+                let mut m = Maker::new("blah");
+                m.set("other");
+                assert!(Regex::new(m.get()).unwrap().is_match("blah"));
+            }
+        "#;
+        let out = lift_src(src);
+        let dump = format!("{:?}", out.decls);
+
+        assert!(
+            !dump.contains("str.in-regex"),
+            "observed receiver mutation must stop source-method literal peeling: {dump}; skips: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            dump.contains("method:get"),
+            "observed receiver mutation should preserve the method ctor bridge seam for .proof resolution: {dump}; skips: {:?}",
             out.skip_reasons
         );
     }
