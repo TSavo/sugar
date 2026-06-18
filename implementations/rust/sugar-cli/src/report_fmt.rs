@@ -72,6 +72,7 @@ fn row_to_json(row: &ReportRow) -> Json {
         "reason": row.reason,
         "dischargeMethod": row.discharge_method,
         "bodyDischargeTier": row.body_discharge_tier,
+        "verification": row.verification.clone(),
         "file": row.callsite.file,
         "line": row.callsite.line,
         "callee": row.callsite.callee,
@@ -170,6 +171,9 @@ pub fn print_report_pretty(r: &Report, quiet: bool) {
             if let Some(tier) = &row.body_discharge_tier {
                 println!("      body tier: {}", tier);
             }
+            if let Some(verification) = &row.verification {
+                print_verification_detail(verification);
+            }
         }
         let superpositions = reports_from_report(r);
         if !superpositions.is_empty() {
@@ -212,10 +216,76 @@ pub fn print_report_pretty(r: &Report, quiet: bool) {
     }
 }
 
+fn compact_json(v: &Json) -> String {
+    serde_json::to_string(v).unwrap_or_else(|_| v.to_string())
+}
+
+fn print_verification_detail(v: &Json) {
+    let kind = v
+        .get("kind")
+        .and_then(|x| x.as_str())
+        .unwrap_or("verification");
+    println!("      verifier: {kind}");
+    if let Some(formula) = v.get("checkedFormula") {
+        println!("        checked: {}", compact_json(formula));
+    }
+    if let Some(posts) = v.get("linkedPosts").and_then(|x| x.as_array()) {
+        println!("        linked posts: {}", posts.len());
+        for post in posts {
+            let source = post
+                .get("sourceSymbol")
+                .and_then(|x| x.as_str())
+                .unwrap_or("<unknown>");
+            let target = post
+                .get("targetContractCid")
+                .and_then(|x| x.as_str())
+                .unwrap_or("<unknown>");
+            println!("          {} -> {}", source, target);
+            if let Some(call) = post.get("call") {
+                println!("            call: {}", compact_json(call));
+            }
+            if let Some(instantiated) = post.get("instantiatedPost") {
+                println!("            post: {}", compact_json(instantiated));
+            }
+        }
+    }
+    if let Some(invs) = v.get("solverInvocations").and_then(|x| x.as_array()) {
+        println!("        solver invocations: {}", invs.len());
+        for inv in invs {
+            let solver = inv.get("solver").and_then(|x| x.as_str()).unwrap_or("?");
+            let compiler = inv.get("compiler").and_then(|x| x.as_str()).unwrap_or("?");
+            let verdict = inv.get("verdict").and_then(|x| x.as_str()).unwrap_or("?");
+            let authoritative = inv
+                .get("authoritative")
+                .and_then(|x| x.as_bool())
+                .unwrap_or(false);
+            if let Some(ms) = inv.get("wallClockMs").and_then(|x| x.as_u64()) {
+                println!(
+                    "          {solver} via {compiler}: {verdict} ({ms}ms, authoritative={authoritative})"
+                );
+            } else {
+                println!(
+                    "          {solver} via {compiler}: {verdict} (authoritative={authoritative})"
+                );
+            }
+            if let Some(cid) = inv.get("solverArtifactCid").and_then(|x| x.as_str()) {
+                println!("            artifact: {cid}");
+            }
+            if let Some(cid) = inv.get("solverInvocationCid").and_then(|x| x.as_str()) {
+                println!("            invocation: {cid}");
+            }
+            if let Some(cid) = inv.get("solverVendorMementoCid").and_then(|x| x.as_str()) {
+                println!("            vendor memento: {cid}");
+            }
+        }
+    }
+}
+
 /// Decide an exit code from a proof report. A load-bearing `prove` run must
-/// have checked at least one callsite; zero-callsite reports are vacuous.
+/// have checked at least one callsite or one contract-level obligation;
+/// completely empty reports are vacuous.
 pub fn report_exit_code(r: &Report) -> u8 {
-    if r.violations > 0 || !r.load_errors.is_empty() || r.total_callsites == 0 {
+    if r.violations > 0 || !r.load_errors.is_empty() || r.rows.is_empty() {
         crate::EXIT_VERIFY_FAIL
     } else {
         crate::EXIT_OK
@@ -265,10 +335,77 @@ mod tests {
             reason: "ok".into(),
             discharge_method: Some("reflexive".into()),
             body_discharge_tier: Some("body-eq-same-callee".into()),
+            verification: None,
         });
 
         let j = report_to_json(&r);
         assert_eq!(j["rows"][0]["bodyDischargeTier"], "body-eq-same-callee");
+    }
+
+    #[test]
+    fn report_json_includes_verification_detail() {
+        let mut r = Report::default();
+        r.rows.push(ReportRow {
+            callsite: CallSite {
+                bridge_ir_name: "consistency".into(),
+                ..CallSite::default()
+            },
+            status: "discharged".into(),
+            reason: "ok".into(),
+            discharge_method: Some("consistency".into()),
+            body_discharge_tier: None,
+            verification: Some(json!({
+                "kind": "consistency",
+                "checkedFormula": { "kind": "literal", "value": true },
+                "linkedPosts": [
+                    {
+                        "sourceSymbol": "call:enc",
+                        "targetContractCid": "blake3-512:vendor",
+                        "instantiatedPost": { "kind": "equals", "operands": [] }
+                    }
+                ],
+                "solverInvocations": [
+                    {
+                        "solver": "cvc5",
+                        "compiler": "smt-lib-v2.6",
+                        "authoritative": true,
+                        "verdict": "unsatisfied"
+                    }
+                ]
+            })),
+        });
+
+        let j = report_to_json(&r);
+        assert_eq!(j["rows"][0]["verification"]["kind"], "consistency");
+        assert_eq!(
+            j["rows"][0]["verification"]["solverInvocations"][0]["compiler"],
+            "smt-lib-v2.6"
+        );
+        assert_eq!(
+            j["rows"][0]["verification"]["linkedPosts"][0]["sourceSymbol"],
+            "call:enc"
+        );
+    }
+
+    #[test]
+    fn discharged_consistency_row_is_not_vacuous() {
+        let mut r = Report {
+            discharged: 1,
+            ..Report::default()
+        };
+        r.rows.push(ReportRow {
+            callsite: CallSite {
+                bridge_ir_name: "consistency".into(),
+                ..CallSite::default()
+            },
+            status: "discharged".into(),
+            reason: "ok".into(),
+            discharge_method: Some("consistency".into()),
+            body_discharge_tier: None,
+            verification: Some(json!({ "kind": "consistency" })),
+        });
+
+        assert_eq!(report_exit_code(&r), crate::EXIT_OK);
     }
 
     #[test]
@@ -285,6 +422,7 @@ mod tests {
             reason: "synthetic panic row".into(),
             discharge_method: None,
             body_discharge_tier: None,
+            verification: None,
         });
 
         let j = report_to_json(&r);
@@ -308,6 +446,7 @@ mod tests {
             reason: "synthetic panic row".into(),
             discharge_method: None,
             body_discharge_tier: None,
+            verification: None,
         });
 
         let j = report_to_json(&r);

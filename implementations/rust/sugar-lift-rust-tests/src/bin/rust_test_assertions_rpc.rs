@@ -6,14 +6,17 @@ use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
-use sugar_canonicalizer::encode_jcs;
+use sugar_canonicalizer::{blake3_512_of, encode_jcs};
 use sugar_ir_symbolic::serialize::{formula_to_value, marshal_declarations};
 use sugar_lift_rust_tests::source_oracle;
 use sugar_lift_rust_tests::{lift_file_with_options, LiftOptions, TargetCfg};
+use sugar_verifier::types::{memento_body, memento_body_field, memento_kind};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const SURFACE: &str = "rust-test-assertions";
 const KIT_DECLARATION_RPC_METHOD: &str = "sugar.plugin.kit_declaration";
+const RESOLVE_PROOF_BY_CID_RPC_METHOD: &str = "sugar.plugin.resolve_proof_by_cid";
+const RESOLVE_SOURCE_MEMENTO_RPC_METHOD: &str = "sugar.plugin.resolve_source_memento";
 
 fn initialize_result() -> Value {
     json!({
@@ -40,6 +43,8 @@ fn kit_declaration_result() -> Value {
                 {"name": "initialize", "required": true},
                 {"name": KIT_DECLARATION_RPC_METHOD, "required": true},
                 {"name": "lift", "required": true},
+                {"name": RESOLVE_PROOF_BY_CID_RPC_METHOD, "required": false},
+                {"name": RESOLVE_SOURCE_MEMENTO_RPC_METHOD, "required": false},
                 {"name": "shutdown", "required": false},
             ]
         },
@@ -261,6 +266,7 @@ fn lift(params: &Value) -> Value {
     }
 
     let ledger = source_ledger(&source_loci);
+    let vendor_conjoins = vendor_conjoins_for_report(&workspace_root, &entries);
     json!({
         "kind": "ir-document",
         "ir": entries,
@@ -275,6 +281,7 @@ fn lift(params: &Value) -> Value {
         // Content-addressed mementos (file + span + BLAKE3-512 of body/template,
         // never source text) -- one per enumerated function, recompute-verifiable.
         "sourceMementos": source_mementos,
+        "vendorConjoins": vendor_conjoins,
     })
 }
 
@@ -395,11 +402,7 @@ fn classify_nontest_fn(
     if let Some(decl) = sugar_lift_rust_tests::broad_functional_warrant(name, sig, block) {
         // We THINK it constrains -> WARRANT it, broadly. The decl flows into the IR;
         // the universe is built from these demands. The vendor is the referee.
-        let entry = if is_method_contract {
-            function_contract_entry_from_decl(name, sig, &decl, source_memento)
-        } else {
-            contract_entry_from_decl(&decl, Some(source_memento))
-        };
+        let entry = function_contract_entry_from_decl(name, sig, &decl, source_memento);
         return ("warranted", None, Some(entry));
     }
     if reduced {
@@ -422,25 +425,6 @@ fn classify_nontest_fn(
         Some("no Sugar resolves this body's value to a literal yet (no value pin)".to_string()),
         None,
     )
-}
-
-fn contract_entry_from_decl(
-    decl: &sugar_ir_symbolic::ContractDecl,
-    source_memento: Option<&Value>,
-) -> Value {
-    let marshalled = marshal_declarations(std::slice::from_ref(decl));
-    let mut entry = match serde_json::from_str::<Value>(&marshalled) {
-        Ok(Value::Array(mut arr)) if !arr.is_empty() => arr.remove(0),
-        _ => json!({
-            "kind": "contract",
-            "name": decl.name,
-            "outBinding": decl.out_binding,
-        }),
-    };
-    if let Some(source_memento) = source_memento {
-        entry["sourceWarrants"] = json!([source_memento]);
-    }
-    entry
 }
 
 fn function_contract_entry_from_decl(
@@ -745,6 +729,401 @@ fn enumerate_rs_files(root: &Path) -> Vec<String> {
     out
 }
 
+fn vendor_conjoins_for_report(workspace_root: &Path, entries: &[Value]) -> Vec<Value> {
+    let proof_files = enumerate_import_proof_files(workspace_root);
+    if proof_files.is_empty() {
+        return Vec::new();
+    }
+    let mut pool = sugar_verifier::types::MementoPool::default();
+    sugar_verifier::load_all_proofs::load_files_into_pool(&proof_files, &mut pool);
+    if pool.bridges_by_symbol.is_empty() {
+        return Vec::new();
+    }
+
+    let mut rows = Vec::new();
+    for local_contract in entries {
+        let Some(inv) = local_contract.get("inv").filter(|value| value.is_object()) else {
+            continue;
+        };
+        let local_contract_name = local_contract
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("<unknown local contract>");
+        let mut callsites = Vec::new();
+        collect_ctor_terms(inv, &mut callsites);
+        for callsite in callsites {
+            let Some(source_symbol) = callsite.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(bridge_env) = pool.bridges_by_symbol.get(source_symbol) else {
+                continue;
+            };
+            let bridge_source_symbol = memento_body_field(bridge_env, "sourceSymbol")
+                .and_then(Value::as_str)
+                .unwrap_or(source_symbol);
+            let target_cid = memento_body_field(bridge_env, "targetContractCid")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "kit referenced bridge `{bridge_source_symbol}` without targetContractCid"
+                    )
+                });
+            let proof_cid = memento_body_field(bridge_env, "targetProofCid")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| {
+                    pool.bridge_self_bundle_by_symbol
+                        .get(bridge_source_symbol)
+                        .cloned()
+                });
+            let target_env = pool.mementos.get(target_cid).unwrap_or_else(|| {
+                let proof = proof_cid.as_deref().unwrap_or("<unknown proof>");
+                panic!(
+                    "kit referenced proof CID `{proof}` but did not resolve target contract `{target_cid}`"
+                )
+            });
+            if memento_kind(target_env) != Some("contract") {
+                continue;
+            }
+            let Some(target_body) = memento_body(target_env) else {
+                continue;
+            };
+            let Some(post) = target_body
+                .get("post")
+                .or_else(|| target_body.get("postcondition"))
+                .filter(|value| value.is_object())
+            else {
+                continue;
+            };
+            let Some(formals) = string_array_field(target_body, "formals") else {
+                continue;
+            };
+            let Some(args) = callsite.get("args").and_then(Value::as_array) else {
+                continue;
+            };
+            if formals.len() != args.len() {
+                continue;
+            }
+            let out_binding = target_body
+                .get("outBinding")
+                .or_else(|| target_body.get("out_binding"))
+                .and_then(Value::as_str)
+                .filter(|name| !name.is_empty())
+                .unwrap_or("out");
+            let mut instantiated_post = post.clone();
+            for (formal, actual) in formals.iter().zip(args.iter()) {
+                instantiated_post = sugar_verifier::instantiate::substitute_formula_pub(
+                    &instantiated_post,
+                    formal,
+                    actual,
+                );
+            }
+            instantiated_post = sugar_verifier::instantiate::substitute_formula_pub(
+                &instantiated_post,
+                out_binding,
+                &callsite,
+            );
+            let vendor_source = source_memento_for_contract(&pool, target_body, target_cid)
+                .map(|memento| resolve_source_memento_for_report(workspace_root, &memento))
+                .unwrap_or_else(|| {
+                    json!({
+                        "status": "absent",
+                        "reason": "vendor contract carried no source memento"
+                    })
+                });
+
+            rows.push(json!({
+                "call": callsite,
+                "localContract": local_contract_name,
+                "localFact": inv,
+                "bridgeSourceSymbol": bridge_source_symbol,
+                "vendorContract": target_body
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .or_else(|| pool.cid_to_name.get(target_cid).map(String::as_str))
+                    .unwrap_or("<unknown vendor contract>"),
+                "vendorContractCid": target_cid,
+                "vendorProofCid": proof_cid,
+                "vendorProofResolution": {
+                    "status": "resolved",
+                    "cid": proof_cid
+                },
+                "vendorPost": post,
+                "instantiatedPost": instantiated_post,
+                "vendorSource": vendor_source,
+            }));
+        }
+    }
+    rows
+}
+
+fn enumerate_import_proof_files(workspace_root: &Path) -> Vec<PathBuf> {
+    let imports = workspace_root.join(".sugar/imports");
+    if !imports.exists() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for entry in walkdir::WalkDir::new(imports)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        let path = entry.path();
+        if path.is_file() && path.extension().is_some_and(|ext| ext == "proof") {
+            out.push(path.to_path_buf());
+        }
+    }
+    out.sort();
+    out
+}
+
+fn collect_ctor_terms(value: &Value, out: &mut Vec<Value>) {
+    if value.get("kind").and_then(Value::as_str) == Some("ctor") {
+        out.push(value.clone());
+    }
+    for field in ["args", "operands"] {
+        if let Some(values) = value.get(field).and_then(Value::as_array) {
+            for child in values {
+                collect_ctor_terms(child, out);
+            }
+        }
+    }
+    if let Some(body) = value.get("body") {
+        collect_ctor_terms(body, out);
+    }
+}
+
+fn string_array_field(value: &Value, key: &str) -> Option<Vec<String>> {
+    value
+        .get(key)?
+        .as_array()?
+        .iter()
+        .map(|item| item.as_str().map(str::to_string))
+        .collect()
+}
+
+fn source_memento_for_contract(
+    pool: &sugar_verifier::types::MementoPool,
+    contract_body: &Value,
+    contract_cid: &str,
+) -> Option<Value> {
+    contract_body
+        .get("sourceWarrants")
+        .or_else(|| contract_body.get("source_warrants"))
+        .and_then(Value::as_array)
+        .and_then(|warrants| warrants.first())
+        .cloned()
+        .or_else(|| source_memento_member_for_contract(pool, contract_body, contract_cid))
+}
+
+fn source_memento_member_for_contract(
+    pool: &sugar_verifier::types::MementoPool,
+    contract_body: &Value,
+    contract_cid: &str,
+) -> Option<Value> {
+    let contract_name = contract_body
+        .get("name")
+        .and_then(Value::as_str)
+        .or_else(|| pool.cid_to_name.get(contract_cid).map(String::as_str));
+    let source_owner = contract_name
+        .and_then(|name| name.strip_prefix("rust-source::").or(Some(name)))
+        .map(str::to_string);
+
+    for env in pool.mementos.values() {
+        if memento_kind(env) != Some("source-memento") {
+            continue;
+        }
+        let Some(payload) = source_memento_payload(env) else {
+            continue;
+        };
+        let named_contract_matches = contract_name.is_some_and(|name| {
+            source_memento_string_field(env, payload, "contractName") == Some(name)
+                || source_memento_string_field(env, payload, "claimName") == Some(name)
+        });
+        let source_owner_matches = source_owner.as_deref().is_some_and(|owner| {
+            source_memento_string_field(env, payload, "sourceFunctionName")
+                .or_else(|| source_memento_string_field(env, payload, "source_function_name"))
+                .is_some_and(|name| name == owner || name.ends_with(&format!("::{owner}")))
+        });
+        if named_contract_matches || source_owner_matches {
+            return Some(payload.clone());
+        }
+    }
+    None
+}
+
+fn source_memento_payload(env: &Value) -> Option<&Value> {
+    env.get("body").or_else(|| memento_body(env))
+}
+
+fn source_memento_string_field<'a>(
+    env: &'a Value,
+    payload: &'a Value,
+    field: &str,
+) -> Option<&'a str> {
+    payload.get(field).and_then(Value::as_str).or_else(|| {
+        env.pointer(&format!("/header/{field}"))
+            .and_then(Value::as_str)
+    })
+}
+
+fn resolve_proof_by_cid_for_report(workspace_root: &Path, cid: &str) -> Value {
+    for path in enumerate_import_proof_files(workspace_root) {
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        if blake3_512_of(&bytes) == cid {
+            return json!({
+                "status": "resolved",
+                "cid": cid,
+                "path": path.display().to_string(),
+            });
+        }
+    }
+    json!({
+        "status": "missing",
+        "cid": cid,
+        "reason": format!("proof CID `{cid}` not found in .sugar/imports"),
+    })
+}
+
+fn resolve_source_memento_rpc(params: &Value) -> Value {
+    let workspace_root = params
+        .get("workspace_root")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let memento = params
+        .get("memento")
+        .or_else(|| params.get("sourceMemento"))
+        .or_else(|| params.get("source_memento"))
+        .unwrap_or(params);
+    resolve_source_memento_for_report(&workspace_root, memento)
+}
+
+fn resolve_source_memento_for_report(workspace_root: &Path, memento_value: &Value) -> Value {
+    let Some(memento) = source_memento_from_json(memento_value) else {
+        return json!({
+            "status": "absent",
+            "reason": "invalid source memento shape",
+        });
+    };
+    match source_oracle::resolve_source_memento(workspace_root, &memento) {
+        Ok(resolved) => {
+            let memento = resolved.fragment.to_memento();
+            json!({
+                "status": "resolved",
+                "display": format_source_memento_for_report(&memento.to_json()),
+                "memento": memento.to_json(),
+            })
+        }
+        Err(refusal) if source_refusal_is_drift(&refusal.reason) => json!({
+            "status": "drifted",
+            "reason": refusal.reason,
+            "memento": memento_value,
+        }),
+        Err(refusal) => json!({
+            "status": "absent",
+            "reason": refusal.reason,
+            "memento": memento_value,
+        }),
+    }
+}
+
+fn source_refusal_is_drift(reason: &str) -> bool {
+    reason.contains("source CID misaligned") || reason.contains("template CID misaligned")
+}
+
+fn source_memento_from_json(value: &Value) -> Option<source_oracle::SourceMemento> {
+    let file = value.get("file").and_then(Value::as_str)?.to_string();
+    let span = value.get("span")?;
+    let params = value
+        .get("paramNames")
+        .or_else(|| value.get("param_names"))
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(source_oracle::SourceMemento {
+        file,
+        function_name: value
+            .get("sourceFunctionName")
+            .or_else(|| value.get("source_function_name"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        span: source_oracle::SrcSpan {
+            start_line: span.get("start_line").and_then(Value::as_u64).unwrap_or(0) as usize,
+            start_col: span.get("start_col").and_then(Value::as_u64).unwrap_or(0) as usize,
+            end_line: span.get("end_line").and_then(Value::as_u64).unwrap_or(0) as usize,
+            end_col: span.get("end_col").and_then(Value::as_u64).unwrap_or(0) as usize,
+        },
+        param_names: params,
+        source_cid: value
+            .get("source_cid")
+            .or_else(|| value.get("sourceCid"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        template_cid: value
+            .get("template_cid")
+            .or_else(|| value.get("templateCid"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    })
+}
+
+fn format_source_memento_for_report(memento: &Value) -> String {
+    let file = memento
+        .get("file")
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown file>");
+    let span = memento.get("span").unwrap_or(&Value::Null);
+    let start = span
+        .get("start_line")
+        .and_then(Value::as_u64)
+        .map(|line| line.to_string())
+        .unwrap_or_else(|| "?".to_string());
+    let end = span
+        .get("end_line")
+        .and_then(Value::as_u64)
+        .map(|line| line.to_string())
+        .unwrap_or_else(|| "?".to_string());
+    let lines = if start == end {
+        start
+    } else {
+        format!("{start}-{end}")
+    };
+    let function = memento
+        .get("sourceFunctionName")
+        .or_else(|| memento.get("source_function_name"))
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown function>");
+    let params = memento
+        .get("paramNames")
+        .or_else(|| memento.get("param_names"))
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    let source_cid = memento
+        .get("source_cid")
+        .or_else(|| memento.get("sourceCid"))
+        .and_then(Value::as_str)
+        .unwrap_or("<missing source cid>");
+    format!("{file}:{lines} {function}({params}) source_cid={source_cid}")
+}
+
 fn send(obj: &Value) {
     let mut out = std::io::stdout().lock();
     let _ = writeln!(out, "{}", serde_json::to_string(obj).unwrap_or_default());
@@ -762,6 +1141,22 @@ fn handle(id: &Value, method: &str, params: &Value) -> Value {
             json!({"jsonrpc": "2.0", "id": id, "result": kit_declaration_result()})
         }
         "lift" => json!({"jsonrpc": "2.0", "id": id, "result": lift(params)}),
+        RESOLVE_PROOF_BY_CID_RPC_METHOD => {
+            let workspace_root = params
+                .get("workspace_root")
+                .and_then(Value::as_str)
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("."));
+            let cid = params.get("cid").and_then(Value::as_str).unwrap_or("");
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": resolve_proof_by_cid_for_report(&workspace_root, cid),
+            })
+        }
+        RESOLVE_SOURCE_MEMENTO_RPC_METHOD => {
+            json!({"jsonrpc": "2.0", "id": id, "result": resolve_source_memento_rpc(params)})
+        }
         "shutdown" => json!({"jsonrpc": "2.0", "id": id, "result": Value::Null}),
         other => err_reply(id, format!("unknown method: {other}")),
     }
@@ -896,6 +1291,35 @@ facts = [
     }
 
     #[test]
+    fn free_function_body_warrant_emits_post_not_fact_inv() {
+        let f: syn::ItemFn = syn::parse_str(
+            r#"fn enc(input: &str) -> &'static str {
+                if input == "abc" { "def" } else { "unknown" }
+            }"#,
+        )
+        .expect("fn parses");
+        let source_memento = json!({
+            "file": "src/lib.rs",
+            "sourceFunctionName": "enc",
+            "span": {"start_line": 1, "end_line": 3},
+            "paramNames": ["input"],
+            "source_cid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "template_cid": "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        });
+        let (status, reason, entry) =
+            classify_nontest_fn("enc", &f.sig, &f.block, false, &source_memento);
+        let entry = entry.expect("body warrant emits function contract");
+
+        assert_eq!(status, "warranted", "reason: {reason:?}");
+        assert_eq!(entry["kind"], "function-contract");
+        assert_eq!(entry["name"], "rust-source::enc");
+        assert_eq!(entry["bridgeSourceSymbol"], "call:enc");
+        assert!(entry.get("post").is_some(), "{entry}");
+        assert!(entry.get("inv").is_none(), "{entry}");
+        assert_eq!(entry["sourceWarrants"][0]["file"], "src/lib.rs");
+    }
+
+    #[test]
     fn binary_partition_warrant_or_refuse_by_vacuity() {
         use sugar_lift_rust_tests::{broad_functional_warrant, sig_returns_unit};
         let parse = |src: &str| -> syn::ItemFn { syn::parse_str(src).unwrap() };
@@ -919,5 +1343,115 @@ facts = [
             broad_functional_warrant("log", &u.sig, &u.block).is_none(),
             "a unit body states no output constraint -> None -> refuse by vacuity"
         );
+    }
+
+    #[test]
+    fn kit_declaration_advertises_proof_and_source_resolution_rpc() {
+        let declaration = kit_declaration_result();
+        let methods = declaration["rpc"]["methods"]
+            .as_array()
+            .expect("methods array");
+
+        assert!(
+            methods
+                .iter()
+                .any(|method| method["name"] == "sugar.plugin.resolve_proof_by_cid"),
+            "kit declaration must advertise proof CID resolution: {declaration}"
+        );
+        assert!(
+            methods
+                .iter()
+                .any(|method| method["name"] == "sugar.plugin.resolve_source_memento"),
+            "kit declaration must advertise SourceOracle memento resolution: {declaration}"
+        );
+    }
+
+    #[test]
+    fn source_memento_resolution_distinguishes_absent_from_drifted() {
+        let root = unique_temp_dir("source_memento_resolution_distinguishes_absent_from_drifted");
+        std::fs::create_dir_all(root.join("vendor/src")).expect("mkdir");
+        let memento = json!({
+            "kind": "source-memento",
+            "file": "vendor/src/lib.rs",
+            "sourceFunctionName": "enc",
+            "span": {"start_line": 1, "start_col": 0, "end_line": 3, "end_col": 1},
+            "paramNames": ["input"],
+            "source_cid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "template_cid": "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        });
+
+        let absent = resolve_source_memento_for_report(&root, &memento);
+        assert_eq!(absent["status"], "absent", "{absent}");
+
+        std::fs::write(
+            root.join("vendor/src/lib.rs"),
+            r#"fn enc(input: &str) -> &'static str {
+    "changed"
+}
+"#,
+        )
+        .expect("write drifted source");
+        let drifted = resolve_source_memento_for_report(&root, &memento);
+
+        assert_eq!(drifted["status"], "drifted", "{drifted}");
+        assert!(
+            drifted["reason"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("source CID misaligned"),
+            "{drifted}"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn vendor_source_memento_resolves_from_proof_member_by_contract_name() {
+        let mut pool = sugar_verifier::types::MementoPool::default();
+        pool.mementos.insert(
+            "blake3-512:source".to_string(),
+            json!({
+                "schemaVersion": "1",
+                "header": {
+                    "kind": "source-memento",
+                    "contractName": "rust-source::enc",
+                    "claimName": "rust-source::enc",
+                    "sourceFunctionName": "enc",
+                    "file": "src/lib.rs"
+                },
+                "body": {
+                    "kind": "source-memento",
+                    "contractName": "rust-source::enc",
+                    "claimName": "rust-source::enc",
+                    "sourceFunctionName": "enc",
+                    "file": "src/lib.rs",
+                    "span": {"start_line": 1, "start_col": 0, "end_line": 3, "end_col": 1},
+                    "paramNames": ["input"],
+                    "source_cid": "blake3-512:source",
+                    "template_cid": "blake3-512:template"
+                }
+            }),
+        );
+        let contract_body = json!({"name": "rust-source::enc"});
+
+        let memento =
+            source_memento_member_for_contract(&pool, &contract_body, "blake3-512:contract")
+                .expect("contract-named source memento member");
+
+        assert_eq!(memento["sourceFunctionName"], "enc");
+        assert_eq!(memento["file"], "src/lib.rs");
+    }
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "sugar-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("mkdir temp dir");
+        dir
     }
 }

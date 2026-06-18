@@ -11,7 +11,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use crate::solvers::{SolveResult, Solver};
+use crate::solvers::{SolveResult, Solver, SolverIdentity};
 use crate::types::ObligationVerdict;
 
 #[derive(Debug, Clone)]
@@ -22,6 +22,7 @@ pub struct SubprocessSolver {
     binary: String,
     flags: Vec<String>,
     timeout: Option<Duration>,
+    identity: SolverIdentity,
 }
 
 impl SubprocessSolver {
@@ -40,7 +41,13 @@ impl SubprocessSolver {
             binary: binary.into(),
             flags,
             timeout,
+            identity: SolverIdentity::default(),
         }
+    }
+
+    pub fn with_identity(mut self, identity: SolverIdentity) -> Self {
+        self.identity = identity;
+        self
     }
 }
 
@@ -53,6 +60,9 @@ impl Solver for SubprocessSolver {
     }
     fn ir_compiler(&self) -> &str {
         &self.ir_compiler
+    }
+    fn identity(&self) -> SolverIdentity {
+        self.identity.clone()
     }
     fn solve(&self, smt: &str) -> SolveResult {
         let started = Instant::now();

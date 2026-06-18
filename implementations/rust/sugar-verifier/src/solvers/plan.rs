@@ -13,7 +13,8 @@ use rayon::prelude::*;
 use serde_json::Value as Json;
 
 use crate::solvers::{
-    dispatch_for_formula, PortfolioMode, SolveResult, Solver, SolverHandle, SolverPlan,
+    dispatch_for_formula, PortfolioMode, SolveResult, Solver, SolverHandle, SolverIdentity,
+    SolverPlan,
 };
 use crate::types::ObligationVerdict;
 
@@ -25,6 +26,8 @@ use crate::types::ObligationVerdict;
 #[derive(Debug, Clone)]
 pub struct SolverInvocation {
     pub authoritative: bool,
+    pub compiler: String,
+    pub identity: SolverIdentity,
     pub result: SolveResult,
 }
 
@@ -81,11 +84,15 @@ fn single(
     match lookup(name, registry) {
         Ok(s) => {
             let input = solver_input(s.as_ref(), smt, formula);
+            let compiler = s.ir_compiler().to_string();
+            let identity = s.identity();
             let r = s.solve(&input);
             let verdict = r.verdict;
             let reason = reason_for(&r);
             let inv = SolverInvocation {
                 authoritative: true,
+                compiler,
+                identity,
                 result: r,
             };
             (verdict, reason, vec![inv])
@@ -106,6 +113,8 @@ fn chain(
         match lookup(n, registry) {
             Ok(s) => {
                 let input = solver_input(s.as_ref(), smt, formula);
+                let compiler = s.ir_compiler().to_string();
+                let identity = s.identity();
                 let r = s.solve(&input);
                 let definitive = matches!(
                     r.verdict,
@@ -116,6 +125,8 @@ fn chain(
                     let verdict = r.verdict;
                     let inv = SolverInvocation {
                         authoritative: true,
+                        compiler,
+                        identity,
                         result: r,
                     };
                     history.push(inv);
@@ -133,6 +144,8 @@ fn chain(
                 }
                 history.push(SolverInvocation {
                     authoritative: false,
+                    compiler,
+                    identity,
                     result: r,
                 });
             }
@@ -177,11 +190,11 @@ fn portfolio(
     // remaining solvers continue until natural completion or timeout.
     // The plan-execution semantics (first definitive verdict wins) is
     // still honored by the post-collection sort.
-    let results: Vec<SolveResult> = handles
+    let results: Vec<(String, SolverIdentity, SolveResult)> = handles
         .par_iter()
         .map(|s| {
             let input = solver_input(s.as_ref(), smt, formula);
-            s.solve(&input)
+            (s.ir_compiler().to_string(), s.identity(), s.solve(&input))
         })
         .collect();
 
@@ -191,13 +204,13 @@ fn portfolio(
             // by name (deterministic).
             let mut sorted = results.clone();
             sorted.sort_by(|a, b| {
-                a.wall_clock
-                    .cmp(&b.wall_clock)
-                    .then_with(|| a.solver_name.cmp(&b.solver_name))
+                a.2.wall_clock
+                    .cmp(&b.2.wall_clock)
+                    .then_with(|| a.2.solver_name.cmp(&b.2.solver_name))
             });
             let chosen = sorted
                 .iter()
-                .find(|r| {
+                .find(|(_, _, r)| {
                     matches!(
                         r.verdict,
                         ObligationVerdict::Discharged | ObligationVerdict::Unsatisfied
@@ -206,20 +219,22 @@ fn portfolio(
                 .cloned()
                 .unwrap_or_else(|| sorted[0].clone());
             let mut invs: Vec<SolverInvocation> = vec![];
-            for r in results.into_iter() {
-                let auth = r.solver_name == chosen.solver_name && r.verdict == chosen.verdict;
+            for (compiler, identity, r) in results.into_iter() {
+                let auth = r.solver_name == chosen.2.solver_name && r.verdict == chosen.2.verdict;
                 invs.push(SolverInvocation {
                     authoritative: auth,
+                    compiler,
+                    identity,
                     result: r,
                 });
             }
             let reason = format!(
                 "portfolio[first-wins]: '{}' returned {} in {}ms",
-                chosen.solver_name,
-                chosen.verdict.as_str(),
-                chosen.wall_clock.as_millis()
+                chosen.2.solver_name,
+                chosen.2.verdict.as_str(),
+                chosen.2.wall_clock.as_millis()
             );
-            (chosen.verdict, reason, invs)
+            (chosen.2.verdict, reason, invs)
         }
         PortfolioMode::Consensus => {
             // ALL definitive verdicts must agree. Mixed Discharged +
@@ -228,6 +243,7 @@ fn portfolio(
             // consensus among the rest.
             let definitives: Vec<&SolveResult> = results
                 .iter()
+                .map(|(_, _, r)| r)
                 .filter(|r| {
                     matches!(
                         r.verdict,
@@ -238,8 +254,10 @@ fn portfolio(
             if definitives.is_empty() {
                 let invs: Vec<SolverInvocation> = results
                     .into_iter()
-                    .map(|r| SolverInvocation {
+                    .map(|(compiler, identity, r)| SolverInvocation {
                         authoritative: false,
+                        compiler,
+                        identity,
                         result: r,
                     })
                     .collect();
@@ -255,13 +273,15 @@ fn portfolio(
                 let n = definitives.len();
                 let invs: Vec<SolverInvocation> = results
                     .into_iter()
-                    .map(|r| {
+                    .map(|(compiler, identity, r)| {
                         let auth = matches!(
                             r.verdict,
                             ObligationVerdict::Discharged | ObligationVerdict::Unsatisfied
                         );
                         SolverInvocation {
                             authoritative: auth,
+                            compiler,
+                            identity,
                             result: r,
                         }
                     })
@@ -288,8 +308,10 @@ fn portfolio(
                 eprintln!("warning: {reason}");
                 let invs: Vec<SolverInvocation> = results
                     .into_iter()
-                    .map(|r| SolverInvocation {
+                    .map(|(compiler, identity, r)| SolverInvocation {
                         authoritative: false,
+                        compiler,
+                        identity,
                         result: r,
                     })
                     .collect();

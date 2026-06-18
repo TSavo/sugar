@@ -12,7 +12,7 @@ use owo_colors::OwoColorize;
 use serde_json::{Map, Value};
 
 use crate::lift_plugin::{self, LiftPluginError, LiftPluginOptions};
-use crate::project_config::{read_project_config, read_user_config, ProjectConfig};
+use crate::project_config::{read_project_config, read_user_config, PluginEntry, ProjectConfig};
 use crate::{LiftArgs, EXIT_OK, EXIT_USER_ERROR, EXIT_VERIFY_FAIL};
 
 pub fn run(args: LiftArgs) -> u8 {
@@ -39,16 +39,20 @@ pub fn run(args: LiftArgs) -> u8 {
         }
     };
 
-    match lift_plugin::dispatch_lift_path(
-        &project_root,
-        &surface,
-        LiftPluginOptions {
-            identify_only: args.identify_only,
-            library_bindings: args.library_bindings,
-            ..Default::default()
-        },
-        true,
-    ) {
+    let mut lift_options = lift_options_for_configured_surface(&project_cfg, &surface);
+    lift_options.identify_only = args.identify_only;
+    lift_options.library_bindings = args.library_bindings;
+    tracing::trace!(
+        surface = %surface,
+        emit = ?lift_options.emit,
+        layer = ?lift_options.layer,
+        workspace_override = ?lift_options.workspace_override,
+        identify_only = lift_options.identify_only,
+        library_bindings = lift_options.library_bindings,
+        "lift: dispatching configured surface"
+    );
+
+    match lift_plugin::dispatch_lift_path(&project_root, &surface, lift_options, true) {
         Ok(session) => {
             let response = session.response();
             if args.identify_only
@@ -78,6 +82,7 @@ pub fn run(args: LiftArgs) -> u8 {
                             return EXIT_USER_ERROR;
                         }
                     };
+                let hard_failure = source_report_has_hard_failures(&report);
                 let rendered = if args.out.json {
                     match render_source_report_json(&report) {
                         Ok(rendered) => rendered,
@@ -92,6 +97,9 @@ pub fn run(args: LiftArgs) -> u8 {
                 if let Err(error) = write_output(None, rendered.as_bytes()) {
                     eprintln!("{}: {error}", "error".red().bold());
                     return EXIT_USER_ERROR;
+                }
+                if hard_failure {
+                    return EXIT_VERIFY_FAIL;
                 }
             } else {
                 let output = match lift_output_document(&project_root, &surface, response) {
@@ -166,12 +174,59 @@ fn configured_lift_surface(
     user_cfg.surface_for("lift")
 }
 
+fn lift_options_for_configured_surface(
+    project_cfg: &ProjectConfig,
+    surface: &str,
+) -> LiftPluginOptions {
+    let Some(plugin) = matching_lift_plugin(project_cfg, surface) else {
+        return LiftPluginOptions::default();
+    };
+    LiftPluginOptions {
+        workspace_override: plugin.workspace_override.clone(),
+        emit: plugin.emit.clone(),
+        layer: plugin.layer.clone(),
+        ..Default::default()
+    }
+}
+
+fn matching_lift_plugin<'a>(
+    project_cfg: &'a ProjectConfig,
+    surface: &str,
+) -> Option<&'a PluginEntry> {
+    project_cfg
+        .plugins
+        .iter()
+        .find(|plugin| plugin.is_lift_plugin() && plugin.surface == surface)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct LiftSourceReport {
     ledger: Value,
     audits: Vec<Value>,
     source_mementos: Vec<Value>,
     contracts: Vec<Value>,
+    vendor_conjoins: Vec<VendorConjoinReport>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct VendorConjoinReport {
+    call: String,
+    local_contract: String,
+    local_fact: String,
+    bridge_source_symbol: String,
+    vendor_contract: String,
+    vendor_contract_cid: String,
+    vendor_proof_cid: Option<String>,
+    vendor_post: String,
+    instantiated_post: String,
+    vendor_source: Option<VendorSourceResolution>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum VendorSourceResolution {
+    Resolved(String),
+    Absent(String),
+    Drifted(String),
 }
 
 const SOURCE_LEDGER_FIELDS: [&str; 7] = [
@@ -237,12 +292,14 @@ fn source_report_from_lift_response(
     let contracts = matching_report_contracts(response, contract_filter, &filtered_audits);
     let source_mementos =
         matching_report_source_mementos(response, contract_filter, &filtered_audits)?;
+    let vendor_conjoins = vendor_conjoins_from_lift_response(response, contract_filter)?;
 
     Ok(LiftSourceReport {
         ledger,
         audits: filtered_audits,
         source_mementos,
         contracts,
+        vendor_conjoins,
     })
 }
 
@@ -277,6 +334,7 @@ fn matching_report_source_mementos(
                 memento.get("contractName").and_then(Value::as_str),
                 memento.get("eufName").and_then(Value::as_str),
                 memento.get("role").and_then(Value::as_str),
+                source_function_name(memento),
             ];
             names
                 .into_iter()
@@ -394,6 +452,7 @@ fn render_source_report_json(report: &LiftSourceReport) -> Result<String, serde_
         "sourceAudits": report.audits,
         "sourceMementos": report.source_mementos,
         "contracts": report.contracts,
+        "vendorConjoins": vendor_conjoins_to_json(&report.vendor_conjoins),
         // Lift-side superposition: candidate universes detected per method.
         "superposition": {
             "methods": universes.len(),
@@ -431,6 +490,38 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
             }
         }
     }
+    if !report.vendor_conjoins.is_empty() {
+        out.push_str("vendor conjoins:\n");
+        for conjoin in &report.vendor_conjoins {
+            out.push_str(&format!("  - call: {}\n", conjoin.call));
+            out.push_str(&format!("    your contract: {}\n", conjoin.local_contract));
+            out.push_str(&format!("    your fact: {}\n", conjoin.local_fact));
+            out.push_str(&format!(
+                "    bridge: {} -> {}\n",
+                conjoin.bridge_source_symbol, conjoin.vendor_contract_cid
+            ));
+            let proof = conjoin.vendor_proof_cid.as_deref().unwrap_or("<unknown>");
+            out.push_str(&format!(
+                "    vendor contract: {} cid={} proof={}\n",
+                conjoin.vendor_contract, conjoin.vendor_contract_cid, proof
+            ));
+            if let Some(source) = &conjoin.vendor_source {
+                out.push_str(&format!(
+                    "    vendor source: {}\n",
+                    format_vendor_source_resolution(source)
+                ));
+            }
+            out.push_str(&format!("    vendor post: {}\n", conjoin.vendor_post));
+            out.push_str(&format!(
+                "    instantiated post: {}\n",
+                conjoin.instantiated_post
+            ));
+            out.push_str(&format!(
+                "    conjoin here: {} ∧ ({})\n",
+                conjoin.local_fact, conjoin.instantiated_post
+            ));
+        }
+    }
     if report.audits.is_empty() {
         out.push_str("no source audits emitted\n");
         return out;
@@ -438,16 +529,24 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
 
     let mut group_keys = Vec::new();
     for audit in &report.audits {
-        let key = contract_name(audit)
-            .map(contract_group_key)
-            .unwrap_or_else(|| "<unknown contract>".to_string());
+        let key = audit_report_group_key(audit);
+        if !group_keys.contains(&key) {
+            group_keys.push(key);
+        }
+    }
+
+    for contract in &report.contracts {
+        let Some(name) = contract_value_name(contract) else {
+            continue;
+        };
+        let key = report_contract_group_key(name);
         if !group_keys.contains(&key) {
             group_keys.push(key);
         }
     }
 
     for memento in &report.source_mementos {
-        let key = memento_group_key(memento).unwrap_or_else(|| "<unknown contract>".to_string());
+        let key = report_memento_group_key(memento);
         if !group_keys.contains(&key) {
             group_keys.push(key);
         }
@@ -457,25 +556,21 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
         let group_audits = report
             .audits
             .iter()
-            .filter(|audit| {
-                contract_name(audit)
-                    .map(contract_group_key)
-                    .is_some_and(|key| key == group_key)
-            })
+            .filter(|audit| audit_report_group_key(audit) == group_key)
             .collect::<Vec<_>>();
         let group_contracts = report
             .contracts
             .iter()
             .filter(|contract| {
                 contract_value_name(contract)
-                    .map(contract_group_key)
+                    .map(report_contract_group_key)
                     .is_some_and(|key| key == group_key)
             })
             .collect::<Vec<_>>();
         let group_mementos = report
             .source_mementos
             .iter()
-            .filter(|memento| memento_group_key(memento).is_some_and(|key| key == group_key))
+            .filter(|memento| report_memento_group_key(memento) == group_key)
             .collect::<Vec<_>>();
 
         let display_name = group_audits
@@ -486,7 +581,7 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
                     .first()
                     .and_then(|contract| contract_value_name(contract))
             })
-            .unwrap_or("<unknown contract>");
+            .unwrap_or(&group_key);
         out.push_str(&format!("\ncontract: {display_name}\n"));
 
         let fact_mementos = group_mementos
@@ -494,32 +589,54 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
             .filter(|memento| is_fact_source_memento(memento))
             .copied()
             .collect::<Vec<_>>();
-        if fact_mementos.is_empty() {
-            match assertion_site_for_group(&group_contracts) {
-                Some(site) => out.push_str(&format!(
+        let asserted_fact_rows = group_contracts
+            .iter()
+            .filter_map(|contract| format_contract_asserted_fact(report, contract))
+            .collect::<Vec<_>>();
+        if fact_mementos.is_empty() && asserted_fact_rows.is_empty() {
+            if let Some(site) = assertion_site_for_group(&group_contracts) {
+                out.push_str(&format!(
                     "facts observed:\n  - assertion source inferred from contract name: {site}\n"
-                )),
-                None => out.push_str("facts observed:\n  - not emitted by kit\n"),
+                ));
             }
         } else {
             out.push_str("facts observed:\n");
             for memento in fact_mementos {
                 out.push_str(&format!("  - {}\n", format_fact_memento(memento)));
             }
+            for row in asserted_fact_rows {
+                out.push_str(&format!("  - {row}\n"));
+            }
         }
-        out.push_str("warranted digs:\n");
-        for audit in &group_audits {
-            out.push_str(&format!("  - {}\n", format_source_memento(audit)));
+        let warranted_mementos = group_mementos
+            .iter()
+            .filter(|memento| !is_fact_source_memento(memento))
+            .collect::<Vec<_>>();
+        if !warranted_mementos.is_empty() || !group_audits.is_empty() {
+            out.push_str("warranted digs:\n");
+            for memento in warranted_mementos {
+                out.push_str(&format!("  - {}\n", format_source_memento_value(memento)));
+            }
+            for audit in &group_audits {
+                out.push_str(&format!("  - {}\n", format_source_memento(audit)));
+            }
         }
+
         if !group_contracts.is_empty() {
             let generalized_rows = group_contracts
                 .iter()
                 .flat_map(|contract| generalized_contract_fol(contract))
                 .collect::<Vec<_>>();
             if generalized_rows.is_empty() {
-                out.push_str("lifted FOL:\n");
-                for contract in &group_contracts {
-                    out.push_str(&format!("  - {}\n", format_contract_fol(contract)));
+                let universe_rows = group_contracts
+                    .iter()
+                    .filter_map(|contract| format_contract_universe_fol(contract))
+                    .collect::<Vec<_>>();
+                if !universe_rows.is_empty() {
+                    out.push_str("lifted FOL:\n");
+                }
+                for row in universe_rows {
+                    out.push_str(&format!("  - {row}\n"));
                 }
             } else {
                 out.push_str("generalized FOL:\n");
@@ -532,6 +649,10 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
                 }
             }
         }
+        if group_audits.is_empty() {
+            continue;
+        }
+
         out.push_str("method breakdown:\n");
         for audit in group_audits {
             let role = audit
@@ -653,6 +774,231 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
     }
 
     out
+}
+
+fn source_report_has_hard_failures(report: &LiftSourceReport) -> bool {
+    report
+        .vendor_conjoins
+        .iter()
+        .any(|row| matches!(row.vendor_source, Some(VendorSourceResolution::Drifted(_))))
+}
+
+fn vendor_conjoins_from_lift_response(
+    response: &Value,
+    contract_filter: Option<&str>,
+) -> Result<Vec<VendorConjoinReport>, String> {
+    let Some(rows) = response
+        .get("vendorConjoins")
+        .or_else(|| response.get("vendor_conjoins"))
+        .or_else(|| response.get("linkerConjoins"))
+        .or_else(|| response.get("linker_conjoins"))
+        .and_then(Value::as_array)
+    else {
+        return Ok(Vec::new());
+    };
+
+    rows.iter()
+        .filter(|row| vendor_conjoin_matches_filter(row, contract_filter))
+        .map(vendor_conjoin_from_value)
+        .collect()
+}
+
+fn vendor_conjoin_matches_filter(row: &Value, contract_filter: Option<&str>) -> bool {
+    let Some(filter) = contract_filter else {
+        return true;
+    };
+    [
+        "call",
+        "localContract",
+        "local_contract",
+        "bridgeSourceSymbol",
+        "bridge_source_symbol",
+        "vendorContract",
+        "vendor_contract",
+        "vendorContractCid",
+        "vendor_contract_cid",
+        "vendorProofCid",
+        "vendor_proof_cid",
+    ]
+    .into_iter()
+    .filter_map(|key| row.get(key).and_then(Value::as_str))
+    .any(|value| value.contains(filter))
+}
+
+fn vendor_conjoin_from_value(row: &Value) -> Result<VendorConjoinReport, String> {
+    ensure_vendor_proof_resolved(row)?;
+    Ok(VendorConjoinReport {
+        call: report_text_field(row, &["call", "callTerm", "call_term"])
+            .unwrap_or_else(|| "<unknown call>".to_string()),
+        local_contract: required_report_text_field(row, &["localContract", "local_contract"])?,
+        local_fact: required_report_text_field(row, &["localFact", "local_fact"])?,
+        bridge_source_symbol: required_report_text_field(
+            row,
+            &[
+                "bridgeSourceSymbol",
+                "bridge_source_symbol",
+                "sourceSymbol",
+                "source_symbol",
+            ],
+        )?,
+        vendor_contract: required_report_text_field(row, &["vendorContract", "vendor_contract"])?,
+        vendor_contract_cid: required_report_text_field(
+            row,
+            &[
+                "vendorContractCid",
+                "vendor_contract_cid",
+                "targetContractCid",
+            ],
+        )?,
+        vendor_proof_cid: report_text_field(
+            row,
+            &["vendorProofCid", "vendor_proof_cid", "targetProofCid"],
+        ),
+        vendor_post: required_report_text_field(row, &["vendorPost", "vendor_post"])?,
+        instantiated_post: required_report_text_field(
+            row,
+            &["instantiatedPost", "instantiated_post"],
+        )?,
+        vendor_source: vendor_source_resolution_from_value(row),
+    })
+}
+
+fn ensure_vendor_proof_resolved(row: &Value) -> Result<(), String> {
+    let resolution = row
+        .get("vendorProofResolution")
+        .or_else(|| row.get("vendor_proof_resolution"))
+        .or_else(|| row.get("proofResolution"))
+        .or_else(|| row.get("proof_resolution"));
+    let Some(resolution) = resolution else {
+        return Ok(());
+    };
+    let status = resolution
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("resolved");
+    if matches!(status, "resolved" | "ok") {
+        return Ok(());
+    }
+    let cid = resolution
+        .get("cid")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            row.get("vendorProofCid")
+                .or_else(|| row.get("vendor_proof_cid"))
+                .or_else(|| row.get("targetProofCid"))
+                .and_then(Value::as_str)
+        })
+        .unwrap_or("<unknown>");
+    Err(format!(
+        "kit referenced proof CID `{cid}` but did not resolve it; this is a kit/protocol panic"
+    ))
+}
+
+fn vendor_source_resolution_from_value(row: &Value) -> Option<VendorSourceResolution> {
+    let source = row
+        .get("vendorSource")
+        .or_else(|| row.get("vendor_source"))
+        .or_else(|| row.get("vendorSourceResolution"))
+        .or_else(|| row.get("vendor_source_resolution"))?;
+    if let Some(rendered) = source.as_str() {
+        return Some(VendorSourceResolution::Resolved(rendered.to_string()));
+    }
+    let status = source
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("resolved");
+    let reason = source
+        .get("reason")
+        .and_then(Value::as_str)
+        .or_else(|| source.get("message").and_then(Value::as_str))
+        .unwrap_or("")
+        .to_string();
+    match status {
+        "resolved" | "ok" => source
+            .get("display")
+            .and_then(Value::as_str)
+            .map(|display| VendorSourceResolution::Resolved(display.to_string()))
+            .or_else(|| {
+                source
+                    .get("memento")
+                    .map(|memento| VendorSourceResolution::Resolved(format_source_ref(memento)))
+            }),
+        "absent" | "missing" | "unavailable" => Some(VendorSourceResolution::Absent(reason)),
+        "drifted" | "drift" | "mismatch" => Some(VendorSourceResolution::Drifted(reason)),
+        _ => Some(VendorSourceResolution::Absent(reason)),
+    }
+}
+
+fn required_report_text_field(row: &Value, keys: &[&str]) -> Result<String, String> {
+    report_text_field(row, keys).ok_or_else(|| {
+        format!(
+            "kit vendor conjoin row missing `{}`",
+            keys.first().copied().unwrap_or("<field>")
+        )
+    })
+}
+
+fn report_text_field(row: &Value, keys: &[&str]) -> Option<String> {
+    let value = keys.iter().find_map(|key| row.get(*key))?;
+    if let Some(text) = value.as_str() {
+        return Some(text.to_string());
+    }
+    if value.is_object() {
+        let kind = value
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if matches!(
+            kind,
+            "atomic" | "Atomic" | "and" | "or" | "not" | "implies" | "forall" | "exists"
+        ) {
+            return Some(proofir_formula_to_fol_with_instances(value));
+        }
+        return Some(proofir_term_to_fol(value));
+    }
+    serde_json::to_string(value).ok()
+}
+
+fn format_vendor_source_resolution(source: &VendorSourceResolution) -> String {
+    match source {
+        VendorSourceResolution::Resolved(display) => display.clone(),
+        VendorSourceResolution::Absent(reason) if reason.is_empty() => "absent".to_string(),
+        VendorSourceResolution::Absent(reason) => format!("absent - {reason}"),
+        VendorSourceResolution::Drifted(reason) if reason.is_empty() => "DRIFTED".to_string(),
+        VendorSourceResolution::Drifted(reason) => format!("DRIFTED - {reason}"),
+    }
+}
+
+fn vendor_conjoins_to_json(rows: &[VendorConjoinReport]) -> Vec<Value> {
+    rows.iter()
+        .map(|row| {
+            let mut value = serde_json::json!({
+                "call": row.call,
+                "localContract": row.local_contract,
+                "localFact": row.local_fact,
+                "bridgeSourceSymbol": row.bridge_source_symbol,
+                "vendorContract": row.vendor_contract,
+                "vendorContractCid": row.vendor_contract_cid,
+                "vendorProofCid": row.vendor_proof_cid,
+                "vendorPost": row.vendor_post,
+                "instantiatedPost": row.instantiated_post,
+            });
+            if let Some(source) = &row.vendor_source {
+                value["vendorSource"] = match source {
+                    VendorSourceResolution::Resolved(display) => {
+                        serde_json::json!({"status": "resolved", "display": display})
+                    }
+                    VendorSourceResolution::Absent(reason) => {
+                        serde_json::json!({"status": "absent", "reason": reason})
+                    }
+                    VendorSourceResolution::Drifted(reason) => {
+                        serde_json::json!({"status": "drifted", "reason": reason})
+                    }
+                };
+            }
+            value
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug)]
@@ -950,7 +1296,54 @@ fn memento_group_key(memento: &Value) -> Option<String> {
     .into_iter()
     .flatten()
     .next()
-    .map(contract_group_key)
+    .map(report_contract_group_key)
+}
+
+fn audit_report_group_key(audit: &Value) -> String {
+    contract_name(audit)
+        .map(report_contract_group_key)
+        .unwrap_or_else(|| audit_role_group_key(audit))
+}
+
+fn audit_role_group_key(audit: &Value) -> String {
+    format!(
+        "{} / {}",
+        audit
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown"),
+        audit
+            .get("universe_kind")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+    )
+}
+
+fn report_contract_group_key(name: &str) -> String {
+    if name.starts_with("rust-source::") {
+        name.to_string()
+    } else {
+        contract_group_key(name)
+    }
+}
+
+fn report_memento_group_key(memento: &Value) -> String {
+    memento_group_key(memento)
+        .or_else(|| source_function_name(memento).map(|name| format!("rust-source::{name}")))
+        .unwrap_or_else(|| {
+            memento
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or("<unknown source memento>")
+                .to_string()
+        })
+}
+
+fn source_function_name(source: &Value) -> Option<&str> {
+    source
+        .get("sourceFunctionName")
+        .or_else(|| source.get("source_function_name"))
+        .and_then(Value::as_str)
 }
 
 fn is_fact_source_memento(memento: &Value) -> bool {
@@ -979,6 +1372,34 @@ fn format_fact_memento(memento: &Value) -> String {
         "{} [{role}] claim={claim} contract={contract}",
         format_source_ref(memento)
     )
+}
+
+fn format_fact_source_memento_ref(source: &Value) -> String {
+    let mut row = format_source_ref(source);
+    let source_cid = source
+        .get("source_cid")
+        .or_else(|| source.get("sourceCid"))
+        .and_then(Value::as_str)
+        .unwrap_or("<missing source cid>");
+    row.push_str(&format!(" source_cid={source_cid}"));
+    row
+}
+
+fn format_fact_source_locus_ref(locus: &Value) -> String {
+    let file = locus
+        .get("file")
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown file>");
+    let line = locus
+        .get("line")
+        .and_then(Value::as_i64)
+        .map(|line| line.to_string())
+        .unwrap_or_else(|| "?".to_string());
+    let ast_path = locus
+        .get("ast_path")
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown locus>");
+    format!("{file}:{line} {ast_path} source=audit-locus")
 }
 
 fn format_counts(value: &Value) -> String {
@@ -1010,10 +1431,7 @@ fn contract_value_name(contract: &Value) -> Option<&str> {
 }
 
 fn contract_group_key(name: &str) -> String {
-    name.rsplit_once("::")
-        .map(|(base, _)| base)
-        .unwrap_or(name)
-        .to_string()
+    name.strip_suffix("::assertion").unwrap_or(name).to_string()
 }
 
 fn assertion_site_for_group(contracts: &[&Value]) -> Option<String> {
@@ -1056,8 +1474,20 @@ fn format_source_memento(audit: &Value) -> String {
         }
     }
     let Some(source) = source else {
-        return format!("<missing source memento> [{role} / {universe}]");
+        return format!("source audit [{role} / {universe}]");
     };
+    format_source_memento_with_role(source, role, universe)
+}
+
+fn format_source_memento_value(source: &Value) -> String {
+    let role = source
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("source-memento");
+    format_source_memento_with_role(source, role, "source")
+}
+
+fn format_source_memento_with_role(source: &Value, role: &str, universe: &str) -> String {
     format!(
         "{} [{role} / {universe}] source_cid={}",
         format_source_ref(source),
@@ -1074,12 +1504,10 @@ fn format_source_ref(source: &Value) -> String {
         .get("file")
         .and_then(Value::as_str)
         .unwrap_or("<unknown file>");
-    let function = source
-        .get("source_function_name")
-        .and_then(Value::as_str)
-        .unwrap_or("<unknown function>");
+    let function = source_function_name(source).unwrap_or("<unknown function>");
     let params = source
         .get("param_names")
+        .or_else(|| source.get("paramNames"))
         .and_then(Value::as_array)
         .map(|params| {
             params
@@ -1116,9 +1544,140 @@ fn format_span(span: &Value) -> String {
 
 fn format_contract_fol(contract: &Value) -> String {
     let name = contract_value_name(contract).unwrap_or("<unknown contract>");
-    let inv = contract.get("inv").unwrap_or(&Value::Null);
-    let rendered = proofir_formula_to_fol_with_instances(inv);
+    let rendered = contract_universe_reading(contract);
     format!("{name} :: {rendered}")
+}
+
+fn format_contract_universe_fol(contract: &Value) -> Option<String> {
+    let name = contract_value_name(contract).unwrap_or("<unknown contract>");
+    for field in ["post", "pre"] {
+        if let Some(formula) = contract.get(field) {
+            let rendered = proofir_formula_to_fol_with_instances(formula);
+            return Some(format!("{name} :: {rendered}"));
+        }
+    }
+    if !contract_inv_is_observed_fact(contract) {
+        if let Some(formula) = contract.get("inv") {
+            let rendered = proofir_formula_to_fol_with_instances(formula);
+            return Some(format!("{name} :: {rendered}"));
+        }
+    }
+    None
+}
+
+fn format_contract_asserted_fact(report: &LiftSourceReport, contract: &Value) -> Option<String> {
+    if !contract_inv_is_observed_fact(contract) {
+        return None;
+    }
+    let name = contract_value_name(contract).unwrap_or("<unknown contract>");
+    let rendered = contract
+        .get("inv")
+        .map(proofir_formula_to_fol_with_instances)?;
+    let mut row = format!("{name} :: {rendered}");
+    if let Some(source) =
+        contract_source_warrant(contract).or_else(|| source_memento_for_contract(report, name))
+    {
+        row.push_str(" @ ");
+        row.push_str(&format_fact_source_memento_ref(source));
+    } else if let Some(locus) = source_locus_for_contract(report, name) {
+        row.push_str(" @ ");
+        row.push_str(&format_fact_source_locus_ref(locus));
+    }
+    Some(row)
+}
+
+fn contract_inv_is_observed_fact(contract: &Value) -> bool {
+    let Some(name) = contract_value_name(contract) else {
+        return false;
+    };
+    name.ends_with("::assertion") || name.contains("::tests::")
+}
+
+fn contract_source_warrant(contract: &Value) -> Option<&Value> {
+    contract
+        .get("sourceWarrants")
+        .or_else(|| contract.get("source_warrants"))
+        .and_then(Value::as_array)
+        .and_then(|warrants| warrants.first())
+}
+
+fn source_memento_for_contract<'a>(
+    report: &'a LiftSourceReport,
+    contract_name: &str,
+) -> Option<&'a Value> {
+    let owner = owning_source_function_name(contract_name);
+    if let Some(owner) = owner.as_deref() {
+        if let Some(memento) = report.source_mementos.iter().find(|memento| {
+            source_function_name(memento)
+                .is_some_and(|name| source_function_name_matches_owner(name, owner))
+        }) {
+            return Some(memento);
+        }
+    }
+    report.source_mementos.iter().find(|memento| {
+        source_function_name(memento)
+            .is_some_and(|name| contract_name_matches_source_function(contract_name, name))
+    })
+}
+
+fn source_locus_for_contract<'a>(
+    report: &'a LiftSourceReport,
+    contract_name: &str,
+) -> Option<&'a Value> {
+    let owner = owning_source_function_name(contract_name);
+    for audit in &report.audits {
+        let Some(loci) = audit.get("loci").and_then(Value::as_array) else {
+            continue;
+        };
+        if let Some(owner) = owner.as_deref() {
+            if let Some(locus) = loci.iter().find(|locus| {
+                locus
+                    .get("ast_path")
+                    .and_then(Value::as_str)
+                    .is_some_and(|path| source_function_name_matches_owner(path, owner))
+            }) {
+                return Some(locus);
+            }
+        }
+        if let Some(locus) = loci.iter().find(|locus| {
+            locus
+                .get("ast_path")
+                .and_then(Value::as_str)
+                .is_some_and(|path| contract_name_matches_source_function(contract_name, path))
+        }) {
+            return Some(locus);
+        }
+    }
+    None
+}
+
+fn owning_source_function_name(contract_name: &str) -> Option<String> {
+    if let Some(name) = contract_name.strip_prefix("rust-source::") {
+        return Some(name.to_string());
+    }
+    if let Some((_, tail)) = contract_name.split_once("::tests::") {
+        let owner = tail.split("::").next().unwrap_or(tail);
+        let owner = owner
+            .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            .next()
+            .unwrap_or(owner);
+        if !owner.is_empty() {
+            return Some(owner.to_string());
+        }
+    }
+    None
+}
+
+fn source_function_name_matches_owner(source_name: &str, owner: &str) -> bool {
+    source_name == owner || source_name.ends_with(&format!("::{owner}"))
+}
+
+fn contract_name_matches_source_function(contract_name: &str, source_name: &str) -> bool {
+    if contract_name == source_name || contract_name == format!("rust-source::{source_name}") {
+        return true;
+    }
+    contract_name.ends_with(&format!("::{source_name}"))
+        || contract_name.contains(&format!("::{source_name}::"))
 }
 
 fn generalized_contract_fol(contract: &Value) -> Vec<String> {
@@ -1852,6 +2411,43 @@ mod tests {
     }
 
     #[test]
+    fn lift_options_for_configured_surface_forward_matching_plugin_options() {
+        let project_cfg = ProjectConfig {
+            surface_lift: Some("rust-fn-contracts".to_string()),
+            plugins: vec![
+                PluginEntry {
+                    kind: Some("lift".to_string()),
+                    surface: "rust-fn-contracts".to_string(),
+                    workspace_override: Some("/tmp/vendor-src".to_string()),
+                    emit: Some("ir-document".to_string()),
+                    layer: Some("all".to_string()),
+                    ..PluginEntry::default()
+                },
+                PluginEntry {
+                    kind: Some("lift".to_string()),
+                    surface: "rust-implications".to_string(),
+                    emit: Some("bridge-only".to_string()),
+                    ..PluginEntry::default()
+                },
+            ],
+            ..ProjectConfig::default()
+        };
+
+        let options = lift_options_for_configured_surface(&project_cfg, "rust-fn-contracts");
+
+        assert_eq!(
+            options.workspace_override.as_deref(),
+            Some("/tmp/vendor-src")
+        );
+        assert_eq!(options.emit.as_deref(), Some("ir-document"));
+        assert_eq!(options.layer.as_deref(), Some("all"));
+        assert!(
+            !options.identify_only && !options.library_bindings,
+            "CLI flags are layered on after config-derived plugin options"
+        );
+    }
+
+    #[test]
     fn source_report_preserves_kit_ledger_and_audits() {
         let report = source_report_from_lift_response(&lift_response_with_source_axis(), None)
             .expect("source report");
@@ -1902,10 +2498,11 @@ mod tests {
         assert!(human.contains("commons-codec.PureJavaCrc32::update(byte[],int,int)"));
         assert!(human.contains("facts observed:"));
         assert!(human.contains("CommonsCodecCrc32Test.java:44 testKnownVector() [java.test-fact]"));
+        assert!(human.contains(
+            "commons-codec.PureJavaCrc32::update(byte[],int,int)::assertion :: crc32.eq-walked"
+        ));
         assert!(human.contains("warranted digs:"));
         assert!(human.contains("606 warranted Assignment crc32.slicing-by-8 input fold"));
-        assert!(human.contains("lifted FOL:"));
-        assert!(human.contains("crc32.eq-walked(3808858755"));
     }
 
     #[test]
@@ -2522,5 +3119,574 @@ mod tests {
         assert!(human.contains("rust-source::Maker::x"));
         assert!(human.contains("out = method:y(self)"), "{human}");
         assert!(!human.contains("<no inv>"), "{human}");
+    }
+
+    #[test]
+    fn human_report_does_not_claim_missing_facts_for_post_contracts_or_source_mementos() {
+        let response = serde_json::json!({
+            "kind": "ir-document",
+            "ir": [
+                {
+                    "kind": "function-contract",
+                    "name": "z",
+                    "formals": ["v"],
+                    "post": {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [
+                            {"kind": "var", "name": "result"},
+                            {"kind": "var", "name": "v"}
+                        ]
+                    }
+                }
+            ],
+            "sourceLedger": {
+                "source_loci": 1,
+                "source_warranted": 1,
+                "source_support": 0,
+                "source_refused": 0,
+                "source_inactive": 0,
+                "source_refuted": 0,
+                "unclassified_source": 0
+            },
+            "sourceAudits": [
+                {
+                    "role": "rust-fn-contracts",
+                    "universe_kind": "function-contract",
+                    "totals": {
+                        "source_loci": 1,
+                        "source_warranted": 1,
+                        "source_support": 0,
+                        "source_refused": 0,
+                        "source_inactive": 0,
+                        "source_refuted": 0,
+                        "unclassified_source": 0
+                    },
+                    "loci": [
+                        {
+                            "file": "src/lib.rs",
+                            "ast_kind": "fn",
+                            "ast_path": "z",
+                            "sourceFunctionName": "z",
+                            "line": 1,
+                            "status": "warranted"
+                        }
+                    ]
+                }
+            ],
+            "sourceMementos": [
+                {
+                    "kind": "source-memento",
+                    "file": "src/lib.rs",
+                    "sourceFunctionName": "z",
+                    "span": {"start_line": 1, "end_line": 3},
+                    "paramNames": ["v"],
+                    "source_cid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "template_cid": "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                }
+            ]
+        });
+        let report = source_report_from_lift_response(&response, None).expect("source report");
+        let human = render_source_report_human(&report);
+
+        assert!(human.contains("contract: z"), "{human}");
+        assert!(
+            human.contains("lifted FOL:\n  - z :: result = v"),
+            "{human}"
+        );
+        assert!(human.contains("warranted digs:"), "{human}");
+        assert!(
+            !human.contains("facts observed:\n  - not emitted by kit"),
+            "{human}"
+        );
+    }
+
+    #[test]
+    fn human_report_renders_rust_source_inv_as_lifted_fol_not_fact() {
+        let response = serde_json::json!({
+            "kind": "ir-document",
+            "ir": [
+                {
+                    "kind": "contract",
+                    "name": "rust-source::enc",
+                    "inv": {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [
+                            {"kind": "var", "name": "out"},
+                            {"kind": "const", "value": "def", "sort": {"name": "String"}}
+                        ]
+                    }
+                }
+            ],
+            "sourceLedger": {
+                "source_loci": 1,
+                "source_warranted": 1,
+                "source_support": 0,
+                "source_refused": 0,
+                "source_inactive": 0,
+                "source_refuted": 0,
+                "unclassified_source": 0
+            },
+            "sourceAudits": [
+                {
+                    "role": "rust-test-assertions",
+                    "universe_kind": "test-assertion",
+                    "loci": [
+                        {
+                            "file": "src/lib.rs",
+                            "ast_kind": "fn",
+                            "ast_path": "enc",
+                            "line": 1,
+                            "status": "warranted"
+                        }
+                    ]
+                }
+            ],
+            "sourceMementos": [
+                {
+                    "kind": "source-memento",
+                    "file": "src/lib.rs",
+                    "sourceFunctionName": "enc",
+                    "span": {"start_line": 1, "end_line": 3},
+                    "paramNames": ["input"],
+                    "source_cid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "template_cid": "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                }
+            ]
+        });
+        let report = source_report_from_lift_response(&response, None).expect("source report");
+        let human = render_source_report_human(&report);
+
+        assert!(human.contains("contract: rust-source::enc"), "{human}");
+        assert!(
+            human.contains("lifted FOL:\n  - rust-source::enc :: out = \"def\""),
+            "{human}"
+        );
+        assert!(
+            !human.contains("contract: rust-source::enc\nfacts observed:"),
+            "{human}"
+        );
+    }
+
+    #[test]
+    fn human_report_groups_rust_audits_without_contract_name() {
+        let response = serde_json::json!({
+            "kind": "ir-document",
+            "ir": [
+                {
+                    "kind": "function-contract",
+                    "name": "rust-source::Maker::x",
+                    "bridgeSourceSymbol": "method:x",
+                    "formals": ["self"],
+                    "outBinding": "out",
+                    "post": {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [
+                            {"kind": "var", "name": "out"},
+                            {"kind": "ctor", "name": "method:y", "args": [
+                                {"kind": "var", "name": "self"}
+                            ]}
+                        ]
+                    }
+                }
+            ],
+            "sourceLedger": {
+                "source_loci": 1,
+                "source_warranted": 1,
+                "source_support": 0,
+                "source_refused": 0,
+                "source_inactive": 0,
+                "source_refuted": 0,
+                "unclassified_source": 0
+            },
+            "sourceAudits": [
+                {
+                    "role": "rust-test-assertions",
+                    "universe_kind": "test-assertion",
+                    "loci": [
+                        {
+                            "file": "src/lib.rs",
+                            "ast_kind": "fn",
+                            "ast_path": "Maker::x",
+                            "line": 10,
+                            "status": "warranted"
+                        }
+                    ]
+                }
+            ],
+            "sourceMementos": [
+                {
+                    "file": "src/lib.rs",
+                    "sourceFunctionName": "Maker::x",
+                    "span": {
+                        "start_line": 10,
+                        "start_col": 4,
+                        "end_line": 12,
+                        "end_col": 5
+                    },
+                    "paramNames": ["self"],
+                    "source_cid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "template_cid": "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                }
+            ]
+        });
+        let report = source_report_from_lift_response(&response, None).expect("source report");
+        let human = render_source_report_human(&report);
+
+        assert!(!human.contains("contract: <unknown contract>"), "{human}");
+        assert!(
+            human.contains("contract: rust-test-assertions / test-assertion"),
+            "{human}"
+        );
+        assert!(
+            human.contains("dig: rust-test-assertions / test-assertion"),
+            "{human}"
+        );
+        assert!(human.contains("src/lib.rs:10 warranted fn"), "{human}");
+        assert!(human.contains("contract: rust-source::Maker::x"), "{human}");
+        assert!(human.contains("src/lib.rs:10-12 Maker::x(self)"), "{human}");
+        assert!(human.contains("out = method:y(self)"), "{human}");
+        assert!(
+            human.contains("rust-source::Maker::x :: out = method:y(self)"),
+            "{human}"
+        );
+        assert!(!human.contains(":: null"), "{human}");
+    }
+
+    #[test]
+    fn human_report_renders_inv_contracts_as_observed_facts() {
+        let response = serde_json::json!({
+            "kind": "ir-document",
+            "ir": [
+                {
+                    "kind": "contract",
+                    "name": "src/lib.rs::tests::facts_are_inv",
+                    "inv": {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [
+                            {"kind": "const", "value": 42, "sort": {"name": "Int"}},
+                            {"kind": "const", "value": 42, "sort": {"name": "Int"}}
+                        ]
+                    }
+                }
+            ],
+            "sourceLedger": {
+                "source_loci": 1,
+                "source_warranted": 1,
+                "source_support": 0,
+                "source_refused": 0,
+                "source_inactive": 0,
+                "source_refuted": 0,
+                "unclassified_source": 0
+            },
+            "sourceAudits": [
+                {
+                    "role": "rust-test-assertions",
+                    "universe_kind": "test-assertion",
+                    "loci": [
+                        {
+                            "file": "src/lib.rs",
+                            "ast_kind": "test-fn",
+                            "ast_path": "facts_are_inv",
+                            "line": 10,
+                            "status": "warranted"
+                        }
+                    ]
+                }
+            ],
+            "sourceMementos": []
+        });
+        let report = source_report_from_lift_response(&response, None).expect("source report");
+        let human = render_source_report_human(&report);
+
+        assert!(
+            human.contains("facts observed:\n  - src/lib.rs::tests::facts_are_inv :: 42 = 42"),
+            "{human}"
+        );
+        assert!(
+            !human.contains("contract: src/lib.rs::tests::facts_are_inv\nfacts observed:\n  - not emitted by kit"),
+            "{human}"
+        );
+    }
+
+    #[test]
+    fn human_report_renders_assertion_fact_with_source_memento() {
+        let response = serde_json::json!({
+            "kind": "ir-document",
+            "ir": [
+                {
+                    "kind": "contract",
+                    "name": "src/lib.rs::tests::enc_asserts",
+                    "inv": {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [
+                            {
+                                "kind": "ctor",
+                                "name": "call:enc",
+                                "args": [
+                                    {"kind": "const", "value": "abc", "sort": {"name": "String"}}
+                                ]
+                            },
+                            {"kind": "const", "value": "def", "sort": {"name": "String"}}
+                        ]
+                    }
+                }
+            ],
+            "sourceLedger": {
+                "source_loci": 1,
+                "source_warranted": 1,
+                "source_support": 0,
+                "source_refused": 0,
+                "source_inactive": 0,
+                "source_refuted": 0,
+                "unclassified_source": 0
+            },
+            "sourceAudits": [
+                {
+                    "role": "rust-test-assertions",
+                    "universe_kind": "test-assertion",
+                    "loci": [
+                        {
+                            "file": "src/lib.rs",
+                            "ast_kind": "test-fn",
+                            "ast_path": "enc_asserts",
+                            "line": 12,
+                            "status": "warranted"
+                        }
+                    ]
+                }
+            ],
+            "sourceMementos": [
+                {
+                    "kind": "source-memento",
+                    "file": "src/lib.rs",
+                    "sourceFunctionName": "enc_asserts",
+                    "span": {"start_line": 12, "end_line": 14},
+                    "paramNames": [],
+                    "source_cid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "template_cid": "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                }
+            ]
+        });
+        let report = source_report_from_lift_response(&response, None).expect("source report");
+        let human = render_source_report_human(&report);
+
+        assert!(
+            human.contains(
+                "facts observed:\n  - src/lib.rs::tests::enc_asserts :: call:enc(\"abc\") = \"def\" @ src/lib.rs:12-14 enc_asserts() source_cid=blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ),
+            "{human}"
+        );
+        assert!(!human.contains("body_text"), "{human}");
+        assert!(!human.contains("ast_template"), "{human}");
+    }
+
+    #[test]
+    fn assertion_fact_source_owner_comes_from_test_function_not_callee() {
+        let name = "method:is_match#euf#c:callresult_method_is_match_a2(c:method:unwrap(c:call:Regex::new(c:method:x(v:src/lib.rs::tests::regex_from_matcher_method_chain::m,s:\"blah\"))),s:\"blah\")::assertion";
+
+        assert_eq!(
+            owning_source_function_name(name).as_deref(),
+            Some("regex_from_matcher_method_chain")
+        );
+        assert!(contract_name_matches_source_function(
+            name,
+            "regex_from_matcher_method_chain"
+        ));
+        assert!(!contract_name_matches_source_function(name, "Regex::new"));
+    }
+
+    #[test]
+    fn report_contract_group_key_keeps_plain_rust_test_contracts_distinct() {
+        assert_eq!(
+            report_contract_group_key("src/lib.rs::tests::first_case"),
+            "src/lib.rs::tests::first_case"
+        );
+        assert_eq!(
+            report_contract_group_key("src/lib.rs::tests::second_case"),
+            "src/lib.rs::tests::second_case"
+        );
+        assert_eq!(
+            report_contract_group_key("method:x#euf#c:method:x(v:m)::assertion"),
+            "method:x#euf#c:method:x(v:m)"
+        );
+    }
+
+    #[test]
+    fn human_report_renders_vendor_conjoin_section() {
+        let report = LiftSourceReport {
+            ledger: serde_json::json!({
+                "source_loci": 1,
+                "source_warranted": 1,
+                "source_support": 0,
+                "source_refused": 0,
+                "source_inactive": 0,
+                "source_refuted": 0,
+                "unclassified_source": 0
+            }),
+            audits: vec![serde_json::json!({
+                "role": "rust-test-assertions",
+                "universe_kind": "test-assertion",
+                "loci": []
+            })],
+            source_mementos: vec![],
+            contracts: vec![],
+            vendor_conjoins: vec![VendorConjoinReport {
+                call: "call:enc(\"def\")".to_string(),
+                local_contract: "src/lib.rs::tests::fresh_vendor_fol_good::enc#euf#c:callresult_enc_a1(s:\"def\")::assertion".to_string(),
+                local_fact: "call:enc(\"def\") = \"ghi\"".to_string(),
+                bridge_source_symbol: "call:enc".to_string(),
+                vendor_contract: "rust-source::enc".to_string(),
+                vendor_contract_cid: "blake3-512:vendor".to_string(),
+                vendor_proof_cid: Some("blake3-512:proof".to_string()),
+                vendor_post: "input = \"def\" ⇒ out = \"ghi\"".to_string(),
+                instantiated_post: "\"def\" = \"def\" ⇒ call:enc(\"def\") = \"ghi\""
+                    .to_string(),
+                vendor_source: Some(VendorSourceResolution::Resolved(
+                    "src/lib.rs:1-9 enc(input) source_cid=blake3-512:source".to_string(),
+                )),
+            }],
+        };
+        let human = render_source_report_human(&report);
+
+        assert!(human.contains("vendor conjoins:"), "{human}");
+        assert!(
+            human.contains(
+                "call: call:enc(\"def\")\n    your contract: src/lib.rs::tests::fresh_vendor_fol_good::enc#euf#c:callresult_enc_a1(s:\"def\")::assertion"
+            ),
+            "{human}"
+        );
+        assert!(
+            human.contains("your fact: call:enc(\"def\") = \"ghi\""),
+            "{human}"
+        );
+        assert!(
+            human.contains(
+                "vendor contract: rust-source::enc cid=blake3-512:vendor proof=blake3-512:proof"
+            ),
+            "{human}"
+        );
+        assert!(
+            human.contains("conjoin here: call:enc(\"def\") = \"ghi\" ∧ (\"def\" = \"def\" ⇒ call:enc(\"def\") = \"ghi\")"),
+            "{human}"
+        );
+        assert!(
+            human.contains("vendor source: src/lib.rs:1-9 enc(input) source_cid=blake3-512:source"),
+            "{human}"
+        );
+    }
+
+    #[test]
+    fn source_report_reads_vendor_conjoins_from_kit_response() {
+        let response = lift_response_with_vendor_conjoin(serde_json::json!({
+            "status": "resolved",
+            "display": "src/lib.rs:1-9 enc(input) source_cid=blake3-512:source"
+        }));
+        let report = source_report_from_lift_response(&response, None).expect("source report");
+
+        assert_eq!(report.vendor_conjoins.len(), 1);
+        let human = render_source_report_human(&report);
+        assert!(human.contains("vendor conjoins:"), "{human}");
+        assert!(
+            human.contains("vendor source: src/lib.rs:1-9 enc(input) source_cid=blake3-512:source"),
+            "{human}"
+        );
+        assert!(!source_report_has_hard_failures(&report));
+    }
+
+    #[test]
+    fn absent_vendor_source_is_reported_but_not_hard_failure() {
+        let response = lift_response_with_vendor_conjoin(serde_json::json!({
+            "status": "absent",
+            "reason": "vendor source unavailable for proof blake3-512:proof"
+        }));
+        let report = source_report_from_lift_response(&response, None).expect("source report");
+        let human = render_source_report_human(&report);
+
+        assert!(
+            human.contains(
+                "vendor source: absent - vendor source unavailable for proof blake3-512:proof"
+            ),
+            "{human}"
+        );
+        assert!(!source_report_has_hard_failures(&report));
+    }
+
+    #[test]
+    fn drifted_vendor_source_is_hard_report_failure() {
+        let response = lift_response_with_vendor_conjoin(serde_json::json!({
+            "status": "drifted",
+            "reason": "source CID misaligned for `enc`"
+        }));
+        let report = source_report_from_lift_response(&response, None).expect("source report");
+        let human = render_source_report_human(&report);
+
+        assert!(
+            human.contains("vendor source: DRIFTED - source CID misaligned for `enc`"),
+            "{human}"
+        );
+        assert!(source_report_has_hard_failures(&report));
+    }
+
+    #[test]
+    fn unresolved_referenced_vendor_proof_cid_is_a_report_error() {
+        let mut response = lift_response_with_vendor_conjoin(serde_json::json!({
+            "status": "absent",
+            "reason": "vendor source unavailable"
+        }));
+        response["vendorConjoins"][0]["vendorProofResolution"] = serde_json::json!({
+            "status": "missing",
+            "cid": "blake3-512:proof"
+        });
+        let err = source_report_from_lift_response(&response, None)
+            .expect_err("referenced proof CID miss is a kit/protocol panic");
+
+        assert!(
+            err.contains("kit referenced proof CID `blake3-512:proof` but did not resolve it"),
+            "{err}"
+        );
+    }
+
+    fn lift_response_with_vendor_conjoin(vendor_source: Value) -> Value {
+        serde_json::json!({
+            "kind": "ir-document",
+            "ir": [],
+            "sourceLedger": {
+                "source_loci": 1,
+                "source_warranted": 1,
+                "source_support": 0,
+                "source_refused": 0,
+                "source_inactive": 0,
+                "source_refuted": 0,
+                "unclassified_source": 0
+            },
+            "sourceAudits": [
+                {
+                    "role": "rust-test-assertions",
+                    "universe_kind": "test-assertion",
+                    "loci": []
+                }
+            ],
+            "sourceMementos": [],
+            "vendorConjoins": [
+                {
+                    "call": "call:enc(\"def\")",
+                    "localContract": "src/lib.rs::tests::fresh_vendor_fol_good::enc#euf#c:callresult_enc_a1(s:\"def\")::assertion",
+                    "localFact": "call:enc(\"def\") = \"ghi\"",
+                    "bridgeSourceSymbol": "call:enc",
+                    "vendorContract": "rust-source::enc",
+                    "vendorContractCid": "blake3-512:vendor",
+                    "vendorProofCid": "blake3-512:proof",
+                    "vendorProofResolution": {"status": "resolved", "cid": "blake3-512:proof"},
+                    "vendorPost": "input = \"def\" ⇒ out = \"ghi\"",
+                    "instantiatedPost": "\"def\" = \"def\" ⇒ call:enc(\"def\") = \"ghi\"",
+                    "vendorSource": vendor_source
+                }
+            ]
+        })
     }
 }

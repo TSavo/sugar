@@ -48,6 +48,7 @@ mod lift_plugin;
 pub mod panic_annotations_runtime;
 mod project_config;
 mod report_fmt;
+mod report_witness;
 mod witness_verify;
 
 /// Exit codes used across subcommands.
@@ -193,6 +194,10 @@ pub struct ProveArgs {
     /// Consensus policy JSON used to evaluate a required empirical witness vector.
     #[arg(long = "consensus-policy", requires = "require_empirically_witnessed")]
     pub consensus_policy: Option<PathBuf>,
+    /// Emit configured prove witnesses. The built-in witness source is this
+    /// prove report; additional sources come from `[[witnesses]]` in config.
+    #[arg(long = "emit-witnesses")]
+    pub emit_witnesses: Option<PathBuf>,
     #[command(flatten)]
     pub out: OutputFlags,
     /// Additional project directories whose .proof files should also be loaded

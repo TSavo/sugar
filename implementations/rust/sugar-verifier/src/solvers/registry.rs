@@ -30,13 +30,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use serde_json::{json, Value as Json};
+use sugar_canonicalizer::jcs_cid_of_json;
 use sugar_ir_compiler_coq::DIALECT as COQ_DIALECT;
 use sugar_ir_compiler_lean::DIALECT as LEAN_DIALECT;
 use sugar_ir_compiler_maude::DIALECT as MAUDE_DIALECT;
 
 use crate::solvers::{
     CetaGateConfig, CoqSubprocessSolver, LeanSubprocessSolver, MaudeSubprocessSolver, SolverConfig,
-    SolverHandle, SolversConfig, StubSolver, SubprocessSolver,
+    SolverHandle, SolverIdentity, SolversConfig, StubSolver, SubprocessSolver,
 };
 
 pub fn build(cfg: &SolversConfig) -> HashMap<String, SolverHandle> {
@@ -94,13 +96,6 @@ fn default_solver_timeout() -> Option<Duration> {
 }
 
 fn build_one(name: &str, sc: &SolverConfig) -> SolverHandle {
-    if let Some(stub) = StubSolver::from_binary(name, &sc.binary) {
-        return Arc::new(stub) as SolverHandle;
-    }
-    let timeout = sc
-        .timeout_seconds
-        .map(Duration::from_secs)
-        .or_else(default_solver_timeout);
     let bin = if sc.binary.is_empty() && is_lean_compiler(&sc.ir_compiler) {
         "lake".to_string()
     } else if sc.binary.is_empty() {
@@ -108,47 +103,124 @@ fn build_one(name: &str, sc: &SolverConfig) -> SolverHandle {
     } else {
         sc.binary.clone()
     };
+    let identity = solver_identity(name, sc, &bin);
+    if let Some(stub) = StubSolver::from_binary(name, &sc.binary) {
+        return Arc::new(stub.with_identity(identity)) as SolverHandle;
+    }
+    let timeout = sc
+        .timeout_seconds
+        .map(Duration::from_secs)
+        .or_else(default_solver_timeout);
     if is_coq_compiler(&sc.ir_compiler) {
-        return Arc::new(CoqSubprocessSolver::new(
-            name,
-            bin,
-            sc.version.clone(),
-            timeout,
-        )) as SolverHandle;
+        return Arc::new(
+            CoqSubprocessSolver::new(name, bin, sc.version.clone(), timeout)
+                .with_identity(identity),
+        ) as SolverHandle;
     }
     if is_maude_compiler(&sc.ir_compiler) {
-        return Arc::new(MaudeSubprocessSolver::new(
-            name,
-            bin,
-            sc.version.clone(),
-            timeout,
-            CetaGateConfig {
-                enabled: sc.ceta_gate,
-                ceta_binary: sc.ceta_binary.clone(),
-                termination_prover: sc.termination_prover.clone(),
-                confluence_checker: sc.confluence_checker.clone(),
+        return Arc::new(
+            MaudeSubprocessSolver::new(
+                name,
+                bin,
+                sc.version.clone(),
                 timeout,
-            },
-        )) as SolverHandle;
+                CetaGateConfig {
+                    enabled: sc.ceta_gate,
+                    ceta_binary: sc.ceta_binary.clone(),
+                    termination_prover: sc.termination_prover.clone(),
+                    confluence_checker: sc.confluence_checker.clone(),
+                    timeout,
+                },
+            )
+            .with_identity(identity),
+        ) as SolverHandle;
     }
     if is_lean_compiler(&sc.ir_compiler) {
-        return Arc::new(LeanSubprocessSolver::new(
+        return Arc::new(
+            LeanSubprocessSolver::new(
+                name,
+                bin,
+                sc.version.clone(),
+                timeout,
+                sc.lake_project.clone(),
+                sc.lean_toolchain.clone(),
+            )
+            .with_identity(identity),
+        ) as SolverHandle;
+    }
+    Arc::new(
+        SubprocessSolver::new(
             name,
             bin,
             sc.version.clone(),
+            sc.ir_compiler.clone(),
+            sc.flags.clone(),
             timeout,
-            sc.lake_project.clone(),
-            sc.lean_toolchain.clone(),
-        )) as SolverHandle;
+        )
+        .with_identity(identity),
+    ) as SolverHandle
+}
+
+fn solver_identity(name: &str, sc: &SolverConfig, resolved_binary: &str) -> SolverIdentity {
+    let invocation = solver_invocation_memento(name, sc, resolved_binary);
+    let invocation_cid = jcs_cid_of_json(&invocation);
+    let (vendor_memento_cid, vendor_memento) = match (&sc.binary_cid, &sc.vendor_pin) {
+        (Some(artifact_cid), Some(vendor_pin)) => {
+            let vendor_scheme = vendor_pin_scheme(vendor_pin);
+            let memento = json!({
+                "kind": "vendor-address-memento",
+                "schemaVersion": "1",
+                "subjectCid": artifact_cid,
+                "vendorAddress": {
+                    "kind": vendor_scheme,
+                    "pin": vendor_pin
+                },
+                "producer": {
+                    "kind": "solver",
+                    "label": name
+                }
+            });
+            (Some(jcs_cid_of_json(&memento)), Some(memento))
+        }
+        _ => (None, None),
+    };
+    SolverIdentity {
+        artifact_cid: sc.binary_cid.clone(),
+        invocation_cid: Some(invocation_cid),
+        vendor_memento_cid,
+        vendor_memento,
     }
-    Arc::new(SubprocessSolver::new(
-        name,
-        bin,
-        sc.version.clone(),
-        sc.ir_compiler.clone(),
-        sc.flags.clone(),
-        timeout,
-    )) as SolverHandle
+}
+
+fn solver_invocation_memento(name: &str, sc: &SolverConfig, resolved_binary: &str) -> Json {
+    json!({
+        "kind": "solver-invocation-memento",
+        "schemaVersion": "1",
+        "solver": {
+            "label": name,
+            "artifactCid": sc.binary_cid,
+            "version": sc.version,
+            "binary": resolved_binary,
+            "flags": sc.flags,
+            "timeoutSeconds": sc.timeout_seconds,
+            "irCompiler": sc.ir_compiler
+        },
+        "adapters": {
+            "cetaGate": sc.ceta_gate,
+            "cetaBinary": sc.ceta_binary,
+            "terminationProver": sc.termination_prover,
+            "confluenceChecker": sc.confluence_checker,
+            "lakeProject": sc.lake_project,
+            "leanToolchain": sc.lean_toolchain
+        }
+    })
+}
+
+fn vendor_pin_scheme(value: &str) -> &str {
+    value
+        .split_once(':')
+        .map(|(scheme, _)| scheme)
+        .unwrap_or("invalid-unprefixed")
 }
 
 /// Convenience: build a registry with a single Z3 SubprocessSolver
@@ -162,16 +234,27 @@ fn build_one(name: &str, sc: &SolverConfig) -> SolverHandle {
 /// obligation that would arise from a Sugar proof graph.
 pub fn build_default_z3(z3_path: &str) -> HashMap<String, SolverHandle> {
     let mut out: HashMap<String, SolverHandle> = HashMap::new();
+    let sc = SolverConfig {
+        binary: z3_path.to_string(),
+        ir_compiler: "smt-lib-v2.6".into(),
+        flags: vec!["-smt2".into(), "-in".into()],
+        version: "4.x".into(),
+        ..Default::default()
+    };
+    let identity = solver_identity("z3", &sc, z3_path);
     out.insert(
         "z3".into(),
-        Arc::new(SubprocessSolver::new(
-            "z3",
-            z3_path,
-            "4.x",
-            "smt-lib-v2.6",
-            vec!["-smt2".into(), "-in".into()],
-            Some(Duration::from_secs(30)),
-        )) as SolverHandle,
+        Arc::new(
+            SubprocessSolver::new(
+                "z3",
+                z3_path,
+                "4.x",
+                "smt-lib-v2.6",
+                vec!["-smt2".into(), "-in".into()],
+                Some(Duration::from_secs(30)),
+            )
+            .with_identity(identity),
+        ) as SolverHandle,
     );
     out
 }
@@ -201,6 +284,82 @@ binary = "stub:unsat"
         let r = build_default_z3("/usr/bin/z3");
         assert!(r.contains_key("z3"));
         assert_eq!(r.get("z3").unwrap().name(), "z3");
+        assert!(r
+            .get("z3")
+            .unwrap()
+            .identity()
+            .invocation_cid
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("blake3-512:"));
+    }
+
+    #[test]
+    fn vendor_pin_is_carried_by_cid_addressed_memento() {
+        let toml = r#"
+[solvers]
+default = "z3"
+
+[solvers.z3]
+binary = "z3"
+binary_cid = "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+vendor_pin = "sha512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+"#;
+        let c = SolversConfig::from_toml(toml).unwrap();
+        let r = build(&c);
+        let identity = r.get("z3").unwrap().identity();
+        assert_eq!(
+            identity.artifact_cid.as_deref(),
+            Some("blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
+        assert!(identity
+            .invocation_cid
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("blake3-512:"));
+        assert!(identity
+            .vendor_memento_cid
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("blake3-512:"));
+        let memento = identity.vendor_memento.expect("vendor memento");
+        assert_eq!(memento["subjectCid"], identity.artifact_cid.unwrap());
+        assert_eq!(
+            memento["vendorAddress"],
+            json!({
+                "kind": "sha512",
+                "pin": "sha512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            })
+        );
+    }
+
+    #[test]
+    fn vendor_pin_scheme_is_opaque_vendor_namespace() {
+        let toml = r#"
+[solvers]
+default = "coq"
+
+[solvers.coq]
+binary = "coqc"
+ir_compiler = "coq"
+binary_cid = "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+vendor_pin = "simon_says:true"
+"#;
+        let c = SolversConfig::from_toml(toml).unwrap();
+        let r = build(&c);
+        let memento = r
+            .get("coq")
+            .unwrap()
+            .identity()
+            .vendor_memento
+            .expect("vendor memento");
+        assert_eq!(
+            memento["vendorAddress"],
+            json!({
+                "kind": "simon_says",
+                "pin": "simon_says:true"
+            })
+        );
     }
 
     #[test]

@@ -3,6 +3,8 @@
 // Stage 7: report. Aggregate per-callsite verdicts plus load-error
 // rows. Mirrors .../verifier/report.cpp.
 
+use serde_json::Value as Json;
+
 use crate::types::{CallSite, LoadError, ObligationVerdict, Report, ReportRow};
 
 pub fn add_callsite(cs: &CallSite, verdict: ObligationVerdict, reason: &str, r: &mut Report) {
@@ -34,6 +36,7 @@ pub fn add_callsite_with_discharge(
         reason: reason.to_string(),
         discharge_method,
         body_discharge_tier,
+        verification: None,
     });
     if verdict == ObligationVerdict::Discharged {
         r.discharged += 1;
@@ -84,6 +87,7 @@ pub fn add_self_post_with_method(
         reason: reason.to_string(),
         discharge_method,
         body_discharge_tier: None,
+        verification: None,
     });
     if verdict == ObligationVerdict::Discharged {
         r.discharged += 1;
@@ -113,6 +117,17 @@ pub fn add_consistency(
     reason: &str,
     r: &mut Report,
 ) {
+    add_consistency_with_verification(contract_cid, property_name, verdict, reason, None, r);
+}
+
+pub fn add_consistency_with_verification(
+    contract_cid: &str,
+    property_name: &str,
+    verdict: ObligationVerdict,
+    reason: &str,
+    verification: Option<Json>,
+    r: &mut Report,
+) {
     let cs = CallSite {
         property_name: format!("consistency:{property_name}"),
         property_cid: contract_cid.to_string(),
@@ -124,6 +139,7 @@ pub fn add_consistency(
         reason: reason.to_string(),
         discharge_method: Some("consistency".to_string()),
         body_discharge_tier: None,
+        verification,
     });
     if verdict == ObligationVerdict::Discharged {
         r.discharged += 1;

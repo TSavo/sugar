@@ -72,6 +72,19 @@ pub struct SolverConfig {
     /// implication-memento `body.prover` strings. Defaults to `0`.
     #[serde(default = "default_version")]
     pub version: String,
+    /// Optional Sugar CID for the solver artifact. This is the verifier's
+    /// address for the thing being invoked; external package-manager hashes
+    /// are carried in vendor-address mementos, not used as Sugar addresses.
+    #[serde(default, alias = "binaryCid")]
+    pub binary_cid: Option<String>,
+    /// Optional vendor-published address for the solver artifact. The value is
+    /// explicitly scheme-prefixed (`sha256:<hex>`, `sha512:<hex>`, `file:<path>`,
+    /// `http:<url>`, `simon_says:true`, npm integrity, etc.). The scheme is a
+    /// vendor namespace, not a whitelist. When paired with `binary_cid`, the
+    /// registry emits a CID-addressed vendor-address memento mapping our
+    /// artifact CID to the vendor pin. The verifier never guesses a scheme.
+    #[serde(default, alias = "vendorPin")]
+    pub vendor_pin: Option<String>,
     /// Optional path to a Lake project that has Mathlib pinned and
     /// cached. Used by the Lean adapter as its working directory.
     #[serde(default)]
@@ -164,6 +177,9 @@ impl SolversConfig {
             solvers: Option<SolversConfig>,
         }
         let outer: Outer = toml::from_str(&body).map_err(|e| format!("parse toml: {e}"))?;
+        if let Some(cfg) = &outer.solvers {
+            validate_vendor_pins(cfg)?;
+        }
         Ok(outer.solvers)
     }
 
@@ -174,8 +190,30 @@ impl SolversConfig {
             solvers: Option<SolversConfig>,
         }
         let outer: Outer = toml::from_str(body).map_err(|e| format!("parse toml: {e}"))?;
-        Ok(outer.solvers.unwrap_or_default())
+        let cfg = outer.solvers.unwrap_or_default();
+        validate_vendor_pins(&cfg)?;
+        Ok(cfg)
     }
+}
+
+fn validate_vendor_pins(cfg: &SolversConfig) -> Result<(), String> {
+    for (name, solver) in &cfg.solvers {
+        let Some(pin) = solver.vendor_pin.as_deref() else {
+            continue;
+        };
+        if !has_vendor_pin_scheme(pin) {
+            return Err(format!(
+                "solver `{name}` vendor_pin must be explicitly scheme-prefixed, e.g. `sha256:<hex>`, `file:<path>`, `http:<url>`, or `simon_says:true`"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn has_vendor_pin_scheme(pin: &str) -> bool {
+    pin.split_once(':')
+        .map(|(scheme, rest)| !scheme.is_empty() && !rest.is_empty())
+        .unwrap_or(false)
 }
 
 /// Compiled execution plan derived from `SolversConfig`. The runner
@@ -239,6 +277,46 @@ binary = "z3"
             SolverPlan::Single(n) => assert_eq!(n, "z3"),
             _ => panic!("expected Single"),
         }
+    }
+
+    #[test]
+    fn parse_solver_artifact_cid_and_vendor_pin() {
+        let s = r#"
+[solvers]
+default = "z3"
+
+[solvers.z3]
+binary = "z3"
+binary_cid = "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+vendor_pin = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+"#;
+        let c = SolversConfig::from_toml(s).unwrap();
+        let z3 = c.solvers.get("z3").unwrap();
+        assert_eq!(
+            z3.binary_cid.as_deref(),
+            Some("blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
+        assert_eq!(
+            z3.vendor_pin.as_deref(),
+            Some("sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        );
+    }
+
+    #[test]
+    fn rejects_unprefixed_vendor_pin() {
+        let s = r#"
+[solvers]
+default = "z3"
+
+[solvers.z3]
+binary = "z3"
+vendor_pin = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+"#;
+        let err = SolversConfig::from_toml(s).expect_err("unprefixed vendor pin rejected");
+        assert!(
+            err.contains("vendor_pin must be explicitly scheme-prefixed"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

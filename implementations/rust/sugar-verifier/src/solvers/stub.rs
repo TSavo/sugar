@@ -10,7 +10,7 @@
 
 use std::time::{Duration, Instant};
 
-use crate::solvers::{SolveResult, Solver};
+use crate::solvers::{SolveResult, Solver, SolverIdentity};
 use crate::types::ObligationVerdict;
 
 #[derive(Debug, Clone)]
@@ -21,6 +21,7 @@ pub struct StubSolver {
     verdict: ObligationVerdict,
     delay: Duration,
     timed_out: bool,
+    identity: SolverIdentity,
 }
 
 impl StubSolver {
@@ -32,6 +33,7 @@ impl StubSolver {
             verdict,
             delay: Duration::from_millis(0),
             timed_out: false,
+            identity: SolverIdentity::default(),
         }
     }
     pub fn with_version(mut self, v: impl Into<String>) -> Self {
@@ -44,6 +46,10 @@ impl StubSolver {
     }
     pub fn with_timed_out(mut self, t: bool) -> Self {
         self.timed_out = t;
+        self
+    }
+    pub fn with_identity(mut self, identity: SolverIdentity) -> Self {
+        self.identity = identity;
         self
     }
 
@@ -73,6 +79,7 @@ impl StubSolver {
             verdict,
             delay: Duration::from_millis(0),
             timed_out,
+            identity: SolverIdentity::default(),
         })
     }
 }
@@ -86,6 +93,9 @@ impl Solver for StubSolver {
     }
     fn ir_compiler(&self) -> &str {
         &self.ir_compiler
+    }
+    fn identity(&self) -> SolverIdentity {
+        self.identity.clone()
     }
     fn solve(&self, _smt: &str) -> SolveResult {
         let started = Instant::now();

@@ -1572,6 +1572,7 @@ dependencies = [
  "sugar-canonicalizer",
  "sugar-ir-compiler-smt-lib",
  "sugar-ir-symbolic",
+ "sugar-verifier",
  "sugar-walk",
  "syn",
  "toml",

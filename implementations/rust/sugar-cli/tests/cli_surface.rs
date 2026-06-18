@@ -580,7 +580,7 @@ done
 }
 
 #[test]
-fn mint_conjoins_producer_contracts_and_consumer_bridges_in_one_proof() {
+fn mint_conjoins_producer_contracts_consumer_bridges_and_implications_in_one_proof() {
     let dir = tempfile::tempdir().expect("create tempdir");
     let project = dir.path().join("project");
     let producer_manifest = project.join(".sugar/lift/producer");
@@ -611,7 +611,7 @@ while IFS= read -r line; do
   if [[ "$line" == *'"method":"initialize"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"name":"producer","protocol_version":"pep/1.7.0","capabilities":{}}}'
   elif [[ "$line" == *'"method":"lift"'* ]]; then
-    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[{"kind":"contract","name":"callee@src/lib.rs:1:1","outBinding":"out","post":{"kind":"atomic","name":"producer_post","args":[]}}],"diagnostics":[]}}'
+    printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[{"kind":"contract","name":"callee@src/lib.rs:1:1","outBinding":"out","pre":{"kind":"atomic","name":"producer_pre","args":[]},"post":{"kind":"atomic","name":"producer_post","args":[]}}],"diagnostics":[]}}'
   elif [[ "$line" == *'"method":"shutdown"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":null}'
     exit 0
@@ -642,7 +642,7 @@ while IFS= read -r line; do
       printf 'consumer received invalid contract cid: %s\n' "$line" >&2
       exit 46
     fi
-    printf '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[{"kind":"bridge","name":"intra-body:rust:callee@src/lib.rs:2:4","schemaVersion":"1","sourceContractCid":"%s","sourceLayer":"rust","sourceSymbol":"callee","target":{"cid":"%s","kind":"contract"},"targetContractCid":"%s","targetLayer":"rust-tests"}],"diagnostics":[]}}\n' "$cid" "$cid" "$cid"
+    printf '{"jsonrpc":"2.0","id":2,"result":{"kind":"ir-document","ir":[{"kind":"bridge","name":"intra-body:rust:callee@src/lib.rs:2:4","schemaVersion":"1","sourceContractCid":"%s","sourceLayer":"rust","sourceSymbol":"callee","target":{"cid":"%s","kind":"contract"},"targetContractCid":"%s","targetLayer":"rust-tests"}],"diagnostics":[],"implications":[{"name":"manifest-post-implies-pre","antecedent":"callee@src/lib.rs:1:1","antecedentSlot":"post","consequent":"callee@src/lib.rs:1:1","consequentSlot":"pre","prover":"stub-consumer"}]}}\n' "$cid" "$cid" "$cid"
   elif [[ "$line" == *'"method":"shutdown"'* ]]; then
     printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":null}'
     exit 0
@@ -724,6 +724,15 @@ done
     assert_eq!(
         sugar_verifier::types::memento_kind(target).as_deref(),
         Some("contract")
+    );
+    let implication_count = pool
+        .mementos
+        .values()
+        .filter(|env| sugar_verifier::types::memento_kind(env).as_deref() == Some("implication"))
+        .count();
+    assert_eq!(
+        implication_count, 1,
+        "consumer top-level implications should mint through manifest RPC"
     );
 }
 

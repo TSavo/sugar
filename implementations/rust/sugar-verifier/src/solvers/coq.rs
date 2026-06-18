@@ -20,7 +20,7 @@ use serde_json::Value as Json;
 use sugar_ir_compiler::IrCompiler;
 use sugar_ir_compiler_coq::{CoqCompiler, DIALECT};
 
-use crate::solvers::{SolveResult, Solver};
+use crate::solvers::{SolveResult, Solver, SolverIdentity};
 use crate::types::ObligationVerdict;
 
 #[derive(Debug)]
@@ -29,6 +29,7 @@ pub struct CoqSubprocessSolver {
     version: String,
     binary: String,
     timeout: Option<Duration>,
+    identity: SolverIdentity,
 }
 
 impl CoqSubprocessSolver {
@@ -43,7 +44,13 @@ impl CoqSubprocessSolver {
             version: version.into(),
             binary: binary.into(),
             timeout,
+            identity: SolverIdentity::default(),
         }
+    }
+
+    pub fn with_identity(mut self, identity: SolverIdentity) -> Self {
+        self.identity = identity;
+        self
     }
 }
 
@@ -56,6 +63,10 @@ impl Solver for CoqSubprocessSolver {
     }
     fn ir_compiler(&self) -> &str {
         DIALECT
+    }
+
+    fn identity(&self) -> SolverIdentity {
+        self.identity.clone()
     }
 
     fn solve(&self, smt: &str) -> SolveResult {

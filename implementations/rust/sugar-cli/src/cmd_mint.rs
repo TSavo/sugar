@@ -991,7 +991,15 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
     // them into one and lose the very disambiguation this exists for.
     let mut by_key: std::collections::BTreeMap<
         (Option<String>, String),
-        (String, bool, bool, Option<String>, bool, Option<String>),
+        (
+            String,
+            bool,
+            bool,
+            bool,
+            Option<String>,
+            bool,
+            Option<String>,
+        ),
     > = std::collections::BTreeMap::new();
     for (cid, env) in &pool.mementos {
         if memento_kind(env) != Some("contract") {
@@ -1030,8 +1038,8 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
         let has_pre = memento_body(env)
             .and_then(|body| body.get("pre"))
             .is_some_and(has_nontrivial_pre_json);
-        let body_bearing =
-            (has_pre || memento_body_field(env, "postHash").is_some()) && body_discharge_eligible;
+        let has_post = memento_body_field(env, "postHash").is_some();
+        let body_bearing = (has_pre || has_post) && body_discharge_eligible;
         let bundle = member_to_bundle.get(cid.as_str()).map(|b| b.to_string());
         let key = (library, name);
         // SELECTION PREFERENCE (most to least preferred):
@@ -1059,7 +1067,7 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
         let new_rank = rank(has_pre, body_bearing, body_discharge_eligible);
         let take = match by_key.get(&key) {
             None => true,
-            Some((_, incumbent_bb, incumbent_has_pre, _, incumbent_eligible, _)) => {
+            Some((_, incumbent_bb, incumbent_has_pre, _, _, incumbent_eligible, _)) => {
                 new_rank > rank(*incumbent_has_pre, *incumbent_bb, *incumbent_eligible)
             }
         };
@@ -1070,6 +1078,7 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
                     cid.clone(),
                     body_bearing,
                     has_pre,
+                    has_post,
                     bundle,
                     body_discharge_eligible,
                     body_discharge_refusal_reason,
@@ -1086,6 +1095,7 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
                     cid,
                     body_bearing,
                     has_pre,
+                    has_post,
                     bundle,
                     body_discharge_eligible,
                     body_discharge_refusal_reason,
@@ -1096,6 +1106,7 @@ fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Value> {
                     "contract_cid": cid,
                     "body_bearing": body_bearing,
                     "has_pre": has_pre,
+                    "has_post": has_post,
                     "bodyDischargeEligible": body_discharge_eligible,
                     "bodyDischargeRefusalReason": body_discharge_refusal_reason,
                     // The dependency bundle CID: the bridge pins this so the
@@ -2487,13 +2498,14 @@ fn mint_ir_document_with_source_mementos(
             // to prove).
             let name = &contract.contract_name;
             let has_pre = contract.has_nontrivial_pre;
-            let body_bearing =
-                (has_pre || contract.post_hash.is_some()) && contract.body_discharge_eligible;
+            let has_post = contract.post_hash.is_some();
+            let body_bearing = (has_pre || has_post) && contract.body_discharge_eligible;
             let mut binding = json!({
                 "name": name,
                 "contract_cid": contract.attestation_cid.clone(),
                 "body_bearing": body_bearing,
                 "has_pre": has_pre,
+                "has_post": has_post,
                 "bodyDischargeEligible": contract.body_discharge_eligible,
                 "bodyDischargeRefusalReason": contract.body_discharge_refusal_reason.clone(),
                 "bridgeSourceSymbol": contract.bridge_source_symbol.clone(),

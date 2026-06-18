@@ -12,7 +12,7 @@ use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
 use sugar_ir_compiler_maude::{compile_artifact, MaudeQueries, DIALECT};
 
 use crate::solvers::ceta::{run_command_capture, CetaGate, CetaGateConfig, CetaGateReceipt};
-use crate::solvers::{SolveResult, Solver};
+use crate::solvers::{SolveResult, Solver, SolverIdentity};
 use crate::types::ObligationVerdict;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -59,6 +59,7 @@ pub struct MaudeSubprocessSolver {
     binary: String,
     timeout: Option<Duration>,
     ceta_config: CetaGateConfig,
+    identity: SolverIdentity,
 }
 
 impl MaudeSubprocessSolver {
@@ -75,7 +76,13 @@ impl MaudeSubprocessSolver {
             binary: binary.into(),
             timeout,
             ceta_config,
+            identity: SolverIdentity::default(),
         }
+    }
+
+    pub fn with_identity(mut self, identity: SolverIdentity) -> Self {
+        self.identity = identity;
+        self
     }
 }
 
@@ -90,6 +97,10 @@ impl Solver for MaudeSubprocessSolver {
 
     fn ir_compiler(&self) -> &str {
         DIALECT
+    }
+
+    fn identity(&self) -> SolverIdentity {
+        self.identity.clone()
     }
 
     fn solve(&self, input: &str) -> SolveResult {
