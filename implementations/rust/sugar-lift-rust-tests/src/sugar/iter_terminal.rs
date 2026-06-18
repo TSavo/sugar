@@ -62,7 +62,7 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{num, ConstValue, Sort, Term};
 use syn::Expr;
 
-use crate::sugar::factory::{build_composite, FactoryCtx};
+use crate::sugar::factory::{build_composite, SugarBuildCtx};
 use crate::sugar::method;
 use crate::sugar::method_family;
 use crate::sugar::monadic;
@@ -130,12 +130,12 @@ enum Terminal {
 /// not cleanly ground (a non-const element under `.sum()`/`.product()`, an empty/oversize
 /// domain) -- so the node can only ever ground-with-teeth or reproduce the baseline opaque
 /// term, never turn a baseline lift into a refusal.
-pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::MethodCall(call) = expr else {
         return None;
     };
     let terminal = recognize_terminal(call)?;
-    if !method_family::resolves_literal_sequence(&call.receiver, fcx.let_inits) {
+    if !method_family::resolves_literal_sequence(&call.receiver, fcx.let_inits()) {
         return None;
     }
     // The opaque `method:` fallback -- the EXACT node `method::recognize`

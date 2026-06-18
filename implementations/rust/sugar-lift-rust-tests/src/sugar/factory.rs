@@ -11,7 +11,7 @@
 //! ## The recognizer-fn pattern
 //!
 //! Every construct is a SELF-CONTAINED node living in its own `src/sugar/*.rs` module,
-//! owning BOTH a recognizer `fn recognize(expr: &Expr, fcx: &FactoryCtx) ->
+//! owning BOTH a recognizer `fn recognize(expr: &Expr, fcx: &SugarBuildCtx) ->
 //! Option<Box<dyn Sugar>>` (returns `Some(boxed self)` if this Sugar handles the site --
 //! building any children via `build_term`/`build_composite` -- else `None`) AND its
 //! `desugar`. The former free `decompose_*` functions are reused INSIDE these
@@ -62,13 +62,39 @@ use crate::{LiftOptions, Sugar, TemporalScope};
 /// initializers (`name -> &init_expr`) that binding-resolving recognizers (`fold`,
 /// `for_each`, `closure_adaptor`) capture. This is the BUILD-time env; the dual
 /// [`SugarCtx`] is the DESUGAR-time env.
-pub(crate) struct FactoryCtx<'a, 'e> {
-    pub(crate) scope: &'a TemporalScope,
-    pub(crate) options: &'a LiftOptions,
-    pub(crate) let_inits: &'a BTreeMap<String, &'e Expr>,
+pub(crate) struct SugarBuildCtx<'a, 'e> {
+    scope: &'a TemporalScope,
+    options: &'a LiftOptions,
+    let_inits: &'a BTreeMap<String, &'e Expr>,
 }
 
-pub(crate) fn build_expr(expr: &Expr, fcx: &FactoryCtx, role: SugarRole) -> Box<dyn Sugar> {
+impl<'a, 'e> SugarBuildCtx<'a, 'e> {
+    pub(crate) fn new(
+        scope: &'a TemporalScope,
+        options: &'a LiftOptions,
+        let_inits: &'a BTreeMap<String, &'e Expr>,
+    ) -> Self {
+        Self {
+            scope,
+            options,
+            let_inits,
+        }
+    }
+
+    pub(crate) fn scope(&self) -> &TemporalScope {
+        self.scope
+    }
+
+    pub(crate) fn options(&self) -> &LiftOptions {
+        self.options
+    }
+
+    pub(crate) fn let_inits(&self) -> &BTreeMap<String, &'e Expr> {
+        self.let_inits
+    }
+}
+
+pub(crate) fn build_expr(expr: &Expr, fcx: &SugarBuildCtx, role: SugarRole) -> Box<dyn Sugar> {
     catalog::build_expr_role(expr, fcx, role)
 }
 
@@ -76,13 +102,13 @@ pub(crate) fn build_expr(expr: &Expr, fcx: &FactoryCtx, role: SugarRole) -> Box<
 /// candidate whose old source-position role is `Term`, else the structural backstop.
 /// TOTAL — every shape news a node (a reasoned leaf for the no-value shapes).
 /// RECURSIVE — composite term recognizers build their operands with `build_term`.
-pub(crate) fn build_term(expr: &Expr, fcx: &FactoryCtx) -> Box<dyn Sugar> {
+pub(crate) fn build_term(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
     build_expr(expr, fcx, SugarRole::Term)
 }
 
 /// Compatibility COMPOSITE wrapper: ask the unified candidate catalog, then return the
 /// first candidate whose old source-position role is `Composite`, else the structural
 /// backstop. Total: an unowned shape becomes the [`UnsupportedSugar`] backstop.
-pub(crate) fn build_composite(expr: &Expr, fcx: &FactoryCtx) -> Box<dyn Sugar> {
+pub(crate) fn build_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
     build_expr(expr, fcx, SugarRole::Composite)
 }

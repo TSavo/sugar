@@ -15,7 +15,7 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{and_, num, Term};
 use syn::{Expr, Pat, Stmt};
 
-use crate::sugar::factory::FactoryCtx;
+use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::literal::LiteralSugar;
 use crate::sugar::method_family;
 use crate::{
@@ -33,10 +33,10 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// [`decompose_fold`]): `Some` only for a recognized `fold` shape, else `None` (the
 /// walk falls through to the next method-call recognizer). Mirrors the FIRST arm of the
 /// old `build_method_call_composite` chain — BEFORE `for_each`.
-pub(crate) fn recognize_composite(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {
         Expr::MethodCall(_) => {
-            decompose_fold(expr, fcx.let_inits).map(|node| Box::new(node) as Box<dyn Sugar>)
+            decompose_fold(expr, fcx.let_inits()).map(|node| Box::new(node) as Box<dyn Sugar>)
         }
         _ => None,
     }

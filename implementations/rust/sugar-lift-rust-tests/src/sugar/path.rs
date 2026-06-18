@@ -55,7 +55,7 @@ use std::rc::Rc;
 use sugar_ir_symbolic::Term;
 use syn::{Expr, ExprPath};
 
-use crate::sugar::factory::FactoryCtx;
+use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::term_leaf::resolved_term;
 use crate::{make_var, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
@@ -65,7 +65,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// TERM recognizer for `Expr::Path`. Mirrors the two source-of-truth arms in order:
 /// the `is_ident("None")` unit-ctor guard (a `call:None` ctor) FIRST, then the general
 /// `make_var(scope.path_name(..))` name read ([`PathSugar`]).
-pub(crate) fn recognize(expr: &Expr, _fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {
         Expr::Path(path) if path.path.is_ident("None") => {
             Some(resolved_term(Rc::new(Term::Ctor {

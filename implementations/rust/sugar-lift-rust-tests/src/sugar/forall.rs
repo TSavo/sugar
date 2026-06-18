@@ -15,13 +15,13 @@ use sugar_ir_symbolic::{and_, forall, implies, lt, lte, num, Formula, Sort, Term
 use syn::{Expr, Pat, Stmt};
 
 use crate::sugar::backstop::boxed;
-use crate::sugar::factory::FactoryCtx;
+use crate::sugar::factory::{build_composite, SugarBuildCtx};
+use crate::sugar::method_family;
 use crate::{
     bounded_domain_from_expr, capture_literal_arrays, collect_assertion_entries,
-    count_asserts_in_stmts, iter_adaptor_base, loop_body_mutates, resolve_index_in_formula,
-    subst_var_in_formula, term_as_int, translate_term_in_scope, BoundedDomain, Desugared,
-    FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant,
-    SUGAR_SEQ_CAP,
+    count_asserts_in_stmts, loop_body_mutates, resolve_index_in_formula, subst_var_in_formula,
+    term_as_int, translate_term_in_scope, BoundedDomain, Desugared, FloatWidthScope, LiftOptions,
+    Outcome, ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant, SUGAR_SEQ_CAP,
 };
 
 pub(crate) const FOR_LOOP_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -32,11 +32,11 @@ pub(crate) const FOR_EACH_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 
 /// COMPOSITE recognizer for `Expr::ForLoop`: the universal-quantifier composite
 /// ([`ForAllSugar`] via [`decompose_for_loop`]). Byte-identical to the
-/// `Expr::ForLoop(f) => boxed(decompose_for_loop(f, fcx.scope, fcx.let_inits))` arm of
+/// `Expr::ForLoop(f) => boxed(decompose_for_loop(f, fcx.scope(), fcx.let_inits()))` arm of
 /// the old fat `build_composite`.
-pub(crate) fn recognize_for_loop(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_for_loop(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {
-        Expr::ForLoop(f) => Some(boxed(decompose_for_loop(f, fcx.scope, fcx.let_inits))),
+        Expr::ForLoop(f) => Some(boxed(decompose_for_loop(f, fcx.scope(), fcx.let_inits()))),
         _ => None,
     }
 }
@@ -46,9 +46,9 @@ pub(crate) fn recognize_for_loop(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dy
 /// shape, else `None` (the walk falls through to the next method-call recognizer).
 /// Mirrors the second arm of the old `build_method_call_composite` chain — AFTER
 /// `fold`, BEFORE `closure_adaptor`.
-pub(crate) fn recognize_for_each(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_for_each(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {
-        Expr::MethodCall(_) => decompose_for_each(expr, fcx.scope, fcx.let_inits)
+        Expr::MethodCall(_) => decompose_for_each(expr, fcx.let_inits(), fcx)
             .map(|node| Box::new(node) as Box<dyn Sugar>),
         _ => None,
     }
@@ -233,7 +233,7 @@ fn lift_bounded_forall(
 /// body / count mismatch). `kind` only flavors the warrant name (`for_each`/`loop`).
 pub(crate) struct ForAllSugar {
     var: String,
-    domain: BoundedDomain,
+    domain: ForAllDomain,
     body_stmts: Vec<Stmt>,
     /// The warrant-name flavor: `"for_each"` (adaptor) or `"loop"` (for-loop).
     kind: &'static str,
@@ -249,6 +249,11 @@ pub(crate) struct ForAllSugar {
     /// (sound under-claim, the established floor). Empty for a `for x in <range>`
     /// whose body indexes nothing -- then this is inert.
     literal_arrays: BTreeMap<String, Vec<Expr>>,
+}
+
+enum ForAllDomain {
+    Bounded(BoundedDomain),
+    Sequence(Box<dyn Sugar>),
 }
 
 impl Sugar for ForAllSugar {
@@ -292,9 +297,23 @@ impl Sugar for ForAllSugar {
             // conjunction), lifts the body all-or-nothing through the normal collector,
             // and gates purity. We re-discriminate the domain here (it is consumed by
             // value) by re-reading; pass the already-resolved `BoundedDomain`.
+            let domain = match &self.domain {
+                ForAllDomain::Bounded(domain) => domain.clone(),
+                ForAllDomain::Sequence(receiver) => {
+                    let seq = receiver.desugar(ctx).dug()?.into_seq()?;
+                    if seq.is_empty() || seq.len() as i64 > SUGAR_SEQ_CAP {
+                        return None;
+                    }
+                    let mut elems = Vec::with_capacity(seq.len());
+                    for elem in seq {
+                        elems.push(translate_term_in_scope(&elem.expr, ctx.scope).ok()?);
+                    }
+                    BoundedDomain::Array(elems)
+                }
+            };
             let (quantified, n_body) = lift_bounded_forall(
                 &self.var,
-                self.domain.clone(),
+                domain,
                 &self.body_stmts,
                 ctx.scope,
                 ctx.options,
@@ -326,8 +345,8 @@ impl Sugar for ForAllSugar {
 /// otherwise. This is the front half of `try_lift_for_each_forall`.
 pub(crate) fn decompose_for_each(
     expr: &Expr,
-    scope: &TemporalScope,
     let_inits: &BTreeMap<String, &Expr>,
+    fcx: &SugarBuildCtx,
 ) -> Option<ForAllSugar> {
     let Expr::MethodCall(call) = expr else {
         return None;
@@ -349,15 +368,16 @@ pub(crate) fn decompose_for_each(
         },
         _ => return None,
     };
-    let base = iter_adaptor_base(&call.receiver);
-    let domain = bounded_domain_from_expr(base, scope)?;
+    if !method_family::resolves_literal_sequence(&call.receiver, let_inits) {
+        return None;
+    }
     let body_stmts: Vec<Stmt> = match &*closure.body {
         Expr::Block(b) => b.block.stmts.clone(),
         other => vec![Stmt::Expr(other.clone(), None)],
     };
     Some(ForAllSugar {
         var,
-        domain,
+        domain: ForAllDomain::Sequence(build_composite(&call.receiver, fcx)),
         body_stmts,
         kind: "for_each",
         literal_arrays: capture_literal_arrays(let_inits),
@@ -379,7 +399,7 @@ pub(crate) fn decompose_for_loop(
     let domain = bounded_domain_from_expr(&f.expr, scope)?;
     Some(ForAllSugar {
         var,
-        domain,
+        domain: ForAllDomain::Bounded(domain),
         body_stmts: f.body.stmts.clone(),
         kind: "loop",
         literal_arrays: capture_literal_arrays(let_inits),

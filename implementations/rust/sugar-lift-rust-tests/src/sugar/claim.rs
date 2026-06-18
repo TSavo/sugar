@@ -5,7 +5,7 @@
 
 use syn::{Expr, Item};
 
-use crate::sugar::factory::FactoryCtx;
+use crate::sugar::factory::SugarBuildCtx;
 use crate::Sugar;
 
 /// The source-position role a Sugar claim serves. Recognition itself lives in the
@@ -28,8 +28,8 @@ pub(crate) enum SugarPriority {
     Fallback = 2,
 }
 
-type ExprRecognizer = fn(&Expr, &FactoryCtx) -> Option<Box<dyn Sugar>>;
-type ItemRecognizer = fn(&Item, &FactoryCtx) -> Option<Box<dyn Sugar>>;
+type ExprRecognizer = fn(&Expr, &SugarBuildCtx) -> Option<Box<dyn Sugar>>;
+type ItemRecognizer = fn(&Item, &SugarBuildCtx) -> Option<Box<dyn Sugar>>;
 
 /// A Sugar's claim that it knows how to recognize one source-expression position.
 #[derive(Clone, Copy)]
@@ -153,7 +153,7 @@ impl ItemSugarClaim {
     pub(crate) fn candidate(
         &'static self,
         item: &Item,
-        fcx: &FactoryCtx,
+        fcx: &SugarBuildCtx,
     ) -> Option<SugarCandidate> {
         (self.recognize)(item, fcx).map(|node| SugarCandidate {
             name: self.name,
@@ -195,7 +195,7 @@ impl ExprSugarClaim {
     pub(crate) fn candidate(
         &'static self,
         expr: &Expr,
-        fcx: &FactoryCtx,
+        fcx: &SugarBuildCtx,
     ) -> Option<SugarCandidate> {
         (self.recognize)(expr, fcx).map(|node| SugarCandidate {
             name: self.name,

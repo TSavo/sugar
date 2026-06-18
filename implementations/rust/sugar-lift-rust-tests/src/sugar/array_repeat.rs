@@ -27,7 +27,7 @@
 use syn::Expr;
 
 use crate::sugar::backstop::boxed;
-use crate::sugar::factory::FactoryCtx;
+use crate::sugar::factory::SugarBuildCtx;
 use crate::{
     repeat_count_literal, token_key, Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON,
 };
@@ -40,7 +40,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// `Expr::Repeat(_) => boxed(decompose_array_repeat(expr))` arm of the old fat
 /// `build_composite`. DISTINCT from the TERM-position `Expr::Repeat` (which expands a
 /// literal-count aggregate); the two roles genuinely differ.
-pub(crate) fn recognize_composite(expr: &Expr, _fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {
         Expr::Repeat(_) => Some(boxed(decompose_array_repeat(expr))),
         _ => None,

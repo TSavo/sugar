@@ -8,7 +8,7 @@
 //
 // The expansion lives at DESUGAR time, not recognize time: the macro_rules registry
 // hangs off `ReductionCtx`, which is in the DESUGAR-time `SugarCtx` (`ctx.reducer`), NOT
-// the build-time `FactoryCtx`. So a term-position macro we can expand is a deferred dig:
+// the build-time `SugarBuildCtx`. So a term-position macro we can expand is a deferred dig:
 // `recognize` news a `MacroSugar` carrying the macro node + the opaque fallback term, and
 // `desugar` does the lookup + token expansion + `build_term` recursion when it finally
 // holds the reducer. An unexpandable macro (no held definition, opaque/builtin macro, or
@@ -21,7 +21,7 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{make_var, Term};
 use syn::Expr;
 
-use crate::sugar::factory::{build_term, FactoryCtx};
+use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::format::{stable_let_bindings, try_resolve_format};
 use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
 use crate::{
@@ -33,11 +33,11 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("macro_term", recognize);
 
 /// TERM recognizer for `Expr::Macro`.
-pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Macro(m) = expr else {
         return None;
     };
-    let scope = fcx.scope;
+    let scope = fcx.scope();
     let seg = m.mac.path.segments.last().map(|s| s.ident.to_string());
     if matches!(seg.as_deref(), Some("format") | Some("concat")) {
         let stable = stable_let_bindings(scope);
@@ -116,11 +116,7 @@ impl MacroSugar {
         // is lifted in the SAME scope/options the invocation was seen in. The expansion is
         // a fresh expr tree with no `let` initializers of its own to capture.
         let empty: BTreeMap<String, &Expr> = BTreeMap::new();
-        let fcx = FactoryCtx {
-            scope: ctx.scope,
-            options: ctx.options,
-            let_inits: &empty,
-        };
+        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &empty);
         Some(build_term(&parsed, &fcx))
     }
 }

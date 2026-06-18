@@ -18,7 +18,7 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{make_var, str_const, Term};
 use syn::Expr;
 
-use crate::sugar::factory::{build_term, FactoryCtx};
+use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::format::{stable_let_bindings, try_resolve_format};
 use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
 use crate::try_fold_eval;
@@ -31,11 +31,11 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::fallback_term("method", recognize);
 
 /// TERM recognizer for `Expr::MethodCall`.
-pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::MethodCall(call) = expr else {
         return None;
     };
-    let scope = fcx.scope;
+    let scope = fcx.scope();
     // CLOSED try_fold / try_rfold: ground to a literal and re-build THAT.
     if matches!(call.method.to_string().as_str(), "try_fold" | "try_rfold") {
         if let Some(grounded) = try_fold_eval::eval_try_fold_operand(expr, scope) {

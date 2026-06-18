@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use sugar_ir_symbolic::{make_var, Term};
 
-use crate::sugar::factory::FactoryCtx;
+use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
 use crate::{is_unqualified_local_name, names_referenced_in_expr, token_key, Sugar};
 use syn::{Expr, Pat};
@@ -18,11 +18,11 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("closure_term", recognize);
 
 /// TERM recognizer for `Expr::Closure`.
-pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Closure(closure) = expr else {
         return None;
     };
-    let scope = fcx.scope;
+    let scope = fcx.scope();
     let params: BTreeSet<String> = closure
         .inputs
         .iter()

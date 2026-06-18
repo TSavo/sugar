@@ -25,7 +25,7 @@ use sugar_ir_symbolic::{str_const, Term};
 use syn::Expr;
 
 use crate::sugar::compare::CompareSugar;
-use crate::sugar::factory::{build_term, FactoryCtx};
+use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::format::{stable_let_bindings, try_resolve_format};
 use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
 use crate::{
@@ -41,11 +41,11 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// reasoned-Hit on `Err`), then the comparison branch (const-fold to a Bool, else the
 /// `cmp:*` [`CompareSugar`]), then the arithmetic-op [`BinOpSugar`] (or the
 /// `term_binop_name`-`None` "unsupported term operator" reasoned-Hit).
-pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Binary(binary) = expr else {
         return None;
     };
-    let scope = fcx.scope;
+    let scope = fcx.scope();
     if matches!(binary.op, syn::BinOp::Add(_)) {
         let stable = stable_let_bindings(scope);
         match try_resolve_format(expr, &stable) {
