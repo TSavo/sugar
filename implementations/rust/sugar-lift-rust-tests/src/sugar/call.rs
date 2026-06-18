@@ -42,7 +42,7 @@ use std::rc::Rc;
 use sugar_ir_symbolic::Term;
 use syn::Expr;
 
-use crate::sugar::factory::{build_term, FactoryCtx};
+use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
 use crate::{expr_head_key, type_id_of_call_term, Desugared, Outcome, Sugar, SugarCtx};
 
@@ -52,7 +52,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// TERM recognizer for `Expr::Call`. Mirrors the source-of-truth arm in order: the
 /// `TypeId::of` const-fold preamble FIRST (a resolved term, or a reasoned-Hit on
 /// `Err`), then the constructive `call:<head>` ctor over the arg children ([`CallSugar`]).
-pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Call(call) = expr else {
         return None;
     };

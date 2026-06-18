@@ -48,7 +48,7 @@ use std::rc::Rc;
 use sugar_ir_symbolic::Term;
 use syn::Expr;
 
-use crate::sugar::factory::{build_term, FactoryCtx};
+use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::{strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -91,7 +91,7 @@ enum Kind {
 /// (for `Some`/`Ok`/`Err`), so a recognized monadic constructor grounds to its
 /// ADT-backed constructed value instead of the generic `call:` / `call:None`
 /// ctor.
-pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {
         // Nullary `None` -- a path whose final segment is `None` (`None`,
         // `None::<isize>` with a turbofish, `Option::None`). `is_ident` is too

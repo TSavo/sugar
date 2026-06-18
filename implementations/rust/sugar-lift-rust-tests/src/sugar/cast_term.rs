@@ -5,7 +5,7 @@
 // identical to the `Expr::Cast` arm of the old fat factory.
 
 use crate::sugar::ctor_term::CtorSugar;
-use crate::sugar::factory::{build_term, FactoryCtx};
+use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::term_leaf::reasoned_hit;
 use crate::{is_shared_dyn_any_type, scalar_cast_type_key, token_key, type_key, Sugar};
 use syn::Expr;
@@ -14,7 +14,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("cast_term", recognize);
 
 /// TERM recognizer for `Expr::Cast`.
-pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Cast(cast) = expr else {
         return None;
     };

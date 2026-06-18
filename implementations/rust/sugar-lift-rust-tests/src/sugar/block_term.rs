@@ -5,7 +5,7 @@
 // through `build_term`); any other block shape is refused by name. Byte-identical to
 // the `Expr::Unsafe`/`Expr::Block` arms of the old fat factory.
 
-use crate::sugar::factory::{build_term, FactoryCtx};
+use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::term_leaf::reasoned_hit;
 use crate::{token_key, Sugar};
 use syn::{Expr, Stmt};
@@ -14,7 +14,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("block_term", recognize);
 
 /// TERM recognizer for `Expr::Unsafe` / `Expr::Block`.
-pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {
         Expr::Unsafe(block) => Some(match block.block.stmts.as_slice() {
             [Stmt::Expr(tail, None)] => build_term(tail, fcx),

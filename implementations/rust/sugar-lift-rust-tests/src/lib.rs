@@ -3703,11 +3703,7 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
         // desugar it with the inline depth bumped (so a nested call re-resolves here,
         // bounded). The child ctx shares the scope/reducer/options; only the depth grows.
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
-        let fcx = sugar::factory::FactoryCtx {
-            scope: self.scope,
-            options: self.options,
-            let_inits: &let_inits,
-        };
+        let fcx = sugar::factory::SugarBuildCtx::new(self.scope, self.options, &let_inits);
         let node = sugar::factory::build_term(&inlined, &fcx);
         let mut fw = self.float_widths.borrow_mut();
         let child = sugar_ctx(
@@ -4024,11 +4020,7 @@ fn closure_method_terminal_effect(
     macro_depth: usize,
     let_inits: &BTreeMap<String, &Expr>,
 ) -> Option<Effect> {
-    let fcx = sugar::factory::FactoryCtx {
-        scope,
-        options,
-        let_inits,
-    };
+    let fcx = sugar::factory::SugarBuildCtx::new(scope, options, let_inits);
     let node =
         sugar::catalog::build_expr_role(expr, &fcx, sugar::claim::SugarRole::ClosureAdaptorVerdict);
     let ctx = sugar_ctx(scope, options, reducer, float_widths, macro_depth);
@@ -4285,11 +4277,7 @@ fn statement_position_terminal_effect(
     // The statement-position recognizer's verdict is purely structural (it ignores the build
     // env), so the in-scope `let` initializers are irrelevant -- an empty map suffices.
     let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
-    let fcx = sugar::factory::FactoryCtx {
-        scope,
-        options,
-        let_inits: &let_inits,
-    };
+    let fcx = sugar::factory::SugarBuildCtx::new(scope, options, &let_inits);
     let node =
         sugar::catalog::build_expr_role(expr, &fcx, sugar::claim::SugarRole::StatementEffect);
     let ctx = sugar_ctx(scope, options, reducer, float_widths, macro_depth);
@@ -4331,11 +4319,7 @@ fn impl_method_terminal_effect(
     // item-role selection dispatches on a `syn::Item`, so wrap the `ItemImpl` back into an
     // `Item::Impl`.
     let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
-    let fcx = sugar::factory::FactoryCtx {
-        scope,
-        options,
-        let_inits: &let_inits,
-    };
+    let fcx = sugar::factory::SugarBuildCtx::new(scope, options, &let_inits);
     let item = syn::Item::Impl(imp.clone());
     let node = sugar::catalog::build_item_role(&item, &fcx, sugar::claim::SugarRole::StatementItem);
     let ctx = sugar_ctx(scope, options, reducer, float_widths, macro_depth);
@@ -4622,11 +4606,11 @@ fn collect_assertion_entries<'a>(
                         // its output. A bail (`None`) at any layer falls through.
                         let ctx =
                             sugar_ctx(&temporal_scope, options, reducer, float_widths, macro_depth);
-                        let fcx = sugar::factory::FactoryCtx {
-                            scope: &temporal_scope,
+                        let fcx = sugar::factory::SugarBuildCtx::new(
+                            &temporal_scope,
                             options,
-                            let_inits: &let_inits,
-                        };
+                            &let_inits,
+                        );
                         sugar::factory::build_composite(&init.expr, &fcx)
                             .desugar(&ctx)
                             .dug()
@@ -4880,11 +4864,8 @@ fn collect_assertion_entries<'a>(
                     // .desugar().dug()` == the old `.and_then(|s| s.desugar().dug())`,
                     // and `boxed(None)` -> `Hit(Unsupported)` -> `.dug()` == the old
                     // `None`. First site where `build()` goes live in the collector.
-                    let fcx = sugar::factory::FactoryCtx {
-                        scope: &temporal_scope,
-                        options,
-                        let_inits: &let_inits,
-                    };
+                    let fcx =
+                        sugar::factory::SugarBuildCtx::new(&temporal_scope, options, &let_inits);
                     sugar::factory::build_composite(e, &fcx).desugar(&ctx).dug()
                 };
                 if let Some(desugared) = lifted {
@@ -4947,11 +4928,8 @@ fn collect_assertion_entries<'a>(
                     // refusal below. SOUNDNESS: never bare `then` -- always guarded.
                     let ctx =
                         sugar_ctx(&temporal_scope, options, reducer, float_widths, macro_depth);
-                    let fcx = sugar::factory::FactoryCtx {
-                        scope: &temporal_scope,
-                        options,
-                        let_inits: &let_inits,
-                    };
+                    let fcx =
+                        sugar::factory::SugarBuildCtx::new(&temporal_scope, options, &let_inits);
                     sugar::factory::build_composite(e, &fcx).desugar(&ctx).dug()
                 } {
                     emit_desugared(desugared, entries, macros_lifted);
@@ -5032,11 +5010,8 @@ fn collect_assertion_entries<'a>(
                     // SOUNDNESS: never bare `A_i` -- always guarded by `guard_i`.
                     let ctx =
                         sugar_ctx(&temporal_scope, options, reducer, float_widths, macro_depth);
-                    let fcx = sugar::factory::FactoryCtx {
-                        scope: &temporal_scope,
-                        options,
-                        let_inits: &let_inits,
-                    };
+                    let fcx =
+                        sugar::factory::SugarBuildCtx::new(&temporal_scope, options, &let_inits);
                     sugar::factory::build_composite(e, &fcx).desugar(&ctx).dug()
                 } {
                     emit_desugared(desugared, entries, macros_lifted);
@@ -5197,11 +5172,11 @@ fn collect_assertion_entries<'a>(
                         // DEFOLDER over a literal domain (bare `.fold`/`.rfold`
                         // statement), or a bare `.for_each` (the same bounded
                         // universal as the equivalent for-loop).
-                        let fcx = sugar::factory::FactoryCtx {
-                            scope: &temporal_scope,
+                        let fcx = sugar::factory::SugarBuildCtx::new(
+                            &temporal_scope,
                             options,
-                            let_inits: &let_inits,
-                        };
+                            &let_inits,
+                        );
                         sugar::factory::build_composite(e, &fcx).desugar(&ctx).dug()
                     };
                     if let Some(desugared) = desugared {
@@ -8535,11 +8510,7 @@ fn translate_bool_assertion(
 fn runtime_match_scrutinee_effect(expr: &Expr, scope: &TemporalScope) -> Option<Effect> {
     let options = LiftOptions::default();
     let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
-    let fcx = sugar::factory::FactoryCtx {
-        scope,
-        options: &options,
-        let_inits: &let_inits,
-    };
+    let fcx = sugar::factory::SugarBuildCtx::new(scope, &options, &let_inits);
     let items: Vec<Item> = Vec::new();
     let reducer = ReductionCtx::from_items(&items);
     let mut float_widths = FloatWidthScope::new();
@@ -11394,7 +11365,7 @@ fn macro_literal_contains_mut_local(lit_text: &str, scope: &TemporalScope) -> bo
 /// fat 30-arm `match` over `Expr` that used to live here has been RELOCATED, arm for
 /// arm, into `build` (which is now the COMPLETE term lifter); this function survives
 /// only to keep the name + signature its many callers depend on. It builds a
-/// `FactoryCtx` + `SugarCtx` from `scope` (the dual build-time / desugar-time envs),
+/// `SugarBuildCtx` + `SugarCtx` from `scope` (the dual build-time / desugar-time envs),
 /// runs `build(expr).desugar(ctx)`, and unwraps the total `Outcome`:
 ///   * `Dug(Term)` -> `Ok(term)` (the term floor reached truth);
 ///   * `Dug(Seq | Constraints)` -> the structural backstop `Err` (a term-position
@@ -11407,11 +11378,7 @@ fn macro_literal_contains_mut_local(lit_text: &str, scope: &TemporalScope) -> bo
 fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term>, String> {
     let options = LiftOptions::default();
     let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
-    let fcx = sugar::factory::FactoryCtx {
-        scope,
-        options: &options,
-        let_inits: &let_inits,
-    };
+    let fcx = sugar::factory::SugarBuildCtx::new(scope, &options, &let_inits);
     let node = sugar::factory::build_term(expr, &fcx);
     let items: Vec<Item> = Vec::new();
     // Seed the reducer from the macro registry the scope carries, so a TERM-POSITION
@@ -12917,6 +12884,36 @@ mod lifter_key_tests {
             out.skip_reasons
         );
         assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    }
+
+    #[test]
+    fn for_each_over_literal_sequence_adaptors_lifts_to_literal_fol() {
+        // POSITIVE (composed sequence sugar): the receiver is still a literal-built
+        // finite sequence after `.map`, so `for_each` has a literal FOL expansion.
+        // Recognition must follow the sequence-sugar tree instead of only stripping
+        // raw iterator adaptors.
+        let src = r#"
+            #[test]
+            fn each_mapped_lit() {
+                [1i32, 2, 3].iter().map(|x| x + 1).for_each(|x| {
+                    assert!(x > 1);
+                });
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "the literal-derived `.for_each` body assert must lift to literal FOL; reasons: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+        assert!(
+            contract_names(&out)
+                .iter()
+                .any(|n| n.contains("::for_each::x")),
+            "the lifted sequence sugar must be named as a for_each memento: {:?}",
+            contract_names(&out)
+        );
     }
 
     #[test]

@@ -30,7 +30,7 @@ use std::collections::BTreeMap;
 
 use syn::{visit::Visit, Expr};
 
-use crate::sugar::factory::FactoryCtx;
+use crate::sugar::factory::SugarBuildCtx;
 use crate::{
     bounded_domain_from_expr, closure_body_advances_iterator, closure_body_is_side_effecting,
     count_asserts_in_expr, peel_fold_adaptors, token_key, Effect, Outcome, Sugar, SugarCtx,
@@ -51,9 +51,9 @@ pub(crate) const VERDICT_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// shape, else `None` (the walk falls through to the next method-call recognizer).
 /// Mirrors the THIRD arm of the old `build_method_call_composite` chain — AFTER
 /// `for_each`, BEFORE `match_scrutinee`.
-pub(crate) fn recognize_composite(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {
-        Expr::MethodCall(_) => decompose_closure_adaptor(expr, fcx.let_inits)
+        Expr::MethodCall(_) => decompose_closure_adaptor(expr, fcx.let_inits())
             .map(|node| Box::new(node) as Box<dyn Sugar>),
         _ => None,
     }

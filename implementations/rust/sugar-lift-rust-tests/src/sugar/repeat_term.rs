@@ -8,7 +8,7 @@
 // `Expr::Repeat` arm of the old fat factory.
 
 use crate::sugar::array_repeat::decompose_array_repeat;
-use crate::sugar::factory::FactoryCtx;
+use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
 use crate::{
     literal_aggregate_term_in_scope, repeat_count_literal, token_key, Effect, Outcome, Sugar,
@@ -19,11 +19,11 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("repeat_term", recognize);
 
 /// TERM recognizer for `Expr::Repeat`.
-pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Repeat(repeat) = expr else {
         return None;
     };
-    let scope = fcx.scope;
+    let scope = fcx.scope();
     let Some(count) = repeat_count_literal(&repeat.len) else {
         return Some(match decompose_array_repeat(expr) {
             Some(node) => match node.desugar_ctx_free() {

@@ -8,7 +8,7 @@ use crate::sugar::backstop::unsupported;
 use crate::sugar::claim::{
     ExprSugarClaim, ItemSugarClaim, SugarCandidate, SugarPriority, SugarRole,
 };
-use crate::sugar::factory::FactoryCtx;
+use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::{
     array_repeat, array_term, await_term, binop, block_term, call, cast_term, closure_adaptor,
     closure_term, conditional, const_block, control_flow_term, enumerate, field_term, filter,
@@ -86,7 +86,7 @@ const ALL_ROLES: &[SugarRole] = &[
 
 /// Ask every expression Sugar whether it handles this source site. Multiple
 /// candidates are first-class; equal-priority candidates for the same role are not.
-pub(crate) fn matching_expr_claims(expr: &Expr, fcx: &FactoryCtx) -> Vec<SugarCandidate> {
+pub(crate) fn matching_expr_claims(expr: &Expr, fcx: &SugarBuildCtx) -> Vec<SugarCandidate> {
     let mut candidates: Vec<_> = EXPR_CLAIMS
         .iter()
         .filter_map(|claim| (*claim).candidate(expr, fcx))
@@ -106,13 +106,13 @@ pub(crate) fn select_expr_role(
         .find(|candidate| candidate.role() == role)
 }
 
-pub(crate) fn build_expr_role(expr: &Expr, fcx: &FactoryCtx, role: SugarRole) -> Box<dyn Sugar> {
+pub(crate) fn build_expr_role(expr: &Expr, fcx: &SugarBuildCtx, role: SugarRole) -> Box<dyn Sugar> {
     select_expr_role(matching_expr_claims(expr, fcx), role)
         .map(|candidate| candidate.into_node())
         .unwrap_or_else(unsupported)
 }
 
-pub(crate) fn matching_item_claims(item: &Item, fcx: &FactoryCtx) -> Vec<SugarCandidate> {
+pub(crate) fn matching_item_claims(item: &Item, fcx: &SugarBuildCtx) -> Vec<SugarCandidate> {
     let mut candidates: Vec<_> = ITEM_CLAIMS
         .iter()
         .filter_map(|claim| (*claim).candidate(item, fcx))
@@ -132,7 +132,7 @@ pub(crate) fn select_item_role(
         .find(|candidate| candidate.role() == role)
 }
 
-pub(crate) fn build_item_role(item: &Item, fcx: &FactoryCtx, role: SugarRole) -> Box<dyn Sugar> {
+pub(crate) fn build_item_role(item: &Item, fcx: &SugarBuildCtx, role: SugarRole) -> Box<dyn Sugar> {
     select_item_role(matching_item_claims(item, fcx), role)
         .map(|candidate| candidate.into_node())
         .unwrap_or_else(unsupported)
@@ -165,7 +165,7 @@ mod tests {
     use syn::{Expr, Item};
 
     use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
-    use crate::sugar::factory::FactoryCtx;
+    use crate::sugar::factory::SugarBuildCtx;
     use crate::{LiftOptions, Outcome, Sugar, SugarCtx, TemporalPlan, TemporalScope};
 
     struct NoopSugar;
@@ -176,7 +176,7 @@ mod tests {
         }
     }
 
-    fn recognize(_: &Expr, _: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    fn recognize(_: &Expr, _: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
         Some(Box::new(NoopSugar))
     }
 
@@ -184,11 +184,7 @@ mod tests {
         let scope = TemporalScope::new("catalog-test", TemporalPlan::default());
         let options = LiftOptions::default();
         let let_inits = BTreeMap::new();
-        let fcx = FactoryCtx {
-            scope: &scope,
-            options: &options,
-            let_inits: &let_inits,
-        };
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
         super::matching_expr_claims(expr, &fcx)
             .into_iter()
             .map(|candidate| candidate.name())
@@ -199,11 +195,7 @@ mod tests {
         let scope = TemporalScope::new("catalog-test", TemporalPlan::default());
         let options = LiftOptions::default();
         let let_inits = BTreeMap::new();
-        let fcx = FactoryCtx {
-            scope: &scope,
-            options: &options,
-            let_inits: &let_inits,
-        };
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
         super::matching_expr_claims(expr, &fcx)
             .into_iter()
             .filter(|candidate| candidate.role() == role)
@@ -215,11 +207,7 @@ mod tests {
         let scope = TemporalScope::new("catalog-test", TemporalPlan::default());
         let options = LiftOptions::default();
         let let_inits = BTreeMap::new();
-        let fcx = FactoryCtx {
-            scope: &scope,
-            options: &options,
-            let_inits: &let_inits,
-        };
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
         super::matching_item_claims(item, &fcx)
             .into_iter()
             .filter(|candidate| candidate.role() == role)
@@ -240,11 +228,7 @@ mod tests {
         let scope = TemporalScope::new("catalog-test", TemporalPlan::default());
         let options = LiftOptions::default();
         let let_inits = BTreeMap::new();
-        let fcx = FactoryCtx {
-            scope: &scope,
-            options: &options,
-            let_inits: &let_inits,
-        };
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
         let expr: Expr = syn::parse_str("1").unwrap();
         let candidates = vec![
             FIRST.candidate(&expr, &fcx).unwrap(),
@@ -394,6 +378,52 @@ mod tests {
         assert!(
             names.contains(&"method"),
             "unknown receiver map should still be claimed by generic MethodSugar: {names:?}"
+        );
+    }
+
+    #[test]
+    fn unrecognized_stdlib_sequence_adaptors_decline_primary_sugar() {
+        let cases = [
+            ("xs.into_iter()", "iterator"),
+            ("xs.cloned()", "iterator"),
+            ("xs.rev()", "rev"),
+            ("xs.enumerate()", "enumerate"),
+            ("xs.filter(|x| true)", "filter"),
+            ("xs.filter_map(|x| Some(x))", "filter_map"),
+            ("xs.skip(1)", "skip"),
+            ("xs.take(1)", "take"),
+            ("xs.skip_while(|x| true)", "skip_while"),
+            ("xs.take_while(|x| true)", "take_while"),
+            ("xs.iter().sum::<i32>()", "iter_terminal"),
+            ("xs.iter().count()", "iter_terminal"),
+            ("xs.iter().nth(0)", "iter_terminal"),
+            ("xs.for_each(|x| assert!(x > 0))", "for_each"),
+        ];
+
+        for (src, sugar_name) in cases {
+            let expr: Expr = syn::parse_str(src).unwrap();
+            let names = candidate_names(&expr);
+
+            assert!(
+                !names.contains(&sugar_name),
+                "unknown receiver `{src}` should not be claimed by {sugar_name}: {names:?}"
+            );
+            assert!(
+                names.contains(&"method") || names.contains(&"closure_adaptor"),
+                "unknown receiver `{src}` should keep a recursive/effect fallback: {names:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn for_each_over_literal_sequence_adaptors_is_owned_by_for_each_sugar() {
+        let expr: Expr =
+            syn::parse_str("[1, 2, 3].iter().map(|x| x + 1).for_each(|x| assert!(x > 0))").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Composite);
+
+        assert!(
+            names.contains(&"for_each"),
+            "for_each over literal-derived sequence should be owned by ForEachSugar: {names:?}"
         );
     }
 

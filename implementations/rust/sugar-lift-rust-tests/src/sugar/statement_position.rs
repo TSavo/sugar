@@ -34,7 +34,7 @@
 
 use syn::{BinOp, Expr};
 
-use crate::sugar::factory::FactoryCtx;
+use crate::sugar::factory::SugarBuildCtx;
 use crate::{
     closure_body_advances_iterator, count_asserts_in_expr, expr_contains_await,
     is_free_fn_block_on_async, reflection_scrutinee, strip_const_block, token_key, Effect, Outcome,
@@ -48,7 +48,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// [`decompose_statement_position`]): `Some` only for a bare statement expr that carries an
 /// assertion, else `None`. The statement-effect claim owns the runtime-continuation verdict
 /// in its own `desugar`. Ctx-independent (the build env is unused).
-pub(crate) fn recognize(expr: &Expr, _fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     decompose_statement_position(expr).map(|node| Box::new(node) as Box<dyn Sugar>)
 }
 

@@ -7,7 +7,7 @@
 use sugar_ir_symbolic::{make_var, num};
 
 use crate::sugar::ctor_term::CtorSugar;
-use crate::sugar::factory::{build_term, FactoryCtx};
+use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::term_leaf::resolved_term;
 use crate::Sugar;
 use syn::Expr;
@@ -16,7 +16,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("range_term", recognize);
 
 /// TERM recognizer for `Expr::Range`.
-pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Range(range) = expr else {
         return None;
     };

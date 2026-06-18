@@ -32,7 +32,7 @@
 use syn::Expr;
 
 use crate::sugar::backstop::boxed;
-use crate::sugar::factory::FactoryCtx;
+use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::term_leaf::reasoned_hit;
 use crate::{token_key, Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON};
 
@@ -47,7 +47,7 @@ pub(crate) const COMPOSITE_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// `Effect::ControlFlow` reason (or the term catch-all on a non-`ControlFlow` verdict).
 /// Byte-identical to the `Expr::TryBlock | Expr::Async | Expr::Try` TERM arm of the old
 /// fat factory. DISTINCT from the COMPOSITE recognizer, which boxes the node directly.
-pub(crate) fn recognize_term(expr: &Expr, _fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_term(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {
         Expr::TryBlock(_) | Expr::Async(_) | Expr::Try(_) => {
             Some(match decompose_control_flow_term(expr) {
@@ -69,7 +69,7 @@ pub(crate) fn recognize_term(expr: &Expr, _fcx: &FactoryCtx) -> Option<Box<dyn S
 /// site reads its `Effect::ControlFlow` Hit). Byte-identical to the
 /// `Expr::TryBlock | Expr::Async | Expr::Try => boxed(decompose_control_flow_term(expr))`
 /// COMPOSITE arm of the old fat factory.
-pub(crate) fn recognize_composite(expr: &Expr, _fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {
         Expr::TryBlock(_) | Expr::Async(_) | Expr::Try(_) => {
             Some(boxed(decompose_control_flow_term(expr)))

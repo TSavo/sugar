@@ -16,7 +16,7 @@ use syn::{Arm, Expr, Lit, Pat, Path, Stmt};
 
 use crate::sugar::backstop::boxed;
 use crate::sugar::configuration::{CfgDisposition, ConfigurationSugar};
-use crate::sugar::factory::FactoryCtx;
+use crate::sugar::factory::SugarBuildCtx;
 use crate::{
     bool_const, closure_body_is_side_effecting, collect_assertion_entries, count_asserts_in_stmts,
     loop_body_mutates, path_to_variant_string, strict_variant_path, translate_lit,
@@ -29,11 +29,11 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 
 /// COMPOSITE recognizer for `Expr::Match`: the conjunction composite ([`MatchSugar`]
 /// via [`decompose_match`]). Byte-identical to the
-/// `Expr::Match(m) => boxed(decompose_match(m, fcx.scope, fcx.options))` arm of the old
+/// `Expr::Match(m) => boxed(decompose_match(m, fcx.scope(), fcx.options()))` arm of the old
 /// fat `build_composite`.
-pub(crate) fn recognize_composite(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {
-        Expr::Match(m) => Some(boxed(decompose_match(m, fcx.scope, fcx.options))),
+        Expr::Match(m) => Some(boxed(decompose_match(m, fcx.scope(), fcx.options()))),
         _ => None,
     }
 }

@@ -47,7 +47,7 @@
 
 use syn::{Expr, ExprLit};
 
-use crate::sugar::factory::FactoryCtx;
+use crate::sugar::factory::SugarBuildCtx;
 use crate::{translate_lit, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -55,7 +55,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 
 /// TERM recognizer for `Expr::Lit`: a scalar literal news a [`TermLiteralSugar`].
 /// Byte-identical to the `Expr::Lit(lit) => translate_lit(lit)` arm.
-pub(crate) fn recognize(expr: &Expr, _fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {
         Expr::Lit(lit) => Some(Box::new(TermLiteralSugar { lit: lit.clone() })),
         _ => None,
