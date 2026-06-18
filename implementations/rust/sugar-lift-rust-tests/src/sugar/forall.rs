@@ -14,7 +14,6 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{and_, forall, implies, lt, lte, num, Formula, Sort, Term};
 use syn::{Expr, Pat, Stmt};
 
-use crate::sugar::backstop::boxed;
 use crate::sugar::factory::{build_composite, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::{
@@ -23,36 +22,6 @@ use crate::{
     term_as_int, translate_term_in_scope, BoundedDomain, Desugared, FloatWidthScope, LiftOptions,
     Outcome, ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant, SUGAR_SEQ_CAP,
 };
-
-pub(crate) const FOR_LOOP_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::composite("forall_loop", recognize_for_loop);
-
-pub(crate) const FOR_EACH_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::composite("for_each", recognize_for_each);
-
-/// COMPOSITE recognizer for `Expr::ForLoop`: the universal-quantifier composite
-/// ([`ForAllSugar`] via [`decompose_for_loop`]). Byte-identical to the
-/// `Expr::ForLoop(f) => boxed(decompose_for_loop(f, fcx.scope(), fcx.let_inits()))` arm of
-/// the old fat `build_composite`.
-pub(crate) fn recognize_for_loop(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    match expr {
-        Expr::ForLoop(f) => Some(boxed(decompose_for_loop(f, fcx.scope(), fcx.let_inits()))),
-        _ => None,
-    }
-}
-
-/// COMPOSITE method-call recognizer for a `.for_each(|v| body)` quantifier terminal
-/// ([`ForAllSugar`] via [`decompose_for_each`]): `Some` only for a recognized `for_each`
-/// shape, else `None` (the walk falls through to the next method-call recognizer).
-/// Mirrors the second arm of the old `build_method_call_composite` chain — AFTER
-/// `fold`, BEFORE `closure_adaptor`.
-pub(crate) fn recognize_for_each(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    match expr {
-        Expr::MethodCall(_) => decompose_for_each(expr, fcx.let_inits(), fcx)
-            .map(|node| Box::new(node) as Box<dyn Sugar>),
-        _ => None,
-    }
-}
 
 /// and `try_lift_for_each_forall` (a `.for_each(|var| body)` adaptor): a `for`
 /// loop and a `.for_each` over the SAME constructed domain assert the SAME

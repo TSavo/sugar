@@ -58,7 +58,9 @@ pub mod sugar {
     pub mod filter;
     pub mod filter_map;
     pub mod fold;
+    pub mod for_each;
     pub mod forall;
+    pub mod forall_loop;
     pub mod format;
     pub mod identity;
     pub mod impl_method;
