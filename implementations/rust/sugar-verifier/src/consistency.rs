@@ -65,8 +65,10 @@ use rayon::prelude::*;
 use serde_json::{json, Value as Json};
 use tracing::{debug, info, warn};
 
-use crate::solvers::{run_plan, SolverHandle, SolverPlan};
-use crate::types::{memento_body, memento_kind, MementoPool, ObligationVerdict};
+use crate::solvers::{run_plan, SolverHandle, SolverInvocation, SolverPlan};
+use crate::types::{
+    memento_body, memento_body_field, memento_kind, MementoPool, ObligationVerdict,
+};
 use sugar_canonicalizer::blake3_512_of;
 use sugar_ir_compiler_smt_lib::emit_asserted;
 
@@ -83,16 +85,18 @@ pub struct ConsistencyResult {
     /// recompute (k(I)=t), NOT from a symbolic solver. Kept distinct so the
     /// report never reads witnessed-by-execution as proven-by-solver.
     pub witnessed: bool,
+    pub verification: Option<Json>,
 }
 
 const CONSISTENT_REASON: &str = "test assertions mutually consistent about callsite";
 const CONTRADICTORY_REASON: &str = "test assertions contradictory about callsite";
 
-/// Does this contract have an `inv` that produces no enumerable bridge
-/// callsite? We approximate "no bridge callsite" structurally: the pass only
-/// fires for contracts that carry an `inv` and NO `pre`/`post` (the lifted
-/// shape of a coalesced test-assertion fact set). Bridge-bearing contracts
-/// carry pre/post and are handled by the call-site path.
+/// Does this contract carry asserted axioms that must be checked for
+/// satisfiability against the local universe? We approximate the boundary
+/// structurally: the pass fires for contracts that carry an `inv` and NO
+/// `pre`. A `post` is allowed and is conjoined with the asserted `inv` as the
+/// lifted universe relation. Pre-bearing contracts remain the call-site path's
+/// job because their `pre` is an obligation, not an established fact.
 ///
 /// SETUP-BINDING EXCLUSION. The Pattern-5 (call-binding) lifter emits, per
 /// call site, a `::facts` contract carrying the SETUP BINDING (e.g.
@@ -105,11 +109,10 @@ const CONTRADICTORY_REASON: &str = "test assertions contradictory about callsite
 ///   - `::assertion` contracts (Pattern-5 conjoined asserted properties)
 ///   - loop/parametrize assertion contracts (no `::facts` suffix)
 /// So `::facts` and `::facts::N` setup-binding contracts are excluded by name.
-fn is_consistency_candidate(body: &Json) -> bool {
+pub(crate) fn is_consistency_candidate(body: &Json) -> bool {
     let has_inv = body.get("inv").map(|v| v.is_object()).unwrap_or(false);
     let has_pre = body.get("pre").map(|v| v.is_object()).unwrap_or(false);
-    let has_post = body.get("post").map(|v| v.is_object()).unwrap_or(false);
-    if !(has_inv && !has_pre && !has_post) {
+    if !(has_inv && !has_pre) {
         return false;
     }
     let name = body
@@ -133,6 +136,14 @@ fn is_setup_binding_name(name: &str) -> bool {
         _ => name,
     };
     stem.ends_with("::facts")
+}
+
+fn axiom_context_formula(body: &Json) -> Json {
+    let inv = body.get("inv").cloned().unwrap_or(Json::Null);
+    match body.get("post").filter(|post| post.is_object()).cloned() {
+        Some(post) => json!({ "kind": "and", "operands": [inv, post] }),
+        None => inv,
+    }
 }
 
 /// Invert a raw-satisfiability solver verdict into a consistency verdict.
@@ -367,8 +378,14 @@ fn try_witness_discharge(
         contract_cid: contract_cid.clone(),
         property_name: property_name.clone(),
         verdict: ObligationVerdict::Undecidable,
-        reason,
+        reason: reason.clone(),
         witnessed: false,
+        verification: Some(json!({
+            "kind": "witness",
+            "witnessed": false,
+            "verdict": ObligationVerdict::Undecidable.as_str(),
+            "reason": reason,
+        })),
     };
     let tool = evidence
         .get("certificate")
@@ -399,25 +416,42 @@ fn try_witness_discharge(
     let outcome = match resolve_witness_package(&resolvers, Path::new(&project), &claim) {
         Ok(o) => o,
         Err(e) => {
+            let reason = format!("witness REFUSED by rust package recompute: {e}");
             return Some(ConsistencyResult {
                 contract_cid,
                 property_name,
                 verdict: ObligationVerdict::Unsatisfied,
-                reason: format!("witness REFUSED by rust package recompute: {e}"),
+                reason: reason.clone(),
                 witnessed: false,
-            })
+                verification: Some(json!({
+                    "kind": "witness",
+                    "witnessed": false,
+                    "verdict": ObligationVerdict::Unsatisfied.as_str(),
+                    "reason": reason,
+                })),
+            });
         }
     };
     Some(if outcome.failed == 0 {
+        let reason = format!(
+            "witness package verified by rust via {}; all {} outcomes passed",
+            outcome.resolved_by, outcome.count
+        );
         ConsistencyResult {
             contract_cid,
             property_name,
             verdict: ObligationVerdict::Discharged,
-            reason: format!(
-                "witness package verified by rust via {}; all {} outcomes passed",
-                outcome.resolved_by, outcome.count
-            ),
+            reason: reason.clone(),
             witnessed: true,
+            verification: Some(json!({
+                "kind": "witness",
+                "witnessed": true,
+                "verdict": ObligationVerdict::Discharged.as_str(),
+                "resolvedBy": outcome.resolved_by,
+                "outcomes": outcome.count,
+                "failed": outcome.failed,
+                "reason": reason,
+            })),
         }
     } else {
         let shown = outcome
@@ -431,20 +465,31 @@ fn try_witness_discharge(
         } else {
             String::new()
         };
+        let reason = format!(
+            "witness REFUSED by rust package body: bundle reproduced via {}; \
+             {}/{} outcomes failed: {}{}",
+            outcome.resolved_by,
+            outcome.failed,
+            outcome.count,
+            shown.join(", "),
+            more
+        );
         ConsistencyResult {
             contract_cid,
             property_name,
             verdict: ObligationVerdict::Unsatisfied,
-            reason: format!(
-                "witness REFUSED by rust package body: bundle reproduced via {}; \
-                 {}/{} outcomes failed: {}{}",
-                outcome.resolved_by,
-                outcome.failed,
-                outcome.count,
-                shown.join(", "),
-                more
-            ),
+            reason: reason.clone(),
             witnessed: false,
+            verification: Some(json!({
+                "kind": "witness",
+                "witnessed": false,
+                "verdict": ObligationVerdict::Unsatisfied.as_str(),
+                "resolvedBy": outcome.resolved_by,
+                "outcomes": outcome.count,
+                "failed": outcome.failed,
+                "failedTests": shown,
+                "reason": reason,
+            })),
         }
     })
 }
@@ -773,38 +818,139 @@ fn canonicalize_formula_json(inv: &Json) -> Json {
         .unwrap_or_else(|_| inv.clone())
 }
 
+fn linked_posts_to_json(linked_posts: &[LinkedPostInstance]) -> Json {
+    Json::Array(
+        linked_posts
+            .iter()
+            .map(|p| {
+                json!({
+                    "sourceSymbol": &p.source_symbol,
+                    "targetContractCid": &p.target_cid,
+                    "targetProofCid": &p.target_proof_cid,
+                    "formals": &p.formals,
+                    "outBinding": &p.out_binding,
+                    "call": &p.call,
+                    "vendorPost": &p.vendor_post,
+                    "instantiatedPost": &p.instantiated_post,
+                })
+            })
+            .collect(),
+    )
+}
+
+fn solver_invocations_to_json(invs: &[SolverInvocation]) -> Json {
+    Json::Array(
+        invs.iter()
+            .map(|inv| {
+                let stdout_first_line = inv
+                    .result
+                    .solver_stdout
+                    .lines()
+                    .map(str::trim)
+                    .find(|line| !line.is_empty())
+                    .unwrap_or("");
+                let mut value = json!({
+                    "solver": &inv.result.solver_name,
+                    "version": &inv.result.solver_version,
+                    "compiler": &inv.compiler,
+                    "authoritative": inv.authoritative,
+                    "verdict": inv.result.verdict.as_str(),
+                    "timedOut": inv.result.timed_out,
+                    "error": &inv.result.error,
+                    "stdoutFirstLine": stdout_first_line,
+                });
+                if let Some(artifact_cid) = &inv.identity.artifact_cid {
+                    value["solverArtifactCid"] = json!(artifact_cid);
+                }
+                if let Some(invocation_cid) = &inv.identity.invocation_cid {
+                    value["solverInvocationCid"] = json!(invocation_cid);
+                }
+                if let Some(vendor_memento_cid) = &inv.identity.vendor_memento_cid {
+                    value["solverVendorMementoCid"] = json!(vendor_memento_cid);
+                }
+                if let Some(vendor_memento) = &inv.identity.vendor_memento {
+                    value["solverVendorMemento"] = vendor_memento.clone();
+                }
+                value
+            })
+            .collect(),
+    )
+}
+
+fn consistency_verification_detail(
+    property_name: &str,
+    checked_formula: &Json,
+    linked_posts: &[LinkedPostInstance],
+    raw_verdict: Option<ObligationVerdict>,
+    final_verdict: ObligationVerdict,
+    solver_reason: Option<&str>,
+    invs: &[SolverInvocation],
+) -> Json {
+    json!({
+        "kind": "consistency",
+        "property": property_name,
+        "checkedFormula": checked_formula,
+        "linkedPosts": linked_posts_to_json(linked_posts),
+        "rawSolverVerdict": raw_verdict.map(|v| v.as_str()),
+        "finalVerdict": final_verdict.as_str(),
+        "solverReason": solver_reason,
+        "solverInvocations": solver_invocations_to_json(invs),
+    })
+}
+
 /// Run the raw-satisfiability consistency check on a single `inv` and label it.
 /// Shared by the per-contract path and the cross-proof conjoined path.
 fn check_inv_consistency(
     cid: String,
     property_name: &str,
     inv: Json,
+    linked_posts: Vec<LinkedPostInstance>,
     plan: &SolverPlan,
     registry: &HashMap<String, SolverHandle>,
 ) -> ConsistencyResult {
     let inv = with_local_forall_instances(canonicalize_formula_json(&inv), property_name);
     if let Some(reason) = structural_contradiction_reason(&inv) {
+        let verdict = ObligationVerdict::Unsatisfied;
         return ConsistencyResult {
             contract_cid: cid,
             property_name: property_name.to_string(),
-            verdict: ObligationVerdict::Unsatisfied,
+            verdict,
             reason: format!("{CONTRADICTORY_REASON} `{property_name}` [structural: {reason}]"),
             witnessed: false,
+            verification: Some(consistency_verification_detail(
+                property_name,
+                &inv,
+                &linked_posts,
+                None,
+                verdict,
+                Some(&format!("structural: {reason}")),
+                &[],
+            )),
         };
     }
     let smt = match emit_asserted(&inv) {
         Ok(s) => s,
         Err(e) => {
+            let verdict = ObligationVerdict::Undecidable;
             return ConsistencyResult {
                 contract_cid: cid,
                 property_name: property_name.to_string(),
-                verdict: ObligationVerdict::Undecidable,
+                verdict,
                 reason: format!("consistency smt-emit (encoding STOP): {e}"),
                 witnessed: false,
+                verification: Some(consistency_verification_detail(
+                    property_name,
+                    &inv,
+                    &linked_posts,
+                    None,
+                    verdict,
+                    Some(&format!("smt-emit: {e}")),
+                    &[],
+                )),
             };
         }
     };
-    let (raw, raw_reason, _invs) = run_plan(plan, registry, &smt, Some(&inv));
+    let (raw, raw_reason, invs) = run_plan(plan, registry, &smt, Some(&inv));
     let (verdict, label) = consistency_verdict(raw);
     let reason = format!("{label} `{property_name}` [{raw_reason}]");
     if verdict == ObligationVerdict::Undecidable {
@@ -821,6 +967,15 @@ fn check_inv_consistency(
         verdict,
         reason,
         witnessed: false,
+        verification: Some(consistency_verification_detail(
+            property_name,
+            &inv,
+            &linked_posts,
+            Some(raw),
+            verdict,
+            Some(&raw_reason),
+            &invs,
+        )),
     }
 }
 
@@ -1156,6 +1311,198 @@ fn with_ambient_foralls(inv: Json, property_name: &str, ambient: &[Json]) -> Jso
     serde_json::json!({ "kind": "and", "operands": operands })
 }
 
+#[derive(Debug, Clone)]
+struct AmbientPost {
+    source_symbol: String,
+    target_cid: String,
+    target_proof_cid: Option<String>,
+    formals: Vec<String>,
+    out_binding: String,
+    post: Json,
+}
+
+#[derive(Debug, Clone)]
+struct LinkedPostInstance {
+    source_symbol: String,
+    target_cid: String,
+    target_proof_cid: Option<String>,
+    formals: Vec<String>,
+    out_binding: String,
+    call: Json,
+    vendor_post: Json,
+    instantiated_post: Json,
+}
+
+fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
+    let mut posts = Vec::new();
+    for (indexed_symbol, bridge_env) in &pool.bridges_by_symbol {
+        let source_symbol = memento_body_field(bridge_env, "sourceSymbol")
+            .and_then(|v| v.as_str())
+            .unwrap_or(indexed_symbol)
+            .to_string();
+        if source_symbol.is_empty() {
+            continue;
+        }
+        let Some(target_cid) =
+            memento_body_field(bridge_env, "targetContractCid").and_then(|v| v.as_str())
+        else {
+            continue;
+        };
+        let Some(contract_env) = pool.mementos.get(target_cid) else {
+            continue;
+        };
+        if memento_kind(contract_env) != Some("contract") {
+            continue;
+        }
+        let Some(body) = memento_body(contract_env) else {
+            continue;
+        };
+        let Some(post) = body
+            .get("post")
+            .or_else(|| body.get("postcondition"))
+            .filter(|v| v.is_object())
+            .cloned()
+        else {
+            continue;
+        };
+        let Some(formals_arr) = body.get("formals").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        let Some(formals) = formals_arr
+            .iter()
+            .map(|v| v.as_str().map(str::to_string))
+            .collect::<Option<Vec<_>>>()
+        else {
+            continue;
+        };
+        let out_binding = body
+            .get("outBinding")
+            .or_else(|| body.get("out_binding"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("out")
+            .to_string();
+        let target_proof_cid = memento_body_field(bridge_env, "targetProofCid")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                pool.bridge_self_bundle_by_symbol
+                    .get(&source_symbol)
+                    .cloned()
+            });
+        posts.push(AmbientPost {
+            source_symbol,
+            target_cid: target_cid.to_string(),
+            target_proof_cid,
+            formals,
+            out_binding,
+            post,
+        });
+    }
+    posts
+}
+
+pub(crate) fn linked_post_instance_count(pool: &MementoPool, body: &Json) -> usize {
+    if !is_consistency_candidate(body) {
+        return 0;
+    }
+    let inv = canonicalize_formula_json(&axiom_context_formula(body));
+    let ambient_posts = collect_ambient_posts(pool);
+    instantiate_ambient_posts_for_inv(&inv, &ambient_posts).len()
+}
+
+fn instantiate_ambient_posts_for_inv(inv: &Json, ambient: &[AmbientPost]) -> Vec<Json> {
+    linked_ambient_post_instances_for_inv(inv, ambient)
+        .into_iter()
+        .map(|p| p.instantiated_post)
+        .collect()
+}
+
+fn linked_ambient_post_instances_for_inv(
+    inv: &Json,
+    ambient: &[AmbientPost],
+) -> Vec<LinkedPostInstance> {
+    if ambient.is_empty() {
+        return Vec::new();
+    }
+    let mut callsites = Vec::new();
+    collect_unquantified_ctor_terms(inv, &mut callsites);
+    if callsites.is_empty() {
+        return Vec::new();
+    }
+
+    let mut instances = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for callsite in &callsites {
+        let Some(name) = callsite.get("name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(args) = callsite.get("args").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        for post in ambient
+            .iter()
+            .filter(|post| post.source_symbol == name && post.formals.len() == args.len())
+        {
+            let mut instance = post.post.clone();
+            for (formal, actual) in post.formals.iter().zip(args.iter()) {
+                instance = crate::instantiate::substitute_formula_pub(&instance, formal, actual);
+            }
+            instance =
+                crate::instantiate::substitute_formula_pub(&instance, &post.out_binding, callsite);
+            if !formula_is_closed(&instance, &mut Vec::new()) {
+                debug!(
+                    source_symbol = %post.source_symbol,
+                    target_cid = %post.target_cid,
+                    "verifier/linker: skipped open specialized post"
+                );
+                continue;
+            }
+            let key = libsugar::canonical::json_jcs(&instance)
+                .unwrap_or_else(|_| serde_json::to_string(&instance).unwrap_or_default());
+            if seen.insert(key) {
+                instances.push(LinkedPostInstance {
+                    source_symbol: post.source_symbol.clone(),
+                    target_cid: post.target_cid.clone(),
+                    target_proof_cid: post.target_proof_cid.clone(),
+                    formals: post.formals.clone(),
+                    out_binding: post.out_binding.clone(),
+                    call: callsite.clone(),
+                    vendor_post: post.post.clone(),
+                    instantiated_post: canonicalize_formula_json(&instance),
+                });
+            }
+        }
+    }
+    instances
+}
+
+fn with_ambient_posts_with_instances(
+    inv: Json,
+    ambient: &[AmbientPost],
+) -> (Json, Vec<LinkedPostInstance>) {
+    if ambient.is_empty() {
+        return (inv, Vec::new());
+    }
+    let instances = linked_ambient_post_instances_for_inv(&inv, ambient);
+    debug!(
+        ambient_posts = ambient.len(),
+        instances = instances.len(),
+        "verifier/linker: conjoining specialized contract posts into obligation"
+    );
+    if instances.is_empty() {
+        return (inv, Vec::new());
+    }
+    let mut operands = Vec::with_capacity(instances.len() + 1);
+    operands.push(inv);
+    operands.extend(instances.iter().map(|p| p.instantiated_post.clone()));
+    (
+        serde_json::json!({ "kind": "and", "operands": operands }),
+        instances,
+    )
+}
+
 fn with_local_forall_instances(inv: Json, property_name: &str) -> Json {
     let mut foralls = Vec::new();
     collect_ambient_foralls(&inv, &mut foralls);
@@ -1228,6 +1575,12 @@ pub fn verify_consistency(
         ambient_foralls = ambient_foralls.len(),
         "verifier/ambient: universals will be conjoined into every obligation"
     );
+    let ambient_posts = collect_ambient_posts(pool);
+    info!(
+        candidates = candidates.len(),
+        ambient_posts = ambient_posts.len(),
+        "verifier/linker: contract posts will be specialized into matching obligations"
+    );
 
     // CROSS-PROOF CONJOIN: group same-named contracts and conjoin their `inv`s
     // before the SAT check -- the cross-proof twin of mint's same-name coalesce
@@ -1288,30 +1641,28 @@ pub fn verify_consistency(
             if callsite_keyed && inv_bodies.len() > 1 {
                 let invs: Vec<Json> = inv_bodies
                     .iter()
-                    .map(|b| {
-                        b.get("inv")
-                            .map(canonicalize_formula_json)
-                            .unwrap_or(Json::Null)
-                    })
+                    .map(|b| canonicalize_formula_json(&axiom_context_formula(b)))
                     .collect();
                 let inv = serde_json::json!({ "kind": "and", "operands": invs });
+                let (inv, linked_posts) = with_ambient_posts_with_instances(inv, &ambient_posts);
                 out.push(check_inv_consistency(
                     inv_cids[0].clone(),
                     property_name,
                     with_ambient_foralls(inv, property_name, &ambient_foralls),
+                    linked_posts,
                     plan,
                     registry,
                 ));
             } else {
                 for (cid, body) in inv_cids.iter().zip(inv_bodies.iter()) {
-                    let inv = body
-                        .get("inv")
-                        .map(canonicalize_formula_json)
-                        .unwrap_or(Json::Null);
+                    let inv = canonicalize_formula_json(&axiom_context_formula(body));
+                    let (inv, linked_posts) =
+                        with_ambient_posts_with_instances(inv, &ambient_posts);
                     out.push(check_inv_consistency(
                         (*cid).clone(),
                         property_name,
                         with_ambient_foralls(inv, property_name, &ambient_foralls),
+                        linked_posts,
                         plan,
                         registry,
                     ));
@@ -1397,6 +1748,9 @@ mod tests {
     }
     fn gt(a: Json, b: Json) -> Json {
         json!({"kind":"atomic","name":">","args":[a,b]})
+    }
+    fn implies(a: Json, b: Json) -> Json {
+        json!({"kind":"implies","operands":[a,b]})
     }
     fn insert_contract(pool: &mut MementoPool, cid: &str, name: &str, inv: Json) {
         let env = json!({
@@ -1728,6 +2082,103 @@ mod tests {
         );
     }
 
+    #[test]
+    fn vendor_function_post_is_linked_into_fresh_consumer_assertions() {
+        let (plan, reg) = z3_plan_and_registry();
+        let vendor_cid = "blake3-512:vendor-enc-contract";
+        let source_symbol = "call:enc";
+        let call_enc = |arg: Json| json!({"kind":"ctor","name":source_symbol,"args":[arg]});
+        let post = implies(
+            eqf(var("input"), string_const("def")),
+            eqf(var("out"), string_const("ghi")),
+        );
+
+        let mut pool = MementoPool::default();
+        pool.mementos.insert(
+            vendor_cid.to_string(),
+            json!({
+                "evidence": {
+                    "kind": "contract",
+                    "body": {
+                        "contractName": "rust-source::enc",
+                        "formals": ["input"],
+                        "outBinding": "out",
+                        "post": post
+                    }
+                }
+            }),
+        );
+        let bridge = json!({
+            "evidence": {
+                "kind": "bridge",
+                "body": {
+                    "sourceSymbol": source_symbol,
+                    "targetContractCid": vendor_cid,
+                    "targetProofCid": "blake3-512:vendor-proof"
+                }
+            }
+        });
+        pool.bridges_by_symbol
+            .insert(source_symbol.to_string(), bridge);
+
+        insert_contract(
+            &mut pool,
+            "blake3-512:good-consumer-assertion",
+            "src/lib.rs::tests::fresh_vendor_fol_good::enc#euf#c:callresult_enc_a1(s:\"def\")::assertion",
+            eqf(call_enc(string_const("def")), string_const("ghi")),
+        );
+        insert_contract(
+            &mut pool,
+            "blake3-512:bad-consumer-assertion",
+            "src/lib.rs::tests::fresh_vendor_fol_bad::enc#euf#c:callresult_enc_a1(s:\"def\")::assertion",
+            eqf(call_enc(string_const("def")), string_const("zzz")),
+        );
+
+        let res = verify_consistency(&pool, &plan, &reg);
+        assert_eq!(res.len(), 2, "two fresh consumer assertions: {res:?}");
+        let good = res
+            .iter()
+            .find(|r| r.contract_cid == "blake3-512:good-consumer-assertion")
+            .expect("good consumer assertion row present");
+        assert_eq!(
+            good.verdict,
+            ObligationVerdict::Discharged,
+            "vendor post enc(\"def\") = \"ghi\" must agree with the fresh good assertion: {res:?}"
+        );
+        let good_verification = good
+            .verification
+            .as_ref()
+            .expect("good row carries verification detail");
+        assert_eq!(good_verification["kind"], "consistency");
+        assert_eq!(
+            good_verification["linkedPosts"][0]["sourceSymbol"],
+            source_symbol
+        );
+        assert_eq!(
+            good_verification["linkedPosts"][0]["targetContractCid"],
+            vendor_cid
+        );
+        assert_eq!(
+            good_verification["linkedPosts"][0]["targetProofCid"],
+            "blake3-512:vendor-proof"
+        );
+        assert_eq!(
+            good_verification["solverInvocations"][0]["compiler"],
+            "smt-lib-v2.6"
+        );
+        assert_eq!(good_verification["rawSolverVerdict"], "unsatisfied");
+        assert_eq!(good_verification["finalVerdict"], "discharged");
+        let bad = res
+            .iter()
+            .find(|r| r.contract_cid == "blake3-512:bad-consumer-assertion")
+            .expect("bad consumer assertion row present");
+        assert_eq!(
+            bad.verdict,
+            ObligationVerdict::Unsatisfied,
+            "vendor post enc(\"def\") = \"ghi\" must refute the fresh bad assertion: {res:?}"
+        );
+    }
+
     /// H1 [B7]: MIXED-SORT CONJUNCTION is a NAMED Undecidable, not a parse error.
     /// Two same-named contracts equate the same `call:f` ctor to a String literal
     /// (String-theory regime: String return sort) and to an Int literal (legacy
@@ -2051,6 +2502,7 @@ mod tests {
             "blake3-512:point".into(),
             "g#euf#c:callresult_g_a1(i:2)::assertion",
             inv,
+            Vec::new(),
             &plan,
             &registry,
         );
@@ -2443,6 +2895,39 @@ mod tests {
         assert!(
             results.is_empty(),
             "pre-bearing contract must not be a consistency candidate"
+        );
+    }
+
+    #[test]
+    fn inv_is_conjoined_with_post_universe_as_axiom_context() {
+        // `inv` is the asserted fact; `post` is the lifted universe relation.
+        // The consistency/conjoiner pass must check their conjunction so a
+        // proof cannot carry an assertion fact that contradicts its own
+        // universe contract.
+        let mut pool = MementoPool::default();
+        let env = json!({
+            "envelope": {
+                "header": {
+                    "kind": "contract",
+                    "contractName": "rust-source::contradictory_universe",
+                    "inv": eqf(var("out"), int(5)),
+                    "post": eqf(var("out"), int(6)),
+                }
+            }
+        });
+        pool.insert("blake3-512:inv-post".into(), env);
+        let (plan, registry) = z3_plan_and_registry();
+        let results = verify_consistency(&pool, &plan, &registry);
+
+        assert_eq!(
+            results.len(),
+            1,
+            "inv/post contract must be checked: {results:?}"
+        );
+        assert_eq!(results[0].verdict, ObligationVerdict::Unsatisfied);
+        assert!(
+            results[0].reason.contains("contradictory"),
+            "inv/post contradiction must be surfaced: {results:?}"
         );
     }
 

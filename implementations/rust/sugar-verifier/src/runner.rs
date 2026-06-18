@@ -33,7 +33,7 @@ use crate::handshake::{
 use crate::solvers::{
     plan::SolverInvocation, registry, run_plan, SolverHandle, SolverPlan, SolversConfig,
 };
-use crate::types::{CallSite, MementoPool, ObligationVerdict, Report};
+use crate::types::{memento_body, CallSite, MementoPool, ObligationVerdict, Report};
 use crate::{
     body_discharge, call_edge_loader, enumerate_callsites, instantiate,
     load_all_proofs::{self, ProofBytes},
@@ -319,6 +319,14 @@ impl Runner {
         let report_stage_capture = StageCapture::start("report", sorted_keys(&pool.mementos));
         let mut violations = 0usize;
         for (cs, verdict, reason, method, body_tier) in per_results {
+            if callsite_body_refusal_is_owned_by_consistency(&cs, verdict, &reason, &pool) {
+                debug!(
+                    bridge = %cs.bridge_ir_name,
+                    property = %cs.property_name,
+                    "verifier/linker: consistency owns body-bearing assertion callsite row"
+                );
+                continue;
+            }
             if verdict != ObligationVerdict::Discharged {
                 violations += 1;
             }
@@ -401,11 +409,12 @@ impl Runner {
                     n_residue.fetch_add(1, Ordering::Relaxed);
                 }
             }
-            report_stage::add_consistency(
+            report_stage::add_consistency_with_verification(
                 &cr.contract_cid,
                 &cr.property_name,
                 cr.verdict,
                 &cr.reason,
+                cr.verification.clone(),
                 &mut report,
             );
         }
@@ -595,6 +604,14 @@ impl Runner {
         // Aggregate report rows.
         let mut violations = 0usize;
         for (cs, verdict, reason, method, body_tier) in per_results {
+            if callsite_body_refusal_is_owned_by_consistency(&cs, verdict, &reason, &pool) {
+                debug!(
+                    bridge = %cs.bridge_ir_name,
+                    property = %cs.property_name,
+                    "verifier/linker: consistency owns body-bearing assertion callsite row"
+                );
+                continue;
+            }
             if verdict != ObligationVerdict::Discharged {
                 violations += 1;
             }
@@ -678,11 +695,12 @@ impl Runner {
                     n_residue.fetch_add(1, Ordering::Relaxed);
                 }
             }
-            report_stage::add_consistency(
+            report_stage::add_consistency_with_verification(
                 &cr.contract_cid,
                 &cr.property_name,
                 cr.verdict,
                 &cr.reason,
+                cr.verification.clone(),
                 &mut report,
             );
         }
@@ -1109,6 +1127,23 @@ type CallsiteResult = (
     Option<String>,
     Option<String>,
 );
+
+fn callsite_body_refusal_is_owned_by_consistency(
+    cs: &CallSite,
+    verdict: ObligationVerdict,
+    reason: &str,
+    pool: &MementoPool,
+) -> bool {
+    if verdict != ObligationVerdict::Undecidable
+        || !reason.starts_with("body-discharge: refuse: target")
+    {
+        return false;
+    }
+    let Some(body) = pool.mementos.get(&cs.property_cid).and_then(memento_body) else {
+        return false;
+    };
+    crate::consistency::linked_post_instance_count(pool, body) > 0
+}
 
 /// Verify each body-derived contract's OWN postcondition. For a contract
 /// with `post = (result == <body>)` (and optionally a conjoined
@@ -1988,4 +2023,95 @@ fn mint_and_cache(
     let envelope_json: Json = serde_json::from_slice(&final_canonical)?;
 
     Ok((cid, envelope_json))
+}
+
+#[cfg(test)]
+mod consistency_owned_callsite_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn string_const(s: &str) -> Json {
+        json!({"kind":"const","value":s,"sort":{"kind":"primitive","name":"String"}})
+    }
+
+    fn eqf(a: Json, b: Json) -> Json {
+        json!({"kind":"atomic","name":"=","args":[a,b]})
+    }
+
+    fn linked_pool_and_callsite() -> (MementoPool, CallSite) {
+        let source_symbol = "call:enc";
+        let vendor_cid = "blake3-512:vendor-enc";
+        let assertion_cid = "blake3-512:consumer-assertion";
+        let call = json!({"kind":"ctor","name":source_symbol,"args":[string_const("def")]});
+        let assertion = json!({
+            "evidence": {
+                "kind": "contract",
+                "body": {
+                    "contractName": "src/lib.rs::tests::fresh_vendor_fol_good::enc#euf#c:callresult_enc_a1(s:\"def\")::assertion",
+                    "inv": eqf(call, string_const("ghi"))
+                }
+            }
+        });
+        let vendor = json!({
+            "evidence": {
+                "kind": "contract",
+                "body": {
+                    "contractName": "rust-source::enc",
+                    "formals": ["input"],
+                    "outBinding": "out",
+                    "post": {
+                        "kind": "implies",
+                        "operands": [
+                            eqf(json!({"kind":"var","name":"input"}), string_const("def")),
+                            eqf(json!({"kind":"var","name":"out"}), string_const("ghi"))
+                        ]
+                    }
+                }
+            }
+        });
+        let bridge = json!({
+            "evidence": {
+                "kind": "bridge",
+                "body": {
+                    "sourceSymbol": source_symbol,
+                    "targetContractCid": vendor_cid
+                }
+            }
+        });
+        let mut pool = MementoPool::default();
+        pool.insert(assertion_cid.to_string(), assertion);
+        pool.mementos.insert(vendor_cid.to_string(), vendor);
+        pool.bridges_by_symbol
+            .insert(source_symbol.to_string(), bridge);
+        let cs = CallSite {
+            bridge_ir_name: source_symbol.to_string(),
+            property_name: "src/lib.rs::tests::fresh_vendor_fol_good::enc#euf#c:callresult_enc_a1(s:\"def\")::assertion".to_string(),
+            property_cid: assertion_cid.to_string(),
+            ..CallSite::default()
+        };
+        (pool, cs)
+    }
+
+    #[test]
+    fn linked_assertion_body_refusal_is_owned_by_consistency() {
+        let (pool, cs) = linked_pool_and_callsite();
+        assert!(callsite_body_refusal_is_owned_by_consistency(
+            &cs,
+            ObligationVerdict::Undecidable,
+            "body-discharge: refuse: target `call:enc` is body-bearing",
+            &pool
+        ));
+    }
+
+    #[test]
+    fn unlinked_assertion_body_refusal_stays_visible() {
+        let (mut pool, cs) = linked_pool_and_callsite();
+        pool.bridges_by_symbol.clear();
+        assert!(!callsite_body_refusal_is_owned_by_consistency(
+            &cs,
+            ObligationVerdict::Undecidable,
+            "body-discharge: refuse: target `call:enc` is body-bearing",
+            &pool
+        ));
+    }
 }

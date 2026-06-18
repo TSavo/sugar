@@ -17,22 +17,21 @@ use serde_json::Value as Json;
 /// Return the kind discriminator of a memento, regardless of shape:
 ///
 /// * v1.2 layered: `header.kind`
+/// * lean header/body members: `header.kind`
 /// * v1.1 flat:    `evidence.kind`
 pub fn memento_kind(envelope: &Json) -> Option<&str> {
-    if envelope.get("envelope").is_some() {
-        envelope
-            .pointer("/header/kind")
-            .or_else(|| envelope.pointer("/envelope/header/kind"))
-            .and_then(|v| v.as_str())
-    } else {
-        envelope.pointer("/evidence/kind").and_then(|v| v.as_str())
-    }
+    envelope
+        .pointer("/header/kind")
+        .or_else(|| envelope.pointer("/envelope/header/kind"))
+        .or_else(|| envelope.pointer("/evidence/kind"))
+        .and_then(|v| v.as_str())
 }
 
 /// Return the substrate-relevant inner object of a memento (the
 /// container of kind-specific fields), regardless of shape:
 ///
 /// * v1.2 layered: `header`
+/// * lean header/body members: `body`, falling back to `header`
 /// * v1.1 flat:    `evidence.body`
 ///
 /// Note: for v1.1, formula references like `preHash`/`antecedentHash`
@@ -43,6 +42,8 @@ pub fn memento_body(envelope: &Json) -> Option<&Json> {
         envelope
             .get("header")
             .or_else(|| envelope.pointer("/envelope/header"))
+    } else if envelope.get("header").is_some() || envelope.get("body").is_some() {
+        envelope.get("body").or_else(|| envelope.get("header"))
     } else {
         envelope.pointer("/evidence/body")
     }
@@ -54,6 +55,7 @@ pub fn memento_body(envelope: &Json) -> Option<&Json> {
 /// * v1.2 layered: prefer `header.<field>` (substrate-load-bearing
 ///   bridge/contract/implication kind-specific fields), then fall back
 ///   to `metadata.<field>` (per-formula derived hashes like preHash).
+/// * lean header/body members: prefer `header.<field>`, then `body.<field>`.
 /// * v1.1 flat:    `evidence.body.<field>` (legacy flat).
 ///
 /// This single helper covers both the substrate references the
@@ -76,6 +78,12 @@ pub fn memento_body_field<'a>(envelope: &'a Json, field: &str) -> Option<&'a Jso
                     .pointer("/envelope/metadata")
                     .and_then(|m| m.get(field))
             })
+    } else if envelope.get("header").is_some() || envelope.get("body").is_some() {
+        envelope
+            .pointer("/header")
+            .and_then(|h| h.get(field))
+            .or_else(|| envelope.pointer("/body").and_then(|b| b.get(field)))
+            .or_else(|| envelope.pointer("/metadata").and_then(|m| m.get(field)))
     } else {
         envelope
             .pointer("/evidence/body")
@@ -1011,6 +1019,7 @@ pub struct ReportRow {
     pub reason: String,
     pub discharge_method: Option<String>,
     pub body_discharge_tier: Option<String>,
+    pub verification: Option<Json>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1075,6 +1084,34 @@ mod tests {
                 }
             }
         })
+    }
+
+    #[test]
+    fn lean_header_body_source_memento_uses_common_accessors() {
+        let memento = json!({
+            "schemaVersion": "1",
+            "header": {
+                "kind": "source-memento",
+                "contractName": "rust-source::enc",
+                "sourceFunctionName": "enc"
+            },
+            "body": {
+                "kind": "source-memento",
+                "file": "src/lib.rs",
+                "source_cid": "blake3-512:source"
+            }
+        });
+
+        assert_eq!(memento_kind(&memento), Some("source-memento"));
+        assert_eq!(memento_body(&memento), Some(&memento["body"]));
+        assert_eq!(
+            memento_body_field(&memento, "contractName"),
+            Some(&memento["header"]["contractName"])
+        );
+        assert_eq!(
+            memento_body_field(&memento, "source_cid"),
+            Some(&memento["body"]["source_cid"])
+        );
     }
 
     #[test]

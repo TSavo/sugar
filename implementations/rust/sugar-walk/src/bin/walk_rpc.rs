@@ -37,6 +37,11 @@ use sugar_claim_envelope::{
 use sugar_ir_types::{EvidenceMemento, IrFormula, IrTerm, SourceKind};
 use sugar_lift_contracts::lift_file_with_docstring_evidence;
 use sugar_walk::emit::{rust_function_term_json_for_file, shadow_proof_ir_cid, shadow_to_proof_ir};
+#[cfg(test)]
+use sugar_walk::source_oracle::resolve_source_memento;
+use sugar_walk::source_oracle::{
+    block_inner_source, block_to_ast_template, source_memento_of_named_item_fn, SourceMemento,
+};
 use sugar_walk::{
     build_function_contract_with_file_and_post_override, build_shadow_source,
     collect_explicit_function_return_facts, lift_function_postcondition_with_return_facts,
@@ -597,6 +602,7 @@ fn rust_vendor_contract_bindings_from_proof(path: &Path) -> Result<Vec<Value>, S
             "contract_cid": member_cid,
             "body_bearing": body_bearing,
             "has_pre": has_pre,
+            "has_post": has_post,
             "bodyDischargeEligible": body_policy.body_discharge_eligible,
             "bodyDischargeRefusalReason": body_policy.body_discharge_refusal_reason,
             "bridgeSourceSymbol": bridge_source_symbol,
@@ -868,6 +874,9 @@ struct CallSite {
     /// followed by explicit arguments. The verifier treats the resulting
     /// `formalActuals` map as opaque data and never infers Rust call syntax.
     actual_terms: Option<Vec<Value>>,
+    /// Producer contract name for the enclosing Rust function or impl method,
+    /// using the same naming convention as `function_contract_lift`.
+    caller_contract_name: Option<String>,
     file: String,
     line: usize,
     col: usize,
@@ -959,6 +968,7 @@ fn collect_tokio_mpsc_channel_conduit_callsites(file: &syn::File, rel_path: &str
                         disambiguated_crate: None,
                         unsupported_reason: None,
                         actual_terms: None,
+                        caller_contract_name: None,
                         file: self.rel_path.to_string(),
                         line,
                         col,
@@ -1156,6 +1166,7 @@ fn collect_tokio_mutex_guard_conduit_callsites(file: &syn::File, rel_path: &str)
                         disambiguated_crate: None,
                         unsupported_reason: None,
                         actual_terms: None,
+                        caller_contract_name: None,
                         file: self.rel_path.to_string(),
                         line,
                         col,
@@ -2867,6 +2878,7 @@ fn collect_callsites_in_items(
                 let param_type_map =
                     build_param_type_map(&item_fn.sig, use_map, local_type_names, current_crate);
                 let param_names = build_param_name_set(&item_fn.sig);
+                let caller_contract_name = item_fn.sig.ident.to_string();
                 collect_callsites_in_block(
                     &item_fn.block,
                     rel_path,
@@ -2881,6 +2893,7 @@ fn collect_callsites_in_items(
                     function_postconditions,
                     &param_type_map,
                     &param_names,
+                    Some(caller_contract_name.as_str()),
                     out,
                 );
             }
@@ -2901,6 +2914,12 @@ fn collect_callsites_in_items(
                             current_crate,
                         );
                         let param_names = build_param_name_set(&method.sig);
+                        let caller_contract_name = if is_liftable_impl_method(item_impl, method) {
+                            impl_function_qualifier(item_impl)
+                                .map(|qualifier| format!("{qualifier}::{}", method.sig.ident))
+                        } else {
+                            None
+                        };
                         collect_callsites_in_block(
                             &method.block,
                             rel_path,
@@ -2915,6 +2934,7 @@ fn collect_callsites_in_items(
                             function_postconditions,
                             &param_type_map,
                             &param_names,
+                            caller_contract_name.as_deref(),
                             out,
                         );
                     }
@@ -2972,6 +2992,7 @@ fn collect_callsites_in_block(
     // declared parameter types; empty when called outside a fn.
     param_type_map: &HashMap<String, TypeIdentity>,
     param_names: &BTreeSet<String>,
+    caller_contract_name: Option<&str>,
     out: &mut Vec<CallSite>,
 ) {
     use syn::visit::Visit;
@@ -2991,6 +3012,7 @@ fn collect_callsites_in_block(
         function_postconditions: &'a FunctionPostconditionsManifest,
         param_type_map: &'a HashMap<String, TypeIdentity>,
         param_names: &'a BTreeSet<String>,
+        caller_contract_name: Option<String>,
         stability_block: &'a syn::Block,
         pure_free_guard_facts: Vec<PureFreeCallGuardFact>,
         out: &'a mut Vec<CallSite>,
@@ -3279,6 +3301,7 @@ fn collect_callsites_in_block(
                         .iter()
                         .map(|arg| self.actual_term_for_expr(arg))
                         .collect::<Option<Vec<_>>>(),
+                    caller_contract_name: self.caller_contract_name.clone(),
                     file: self.rel_path.to_string(),
                     line: start.line,
                     col: start.column,
@@ -3294,6 +3317,7 @@ fn collect_callsites_in_block(
                     disambiguated_crate: None,
                     unsupported_reason: Some("unsupported-closure-invocation"),
                     actual_terms: None,
+                    caller_contract_name: self.caller_contract_name.clone(),
                     file: self.rel_path.to_string(),
                     line: start.line,
                     col: start.column,
@@ -3309,6 +3333,7 @@ fn collect_callsites_in_block(
                     disambiguated_crate: None,
                     unsupported_reason: Some("unsupported-dynamic-callee"),
                     actual_terms: None,
+                    caller_contract_name: self.caller_contract_name.clone(),
                     file: self.rel_path.to_string(),
                     line: start.line,
                     col: start.column,
@@ -3318,13 +3343,19 @@ fn collect_callsites_in_block(
             self.invalidate_pure_free_guard_facts_for_expr_effects(&syn::Expr::Call(node.clone()));
         }
         fn visit_expr_macro(&mut self, node: &'ast syn::ExprMacro) {
-            self.out
-                .push(unsupported_macro_callsite(&node.mac, self.rel_path));
+            self.out.push(unsupported_macro_callsite(
+                &node.mac,
+                self.rel_path,
+                self.caller_contract_name.as_deref(),
+            ));
             syn::visit::visit_expr_macro(self, node);
         }
         fn visit_stmt_macro(&mut self, node: &'ast syn::StmtMacro) {
-            self.out
-                .push(unsupported_macro_callsite(&node.mac, self.rel_path));
+            self.out.push(unsupported_macro_callsite(
+                &node.mac,
+                self.rel_path,
+                self.caller_contract_name.as_deref(),
+            ));
             syn::visit::visit_stmt_macro(self, node);
         }
         fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
@@ -3420,6 +3451,7 @@ fn collect_callsites_in_block(
                     .or_else(|| function_postcondition_target.map(|(krate, _)| krate)),
                 unsupported_reason: None,
                 actual_terms,
+                caller_contract_name: self.caller_contract_name.clone(),
                 file: self.rel_path.to_string(),
                 line: start.line,
                 col: start.column,
@@ -3526,6 +3558,7 @@ fn collect_callsites_in_block(
                 disambiguated_crate: None,
                 unsupported_reason: None,
                 actual_terms: None,
+                caller_contract_name: self.caller_contract_name.clone(),
                 file: self.rel_path.to_string(),
                 line: start.line,
                 col: start.column,
@@ -3618,6 +3651,7 @@ fn collect_callsites_in_block(
         function_postconditions,
         param_type_map,
         param_names,
+        caller_contract_name: caller_contract_name.map(str::to_string),
         stability_block: block,
         pure_free_guard_facts: Vec::new(),
         out,
@@ -3625,7 +3659,11 @@ fn collect_callsites_in_block(
     v.visit_block(block);
 }
 
-fn unsupported_macro_callsite(mac: &syn::Macro, rel_path: &str) -> CallSite {
+fn unsupported_macro_callsite(
+    mac: &syn::Macro,
+    rel_path: &str,
+    caller_contract_name: Option<&str>,
+) -> CallSite {
     let callee = mac
         .path
         .segments
@@ -3648,6 +3686,7 @@ fn unsupported_macro_callsite(mac: &syn::Macro, rel_path: &str) -> CallSite {
         disambiguated_crate: None,
         unsupported_reason: Some("unsupported-macro-callsite"),
         actual_terms: None,
+        caller_contract_name: caller_contract_name.map(str::to_string),
         file: rel_path.to_string(),
         line: start.line,
         col: start.column,
@@ -4822,11 +4861,34 @@ fn has_nontrivial_pre_json(pre: &Value) -> bool {
         && pre.get("name").and_then(|v| v.as_str()) == Some("true"))
 }
 
+fn binding_has_post(binding: &Value) -> bool {
+    binding
+        .get("has_post")
+        .or_else(|| binding.get("hasPost"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or_else(|| binding.get("post").is_some() || binding.get("postHash").is_some())
+}
+
 fn binding_is_body_bearing(binding: &Value) -> bool {
     binding
         .get("body_bearing")
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
+}
+
+fn binding_contract_name(binding: &Value) -> Option<&str> {
+    binding
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+}
+
+fn binding_is_imported_contract(binding: &Value) -> bool {
+    binding
+        .get("target_proof_cid")
+        .and_then(Value::as_str)
+        .is_some_and(|cid| !cid.trim().is_empty())
 }
 
 fn binding_rank(binding: &Value) -> u8 {
@@ -4882,171 +4944,6 @@ fn push_rust_binding_key_leaf(leaves: &mut Vec<String>, leaf: &str) {
 // pinned CIDs, else REFUSES. Exact-or-refuse, no silent loss.
 // ---------------------------------------------------------------------------
 
-/// A typed refusal from the Source Oracle: the on-disk source did not recompute
-/// to the pinned CID (drift), or the locus could not be resolved. Never a silent
-/// fallback — the refusal is the BINARY axis of the three-axis pin, checked at
-/// every resolution.
-#[derive(Debug)]
-struct SourceOracleRefusal {
-    reason: String,
-}
-
-/// A SourceMemento: the locus + pins extracted from a sugar binding's
-/// `body_source`. Zero content — the body lives on disk.
-#[derive(Debug)]
-struct SourceMemento {
-    source_function_name: Option<String>,
-    file: String,
-    start_line: Option<usize>,
-    end_line: Option<usize>,
-    source_cid: Option<String>,
-    template_cid: Option<String>,
-}
-
-/// What the oracle returns on a clean resolve: the reconstructed body + the
-/// recomputed pins (byte-identical to the mint).
-#[derive(Debug)]
-struct ResolvedSource {
-    body_text: String,
-    source_cid: String,
-    template_cid: String,
-    param_names: Vec<String>,
-}
-
-/// The Source Oracle. Reads the on-disk rust source at the memento's locus,
-/// re-derives `source_cid`/`template_cid` USING THE EXACT SAME bytes +
-/// canonicalization the producer (`sugar_body_source`) used at mint
-/// (`block_inner_source` -> `canonical_sugar_body_text` -> `blake3_512_of`; and
-/// `block_to_ast_template().to_string()` -> `blake3_512_of`), and returns the
-/// body IFF BOTH recomputed CIDs equal the pinned ones. Else a typed refusal.
-///
-/// `project_root` is the root the memento's `file` is relative to (the vendor
-/// package dir for a vendor binding, the consumer project for an in-project
-/// one). The reuse of the producer's exact functions is what guarantees a clean
-/// resolve byte-matches the mint (and preserves the `.chars()` multibyte
-/// operator invariant).
-fn resolve_source_memento(
-    project_root: &Path,
-    memento: &SourceMemento,
-) -> Result<ResolvedSource, SourceOracleRefusal> {
-    let path = project_root.join(&memento.file);
-    let src = std::fs::read_to_string(&path).map_err(|e| SourceOracleRefusal {
-        reason: format!("cannot read source `{}`: {e}", path.display()),
-    })?;
-    let file = syn::parse_file(&src).map_err(|e| SourceOracleRefusal {
-        reason: format!("cannot parse source `{}`: {e}", path.display()),
-    })?;
-
-    let item_fn =
-        locate_boundary_source_fn(&file.items, memento).ok_or_else(|| SourceOracleRefusal {
-            reason: format!(
-                "source function `{}` not found in `{}` near line {:?}",
-                memento.source_function_name.as_deref().unwrap_or("<any>"),
-                memento.file,
-                memento.start_line
-            ),
-        })?;
-
-    // Recompute with the producer's EXACT machinery (no reimplementation).
-    let body_text = block_inner_source(&src, &item_fn.block)
-        .map(canonical_sugar_body_text)
-        .unwrap_or_default()
-        .to_string();
-    let param_names: Vec<String> = item_fn
-        .sig
-        .inputs
-        .iter()
-        .filter_map(|arg| match arg {
-            syn::FnArg::Typed(pat_ty) => match &*pat_ty.pat {
-                syn::Pat::Ident(pid) => Some(pid.ident.to_string()),
-                _ => None,
-            },
-            syn::FnArg::Receiver(_) => None,
-        })
-        .collect();
-    let ast_template = block_to_ast_template(&item_fn.block, &param_names);
-    let recomputed_source_cid = blake3_512_of(body_text.as_bytes());
-    let recomputed_template_cid = blake3_512_of(ast_template.to_string().as_bytes());
-
-    if let Some(pinned) = &memento.source_cid {
-        if &recomputed_source_cid != pinned {
-            return Err(SourceOracleRefusal {
-                reason: format!(
-                    "source CID misaligned for `{}` in `{}`: pinned {pinned}, on-disk {recomputed_source_cid} -- the source drifted from the proof",
-                    memento.source_function_name.as_deref().unwrap_or("<any>"),
-                    memento.file
-                ),
-            });
-        }
-    }
-    if let Some(pinned) = &memento.template_cid {
-        if &recomputed_template_cid != pinned {
-            return Err(SourceOracleRefusal {
-                reason: format!(
-                    "template CID misaligned for `{}` in `{}`: pinned {pinned}, on-disk {recomputed_template_cid} -- the AST drifted from the proof",
-                    memento.source_function_name.as_deref().unwrap_or("<any>"),
-                    memento.file
-                ),
-            });
-        }
-    }
-
-    Ok(ResolvedSource {
-        body_text,
-        source_cid: recomputed_source_cid,
-        template_cid: recomputed_template_cid,
-        param_names,
-    })
-}
-
-/// Find the `syn::ItemFn` the memento names (by `source_function_name`, then by
-/// span when ambiguous), recursing into nested modules.
-fn locate_boundary_source_fn<'a>(
-    items: &'a [syn::Item],
-    memento: &SourceMemento,
-) -> Option<&'a syn::ItemFn> {
-    let mut matches: Vec<&syn::ItemFn> = Vec::new();
-    collect_named_fns(items, memento.source_function_name.as_deref(), &mut matches);
-    if matches.is_empty() {
-        return None;
-    }
-    if matches.len() > 1 {
-        if let Some(start) = memento.start_line {
-            for f in &matches {
-                let f_start = f.sig.fn_token.span.start().line;
-                let f_end = f.block.brace_token.span.close().end().line;
-                let end = memento.end_line.unwrap_or(f_end);
-                if f_start <= start && start <= end {
-                    return Some(f);
-                }
-            }
-        }
-    }
-    Some(matches[0])
-}
-
-fn collect_named_fns<'a>(
-    items: &'a [syn::Item],
-    name: Option<&str>,
-    out: &mut Vec<&'a syn::ItemFn>,
-) {
-    for item in items {
-        match item {
-            syn::Item::Fn(item_fn) => {
-                if name.is_none_or(|n| item_fn.sig.ident == n) {
-                    out.push(item_fn);
-                }
-            }
-            syn::Item::Mod(item_mod) => {
-                if let Some((_, nested)) = &item_mod.content {
-                    collect_named_fns(nested, name, out);
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
 /// A vendor sugar binding the materializer can fill a boundary stub from: the
 /// `(library_tag, source_function_name)` key + the SourceMemento needed to
 /// resolve its body.
@@ -5054,37 +4951,6 @@ struct VendorBinding {
     library_tag: String,
     source_function_name: String,
     memento: SourceMemento,
-}
-
-/// Parse a `body_source` JSON into a SourceMemento.
-fn source_memento_from_body_source(
-    source_function_name: Option<String>,
-    body_source: &Value,
-) -> Option<SourceMemento> {
-    let file = body_source.get("file").and_then(Value::as_str)?.to_string();
-    let span = body_source.get("span");
-    let start_line = span
-        .and_then(|s| s.get("start_line"))
-        .and_then(Value::as_u64)
-        .map(|n| n as usize);
-    let end_line = span
-        .and_then(|s| s.get("end_line"))
-        .and_then(Value::as_u64)
-        .map(|n| n as usize);
-    Some(SourceMemento {
-        source_function_name,
-        file,
-        start_line,
-        end_line,
-        source_cid: body_source
-            .get("source_cid")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        template_cid: body_source
-            .get("template_cid")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-    })
 }
 
 /// Collect VendorBindings from the FROZEN vendor `.proof`s resolved for the
@@ -5141,7 +5007,7 @@ fn vendor_bindings_from_proofs(project_root: &Path) -> Result<Vec<VendorBinding>
                 continue;
             };
             let Some(memento) =
-                source_memento_from_body_source(Some(source_function_name.clone()), body_source)
+                SourceMemento::from_body_source(Some(source_function_name.clone()), body_source)
             else {
                 continue;
             };
@@ -5248,8 +5114,14 @@ fn lift_implications(params: &Value) -> Result<Value, String> {
     // from "no contract exists for this callee".
     let mut contracts_by_key: HashMap<(String, String), &Value> = HashMap::new();
     let mut ineligible_by_key: HashMap<(String, String), &Value> = HashMap::new();
+    let mut same_bundle_bindings_by_name: HashMap<String, &Value> = HashMap::new();
     for binding in &contract_bindings {
-        if let Some(name) = binding.get("name").and_then(|v| v.as_str()) {
+        if let Some(name) = binding_contract_name(binding) {
+            if !binding_is_imported_contract(binding) {
+                same_bundle_bindings_by_name
+                    .entry(name.to_string())
+                    .or_insert(binding);
+            }
             let leaf = name.split('@').next().unwrap_or(name).trim().to_string();
             if leaf.is_empty() {
                 continue;
@@ -5297,6 +5169,8 @@ fn lift_implications(params: &Value) -> Result<Value, String> {
     }
 
     let mut entries: Vec<Value> = Vec::new();
+    let mut implications: Vec<Value> = Vec::new();
+    let mut seen_implications: BTreeSet<String> = BTreeSet::new();
     let mut diagnostics: Vec<Value> = Vec::new();
     diagnostics.extend(residue_manifest.into_diagnostics());
 
@@ -5646,6 +5520,32 @@ fn lift_implications(params: &Value) -> Result<Value, String> {
             {
                 bridge["targetProofCid"] = json!(tpc);
             }
+            if binding_has_pre(binding) && !binding_is_imported_contract(binding) {
+                if let (Some(caller_name), Some(callee_name)) = (
+                    cs.caller_contract_name.as_deref(),
+                    binding_contract_name(binding),
+                ) {
+                    if same_bundle_bindings_by_name
+                        .get(caller_name)
+                        .is_some_and(|caller_binding| binding_has_post(caller_binding))
+                    {
+                        let implication_name = format!(
+                            "rust-call-pre:{caller_name}->{callee_name}@{}:{}:{}",
+                            cs.file, cs.line, cs.col
+                        );
+                        if seen_implications.insert(implication_name.clone()) {
+                            implications.push(json!({
+                                "name": implication_name,
+                                "antecedent": caller_name,
+                                "antecedentSlot": "post",
+                                "consequent": callee_name,
+                                "consequentSlot": "pre",
+                                "prover": "rust-implications",
+                            }));
+                        }
+                    }
+                }
+            }
             entries.push(bridge);
         }
     }
@@ -5720,7 +5620,7 @@ fn lift_implications(params: &Value) -> Result<Value, String> {
         );
     }
 
-    Ok(json!({
+    let mut response = json!({
         "kind": "ir-document",
         "ir": entries,
         "diagnostics": diagnostics,
@@ -5731,7 +5631,11 @@ fn lift_implications(params: &Value) -> Result<Value, String> {
         "oracle_ready": oracle_observation.ready,
         "receivers_attempted": oracle_observation.attempted,
         "receivers_resolved": oracle_observation.resolved,
-    }))
+    });
+    if !implications.is_empty() {
+        response["implications"] = json!(implications);
+    }
+    Ok(response)
 }
 
 fn lift_pre(params: &Value) -> Result<Value, String> {
@@ -6603,6 +6507,8 @@ fn function_contract_lift(params: &Value) -> Result<Value, String> {
     let function_postconditions = FunctionPostconditionsManifest::load(&root)?;
     let mut entries: Vec<Value> = Vec::new();
     let mut diagnostics: Vec<Value> = Vec::new();
+    let mut source_loci: Vec<Value> = Vec::new();
+    let mut source_mementos: Vec<Value> = Vec::new();
     let mut visited: std::collections::BTreeSet<PathBuf> = Default::default();
 
     for scan_root in lift_scan_roots(&root, &source_paths) {
@@ -6738,6 +6644,20 @@ fn function_contract_lift(params: &Value) -> Result<Value, String> {
             if !panic_loci.is_empty() {
                 entry["panicLoci"] = json!(panic_loci);
             }
+            let source_memento = source_memento_of_named_item_fn(
+                rel.as_str(),
+                &src,
+                &target.fn_name,
+                &target.item_fn,
+            )
+            .to_json();
+            entry["sourceWarrants"] = json!([source_memento.clone()]);
+            source_loci.push(function_contract_source_locus(
+                rel.as_str(),
+                &target,
+                &source_memento,
+            ));
+            source_mementos.push(source_memento);
             entries.push(entry);
         }
     }
@@ -6805,12 +6725,67 @@ fn function_contract_lift(params: &Value) -> Result<Value, String> {
         );
     }
 
+    let source_ledger = source_ledger_for_loci(&source_loci);
     Ok(json!({
         "kind": "ir-document",
         "ir": entries,
         "diagnostics": diagnostics,
         "refusals": [],
+        "sourceLedger": source_ledger.clone(),
+        "sourceAudits": [json!({
+            "role": "rust-fn-contracts",
+            "universe_kind": "function-contract",
+            "totals": source_ledger,
+            "loci": source_loci,
+        })],
+        "sourceMementos": source_mementos,
     }))
+}
+
+fn function_contract_source_locus(
+    rel: &str,
+    target: &FunctionContractLiftTarget,
+    source_memento: &Value,
+) -> Value {
+    let span = source_memento.get("span").unwrap_or(&Value::Null);
+    json!({
+        "file": rel,
+        "role": "rust-fn-contracts",
+        "universe_kind": "function-contract",
+        "ast_kind": if target.fn_name.contains("::") { "method" } else { "fn" },
+        "ast_path": target.fn_name.clone(),
+        "sourceFunctionName": target.fn_name.clone(),
+        "line": span
+            .get("start_line")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        "col": span
+            .get("start_col")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        "source_cid": source_memento
+            .get("source_cid")
+            .cloned()
+            .unwrap_or(Value::Null),
+        "status": "warranted",
+    })
+}
+
+fn source_ledger_for_loci(loci: &[Value]) -> Value {
+    let count = |status: &str| {
+        loci.iter()
+            .filter(|locus| locus.get("status").and_then(Value::as_str) == Some(status))
+            .count()
+    };
+    json!({
+        "source_loci": loci.len(),
+        "source_warranted": count("warranted"),
+        "source_support": count("support"),
+        "source_refused": count("refused"),
+        "source_inactive": count("inactive"),
+        "source_refuted": count("refuted"),
+        "unclassified_source": count("unclassified"),
+    })
 }
 
 fn emit_infallible_serialize_contracts(
@@ -7969,280 +7944,8 @@ fn sugar_type_surface(ty: &syn::Type) -> String {
 /// stay in source files; proofs carry `file`, `span`, `source_cid`,
 /// `template_cid`, and `param_names`.
 fn sugar_body_source(rel: &str, src: &str, item_fn: &syn::ItemFn) -> Value {
-    let start = item_fn.sig.fn_token.span.start();
-    let end = item_fn.block.brace_token.span.close().end();
-    let body_text = block_inner_source(src, &item_fn.block)
-        .map(canonical_sugar_body_text)
-        .unwrap_or_default()
-        .to_string();
-    let param_names: Vec<String> = item_fn
-        .sig
-        .inputs
-        .iter()
-        .filter_map(|arg| match arg {
-            syn::FnArg::Typed(pat_ty) => match &*pat_ty.pat {
-                syn::Pat::Ident(pid) => Some(pid.ident.to_string()),
-                _ => None,
-            },
-            syn::FnArg::Receiver(_) => None,
-        })
-        .collect();
-    let ast_template = block_to_ast_template(&item_fn.block, &param_names);
-    let template_text = ast_template.to_string();
-    let source_cid = blake3_512_of(body_text.as_bytes());
-    let template_cid = blake3_512_of(template_text.as_bytes());
-    json!({
-        "file": rel,
-        "span": {
-            "start_line": start.line,
-            "start_col": start.column,
-            "end_line": end.line,
-            "end_col": end.column,
-        },
-        "source_cid": source_cid,
-        "template_cid": template_cid,
-        "param_names": param_names,
-    })
-}
-
-fn canonical_sugar_body_text(body: &str) -> &str {
-    body.trim()
-}
-
-/// Identifier-canonical AST template serializer for the Recognizer
-/// foundation (#81, #82). Walks a `syn::Block` and emits a structured JSON
-/// tree where each node is `{kind, ...}`. Sugar param names are replaced
-/// with `$1`, `$2`, … so user-code variants alpha-equivalent to the sugar
-/// match the same template.
-///
-/// The format is intentionally a small union over the syn variants that
-/// actually show up in sugar bodies (calls, method calls, paths, refs,
-/// ?, blocks, literals, identifiers). Unhandled variants fall through to
-/// `{kind: "other", variant: "<name>"}` catch-all so the template is
-/// never lossy in a way that drops a node — only in a way that opaqueifies
-/// the variant. The recognizer then refuses any candidate site containing
-/// an opaqued node.
-fn block_to_ast_template(block: &syn::Block, params: &[String]) -> Value {
-    let stmts: Vec<Value> = block
-        .stmts
-        .iter()
-        .map(|stmt| stmt_to_template(stmt, params))
-        .collect();
-    json!({ "kind": "block", "stmts": stmts })
-}
-
-fn stmt_to_template(stmt: &syn::Stmt, params: &[String]) -> Value {
-    use syn::Stmt;
-    match stmt {
-        Stmt::Local(local) => {
-            let pat = pat_to_template(&local.pat, params);
-            let init = local
-                .init
-                .as_ref()
-                .map(|init| expr_to_template(&init.expr, params))
-                .unwrap_or(Value::Null);
-            json!({ "kind": "let", "pat": pat, "init": init })
-        }
-        Stmt::Item(_) => json!({ "kind": "item" }),
-        Stmt::Expr(expr, semi) => {
-            let inner = expr_to_template(expr, params);
-            let trailing = semi.is_some();
-            json!({ "kind": "expr_stmt", "expr": inner, "trailing_semi": trailing })
-        }
-        Stmt::Macro(m) => {
-            let path = path_to_template(&m.mac.path);
-            json!({ "kind": "macro_stmt", "path": path })
-        }
-    }
-}
-
-fn expr_to_template(expr: &syn::Expr, params: &[String]) -> Value {
-    use syn::Expr;
-    match expr {
-        Expr::Call(c) => {
-            let func = expr_to_template(&c.func, params);
-            let args: Vec<Value> = c.args.iter().map(|a| expr_to_template(a, params)).collect();
-            json!({ "kind": "call", "func": func, "args": args })
-        }
-        Expr::MethodCall(m) => {
-            let receiver = expr_to_template(&m.receiver, params);
-            let method = m.method.to_string();
-            let args: Vec<Value> = m.args.iter().map(|a| expr_to_template(a, params)).collect();
-            json!({
-                "kind": "method_call",
-                "receiver": receiver,
-                "method": method,
-                "args": args,
-            })
-        }
-        Expr::Path(p) => {
-            let segs: Vec<String> = p
-                .path
-                .segments
-                .iter()
-                .map(|s| s.ident.to_string())
-                .collect();
-            if segs.len() == 1 {
-                if let Some(idx) = params.iter().position(|n| n == &segs[0]) {
-                    return json!({ "kind": "param_ref", "index": idx + 1 });
-                }
-                return json!({ "kind": "ident", "name": segs[0] });
-            }
-            json!({ "kind": "path", "segments": segs })
-        }
-        Expr::Lit(l) => lit_to_template(&l.lit),
-        Expr::Reference(r) => {
-            let inner = expr_to_template(&r.expr, params);
-            json!({ "kind": "ref", "mutability": r.mutability.is_some(), "expr": inner })
-        }
-        Expr::Try(t) => {
-            let inner = expr_to_template(&t.expr, params);
-            json!({ "kind": "try", "expr": inner })
-        }
-        Expr::Block(b) => block_to_ast_template(&b.block, params),
-        Expr::Paren(p) => expr_to_template(&p.expr, params),
-        Expr::Tuple(t) => {
-            let elems: Vec<Value> = t
-                .elems
-                .iter()
-                .map(|e| expr_to_template(e, params))
-                .collect();
-            json!({ "kind": "tuple", "elems": elems })
-        }
-        Expr::Array(a) => {
-            let elems: Vec<Value> = a
-                .elems
-                .iter()
-                .map(|e| expr_to_template(e, params))
-                .collect();
-            json!({ "kind": "array", "elems": elems })
-        }
-        Expr::Closure(_) => json!({ "kind": "closure" }),
-        Expr::Match(_) => json!({ "kind": "match" }),
-        Expr::If(_) => json!({ "kind": "if" }),
-        Expr::Return(r) => {
-            let inner = r
-                .expr
-                .as_ref()
-                .map(|e| expr_to_template(e, params))
-                .unwrap_or(Value::Null);
-            json!({ "kind": "return", "expr": inner })
-        }
-        Expr::Binary(b) => {
-            let left = expr_to_template(&b.left, params);
-            let right = expr_to_template(&b.right, params);
-            let op = format!("{:?}", b.op);
-            json!({ "kind": "binary", "op": op, "left": left, "right": right })
-        }
-        Expr::Unary(u) => {
-            let inner = expr_to_template(&u.expr, params);
-            let op = format!("{:?}", u.op);
-            json!({ "kind": "unary", "op": op, "expr": inner })
-        }
-        Expr::Field(f) => {
-            let base = expr_to_template(&f.base, params);
-            let member = match &f.member {
-                syn::Member::Named(n) => n.to_string(),
-                syn::Member::Unnamed(u) => u.index.to_string(),
-            };
-            json!({ "kind": "field", "base": base, "member": member })
-        }
-        Expr::Macro(m) => {
-            let path = path_to_template(&m.mac.path);
-            json!({ "kind": "macro", "path": path })
-        }
-        other => json!({
-            "kind": "other",
-            "variant": format!("{:?}", std::mem::discriminant(other)),
-        }),
-    }
-}
-
-fn pat_to_template(pat: &syn::Pat, params: &[String]) -> Value {
-    use syn::Pat;
-    match pat {
-        Pat::Ident(pi) => {
-            let name = pi.ident.to_string();
-            if let Some(idx) = params.iter().position(|n| n == &name) {
-                json!({ "kind": "param_ref", "index": idx + 1 })
-            } else {
-                json!({ "kind": "binding", "name": name })
-            }
-        }
-        Pat::Wild(_) => json!({ "kind": "wildcard" }),
-        Pat::Tuple(t) => {
-            let elems: Vec<Value> = t.elems.iter().map(|p| pat_to_template(p, params)).collect();
-            json!({ "kind": "pat_tuple", "elems": elems })
-        }
-        _ => json!({ "kind": "pat_other" }),
-    }
-}
-
-fn path_to_template(path: &syn::Path) -> Value {
-    let segs: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
-    json!({ "segments": segs })
-}
-
-fn lit_to_template(lit: &syn::Lit) -> Value {
-    match lit {
-        syn::Lit::Str(s) => json!({ "kind": "lit_str", "value": s.value() }),
-        syn::Lit::Int(i) => json!({ "kind": "lit_int", "value": i.base10_digits() }),
-        syn::Lit::Bool(b) => json!({ "kind": "lit_bool", "value": b.value }),
-        syn::Lit::Char(c) => json!({ "kind": "lit_char", "value": c.value().to_string() }),
-        syn::Lit::Float(f) => json!({ "kind": "lit_float", "value": f.base10_digits() }),
-        _ => json!({ "kind": "lit_other" }),
-    }
-}
-
-fn block_inner_source<'a>(src: &'a str, block: &syn::Block) -> Option<&'a str> {
-    let open_end = block.brace_token.span.open().end();
-    let close_start = block.brace_token.span.close().start();
-    source_slice_between(src, open_end, close_start)
-}
-
-fn source_slice_between(
-    src: &str,
-    start: proc_macro2::LineColumn,
-    end: proc_macro2::LineColumn,
-) -> Option<&str> {
-    let start = line_column_to_byte_offset(src, start)?;
-    let end = line_column_to_byte_offset(src, end)?;
-    if start <= end {
-        src.get(start..end)
-    } else {
-        None
-    }
-}
-
-fn line_column_to_byte_offset(src: &str, loc: proc_macro2::LineColumn) -> Option<usize> {
-    if loc.line == 0 {
-        return None;
-    }
-
-    let mut line_starts = vec![0usize];
-    for (idx, byte) in src.bytes().enumerate() {
-        if byte == b'\n' {
-            line_starts.push(idx + 1);
-        }
-    }
-
-    let line_start = *line_starts.get(loc.line - 1)?;
-    let line_end = line_starts
-        .get(loc.line)
-        .copied()
-        .map(|next_start| next_start.saturating_sub(1))
-        .unwrap_or(src.len());
-    let line = src.get(line_start..line_end)?;
-
-    if loc.column == 0 {
-        return Some(line_start);
-    }
-
-    match line.char_indices().nth(loc.column) {
-        Some((offset, _)) => Some(line_start + offset),
-        None if line.chars().count() == loc.column => Some(line_end),
-        None => None,
-    }
+    source_memento_of_named_item_fn(rel, src, &item_fn.sig.ident.to_string(), item_fn)
+        .to_body_source_json()
 }
 
 fn normalize_ws(s: &str) -> String {
@@ -9834,7 +9537,7 @@ mod tests {
             .unwrap();
         let body_source = sugar_body_source(file_rel, src, item_fn);
         // body_source carries only the locus + pins.
-        source_memento_from_body_source(Some(fn_name.to_string()), &body_source).unwrap()
+        SourceMemento::from_body_source(Some(fn_name.to_string()), &body_source).unwrap()
     }
 
     fn unique_tmp(tag: &str) -> PathBuf {
@@ -9857,9 +9560,9 @@ mod tests {
         let memento = mint_memento_for(&dir, "rev", src);
         // Clean disk == the pin: the oracle returns the body.
         let resolved = resolve_source_memento(&dir, &memento).expect("clean resolve");
-        assert_eq!(resolved.body_text, "s.chars().rev().collect()");
-        assert_eq!(resolved.source_cid, memento.source_cid.clone().unwrap());
-        assert_eq!(resolved.template_cid, memento.template_cid.clone().unwrap());
+        assert_eq!(resolved.body_text(), "s.chars().rev().collect()");
+        assert_eq!(resolved.source_cid, memento.source_cid);
+        assert_eq!(resolved.template_cid, memento.template_cid);
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -12613,6 +12316,126 @@ pub fn caller(input: &str) -> i64 {
     }
 
     #[test]
+    fn lift_implications_emits_same_bundle_pre_implication_for_caller_to_callee() {
+        let src = r##"
+pub fn callee(x: i64) -> i64 {
+    x
+}
+
+pub fn caller(x: i64) -> i64 {
+    callee(x)
+}
+"##;
+        let root = temp_workspace("lift_implications_same_bundle_implication");
+        let src_dir = root.join("src");
+        fs::create_dir_all(&src_dir).expect("create src dir");
+        let rel = "src/lib.rs";
+        fs::write(root.join(rel), src).expect("write source");
+
+        let contract_bindings = json!([
+            {
+                "name": "caller",
+                "contract_cid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "body_bearing": true,
+                "has_post": true
+            },
+            {
+                "name": "callee",
+                "contract_cid": "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "body_bearing": true,
+                "has_pre": true,
+                "formals": ["x"]
+            }
+        ]);
+
+        let resp = lift_implications(&json!({
+            "workspace_root": root.to_string_lossy(),
+            "source_paths": [rel],
+            "contract_bindings": contract_bindings,
+        }))
+        .expect("lift_implications");
+
+        let ir = resp["ir"].as_array().expect("ir array");
+        let bridge = ir
+            .iter()
+            .find(|entry| entry["sourceSymbol"] == "callee")
+            .unwrap_or_else(|| panic!("callee bridge missing: {resp:#?}"));
+        assert_eq!(
+            bridge["targetContractCid"],
+            "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        );
+
+        let implications = resp["implications"]
+            .as_array()
+            .unwrap_or_else(|| panic!("implications missing: {resp:#?}"));
+        assert_eq!(
+            implications.len(),
+            1,
+            "expected one caller.post => callee.pre implication, got {implications:#?}"
+        );
+        let implication = &implications[0];
+        assert_eq!(implication["antecedent"], "caller");
+        assert_eq!(implication["antecedentSlot"], "post");
+        assert_eq!(implication["consequent"], "callee");
+        assert_eq!(implication["consequentSlot"], "pre");
+        assert_eq!(implication["prover"], "rust-implications");
+        assert!(implication["name"]
+            .as_str()
+            .expect("implication name")
+            .contains("caller->callee@src/lib.rs:"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn lift_implications_does_not_emit_pre_implication_without_caller_post() {
+        let src = r##"
+pub fn callee(x: i64) -> i64 {
+    x
+}
+
+pub fn caller(x: i64) -> i64 {
+    callee(x)
+}
+"##;
+        let root = temp_workspace("lift_implications_requires_caller_post");
+        let src_dir = root.join("src");
+        fs::create_dir_all(&src_dir).expect("create src dir");
+        let rel = "src/lib.rs";
+        fs::write(root.join(rel), src).expect("write source");
+
+        let contract_bindings = json!([
+            {
+                "name": "caller",
+                "contract_cid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "body_bearing": true,
+                "has_pre": true
+            },
+            {
+                "name": "callee",
+                "contract_cid": "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "body_bearing": true,
+                "has_pre": true,
+                "formals": ["x"]
+            }
+        ]);
+
+        let resp = lift_implications(&json!({
+            "workspace_root": root.to_string_lossy(),
+            "source_paths": [rel],
+            "contract_bindings": contract_bindings,
+        }))
+        .expect("lift_implications");
+
+        assert!(
+            resp["implications"].is_null(),
+            "caller without post slot must stay bridge-only: {resp:#?}"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn lift_implications_uses_bridge_source_symbol_for_impl_method_contracts() {
         let src = r##"
 pub struct Digitish;
@@ -12727,6 +12550,10 @@ edition = "2021"
         assert_eq!(bridge["targetProofCid"], proof_cid);
         assert_eq!(bridge["callsite"]["formalActuals"]["self"]["kind"], "var");
         assert_eq!(bridge["callsite"]["formalActuals"]["self"]["name"], "m");
+        assert!(
+            consumer["implications"].is_null(),
+            "imported proof contracts should stay bridge-only; got {consumer:#?}"
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -13356,6 +13183,109 @@ pub fn identity(value: i64) -> i64 {
             .find(|entry| entry["name"] == "identity")
             .expect("identity function contract");
         assert_eq!(entry["library"], "sugar_cli");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn function_contract_lift_emits_source_oracle_mementos_without_source_text() {
+        let root = temp_workspace("function_contract_source_mementos");
+        let src_dir = root.join("src");
+        fs::create_dir_all(&src_dir).expect("create src dir");
+        fs::write(
+            root.join("Cargo.toml"),
+            r#"
+[package]
+name = "source-memento-demo"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .expect("write Cargo.toml");
+        fs::write(
+            src_dir.join("lib.rs"),
+            r#"
+pub fn callee(x: i64) -> i64 {
+    x + 1
+}
+
+pub struct Thing;
+
+impl Thing {
+    pub fn method(&self, x: i64) -> i64 {
+        callee(x)
+    }
+}
+"#,
+        )
+        .expect("write source");
+
+        let resp = function_contract_lift(&json!({
+            "workspace_root": root.to_string_lossy(),
+            "source_paths": ["."]
+        }))
+        .expect("function contract lift");
+
+        assert_eq!(resp["sourceLedger"]["source_loci"], json!(2));
+        assert_eq!(resp["sourceLedger"]["source_warranted"], json!(2));
+        assert_eq!(resp["sourceLedger"]["unclassified_source"], json!(0));
+        let audits = resp["sourceAudits"].as_array().expect("source audits");
+        assert_eq!(audits.len(), 1);
+        assert_eq!(audits[0]["role"], "rust-fn-contracts");
+        assert_eq!(audits[0]["universe_kind"], "function-contract");
+        let loci = audits[0]["loci"].as_array().expect("audit loci");
+        assert_eq!(loci.len(), 2);
+        assert!(loci.iter().all(|locus| locus["status"] == "warranted"));
+
+        let mementos = resp["sourceMementos"].as_array().expect("source mementos");
+        assert_eq!(mementos.len(), 2);
+        let names: BTreeSet<String> = mementos
+            .iter()
+            .map(|memento| {
+                memento["sourceFunctionName"]
+                    .as_str()
+                    .expect("source function name")
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(
+            names,
+            BTreeSet::from(["Thing::method".to_string(), "callee".to_string()])
+        );
+        for memento in mementos {
+            assert_eq!(memento["file"], "src/lib.rs");
+            assert!(memento["source_cid"]
+                .as_str()
+                .is_some_and(|cid| !cid.is_empty()));
+            assert!(memento["template_cid"]
+                .as_str()
+                .is_some_and(|cid| !cid.is_empty()));
+            assert!(memento.get("source").is_none(), "must not emit source text");
+            assert!(
+                memento.get("body_text").is_none(),
+                "must not emit body text"
+            );
+            assert!(
+                memento.get("ast_template").is_none(),
+                "must not emit AST template text"
+            );
+        }
+
+        let entries = resp["ir"].as_array().expect("ir array");
+        for name in ["callee", "Thing::method"] {
+            let entry = entries
+                .iter()
+                .find(|entry| entry["name"] == name)
+                .unwrap_or_else(|| panic!("missing contract {name}: {entries:?}"));
+            let warrants = entry["sourceWarrants"]
+                .as_array()
+                .expect("contract source warrants");
+            assert_eq!(warrants.len(), 1);
+            assert_eq!(warrants[0]["sourceFunctionName"], name);
+            assert!(warrants[0]["source_cid"]
+                .as_str()
+                .is_some_and(|cid| !cid.is_empty()));
+        }
 
         let _ = fs::remove_dir_all(root);
     }

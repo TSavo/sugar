@@ -6,15 +6,19 @@
 // dispatch lift uses) to export SUGAR_WITNESS_DISCHARGE_<TOOL> per tool, so
 // witness recompute rides the manifest with no bespoke config.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use owo_colors::OwoColorize;
 use serde_json::{json, Value};
-use sugar_canonicalizer::blake3_512_of;
+use sugar_canonicalizer::{blake3_512_of, jcs_cid_of_json};
+use walkdir::WalkDir;
 
 use sugar_verifier::{Runner, RunnerConfig};
 
-use crate::project_config::read_project_config;
+use crate::project_config::{read_project_config, ProjectConfig, WitnessEntry};
 use crate::report_fmt;
 use crate::ProveArgs;
 
@@ -200,10 +204,33 @@ pub fn run(args: ProveArgs) -> u8 {
         }
     };
     let report = run_artifact.report;
+    let report_json = report_fmt::report_to_json(&report);
+    if let Some(witness_dir) = &args.emit_witnesses {
+        match emit_configured_witnesses(&project_root, &report_json, witness_dir) {
+            Ok(witnesses) => {
+                if !args.out.quiet {
+                    for witness in &witnesses {
+                        eprintln!(
+                            "witness: {} witness={} proof={} evidence={} -> {}",
+                            witness.name,
+                            witness.witness_cid,
+                            witness.proof_cid,
+                            witness.evidence_cid,
+                            witness.proof_file.display()
+                        );
+                        eprintln!("         body: {}", witness.evidence_file.display());
+                    }
+                }
+            }
+            Err(error) => {
+                eprintln!("{}: emit prove witnesses: {error}", "error".red().bold());
+                return crate::EXIT_USER_ERROR;
+            }
+        }
+    }
 
     if args.out.json {
-        let j = report_fmt::report_to_json(&report);
-        match serde_json::to_string_pretty(&j) {
+        match serde_json::to_string_pretty(&report_json) {
             Ok(s) => println!("{s}"),
             Err(e) => {
                 eprintln!("{}: serialize JSON: {e}", "error".red().bold());
@@ -215,6 +242,365 @@ pub fn run(args: ProveArgs) -> u8 {
     }
 
     report_fmt::report_exit_code(&report)
+}
+
+fn emit_configured_witnesses(
+    project_root: &Path,
+    report_json: &Value,
+    out_dir: &Path,
+) -> Result<Vec<crate::report_witness::ReportWitnessProof>, String> {
+    let mut out = Vec::new();
+    let cfg = read_project_config(project_root);
+    let replay_pins = build_replay_pins(project_root, report_json, out_dir, &cfg)?;
+    if cfg.witnesses.is_empty() {
+        out.push(crate::report_witness::mint_report_witness(
+            project_root,
+            report_json,
+            &replay_pins,
+            out_dir,
+        )?);
+        return Ok(out);
+    }
+    for witness in cfg.witnesses {
+        if witness.kind.eq_ignore_ascii_case("report") {
+            out.push(crate::report_witness::mint_report_witness(
+                project_root,
+                report_json,
+                &replay_pins,
+                out_dir,
+            )?);
+            continue;
+        }
+        if witness.kind.eq_ignore_ascii_case("command") {
+            let evidence = run_command_witness(project_root, &witness)?;
+            let claim_body = json!({
+                "kind": "sugar-command-witness",
+                "schemaVersion": "1",
+                "name": &witness.name,
+                "command": &witness.command,
+                "project": project_root.display().to_string(),
+            });
+            out.push(crate::report_witness::mint_json_witness(
+                &witness.name,
+                "sugar-command-witness",
+                &claim_body,
+                &evidence,
+                out_dir,
+            )?);
+            continue;
+        }
+        if witness.kind.eq_ignore_ascii_case("file") {
+            let evidence = read_file_witness(project_root, &witness)?;
+            let claim_body = json!({
+                "kind": "sugar-file-witness",
+                "schemaVersion": "1",
+                "name": &witness.name,
+                "path": &witness.path,
+                "project": project_root.display().to_string(),
+            });
+            out.push(crate::report_witness::mint_json_witness(
+                &witness.name,
+                "sugar-file-witness",
+                &claim_body,
+                &evidence,
+                out_dir,
+            )?);
+            continue;
+        }
+        return Err(format!(
+            "unsupported witness kind `{}` for `{}`",
+            witness.kind, witness.name
+        ));
+    }
+    Ok(out)
+}
+
+fn build_replay_pins(
+    project_root: &Path,
+    report_json: &Value,
+    out_dir: &Path,
+    cfg: &ProjectConfig,
+) -> Result<Value, String> {
+    Ok(json!({
+        "kind": "sugar-prove-replay-pins",
+        "schemaVersion": "1",
+        "producer": {
+            "package": env!("CARGO_PKG_NAME"),
+            "version": env!("CARGO_PKG_VERSION"),
+        },
+        "projectConfig": project_config_pin(project_root)?,
+        "lifters": lifter_pins(project_root, cfg),
+        "solvers": solver_pins_from_report(report_json),
+        "proofInputs": proof_input_pins(project_root, out_dir)?,
+        "witnessSources": witness_source_pins(cfg),
+    }))
+}
+
+fn project_config_pin(project_root: &Path) -> Result<Value, String> {
+    let path = project_root.join(".sugar/config.toml");
+    if !path.exists() {
+        return Ok(pin_memento(json!({
+            "kind": "file-bytes-memento",
+            "schemaVersion": "1",
+            "role": "sugar-project-config",
+            "present": false,
+            "path": ".sugar/config.toml",
+        })));
+    }
+    let bytes = std::fs::read(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    Ok(pin_memento(json!({
+        "kind": "file-bytes-memento",
+        "schemaVersion": "1",
+        "role": "sugar-project-config",
+        "present": true,
+        "path": ".sugar/config.toml",
+        "byteCid": blake3_512_of(&bytes),
+        "byteLength": bytes.len(),
+    })))
+}
+
+fn lifter_pins(project_root: &Path, cfg: &ProjectConfig) -> Vec<Value> {
+    cfg.plugins
+        .iter()
+        .filter(|plugin| plugin.is_lift_plugin())
+        .map(|plugin| {
+            let manifest = lift_manifest_file_pin(project_root, &plugin.surface);
+            pin_memento(json!({
+                "kind": "lifter-config-memento",
+                "schemaVersion": "1",
+                "displayName": plugin.display_name(),
+                "plugin": {
+                    "name": plugin.name.as_deref(),
+                    "kind": plugin.kind.as_deref(),
+                    "surface": &plugin.surface,
+                    "workspaceOverride": plugin.workspace_override.as_deref(),
+                    "emit": plugin.emit.as_deref(),
+                    "layer": plugin.layer.as_deref(),
+                },
+                "manifest": manifest,
+            }))
+        })
+        .collect()
+}
+
+fn lift_manifest_file_pin(project_root: &Path, surface: &str) -> Value {
+    let project_local = project_root
+        .join(".sugar")
+        .join("lift")
+        .join(surface)
+        .join("manifest.toml");
+    let global = std::env::var_os("HOME").map(|home| {
+        PathBuf::from(home)
+            .join(".config")
+            .join("sugar")
+            .join("lift")
+            .join(surface)
+            .join("manifest.toml")
+    });
+    let path = if project_local.exists() {
+        Some(project_local)
+    } else {
+        global.filter(|p| p.exists())
+    };
+    let Some(path) = path else {
+        return json!({
+            "present": false,
+            "surface": surface,
+        });
+    };
+    match std::fs::read(&path) {
+        Ok(bytes) => json!({
+            "present": true,
+            "path": path.display().to_string(),
+            "byteCid": blake3_512_of(&bytes),
+            "byteLength": bytes.len(),
+        }),
+        Err(error) => json!({
+            "present": true,
+            "path": path.display().to_string(),
+            "error": error.to_string(),
+        }),
+    }
+}
+
+fn witness_source_pins(cfg: &ProjectConfig) -> Vec<Value> {
+    if cfg.witnesses.is_empty() {
+        return vec![pin_memento(json!({
+            "kind": "witness-source-memento",
+            "schemaVersion": "1",
+            "witnessKind": "report",
+            "builtin": true,
+        }))];
+    }
+    cfg.witnesses
+        .iter()
+        .map(|witness| {
+            pin_memento(json!({
+                "kind": "witness-source-memento",
+                "schemaVersion": "1",
+                "witnessKind": &witness.kind,
+                "config": {
+                    "name": &witness.name,
+                    "command": &witness.command,
+                    "workingDir": &witness.working_dir,
+                    "path": &witness.path,
+                }
+            }))
+        })
+        .collect()
+}
+
+fn solver_pins_from_report(report_json: &Value) -> Vec<Value> {
+    let mut out: BTreeMap<String, Value> = BTreeMap::new();
+    let Some(rows) = report_json.get("rows").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    for row in rows {
+        let Some(invs) = row
+            .get("verification")
+            .and_then(|v| v.get("solverInvocations"))
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+        for inv in invs {
+            let memento = json!({
+                "kind": "solver-report-pin-memento",
+                "schemaVersion": "1",
+                "solverInvocationCid": inv.get("solverInvocationCid"),
+                "solverArtifactCid": inv.get("solverArtifactCid"),
+                "solverVendorMementoCid": inv.get("solverVendorMementoCid"),
+                "solverVendorMemento": inv.get("solverVendorMemento"),
+                "compiler": inv.get("compiler"),
+                "verdict": inv.get("verdict"),
+                "authoritative": inv.get("authoritative"),
+            });
+            let pin = pin_memento(memento);
+            if let Some(cid) = pin.get("cid").and_then(Value::as_str) {
+                out.insert(cid.to_string(), pin);
+            }
+        }
+    }
+    out.into_values().collect()
+}
+
+fn proof_input_pins(project_root: &Path, out_dir: &Path) -> Result<Vec<Value>, String> {
+    let project_abs = absolute_path(project_root)?;
+    let out_abs = absolute_path(out_dir)?;
+    let mut out: BTreeMap<String, Value> = BTreeMap::new();
+    for entry in WalkDir::new(&project_abs) {
+        let entry = entry.map_err(|e| format!("walk {}: {e}", project_abs.display()))?;
+        let path = entry.path();
+        if path.starts_with(&out_abs) || !entry.file_type().is_file() {
+            continue;
+        }
+        if path.extension().and_then(|s| s.to_str()) != Some("proof") {
+            continue;
+        }
+        let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+        let declared_cid = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .filter(|s| s.starts_with("blake3-512:"));
+        let memento = json!({
+            "kind": "proof-file-memento",
+            "schemaVersion": "1",
+            "path": path_for_report(&project_abs, path),
+            "declaredProofCid": declared_cid,
+            "fileByteCid": blake3_512_of(&bytes),
+            "byteLength": bytes.len(),
+        });
+        let pin = pin_memento(memento);
+        if let Some(cid) = pin.get("cid").and_then(Value::as_str) {
+            out.insert(cid.to_string(), pin);
+        }
+    }
+    Ok(out.into_values().collect())
+}
+
+fn pin_memento(memento: Value) -> Value {
+    let cid = jcs_cid_of_json(&memento);
+    json!({
+        "cid": cid,
+        "memento": memento,
+    })
+}
+
+fn absolute_path(path: &Path) -> Result<PathBuf, String> {
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        let cwd = std::env::current_dir().map_err(|e| format!("current dir: {e}"))?;
+        Ok(cwd.join(path))
+    }
+}
+
+fn path_for_report(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .display()
+        .to_string()
+}
+
+fn run_command_witness(project_root: &Path, witness: &WitnessEntry) -> Result<Value, String> {
+    if witness.command.is_empty() {
+        return Err(format!("witness `{}` has empty command", witness.name));
+    }
+    let working_dir = witness
+        .working_dir
+        .as_ref()
+        .map(PathBuf::from)
+        .map(|p| {
+            if p.is_absolute() {
+                p
+            } else {
+                project_root.join(p)
+            }
+        })
+        .unwrap_or_else(|| project_root.to_path_buf());
+    let mut cmd = Command::new(&witness.command[0]);
+    cmd.args(&witness.command[1..]).current_dir(&working_dir);
+    let output = cmd
+        .output()
+        .map_err(|e| format!("run witness `{}`: {e}", witness.name))?;
+    let status_code = output.status.code();
+    Ok(json!({
+        "kind": "command-output-witness",
+        "schemaVersion": "1",
+        "name": witness.name,
+        "command": witness.command,
+        "workingDir": working_dir.display().to_string(),
+        "status": if output.status.success() { "passed" } else { "failed" },
+        "exitCode": status_code,
+        "stdout": String::from_utf8_lossy(&output.stdout).to_string(),
+        "stderr": String::from_utf8_lossy(&output.stderr).to_string(),
+    }))
+}
+
+fn read_file_witness(project_root: &Path, witness: &WitnessEntry) -> Result<Value, String> {
+    let path = witness
+        .path
+        .as_ref()
+        .ok_or_else(|| format!("file witness `{}` missing path", witness.name))?;
+    let path = PathBuf::from(path);
+    let full = if path.is_absolute() {
+        path
+    } else {
+        project_root.join(path)
+    };
+    let bytes = std::fs::read(&full).map_err(|e| format!("read {}: {e}", full.display()))?;
+    let byte_cid = blake3_512_of(&bytes);
+    let text = std::str::from_utf8(&bytes).ok().map(str::to_string);
+    Ok(json!({
+        "kind": "file-witness",
+        "schemaVersion": "1",
+        "name": witness.name,
+        "path": full.display().to_string(),
+        "byteCid": byte_cid,
+        "byteLength": bytes.len(),
+        "text": text,
+        "bodyB64": B64.encode(&bytes),
+    }))
 }
 
 // WITNESS DISCHARGE defaults: so `sugar prove <project>` and artifact-mode

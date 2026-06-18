@@ -45,6 +45,8 @@ pub mod subprocess;
 use std::sync::Arc;
 use std::time::Duration;
 
+use serde_json::Value as Json;
+
 use crate::types::ObligationVerdict;
 
 /// A single solver invocation outcome.
@@ -75,12 +77,27 @@ pub trait Solver: Send + Sync {
     fn name(&self) -> &str;
     fn version(&self) -> &str;
     fn ir_compiler(&self) -> &str;
+    fn identity(&self) -> SolverIdentity {
+        SolverIdentity::default()
+    }
     fn solve(&self, smt: &str) -> SolveResult;
 }
 
 /// Convenience type alias: trait objects come through the registry as
 /// shared, cheaply-clonable handles.
 pub type SolverHandle = Arc<dyn Solver>;
+
+/// CID-addressed solver identity. Human labels (`name`, `version`) are
+/// diagnostics; replay pins are CIDs. If a vendor has their own address space
+/// (sha256, package-integrity, etc.), that relation is carried as a memento
+/// whose own address is a Sugar CID.
+#[derive(Debug, Clone, Default)]
+pub struct SolverIdentity {
+    pub artifact_cid: Option<String>,
+    pub invocation_cid: Option<String>,
+    pub vendor_memento_cid: Option<String>,
+    pub vendor_memento: Option<Json>,
+}
 
 pub use ceta::{CetaGate, CetaGateConfig};
 pub use config::{DispatchConfig, PortfolioMode, SolverConfig, SolverPlan, SolversConfig};

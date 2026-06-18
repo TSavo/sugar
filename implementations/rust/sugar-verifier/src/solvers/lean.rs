@@ -11,7 +11,7 @@ use sugar_canonicalizer::blake3_512_of;
 use sugar_ir_compiler::IrCompiler;
 use sugar_ir_compiler_lean::{LeanCompiler, DIALECT, THEOREM_NAME};
 
-use crate::solvers::{SolveResult, Solver};
+use crate::solvers::{SolveResult, Solver, SolverIdentity};
 use crate::types::ObligationVerdict;
 
 #[derive(Debug)]
@@ -22,6 +22,7 @@ pub struct LeanSubprocessSolver {
     timeout: Option<Duration>,
     lake_project: Option<PathBuf>,
     lean_toolchain: Option<String>,
+    identity: SolverIdentity,
 }
 
 impl LeanSubprocessSolver {
@@ -40,7 +41,13 @@ impl LeanSubprocessSolver {
             timeout,
             lake_project: lake_project.map(PathBuf::from),
             lean_toolchain,
+            identity: SolverIdentity::default(),
         }
+    }
+
+    pub fn with_identity(mut self, identity: SolverIdentity) -> Self {
+        self.identity = identity;
+        self
     }
 
     pub fn lean_file_cid(source: &str) -> String {
@@ -164,6 +171,10 @@ impl Solver for LeanSubprocessSolver {
 
     fn ir_compiler(&self) -> &str {
         DIALECT
+    }
+
+    fn identity(&self) -> SolverIdentity {
+        self.identity.clone()
     }
 
     fn solve(&self, smt: &str) -> SolveResult {

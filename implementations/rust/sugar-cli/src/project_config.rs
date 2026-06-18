@@ -64,6 +64,20 @@ pub struct KitAliasEntry {
     pub lang: String,
 }
 
+/// One configured witness source. `kind = "report"` names the built-in prove
+/// report witness. `kind = "command"` runs `command` in the project root (or
+/// `working_dir`) and captures stdout/stderr/exit status as witness evidence.
+/// `kind = "file"` pins arbitrary bytes by path: a compiler log, a program
+/// transcript, an image, a poem, any external artifact the config names.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WitnessEntry {
+    pub name: String,
+    pub kind: String,
+    pub command: Vec<String>,
+    pub working_dir: Option<String>,
+    pub path: Option<String>,
+}
+
 impl PluginEntry {
     pub fn display_name(&self) -> &str {
         self.name.as_deref().unwrap_or(self.surface.as_str())
@@ -142,6 +156,9 @@ pub struct ProjectConfig {
     /// `cmd_mint` to stamp every emitted memento and by `cmd_materialize`
     /// to resolve floating axes against the consumer's profile.
     pub platform_profile: Option<PlatformProfile>,
+
+    /// Configured witness sources consumed by `sugar prove --emit-witnesses`.
+    pub witnesses: Vec<WitnessEntry>,
 }
 
 impl ProjectConfig {
@@ -202,6 +219,7 @@ fn parse_config(text: &str) -> ProjectConfig {
     // In-flight `[[kits]]` entry. Pushed to `cfg.kits` on each new
     // array-of-tables header or at end-of-file.
     let mut current_kit: Option<KitAliasEntry> = None;
+    let mut current_witness: Option<WitnessEntry> = None;
     for raw_line in text.lines() {
         let line = strip_comment(raw_line).trim();
         if line.is_empty() {
@@ -226,6 +244,11 @@ fn parse_config(text: &str) -> ProjectConfig {
                     cfg.kits.push(prev);
                 }
             }
+            if let Some(prev) = current_witness.take() {
+                if !prev.name.is_empty() && !prev.kind.is_empty() {
+                    cfg.witnesses.push(prev);
+                }
+            }
             let header = inner.trim().to_lowercase();
             if header == "plugins" {
                 current_plugin = Some(PluginEntry::default());
@@ -233,6 +256,9 @@ fn parse_config(text: &str) -> ProjectConfig {
             } else if header == "kits" {
                 current_kit = Some(KitAliasEntry::default());
                 section = Some("kits.entry".to_string());
+            } else if header == "witnesses" {
+                current_witness = Some(WitnessEntry::default());
+                section = Some("witnesses.entry".to_string());
             } else {
                 section = Some(header);
             }
@@ -251,6 +277,11 @@ fn parse_config(text: &str) -> ProjectConfig {
                     && !prev.lang.is_empty()
                 {
                     cfg.kits.push(prev);
+                }
+            }
+            if let Some(prev) = current_witness.take() {
+                if !prev.name.is_empty() && !prev.kind.is_empty() {
+                    cfg.witnesses.push(prev);
                 }
             }
             section = Some(s.trim().to_lowercase());
@@ -346,6 +377,31 @@ fn parse_config(text: &str) -> ProjectConfig {
                     entry.lang = val;
                 }
             }
+            (Some("witnesses.entry"), "name") => {
+                if let Some(entry) = current_witness.as_mut() {
+                    entry.name = val;
+                }
+            }
+            (Some("witnesses.entry"), "kind") => {
+                if let Some(entry) = current_witness.as_mut() {
+                    entry.kind = val;
+                }
+            }
+            (Some("witnesses.entry"), "command") => {
+                if let Some(entry) = current_witness.as_mut() {
+                    entry.command = parse_string_array(&val);
+                }
+            }
+            (Some("witnesses.entry"), "working_dir") => {
+                if let Some(entry) = current_witness.as_mut() {
+                    entry.working_dir = Some(val);
+                }
+            }
+            (Some("witnesses.entry"), "path") => {
+                if let Some(entry) = current_witness.as_mut() {
+                    entry.path = Some(val);
+                }
+            }
             _ => {}
         }
     }
@@ -362,6 +418,11 @@ fn parse_config(text: &str) -> ProjectConfig {
             && !prev.lang.is_empty()
         {
             cfg.kits.push(prev);
+        }
+    }
+    if let Some(prev) = current_witness.take() {
+        if !prev.name.is_empty() && !prev.kind.is_empty() {
+            cfg.witnesses.push(prev);
         }
     }
     cfg
@@ -576,6 +637,35 @@ lang = "third-party"
         assert_eq!(cfg.kits[1].project, "/opt/sugar/kits/third-party");
         assert_eq!(cfg.kits[1].surface, "third-party-surface");
         assert_eq!(cfg.kits[1].lang, "third-party");
+    }
+
+    #[test]
+    fn parses_witness_entries() {
+        let cfg = parse_config(
+            r#"[[witnesses]]
+name = "prove-report"
+kind = "report"
+
+[[witnesses]]
+name = "unit-test-green"
+kind = "command"
+command = ["cargo", "test", "--lib"]
+
+[[witnesses]]
+name = "poem"
+kind = "file"
+path = "witnesses/poem.txt"
+"#,
+        );
+
+        assert_eq!(cfg.witnesses.len(), 3);
+        assert_eq!(cfg.witnesses[0].name, "prove-report");
+        assert_eq!(cfg.witnesses[0].kind, "report");
+        assert_eq!(
+            cfg.witnesses[1].command,
+            vec!["cargo".to_string(), "test".to_string(), "--lib".to_string()]
+        );
+        assert_eq!(cfg.witnesses[2].path.as_deref(), Some("witnesses/poem.txt"));
     }
 
     #[test]
