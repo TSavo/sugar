@@ -105,15 +105,6 @@ impl ExprSugarClaim {
     pub(crate) const fn fallback_term(name: &'static str, recognize: ExprRecognizer) -> Self {
         Self::new(name, SugarRole::Term, SugarPriority::Fallback, recognize)
     }
-
-    pub(crate) const fn fallback_composite(name: &'static str, recognize: ExprRecognizer) -> Self {
-        Self::new(
-            name,
-            SugarRole::Composite,
-            SugarPriority::Fallback,
-            recognize,
-        )
-    }
 }
 
 /// A Sugar's claim that it knows how to recognize one source-item position.

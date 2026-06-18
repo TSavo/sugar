@@ -66,9 +66,11 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &take_while::EXPR_SUGAR,
     &fold::EXPR_SUGAR,
     &forall::FOR_EACH_EXPR_SUGAR,
-    &closure_adaptor::EXPR_SUGAR,
-    &match_scrutinee::EXPR_SUGAR,
-    &closure_adaptor::VERDICT_EXPR_SUGAR,
+    &closure_adaptor::TLS_ACCESSOR_EXPR_SUGAR,
+    &closure_adaptor::OPAQUE_ACCESSOR_EXPR_SUGAR,
+    &closure_adaptor::ITER_ADVANCE_BODY_EXPR_SUGAR,
+    &closure_adaptor::MUTATING_BODY_EXPR_SUGAR,
+    &closure_adaptor::RUNTIME_RECEIVER_EXPR_SUGAR,
     &statement_position::EXPR_SUGAR,
     &match_scrutinee::VERDICT_EXPR_SUGAR,
 ];
@@ -409,7 +411,7 @@ mod tests {
                 "unknown receiver `{src}` should not be claimed by {sugar_name}: {names:?}"
             );
             assert!(
-                names.contains(&"method") || names.contains(&"closure_adaptor"),
+                names.contains(&"method"),
                 "unknown receiver `{src}` should keep a recursive/effect fallback: {names:?}"
             );
         }
@@ -455,11 +457,59 @@ mod tests {
     }
 
     #[test]
-    fn closure_adaptor_verdict_is_a_catalog_claim() {
-        let expr: Expr = syn::parse_str("xs.iter().map(|x| { assert_eq!(x, x); x })").unwrap();
+    fn closure_runtime_receiver_verdict_is_a_catalog_claim() {
+        let expr: Expr =
+            syn::parse_str("std::env::args().for_each(|x| assert!(!x.is_empty()))").unwrap();
         let names = candidate_names_for_role(&expr, SugarRole::ClosureAdaptorVerdict);
 
-        assert_eq!(names, vec!["closure_adaptor"]);
+        assert_eq!(names, vec!["closure_runtime_receiver"]);
+    }
+
+    #[test]
+    fn closure_tls_accessor_verdict_is_a_catalog_claim() {
+        let expr: Expr = syn::parse_str("DROPS.with(|d| assert_eq!(*d.borrow(), [0]))").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::ClosureAdaptorVerdict);
+
+        assert_eq!(names, vec!["closure_tls_accessor"]);
+    }
+
+    #[test]
+    fn closure_opaque_accessor_verdict_is_a_catalog_claim() {
+        let expr: Expr =
+            syn::parse_str("cursor.with_unfilled_buf(|buf| assert!(!buf.is_empty()))").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::ClosureAdaptorVerdict);
+
+        assert_eq!(names, vec!["closure_opaque_accessor"]);
+    }
+
+    #[test]
+    fn closure_mutating_body_verdict_is_a_catalog_claim() {
+        let expr: Expr =
+            syn::parse_str("[1, 2, 3].iter().for_each(|x| { total += x; assert!(total > 0); })")
+                .unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::ClosureAdaptorVerdict);
+
+        assert_eq!(names, vec!["closure_mutating_body"]);
+    }
+
+    #[test]
+    fn closure_iter_advance_body_verdict_is_a_catalog_claim() {
+        let expr: Expr =
+            syn::parse_str("iter.clone().for_each(|x| assert_eq!(Some(x), iter.next()))").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::ClosureAdaptorVerdict);
+
+        assert_eq!(names, vec!["closure_iter_advance_body"]);
+    }
+
+    #[test]
+    fn pure_literal_closure_adaptor_declines_effect_verdict_claim() {
+        let expr: Expr = syn::parse_str("[1, 2, 3].iter().for_each(|x| assert!(*x > 0))").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::ClosureAdaptorVerdict);
+
+        assert!(
+            names.is_empty(),
+            "pure closure over literal sequence should not claim an effect verdict: {names:?}"
+        );
     }
 
     #[test]

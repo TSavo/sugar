@@ -46,8 +46,9 @@
 //! `Expr::Array` is the sequence-floor `LiteralSugar` (`literal`). The term `Expr::Repeat`
 //! expands a literal-count aggregate (`repeat_term`); the composite one is the
 //! `ArrayRepeat` refuse-shape (`array_repeat`). The term `Expr::MethodCall` is the
-//! `method:` ctor (`method`); the composite one is the
-//! `fold`/`for_each`/`closure_adaptor`/`match_scrutinee` quantifier chain.
+//! `method:` ctor (`method`); the composite one is the `fold`/`for_each`/sequence-adaptor
+//! quantifier chain. Closure-adaptor and match-scrutinee terminal verdicts are separate
+//! catalog roles, not composite fallbacks.
 
 use std::collections::BTreeMap;
 
@@ -60,7 +61,7 @@ use crate::{LiftOptions, Sugar, TemporalScope};
 /// What a recognizer needs from its environment to construct a node: the temporal
 /// `scope` (binding / mutability oracle), the lift `options`, and the in-scope `let`
 /// initializers (`name -> &init_expr`) that binding-resolving recognizers (`fold`,
-/// `for_each`, `closure_adaptor`) capture. This is the BUILD-time env; the dual
+/// `for_each`, closure verdicts) capture. This is the BUILD-time env; the dual
 /// [`SugarCtx`] is the DESUGAR-time env.
 pub(crate) struct SugarBuildCtx<'a, 'e> {
     scope: &'a TemporalScope,
