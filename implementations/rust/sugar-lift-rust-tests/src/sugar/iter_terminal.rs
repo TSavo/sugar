@@ -28,12 +28,12 @@
 // THE PREDICATE-BOOL terminals (`.any(p)`/`.all(p)`) const-evaluate the closure over each
 // element and OR (`any`) / AND (`all`) the per-element bools to a GROUNDED bool const.
 //
-// This is the TERM-position node -- it sits in the term registry BEFORE
-// `method_call_term::recognize`, so a recognized literal-domain reduction grounds to its
+// This is the TERM-position node -- it declares a better TERM priority than
+// `method::recognize`, so a recognized literal-domain reduction grounds to its
 // value instead of the opaque `method:<m>` EUF ctor. A receiver chain the literal-Seq
 // machinery does not own (`peel_fold_adaptors` -> `None`: an unknown adaptor, a closure
 // adaptor that is not const-evaluable here, a `let`-bound receiver that does not resolve
-// to a literal) is NOT recognized -> falls through to the opaque `method:` ctor (the
+// to a literal) is NOT recognized -> falls through to `MethodSugar` (the opaque `method:` ctor,
 // established sound under-claim).
 //
 // THE POSITIONAL TERMINALS GROUND VIA `MonadicSugar`. The positional terminals return
@@ -62,14 +62,17 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{num, ConstValue, Sort, Term};
 use syn::Expr;
 
-use crate::sugar::factory::FactoryCtx;
-use crate::sugar::literal::LiteralSugar;
-use crate::sugar::method_call_term;
+use crate::sugar::factory::{build_composite, FactoryCtx};
+use crate::sugar::method;
+use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::{
-    const_eval_unary_closure, parse_int_lit, peel_fold_adaptors, strip_refs_groups, ConstVal,
-    Desugared, Outcome, Sugar, SugarCtx,
+    const_eval_unary_closure, parse_int_lit, strip_refs_groups, ConstVal, Desugared, Outcome,
+    Sugar, SugarCtx,
 };
+
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::term("iter_terminal", recognize);
 
 /// Build a grounded boolean CONST term (`bool(b)`) for the `.any`/`.all` reductions. The
 /// `Bool` sort meets the `assert_eq!(..., true)` RHS bool const structurally (z3 enforces
@@ -115,15 +118,15 @@ enum Terminal {
 /// a WRITTEN LITERAL `Seq` (a syntactic array `[..]` / closed range `a..b`). Any other
 /// receiver (an unknown adaptor `peel` -> `None`, or a non-literal base -- `v[..4]`, a
 /// `let`-bound name `translate_term_in_scope` cannot resolve, an opaque `io`, a runtime
-/// `make_v()`) returns `None`, so the walk falls through to `method_call_term` (the opaque
-/// `method:` ctor, the established sound under-claim) -- BYTE-IDENTICAL to baseline.
+/// `make_v()`) returns `None`, so generic `MethodSugar` owns the opaque `method:` ctor,
+/// the established sound under-claim -- BYTE-IDENTICAL to baseline.
 ///
 /// The SYNTACTIC-LITERAL GATE is the soundness line drawn at BUILD time (the factory
 /// dispatch is build-time -- a recognizer that returns `Some` commits the node, so a
 /// desugar-time `Hit` could NOT fall through). Only a written literal base is ever
 /// recognized; an effect / runtime / opaque domain is NOT a syntactic literal -> never
 /// reaches the reduction. As belt-and-suspenders, the node ALSO holds the opaque
-/// `method_call_term` fallback and emits IT (never refusing) if the literal desugar does
+/// `MethodSugar` fallback and emits IT (never refusing) if the literal desugar does
 /// not cleanly ground (a non-const element under `.sum()`/`.product()`, an empty/oversize
 /// domain) -- so the node can only ever ground-with-teeth or reproduce the baseline opaque
 /// term, never turn a baseline lift into a refusal.
@@ -131,7 +134,24 @@ pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>>
     let Expr::MethodCall(call) = expr else {
         return None;
     };
-    let terminal = match call.method.to_string().as_str() {
+    let terminal = recognize_terminal(call)?;
+    if !method_family::resolves_literal_sequence(&call.receiver, fcx.let_inits) {
+        return None;
+    }
+    // The opaque `method:` fallback -- the EXACT node `method::recognize`
+    // builds for this same expr (built DIRECTLY, not via `build_term`, which would re-enter
+    // this recognizer and loop). Emitted verbatim if the literal desugar does not cleanly
+    // ground, so this node never refuses a form baseline lifted opaquely.
+    let fallback = method::recognize(expr, fcx)?;
+    Some(Box::new(IterTerminalSugar {
+        terminal,
+        inner: build_composite(&call.receiver, fcx),
+        fallback,
+    }))
+}
+
+fn recognize_terminal(call: &syn::ExprMethodCall) -> Option<Terminal> {
+    Some(match call.method.to_string().as_str() {
         // Scalar reductions, extremum terminals, and the nullary positional terminals
         // take no args.
         "sum" if call.args.is_empty() => Terminal::Sum,
@@ -175,36 +195,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>>
             }
         }
         _ => return None,
-    };
-    // Peel the receiver adaptor chain to (base, ordered wrappers) EXACTLY as
-    // `fold::decompose_seq` does. `None` (an unknown adaptor / unresolvable binding) ->
-    // NOT RECOGNIZED -> fall through to the opaque ctor.
-    let (base, adaptors) = peel_fold_adaptors(&call.receiver, fcx.let_inits, 0)?;
-    // THE SYNTACTIC-LITERAL GATE: the base must be a WRITTEN literal array / range. A
-    // non-literal base (`v[..4]` Index, a bare `let`-bound / opaque / runtime receiver
-    // `peel` could not resolve to a literal) is NOT recognized -> fall through to the
-    // opaque ctor (baseline). This is the build-time soundness boundary: we never even
-    // construct the reduction over a non-literal domain.
-    if !matches!(strip_refs_groups(base), Expr::Array(_) | Expr::Range(_)) {
-        return None;
-    }
-    // Build the inner seq-`Sugar`: `LiteralSugar` base nested under the adaptor decorators
-    // (base->terminal order), mirroring `fold::decompose_seq`.
-    let mut inner: Box<dyn Sugar> = Box::new(LiteralSugar { base: base.clone() });
-    for wrap in adaptors {
-        inner = wrap(inner);
-    }
-    // The opaque `method:` fallback -- the EXACT node `method_call_term::recognize` builds
-    // for this same expr (built DIRECTLY, not via `build_term`, which would re-enter this
-    // recognizer and loop). `method_call_term` owns every `Expr::MethodCall`, so it always
-    // `Some`s here; the `?` is a defensive no-op. Emitted verbatim if the literal desugar
-    // does not cleanly ground, so this node never refuses a form baseline lifted opaquely.
-    let fallback = method_call_term::recognize(expr, fcx)?;
-    Some(Box::new(IterTerminalSugar {
-        terminal,
-        inner,
-        fallback,
-    }))
+    })
 }
 
 /// The iterator scalar-reduction terminal node. Holds the pre-built inner seq-`Sugar`
@@ -285,11 +276,7 @@ impl IterTerminalSugar {
                 if const_eval_unary_closure(pred, v)?.as_bool()? {
                     // `.position` grounds the INDEX (always a non-negative int); `.find`
                     // grounds the ELEMENT (must be an int for the `opt:some` field sort).
-                    let n = if want_index {
-                        idx as i128
-                    } else {
-                        v.as_int()?
-                    };
+                    let n = if want_index { idx as i128 } else { v.as_int()? };
                     return Some(Desugared::Term(monadic::some_term(num(n))));
                 }
             }

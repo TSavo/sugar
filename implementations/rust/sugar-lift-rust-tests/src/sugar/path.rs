@@ -24,7 +24,7 @@
 // `Term::Var { name }` via the shared `make_var` helper, byte-identical to the
 // arm's `make_var(..)`.
 //
-// THE `None` SPECIAL-CASE IS NOT THIS NODE'S JOB (router preamble). The arm
+// THE `None` SPECIAL-CASE BELONGS TO THIS CLAIM'S RECOGNIZER. The arm
 // immediately above the general path arm,
 //
 //     Expr::Path(path) if path.path.is_ident("None") => Ok(Rc::new(Term::Ctor {
@@ -33,12 +33,9 @@
 //     })),
 //
 // produces a `Ctor`, NOT a `Var`. That guard is a DISTINCT shape (the `None`
-// unit-variant constructor) and belongs to the coordinator's factory arm, which
-// must test `path.path.is_ident("None")` and route to the `None`-ctor node
-// BEFORE falling through to `PathSugar`. `PathSugar` owns ONLY the general
-// `make_var(scope.path_name(..))` arm; it does NOT re-check `is_ident("None")`
-// (doing so would duplicate a router decision inside a leaf -- the detection-soup
-// anti-pattern). DOCUMENTED, not implemented here.
+// unit-variant constructor) and is handled by `recognize` BEFORE falling through to
+// `PathSugar`. `PathSugar` owns ONLY the general `make_var(scope.path_name(..))` arm;
+// it does NOT re-check `is_ident("None")`.
 //
 // WHY NOT WRAP `BoundSugar`. `BoundSugar` (src/sugar/bound.rs) is a THIN
 // pass-through DECORATOR over an ALREADY-`Sugar`-typed operand (`Box<dyn
@@ -62,15 +59,20 @@ use crate::sugar::factory::FactoryCtx;
 use crate::sugar::term_leaf::resolved_term;
 use crate::{make_var, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::fallback_term("path", recognize);
+
 /// TERM recognizer for `Expr::Path`. Mirrors the two source-of-truth arms in order:
 /// the `is_ident("None")` unit-ctor guard (a `call:None` ctor) FIRST, then the general
 /// `make_var(scope.path_name(..))` name read ([`PathSugar`]).
 pub(crate) fn recognize(expr: &Expr, _fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
     match expr {
-        Expr::Path(path) if path.path.is_ident("None") => Some(resolved_term(Rc::new(Term::Ctor {
-            name: "call:None".to_string(),
-            args: Vec::new(),
-        }))),
+        Expr::Path(path) if path.path.is_ident("None") => {
+            Some(resolved_term(Rc::new(Term::Ctor {
+                name: "call:None".to_string(),
+                args: Vec::new(),
+            })))
+        }
         Expr::Path(path) => Some(Box::new(PathSugar { path: path.clone() })),
         _ => None,
     }
@@ -79,8 +81,8 @@ pub(crate) fn recognize(expr: &Expr, _fcx: &FactoryCtx) -> Option<Box<dyn Sugar>
 /// A path read in TERM position (`x`, `Foo::BAR`). LEAF: produces a `Term::Var`
 /// directly from the held `ExprPath` + `ctx.scope.path_name`, with NO child
 /// `Sugar`. Mirrors the general `Expr::Path` arm of `translate_term_in_scope`
-/// byte-identically. The `None` unit-ctor special-case is the router's job, not
-/// this node's (see the module header).
+/// byte-identically. The `None` unit-ctor special-case is handled by this Sugar's
+/// recognizer before a [`PathSugar`] node is built (see the module header).
 pub(crate) struct PathSugar {
     /// The source path this reference named. `desugar` resolves it through
     /// `ctx.scope.path_name(&path.path)` -- the shadowing-correct temporal

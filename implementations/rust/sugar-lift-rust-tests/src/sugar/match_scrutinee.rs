@@ -37,6 +37,15 @@ use crate::{
     STRUCTURAL_BACKSTOP_REASON,
 };
 
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::fallback_composite("match_scrutinee", recognize_composite);
+
+pub(crate) const VERDICT_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::match_scrutinee_verdict(
+        "match_scrutinee",
+        recognize_verdict,
+    );
+
 /// COMPOSITE method-call recognizer for a match-scrutinee method shape
 /// ([`MatchScrutineeSugar`] via [`decompose_match_scrutinee`]): `Some` only for a
 /// recognized shape, else `None`. Mirrors the LAST arm of the old
@@ -51,15 +60,10 @@ pub(crate) fn recognize_composite(expr: &Expr, _fcx: &FactoryCtx) -> Option<Box<
 }
 
 /// MATCH-position recognizer ([`MatchScrutineeSugar`] via [`decompose_match_scrutinee`]):
-/// `Some` only for an `Expr::Match` over a RUNTIME call-result scrutinee, else `None`. This
-/// is the shape the verdict-reading factory entry (`build_match_scrutinee`) walks for the two
-/// `Expr::Match` callsites (the statement-context residue and the `translate_bool_assertion`
-/// half-refuse) — DISTINCT from `recognize_composite`, which owns the method-call-chain
-/// placeholder slot. The verdict is purely SYNTACTIC, so this recognizer takes no
-/// `FactoryCtx` and returns the CONCRETE node (the factory entry reduces it via the node's
-/// ctx-free reduction, not a `Box<dyn Sugar>` registry walk).
-pub(crate) fn recognize(expr: &Expr) -> Option<MatchScrutineeSugar> {
-    decompose_match_scrutinee(expr)
+/// `Some` only for an `Expr::Match` over a RUNTIME call-result scrutinee, else `None`.
+/// DISTINCT from `recognize_composite`, which owns the method-call-chain placeholder slot.
+pub(crate) fn recognize_verdict(expr: &Expr, _fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    decompose_match_scrutinee(expr).map(|node| Box::new(node) as Box<dyn Sugar>)
 }
 
 /// The `match <runtime call> { .. }` whose asserted value is the arm taken by a runtime
@@ -87,8 +91,8 @@ impl MatchScrutineeSugar {
     /// The total reduction, made WITHOUT a `SugarCtx` -- the verdict is purely SYNTACTIC (it
     /// reads only the recognized scrutinee shape), so it does not need scope/options. The
     /// `Sugar::desugar(&ctx)` impl delegates here so the node has the canonical trait shape,
-    /// while the ctx-less thin node-router (`runtime_match_scrutinee_effect`) -- which serves
-    /// the ctx-less `translate_bool_assertion` callsite -- reads the SAME verdict here.
+    /// while the thin node-router (`runtime_match_scrutinee_effect`) reads the SAME verdict
+    /// through the trait.
     /// The composite makes NO verdict of its own: it Hits its single SCRUTINEE leaf. A built
     /// node always names `RuntimeMatchScrutinee` (recognition is the verdict's precondition);
     /// the STRUCTURAL backstop is the total-but-unreachable tail the fall-through routers

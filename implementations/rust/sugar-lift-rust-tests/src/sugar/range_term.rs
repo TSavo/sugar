@@ -12,6 +12,9 @@ use crate::sugar::term_leaf::resolved_term;
 use crate::Sugar;
 use syn::Expr;
 
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::term("range_term", recognize);
+
 /// TERM recognizer for `Expr::Range`.
 pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Range(range) = expr else {

@@ -199,7 +199,10 @@ fn lift(params: &Value) -> Value {
                     // assertion we DID lift that contradicts (itself or the body).
                     // A can't-lift is a coverage gap (named in the reason), never a
                     // contradiction verdict.
-                    Some(w) => ("silent", Some(format!("vendor pin not liftable: {}", w.reason))),
+                    Some(w) => (
+                        "silent",
+                        Some(format!("vendor pin not liftable: {}", w.reason)),
+                    ),
                     None => ("warranted", None),
                 }
             } else {
@@ -209,8 +212,12 @@ fn lift(params: &Value) -> Value {
                 // `warranted` (constrains -> decl flows into the IR), or falls through to
                 // the honest "we don't have a Sugar for that yet" -- never a `refused`
                 // verdict it didn't earn.
-                let (s, r, decl) =
-                    classify_nontest_fn(&name, fr.sig, fr.block, out.reduced_helpers.contains(&name));
+                let (s, r, decl) = classify_nontest_fn(
+                    &name,
+                    fr.sig,
+                    fr.block,
+                    out.reduced_helpers.contains(&name),
+                );
                 if let Some(decl) = decl {
                     value_decls.push(decl);
                 }
@@ -345,7 +352,6 @@ fn fn_has_test_attr(attrs: &[syn::Attribute]) -> bool {
     })
 }
 
-
 /// Classify a NON-test fn body into its source-ledger status -- the SINGLE decision
 /// point, so the design law "`refused` is impossible" lives (and is tested) in ONE
 /// place. A body is `support` (the reducer inlined it as a universe member),
@@ -357,7 +363,11 @@ fn classify_nontest_fn(
     sig: &syn::Signature,
     block: &syn::Block,
     reduced: bool,
-) -> (&'static str, Option<String>, Option<sugar_ir_symbolic::ContractDecl>) {
+) -> (
+    &'static str,
+    Option<String>,
+    Option<sugar_ir_symbolic::ContractDecl>,
+) {
     if reduced {
         // A non-test fn the reducer INLINED to discharge a test (a bare-statement R7
         // inline, an arg-position inline, OR -- capability #1 -- a TERM-POSITION
@@ -388,7 +398,6 @@ fn classify_nontest_fn(
         None,
     )
 }
-
 
 /// LSP-coordinate positions (0-based line, 0-based col) of every method-call
 /// ident in a body -- the positions the RA oracle resolves to receiver/param
@@ -466,12 +475,12 @@ fn oracle_reclassify_mutating(
                 // name the proven order-loss boundary. (A future effect/Hit ledger status
                 // is the honest home for this; until then it is honest, visible work.)
                 locus["status"] = json!("unclassified");
-                locus["reason"] = json!("mutation through &mut (oracle): proven effect, no value pin");
+                locus["reason"] =
+                    json!("mutation through &mut (oracle): proven effect, no value pin");
             }
         }
     }
 }
-
 
 /// Roll the per-locus statuses into the `sourceLedger` the CLI source-audit gate
 /// requires. The CLI RECOMPUTES this from the loci, so it must be exactly the
@@ -750,7 +759,10 @@ facts = [
         let decl = broad_functional_warrant("f", &f.sig, &f.block)
             .expect("value body warrants down to bare functionality");
         let inv = format!("{:?}", decl.inv.unwrap());
-        assert!(inv.contains("call:f") && inv.contains('a'), "functional warrant out=call:f(a): {inv}");
+        assert!(
+            inv.contains("call:f") && inv.contains('a'),
+            "functional warrant out=call:f(a): {inv}"
+        );
 
         // UNIT body -> NEVER constrains (no output) -> None -> caller refuses by
         // vacuity. Effectful or not, there is no output to demand anything about.

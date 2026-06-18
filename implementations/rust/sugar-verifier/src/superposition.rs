@@ -264,10 +264,7 @@ mod tests {
 
     #[test]
     fn undecidable_and_refused_neither_license_nor_accuse() {
-        let items = vec![
-            item("f", "undecidable", "p1"),
-            item("f", "refused", "p2"),
-        ];
+        let items = vec![item("f", "undecidable", "p1"), item("f", "refused", "p2")];
         assert!(
             fold_verdicts(&items).is_empty(),
             "no licensing reading -> no report"
@@ -303,10 +300,7 @@ mod tests {
 
     #[test]
     fn distinct_symbols_get_distinct_reports() {
-        let items = vec![
-            item("a", "discharged", "p"),
-            item("b", "discharged", "p"),
-        ];
+        let items = vec![item("a", "discharged", "p"), item("b", "discharged", "p")];
         let reports = fold_verdicts(&items);
         assert_eq!(reports.len(), 2);
         assert_ne!(reports[0].cid, reports[1].cid);

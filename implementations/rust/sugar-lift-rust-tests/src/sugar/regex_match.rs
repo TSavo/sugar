@@ -444,15 +444,18 @@ mod tests {
 
     #[test]
     fn declines_non_regex_call() {
-        assert!(recognize_regex_match(&parse(r#"Foo::new("x").is_match(s)"#), &no_bindings()).is_none());
+        assert!(
+            recognize_regex_match(&parse(r#"Foo::new("x").is_match(s)"#), &no_bindings()).is_none()
+        );
     }
 
     #[test]
     fn declines_find_without_is_some() {
-        assert!(
-            recognize_regex_match(&parse(r#"Regex::new("a").unwrap().find(s)"#), &no_bindings())
-                .is_none()
-        );
+        assert!(recognize_regex_match(
+            &parse(r#"Regex::new("a").unwrap().find(s)"#),
+            &no_bindings()
+        )
+        .is_none());
     }
 
     #[test]

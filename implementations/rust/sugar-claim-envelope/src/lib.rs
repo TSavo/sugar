@@ -1320,7 +1320,10 @@ pub fn mint_implication(args: &MintImplicationArgs) -> MintedEnvelope {
         ("producedBy".into(), Value::string(args.produced_by.clone())),
         ("producedAt".into(), Value::string(args.produced_at.clone())),
         ("prover".into(), Value::string(args.prover.clone())),
-        ("proverRunMs".into(), Value::integer(i128::from(args.prover_run_ms))),
+        (
+            "proverRunMs".into(),
+            Value::integer(i128::from(args.prover_run_ms)),
+        ),
     ];
     if !args.smt_lib_input.is_empty() {
         metadata_kvs.push((

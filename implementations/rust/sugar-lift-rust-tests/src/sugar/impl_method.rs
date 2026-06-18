@@ -32,12 +32,15 @@ use syn::{Item, ItemImpl};
 use crate::sugar::factory::FactoryCtx;
 use crate::{impl_block_method_name, Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON};
 
+pub(crate) const ITEM_SUGAR: crate::sugar::claim::ItemSugarClaim =
+    crate::sugar::claim::ItemSugarClaim::statement_item("impl_method", recognize);
+
 /// ITEM-position recognizer ([`ImplMethodSugar`] via [`decompose_impl_method`]): `Some` only
 /// for a statement-nested `impl` block whose first method body carries an assertion, else
-/// `None`. The item factory entry (`build_item`) walks a one-recognizer registry over this;
-/// the node owns the impl-method-reachability verdict in its own `desugar`. An `impl` operates
-/// on a `syn::Item`/`ItemImpl`, not an `Expr`, so this is the item-registry analogue of the
-/// term/composite `recognize` shape. Ctx-independent (the verdict is purely structural).
+/// `None`. The item claim owns the impl-method-reachability verdict in its own `desugar`.
+/// An `impl` operates on a `syn::Item`/`ItemImpl`, not an `Expr`, so this is the item-source
+/// analogue of the expression `recognize` shape. Ctx-independent (the verdict is purely
+/// structural).
 pub(crate) fn recognize(item: &Item, _fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
     let Item::Impl(imp) = item else {
         return None;

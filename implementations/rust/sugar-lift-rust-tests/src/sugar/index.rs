@@ -19,7 +19,7 @@
 // backstop, the old `?`-propagated `Err`); a child that `Hit`s a named order-loss
 // boundary propagates that `Hit` VERBATIM (the old named inner `Err`).
 //
-// THE ROUTER PREAMBLE IS NOT THIS NODE'S JOB. The `Expr::Index` arm has TWO
+// THE RECOGNIZER PREAMBLE. The `Expr::Index` shape has TWO
 // EARLY-RETURN recognizers BEFORE the constructive tail:
 //
 //   if let Some(term) = const_index_term_in_scope(index, scope)? {
@@ -35,12 +35,10 @@
 //
 // The const-index fold (`const_index_term_in_scope`, with its own `?`-propagated `Err`)
 // and the mutable-container TEMPORAL-READ refusal (`decompose_temporal_read` ->
-// `Effect::TemporalRead`, ALREADY owned by `TemporalReadSugar`) are ROUTER concerns:
-// they decide whether the constructive `index` ctor is reached at all. They live in the
-// factory arm the coordinator wires (the decomposer / dispatch that builds this node
-// ONLY when both preamble recognizers declined). `IndexSugar` is the CONSTRUCTIVE
-// COMPOSER ONLY -- it assumes the preamble has been cleared (the container is a stable,
-// non-`mut`-local read) and emits the `index` ctor.
+// `Effect::TemporalRead`, owned by `TemporalReadSugar`) are owned by this Sugar's
+// `recognize`: they decide whether the constructive `index` ctor is reached at all.
+// `IndexSugar` is the CONSTRUCTIVE COMPOSER ONLY -- it is built only after those
+// preambles decline, then emits the `index` ctor.
 
 use std::rc::Rc;
 
@@ -51,6 +49,9 @@ use crate::sugar::factory::{build_term, FactoryCtx};
 use crate::sugar::temporal_read::decompose_temporal_read;
 use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
 use crate::{const_index_term_in_scope, Desugared, Effect, Outcome, Sugar, SugarCtx};
+
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::term("index", recognize);
 
 /// TERM recognizer for `Expr::Index`. Mirrors the source-of-truth arm in order: the
 /// const-index preamble FIRST (a digit-index resolved term, or a reasoned-Hit on
@@ -221,7 +222,9 @@ mod tests {
             Outcome::Hit(Effect::TemporalRead { boundary }) => {
                 assert_eq!(boundary, "mut-container");
             }
-            Outcome::Hit(_) => panic!("expected the container's TemporalRead Hit, got a different Hit"),
+            Outcome::Hit(_) => {
+                panic!("expected the container's TemporalRead Hit, got a different Hit")
+            }
             Outcome::Dug(_) => panic!("expected the container's Hit to propagate, got a Dug"),
         }
     }

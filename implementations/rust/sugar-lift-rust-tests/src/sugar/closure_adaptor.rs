@@ -28,7 +28,7 @@
 
 use std::collections::BTreeMap;
 
-use syn::{Expr, visit::Visit};
+use syn::{visit::Visit, Expr};
 
 use crate::sugar::factory::FactoryCtx;
 use crate::{
@@ -36,6 +36,15 @@ use crate::{
     count_asserts_in_expr, peel_fold_adaptors, token_key, Effect, Outcome, Sugar, SugarCtx,
     PURE_CLOSURE_ADAPTORS, STRUCTURAL_BACKSTOP_REASON,
 };
+
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::fallback_composite("closure_adaptor", recognize_composite);
+
+pub(crate) const VERDICT_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::closure_adaptor_verdict(
+        "closure_adaptor",
+        recognize_composite,
+    );
 
 /// COMPOSITE method-call recognizer for a closure-bearing adaptor ([`ClosureAdaptorSugar`]
 /// via [`decompose_closure_adaptor`]): `Some` only for a recognized closure-adaptor
@@ -171,7 +180,8 @@ pub(crate) fn decompose_closure_adaptor(
     impl<'ast> Visit<'ast> for Find {
         fn visit_expr_method_call(&mut self, m: &'ast syn::ExprMethodCall) {
             if self.closure.is_none() {
-                if let Some(Expr::Closure(c)) = m.args.iter().find(|a| matches!(a, Expr::Closure(_)))
+                if let Some(Expr::Closure(c)) =
+                    m.args.iter().find(|a| matches!(a, Expr::Closure(_)))
                 {
                     self.method = Some(m.method.to_string());
                     self.closure = Some(c.clone());

@@ -17,6 +17,7 @@ use syn::{Expr, Pat, Stmt};
 
 use crate::sugar::factory::FactoryCtx;
 use crate::sugar::literal::LiteralSugar;
+use crate::sugar::method_family;
 use crate::{
     closure_body_is_side_effecting, closure_single_param_ident, collect_assertion_entries,
     const_fold_acc_update, const_int_acc_init, count_asserts_in_stmts, peel_fold_adaptors,
@@ -24,6 +25,9 @@ use crate::{
     tuple_components, wrap_rev, ConstVal, Desugared, Outcome, Sugar, SugarCtx, Warrant,
     SUGAR_SEQ_CAP,
 };
+
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::composite("fold", recognize_composite);
 
 /// COMPOSITE method-call recognizer for a `fold` terminal ([`FoldSugar`] via
 /// [`decompose_fold`]): `Some` only for a recognized `fold` shape, else `None` (the
@@ -54,6 +58,9 @@ fn decompose_seq(
     extra_rev: bool,
 ) -> Option<Box<dyn Sugar>> {
     let (base, mut adaptors) = peel_fold_adaptors(expr, let_inits, 0)?;
+    if !method_family::is_literal_sequence_base(base) {
+        return None;
+    }
     if extra_rev {
         adaptors.push(Box::new(wrap_rev));
     }
@@ -109,153 +116,154 @@ impl Sugar for FoldSugar {
         // lifts it (the structural bail -> `Hit(Effect::Unsupported)`, discarded by the
         // fall-through consumer exactly as the old `None` was).
         Outcome::from_opt((|| {
-        // The post-adaptor element sequence (the inner seq-sugar bottoms out at a
-        // literal domain or bails).
-        let seq = self.inner.desugar(ctx).dug()?.into_seq()?;
-        if seq.is_empty() {
-            // The adaptor chain emptied the sequence (`.filter` kept nothing /
-            // `.take(0)`): the fold body never runs -> vacuous. None rather than a
-            // vacuous `true`.
-            return None;
-        }
-        if seq.len() as i64 > SUGAR_SEQ_CAP {
-            return None;
-        }
-        let n_body = count_asserts_in_stmts(&self.body_stmts);
-        if n_body == 0 {
-            return None;
-        }
-        // Purity: the closure body must not mutate external state / advance an
-        // iterator (a side-effecting body makes each iteration observe a varying
-        // value, so the finite conjunction would be a false claim). HALF 2 then
-        // makes it terminal. Scan the FULL closure body (tail included), exactly as
-        // the procedural defolder did.
-        if closure_body_is_side_effecting(&self.closure_body) {
-            return None;
-        }
-        // Lift the body ONCE, free in acc_var / elem_var / idx_var. All-or-nothing.
-        let mut body_entries = Vec::new();
-        let mut body_skipped = Vec::new();
-        let mut body_lifted = 0usize;
-        let mut body_helpers = HashSet::new();
-        collect_assertion_entries(
-            &self.body_stmts,
-            ctx.scope.local_scope(),
-            ctx.options,
-            ctx.reducer,
-            *ctx.float_widths.borrow_mut(),
-            &mut body_entries,
-            &mut body_skipped,
-            &mut body_lifted,
-            &mut body_helpers,
-            ctx.macro_depth,
-            &ctx.scope.plan.interior_mut,
-            &BTreeMap::new(),
-        );
-        if !body_skipped.is_empty() || body_entries.len() != n_body {
-            return None;
-        }
-        let body_conj = and_(body_entries.iter().map(|e| e.atom.clone()).collect());
+            // The post-adaptor element sequence (the inner seq-sugar bottoms out at a
+            // literal domain or bails).
+            let seq = self.inner.desugar(ctx).dug()?.into_seq()?;
+            if seq.is_empty() {
+                // The adaptor chain emptied the sequence (`.filter` kept nothing /
+                // `.take(0)`): the fold body never runs -> vacuous. None rather than a
+                // vacuous `true`.
+                return None;
+            }
+            if seq.len() as i64 > SUGAR_SEQ_CAP {
+                return None;
+            }
+            let n_body = count_asserts_in_stmts(&self.body_stmts);
+            if n_body == 0 {
+                return None;
+            }
+            // Purity: the closure body must not mutate external state / advance an
+            // iterator (a side-effecting body makes each iteration observe a varying
+            // value, so the finite conjunction would be a false claim). HALF 2 then
+            // makes it terminal. Scan the FULL closure body (tail included), exactly as
+            // the procedural defolder did.
+            if closure_body_is_side_effecting(&self.closure_body) {
+                return None;
+            }
+            // Lift the body ONCE, free in acc_var / elem_var / idx_var. All-or-nothing.
+            let mut body_entries = Vec::new();
+            let mut body_skipped = Vec::new();
+            let mut body_lifted = 0usize;
+            let mut body_helpers = HashSet::new();
+            collect_assertion_entries(
+                &self.body_stmts,
+                ctx.scope.local_scope(),
+                ctx.options,
+                ctx.reducer,
+                *ctx.float_widths.borrow_mut(),
+                &mut body_entries,
+                &mut body_skipped,
+                &mut body_lifted,
+                &mut body_helpers,
+                ctx.macro_depth,
+                &ctx.scope.plan.interior_mut,
+                &BTreeMap::new(),
+            );
+            if !body_skipped.is_empty() || body_entries.len() != n_body {
+                return None;
+            }
+            let body_conj = and_(body_entries.iter().map(|e| e.atom.clone()).collect());
 
-        // Pre-translate the captured literal arrays' element exprs to TERMS so a body
-        // `index(ys, <const>)` can resolve to its concrete element after the index is
-        // threaded. An element that does not translate cleanly drops that array (its
-        // `index` reads stay the EUF accessor -- a sound under-claim, never a fake-dig).
-        let mut array_terms: BTreeMap<String, Vec<Rc<Term>>> = BTreeMap::new();
-        for (arr, elems) in &self.literal_arrays {
-            // SOUNDNESS: only an IMMUTABLE literal array may have its `index(arr, k)`
-            // read resolved to a literal element. A `let mut arr = [..]` could be
-            // index-assigned / mutated, so its value at a later program point is not
-            // the written literal -- leave its `index` reads as the EUF accessor.
-            if ctx.scope.is_mut_local(arr) {
-                continue;
-            }
-            let mut ts = Vec::with_capacity(elems.len());
-            let mut ok = true;
-            for e in elems {
-                match translate_term_in_scope(e, ctx.scope) {
-                    Ok(t) => ts.push(t),
-                    Err(_) => {
-                        ok = false;
-                        break;
-                    }
+            // Pre-translate the captured literal arrays' element exprs to TERMS so a body
+            // `index(ys, <const>)` can resolve to its concrete element after the index is
+            // threaded. An element that does not translate cleanly drops that array (its
+            // `index` reads stay the EUF accessor -- a sound under-claim, never a fake-dig).
+            let mut array_terms: BTreeMap<String, Vec<Rc<Term>>> = BTreeMap::new();
+            for (arr, elems) in &self.literal_arrays {
+                // SOUNDNESS: only an IMMUTABLE literal array may have its `index(arr, k)`
+                // read resolved to a literal element. A `let mut arr = [..]` could be
+                // index-assigned / mutated, so its value at a later program point is not
+                // the written literal -- leave its `index` reads as the EUF accessor.
+                if ctx.scope.is_mut_local(arr) {
+                    continue;
                 }
-            }
-            if ok {
-                array_terms.insert(arr.clone(), ts);
-            }
-        }
-
-        // Thread the accumulator over the RESULTING element sequence: substitute the
-        // concrete acc_k + the item binder's component(s) into the body formula, and
-        // const-fold the tail to acc_{k+1} given those same bindings.
-        let mut instances = Vec::with_capacity(seq.len());
-        let mut acc = self.acc_0;
-        for elem in &seq {
-            let mut inst = subst_var_in_formula(&body_conj, &self.acc_var, &num(i128::from(acc)));
-            let mut tail_env: BTreeMap<String, i64> = BTreeMap::new();
-            tail_env.insert(self.acc_var.clone(), acc);
-            match &self.item_binder {
-                FoldItemBinder::Whole(var) => {
-                    let t = translate_term_in_scope(&elem.expr, ctx.scope).ok()?;
-                    inst = subst_var_in_formula(&inst, var, &t);
-                    // The fold item enters the bounded i64 accumulator env; a wide
-                    // element value is not a representable cursor input -> bail
-                    // (EXACT-OR-BAIL).
-                    if let Some(n) = elem
-                        .value
-                        .as_ref()
-                        .and_then(ConstVal::as_int)
-                        .and_then(|n| i64::try_from(n).ok())
-                    {
-                        tail_env.insert(var.clone(), n);
-                    }
-                }
-                FoldItemBinder::Pair(c0, c1) => {
-                    let comps = tuple_components(&elem.expr)?;
-                    if comps.len() != 2 {
-                        return None;
-                    }
-                    let t0 = translate_term_in_scope(comps[0], ctx.scope).ok()?;
-                    let t1 = translate_term_in_scope(comps[1], ctx.scope).ok()?;
-                    inst = subst_var_in_formula(&inst, c0, &t0);
-                    inst = subst_var_in_formula(&inst, c1, &t1);
-                    if let Some(ConstVal::Tuple(parts)) = &elem.value {
-                        if let Some(n) = parts
-                            .first()
-                            .and_then(ConstVal::as_int)
-                            .and_then(|n| i64::try_from(n).ok())
-                        {
-                            tail_env.insert(c0.clone(), n);
-                        }
-                        if let Some(n) = parts
-                            .get(1)
-                            .and_then(ConstVal::as_int)
-                            .and_then(|n| i64::try_from(n).ok())
-                        {
-                            tail_env.insert(c1.clone(), n);
+                let mut ts = Vec::with_capacity(elems.len());
+                let mut ok = true;
+                for e in elems {
+                    match translate_term_in_scope(e, ctx.scope) {
+                        Ok(t) => ts.push(t),
+                        Err(_) => {
+                            ok = false;
+                            break;
                         }
                     }
                 }
+                if ok {
+                    array_terms.insert(arr.clone(), ts);
+                }
             }
-            // Resolve `index(<lit-array>, <const>)` reads (the now-threaded index) to
-            // their literal elements -- the teeth: the asserted RHS carries the real
-            // element value, so a wrong-expected twin is z3-refutable.
-            if !array_terms.is_empty() {
-                inst = resolve_index_in_formula(&inst, &array_terms);
+
+            // Thread the accumulator over the RESULTING element sequence: substitute the
+            // concrete acc_k + the item binder's component(s) into the body formula, and
+            // const-fold the tail to acc_{k+1} given those same bindings.
+            let mut instances = Vec::with_capacity(seq.len());
+            let mut acc = self.acc_0;
+            for elem in &seq {
+                let mut inst =
+                    subst_var_in_formula(&body_conj, &self.acc_var, &num(i128::from(acc)));
+                let mut tail_env: BTreeMap<String, i64> = BTreeMap::new();
+                tail_env.insert(self.acc_var.clone(), acc);
+                match &self.item_binder {
+                    FoldItemBinder::Whole(var) => {
+                        let t = translate_term_in_scope(&elem.expr, ctx.scope).ok()?;
+                        inst = subst_var_in_formula(&inst, var, &t);
+                        // The fold item enters the bounded i64 accumulator env; a wide
+                        // element value is not a representable cursor input -> bail
+                        // (EXACT-OR-BAIL).
+                        if let Some(n) = elem
+                            .value
+                            .as_ref()
+                            .and_then(ConstVal::as_int)
+                            .and_then(|n| i64::try_from(n).ok())
+                        {
+                            tail_env.insert(var.clone(), n);
+                        }
+                    }
+                    FoldItemBinder::Pair(c0, c1) => {
+                        let comps = tuple_components(&elem.expr)?;
+                        if comps.len() != 2 {
+                            return None;
+                        }
+                        let t0 = translate_term_in_scope(comps[0], ctx.scope).ok()?;
+                        let t1 = translate_term_in_scope(comps[1], ctx.scope).ok()?;
+                        inst = subst_var_in_formula(&inst, c0, &t0);
+                        inst = subst_var_in_formula(&inst, c1, &t1);
+                        if let Some(ConstVal::Tuple(parts)) = &elem.value {
+                            if let Some(n) = parts
+                                .first()
+                                .and_then(ConstVal::as_int)
+                                .and_then(|n| i64::try_from(n).ok())
+                            {
+                                tail_env.insert(c0.clone(), n);
+                            }
+                            if let Some(n) = parts
+                                .get(1)
+                                .and_then(ConstVal::as_int)
+                                .and_then(|n| i64::try_from(n).ok())
+                            {
+                                tail_env.insert(c1.clone(), n);
+                            }
+                        }
+                    }
+                }
+                // Resolve `index(<lit-array>, <const>)` reads (the now-threaded index) to
+                // their literal elements -- the teeth: the asserted RHS carries the real
+                // element value, so a wrong-expected twin is z3-refutable.
+                if !array_terms.is_empty() {
+                    inst = resolve_index_in_formula(&inst, &array_terms);
+                }
+                instances.push(inst);
+                acc = const_fold_acc_update(&self.tail, &tail_env)?;
             }
-            instances.push(inst);
-            acc = const_fold_acc_update(&self.tail, &tail_env)?;
-        }
-        let conj = and_(instances);
-        let warrant = Warrant {
-            name: Some(format!("{}::{}", ctx.scope.local_scope(), self.method)),
-        };
-        Some(Desugared::Constraints {
-            atom: conj,
-            n: n_body,
-            warrant,
-        })
+            let conj = and_(instances);
+            let warrant = Warrant {
+                name: Some(format!("{}::{}", ctx.scope.local_scope(), self.method)),
+            };
+            Some(Desugared::Constraints {
+                atom: conj,
+                n: n_body,
+                warrant,
+            })
         })())
     }
 }

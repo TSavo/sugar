@@ -1698,7 +1698,13 @@ fn collect_free_vars_term_ctx_adt(
         Term::Let { bindings, body, .. } => {
             let mut current_bound = bound.clone();
             for b in bindings {
-                collect_free_vars_term_ctx_adt(&b.bound_term, out, &current_bound, real_ctx, adt_ctx);
+                collect_free_vars_term_ctx_adt(
+                    &b.bound_term,
+                    out,
+                    &current_bound,
+                    real_ctx,
+                    adt_ctx,
+                );
                 current_bound.insert(b.name.clone());
             }
             collect_free_vars_term_ctx_adt(body, out, &current_bound, real_ctx, adt_ctx);

@@ -129,7 +129,10 @@ enum FmtValue {
     /// An integer with its width suffix (so `{:x}`/`{:b}`/`{:o}` render at the right
     /// width and a value's signed/unsigned-ness is honored). i128 carrier; the suffix
     /// drives the actual render.
-    Int { value: i128, suffix: IntKind },
+    Int {
+        value: i128,
+        suffix: IntKind,
+    },
     F32(f32),
     F64(f64),
     Char(char),
@@ -238,9 +241,7 @@ fn resolve_string_operand(
         // ONLY recurse into the dispatcher for a RECOGNIZED format shape
         // (`format!`/`concat!`/`.to_string()`/string `+`); anything else is not a
         // resolvable string -> `Ok(None)`. This guard breaks the recursion cycle.
-        e if is_format_shape(e) => {
-            resolve_format_string(e, binds)
-        }
+        e if is_format_shape(e) => resolve_format_string(e, binds),
         _ => Ok(None),
     }
 }
@@ -840,7 +841,9 @@ fn resolve_fmt_value(
         Expr::Unary(u) if matches!(u.op, syn::UnOp::Neg(_)) => {
             match resolve_fmt_value(&u.expr, binds)? {
                 Some(FmtValue::Int { value, suffix }) => Ok(Some(FmtValue::Int {
-                    value: value.checked_neg().ok_or_else(|| "int overflow".to_string())?,
+                    value: value
+                        .checked_neg()
+                        .ok_or_else(|| "int overflow".to_string())?,
                     suffix,
                 })),
                 Some(FmtValue::F64(x)) => Ok(Some(FmtValue::F64(-x))),
@@ -850,7 +853,10 @@ fn resolve_fmt_value(
         }
         // float division of two literals: `1.0 / 0.0` = inf, `0.0 / 0.0` = NaN, etc.
         Expr::Binary(b) if matches!(b.op, syn::BinOp::Div(_)) => {
-            match (resolve_fmt_value(&b.left, binds)?, resolve_fmt_value(&b.right, binds)?) {
+            match (
+                resolve_fmt_value(&b.left, binds)?,
+                resolve_fmt_value(&b.right, binds)?,
+            ) {
                 (Some(FmtValue::F64(l)), Some(FmtValue::F64(r))) => Ok(Some(FmtValue::F64(l / r))),
                 (Some(FmtValue::F32(l)), Some(FmtValue::F32(r))) => Ok(Some(FmtValue::F32(l / r))),
                 _ => Ok(None),
@@ -948,10 +954,8 @@ pub(crate) fn try_resolve_format(
 /// The in-scope IMMUTABLE `let` bindings (`name -> init`), the map the FormatSugar
 /// hooks (`a + b`, `format!`, `.to_string()`) resolve operands against: a `let mut` is
 /// excluded so a mutated operand is never mis-dissolved. Byte-identical to the inline
-/// `stable` map the source-of-truth factory arms built from `scope.let_bindings`.
-pub(crate) fn stable_let_bindings(
-    scope: &crate::TemporalScope,
-) -> BTreeMap<String, Expr> {
+/// `stable` map the old inline term translation built from `scope.let_bindings`.
+pub(crate) fn stable_let_bindings(scope: &crate::TemporalScope) -> BTreeMap<String, Expr> {
     scope
         .let_bindings_iter()
         .filter(|(name, _)| !scope.is_mut_local(name))
@@ -1086,14 +1090,24 @@ pub(crate) fn exact_fixed_f64(v: f64, sign: FmtSign, frac: usize) -> String {
     if let Some(x) = special_f64(v, sign) {
         return x;
     }
-    format!("{}{:.*}", sign_prefix(v.is_sign_negative(), sign), frac, v.abs())
+    format!(
+        "{}{:.*}",
+        sign_prefix(v.is_sign_negative(), sign),
+        frac,
+        v.abs()
+    )
 }
 
 pub(crate) fn exact_fixed_f32(v: f32, sign: FmtSign, frac: usize) -> String {
     if let Some(x) = special_f32(v, sign) {
         return x;
     }
-    format!("{}{:.*}", sign_prefix(v.is_sign_negative(), sign), frac, v.abs())
+    format!(
+        "{}{:.*}",
+        sign_prefix(v.is_sign_negative(), sign),
+        frac,
+        v.abs()
+    )
 }
 
 /// `to_exact_exp_str`: `ndigits` significant digits in exponential (`{:.ndigits-1 e}`),
@@ -1123,7 +1137,11 @@ pub(crate) fn shortest_exp_f64(v: f64, sign: FmtSign, lo: i32, hi: i32, upper: b
         return x;
     }
     let se = format!("{:e}", v.abs());
-    let k: i32 = se.split('e').nth(1).and_then(|e| e.parse().ok()).unwrap_or(0);
+    let k: i32 = se
+        .split('e')
+        .nth(1)
+        .and_then(|e| e.parse().ok())
+        .unwrap_or(0);
     let body = if lo <= k && k < hi {
         format!("{}", v.abs())
     } else if upper {
@@ -1139,7 +1157,11 @@ pub(crate) fn shortest_exp_f32(v: f32, sign: FmtSign, lo: i32, hi: i32, upper: b
         return x;
     }
     let se = format!("{:e}", v.abs());
-    let k: i32 = se.split('e').nth(1).and_then(|e| e.parse().ok()).unwrap_or(0);
+    let k: i32 = se
+        .split('e')
+        .nth(1)
+        .and_then(|e| e.parse().ok())
+        .unwrap_or(0);
     let body = if lo <= k && k < hi {
         format!("{}", v.abs())
     } else if upper {
@@ -1263,16 +1285,10 @@ fn parse_flt2dec_value(expr: &Expr, bindings: &BTreeMap<String, Expr>) -> Option
             let m = parse_flt2dec_value(m_expr, bindings)?;
             let e = parse_i32_literal(e_expr)?;
             match m {
-                Flt2decValue::F64(mv) if is_f64 => {
-                    Some(Flt2decValue::F64(ldexp_f64(mv, e)))
-                }
+                Flt2decValue::F64(mv) if is_f64 => Some(Flt2decValue::F64(ldexp_f64(mv, e))),
                 // The mantissa literal `1.0` parses as F64; for `ldexp_f32` cast it.
-                Flt2decValue::F64(mv) if is_f32 => {
-                    Some(Flt2decValue::F32(ldexp_f32(mv as f32, e)))
-                }
-                Flt2decValue::F32(mv) if is_f32 => {
-                    Some(Flt2decValue::F32(ldexp_f32(mv, e)))
-                }
+                Flt2decValue::F64(mv) if is_f32 => Some(Flt2decValue::F32(ldexp_f32(mv as f32, e))),
+                Flt2decValue::F32(mv) if is_f32 => Some(Flt2decValue::F32(ldexp_f32(mv, e))),
                 _ => None,
             }
         }
@@ -1288,7 +1304,12 @@ fn parse_flt2dec_value(expr: &Expr, bindings: &BTreeMap<String, Expr>) -> Option
                 narrowed.remove(&name);
                 return parse_flt2dec_value(bound, &narrowed);
             }
-            let segs: Vec<String> = p.path.segments.iter().map(|s| s.ident.to_string()).collect();
+            let segs: Vec<String> = p
+                .path
+                .segments
+                .iter()
+                .map(|s| s.ident.to_string())
+                .collect();
             if segs.len() != 2 {
                 return None;
             }
@@ -1681,67 +1702,149 @@ mod tests {
     // ── Display / Debug over each scalar kind ──
     #[test]
     fn display_int() {
-        assert_eq!(resolve(r#"format!("{}", 0)"#).unwrap().as_deref(), Some("0"));
-        assert_eq!(resolve(r#"format!("{}", 1i8)"#).unwrap().as_deref(), Some("1"));
-        assert_eq!(resolve(r#"format!("{}", 42u64)"#).unwrap().as_deref(), Some("42"));
-        assert_eq!(resolve(r#"format!("{}", -7)"#).unwrap().as_deref(), Some("-7"));
+        assert_eq!(
+            resolve(r#"format!("{}", 0)"#).unwrap().as_deref(),
+            Some("0")
+        );
+        assert_eq!(
+            resolve(r#"format!("{}", 1i8)"#).unwrap().as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            resolve(r#"format!("{}", 42u64)"#).unwrap().as_deref(),
+            Some("42")
+        );
+        assert_eq!(
+            resolve(r#"format!("{}", -7)"#).unwrap().as_deref(),
+            Some("-7")
+        );
     }
     #[test]
     fn debug_int() {
-        assert_eq!(resolve(r#"format!("{:?}", 0u32)"#).unwrap().as_deref(), Some("0"));
+        assert_eq!(
+            resolve(r#"format!("{:?}", 0u32)"#).unwrap().as_deref(),
+            Some("0")
+        );
     }
     #[test]
     fn radix_int() {
-        assert_eq!(resolve(r#"format!("{:x}", 255u32)"#).unwrap().as_deref(), Some("ff"));
-        assert_eq!(resolve(r#"format!("{:X}", 255u32)"#).unwrap().as_deref(), Some("FF"));
-        assert_eq!(resolve(r#"format!("{:b}", 5u32)"#).unwrap().as_deref(), Some("101"));
-        assert_eq!(resolve(r#"format!("{:o}", 8u32)"#).unwrap().as_deref(), Some("10"));
+        assert_eq!(
+            resolve(r#"format!("{:x}", 255u32)"#).unwrap().as_deref(),
+            Some("ff")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:X}", 255u32)"#).unwrap().as_deref(),
+            Some("FF")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:b}", 5u32)"#).unwrap().as_deref(),
+            Some("101")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:o}", 8u32)"#).unwrap().as_deref(),
+            Some("10")
+        );
         // two's-complement at width: `-1i8` lower-hex is "ff".
-        assert_eq!(resolve(r#"format!("{:x}", -1i8)"#).unwrap().as_deref(), Some("ff"));
+        assert_eq!(
+            resolve(r#"format!("{:x}", -1i8)"#).unwrap().as_deref(),
+            Some("ff")
+        );
     }
     #[test]
     fn exp_int() {
-        assert_eq!(resolve(r#"format!("{:e}", 0)"#).unwrap().as_deref(), Some("0e0"));
-        assert_eq!(resolve(r#"format!("{:E}", 0u32)"#).unwrap().as_deref(), Some("0E0"));
+        assert_eq!(
+            resolve(r#"format!("{:e}", 0)"#).unwrap().as_deref(),
+            Some("0e0")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:E}", 0u32)"#).unwrap().as_deref(),
+            Some("0E0")
+        );
     }
     #[test]
     fn zero_pad_int() {
-        assert_eq!(resolve(r#"format!("{:05}", 7)"#).unwrap().as_deref(), Some("00007"));
-        assert_eq!(resolve(r#"format!("{:05}", -7)"#).unwrap().as_deref(), Some("-0007"));
+        assert_eq!(
+            resolve(r#"format!("{:05}", 7)"#).unwrap().as_deref(),
+            Some("00007")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:05}", -7)"#).unwrap().as_deref(),
+            Some("-0007")
+        );
     }
     #[test]
     fn display_float_and_precision() {
-        assert_eq!(resolve(r#"format!("{}", 3.14)"#).unwrap().as_deref(), Some("3.14"));
-        assert_eq!(resolve(r#"format!("{:.2}", 3.14159)"#).unwrap().as_deref(), Some("3.14"));
-        assert_eq!(resolve(r#"format!("{:.0}", 3.14)"#).unwrap().as_deref(), Some("3"));
+        assert_eq!(
+            resolve(r#"format!("{}", 3.14)"#).unwrap().as_deref(),
+            Some("3.14")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:.2}", 3.14159)"#).unwrap().as_deref(),
+            Some("3.14")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:.0}", 3.14)"#).unwrap().as_deref(),
+            Some("3")
+        );
     }
     #[test]
     fn display_char_str_bool() {
-        assert_eq!(resolve(r#"format!("{}", 'a')"#).unwrap().as_deref(), Some("a"));
-        assert_eq!(resolve(r#"format!("{}", "hi")"#).unwrap().as_deref(), Some("hi"));
-        assert_eq!(resolve(r#"format!("{:?}", "hi")"#).unwrap().as_deref(), Some("\"hi\""));
-        assert_eq!(resolve(r#"format!("{}", true)"#).unwrap().as_deref(), Some("true"));
+        assert_eq!(
+            resolve(r#"format!("{}", 'a')"#).unwrap().as_deref(),
+            Some("a")
+        );
+        assert_eq!(
+            resolve(r#"format!("{}", "hi")"#).unwrap().as_deref(),
+            Some("hi")
+        );
+        assert_eq!(
+            resolve(r#"format!("{:?}", "hi")"#).unwrap().as_deref(),
+            Some("\"hi\"")
+        );
+        assert_eq!(
+            resolve(r#"format!("{}", true)"#).unwrap().as_deref(),
+            Some("true")
+        );
     }
     #[test]
     fn literal_segments_and_multiple_args() {
         assert_eq!(
-            resolve(r#"format!("a={}, b={:x}", 1, 255u32)"#).unwrap().as_deref(),
+            resolve(r#"format!("a={}, b={:x}", 1, 255u32)"#)
+                .unwrap()
+                .as_deref(),
             Some("a=1, b=ff")
         );
-        assert_eq!(resolve(r#"format!("{{}}")"#).unwrap().as_deref(), Some("{}"));
+        assert_eq!(
+            resolve(r#"format!("{{}}")"#).unwrap().as_deref(),
+            Some("{}")
+        );
     }
     #[test]
     fn to_string_and_concat() {
-        assert_eq!(resolve(r#"3.14.to_string()"#).unwrap().as_deref(), Some("3.14"));
-        assert_eq!(resolve(r#"42u8.to_string()"#).unwrap().as_deref(), Some("42"));
-        assert_eq!(resolve(r#"concat!("a", "b", "c")"#).unwrap().as_deref(), Some("abc"));
-        assert_eq!(resolve(r#"concat!("x", 1, true)"#).unwrap().as_deref(), Some("x1true"));
+        assert_eq!(
+            resolve(r#"3.14.to_string()"#).unwrap().as_deref(),
+            Some("3.14")
+        );
+        assert_eq!(
+            resolve(r#"42u8.to_string()"#).unwrap().as_deref(),
+            Some("42")
+        );
+        assert_eq!(
+            resolve(r#"concat!("a", "b", "c")"#).unwrap().as_deref(),
+            Some("abc")
+        );
+        assert_eq!(
+            resolve(r#"concat!("x", 1, true)"#).unwrap().as_deref(),
+            Some("x1true")
+        );
     }
     #[test]
     fn nested_compositional() {
         // a format! whose arg is itself a format!.
         assert_eq!(
-            resolve(r#"format!("[{}]", format!("{:x}", 255u32))"#).unwrap().as_deref(),
+            resolve(r#"format!("[{}]", format!("{:x}", 255u32))"#)
+                .unwrap()
+                .as_deref(),
             Some("[ff]")
         );
     }
@@ -1750,7 +1853,9 @@ mod tests {
         let mut binds = BTreeMap::new();
         binds.insert("max".to_string(), parse("9u8"));
         assert_eq!(
-            try_resolve_format(&parse(r#"format!("{max}")"#), &binds).unwrap().as_deref(),
+            try_resolve_format(&parse(r#"format!("{max}")"#), &binds)
+                .unwrap()
+                .as_deref(),
             Some("9")
         );
     }
@@ -1944,9 +2049,8 @@ mod tests {
             None
         );
         // A non-closed format! expected (runtime arg) -> None.
-        let mfmt = assert_macro(
-            r#"assert_eq!(to_string(f, 1.0, Minus, 0), format!("{}", some_var));"#,
-        );
+        let mfmt =
+            assert_macro(r#"assert_eq!(to_string(f, 1.0, Minus, 0), format!("{}", some_var));"#);
         assert_eq!(
             dissolve_flt2dec_assert(&mfmt, Flt2decMode::Shortest, &b),
             None
@@ -2014,7 +2118,11 @@ mod tests {
             out.assertions_lifted, 2,
             "both the format!-pattern and the literal expected must dissolve"
         );
-        assert_eq!(out.assertions_refused, 0, "nothing refused: {:?}", out.skip_reasons);
+        assert_eq!(
+            out.assertions_refused, 0,
+            "nothing refused: {:?}",
+            out.skip_reasons
+        );
     }
 
     // ── Float-formatting engine (moved verbatim from the former flt2dec_eval.rs).
@@ -2053,7 +2161,11 @@ mod tests {
             (1.9971e20, Minus, 1, "199710000000000000000.0"),
         ];
         for (v, s, frac, want) in cases {
-            assert_eq!(&shortest_f64(*v, *s, *frac), want, "shortest({v},{s:?},{frac})");
+            assert_eq!(
+                &shortest_f64(*v, *s, *frac),
+                want,
+                "shortest({v},{s:?},{frac})"
+            );
         }
     }
 
@@ -2077,7 +2189,11 @@ mod tests {
             (3.14, Minus, 2, "3.14"),
         ];
         for (v, s, frac, want) in cases {
-            assert_eq!(&exact_fixed_f64(*v, *s, *frac), want, "exact_fixed({v},{s:?},{frac})");
+            assert_eq!(
+                &exact_fixed_f64(*v, *s, *frac),
+                want,
+                "exact_fixed({v},{s:?},{frac})"
+            );
         }
     }
 
@@ -2104,7 +2220,11 @@ mod tests {
             (0.195, Minus, 3, true, "1.95E-1"),
         ];
         for (v, s, n, u, want) in cases {
-            assert_eq!(&exact_exp_f64(*v, *s, *n, *u), want, "exact_exp({v},{s:?},{n},{u})");
+            assert_eq!(
+                &exact_exp_f64(*v, *s, *n, *u),
+                want,
+                "exact_exp({v},{s:?},{n},{u})"
+            );
         }
     }
 
@@ -2140,7 +2260,10 @@ mod tests {
     #[test]
     fn distinct_values_do_not_collapse() {
         assert_ne!(shortest_f64(3.14, Minus, 0), shortest_f64(3.15, Minus, 0));
-        assert_ne!(exact_exp_f64(0.195, Minus, 1, false), exact_exp_f64(0.295, Minus, 1, false));
+        assert_ne!(
+            exact_exp_f64(0.195, Minus, 1, false),
+            exact_exp_f64(0.295, Minus, 1, false)
+        );
     }
 
     #[test]

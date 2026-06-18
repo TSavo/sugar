@@ -8,6 +8,9 @@ use crate::sugar::factory::{build_term, FactoryCtx};
 use crate::{token_key, Sugar};
 use syn::Expr;
 
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::term("field_term", recognize);
+
 /// TERM recognizer for `Expr::Field`.
 pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
     match expr {

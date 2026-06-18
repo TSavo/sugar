@@ -119,9 +119,9 @@ use sugar_ir_types::IrTerm;
 use libsugar::wp::{self, free_vars_term, WpError};
 use sugar_ir_types::IrFormula;
 
-use libsugar::core::types::Term;
 use crate::body_discharge::CatalogResolver;
 use crate::types::{memento_body, memento_kind, MementoPool};
+use libsugar::core::types::Term;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -232,10 +232,7 @@ fn contract_body_has_nontrivial_pre(callee_name: &str, pool: &MementoPool) -> bo
 /// NEVER returns Pure or Impure when there is any doubt. Ambiguity → Unknown.
 pub fn callee_purity(call_json: &Json, pool: &MementoPool) -> Purity {
     // Step 0: extract the callee name (for the resolver and arg extraction).
-    let callee_name = match call_json
-        .get("name")
-        .and_then(|v| v.as_str())
-    {
+    let callee_name = match call_json.get("name").and_then(|v| v.as_str()) {
         Some(n) => n,
         None => return Purity::Unknown,
     };
@@ -303,9 +300,7 @@ pub fn callee_purity(call_json: &Json, pool: &MementoPool) -> Purity {
     // Step 3: extract body_expr from `=(body_expr, __purity_sentinel)`.
     // wp(call, result==sentinel) must produce exactly this shape.
     let body_expr: IrTerm = match reduced {
-        IrFormula::Atomic { name, mut args }
-            if name == "=" && args.len() == 2 =>
-        {
+        IrFormula::Atomic { name, mut args } if name == "=" && args.len() == 2 => {
             // args[0] = body_expr(call.args), args[1] = sentinel.
             // Confirm args[1] IS the sentinel before trusting args[0].
             let is_sentinel = matches!(&args[1], IrTerm::Var { name } if name == PURITY_SENTINEL);
@@ -347,9 +342,11 @@ pub fn callee_purity(call_json: &Json, pool: &MementoPool) -> Purity {
     // Check each extra free variable for an explicit hidden-state prefix.
     // If ALL extra vars carry a known prefix → Impure (unambiguous).
     // If ANY extra var lacks a known prefix → Unknown (could be anything).
-    let all_hidden = extra_free
-        .iter()
-        .all(|name| HIDDEN_STATE_PREFIXES.iter().any(|pfx| name.starts_with(pfx)));
+    let all_hidden = extra_free.iter().all(|name| {
+        HIDDEN_STATE_PREFIXES
+            .iter()
+            .any(|pfx| name.starts_with(pfx))
+    });
 
     if all_hidden {
         Purity::Impure
@@ -426,7 +423,8 @@ mod tests {
             }
         });
         let mut pool = MementoPool::default();
-        pool.mementos.insert("blake3-512:double-pure".into(), contract_env);
+        pool.mementos
+            .insert("blake3-512:double-pure".into(), contract_env);
         pool.bridges_by_symbol.insert("double".into(), bridge_env);
         pool
     }
@@ -468,7 +466,8 @@ mod tests {
             }
         });
         let mut pool = MementoPool::default();
-        pool.mementos.insert("blake3-512:cell-get-impure".into(), contract_env);
+        pool.mementos
+            .insert("blake3-512:cell-get-impure".into(), contract_env);
         pool.bridges_by_symbol.insert("cell_get".into(), bridge_env);
         pool
     }
@@ -509,7 +508,8 @@ mod tests {
             }
         });
         let mut pool = MementoPool::default();
-        pool.mementos.insert("blake3-512:mystery-unknown".into(), contract_env);
+        pool.mementos
+            .insert("blake3-512:mystery-unknown".into(), contract_env);
         pool.bridges_by_symbol.insert("mystery".into(), bridge_env);
         pool
     }
@@ -731,7 +731,8 @@ mod tests {
             }
         });
         let mut pool = MementoPool::default();
-        pool.mementos.insert("blake3-512:unwrap-pre-bearing".into(), contract_env);
+        pool.mementos
+            .insert("blake3-512:unwrap-pre-bearing".into(), contract_env);
         pool.bridges_by_symbol.insert("unwrap".into(), bridge_env);
 
         let c = call("unwrap", vec![var_term("opt")]);

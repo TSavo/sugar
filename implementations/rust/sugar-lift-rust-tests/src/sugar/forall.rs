@@ -14,7 +14,8 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{and_, forall, implies, lt, lte, num, Formula, Sort, Term};
 use syn::{Expr, Pat, Stmt};
 
-use crate::sugar::factory::{boxed, FactoryCtx};
+use crate::sugar::backstop::boxed;
+use crate::sugar::factory::FactoryCtx;
 use crate::{
     bounded_domain_from_expr, capture_literal_arrays, collect_assertion_entries,
     count_asserts_in_stmts, iter_adaptor_base, loop_body_mutates, resolve_index_in_formula,
@@ -22,6 +23,12 @@ use crate::{
     FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant,
     SUGAR_SEQ_CAP,
 };
+
+pub(crate) const FOR_LOOP_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::composite("forall_loop", recognize_for_loop);
+
+pub(crate) const FOR_EACH_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::composite("for_each", recognize_for_each);
 
 /// COMPOSITE recognizer for `Expr::ForLoop`: the universal-quantifier composite
 /// ([`ForAllSugar`] via [`decompose_for_loop`]). Byte-identical to the
@@ -41,9 +48,8 @@ pub(crate) fn recognize_for_loop(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dy
 /// `fold`, BEFORE `closure_adaptor`.
 pub(crate) fn recognize_for_each(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
     match expr {
-        Expr::MethodCall(_) => {
-            decompose_for_each(expr, fcx.scope, fcx.let_inits).map(|node| Box::new(node) as Box<dyn Sugar>)
-        }
+        Expr::MethodCall(_) => decompose_for_each(expr, fcx.scope, fcx.let_inits)
+            .map(|node| Box::new(node) as Box<dyn Sugar>),
         _ => None,
     }
 }
@@ -251,65 +257,65 @@ impl Sugar for ForAllSugar {
         // lifts it (the structural bail -> `Hit(Effect::Unsupported)`, discarded by the
         // fall-through consumer exactly as the old `None` was).
         Outcome::from_opt((|| {
-        // Translate the captured literal arrays' element exprs to TERMS so the body's
-        // `index(ys, <const>)` reads (the LITERAL-INT RANGE unroll) can resolve to
-        // concrete elements. SOUNDNESS: only an IMMUTABLE literal array may have its
-        // index reads resolved -- a `let mut arr = [..]` could be index-assigned, so
-        // its value at a later point is not the written literal (leave its reads as
-        // the EUF accessor). An element that does not translate cleanly drops that
-        // array (its reads stay the EUF accessor -- a sound under-claim, never a
-        // fake-dig). Byte-identical to `FoldSugar`'s array_terms capture.
-        let mut array_terms: BTreeMap<String, Vec<Rc<Term>>> = BTreeMap::new();
-        for (arr, elems) in &self.literal_arrays {
-            if ctx.scope.is_mut_local(arr) {
-                continue;
-            }
-            let mut ts = Vec::with_capacity(elems.len());
-            let mut ok = true;
-            for e in elems {
-                match translate_term_in_scope(e, ctx.scope) {
-                    Ok(t) => ts.push(t),
-                    Err(_) => {
-                        ok = false;
-                        break;
+            // Translate the captured literal arrays' element exprs to TERMS so the body's
+            // `index(ys, <const>)` reads (the LITERAL-INT RANGE unroll) can resolve to
+            // concrete elements. SOUNDNESS: only an IMMUTABLE literal array may have its
+            // index reads resolved -- a `let mut arr = [..]` could be index-assigned, so
+            // its value at a later point is not the written literal (leave its reads as
+            // the EUF accessor). An element that does not translate cleanly drops that
+            // array (its reads stay the EUF accessor -- a sound under-claim, never a
+            // fake-dig). Byte-identical to `FoldSugar`'s array_terms capture.
+            let mut array_terms: BTreeMap<String, Vec<Rc<Term>>> = BTreeMap::new();
+            for (arr, elems) in &self.literal_arrays {
+                if ctx.scope.is_mut_local(arr) {
+                    continue;
+                }
+                let mut ts = Vec::with_capacity(elems.len());
+                let mut ok = true;
+                for e in elems {
+                    match translate_term_in_scope(e, ctx.scope) {
+                        Ok(t) => ts.push(t),
+                        Err(_) => {
+                            ok = false;
+                            break;
+                        }
                     }
                 }
+                if ok {
+                    array_terms.insert(arr.clone(), ts);
+                }
             }
-            if ok {
-                array_terms.insert(arr.clone(), ts);
-            }
-        }
 
-        // `lift_bounded_forall` is the shared verified core: it const-checks the
-        // domain (range -> guarded forall OR -- when both endpoints are literal ints
-        // and the count is small -- a finite point-wise unroll; array -> finite
-        // conjunction), lifts the body all-or-nothing through the normal collector,
-        // and gates purity. We re-discriminate the domain here (it is consumed by
-        // value) by re-reading; pass the already-resolved `BoundedDomain`.
-        let (quantified, n_body) = lift_bounded_forall(
-            &self.var,
-            self.domain.clone(),
-            &self.body_stmts,
-            ctx.scope,
-            ctx.options,
-            ctx.reducer,
-            *ctx.float_widths.borrow_mut(),
-            ctx.macro_depth,
-            &array_terms,
-        )?;
-        let warrant = Warrant {
-            name: Some(format!(
-                "{}::{}::{}",
-                ctx.scope.local_scope(),
-                self.kind,
-                self.var
-            )),
-        };
-        Some(Desugared::Constraints {
-            atom: quantified,
-            n: n_body,
-            warrant,
-        })
+            // `lift_bounded_forall` is the shared verified core: it const-checks the
+            // domain (range -> guarded forall OR -- when both endpoints are literal ints
+            // and the count is small -- a finite point-wise unroll; array -> finite
+            // conjunction), lifts the body all-or-nothing through the normal collector,
+            // and gates purity. We re-discriminate the domain here (it is consumed by
+            // value) by re-reading; pass the already-resolved `BoundedDomain`.
+            let (quantified, n_body) = lift_bounded_forall(
+                &self.var,
+                self.domain.clone(),
+                &self.body_stmts,
+                ctx.scope,
+                ctx.options,
+                ctx.reducer,
+                *ctx.float_widths.borrow_mut(),
+                ctx.macro_depth,
+                &array_terms,
+            )?;
+            let warrant = Warrant {
+                name: Some(format!(
+                    "{}::{}::{}",
+                    ctx.scope.local_scope(),
+                    self.kind,
+                    self.var
+                )),
+            };
+            Some(Desugared::Constraints {
+                atom: quantified,
+                n: n_body,
+                warrant,
+            })
         })())
     }
 }

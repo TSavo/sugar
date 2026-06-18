@@ -7,7 +7,27 @@
 
 use syn::Expr;
 
+use crate::sugar::factory::{build_composite, FactoryCtx};
+use crate::sugar::method_family;
 use crate::{ConstVal, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx};
+
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::composite("enumerate", recognize_composite);
+
+pub(crate) fn recognize_composite(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    let Expr::MethodCall(call) = expr else {
+        return None;
+    };
+    if call.method == "enumerate"
+        && call.args.is_empty()
+        && method_family::resolves_literal_sequence(expr, fcx.let_inits)
+    {
+        return Some(Box::new(EnumerateSugar {
+            inner: build_composite(&call.receiver, fcx),
+        }));
+    }
+    None
+}
 
 /// Pair each element with its position: element `e` at index `i` becomes `(i, e)`.
 pub(crate) struct EnumerateSugar {

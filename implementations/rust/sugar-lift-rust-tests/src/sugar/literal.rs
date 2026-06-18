@@ -16,6 +16,9 @@ use crate::{
     Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP,
 };
 
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::composite("literal", recognize_composite);
+
 /// COMPOSITE recognizer for `Expr::Array` / `Expr::Range`: the SEQUENCE-floor
 /// [`LiteralSugar`] (a finite literal domain `-> Seq`). Byte-identical to the
 /// `Expr::Array(_) | Expr::Range(_) => Box::new(LiteralSugar { base: expr.clone() })`
@@ -45,53 +48,53 @@ impl Sugar for LiteralSugar {
         // structural bail -> `Hit(Effect::Unsupported)` (discarded by the fall-through
         // consumer exactly as the old `None` was). No unclassified return path.
         Outcome::from_opt((|| {
-        // Discriminate the domain EXACTLY as the defolder does (construction axiom:
-        // a literal array unrolls over its element terms; a closed range enumerates
-        // its integers). A runtime collection is not a `BoundedDomain` -> None.
-        let domain = bounded_domain_from_expr(&self.base, ctx.scope)?;
-        let seq: Vec<DesugaredElem> = match domain {
-            BoundedDomain::Array(_) => match strip_refs_groups(&self.base) {
-                Expr::Array(arr) => {
-                    if arr.elems.len() as i64 > SUGAR_SEQ_CAP {
+            // Discriminate the domain EXACTLY as the defolder does (construction axiom:
+            // a literal array unrolls over its element terms; a closed range enumerates
+            // its integers). A runtime collection is not a `BoundedDomain` -> None.
+            let domain = bounded_domain_from_expr(&self.base, ctx.scope)?;
+            let seq: Vec<DesugaredElem> = match domain {
+                BoundedDomain::Array(_) => match strip_refs_groups(&self.base) {
+                    Expr::Array(arr) => {
+                        if arr.elems.len() as i64 > SUGAR_SEQ_CAP {
+                            return None;
+                        }
+                        arr.elems
+                            .iter()
+                            .map(|e| DesugaredElem {
+                                expr: e.clone(),
+                                value: const_eval(e, &BTreeMap::new()),
+                            })
+                            .collect()
+                    }
+                    _ => return None,
+                },
+                BoundedDomain::Range {
+                    start,
+                    end,
+                    inclusive,
+                } => {
+                    let (Some(s), Some(e)) = (term_as_int(&start), term_as_int(&end)) else {
+                        return None;
+                    };
+                    // `checked_add`: an inclusive end at i128::MAX would overflow.
+                    let Some(e) = (if inclusive { e.checked_add(1) } else { Some(e) }) else {
+                        return None;
+                    };
+                    if e < s || e - s > i128::from(SUGAR_SEQ_CAP) {
                         return None;
                     }
-                    arr.elems
-                        .iter()
-                        .map(|e| DesugaredElem {
-                            expr: e.clone(),
-                            value: const_eval(e, &BTreeMap::new()),
+                    (s..e)
+                        .map(|n| DesugaredElem {
+                            expr: syn::parse_str::<Expr>(&n.to_string()).unwrap(),
+                            value: Some(ConstVal::Int(n)),
                         })
                         .collect()
                 }
-                _ => return None,
-            },
-            BoundedDomain::Range {
-                start,
-                end,
-                inclusive,
-            } => {
-                let (Some(s), Some(e)) = (term_as_int(&start), term_as_int(&end)) else {
-                    return None;
-                };
-                // `checked_add`: an inclusive end at i128::MAX would overflow.
-                let Some(e) = (if inclusive { e.checked_add(1) } else { Some(e) }) else {
-                    return None;
-                };
-                if e < s || e - s > i128::from(SUGAR_SEQ_CAP) {
-                    return None;
-                }
-                (s..e)
-                    .map(|n| DesugaredElem {
-                        expr: syn::parse_str::<Expr>(&n.to_string()).unwrap(),
-                        value: Some(ConstVal::Int(n)),
-                    })
-                    .collect()
+            };
+            if seq.is_empty() {
+                return None;
             }
-        };
-        if seq.is_empty() {
-            return None;
-        }
-        Some(Desugared::Seq(seq))
+            Some(Desugared::Seq(seq))
         })())
     }
 }

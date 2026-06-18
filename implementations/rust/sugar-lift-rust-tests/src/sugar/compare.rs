@@ -11,12 +11,12 @@
 // keyed per relation (`cmp:lt`/`cmp:le`/.../`cmp:eq`/`cmp:neq`/`cmp:ge`) so two
 // contradictory comparisons over the same operands are DISTINCT terms (the teeth).
 //
-// THIS NODE IS THE COMPOSER ONLY. The `Expr::Binary` arm has a PREAMBLE before the
+// THIS NODE IS THE COMPOSER ONLY. The `Expr::Binary` shape has a PREAMBLE before the
 // constructive ctor (the `FormatSugar` string-`+` hook, and the const-fold to a Bool
-// literal via `const_eval`) -- those early returns are NOT in this node; they live in
-// the factory arm the coordinator wires (see the report's preamble note). This node
-// composes its two pre-built children and emits the `cmp:*` ctor over their terms,
-// propagating a child `Hit` verbatim.
+// literal via `const_eval`) -- those early returns are owned by `binop::recognize`,
+// which builds this node only for the non-const comparison tail. This node composes
+// its two pre-built children and emits the `cmp:*` ctor over their terms, propagating
+// a child `Hit` verbatim.
 
 use std::rc::Rc;
 
@@ -154,7 +154,9 @@ mod tests {
             Outcome::Hit(Effect::Mutation { boundary }) => {
                 assert_eq!(boundary, "stub");
             }
-            Outcome::Hit(_) => panic!("expected the left child's Mutation Hit, got a different Effect"),
+            Outcome::Hit(_) => {
+                panic!("expected the left child's Mutation Hit, got a different Effect")
+            }
             Outcome::Dug(_) => panic!("expected the left child's Hit, got Dug"),
         }
     }
@@ -170,7 +172,9 @@ mod tests {
             Outcome::Hit(Effect::Mutation { boundary }) => {
                 assert_eq!(boundary, "stub");
             }
-            Outcome::Hit(_) => panic!("expected the right child's Mutation Hit, got a different Effect"),
+            Outcome::Hit(_) => {
+                panic!("expected the right child's Mutation Hit, got a different Effect")
+            }
             Outcome::Dug(_) => panic!("expected the right child's Hit, got Dug"),
         }
     }

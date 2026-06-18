@@ -175,7 +175,10 @@ mod tests {
         // the no-op floor (stripped on this target), NOT a Hit.
         let target = TargetCfg::from_rustc_cfg_facts(["target_os=\"linux\""]).unwrap();
         let options = LiftOptions::for_target_cfg(target);
-        match run(vec![cfg_attr(quote::quote!(target_os = "windows"))], &options) {
+        match run(
+            vec![cfg_attr(quote::quote!(target_os = "windows"))],
+            &options,
+        ) {
             Outcome::Dug(Desugared::Seq(s)) => {
                 assert!(s.is_empty(), "inactive strips to the empty no-op floor")
             }

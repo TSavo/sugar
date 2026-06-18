@@ -8,6 +8,9 @@ use crate::sugar::term_leaf::reasoned_hit;
 use crate::{token_key, Effect, Sugar, UnsupportedTermCause};
 use syn::Expr;
 
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::term("raw_addr_term", recognize);
+
 /// TERM recognizer for `Expr::RawAddr`.
 pub(crate) fn recognize(expr: &Expr, _fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
     match expr {

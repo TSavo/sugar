@@ -62,14 +62,53 @@ use syn::Expr;
 /// common cases (their receivers are runtime locals, not literals); this is a focused
 /// backstop for the rare impure-op-on-a-literal.
 const IMPURE_NAMES: &[&str] = &[
-    "as_ptr", "as_mut_ptr", "addr", "expose_addr", "expose_provenance", "with_addr",
-    "from_raw", "into_raw", "transmute", "transmute_copy", "assume_init",
-    "now", "elapsed", "duration_since", "instant",
-    "read", "write", "read_to_string", "stdin", "stdout", "stderr", "lock",
-    "random", "gen", "gen_range", "fill", "next_u32", "next_u64",
-    "spawn", "join", "load", "store", "fetch_add", "fetch_sub", "fetch_or",
-    "compare_exchange", "swap", "send", "recv", "try_recv",
-    "var", "vars", "args", "open", "metadata", "create", "remove_file",
+    "as_ptr",
+    "as_mut_ptr",
+    "addr",
+    "expose_addr",
+    "expose_provenance",
+    "with_addr",
+    "from_raw",
+    "into_raw",
+    "transmute",
+    "transmute_copy",
+    "assume_init",
+    "now",
+    "elapsed",
+    "duration_since",
+    "instant",
+    "read",
+    "write",
+    "read_to_string",
+    "stdin",
+    "stdout",
+    "stderr",
+    "lock",
+    "random",
+    "gen",
+    "gen_range",
+    "fill",
+    "next_u32",
+    "next_u64",
+    "spawn",
+    "join",
+    "load",
+    "store",
+    "fetch_add",
+    "fetch_sub",
+    "fetch_or",
+    "compare_exchange",
+    "swap",
+    "send",
+    "recv",
+    "try_recv",
+    "var",
+    "vars",
+    "args",
+    "open",
+    "metadata",
+    "create",
+    "remove_file",
 ];
 
 /// Certify that every operand of a unit-test assertion is CLOSED STDLIB VALUE SUGAR
@@ -94,7 +133,8 @@ fn is_const_or_ctor_path(p: &syn::Path) -> bool {
     let first_upper = s.chars().next().map(|c| c.is_uppercase()).unwrap_or(false);
     // SCREAMING_SNAKE const: all uppercase / digits / underscore
     let screaming = !s.is_empty()
-        && s.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+        && s.chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
     first_upper || screaming
 }
 
@@ -111,13 +151,21 @@ fn is_type_assoc_call_path(p: &syn::Path) -> bool {
     if p.segments.len() < 2 {
         return false;
     }
-    let first = p.segments.first().map(|s| s.ident.to_string()).unwrap_or_default();
+    let first = p
+        .segments
+        .first()
+        .map(|s| s.ident.to_string())
+        .unwrap_or_default();
     let first_type = first
         .chars()
         .next()
         .map(|c| c.is_uppercase())
         .unwrap_or(false);
-    let last = p.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
+    let last = p
+        .segments
+        .last()
+        .map(|s| s.ident.to_string())
+        .unwrap_or_default();
     first_type && !IMPURE_NAMES.contains(&last.as_str())
 }
 
@@ -158,11 +206,7 @@ fn closed_pure_sugar(expr: &Expr) -> bool {
         Expr::Macro(mac) => {
             use syn::parse::Parser;
             use syn::punctuated::Punctuated;
-            let name = mac
-                .mac
-                .path
-                .path_last_ident()
-                .unwrap_or_default();
+            let name = mac.mac.path.path_last_ident().unwrap_or_default();
             if !matches!(name.as_str(), "format" | "concat" | "stringify" | "vec") {
                 return false;
             }
@@ -256,14 +300,20 @@ fn replace_value_ident(
             TokenTree::Punct(ref p) if p.as_char() == '.' => {
                 prev_dot = true;
                 prev_colon = false;
-                out.extend(std::iter::once(TokenTree::Punct(Punct::new('.', p.spacing()))));
+                out.extend(std::iter::once(TokenTree::Punct(Punct::new(
+                    '.',
+                    p.spacing(),
+                ))));
             }
             TokenTree::Punct(ref p) if p.as_char() == ':' => {
                 // A `:` (often part of `::`); mark so the NEXT ident is treated as a path
                 // segment name and not substituted.
                 prev_colon = true;
                 prev_dot = false;
-                out.extend(std::iter::once(TokenTree::Punct(Punct::new(':', p.spacing()))));
+                out.extend(std::iter::once(TokenTree::Punct(Punct::new(
+                    ':',
+                    p.spacing(),
+                ))));
             }
             other => {
                 // any other token resets both name-position flags.
@@ -384,7 +434,10 @@ pub fn collect_dissolvable(file: &syn::File) -> Vec<Dissolvable> {
     }
     impl<'a, 'ast> syn::visit::Visit<'ast> for FnWalk<'a> {
         fn visit_item_fn(&mut self, f: &'ast syn::ItemFn) {
-            self.map.entry(f.sig.ident.to_string()).or_default().push(f.clone());
+            self.map
+                .entry(f.sig.ident.to_string())
+                .or_default()
+                .push(f.clone());
             self.all.push(f.clone());
             syn::visit::visit_item_fn(self, f);
         }
@@ -839,7 +892,10 @@ fn collect_block_asserts(
             // a reference to a carried local `let` binding is a closed leaf (its value
             // is supplied by the setup block).
             Expr::Path(p) => {
-                p.path.get_ident().map(|i| locals.contains(&i.to_string())).unwrap_or(false)
+                p.path
+                    .get_ident()
+                    .map(|i| locals.contains(&i.to_string()))
+                    .unwrap_or(false)
                     || is_const_or_ctor_path(&p.path)
             }
             Expr::Call(c) => {
@@ -919,9 +975,10 @@ fn collect_block_asserts(
                     Expr::Paren(p) => array_len(&p.expr),
                     Expr::Array(a) => Some(a.elems.len() as i64),
                     Expr::Repeat(rep) => match rep.len.as_ref() {
-                        Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(i), .. }) => {
-                            i.base10_parse::<i64>().ok()
-                        }
+                        Expr::Lit(syn::ExprLit {
+                            lit: syn::Lit::Int(i),
+                            ..
+                        }) => i.base10_parse::<i64>().ok(),
                         _ => None,
                     },
                     _ => None,
@@ -933,19 +990,21 @@ fn collect_block_asserts(
             Expr::Range(r) => {
                 let parse_int = |e: &Expr| -> Option<i64> {
                     match e {
-                        Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(i), .. }) => {
-                            i.base10_parse::<i64>().ok()
-                        }
-                        Expr::Unary(u) if matches!(u.op, syn::UnOp::Neg(_)) => match u.expr.as_ref() {
-                            Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(i), .. }) => {
-                                i.base10_parse::<i64>().ok().map(|n| -n)
+                        Expr::Lit(syn::ExprLit {
+                            lit: syn::Lit::Int(i),
+                            ..
+                        }) => i.base10_parse::<i64>().ok(),
+                        Expr::Unary(u) if matches!(u.op, syn::UnOp::Neg(_)) => {
+                            match u.expr.as_ref() {
+                                Expr::Lit(syn::ExprLit {
+                                    lit: syn::Lit::Int(i),
+                                    ..
+                                }) => i.base10_parse::<i64>().ok().map(|n| -n),
+                                _ => None,
                             }
-                            _ => None,
-                        },
+                        }
                         // `v.len()` on a literal-array / slice LOCAL of known length.
-                        Expr::MethodCall(mc)
-                            if mc.method == "len" && mc.args.is_empty() =>
-                        {
+                        Expr::MethodCall(mc) if mc.method == "len" && mc.args.is_empty() => {
                             let recv = match mc.receiver.as_ref() {
                                 Expr::Path(p) => p.path.get_ident().map(|i| i.to_string()),
                                 _ => None,
@@ -957,7 +1016,11 @@ fn collect_block_asserts(
                 };
                 let start = parse_int(r.start.as_deref()?)?;
                 let end = parse_int(r.end.as_deref()?)?;
-                let end = if matches!(r.limits, syn::RangeLimits::Closed(_)) { end + 1 } else { end };
+                let end = if matches!(r.limits, syn::RangeLimits::Closed(_)) {
+                    end + 1
+                } else {
+                    end
+                };
                 if end < start || end - start > CAP {
                     return None;
                 }
@@ -1034,8 +1097,10 @@ fn collect_block_asserts(
                     };
                     let enough = value_ops.len() == if macro_name == "assert" { 1 } else { 2 };
                     let mut scratch = std::collections::BTreeSet::new();
-                    let all_sugar =
-                        enough && value_ops.iter().all(|e| check(e, fns, locals, &mut scratch));
+                    let all_sugar = enough
+                        && value_ops
+                            .iter()
+                            .all(|e| check(e, fns, locals, &mut scratch));
                     let gated =
                         all_sugar && (operands_use_stdlib_op(&value_ops) || !scratch.is_empty());
                     if gated {
@@ -1045,7 +1110,12 @@ fn collect_block_asserts(
                         } else {
                             let l = value_ops[0];
                             let r = value_ops[1];
-                            format!("{}!({}, {})", macro_name, quote::quote!(#l), quote::quote!(#r))
+                            format!(
+                                "{}!({}, {})",
+                                macro_name,
+                                quote::quote!(#l),
+                                quote::quote!(#r)
+                            )
                         };
                         // With a per-point prefix (unrolled-iteration `let`s / builder
                         // stmts), wrap the whole point in a brace block so the carried
@@ -1130,7 +1200,12 @@ fn collect_block_asserts(
         // loop is left to the bin-2 refusal (safe). Backstop: every point is closed +
         // GATED, and the harness compile+run is the final fence -- a wrong substitution
         // or a non-sugar carried stmt can only fail to compile => not dissolved.
-        fn unroll_loop(&mut self, f: &syn::ExprForLoop, prefix: &str, scope: &std::collections::BTreeSet<String>) {
+        fn unroll_loop(
+            &mut self,
+            f: &syn::ExprForLoop,
+            prefix: &str,
+            scope: &std::collections::BTreeSet<String>,
+        ) {
             // Bound total emitted points per top-level loop site (nested literal domains
             // multiply); keep it finite and cheap. A loop that would exceed the cap is
             // left unrolled-only-partially is NOT acceptable (it would under/over claim
@@ -1207,19 +1282,53 @@ fn collect_block_asserts(
                     }
                     // An assert macro: emit `{ prefix; assert }` as one closed point.
                     syn::Stmt::Macro(sm) => {
-                        let name = sm.mac.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
+                        let name = sm
+                            .mac
+                            .path
+                            .segments
+                            .last()
+                            .map(|s| s.ident.to_string())
+                            .unwrap_or_default();
                         if name.starts_with("assert") || name.starts_with("debug_assert") {
-                            let target = if self.while_depth > 0 { &mut *self.while_asserts } else { &mut *self.asserts };
-                            W::try_assert_static(&sm.mac, self.fns, scope, prefix, target, self.helpers);
+                            let target = if self.while_depth > 0 {
+                                &mut *self.while_asserts
+                            } else {
+                                &mut *self.asserts
+                            };
+                            W::try_assert_static(
+                                &sm.mac,
+                                self.fns,
+                                scope,
+                                prefix,
+                                target,
+                                self.helpers,
+                            );
                             self.try_custom_macro_prefixed(&sm.mac, scope, prefix);
                         }
                         // a non-assert statement macro (e.g. `println!`) is ignored.
                     }
                     syn::Stmt::Expr(Expr::Macro(em), _) => {
-                        let name = em.mac.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
+                        let name = em
+                            .mac
+                            .path
+                            .segments
+                            .last()
+                            .map(|s| s.ident.to_string())
+                            .unwrap_or_default();
                         if name.starts_with("assert") || name.starts_with("debug_assert") {
-                            let target = if self.while_depth > 0 { &mut *self.while_asserts } else { &mut *self.asserts };
-                            W::try_assert_static(&em.mac, self.fns, scope, prefix, target, self.helpers);
+                            let target = if self.while_depth > 0 {
+                                &mut *self.while_asserts
+                            } else {
+                                &mut *self.asserts
+                            };
+                            W::try_assert_static(
+                                &em.mac,
+                                self.fns,
+                                scope,
+                                prefix,
+                                target,
+                                self.helpers,
+                            );
                             self.try_custom_macro_prefixed(&em.mac, scope, prefix);
                         }
                     }
@@ -1257,7 +1366,12 @@ fn collect_block_asserts(
             if self.while_depth > 0 {
                 return;
             }
-            let name = m.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
+            let name = m
+                .path
+                .segments
+                .last()
+                .map(|s| s.ident.to_string())
+                .unwrap_or_default();
             if name == "macro_rules" || !self.local_macros.contains_key(&name) {
                 return;
             }
@@ -1388,7 +1502,12 @@ pub fn collect_dissolvable_asserts(file: &syn::File) -> Vec<String> {
                         } else {
                             let l = value_ops[0];
                             let r = value_ops[1];
-                            format!("{}!({}, {})", macro_name, quote::quote!(#l), quote::quote!(#r))
+                            format!(
+                                "{}!({}, {})",
+                                macro_name,
+                                quote::quote!(#l),
+                                quote::quote!(#r)
+                            )
                         };
                         self.out.push(stmt);
                     }
@@ -1618,16 +1737,34 @@ mod tests {
         )
         .unwrap();
         let units = collect_dissolvable(&file);
-        let in_while =
-            |n: &str| units.iter().any(|u| u.under_while && u.asserts.iter().any(|a| a.contains(n)));
-        let in_top =
-            |n: &str| units.iter().any(|u| !u.under_while && u.asserts.iter().any(|a| a.contains(n)));
+        let in_while = |n: &str| {
+            units
+                .iter()
+                .any(|u| u.under_while && u.asserts.iter().any(|a| a.contains(n)))
+        };
+        let in_top = |n: &str| {
+            units
+                .iter()
+                .any(|u| !u.under_while && u.asserts.iter().any(|a| a.contains(n)))
+        };
         // the while-body 'B'->"b" assert: tagged terminal, and NOT in any unclassified unit.
-        assert!(in_while("\"b\""), "while-body closed assert must be tagged terminal (under_while)");
-        assert!(!in_top("\"b\""), "while-body assert must NOT land in an unclassified unit");
+        assert!(
+            in_while("\"b\""),
+            "while-body closed assert must be tagged terminal (under_while)"
+        );
+        assert!(
+            !in_top("\"b\""),
+            "while-body assert must NOT land in an unclassified unit"
+        );
         // the top-level 'A'->"a" assert: unclassified, and NOT tagged terminal.
-        assert!(in_top("\"a\""), "top-level closed assert must be unclassified (not under_while)");
-        assert!(!in_while("\"a\""), "top-level assert must NOT be tagged terminal");
+        assert!(
+            in_top("\"a\""),
+            "top-level closed assert must be unclassified (not under_while)"
+        );
+        assert!(
+            !in_while("\"a\""),
+            "top-level assert must NOT be tagged terminal"
+        );
     }
 
     #[test]
@@ -1663,7 +1800,7 @@ mod tests {
         // impure ops (pointer / time / IO / atomic), even on literals.
         assert!(!gate("'a'.encode_utf8(&mut buf).as_ptr()")); // free `buf` AND as_ptr
         assert!(!gate("Instant::now()")); // ctor-ish path but `now` is impure-named... it's a method-free call
-        // field access / arbitrary expr -> not certified.
+                                          // field access / arbitrary expr -> not certified.
         assert!(!gate("x.field"));
         assert!(!gate("{ let y = 3; y }"));
     }
@@ -1676,8 +1813,15 @@ mod tests {
         )
         .unwrap();
         let d = collect_dissolvable(&file);
-        assert!(d.iter().any(|u| u.prelude.contains("fn lower")), "helper carried");
-        assert_eq!(d.iter().map(|u| u.asserts.len()).sum::<usize>(), 1, "the helper-wrapped assert is dissolvable");
+        assert!(
+            d.iter().any(|u| u.prelude.contains("fn lower")),
+            "helper carried"
+        );
+        assert_eq!(
+            d.iter().map(|u| u.asserts.len()).sum::<usize>(),
+            1,
+            "the helper-wrapped assert is dissolvable"
+        );
     }
 
     #[test]
@@ -1691,11 +1835,15 @@ mod tests {
         .unwrap();
         let d = collect_dissolvable(&file);
         assert!(
-            d.iter().any(|u| u.prelude.contains("macro_rules ! ae") || u.prelude.contains("macro_rules! ae")),
+            d.iter()
+                .any(|u| u.prelude.contains("macro_rules ! ae")
+                    || u.prelude.contains("macro_rules! ae")),
             "macro def carried into prelude"
         );
         assert!(
-            d.iter().flat_map(|u| &u.asserts).any(|a| a.starts_with("ae !") || a.starts_with("ae!")),
+            d.iter()
+                .flat_map(|u| &u.asserts)
+                .any(|a| a.starts_with("ae !") || a.starts_with("ae!")),
             "closed macro invocation collected as a dissolvable unit"
         );
     }
@@ -1712,7 +1860,9 @@ mod tests {
         .unwrap();
         let d = collect_dissolvable(&file);
         assert!(
-            d.iter().flat_map(|u| &u.asserts).all(|a| !a.starts_with("ae !") && !a.starts_with("ae!")),
+            d.iter()
+                .flat_map(|u| &u.asserts)
+                .all(|a| !a.starts_with("ae !") && !a.starts_with("ae!")),
             "free-arg macro invocation is NOT dissolved"
         );
     }
@@ -1729,7 +1879,9 @@ mod tests {
         let total: usize = d.iter().map(|u| u.asserts.len()).sum();
         assert_eq!(total, 3, "0..3 unrolls to 3 points");
         assert!(
-            d.iter().flat_map(|u| &u.asserts).any(|a| a.contains("0 .") || a.contains("0.") || a.contains("0i32")),
+            d.iter()
+                .flat_map(|u| &u.asserts)
+                .any(|a| a.contains("0 .") || a.contains("0.") || a.contains("0i32")),
             "loop var substituted with concrete values"
         );
     }
@@ -1745,7 +1897,10 @@ mod tests {
         .unwrap();
         let d = collect_dissolvable(&file);
         let total: usize = d.iter().map(|u| u.asserts.len()).sum();
-        assert_eq!(total, 3, "0..3 over local array unrolls to 3 carried points");
+        assert_eq!(
+            total, 3,
+            "0..3 over local array unrolls to 3 carried points"
+        );
         assert!(
             d.iter().any(|u| u.setup.contains("let expected")),
             "the local `let expected` array is carried into setup"
@@ -1761,7 +1916,10 @@ mod tests {
         )
         .unwrap();
         let d = collect_dissolvable(&file);
-        assert!(d.iter().all(|u| u.asserts.is_empty()), "runtime-domain loop must not unroll");
+        assert!(
+            d.iter().all(|u| u.asserts.is_empty()),
+            "runtime-domain loop must not unroll"
+        );
     }
 
     #[test]
@@ -1776,15 +1934,22 @@ mod tests {
         .unwrap();
         let d = collect_dissolvable(&file);
         let total: usize = d.iter().map(|u| u.asserts.len()).sum();
-        assert_eq!(total, 3, "0..3 with a body `let` unrolls to 3 closed points");
+        assert_eq!(
+            total, 3,
+            "0..3 with a body `let` unrolls to 3 closed points"
+        );
         assert!(
-            d.iter().flat_map(|u| &u.asserts).all(|a| a.contains("let s =")),
+            d.iter()
+                .flat_map(|u| &u.asserts)
+                .all(|a| a.contains("let s =")),
             "each unrolled point carries the body `let` into a brace block: {:?}",
             d.iter().map(|u| &u.asserts).collect::<Vec<_>>()
         );
         // the loop var is concretely substituted (no free `i` remains).
         assert!(
-            d.iter().flat_map(|u| &u.asserts).all(|a| !a.contains("(i as u32)")),
+            d.iter()
+                .flat_map(|u| &u.asserts)
+                .all(|a| !a.contains("(i as u32)")),
             "loop var i is substituted to a concrete value in every point"
         );
     }
@@ -1801,7 +1966,10 @@ mod tests {
         .unwrap();
         let d = collect_dissolvable(&file);
         let total: usize = d.iter().map(|u| u.asserts.len()).sum();
-        assert_eq!(total, 3, "0..v.len() over a 3-element literal local unrolls to 3 points");
+        assert_eq!(
+            total, 3,
+            "0..v.len() over a 3-element literal local unrolls to 3 points"
+        );
     }
 
     #[test]
@@ -1822,17 +1990,24 @@ mod tests {
         // value-position-aware: the method `.sign(` is preserved, never rewritten to a
         // value; the ARGUMENT `sign` is substituted to a concrete enum value.
         assert!(
-            d.iter().flat_map(|u| &u.asserts).all(|a| a.contains(". sign (") || a.contains(".sign(")),
+            d.iter()
+                .flat_map(|u| &u.asserts)
+                .all(|a| a.contains(". sign (") || a.contains(".sign(")),
             "the method name `.sign(` is preserved (not corrupted by value subst): {:?}",
             d.iter().map(|u| &u.asserts).collect::<Vec<_>>()
         );
         assert!(
-            d.iter().flat_map(|u| &u.asserts).all(|a| !a.contains("sign (sign)") && !a.contains("sign(sign)")),
+            d.iter()
+                .flat_map(|u| &u.asserts)
+                .all(|a| !a.contains("sign (sign)") && !a.contains("sign(sign)")),
             "the loop-var argument is substituted (no free `sign` remains in the builder)"
         );
         // the body `let` + builder mutation are carried into each point block.
         assert!(
-            d.iter().flat_map(|u| &u.asserts).all(|a| a.contains("FormattingOptions :: new") || a.contains("FormattingOptions::new")),
+            d.iter()
+                .flat_map(|u| &u.asserts)
+                .all(|a| a.contains("FormattingOptions :: new")
+                    || a.contains("FormattingOptions::new")),
             "the body `let` constructor is carried into every point"
         );
     }
@@ -1885,9 +2060,18 @@ mod tests {
         let out = replace_value_ident(toks, "sign", &val).to_string();
         // method name `.sign(` preserved; the bare value `sign` arg replaced; the path
         // segment `Sign::sign` preserved.
-        assert!(out.contains("sign (VALUE)") || out.contains("sign(VALUE)"), "value arg replaced: {out}");
-        assert!(!out.contains("VALUE (VALUE)"), "method name `.sign` NOT replaced: {out}");
-        assert!(out.contains("Sign :: sign") || out.contains("Sign::sign"), "path segment preserved: {out}");
+        assert!(
+            out.contains("sign (VALUE)") || out.contains("sign(VALUE)"),
+            "value arg replaced: {out}"
+        );
+        assert!(
+            !out.contains("VALUE (VALUE)"),
+            "method name `.sign` NOT replaced: {out}"
+        );
+        assert!(
+            out.contains("Sign :: sign") || out.contains("Sign::sign"),
+            "path segment preserved: {out}"
+        );
     }
 
     #[test]
@@ -1900,9 +2084,16 @@ mod tests {
         )
         .unwrap();
         let d = collect_dissolvable(&file);
-        assert_eq!(d.iter().map(|u| u.asserts.len()).sum::<usize>(), 1, "multilevel pure helper dissolvable");
-        assert!(d.iter().any(|u| u.prelude.contains("fn outer") && u.prelude.contains("fn inner")),
-            "both helpers in the chain are carried");
+        assert_eq!(
+            d.iter().map(|u| u.asserts.len()).sum::<usize>(),
+            1,
+            "multilevel pure helper dissolvable"
+        );
+        assert!(
+            d.iter()
+                .any(|u| u.prelude.contains("fn outer") && u.prelude.contains("fn inner")),
+            "both helpers in the chain are carried"
+        );
     }
 
     #[test]
@@ -1919,10 +2110,14 @@ mod tests {
         // The helper's INTERNAL assert is carried as a concrete point (c := 'A'): a unit
         // whose asserts reference the substituted body (`'A'.to_lowercase()`), NOT a free `c`.
         let inlined = d.iter().any(|u| {
-            u.asserts.iter().any(|a| a.contains("count")) && !u.asserts.iter().any(|a| a.contains("c ."))
+            u.asserts.iter().any(|a| a.contains("count"))
+                && !u.asserts.iter().any(|a| a.contains("c ."))
         });
-        assert!(inlined, "helper internal assert should inline at the literal arg: {:?}",
-            d.iter().map(|u| &u.asserts).collect::<Vec<_>>());
+        assert!(
+            inlined,
+            "helper internal assert should inline at the literal arg: {:?}",
+            d.iter().map(|u| &u.asserts).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -1936,7 +2131,8 @@ mod tests {
         let d = collect_dissolvable(&file);
         // No unit carries the helper's internal `count` assert (its arg is runtime `x`).
         assert!(
-            d.iter().all(|u| !u.asserts.iter().any(|a| a.contains("count"))),
+            d.iter()
+                .all(|u| !u.asserts.iter().any(|a| a.contains("count"))),
             "a runtime-arg call must not inline the helper body: {:?}",
             d.iter().map(|u| &u.asserts).collect::<Vec<_>>()
         );
@@ -1978,7 +2174,10 @@ mod tests {
         )
         .unwrap();
         let d = collect_dissolvable(&file);
-        assert!(d.iter().all(|u| u.asserts.is_empty()), "helper with unresolvable callee must be skipped (safe)");
+        assert!(
+            d.iter().all(|u| u.asserts.is_empty()),
+            "helper with unresolvable callee must be skipped (safe)"
+        );
     }
 
     #[test]

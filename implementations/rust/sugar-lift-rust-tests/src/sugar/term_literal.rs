@@ -40,18 +40,18 @@
 // two floors). The shared `Lit`-decoding lives in `translate_lit`, called by this
 // node; `LiteralSugar` never touches a scalar `Lit`, so there is no overlap to unify.
 //
-// ROUTER PREAMBLE (the coordinator's factory-arm job, DOCUMENTED, not here). The
-// factory arm for `Expr::Lit` in TERM position must `new` a `TermLiteralSugar`
-// holding the `ExprLit`. (The factory already routes `Expr::Array | Expr::Range` to
-// the sequence `LiteralSugar`; the scalar `Expr::Lit` arm is the distinct term-floor
-// entry that lands here. The byte-string-literal `bytes_literal_term` and the
-// bare-`b"..."` operand recognizers stay where they are; this node owns the scalar
-// `Expr::Lit` term shape via `translate_lit`.)
+// RECOGNIZER PREAMBLE. This Sugar's claim owns the scalar `Expr::Lit` TERM shape and
+// news a `TermLiteralSugar` holding the `ExprLit`. `Expr::Array | Expr::Range` are
+// separate sequence-floor claims (`LiteralSugar`); scalar literals stay here via
+// `translate_lit`.
 
 use syn::{Expr, ExprLit};
 
 use crate::sugar::factory::FactoryCtx;
 use crate::{translate_lit, Desugared, Effect, Outcome, Sugar, SugarCtx};
+
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::term("term_literal", recognize);
 
 /// TERM recognizer for `Expr::Lit`: a scalar literal news a [`TermLiteralSugar`].
 /// Byte-identical to the `Expr::Lit(lit) => translate_lit(lit)` arm.

@@ -25,18 +25,17 @@
 // that `Hit`s a named order-loss boundary propagates that `Hit` VERBATIM (the old
 // named `Err` the inner `translate_term_in_scope?` produced).
 //
-// THE ROUTER PREAMBLE IS NOT THIS NODE'S JOB. The `Expr::Call` arm has an EARLY-RETURN
+// THE RECOGNIZER PREAMBLE. The `Expr::Call` shape has an EARLY-RETURN
 // recognizer BEFORE the constructive tail:
 //
 //   if let Some(term) = type_id_of_call_term(&call.func, call.args.len())? {
 //       return Ok(term);
 //   }
 //
-// That `TypeId::of::<T>()` const-fold (and its own `?`-propagated `Err`) is a ROUTER
-// concern: it decides whether the constructive `call:` ctor is reached at all. It lives
-// in the factory arm the coordinator wires (the decomposer / dispatch that builds this
-// node ONLY when the preamble did not already return). `CallSugar` is the CONSTRUCTIVE
-// COMPOSER ONLY -- it assumes the preamble has been cleared and emits the `call:` ctor.
+// That `TypeId::of::<T>()` const-fold (and its own `?`-propagated `Err`) is owned by
+// `recognize`: it decides whether the constructive `call:` ctor is reached at all.
+// `CallSugar` is the CONSTRUCTIVE COMPOSER ONLY -- it is built only after the preamble
+// has been cleared, and then emits the `call:` ctor.
 
 use std::rc::Rc;
 
@@ -46,6 +45,9 @@ use syn::Expr;
 use crate::sugar::factory::{build_term, FactoryCtx};
 use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
 use crate::{expr_head_key, type_id_of_call_term, Desugared, Outcome, Sugar, SugarCtx};
+
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::fallback_term("call", recognize);
 
 /// TERM recognizer for `Expr::Call`. Mirrors the source-of-truth arm in order: the
 /// `TypeId::of` const-fold preamble FIRST (a resolved term, or a reasoned-Hit on
@@ -117,7 +119,7 @@ impl CallSugar {
 
     /// Build the node retaining the ORIGINAL func + arg exprs, so `desugar` can attempt
     /// the term-position value-call inline preamble (capability #1) before falling back
-    /// to the opaque `call:` ctor. This is what the `recognize` factory entry uses.
+    /// to the opaque `call:` ctor. This is what this Sugar's `recognize` claim uses.
     pub(crate) fn from_func_with_exprs(
         func: &Expr,
         arg_exprs: Vec<Expr>,
@@ -299,9 +301,7 @@ mod tests {
             "f",
             vec![
                 Box::new(StubTerm { tag: "x" }),
-                Box::new(StubHit {
-                    boundary: "mut[i]",
-                }),
+                Box::new(StubHit { boundary: "mut[i]" }),
             ],
         );
         match run(&node) {

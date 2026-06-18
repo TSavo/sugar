@@ -23,7 +23,7 @@
 //     legacy `Err(reason)` byte-identically, so the wire format (CID + counts) is
 //     conserved.
 //
-// These are the term-dispatch analogue of `factory::UnsupportedSugar` (the bare
+// These are the term-dispatch analogue of `backstop::UnsupportedSugar` (the bare
 // structural backstop), but EARNED: they carry the arm's own pre-built term / reason,
 // not the generic structural-backstop string. They never DECIDE the walk — the arm
 // already did; the leaf just holds the verdict so it propagates inside-out through the

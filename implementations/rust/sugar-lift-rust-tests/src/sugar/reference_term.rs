@@ -11,6 +11,9 @@ use crate::sugar::term_leaf::reasoned_hit;
 use crate::{is_immutable_value_expr, token_key, Effect, Sugar, UnsupportedTermCause};
 use syn::Expr;
 
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::term("reference_term", recognize);
+
 /// TERM recognizer for `Expr::Reference`.
 pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Reference(reference) = expr else {

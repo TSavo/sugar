@@ -26,8 +26,14 @@
 
 use syn::Expr;
 
-use crate::sugar::factory::{boxed, FactoryCtx};
-use crate::{repeat_count_literal, token_key, Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON};
+use crate::sugar::backstop::boxed;
+use crate::sugar::factory::FactoryCtx;
+use crate::{
+    repeat_count_literal, token_key, Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON,
+};
+
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::composite("array_repeat", recognize_composite);
 
 /// COMPOSITE recognizer for `Expr::Repeat`: the `ArrayRepeatSugar` refuse-shape (via
 /// [`decompose_array_repeat`]). Byte-identical to the
