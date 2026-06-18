@@ -77,7 +77,11 @@ pub mod sugar {
     pub mod rev;
     pub mod skip;
     pub mod skip_while;
+    pub mod statement_control_flow;
+    pub mod statement_loop_advance;
     pub mod statement_position;
+    pub mod statement_reflection;
+    pub mod statement_runtime_expr;
     pub mod struct_term;
     pub mod take;
     pub mod take_while;

@@ -5,16 +5,15 @@
 use syn::{Expr, Item};
 
 use crate::sugar::backstop::unsupported;
-use crate::sugar::claim::{
-    ExprSugarClaim, ItemSugarClaim, SugarCandidate, SugarPriority, SugarRole,
-};
+use crate::sugar::claim::{ExprSugarClaim, ItemSugarClaim, SugarCandidate, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::{
     array_repeat, array_term, await_term, binop, block_term, call, cast_term, closure_adaptor,
     closure_term, conditional, const_block, control_flow_term, enumerate, field_term, filter,
     filter_map, fold, forall, impl_method, index, iter_terminal, iterator, literal, macro_term,
     map, match_node, match_scrutinee, method, monadic, path, range_term, raw_addr_term,
-    reference_term, repeat_term, rev, skip, skip_while, statement_position, struct_term, take,
+    reference_term, repeat_term, rev, skip, skip_while, statement_control_flow,
+    statement_loop_advance, statement_reflection, statement_runtime_expr, struct_term, take,
     take_while, term_literal, transparent_term, tuple_term, unary,
 };
 use crate::Sugar;
@@ -71,20 +70,14 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &closure_adaptor::ITER_ADVANCE_BODY_EXPR_SUGAR,
     &closure_adaptor::MUTATING_BODY_EXPR_SUGAR,
     &closure_adaptor::RUNTIME_RECEIVER_EXPR_SUGAR,
-    &statement_position::EXPR_SUGAR,
+    &statement_control_flow::EXPR_SUGAR,
+    &statement_reflection::EXPR_SUGAR,
+    &statement_loop_advance::EXPR_SUGAR,
+    &statement_runtime_expr::EXPR_SUGAR,
     &match_scrutinee::VERDICT_EXPR_SUGAR,
 ];
 
 const ITEM_CLAIMS: &[&ItemSugarClaim] = &[&impl_method::ITEM_SUGAR];
-
-const ALL_ROLES: &[SugarRole] = &[
-    SugarRole::Term,
-    SugarRole::Composite,
-    SugarRole::StatementEffect,
-    SugarRole::ClosureAdaptorVerdict,
-    SugarRole::MatchScrutineeVerdict,
-    SugarRole::StatementItem,
-];
 
 /// Ask every expression Sugar whether it handles this source site. Multiple
 /// candidates are first-class; equal-priority candidates for the same role are not.
@@ -141,21 +134,27 @@ pub(crate) fn build_item_role(item: &Item, fcx: &SugarBuildCtx, role: SugarRole)
 }
 
 fn assert_no_ambiguous_role_priority(candidates: &[SugarCandidate]) {
-    for role in ALL_ROLES {
-        for priority in [SugarPriority::Primary, SugarPriority::Fallback] {
-            let names: Vec<_> = candidates
-                .iter()
-                .filter(|candidate| candidate.role() == *role && candidate.priority() == priority)
-                .map(|candidate| candidate.name())
-                .collect();
-            if names.len() > 1 {
-                panic!(
-                    "ambiguous Sugar candidates for role {:?} at priority {:?}: {}",
-                    role,
-                    priority,
-                    names.join(", ")
-                );
-            }
+    for (index, candidate) in candidates.iter().enumerate() {
+        if candidates[..index].iter().any(|prior| {
+            prior.role() == candidate.role() && prior.priority() == candidate.priority()
+        }) {
+            continue;
+        }
+
+        let names: Vec<_> = candidates
+            .iter()
+            .filter(|other| {
+                other.role() == candidate.role() && other.priority() == candidate.priority()
+            })
+            .map(|candidate| candidate.name())
+            .collect();
+        if names.len() > 1 {
+            panic!(
+                "ambiguous Sugar candidates for role {:?} at priority {:?}: {}",
+                candidate.role(),
+                candidate.priority(),
+                names.join(", ")
+            );
         }
     }
 }
@@ -203,6 +202,15 @@ mod tests {
             .filter(|candidate| candidate.role() == role)
             .map(|candidate| candidate.name())
             .collect()
+    }
+
+    fn selected_candidate_name_for_role(expr: &Expr, role: SugarRole) -> Option<&'static str> {
+        let scope = TemporalScope::new("catalog-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        super::select_expr_role(super::matching_expr_claims(expr, &fcx), role)
+            .map(|candidate| candidate.name())
     }
 
     fn item_candidate_names_for_role(item: &Item, role: SugarRole) -> Vec<&'static str> {
@@ -449,11 +457,73 @@ mod tests {
     }
 
     #[test]
-    fn statement_position_effect_is_a_catalog_claim() {
+    fn statement_control_flow_effect_is_a_catalog_claim() {
         let expr: Expr = syn::parse_str("async { assert_eq!(1, 1); }.await").unwrap();
         let names = candidate_names_for_role(&expr, SugarRole::StatementEffect);
 
-        assert_eq!(names, vec!["statement_position"]);
+        assert_eq!(names, vec!["statement_control_flow"]);
+    }
+
+    #[test]
+    fn statement_reflection_effect_is_a_catalog_claim() {
+        let expr: Expr = syn::parse_str(
+            "match const { Type::of::<[u16; 4]>() }.kind { TypeKind::Array(array) => assert_eq!(array.len, 4), _ => unreachable!() }",
+        )
+        .unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::StatementEffect);
+
+        assert_eq!(names, vec!["statement_reflection"]);
+    }
+
+    #[test]
+    fn statement_loop_advance_effect_is_a_catalog_claim() {
+        let expr: Expr = syn::parse_str(
+            "loop { let (lower, upper) = iter.size_hint(); assert!(lower <= upper.unwrap()); }",
+        )
+        .unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::StatementEffect);
+
+        assert_eq!(names, vec!["statement_loop_advance"]);
+    }
+
+    #[test]
+    fn overlapping_statement_effects_resolve_by_declared_priority() {
+        let expr: Expr = syn::parse_str(
+            "loop { let _borrow = &mut value; let (lower, upper) = iter.size_hint(); assert!(lower <= upper.unwrap()); }",
+        )
+        .unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::StatementEffect);
+
+        assert_eq!(
+            names,
+            vec!["statement_loop_advance", "statement_runtime_expr"]
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::StatementEffect),
+            Some("statement_loop_advance")
+        );
+    }
+
+    #[test]
+    fn statement_runtime_expr_effect_is_a_catalog_claim() {
+        let expr: Expr = syn::parse_str(
+            "(assert_matches!(*MutRefWithDrop(&mut val).0, 0), std::mem::take(&mut val))",
+        )
+        .unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::StatementEffect);
+
+        assert_eq!(names, vec!["statement_runtime_expr"]);
+    }
+
+    #[test]
+    fn pure_literal_statement_declines_effect_claim() {
+        let expr: Expr = syn::parse_str("{ assert_eq!(1, 1); }").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::StatementEffect);
+
+        assert!(
+            names.is_empty(),
+            "pure literal statement should not claim an effect verdict: {names:?}"
+        );
     }
 
     #[test]

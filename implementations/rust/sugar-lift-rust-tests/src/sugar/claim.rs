@@ -21,11 +21,15 @@ pub(crate) enum SugarRole {
 }
 
 /// Sugar-declared candidate priority. Lower is better: a specific method-call
-/// decomposition outranks the generic `method:` fallback, while both remain valid claims.
+/// decomposition outranks the generic `method:` fallback, while overlapping
+/// specific sugars can still declare their own precedence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum SugarPriority {
     Primary = 1,
-    Fallback = 2,
+    Secondary = 2,
+    Tertiary = 3,
+    Quaternary = 4,
+    Fallback = 100,
 }
 
 type ExprRecognizer = fn(&Expr, &SugarBuildCtx) -> Option<Box<dyn Sugar>>;
