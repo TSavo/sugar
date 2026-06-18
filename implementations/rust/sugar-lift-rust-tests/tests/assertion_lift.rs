@@ -12258,6 +12258,16 @@ fn ir_entry_index_containing(doc: &serde_json::Value, needle: &str) -> Option<us
         .position(|entry| entry.to_string().contains(needle))
 }
 
+/// The first `ir` entry whose contract/function-contract name is `name`.
+fn ir_entry_named<'a>(doc: &'a serde_json::Value, name: &str) -> Option<&'a serde_json::Value> {
+    doc["ir"].as_array()?.iter().find(|entry| {
+        matches!(
+            entry["kind"].as_str(),
+            Some("contract" | "function-contract")
+        ) && entry["name"] == serde_json::json!(name)
+    })
+}
+
 #[test]
 fn rpc_demotes_fully_inlined_value_helper_to_support_no_standalone_contract() {
     // `fn h(n) { n + 1 }` + `assert_eq!(h(2), 3)`: h is fully peeled, so its lift-RPC
@@ -12286,11 +12296,11 @@ fn calls_h() {
 }
 
 #[test]
-fn rpc_demotes_fully_inlined_impl_methods_to_qualified_support() {
+fn rpc_emits_consumed_impl_methods_as_bridgeable_contracts() {
     // `Maker::new` and `Maker::get` are consumed by the recursive method DFS that
-    // grounds the regex pattern. They are support universe members, keyed by the
-    // same `Type::method` identity the method registry used, not by the colliding
-    // bare names `new` / `get`.
+    // grounds the regex pattern. They still own source semantics: the lifter must emit
+    // bridgeable method contracts keyed by the same `Type::method` identity the method
+    // registry used, not bury them as support-only universe members.
     let doc = run_rpc_lift(
         "src/method_inline.rs",
         r#"
@@ -12319,18 +12329,188 @@ fn regex_from_method() {
 
     assert_eq!(
         locus_status(&doc, "Maker::new"),
-        Some("support"),
-        "consumed associated constructor must be qualified support: {doc:#}"
+        Some("warranted"),
+        "consumed associated constructor must carry its own source contract: {doc:#}"
     );
     assert_eq!(
         locus_status(&doc, "Maker::get"),
-        Some("support"),
-        "consumed receiver method must be qualified support: {doc:#}"
+        Some("warranted"),
+        "consumed receiver method must carry its own source contract: {doc:#}"
     );
     assert_eq!(
-        doc["sourceLedger"]["source_support"],
-        serde_json::json!(2),
-        "both consumed impl methods should count as support: {doc:#}"
+        doc["sourceLedger"]["source_warranted"],
+        serde_json::json!(3),
+        "test + both consumed impl methods should count as warranted: {doc:#}"
+    );
+    let new_contract = ir_entry_named(&doc, "rust-source::Maker::new")
+        .unwrap_or_else(|| panic!("missing Maker::new contract: {doc:#}"));
+    let get_contract = ir_entry_named(&doc, "rust-source::Maker::get")
+        .unwrap_or_else(|| panic!("missing Maker::get contract: {doc:#}"));
+    assert_eq!(new_contract["kind"], serde_json::json!("function-contract"));
+    assert_eq!(
+        new_contract["bridgeSourceSymbol"],
+        serde_json::json!("call:Maker::new")
+    );
+    assert_eq!(get_contract["kind"], serde_json::json!("function-contract"));
+    assert_eq!(
+        get_contract["bridgeSourceSymbol"],
+        serde_json::json!("method:get")
+    );
+}
+
+#[test]
+fn rpc_method_contracts_carry_recursive_contract_edges() {
+    // x() calls y(), y() calls z(), z() returns a literal-backed field. The report must
+    // not collapse x/y/z into source support. x owns "x AND y" by emitting its local
+    // body relation `out = method:y(self)` plus a bridgeable contract for y; y does the
+    // same for z.
+    let doc = run_rpc_lift(
+        "src/method_edges.rs",
+        r#"
+struct Maker {
+    pattern: &'static str,
+}
+
+impl Maker {
+    fn new(pattern: &'static str) -> Self {
+        Self { pattern }
+    }
+
+    fn x(&self) -> &'static str {
+        self.y()
+    }
+
+    fn y(&self) -> &'static str {
+        self.z()
+    }
+
+    fn z(&self) -> &'static str {
+        let x = self.pattern;
+        x
+    }
+}
+
+#[test]
+fn regex_from_method_chain() {
+    let m = Maker::new("blah");
+    assert!(Regex::new(m.x()).unwrap().is_match("blah"));
+}
+"#,
+    );
+
+    for name in ["Maker::x", "Maker::y", "Maker::z"] {
+        assert_eq!(
+            locus_status(&doc, name),
+            Some("warranted"),
+            "{name} must be a source contract, not support-only: {doc:#}"
+        );
+        let contract = ir_entry_named(&doc, &format!("rust-source::{name}"))
+            .unwrap_or_else(|| panic!("missing method contract for {name}: {doc:#}"));
+        assert_eq!(
+            contract["kind"],
+            serde_json::json!("function-contract"),
+            "{name} must mint as a body-bearing function contract: {contract:#}"
+        );
+        assert_eq!(
+            contract["sourceWarrants"][0]["sourceFunctionName"],
+            serde_json::json!(name),
+            "{name} must carry its own source memento warrant: {contract:#}"
+        );
+    }
+
+    let x = ir_entry_named(&doc, "rust-source::Maker::x").unwrap();
+    let y = ir_entry_named(&doc, "rust-source::Maker::y").unwrap();
+    let z = ir_entry_named(&doc, "rust-source::Maker::z").unwrap();
+    assert_eq!(x["bridgeSourceSymbol"], serde_json::json!("method:x"));
+    assert!(
+        x["post"].to_string().contains("method:y"),
+        "x's contract must carry the edge to y: {x:#}"
+    );
+    assert_eq!(y["bridgeSourceSymbol"], serde_json::json!("method:y"));
+    assert!(
+        y["post"].to_string().contains("method:z"),
+        "y's contract must carry the edge to z: {y:#}"
+    );
+    assert_eq!(z["bridgeSourceSymbol"], serde_json::json!("method:z"));
+    assert!(
+        z["post"].to_string().contains("field:pattern"),
+        "z must bottom out at the field relation: {z:#}"
+    );
+}
+
+#[test]
+fn rpc_matcher_method_contracts_carry_recursive_argument_edges() {
+    // MatcherMethod::x("blah") calls y(input), y(input) calls z(input), and z(input)
+    // returns that same input. This is the argument-threaded version of the recursive
+    // method contract edge: the source contracts must carry `method:y(self, input)`
+    // and `method:z(self, input)`, not collapse to receiver-only edges.
+    let doc = run_rpc_lift(
+        "src/matcher_method_edges.rs",
+        r#"
+struct MatcherMethod;
+
+impl MatcherMethod {
+    fn x(&self, input: &'static str) -> &'static str {
+        self.y(input)
+    }
+
+    fn y(&self, input: &'static str) -> &'static str {
+        self.z(input)
+    }
+
+    fn z(&self, input: &'static str) -> &'static str {
+        input
+    }
+}
+
+#[test]
+fn regex_from_matcher_method_chain() {
+    let m = MatcherMethod;
+    assert!(Regex::new(m.x("blah")).unwrap().is_match("blah"));
+}
+"#,
+    );
+
+    for name in ["MatcherMethod::x", "MatcherMethod::y", "MatcherMethod::z"] {
+        assert_eq!(
+            locus_status(&doc, name),
+            Some("warranted"),
+            "{name} must be a source contract, not support-only: {doc:#}"
+        );
+        let contract = ir_entry_named(&doc, &format!("rust-source::{name}"))
+            .unwrap_or_else(|| panic!("missing method contract for {name}: {doc:#}"));
+        assert_eq!(
+            contract["kind"],
+            serde_json::json!("function-contract"),
+            "{name} must mint as a body-bearing function contract: {contract:#}"
+        );
+        assert_eq!(
+            contract["formals"],
+            serde_json::json!(["self", "input"]),
+            "{name} must keep receiver + input slots for downstream vendor binding: {contract:#}"
+        );
+    }
+
+    let x = ir_entry_named(&doc, "rust-source::MatcherMethod::x").unwrap();
+    let y = ir_entry_named(&doc, "rust-source::MatcherMethod::y").unwrap();
+    let z = ir_entry_named(&doc, "rust-source::MatcherMethod::z").unwrap();
+    let x_post = x["post"].to_string();
+    let y_post = y["post"].to_string();
+    let z_post = z["post"].to_string();
+    assert_eq!(x["bridgeSourceSymbol"], serde_json::json!("method:x"));
+    assert!(
+        x_post.contains("method:y") && x_post.contains("input"),
+        "x's contract must carry the argument-threaded edge to y(input): {x:#}"
+    );
+    assert_eq!(y["bridgeSourceSymbol"], serde_json::json!("method:y"));
+    assert!(
+        y_post.contains("method:z") && y_post.contains("input"),
+        "y's contract must carry the argument-threaded edge to z(input): {y:#}"
+    );
+    assert_eq!(z["bridgeSourceSymbol"], serde_json::json!("method:z"));
+    assert!(
+        z_post.contains("input") && !z_post.contains("method:"),
+        "z must bottom out at the input relation, not another method edge: {z:#}"
     );
 }
 
@@ -12361,7 +12541,7 @@ fn caller() {
 
     let callee = ir_entry_index_containing(&doc, "rust-source::Maker::get")
         .unwrap_or_else(|| panic!("missing source method contract: {doc:#}"));
-    let caller = ir_entry_index_containing(&doc, "method:get")
+    let caller = ir_entry_index_containing(&doc, "method:get#euf")
         .unwrap_or_else(|| panic!("missing caller method obligation: {doc:#}"));
     assert!(
         callee < caller,

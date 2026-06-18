@@ -485,6 +485,157 @@ fn binding_templates_from_proof(path: &Path) -> Result<Vec<RecognizeBindingTempl
     Ok(bindings)
 }
 
+fn rust_vendor_contract_bindings_from_proofs(project_root: &Path) -> Result<Vec<Value>, String> {
+    let proof_paths = resolve_recognizer_proof_paths(project_root)?;
+    let mut bindings = Vec::new();
+    for path in proof_paths {
+        bindings.extend(rust_vendor_contract_bindings_from_proof(&path)?);
+    }
+    Ok(bindings)
+}
+
+fn rust_vendor_contract_bindings_from_proof(path: &Path) -> Result<Vec<Value>, String> {
+    let bytes = std::fs::read(path)
+        .map_err(|error| format!("read Rust vendor proof {}: {error}", path.display()))?;
+    let proof_cid = blake3_512_of(&bytes);
+    let catalog = sugar_proof_envelope::cbor_decode(&bytes)
+        .map_err(|error| format!("decode Rust vendor proof {}: {error}", path.display()))?;
+    let members = catalog
+        .as_map()
+        .and_then(|root| root.get("members"))
+        .and_then(sugar_proof_envelope::CborValue::as_map)
+        .ok_or_else(|| {
+            format!(
+                "decode Rust vendor proof {}: missing members map",
+                path.display()
+            )
+        })?;
+
+    let mut parsed_members: Vec<(String, Value)> = Vec::new();
+    for member in members.values() {
+        let Some(member_bytes) = member.as_bstr() else {
+            continue;
+        };
+        let Ok(parsed) = serde_json::from_slice::<Value>(member_bytes) else {
+            continue;
+        };
+        parsed_members.push((blake3_512_of(member_bytes), parsed));
+    }
+
+    let mut bridge_source_by_target: HashMap<String, String> = HashMap::new();
+    for (_cid, member) in &parsed_members {
+        if rust_proof_member_kind(member) != Some("bridge") {
+            continue;
+        }
+        if rust_proof_member_field(member, "callsite").is_some() {
+            continue;
+        }
+        if rust_proof_member_field(member, "sourceLayer").and_then(Value::as_str) != Some("source")
+        {
+            continue;
+        }
+        if rust_proof_member_field(member, "targetLayer").and_then(Value::as_str) != Some("kit") {
+            continue;
+        }
+        let Some(source_symbol) = rust_proof_member_field(member, "sourceSymbol")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+        else {
+            continue;
+        };
+        let Some(target_cid) = rust_proof_member_field(member, "targetContractCid")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+        else {
+            continue;
+        };
+        bridge_source_by_target
+            .entry(target_cid.to_string())
+            .or_insert_with(|| source_symbol.to_string());
+    }
+
+    let mut bindings = Vec::new();
+    for (member_cid, member) in parsed_members {
+        if rust_proof_member_kind(&member) != Some("contract") {
+            continue;
+        }
+        let Some(name) = rust_proof_member_field(&member, "name")
+            .or_else(|| rust_proof_member_field(&member, "contractName"))
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+        else {
+            continue;
+        };
+        let Some(bridge_source_symbol) = bridge_source_by_target.get(&member_cid).cloned() else {
+            continue;
+        };
+        let Some(formals) = rust_proof_member_field(&member, "formals").cloned() else {
+            continue;
+        };
+        let has_pre = rust_proof_member_field(&member, "pre").is_some_and(has_nontrivial_pre_json);
+        let has_post = rust_proof_member_field(&member, "post").is_some()
+            || rust_proof_member_field(&member, "postHash").is_some();
+        if !has_pre && !has_post {
+            continue;
+        }
+
+        let body_policy_input = json!({
+            "bodyDischargeEligible": rust_proof_member_field(&member, "bodyDischargeEligible").cloned().unwrap_or(Value::Null),
+            "bodyDischargeRefusalReason": rust_proof_member_field(&member, "bodyDischargeRefusalReason").cloned().unwrap_or(Value::Null),
+            "dischargePolicy": rust_proof_member_field(&member, "dischargePolicy").cloned().unwrap_or(Value::Null),
+        });
+        let body_policy = body_discharge_policy_from_object(&body_policy_input);
+        log_body_discharge_policy_warnings(
+            "walk-rust-vendor-proof-contract-binding",
+            name,
+            &body_policy.warnings,
+        );
+        let body_bearing = (has_pre || has_post) && body_policy.body_discharge_eligible;
+
+        let mut binding = json!({
+            "name": name,
+            "contract_cid": member_cid,
+            "body_bearing": body_bearing,
+            "has_pre": has_pre,
+            "bodyDischargeEligible": body_policy.body_discharge_eligible,
+            "bodyDischargeRefusalReason": body_policy.body_discharge_refusal_reason,
+            "bridgeSourceSymbol": bridge_source_symbol,
+            "target_proof_cid": proof_cid,
+            "formals": formals,
+            "library": rust_proof_member_field(&member, "library").cloned().unwrap_or(Value::Null),
+        });
+        if let Some(formal_sorts) = rust_proof_member_field(&member, "formalSorts").cloned() {
+            binding["formalSorts"] = formal_sorts;
+        }
+        bindings.push(binding);
+    }
+
+    Ok(bindings)
+}
+
+fn rust_proof_member_kind(member: &Value) -> Option<&str> {
+    rust_proof_member_field(member, "kind").and_then(Value::as_str)
+}
+
+fn rust_proof_member_field<'a>(member: &'a Value, key: &str) -> Option<&'a Value> {
+    member
+        .get("header")
+        .and_then(|header| header.get(key))
+        .or_else(|| member.get("body").and_then(|body| body.get(key)))
+        .or_else(|| {
+            member
+                .get("evidence")
+                .and_then(|evidence| evidence.get("body"))
+                .and_then(|body| body.get(key))
+        })
+        .or_else(|| {
+            member
+                .get("metadata")
+                .and_then(|metadata| metadata.get(key))
+        })
+        .or_else(|| member.get(key))
+}
+
 fn binding_template_from_sugar_entry(
     entry: &Value,
     target_proof_cid: Option<String>,
@@ -4688,6 +4839,41 @@ fn binding_rank(binding: &Value) -> u8 {
     }
 }
 
+fn rust_binding_key_leaves(name_leaf: &str, binding: &Value) -> Vec<String> {
+    let mut leaves = Vec::new();
+    push_rust_binding_key_leaf(&mut leaves, name_leaf);
+    let Some(alias) = binding
+        .get("bridgeSourceSymbol")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return leaves;
+    };
+
+    push_rust_binding_key_leaf(&mut leaves, alias);
+    if let Some(method_leaf) = alias.strip_prefix("method:") {
+        push_rust_binding_key_leaf(&mut leaves, method_leaf);
+    }
+    if let Some(call_leaf) = alias.strip_prefix("call:") {
+        push_rust_binding_key_leaf(&mut leaves, call_leaf);
+        if let Some(last) = call_leaf.rsplit("::").next() {
+            push_rust_binding_key_leaf(&mut leaves, last);
+        }
+    }
+    leaves
+}
+
+fn push_rust_binding_key_leaf(leaves: &mut Vec<String>, leaf: &str) {
+    let leaf = leaf.trim();
+    if leaf.is_empty() {
+        return;
+    }
+    if !leaves.iter().any(|existing| existing == leaf) {
+        leaves.push(leaf.to_string());
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Source Oracle + materialize (#1359). The rust mirror of the python kit's
 // `source_oracle.py` + `bind_rpc.py::materialize_impl`. The `.proof` carries a
@@ -4986,11 +5172,15 @@ fn lift_implications(params: &Value) -> Result<Value, String> {
         .filter_map(|v| v.as_str().map(|s| s.to_string()))
         .collect();
 
-    let empty: Vec<Value> = Vec::new();
-    let contract_bindings: &Vec<Value> = params
+    let mut contract_bindings: Vec<Value> = params
         .get("contract_bindings")
         .and_then(|v| v.as_array())
-        .unwrap_or(&empty);
+        .cloned()
+        .unwrap_or_default();
+    let supplied_contract_bindings = contract_bindings.len();
+    let vendor_contract_bindings = rust_vendor_contract_bindings_from_proofs(&workspace_root)?;
+    let vendor_contract_binding_count = vendor_contract_bindings.len();
+    contract_bindings.extend(vendor_contract_bindings);
 
     let span = tracing::info_span!(
         "lift_implications",
@@ -5002,6 +5192,8 @@ fn lift_implications(params: &Value) -> Result<Value, String> {
 
     info!(
         source_files = source_paths.len(),
+        supplied_contract_bindings = supplied_contract_bindings,
+        vendor_contract_bindings = vendor_contract_binding_count,
         contract_bindings = contract_bindings.len(),
         workspace = %workspace_root.display(),
         "lift_implications: starting callsite collection"
@@ -5056,23 +5248,13 @@ fn lift_implications(params: &Value) -> Result<Value, String> {
     // from "no contract exists for this callee".
     let mut contracts_by_key: HashMap<(String, String), &Value> = HashMap::new();
     let mut ineligible_by_key: HashMap<(String, String), &Value> = HashMap::new();
-    for binding in contract_bindings {
+    for binding in &contract_bindings {
         if let Some(name) = binding.get("name").and_then(|v| v.as_str()) {
             let leaf = name.split('@').next().unwrap_or(name).trim().to_string();
             if leaf.is_empty() {
                 continue;
             }
-            let mut key_leaves = vec![leaf];
-            if let Some(alias) = binding
-                .get("bridgeSourceSymbol")
-                .and_then(|v| v.as_str())
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
-                if !key_leaves.iter().any(|existing| existing == alias) {
-                    key_leaves.push(alias.to_string());
-                }
-            }
+            let key_leaves = rust_binding_key_leaves(&leaf, binding);
             let body_policy = body_discharge_policy_from_object(binding);
             log_body_discharge_policy_warnings(
                 "walk-lift-implication-contract-binding",
@@ -9624,7 +9806,6 @@ fn cvalue_to_json(v: &CValue) -> Value {
 mod tests {
     use super::*;
     use libsugar::core::{bind_result_payload, bind_term_document, BindOptions, Term};
-    use libsugar::panic_freedom;
     use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -12117,6 +12298,74 @@ reason = "scope discipline probe"
         proof.cid
     }
 
+    fn write_rust_vendor_function_contract_proof(
+        proof_dir: &Path,
+        contract_name: &str,
+        library: &str,
+        source_symbol: &str,
+        formals: Value,
+    ) -> (String, String) {
+        let contract_member = json!({
+            "header": {
+                "kind": "contract",
+                "name": contract_name,
+                "outBinding": "out",
+                "post": {
+                    "kind": "atomic",
+                    "name": "=",
+                    "args": [
+                        {"kind": "var", "name": "out"},
+                        {"kind": "ctor", "name": "vendor:pattern", "args": []}
+                    ]
+                },
+                "formals": formals,
+                "formalSorts": [{"kind": "primitive", "name": "string"}],
+                "verdict": "holds"
+            },
+            "metadata": {
+                "library": library,
+                "postHash": "test-post-hash"
+            }
+        });
+        let contract_bytes = serde_json::to_vec(&contract_member).expect("contract member json");
+        let contract_cid = blake3_512_of(&contract_bytes);
+
+        let bridge_member = json!({
+            "header": {
+                "kind": "bridge",
+                "sourceLayer": "source",
+                "sourceSymbol": source_symbol,
+                "targetLayer": "kit",
+                "targetContractCid": contract_cid,
+                "verdict": "holds"
+            },
+            "metadata": {
+                "notes": "test self-pinned Rust vendor function bridge"
+            }
+        });
+        let bridge_bytes = serde_json::to_vec(&bridge_member).expect("bridge member json");
+        let bridge_cid = blake3_512_of(&bridge_bytes);
+
+        let mut members = BTreeMap::new();
+        members.insert(contract_cid.clone(), contract_bytes);
+        members.insert(bridge_cid, bridge_bytes);
+        let signer_seed: Ed25519Seed = [0x92; 32];
+        let proof = build_proof_envelope(&ProofEnvelopeInput {
+            name: "rust-vendor-function-contract".to_string(),
+            version: "0.1.0".to_string(),
+            binary_cid: None,
+            metadata: None,
+            members,
+            signer_cid: ed25519_pubkey_string(&signer_seed),
+            signer_seed,
+            declared_at: "2026-06-18T00:00:00.000Z".to_string(),
+        });
+        fs::create_dir_all(proof_dir).expect("create proof dir");
+        fs::write(proof_dir.join(format!("{}.proof", proof.cid)), &proof.bytes)
+            .expect("write proof");
+        (proof.cid, contract_cid)
+    }
+
     fn single_entry_for_source(name: &str, source: &str) -> Value {
         let root = temp_workspace(name);
         let src_dir = root.join("src");
@@ -12425,6 +12674,59 @@ edition = "2021"
         );
         assert_eq!(bridge["callsite"]["formalActuals"]["self"]["kind"], "var");
         assert_eq!(bridge["callsite"]["formalActuals"]["self"]["name"], "value");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn lift_implications_loads_method_contracts_from_imported_rust_proofs() {
+        let src = r##"
+use match_crate::Match;
+
+pub fn user_unit_test_subject(m: Match) -> &'static str {
+    m.pattern()
+}
+"##;
+        let root = temp_workspace("lift_implications_imported_rust_proof_method_contract");
+        let src_dir = root.join("src");
+        fs::create_dir_all(&src_dir).expect("create src dir");
+        fs::write(
+            root.join("Cargo.toml"),
+            r#"
+[package]
+name = "consumer-crate"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .expect("write Cargo.toml");
+        let rel = "src/lib.rs";
+        fs::write(root.join(rel), src).expect("write source");
+
+        let (proof_cid, contract_cid) = write_rust_vendor_function_contract_proof(
+            &root.join(".sugar").join("imports"),
+            "rust-source::Match::pattern",
+            "match_crate",
+            "method:pattern",
+            json!(["self"]),
+        );
+
+        let consumer = lift_implications(&json!({
+            "workspace_root": root.to_string_lossy(),
+            "source_paths": [rel],
+            "contract_bindings": [],
+        }))
+        .expect("lift implications");
+        let ir = consumer["ir"].as_array().expect("consumer ir array");
+        let bridge = ir
+            .iter()
+            .find(|entry| entry["sourceSymbol"] == "method:pattern")
+            .unwrap_or_else(|| panic!("method:pattern bridge missing: {consumer:#?}"));
+
+        assert_eq!(bridge["targetContractCid"], contract_cid);
+        assert_eq!(bridge["targetProofCid"], proof_cid);
+        assert_eq!(bridge["callsite"]["formalActuals"]["self"]["kind"], "var");
+        assert_eq!(bridge["callsite"]["formalActuals"]["self"]["name"], "m");
 
         let _ = fs::remove_dir_all(root);
     }

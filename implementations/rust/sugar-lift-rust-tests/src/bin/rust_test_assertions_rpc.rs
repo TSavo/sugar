@@ -6,7 +6,8 @@ use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
-use sugar_ir_symbolic::serialize::marshal_declarations;
+use sugar_canonicalizer::encode_jcs;
+use sugar_ir_symbolic::serialize::{formula_to_value, marshal_declarations};
 use sugar_lift_rust_tests::source_oracle;
 use sugar_lift_rust_tests::{lift_file_with_options, LiftOptions, TargetCfg};
 
@@ -168,7 +169,7 @@ fn lift(params: &Value) -> Value {
         collect_fns(&file.items, &mut fns);
         // Real warrants emit ProofIR: contracts the recursive body-walk produced,
         // marshalled into the IR alongside the test-assertion decls (below).
-        let mut value_decls: Vec<sugar_ir_symbolic::ContractDecl> = Vec::new();
+        let mut value_entries: Vec<Value> = Vec::new();
         // Oracle slice: unclassified method-call bodies queued for the RA daemon's
         // receiver/param-mutability verdict. (source_loci index, LSP positions).
         let mut oracle_pending: Vec<(usize, Vec<(u32, u32)>)> = Vec::new();
@@ -213,14 +214,15 @@ fn lift(params: &Value) -> Value {
                 // `warranted` (constrains -> decl flows into the IR), or falls through to
                 // the honest "we don't have a Sugar for that yet" -- never a `refused`
                 // verdict it didn't earn.
-                let (s, r, decl) = classify_nontest_fn(
+                let (s, r, entry) = classify_nontest_fn(
                     &name,
                     fr.sig,
                     fr.block,
                     out.reduced_helpers.contains(&name),
+                    &memento.to_json(),
                 );
-                if let Some(decl) = decl {
-                    value_decls.push(decl);
+                if let Some(entry) = entry {
+                    value_entries.push(entry);
                 }
                 (s, r)
             };
@@ -246,10 +248,7 @@ fn lift(params: &Value) -> Value {
         }
         // Flow the emitted value-fn contracts into the IR document, so a
         // `warranted` source locus is backed by a real relation in `ir`.
-        let value_marshalled = marshal_declarations(&value_decls);
-        if let Ok(Value::Array(arr)) = serde_json::from_str::<Value>(&value_marshalled) {
-            entries.extend(arr);
-        }
+        entries.extend(value_entries);
         entries.extend(assertion_entries);
         // Oracle slice: ask the resident RA daemon (sugar-linkerd) to resolve the
         // receiver/param mutability of each queued method-call position. A method
@@ -380,12 +379,10 @@ fn classify_nontest_fn(
     sig: &syn::Signature,
     block: &syn::Block,
     reduced: bool,
-) -> (
-    &'static str,
-    Option<String>,
-    Option<sugar_ir_symbolic::ContractDecl>,
-) {
-    if reduced {
+    source_memento: &Value,
+) -> (&'static str, Option<String>, Option<Value>) {
+    let is_method_contract = name.contains("::");
+    if reduced && !is_method_contract {
         // A non-test fn the reducer INLINED to discharge a test (a bare-statement R7
         // inline, an arg-position inline, OR -- capability #1 -- a TERM-POSITION
         // value-call peel that grounded `h(2)` to `+(2,1)`). It backs a warrant as a
@@ -398,7 +395,18 @@ fn classify_nontest_fn(
     if let Some(decl) = sugar_lift_rust_tests::broad_functional_warrant(name, sig, block) {
         // We THINK it constrains -> WARRANT it, broadly. The decl flows into the IR;
         // the universe is built from these demands. The vendor is the referee.
-        return ("warranted", None, Some(decl));
+        let entry = if is_method_contract {
+            function_contract_entry_from_decl(name, sig, &decl, source_memento)
+        } else {
+            contract_entry_from_decl(&decl, Some(source_memento))
+        };
+        return ("warranted", None, Some(entry));
+    }
+    if reduced {
+        // A consumed method with no output has no contract to emit, but it was still
+        // part of the resolved universe. Keep that support-only. Value-returning
+        // methods take the branch above and own their semantics as contracts.
+        return ("support", None, None);
     }
     // NO WARRANT, NO INLINE -- and we do NOT SCAN. Declining is the sin, and a
     // syntactic scan for effects is the same sin in disguise: it can't tell
@@ -414,6 +422,126 @@ fn classify_nontest_fn(
         Some("no Sugar resolves this body's value to a literal yet (no value pin)".to_string()),
         None,
     )
+}
+
+fn contract_entry_from_decl(
+    decl: &sugar_ir_symbolic::ContractDecl,
+    source_memento: Option<&Value>,
+) -> Value {
+    let marshalled = marshal_declarations(std::slice::from_ref(decl));
+    let mut entry = match serde_json::from_str::<Value>(&marshalled) {
+        Ok(Value::Array(mut arr)) if !arr.is_empty() => arr.remove(0),
+        _ => json!({
+            "kind": "contract",
+            "name": decl.name,
+            "outBinding": decl.out_binding,
+        }),
+    };
+    if let Some(source_memento) = source_memento {
+        entry["sourceWarrants"] = json!([source_memento]);
+    }
+    entry
+}
+
+fn function_contract_entry_from_decl(
+    source_name: &str,
+    sig: &syn::Signature,
+    decl: &sugar_ir_symbolic::ContractDecl,
+    source_memento: &Value,
+) -> Value {
+    let mut entry = json!({
+        "kind": "function-contract",
+        "name": decl.name,
+        "bridgeSourceSymbol": bridge_source_symbol_for(source_name, sig),
+        "formals": sig_param_names(sig),
+        "formalSorts": sig_param_sorts(sig),
+        "returnSort": return_sort(sig),
+        "outBinding": decl.out_binding,
+        "bodyDischargeEligible": true,
+        "sourceWarrants": [source_memento],
+    });
+    if let Some(pre) = &decl.pre {
+        entry["pre"] = formula_json(pre);
+    }
+    if let Some(post) = decl.post.as_ref().or(decl.inv.as_ref()) {
+        entry["post"] = formula_json(post);
+    }
+    entry
+}
+
+fn formula_json(formula: &sugar_ir_symbolic::Formula) -> Value {
+    serde_json::from_str(&encode_jcs(formula_to_value(formula).as_ref()))
+        .expect("formula JSON emitted by sugar-ir-symbolic must parse")
+}
+
+fn bridge_source_symbol_for(source_name: &str, sig: &syn::Signature) -> String {
+    if sig
+        .inputs
+        .first()
+        .is_some_and(|arg| matches!(arg, syn::FnArg::Receiver(_)))
+    {
+        let method = source_name.rsplit("::").next().unwrap_or(source_name);
+        format!("method:{method}")
+    } else {
+        format!("call:{source_name}")
+    }
+}
+
+fn sig_param_names(sig: &syn::Signature) -> Vec<String> {
+    sig.inputs
+        .iter()
+        .filter_map(|arg| match arg {
+            syn::FnArg::Receiver(_) => Some("self".to_string()),
+            syn::FnArg::Typed(pat) => match &*pat.pat {
+                syn::Pat::Ident(ident) => Some(ident.ident.to_string()),
+                _ => None,
+            },
+        })
+        .collect()
+}
+
+fn sig_param_sorts(sig: &syn::Signature) -> Vec<Value> {
+    sig.inputs
+        .iter()
+        .filter_map(|arg| match arg {
+            syn::FnArg::Receiver(_) => Some(sort_json("Int")),
+            syn::FnArg::Typed(pat) => Some(type_sort(&pat.ty)),
+        })
+        .collect()
+}
+
+fn return_sort(sig: &syn::Signature) -> Value {
+    match &sig.output {
+        syn::ReturnType::Default => sort_json("unit"),
+        syn::ReturnType::Type(_, ty) => type_sort(ty),
+    }
+}
+
+fn type_sort(ty: &syn::Type) -> Value {
+    match ty {
+        syn::Type::Reference(r) => type_sort(&r.elem),
+        syn::Type::Path(path) if path.qself.is_none() => {
+            let name = path
+                .path
+                .segments
+                .last()
+                .map(|seg| seg.ident.to_string())
+                .unwrap_or_else(|| "Int".to_string());
+            match name.as_str() {
+                "bool" => sort_json("Bool"),
+                "str" | "String" => sort_json("String"),
+                "f32" | "f64" => sort_json("Real"),
+                "()" => sort_json("unit"),
+                _ => sort_json("Int"),
+            }
+        }
+        syn::Type::Tuple(tuple) if tuple.elems.is_empty() => sort_json("unit"),
+        _ => sort_json("Int"),
+    }
+}
+
+fn sort_json(name: &str) -> Value {
+    json!({"kind": "primitive", "name": name})
 }
 
 /// LSP-coordinate positions (0-based line, 0-based col) of every method-call
@@ -756,7 +884,9 @@ facts = [
         // VISIBLE work. An effect present is a diagnostic REASON, never a `refused` STATUS.
         let f: syn::ItemFn =
             syn::parse_str("fn log(x: i32) { println!(\"{x}\"); }").expect("fn parses");
-        let (status, reason, decl) = classify_nontest_fn("log", &f.sig, &f.block, false);
+        let source_memento = json!({});
+        let (status, reason, decl) =
+            classify_nontest_fn("log", &f.sig, &f.block, false, &source_memento);
         assert!(decl.is_none(), "an un-warrantable body mints no contract");
         assert_ne!(status, "refused", "`refused` must be impossible by design");
         assert_eq!(

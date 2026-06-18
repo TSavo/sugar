@@ -366,14 +366,20 @@ fn universe_readings_per_method(contracts: &[Value]) -> BTreeMap<String, Vec<Str
     let mut m: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for c in contracts {
         if let Some(name) = contract_value_name(c) {
-            let reading = c
-                .get("inv")
-                .map(proofir_formula_to_fol_with_instances)
-                .unwrap_or_else(|| "<no inv>".to_string());
+            let reading = contract_universe_reading(c);
             m.entry(universe_symbol(name)).or_default().push(reading);
         }
     }
     m
+}
+
+fn contract_universe_reading(contract: &Value) -> String {
+    for field in ["post", "inv", "pre"] {
+        if let Some(formula) = contract.get(field) {
+            return proofir_formula_to_fol_with_instances(formula);
+        }
+    }
+    "<no formula>".to_string()
 }
 
 fn render_source_report_json(report: &LiftSourceReport) -> Result<String, serde_json::Error> {
@@ -2460,5 +2466,61 @@ mod tests {
         assert_eq!(parsed["sourceLedger"]["source_loci"], 29);
         assert_eq!(parsed["sourceAudits"].as_array().unwrap().len(), 1);
         assert_eq!(parsed["sourceMementos"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn human_report_renders_function_contract_post_readings() {
+        let response = serde_json::json!({
+            "kind": "ir-document",
+            "ir": [
+                {
+                    "kind": "function-contract",
+                    "name": "rust-source::Maker::x",
+                    "bridgeSourceSymbol": "method:x",
+                    "formals": ["self"],
+                    "outBinding": "out",
+                    "post": {
+                        "kind": "atomic",
+                        "name": "=",
+                        "args": [
+                            {"kind": "var", "name": "out"},
+                            {"kind": "ctor", "name": "method:y", "args": [
+                                {"kind": "var", "name": "self"}
+                            ]}
+                        ]
+                    }
+                }
+            ],
+            "sourceLedger": {
+                "source_loci": 1,
+                "source_warranted": 1,
+                "source_support": 0,
+                "source_refused": 0,
+                "source_inactive": 0,
+                "source_refuted": 0,
+                "unclassified_source": 0
+            },
+            "sourceAudits": [
+                {
+                    "role": "rust-test-assertions",
+                    "universe_kind": "test-assertion",
+                    "loci": [
+                        {
+                            "file": "src/lib.rs",
+                            "ast_path": "Maker::x",
+                            "line": 10,
+                            "status": "warranted"
+                        }
+                    ]
+                }
+            ],
+            "sourceMementos": []
+        });
+        let report = source_report_from_lift_response(&response, None).expect("source report");
+        let human = render_source_report_human(&report);
+
+        assert!(human.contains("rust-source::Maker::x"));
+        assert!(human.contains("out = method:y(self)"), "{human}");
+        assert!(!human.contains("<no inv>"), "{human}");
     }
 }
