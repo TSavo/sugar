@@ -116,6 +116,7 @@ use sugar_ir_symbolic::{
 };
 use syn::parse::{Parse, ParseStream, Parser};
 use syn::punctuated::Punctuated;
+use syn::spanned::Spanned;
 use syn::{BinOp, Expr, ExprLit, Item, Lit, Pat, Stmt, Token, Type, UnOp};
 
 #[derive(Debug, Clone)]
@@ -125,9 +126,21 @@ pub struct LiftWarning {
     pub reason: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct AssertionFactEmission {
+    pub source_path: String,
+    pub item_name: String,
+    pub contract_name: String,
+    pub fact_spans: Vec<proc_macro2::Span>,
+}
+
 #[derive(Debug, Default)]
 pub struct AdapterOutput {
     pub decls: Vec<ContractDecl>,
+    /// Report-only ownership accounting for assertion-surface facts. This keeps
+    /// `ContractDecl` canonical while letting the kit say which assertion source
+    /// emitted each fact.
+    pub assertion_facts: Vec<AssertionFactEmission>,
     pub warnings: Vec<LiftWarning>,
     pub seen: usize,
     pub lifted: usize,
@@ -1355,12 +1368,18 @@ fn visit_test_fn(
         return;
     }
 
-    for (name, atoms) in group_assertions(entries, &test_name) {
+    for group in group_assertions(entries, &test_name) {
+        out.assertion_facts.push(AssertionFactEmission {
+            source_path: source_path.to_string(),
+            item_name: test_name.clone(),
+            contract_name: group.name.clone(),
+            fact_spans: group.fact_spans.clone(),
+        });
         out.decls.push(ContractDecl {
-            name,
+            name: group.name,
             pre: None,
             post: None,
-            inv: Some(and_(atoms)),
+            inv: Some(and_(group.atoms)),
             out_binding: "out".to_string(),
             evidence: None,
             panic_loci: Vec::new(),
@@ -1387,9 +1406,17 @@ pub(crate) fn scoped_test_name(source_path: &str, modules: &[String], fn_name: &
     }
 }
 
+#[derive(Clone)]
 struct AssertionEntry {
     name: Option<String>,
     atom: Rc<Formula>,
+    fact_span: Option<proc_macro2::Span>,
+}
+
+struct AssertionGroup {
+    name: String,
+    atoms: Vec<Rc<Formula>>,
+    fact_spans: Vec<proc_macro2::Span>,
 }
 
 struct ReductionCtx<'a> {
@@ -2366,26 +2393,27 @@ impl TemporalScope {
     }
 }
 
-fn group_assertions(
-    entries: Vec<AssertionEntry>,
-    fallback_name: &str,
-) -> Vec<(String, Vec<Rc<Formula>>)> {
+fn group_assertions(entries: Vec<AssertionEntry>, fallback_name: &str) -> Vec<AssertionGroup> {
     // Each entry joins the obligation named by its callsite (or the fn
     // fallback). A lifted loop is a named `<test>::loop::<var>` memento with its
     // own obligation here, mirroring the Python layer-2 lifter. Whether a
     // universal refutes a sibling point-claim is answered ONCE in the shared
     // consistency engine (which treats forall invariants as ambient), not in
     // this per-language lifter.
-    let mut groups: Vec<(String, Vec<Rc<Formula>>)> = Vec::new();
+    let mut groups: Vec<AssertionGroup> = Vec::new();
     for entry in entries {
         let name = entry.name.unwrap_or_else(|| fallback_name.to_string());
-        if let Some((_, atoms)) = groups
-            .iter_mut()
-            .find(|(group_name, _)| group_name == &name)
-        {
-            atoms.push(entry.atom);
+        if let Some(group) = groups.iter_mut().find(|group| group.name == name) {
+            group.atoms.push(entry.atom);
+            if let Some(span) = entry.fact_span {
+                group.fact_spans.push(span);
+            }
         } else {
-            groups.push((name, vec![entry.atom]));
+            groups.push(AssertionGroup {
+                name,
+                atoms: vec![entry.atom],
+                fact_spans: entry.fact_span.into_iter().collect(),
+            });
         }
     }
     groups
@@ -4158,6 +4186,7 @@ fn emit_desugared(
             entries.push(AssertionEntry {
                 name: warrant.name,
                 atom,
+                fact_span: None,
             });
             *macros_lifted += n;
             true
@@ -5007,6 +5036,7 @@ fn collect_assertion_entries<'a>(
     let reduced_at_entry: HashSet<String> = reduced_helpers.clone();
     let mut reduced_in_block: HashSet<String> = HashSet::new();
     for (stmt_idx, stmt) in stmts.iter().enumerate() {
+        let entries_before_stmt = entries.len();
         match stmt {
             Stmt::Local(local) => {
                 update_float_width_scope_for_pat(&local.pat, float_widths);
@@ -5866,6 +5896,7 @@ fn collect_assertion_entries<'a>(
                 }
             }
         }
+        mark_new_entries_with_fact_span(entries, entries_before_stmt, stmt);
         advance_temporal_scope_for_stmt(stmt, &mut temporal_scope);
     }
     // TERM-POSITION INLINE SUPPORT-RECORD (capability #1, the flow-OUT). A value helper
@@ -6009,6 +6040,15 @@ fn collect_assertion_entries<'a>(
             if entry.name.is_none() {
                 entry.name = Some(local_scope.to_string());
             }
+        }
+    }
+}
+
+fn mark_new_entries_with_fact_span(entries: &mut [AssertionEntry], start: usize, stmt: &Stmt) {
+    let span = stmt.span();
+    for entry in entries.iter_mut().skip(start) {
+        if entry.fact_span.is_none() {
+            entry.fact_span = Some(span);
         }
     }
 }
@@ -6612,12 +6652,18 @@ fn lift_item_assertions(
         }
     }
 
-    for (name, atoms) in group_assertions(entries, &item_name) {
+    for group in group_assertions(entries, &item_name) {
+        out.assertion_facts.push(AssertionFactEmission {
+            source_path: source_path.to_string(),
+            item_name: item_name.clone(),
+            contract_name: group.name.clone(),
+            fact_spans: group.fact_spans.clone(),
+        });
         out.decls.push(ContractDecl {
-            name,
+            name: group.name,
             pre: None,
             post: None,
-            inv: Some(and_(atoms)),
+            inv: Some(and_(group.atoms)),
             out_binding: "out".to_string(),
             evidence: None,
             panic_loci: Vec::new(),
@@ -8291,6 +8337,7 @@ fn collect_macro(
             entries.push(AssertionEntry {
                 name: warrant.name,
                 atom,
+                fact_span: None,
             });
             return;
         }
@@ -8904,6 +8951,7 @@ fn assertion_entries_from_ascii_macro(
             entries.push(AssertionEntry {
                 name: None,
                 atom: if negate { not_(atom) } else { atom },
+                fact_span: None,
             });
         }
         if !literal_char_predicate_only(&predicate) {
@@ -8913,6 +8961,7 @@ fn assertion_entries_from_ascii_macro(
                 entries.push(AssertionEntry {
                     name: None,
                     atom: if negate { not_(atom) } else { atom },
+                    fact_span: None,
                 });
             }
         }
@@ -8988,6 +9037,7 @@ fn translate_bool_assertion_with_audits(
                 return Ok(AssertionEntry {
                     name: entry.name,
                     atom: not_(entry.atom),
+                    fact_span: entry.fact_span,
                 });
             }
             if let Some(entry) =
@@ -8996,6 +9046,7 @@ fn translate_bool_assertion_with_audits(
                 return Ok(AssertionEntry {
                     name: entry.name,
                     atom: not_(entry.atom),
+                    fact_span: entry.fact_span,
                 });
             }
             // `!matches!(x, Type::Variant)` — negate the discriminant atom. This
@@ -9006,6 +9057,7 @@ fn translate_bool_assertion_with_audits(
                 return Ok(AssertionEntry {
                     name: entry.name,
                     atom: not_(entry.atom),
+                    fact_span: entry.fact_span,
                 });
             }
             // `!(<lhs> <cmp> <rhs>)` is a NEGATED comparison. Route it to the
@@ -9027,6 +9079,7 @@ fn translate_bool_assertion_with_audits(
                     return Ok(AssertionEntry {
                         name: entry.name,
                         atom: not_(entry.atom),
+                        fact_span: entry.fact_span,
                     });
                 }
             }
@@ -9044,6 +9097,7 @@ fn translate_bool_assertion_with_audits(
                 Ok(AssertionEntry {
                     name: entry.name,
                     atom: not_(entry.atom),
+                    fact_span: entry.fact_span,
                 })
             }
         }
@@ -9201,6 +9255,7 @@ fn translate_float_refinement_assertion(
             Ok(Some(AssertionEntry {
                 name,
                 atom: atomic_(format!("float.{width}.{method}"), vec![receiver]),
+                fact_span: None,
             }))
         }
         Expr::Paren(paren) => {
@@ -9333,7 +9388,11 @@ fn translate_infinity_eq_assertion_with_audits(
         atomic_(format!("float.{width}.is_infinite"), vec![receiver.clone()]),
         atomic_(format!("float.{width}.{sign_pred}"), vec![receiver]),
     ]);
-    Ok(Some(AssertionEntry { name, atom }))
+    Ok(Some(AssertionEntry {
+        name,
+        atom,
+        fact_span: None,
+    }))
 }
 
 type FloatWidthScope = BTreeMap<String, &'static str>;
@@ -9573,7 +9632,11 @@ fn translate_binary_bool_assertion_with_audits(
             } else {
                 or_(vec![left.atom, right.atom])
             };
-            Ok(AssertionEntry { name, atom })
+            Ok(AssertionEntry {
+                name,
+                atom,
+                fact_span: None,
+            })
         }
         BinOp::Eq(_) | BinOp::Ne(_) | BinOp::Lt(_) | BinOp::Le(_) | BinOp::Gt(_) | BinOp::Ge(_) => {
             // For == only: intercept infinity-constant equality before the
@@ -9837,6 +9900,7 @@ fn wrapped_variant_entry(
     Some(AssertionEntry {
         name: outer.name,
         atom: and_(vec![outer.atom, inner_atom]),
+        fact_span: outer.fact_span,
     })
 }
 
@@ -9896,6 +9960,7 @@ fn tuple_pattern_entry(
     Some(AssertionEntry {
         name,
         atom: and_(atoms),
+        fact_span: None,
     })
 }
 
@@ -10087,6 +10152,7 @@ fn translate_string_predicate_assertion(
                     Ok(Some(AssertionEntry {
                         name,
                         atom: atomic_("contains", vec![receiver, pattern]),
+                        fact_span: None,
                     }))
                 }
                 "starts_with" | "ends_with" => {
@@ -10143,6 +10209,7 @@ fn translate_string_predicate_assertion(
                     Ok(Some(AssertionEntry {
                         name,
                         atom: atomic_(atom_name, vec![pattern, receiver]),
+                        fact_span: None,
                     }))
                 }
                 "is_ascii" => {
@@ -10158,6 +10225,7 @@ fn translate_string_predicate_assertion(
                         return Ok(Some(AssertionEntry {
                             name,
                             atom: atomic_("str.is_ascii", vec![receiver]),
+                            fact_span: None,
                         }));
                     }
                     let Some(bytes) = literal_byte_string_value(&call.receiver) else {
@@ -10172,7 +10240,11 @@ fn translate_string_predicate_assertion(
                     } else {
                         and_(atoms)
                     };
-                    Ok(Some(AssertionEntry { name: None, atom }))
+                    Ok(Some(AssertionEntry {
+                        name: None,
+                        atom,
+                        fact_span: None,
+                    }))
                 }
                 "is_ascii_alphabetic" => {
                     let Some(receiver) = char_literal_term(&call.receiver) else {
@@ -10191,6 +10263,7 @@ fn translate_string_predicate_assertion(
                     Ok(Some(AssertionEntry {
                         name,
                         atom: atomic_("str.is_ascii_alphabetic", vec![receiver]),
+                        fact_span: None,
                     }))
                 }
                 "is_ascii_digit" => {
@@ -10243,6 +10316,7 @@ fn translate_string_predicate_assertion(
                     Ok(Some(AssertionEntry {
                         name,
                         atom: eq(bool_const(ch.is_alphabetic()), bool_const(true)),
+                        fact_span: None,
                     }))
                 }
                 _ => Ok(None),
@@ -10348,6 +10422,7 @@ fn translate_regex_match_assertion(
     Ok(Some(AssertionEntry {
         name,
         atom: atomic_("str.in-regex", vec![subject, pattern]),
+        fact_span: None,
     }))
 }
 
@@ -10367,6 +10442,7 @@ fn ascii_char_class_assertion(
     Ok(Some(AssertionEntry {
         name,
         atom: atomic_(atom_name, vec![receiver]),
+        fact_span: None,
     }))
 }
 
@@ -10426,7 +10502,11 @@ fn translate_literal_iterator_assertion(
             )?);
         }
         let atom = quantifier_join(&method, atoms);
-        return Ok(Some(AssertionEntry { name: None, atom }));
+        return Ok(Some(AssertionEntry {
+            name: None,
+            atom,
+            fact_span: None,
+        }));
     }
 
     // PATH 2 (general): a SCALAR-LITERAL array domain (`[1,2,3].iter()` or a
@@ -10457,7 +10537,11 @@ fn translate_literal_iterator_assertion(
         atoms.push(entry.atom);
     }
     let atom = quantifier_join(&method, atoms);
-    Ok(Some(AssertionEntry { name: None, atom }))
+    Ok(Some(AssertionEntry {
+        name: None,
+        atom,
+        fact_span: None,
+    }))
 }
 
 /// `all` -> the conjunction of the per-element atoms (empty domain -> vacuously
@@ -11750,6 +11834,7 @@ fn assertion_entry_from_relation(
         return AssertionEntry {
             name: None,
             atom: constructor_operator_atom(lhs, rhs, op, &tag),
+            fact_span: None,
         };
     }
 
@@ -11768,7 +11853,11 @@ fn assertion_entry_from_relation(
         RelationOp::Gt => gt(lhs, rhs),
         RelationOp::Ge => gte(lhs, rhs),
     };
-    AssertionEntry { name, atom }
+    AssertionEntry {
+        name,
+        atom,
+        fact_span: None,
+    }
 }
 
 fn constructor_operator_atom(

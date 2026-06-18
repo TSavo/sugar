@@ -2,6 +2,7 @@
 //
 // RPC entrypoint for the Rust test-assertion consistency lifter.
 
+use std::collections::{BTreeMap, VecDeque};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
@@ -9,8 +10,11 @@ use serde_json::{json, Value};
 use sugar_canonicalizer::{blake3_512_of, encode_jcs};
 use sugar_ir_symbolic::serialize::{formula_to_value, marshal_declarations};
 use sugar_lift_rust_tests::source_oracle;
-use sugar_lift_rust_tests::{lift_file_with_options, FactoryAudit, LiftOptions, TargetCfg};
+use sugar_lift_rust_tests::{
+    lift_file_with_options, AssertionFactEmission, FactoryAudit, LiftOptions, TargetCfg,
+};
 use sugar_verifier::types::{memento_body, memento_body_field, memento_kind};
+use tracing::{debug, info, warn};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const SURFACE: &str = "rust-test-assertions";
@@ -71,6 +75,11 @@ fn lift(params: &Value) -> Value {
             .collect(),
         _ => vec![".".to_string()],
     };
+    info!(
+        workspace_root = %workspace_root.display(),
+        requested = ?requested,
+        "rust-test-assertions lift request"
+    );
 
     let mut rel_paths = Vec::new();
     for entry in &requested {
@@ -90,6 +99,12 @@ fn lift(params: &Value) -> Value {
     }
     rel_paths.sort();
     rel_paths.dedup();
+    info!(
+        workspace_root = %workspace_root.display(),
+        requested_count = requested.len(),
+        rust_files = rel_paths.len(),
+        "rust-test-assertions source enumeration complete"
+    );
 
     let mut entries = Vec::new();
     let mut diagnostics = Vec::new();
@@ -103,6 +118,7 @@ fn lift(params: &Value) -> Value {
     let mut source_loci: Vec<Value> = Vec::new();
     let mut source_mementos: Vec<Value> = Vec::new();
     let mut factory_audits: Vec<Value> = Vec::new();
+    let mut assertion_surface_audits: Vec<Value> = Vec::new();
     let options = match lift_options_from_config(&workspace_root, params) {
         Ok(options) => options,
         Err(reason) => {
@@ -118,11 +134,22 @@ fn lift(params: &Value) -> Value {
             LiftOptions::default()
         }
     };
-    for rel in &rel_paths {
+    for (file_index, rel) in rel_paths.iter().enumerate() {
         let abs = workspace_root.join(rel);
+        info!(
+            file = rel.as_str(),
+            file_index = file_index + 1,
+            file_total = rel_paths.len(),
+            "rust-test-assertions file lift start"
+        );
         let bytes = match std::fs::read(&abs) {
             Ok(bytes) => bytes,
             Err(e) => {
+                warn!(
+                    file = rel.as_str(),
+                    error = %e,
+                    "rust-test-assertions file read failed"
+                );
                 diagnostics.push(json!({
                     "kind": "lift-gap",
                     "path": rel,
@@ -134,6 +161,10 @@ fn lift(params: &Value) -> Value {
         let src = match std::str::from_utf8(&bytes) {
             Ok(src) => src,
             Err(_) => {
+                warn!(
+                    file = rel.as_str(),
+                    "rust-test-assertions non-utf8 source skipped"
+                );
                 diagnostics.push(json!({
                     "kind": "lift-gap",
                     "path": rel,
@@ -145,6 +176,11 @@ fn lift(params: &Value) -> Value {
         let file = match syn::parse_file(src) {
             Ok(file) => file,
             Err(e) => {
+                warn!(
+                    file = rel.as_str(),
+                    error = %e,
+                    "rust-test-assertions parse failed"
+                );
                 diagnostics.push(json!({
                     "kind": "lift-gap",
                     "path": rel,
@@ -154,6 +190,17 @@ fn lift(params: &Value) -> Value {
             }
         };
         let out = lift_file_with_options(&file, rel, &options);
+        let mut source_cache = FileSourceOracleCache::new(rel, src);
+        info!(
+            file = rel.as_str(),
+            file_index = file_index + 1,
+            file_total = rel_paths.len(),
+            assertions_lifted = out.assertions_lifted,
+            assertions_refused = out.assertions_refused,
+            warnings = out.warnings.len(),
+            assertion_facts = out.assertion_facts.len(),
+            "rust-test-assertions file lift complete"
+        );
         let marshalled = marshal_declarations(&out.decls);
         let parsed: Value = serde_json::from_str(&marshalled).unwrap_or_else(|_| json!([]));
         let mut assertion_entries = Vec::new();
@@ -174,15 +221,21 @@ fn lift(params: &Value) -> Value {
         factory_audits.extend(factory_audits_json(rel, &out.factory_audits));
         let mut fns: Vec<FnRef> = Vec::new();
         collect_fns(&file.items, &mut fns);
+        debug!(
+            file = rel.as_str(),
+            functions = fns.len(),
+            "rust-test-assertions source functions enumerated"
+        );
         // Real warrants emit ProofIR: contracts the recursive body-walk produced,
         // marshalled into the IR alongside the test-assertion decls (below).
         let mut value_entries: Vec<Value> = Vec::new();
+        let mut assertion_sources: BTreeMap<String, AssertionSourceRecord> = BTreeMap::new();
         // Oracle slice: unresolved method-call bodies queued for the RA daemon's
         // receiver/param-mutability verdict. (source_loci index, LSP positions).
         let mut oracle_pending: Vec<(usize, Vec<(u32, u32)>)> = Vec::new();
-        for fr in fns {
-            let memento =
-                source_oracle::source_memento_of(rel, src, fr.span, &fr.name, fr.sig, fr.block);
+        for fr in &fns {
+            let memento = source_cache.function_memento(fr);
+            let memento_json = memento.to_json();
             let name = fr.name.clone();
             let is_test = fn_has_test_attr(fr.attrs);
             let warning = out
@@ -226,7 +279,7 @@ fn lift(params: &Value) -> Value {
                     fr.sig,
                     fr.block,
                     out.reduced_helpers.contains(&name),
-                    &memento.to_json(),
+                    &memento_json,
                 );
                 if let Some(entry) = entry {
                     value_entries.push(entry);
@@ -244,6 +297,23 @@ fn lift(params: &Value) -> Value {
             if let Some(r) = reason {
                 locus["reason"] = json!(r);
             }
+            if is_test {
+                let assertion_source = format!("{rel}::{name}");
+                assertion_sources.insert(
+                    assertion_source.clone(),
+                    AssertionSourceRecord {
+                        assertion_source,
+                        file: rel.to_string(),
+                        line: memento.span.start_line,
+                        source_status: status.to_string(),
+                        reason: locus
+                            .get("reason")
+                            .and_then(Value::as_str)
+                            .map(str::to_string),
+                        memento: memento_json.clone(),
+                    },
+                );
+            }
             if status == "unresolved" {
                 let positions = method_call_positions(fr.block);
                 if !positions.is_empty() {
@@ -251,11 +321,23 @@ fn lift(params: &Value) -> Value {
                 }
             }
             source_loci.push(locus);
-            source_mementos.push(memento.to_json());
+            source_mementos.push(memento_json);
         }
         // Flow the emitted value-fn contracts into the IR document, so a
         // `warranted` source locus is backed by a real relation in `ir`.
         entries.extend(value_entries);
+        let assertion_entries = attach_assertion_source_warrants(
+            assertion_entries,
+            &out.assertion_facts,
+            &fns,
+            &mut source_cache,
+        );
+        assertion_surface_audits.extend(assertion_surface_audits_for_file(
+            &out.assertion_facts,
+            &assertion_sources,
+            &fns,
+            &mut source_cache,
+        ));
         entries.extend(assertion_entries);
         // Oracle slice: ask the resident RA daemon (sugar-linkerd) to resolve the
         // receiver/param mutability of each queued method-call position. A method
@@ -269,6 +351,24 @@ fn lift(params: &Value) -> Value {
 
     let ledger = source_ledger(&source_loci);
     let vendor_conjoins = vendor_conjoins_for_report(&workspace_root, &entries);
+    info!(
+        source_loci = ledger
+            .get("source_loci")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(0),
+        source_warranted = ledger
+            .get("source_warranted")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(0),
+        source_unresolved = ledger
+            .get("source_unresolved")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(0),
+        assertion_surfaces = assertion_surface_audits.len(),
+        contracts = entries.len(),
+        diagnostics = diagnostics.len(),
+        "rust-test-assertions lift complete"
+    );
     json!({
         "kind": "ir-document",
         "ir": entries,
@@ -285,7 +385,171 @@ fn lift(params: &Value) -> Value {
         // never source text) -- one per enumerated function, recompute-verifiable.
         "sourceMementos": source_mementos,
         "vendorConjoins": vendor_conjoins,
+        "assertionSurfaceAudits": assertion_surface_audits,
     })
+}
+
+#[derive(Clone)]
+struct AssertionSourceRecord {
+    assertion_source: String,
+    file: String,
+    line: usize,
+    source_status: String,
+    reason: Option<String>,
+    memento: Value,
+}
+
+struct FileSourceOracleCache<'a> {
+    rel: &'a str,
+    fragments: source_oracle::SourceFragmentCache<'a>,
+    function_mementos: BTreeMap<String, source_oracle::SourceMemento>,
+    statement_mementos: BTreeMap<String, Option<Value>>,
+}
+
+impl<'a> FileSourceOracleCache<'a> {
+    fn new(rel: &'a str, src: &'a str) -> Self {
+        Self {
+            rel,
+            fragments: source_oracle::SourceFragmentCache::new(src),
+            function_mementos: BTreeMap::new(),
+            statement_mementos: BTreeMap::new(),
+        }
+    }
+
+    fn function_memento(&mut self, fr: &FnRef<'_>) -> source_oracle::SourceMemento {
+        let key = format!("{}@{}", fr.name, span_key(fr.span));
+        if let Some(memento) = self.function_mementos.get(&key) {
+            return memento.clone();
+        }
+        let memento = self
+            .fragments
+            .source_memento_of(self.rel, fr.span, &fr.name, fr.sig, fr.block);
+        self.function_mementos.insert(key, memento.clone());
+        memento
+    }
+
+    fn fact_source_mementos(
+        &mut self,
+        fns: &[FnRef<'_>],
+        fact: &AssertionFactEmission,
+    ) -> Vec<Value> {
+        let Some(owner) = fns
+            .iter()
+            .find(|fr| format!("{}::{}", self.rel, fr.name) == fact.item_name)
+        else {
+            return Vec::new();
+        };
+        fact.fact_spans
+            .iter()
+            .filter_map(|span| self.statement_memento(owner, *span))
+            .collect()
+    }
+
+    fn statement_memento(&mut self, owner: &FnRef<'_>, span: proc_macro2::Span) -> Option<Value> {
+        let key = format!("{}@{}", owner.name, span_key(span));
+        if let Some(memento) = self.statement_mementos.get(&key) {
+            return memento.clone();
+        }
+        let memento = self
+            .fragments
+            .source_memento_of_statement_span(self.rel, span, &owner.name, owner.sig, owner.block)
+            .map(|memento| memento.to_json());
+        self.statement_mementos.insert(key, memento.clone());
+        memento
+    }
+}
+
+fn span_key(span: proc_macro2::Span) -> String {
+    let start = span.start();
+    let end = span.end();
+    format!(
+        "{}:{}-{}:{}",
+        start.line, start.column, end.line, end.column
+    )
+}
+
+fn attach_assertion_source_warrants(
+    mut entries: Vec<Value>,
+    facts: &[AssertionFactEmission],
+    fns: &[FnRef<'_>],
+    source_cache: &mut FileSourceOracleCache<'_>,
+) -> Vec<Value> {
+    let mut warrants_by_contract: BTreeMap<String, VecDeque<Value>> = BTreeMap::new();
+    for fact in facts {
+        let mementos = source_cache.fact_source_mementos(fns, fact);
+        if !mementos.is_empty() {
+            warrants_by_contract
+                .entry(fact.contract_name.clone())
+                .or_default()
+                .push_back(json!(mementos));
+        }
+    }
+
+    for entry in &mut entries {
+        let Some(name) = entry.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(queue) = warrants_by_contract.get_mut(name) else {
+            continue;
+        };
+        if let Some(mementos) = queue.pop_front() {
+            entry["sourceWarrants"] = mementos;
+        }
+    }
+
+    entries
+}
+
+fn assertion_surface_audits_for_file(
+    facts: &[AssertionFactEmission],
+    sources: &BTreeMap<String, AssertionSourceRecord>,
+    fns: &[FnRef<'_>],
+    source_cache: &mut FileSourceOracleCache<'_>,
+) -> Vec<Value> {
+    sources
+        .values()
+        .map(|source| {
+            let fact_rows = facts
+                .iter()
+                .filter(|fact| fact.item_name == source.assertion_source)
+                .map(|fact| {
+                    let mementos = source_cache.fact_source_mementos(fns, fact);
+                    let mut row = json!({
+                        "contract": fact.contract_name,
+                        "sourcePath": fact.source_path,
+                        "sourceMementos": mementos,
+                    });
+                    if let Some(first) = row
+                        .get("sourceMementos")
+                        .and_then(Value::as_array)
+                        .and_then(|arr| arr.first())
+                        .cloned()
+                    {
+                        row["sourceMemento"] = first;
+                    }
+                    row
+                })
+                .collect::<Vec<_>>();
+            let mut row = json!({
+                "kind": "assertion-surface-audit",
+                "surface": SURFACE,
+                "assertionSource": source.assertion_source,
+                "file": source.file,
+                "line": source.line,
+                "sourceStatus": source.source_status,
+                "status": if fact_rows.is_empty() { "no-facts-emitted" } else { "facts-emitted" },
+                "facts": fact_rows,
+                "sourceMemento": source.memento,
+            });
+            if row["status"] == "no-facts-emitted" {
+                row["reason"] = json!(source
+                    .reason
+                    .clone()
+                    .unwrap_or_else(|| "no fact contracts emitted by kit".to_string()));
+            }
+            row
+        })
+        .collect()
 }
 
 /// Collect every `fn` item in the file -- top-level and nested in inline
@@ -305,19 +569,28 @@ struct FnRef<'a> {
 /// no constructor here, so it is not a locus. Impl methods are the bulk of real
 /// code -- excluding them would make `unclassified=0` hollow.
 fn collect_fns<'a>(items: &'a [syn::Item], out: &mut Vec<FnRef<'a>>) {
-    use syn::spanned::Spanned;
+    collect_fns_in_scope(items, &mut Vec::new(), out);
+}
+
+fn collect_fns_in_scope<'a>(
+    items: &'a [syn::Item],
+    modules: &mut Vec<String>,
+    out: &mut Vec<FnRef<'a>>,
+) {
     for item in items {
         match item {
             syn::Item::Fn(f) => out.push(FnRef {
-                span: f.span(),
-                name: f.sig.ident.to_string(),
+                span: function_surface_span(&f.attrs, f.sig.fn_token.span),
+                name: scoped_fn_name(modules, &f.sig.ident.to_string()),
                 sig: &f.sig,
                 block: &f.block,
                 attrs: &f.attrs,
             }),
             syn::Item::Mod(m) => {
                 if let Some((_, inner)) = &m.content {
-                    collect_fns(inner, out);
+                    modules.push(m.ident.to_string());
+                    collect_fns_in_scope(inner, modules, out);
+                    modules.pop();
                 }
             }
             syn::Item::Impl(im) => {
@@ -326,10 +599,10 @@ fn collect_fns<'a>(items: &'a [syn::Item], out: &mut Vec<FnRef<'a>>) {
                     if let syn::ImplItem::Fn(m) = ii {
                         let name = self_ty
                             .as_ref()
-                            .map(|ty| format!("{ty}::{}", m.sig.ident))
+                            .map(|ty| scoped_fn_name(modules, &format!("{ty}::{}", m.sig.ident)))
                             .unwrap_or_else(|| m.sig.ident.to_string());
                         out.push(FnRef {
-                            span: m.span(),
+                            span: function_surface_span(&m.attrs, m.sig.fn_token.span),
                             name,
                             sig: &m.sig,
                             block: &m.block,
@@ -343,8 +616,11 @@ fn collect_fns<'a>(items: &'a [syn::Item], out: &mut Vec<FnRef<'a>>) {
                     if let syn::TraitItem::Fn(m) = ti {
                         if let Some(block) = &m.default {
                             out.push(FnRef {
-                                span: m.span(),
-                                name: format!("{}::{}", tr.ident, m.sig.ident),
+                                span: function_surface_span(&m.attrs, m.sig.fn_token.span),
+                                name: scoped_fn_name(
+                                    modules,
+                                    &format!("{}::{}", tr.ident, m.sig.ident),
+                                ),
                                 sig: &m.sig,
                                 block,
                                 attrs: &m.attrs,
@@ -356,6 +632,23 @@ fn collect_fns<'a>(items: &'a [syn::Item], out: &mut Vec<FnRef<'a>>) {
             _ => {}
         }
     }
+}
+
+fn scoped_fn_name(modules: &[String], name: &str) -> String {
+    if modules.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}::{name}", modules.join("::"))
+    }
+}
+
+fn function_surface_span(
+    attrs: &[syn::Attribute],
+    fallback: proc_macro2::Span,
+) -> proc_macro2::Span {
+    use syn::spanned::Spanned;
+
+    attrs.first().map_or(fallback, |attr| attr.span())
 }
 
 fn impl_audit_self_ty_key(ty: &syn::Type) -> Option<String> {
@@ -1159,6 +1452,7 @@ fn err_reply(id: &Value, msg: String) -> Value {
 }
 
 fn handle(id: &Value, method: &str, params: &Value) -> Value {
+    debug!(method, "rust-test-assertions rpc request");
     match method {
         "initialize" => json!({"jsonrpc": "2.0", "id": id, "result": initialize_result()}),
         KIT_DECLARATION_RPC_METHOD => {
@@ -1187,6 +1481,8 @@ fn handle(id: &Value, method: &str, params: &Value) -> Value {
 }
 
 fn main() {
+    init_tracing();
+    info!("rust-test-assertions-rpc listening on stdio");
     let stdin = std::io::stdin();
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
@@ -1210,6 +1506,45 @@ fn main() {
         if method == "shutdown" {
             break;
         }
+    }
+}
+
+fn init_tracing() {
+    let filter = if std::env::var_os("RUST_LOG").is_some() {
+        tracing_subscriber::EnvFilter::builder()
+            .with_default_directive(tracing_subscriber::filter::LevelFilter::WARN.into())
+            .from_env_lossy()
+    } else {
+        tracing_subscriber::EnvFilter::new("warn,sugar_lift_rust_tests=info")
+    };
+    if let Ok(path) = std::env::var("SUGAR_LOG_FILE") {
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            Ok(file) => {
+                tracing_subscriber::fmt()
+                    .with_writer(file)
+                    .with_ansi(false)
+                    .with_env_filter(filter)
+                    .init();
+            }
+            Err(error) => {
+                eprintln!(
+                    "warning: could not open SUGAR_LOG_FILE {path}: {error}; logging to stderr"
+                );
+                tracing_subscriber::fmt()
+                    .with_writer(std::io::stderr)
+                    .with_env_filter(filter)
+                    .init();
+            }
+        }
+    } else {
+        tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .with_env_filter(filter)
+            .init();
     }
 }
 
@@ -1521,6 +1856,89 @@ mod tests {
             }),
             "assertion macro spelling should be factory-accounted as a constraint Sugar: {audits:?}"
         );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn lift_emits_assertion_surface_fact_accounting() {
+        let root = unique_temp_dir("lift_emits_assertion_surface_fact_accounting");
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        std::fs::write(
+            root.join("src/lib.rs"),
+            r#"
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn emits_fact() {
+        assert_eq!(1 + 1, 2);
+    }
+
+    #[test]
+    fn no_fact() {
+        let _x = 1;
+    }
+}
+"#,
+        )
+        .expect("write rust source");
+
+        let response = lift(&json!({
+            "workspace_root": root,
+            "source_paths": ["src/lib.rs"]
+        }));
+        let audits = response["assertionSurfaceAudits"]
+            .as_array()
+            .expect("assertionSurfaceAudits is an array");
+
+        let emitted = audits
+            .iter()
+            .find(|row| row["assertionSource"] == "src/lib.rs::tests::emits_fact")
+            .expect("emitted assertion source is accounted");
+        assert_eq!(emitted["status"], "facts-emitted", "{emitted}");
+        assert_eq!(emitted["facts"].as_array().unwrap().len(), 1, "{emitted}");
+        assert_eq!(emitted["sourceMemento"]["file"], "src/lib.rs");
+        assert_eq!(
+            emitted["sourceMemento"]["sourceFunctionName"],
+            "tests::emits_fact"
+        );
+        assert_eq!(emitted["sourceMemento"]["span"]["start_line"], 4);
+        assert_eq!(emitted["sourceMemento"]["span"]["end_line"], 7);
+        assert!(emitted["sourceMemento"].get("body_text").is_none());
+        assert!(emitted["sourceMemento"].get("ast_template").is_none());
+        let fact_memento = &emitted["facts"][0]["sourceMemento"];
+        assert_eq!(fact_memento["file"], "src/lib.rs");
+        assert_eq!(fact_memento["sourceFunctionName"], "tests::emits_fact");
+        assert_eq!(fact_memento["span"]["start_line"], 6);
+        assert_eq!(fact_memento["span"]["end_line"], 6);
+        assert!(fact_memento.get("body_text").is_none());
+        assert!(fact_memento.get("ast_template").is_none());
+
+        let no_fact = audits
+            .iter()
+            .find(|row| row["assertionSource"] == "src/lib.rs::tests::no_fact")
+            .expect("no-fact assertion source is accounted");
+        assert_eq!(no_fact["status"], "no-facts-emitted", "{no_fact}");
+        assert_eq!(no_fact["facts"].as_array().unwrap().len(), 0, "{no_fact}");
+        assert!(
+            no_fact["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("no liftable scalar assertions")),
+            "{no_fact}"
+        );
+
+        let ir = response["ir"].as_array().expect("ir array");
+        let fact_contract = emitted["facts"][0]["contract"]
+            .as_str()
+            .expect("fact contract name");
+        let contract = ir
+            .iter()
+            .find(|entry| entry["name"] == fact_contract)
+            .expect("fact contract is present in ir");
+        assert_eq!(contract["sourceWarrants"][0]["file"], "src/lib.rs");
+        assert_eq!(contract["sourceWarrants"][0]["span"]["start_line"], 6);
+        assert_eq!(contract["sourceWarrants"][0]["span"]["end_line"], 6);
+        assert_eq!(contract["sourceWarrants"][0], *fact_memento);
 
         let _ = std::fs::remove_dir_all(root);
     }
