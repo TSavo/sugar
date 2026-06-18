@@ -1,5 +1,8 @@
 use sugar_ir_symbolic::{ConstValue, Formula, Term};
-use sugar_lift_rust_tests::{lift_file, lift_file_with_options, LiftOptions, TargetCfg};
+use sugar_lift_rust_tests::{
+    lift_file, lift_file_with_options, lift_file_with_source_imports, ConstSourceRegistry,
+    LiftOptions, MacroRegistry, TargetCfg,
+};
 
 fn parse(src: &str) -> syn::File {
     syn::parse_file(src).expect("fixture parses")
@@ -87,6 +90,110 @@ fn assert_int_zero_arg_call_eq_atom(formula: &Formula, expected_call: &str, expe
         }
         other => panic!("expected equality atom, got {other:?}"),
     }
+}
+
+#[test]
+fn const_item_range_endpoint_is_a_compiler_axiom() {
+    let src = r#"
+        const B: usize = 6;
+        const CAPACITY: usize = 2 * B - 1;
+
+        #[test]
+        fn splitpoint_shape() {
+            assert_eq!(CAPACITY, 11);
+            for idx in 0..=CAPACITY {
+                assert!(idx <= CAPACITY);
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "alloc/src/collections/btree/node/tests.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "const-backed assertions should lift; skip reasons: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        !out.skip_reasons
+            .iter()
+            .any(|reason| reason.contains("RUNTIME endpoint")),
+        "const-backed range endpoint is a compiler axiom, not runtime: {:?}",
+        out.skip_reasons
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        !dump.contains("CAPACITY") && !dump.contains("Var { name: \"B\""),
+        "const paths must desugar through their compiler-known initializers, not stay vars: {dump}"
+    );
+}
+
+#[test]
+fn use_super_glob_feeds_parent_consts_to_const_sugar() {
+    let parent = r#"
+        const B: usize = 6;
+        pub(super) const CAPACITY: usize = 2 * B - 1;
+    "#;
+    let child = r#"
+        use super::*;
+
+        #[test]
+        fn splitpoint_shape() {
+            assert_eq!(CAPACITY, 11);
+        }
+    "#;
+    let parent_path = "alloc/src/collections/btree/node.rs";
+    let child_path = "alloc/src/collections/btree/node/tests.rs";
+    let parent_file = parse(parent);
+    let child_file = parse(child);
+    let mut const_sources = ConstSourceRegistry::new();
+    const_sources.scan_file(parent_path, &parent_file);
+    const_sources.scan_file(child_path, &child_file);
+
+    let out = lift_file_with_source_imports(
+        &child_file,
+        child_path,
+        &LiftOptions::default(),
+        &MacroRegistry::new(),
+        &const_sources,
+    );
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "use-fed const assertion should lift; skip reasons: {:?}",
+        out.skip_reasons
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        !dump.contains("CAPACITY") && !dump.contains("Var { name: \"B\""),
+        "use-fed const paths must desugar through parent compiler consts: {dump}"
+    );
+}
+
+#[test]
+fn const_item_range_endpoint_refusal_uses_recursive_const_sugar() {
+    let src = r#"
+        const B: usize = 6;
+        const CAPACITY: usize = 2 * B - 1;
+
+        #[test]
+        fn splitpoint_shape() {
+            for idx in 0..=CAPACITY {
+                let mut left_len = idx;
+                left_len += opaque(idx);
+                assert!(left_len <= CAPACITY);
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "alloc/src/collections/btree/node/tests.rs");
+    assert!(
+        out.assertions_refused > 0,
+        "fixture should still expose an unlifted for-body shape"
+    );
+    assert!(
+        !out.skip_reasons
+            .iter()
+            .any(|reason| reason.contains("RUNTIME endpoint")),
+        "const-backed range endpoint is compiler-grounded even when the loop body refuses: {:?}",
+        out.skip_reasons
+    );
 }
 
 fn assert_string_call_eq_atom(formula: &Formula, expected_call: &str, expected_rhs: &str) {

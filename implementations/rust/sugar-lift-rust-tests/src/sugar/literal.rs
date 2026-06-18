@@ -12,8 +12,8 @@ use syn::Expr;
 
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{
-    bounded_domain_from_expr, const_eval, strip_refs_groups, term_as_int, BoundedDomain, ConstVal,
-    Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP,
+    bounded_domain_from_expr, const_eval, const_fold_int_term, strip_refs_groups, term_as_int,
+    BoundedDomain, ConstVal, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -73,7 +73,10 @@ impl Sugar for LiteralSugar {
                     end,
                     inclusive,
                 } => {
-                    let (Some(s), Some(e)) = (term_as_int(&start), term_as_int(&end)) else {
+                    let (Some(s), Some(e)) = (
+                        term_as_int(&start).or_else(|| const_fold_int_term(&start)),
+                        term_as_int(&end).or_else(|| const_fold_int_term(&end)),
+                    ) else {
                         return None;
                     };
                     // `checked_add`: an inclusive end at i128::MAX would overflow.

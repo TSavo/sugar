@@ -19,8 +19,8 @@ use std::collections::BTreeMap;
 
 use sugar_lift_rust_tests::closed_eval::{self, HarnessResult};
 use sugar_lift_rust_tests::{
-    lift_file_with_macro_imports, refusal_disposition, Disposition, LiftOptions, MacroRegistry,
-    TargetCfg,
+    lift_file_with_source_imports, refusal_disposition, ConstSourceRegistry, Disposition,
+    LiftOptions, MacroRegistry, TargetCfg,
 };
 use syn::visit::{self, Visit};
 
@@ -204,6 +204,13 @@ fn bucket(reason: &str) -> String {
     }
 }
 
+fn rel_path_for_scan_root(path: &std::path::Path, root: &str) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .to_string()
+}
+
 #[derive(Default)]
 struct Totals {
     files: usize,
@@ -279,6 +286,7 @@ fn main() {
     // Build the source-graph macro registry: every macro_rules! in the corpus
     // itself plus each dependency source tree.
     let mut registry = MacroRegistry::new();
+    let mut const_registry = ConstSourceRegistry::new();
     let mut scan_dirs: Vec<&str> = vec![corpus.as_str()];
     scan_dirs.extend(dep_dirs.iter().map(|s| s.as_str()));
     for dir in &scan_dirs {
@@ -290,6 +298,7 @@ fn main() {
             if p.extension().and_then(|e| e.to_str()) == Some("rs") {
                 if let Ok(src) = std::fs::read_to_string(p) {
                     registry.scan_source(&src);
+                    const_registry.scan_source(&rel_path_for_scan_root(p, dir), &src);
                 }
             }
         }
@@ -398,7 +407,7 @@ fn main() {
                 census_rows.push((rel.clone(), row));
             }
         }
-        let out = lift_file_with_macro_imports(&file, &rel, &options, &registry);
+        let out = lift_file_with_source_imports(&file, &rel, &options, &registry, &const_registry);
         let discharged = out.assertions_lifted;
         let refused_total = out.assertions_refused;
 

@@ -53,6 +53,7 @@ pub mod sugar {
     pub mod conditional;
     pub mod configuration;
     pub mod const_block;
+    pub mod const_path;
     pub mod constraint;
     pub mod control_flow_term;
     pub mod ctor_term;
@@ -106,6 +107,7 @@ pub mod sugar {
     pub mod transparent_term;
     pub mod tuple_term;
     pub mod unary;
+    pub mod use_item;
 }
 
 use crate::sugar::configuration::{
@@ -679,10 +681,29 @@ pub fn lift_file_with_macro_imports(
     options: &LiftOptions,
     imported_macros: &MacroRegistry,
 ) -> AdapterOutput {
+    let empty_consts = ConstSourceRegistry::new();
+    lift_file_with_source_imports(file, source_path, options, imported_macros, &empty_consts)
+}
+
+/// Lift a file with external source registries in scope. Macro imports expand
+/// macro_rules! definitions; const source imports are compiler axioms materialized by
+/// `UseSugar` and consumed by `ConstSugar`.
+pub fn lift_file_with_source_imports(
+    file: &syn::File,
+    source_path: &str,
+    options: &LiftOptions,
+    imported_macros: &MacroRegistry,
+    imported_consts: &ConstSourceRegistry,
+) -> AdapterOutput {
     let mut out = AdapterOutput::default();
     let factory_audits = FactoryAuditLog::default();
     let mut modules = Vec::new();
-    let reducer = ReductionCtx::from_items_with_imports(&file.items, imported_macros);
+    let reducer = ReductionCtx::from_items_with_source_imports(
+        &file.items,
+        source_path,
+        imported_macros,
+        imported_consts,
+    );
     // Pass 1: walk test fns (and modules). Populates assertions_lifted, reduced_helpers.
     walk_items(
         &file.items,
@@ -1513,6 +1534,7 @@ struct ReductionCtx<'a> {
     functions: BTreeMap<String, &'a syn::ItemFn>,
     ambiguous_functions: BTreeSet<String>,
     impl_values: ImplValueRegistry,
+    consts: ConstRegistry,
     /// In-source `macro_rules!` definitions, by name, parsed into rules. These
     /// are what lets the lifter walk into a macro's definition and expand it,
     /// the same way it walks into a function. A name defined more than once is
@@ -1532,15 +1554,29 @@ impl<'a> ReductionCtx<'a> {
     }
 
     fn from_items_with_imports(items: &'a [Item], imported: &MacroRegistry) -> Self {
+        let empty_consts = ConstSourceRegistry::new();
+        Self::from_items_with_source_imports(items, "", imported, &empty_consts)
+    }
+
+    fn from_items_with_source_imports(
+        items: &'a [Item],
+        source_path: &str,
+        imported: &MacroRegistry,
+        imported_consts: &ConstSourceRegistry,
+    ) -> Self {
         let mut ctx = Self {
             functions: BTreeMap::new(),
             ambiguous_functions: BTreeSet::new(),
             impl_values: ImplValueRegistry::new(),
+            consts: ConstRegistry::new(),
             macros: BTreeMap::new(),
             ambiguous_macros: BTreeSet::new(),
             imported: imported.clone(),
         };
         ctx.collect_items(items);
+        let use_consts =
+            sugar::use_item::const_imports_for_items(items, source_path, imported_consts);
+        ctx.consts.merge_imports(&use_consts);
         ctx
     }
 
@@ -1568,6 +1604,10 @@ impl<'a> ReductionCtx<'a> {
                 }
                 Item::Impl(imp) => {
                     self.insert_impl_values(imp);
+                }
+                Item::Const(c) => {
+                    self.consts
+                        .insert(&c.ident.to_string(), Rc::new((*c.expr).clone()));
                 }
                 Item::Mod(m) => {
                     if let Some((_, items)) = &m.content {
@@ -1709,6 +1749,131 @@ impl<'a> ReductionCtx<'a> {
 
     fn impl_value_registry_snapshot(&self) -> ImplValueRegistry {
         self.impl_values.clone()
+    }
+
+    fn const_registry_snapshot(&self) -> ConstRegistry {
+        self.consts.clone()
+    }
+}
+
+/// In-source const item initializers visible to a scope. A Rust `const` is a compiler
+/// axiom for compiling code: if a path resolves to that const, the value is its
+/// initializer. The registry stores the source expression and lets `ConstSugar` recurse
+/// through the normal factory instead of freezing the path as a variable.
+#[derive(Default, Clone)]
+pub(crate) struct ConstRegistry {
+    consts: BTreeMap<String, Rc<Expr>>,
+    ambiguous: BTreeSet<String>,
+}
+
+impl std::fmt::Debug for ConstRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConstRegistry")
+            .field("consts", &self.consts.keys().collect::<Vec<_>>())
+            .field("ambiguous", &self.ambiguous)
+            .finish()
+    }
+}
+
+impl ConstRegistry {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn insert(&mut self, name: &str, expr: Rc<Expr>) {
+        if self.ambiguous.contains(name) {
+            return;
+        }
+        match self.consts.get(name) {
+            Some(existing) if expr_signature(existing) == expr_signature(&expr) => {}
+            Some(_) => {
+                self.consts.remove(name);
+                self.ambiguous.insert(name.to_string());
+            }
+            None => {
+                self.consts.insert(name.to_string(), expr);
+            }
+        }
+    }
+
+    pub(crate) fn merge_imports(&mut self, imported: &ConstRegistry) {
+        for (name, expr) in &imported.consts {
+            if self.consts.contains_key(name) || self.ambiguous.contains(name) {
+                continue;
+            }
+            self.insert(name, expr.clone());
+        }
+    }
+
+    pub(crate) fn merge_all(&mut self, imported: &ConstRegistry) {
+        for (name, expr) in &imported.consts {
+            self.insert(name, expr.clone());
+        }
+    }
+
+    pub(crate) fn lookup(&self, name: &str) -> Option<Rc<Expr>> {
+        if self.ambiguous.contains(name) {
+            return None;
+        }
+        self.consts.get(name).cloned()
+    }
+}
+
+fn expr_signature(expr: &Expr) -> String {
+    expr.to_token_stream().to_string()
+}
+
+/// Const item initializers indexed by source file. `UseSugar` reads this source graph
+/// to turn compiler-visible imports (`use super::*`) into the local visible
+/// `ConstRegistry`; `ConstSugar` then owns value lowering from that registry.
+#[derive(Default, Clone)]
+pub struct ConstSourceRegistry {
+    by_source: BTreeMap<String, ConstRegistry>,
+}
+
+impl std::fmt::Debug for ConstSourceRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConstSourceRegistry")
+            .field("sources", &self.by_source.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
+
+impl ConstSourceRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn scan_file(&mut self, source_path: &str, file: &syn::File) {
+        let mut registry = ConstRegistry::new();
+        scan_const_items(&file.items, &mut registry);
+        self.by_source.insert(source_path.to_string(), registry);
+    }
+
+    pub fn scan_source(&mut self, source_path: &str, src: &str) {
+        if let Ok(file) = syn::parse_file(src) {
+            self.scan_file(source_path, &file);
+        }
+    }
+
+    pub(crate) fn registry_for_source(&self, source_path: &str) -> Option<&ConstRegistry> {
+        self.by_source.get(source_path)
+    }
+}
+
+fn scan_const_items(items: &[Item], registry: &mut ConstRegistry) {
+    for item in items {
+        match item {
+            Item::Const(c) => {
+                registry.insert(&c.ident.to_string(), Rc::new((*c.expr).clone()));
+            }
+            Item::Mod(m) => {
+                if let Some((_, items)) = &m.content {
+                    scan_const_items(items, registry);
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -2285,6 +2450,10 @@ pub(crate) struct TemporalScope {
     /// commit only if the result fully grounds. Empty by default keeps every method call
     /// on the opaque `method:` fallback.
     impl_value_registry: ImplValueRegistry,
+    /// In-source const item initializers visible to this scope. A const path is a
+    /// compiler axiom, so `ConstSugar` resolves it to this initializer and recursively
+    /// asks the factory to desugar the initializer term.
+    const_registry: ConstRegistry,
     /// Names of value helpers PEELED to ground literals by a term-position inline during
     /// this scope's desugar (capability #1). Resolution flows IN (the `fn_registry`); the
     /// support-record must flow OUT, so the classifier DEMOTES a fully-inlined helper to
@@ -2314,6 +2483,7 @@ impl TemporalScope {
             macro_registry: MacroRegistry::new(),
             fn_registry: FnRegistry::new(),
             impl_value_registry: ImplValueRegistry::new(),
+            const_registry: ConstRegistry::new(),
             inlined_value_helpers: std::cell::RefCell::new(BTreeSet::new()),
             dormant_mut_ref: sugar::dormant_mut_ref::DormantMutRefState::default(),
         }
@@ -2371,6 +2541,17 @@ impl TemporalScope {
     /// The in-source inherent impl value registry visible at this scope.
     fn impl_value_registry(&self) -> &ImplValueRegistry {
         &self.impl_value_registry
+    }
+
+    /// Record the in-source const registry visible at this scope.
+    fn with_const_registry(mut self, registry: ConstRegistry) -> Self {
+        self.const_registry = registry;
+        self
+    }
+
+    pub(crate) fn const_expr_for_path(&self, path: &syn::Path) -> Option<Rc<Expr>> {
+        let name = path.get_ident()?.to_string();
+        self.const_registry.lookup(&name)
     }
 
     /// Record the in-scope literal-array bindings for this block (see field doc).
@@ -2848,7 +3029,7 @@ fn resolve_index_in_term(term: &Rc<Term>, arrays: &BTreeMap<String, Vec<Rc<Term>
 /// literal value. Used to reduce a threaded index like `sub(num(4), num(1))` to `3`
 /// before an `index` resolution. None for any non-const / non-arithmetic term -- the
 /// `index` then stays the EUF accessor (sound under-claim).
-fn const_fold_int_term(term: &Rc<Term>) -> Option<i128> {
+pub(crate) fn const_fold_int_term(term: &Rc<Term>) -> Option<i128> {
     if let Some(n) = term_as_int(term) {
         return Some(n);
     }
@@ -5271,6 +5452,7 @@ fn collect_assertion_entries<'a>(
     temporal_scope = temporal_scope.with_fn_registry(reducer.fn_registry_snapshot(&local_fns));
     temporal_scope =
         temporal_scope.with_impl_value_registry(reducer.impl_value_registry_snapshot());
+    temporal_scope = temporal_scope.with_const_registry(reducer.const_registry_snapshot());
     // Map of this block's simple `let <ident> = <init>;` bindings, so the DEFOLDER can
     // resolve a fold receiver that is a binding (`it.fold(..)` where `it = xs.iter()`,
     // `xs = [..]`) back through to its literal-array / range domain. A non-simple pat or
@@ -6435,7 +6617,7 @@ fn collect_arg_position_call_sites(stmts: &[Stmt], fn_name: &str, arity: usize) 
 /// const-fold to ints for the domain to be finite-literal; a missing or non-literal end
 /// is runtime. (A `..` open range never reaches a refused for-loop -- it would not parse
 /// as an iterable in the corpus -- but a missing end is treated as runtime for safety.)
-fn for_domain_endpoint_is_runtime(expr: &Expr) -> bool {
+fn for_domain_endpoint_is_runtime(expr: &Expr, scope: &TemporalScope) -> bool {
     match strip_refs_groups(expr) {
         // A literal array / repeat is a finite literal construction -> NOT runtime.
         Expr::Array(_) | Expr::Repeat(_) => false,
@@ -6443,12 +6625,12 @@ fn for_domain_endpoint_is_runtime(expr: &Expr) -> bool {
             let start_lit = r
                 .start
                 .as_ref()
-                .map(|e| const_int(e).is_some())
+                .map(|e| range_endpoint_const_folds(e, scope))
                 .unwrap_or(true); // `..end` start defaults to 0 -- literal.
             let end_lit = r
                 .end
                 .as_ref()
-                .map(|e| const_int(e).is_some())
+                .map(|e| range_endpoint_const_folds(e, scope))
                 .unwrap_or(false); // `start..` open end is a runtime/unbounded extent.
             !(start_lit && end_lit)
         }
@@ -6456,6 +6638,16 @@ fn for_domain_endpoint_is_runtime(expr: &Expr) -> bool {
         // collection -- already bin-2 by `for_iter_domain`; not our concern here.
         _ => false,
     }
+}
+
+fn range_endpoint_const_folds(expr: &Expr, scope: &TemporalScope) -> bool {
+    if const_int(expr).is_some() {
+        return true;
+    }
+    translate_term_in_scope(expr, scope)
+        .ok()
+        .and_then(|term| term_as_int(&term).or_else(|| const_fold_int_term(&term)))
+        .is_some()
 }
 
 /// True when EVERY mutation in the loop body is a SIMPLE COUNTER step over the literal
@@ -6596,7 +6788,7 @@ fn for_context_refusal_reason(
     // (A) RUNTIME DOMAIN ENDPOINT: `for i in 0..v.len()` -- the universe is not a finite
     // construction from source literals (the count is a runtime quantity). Terminal
     // Effect, EARNED by the non-literal endpoint (a literal-int range never matches).
-    if for_domain_endpoint_is_runtime(&f.expr) {
+    if for_domain_endpoint_is_runtime(&f.expr, scope) {
         return "assertion under for context whose domain is over a RUNTIME endpoint \
                 (`a..b` with a runtime bound -- not a finite construction from source \
                 literals); released to layer 0"

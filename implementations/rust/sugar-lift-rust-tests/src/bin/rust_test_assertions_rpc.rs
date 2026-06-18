@@ -11,8 +11,8 @@ use sugar_canonicalizer::{blake3_512_of, encode_jcs};
 use sugar_ir_symbolic::serialize::{formula_to_value, marshal_declarations};
 use sugar_lift_rust_tests::source_oracle;
 use sugar_lift_rust_tests::{
-    lift_file_with_options, AssertionFactEmission, AssertionFactKind, FactoryAudit, LiftOptions,
-    TargetCfg,
+    lift_file_with_source_imports, AssertionFactEmission, AssertionFactKind, ConstSourceRegistry,
+    FactoryAudit, LiftOptions, MacroRegistry, TargetCfg,
 };
 use sugar_verifier::types::{memento_body, memento_body_field, memento_kind};
 use tracing::{debug, info, warn};
@@ -135,65 +135,24 @@ fn lift(params: &Value) -> Value {
             LiftOptions::default()
         }
     };
-    for (file_index, rel) in rel_paths.iter().enumerate() {
-        let abs = workspace_root.join(rel);
+    let parsed_sources = read_parsed_sources(&workspace_root, &rel_paths, &mut diagnostics);
+    let macro_imports = MacroRegistry::new();
+    let const_imports = build_const_source_registry(&parsed_sources);
+    for (file_index, source) in parsed_sources.iter().enumerate() {
+        let rel = source.rel.as_str();
         info!(
-            file = rel.as_str(),
+            file = rel,
             file_index = file_index + 1,
             file_total = rel_paths.len(),
             "rust-test-assertions file lift start"
         );
-        let bytes = match std::fs::read(&abs) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                warn!(
-                    file = rel.as_str(),
-                    error = %e,
-                    "rust-test-assertions file read failed"
-                );
-                diagnostics.push(json!({
-                    "kind": "lift-gap",
-                    "path": rel,
-                    "reason": format!("read: {e}"),
-                }));
-                continue;
-            }
-        };
-        let src = match std::str::from_utf8(&bytes) {
-            Ok(src) => src,
-            Err(_) => {
-                warn!(
-                    file = rel.as_str(),
-                    "rust-test-assertions non-utf8 source skipped"
-                );
-                diagnostics.push(json!({
-                    "kind": "lift-gap",
-                    "path": rel,
-                    "reason": "non-utf8 source",
-                }));
-                continue;
-            }
-        };
-        let file = match syn::parse_file(src) {
-            Ok(file) => file,
-            Err(e) => {
-                warn!(
-                    file = rel.as_str(),
-                    error = %e,
-                    "rust-test-assertions parse failed"
-                );
-                diagnostics.push(json!({
-                    "kind": "lift-gap",
-                    "path": rel,
-                    "reason": format!("parse: {e}"),
-                }));
-                continue;
-            }
-        };
-        let out = lift_file_with_options(&file, rel, &options);
+        let src = source.src.as_str();
+        let file = &source.file;
+        let out =
+            lift_file_with_source_imports(file, rel, &options, &macro_imports, &const_imports);
         let mut source_cache = FileSourceOracleCache::new(rel, src);
         info!(
-            file = rel.as_str(),
+            file = rel,
             file_index = file_index + 1,
             file_total = rel_paths.len(),
             assertions_lifted = out.assertions_lifted,
@@ -223,7 +182,7 @@ fn lift(params: &Value) -> Value {
         let mut fns: Vec<FnRef> = Vec::new();
         collect_fns(&file.items, &mut fns);
         debug!(
-            file = rel.as_str(),
+            file = rel,
             functions = fns.len(),
             "rust-test-assertions source functions enumerated"
         );
@@ -388,6 +347,84 @@ fn lift(params: &Value) -> Value {
         "vendorConjoins": vendor_conjoins,
         "assertionSurfaceAudits": assertion_surface_audits,
     })
+}
+
+struct ParsedSource {
+    rel: String,
+    src: String,
+    file: syn::File,
+}
+
+fn read_parsed_sources(
+    workspace_root: &Path,
+    rel_paths: &[String],
+    diagnostics: &mut Vec<Value>,
+) -> Vec<ParsedSource> {
+    let mut parsed = Vec::new();
+    for rel in rel_paths {
+        let abs = workspace_root.join(rel);
+        let bytes = match std::fs::read(&abs) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                warn!(
+                    file = rel.as_str(),
+                    error = %e,
+                    "rust-test-assertions file read failed"
+                );
+                diagnostics.push(json!({
+                    "kind": "lift-gap",
+                    "path": rel,
+                    "reason": format!("read: {e}"),
+                }));
+                continue;
+            }
+        };
+        let src = match String::from_utf8(bytes) {
+            Ok(src) => src,
+            Err(_) => {
+                warn!(
+                    file = rel.as_str(),
+                    "rust-test-assertions non-utf8 source skipped"
+                );
+                diagnostics.push(json!({
+                    "kind": "lift-gap",
+                    "path": rel,
+                    "reason": "non-utf8 source",
+                }));
+                continue;
+            }
+        };
+        let file = match syn::parse_file(&src) {
+            Ok(file) => file,
+            Err(e) => {
+                warn!(
+                    file = rel.as_str(),
+                    error = %e,
+                    "rust-test-assertions parse failed"
+                );
+                diagnostics.push(json!({
+                    "kind": "lift-gap",
+                    "path": rel,
+                    "reason": format!("parse: {e}"),
+                }));
+                continue;
+            }
+        };
+        parsed.push(ParsedSource {
+            rel: rel.clone(),
+            src,
+            file,
+        });
+    }
+    parsed
+}
+
+fn build_const_source_registry(parsed_sources: &[ParsedSource]) -> ConstSourceRegistry {
+    let mut registry = ConstSourceRegistry::new();
+    for source in parsed_sources {
+        registry.scan_file(&source.rel, &source.file);
+    }
+    registry
 }
 
 #[derive(Clone)]
@@ -1957,15 +1994,15 @@ mod tests {
             emitted["sourceMemento"]["sourceFunctionName"],
             "tests::emits_fact"
         );
-        assert_eq!(emitted["sourceMemento"]["span"]["start_line"], 7);
-        assert_eq!(emitted["sourceMemento"]["span"]["end_line"], 10);
+        assert_eq!(emitted["sourceMemento"]["span"]["start_line"], 8);
+        assert_eq!(emitted["sourceMemento"]["span"]["end_line"], 11);
         assert!(emitted["sourceMemento"].get("body_text").is_none());
         assert!(emitted["sourceMemento"].get("ast_template").is_none());
         let fact_memento = &emitted["facts"][0]["sourceMemento"];
         assert_eq!(fact_memento["file"], "src/lib.rs");
         assert_eq!(fact_memento["sourceFunctionName"], "tests::emits_fact");
-        assert_eq!(fact_memento["span"]["start_line"], 9);
-        assert_eq!(fact_memento["span"]["end_line"], 9);
+        assert_eq!(fact_memento["span"]["start_line"], 10);
+        assert_eq!(fact_memento["span"]["end_line"], 10);
         assert!(fact_memento.get("body_text").is_none());
         assert!(fact_memento.get("ast_template").is_none());
 
@@ -2031,8 +2068,8 @@ mod tests {
             .find(|entry| entry["name"] == fact_contract)
             .expect("fact contract is present in ir");
         assert_eq!(contract["sourceWarrants"][0]["file"], "src/lib.rs");
-        assert_eq!(contract["sourceWarrants"][0]["span"]["start_line"], 9);
-        assert_eq!(contract["sourceWarrants"][0]["span"]["end_line"], 9);
+        assert_eq!(contract["sourceWarrants"][0]["span"]["start_line"], 10);
+        assert_eq!(contract["sourceWarrants"][0]["span"]["end_line"], 10);
         assert_eq!(contract["sourceWarrants"][0], *fact_memento);
 
         let support_contract = fact_and_support["supportFacts"][0]["contract"]
