@@ -1919,7 +1919,10 @@ fn mint_and_cache(
         ("producedBy".into(), Value::string(producer_id.to_string())),
         ("producedAt".into(), Value::string(now.to_string())),
         ("prover".into(), Value::string(prover_tag.to_string())),
-        ("proverRunMs".into(), Value::integer(i128::from(prover_run_ms))),
+        (
+            "proverRunMs".into(),
+            Value::integer(i128::from(prover_run_ms)),
+        ),
         ("producerPubkey".into(), Value::string(pubkey.clone())),
     ];
     if !smt_lib_input.is_empty() {

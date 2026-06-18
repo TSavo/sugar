@@ -10,6 +10,9 @@ use crate::sugar::term_leaf::reasoned_hit;
 use crate::{token_key, Sugar};
 use syn::{Expr, Stmt};
 
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::term("block_term", recognize);
+
 /// TERM recognizer for `Expr::Unsafe` / `Expr::Block`.
 pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
     match expr {

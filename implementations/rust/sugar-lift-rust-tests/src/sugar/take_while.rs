@@ -6,7 +6,29 @@
 // non-bool / runtime closure result. Lifted verbatim from the
 // `Adaptor::TakeWhile(closure)` arm of the former `apply_one_adaptor` match.
 
+use syn::Expr;
+
+use crate::sugar::factory::{build_composite, FactoryCtx};
 use crate::{const_eval_unary_closure, Desugared, Outcome, Sugar, SugarCtx};
+
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::composite("take_while", recognize_composite);
+
+pub(crate) fn recognize_composite(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    let Expr::MethodCall(call) = expr else {
+        return None;
+    };
+    if call.method != "take_while" || call.args.len() != 1 {
+        return None;
+    }
+    let Expr::Closure(pred) = &call.args[0] else {
+        return None;
+    };
+    Some(Box::new(TakeWhileSugar {
+        inner: build_composite(&call.receiver, fcx),
+        pred: pred.clone(),
+    }))
+}
 
 /// Keep the leading run of elements where `pred` const-evaluates true.
 pub(crate) struct TakeWhileSugar {

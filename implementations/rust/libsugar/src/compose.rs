@@ -1378,7 +1378,11 @@ fn serde_to_canonical(j: JsonValue) -> Arc<Value> {
     match j {
         JsonValue::Null => Value::null(),
         JsonValue::Bool(b) => Value::boolean(b),
-        JsonValue::Number(n) => match n.as_i64().map(i128::from).or_else(|| n.as_u64().map(i128::from)) {
+        JsonValue::Number(n) => match n
+            .as_i64()
+            .map(i128::from)
+            .or_else(|| n.as_u64().map(i128::from))
+        {
             Some(i) => Value::integer(i),
             None => Value::object(vec![(
                 "__sugar_non_i64_number__".to_string(),

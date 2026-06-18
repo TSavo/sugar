@@ -66,12 +66,10 @@
 // `child_term_or_hit` (no `crate::` helper added -- the only `lib.rs` edit is the
 // mod declaration).
 //
-// ROUTER PREAMBLE (the coordinator's factory-arm job, DOCUMENTED, not here). The
-// factory arm for `Expr::Unary` must: `build(&unary.expr, fcx)` as the child Sugar,
-// and `new` a `UnarySugar` carrying { the op `unary.op`, the operand `Expr`, the
-// whole-unary `Expr` for the token_key, the child }. `UnarySugar` makes NO
-// recognition decision of its own -- it composes and reduces; the recognition (it
-// IS a unary) is the router's.
+// RECOGNIZER PREAMBLE. `recognize` for `Expr::Unary` builds the operand child and
+// news a `UnarySugar` carrying { the op `unary.op`, the operand `Expr`, the whole-unary
+// `Expr` for the token_key, the child }. `UnarySugar` makes no recognition decision of
+// its own; it composes and reduces after the Sugar claim accepts the source shape.
 
 use std::rc::Rc;
 
@@ -83,6 +81,9 @@ use crate::{
     const_float, const_int, num, real_const, real_literal_is_zero, token_key, Desugared, Effect,
     Outcome, Sugar, SugarCtx,
 };
+
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::term("unary", recognize);
 
 /// TERM recognizer for `Expr::Unary`: news a [`UnarySugar`] over the operand child.
 /// Byte-identical to the `Expr::Unary` arm — `UnarySugar` owns the per-`UnOp` arm

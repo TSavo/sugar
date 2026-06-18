@@ -14,6 +14,9 @@ use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
 use crate::{is_unqualified_local_name, names_referenced_in_expr, token_key, Sugar};
 use syn::{Expr, Pat};
 
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::term("closure_term", recognize);
+
 /// TERM recognizer for `Expr::Closure`.
 pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Closure(closure) = expr else {

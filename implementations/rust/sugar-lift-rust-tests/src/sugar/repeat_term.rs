@@ -3,7 +3,7 @@
 // TERM recognizer for `Expr::Repeat` (`[elem; N]`) in TERM position: a literal count
 // expands to the N-fold `literal_aggregate_term` "Array"; a non-literal count is the
 // `ArrayRepeatSugar` refuse-shape (`Effect::ArrayRepeat`). This is the TERM-position
-// node — DISTINCT from the COMPOSITE-registry `Expr::Repeat` (which boxes
+// node — DISTINCT from the COMPOSITE-catalog `Expr::Repeat` (which boxes
 // `decompose_array_repeat` directly as the refuse-shape). Byte-identical to the
 // `Expr::Repeat` arm of the old fat factory.
 
@@ -14,6 +14,9 @@ use crate::{
     literal_aggregate_term_in_scope, repeat_count_literal, token_key, Effect, Outcome, Sugar,
 };
 use syn::Expr;
+
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::term("repeat_term", recognize);
 
 /// TERM recognizer for `Expr::Repeat`.
 pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
@@ -39,8 +42,10 @@ pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>>
         )));
     }
     let elem_refs = std::iter::repeat(&*repeat.expr).take(count);
-    Some(match literal_aggregate_term_in_scope("Array", elem_refs, expr, scope) {
-        Ok(term) => resolved_term(term),
-        Err(reason) => reasoned_hit(reason),
-    })
+    Some(
+        match literal_aggregate_term_in_scope("Array", elem_refs, expr, scope) {
+            Ok(term) => resolved_term(term),
+            Err(reason) => reasoned_hit(reason),
+        },
+    )
 }

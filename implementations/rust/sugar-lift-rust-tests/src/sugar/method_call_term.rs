@@ -10,7 +10,7 @@
 // to_string()` dissolves to a `str_const`; a closure-bearing adaptor in term position
 // refuses with collection provenance; otherwise the EUF `method:` ctor node. This is
 // the TERM-position node — DISTINCT from the COMPOSITE `fold`/`for_each`/closure-
-// adaptor/match-scrutinee dispatch the COMPOSITE registry routes `Expr::MethodCall` to.
+// adaptor/match-scrutinee dispatch the COMPOSITE catalog routes `Expr::MethodCall` to.
 // Byte-identical to the old fat factory's `Expr::MethodCall` term arm.
 
 use std::rc::Rc;
@@ -26,6 +26,9 @@ use crate::{
     angle_args_key, closure_adaptor_refusal, is_consuming_iterator_method,
     receiver_is_versioned_iterator, Desugared, Outcome, Sugar, SugarCtx,
 };
+
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::fallback_term("method_call_term", recognize);
 
 /// TERM recognizer for `Expr::MethodCall`.
 pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {

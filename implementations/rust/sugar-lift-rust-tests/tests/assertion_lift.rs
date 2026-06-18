@@ -659,7 +659,11 @@ fn wide() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/wide.rs");
-    assert_eq!(out.lifted, 1, "all four wide literals lift: {:?}", out.warnings);
+    assert_eq!(
+        out.lifted, 1,
+        "all four wide literals lift: {:?}",
+        out.warnings
+    );
     let operands = inv_operands(&out.decls[0]);
     assert_eq!(operands.len(), 4, "one atom per wide-literal assert");
     // EXACT values -- a bad-twin with any wrong value refutes downstream.
@@ -1453,7 +1457,10 @@ fn exponent_float_literal() {
     assert_eq!(out.decls.len(), 1);
 
     let decl = &out.decls[0];
-    assert_eq!(decl.name, "tests/num/floats.rs::exponent_float_literal::value#euf#c:callresult_value_a0()::assertion");
+    assert_eq!(
+        decl.name,
+        "tests/num/floats.rs::exponent_float_literal::value#euf#c:callresult_value_a0()::assertion"
+    );
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 2);
     assert_real_call_eq_atom(&operands[0], "call:value", "0.001");
@@ -1944,7 +1951,10 @@ fn bool_compare_exchange() {
     // call (declared `SugarResult` by the compiler so it meets the RHS).
     match inv_operands(&out.decls[0])[0].as_ref() {
         Formula::Atomic { name, args } => {
-            assert_eq!(name, "=", "the grounded Result equality is a flat structural `=`");
+            assert_eq!(
+                name, "=",
+                "the grounded Result equality is a flat structural `=`"
+            );
             assert_eq!(args.len(), 2);
             // LHS: opaque method call.
             match args[0].as_ref() {
@@ -1954,10 +1964,16 @@ fn bool_compare_exchange() {
             // RHS: grounded res:ok(false).
             match args[1].as_ref() {
                 Term::Ctor { name, args } => {
-                    assert_eq!(name, "res:ok", "the RHS Ok(false) grounds to the res:ok ctor");
+                    assert_eq!(
+                        name, "res:ok",
+                        "the RHS Ok(false) grounds to the res:ok ctor"
+                    );
                     assert_eq!(args.len(), 1);
                     match args[0].as_ref() {
-                        Term::Const { value: ConstValue::Bool(value), .. } => assert!(!*value),
+                        Term::Const {
+                            value: ConstValue::Bool(value),
+                            ..
+                        } => assert!(!*value),
                         other => panic!("expected bool constructor arg, got {other:?}"),
                     }
                 }
@@ -1967,13 +1983,17 @@ fn bool_compare_exchange() {
         other => panic!("expected equality atom, got {other:?}"),
     }
     assert!(
-        !decl_mentions_ctor(&out.decls[0], "call:eq:Ok") && !decl_mentions_ctor(&out.decls[0], "call:Ok"),
+        !decl_mentions_ctor(&out.decls[0], "call:eq:Ok")
+            && !decl_mentions_ctor(&out.decls[0], "call:Ok"),
         "no federated call:eq:Ok / call:Ok may survive: {:?}",
         out.decls[0].inv
     );
     // The opaque Result call meets the grounded Ok(false) well-sortedly -> SAT.
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "compare_exchange_ok") {
-        assert!(sat, "the opaque compare_exchange == Ok(false) must be consistent (SAT)");
+        assert!(
+            sat,
+            "the opaque compare_exchange == Ok(false) must be consistent (SAT)"
+        );
     }
 }
 
@@ -2000,12 +2020,18 @@ fn test_range_nth() {
 
     match inv_operands(&out.decls[0])[0].as_ref() {
         Formula::Atomic { name, args } => {
-            assert_eq!(name, "=", "the grounded Option equality is a flat structural `=`");
+            assert_eq!(
+                name, "=",
+                "the grounded Option equality is a flat structural `=`"
+            );
             assert_eq!(args.len(), 2);
             for side in args {
                 match side.as_ref() {
                     Term::Ctor { name, args } => {
-                        assert_eq!(name, "opt:none", "both sides ground to opt:none (past-end value)");
+                        assert_eq!(
+                            name, "opt:none",
+                            "both sides ground to opt:none (past-end value)"
+                        );
                         assert!(args.is_empty());
                     }
                     other => panic!("expected opt:none ctor, got {other:?}"),
@@ -2074,11 +2100,15 @@ fn test_and() {
     // (`opt:some`/`opt:none`) or an opaque `method:`/`call:` Option-valued call.
     // At least one operand must be a grounded monadic ctor (the RHS), proving the
     // constructor grounded rather than staying a federated EUF var.
-    let monadic = |t: &Term| matches!(t, Term::Ctor { name, .. } if name == "opt:some" || name == "opt:none");
+    let monadic =
+        |t: &Term| matches!(t, Term::Ctor { name, .. } if name == "opt:some" || name == "opt:none");
     for operand in operands {
         match operand.as_ref() {
             Formula::Atomic { name, args } => {
-                assert_eq!(name, "=", "the grounded Option equality is a flat structural `=`");
+                assert_eq!(
+                    name, "=",
+                    "the grounded Option equality is a flat structural `=`"
+                );
                 assert_eq!(args.len(), 2);
                 assert!(
                     monadic(args[0].as_ref()) || monadic(args[1].as_ref()),
@@ -2096,7 +2126,10 @@ fn test_and() {
     // The whole conjoined contract must be well-sorted + SAT under z3 (the opaque
     // `method:and` declared SugarOption meets the Option values).
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "option_test_and") {
-        assert!(sat, "the test_and contract must be consistent (SAT) under z3");
+        assert!(
+            sat,
+            "the test_and contract must be consistent (SAT) under z3"
+        );
     }
 }
 
@@ -3360,7 +3393,10 @@ fn t() { assert!([1, 2, 3].iter().all(|&x| x < 2)); }
 "#;
     let da = format!("{:?}", lift_file(&parse(a), "src/x.rs").decls[0]);
     let db = format!("{:?}", lift_file(&parse(b), "src/x.rs").decls[0]);
-    assert_ne!(da, db, "distinct per-element bounds must lift distinctly (teeth)");
+    assert_ne!(
+        da, db,
+        "distinct per-element bounds must lift distinctly (teeth)"
+    );
 }
 
 #[test]
@@ -3512,7 +3548,10 @@ fn comparison_atoms() {
     assert_eq!(out.decls.len(), 1);
 
     let decl = &out.decls[0];
-    assert_eq!(decl.name, "tests/compare.rs::comparison_atoms::value#euf#c:callresult_value_a0()::assertion");
+    assert_eq!(
+        decl.name,
+        "tests/compare.rs::comparison_atoms::value#euf#c:callresult_value_a0()::assertion"
+    );
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 3);
     assert_int_call_cmp_atom(&operands[0], ">", "call:value", 3);
@@ -3537,7 +3576,10 @@ fn connective_atoms() {
     assert_eq!(out.decls.len(), 1);
 
     let decl = &out.decls[0];
-    assert_eq!(decl.name, "tests/compare.rs::connective_atoms::value#euf#c:callresult_value_a0()::assertion");
+    assert_eq!(
+        decl.name,
+        "tests/compare.rs::connective_atoms::value#euf#c:callresult_value_a0()::assertion"
+    );
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 2);
     match operands[0].as_ref() {
@@ -3577,7 +3619,10 @@ fn negated_comparison() {
     assert_eq!(out.decls.len(), 1);
 
     let decl = &out.decls[0];
-    assert_eq!(decl.name, "tests/compare.rs::negated_comparison::value#euf#c:callresult_value_a0()::assertion");
+    assert_eq!(
+        decl.name,
+        "tests/compare.rs::negated_comparison::value#euf#c:callresult_value_a0()::assertion"
+    );
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 2);
     assert_int_call_cmp_atom(&operands[0], "\u{2265}", "call:value", 3);
@@ -3629,7 +3674,10 @@ fn const_eq_folds() {
         Formula::Atomic { name, args } => {
             assert_eq!(name, "=");
             assert_eq!(args.len(), 2);
-            assert!(bool_const_value(&args[0]), "lhs `false == false` -> Bool(true)");
+            assert!(
+                bool_const_value(&args[0]),
+                "lhs `false == false` -> Bool(true)"
+            );
             assert!(bool_const_value(&args[1]), "rhs `true` -> Bool(true)");
         }
         other => panic!("expected equality atom, got {other:?}"),
@@ -4808,8 +4856,14 @@ fn fmt_roundtrip() {
         Formula::Atomic { name, args } => {
             assert_eq!(name, "=");
             match args[0].as_ref() {
-                Term::Const { value: ConstValue::String(s), .. } => {
-                    assert_eq!(s, "5", "format! over a literal binding dissolves to its value")
+                Term::Const {
+                    value: ConstValue::String(s),
+                    ..
+                } => {
+                    assert_eq!(
+                        s, "5",
+                        "format! over a literal binding dissolves to its value"
+                    )
                 }
                 other => panic!("LHS must be the dissolved str_const, got {other:?}"),
             }
@@ -4839,8 +4893,14 @@ fn fmt_twice() {
     assert_eq!(ops.len(), 2);
     let lhs0 = eq_lhs_name(&ops[0]);
     let lhs1 = eq_lhs_name(&ops[1]);
-    assert!(lhs0.starts_with("macro:"), "runtime-arg format! stays opaque: {lhs0}");
-    assert_eq!(lhs0, lhs1, "identical runtime format! calls coalesce (congruence)");
+    assert!(
+        lhs0.starts_with("macro:"),
+        "runtime-arg format! stays opaque: {lhs0}"
+    );
+    assert_eq!(
+        lhs0, lhs1,
+        "identical runtime format! calls coalesce (congruence)"
+    );
 }
 
 #[test]
@@ -5270,7 +5330,8 @@ fn cond_test() {
 "#;
     let out = lift_file(&parse(src), "tests/cond.rs");
     assert_eq!(
-        out.assertions_lifted, 1,
+        out.assertions_lifted,
+        1,
         "conditional assert lifts as a guarded implication: {:?}",
         refusal_reasons(&out)
     );
@@ -5305,7 +5366,8 @@ fn match_test() {
 "#;
     let out = lift_file(&parse(src), "tests/m.rs");
     assert_eq!(
-        out.assertions_lifted, 2,
+        out.assertions_lifted,
+        2,
         "both arm asserts lift as guarded implications: {:?}",
         refusal_reasons(&out)
     );
@@ -5341,7 +5403,8 @@ fn variant_match() {
 "#;
     let out = lift_file(&parse(src), "tests/v.rs");
     assert_eq!(
-        out.assertions_lifted, 2,
+        out.assertions_lifted,
+        2,
         "both variant-guarded arm asserts lift: {:?}",
         refusal_reasons(&out)
     );
@@ -5379,7 +5442,8 @@ fn bad_twin() {
 "#;
     let out = lift_file(&parse(src), "tests/bad.rs");
     assert_eq!(
-        out.assertions_lifted, 2,
+        out.assertions_lifted,
+        2,
         "the (refutable) guarded implications still lift: {:?}",
         refusal_reasons(&out)
     );
@@ -5422,17 +5486,21 @@ fn test_bool_not() {
 "#;
     let out = lift_file(&parse(src), "tests/bool.rs");
     assert_eq!(
-        out.assertions_lifted, 4,
+        out.assertions_lifted,
+        4,
         "all four const-guarded branch asserts must dig (2 ifs x 2 branches): {:?}",
         refusal_reasons(&out)
     );
     assert_eq!(
-        out.assertions_refused, 0,
+        out.assertions_refused,
+        0,
         "no const-guard branch may stay refused: {:?}",
         refusal_reasons(&out)
     );
     assert!(
-        refusal_reasons(&out).iter().all(|r| !r.contains("under if context")),
+        refusal_reasons(&out)
+            .iter()
+            .all(|r| !r.contains("under if context")),
         "no const-guard assert may stay in the if-context bucket: {:?}",
         refusal_reasons(&out)
     );
@@ -5458,7 +5526,8 @@ fn bare() {
 "#;
     let out = lift_file(&parse(src), "tests/bare.rs");
     assert_eq!(
-        out.assertions_lifted, 2,
+        out.assertions_lifted,
+        2,
         "both bare-bool-literal asserts lift (constant claims): {:?}",
         refusal_reasons(&out)
     );
@@ -5492,7 +5561,8 @@ fn bad_twin() {
 "#;
     let out = lift_file(&parse(src), "tests/bad_twin.rs");
     assert_eq!(
-        out.assertions_lifted, 1,
+        out.assertions_lifted,
+        1,
         "the (refutable) const-guarded implication still digs: {:?}",
         refusal_reasons(&out)
     );
@@ -5532,12 +5602,15 @@ fn cfg_if() {
         &LiftOptions::for_target_cfg(cfg),
     );
     assert_eq!(
-        out.assertions_lifted, 2,
+        out.assertions_lifted,
+        2,
         "both branches of a resolved cfg!-guarded if must dig: {:?}",
         refusal_reasons(&out)
     );
     assert!(
-        refusal_reasons(&out).iter().all(|r| !r.contains("under if context")),
+        refusal_reasons(&out)
+            .iter()
+            .all(|r| !r.contains("under if context")),
         "a resolved cfg if-guard must not stay in the if-context bucket: {:?}",
         refusal_reasons(&out)
     );
@@ -5560,12 +5633,15 @@ fn rt() {
 "#;
     let out = lift_file(&parse(src), "tests/rt.rs");
     assert_eq!(
-        out.assertions_lifted, 0,
+        out.assertions_lifted,
+        0,
         "a runtime if-guard must NOT dig (no const fold): {:?}",
         refusal_reasons(&out)
     );
     assert!(
-        refusal_reasons(&out).iter().any(|r| r.contains("under if context")),
+        refusal_reasons(&out)
+            .iter()
+            .any(|r| r.contains("under if context")),
         "the runtime-guarded assert must stay refused under if context: {:?}",
         refusal_reasons(&out)
     );
@@ -5601,12 +5677,14 @@ fn wrapping() {
         &LiftOptions::for_target_cfg(cfg),
     );
     assert_eq!(
-        out.assertions_lifted, 1,
+        out.assertions_lifted,
+        1,
         "the surviving (active-cfg) arm's assert must dig: {:?}",
         refusal_reasons(&out)
     );
     assert_eq!(
-        out.assertions_refused, 1,
+        out.assertions_refused,
+        1,
         "the cfg-inactive arm's assert must be accounted as refused (not silent): {:?}",
         refusal_reasons(&out)
     );
@@ -5648,7 +5726,8 @@ fn eff() {
 "#;
     let out = lift_file(&parse(src), "tests/eff.rs");
     assert_eq!(
-        out.assertions_lifted, 0,
+        out.assertions_lifted,
+        0,
         "an effectful-scrutinee match must NOT dig: {:?}",
         refusal_reasons(&out)
     );
@@ -5750,7 +5829,10 @@ fn orpat() {
 }
 "#;
     let out = lift_file(&parse(or_pat), "tests/or.rs");
-    assert_eq!(out.assertions_lifted, 0, "an or-pattern arm must bail the match");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "an or-pattern arm must bail the match"
+    );
     assert!(
         refusal_reasons(&out)
             .iter()
@@ -5787,7 +5869,8 @@ fn payload_bind() {
     // over the bound `val`. The emitted formula must be the discriminant with NO
     // free `val`/`get` (the soundness line: no payload-binding fake-discharge).
     assert_eq!(
-        out.assertions_lifted, 1,
+        out.assertions_lifted,
+        1,
         "panic-locus lifts the variant discriminant: {:?}",
         refusal_reasons(&out)
     );
@@ -5801,7 +5884,9 @@ fn payload_bind() {
     // would false-match `value:` in the Const dump, so check the precise leak
     // signatures instead.)
     assert!(
-        !dump.contains("get") && !dump.contains("payload:") && !dump.contains("Var { name: \"val\""),
+        !dump.contains("get")
+            && !dump.contains("payload:")
+            && !dump.contains("Var { name: \"val\""),
         "the pattern-bound payload `val.get()` must NOT leak into the formula \
          (no free-var fake-discharge): {dump}"
     );
@@ -6025,7 +6110,11 @@ mod const_cmp {
         out.skip_reasons
     );
     // Totality preserved: the two asserts are accounted (lifted), none silently dropped.
-    assert_eq!(out.decls.len(), 2, "each const-item assert yields a contract");
+    assert_eq!(
+        out.decls.len(),
+        2,
+        "each const-item assert yields a contract"
+    );
 }
 
 #[test]
@@ -6053,7 +6142,12 @@ fn t() {
         .skip_reasons
         .iter()
         .find(|r| r.contains("type-level obligation"))
-        .unwrap_or_else(|| panic!("expected a type-level-obligation refusal, got {:?}", out.skip_reasons));
+        .unwrap_or_else(|| {
+            panic!(
+                "expected a type-level-obligation refusal, got {:?}",
+                out.skip_reasons
+            )
+        });
     assert_eq!(
         sugar_lift_rust_tests::refusal_disposition(reason),
         sugar_lift_rust_tests::Disposition::Refused,
@@ -6091,7 +6185,9 @@ fn t() {
     );
     // It is NEVER mislabeled a type-level obligation (the empty-vs-non-empty discrimination).
     assert!(
-        !out.skip_reasons.iter().any(|r| r.contains("type-level obligation")),
+        !out.skip_reasons
+            .iter()
+            .any(|r| r.contains("type-level obligation")),
         "a non-empty-body helper must NOT be labeled a type-level obligation: {:?}",
         out.skip_reasons
     );
@@ -6121,9 +6217,11 @@ fn t() {
         out.skip_reasons
     );
     assert!(
-        out.skip_reasons.iter().any(|r| r.contains("monomorphization")
-            && sugar_lift_rust_tests::refusal_disposition(r)
-                == sugar_lift_rust_tests::Disposition::Refused),
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("monomorphization")
+                && sugar_lift_rust_tests::refusal_disposition(r)
+                    == sugar_lift_rust_tests::Disposition::Refused),
         "the generic helper's refusal must remain the terminal monomorphization reason: {:?}",
         out.skip_reasons
     );
@@ -6609,7 +6707,10 @@ fn t() { let s = mk(); assert!(matches!(s, (Bound::Start, 1))); }
     let db = format!("{:?}", lift_file(&parse(b), "tests/ops.rs").decls[0]);
     assert!(da.contains("Bound::End"), "a tags End: {da}");
     assert!(db.contains("Bound::Start"), "b tags Start: {db}");
-    assert_ne!(da, db, "distinct tuple variants must be distinct terms (teeth)");
+    assert_ne!(
+        da, db,
+        "distinct tuple variants must be distinct terms (teeth)"
+    );
 }
 
 #[test]
@@ -6626,7 +6727,10 @@ fn t() { let s = mk(); assert!(matches!(s, (Bound::End, 2))); }
 "#;
     let da = format!("{:?}", lift_file(&parse(a), "tests/ops.rs").decls[0]);
     let db = format!("{:?}", lift_file(&parse(b), "tests/ops.rs").decls[0]);
-    assert_ne!(da, db, "distinct literal components must be distinct terms (teeth)");
+    assert_ne!(
+        da, db,
+        "distinct literal components must be distinct terms (teeth)"
+    );
 }
 
 #[test]
@@ -7214,15 +7318,16 @@ fn emit_value_contract_string_matches_composes_through_compiler() {
 fn emit_value_contract_guarded_matches_warrants() {
     use sugar_lift_rust_tests::emit_value_contract;
     // A flat enum-variant pattern with a pure comparison guard over the binding.
-    let f: syn::ItemFn = syn::parse_str(
-        "fn pos(p: Option<i32>) -> bool { matches!(p, Some(n) if n > 0) }",
-    )
-    .unwrap();
+    let f: syn::ItemFn =
+        syn::parse_str("fn pos(p: Option<i32>) -> bool { matches!(p, Some(n) if n > 0) }").unwrap();
     let decl = emit_value_contract("pos", &f.block).expect("guarded matches! warrants");
     assert_eq!(decl.out_binding, "out");
     let inv = format!("{:?}", decl.inv.expect("inv present"));
     assert!(inv.contains("variant_of"), "discriminant present: {inv}");
-    assert!(inv.contains("payload:"), "binding mapped to payload accessor: {inv}");
+    assert!(
+        inv.contains("payload:"),
+        "binding mapped to payload accessor: {inv}"
+    );
     assert!(inv.contains("out"), "return value related: {inv}");
 }
 
@@ -7239,7 +7344,10 @@ fn emit_value_contract_guarded_matches_binding_only_warrants() {
     let inv = format!("{:?}", decl.inv.expect("inv present"));
     // the guard reduces to v == 5 (the binding x maps straight to v, no variant_of).
     assert!(inv.contains('5'), "guard reduced to v == 5: {inv}");
-    assert!(!inv.contains("variant_of"), "no discriminant for a binding pattern: {inv}");
+    assert!(
+        !inv.contains("variant_of"),
+        "no discriminant for a binding pattern: {inv}"
+    );
 }
 
 // Step 7 for guarded matches!: the emitted relation must COMPOSE -- well-sorted
@@ -7247,10 +7355,8 @@ fn emit_value_contract_guarded_matches_binding_only_warrants() {
 #[test]
 fn emit_value_contract_guarded_matches_composes_through_compiler() {
     use sugar_lift_rust_tests::emit_value_contract;
-    let f: syn::ItemFn = syn::parse_str(
-        "fn pos(p: Option<i32>) -> bool { matches!(p, Some(n) if n > 0) }",
-    )
-    .unwrap();
+    let f: syn::ItemFn =
+        syn::parse_str("fn pos(p: Option<i32>) -> bool { matches!(p, Some(n) if n > 0) }").unwrap();
     let decl = emit_value_contract("pos", &f.block).unwrap();
     let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
     let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
@@ -7289,14 +7395,15 @@ fn emit_value_contract_guarded_matches_composes_through_compiler() {
 #[test]
 fn emit_value_contract_unguarded_enum_variant_matches_warrants() {
     use sugar_lift_rust_tests::emit_value_contract;
-    let f: syn::ItemFn = syn::parse_str(
-        "fn is_v4(s: &IpKind) -> bool { matches!(s, IpKind::V4(_)) }",
-    )
-    .unwrap();
+    let f: syn::ItemFn =
+        syn::parse_str("fn is_v4(s: &IpKind) -> bool { matches!(s, IpKind::V4(_)) }").unwrap();
     let decl = emit_value_contract("is_v4", &f.block).expect("enum-variant matches! warrants");
     let inv = format!("{:?}", decl.inv.expect("inv present"));
     assert!(inv.contains("variant_of"), "discriminant present: {inv}");
-    assert!(inv.contains("V4"), "the matched variant tag is present: {inv}");
+    assert!(
+        inv.contains("V4"),
+        "the matched variant tag is present: {inv}"
+    );
 }
 
 // Discrimination: is_v4 and is_v6 over the same subject are DISTINCT discriminants
@@ -7309,10 +7416,22 @@ fn emit_value_contract_unguarded_enum_variant_discrimination() {
         syn::parse_str("fn f(s: &IpKind) -> bool { matches!(s, IpKind::V4(_)) }").unwrap();
     let v6: syn::ItemFn =
         syn::parse_str("fn f(s: &IpKind) -> bool { matches!(s, IpKind::V6(_)) }").unwrap();
-    let i4 = format!("{:?}", emit_value_contract("f", &v4.block).unwrap().inv.unwrap());
-    let i6 = format!("{:?}", emit_value_contract("f", &v6.block).unwrap().inv.unwrap());
-    assert!(i4.contains("V4") && !i4.contains("V6"), "v4 discriminant: {i4}");
-    assert!(i6.contains("V6") && !i6.contains("V4"), "v6 discriminant: {i6}");
+    let i4 = format!(
+        "{:?}",
+        emit_value_contract("f", &v4.block).unwrap().inv.unwrap()
+    );
+    let i6 = format!(
+        "{:?}",
+        emit_value_contract("f", &v6.block).unwrap().inv.unwrap()
+    );
+    assert!(
+        i4.contains("V4") && !i4.contains("V6"),
+        "v4 discriminant: {i4}"
+    );
+    assert!(
+        i6.contains("V6") && !i6.contains("V4"),
+        "v6 discriminant: {i6}"
+    );
     // a bare binding pattern is always-true (vacuous) -> not warranted.
     let bind: syn::ItemFn =
         syn::parse_str("fn f(s: &IpKind) -> bool { matches!(s, _anything) }").unwrap();
@@ -7325,10 +7444,8 @@ fn emit_value_contract_unguarded_enum_variant_discrimination() {
 #[test]
 fn emit_value_contract_unguarded_enum_variant_composes_through_compiler() {
     use sugar_lift_rust_tests::emit_value_contract;
-    let f: syn::ItemFn = syn::parse_str(
-        "fn is_v4(s: &IpKind) -> bool { matches!(s, IpKind::V4(_)) }",
-    )
-    .unwrap();
+    let f: syn::ItemFn =
+        syn::parse_str("fn is_v4(s: &IpKind) -> bool { matches!(s, IpKind::V4(_)) }").unwrap();
     let decl = emit_value_contract("is_v4", &f.block).unwrap();
     let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
     let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
@@ -7342,7 +7459,10 @@ fn emit_value_contract_unguarded_enum_variant_composes_through_compiler() {
     if std::path::Path::new(z3).exists() {
         let path = std::env::temp_dir().join("sugar_enum_variant_compose.smt2");
         std::fs::write(&path, &script).expect("write smt2");
-        let out = std::process::Command::new(z3).arg(&path).output().expect("run z3");
+        let out = std::process::Command::new(z3)
+            .arg(&path)
+            .output()
+            .expect("run z3");
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(
             !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
@@ -7371,8 +7491,14 @@ fn emit_value_contract_char_cast_warrants_and_composes() {
     .unwrap();
     let decl = emit_value_contract("up", &f.block).expect("char-cast if-body warrants");
     let inv_dbg = format!("{:?}", decl.inv.clone().expect("inv present"));
-    assert!(inv_dbg.contains("cast:char"), "char cast ctor present: {inv_dbg}");
-    assert!(inv_dbg.contains("cast:u8"), "nested u8 cast ctor present: {inv_dbg}");
+    assert!(
+        inv_dbg.contains("cast:char"),
+        "char cast ctor present: {inv_dbg}"
+    );
+    assert!(
+        inv_dbg.contains("cast:u8"),
+        "nested u8 cast ctor present: {inv_dbg}"
+    );
 
     let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
     let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
@@ -7384,13 +7510,19 @@ fn emit_value_contract_char_cast_warrants_and_composes() {
     if std::path::Path::new(z3).exists() {
         let path = std::env::temp_dir().join("sugar_char_cast_compose.smt2");
         std::fs::write(&path, &script).expect("write smt2");
-        let out = std::process::Command::new(z3).arg(&path).output().expect("run z3");
+        let out = std::process::Command::new(z3)
+            .arg(&path)
+            .output()
+            .expect("run z3");
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(
             !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
             "char-cast relation must be well-sorted for z3:\n{stdout}\n--- {script}"
         );
-        assert!(stdout.contains("sat"), "char-cast relation must be satisfiable:\n{stdout}\n--- {script}");
+        assert!(
+            stdout.contains("sat"),
+            "char-cast relation must be satisfiable:\n{stdout}\n--- {script}"
+        );
     }
 }
 
@@ -7399,8 +7531,7 @@ fn emit_value_contract_char_cast_warrants_and_composes() {
 #[test]
 fn emit_value_contract_unhandled_cast_refused() {
     use sugar_lift_rust_tests::emit_value_contract;
-    let f: syn::ItemFn =
-        syn::parse_str("fn p(x: &u8) -> *const u8 { x as *const u8 }").unwrap();
+    let f: syn::ItemFn = syn::parse_str("fn p(x: &u8) -> *const u8 { x as *const u8 }").unwrap();
     assert!(
         emit_value_contract("p", &f.block).is_none(),
         "a raw-pointer cast must not warrant"
@@ -7422,7 +7553,10 @@ fn emit_value_contract_guard_return_warrants_and_composes() {
     .unwrap();
     let decl = emit_value_contract("sign", &f.block).expect("guard-clause body warrants");
     let inv_dbg = format!("{:?}", decl.inv.clone().expect("inv present"));
-    assert!(inv_dbg.contains("implies"), "guard clauses encode via implies: {inv_dbg}");
+    assert!(
+        inv_dbg.contains("implies"),
+        "guard clauses encode via implies: {inv_dbg}"
+    );
     assert!(inv_dbg.contains("out"), "return value related: {inv_dbg}");
 
     let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(&decl));
@@ -7435,13 +7569,19 @@ fn emit_value_contract_guard_return_warrants_and_composes() {
     if std::path::Path::new(z3).exists() {
         let path = std::env::temp_dir().join("sugar_guard_return_compose.smt2");
         std::fs::write(&path, &script).expect("write smt2");
-        let out = std::process::Command::new(z3).arg(&path).output().expect("run z3");
+        let out = std::process::Command::new(z3)
+            .arg(&path)
+            .output()
+            .expect("run z3");
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(
             !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
             "guard-clause relation must be well-sorted for z3:\n{stdout}\n--- {script}"
         );
-        assert!(stdout.contains("sat"), "guard-clause relation must be satisfiable:\n{stdout}");
+        assert!(
+            stdout.contains("sat"),
+            "guard-clause relation must be satisfiable:\n{stdout}"
+        );
     }
 }
 
@@ -7463,10 +7603,8 @@ fn emit_value_contract_unary_neg_tail_warrants() {
 fn emit_value_contract_guard_return_non_value_tail_refused() {
     use sugar_lift_rust_tests::emit_value_contract;
     // tail is a loop expression (not an EUF value) -> None.
-    let f: syn::ItemFn = syn::parse_str(
-        "fn f(a: i32) -> i32 { if a > 0 { return a; } loop { } }",
-    )
-    .unwrap();
+    let f: syn::ItemFn =
+        syn::parse_str("fn f(a: i32) -> i32 { if a > 0 { return a; } loop { } }").unwrap();
     assert!(
         emit_value_contract("f", &f.block).is_none(),
         "a non-value guard tail must not warrant"
@@ -7482,13 +7620,14 @@ fn emit_value_contract_guard_return_non_value_tail_refused() {
 #[test]
 fn emit_value_contract_slice_pattern_matches_warrants_and_composes() {
     use sugar_lift_rust_tests::emit_value_contract;
-    let f: syn::ItemFn = syn::parse_str(
-        "fn is_doc(o: [u8; 4]) -> bool { matches!(o, [192, 0, 2, _]) }",
-    )
-    .unwrap();
+    let f: syn::ItemFn =
+        syn::parse_str("fn is_doc(o: [u8; 4]) -> bool { matches!(o, [192, 0, 2, _]) }").unwrap();
     let decl = emit_value_contract("is_doc", &f.block).expect("slice-pattern matches! warrants");
     let inv_dbg = format!("{:?}", decl.inv.clone().expect("inv present"));
-    assert!(inv_dbg.contains("index"), "index accessor present: {inv_dbg}");
+    assert!(
+        inv_dbg.contains("index"),
+        "index accessor present: {inv_dbg}"
+    );
     for lit in ["192", "2"] {
         assert!(inv_dbg.contains(lit), "fixed byte {lit} present: {inv_dbg}");
     }
@@ -7503,13 +7642,19 @@ fn emit_value_contract_slice_pattern_matches_warrants_and_composes() {
     if std::path::Path::new(z3).exists() {
         let path = std::env::temp_dir().join("sugar_slice_pattern_compose.smt2");
         std::fs::write(&path, &script).expect("write smt2");
-        let out = std::process::Command::new(z3).arg(&path).output().expect("run z3");
+        let out = std::process::Command::new(z3)
+            .arg(&path)
+            .output()
+            .expect("run z3");
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(
             !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
             "slice-pattern relation must be well-sorted for z3:\n{stdout}\n--- {script}"
         );
-        assert!(stdout.contains("sat"), "slice-pattern relation must be satisfiable:\n{stdout}");
+        assert!(
+            stdout.contains("sat"),
+            "slice-pattern relation must be satisfiable:\n{stdout}"
+        );
     }
 }
 
@@ -7562,13 +7707,19 @@ fn emit_value_contract_const_block_warrants_and_composes() {
     if std::path::Path::new(z3).exists() {
         let path = std::env::temp_dir().join("sugar_const_block_compose.smt2");
         std::fs::write(&path, &script).expect("write smt2");
-        let out = std::process::Command::new(z3).arg(&path).output().expect("run z3");
+        let out = std::process::Command::new(z3)
+            .arg(&path)
+            .output()
+            .expect("run z3");
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(
             !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
             "const-block relation must be well-sorted for z3:\n{stdout}\n--- {script}"
         );
-        assert!(stdout.contains("sat"), "const-block relation must be satisfiable:\n{stdout}");
+        assert!(
+            stdout.contains("sat"),
+            "const-block relation must be satisfiable:\n{stdout}"
+        );
     }
 }
 
@@ -7590,7 +7741,10 @@ fn z3_verdict(inv: &serde_json::Value, label: &str) -> Option<bool> {
     // races (one test reads another's script).
     let path = std::env::temp_dir().join(format!("sugar_vendor_check_{label}.smt2"));
     std::fs::write(&path, &script).expect("write smt2");
-    let out = std::process::Command::new(z3).arg(&path).output().expect("run z3");
+    let out = std::process::Command::new(z3)
+        .arg(&path)
+        .output()
+        .expect("run z3");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
@@ -7613,7 +7767,10 @@ fn vendor_pin_confirms_correct_warrant_sat() {
     let decl = emit_value_contract("double", &f.block).expect("warrants");
     let conjoined = warrant_conjoined_with_vendor(&decl, &[("x", 3)], 6);
     if let Some(sat) = z3_verdict(&inv_json(&conjoined), "good") {
-        assert!(sat, "warrant out=x*2 at x=3 must coexist with the sworn answer 6 (SAT)");
+        assert!(
+            sat,
+            "warrant out=x*2 at x=3 must coexist with the sworn answer 6 (SAT)"
+        );
     }
 }
 
@@ -7628,7 +7785,10 @@ fn vendor_pin_refutes_wrong_warrant_unsat() {
     let decl = emit_value_contract("double", &f.block).expect("warrants");
     let conjoined = warrant_conjoined_with_vendor(&decl, &[("x", 3)], 7);
     if let Some(sat) = z3_verdict(&inv_json(&conjoined), "bad") {
-        assert!(!sat, "warrant out=x*2 at x=3 must CONTRADICT the sworn answer 7 (UNSAT)");
+        assert!(
+            !sat,
+            "warrant out=x*2 at x=3 must CONTRADICT the sworn answer 7 (UNSAT)"
+        );
     }
 }
 
@@ -7652,13 +7812,19 @@ fn broad_functional_warrant_composes_through_compiler() {
     if std::path::Path::new(z3).exists() {
         let path = std::env::temp_dir().join("sugar_broad_functional_compose.smt2");
         std::fs::write(&path, &script).expect("write smt2");
-        let out = std::process::Command::new(z3).arg(&path).output().expect("run z3");
+        let out = std::process::Command::new(z3)
+            .arg(&path)
+            .output()
+            .expect("run z3");
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(
             !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
             "functional warrant must be well-sorted:\n{stdout}\n--- {script}"
         );
-        assert!(stdout.contains("sat"), "functional warrant must be satisfiable:\n{stdout}");
+        assert!(
+            stdout.contains("sat"),
+            "functional warrant must be satisfiable:\n{stdout}"
+        );
     }
 }
 
@@ -8274,7 +8440,11 @@ fn cast_f32() {
 "#;
     let out = lift_file(&parse(src), "tests/num.rs");
     assert_eq!(out.seen, 1);
-    assert_eq!(out.lifted, 1, "float-cast assert must lift: {:?}", out.warnings);
+    assert_eq!(
+        out.lifted, 1,
+        "float-cast assert must lift: {:?}",
+        out.warnings
+    );
     let operands = inv_operands(&out.decls[0]);
     assert_eq!(operands.len(), 1);
     match operands[0].as_ref() {
@@ -8315,7 +8485,11 @@ fn cast_f32_contradiction() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/num.rs");
-    assert_eq!(out.lifted, 1, "both casted asserts lift into one row: {:?}", out.warnings);
+    assert_eq!(
+        out.lifted, 1,
+        "both casted asserts lift into one row: {:?}",
+        out.warnings
+    );
     // Two operands over the SAME cast term, pinned to two different reals.
     assert_eq!(inv_operands(&out.decls[0]).len(), 2);
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "float_cast_contra") {
@@ -8336,7 +8510,9 @@ fn ptr_cast() {
     let out = lift_file(&parse(src), "tests/num.rs");
     assert_eq!(out.lifted, 0);
     assert!(
-        out.warnings.iter().any(|w| w.reason.contains("unsupported term")),
+        out.warnings
+            .iter()
+            .any(|w| w.reason.contains("unsupported term")),
         "pointer-target cast must stay residual: {:?}",
         out.warnings
     );
@@ -8362,7 +8538,11 @@ fn t() {
 "#;
     let ow = lift_file(&parse(wrapped), "tests/result.rs");
     let ob = lift_file(&parse(bare), "tests/result.rs");
-    assert_eq!(ow.lifted, 1, "unsafe-wrapped assert must lift: {:?}", ow.warnings);
+    assert_eq!(
+        ow.lifted, 1,
+        "unsafe-wrapped assert must lift: {:?}",
+        ow.warnings
+    );
     assert_eq!(ob.lifted, 1, "bare assert must lift: {:?}", ob.warnings);
     // CONGRUENCE: the unsafe wrapper introduces no new shape -- the two invs are
     // byte-identical (same canonical FOL).
@@ -8386,10 +8566,17 @@ fn t() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/cell.rs");
-    assert_eq!(out.lifted, 1, "both unsafe asserts lift: {:?}", out.warnings);
+    assert_eq!(
+        out.lifted, 1,
+        "both unsafe asserts lift: {:?}",
+        out.warnings
+    );
     assert_eq!(inv_operands(&out.decls[0]).len(), 2);
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "unsafe_contra") {
-        assert!(!sat, "transparent unsafe row must refute a contradictory pin (UNSAT)");
+        assert!(
+            !sat,
+            "transparent unsafe row must refute a contradictory pin (UNSAT)"
+        );
     }
 }
 
@@ -8406,9 +8593,14 @@ fn t() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/cell.rs");
-    assert_eq!(out.lifted, 0, "mutable-raw deref under unsafe must NOT lift");
+    assert_eq!(
+        out.lifted, 0,
+        "mutable-raw deref under unsafe must NOT lift"
+    );
     assert!(
-        out.warnings.iter().any(|w| w.reason.contains("unsupported term")),
+        out.warnings
+            .iter()
+            .any(|w| w.reason.contains("unsupported term")),
         "the inner `&mut *p` must stay residual (only the wrapper is transparent): {:?}",
         out.warnings
     );
@@ -8433,7 +8625,10 @@ fn join_try() {
         .iter()
         .find(|r| r.contains("effectful control-flow block"))
         .unwrap_or_else(|| {
-            panic!("expected an effectful-control-flow refusal, got {:?}", out.skip_reasons)
+            panic!(
+                "expected an effectful-control-flow refusal, got {:?}",
+                out.skip_reasons
+            )
         });
     assert_eq!(
         sugar_lift_rust_tests::refusal_disposition(reason),
@@ -8483,7 +8678,10 @@ fn test_join() {
         .iter()
         .find(|r| r.contains("effectful control-flow block"))
         .unwrap_or_else(|| {
-            panic!("expected a future-continuation refusal, got {:?}", out.skip_reasons)
+            panic!(
+                "expected a future-continuation refusal, got {:?}",
+                out.skip_reasons
+            )
         });
     assert_eq!(
         sugar_lift_rust_tests::refusal_disposition(reason),
@@ -8516,7 +8714,10 @@ fn test_arrays() {
         .iter()
         .find(|r| r.contains("opaque compile-time reflection"))
         .unwrap_or_else(|| {
-            panic!("expected an opaque-reflection refusal, got {:?}", out.skip_reasons)
+            panic!(
+                "expected an opaque-reflection refusal, got {:?}",
+                out.skip_reasons
+            )
         });
     assert_eq!(
         sugar_lift_rust_tests::refusal_disposition(reason),
@@ -8529,10 +8730,13 @@ fn test_arrays() {
         .iter()
         .filter(|r| r.contains("opaque compile-time reflection"))
         .count();
-    assert_eq!(refl, 2, "both reflection body asserts refused: {:?}", out.skip_reasons);
+    assert_eq!(
+        refl, 2,
+        "both reflection body asserts refused: {:?}",
+        out.skip_reasons
+    );
     assert!(
-        !out
-            .skip_reasons
+        !out.skip_reasons
             .iter()
             .any(|r| r.contains("unenumerated statement position")),
         "no reflection body assert should fall to the unenumerated safety net: {:?}",
@@ -8558,8 +8762,7 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/lit_match.rs");
     assert!(
-        !out
-            .skip_reasons
+        !out.skip_reasons
             .iter()
             .any(|r| r.contains("opaque compile-time reflection")),
         "a literal-scrutinee match must NEVER be reflection-refused: {:?}",
@@ -8587,8 +8790,7 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/lit_block.rs");
     assert!(
-        !out
-            .skip_reasons
+        !out.skip_reasons
             .iter()
             .any(|r| r.contains("effectful control-flow block")
                 || r.contains("opaque compile-time reflection")),
@@ -8596,7 +8798,10 @@ fn t() {
         out.skip_reasons
     );
     assert_eq!(out.lifted, 1, "the literal block digs: {:?}", out.warnings);
-    assert_eq!(out.assertions_lifted, 1, "the in-scope literal assert lifts");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "the in-scope literal assert lifts"
+    );
 }
 
 // ── DIG WAVE: versioned-cursor / bin-1 body-lift over LITERAL domains ─────────
@@ -8617,8 +8822,14 @@ fn dug_eq_int_pairs(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<(i128, i128)>
         match f {
             Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
                 if let (
-                    Term::Const { value: ConstValue::Int(a), .. },
-                    Term::Const { value: ConstValue::Int(b), .. },
+                    Term::Const {
+                        value: ConstValue::Int(a),
+                        ..
+                    },
+                    Term::Const {
+                        value: ConstValue::Int(b),
+                        ..
+                    },
                 ) = (args[0].as_ref(), args[1].as_ref())
                 {
                     out.push((*a, *b));
@@ -8654,7 +8865,8 @@ fn dug_eq_ctor_name_pairs(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<(String
     fn walk(f: &Formula, out: &mut Vec<(String, String)>) {
         match f {
             Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
-                if let (Some(a), Some(b)) = (ctor_name(args[0].as_ref()), ctor_name(args[1].as_ref()))
+                if let (Some(a), Some(b)) =
+                    (ctor_name(args[0].as_ref()), ctor_name(args[1].as_ref()))
                 {
                     out.push((a, b));
                 }
@@ -8742,7 +8954,10 @@ fn monadic_some_equal_is_sat_and_bad_twin_is_unsat() {
 
     let bad = lift_eq_decl("Some(1)", "Some(2)", "tests/monadic_some_bad.rs");
     if let Some(sat) = z3_verdict(&inv_json(&bad), "monadic_some_bad") {
-        assert!(!sat, "the bad twin Some(1)==Some(2) must be z3-UNSAT (injectivity teeth)");
+        assert!(
+            !sat,
+            "the bad twin Some(1)==Some(2) must be z3-UNSAT (injectivity teeth)"
+        );
     }
 }
 
@@ -8788,7 +9003,10 @@ fn monadic_result_ok_equal_sat_bad_twin_and_cross_variant_unsat() {
         "Ok(1)==Err(1) must ground to res:ok vs res:err ctors"
     );
     if let Some(sat) = z3_verdict(&inv_json(&cross), "monadic_ok_err") {
-        assert!(!sat, "Ok(1)==Err(1) must be z3-UNSAT (cross-variant distinctness)");
+        assert!(
+            !sat,
+            "Ok(1)==Err(1) must be z3-UNSAT (cross-variant distinctness)"
+        );
     }
 }
 
@@ -8827,9 +9045,16 @@ fn iter_next_over_literal_array_grounds_to_some_first_element() {
 
     // BAD TWIN: `Some(&2)` -> `opt:some(2)` -> `=(opt:some(1), opt:some(2))` ->
     // z3-UNSAT (the real teeth; the old opaque form left it SAT).
-    let bad = lift_eq_decl("[1, 2, 3].iter().next()", "Some(&2)", "tests/iter_next_bad.rs");
+    let bad = lift_eq_decl(
+        "[1, 2, 3].iter().next()",
+        "Some(&2)",
+        "tests/iter_next_bad.rs",
+    );
     if let Some(sat) = z3_verdict(&inv_json(&bad), "iter_next_bad") {
-        assert!(!sat, "the bad twin `.next() == Some(&2)` must be z3-UNSAT (injectivity teeth)");
+        assert!(
+            !sat,
+            "the bad twin `.next() == Some(&2)` must be z3-UNSAT (injectivity teeth)"
+        );
     }
 }
 
@@ -8838,7 +9063,11 @@ fn iter_nth_and_last_over_literal_array_ground_with_teeth() {
     // `.nth(k)` -> `Some(elem[k])`; `.last()` -> `Some(elem[len-1])`. Past the end
     // -> `None`. Each grounds with bad-twin teeth.
     // `.nth(1)` of [10,20,30] is 20.
-    let nth = lift_eq_decl("[10, 20, 30].iter().nth(1)", "Some(&20)", "tests/iter_nth_good.rs");
+    let nth = lift_eq_decl(
+        "[10, 20, 30].iter().nth(1)",
+        "Some(&20)",
+        "tests/iter_nth_good.rs",
+    );
     assert_eq!(
         dug_eq_ctor_name_pairs(&nth),
         vec![("opt:some".to_string(), "opt:some".to_string())],
@@ -8848,13 +9077,21 @@ fn iter_nth_and_last_over_literal_array_ground_with_teeth() {
     if let Some(sat) = z3_verdict(&inv_json(&nth), "iter_nth_good") {
         assert!(sat, "`.nth(1) == Some(20)` must be SAT");
     }
-    let nth_bad = lift_eq_decl("[10, 20, 30].iter().nth(1)", "Some(&21)", "tests/iter_nth_bad.rs");
+    let nth_bad = lift_eq_decl(
+        "[10, 20, 30].iter().nth(1)",
+        "Some(&21)",
+        "tests/iter_nth_bad.rs",
+    );
     if let Some(sat) = z3_verdict(&inv_json(&nth_bad), "iter_nth_bad") {
         assert!(!sat, "`.nth(1) == Some(21)` must be z3-UNSAT");
     }
 
     // `.last()` of [10,20,30] is 30.
-    let last = lift_eq_decl("[10, 20, 30].iter().last()", "Some(&30)", "tests/iter_last_good.rs");
+    let last = lift_eq_decl(
+        "[10, 20, 30].iter().last()",
+        "Some(&30)",
+        "tests/iter_last_good.rs",
+    );
     assert_eq!(
         dug_eq_ctor_name_pairs(&last),
         vec![("opt:some".to_string(), "opt:some".to_string())],
@@ -8867,7 +9104,11 @@ fn iter_nth_and_last_over_literal_array_ground_with_teeth() {
 
     // `.nth(9)` past the end -> `None`. Grounds to opt:none; `== None` is SAT,
     // `== Some(&1)` is z3-UNSAT (distinctness).
-    let past = lift_eq_decl("[10, 20, 30].iter().nth(9)", "None", "tests/iter_nth_past.rs");
+    let past = lift_eq_decl(
+        "[10, 20, 30].iter().nth(9)",
+        "None",
+        "tests/iter_nth_past.rs",
+    );
     assert_eq!(
         dug_eq_ctor_name_pairs(&past),
         vec![("opt:none".to_string(), "opt:none".to_string())],
@@ -8877,7 +9118,11 @@ fn iter_nth_and_last_over_literal_array_ground_with_teeth() {
     if let Some(sat) = z3_verdict(&inv_json(&past), "iter_nth_past") {
         assert!(sat, "`.nth(9) == None` (both opt:none) must be SAT");
     }
-    let past_bad = lift_eq_decl("[10, 20, 30].iter().nth(9)", "Some(&1)", "tests/iter_nth_past_bad.rs");
+    let past_bad = lift_eq_decl(
+        "[10, 20, 30].iter().nth(9)",
+        "Some(&1)",
+        "tests/iter_nth_past_bad.rs",
+    );
     if let Some(sat) = z3_verdict(&inv_json(&past_bad), "iter_nth_past_bad") {
         assert!(!sat, "`.nth(9) == Some(1)` must be z3-UNSAT (None != Some)");
     }
@@ -8926,8 +9171,14 @@ fn dug_eq_bool_pairs(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<(bool, bool)
         match f {
             Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
                 if let (
-                    Term::Const { value: ConstValue::Bool(a), .. },
-                    Term::Const { value: ConstValue::Bool(b), .. },
+                    Term::Const {
+                        value: ConstValue::Bool(a),
+                        ..
+                    },
+                    Term::Const {
+                        value: ConstValue::Bool(b),
+                        ..
+                    },
                 ) = (args[0].as_ref(), args[1].as_ref())
                 {
                     out.push((*a, *b));
@@ -8963,7 +9214,11 @@ fn iter_min_max_over_literal_array_ground_to_some_extremum() {
     // wrap the extremum int via MonadicSugar (the `Option<&T>` result). The atom
     // is `=(opt:some(1), opt:some(1))` -- a structural Option equality, NOT an
     // opaque `method:min` / `call:eq:Some` var.
-    let min = lift_eq_decl("[3, 1, 2].iter().min()", "Some(&1)", "tests/iter_min_good.rs");
+    let min = lift_eq_decl(
+        "[3, 1, 2].iter().min()",
+        "Some(&1)",
+        "tests/iter_min_good.rs",
+    );
     assert_eq!(
         dug_eq_ctor_name_pairs(&min),
         vec![("opt:some".to_string(), "opt:some".to_string())],
@@ -8979,12 +9234,23 @@ fn iter_min_max_over_literal_array_ground_to_some_extremum() {
         assert!(sat, "`.min() == Some(1)` must be SAT");
     }
     // BAD TWIN: `Some(&2)` -> `=(opt:some(1), opt:some(2))` -> z3-UNSAT (injectivity).
-    let min_bad = lift_eq_decl("[3, 1, 2].iter().min()", "Some(&2)", "tests/iter_min_bad.rs");
+    let min_bad = lift_eq_decl(
+        "[3, 1, 2].iter().min()",
+        "Some(&2)",
+        "tests/iter_min_bad.rs",
+    );
     if let Some(sat) = z3_verdict(&inv_json(&min_bad), "iter_min_bad") {
-        assert!(!sat, "the bad twin `.min() == Some(&2)` must be z3-UNSAT (injectivity teeth)");
+        assert!(
+            !sat,
+            "the bad twin `.min() == Some(&2)` must be z3-UNSAT (injectivity teeth)"
+        );
     }
 
-    let max = lift_eq_decl("[3, 1, 2].iter().max()", "Some(&3)", "tests/iter_max_good.rs");
+    let max = lift_eq_decl(
+        "[3, 1, 2].iter().max()",
+        "Some(&3)",
+        "tests/iter_max_good.rs",
+    );
     assert_eq!(
         dug_eq_ctor_name_pairs(&max),
         vec![("opt:some".to_string(), "opt:some".to_string())],
@@ -8994,7 +9260,11 @@ fn iter_min_max_over_literal_array_ground_to_some_extremum() {
     if let Some(sat) = z3_verdict(&inv_json(&max), "iter_max_good") {
         assert!(sat, "`.max() == Some(3)` must be SAT");
     }
-    let max_bad = lift_eq_decl("[3, 1, 2].iter().max()", "Some(&2)", "tests/iter_max_bad.rs");
+    let max_bad = lift_eq_decl(
+        "[3, 1, 2].iter().max()",
+        "Some(&2)",
+        "tests/iter_max_bad.rs",
+    );
     if let Some(sat) = z3_verdict(&inv_json(&max_bad), "iter_max_bad") {
         assert!(!sat, "the bad twin `.max() == Some(&2)` must be z3-UNSAT");
     }
@@ -9017,7 +9287,9 @@ fn iter_min_over_runtime_receiver_stays_opaque_no_fake_dig() {
         "a runtime `.min()` must NOT ground to opt:some on BOTH sides (no fake-dig)"
     );
     assert!(
-        out.decls.iter().any(|d| decl_mentions_ctor(d, "method:min")),
+        out.decls
+            .iter()
+            .any(|d| decl_mentions_ctor(d, "method:min")),
         "the runtime `.min()` must stay the opaque method:min ctor: {:?}",
         out.decls.iter().map(|d| d.inv.clone()).collect::<Vec<_>>()
     );
@@ -9054,7 +9326,10 @@ fn iter_find_and_position_over_literal_array_ground_with_teeth() {
         "tests/iter_find_bad.rs",
     );
     if let Some(sat) = z3_verdict(&inv_json(&find_bad), "iter_find_bad") {
-        assert!(!sat, "the bad twin `.find(>3) == Some(&5)` must be z3-UNSAT");
+        assert!(
+            !sat,
+            "the bad twin `.find(>3) == Some(&5)` must be z3-UNSAT"
+        );
     }
     // No match -> `None`.
     let find_none = lift_eq_decl(
@@ -9095,7 +9370,10 @@ fn iter_find_and_position_over_literal_array_ground_with_teeth() {
         "tests/iter_position_bad.rs",
     );
     if let Some(sat) = z3_verdict(&inv_json(&pos_bad), "iter_position_bad") {
-        assert!(!sat, "the bad twin `.position(>3) == Some(0)` must be z3-UNSAT");
+        assert!(
+            !sat,
+            "the bad twin `.position(>3) == Some(0)` must be z3-UNSAT"
+        );
     }
 }
 
@@ -9134,7 +9412,10 @@ fn iter_any_all_term_position_ground_to_bool_const_with_teeth() {
         "tests/iter_any_bad.rs",
     );
     if let Some(sat) = z3_verdict(&inv_json(&any_bad), "iter_any_bad") {
-        assert!(!sat, "the bad twin `.any(>2) == false` must be z3-UNSAT (bool distinctness teeth)");
+        assert!(
+            !sat,
+            "the bad twin `.any(>2) == false` must be z3-UNSAT (bool distinctness teeth)"
+        );
     }
 
     // `[1,2,3].iter().all(|x| *x > 0)` -- all > 0 -> bool(true).
@@ -9198,7 +9479,9 @@ fn iter_any_over_effect_domain_receiver_stays_opaque_no_fake_dig() {
         out.decls.iter().map(|d| d.inv.clone()).collect::<Vec<_>>()
     );
     assert!(
-        out.skip_reasons.iter().any(|r| r.contains(".any(") && r.contains("OPAQUE")),
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains(".any(") && r.contains("OPAQUE")),
         "the runtime `.any()` must be named bin-2 (opaque collection): {:?}",
         out.skip_reasons
     );
@@ -9212,7 +9495,8 @@ fn iter_find_with_unconstevaluable_closure_stays_opaque() {
     // but `const_eval_unary_closure` returns None on the unbound capture), so the
     // closure-adaptor provenance path names it (bin-1: domain constructed, body not
     // yet point-wise liftable) and refuses -- never a fake grounded `opt:some`.
-    let src = "#[test]\nfn t(cap: i32) { assert_eq!([1, 2, 3].iter().find(|x| **x > cap), Some(&1)); }\n";
+    let src =
+        "#[test]\nfn t(cap: i32) { assert_eq!([1, 2, 3].iter().find(|x| **x > cap), Some(&1)); }\n";
     let out = lift_file(&parse(src), "tests/iter_find_runtime_capture.rs");
     assert_eq!(
         out.lifted, 0,
@@ -9251,7 +9535,9 @@ fn t() {
     let out = lift_file(&parse(src), "tests/cursor_rfold.rs");
     // The cursor rfold (the let-init fold) must dig; the trailing `assert_eq!(i,0)` lifts too.
     assert!(
-        !out.skip_reasons.iter().any(|r| r.contains("let-initializer")),
+        !out.skip_reasons
+            .iter()
+            .any(|r| r.contains("let-initializer")),
         "the cursor rfold over literal arrays must dig, not stay a let-init refusal: {:?}",
         out.skip_reasons
     );
@@ -9320,7 +9606,9 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/cursor_skip_while.rs");
     assert!(
-        !out.skip_reasons.iter().any(|r| r.contains("let-initializer")),
+        !out.skip_reasons
+            .iter()
+            .any(|r| r.contains("let-initializer")),
         "the skip_while(*x) cursor fold must dig: {:?}",
         out.skip_reasons
     );
@@ -9357,7 +9645,9 @@ fn t() {
     let out = lift_file(&parse(src), "tests/cursor_runtime_ys.rs");
     // The runtime-init fold is NOT dug; it stays a let-init refusal (honest under-claim).
     assert!(
-        out.skip_reasons.iter().any(|r| r.contains("let-initializer")),
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("let-initializer")),
         "a runtime-indexed/runtime-extent cursor fold must stay unclassified: {:?}",
         out.skip_reasons
     );
@@ -9395,7 +9685,9 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/filter_map_fold.rs");
     assert!(
-        !out.skip_reasons.iter().any(|r| r.contains("let-initializer")),
+        !out.skip_reasons
+            .iter()
+            .any(|r| r.contains("let-initializer")),
         "the filter_map cursor fold must dig, not stay a let-init refusal: {:?}",
         out.skip_reasons
     );
@@ -9412,7 +9704,10 @@ fn t() {
     );
     // Each ground equality is true -> SAT (teeth: real, not vacuous).
     if let Some(sat) = z3_verdict(&inv_json(fold_decl), "filter_map_fold_good") {
-        assert!(sat, "the filter_map dig (0==0 ∧ 4==4 ∧ ..) must be satisfiable");
+        assert!(
+            sat,
+            "the filter_map dig (0==0 ∧ 4==4 ∧ ..) must be satisfiable"
+        );
     }
 }
 
@@ -9433,7 +9728,9 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/filter_map_rfold.rs");
     assert!(
-        !out.skip_reasons.iter().any(|r| r.contains("let-initializer")),
+        !out.skip_reasons
+            .iter()
+            .any(|r| r.contains("let-initializer")),
         "the filter_map cursor rfold must dig: {:?}",
         out.skip_reasons
     );
@@ -9484,7 +9781,10 @@ fn t() {
     );
     // The conjunction (0==99 ∧ 4==99 ∧ ..) is z3-UNSAT (refutes) -- the real teeth.
     if let Some(sat) = z3_verdict(&inv_json(fold_decl), "filter_map_fold_bad") {
-        assert!(!sat, "the bad-twin filter_map conjunction must be z3-UNSAT (refutes)");
+        assert!(
+            !sat,
+            "the bad-twin filter_map conjunction must be z3-UNSAT (refutes)"
+        );
     }
 }
 
@@ -9552,7 +9852,8 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/iter_sum.rs");
     assert_eq!(
-        out.skip_reasons, Vec::<String>::new(),
+        out.skip_reasons,
+        Vec::<String>::new(),
         "the literal-domain `.sum()` must dig, not refuse: {:?}",
         out.skip_reasons
     );
@@ -9633,9 +9934,18 @@ fn iter_sum_through_map_filter_and_closed_range_digs() {
     // as `fold`. `.filter(even).sum()` keeps [2,4] -> 6; `.map(*2).sum()` -> 12; a closed
     // range `(1..=4).sum()` -> 10. Each grounds to the EXACT total with teeth.
     let cases: &[(&str, i128)] = &[
-        (r#"#[test] fn t() { assert_eq!([1,2,3,4].iter().filter(|&&x| x % 2 == 0).sum::<i32>(), 6); }"#, 6),
-        (r#"#[test] fn t() { assert_eq!([1,2,3].iter().map(|x| x * 2).sum::<i32>(), 12); }"#, 12),
-        (r#"#[test] fn t() { assert_eq!((1..=4).sum::<i32>(), 10); }"#, 10),
+        (
+            r#"#[test] fn t() { assert_eq!([1,2,3,4].iter().filter(|&&x| x % 2 == 0).sum::<i32>(), 6); }"#,
+            6,
+        ),
+        (
+            r#"#[test] fn t() { assert_eq!([1,2,3].iter().map(|x| x * 2).sum::<i32>(), 12); }"#,
+            12,
+        ),
+        (
+            r#"#[test] fn t() { assert_eq!((1..=4).sum::<i32>(), 10); }"#,
+            10,
+        ),
     ];
     for (i, (src, total)) in cases.iter().enumerate() {
         let out = lift_file(&parse(src), "tests/iter_compose.rs");
@@ -9676,7 +9986,10 @@ fn t() {
         out.decls.iter().all(|d| dug_eq_int_pairs(d).is_empty()),
         "no grounded int total may be minted over a runtime collection (no fake-dig)"
     );
-    let dump = format!("{:?}", out.decls.iter().map(|d| d.name.clone()).collect::<Vec<_>>());
+    let dump = format!(
+        "{:?}",
+        out.decls.iter().map(|d| d.name.clone()).collect::<Vec<_>>()
+    );
     assert!(
         dump.contains("method:sum"),
         "the runtime-domain `.sum()` must stay the opaque `method:sum` ctor: {dump}"
@@ -9700,7 +10013,10 @@ fn t(io: X) {
         out.decls.iter().all(|d| dug_eq_int_pairs(d).is_empty()),
         "no grounded int total may be minted over an opaque param receiver (no fake-dig)"
     );
-    let dump = format!("{:?}", out.decls.iter().map(|d| d.name.clone()).collect::<Vec<_>>());
+    let dump = format!(
+        "{:?}",
+        out.decls.iter().map(|d| d.name.clone()).collect::<Vec<_>>()
+    );
     assert!(
         dump.contains("method:sum"),
         "the opaque-param `.sum()` must stay the opaque `method:sum` ctor: {dump}"
@@ -9820,14 +10136,15 @@ fn t() {
     let claims_sum_eq_60_as_closed = out.decls.iter().any(|d| {
         let dump = format!("{:?}", d.inv);
         // a fabricated dig would emit a bare `60 == 60` (both sides const) with no `sum` var.
-        dump.contains("Int(60)")
-            && dump.matches("Int(60)").count() >= 2
-            && !dump.contains("sum")
+        dump.contains("Int(60)") && dump.matches("Int(60)").count() >= 2 && !dump.contains("sum")
     });
     assert!(
         !claims_sum_eq_60_as_closed,
         "a mutated accumulator must not be fake-resolved to its final literal: {:?}",
-        out.decls.iter().map(|d| format!("{:?}", d.inv)).collect::<Vec<_>>()
+        out.decls
+            .iter()
+            .map(|d| format!("{:?}", d.inv))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -9895,12 +10212,18 @@ fn t() {
         let dump = format!("{:?}", d.inv);
         // a fabricated dig over the literal `[0,0,0]` would emit `0 == 10` or over a
         // hallucinated post-state `10 == 10`; either is a fake-dig of a mutable array.
-        (dump.contains("Int(10)") && dump.matches("Int(10)").count() >= 2 && !dump.contains("buf") && !dump.contains("index"))
+        (dump.contains("Int(10)")
+            && dump.matches("Int(10)").count() >= 2
+            && !dump.contains("buf")
+            && !dump.contains("index"))
     });
     assert!(
         !claims_buf0_as_closed_literal,
         "a mutable array's index read must stay uninterpreted, not fake-resolved: {:?}",
-        out.decls.iter().map(|d| format!("{:?}", d.inv)).collect::<Vec<_>>()
+        out.decls
+            .iter()
+            .map(|d| format!("{:?}", d.inv))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -9938,7 +10261,12 @@ fn t() {
         .skip_reasons
         .iter()
         .find(|r| r.contains("RUNTIME endpoint"))
-        .unwrap_or_else(|| panic!("expected a named RUNTIME-endpoint refusal: {:?}", out.skip_reasons));
+        .unwrap_or_else(|| {
+            panic!(
+                "expected a named RUNTIME-endpoint refusal: {:?}",
+                out.skip_reasons
+            )
+        });
     assert_eq!(
         disp(r),
         sugar_lift_rust_tests::Disposition::Refused,
@@ -9968,7 +10296,12 @@ fn t() {
         .skip_reasons
         .iter()
         .find(|r| r.contains("RUNTIME-VALUED accumulator") || r.contains("body READS RUNTIME DATA"))
-        .unwrap_or_else(|| panic!("expected a named runtime-cause refusal: {:?}", out.skip_reasons));
+        .unwrap_or_else(|| {
+            panic!(
+                "expected a named runtime-cause refusal: {:?}",
+                out.skip_reasons
+            )
+        });
     assert_eq!(
         disp(r),
         sugar_lift_rust_tests::Disposition::Refused,
@@ -9998,7 +10331,12 @@ fn t() {
         .skip_reasons
         .iter()
         .find(|r| r.contains("RUNTIME-VALUED accumulator"))
-        .unwrap_or_else(|| panic!("expected a named RUNTIME-VALUED-accumulator refusal: {:?}", out.skip_reasons));
+        .unwrap_or_else(|| {
+            panic!(
+                "expected a named RUNTIME-VALUED-accumulator refusal: {:?}",
+                out.skip_reasons
+            )
+        });
     assert_eq!(
         disp(r),
         sugar_lift_rust_tests::Disposition::Refused,
@@ -10025,7 +10363,9 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/forloop_counter.rs");
     assert!(
-        !out.skip_reasons.iter().any(|r| r.contains("RUNTIME-VALUED accumulator")),
+        !out.skip_reasons
+            .iter()
+            .any(|r| r.contains("RUNTIME-VALUED accumulator")),
         "a simple `acc += 1` counter must NOT be refused as a runtime-valued accumulator: {:?}",
         out.skip_reasons
     );
@@ -10100,9 +10440,22 @@ fn t() {
         .skip_reasons
         .iter()
         .find(|r| r.contains("effectful / raw-pointer / mutable-reference term"))
-        .unwrap_or_else(|| panic!("expected a mutable-reference terminal, got {:?}", out.skip_reasons));
-    assert_eq!(disp2(r), sugar_lift_rust_tests::Disposition::Refused, "must be terminal: {r}");
-    assert_eq!(out.assertions_lifted, 0, "a `&mut` term must not lift: {:?}", out.skip_reasons);
+        .unwrap_or_else(|| {
+            panic!(
+                "expected a mutable-reference terminal, got {:?}",
+                out.skip_reasons
+            )
+        });
+    assert_eq!(
+        disp2(r),
+        sugar_lift_rust_tests::Disposition::Refused,
+        "must be terminal: {r}"
+    );
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "a `&mut` term must not lift: {:?}",
+        out.skip_reasons
+    );
 }
 
 #[test]
@@ -10119,9 +10472,21 @@ fn t() {
     let r = out
         .skip_reasons
         .iter()
-        .find(|r| r.contains("effectful / raw-pointer / mutable-reference term") && r.contains("raw pointer"))
-        .unwrap_or_else(|| panic!("expected a raw-pointer terminal, got {:?}", out.skip_reasons));
-    assert_eq!(disp2(r), sugar_lift_rust_tests::Disposition::Refused, "must be terminal: {r}");
+        .find(|r| {
+            r.contains("effectful / raw-pointer / mutable-reference term")
+                && r.contains("raw pointer")
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "expected a raw-pointer terminal, got {:?}",
+                out.skip_reasons
+            )
+        });
+    assert_eq!(
+        disp2(r),
+        sugar_lift_rust_tests::Disposition::Refused,
+        "must be terminal: {r}"
+    );
 }
 
 #[test]
@@ -10139,9 +10504,21 @@ fn t() {
     let r = out
         .skip_reasons
         .iter()
-        .find(|r| r.contains("effectful / raw-pointer / mutable-reference term") && r.contains("const { <path> }"))
-        .unwrap_or_else(|| panic!("expected a const-block-path terminal, got {:?}", out.skip_reasons));
-    assert_eq!(disp2(r), sugar_lift_rust_tests::Disposition::Refused, "must be terminal: {r}");
+        .find(|r| {
+            r.contains("effectful / raw-pointer / mutable-reference term")
+                && r.contains("const { <path> }")
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "expected a const-block-path terminal, got {:?}",
+                out.skip_reasons
+            )
+        });
+    assert_eq!(
+        disp2(r),
+        sugar_lift_rust_tests::Disposition::Refused,
+        "must be terminal: {r}"
+    );
 }
 
 #[test]
@@ -10158,11 +10535,17 @@ fn t() {
     let out = lift_file(&parse(src), "tests/purecast.rs");
     // No effectful-term terminal must appear for a pure cast.
     assert!(
-        !out.skip_reasons.iter().any(|r| r.contains("effectful / raw-pointer / mutable-reference term")),
+        !out.skip_reasons
+            .iter()
+            .any(|r| r.contains("effectful / raw-pointer / mutable-reference term")),
         "a pure cast must NOT be fake-refused as an effectful term: {:?}",
         out.skip_reasons
     );
-    if let Some(r) = out.skip_reasons.iter().find(|r| r.contains("unsupported term")) {
+    if let Some(r) = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains("unsupported term"))
+    {
         assert_eq!(
             disp2(r),
             sugar_lift_rust_tests::Disposition::Unclassified,
@@ -10183,11 +10566,17 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/imref.rs");
     assert!(
-        !out.skip_reasons.iter().any(|r| r.contains("effectful / raw-pointer / mutable-reference term")),
+        !out.skip_reasons
+            .iter()
+            .any(|r| r.contains("effectful / raw-pointer / mutable-reference term")),
         "an immutable `&` must not be refused as an effectful term: {:?}",
         out.skip_reasons
     );
-    assert_eq!(out.assertions_lifted, 1, "an immutable `&a == &a` must lift: {:?}", out.skip_reasons);
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "an immutable `&a == &a` must lift: {:?}",
+        out.skip_reasons
+    );
 }
 
 #[test]
@@ -10205,8 +10594,17 @@ fn t() {
         .skip_reasons
         .iter()
         .find(|r| r.contains("operand is a runtime non-scalar result"))
-        .unwrap_or_else(|| panic!("expected a runtime-match-scrutinee terminal, got {:?}", out.skip_reasons));
-    assert_eq!(disp2(r), sugar_lift_rust_tests::Disposition::Refused, "must be terminal: {r}");
+        .unwrap_or_else(|| {
+            panic!(
+                "expected a runtime-match-scrutinee terminal, got {:?}",
+                out.skip_reasons
+            )
+        });
+    assert_eq!(
+        disp2(r),
+        sugar_lift_rust_tests::Disposition::Refused,
+        "must be terminal: {r}"
+    );
 }
 
 #[test]
@@ -10222,11 +10620,17 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/matchconst.rs");
     assert!(
-        !out.skip_reasons.iter().any(|r| r.contains("operand is a runtime non-scalar result")),
+        !out.skip_reasons
+            .iter()
+            .any(|r| r.contains("operand is a runtime non-scalar result")),
         "a match over a constructed scrutinee must NOT be fake-refused: {:?}",
         out.skip_reasons
     );
-    if let Some(r) = out.skip_reasons.iter().find(|r| r.contains("only scalar equality")) {
+    if let Some(r) = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains("only scalar equality"))
+    {
         assert_eq!(
             disp2(r),
             sugar_lift_rust_tests::Disposition::Unclassified,
@@ -10250,8 +10654,17 @@ fn t() {
         .skip_reasons
         .iter()
         .find(|r| r.contains("has a non-literal length -- not a finite"))
-        .unwrap_or_else(|| panic!("expected an array-repeat terminal, got {:?}", out.skip_reasons));
-    assert_eq!(disp2(r), sugar_lift_rust_tests::Disposition::Refused, "must be terminal: {r}");
+        .unwrap_or_else(|| {
+            panic!(
+                "expected an array-repeat terminal, got {:?}",
+                out.skip_reasons
+            )
+        });
+    assert_eq!(
+        disp2(r),
+        sugar_lift_rust_tests::Disposition::Refused,
+        "must be terminal: {r}"
+    );
 }
 
 #[test]
@@ -10266,11 +10679,17 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/arrrepeatlit.rs");
     assert!(
-        !out.skip_reasons.iter().any(|r| r.contains("has a non-literal length -- not a finite")),
+        !out.skip_reasons
+            .iter()
+            .any(|r| r.contains("has a non-literal length -- not a finite")),
         "a literal-length repeat must not be refused: {:?}",
         out.skip_reasons
     );
-    assert_eq!(out.assertions_lifted, 1, "a literal-length repeat must lift: {:?}", out.skip_reasons);
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "a literal-length repeat must lift: {:?}",
+        out.skip_reasons
+    );
 }
 
 #[test]
@@ -10308,7 +10727,9 @@ fn t() {
     let out = lift_file(&parse(src), "tests/chunks.rs");
     // (1) The matcher matched: no unsupported-grammar / "no rule matched" refusal.
     assert!(
-        !out.skip_reasons.iter().any(|r| r.contains("no rule matched")),
+        !out.skip_reasons
+            .iter()
+            .any(|r| r.contains("no rule matched")),
         "the metavar-group / trailing-comma matcher shape must MATCH (no 'no rule matched'): {:?}",
         out.skip_reasons
     );
@@ -10427,23 +10848,39 @@ fn t() {
 /// either side is not a grounded `opt:some(<int>)` (e.g. if a side stayed an opaque
 /// `method:try_fold` -- exactly the fake-discharge the structural tests forbid).
 fn try_fold_some_pair(out: &sugar_lift_rust_tests::AdapterOutput) -> (i128, i128) {
-    assert_eq!(out.lifted, 1, "must discharge; reasons={:?}", out.skip_reasons);
+    assert_eq!(
+        out.lifted, 1,
+        "must discharge; reasons={:?}",
+        out.skip_reasons
+    );
     assert_eq!(out.decls.len(), 1);
     let operands = inv_operands(&out.decls[0]);
     assert_eq!(operands.len(), 1, "one grounded equality atom");
     let Formula::Atomic { name, args } = operands[0].as_ref() else {
         panic!("expected equality atom, got {:?}", operands[0]);
     };
-    assert_eq!(name, "=", "the grounded Option equality is a plain structural `=`");
+    assert_eq!(
+        name, "=",
+        "the grounded Option equality is a plain structural `=`"
+    );
     assert_eq!(args.len(), 2);
     let some_int = |t: &Term| -> i128 {
         let Term::Ctor { name, args } = t else {
-            panic!("expected opt:some ctor (a GROUNDED literal, NOT an opaque \
-                    method:try_fold), got {t:?}");
+            panic!(
+                "expected opt:some ctor (a GROUNDED literal, NOT an opaque \
+                    method:try_fold), got {t:?}"
+            );
         };
-        assert_eq!(name, "opt:some", "the fold result must be a grounded opt:some(n)");
+        assert_eq!(
+            name, "opt:some",
+            "the fold result must be a grounded opt:some(n)"
+        );
         assert_eq!(args.len(), 1);
-        let Term::Const { value: ConstValue::Int(v), .. } = args[0].as_ref() else {
+        let Term::Const {
+            value: ConstValue::Int(v),
+            ..
+        } = args[0].as_ref()
+        else {
             panic!("expected int inside opt:some, got {:?}", args[0]);
         };
         *v
@@ -10483,7 +10920,11 @@ fn try_fold_map_row_grounds_both_sides_equal() {
         assert_eq!((0..10).map(|x| x + 3).try_fold(7, f), (3..13).try_fold(7, f)); }"#,
     );
     let (a, b) = try_fold_some_pair(&out);
-    assert_eq!((a, b), (11250, 11250), "both sides ground to the real Rust value");
+    assert_eq!(
+        (a, b),
+        (11250, 11250),
+        "both sides ground to the real Rust value"
+    );
 }
 
 #[test]
@@ -10495,7 +10936,11 @@ fn try_fold_map_row_bad_twin_refutes() {
         assert_eq!((0..10).map(|x| x + 3).try_fold(7, f), (3..13).try_fold(8, f)); }"#,
     );
     let (a, b) = try_fold_some_pair(&out);
-    assert_eq!((a, b), (11250, 12274), "bad-twin grounds to UNEQUAL literals");
+    assert_eq!(
+        (a, b),
+        (11250, 12274),
+        "bad-twin grounds to UNEQUAL literals"
+    );
     assert_ne!(a, b, "Some(a) == Some(b) with a != b is z3-UNSAT (refutes)");
 }
 
@@ -10651,7 +11096,9 @@ fn test_map_try_folds() {
     let mut saw_grounded = false;
     for d in &out.decls {
         for op in inv_operands(d) {
-            let Formula::Atomic { name, args } = op.as_ref() else { continue };
+            let Formula::Atomic { name, args } = op.as_ref() else {
+                continue;
+            };
             if name != "=" || args.len() != 2 {
                 continue;
             }
@@ -10663,8 +11110,9 @@ fn test_map_try_folds() {
                     _ => String::new(),
                 })
                 .collect();
-            let has_opaque =
-                names.iter().any(|n| n == "method:try_fold" || n == "method:try_rfold");
+            let has_opaque = names
+                .iter()
+                .any(|n| n == "method:try_fold" || n == "method:try_rfold");
             // A fabricated grounded `opt:some(<int>)` operand.
             let has_grounded_some = args.iter().any(|t| {
                 matches!(t.as_ref(), Term::Ctor { name, args }
@@ -10685,7 +11133,10 @@ fn test_map_try_folds() {
             }
         }
     }
-    assert!(saw_grounded, "the 2 closed rows must ground to opt:some(_)==opt:some(_)");
+    assert!(
+        saw_grounded,
+        "the 2 closed rows must ground to opt:some(_)==opt:some(_)"
+    );
     assert!(
         saw_opaque_runtime,
         "the runtime rows must STAY opaque method:try_fold (not fabricated)"
@@ -10725,7 +11176,10 @@ fn int_cmp_atom(decl: &sugar_ir_symbolic::ContractDecl) -> (String, i128, i128) 
     };
     let int_of = |t: &Term| -> i128 {
         match t {
-            Term::Const { value: ConstValue::Int(v), .. } => *v,
+            Term::Const {
+                value: ConstValue::Int(v),
+                ..
+            } => *v,
             other => panic!("expected int operand, got {other:?}"),
         }
     };
@@ -10788,7 +11242,11 @@ fn case2_zero_byte_inlines_to_finite_conjunction_dig() {
         }
     }
     seen.sort();
-    assert_eq!(seen, vec![0, 1, 2, 3], "the finite conjunction 0<4 ∧ 1<4 ∧ 2<4 ∧ 3<4");
+    assert_eq!(
+        seen,
+        vec![0, 1, 2, 3],
+        "the finite conjunction 0<4 ∧ 1<4 ∧ 2<4 ∧ 3<4"
+    );
 }
 
 #[test]
@@ -10809,7 +11267,11 @@ fn case2_zero_byte_bad_twin_byte_lt_3_refutes_z3_unsat() {
     let out = lift_file(&parse(src), "tests/sip_twin.rs");
     let decl = decl_named(&out, "test_hash_no_bytes_dropped_32::argsite::zero_byte#b3");
     let (op, lhs, rhs) = int_cmp_atom(decl);
-    assert_eq!((op.as_str(), lhs, rhs), ("<", 3, 3), "bad-twin site 3 grounds to `3 < 3` (false)");
+    assert_eq!(
+        (op.as_str(), lhs, rhs),
+        ("<", 3, 3),
+        "bad-twin site 3 grounds to `3 < 3` (false)"
+    );
     // z3_verdict: Some(true)=SAT, Some(false)=UNSAT, None=z3 absent.
     if let Some(sat) = z3_verdict(&inv_json(decl), "case2_bad_twin_b3") {
         assert!(!sat, "bad-twin `3 < 3` is z3-UNSAT (refutes)");
@@ -10839,7 +11301,9 @@ fn case1_cloned_sideeffectful_any_is_refused_bail() {
     "#;
     let out = lift_file(&parse(src), "tests/zip.rs");
     assert!(
-        out.skip_reasons.iter().any(|r| r.contains(SIDEEFFECT_CLONE_REASON)),
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains(SIDEEFFECT_CLONE_REASON)),
         "the side-effecting-clone `.any` must BAIL with its named reason: {:?}",
         out.skip_reasons
     );
@@ -10871,7 +11335,9 @@ fn case1_discrimination_pure_any_over_int_literal_array_not_refused() {
     "#;
     let out = lift_file(&parse(src), "tests/pure_any.rs");
     assert!(
-        !out.skip_reasons.iter().any(|r| r.contains(SIDEEFFECT_CLONE_REASON)),
+        !out.skip_reasons
+            .iter()
+            .any(|r| r.contains(SIDEEFFECT_CLONE_REASON)),
         "a pure `.any` over an int-literal array must NOT be refused by the \
          side-effecting-clone guard (fake-refuse guard): {:?}",
         out.skip_reasons
@@ -10894,7 +11360,9 @@ fn case1_discrimination_cloned_loop_over_int_literals_not_refused() {
     "#;
     let out = lift_file(&parse(src), "tests/cloned_lits.rs");
     assert!(
-        !out.skip_reasons.iter().any(|r| r.contains(SIDEEFFECT_CLONE_REASON)),
+        !out.skip_reasons
+            .iter()
+            .any(|r| r.contains(SIDEEFFECT_CLONE_REASON)),
         "a `.cloned()` loop over a SCALAR-LITERAL array is pure and must NOT trigger \
          the side-effecting-clone guard: {:?}",
         out.skip_reasons
@@ -10951,7 +11419,12 @@ fn case3_decode_utf16_size_hint_loop_is_refused_bail() {
         .skip_reasons
         .iter()
         .find(|r| r.contains("`check`") && r.contains("runtime iterator"))
-        .unwrap_or_else(|| panic!("expected a runtime-iterator refusal for `check`: {:?}", out.skip_reasons));
+        .unwrap_or_else(|| {
+            panic!(
+                "expected a runtime-iterator refusal for `check`: {:?}",
+                out.skip_reasons
+            )
+        });
     assert_eq!(
         refusal_disposition(check_refusal),
         Disposition::Refused,
@@ -11021,7 +11494,12 @@ fn case3_discrimination_concrete_nested_fn_still_inlines_not_refused() {
     a_bounds.dedup();
     b_bounds.sort();
     b_bounds.dedup();
-    assert_eq!(a_bounds, vec![10], "a's inner digs with ITS OWN `< 10`: {:?}", out.decls.iter().map(|d| &d.name).collect::<Vec<_>>());
+    assert_eq!(
+        a_bounds,
+        vec![10],
+        "a's inner digs with ITS OWN `< 10`: {:?}",
+        out.decls.iter().map(|d| &d.name).collect::<Vec<_>>()
+    );
     assert_eq!(b_bounds, vec![100], "b's inner digs with ITS OWN `< 100`");
 }
 
@@ -11052,7 +11530,10 @@ fn format_eq_verdict(lhs: &str, rhs: &str, label: &str) -> Option<bool> {
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
     let path = std::env::temp_dir().join(format!("sugar_fmt_teeth_{label}.smt2"));
     std::fs::write(&path, &script).unwrap();
-    let z3out = std::process::Command::new(z3).arg(&path).output().expect("run z3");
+    let z3out = std::process::Command::new(z3)
+        .arg(&path)
+        .output()
+        .expect("run z3");
     let stdout = String::from_utf8_lossy(&z3out.stdout);
     assert!(
         !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
@@ -11065,7 +11546,10 @@ fn format_eq_verdict(lhs: &str, rhs: &str, label: &str) -> Option<bool> {
 fn format_int_eq_has_teeth() {
     // Display + hex int. GOOD: correct string SAT; BAD: wrong string UNSAT.
     if let Some(good) = format_eq_verdict(r#"format!("{}", 42u32)"#, r#""42""#, "int_good") {
-        assert!(good, "format!(\"{{}}\", 42u32) == \"42\" must be SAT (discharges)");
+        assert!(
+            good,
+            "format!(\"{{}}\", 42u32) == \"42\" must be SAT (discharges)"
+        );
         let bad = format_eq_verdict(r#"format!("{}", 42u32)"#, r#""99""#, "int_bad").unwrap();
         assert!(!bad, "a WRONG expected string must be z3-UNSAT (teeth)");
         // radix spec carries teeth too.
@@ -11088,9 +11572,15 @@ fn format_char_eq_has_teeth() {
 #[test]
 fn format_str_eq_has_teeth() {
     if let Some(good) = format_eq_verdict(r#"format!("{:?}", "hi")"#, r#""\"hi\"""#, "str_good") {
-        assert!(good, "format!(\"{{:?}}\", \"hi\") == \"\\\"hi\\\"\" must be SAT");
+        assert!(
+            good,
+            "format!(\"{{:?}}\", \"hi\") == \"\\\"hi\\\"\" must be SAT"
+        );
         let bad = format_eq_verdict(r#"format!("{:?}", "hi")"#, r#""hi""#, "str_bad").unwrap();
-        assert!(!bad, "Debug str must quote -> bare \"hi\" is z3-UNSAT (teeth)");
+        assert!(
+            !bad,
+            "Debug str must quote -> bare \"hi\" is z3-UNSAT (teeth)"
+        );
     }
 }
 
@@ -11108,8 +11598,12 @@ fn format_float_eq_has_teeth() {
     // Float Display + precision through FormatSugar's float engine (the subsumed
     // flt2dec compute path), end-to-end with teeth.
     if let Some(good) = format_eq_verdict(r#"format!("{:.2}", 3.14159)"#, r#""3.14""#, "flt_good") {
-        assert!(good, "format!(\"{{:.2}}\", 3.14159) == \"3.14\" must be SAT");
-        let bad = format_eq_verdict(r#"format!("{:.2}", 3.14159)"#, r#""3.15""#, "flt_bad").unwrap();
+        assert!(
+            good,
+            "format!(\"{{:.2}}\", 3.14159) == \"3.14\" must be SAT"
+        );
+        let bad =
+            format_eq_verdict(r#"format!("{:.2}", 3.14159)"#, r#""3.15""#, "flt_bad").unwrap();
         assert!(!bad, "wrong rounded float string must be z3-UNSAT (teeth)");
     }
 }
@@ -11165,7 +11659,9 @@ fn format_runtime_arg_does_not_overfire() {
 
 /// The lifted (lhs, rhs) of the single `assert_eq!` in a one-assert fn: the inv is an
 /// `and` connective with one `= (lhs, rhs)` operand (the conjoined-asserts shape).
-fn single_eq_atom(decl: &sugar_ir_symbolic::ContractDecl) -> (std::rc::Rc<Term>, std::rc::Rc<Term>) {
+fn single_eq_atom(
+    decl: &sugar_ir_symbolic::ContractDecl,
+) -> (std::rc::Rc<Term>, std::rc::Rc<Term>) {
     let operands = inv_operands(decl);
     assert_eq!(
         operands.len(),
@@ -11195,7 +11691,10 @@ fn z3_sat_of_inv(decl: &sugar_ir_symbolic::ContractDecl, tag: &str) -> Option<bo
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
     let path = std::env::temp_dir().join(format!("sugar_macro_term_{tag}.smt2"));
     std::fs::write(&path, &script).expect("write smt2");
-    let out = std::process::Command::new(z3).arg(&path).output().expect("run z3");
+    let out = std::process::Command::new(z3)
+        .arg(&path)
+        .output()
+        .expect("run z3");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         !stdout.contains("unknown constant") && !stdout.to_lowercase().contains("error"),
@@ -11223,15 +11722,30 @@ fn t() {
     let (lhs, rhs) = single_eq_atom(&out.decls[0]);
     match lhs.as_ref() {
         Term::Ctor { name, args } => {
-            assert_eq!(name, "+", "term-position macro must expand to a `+` ctor, got {lhs:?}");
+            assert_eq!(
+                name, "+",
+                "term-position macro must expand to a `+` ctor, got {lhs:?}"
+            );
             assert_eq!(args.len(), 2);
             assert!(
-                matches!(args[0].as_ref(), Term::Const { value: ConstValue::Int(2), .. }),
+                matches!(
+                    args[0].as_ref(),
+                    Term::Const {
+                        value: ConstValue::Int(2),
+                        ..
+                    }
+                ),
                 "first operand must be the literal 2, got {:?}",
                 args[0]
             );
             assert!(
-                matches!(args[1].as_ref(), Term::Const { value: ConstValue::Int(3), .. }),
+                matches!(
+                    args[1].as_ref(),
+                    Term::Const {
+                        value: ConstValue::Int(3),
+                        ..
+                    }
+                ),
                 "second operand must be the literal 3, got {:?}",
                 args[1]
             );
@@ -11239,7 +11753,13 @@ fn t() {
         other => panic!("expected grounded `+(2,3)` ctor LHS, got {other:?}"),
     }
     assert!(
-        matches!(rhs.as_ref(), Term::Const { value: ConstValue::Int(5), .. }),
+        matches!(
+            rhs.as_ref(),
+            Term::Const {
+                value: ConstValue::Int(5),
+                ..
+            }
+        ),
         "RHS must be the int const 5, got {rhs:?}"
     );
     let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
@@ -11270,7 +11790,10 @@ fn t() {
         "bad twin LHS must also be the grounded `+` ctor, got {bad_lhs:?}"
     );
     if let Some(sat) = z3_sat_of_inv(&bad_out.decls[0], "bad") {
-        assert!(!sat, "grounded `+(2,3) == 6` must be z3-UNSAT (teeth: the bad twin is refuted)");
+        assert!(
+            !sat,
+            "grounded `+(2,3) == 6` must be z3-UNSAT (teeth: the bad twin is refuted)"
+        );
     }
 }
 
@@ -11294,7 +11817,9 @@ fn t() {
             name.starts_with("macro:line"),
             "an unexpandable macro must stay the opaque `macro:` var, got `{name}`"
         ),
-        other => panic!("an unexpandable macro must lift to the opaque `macro:` var, got {other:?}"),
+        other => {
+            panic!("an unexpandable macro must lift to the opaque `macro:` var, got {other:?}")
+        }
     }
 }
 
@@ -11416,7 +11941,10 @@ fn calls_h_wrong() {
     let (op, a, b) = grounded_arith_lhs(&out.decls[0]);
     assert_eq!((op.as_str(), a, b), ("+", 2, 1));
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "inline_h_bad") {
-        assert!(!sat, "grounded `+(2,1) == 4` must be z3-UNSAT (teeth bite the bad twin)");
+        assert!(
+            !sat,
+            "grounded `+(2,1) == 4` must be z3-UNSAT (teeth bite the bad twin)"
+        );
     }
 }
 
@@ -11450,7 +11978,10 @@ fn calls_h() {
         }
         other => panic!("expected `+(*(3,2), 1)`, got {other:?}"),
     }
-    assert!(!inv_has_opaque_call_leaf(&out.decls[0]), "no opaque leaf after nested peel");
+    assert!(
+        !inv_has_opaque_call_leaf(&out.decls[0]),
+        "no opaque leaf after nested peel"
+    );
     assert!(out.reduced_helpers.contains("g") && out.reduced_helpers.contains("h"));
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "inline_nested_good") {
         assert!(sat, "grounded `+(*(3,2),1) == 7` must be SAT");
@@ -11472,7 +12003,10 @@ fn calls_h_wrong() {
     let out = lift_file(&parse(src), "tests/inline.rs");
     assert_eq!(out.decls.len(), 1);
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "inline_nested_bad") {
-        assert!(!sat, "grounded `+(*(3,2),1) == 8` must be z3-UNSAT (nested teeth bite)");
+        assert!(
+            !sat,
+            "grounded `+(*(3,2),1) == 8` must be z3-UNSAT (nested teeth bite)"
+        );
     }
 }
 
@@ -11492,7 +12026,11 @@ fn calls_h() {
     let out = lift_file(&parse(src), "tests/inline.rs");
     assert_eq!(out.decls.len(), 1);
     let (op, a, b) = grounded_arith_lhs(&out.decls[0]);
-    assert_eq!((op.as_str(), a, b), ("+", 5, 10), "SSA rebind must substitute the VALUE");
+    assert_eq!(
+        (op.as_str(), a, b),
+        ("+", 5, 10),
+        "SSA rebind must substitute the VALUE"
+    );
     assert!(out.reduced_helpers.contains("h") && out.reduced_helpers.contains("other"));
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "inline_ssa_good") {
         assert!(sat, "grounded `+(5,10) == 15` must be SAT");
@@ -11617,7 +12155,11 @@ fn contradiction() {
     let out = lift_file(&parse(src), "tests/inline.rs");
     assert_eq!(out.decls.len(), 1, "both pins must coalesce into one inv");
     let operands = inv_operands(&out.decls[0]);
-    assert_eq!(operands.len(), 2, "both contradictory pins must be present (not masked)");
+    assert_eq!(
+        operands.len(),
+        2,
+        "both contradictory pins must be present (not masked)"
+    );
     // The whole conjoined contract is z3-UNSAT: `+(2,1)==3 && +(2,1)==4` cannot hold.
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "inline_contradiction") {
         assert!(
@@ -11822,7 +12364,10 @@ fn t() {
         .iter()
         .find(|r| r.contains("side-effecting closure body"))
         .unwrap_or_else(|| {
-            panic!("expected a side-effecting-closure-body refusal, got {:?}", out.skip_reasons)
+            panic!(
+                "expected a side-effecting-closure-body refusal, got {:?}",
+                out.skip_reasons
+            )
         });
     assert_eq!(
         sugar_lift_rust_tests::refusal_disposition(reason),
@@ -11904,7 +12449,10 @@ fn t() {
         out_good.skip_reasons
     );
     if let Some(sat) = z3_verdict(&inv_json(&out_good.decls[0]), "catch_unwind_good") {
-        assert!(sat, "the lifted `v == 6` (with v := 6) must be SAT under z3");
+        assert!(
+            sat,
+            "the lifted `v == 6` (with v := 6) must be SAT under z3"
+        );
     }
 
     // BAD twin: flip the anchor (`assert_eq!(v, 7)` with the same `v := 6`). The lifted

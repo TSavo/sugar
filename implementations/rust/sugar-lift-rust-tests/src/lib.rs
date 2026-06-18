@@ -13,8 +13,8 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
 use std::rc::Rc;
 
-mod macro_expand;
 pub mod closed_eval;
+mod macro_expand;
 mod try_fold_eval;
 
 // The `Sugar` decorator classes each live in their own self-contained module under
@@ -30,12 +30,15 @@ pub mod sugar {
     pub mod array_repeat;
     pub mod array_term;
     pub mod await_term;
+    pub mod backstop;
     pub mod binop;
     pub mod block_term;
     pub mod bound;
     pub mod call;
     pub mod callsite;
     pub mod cast_term;
+    pub mod catalog;
+    pub mod claim;
     pub mod closure_adaptor;
     pub mod closure_term;
     pub mod compare;
@@ -56,6 +59,7 @@ pub mod sugar {
     pub mod impl_method;
     pub mod index;
     pub mod iter_terminal;
+    pub mod iterator;
     pub mod literal;
     pub mod macro_term;
     pub mod map;
@@ -666,8 +670,7 @@ fn census_walk_stmts(
                 sugar::callsite::CallsiteSugar::decompose(e, &local_fns, reducer, options, 0)
             {
                 let mut fw = FloatWidthScope::new();
-                let outcome =
-                    cs.desugar(scope, idx, options, reducer, &mut fw, reduced, 0);
+                let outcome = cs.desugar(scope, idx, options, reducer, &mut fw, reduced, 0);
                 let row = match outcome {
                     sugar::callsite::CallsiteOutcome::Dug(_) => CallsiteCensusRow {
                         helper: cs.name.clone(),
@@ -690,10 +693,7 @@ fn census_walk_stmts(
     }
 }
 
-fn census_row_from_bail(
-    helper: String,
-    cause: sugar::callsite::BailCause,
-) -> CallsiteCensusRow {
+fn census_row_from_bail(helper: String, cause: sugar::callsite::BailCause) -> CallsiteCensusRow {
     use sugar::callsite::{BailCause, ResidueCategory};
     match cause {
         BailCause::NotInlinable => CallsiteCensusRow {
@@ -915,16 +915,31 @@ fn walk_non_test_fns(
             // (e.g. `const _: () = assert!(S(1) == S(1));`). Count and refuse them
             // so they are accounted, not silently dropped.
             Item::Const(c) => {
-                lift_item_assertions(&c.expr, "const-item", source_path, modules, options, reducer, out);
+                lift_item_assertions(
+                    &c.expr,
+                    "const-item",
+                    source_path,
+                    modules,
+                    options,
+                    reducer,
+                    out,
+                );
             }
             Item::Static(s) => {
-                lift_item_assertions(&s.expr, "static-item", source_path, modules, options, reducer, out);
+                lift_item_assertions(
+                    &s.expr,
+                    "static-item",
+                    source_path,
+                    modules,
+                    options,
+                    reducer,
+                    out,
+                );
             }
             _ => {}
         }
     }
 }
-
 
 /// A trait bound that makes a parameter carry RUNTIME behaviour/data that is not a
 /// source literal: a closure/fn-pointer (`Fn`/`FnMut`/`FnOnce`) or an iterator
@@ -948,10 +963,7 @@ fn trait_bound_is_runtime_opaque(b: &syn::TypeParamBound) -> bool {
     false
 }
 
-fn param_type_is_runtime_opaque(
-    ty: &syn::Type,
-    runtime_generics: &HashSet<String>,
-) -> bool {
+fn param_type_is_runtime_opaque(ty: &syn::Type, runtime_generics: &HashSet<String>) -> bool {
     match ty {
         // `impl Fn(..)` / `impl Iterator` parameter.
         syn::Type::ImplTrait(it) => it.bounds.iter().any(trait_bound_is_runtime_opaque),
@@ -1018,12 +1030,11 @@ fn helper_is_runtime_parametric(f: &syn::ItemFn) -> bool {
 /// helper whose closed-literal call site a value-lifter CAN pin -- that stays
 /// unclassified, owned by dissolution / call-site inlining.)
 fn helper_is_generic_parametric(f: &syn::ItemFn) -> bool {
-    f.sig.generics.params.iter().any(|gp| {
-        matches!(
-            gp,
-            syn::GenericParam::Type(_) | syn::GenericParam::Const(_)
-        )
-    })
+    f.sig
+        .generics
+        .params
+        .iter()
+        .any(|gp| matches!(gp, syn::GenericParam::Type(_) | syn::GenericParam::Const(_)))
 }
 
 /// A helper's BODY contains a provably-RUNTIME construct that the resolved-body reducer
@@ -2407,7 +2418,10 @@ fn resolve_index_in_term(term: &Rc<Term>, arrays: &BTreeMap<String, Vec<Rc<Term>
         }
         Term::Ctor { name, args } => Rc::new(Term::Ctor {
             name: name.clone(),
-            args: args.iter().map(|a| resolve_index_in_term(a, arrays)).collect(),
+            args: args
+                .iter()
+                .map(|a| resolve_index_in_term(a, arrays))
+                .collect(),
         }),
         _ => term.clone(),
     }
@@ -2446,7 +2460,10 @@ fn resolve_index_in_formula(
     match formula.as_ref() {
         Formula::Atomic { name, args } => Rc::new(Formula::Atomic {
             name: name.clone(),
-            args: args.iter().map(|a| resolve_index_in_term(a, arrays)).collect(),
+            args: args
+                .iter()
+                .map(|a| resolve_index_in_term(a, arrays))
+                .collect(),
         }),
         Formula::Connective { kind, operands } => Rc::new(Formula::Connective {
             kind: kind.clone(),
@@ -2767,7 +2784,9 @@ fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal>
                         // target; a wide value would TRUNCATE (change value) -> bail
                         // (EXACT-OR-BAIL; the cast comment's identity-preservation is now
                         // enforced, not assumed).
-                        "i64" | "isize" => i64::try_from(n).ok().map(|v| ConstVal::Int(i128::from(v))),
+                        "i64" | "isize" => {
+                            i64::try_from(n).ok().map(|v| ConstVal::Int(i128::from(v)))
+                        }
                         _ => None,
                     }
                 }
@@ -2814,19 +2833,35 @@ fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal>
                 BinOp::Mul(_) => as_i64(&l)?.checked_mul(as_i64(&r)?).map(int),
                 BinOp::Div(_) => {
                     let (a, d) = (as_i64(&l)?, as_i64(&r)?);
-                    if d == 0 { None } else { a.checked_div(d).map(int) }
+                    if d == 0 {
+                        None
+                    } else {
+                        a.checked_div(d).map(int)
+                    }
                 }
                 BinOp::Rem(_) => {
                     let (a, d) = (as_i64(&l)?, as_i64(&r)?);
-                    if d == 0 { None } else { a.checked_rem(d).map(int) }
+                    if d == 0 {
+                        None
+                    } else {
+                        a.checked_rem(d).map(int)
+                    }
                 }
                 // comparisons -> Bool (ints or chars).
                 BinOp::Eq(_) => Some(ConstVal::Bool(l == r)),
                 BinOp::Ne(_) => Some(ConstVal::Bool(l != r)),
-                BinOp::Lt(_) => const_cmp(&l, &r).map(|o| ConstVal::Bool(o == std::cmp::Ordering::Less)),
-                BinOp::Le(_) => const_cmp(&l, &r).map(|o| ConstVal::Bool(o != std::cmp::Ordering::Greater)),
-                BinOp::Gt(_) => const_cmp(&l, &r).map(|o| ConstVal::Bool(o == std::cmp::Ordering::Greater)),
-                BinOp::Ge(_) => const_cmp(&l, &r).map(|o| ConstVal::Bool(o != std::cmp::Ordering::Less)),
+                BinOp::Lt(_) => {
+                    const_cmp(&l, &r).map(|o| ConstVal::Bool(o == std::cmp::Ordering::Less))
+                }
+                BinOp::Le(_) => {
+                    const_cmp(&l, &r).map(|o| ConstVal::Bool(o != std::cmp::Ordering::Greater))
+                }
+                BinOp::Gt(_) => {
+                    const_cmp(&l, &r).map(|o| ConstVal::Bool(o == std::cmp::Ordering::Greater))
+                }
+                BinOp::Ge(_) => {
+                    const_cmp(&l, &r).map(|o| ConstVal::Bool(o != std::cmp::Ordering::Less))
+                }
                 // short-circuit logic.
                 BinOp::And(_) => Some(ConstVal::Bool(l.as_bool()? && r.as_bool()?)),
                 BinOp::Or(_) => Some(ConstVal::Bool(l.as_bool()? || r.as_bool()?)),
@@ -3474,11 +3509,9 @@ impl Effect {
     }
 }
 
-
 /// Maximum desugared sequence length (a finite-construction guard shared by every
 /// sequence class). Mirrors the defolder's `CAP`.
 const SUGAR_SEQ_CAP: i64 = 4096;
-
 
 /// `ConditionalSugar`: the CLAIM-side atom (mirror of `LiteralSugar`, the
 /// value-side atom). A guarded assertion `if <guard> { <then-asserts> }
@@ -3493,7 +3526,6 @@ const SUGAR_SEQ_CAP: i64 = 4096;
 /// trunk previously refused).
 ///
 
-
 /// A `match scrut { pat_i => body_i }` reduced to its scrutinee term + per-arm
 /// discriminant guards. The conjunction it states is `⋀_i (guard_i ⇒ conj(A_i))`,
 
@@ -3506,9 +3538,7 @@ const SUGAR_SEQ_CAP: i64 = 4096;
 ///   - the final wildcard `_ =>`  ->  `Ok(None)` (the caller substitutes the
 ///     negation of all prior guards).
 
-
 /// Build a `MatchSugar` from a `Stmt::Expr(Expr::Match(..))`: the scrutinee must
-
 
 /// Capture the in-scope LITERAL arrays (`ys -> [13, 15, ..]`) from `let_inits`, so a
 /// for-loop / for_each body's `index(ys, <const>)` read can resolve to its concrete
@@ -3558,9 +3588,7 @@ fn capture_scalar_literal_arrays(stmts: &[Stmt]) -> BTreeMap<String, Vec<Expr>> 
 /// type ascription. `None` for `mut`/`ref`/sub-pattern/destructuring binders.
 fn let_simple_binding(pat: &Pat) -> Option<String> {
     match pat {
-        Pat::Ident(pi)
-            if pi.mutability.is_none() && pi.by_ref.is_none() && pi.subpat.is_none() =>
-        {
+        Pat::Ident(pi) if pi.mutability.is_none() && pi.by_ref.is_none() && pi.subpat.is_none() => {
             Some(pi.ident.to_string())
         }
         Pat::Type(t) => let_simple_binding(&t.pat),
@@ -3612,14 +3640,19 @@ fn is_closed_scalar_literal(expr: &Expr) -> bool {
             Lit::Int(_) | Lit::Char(_) | Lit::Byte(_) | Lit::Bool(_)
         ),
         Expr::Unary(u) if matches!(u.op, UnOp::Neg(_)) => {
-            matches!(&*u.expr, Expr::Lit(ExprLit { lit: Lit::Int(_), .. }))
+            matches!(
+                &*u.expr,
+                Expr::Lit(ExprLit {
+                    lit: Lit::Int(_),
+                    ..
+                })
+            )
         }
         Expr::Paren(p) => is_closed_scalar_literal(&p.expr),
         Expr::Group(g) => is_closed_scalar_literal(&g.expr),
         _ => false,
     }
 }
-
 
 /// Build a `SugarCtx` from the collector's loose arguments. Centralizes the
 /// `RefCell` wrap of `float_widths` so the call sites stay terse.
@@ -3804,10 +3837,34 @@ fn term_as_int(t: &Rc<Term>) -> Option<i128> {
 /// closure body advances / mutates external state (a side effect), so a single
 /// universal over the closure parameter is not a timeless point-wise claim.
 const CLOSURE_BODY_MUTATING_METHODS: &[&str] = &[
-    "next", "next_back", "nth", "nth_back", "push", "push_back", "push_front",
-    "pop", "pop_back", "pop_front", "insert", "remove", "clear", "set", "replace",
-    "swap", "truncate", "extend", "append", "drain", "store", "fetch_add",
-    "fetch_sub", "fetch_or", "borrow_mut", "get_mut", "write", "send",
+    "next",
+    "next_back",
+    "nth",
+    "nth_back",
+    "push",
+    "push_back",
+    "push_front",
+    "pop",
+    "pop_back",
+    "pop_front",
+    "insert",
+    "remove",
+    "clear",
+    "set",
+    "replace",
+    "swap",
+    "truncate",
+    "extend",
+    "append",
+    "drain",
+    "store",
+    "fetch_add",
+    "fetch_sub",
+    "fetch_or",
+    "borrow_mut",
+    "get_mut",
+    "write",
+    "send",
 ];
 
 /// The closure-bearing iterator/Option adaptors whose closure body MAY carry a
@@ -3817,10 +3874,32 @@ const CLOSURE_BODY_MUTATING_METHODS: &[&str] = &[
 /// iteration -- its asserts are not point-wise and cannot be lifted by any value
 /// lifter, so they are TERMINAL (closed with a source property), not lifter work.
 const PURE_CLOSURE_ADAPTORS: &[&str] = &[
-    "for_each", "try_for_each", "fold", "rfold", "try_fold", "map", "filter_map",
-    "flat_map", "scan", "inspect", "all", "any", "find", "find_map", "position",
-    "rposition", "reduce", "map_while", "take_while", "skip_while", "filter",
-    "and_then", "or_else", "map_or", "map_or_else", "unwrap_or_else",
+    "for_each",
+    "try_for_each",
+    "fold",
+    "rfold",
+    "try_fold",
+    "map",
+    "filter_map",
+    "flat_map",
+    "scan",
+    "inspect",
+    "all",
+    "any",
+    "find",
+    "find_map",
+    "position",
+    "rposition",
+    "reduce",
+    "map_while",
+    "take_while",
+    "skip_while",
+    "filter",
+    "and_then",
+    "or_else",
+    "map_or",
+    "map_or_else",
+    "unwrap_or_else",
 ];
 
 /// True if a closure body (a `Block`'s stmts or a single body expr) is
@@ -3927,7 +4006,7 @@ fn closure_body_advances_iterator(body: &Expr) -> bool {
 /// `ClosureAdaptorSugar` node's `desugar` `Hit`s (a mutation / iterator-advance /
 /// opaque-runtime / TLS boundary). A THIN ADAPTER over the node, which lives in
 /// `sugar::closure_adaptor`: it `build`s the node through the factory
-/// (`sugar::factory::build_closure_adaptor`, the single-recognizer walk), `desugar`s it once,
+/// (`sugar::factory::build_closure_adaptor`, the closure-adaptor verdict role), `desugar`s it once,
 /// and reads the verdict -- mapping the node's STRUCTURAL backstop `Hit` back to `None` (the
 /// honest-unclassified fall-through, the old `None`). The caller renders `effect.reason()`
 /// into `skip_reasons` -- the wire format is unchanged.
@@ -4023,8 +4102,12 @@ fn reflection_scrutinee(scrut: &Expr) -> Option<String> {
         fn visit_expr_call(&mut self, c: &'ast syn::ExprCall) {
             if let Expr::Path(p) = &*c.func {
                 // `Type::of` / `TypeId::of` (segment `of` on a `Type`/`TypeId` path).
-                let segs: Vec<String> =
-                    p.path.segments.iter().map(|s| s.ident.to_string()).collect();
+                let segs: Vec<String> = p
+                    .path
+                    .segments
+                    .iter()
+                    .map(|s| s.ident.to_string())
+                    .collect();
                 if segs.iter().any(|s| s == "Type" || s == "TypeId")
                     && segs.last().is_some_and(|s| s == "of")
                 {
@@ -4137,7 +4220,9 @@ fn const_fold_bool_guard(cond: &Expr, options: &LiftOptions) -> Option<bool> {
     };
     let base = match inner {
         // A bare boolean literal: `true` / `false`.
-        Expr::Lit(ExprLit { lit: Lit::Bool(b), .. }) => b.value,
+        Expr::Lit(ExprLit {
+            lit: Lit::Bool(b), ..
+        }) => b.value,
         // `(.. )` / `{ .. }` wrapping a literal.
         Expr::Paren(p) => const_fold_bool_guard(&p.expr, options)?,
         Expr::Group(g) => const_fold_bool_guard(&g.expr, options)?,
@@ -4436,9 +4521,7 @@ fn collect_assertion_entries<'a>(
             Stmt::Local(local) => {
                 let init = local.init.as_ref().filter(|i| i.diverge.is_none())?;
                 match &local.pat {
-                    Pat::Ident(p) if p.subpat.is_none() => {
-                        Some((p.ident.to_string(), &*init.expr))
-                    }
+                    Pat::Ident(p) if p.subpat.is_none() => Some((p.ident.to_string(), &*init.expr)),
                     _ => None,
                 }
             }
@@ -4534,19 +4617,16 @@ fn collect_assertion_entries<'a>(
                         // `Sugar` tree is built by `decompose_*` (node + children)
                         // and walked by `desugar()`; the warranted emission drains
                         // its output. A bail (`None`) at any layer falls through.
-                        let ctx = sugar_ctx(
-                            &temporal_scope,
-                            options,
-                            reducer,
-                            float_widths,
-                            macro_depth,
-                        );
+                        let ctx =
+                            sugar_ctx(&temporal_scope, options, reducer, float_widths, macro_depth);
                         let fcx = sugar::factory::FactoryCtx {
                             scope: &temporal_scope,
                             options,
                             let_inits: &let_inits,
                         };
-                        sugar::factory::build_composite(&init.expr, &fcx).desugar(&ctx).dug()
+                        sugar::factory::build_composite(&init.expr, &fcx)
+                            .desugar(&ctx)
+                            .dug()
                     } {
                         emit_desugared(desugared, entries, macros_lifted);
                     } else {
@@ -4788,13 +4868,8 @@ fn collect_assertion_entries<'a>(
                 // conjunction over a literal array). If the body does not wholly
                 // compute to truth values, the desugar bails (refuse below).
                 let lifted = {
-                    let ctx = sugar_ctx(
-                        &temporal_scope,
-                        options,
-                        reducer,
-                        float_widths,
-                        macro_depth,
-                    );
+                    let ctx =
+                        sugar_ctx(&temporal_scope, options, reducer, float_widths, macro_depth);
                     // FACTORY WIRING (slice 1): the recursive `build` factory
                     // dispatches `Expr::ForLoop` to `decompose_for_loop` (its arm is
                     // `boxed(decompose_for_loop(f, scope, let_inits))`), so this is the
@@ -4867,13 +4942,8 @@ fn collect_assertion_entries<'a>(
                     // -- the claim-side atom. EXACT-OR-BAIL (guard must translate, the
                     // branch asserts must fully lift, pure body); a bail keeps the
                     // refusal below. SOUNDNESS: never bare `then` -- always guarded.
-                    let ctx = sugar_ctx(
-                        &temporal_scope,
-                        options,
-                        reducer,
-                        float_widths,
-                        macro_depth,
-                    );
+                    let ctx =
+                        sugar_ctx(&temporal_scope, options, reducer, float_widths, macro_depth);
                     let fcx = sugar::factory::FactoryCtx {
                         scope: &temporal_scope,
                         options,
@@ -4930,7 +5000,10 @@ fn collect_assertion_entries<'a>(
                         .filter(|a| !expr_diverges(&a.body))
                         .map(|a| count_asserts_in_expr(&a.body))
                         .sum();
-                    let reason = (Effect::Reflection { boundary: b.clone() }).reason();
+                    let reason = (Effect::Reflection {
+                        boundary: b.clone(),
+                    })
+                    .reason();
                     for _ in 0..body_asserts {
                         skipped.push(reason.clone());
                     }
@@ -4954,13 +5027,8 @@ fn collect_assertion_entries<'a>(
                     // reduce to a discriminant (binding/guard/or/range arms bail), and
                     // the arm asserts must fully lift; a bail keeps the refusal below.
                     // SOUNDNESS: never bare `A_i` -- always guarded by `guard_i`.
-                    let ctx = sugar_ctx(
-                        &temporal_scope,
-                        options,
-                        reducer,
-                        float_widths,
-                        macro_depth,
-                    );
+                    let ctx =
+                        sugar_ctx(&temporal_scope, options, reducer, float_widths, macro_depth);
                     let fcx = sugar::factory::FactoryCtx {
                         scope: &temporal_scope,
                         options,
@@ -4999,9 +5067,9 @@ fn collect_assertion_entries<'a>(
                     // (`expr_is_runtime_call_result` false), so it STAYS the generic
                     // UNCLASSIFIED reason -- the fake-refuse guardrail. Corpus:
                     // option.rs::test_mut_iter (`match it.next()`).
-                    let reason = if let Some(eff) = runtime_match_scrutinee_effect(
-                        &Expr::Match(m.clone()),
-                    ) {
+                    let reason = if let Some(eff) =
+                        runtime_match_scrutinee_effect(&Expr::Match(m.clone()), &temporal_scope)
+                    {
                         eff.reason()
                     } else {
                         "assertion under match context: not unconditional point-wise; released to layer 0"
@@ -5121,13 +5189,8 @@ fn collect_assertion_entries<'a>(
                     // `n`. An OPAQUE receiver makes `try_lift_for_each_forall` None,
                     // so the assert stays in its existing bin-2 refusal below.
                     let desugared = {
-                        let ctx = sugar_ctx(
-                            &temporal_scope,
-                            options,
-                            reducer,
-                            float_widths,
-                            macro_depth,
-                        );
+                        let ctx =
+                            sugar_ctx(&temporal_scope, options, reducer, float_widths, macro_depth);
                         // DEFOLDER over a literal domain (bare `.fold`/`.rfold`
                         // statement), or a bare `.for_each` (the same bounded
                         // universal as the equivalent for-loop).
@@ -5142,92 +5205,92 @@ fn collect_assertion_entries<'a>(
                         emit_desugared(desugared, entries, macros_lifted);
                         true
                     } else {
-                    // const_eval_select((), compiletime, runtime): inline the
-                    // runtime branch (the fn called at run time).
-                    let select_target = const_eval_select_runtime_target(e)
-                        .filter(|name| local_fns.contains_key(name));
-                    if let Some(name) = select_target {
-                        collect_assertion_entries(
-                            &local_fns[&name].block.stmts,
-                            local_scope,
-                            options,
-                            reducer,
-                            float_widths,
-                            entries,
-                            skipped,
-                            macros_lifted,
-                            reduced_helpers,
-                            macro_depth,
-                            &BTreeSet::new(),
+                        // const_eval_select((), compiletime, runtime): inline the
+                        // runtime branch (the fn called at run time).
+                        let select_target = const_eval_select_runtime_target(e)
+                            .filter(|name| local_fns.contains_key(name));
+                        if let Some(name) = select_target {
+                            collect_assertion_entries(
+                                &local_fns[&name].block.stmts,
+                                local_scope,
+                                options,
+                                reducer,
+                                float_widths,
+                                entries,
+                                skipped,
+                                macros_lifted,
+                                reduced_helpers,
+                                macro_depth,
+                                &BTreeSet::new(),
+                                &local_fns,
+                            );
+                            true
+                        } else if let Some(stmts) = unconditional_block_stmts(e) {
+                            collect_assertion_entries(
+                                stmts,
+                                &child_block_scope(local_scope, stmt_idx),
+                                options,
+                                reducer,
+                                float_widths,
+                                entries,
+                                skipped,
+                                macros_lifted,
+                                reduced_helpers,
+                                macro_depth,
+                                &temporal_scope.plan.interior_mut,
+                                &local_fns,
+                            );
+                            true
+                        } else if let Some(cs) = sugar::callsite::CallsiteSugar::decompose(
+                            e,
                             &local_fns,
-                        );
-                        true
-                    } else if let Some(stmts) = unconditional_block_stmts(e) {
-                        collect_assertion_entries(
-                            stmts,
-                            &child_block_scope(local_scope, stmt_idx),
-                            options,
                             reducer,
-                            float_widths,
-                            entries,
-                            skipped,
-                            macros_lifted,
-                            reduced_helpers,
-                            macro_depth,
-                            &temporal_scope.plan.interior_mut,
-                            &local_fns,
-                        );
-                        true
-                    } else if let Some(cs) = sugar::callsite::CallsiteSugar::decompose(
-                        e,
-                        &local_fns,
-                        reducer,
-                        options,
-                        macro_depth,
-                    ) {
-                        // CALLSITE-SUGAR DISPATCH ARM (lift-and-replace of the old R7
-                        // procedural block; the inlining engine now lives in
-                        // `sugar::callsite`). `decompose` recognized a carryable
-                        // closed-arg call to an inlinable helper; `desugar` β-reduces
-                        // (param := actual) and re-desugars the substituted body
-                        // through THIS SAME hierarchy in scratch buffers, gated on the
-                        // monotonic `added_unclassified == 0` invariant.
-                        //
-                        // RECONCILIATION HOOK (concurrent lib.rs split): this is the ONE
-                        // decompose-dispatch arm to add to the central
-                        // `collect_assertion_entries` body. It sits in the bare-expr-
-                        // statement fallthrough, after `for_each`/`const_eval_select`/
-                        // `unconditional_block`, replacing the inline R7 branch.
-                        match cs.desugar(
-                            local_scope,
-                            stmt_idx,
                             options,
-                            reducer,
-                            float_widths,
-                            reduced_helpers,
                             macro_depth,
                         ) {
-                            sugar::callsite::CallsiteOutcome::Dug(commit) => {
-                                // The body fully reduced: COMMIT the trial buffers (the
-                                // asserts lift via the byte-identical dig path). This is
-                                // the blessed inlining-unblock.
-                                entries.extend(commit.entries);
-                                skipped.extend(commit.skipped);
-                                *macros_lifted += commit.macros_lifted;
-                                *reduced_helpers = commit.reduced_helpers;
-                                reduced_helpers.insert(commit.name.clone());
-                                reduced_in_block.insert(commit.name);
-                                true
+                            // CALLSITE-SUGAR DISPATCH ARM (lift-and-replace of the old R7
+                            // procedural block; the inlining engine now lives in
+                            // `sugar::callsite`). `decompose` recognized a carryable
+                            // closed-arg call to an inlinable helper; `desugar` β-reduces
+                            // (param := actual) and re-desugars the substituted body
+                            // through THIS SAME hierarchy in scratch buffers, gated on the
+                            // monotonic `added_unclassified == 0` invariant.
+                            //
+                            // RECONCILIATION HOOK (concurrent lib.rs split): this is the ONE
+                            // decompose-dispatch arm to add to the central
+                            // `collect_assertion_entries` body. It sits in the bare-expr-
+                            // statement fallthrough, after `for_each`/`const_eval_select`/
+                            // `unconditional_block`, replacing the inline R7 branch.
+                            match cs.desugar(
+                                local_scope,
+                                stmt_idx,
+                                options,
+                                reducer,
+                                float_widths,
+                                reduced_helpers,
+                                macro_depth,
+                            ) {
+                                sugar::callsite::CallsiteOutcome::Dug(commit) => {
+                                    // The body fully reduced: COMMIT the trial buffers (the
+                                    // asserts lift via the byte-identical dig path). This is
+                                    // the blessed inlining-unblock.
+                                    entries.extend(commit.entries);
+                                    skipped.extend(commit.skipped);
+                                    *macros_lifted += commit.macros_lifted;
+                                    *reduced_helpers = commit.reduced_helpers;
+                                    reduced_helpers.insert(commit.name.clone());
+                                    reduced_in_block.insert(commit.name);
+                                    true
+                                }
+                                // BAIL: the body did not fully reduce (honest unclassified
+                                // residue). Leave the helper unreduced; Pass 2 keeps the
+                                // single "reachable only via call-site inlining" refusal.
+                                // Never fake-dug, never fake-refused.
+                                sugar::callsite::CallsiteOutcome::Bail(_) => false,
                             }
-                            // BAIL: the body did not fully reduce (honest unclassified
-                            // residue). Leave the helper unreduced; Pass 2 keeps the
-                            // single "reachable only via call-site inlining" refusal.
-                            // Never fake-dug, never fake-refused.
-                            sugar::callsite::CallsiteOutcome::Bail(_) => false,
+                        } else {
+                            false
                         }
-                    } else {
-                        false
-                    }
                     }
                 } else {
                     false
@@ -5382,11 +5445,8 @@ fn collect_assertion_entries<'a>(
             for (param, arg) in params.iter().cloned().zip(args.into_iter()) {
                 bindings.insert(param, arg);
             }
-            let cs = sugar::callsite::CallsiteSugar::from_bindings(
-                helper,
-                fn_name.clone(),
-                bindings,
-            );
+            let cs =
+                sugar::callsite::CallsiteSugar::from_bindings(helper, fn_name.clone(), bindings);
             // A distinct child scope per site so distinct-literal sites do not conjoin
             // into a false consistency collapse (the discrimination invariant). The
             // per-helper-per-site scope tag `<scope>::argsite::<helper>#<i>` is unique.
@@ -5458,11 +5518,7 @@ fn collect_assertion_entries<'a>(
 /// distinct (the discrimination invariant). Does NOT descend into nested fn item
 /// bodies (their calls belong to their own block scope). Used by the arg-position
 /// call-site inliner to find sites the bare-statement dispatch missed.
-fn collect_arg_position_call_sites(
-    stmts: &[Stmt],
-    fn_name: &str,
-    arity: usize,
-) -> Vec<Vec<Expr>> {
+fn collect_arg_position_call_sites(stmts: &[Stmt], fn_name: &str, arity: usize) -> Vec<Vec<Expr>> {
     use std::collections::BTreeSet;
     struct W<'a> {
         target: &'a str,
@@ -5602,7 +5658,8 @@ fn loop_mutation_is_simple_counter_only(stmts: &[Stmt]) -> bool {
                     Expr::Binary(b) => {
                         matches!(b.op, BinOp::Add(_) | BinOp::Sub(_) | BinOp::Mul(_))
                             && (const_int(&b.left).is_some() || const_int(&b.right).is_some())
-                            && (matches!(&*b.left, Expr::Path(_)) || matches!(&*b.right, Expr::Path(_)))
+                            && (matches!(&*b.left, Expr::Path(_))
+                                || matches!(&*b.right, Expr::Path(_)))
                     }
                     _ => false,
                 };
@@ -7696,7 +7753,10 @@ fn is_pure_pinnable_expr(expr: &Expr) -> bool {
         Expr::Array(a) => a.elems.iter().all(is_pure_pinnable_expr),
         Expr::Cast(c) => is_pure_pinnable_expr(&c.expr),
         Expr::Range(r) => {
-            r.start.as_deref().map(is_pure_pinnable_expr).unwrap_or(true)
+            r.start
+                .as_deref()
+                .map(is_pure_pinnable_expr)
+                .unwrap_or(true)
                 && r.end.as_deref().map(is_pure_pinnable_expr).unwrap_or(true)
         }
         _ => false,
@@ -7839,7 +7899,10 @@ fn substitute_exprs(exprs: &[Expr], bindings: &ExprBindings) -> Vec<Expr> {
 /// via the file registry).
 fn substitute_stmts(stmts: &[Stmt], bindings: &ExprBindings) -> Vec<Stmt> {
     let mut binds = bindings.clone();
-    stmts.iter().map(|s| substitute_stmt(s, &mut binds)).collect()
+    stmts
+        .iter()
+        .map(|s| substitute_stmt(s, &mut binds))
+        .collect()
 }
 
 fn substitute_stmt(stmt: &Stmt, binds: &mut ExprBindings) -> Stmt {
@@ -8380,7 +8443,9 @@ fn translate_bool_assertion(
                 })
             }
         }
-        Expr::Lit(ExprLit { lit: Lit::Bool(b), .. }) => {
+        Expr::Lit(ExprLit {
+            lit: Lit::Bool(b), ..
+        }) => {
             // A bare boolean LITERAL assert `assert!(true)` / `assert!(false)` is a
             // CONSTANT claim -- the timeless value is fixed from the source literal.
             // `assert!(true)` lifts to the tautology `true == true`; `assert!(false)`
@@ -8432,7 +8497,7 @@ fn translate_bool_assertion(
             // EARNED by `runtime_match_scrutinee_effect`; a `match` over a CONSTRUCTED literal
             // scrutinee (no runtime call) matches None and STAYS the bare `only scalar equality`
             // reason below -- UNCLASSIFIED (the inverse-sin guardrail against fake-refuse).
-            if let Some(effect) = runtime_match_scrutinee_effect(other) {
+            if let Some(effect) = runtime_match_scrutinee_effect(other, scope) {
                 return Err(effect.reason());
             }
             Err(format!(
@@ -8464,8 +8529,20 @@ fn translate_bool_assertion(
 /// scrutinee. A non-`match` expr OR a `match` over a CONSTRUCTED literal / path / index
 /// scrutinee declines to RECOGNIZE (the build arm returns `None`), which this router maps to
 /// `None` -- leaving everything else UNCLASSIFIED, never terminalized by position.
-fn runtime_match_scrutinee_effect(expr: &Expr) -> Option<Effect> {
-    match sugar::factory::build_match_scrutinee(expr) {
+fn runtime_match_scrutinee_effect(expr: &Expr, scope: &TemporalScope) -> Option<Effect> {
+    let options = LiftOptions::default();
+    let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
+    let fcx = sugar::factory::FactoryCtx {
+        scope,
+        options: &options,
+        let_inits: &let_inits,
+    };
+    let items: Vec<Item> = Vec::new();
+    let reducer = ReductionCtx::from_items(&items);
+    let mut float_widths = FloatWidthScope::new();
+    let ctx = sugar_ctx(scope, &options, &reducer, &mut float_widths, 0);
+    let node = sugar::factory::build_match_scrutinee(expr, &fcx);
+    match node.desugar(&ctx) {
         // The STRUCTURAL backstop = the honest-unclassified fall-through (the old `None`).
         Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {
             None
@@ -9158,7 +9235,9 @@ fn tuple_pattern_entry(
                 name: "variant_of".to_string(),
                 args: vec![field],
             });
-            atoms.push(assertion_entry_from_eq(lhs, str_const(format!("variant::{variant}")), scope).atom);
+            atoms.push(
+                assertion_entry_from_eq(lhs, str_const(format!("variant::{variant}")), scope).atom,
+            );
         } else if let syn::Pat::Lit(lit) = elem {
             let rhs = lit_membership_term(&lit.lit)?;
             atoms.push(assertion_entry_from_eq(field, rhs, scope).atom);
@@ -9575,7 +9654,11 @@ fn translate_regex_match_assertion(
     let reducer = ReductionCtx::from_items(&[]);
     let options = LiftOptions::default();
     let ctx = sugar_ctx(scope, &options, &reducer, &mut fw, 0);
-    let Some(pattern_str) = m.resolve_pattern(&ctx).dug().and_then(|d| d.as_string_literal()) else {
+    let Some(pattern_str) = m
+        .resolve_pattern(&ctx)
+        .dug()
+        .and_then(|d| d.as_string_literal())
+    else {
         // Runtime / unsupported pattern operand -> not a recognized regex
         // membership today (the composition frontier). Declined, not refused.
         return Ok(None);
@@ -9678,7 +9761,9 @@ fn translate_literal_iterator_assertion(
         // keep its historical refusal for a non-ident param there. For the general
         // arithmetic body we simply decline (Ok(None)) so provenance is named.
         if literal_iterator_elements(&call.receiver)?.is_some() {
-            return Err(format!("{method} predicate requires a simple identifier parameter"));
+            return Err(format!(
+                "{method} predicate requires a simple identifier parameter"
+            ));
         }
         return Ok(None);
     };
@@ -10090,7 +10175,11 @@ fn emit_guard_return_value(block: &syn::Block, scope: &TemporalScope) -> Option<
         };
         let mut gp = negated.clone();
         gp.push(cond.clone());
-        let guard = if gp.len() == 1 { gp.remove(0) } else { and_(gp) };
+        let guard = if gp.len() == 1 {
+            gp.remove(0)
+        } else {
+            and_(gp)
+        };
         clauses.push((guard, ret_term));
         negated.push(not_(cond));
         idx += 1;
@@ -11393,7 +11482,11 @@ fn translate_assertion_term_in_scope(
         // the `_ =>` delegation below). Matches the FINAL segment ident so a
         // turbofish (`None::<isize>`) / qualified path grounds too.
         Expr::Path(path)
-            if path.path.segments.last().is_some_and(|seg| seg.ident == "None") =>
+            if path
+                .path
+                .segments
+                .last()
+                .is_some_and(|seg| seg.ident == "None") =>
         {
             Ok(Rc::new(Term::Ctor {
                 name: sugar::monadic::OPT_NONE.to_string(),
@@ -11532,7 +11625,10 @@ fn is_literal_identity_term(term: &Term) -> bool {
         // aggregate (a ground value), keeping the EUF callsite key stable, instead
         // of degrading to a non-literal `agg:`.
         Term::Ctor { name, args }
-            if matches!(name.as_str(), "opt:some" | "opt:none" | "res:ok" | "res:err") =>
+            if matches!(
+                name.as_str(),
+                "opt:some" | "opt:none" | "res:ok" | "res:err"
+            ) =>
         {
             args.iter().all(|arg| is_literal_identity_term(arg))
         }
@@ -12222,7 +12318,11 @@ mod lifter_key_tests {
             "target_family=\"unix\"",
         ])
         .expect("cfg facts");
-        lift_file_with_options(&file, "tests/test_src.rs", &LiftOptions::for_target_cfg(target))
+        lift_file_with_options(
+            &file,
+            "tests/test_src.rs",
+            &LiftOptions::for_target_cfg(target),
+        )
     }
 
     fn contract_names(out: &AdapterOutput) -> Vec<&str> {
@@ -12259,7 +12359,9 @@ mod lifter_key_tests {
             out.skip_reasons
         );
         assert!(
-            !out.skip_reasons.iter().any(|r| r.contains("nested in an unlifted expression statement")),
+            !out.skip_reasons
+                .iter()
+                .any(|r| r.contains("nested in an unlifted expression statement")),
             "const-item asserts must not fall to the unlifted-expr-statement bucket: {:?}",
             out.skip_reasons
         );
@@ -12313,7 +12415,9 @@ mod lifter_key_tests {
         // The `assert!(x == 42)` under the `for` must stay refused (conditional);
         // only the unconditional top-level `assert!(X)` lifts.
         assert!(
-            out.skip_reasons.iter().any(|r| r.contains("under for context")),
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("under for context")),
             "the for-bodied assert inside the const block must stay refused as a \
              for-context assertion, not be falsely lifted: {:?}",
             out.skip_reasons
@@ -12683,8 +12787,13 @@ mod lifter_key_tests {
         // whose name resolves to the plain Var `y` (it would be ambiguous/dropped).
         let names = contract_names(&out);
         // The presence of a skip reason about y's ambiguity is the expected outcome.
-        let y_ambiguous = out.skip_reasons.iter().any(|r| r.contains("ambiguous") && r.contains("y"))
-            || !names.iter().any(|n| n.ends_with("::assertion") && n.contains("y"));
+        let y_ambiguous = out
+            .skip_reasons
+            .iter()
+            .any(|r| r.contains("ambiguous") && r.contains("y"))
+            || !names
+                .iter()
+                .any(|n| n.ends_with("::assertion") && n.contains("y"));
         assert!(
             y_ambiguous || out.skip_reasons.iter().any(|r| r.contains("y")),
             "expected y to be ambiguous/dropped after addr_of_mut!, contracts: {names:?}, skips: {:?}",
@@ -12767,14 +12876,17 @@ mod lifter_key_tests {
             out.skip_reasons
         );
         assert!(
-            !out.skip_reasons.iter().any(|r| r
-                .contains("nested in an unlifted expression statement")
-                || r.contains("inside a let-initializer expression")),
+            !out.skip_reasons
+                .iter()
+                .any(|r| r.contains("nested in an unlifted expression statement")
+                    || r.contains("inside a let-initializer expression")),
             "the `.for_each` body assert must not stay in a fold-closure refusal: {:?}",
             out.skip_reasons
         );
         assert!(
-            contract_names(&out).iter().any(|n| n.contains("::for_each::x")),
+            contract_names(&out)
+                .iter()
+                .any(|n| n.contains("::for_each::x")),
             "the lifted universal must be named `<test>::for_each::<var>`: {:?}",
             contract_names(&out)
         );
@@ -12821,7 +12933,8 @@ mod lifter_key_tests {
         "#;
         let out = lift_src(src);
         assert_eq!(
-            out.assertions_lifted, 0,
+            out.assertions_lifted,
+            0,
             "an opaque-domain `.for_each` must NOT be lifted (runtime data, not \
              constructible): {:?}",
             contract_names(&out)
@@ -12832,7 +12945,9 @@ mod lifter_key_tests {
             out.skip_reasons
         );
         assert!(
-            !contract_names(&out).iter().any(|n| n.contains("::for_each::")),
+            !contract_names(&out)
+                .iter()
+                .any(|n| n.contains("::for_each::")),
             "no `for_each` universal memento may be minted over an opaque domain: {:?}",
             contract_names(&out)
         );
@@ -12857,13 +12972,16 @@ mod lifter_key_tests {
         "#;
         let out = lift_src(src);
         assert_eq!(
-            out.assertions_lifted, 0,
+            out.assertions_lifted,
+            0,
             "a mutating-body `.for_each` must NOT be lifted even over a literal \
              domain (unsound single universal): {:?}",
             contract_names(&out)
         );
         assert!(
-            !contract_names(&out).iter().any(|n| n.contains("::for_each::")),
+            !contract_names(&out)
+                .iter()
+                .any(|n| n.contains("::for_each::")),
             "no `for_each` universal memento may be minted for a mutating body: {:?}",
             contract_names(&out)
         );
@@ -12892,12 +13010,16 @@ mod lifter_key_tests {
         "#;
         let out = lift_src(src);
         assert!(
-            out.skip_reasons.iter().any(|r| r.contains("side-effecting closure body")),
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("side-effecting closure body")),
             "a for_each body that advances a captured iterator must be TERMINAL refused: {:?}",
             out.skip_reasons
         );
         assert!(
-            out.skip_reasons.iter().all(|r| !r.contains("nested in an unlifted expression statement")),
+            out.skip_reasons
+                .iter()
+                .all(|r| !r.contains("nested in an unlifted expression statement")),
             "the side-effecting case must NOT stay in the generic unclassified bucket: {:?}",
             out.skip_reasons
         );
@@ -12924,7 +13046,9 @@ mod lifter_key_tests {
         "#;
         let out = lift_src(src);
         assert!(
-            out.skip_reasons.iter().any(|r| r.contains("opaque/effectful accessor") && r.contains("bin-2")),
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("opaque/effectful accessor") && r.contains("bin-2")),
             "a `.with`-accessor closure assert must be TERMINAL refused (bin-2): {:?}",
             out.skip_reasons
         );
@@ -12952,14 +13076,32 @@ mod lifter_key_tests {
         // refusal to the source construct that warrants it (the bail-side `SourceMemento`,
         // mirror of the dig-side `Warrant`).
         let effects: Vec<Effect> = vec![
-            Effect::Mutation { boundary: "v.push(x)".to_string() },
-            Effect::IterAdvance { boundary: "iter.next()".to_string() },
-            Effect::OpaqueRuntime { boundary: "p.iter().for_each(..)".to_string(), accessor: false },
-            Effect::OpaqueRuntime { boundary: "buf.with_unfilled_buf(..)".to_string(), accessor: true },
-            Effect::Tls { boundary: "DROPS.with(..)".to_string() },
-            Effect::Io { boundary: "out.write(..)".to_string() },
-            Effect::TemporalRead { boundary: "a[i]".to_string() },
-            Effect::ControlFlow { boundary: "try { maybe_fut? }".to_string() },
+            Effect::Mutation {
+                boundary: "v.push(x)".to_string(),
+            },
+            Effect::IterAdvance {
+                boundary: "iter.next()".to_string(),
+            },
+            Effect::OpaqueRuntime {
+                boundary: "p.iter().for_each(..)".to_string(),
+                accessor: false,
+            },
+            Effect::OpaqueRuntime {
+                boundary: "buf.with_unfilled_buf(..)".to_string(),
+                accessor: true,
+            },
+            Effect::Tls {
+                boundary: "DROPS.with(..)".to_string(),
+            },
+            Effect::Io {
+                boundary: "out.write(..)".to_string(),
+            },
+            Effect::TemporalRead {
+                boundary: "a[i]".to_string(),
+            },
+            Effect::ControlFlow {
+                boundary: "try { maybe_fut? }".to_string(),
+            },
         ];
         for e in &effects {
             assert_eq!(
@@ -12969,7 +13111,10 @@ mod lifter_key_tests {
                 e.reason()
             );
             // The boundary memento carries the source construct (non-empty rope).
-            assert!(!e.boundary().boundary.is_empty(), "boundary memento must rope to a source construct");
+            assert!(
+                !e.boundary().boundary.is_empty(),
+                "boundary memento must rope to a source construct"
+            );
         }
     }
 
@@ -12990,7 +13135,9 @@ mod lifter_key_tests {
         "#;
         let out = lift_src(mut_src);
         assert!(
-            out.skip_reasons.iter().any(|r| r.contains("side-effecting closure body")),
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("side-effecting closure body")),
             "a mutating closure body must be a typed SideEffect refuse: {:?}",
             out.skip_reasons
         );
@@ -13003,7 +13150,9 @@ mod lifter_key_tests {
             out.skip_reasons
         );
         assert!(
-            out.skip_reasons.iter().all(|r| !r.contains("nested in an unlifted expression statement")),
+            out.skip_reasons
+                .iter()
+                .all(|r| !r.contains("nested in an unlifted expression statement")),
             "the mutation case must NOT stay generic-unclassified: {:?}",
             out.skip_reasons
         );
@@ -13020,7 +13169,9 @@ mod lifter_key_tests {
         "#;
         let out = lift_src(adv_src);
         assert!(
-            out.skip_reasons.iter().any(|r| r.contains("side-effecting closure body")),
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("side-effecting closure body")),
             "an iterator-advancing closure body must be a typed SideEffect refuse: {:?}",
             out.skip_reasons
         );
@@ -13048,7 +13199,9 @@ mod lifter_key_tests {
         "#;
         let out = lift_src(src);
         assert!(
-            out.skip_reasons.iter().any(|r| r.contains("bin-2") && r.contains("runtime")),
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("bin-2") && r.contains("runtime")),
             "an opaque runtime receiver must be a typed OpaqueRuntimeEffect refuse (bin-2): {:?}",
             out.skip_reasons
         );
@@ -13097,7 +13250,10 @@ mod lifter_key_tests {
         );
         assert!(
             !out.skip_reasons.is_empty()
-                && out.skip_reasons.iter().all(|r| matches!(refusal_disposition(r), Disposition::Unclassified)),
+                && out
+                    .skip_reasons
+                    .iter()
+                    .all(|r| matches!(refusal_disposition(r), Disposition::Unclassified)),
             "a PURE-but-untranslated term must STAY UNCLASSIFIED, never a SideEffect refuse: {:?}",
             out.skip_reasons
         );
@@ -13130,7 +13286,9 @@ mod lifter_key_tests {
         "#;
         let out = lift_src(src);
         assert!(
-            out.skip_reasons.iter().any(|r| r.contains("mutable container is not temporally stable")),
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("mutable container is not temporally stable")),
             "a read of a mutable container must surface the TemporalReadEffect reason: {:?}",
             out.skip_reasons
         );
@@ -13160,7 +13318,9 @@ mod lifter_key_tests {
         "#;
         let out = lift_src(src);
         assert!(
-            out.skip_reasons.iter().all(|r| !r.contains("mutable container is not temporally stable")),
+            out.skip_reasons
+                .iter()
+                .all(|r| !r.contains("mutable container is not temporally stable")),
             "an immutable-container read must NEVER wear the TemporalReadEffect reason: {:?}",
             out.skip_reasons
         );
@@ -13193,9 +13353,11 @@ mod lifter_key_tests {
             out.skip_reasons
         );
         assert!(
-            out.skip_reasons.iter().all(|r| !r.contains("let-initializer expression")
-                && !r.contains("side-effecting closure body")
-                && !r.contains("opaque/effectful accessor")),
+            out.skip_reasons
+                .iter()
+                .all(|r| !r.contains("let-initializer expression")
+                    && !r.contains("side-effecting closure body")
+                    && !r.contains("opaque/effectful accessor")),
             "a defolded pure fold must NOT remain in any skip bucket: {:?}",
             out.skip_reasons
         );
@@ -13264,13 +13426,16 @@ mod lifter_key_tests {
         "#;
         let out = lift_src(src);
         assert_eq!(
-            out.assertions_lifted, 0,
+            out.assertions_lifted,
+            0,
             "an opaque-domain fold must NOT be lifted by the defolder: {:?}",
             contract_names(&out)
         );
         assert!(
-            out.skip_reasons.iter().any(|r| r.contains("opaque runtime receiver")
-                && matches!(refusal_disposition(r), Disposition::Refused)),
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("opaque runtime receiver")
+                    && matches!(refusal_disposition(r), Disposition::Refused)),
             "an opaque-receiver fold body assert must be TERMINAL refused (bin-2): {:?}",
             out.skip_reasons
         );
@@ -13291,13 +13456,16 @@ mod lifter_key_tests {
         "#;
         let out = lift_src(src);
         assert_eq!(
-            out.assertions_lifted, 0,
+            out.assertions_lifted,
+            0,
             "a side-effecting-body fold must NOT be lifted: {:?}",
             contract_names(&out)
         );
         assert!(
-            out.skip_reasons.iter().any(|r| r.contains("side-effecting closure body")
-                && matches!(refusal_disposition(r), Disposition::Refused)),
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("side-effecting closure body")
+                    && matches!(refusal_disposition(r), Disposition::Refused)),
             "a side-effecting fold body assert must be TERMINAL refused: {:?}",
             out.skip_reasons
         );
@@ -13319,13 +13487,16 @@ mod lifter_key_tests {
         "#;
         let out = lift_src(src);
         assert_eq!(
-            out.assertions_lifted, 0,
+            out.assertions_lifted,
+            0,
             "a non-const-foldable accumulator must NOT be defolded: {:?}",
             contract_names(&out)
         );
         assert!(
-            out.skip_reasons.iter().any(|r| r.contains("let-initializer expression")
-                && matches!(refusal_disposition(r), Disposition::Unclassified)),
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("let-initializer expression")
+                    && matches!(refusal_disposition(r), Disposition::Unclassified)),
             "a non-foldable-acc fold stays UNCLASSIFIED (honest), not terminal: {:?}",
             out.skip_reasons
         );
@@ -13351,11 +13522,18 @@ mod lifter_key_tests {
             }
         "#;
         let out = lift_src(src);
-        assert_eq!(out.assertions_lifted, 1, "filtered fold must lift: {:?}", out.skip_reasons);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "filtered fold must lift: {:?}",
+            out.skip_reasons
+        );
         let dump = format!("{:?}", out.decls);
         // kept evens present as concrete operands; dropped odds absent as element operands.
         for kept in ["0", "2", "4"] {
-            assert!(dump.contains(kept), "kept element {kept} must appear in the conjunction");
+            assert!(
+                dump.contains(kept),
+                "kept element {kept} must appear in the conjunction"
+            );
         }
         // The conjunction has exactly 3 conjuncts (one per kept element). The `%` atom
         // `x % 2 == 0` becomes `<elem> % 2 == 0`; count the int-modulo subterms == 3.
@@ -13378,10 +13556,17 @@ mod lifter_key_tests {
             }
         "#;
         let out = lift_src(src);
-        assert_eq!(out.assertions_lifted, 1, "mapped fold must lift: {:?}", out.skip_reasons);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "mapped fold must lift: {:?}",
+            out.skip_reasons
+        );
         let dump = format!("{:?}", out.decls);
         for mapped in ["10", "20", "30"] {
-            assert!(dump.contains(mapped), "transformed value {mapped} must appear: {dump}");
+            assert!(
+                dump.contains(mapped),
+                "transformed value {mapped} must appear: {dump}"
+            );
         }
     }
 
@@ -13396,9 +13581,16 @@ mod lifter_key_tests {
             }
         "#;
         let out = lift_src(src);
-        assert_eq!(out.assertions_lifted, 1, "skip/take fold must lift: {:?}", out.skip_reasons);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "skip/take fold must lift: {:?}",
+            out.skip_reasons
+        );
         let dump = format!("{:?}", out.decls);
-        assert!(dump.contains("20") && dump.contains("30"), "kept window {{20,30}}: {dump}");
+        assert!(
+            dump.contains("20") && dump.contains("30"),
+            "kept window {{20,30}}: {dump}"
+        );
     }
 
     #[test]
@@ -13418,13 +13610,20 @@ mod lifter_key_tests {
         "#;
         let out = lift_src(src);
         // It DOES lift (the defolder digs the literal-derived sequence) ...
-        assert_eq!(out.assertions_lifted, 1, "the enumerate fold lifts: {:?}", out.skip_reasons);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "the enumerate fold lifts: {:?}",
+            out.skip_reasons
+        );
         let dump = format!("{:?}", out.decls);
         // ... but HONESTLY: the actual element values 1,2,3 are the LHS of the equalities
         // (faithful substitution), so `1 == ws[0]` etc. are refutable given ws=[9,9,9]. The
         // lift did not coerce x to 9 or drop the claim.
         for actual in ["1", "2", "3"] {
-            assert!(dump.contains(actual), "actual element {actual} must be the faithful LHS: {dump}");
+            assert!(
+                dump.contains(actual),
+                "actual element {actual} must be the faithful LHS: {dump}"
+            );
         }
         // The equality predicate is present (an `=`/eq atom), not optimized away to `true`.
         assert!(
@@ -13448,7 +13647,8 @@ mod lifter_key_tests {
         "#;
         let out = lift_src(src);
         assert_eq!(
-            out.assertions_lifted, 0,
+            out.assertions_lifted,
+            0,
             "a runtime-predicate filter must BAIL (cannot decide the kept set exactly): {:?}",
             contract_names(&out)
         );
@@ -13468,7 +13668,8 @@ mod lifter_key_tests {
         "#;
         let out = lift_src(src);
         assert_eq!(
-            out.assertions_lifted, 0,
+            out.assertions_lifted,
+            0,
             "an overflowing map closure must BAIL, not wrap (exact-or-none): {:?}",
             contract_names(&out)
         );
@@ -13508,7 +13709,9 @@ mod lifter_key_tests {
             out.skip_reasons
         );
         assert!(
-            out.skip_reasons.iter().all(|r| !r.contains("under if context")),
+            out.skip_reasons
+                .iter()
+                .all(|r| !r.contains("under if context")),
             "the guarded assert must NOT stay in the if-context refusal: {:?}",
             out.skip_reasons
         );
@@ -13598,12 +13801,15 @@ mod lifter_key_tests {
         "#;
         let out = lift_src(src);
         assert_eq!(
-            out.assertions_lifted, 0,
+            out.assertions_lifted,
+            0,
             "a side-effecting (iterator-advancing) guard must BAIL: {:?}",
             contract_names(&out)
         );
         assert!(
-            out.skip_reasons.iter().any(|r| r.contains("under if context")),
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("under if context")),
             "the side-effecting-guard assert must stay in the if-context refusal: {:?}",
             out.skip_reasons
         );
@@ -13627,7 +13833,8 @@ mod lifter_key_tests {
         "#;
         let out = lift_src(src);
         assert_eq!(
-            out.assertions_lifted, 0,
+            out.assertions_lifted,
+            0,
             "a mutating guarded branch must BAIL (not a timeless point-wise claim): {:?}",
             contract_names(&out)
         );
@@ -13664,8 +13871,9 @@ mod lifter_key_tests {
             out.skip_reasons
         );
         assert!(
-            out.skip_reasons.iter().all(|r| !r.contains("under for context")
-                && !r.contains("under if context")),
+            out.skip_reasons
+                .iter()
+                .all(|r| !r.contains("under for context") && !r.contains("under if context")),
             "neither the for-context nor the if-context refusal may remain: {:?}",
             out.skip_reasons
         );
@@ -13734,10 +13942,20 @@ mod lifter_key_tests {
         let out = lift_src(src);
         // The format! assertions must be refused (skip reasons present),
         // not lifted into contradictory obligations.
-        let refused = out.skip_reasons.iter().any(|r| r.contains("mut") && r.contains("local"))
-            || out.skip_reasons.iter().any(|r| r.contains("temporally unstable"));
+        let refused = out
+            .skip_reasons
+            .iter()
+            .any(|r| r.contains("mut") && r.contains("local"))
+            || out
+                .skip_reasons
+                .iter()
+                .any(|r| r.contains("temporally unstable"));
         // If they were lifted, there should be at most 1 obligation (not 2 contradictory ones).
-        let fmt_obligations = out.decls.iter().filter(|d| d.name.contains("format")).count();
+        let fmt_obligations = out
+            .decls
+            .iter()
+            .filter(|d| d.name.contains("format"))
+            .count();
         assert!(
             refused || fmt_obligations <= 1,
             "format! with mut local should be refused or produce at most 1 obligation; \
@@ -13761,10 +13979,15 @@ mod lifter_key_tests {
         "#;
         let out = lift_src(src);
         // The format! with inline mut capture must be refused.
-        let refused = out.skip_reasons.iter().any(|r| {
-            r.contains("temporally unstable") || r.contains("mut")
-        });
-        let fmt_contracts = out.decls.iter().filter(|d| d.name.contains("format")).count();
+        let refused = out
+            .skip_reasons
+            .iter()
+            .any(|r| r.contains("temporally unstable") || r.contains("mut"));
+        let fmt_contracts = out
+            .decls
+            .iter()
+            .filter(|d| d.name.contains("format"))
+            .count();
         assert!(
             refused || fmt_contracts <= 1,
             "format! with inline mut capture should be refused; skips: {:?}",
@@ -13969,7 +14192,10 @@ mod lifter_key_tests {
             found_both,
             "inlined contradictory body must coalesce both pins into one inv (caught, \
              not masked): {:?}",
-            out.decls.iter().map(|d| format!("{:?}", d.inv)).collect::<Vec<_>>()
+            out.decls
+                .iter()
+                .map(|d| format!("{:?}", d.inv))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -13990,7 +14216,7 @@ mod lifter_key_tests {
         let dump = format!("{:?}", out.decls);
         // Two distinct closure symbols (x+1 vs x+2), not one coalesced.
         assert!(
-            dump.contains("closure:") ,
+            dump.contains("closure:"),
             "closures should lift to opaque closure: symbols: {dump}"
         );
         // The two apply-calls must NOT collapse to one obligation (distinct closures).
@@ -14134,7 +14360,11 @@ mod lifter_key_tests {
             "inactive cfg on test fn",
             "inactive cfg on assertion; skipped: cfg(target_has_atomic)",
         ] {
-            assert_eq!(refusal_disposition(r), Disposition::Inactive, "should be inactive: {r}");
+            assert_eq!(
+                refusal_disposition(r),
+                Disposition::Inactive,
+                "should be inactive: {r}"
+            );
         }
         // UNCLASSIFIED (lifter limitation -- WORK), incl. the default for anything
         // not on the whitelist.
@@ -14200,12 +14430,14 @@ mod lifter_key_tests {
             }
         "#;
         let out = lift_src(src);
-        assert_eq!(out.assertions_lifted, 0, "an impl-method assert must not lift");
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "an impl-method assert must not lift"
+        );
         assert!(
-            out.skip_reasons
-                .iter()
-                .any(|r| r.contains("reachable only at runtime when the method is invoked")
-                    && refusal_disposition(r) == Disposition::Refused),
+            out.skip_reasons.iter().any(|r| r
+                .contains("reachable only at runtime when the method is invoked")
+                && refusal_disposition(r) == Disposition::Refused),
             "the impl-method assert must be REFUSED with its named runtime cause: {:?}",
             out.skip_reasons
         );
@@ -14228,12 +14460,14 @@ mod lifter_key_tests {
             }
         "#;
         let out = lift_src(src);
-        assert_eq!(out.assertions_lifted, 0, "a nested-impl-method assert must not lift");
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "a nested-impl-method assert must not lift"
+        );
         assert!(
-            out.skip_reasons
-                .iter()
-                .any(|r| r.contains("reachable only at runtime when the method is invoked")
-                    && refusal_disposition(r) == Disposition::Refused),
+            out.skip_reasons.iter().any(|r| r
+                .contains("reachable only at runtime when the method is invoked")
+                && refusal_disposition(r) == Disposition::Refused),
             "the nested-impl-method assert must be REFUSED with its named runtime cause: {:?}",
             out.skip_reasons
         );
@@ -14253,7 +14487,10 @@ mod lifter_key_tests {
             }
         "#;
         let out = lift_src(src);
-        assert_eq!(out.assertions_lifted, 0, "a mut-borrow expr-stmt assert must not lift");
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "a mut-borrow expr-stmt assert must not lift"
+        );
         assert!(
             out.skip_reasons
                 .iter()
@@ -14286,10 +14523,9 @@ mod lifter_key_tests {
         "#;
         let out = lift_src(src);
         assert!(
-            out.skip_reasons
-                .iter()
-                .any(|r| r.contains("signed zero float literal remains an IEEE refinement")
-                    && refusal_disposition(r) == Disposition::Refused),
+            out.skip_reasons.iter().any(|r| r
+                .contains("signed zero float literal remains an IEEE refinement")
+                && refusal_disposition(r) == Disposition::Refused),
             "the -0.0 literal must be REFUSED with its named signed-zero cause: {:?}",
             out.skip_reasons
         );
@@ -14386,7 +14622,9 @@ mod lifter_key_tests {
                 "#,
             );
             assert!(
-                out.skip_reasons.iter().all(|r| !r.contains("under if context")),
+                out.skip_reasons
+                    .iter()
+                    .all(|r| !r.contains("under if context")),
                 "a const if-guard must now DIG (no longer under-if-context): {:?}",
                 out.skip_reasons
             );
@@ -14397,7 +14635,11 @@ mod lifter_key_tests {
                 "a const if-guard must NEVER be runtime-refused (fake-refuse): {:?}",
                 out.skip_reasons
             );
-            assert_eq!(out.assertions_lifted, 2, "both branch asserts dig: {:?}", out.skip_reasons);
+            assert_eq!(
+                out.assertions_lifted, 2,
+                "both branch asserts dig: {:?}",
+                out.skip_reasons
+            );
         }
         // The cfg!-guard variant resolves only against explicit target facts; with
         // 64-bit facts it const-folds and digs (it must NOT stay under-if-context).
@@ -14413,11 +14655,17 @@ mod lifter_key_tests {
                 "#,
             );
             assert!(
-                out.skip_reasons.iter().all(|r| !r.contains("under if context")),
+                out.skip_reasons
+                    .iter()
+                    .all(|r| !r.contains("under if context")),
                 "a resolved cfg! if-guard must DIG (no longer under-if-context): {:?}",
                 out.skip_reasons
             );
-            assert_eq!(out.assertions_lifted, 1, "the cfg-active branch digs: {:?}", out.skip_reasons);
+            assert_eq!(
+                out.assertions_lifted, 1,
+                "the cfg-active branch digs: {:?}",
+                out.skip_reasons
+            );
         }
 
         // (2) a PURE expr-statement (a tuple with no `&mut` / mutation) is not runtime --
@@ -14481,7 +14729,8 @@ mod lifter_key_tests {
             "closure-param helper is bin-2 terminal"
         );
         // generic Iterator param
-        let iter_helper = pf("fn drive<I: Iterator<Item = u32>>(mut it: I) { assert_eq!(it.next(), Some(1)); }");
+        let iter_helper =
+            pf("fn drive<I: Iterator<Item = u32>>(mut it: I) { assert_eq!(it.next(), Some(1)); }");
         assert!(helper_is_runtime_parametric(&iter_helper));
         assert_eq!(
             refusal_disposition(&callsite_inlining_reason("drive", &iter_helper)),
@@ -14500,8 +14749,9 @@ mod lifter_key_tests {
         );
         // slice-only param -- a literal slice CAN be closed at the call site, so we do NOT
         // claim it terminal (safe under-claim); dissolution + the exact partition own it.
-        let slice_helper =
-            pf("fn test_chain(xs: &[i32], ys: &[i32]) { assert_eq!(xs.iter().chain(ys).count(), 6); }");
+        let slice_helper = pf(
+            "fn test_chain(xs: &[i32], ys: &[i32]) { assert_eq!(xs.iter().chain(ys).count(), 6); }",
+        );
         assert!(!helper_is_runtime_parametric(&slice_helper));
         assert_eq!(
             refusal_disposition(&callsite_inlining_reason("test_chain", &slice_helper)),
@@ -14520,7 +14770,8 @@ mod lifter_key_tests {
     // concrete-param / no-visible-source shape that STAYS UNCLASSIFIED -- the
     // inverse-sin guardrail against fake-refuse).
     #[test]
-    fn generic_parametric_helper_is_monomorphization_terminal_but_concrete_or_invisible_stays_unclassified() {
+    fn generic_parametric_helper_is_monomorphization_terminal_but_concrete_or_invisible_stays_unclassified(
+    ) {
         use Disposition::*;
         fn pf(src: &str) -> syn::ItemFn {
             syn::parse_str(src).expect("parse fn")
@@ -14552,7 +14803,10 @@ mod lifter_key_tests {
             pf("fn check_size_hint<const N: usize>(a: (usize, Option<usize>), b: (usize, Option<usize>)) { assert_eq!(a, b); }");
         assert!(helper_is_generic_parametric(&check_size_hint));
         assert_eq!(
-            refusal_disposition(&callsite_inlining_reason("check_size_hint", &check_size_hint)),
+            refusal_disposition(&callsite_inlining_reason(
+                "check_size_hint",
+                &check_size_hint
+            )),
             Refused,
             "const-generic helper is monomorphization terminal"
         );
@@ -14633,7 +14887,6 @@ mod lifter_key_tests {
         }
     }
 
-
     // ── starts_with over a MUTABLE-local receiver is a runtime (bin-2) refusal ──
     // Corpus: iter/adapters/zip.rs::test_zip_next_back_side_effects_exhausted and
     // ::test_zip_nth_back_side_effects_exhausted -- `let mut a = Vec::new()` pushed
@@ -14656,7 +14909,12 @@ mod lifter_key_tests {
             }
         "#;
         let out = lift_src(src);
-        assert_eq!(out.assertions_lifted, 0, "no fake-discharge: {:?}", contract_names(&out));
+        assert_eq!(
+            out.assertions_lifted,
+            0,
+            "no fake-discharge: {:?}",
+            contract_names(&out)
+        );
         assert!(
             out.skip_reasons
                 .iter()
@@ -14753,7 +15011,12 @@ mod lifter_key_tests {
             }
         "#;
         let out = lift_src(src);
-        assert_eq!(out.assertions_lifted, 0, "no fake-discharge: {:?}", contract_names(&out));
+        assert_eq!(
+            out.assertions_lifted,
+            0,
+            "no fake-discharge: {:?}",
+            contract_names(&out)
+        );
         assert!(
             out.skip_reasons
                 .iter()
@@ -14823,7 +15086,9 @@ mod lifter_key_tests {
         );
         // And it is never fake-discharged as a bin-2 contradiction either.
         assert!(
-            out.skip_reasons.iter().all(|r| !r.contains("READS a MUTABLE-local capture")),
+            out.skip_reasons
+                .iter()
+                .all(|r| !r.contains("READS a MUTABLE-local capture")),
             "immutable-capture body stays off the mut-capture path: {:?}",
             out.skip_reasons
         );

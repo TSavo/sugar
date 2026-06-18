@@ -74,9 +74,9 @@ fn to_cvalue(value: &Json) -> Arc<CValue> {
     match value {
         Json::Null => CValue::null(),
         Json::Bool(b) => CValue::boolean(*b),
-        Json::Number(n) => {
-            CValue::integer(i128::from(n.as_i64().expect("test fixture numbers fit i64")))
-        }
+        Json::Number(n) => CValue::integer(i128::from(
+            n.as_i64().expect("test fixture numbers fit i64"),
+        )),
         Json::String(s) => CValue::string(s.clone()),
         Json::Array(items) => CValue::array(items.iter().map(to_cvalue).collect()),
         Json::Object(map) => CValue::object(

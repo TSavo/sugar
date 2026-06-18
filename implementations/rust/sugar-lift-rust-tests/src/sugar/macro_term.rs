@@ -25,9 +25,12 @@ use crate::sugar::factory::{build_term, FactoryCtx};
 use crate::sugar::format::{stable_let_bindings, try_resolve_format};
 use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
 use crate::{
-    macro_literal_contains_mut_local, sugar_ctx, str_const, token_key, Desugared, Outcome, Sugar,
+    macro_literal_contains_mut_local, str_const, sugar_ctx, token_key, Desugared, Outcome, Sugar,
     SugarCtx, MAX_MACRO_EXPANSION_DEPTH,
 };
+
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::term("macro_term", recognize);
 
 /// TERM recognizer for `Expr::Macro`.
 pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {

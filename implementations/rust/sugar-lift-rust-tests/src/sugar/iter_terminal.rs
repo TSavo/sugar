@@ -28,7 +28,7 @@
 // THE PREDICATE-BOOL terminals (`.any(p)`/`.all(p)`) const-evaluate the closure over each
 // element and OR (`any`) / AND (`all`) the per-element bools to a GROUNDED bool const.
 //
-// This is the TERM-position node -- it sits in the term registry BEFORE
+// This is the TERM-position node -- it declares a better TERM priority than
 // `method_call_term::recognize`, so a recognized literal-domain reduction grounds to its
 // value instead of the opaque `method:<m>` EUF ctor. A receiver chain the literal-Seq
 // machinery does not own (`peel_fold_adaptors` -> `None`: an unknown adaptor, a closure
@@ -62,14 +62,16 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{num, ConstValue, Sort, Term};
 use syn::Expr;
 
-use crate::sugar::factory::FactoryCtx;
-use crate::sugar::literal::LiteralSugar;
+use crate::sugar::factory::{build_composite, FactoryCtx};
 use crate::sugar::method_call_term;
 use crate::sugar::monadic;
 use crate::{
-    const_eval_unary_closure, parse_int_lit, peel_fold_adaptors, strip_refs_groups, ConstVal,
-    Desugared, Outcome, Sugar, SugarCtx,
+    const_eval_unary_closure, parse_int_lit, strip_refs_groups, ConstVal, Desugared, Outcome,
+    Sugar, SugarCtx,
 };
+
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::term("iter_terminal", recognize);
 
 /// Build a grounded boolean CONST term (`bool(b)`) for the `.any`/`.all` reductions. The
 /// `Bool` sort meets the `assert_eq!(..., true)` RHS bool const structurally (z3 enforces
@@ -131,7 +133,21 @@ pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>>
     let Expr::MethodCall(call) = expr else {
         return None;
     };
-    let terminal = match call.method.to_string().as_str() {
+    let terminal = recognize_terminal(call)?;
+    // The opaque `method:` fallback -- the EXACT node `method_call_term::recognize`
+    // builds for this same expr (built DIRECTLY, not via `build_term`, which would re-enter
+    // this recognizer and loop). Emitted verbatim if the literal desugar does not cleanly
+    // ground, so this node never refuses a form baseline lifted opaquely.
+    let fallback = method_call_term::recognize(expr, fcx)?;
+    Some(Box::new(IterTerminalSugar {
+        terminal,
+        inner: build_composite(&call.receiver, fcx),
+        fallback,
+    }))
+}
+
+fn recognize_terminal(call: &syn::ExprMethodCall) -> Option<Terminal> {
+    Some(match call.method.to_string().as_str() {
         // Scalar reductions, extremum terminals, and the nullary positional terminals
         // take no args.
         "sum" if call.args.is_empty() => Terminal::Sum,
@@ -175,36 +191,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>>
             }
         }
         _ => return None,
-    };
-    // Peel the receiver adaptor chain to (base, ordered wrappers) EXACTLY as
-    // `fold::decompose_seq` does. `None` (an unknown adaptor / unresolvable binding) ->
-    // NOT RECOGNIZED -> fall through to the opaque ctor.
-    let (base, adaptors) = peel_fold_adaptors(&call.receiver, fcx.let_inits, 0)?;
-    // THE SYNTACTIC-LITERAL GATE: the base must be a WRITTEN literal array / range. A
-    // non-literal base (`v[..4]` Index, a bare `let`-bound / opaque / runtime receiver
-    // `peel` could not resolve to a literal) is NOT recognized -> fall through to the
-    // opaque ctor (baseline). This is the build-time soundness boundary: we never even
-    // construct the reduction over a non-literal domain.
-    if !matches!(strip_refs_groups(base), Expr::Array(_) | Expr::Range(_)) {
-        return None;
-    }
-    // Build the inner seq-`Sugar`: `LiteralSugar` base nested under the adaptor decorators
-    // (base->terminal order), mirroring `fold::decompose_seq`.
-    let mut inner: Box<dyn Sugar> = Box::new(LiteralSugar { base: base.clone() });
-    for wrap in adaptors {
-        inner = wrap(inner);
-    }
-    // The opaque `method:` fallback -- the EXACT node `method_call_term::recognize` builds
-    // for this same expr (built DIRECTLY, not via `build_term`, which would re-enter this
-    // recognizer and loop). `method_call_term` owns every `Expr::MethodCall`, so it always
-    // `Some`s here; the `?` is a defensive no-op. Emitted verbatim if the literal desugar
-    // does not cleanly ground, so this node never refuses a form baseline lifted opaquely.
-    let fallback = method_call_term::recognize(expr, fcx)?;
-    Some(Box::new(IterTerminalSugar {
-        terminal,
-        inner,
-        fallback,
-    }))
+    })
 }
 
 /// The iterator scalar-reduction terminal node. Holds the pre-built inner seq-`Sugar`
@@ -285,11 +272,7 @@ impl IterTerminalSugar {
                 if const_eval_unary_closure(pred, v)?.as_bool()? {
                     // `.position` grounds the INDEX (always a non-negative int); `.find`
                     // grounds the ELEMENT (must be an int for the `opt:some` field sort).
-                    let n = if want_index {
-                        idx as i128
-                    } else {
-                        v.as_int()?
-                    };
+                    let n = if want_index { idx as i128 } else { v.as_int()? };
                     return Some(Desugared::Term(monadic::some_term(num(n))));
                 }
             }

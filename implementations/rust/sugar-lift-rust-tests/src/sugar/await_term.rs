@@ -8,6 +8,9 @@ use crate::sugar::factory::{build_term, FactoryCtx};
 use crate::Sugar;
 use syn::Expr;
 
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::term("await_term", recognize);
+
 /// TERM recognizer for `Expr::Await`.
 pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
     match expr {

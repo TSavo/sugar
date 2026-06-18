@@ -10,14 +10,13 @@
 // where `op_name` is the `&'static str` `term_binop_name` returns for the operator
 // (`"+"`/`"-"`/`"*"`/`"int-div"`/`"int-rem"`/`"bit-and"`/.../`"shift-right"`).
 //
-// THIS NODE IS THE COMPOSER ONLY. The `Expr::Binary` arm has a PREAMBLE before the
+// THIS NODE IS THE COMPOSER ONLY. The `Expr::Binary` shape has a PREAMBLE before the
 // arithmetic ctor (the `FormatSugar` string-`+` hook, then the comparison branch that
 // fires when `relation_from_binop(&op).is_some()`, then the `term_binop_name` lookup
 // itself -- a `None` there is the "unsupported term operator" refusal). Those early
-// returns / the op-name resolution are NOT in this node; the factory arm the
-// coordinator wires resolves `op_name` and hands it to the constructor (see the
-// report's preamble note). This node composes its two pre-built children and emits the
-// arithmetic ctor over their terms, propagating a child `Hit` verbatim.
+// returns and the op-name resolution are owned by `recognize`, which builds this node
+// only for the arithmetic tail. This node composes its two pre-built children and emits
+// the arithmetic ctor over their terms, propagating a child `Hit` verbatim.
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -33,6 +32,9 @@ use crate::{
     bool_const, const_eval, relation_from_binop, term_binop_name, token_key, ConstVal, Desugared,
     Outcome, Sugar, SugarCtx,
 };
+
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::term("binop", recognize);
 
 /// TERM recognizer for `Expr::Binary`. Mirrors the source-of-truth arm in order: the
 /// FormatSugar string-`+` hook FIRST (only for `Add`; a resolved `str_const`, or a
@@ -206,7 +208,9 @@ mod tests {
             Outcome::Hit(Effect::Mutation { boundary }) => {
                 assert_eq!(boundary, "stub");
             }
-            Outcome::Hit(_) => panic!("expected the left child's Mutation Hit, got a different Effect"),
+            Outcome::Hit(_) => {
+                panic!("expected the left child's Mutation Hit, got a different Effect")
+            }
             Outcome::Dug(_) => panic!("expected the left child's Hit, got Dug"),
         }
     }
@@ -222,7 +226,9 @@ mod tests {
             Outcome::Hit(Effect::Mutation { boundary }) => {
                 assert_eq!(boundary, "stub");
             }
-            Outcome::Hit(_) => panic!("expected the right child's Mutation Hit, got a different Effect"),
+            Outcome::Hit(_) => {
+                panic!("expected the right child's Mutation Hit, got a different Effect")
+            }
             Outcome::Dug(_) => panic!("expected the right child's Hit, got Dug"),
         }
     }

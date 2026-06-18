@@ -51,6 +51,9 @@ use syn::Expr;
 use crate::sugar::factory::{build_term, FactoryCtx};
 use crate::{strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::term("monadic", recognize);
+
 /// The reserved monadic ctor names. Distinct from the generic `call:<head>`
 /// ctor (`call:Some`/`call:None`) so the equality routes through the plain
 /// `eq(lhs, rhs)` atom (NOT the federated `call:eq:Some` EUF), and so the

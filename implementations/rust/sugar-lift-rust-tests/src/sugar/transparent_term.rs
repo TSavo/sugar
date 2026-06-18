@@ -9,6 +9,12 @@ use crate::sugar::factory::{build_composite, build_term, FactoryCtx};
 use crate::Sugar;
 use syn::Expr;
 
+pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::term("transparent_term", recognize);
+
+pub(crate) const COMPOSITE_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::composite("transparent_composite", recognize_composite);
+
 /// TERM recognizer for `Expr::Paren` / `Expr::Group`: recurse through to the inner
 /// expr's TERM Sugar.
 pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {

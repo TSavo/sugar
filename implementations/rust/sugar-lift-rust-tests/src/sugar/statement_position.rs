@@ -41,10 +41,12 @@ use crate::{
     Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON,
 };
 
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::statement_effect("statement_position", recognize);
+
 /// REFUSE-side statement-position recognizer ([`StatementPositionSugar`] via
 /// [`decompose_statement_position`]): `Some` only for a bare statement expr that carries an
-/// assertion, else `None`. The verdict-reading factory entry (`build_statement_position`)
-/// walks a one-recognizer registry over this; the node owns the runtime-continuation verdict
+/// assertion, else `None`. The statement-effect claim owns the runtime-continuation verdict
 /// in its own `desugar`. Ctx-independent (the build env is unused).
 pub(crate) fn recognize(expr: &Expr, _fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
     decompose_statement_position(expr).map(|node| Box::new(node) as Box<dyn Sugar>)

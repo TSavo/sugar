@@ -491,9 +491,8 @@ fn main() {
     // full named non-discharged set; only their sum reconciles against the textual
     // macro count.
     let named_non_discharged = totals.refused + totals.unclassified + totals.inactive;
-    let unaccounted = totals.assert_macros as i64
-        - totals.discharged as i64
-        - named_non_discharged as i64;
+    let unaccounted =
+        totals.assert_macros as i64 - totals.discharged as i64 - named_non_discharged as i64;
     // Per-file split. A positive per-file residual is a genuinely unreached
     // assertion (the true silent drop). A negative per-file residual is
     // inlining inflation: the reducer inlined a helper called from several
@@ -634,8 +633,8 @@ fn main() {
 /// category names the blocker shape (the roadmap rung). Per-helper rows let us map
 /// the 112 "reachable only" asserts back to their cause.
 fn report_callsite_census(rows: &[(String, sugar_lift_rust_tests::CallsiteCensusRow)]) {
-    use sugar_lift_rust_tests::CallsiteCensusRow;
     use std::collections::BTreeMap;
+    use sugar_lift_rust_tests::CallsiteCensusRow;
 
     // Per helper: did ANY call site commit it? and the bail categories observed.
     #[derive(Default)]

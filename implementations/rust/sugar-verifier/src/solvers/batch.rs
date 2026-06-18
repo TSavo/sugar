@@ -154,7 +154,9 @@ fn parse_chunk(stdout: &str, n: usize) -> Vec<BatchOutcome> {
         }
     }
     while out.len() < n {
-        out.push(undecidable("batch: missing marker (truncated/killed chunk)"));
+        out.push(undecidable(
+            "batch: missing marker (truncated/killed chunk)",
+        ));
     }
     out
 }
@@ -213,9 +215,24 @@ mod tests {
         assert_eq!(r.len(), 3);
         // raw z3: sat -> Unsatisfied (consistency layer inverts later); unsat ->
         // Discharged; unknown constant -> Refused.
-        assert_eq!(r[0].raw, ObligationVerdict::Unsatisfied, "frag: {}", r[0].fragment);
-        assert_eq!(r[1].raw, ObligationVerdict::Discharged, "frag: {}", r[1].fragment);
-        assert_eq!(r[2].raw, ObligationVerdict::Refused, "frag: {}", r[2].fragment);
+        assert_eq!(
+            r[0].raw,
+            ObligationVerdict::Unsatisfied,
+            "frag: {}",
+            r[0].fragment
+        );
+        assert_eq!(
+            r[1].raw,
+            ObligationVerdict::Discharged,
+            "frag: {}",
+            r[1].fragment
+        );
+        assert_eq!(
+            r[2].raw,
+            ObligationVerdict::Refused,
+            "frag: {}",
+            r[2].fragment
+        );
     }
 
     #[test]

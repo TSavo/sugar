@@ -501,8 +501,7 @@ fn render_int(i: i128) -> String {
 /// Int MUST be recovered here or a refutation against an opaque symbol could
 /// be masked (a falsePass).
 fn const_concrete_int(value: &serde_json::Value, sort: &sugar_ir_types::Sort) -> Option<i128> {
-    let sort_is_int =
-        matches!(sort, sugar_ir_types::Sort::Primitive { name } if name == "Int");
+    let sort_is_int = matches!(sort, sugar_ir_types::Sort::Primitive { name } if name == "Int");
     match value {
         serde_json::Value::Bool(b) => Some(if *b { 1 } else { 0 }),
         serde_json::Value::Number(_) => value

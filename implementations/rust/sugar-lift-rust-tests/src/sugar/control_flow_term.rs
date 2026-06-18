@@ -31,9 +31,16 @@
 
 use syn::Expr;
 
-use crate::sugar::factory::{boxed, FactoryCtx};
+use crate::sugar::backstop::boxed;
+use crate::sugar::factory::FactoryCtx;
 use crate::sugar::term_leaf::reasoned_hit;
 use crate::{token_key, Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON};
+
+pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::term("control_flow_term", recognize_term);
+
+pub(crate) const COMPOSITE_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::composite("control_flow_composite", recognize_composite);
 
 /// TERM recognizer for effectful control-flow (`Expr::TryBlock`/`Async`/`Try`): the
 /// `ControlFlowTermSugar` refuse-shape, surfaced as a reasoned-Hit carrying the
@@ -42,13 +49,17 @@ use crate::{token_key, Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REA
 /// fat factory. DISTINCT from the COMPOSITE recognizer, which boxes the node directly.
 pub(crate) fn recognize_term(expr: &Expr, _fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
     match expr {
-        Expr::TryBlock(_) | Expr::Async(_) | Expr::Try(_) => Some(match decompose_control_flow_term(expr) {
-            Some(node) => match node.desugar_ctx_free() {
-                Outcome::Hit(effect @ Effect::ControlFlow { .. }) => reasoned_hit(effect.reason()),
-                _ => reasoned_hit(format!("unsupported term `{}`", token_key(expr))),
-            },
-            None => reasoned_hit(format!("unsupported term `{}`", token_key(expr))),
-        }),
+        Expr::TryBlock(_) | Expr::Async(_) | Expr::Try(_) => {
+            Some(match decompose_control_flow_term(expr) {
+                Some(node) => match node.desugar_ctx_free() {
+                    Outcome::Hit(effect @ Effect::ControlFlow { .. }) => {
+                        reasoned_hit(effect.reason())
+                    }
+                    _ => reasoned_hit(format!("unsupported term `{}`", token_key(expr))),
+                },
+                None => reasoned_hit(format!("unsupported term `{}`", token_key(expr))),
+            })
+        }
         _ => None,
     }
 }

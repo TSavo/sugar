@@ -13,6 +13,9 @@ use crate::{
 };
 use syn::{Expr, Stmt};
 
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::term("const_block", recognize);
+
 /// TERM recognizer for `Expr::Const`.
 pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Const(const_block) = expr else {
@@ -25,7 +28,10 @@ pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>>
         return Some(reasoned_hit(effect.reason()));
     }
     match translate_expression_only_block_in_scope(&const_block.block, "const", scope) {
-        Ok(term) => Some(resolved_term(scope_const_block_locals(term, scope.local_scope()))),
+        Ok(term) => Some(resolved_term(scope_const_block_locals(
+            term,
+            scope.local_scope(),
+        ))),
         Err(reason) => Some(reasoned_hit(reason)),
     }
 }

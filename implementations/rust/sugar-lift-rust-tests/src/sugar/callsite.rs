@@ -320,7 +320,12 @@ mod tests {
 
     fn lift(src: &str) -> crate::AdapterOutput {
         let file = syn::parse_file(src).expect("parse");
-        lift_file_with_macro_imports(&file, "test.rs", &LiftOptions::default(), &MacroRegistry::new())
+        lift_file_with_macro_imports(
+            &file,
+            "test.rs",
+            &LiftOptions::default(),
+            &MacroRegistry::new(),
+        )
     }
 
     fn reachable_only(out: &crate::AdapterOutput) -> usize {
@@ -566,8 +571,7 @@ mod tests {
             out.skip_reasons
         );
         assert!(
-            !out
-                .skip_reasons
+            !out.skip_reasons
                 .iter()
                 .any(|r| r.contains("has no visible source")),
             "the nested helper must resolve (no `has no visible source`): {:?}",
@@ -743,7 +747,10 @@ mod tests {
         assert!(
             !claims_seven_as_closed,
             "a runtime actual the assert reads must not forge a closed `7 == 7`: {:?}",
-            out.decls.iter().map(|d| format!("{:?}", d.inv)).collect::<Vec<_>>()
+            out.decls
+                .iter()
+                .map(|d| format!("{:?}", d.inv))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -777,7 +784,10 @@ mod tests {
         assert!(
             !claims_seven_as_closed,
             "a non-closed actual must not forge a closed pin: {:?}",
-            out.decls.iter().map(|d| format!("{:?}", d.inv)).collect::<Vec<_>>()
+            out.decls
+                .iter()
+                .map(|d| format!("{:?}", d.inv))
+                .collect::<Vec<_>>()
         );
     }
 }

@@ -636,11 +636,8 @@ mod tests {
                 )*
             }};
         };
-        let out = expand(
-            &rules_of(def),
-            quote! { b"hello", ("hello", b"") },
-        )
-        .unwrap_or_else(|e| panic!("expand err: {e}"));
+        let out = expand(&rules_of(def), quote! { b"hello", ("hello", b"") })
+            .unwrap_or_else(|e| panic!("expand err: {e}"));
         assert_eq!(
             out.to_string(),
             quote! {{
@@ -660,11 +657,8 @@ mod tests {
                 $( assert_eq!($v, $i); )*
             }};
         };
-        let out = expand(
-            &rules_of(def),
-            quote! { src, ("a", 1), ("b", 2) },
-        )
-        .unwrap_or_else(|e| panic!("expand err: {e}"));
+        let out = expand(&rules_of(def), quote! { src, ("a", 1), ("b", 2) })
+            .unwrap_or_else(|e| panic!("expand err: {e}"));
         assert_eq!(
             out.to_string(),
             quote! {{ assert_eq!("a", 1); assert_eq!("b", 2); }}.to_string()
@@ -760,11 +754,8 @@ mod trailing_separator_tests {
     #[test]
     fn repetition_groups_without_trailing_comma_expand() {
         // Same matcher, no trailing comma: the `$(,)?` simply matches zero.
-        let out = expand(
-            &rules_of(chunks_def()),
-            quote! { b"H", ("a", 1), ("b", 2) },
-        )
-        .unwrap_or_else(|e| panic!("no-trailing-comma expand err: {e}"));
+        let out = expand(&rules_of(chunks_def()), quote! { b"H", ("a", 1), ("b", 2) })
+            .unwrap_or_else(|e| panic!("no-trailing-comma expand err: {e}"));
         assert_eq!(
             out.to_string(),
             quote! {{ assert_eq!("a", 1); assert_eq!("b", 2); }}.to_string()

@@ -91,7 +91,10 @@ impl Sugar for TemporalReadSugar {
 /// refused; they stay on the constructive `index(a, i)` path / EUF term (the fake-refuse
 /// guardrail, and the discrimination twin's soundness gate). It makes NO verdict -- the
 /// temporal-read decision is `TemporalReadSugar::desugar`'s (and its leaf's) alone.
-pub(crate) fn decompose_temporal_read(expr: &Expr, scope: &TemporalScope) -> Option<TemporalReadSugar> {
+pub(crate) fn decompose_temporal_read(
+    expr: &Expr,
+    scope: &TemporalScope,
+) -> Option<TemporalReadSugar> {
     let Expr::Index(index) = expr else {
         return None;
     };

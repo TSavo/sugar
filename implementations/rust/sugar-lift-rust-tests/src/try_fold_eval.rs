@@ -38,8 +38,7 @@ use std::collections::BTreeMap;
 use syn::{Expr, ExprClosure, Pat};
 
 use crate::{
-    closure_single_param_ident, const_eval, const_int, strip_refs_groups, ConstVal,
-    TemporalScope,
+    closure_single_param_ident, const_eval, const_int, strip_refs_groups, ConstVal, TemporalScope,
 };
 
 /// The maximum element count the evaluator will unroll (mirrors `SUGAR_SEQ_CAP`).
@@ -290,7 +289,11 @@ fn eval_range(r: &syn::ExprRange) -> Option<Vec<ConstVal>> {
     let start = const_eval(r.start.as_deref()?, &env)?.as_int()?;
     let end_raw = const_eval(r.end.as_deref()?, &env)?.as_int()?;
     let inclusive = matches!(r.limits, syn::RangeLimits::Closed(_));
-    let end = if inclusive { end_raw.checked_add(1)? } else { end_raw };
+    let end = if inclusive {
+        end_raw.checked_add(1)?
+    } else {
+        end_raw
+    };
     if end < start || (end - start) > TRY_FOLD_SEQ_CAP as i128 {
         return None;
     }
@@ -714,7 +717,10 @@ mod tests {
         let twin = ground(MAP_LETS, "(3..13).try_fold(8, f)");
         assert_eq!(good.as_deref(), Some("Some (11250)"));
         assert_eq!(twin.as_deref(), Some("Some (12274)"));
-        assert_ne!(good, twin, "a genuinely unequal fold must ground differently");
+        assert_ne!(
+            good, twin,
+            "a genuinely unequal fold must ground differently"
+        );
     }
 
     #[test]

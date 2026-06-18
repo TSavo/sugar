@@ -11,7 +11,29 @@
 // result, or a kept value it cannot materialize back to an `Expr` -- exact-or-bail,
 // same as `MapSugar` / `FilterSugar`.
 
+use syn::Expr;
+
+use crate::sugar::factory::{build_composite, FactoryCtx};
 use crate::{const_eval_option_closure, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx};
+
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::composite("filter_map", recognize_composite);
+
+pub(crate) fn recognize_composite(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
+    let Expr::MethodCall(call) = expr else {
+        return None;
+    };
+    if call.method != "filter_map" || call.args.len() != 1 {
+        return None;
+    }
+    let Expr::Closure(f) = &call.args[0] else {
+        return None;
+    };
+    Some(Box::new(FilterMapSugar {
+        inner: build_composite(&call.receiver, fcx),
+        f: f.clone(),
+    }))
+}
 
 /// Const-evaluate `f` (returning `Option`) over each element and keep the `Some` values.
 pub(crate) struct FilterMapSugar {
@@ -26,9 +48,9 @@ impl Sugar for FilterMapSugar {
             let mut out = Vec::with_capacity(seq.len());
             for elem in seq {
                 let v = elem.value.as_ref()?; // opaque element under a filter_map -> bail
-                // The closure returns `Option<_>`: a `None` drops the element, a
-                // `Some(v)` keeps it with its mapped const value. A non-`Option` /
-                // runtime / unmodeled body bails the whole defold.
+                                              // The closure returns `Option<_>`: a `None` drops the element, a
+                                              // `Some(v)` keeps it with its mapped const value. A non-`Option` /
+                                              // runtime / unmodeled body bails the whole defold.
                 if let Some(mapped) = const_eval_option_closure(&self.f, v)? {
                     let mexpr = mapped.to_expr()?; // materialize for EUF translation
                     out.push(DesugaredElem {
