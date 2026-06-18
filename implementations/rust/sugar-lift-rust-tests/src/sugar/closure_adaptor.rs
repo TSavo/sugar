@@ -34,29 +34,78 @@ use crate::sugar::factory::SugarBuildCtx;
 use crate::{
     bounded_domain_from_expr, closure_body_advances_iterator, closure_body_is_side_effecting,
     count_asserts_in_expr, peel_fold_adaptors, token_key, Effect, Outcome, Sugar, SugarCtx,
-    PURE_CLOSURE_ADAPTORS, STRUCTURAL_BACKSTOP_REASON,
+    TemporalScope, PURE_CLOSURE_ADAPTORS, STRUCTURAL_BACKSTOP_REASON,
 };
 
-pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::fallback_composite("closure_adaptor", recognize_composite);
-
-pub(crate) const VERDICT_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+pub(crate) const TLS_ACCESSOR_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::closure_adaptor_verdict(
-        "closure_adaptor",
-        recognize_composite,
+        "closure_tls_accessor",
+        recognize_tls_accessor_verdict,
     );
 
-/// COMPOSITE method-call recognizer for a closure-bearing adaptor ([`ClosureAdaptorSugar`]
-/// via [`decompose_closure_adaptor`]): `Some` only for a recognized closure-adaptor
-/// shape, else `None` (the walk falls through to the next method-call recognizer).
-/// Mirrors the THIRD arm of the old `build_method_call_composite` chain — AFTER
-/// `for_each`, BEFORE `match_scrutinee`.
-pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    match expr {
-        Expr::MethodCall(_) => decompose_closure_adaptor(expr, fcx.let_inits())
-            .map(|node| Box::new(node) as Box<dyn Sugar>),
-        _ => None,
-    }
+pub(crate) const OPAQUE_ACCESSOR_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::closure_adaptor_verdict(
+        "closure_opaque_accessor",
+        recognize_opaque_accessor_verdict,
+    );
+
+pub(crate) const ITER_ADVANCE_BODY_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::closure_adaptor_verdict(
+        "closure_iter_advance_body",
+        recognize_iter_advance_body_verdict,
+    );
+
+pub(crate) const MUTATING_BODY_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::closure_adaptor_verdict(
+        "closure_mutating_body",
+        recognize_mutating_body_verdict,
+    );
+
+pub(crate) const RUNTIME_RECEIVER_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::closure_adaptor_verdict(
+        "closure_runtime_receiver",
+        recognize_runtime_receiver_verdict,
+    );
+
+fn recognize_tls_accessor_verdict(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    recognize_verdict_kind(expr, fcx, ClosureAdaptorClaimKind::TlsAccessor)
+}
+
+fn recognize_opaque_accessor_verdict(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    recognize_verdict_kind(expr, fcx, ClosureAdaptorClaimKind::OpaqueAccessor)
+}
+
+fn recognize_iter_advance_body_verdict(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    recognize_verdict_kind(expr, fcx, ClosureAdaptorClaimKind::IterAdvanceBody)
+}
+
+fn recognize_mutating_body_verdict(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    recognize_verdict_kind(expr, fcx, ClosureAdaptorClaimKind::MutatingBody)
+}
+
+fn recognize_runtime_receiver_verdict(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    recognize_verdict_kind(expr, fcx, ClosureAdaptorClaimKind::RuntimeReceiver)
+}
+
+fn recognize_verdict_kind(
+    expr: &Expr,
+    fcx: &SugarBuildCtx,
+    kind: ClosureAdaptorClaimKind,
+) -> Option<Box<dyn Sugar>> {
+    let Expr::MethodCall(_) = expr else {
+        return None;
+    };
+    let node = decompose_closure_adaptor(expr, fcx.let_inits())?;
+    (node.claim_kind(fcx.scope()) == Some(kind)).then(|| Box::new(node) as Box<dyn Sugar>)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClosureAdaptorClaimKind {
+    TlsAccessor,
+    OpaqueAccessor,
+    IterAdvanceBody,
+    MutatingBody,
+    RuntimeReceiver,
 }
 
 /// The closure-bearing method statement, composed as a node whose `desugar` makes every
@@ -80,24 +129,65 @@ pub(crate) struct ClosureAdaptorSugar {
 }
 
 impl ClosureAdaptorSugar {
+    fn accessor_claim_kind(&self) -> Option<ClosureAdaptorClaimKind> {
+        if PURE_CLOSURE_ADAPTORS.contains(&self.method.as_str()) {
+            return None;
+        }
+        if self.method == "with" {
+            return Some(ClosureAdaptorClaimKind::TlsAccessor);
+        }
+        Some(ClosureAdaptorClaimKind::OpaqueAccessor)
+    }
+
+    fn body_claim_kind(&self) -> Option<ClosureAdaptorClaimKind> {
+        if !closure_body_is_side_effecting(&self.closure.body) {
+            return None;
+        }
+        if closure_body_advances_iterator(&self.closure.body) {
+            return Some(ClosureAdaptorClaimKind::IterAdvanceBody);
+        }
+        Some(ClosureAdaptorClaimKind::MutatingBody)
+    }
+
+    fn receiver_resolves_literal(&self, scope: &TemporalScope) -> bool {
+        let borrowed: BTreeMap<String, &Expr> =
+            self.let_inits.iter().map(|(k, v)| (k.clone(), v)).collect();
+        peel_fold_adaptors(&self.receiver, &borrowed, 0)
+            .and_then(|(base, _)| bounded_domain_from_expr(base, scope))
+            .is_some()
+    }
+
+    fn receiver_claim_kind(&self, scope: &TemporalScope) -> Option<ClosureAdaptorClaimKind> {
+        if self.receiver_resolves_literal(scope) {
+            return None;
+        }
+        Some(ClosureAdaptorClaimKind::RuntimeReceiver)
+    }
+
+    fn claim_kind(&self, scope: &TemporalScope) -> Option<ClosureAdaptorClaimKind> {
+        self.accessor_claim_kind()
+            .or_else(|| self.body_claim_kind())
+            .or_else(|| self.receiver_claim_kind(scope))
+    }
+
     /// ACCESSOR leaf: a non-pure adaptor (`.with`, `.with_unfilled_buf`, ...) ranges over
     /// runtime/opaque state, not a constructed literal domain -- bin-2. `.with` is the
     /// thread-local accessor (`Tls`); any other effectful accessor is the generic
     /// opaque-accessor boundary. A PURE adaptor is not an accessor boundary -> `None`
     /// (the leaf Digs -- keep going to the body / receiver leaves).
     fn accessor_effect(&self, boundary: &str) -> Option<Effect> {
-        if PURE_CLOSURE_ADAPTORS.contains(&self.method.as_str()) {
-            return None;
-        }
-        if self.method == "with" {
-            return Some(Effect::Tls {
+        match self.accessor_claim_kind()? {
+            ClosureAdaptorClaimKind::TlsAccessor => Some(Effect::Tls {
                 boundary: boundary.to_string(),
-            });
+            }),
+            ClosureAdaptorClaimKind::OpaqueAccessor => Some(Effect::OpaqueRuntime {
+                boundary: boundary.to_string(),
+                accessor: true,
+            }),
+            ClosureAdaptorClaimKind::IterAdvanceBody
+            | ClosureAdaptorClaimKind::MutatingBody
+            | ClosureAdaptorClaimKind::RuntimeReceiver => unreachable!("accessor leaf kind"),
         }
-        Some(Effect::OpaqueRuntime {
-            boundary: boundary.to_string(),
-            accessor: true,
-        })
     }
 
     /// BODY leaf: a side-effecting closure body is an order-loss boundary -- distinguish the
@@ -105,17 +195,17 @@ impl ClosureAdaptorSugar {
     /// `.push`). Both are the SAME terminal class; typing them apart records the cause in
     /// the catalog. A PURE body -> `None` (the leaf Digs).
     fn body_effect(&self, boundary: &str) -> Option<Effect> {
-        if !closure_body_is_side_effecting(&self.closure.body) {
-            return None;
-        }
-        if closure_body_advances_iterator(&self.closure.body) {
-            return Some(Effect::IterAdvance {
+        match self.body_claim_kind()? {
+            ClosureAdaptorClaimKind::IterAdvanceBody => Some(Effect::IterAdvance {
                 boundary: boundary.to_string(),
-            });
+            }),
+            ClosureAdaptorClaimKind::MutatingBody => Some(Effect::Mutation {
+                boundary: boundary.to_string(),
+            }),
+            ClosureAdaptorClaimKind::TlsAccessor
+            | ClosureAdaptorClaimKind::OpaqueAccessor
+            | ClosureAdaptorClaimKind::RuntimeReceiver => unreachable!("body leaf kind"),
         }
-        Some(Effect::Mutation {
-            boundary: boundary.to_string(),
-        })
     }
 
     /// RECEIVER leaf: does the receiver resolve to a finite literal domain? If YES, the leaf
@@ -124,18 +214,16 @@ impl ClosureAdaptorSugar {
     /// fake-refused. If NO, the iterated/threaded values are runtime data -- the leaf `Hit`s
     /// `OpaqueRuntime` (bin-2, no finite construction to walk).
     fn receiver_effect(&self, boundary: &str, ctx: &SugarCtx) -> Option<Effect> {
-        let borrowed: BTreeMap<String, &Expr> =
-            self.let_inits.iter().map(|(k, v)| (k.clone(), v)).collect();
-        let resolves_literal = peel_fold_adaptors(&self.receiver, &borrowed, 0)
-            .and_then(|(base, _)| bounded_domain_from_expr(base, ctx.scope))
-            .is_some();
-        if resolves_literal {
-            return None;
+        match self.receiver_claim_kind(ctx.scope)? {
+            ClosureAdaptorClaimKind::RuntimeReceiver => Some(Effect::OpaqueRuntime {
+                boundary: boundary.to_string(),
+                accessor: false,
+            }),
+            ClosureAdaptorClaimKind::TlsAccessor
+            | ClosureAdaptorClaimKind::OpaqueAccessor
+            | ClosureAdaptorClaimKind::IterAdvanceBody
+            | ClosureAdaptorClaimKind::MutatingBody => unreachable!("receiver leaf kind"),
         }
-        Some(Effect::OpaqueRuntime {
-            boundary: boundary.to_string(),
-            accessor: false,
-        })
     }
 }
 

@@ -37,31 +37,14 @@ use crate::{
     STRUCTURAL_BACKSTOP_REASON,
 };
 
-pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::fallback_composite("match_scrutinee", recognize_composite);
-
 pub(crate) const VERDICT_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::match_scrutinee_verdict(
         "match_scrutinee",
         recognize_verdict,
     );
 
-/// COMPOSITE method-call recognizer for a match-scrutinee method shape
-/// ([`MatchScrutineeSugar`] via [`decompose_match_scrutinee`]): `Some` only for a
-/// recognized shape, else `None`. Mirrors the LAST arm of the old
-/// `build_method_call_composite` chain — AFTER `closure_adaptor`.
-pub(crate) fn recognize_composite(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    match expr {
-        Expr::MethodCall(_) => {
-            decompose_match_scrutinee(expr).map(|node| Box::new(node) as Box<dyn Sugar>)
-        }
-        _ => None,
-    }
-}
-
 /// MATCH-position recognizer ([`MatchScrutineeSugar`] via [`decompose_match_scrutinee`]):
 /// `Some` only for an `Expr::Match` over a RUNTIME call-result scrutinee, else `None`.
-/// DISTINCT from `recognize_composite`, which owns the method-call-chain placeholder slot.
 pub(crate) fn recognize_verdict(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     decompose_match_scrutinee(expr).map(|node| Box::new(node) as Box<dyn Sugar>)
 }
