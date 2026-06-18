@@ -11,8 +11,10 @@ use std::path::PathBuf;
 use owo_colors::OwoColorize;
 use serde_json::{Map, Value};
 
+use crate::cmd_prove;
 use crate::lift_plugin::{self, LiftPluginError, LiftPluginOptions};
 use crate::project_config::{read_project_config, read_user_config, PluginEntry, ProjectConfig};
+use crate::report_fmt;
 use crate::{LiftArgs, EXIT_OK, EXIT_USER_ERROR, EXIT_VERIFY_FAIL};
 
 pub fn run(args: LiftArgs) -> u8 {
@@ -82,9 +84,23 @@ pub fn run(args: LiftArgs) -> u8 {
                             return EXIT_USER_ERROR;
                         }
                     };
-                let hard_failure = source_report_has_hard_failures(&report);
+                let prove_report = if args.prove {
+                    match cmd_prove::build_prove_report(&project_root, &args.z3, &args.with) {
+                        Ok(prove_report) => Some(prove_report),
+                        Err(error) => {
+                            eprintln!("{}: prove report: {error}", "error".red().bold());
+                            return EXIT_USER_ERROR;
+                        }
+                    }
+                } else {
+                    None
+                };
+                let mut hard_failure = source_report_has_hard_failures(&report);
+                if let Some(prove_report) = &prove_report {
+                    hard_failure |= report_fmt::report_exit_code(prove_report) != EXIT_OK;
+                }
                 let rendered = if args.out.json {
-                    match render_source_report_json(&report) {
+                    match render_report_json(&report, prove_report.as_ref()) {
                         Ok(rendered) => rendered,
                         Err(error) => {
                             eprintln!("{}: render lift report: {error}", "error".red().bold());
@@ -92,7 +108,7 @@ pub fn run(args: LiftArgs) -> u8 {
                         }
                     }
                 } else {
-                    render_source_report_human(&report)
+                    render_report_human(&report, prove_report.as_ref())
                 };
                 if let Err(error) = write_output(None, rendered.as_bytes()) {
                     eprintln!("{}: {error}", "error".red().bold());
@@ -203,6 +219,7 @@ fn matching_lift_plugin<'a>(
 struct LiftSourceReport {
     ledger: Value,
     audits: Vec<Value>,
+    factory_audits: Vec<Value>,
     source_mementos: Vec<Value>,
     contracts: Vec<Value>,
     vendor_conjoins: Vec<VendorConjoinReport>,
@@ -229,13 +246,14 @@ enum VendorSourceResolution {
     Drifted(String),
 }
 
-const SOURCE_LEDGER_FIELDS: [&str; 7] = [
+const SOURCE_LEDGER_FIELDS: [&str; 8] = [
     "source_loci",
     "source_warranted",
     "source_support",
     "source_refused",
     "source_inactive",
     "source_refuted",
+    "source_unresolved",
     "unclassified_source",
 ];
 
@@ -250,9 +268,9 @@ fn source_report_from_lift_response(
             "lift response did not include sourceLedger; the kit must emit source-audit accounting"
                 .to_string()
         })?;
-    if ledger.get("unclassified_source").is_none() {
+    if ledger.get("source_unresolved").is_none() && ledger.get("unclassified_source").is_none() {
         return Err(
-            "lift response sourceLedger is missing unclassified_source; cannot measure source coverage"
+            "lift response sourceLedger is missing source_unresolved; cannot measure unresolved source coverage"
                 .to_string(),
         );
     }
@@ -289,6 +307,7 @@ fn source_report_from_lift_response(
     } else {
         ledger.clone()
     };
+    let factory_audits = matching_report_factory_audits(response, contract_filter);
     let contracts = matching_report_contracts(response, contract_filter, &filtered_audits);
     let source_mementos =
         matching_report_source_mementos(response, contract_filter, &filtered_audits)?;
@@ -297,6 +316,7 @@ fn source_report_from_lift_response(
     Ok(LiftSourceReport {
         ledger,
         audits: filtered_audits,
+        factory_audits,
         source_mementos,
         contracts,
         vendor_conjoins,
@@ -376,6 +396,36 @@ fn matching_report_contracts(
         .collect()
 }
 
+fn matching_report_factory_audits(response: &Value, contract_filter: Option<&str>) -> Vec<Value> {
+    let Some(rows) = response
+        .get("factoryAudits")
+        .or_else(|| response.get("factory_audits"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    rows.iter()
+        .filter(|row| {
+            contract_filter.is_none_or(|filter| factory_audit_matches_filter(row, filter))
+        })
+        .cloned()
+        .collect()
+}
+
+fn factory_audit_matches_filter(row: &Value, filter: &str) -> bool {
+    [
+        row.get("file").and_then(Value::as_str),
+        row.get("site").and_then(Value::as_str),
+        row.get("requested_role").and_then(Value::as_str),
+        row.get("selected").and_then(Value::as_str),
+        row.get("status").and_then(Value::as_str),
+        row.get("reason").and_then(Value::as_str),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|text| text.contains(filter))
+}
+
 fn recompute_source_ledger(audits: &[Value]) -> Value {
     let mut ledger = Map::new();
     for field in SOURCE_LEDGER_FIELDS {
@@ -384,14 +434,29 @@ fn recompute_source_ledger(audits: &[Value]) -> Value {
             .map(|audit| {
                 audit
                     .get("totals")
-                    .and_then(|totals| totals.get(field))
-                    .and_then(Value::as_i64)
+                    .map(|totals| source_total_for_field(totals, field))
                     .unwrap_or(0)
             })
             .sum::<i64>();
         ledger.insert(field.to_string(), Value::Number(total.into()));
     }
     Value::Object(ledger)
+}
+
+fn source_total_for_field(totals: &Value, field: &str) -> i64 {
+    match field {
+        "source_unresolved" => totals
+            .get("source_unresolved")
+            .or_else(|| totals.get("unclassified_source"))
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        "unclassified_source" => totals
+            .get("unclassified_source")
+            .or_else(|| totals.get("source_unresolved"))
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        _ => totals.get(field).and_then(Value::as_i64).unwrap_or(0),
+    }
 }
 
 /// The symbol-under-test for a lifted assertion contract: each lifted assertion
@@ -440,16 +505,17 @@ fn contract_universe_reading(contract: &Value) -> String {
     "<no formula>".to_string()
 }
 
-fn render_source_report_json(report: &LiftSourceReport) -> Result<String, serde_json::Error> {
+fn source_report_json_value(report: &LiftSourceReport) -> Value {
     let universes = universes_per_method(&report.contracts);
     let universe_rows: Vec<Value> = universes
         .iter()
         .map(|(method, n)| serde_json::json!({ "method": method, "universes": n }))
         .collect();
-    serde_json::to_string_pretty(&serde_json::json!({
+    serde_json::json!({
         "kind": "lift-source-report",
         "sourceLedger": report.ledger,
         "sourceAudits": report.audits,
+        "factoryAudits": report.factory_audits,
         "sourceMementos": report.source_mementos,
         "contracts": report.contracts,
         "vendorConjoins": vendor_conjoins_to_json(&report.vendor_conjoins),
@@ -459,8 +525,23 @@ fn render_source_report_json(report: &LiftSourceReport) -> Result<String, serde_
             "universes": report.contracts.len(),
             "perMethod": universe_rows,
         },
-    }))
-    .map(|mut rendered| {
+    })
+}
+
+fn render_report_json(
+    report: &LiftSourceReport,
+    prove_report: Option<&sugar_verifier::Report>,
+) -> Result<String, serde_json::Error> {
+    let value = if let Some(prove_report) = prove_report {
+        serde_json::json!({
+            "kind": "lift-prove-report",
+            "lift": source_report_json_value(report),
+            "prove": report_fmt::report_to_json(prove_report),
+        })
+    } else {
+        source_report_json_value(report)
+    };
+    serde_json::to_string_pretty(&value).map(|mut rendered| {
         rendered.push('\n');
         rendered
     })
@@ -522,6 +603,7 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
             ));
         }
     }
+    out.push_str(&render_factory_accounting(&report.factory_audits));
     if report.audits.is_empty() {
         out.push_str("no source audits emitted\n");
         return out;
@@ -773,6 +855,22 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
         }
     }
 
+    out
+}
+
+fn render_report_human(
+    report: &LiftSourceReport,
+    prove_report: Option<&sugar_verifier::Report>,
+) -> String {
+    let mut out = render_source_report_human(report);
+    if let Some(prove_report) = prove_report {
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push('\n');
+        out.push_str("prove report (solver witness):\n");
+        out.push_str(&report_fmt::format_report_pretty(prove_report, false));
+    }
     out
 }
 
@@ -1267,11 +1365,11 @@ fn format_ast_kind_counts(counts: &BTreeMap<String, i64>) -> String {
 fn source_status_order(status: &str) -> usize {
     match status {
         "warranted" => 0,
-        "inactive" => 1,
+        "refused" => 1,
         "support" => 2,
-        "refused" => 3,
+        "inactive" => 3,
         "refuted" => 4,
-        "unclassified" => 5,
+        "unresolved" => 5,
         _ => 6,
     }
 }
@@ -1283,7 +1381,8 @@ fn normalized_source_status(status: Option<&str>) -> &str {
         Some("support") => "support",
         Some("refused") => "refused",
         Some("refuted") => "refuted",
-        _ => "unclassified",
+        Some("unresolved") | Some("unclassified") | Some("silent") => "unresolved",
+        _ => "unresolved",
     }
 }
 
@@ -1404,19 +1503,181 @@ fn format_fact_source_locus_ref(locus: &Value) -> String {
 
 fn format_counts(value: &Value) -> String {
     format!(
-        "loci={} warranted={} inactive={} support={} refused={} refuted={} unclassified={}",
+        "loci={} warranted={} inactive={} support={} refused={} refuted={} unresolved={}",
         source_count(value, "source_loci"),
         source_count(value, "source_warranted"),
         source_count(value, "source_inactive"),
         source_count(value, "source_support"),
         source_count(value, "source_refused"),
         source_count(value, "source_refuted"),
-        source_count(value, "unclassified_source"),
+        source_unresolved_count(value),
     )
 }
 
 fn source_count(value: &Value, field: &str) -> i64 {
     value.get(field).and_then(Value::as_i64).unwrap_or(0)
+}
+
+fn source_unresolved_count(value: &Value) -> i64 {
+    value
+        .get("source_unresolved")
+        .or_else(|| value.get("unclassified_source"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+}
+
+fn render_factory_accounting(factory_audits: &[Value]) -> String {
+    if factory_audits.is_empty() {
+        return String::new();
+    }
+
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for audit in factory_audits {
+        let status = normalized_source_status(audit.get("status").and_then(Value::as_str));
+        *counts.entry(status).or_default() += 1;
+    }
+    let mut out = format!(
+        "factory accounting: sites={} warranted={} refused={} support={} unresolved={}\n",
+        factory_audits.len(),
+        counts.get("warranted").copied().unwrap_or(0),
+        counts.get("refused").copied().unwrap_or(0),
+        counts.get("support").copied().unwrap_or(0),
+        counts.get("unresolved").copied().unwrap_or(0),
+    );
+
+    let mut rows = factory_audits.iter().collect::<Vec<_>>();
+    rows.sort_by_key(|audit| {
+        let status = normalized_source_status(audit.get("status").and_then(Value::as_str));
+        (
+            factory_status_order(status),
+            audit
+                .get("file")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            audit
+                .get("line")
+                .and_then(Value::as_i64)
+                .unwrap_or(i64::MAX),
+            audit
+                .get("site")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+        )
+    });
+
+    for status in ["unresolved", "refused", "support", "warranted"] {
+        let status_rows = rows
+            .iter()
+            .copied()
+            .filter(|audit| {
+                normalized_source_status(audit.get("status").and_then(Value::as_str)) == status
+            })
+            .collect::<Vec<_>>();
+        if status_rows.is_empty() {
+            continue;
+        }
+        let heading = if status == "refused" {
+            "factory boundaries (refused)"
+        } else {
+            match status {
+                "unresolved" => "factory unresolved",
+                "support" => "factory support",
+                "warranted" => "factory warranted",
+                _ => "factory other",
+            }
+        };
+        out.push_str(&format!("{heading}:\n"));
+        for audit in status_rows.iter().take(12) {
+            out.push_str(&format_factory_audit_row(audit));
+        }
+        if status_rows.len() > 12 {
+            out.push_str(&format!(
+                "  (+{} more {status} sites)\n",
+                status_rows.len() - 12
+            ));
+        }
+    }
+
+    out
+}
+
+fn factory_status_order(status: &str) -> usize {
+    match status {
+        "unresolved" => 0,
+        "refused" => 1,
+        "support" => 2,
+        "warranted" => 3,
+        _ => 4,
+    }
+}
+
+fn format_factory_audit_row(audit: &Value) -> String {
+    let file = audit
+        .get("file")
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown file>");
+    let line = audit
+        .get("line")
+        .and_then(Value::as_i64)
+        .map(|line| line.to_string())
+        .unwrap_or_else(|| "?".to_string());
+    let ast_kind = audit.get("ast_kind").and_then(Value::as_str).unwrap_or("?");
+    let role = audit
+        .get("requested_role")
+        .and_then(Value::as_str)
+        .unwrap_or("?");
+    let selected = audit
+        .get("selected")
+        .and_then(Value::as_str)
+        .unwrap_or("<none>");
+    let output = audit.get("output").and_then(Value::as_str).unwrap_or("?");
+    let site = audit.get("site").and_then(Value::as_str).unwrap_or("?");
+    let mut row = format!(
+        "  - {file}:{line} {ast_kind} role={role} selected={selected} output={output}\n    site: `{site}`\n"
+    );
+    let candidates = format_factory_candidates(audit);
+    if !candidates.is_empty() {
+        row.push_str(&format!("    candidates: {candidates}\n"));
+    }
+    if let Some(reason) = audit.get("reason").and_then(Value::as_str) {
+        if !reason.is_empty() {
+            let label = if normalized_source_status(audit.get("status").and_then(Value::as_str))
+                == "refused"
+            {
+                "boundary"
+            } else {
+                "reason"
+            };
+            row.push_str(&format!("    {label}: {reason}\n"));
+        }
+    }
+    row
+}
+
+fn format_factory_candidates(audit: &Value) -> String {
+    let Some(candidates) = audit.get("candidates").and_then(Value::as_array) else {
+        return String::new();
+    };
+    candidates
+        .iter()
+        .filter_map(|candidate| {
+            let name = candidate.get("name").and_then(Value::as_str)?;
+            let role = candidate.get("role").and_then(Value::as_str).unwrap_or("?");
+            let priority = candidate
+                .get("priority")
+                .and_then(Value::as_str)
+                .unwrap_or("?");
+            let selected = candidate
+                .get("selected")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let suffix = if selected { "*" } else { "" };
+            Some(format!("{name}[{role}/{priority}]{suffix}"))
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn contract_name(audit: &Value) -> Option<&str> {
@@ -2252,6 +2513,65 @@ mod tests {
     use super::*;
     use crate::project_config::PluginEntry;
     use crate::OutputFlags;
+    use sugar_verifier::{CallSite, Report, ReportRow};
+
+    fn minimal_source_report() -> LiftSourceReport {
+        LiftSourceReport {
+            ledger: serde_json::json!({
+                "source_loci": 1,
+                "source_warranted": 1,
+                "source_support": 0,
+                "source_refused": 0,
+                "source_inactive": 0,
+                "source_refuted": 0,
+                "source_unresolved": 0
+            }),
+            audits: vec![serde_json::json!({
+                "role": "rust-test-assertions",
+                "universe_kind": "test-assertion",
+                "loci": []
+            })],
+            factory_audits: vec![],
+            source_mementos: vec![],
+            contracts: vec![],
+            vendor_conjoins: vec![],
+        }
+    }
+
+    fn prove_report_with_sat_witness() -> Report {
+        let mut report = Report {
+            total_callsites: 1,
+            discharged: 1,
+            ..Report::default()
+        };
+        report.rows.push(ReportRow {
+            callsite: CallSite {
+                bridge_ir_name: "method:is_match".to_string(),
+                bridge_source_layer: "rust-test".to_string(),
+                bridge_target_layer: "proofir".to_string(),
+                property_name: "consistency:method:is_match".to_string(),
+                ..CallSite::default()
+            },
+            status: "discharged".to_string(),
+            reason: "solver witness accepted".to_string(),
+            discharge_method: Some("solver-substantive".to_string()),
+            body_discharge_tier: None,
+            verification: Some(serde_json::json!({
+                "kind": "consistency",
+                "checkedFormula": {"kind": "atomic", "name": "str.in-regex"},
+                "solverInvocations": [{
+                    "solver": "z3",
+                    "compiler": "smt-lib-v2.6",
+                    "verdict": "sat",
+                    "authoritative": true,
+                    "solverInvocationCid": "blake3-512:invoke",
+                    "solverArtifactCid": "blake3-512:artifact",
+                    "solverVendorMementoCid": "blake3-512:vendor"
+                }]
+            })),
+        });
+        report
+    }
 
     fn lift_response_with_source_axis() -> serde_json::Value {
         serde_json::json!({
@@ -2380,6 +2700,51 @@ mod tests {
     }
 
     #[test]
+    fn human_report_can_append_prove_sat_witness() {
+        let lift = minimal_source_report();
+        let prove = prove_report_with_sat_witness();
+        let human = render_report_human(&lift, Some(&prove));
+
+        assert!(
+            human.contains("source audit: loci=1 warranted=1"),
+            "{human}"
+        );
+        assert!(human.contains("prove report (solver witness):"), "{human}");
+        assert!(human.contains("Sugar verifier report"), "{human}");
+        assert!(human.contains("discharged"), "{human}");
+        assert!(human.contains("method:is_match"), "{human}");
+        assert!(human.contains("z3 via smt-lib-v2.6: sat"), "{human}");
+        assert!(human.contains("invocation: blake3-512:invoke"), "{human}");
+        assert!(human.contains("artifact: blake3-512:artifact"), "{human}");
+        assert!(
+            human.contains("vendor memento: blake3-512:vendor"),
+            "{human}"
+        );
+    }
+
+    #[test]
+    fn json_report_can_append_prove_sat_witness() {
+        let lift = minimal_source_report();
+        let prove = prove_report_with_sat_witness();
+        let rendered = render_report_json(&lift, Some(&prove)).expect("render");
+        let parsed: Value = serde_json::from_str(&rendered).expect("json");
+
+        assert_eq!(parsed["kind"], "lift-prove-report");
+        assert_eq!(parsed["lift"]["kind"], "lift-source-report");
+        assert_eq!(parsed["prove"]["discharged"], 1);
+        assert_eq!(parsed["prove"]["rows"][0]["status"], "discharged");
+        assert_eq!(
+            parsed["prove"]["rows"][0]["verification"]["solverInvocations"][0]["verdict"],
+            "sat"
+        );
+        assert_eq!(
+            parsed["prove"]["rows"][0]["verification"]["solverInvocations"][0]
+                ["solverInvocationCid"],
+            "blake3-512:invoke"
+        );
+    }
+
+    #[test]
     fn lift_returns_ok() {
         let args = LiftArgs {
             project: Some(PathBuf::from("/sugar/no/such/lift/project")),
@@ -2387,6 +2752,9 @@ mod tests {
             identify_only: false,
             library_bindings: false,
             report: false,
+            prove: false,
+            z3: "z3".to_string(),
+            with: vec![],
             contract: None,
             out: OutputFlags::default(),
         };
@@ -2494,7 +2862,7 @@ mod tests {
                 .expect("filtered source report");
         let human = render_source_report_human(&report);
 
-        assert!(human.contains("source audit: loci=29 warranted=15 inactive=13 support=0 refused=1 refuted=0 unclassified=0"));
+        assert!(human.contains("source audit: loci=29 warranted=15 inactive=13 support=0 refused=1 refuted=0 unresolved=0"));
         assert!(human.contains("commons-codec.PureJavaCrc32::update(byte[],int,int)"));
         assert!(human.contains("facts observed:"));
         assert!(human.contains("CommonsCodecCrc32Test.java:44 testKnownVector() [java.test-fact]"));
@@ -2562,13 +2930,74 @@ mod tests {
         let human = render_source_report_human(&report);
 
         assert!(human.contains(
-            "source audit: loci=3 warranted=1 inactive=0 support=2 refused=0 refuted=0 unclassified=0"
+            "source audit: loci=3 warranted=1 inactive=0 support=2 refused=0 refuted=0 unresolved=0"
         ));
         assert!(human.contains(
-            "totals: loci=3 warranted=1 inactive=0 support=2 refused=0 refuted=0 unclassified=0"
+            "totals: loci=3 warranted=1 inactive=0 support=2 refused=0 refuted=0 unresolved=0"
         ));
         assert!(human.contains("support roots: Import=1"));
         assert!(human.contains("support covered by parent: alias=1"));
+    }
+
+    #[test]
+    fn human_report_shows_factory_unresolved_sites_with_candidates() {
+        let response = serde_json::json!({
+            "kind": "ir-document",
+            "ir": [],
+            "sourceLedger": {
+                "source_loci": 1,
+                "source_warranted": 0,
+                "source_support": 0,
+                "source_refused": 0,
+                "source_inactive": 0,
+                "source_refuted": 0,
+                "source_unresolved": 1
+            },
+            "sourceAudits": [],
+            "sourceMementos": [],
+            "factoryAudits": [
+                {
+                    "file": "src/lib.rs",
+                    "line": 7,
+                    "ast_kind": "expr",
+                    "site": "|| 1",
+                    "requested_role": "Composite",
+                    "selected": null,
+                    "candidates": [
+                        {
+                            "name": "closure_term",
+                            "role": "Term",
+                            "priority": "Primary",
+                            "selected": false
+                        }
+                    ],
+                    "status": "unresolved",
+                    "output": "structural-backstop",
+                    "reason": "no Sugar candidate for role Composite at `|| 1`; write more Sugar for this AST"
+                }
+            ]
+        });
+        let report = source_report_from_lift_response(&response, None).expect("source report");
+        let human = render_source_report_human(&report);
+
+        assert!(human.contains(
+            "source audit: loci=1 warranted=0 inactive=0 support=0 refused=0 refuted=0 unresolved=1"
+        ));
+        assert!(human
+            .contains("factory accounting: sites=1 warranted=0 refused=0 support=0 unresolved=1"));
+        assert!(human.contains("factory unresolved:"), "{human}");
+        assert!(human.contains(
+            "src/lib.rs:7 expr role=Composite selected=<none> output=structural-backstop"
+        ));
+        assert!(human.contains("site: `|| 1`"), "{human}");
+        assert!(
+            human.contains("candidates: closure_term[Term/Primary]"),
+            "{human}"
+        );
+        assert!(
+            human.contains("reason: no Sugar candidate for role Composite at `|| 1`; write more Sugar for this AST"),
+            "{human}"
+        );
     }
 
     #[test]
@@ -2621,8 +3050,9 @@ mod tests {
             "package itsdangerous at /site-packages/itsdangerous [python.package-source / package-accounting]"
         ));
         assert!(!human.contains("<missing source memento>"));
-        assert!(human
-            .contains("/site-packages/itsdangerous/serializer.py:245 unclassified FunctionDef"));
+        assert!(
+            human.contains("/site-packages/itsdangerous/serializer.py:245 unresolved FunctionDef")
+        );
     }
 
     #[test]
@@ -2682,9 +3112,9 @@ mod tests {
         assert!(human.contains("loci: elided (structural package accounting)"));
         assert!(human.contains("warranted: Return=1"));
         assert!(human.contains("support: FunctionDef=1"));
-        assert!(human.contains("unclassified: Assign=1, Call=1"));
+        assert!(human.contains("unresolved: Assign=1, Call=1"));
         assert!(human.contains("sample loci:"));
-        assert!(human.contains("/site-packages/pandas/core/frame.py:10 unclassified Assign"));
+        assert!(human.contains("/site-packages/pandas/core/frame.py:10 unresolved Assign"));
     }
 
     #[test]
@@ -2750,7 +3180,7 @@ mod tests {
         let human = render_source_report_human(&report);
 
         assert!(human.contains("  ast types:\n"));
-        assert!(human.contains("    unclassified: Assign=1, Compare=1, If=1, Subscript=1"));
+        assert!(human.contains("    unresolved: Assign=1, Compare=1, If=1, Subscript=1"));
     }
 
     #[test]
@@ -2862,14 +3292,12 @@ mod tests {
         let human = render_source_report_human(&report);
 
         assert!(human.contains("  ast rollup:\n"));
-        assert!(
-            human.contains("    unclassified roots: Assign=1, FunctionDef=1, If=1, ImportFrom=1")
-        );
-        assert!(human.contains("    unclassified constraint roots: Assign=1, If=1"));
-        assert!(human.contains("    unclassified constraint children: Compare=1, Subscript=1"));
-        assert!(human.contains("    unclassified support roots: FunctionDef=1, ImportFrom=1"));
+        assert!(human.contains("    unresolved roots: Assign=1, FunctionDef=1, If=1, ImportFrom=1"));
+        assert!(human.contains("    unresolved constraint roots: Assign=1, If=1"));
+        assert!(human.contains("    unresolved constraint children: Compare=1, Subscript=1"));
+        assert!(human.contains("    unresolved support roots: FunctionDef=1, ImportFrom=1"));
         assert!(human.contains(
-            "    unclassified covered by parent: Compare=1, Name=2, Subscript=1, alias=1, arg=1"
+            "    unresolved covered by parent: Compare=1, Name=2, Subscript=1, alias=1, arg=1"
         ));
     }
 
@@ -3056,7 +3484,7 @@ mod tests {
         let report =
             source_report_from_lift_response(&lift_response_with_source_axis(), Some("Crc32"))
                 .expect("filtered source report");
-        let rendered = render_source_report_json(&report).expect("json report");
+        let rendered = render_report_json(&report, None).expect("json report");
         let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("valid json");
 
         assert_eq!(parsed["kind"], "lift-source-report");
@@ -3533,6 +3961,7 @@ mod tests {
                 "universe_kind": "test-assertion",
                 "loci": []
             })],
+            factory_audits: vec![],
             source_mementos: vec![],
             contracts: vec![],
             vendor_conjoins: vec![VendorConjoinReport {

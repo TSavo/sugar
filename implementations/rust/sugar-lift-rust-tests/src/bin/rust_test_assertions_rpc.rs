@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use sugar_canonicalizer::{blake3_512_of, encode_jcs};
 use sugar_ir_symbolic::serialize::{formula_to_value, marshal_declarations};
 use sugar_lift_rust_tests::source_oracle;
-use sugar_lift_rust_tests::{lift_file_with_options, LiftOptions, TargetCfg};
+use sugar_lift_rust_tests::{lift_file_with_options, FactoryAudit, LiftOptions, TargetCfg};
 use sugar_verifier::types::{memento_body, memento_body_field, memento_kind};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -96,12 +96,13 @@ fn lift(params: &Value) -> Value {
     // Source-audit accounting (parity with Java's SourceWarrant/sourceLedger,
     // #2134-#2136). The DENOMINATOR is the SourceOracle's enumeration of every
     // function in the file -- not just the things the kit classified. A `#[test]`
-    // fn is in this kit's universe (warranted, or silent if the lift warned);
-    // a non-test fn the kit does not speak is `unclassified` -- the dark this
-    // metric exists to surface. `unclassified` is therefore MEASURED against the
-    // whole source, not 0 by construction.
+    // fn is in this kit's universe (warranted, or unresolved if the lift warned);
+    // a non-test fn the kit does not speak is `unresolved` -- the dark this metric
+    // exists to surface. `unresolved` is therefore MEASURED against the whole source,
+    // not 0 by construction.
     let mut source_loci: Vec<Value> = Vec::new();
     let mut source_mementos: Vec<Value> = Vec::new();
+    let mut factory_audits: Vec<Value> = Vec::new();
     let options = match lift_options_from_config(&workspace_root, params) {
         Ok(options) => options,
         Err(reason) => {
@@ -170,12 +171,13 @@ fn lift(params: &Value) -> Value {
         // DENOMINATOR: the oracle enumerates every function in the file. Each one
         // gets a content-addressed memento and a classified locus, so the dark
         // (functions the kit does not speak) is COUNTED, not skipped.
+        factory_audits.extend(factory_audits_json(rel, &out.factory_audits));
         let mut fns: Vec<FnRef> = Vec::new();
         collect_fns(&file.items, &mut fns);
         // Real warrants emit ProofIR: contracts the recursive body-walk produced,
         // marshalled into the IR alongside the test-assertion decls (below).
         let mut value_entries: Vec<Value> = Vec::new();
-        // Oracle slice: unclassified method-call bodies queued for the RA daemon's
+        // Oracle slice: unresolved method-call bodies queued for the RA daemon's
         // receiver/param-mutability verdict. (source_loci index, LSP positions).
         let mut oracle_pending: Vec<(usize, Vec<(u32, u32)>)> = Vec::new();
         for fr in fns {
@@ -192,22 +194,22 @@ fn lift(params: &Value) -> Value {
             // IMPOSSIBLE here by design: the walk never DECLINES (that is the sin), and
             // the only "no" is an UNSAT certificate (`refuted`) minted at the body<->pin
             // seam where the analysis lives. A body that does not resolve to a value
-            // falls through to `unclassified` -- the HONEST dark, "we don't have a Sugar
+            // falls through to `unresolved` -- the HONEST dark, "we don't have a Sugar
             // for that yet", the residual the campaign drives to 0 by real classification
             // work. (Laundering the dark into a verdict it never earned -- forcing the
-            // catch-all so `unclassified=0` looks done -- is the FAKE ZERO; the honest
+            // catch-all so `unresolved=0` looks done -- is the FAKE ZERO; the honest
             // move is the opposite: let the dark be visible.)
             let (status, reason): (&str, Option<String>) = if is_test {
                 match warning {
                     // NEW DOCTRINE: the lifter COULDN'T LIFT this vendor assertion
                     // (unsupported assert / no liftable scalar / ambiguous cfg) ->
-                    // there is no usable pin to check, so it is SILENT, not refused.
+                    // there is no usable pin to check, so it is UNRESOLVED, not refused.
                     // `refused` is reserved for an UNSAT certificate -- a vendor
                     // assertion we DID lift that contradicts (itself or the body).
                     // A can't-lift is a coverage gap (named in the reason), never a
                     // contradiction verdict.
                     Some(w) => (
-                        "silent",
+                        "unresolved",
                         Some(format!("vendor pin not liftable: {}", w.reason)),
                     ),
                     None => ("warranted", None),
@@ -242,7 +244,7 @@ fn lift(params: &Value) -> Value {
             if let Some(r) = reason {
                 locus["reason"] = json!(r);
             }
-            if status == "unclassified" {
+            if status == "unresolved" {
                 let positions = method_call_positions(fr.block);
                 if !positions.is_empty() {
                     oracle_pending.push((source_loci.len(), positions));
@@ -258,9 +260,9 @@ fn lift(params: &Value) -> Value {
         // Oracle slice: ask the resident RA daemon (sugar-linkerd) to resolve the
         // receiver/param mutability of each queued method-call position. A method
         // call that is `&mut self` / takes a `&mut` param is the provable
-        // "mutation through &mut" effect -> SHARPEN the unclassified locus's reason. An
+        // "mutation through &mut" effect -> SHARPEN the unresolved locus's reason. An
         // unreachable/cold daemon yields no resolutions -> every body stays
-        // unclassified (the conservative refuse-floor); the oracle never warrants
+        // unresolved (the conservative refuse-floor); the oracle never warrants
         // here (RefClean does not rule out IO/panic the signature can't show).
         oracle_reclassify_mutating(&workspace_root, rel, &oracle_pending, &mut source_loci);
     }
@@ -278,6 +280,7 @@ fn lift(params: &Value) -> Value {
             "universe_kind": "test-assertion",
             "loci": source_loci,
         })],
+        "factoryAudits": factory_audits,
         // Content-addressed mementos (file + span + BLAKE3-512 of body/template,
         // never source text) -- one per enumerated function, recompute-verifiable.
         "sourceMementos": source_mementos,
@@ -416,12 +419,12 @@ fn classify_nontest_fn(
     // `[1..5].iter().next()` -> `1` from a real side effect (only RESOLVING the term
     // can). A side effect surfaces ONLY at term resolution, as a `Hit`, when the body
     // is actually reduced -- never from a pre-scan here. So: we have no Sugar that
-    // resolves this body's value to a literal yet, and it falls through to UNCLASSIFIED
+    // resolves this body's value to a literal yet, and it falls through to UNRESOLVED
     // -- "we don't have a Sugar for that yet" = honest, visible work the campaign
-    // drives to 0. `refused` is IMPOSSIBLE by design: reserved for an UNSAT certificate
-    // (`refuted`), minted at the body<->pin seam, never a static decline.
+    // drives to 0. `refused` is reserved for named source/effect boundaries and UNSAT
+    // certificates, never for a static decline.
     (
-        "unclassified",
+        "unresolved",
         Some("no Sugar resolves this body's value to a literal yet (no value pin)".to_string()),
         None,
     )
@@ -551,11 +554,11 @@ fn method_call_positions(block: &syn::Block) -> Vec<(u32, u32)> {
     v.0
 }
 
-/// Oracle slice: resolve the queued unclassified method-call bodies against the
+/// Oracle slice: resolve the queued unresolved method-call bodies against the
 /// resident RA daemon and reclassify any body with a `&mut self` / `&mut`-param
-/// (Mutating) method call -> SHARPEN the `unclassified` locus reason "mutation through &mut". Sound + safe: an
+/// (Mutating) method call -> SHARPEN the `unresolved` locus reason "mutation through &mut". Sound + safe: an
 /// unreachable/cold daemon returns no resolutions -> a conservative no-op (every
-/// body stays unclassified). Never WARRANTS here -- `RefClean` does not prove the
+/// body stays unresolved). Never WARRANTS here -- `RefClean` does not prove the
 /// body free of IO/panic the signature can't reveal.
 fn oracle_reclassify_mutating(
     workspace_root: &Path,
@@ -598,12 +601,10 @@ fn oracle_reclassify_mutating(
         });
         if mutating {
             if let Some(locus) = source_loci.get_mut(*idx) {
-                // A PROVEN `&mut` mutation is a real EFFECT, not a decline -- so it is
-                // NOT `refused` (which is impossible by design). The locus stays
-                // `unclassified` ("no Sugar yet"); the oracle only SHARPENS its reason to
-                // name the proven order-loss boundary. (A future effect/Hit ledger status
-                // is the honest home for this; until then it is honest, visible work.)
-                locus["status"] = json!("unclassified");
+                // A PROVEN `&mut` mutation is a real effect signal, but this side
+                // door does not own a Sugar proof. The locus stays `unresolved`;
+                // the oracle only SHARPENS its reason to name the observed boundary.
+                locus["status"] = json!("unresolved");
                 locus["reason"] =
                     json!("mutation through &mut (oracle): proven effect, no value pin");
             }
@@ -613,28 +614,24 @@ fn oracle_reclassify_mutating(
 
 /// Roll the per-locus statuses into the `sourceLedger` the CLI source-audit gate
 /// requires. The CLI RECOMPUTES this from the loci, so it must be exactly the
-/// per-status counts. `unclassified_source` is the silent-drop measure: every
-/// locus the kit emits carries a classified status, so a non-zero count here
-/// means a source locus escaped accounting -- the thing `silent = 0` forbids.
+/// per-status counts. `source_unresolved` is the "write more Sugar" bucket.
 fn source_ledger(loci: &[Value]) -> Value {
     let count = |status: &str| {
         loci.iter()
             .filter(|l| l.get("status").and_then(Value::as_str) == Some(status))
             .count()
     };
+    let unresolved = count("unresolved") + count("unclassified");
     json!({
         "source_loci": loci.len(),
         "source_warranted": count("warranted"),
         "source_support": count("support"),
         "source_refused": count("refused"),
-        // SILENT (new doctrine): a body with no output to constrain (unit return)
-        // and no vendor pin -- nothing to lift, nothing to check. Partitioned out
-        // of `unclassified` so the residual is only value bodies the lifter cannot
-        // read yet, NOT effect-only operations parked on a floor.
-        "source_silent": count("silent"),
+        "source_unresolved": unresolved,
         "source_inactive": count("inactive"),
         "source_refuted": count("refuted"),
-        "unclassified_source": count("unclassified"),
+        // Compatibility alias for current CLI source-ledger plumbing.
+        "unclassified_source": unresolved,
     })
 }
 
@@ -955,6 +952,33 @@ fn source_memento_payload(env: &Value) -> Option<&Value> {
     env.get("body").or_else(|| memento_body(env))
 }
 
+fn factory_audits_json(file: &str, audits: &[FactoryAudit]) -> Vec<Value> {
+    audits
+        .iter()
+        .map(|audit| {
+            json!({
+                "file": file,
+                "ast_kind": audit.ast_kind,
+                "site": audit.site,
+                "line": audit.line,
+                "requested_role": audit.requested_role,
+                "selected": audit.selected,
+                "candidates": audit.candidates.iter().map(|candidate| {
+                    json!({
+                        "name": candidate.name,
+                        "role": candidate.role,
+                        "priority": candidate.priority,
+                        "selected": candidate.selected,
+                    })
+                }).collect::<Vec<_>>(),
+                "status": audit.disposition.as_str(),
+                "output": audit.output,
+                "reason": audit.reason,
+            })
+        })
+        .collect()
+}
+
 fn source_memento_string_field<'a>(
     env: &'a Value,
     payload: &'a Value,
@@ -1272,20 +1296,22 @@ facts = [
     }
 
     #[test]
-    fn refused_is_impossible_unwarrantable_body_falls_through_to_no_sugar_yet() {
-        // DESIGN LAW: the source-ledger can NEVER emit `refused`. A non-test body the
-        // kit cannot warrant or inline is not "considered and declined" -- it falls
-        // through to "we don't have a Sugar for that yet" (`unclassified`), the honest,
-        // VISIBLE work. An effect present is a diagnostic REASON, never a `refused` STATUS.
+    fn unwarrantable_body_falls_through_to_unresolved_no_sugar_yet() {
+        // DESIGN LAW: a non-test body the kit cannot warrant or inline is not
+        // "considered and declined" -- it falls through to "we don't have a Sugar
+        // for that yet" (`unresolved`), the honest, VISIBLE work.
         let f: syn::ItemFn =
             syn::parse_str("fn log(x: i32) { println!(\"{x}\"); }").expect("fn parses");
         let source_memento = json!({});
         let (status, reason, decl) =
             classify_nontest_fn("log", &f.sig, &f.block, false, &source_memento);
         assert!(decl.is_none(), "an un-warrantable body mints no contract");
-        assert_ne!(status, "refused", "`refused` must be impossible by design");
+        assert_ne!(
+            status, "refused",
+            "`refused` must be earned by a named boundary"
+        );
         assert_eq!(
-            status, "unclassified",
+            status, "unresolved",
             "an un-warrantable body falls through to 'no Sugar yet' (reason: {reason:?})"
         );
     }
@@ -1440,6 +1466,63 @@ facts = [
 
         assert_eq!(memento["sourceFunctionName"], "enc");
         assert_eq!(memento["file"], "src/lib.rs");
+    }
+
+    #[test]
+    fn lift_emits_factory_audits_for_assertion_term_lowering() {
+        let root = unique_temp_dir("lift_emits_factory_audits_for_assertion_term_lowering");
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        std::fs::write(
+            root.join("src/lib.rs"),
+            r#"
+pub fn make_value() -> i32 {
+    6
+}
+
+#[cfg(test)]
+mod tests {
+    use super::make_value;
+
+    #[test]
+    fn scalar_is_six() {
+        assert_eq!(make_value(), 6);
+    }
+}
+"#,
+        )
+        .expect("write rust source");
+
+        let response = lift(&json!({
+            "workspace_root": root,
+            "source_paths": ["src/lib.rs"]
+        }));
+        let audits = response["factoryAudits"]
+            .as_array()
+            .expect("factoryAudits is an array");
+
+        assert!(
+            !audits.is_empty(),
+            "assertion term lowering must go through the audited Sugar factory: {response}"
+        );
+        assert!(
+            audits.iter().any(|audit| audit["site"] == "make_value ()"),
+            "call operand should be factory-accounted: {audits:?}"
+        );
+        assert!(
+            audits.iter().any(|audit| audit["site"] == "6"),
+            "literal operand should be factory-accounted: {audits:?}"
+        );
+        assert!(
+            audits.iter().any(|audit| {
+                audit["requested_role"] == "Constraint"
+                    && audit["site"]
+                        .as_str()
+                        .is_some_and(|site| site.contains("assert_eq"))
+            }),
+            "assertion macro spelling should be factory-accounted as a constraint Sugar: {audits:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     fn unique_temp_dir(name: &str) -> PathBuf {

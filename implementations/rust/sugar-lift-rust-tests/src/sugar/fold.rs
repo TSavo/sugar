@@ -155,6 +155,7 @@ impl Sugar for FoldSugar {
                 &mut body_skipped,
                 &mut body_lifted,
                 &mut body_helpers,
+                ctx.factory_audits,
                 ctx.macro_depth,
                 &ctx.scope.plan.interior_mut,
                 &BTreeMap::new(),

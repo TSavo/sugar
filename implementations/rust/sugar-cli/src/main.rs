@@ -262,6 +262,15 @@ pub struct LiftArgs {
     /// Print the lifter's source-audit countdown instead of the raw ProofIR term JSON.
     #[arg(long, conflicts_with_all = ["output", "identify_only", "library_bindings"])]
     pub report: bool,
+    /// With --report, append the verifier discharge report from the current .proof set.
+    #[arg(long = "prove", requires = "report")]
+    pub prove: bool,
+    /// Path to z3 binary for --report --prove.
+    #[arg(long, default_value = "z3", requires = "prove")]
+    pub z3: String,
+    /// Additional project directories whose .proof files should also be loaded by --report --prove.
+    #[arg(long = "with", num_args = 0.., requires = "prove")]
+    pub with: Vec<String>,
     /// Restrict --report to source audits whose contract name contains this string.
     #[arg(long = "contract", requires = "report")]
     pub contract: Option<String>,

@@ -89,9 +89,14 @@ impl Sugar for ConditionalSugar {
             let guard = match const_fold_bool_guard(&self.cond, ctx.options) {
                 Some(value) => eq(bool_const(value), bool_const(true)),
                 None => {
-                    lower_assert_condition(&self.cond, ctx.scope, &ctx.float_widths.borrow())
-                        .ok()?
-                        .atom
+                    lower_assert_condition(
+                        &self.cond,
+                        ctx.scope,
+                        &ctx.float_widths.borrow(),
+                        ctx.factory_audits,
+                    )
+                    .ok()?
+                    .atom
                 }
             };
 
@@ -144,6 +149,7 @@ impl ConditionalSugar {
             &mut body_skipped,
             &mut body_lifted,
             &mut body_helpers,
+            ctx.factory_audits,
             ctx.macro_depth,
             &ctx.scope.plan.interior_mut,
             &BTreeMap::new(),

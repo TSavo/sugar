@@ -38,6 +38,7 @@ fn lift_bounded_forall(
     reducer: &ReductionCtx<'_>,
     float_widths: &mut FloatWidthScope,
     macro_depth: usize,
+    factory_audits: Option<&crate::FactoryAuditLog>,
     // In-scope IMMUTABLE literal arrays (name -> element TERMS), already mut-gated and
     // translated by the caller. Used to resolve a body `index(arr, <const>)` read to
     // its concrete element in the LITERAL-INT RANGE unroll. Empty -> no index read is
@@ -73,6 +74,7 @@ fn lift_bounded_forall(
         &mut body_skipped,
         &mut body_lifted,
         &mut body_helpers,
+        factory_audits,
         macro_depth,
         &scope.plan.interior_mut,
         &BTreeMap::new(),
@@ -289,6 +291,7 @@ impl Sugar for ForAllSugar {
                 ctx.reducer,
                 *ctx.float_widths.borrow_mut(),
                 ctx.macro_depth,
+                ctx.factory_audits,
                 &array_terms,
             )?;
             let warrant = Warrant {

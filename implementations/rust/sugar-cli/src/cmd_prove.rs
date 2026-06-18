@@ -149,61 +149,13 @@ pub fn run(args: ProveArgs) -> u8 {
         return crate::EXIT_USER_ERROR;
     }
 
-    let cfg_doc = read_project_config(&project_root);
-
-    configure_witness_discharge_env(&project_root, &cfg_doc);
-
-    // Resolve `--with` paths relative to project_root unless absolute,
-    // matching how `[verify].callees` is resolved (project-root-anchored).
-    // Without this, `--with foo` depends on CWD and breaks when prove is
-    // invoked outside the project root.
-    let mut extra_projects: Vec<PathBuf> = args
-        .with
-        .iter()
-        .map(|s| {
-            let p = PathBuf::from(s);
-            if p.is_absolute() {
-                p
-            } else {
-                project_root.join(p)
-            }
-        })
-        .collect();
-
-    for callee in &cfg_doc.callees {
-        let p = project_root.join(callee);
-        if p.exists() {
-            extra_projects.push(p);
-        }
-    }
-
-    let dependency_proofs = match crate::kit_dispatch::dependency_proofs_via_rpc(&project_root) {
-        Ok(proofs) => proofs,
-        Err(error) => {
-            eprintln!(
-                "{}: dependency proof resolution skipped: {error}",
-                "warning".yellow().bold()
-            );
-            Vec::new()
-        }
-    };
-
-    let cfg = RunnerConfig {
-        project_root: project_root.clone(),
-        z3_path: args.z3,
-        extra_projects,
-        extra_proofs: dependency_proofs,
-        ..Default::default()
-    };
-    let runner = Runner::new(cfg);
-    let run_artifact = match runner.run_with_proof_run() {
-        Ok(artifact) => artifact,
+    let report = match build_prove_report(&project_root, &args.z3, &args.with) {
+        Ok(report) => report,
         Err(error) => {
             eprintln!("{}: {error}", "error".red().bold());
             return crate::EXIT_USER_ERROR;
         }
     };
-    let report = run_artifact.report;
     let report_json = report_fmt::report_to_json(&report);
     if let Some(witness_dir) = &args.emit_witnesses {
         match emit_configured_witnesses(&project_root, &report_json, witness_dir) {
@@ -242,6 +194,62 @@ pub fn run(args: ProveArgs) -> u8 {
     }
 
     report_fmt::report_exit_code(&report)
+}
+
+pub(crate) fn build_prove_report(
+    project_root: &Path,
+    z3: &str,
+    with: &[String],
+) -> Result<sugar_verifier::Report, String> {
+    let cfg_doc = read_project_config(project_root);
+
+    configure_witness_discharge_env(project_root, &cfg_doc);
+
+    // Resolve `--with` paths relative to project_root unless absolute,
+    // matching how `[verify].callees` is resolved (project-root-anchored).
+    // Without this, `--with foo` depends on CWD and breaks when prove is
+    // invoked outside the project root.
+    let mut extra_projects: Vec<PathBuf> = with
+        .iter()
+        .map(|s| {
+            let p = PathBuf::from(s);
+            if p.is_absolute() {
+                p
+            } else {
+                project_root.join(p)
+            }
+        })
+        .collect();
+
+    for callee in &cfg_doc.callees {
+        let p = project_root.join(callee);
+        if p.exists() {
+            extra_projects.push(p);
+        }
+    }
+
+    let dependency_proofs = match crate::kit_dispatch::dependency_proofs_via_rpc(project_root) {
+        Ok(proofs) => proofs,
+        Err(error) => {
+            eprintln!(
+                "{}: dependency proof resolution skipped: {error}",
+                "warning".yellow().bold()
+            );
+            Vec::new()
+        }
+    };
+
+    let cfg = RunnerConfig {
+        project_root: project_root.to_path_buf(),
+        z3_path: z3.to_string(),
+        extra_projects,
+        extra_proofs: dependency_proofs,
+        ..Default::default()
+    };
+    Runner::new(cfg)
+        .run_with_proof_run()
+        .map(|artifact| artifact.report)
+        .map_err(|error| error.to_string())
 }
 
 fn emit_configured_witnesses(

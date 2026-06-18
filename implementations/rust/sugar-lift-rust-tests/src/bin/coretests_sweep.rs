@@ -6,9 +6,9 @@
 //
 //   discharged  -- lifted to a FOL atom (one invariant operand per assertion)
 //   refused     -- the lifter emitted a named warning (loudly-bounded-lossy)
-//   unaccounted -- seen in source but neither lifted nor warned (a SILENT DROP)
+//   missing     -- seen in source but neither lifted nor warned (a SILENT DROP)
 //
-// 100% on stdlib == unaccounted == 0, with every refusal carrying an honest
+// 100% on stdlib == missing == 0, with every refusal carrying an honest
 // reason. This binary computes that number and the reason histogram (the
 // remaining roadmap). It does NOT decide whether a refusal is honest vs a
 // missing reduction -- that is an architect judgement made from the histogram.
@@ -119,7 +119,7 @@ fn dissolve_count(prelude: &str, setup: &str, asserts: &[String], dir: &std::pat
 /// debug_assert. This covers the standard six plus stdlib custom macros
 /// (assert_all!, assert_none!, assert_eq_const_safe!, ...) that the lifter
 /// lifts or refuses. The independent denominator must match this universe or
-/// discharged would exceed it and unaccounted would go negative.
+/// the report will show callsite expansion rather than a fake negative gap.
 fn is_assert_macro_name(name: &str) -> bool {
     name.starts_with("assert") || name.starts_with("debug_assert")
 }
@@ -347,7 +347,7 @@ fn main() {
     let mut reasons: BTreeMap<String, usize> = BTreeMap::new();
     let mut reason_samples: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut all_reasons: Vec<String> = Vec::new();
-    // Per-file rows: (path, asserts, atoms, warnings, unaccounted, parse_ok)
+    // Per-file rows: (path, asserts, atoms, warnings, raw-accounting delta, parse_ok)
     let mut rows: Vec<(String, usize, usize, usize, i64, bool)> = Vec::new();
     // Every assertion site's content CID across the whole corpus. Sorted +
     // hashed (dups kept) into one multiset-CID below: the identity of the assertion surface,
@@ -451,8 +451,8 @@ fn main() {
         // This is EXACT (no draw-order): a non-green unclassified assert can NEVER be drawn
         // down by a while-body green, so unclassified cannot be fake-zeroed as we drive to 0.
         // Per-file total contribution stays file_terminal+file_unclassified (move, not add)
-        // => SILENT and net unaccounted invariant. Hermetic (no --dissolve): greens=0 =>
-        // every bucket unchanged.
+        // => SILENT and callsite-expansion accounting stay exact. Hermetic (no --dissolve):
+        // greens=0 => every bucket unchanged.
         let (green_unclassified, green_while) = if dissolve {
             let units = closed_eval::collect_dissolvable(&file);
             let mut gu = 0usize;
@@ -481,26 +481,27 @@ fn main() {
         totals.discharged += dissolved;
         let refused = refused_total;
 
-        // Silent drop: a real assert macro the collector never reached (nested
-        // in control flow) -- neither lifted nor refused with a reason.
-        let unaccounted = counter.total as i64 - discharged as i64 - refused as i64;
-        rows.push((rel, counter.total, discharged, refused, unaccounted, true));
+        // Raw-accounting delta. Positive means a real assert macro the collector
+        // never reached. Negative means the source body was dug at multiple
+        // callsites, creating more obligations than textual assert macros.
+        let raw_delta = counter.total as i64 - discharged as i64 - refused as i64;
+        rows.push((rel, counter.total, discharged, refused, raw_delta, true));
     }
 
     // Headline reconciliation at macro granularity. `refused + unclassified` is the
     // full named non-discharged set; only their sum reconciles against the textual
     // macro count.
     let named_non_discharged = totals.refused + totals.unclassified + totals.inactive;
-    let unaccounted =
-        totals.assert_macros as i64 - totals.discharged as i64 - named_non_discharged as i64;
-    // Per-file split. A positive per-file residual is a genuinely unreached
-    // assertion (the true silent drop). A negative per-file residual is
-    // inlining inflation: the reducer inlined a helper called from several
-    // sites, lifting one textual assert as several point-wise instances, so
-    // discharged exceeds the textual count. The net headline mixes the two, so
-    // we report the genuinely-unreached sum separately as the real delta.
-    let genuinely_unreached: i64 = rows.iter().map(|r| r.4.max(0)).sum();
-    let inlining_inflation: i64 = rows.iter().map(|r| (-r.4).max(0)).sum();
+    // Per-file split. A positive per-file residual is a missing assertion (the
+    // true silent drop). A negative per-file residual is callsite expansion: the
+    // reducer inlined a helper called from several sites, lifting one textual
+    // assert as several point-wise instances. Those are different facts, so the
+    // public report keeps them separate:
+    //
+    //   raw assertions + callsite expansion - missing assertions = obligations.
+    let missing_assertions: i64 = rows.iter().map(|r| r.4.max(0)).sum();
+    let callsite_expansion: i64 = rows.iter().map(|r| (-r.4).max(0)).sum();
+    let accounted_obligations = totals.discharged + named_non_discharged;
     let pct = |n: usize| {
         if totals.assert_macros == 0 {
             0.0
@@ -543,18 +544,17 @@ fn main() {
         pct(totals.inactive)
     );
     println!(
-        "  unaccounted (net):           {:>6}  ({:.1}%)",
-        unaccounted,
-        pct(unaccounted.max(0) as usize)
+        "  missing assertions (SILENT): {:>6}  ({:.1}%)   <-- delta target = 0",
+        missing_assertions,
+        pct(missing_assertions.max(0) as usize)
     );
     println!(
-        "  genuinely unreached (SILENT):{:>6}  ({:.1}%)   <-- delta target = 0",
-        genuinely_unreached,
-        pct(genuinely_unreached.max(0) as usize)
+        "  callsite-expanded obligations:{:>5}   (source body dug at N call sites)",
+        callsite_expansion
     );
     println!(
-        "  inlining inflation:          {:>6}   (helper inlined at N call sites)",
-        inlining_inflation
+        "  accounting identity: {} raw + {} expanded - {} missing = {} accounted",
+        totals.assert_macros, callsite_expansion, missing_assertions, accounted_obligations
     );
     println!(
         "test fns: seen {} / lifted {}",
@@ -568,7 +568,7 @@ fn main() {
         println!("  {:>6}  {}", count, reason);
     }
     println!();
-    println!("---- top files by unaccounted (silent drops) ----");
+    println!("---- top files by missing assertions (silent drops) ----");
     let mut by_unacc: Vec<&(String, usize, usize, usize, i64, bool)> = rows.iter().collect();
     by_unacc.sort_by(|a, b| b.4.cmp(&a.4));
     for (rel, asserts, discharged, refused, unacc, ok) in by_unacc.iter().take(30) {
@@ -605,7 +605,6 @@ fn main() {
         let json = build_ledger_json(
             corpus,
             &totals,
-            unaccounted,
             &reasons,
             &reason_samples,
             &all_reasons,
@@ -732,19 +731,21 @@ fn report_callsite_census(rows: &[(String, sugar_lift_rust_tests::CallsiteCensus
 }
 
 /// The sweep ledger as a JSON value: the total accounting (every assertion
-/// binned into discharged/refused/unaccounted), the reason histogram, and the
-/// per-file rows. Pure so the shape -- and the CID over it -- is testable.
+/// binned into discharged/refused/missing or expanded through callsites), the
+/// reason histogram, and the per-file rows. Pure so the shape -- and the CID
+/// over it -- is testable.
 #[allow(clippy::too_many_arguments)]
 fn build_ledger_json(
     corpus: &str,
     totals: &Totals,
-    unaccounted: i64,
     reasons: &BTreeMap<String, usize>,
     reason_samples: &BTreeMap<String, Vec<String>>,
     all_reasons: &[String],
     rows: &[(String, usize, usize, usize, i64, bool)],
     assertion_multiset_cid: &str,
 ) -> serde_json::Value {
+    let missing_assertions: i64 = rows.iter().map(|r| r.4.max(0)).sum();
+    let callsite_expansion: i64 = rows.iter().map(|r| (-r.4).max(0)).sum();
     let mut obj = serde_json::Map::new();
     obj.insert("corpus".into(), corpus.into());
     obj.insert("files".into(), totals.files.into());
@@ -755,7 +756,8 @@ fn build_ledger_json(
     obj.insert("refused".into(), totals.refused.into());
     obj.insert("unclassified".into(), totals.unclassified.into());
     obj.insert("inactive".into(), totals.inactive.into());
-    obj.insert("unaccounted".into(), unaccounted.into());
+    obj.insert("missing_assertions".into(), missing_assertions.into());
+    obj.insert("callsite_expansion".into(), callsite_expansion.into());
     obj.insert(
         "assertion_multiset_cid".into(),
         assertion_multiset_cid.into(),
@@ -799,7 +801,8 @@ fn build_ledger_json(
             m.insert("asserts".into(), (*asserts).into());
             m.insert("discharged".into(), (*discharged).into());
             m.insert("refused".into(), (*refused).into());
-            m.insert("unaccounted".into(), (*unacc).into());
+            m.insert("missing_assertions".into(), (*unacc).max(0).into());
+            m.insert("callsite_expansion".into(), (-*unacc).max(0).into());
             m.insert("parse_ok".into(), (*ok).into());
             serde_json::Value::Object(m)
         })
@@ -847,19 +850,50 @@ mod tests {
     #[test]
     fn ledger_json_is_deterministic_and_carries_the_residual_fields() {
         let (totals, reasons, samples, all, rows) = fixture();
-        let v1 = build_ledger_json("corpus", &totals, 0, &reasons, &samples, &all, &rows, "x");
-        let v2 = build_ledger_json("corpus", &totals, 0, &reasons, &samples, &all, &rows, "x");
+        let v1 = build_ledger_json("corpus", &totals, &reasons, &samples, &all, &rows, "x");
+        let v2 = build_ledger_json("corpus", &totals, &reasons, &samples, &all, &rows, "x");
         assert_eq!(v1, v2);
         // exactly the fields `sugar diff --ledger-*` reads for the residual axis.
-        for field in ["assert_macros", "discharged", "refused", "unaccounted"] {
+        for field in [
+            "assert_macros",
+            "discharged",
+            "refused",
+            "missing_assertions",
+            "callsite_expansion",
+        ] {
             assert!(v1.get(field).and_then(|n| n.as_i64()).is_some(), "{field}");
         }
+        assert!(v1.get("unaccounted").is_none());
+    }
+
+    #[test]
+    fn ledger_json_splits_missing_from_callsite_expansion() {
+        let (mut totals, reasons, samples, all, _) = fixture();
+        totals.assert_macros = 3;
+        totals.discharged = 4;
+        totals.refused = 1;
+        totals.unclassified = 0;
+        totals.inactive = 0;
+        let rows = vec![
+            ("missing.rs".to_string(), 3, 1, 1, 1i64, true),
+            ("inlined.rs".to_string(), 0, 3, 0, -3i64, true),
+        ];
+        let v = build_ledger_json("corpus", &totals, &reasons, &samples, &all, &rows, "x");
+        assert_eq!(
+            v.get("missing_assertions").and_then(|n| n.as_i64()),
+            Some(1)
+        );
+        assert_eq!(
+            v.get("callsite_expansion").and_then(|n| n.as_i64()),
+            Some(3)
+        );
+        assert!(v.get("unaccounted").is_none());
     }
 
     #[test]
     fn ledger_cid_is_blake3_512_tagged_and_stable() {
         let (totals, reasons, samples, all, rows) = fixture();
-        let v = build_ledger_json("corpus", &totals, 0, &reasons, &samples, &all, &rows, "");
+        let v = build_ledger_json("corpus", &totals, &reasons, &samples, &all, &rows, "");
         let cid = sugar_canonicalizer::jcs_cid_of_json(&v);
         assert!(cid.starts_with("blake3-512:"), "{cid}");
         assert_eq!(cid, sugar_canonicalizer::jcs_cid_of_json(&v));
@@ -909,9 +943,7 @@ mod tests {
     fn ledger_carries_assertion_multiset_cid() {
         let (totals, reasons, samples, all, rows) = fixture();
         let set_cid = "blake3-512:abc";
-        let v = build_ledger_json(
-            "corpus", &totals, 0, &reasons, &samples, &all, &rows, set_cid,
-        );
+        let v = build_ledger_json("corpus", &totals, &reasons, &samples, &all, &rows, set_cid);
         assert_eq!(
             v.get("assertion_multiset_cid").and_then(|s| s.as_str()),
             Some(set_cid)

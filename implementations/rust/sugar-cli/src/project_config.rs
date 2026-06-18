@@ -481,11 +481,13 @@ pub const KNOWN_SURFACES: &[&str] = &[
     "zig-source",
 ];
 
-/// Solver menu shown by `sugar init`. v1 ships with single-solver
-/// support (Z3); the chain / portfolio / consensus modes are
-/// captured in the config schema but not yet implemented in the verifier.
+/// Solver menu shown by `sugar init`. These are the in-tree logical solver
+/// names the verifier registry understands from `.sugar/config.toml`; third
+/// party solver/compiler pairs can still be supplied through manifests.
 #[allow(dead_code)] // public API; menu data for `sugar init` interactive flow (TODO: wire up)
-pub const KNOWN_SOLVERS: &[&str] = &["z3", "cvc5", "bitwuzla", "yices2", "mathsat"];
+pub const KNOWN_SOLVERS: &[&str] = &[
+    "maude", "z3", "cvc5", "vampire", "coq", "lean", "bitwuzla", "yices2", "mathsat",
+];
 
 #[cfg(test)]
 mod tests {

@@ -54,6 +54,7 @@ RUST="$REPO/implementations/rust"
 BIN_DIR="$RUST/target/debug"
 SUGAR="$BIN_DIR/sugar"
 ASSERT_RPC="$BIN_DIR/rust_test_assertions_rpc"
+source "$REPO/scripts/stdlib-solver-portfolio.sh"
 WORK="${STD_CORE_SHOWCASE_WORK:-$HERE/.work}"
 PROJECT="$WORK/proof-scope"
 WITNESS_TARGET="$WORK/coretests-target"
@@ -88,7 +89,11 @@ if [ "${STD_CORE_SHOWCASE_SKIP_LOCAL_BUILD:-0}" != "1" ]; then
   echo "== build local proof binaries =="
   cargo build --manifest-path "$RUST/Cargo.toml" \
     -p sugar-cli --bin sugar \
-    -p sugar-lift-rust-tests --bin rust_test_assertions_rpc >/dev/null
+    -p sugar-lift-rust-tests --bin rust_test_assertions_rpc \
+    -p sugar-ir-compiler-smt-lib --bin sugar-ir-smt-lib \
+    -p sugar-ir-compiler-coq --bin sugar-ir-coq \
+    -p sugar-ir-compiler-lean --bin sugar-ir-lean \
+    -p sugar-ir-compiler-maude --bin sugar-ir-maude >/dev/null
 fi
 
 for bin in "$SUGAR" "$ASSERT_RPC"; do
@@ -670,22 +675,13 @@ kind = "lift"
 surface = "rust-test-assertions"
 emit = "ir-document"
 
-[solvers]
-default = "z3"
-
-[solvers.dispatch]
-linear_arithmetic = "z3"
-default = "z3"
-
-[solvers.z3]
-binary = "z3"
-flags = ["-smt2", "-in"]
-
 [platform_profile]
 language = "rust"
 library = "rust-std-coretests-scalar"
 version = "$RUSTC_VERSION"
 TOML
+append_sugar_solver_portfolio "$PROJECT/.sugar/config.toml" "$REPO"
+write_sugar_ir_compiler_manifests "$PROJECT" "$BIN_DIR"
 
 python3 - "$PROJECT/.sugar/config.toml" "$STD_CORE_RUST_TARGET" "$TARGET_CFG_FACTS_FILE" <<'PY'
 import json
