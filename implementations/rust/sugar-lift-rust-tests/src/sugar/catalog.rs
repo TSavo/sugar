@@ -8,13 +8,14 @@ use crate::sugar::backstop::unsupported;
 use crate::sugar::claim::{ExprSugarClaim, ItemSugarClaim, SugarCandidate, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::{
-    array_repeat, array_term, await_term, binop, block_term, call, cast_term, closure_adaptor,
-    closure_term, conditional, const_block, control_flow_term, enumerate, field_term, filter,
-    filter_map, fold, forall, impl_method, index, iter_terminal, iterator, literal, macro_term,
-    map, match_node, match_scrutinee, method, monadic, path, range_term, raw_addr_term,
-    reference_term, repeat_term, rev, skip, skip_while, statement_control_flow,
-    statement_loop_advance, statement_reflection, statement_runtime_expr, struct_term, take,
-    take_while, term_literal, transparent_term, tuple_term, unary,
+    array_repeat, array_term, await_term, binop, block_term, call, cast_term,
+    closure_iter_advance_body, closure_mutating_body, closure_opaque_accessor,
+    closure_runtime_receiver, closure_term, closure_tls_accessor, conditional, const_block,
+    control_flow_term, enumerate, field_term, filter, filter_map, fold, forall, impl_method, index,
+    iter_terminal, iterator, literal, macro_term, map, match_node, match_scrutinee, method,
+    monadic, path, range_term, raw_addr_term, reference_term, repeat_term, rev, skip, skip_while,
+    statement_control_flow, statement_loop_advance, statement_reflection, statement_runtime_expr,
+    struct_term, take, take_while, term_literal, transparent_term, tuple_term, unary,
 };
 use crate::Sugar;
 
@@ -65,11 +66,11 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &take_while::EXPR_SUGAR,
     &fold::EXPR_SUGAR,
     &forall::FOR_EACH_EXPR_SUGAR,
-    &closure_adaptor::TLS_ACCESSOR_EXPR_SUGAR,
-    &closure_adaptor::OPAQUE_ACCESSOR_EXPR_SUGAR,
-    &closure_adaptor::ITER_ADVANCE_BODY_EXPR_SUGAR,
-    &closure_adaptor::MUTATING_BODY_EXPR_SUGAR,
-    &closure_adaptor::RUNTIME_RECEIVER_EXPR_SUGAR,
+    &closure_tls_accessor::EXPR_SUGAR,
+    &closure_opaque_accessor::EXPR_SUGAR,
+    &closure_iter_advance_body::EXPR_SUGAR,
+    &closure_mutating_body::EXPR_SUGAR,
+    &closure_runtime_receiver::EXPR_SUGAR,
     &statement_control_flow::EXPR_SUGAR,
     &statement_reflection::EXPR_SUGAR,
     &statement_loop_advance::EXPR_SUGAR,
@@ -540,7 +541,14 @@ mod tests {
         let expr: Expr = syn::parse_str("DROPS.with(|d| assert_eq!(*d.borrow(), [0]))").unwrap();
         let names = candidate_names_for_role(&expr, SugarRole::ClosureAdaptorVerdict);
 
-        assert_eq!(names, vec!["closure_tls_accessor"]);
+        assert_eq!(
+            names,
+            vec!["closure_tls_accessor", "closure_runtime_receiver"]
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::ClosureAdaptorVerdict),
+            Some("closure_tls_accessor")
+        );
     }
 
     #[test]
@@ -549,7 +557,14 @@ mod tests {
             syn::parse_str("cursor.with_unfilled_buf(|buf| assert!(!buf.is_empty()))").unwrap();
         let names = candidate_names_for_role(&expr, SugarRole::ClosureAdaptorVerdict);
 
-        assert_eq!(names, vec!["closure_opaque_accessor"]);
+        assert_eq!(
+            names,
+            vec!["closure_opaque_accessor", "closure_runtime_receiver"]
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::ClosureAdaptorVerdict),
+            Some("closure_opaque_accessor")
+        );
     }
 
     #[test]
@@ -568,7 +583,36 @@ mod tests {
             syn::parse_str("iter.clone().for_each(|x| assert_eq!(Some(x), iter.next()))").unwrap();
         let names = candidate_names_for_role(&expr, SugarRole::ClosureAdaptorVerdict);
 
-        assert_eq!(names, vec!["closure_iter_advance_body"]);
+        assert_eq!(
+            names,
+            vec![
+                "closure_iter_advance_body",
+                "closure_mutating_body",
+                "closure_runtime_receiver"
+            ]
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::ClosureAdaptorVerdict),
+            Some("closure_iter_advance_body")
+        );
+    }
+
+    #[test]
+    fn overlapping_closure_adaptor_verdicts_resolve_by_declared_priority() {
+        let expr: Expr = syn::parse_str(
+            "std::env::args().for_each(|x| { total += 1; assert!(!x.is_empty()); })",
+        )
+        .unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::ClosureAdaptorVerdict);
+
+        assert_eq!(
+            names,
+            vec!["closure_mutating_body", "closure_runtime_receiver"]
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::ClosureAdaptorVerdict),
+            Some("closure_mutating_body")
+        );
     }
 
     #[test]

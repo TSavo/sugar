@@ -40,7 +40,12 @@ pub mod sugar {
     pub mod catalog;
     pub mod claim;
     pub mod closure_adaptor;
+    pub mod closure_iter_advance_body;
+    pub mod closure_mutating_body;
+    pub mod closure_opaque_accessor;
+    pub mod closure_runtime_receiver;
     pub mod closure_term;
+    pub mod closure_tls_accessor;
     pub mod compare;
     pub mod conditional;
     pub mod configuration;
