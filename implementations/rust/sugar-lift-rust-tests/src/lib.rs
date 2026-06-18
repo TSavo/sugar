@@ -3119,19 +3119,28 @@ impl Desugared {
         }
     }
 
-    /// The single STRING LITERAL value this desugared to, or None. A
-    /// pattern-operand `Sugar` (the regex pattern) digs to a one-element `Seq`
-    /// whose element `expr` is a `&str` literal; this reads that literal's value
-    /// back out. `None` for any non-string-literal payload (a multi-element seq, a
-    /// constraint terminal, a non-`LitStr` element) -- the caller bails. This is
-    /// the COMPOSITIONAL read: the regex node consumes whatever its pattern child
-    /// dug to, so a literal / const-string / `concat!` all flow through the same
+    /// The single STRING LITERAL value this desugared to, or None. A regex
+    /// pattern child may bottom out as either a string `Term` through the
+    /// recursive term factory or as the older one-element `Seq`; both read the
+    /// same literal value. `None` for any non-string-literal payload (a
+    /// multi-element seq, a constraint terminal, a non-`LitStr` element) -- the
+    /// caller bails. This is the COMPOSITIONAL read: the regex node consumes
+    /// whatever its pattern child dug to, so a literal / const-string /
+    /// `concat!` / `format!` / pure helper call all flow through the same
     /// `desugar` -> `as_string_literal` path.
     fn as_string_literal(&self) -> Option<String> {
         let seq = match self {
+            Desugared::Term(term) => {
+                return match term.as_ref() {
+                    Term::Const {
+                        value: ConstValue::String(s),
+                        sort,
+                    } if sort.name == "String" => Some(s.clone()),
+                    _ => None,
+                };
+            }
             Desugared::Seq(s) => s,
             Desugared::Constraints { .. } => return None,
-            Desugared::Term(_) => return None,
         };
         let [only] = seq.as_slice() else {
             return None;
@@ -9394,18 +9403,16 @@ fn translate_string_predicate_assertion(
     scope: &TemporalScope,
 ) -> Result<Option<AssertionEntry>, String> {
     // `RegexSugar` (the regex-match → str.in_re membership lift). A
-    // `Regex::new("pat").unwrap().is_match(subj)` / `re.is_match(subj)` /
-    // `Regex::new("pat")…find(subj).is_some()` is first-order string theory:
-    // `re.is_match(s) ⟺ str.in_re(s, R)` where the pattern literal lowers to a
-    // z3 RegLan term. We LIFT THE SHAPE — never link/run the `regex` crate. The
-    // pattern is recognized as a STRING LITERAL (a LiteralSugar of String kind);
-    // a non-literal/runtime pattern is NOT recognized (the floor is a written
-    // literal). The emitted atom is byte-identical to the Java `@Pattern` pass's
-    // `str.in-regex(subject, <raw-regex-const>)`; the SMT compiler's
-    // `regex_regln` is the single lowering authority and the refuse-by-name
-    // boundary for non-regular features. This runs FIRST so an `is_match` /
-    // `is_some` over a `Regex::new(lit)` chain routes here before the generic
-    // method-name arms; a foreign `is_match` falls through (None).
+    // `Regex::new(<pattern>).unwrap().is_match(subj)` / `re.is_match(subj)` /
+    // `Regex::new(<pattern>)…find(subj).is_some()` is first-order string theory:
+    // `re.is_match(s) ⟺ str.in_re(s, R)` where the pattern operand is a child
+    // Sugar resolved through the recursive factory. We LIFT THE SHAPE — never
+    // link/run the `regex` crate. The emitted atom is byte-identical to the Java
+    // `@Pattern` pass's `str.in-regex(subject, <raw-regex-const>)`; the SMT
+    // compiler's `regex_regln` is the single lowering authority and the
+    // refuse-by-name boundary for non-regular features. This runs FIRST so an
+    // `is_match` / `is_some` over a `Regex::new(...)` chain routes here before the
+    // generic method-name arms; a foreign `is_match` falls through (None).
     if let Some(entry) = translate_regex_match_assertion(expr, scope)? {
         return Ok(Some(entry));
     }
@@ -9604,13 +9611,15 @@ fn translate_string_predicate_assertion(
 /// the Java `@Pattern` universe pass emits (`buildRegexUniverseContract`). The
 /// subject becomes a String-sorted term (a literal subject is the decidable POINT
 /// case; a variable subject is the UNIVERSAL membership case, translated opaquely);
-/// the pattern is the verbatim `Regex::new("…")` String literal carried RAW as a
-/// String-sorted const (`str_const`), NOT a pre-lowered regln — the SMT compiler's
+/// the pattern is the verbatim resolved `Regex::new(<pattern>)` String literal
+/// carried RAW as a String-sorted const (`str_const`), NOT a pre-lowered regln —
+/// the SMT compiler's
 /// `regex_regln` is the single lowering authority and the refuse-by-name boundary
 /// for non-regular features (backreference / lookahead / atomic / inline flag /
-/// `\b`), which it drops without approximating. Returns `None` when the expr is not
-/// a recognized regex-match shape (or carries a non-literal pattern) — never a
-/// fake-refuse; the construct simply is not a regex membership.
+/// `\b`), which it drops without approximating. Returns `None` when the expr is
+/// not a recognized regex-match shape or the pattern child does not dig to a
+/// string literal — never a fake-refuse; the construct simply is not a regex
+/// membership.
 fn translate_regex_match_assertion(
     expr: &Expr,
     scope: &TemporalScope,
@@ -9625,24 +9634,24 @@ fn translate_regex_match_assertion(
         .filter(|(name, _)| !scope.is_mut_local(name))
         .map(|(name, init)| (name.clone(), init.clone()))
         .collect();
-    let Some(m) = sugar::regex_match::recognize_regex_match(expr, &stable_bindings) else {
+    let options = LiftOptions::default();
+    let stable_binding_refs: BTreeMap<String, &Expr> = stable_bindings
+        .iter()
+        .map(|(name, init)| (name.clone(), init))
+        .collect();
+    let fcx = sugar::factory::SugarBuildCtx::new(scope, &options, &stable_binding_refs);
+    let Some(m) = sugar::regex_match::recognize_regex_match(expr, &stable_bindings, &fcx) else {
         return Ok(None);
     };
     // COMPOSITIONAL pattern resolution: the pattern operand is an INNER `Sugar`,
     // resolved by DESUGARING it (mirroring `MapSugar`'s inner). `Dug` -> the
-    // resolved string literal (a literal / const-string / `concat!` all flow
-    // through this one path); `Hit` -> a genuinely runtime / unsupported pattern
-    // (a `format!(…)` with no FormatSugar yet) -> DECLINE (None), the composition
-    // frontier that flips to dig FOR FREE when its producer lands. We never bail
-    // merely because the pattern is not an inline literal.
-    //
-    // The current pattern producers (string-literal base case, `let`/`const`
-    // resolver, `concat!`) are PURE -- they do not read the SugarCtx -- so a
-    // minimal ctx suffices here; a future ctx-needing producer threads the real
-    // ctx in then, with no change to this contract.
+    // resolved string literal (a literal / const-string / `concat!` / `format!` /
+    // pure helper call all flow through this one path); `Hit` -> a genuinely
+    // runtime / unsupported pattern -> DECLINE (None), the composition frontier
+    // that flips to dig when its producer lands. We never bail merely because the
+    // pattern is not an inline literal.
     let mut fw = FloatWidthScope::new();
     let reducer = ReductionCtx::from_items(&[]);
-    let options = LiftOptions::default();
     let ctx = sugar_ctx(scope, &options, &reducer, &mut fw, 0);
     let Some(pattern_str) = m
         .resolve_pattern(&ctx)
@@ -15004,6 +15013,44 @@ mod lifter_key_tests {
                     && matches!(refusal_disposition(r), Disposition::Unclassified)
             }),
             "an immutable slice-pattern starts_with must stay UNCLASSIFIED work: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn regex_pattern_free_function_returning_literal_composes_through_factory() {
+        let src = r#"
+            fn pattern() -> &'static str { "blah" }
+
+            #[test]
+            fn t() {
+                assert!(Regex::new(pattern()).unwrap().is_match("blah"));
+            }
+        "#;
+        let out = lift_src(src);
+        let dump = format!("{:?}", out.decls);
+
+        assert!(
+            dump.contains("str.in-regex") && dump.contains("blah"),
+            "regex pattern producer should compose through CallSugar/factory recursion: {dump}; skips: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn regex_pattern_format_macro_composes_through_factory() {
+        let src = r#"
+            #[test]
+            fn t() {
+                assert!(Regex::new(format!("{}{}", "bl", "ah")).unwrap().is_match("blah"));
+            }
+        "#;
+        let out = lift_src(src);
+        let dump = format!("{:?}", out.decls);
+
+        assert!(
+            dump.contains("str.in-regex") && dump.contains("blah"),
+            "regex pattern producer should compose through FormatMacroSugar/factory recursion: {dump}; skips: {:?}",
             out.skip_reasons
         );
     }
