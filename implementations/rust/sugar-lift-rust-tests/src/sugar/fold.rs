@@ -17,6 +17,7 @@ use syn::{Expr, Pat, Stmt};
 
 use crate::sugar::factory::FactoryCtx;
 use crate::sugar::literal::LiteralSugar;
+use crate::sugar::method_family;
 use crate::{
     closure_body_is_side_effecting, closure_single_param_ident, collect_assertion_entries,
     const_fold_acc_update, const_int_acc_init, count_asserts_in_stmts, peel_fold_adaptors,
@@ -57,6 +58,9 @@ fn decompose_seq(
     extra_rev: bool,
 ) -> Option<Box<dyn Sugar>> {
     let (base, mut adaptors) = peel_fold_adaptors(expr, let_inits, 0)?;
+    if !method_family::is_literal_sequence_base(base) {
+        return None;
+    }
     if extra_rev {
         adaptors.push(Box::new(wrap_rev));
     }

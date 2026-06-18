@@ -65,7 +65,8 @@ pub mod sugar {
     pub mod map;
     pub mod match_node;
     pub mod match_scrutinee;
-    pub mod method_call_term;
+    pub mod method;
+    pub mod method_family;
     pub mod monadic;
     pub mod path;
     pub mod range_term;
@@ -4005,11 +4006,10 @@ fn closure_body_advances_iterator(body: &Expr) -> bool {
 /// dissolvable/liftable pure point-wise iteration, return the NAMED `Effect` the
 /// `ClosureAdaptorSugar` node's `desugar` `Hit`s (a mutation / iterator-advance /
 /// opaque-runtime / TLS boundary). A THIN ADAPTER over the node, which lives in
-/// `sugar::closure_adaptor`: it `build`s the node through the factory
-/// (`sugar::factory::build_closure_adaptor`, the closure-adaptor verdict role), `desugar`s it once,
-/// and reads the verdict -- mapping the node's STRUCTURAL backstop `Hit` back to `None` (the
-/// honest-unclassified fall-through, the old `None`). The caller renders `effect.reason()`
-/// into `skip_reasons` -- the wire format is unchanged.
+/// `sugar::closure_adaptor`: it asks the catalog for the closure-adaptor verdict role,
+/// `desugar`s it once, and reads the verdict -- mapping the node's STRUCTURAL backstop
+/// `Hit` back to `None` (the honest-unclassified fall-through, the old `None`). The caller
+/// renders `effect.reason()` into `skip_reasons` -- the wire format is unchanged.
 ///
 /// Returns `None` for a PURE adaptor over a PURE body over a LITERAL-resolvable receiver
 /// (the defoldable / for_each-liftable case -- honest UNCLASSIFIED work, never fake-refused)
@@ -4029,7 +4029,8 @@ fn closure_method_terminal_effect(
         options,
         let_inits,
     };
-    let node = sugar::factory::build_closure_adaptor(expr, &fcx);
+    let node =
+        sugar::catalog::build_expr_role(expr, &fcx, sugar::claim::SugarRole::ClosureAdaptorVerdict);
     let ctx = sugar_ctx(scope, options, reducer, float_widths, macro_depth);
     match node.desugar(&ctx) {
         // The STRUCTURAL backstop = the honest-unclassified fall-through (the old `None`).
@@ -4289,7 +4290,8 @@ fn statement_position_terminal_effect(
         options,
         let_inits: &let_inits,
     };
-    let node = sugar::factory::build_statement_position(expr, &fcx);
+    let node =
+        sugar::catalog::build_expr_role(expr, &fcx, sugar::claim::SugarRole::StatementEffect);
     let ctx = sugar_ctx(scope, options, reducer, float_widths, macro_depth);
     match node.desugar(&ctx) {
         // The STRUCTURAL backstop = the honest-unclassified fall-through (the old `None`).
@@ -4325,8 +4327,9 @@ fn impl_method_terminal_effect(
     macro_depth: usize,
 ) -> Option<Effect> {
     // The impl-method recognizer's verdict is purely structural (it ignores the build env),
-    // so the in-scope `let` initializers are irrelevant -- an empty map suffices. `build_item`
-    // dispatches on a `syn::Item`, so wrap the `ItemImpl` back into an `Item::Impl`.
+    // so the in-scope `let` initializers are irrelevant -- an empty map suffices. Catalog
+    // item-role selection dispatches on a `syn::Item`, so wrap the `ItemImpl` back into an
+    // `Item::Impl`.
     let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
     let fcx = sugar::factory::FactoryCtx {
         scope,
@@ -4334,7 +4337,7 @@ fn impl_method_terminal_effect(
         let_inits: &let_inits,
     };
     let item = syn::Item::Impl(imp.clone());
-    let node = sugar::factory::build_item(&item, &fcx);
+    let node = sugar::catalog::build_item_role(&item, &fcx, sugar::claim::SugarRole::StatementItem);
     let ctx = sugar_ctx(scope, options, reducer, float_widths, macro_depth);
     match node.desugar(&ctx) {
         // The STRUCTURAL backstop = the honest-unclassified fall-through (the old `None`).
@@ -8541,7 +8544,8 @@ fn runtime_match_scrutinee_effect(expr: &Expr, scope: &TemporalScope) -> Option<
     let reducer = ReductionCtx::from_items(&items);
     let mut float_widths = FloatWidthScope::new();
     let ctx = sugar_ctx(scope, &options, &reducer, &mut float_widths, 0);
-    let node = sugar::factory::build_match_scrutinee(expr, &fcx);
+    let node =
+        sugar::catalog::build_expr_role(expr, &fcx, sugar::claim::SugarRole::MatchScrutineeVerdict);
     match node.desugar(&ctx) {
         // The STRUCTURAL backstop = the honest-unclassified fall-through (the old `None`).
         Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {

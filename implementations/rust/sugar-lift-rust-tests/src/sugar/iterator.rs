@@ -8,6 +8,7 @@
 use syn::Expr;
 
 use crate::sugar::factory::{build_composite, FactoryCtx};
+use crate::sugar::method_family;
 use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -22,9 +23,13 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<d
         return None;
     }
     match call.method.to_string().as_str() {
-        "iter" | "into_iter" | "cloned" | "copied" | "fuse" => Some(Box::new(IteratorSugar {
-            inner: build_composite(&call.receiver, fcx),
-        })),
+        "iter" | "into_iter" | "cloned" | "copied" | "fuse"
+            if method_family::resolves_literal_sequence(expr, fcx.let_inits) =>
+        {
+            Some(Box::new(IteratorSugar {
+                inner: build_composite(&call.receiver, fcx),
+            }))
+        }
         _ => None,
     }
 }

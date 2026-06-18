@@ -7,6 +7,7 @@
 use syn::Expr;
 
 use crate::sugar::factory::{build_composite, FactoryCtx};
+use crate::sugar::method_family;
 use crate::{const_int, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -20,6 +21,9 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<d
         return None;
     }
     let n: usize = const_int(&call.args[0])?.try_into().ok()?;
+    if !method_family::resolves_literal_sequence(expr, fcx.let_inits) {
+        return None;
+    }
     Some(Box::new(SkipSugar {
         inner: build_composite(&call.receiver, fcx),
         n,

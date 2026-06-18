@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// `MethodCallTermSugar` + the TERM recognizer for `Expr::MethodCall`. The constructive
+// `MethodSugar` + the TERM recognizer for `Expr::MethodCall`. The constructive
 // method-call term node digs the receiver child FIRST, applies the per-occurrence
 // consuming-iterator `@adv{n}` re-tag (a runtime read of `ctx.scope`), then digs the
 // arg children in source order, and emits `method:<m>` over `[receiver, args..]`.
@@ -28,7 +28,7 @@ use crate::{
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::fallback_term("method_call_term", recognize);
+    crate::sugar::claim::ExprSugarClaim::fallback_term("method", recognize);
 
 /// TERM recognizer for `Expr::MethodCall`.
 pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>> {
@@ -57,7 +57,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<dyn Sugar>>
     }
     // The constructive `method:` ctor. The RECEIVER is dug first; a per-occurrence
     // consuming-iterator advance re-tags the receiver var (`@adv{n}`).
-    Some(Box::new(MethodCallTermSugar {
+    Some(Box::new(MethodSugar {
         method: method_key(call),
         receiver: build_term(&call.receiver, fcx),
         is_consuming: is_consuming_iterator_method(&call.method.to_string()),
@@ -78,14 +78,14 @@ fn method_key(call: &syn::ExprMethodCall) -> String {
 /// then digs the arg children in source order, and emits `method:<m>` over
 /// `[receiver, args..]`. A child `Hit` propagates verbatim; a non-term child digs to
 /// the structural backstop.
-struct MethodCallTermSugar {
+struct MethodSugar {
     method: String,
     receiver: Box<dyn Sugar>,
     is_consuming: bool,
     args: Vec<Box<dyn Sugar>>,
 }
 
-impl Sugar for MethodCallTermSugar {
+impl Sugar for MethodSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let mut receiver = match self.receiver.desugar(ctx) {
             Outcome::Dug(d) => match d.into_term() {

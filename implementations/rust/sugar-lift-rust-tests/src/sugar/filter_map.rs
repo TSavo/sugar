@@ -14,6 +14,7 @@
 use syn::Expr;
 
 use crate::sugar::factory::{build_composite, FactoryCtx};
+use crate::sugar::method_family;
 use crate::{const_eval_option_closure, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -29,6 +30,9 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &FactoryCtx) -> Option<Box<d
     let Expr::Closure(f) = &call.args[0] else {
         return None;
     };
+    if !method_family::resolves_literal_sequence(expr, fcx.let_inits) {
+        return None;
+    }
     Some(Box::new(FilterMapSugar {
         inner: build_composite(&call.receiver, fcx),
         f: f.clone(),
