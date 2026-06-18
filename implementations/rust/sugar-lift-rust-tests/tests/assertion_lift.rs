@@ -12250,6 +12250,14 @@ fn ir_mentions_call_symbol(doc: &serde_json::Value, name: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// The first `ir` index whose serialized entry mentions `needle`.
+fn ir_entry_index_containing(doc: &serde_json::Value, needle: &str) -> Option<usize> {
+    doc["ir"]
+        .as_array()?
+        .iter()
+        .position(|entry| entry.to_string().contains(needle))
+}
+
 #[test]
 fn rpc_demotes_fully_inlined_value_helper_to_support_no_standalone_contract() {
     // `fn h(n) { n + 1 }` + `assert_eq!(h(2), 3)`: h is fully peeled, so its lift-RPC
@@ -12274,6 +12282,90 @@ fn calls_h() {
     assert!(
         !ir_mentions_call_symbol(&doc, "h"),
         "no standalone `out=call:h` warrant decl may be minted (hollow-B relocated): {doc:#}"
+    );
+}
+
+#[test]
+fn rpc_demotes_fully_inlined_impl_methods_to_qualified_support() {
+    // `Maker::new` and `Maker::get` are consumed by the recursive method DFS that
+    // grounds the regex pattern. They are support universe members, keyed by the
+    // same `Type::method` identity the method registry used, not by the colliding
+    // bare names `new` / `get`.
+    let doc = run_rpc_lift(
+        "src/method_inline.rs",
+        r#"
+struct Maker {
+    pattern: &'static str,
+}
+
+impl Maker {
+    fn new(pattern: &'static str) -> Self {
+        Self { pattern }
+    }
+
+    fn get(&self) -> &'static str {
+        let x = self.pattern;
+        x
+    }
+}
+
+#[test]
+fn regex_from_method() {
+    let m = Maker::new("blah");
+    assert!(Regex::new(m.get()).unwrap().is_match("blah"));
+}
+"#,
+    );
+
+    assert_eq!(
+        locus_status(&doc, "Maker::new"),
+        Some("support"),
+        "consumed associated constructor must be qualified support: {doc:#}"
+    );
+    assert_eq!(
+        locus_status(&doc, "Maker::get"),
+        Some("support"),
+        "consumed receiver method must be qualified support: {doc:#}"
+    );
+    assert_eq!(
+        doc["sourceLedger"]["source_support"],
+        serde_json::json!(2),
+        "both consumed impl methods should count as support: {doc:#}"
+    );
+}
+
+#[test]
+fn rpc_emits_source_method_contract_before_caller_method_obligation() {
+    // A method body we cannot ground still has a source contract. Emit that
+    // callee contract first, then the caller assertion carrying `method:get`, so
+    // downstream mint/link can reuse the callee memento instead of discovering it
+    // after the caller-side obligation has already been serialized.
+    let doc = run_rpc_lift(
+        "src/method_order.rs",
+        r#"
+struct Maker;
+
+impl Maker {
+    fn get(&self) -> i32 {
+        opaque()
+    }
+}
+
+#[test]
+fn caller() {
+    let m = Maker;
+    assert_eq!(m.get(), 3);
+}
+"#,
+    );
+
+    let callee = ir_entry_index_containing(&doc, "rust-source::Maker::get")
+        .unwrap_or_else(|| panic!("missing source method contract: {doc:#}"));
+    let caller = ir_entry_index_containing(&doc, "method:get")
+        .unwrap_or_else(|| panic!("missing caller method obligation: {doc:#}"));
+    assert!(
+        callee < caller,
+        "source method contract must be emitted before caller obligation: callee={callee}, caller={caller}, doc={doc:#}"
     );
 }
 

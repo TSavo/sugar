@@ -3908,7 +3908,7 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
             // Record this helper (and any it transitively peeled) as a UNIVERSE member,
             // so the classifier demotes it to "support" rather than re-minting a
             // standalone `out=call:NAME` contract -- the hollow-B symbol we just killed.
-            if let Some(name) = value_call_head_name(func) {
+            if let Some(name) = value_call_support_key(func) {
                 self.scope.record_inlined_value_helper(&name);
             }
             Some(term)
@@ -3931,7 +3931,7 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
         if self.macro_depth >= MAX_VALUE_CALL_INLINE_DEPTH {
             return None;
         }
-        let inlined =
+        let (support_key, inlined) =
             resolve_value_method_inline(method, receiver, args, self.scope, self.options)?;
         let inlined = resolve_known_value_projection(&inlined, self.scope, self.options);
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
@@ -3949,13 +3949,23 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
             Outcome::Dug(d) => d.into_term()?,
             Outcome::Hit(_) => return None,
         };
-        is_fully_grounded_term(&term).then_some(term)
+        if is_fully_grounded_term(&term) {
+            self.scope.record_inlined_value_helper(&support_key);
+            for key in receiver_source_support_keys(receiver, self.scope, self.options) {
+                self.scope.record_inlined_value_helper(&key);
+            }
+            Some(term)
+        } else {
+            None
+        }
     }
 }
 
-/// The simple head ident of a value call (`f` in `f(args)`), peeling `Paren`/`Group`.
-/// `None` for a non-path / qualified head. Used to record a peeled helper's name.
-fn value_call_head_name(func: &Expr) -> Option<String> {
+/// The source-support key of a value call, peeling `Paren`/`Group`.
+/// Free functions use `f`; associated impl functions use `Type::f`, matching the
+/// impl method registry's identity so support records cannot collide on bare
+/// method names like `new` / `get`.
+fn value_call_support_key(func: &Expr) -> Option<String> {
     let inner = match func {
         Expr::Paren(p) => &*p.expr,
         Expr::Group(g) => &*g.expr,
@@ -3965,7 +3975,11 @@ fn value_call_head_name(func: &Expr) -> Option<String> {
     if path.qself.is_some() {
         return None;
     }
-    path.path.get_ident().map(|i| i.to_string())
+    if let Some(ident) = path.path.get_ident() {
+        return Some(ident.to_string());
+    }
+    let (self_ty, name) = assoc_call_key(&path.path)?;
+    Some(format!("{self_ty}::{name}"))
 }
 
 fn assoc_call_key(path: &syn::Path) -> Option<(String, String)> {
@@ -7664,7 +7678,7 @@ fn resolve_value_method_inline(
     args: &[Expr],
     scope: &TemporalScope,
     options: &LiftOptions,
-) -> Option<Expr> {
+) -> Option<(String, Expr)> {
     let self_ty = receiver_source_type_key(receiver, scope, options, 0)?;
     let helper = scope
         .impl_value_registry()
@@ -7687,7 +7701,8 @@ fn resolve_value_method_inline(
     for (param, arg) in params.into_iter().zip(args.iter()) {
         binds.insert(param, arg.clone());
     }
-    value_body_tail_substituted(&helper.block, &mut binds)
+    let body = value_body_tail_substituted(&helper.block, &mut binds)?;
+    Some((format!("{self_ty}::{method}"), body))
 }
 
 fn receiver_source_type_key(
@@ -7731,6 +7746,53 @@ fn receiver_source_type_key(
             receiver_source_type_key(&resolved, scope, options, depth + 1)
         }
         _ => None,
+    }
+}
+
+fn receiver_source_support_keys(
+    receiver: &Expr,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+) -> BTreeSet<String> {
+    let mut keys = BTreeSet::new();
+    collect_source_expr_support_keys(receiver, scope, options, 0, &mut keys);
+    keys
+}
+
+fn collect_source_expr_support_keys(
+    expr: &Expr,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+    depth: usize,
+    out: &mut BTreeSet<String>,
+) {
+    if depth >= MAX_VALUE_CALL_INLINE_DEPTH {
+        return;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Path(path) if path.qself.is_none() => {
+            let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) else {
+                return;
+            };
+            if let Some(init) = scope.let_binding(&name) {
+                collect_source_expr_support_keys(init, scope, options, depth + 1, out);
+            }
+        }
+        Expr::Call(call) => {
+            let args: Vec<Expr> = call.args.iter().cloned().collect();
+            if let Some(resolved) = resolve_value_call_inline(&call.func, &args, scope, options) {
+                if let Some(key) = value_call_support_key(&call.func) {
+                    out.insert(key);
+                }
+                collect_source_expr_support_keys(&resolved, scope, options, depth + 1, out);
+            }
+        }
+        Expr::Field(field) => {
+            if let Some(resolved) = resolve_field_projection(field, scope, options, depth + 1) {
+                collect_source_expr_support_keys(&resolved, scope, options, depth + 1, out);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -15508,6 +15570,12 @@ mod lifter_key_tests {
             dump.contains("str.in-regex") && dump.contains("blah"),
             "regex pattern producer should compose through impl MethodSugar/factory recursion: {dump}; skips: {:?}",
             out.skip_reasons
+        );
+        assert!(
+            out.reduced_helpers.contains("Maker::new")
+                && out.reduced_helpers.contains("Maker::get"),
+            "consumed impl value methods must be recorded under qualified support keys: {:?}",
+            out.reduced_helpers
         );
     }
 

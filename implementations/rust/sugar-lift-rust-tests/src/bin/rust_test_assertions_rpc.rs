@@ -149,8 +149,9 @@ fn lift(params: &Value) -> Value {
         let out = lift_file_with_options(&file, rel, &options);
         let marshalled = marshal_declarations(&out.decls);
         let parsed: Value = serde_json::from_str(&marshalled).unwrap_or_else(|_| json!([]));
+        let mut assertion_entries = Vec::new();
         if let Some(arr) = parsed.as_array() {
-            entries.extend(arr.iter().cloned());
+            assertion_entries.extend(arr.iter().cloned());
         }
         for w in &out.warnings {
             diagnostics.push(json!({
@@ -249,6 +250,7 @@ fn lift(params: &Value) -> Value {
         if let Ok(Value::Array(arr)) = serde_json::from_str::<Value>(&value_marshalled) {
             entries.extend(arr);
         }
+        entries.extend(assertion_entries);
         // Oracle slice: ask the resident RA daemon (sugar-linkerd) to resolve the
         // receiver/param mutability of each queued method-call position. A method
         // call that is `&mut self` / takes a `&mut` param is the provable
@@ -310,11 +312,16 @@ fn collect_fns<'a>(items: &'a [syn::Item], out: &mut Vec<FnRef<'a>>) {
                 }
             }
             syn::Item::Impl(im) => {
+                let self_ty = impl_audit_self_ty_key(&im.self_ty);
                 for ii in &im.items {
                     if let syn::ImplItem::Fn(m) = ii {
+                        let name = self_ty
+                            .as_ref()
+                            .map(|ty| format!("{ty}::{}", m.sig.ident))
+                            .unwrap_or_else(|| m.sig.ident.to_string());
                         out.push(FnRef {
                             span: m.span(),
-                            name: m.sig.ident.to_string(),
+                            name,
                             sig: &m.sig,
                             block: &m.block,
                             attrs: &m.attrs,
@@ -328,7 +335,7 @@ fn collect_fns<'a>(items: &'a [syn::Item], out: &mut Vec<FnRef<'a>>) {
                         if let Some(block) = &m.default {
                             out.push(FnRef {
                                 span: m.span(),
-                                name: m.sig.ident.to_string(),
+                                name: format!("{}::{}", tr.ident, m.sig.ident),
                                 sig: &m.sig,
                                 block,
                                 attrs: &m.attrs,
@@ -339,6 +346,16 @@ fn collect_fns<'a>(items: &'a [syn::Item], out: &mut Vec<FnRef<'a>>) {
             }
             _ => {}
         }
+    }
+}
+
+fn impl_audit_self_ty_key(ty: &syn::Type) -> Option<String> {
+    match ty {
+        syn::Type::Path(tp) if tp.qself.is_none() => {
+            tp.path.segments.last().map(|seg| seg.ident.to_string())
+        }
+        syn::Type::Reference(r) => impl_audit_self_ty_key(&r.elem),
+        _ => None,
     }
 }
 
@@ -674,11 +691,11 @@ mod tests {
         let names: Vec<String> = fns_of(src).iter().map(|f| f.name.clone()).collect();
         assert!(names.contains(&"free_fn".to_string()));
         assert!(
-            names.contains(&"method".to_string()),
+            names.contains(&"S::method".to_string()),
             "impl method must be enumerated: {names:?}"
         );
         assert!(
-            names.contains(&"defaulted".to_string()),
+            names.contains(&"T::defaulted".to_string()),
             "trait default method must be enumerated: {names:?}"
         );
         // a trait method WITHOUT a body declares no constructor -> not a locus.
