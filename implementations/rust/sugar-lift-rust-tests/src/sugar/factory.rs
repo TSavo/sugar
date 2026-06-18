@@ -60,8 +60,8 @@ use tracing::{debug, warn};
 use crate::sugar::catalog;
 use crate::sugar::claim::SugarRole;
 use crate::{
-    refusal_disposition, token_key, Desugared, Disposition, Effect, FactoryAudit,
-    FactoryCandidateAudit, FactoryDisposition, LiftOptions, Outcome, Sugar, SugarCtx,
+    refusal_disposition, token_key, AssertionFactKind, Desugared, Disposition, Effect,
+    FactoryAudit, FactoryCandidateAudit, FactoryDisposition, LiftOptions, Outcome, Sugar, SugarCtx,
     TemporalScope, STRUCTURAL_BACKSTOP_REASON,
 };
 
@@ -74,6 +74,7 @@ pub(crate) struct SugarBuildCtx<'a, 'e> {
     scope: &'a TemporalScope,
     options: &'a LiftOptions,
     let_inits: &'a BTreeMap<String, &'e Expr>,
+    bound_path_stack: Vec<String>,
 }
 
 impl<'a, 'e> SugarBuildCtx<'a, 'e> {
@@ -86,6 +87,7 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
             scope,
             options,
             let_inits,
+            bound_path_stack: Vec::new(),
         }
     }
 
@@ -99,6 +101,21 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
 
     pub(crate) fn let_inits(&self) -> &BTreeMap<String, &'e Expr> {
         self.let_inits
+    }
+
+    pub(crate) fn resolving_bound_path(&self, name: &str) -> bool {
+        self.bound_path_stack.iter().any(|current| current == name)
+    }
+
+    pub(crate) fn with_bound_path(&self, name: &str) -> Self {
+        let mut bound_path_stack = self.bound_path_stack.clone();
+        bound_path_stack.push(name.to_string());
+        Self {
+            scope: self.scope,
+            options: self.options,
+            let_inits: self.let_inits,
+            bound_path_stack,
+        }
     }
 }
 
@@ -208,9 +225,16 @@ impl FactoryAuditSeed {
 
     fn disposition(&self, outcome: &Outcome) -> (FactoryDisposition, &'static str, Option<String>) {
         match outcome {
-            Outcome::Dug(Desugared::Constraints { .. }) => {
-                (FactoryDisposition::Warranted, "constraints", None)
-            }
+            Outcome::Dug(Desugared::Constraints { kind, .. }) => match kind {
+                AssertionFactKind::Warranted => {
+                    (FactoryDisposition::Warranted, "constraints", None)
+                }
+                AssertionFactKind::Support => (
+                    FactoryDisposition::Support,
+                    "constraints",
+                    Some("inert: support constraint; no scalar universe emitted".to_string()),
+                ),
+            },
             Outcome::Dug(Desugared::Term(_)) => (FactoryDisposition::Warranted, "term", None),
             Outcome::Dug(Desugared::Seq(seq)) if seq.is_empty() => (
                 FactoryDisposition::Support,

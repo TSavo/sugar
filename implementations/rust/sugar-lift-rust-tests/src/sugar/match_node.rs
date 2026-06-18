@@ -20,8 +20,8 @@ use crate::sugar::factory::SugarBuildCtx;
 use crate::{
     bool_const, closure_body_is_side_effecting, collect_assertion_entries, count_asserts_in_stmts,
     loop_body_mutates, path_to_variant_string, strict_variant_path, translate_lit,
-    translate_term_in_scope, wrapped_variant, Desugared, LiftOptions, Outcome, Sugar, SugarCtx,
-    TemporalScope, Warrant,
+    translate_term_in_scope, wrapped_variant, AssertionFactKind, Desugared, LiftOptions, Outcome,
+    Sugar, SugarCtx, TemporalScope, Warrant,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -290,6 +290,7 @@ impl Sugar for MatchSugar {
             Some(Desugared::Constraints {
                 atom,
                 n: total,
+                kind: AssertionFactKind::Warranted,
                 warrant,
             })
         })())
@@ -326,7 +327,11 @@ impl MatchSugar {
             &ctx.scope.plan.interior_mut,
             &BTreeMap::new(),
         );
-        if !body_skipped.is_empty() || body_entries.len() != expected {
+        let warranted = body_entries
+            .iter()
+            .filter(|entry| matches!(entry.kind, AssertionFactKind::Warranted))
+            .count();
+        if !body_skipped.is_empty() || warranted != expected {
             return None;
         }
         Some(and_(body_entries.iter().map(|e| e.atom.clone()).collect()))

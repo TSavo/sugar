@@ -11,7 +11,8 @@ use sugar_canonicalizer::{blake3_512_of, encode_jcs};
 use sugar_ir_symbolic::serialize::{formula_to_value, marshal_declarations};
 use sugar_lift_rust_tests::source_oracle;
 use sugar_lift_rust_tests::{
-    lift_file_with_options, AssertionFactEmission, FactoryAudit, LiftOptions, TargetCfg,
+    lift_file_with_options, AssertionFactEmission, AssertionFactKind, FactoryAudit, LiftOptions,
+    TargetCfg,
 };
 use sugar_verifier::types::{memento_body, memento_body_field, memento_kind};
 use tracing::{debug, info, warn};
@@ -509,27 +510,27 @@ fn assertion_surface_audits_for_file(
     sources
         .values()
         .map(|source| {
-            let fact_rows = facts
-                .iter()
-                .filter(|fact| fact.item_name == source.assertion_source)
-                .map(|fact| {
-                    let mementos = source_cache.fact_source_mementos(fns, fact);
-                    let mut row = json!({
-                        "contract": fact.contract_name,
-                        "sourcePath": fact.source_path,
-                        "sourceMementos": mementos,
-                    });
-                    if let Some(first) = row
-                        .get("sourceMementos")
-                        .and_then(Value::as_array)
-                        .and_then(|arr| arr.first())
-                        .cloned()
-                    {
-                        row["sourceMemento"] = first;
-                    }
-                    row
-                })
-                .collect::<Vec<_>>();
+            let fact_rows = assertion_fact_rows_for_kind(
+                facts,
+                source,
+                AssertionFactKind::Warranted,
+                fns,
+                source_cache,
+            );
+            let support_rows = assertion_fact_rows_for_kind(
+                facts,
+                source,
+                AssertionFactKind::Support,
+                fns,
+                source_cache,
+            );
+            let status = if !fact_rows.is_empty() {
+                "facts-emitted"
+            } else if !support_rows.is_empty() {
+                "support-only"
+            } else {
+                "no-facts-emitted"
+            };
             let mut row = json!({
                 "kind": "assertion-surface-audit",
                 "surface": SURFACE,
@@ -537,8 +538,9 @@ fn assertion_surface_audits_for_file(
                 "file": source.file,
                 "line": source.line,
                 "sourceStatus": source.source_status,
-                "status": if fact_rows.is_empty() { "no-facts-emitted" } else { "facts-emitted" },
+                "status": status,
                 "facts": fact_rows,
+                "supportFacts": support_rows,
                 "sourceMemento": source.memento,
             });
             if row["status"] == "no-facts-emitted" {
@@ -546,6 +548,40 @@ fn assertion_surface_audits_for_file(
                     .reason
                     .clone()
                     .unwrap_or_else(|| "no fact contracts emitted by kit".to_string()));
+            } else if row["status"] == "support-only" {
+                row["reason"] =
+                    json!("support contracts emitted; no scalar universe emitted by kit");
+            }
+            row
+        })
+        .collect()
+}
+
+fn assertion_fact_rows_for_kind(
+    facts: &[AssertionFactEmission],
+    source: &AssertionSourceRecord,
+    kind: AssertionFactKind,
+    fns: &[FnRef<'_>],
+    source_cache: &mut FileSourceOracleCache<'_>,
+) -> Vec<Value> {
+    facts
+        .iter()
+        .filter(|fact| fact.item_name == source.assertion_source && fact.kind == kind)
+        .map(|fact| {
+            let mementos = source_cache.fact_source_mementos(fns, fact);
+            let mut row = json!({
+                "contract": fact.contract_name,
+                "kind": fact.kind.as_str(),
+                "sourcePath": fact.source_path,
+                "sourceMementos": mementos,
+            });
+            if let Some(first) = row
+                .get("sourceMementos")
+                .and_then(Value::as_array)
+                .and_then(|arr| arr.first())
+                .cloned()
+            {
+                row["sourceMemento"] = first;
             }
             row
         })
@@ -1867,11 +1903,25 @@ mod tests {
         std::fs::write(
             root.join("src/lib.rs"),
             r#"
+fn answer() -> i32 { 42 }
+
 #[cfg(test)]
 mod tests {
+    use super::answer;
+
     #[test]
     fn emits_fact() {
         assert_eq!(1 + 1, 2);
+    }
+
+    #[test]
+    fn fact_and_support() {
+        assert_eq!(answer(), 42);
+    }
+
+    #[test]
+    fn support_only() {
+        answer();
     }
 
     #[test]
@@ -1897,22 +1947,67 @@ mod tests {
             .expect("emitted assertion source is accounted");
         assert_eq!(emitted["status"], "facts-emitted", "{emitted}");
         assert_eq!(emitted["facts"].as_array().unwrap().len(), 1, "{emitted}");
+        assert_eq!(
+            emitted["supportFacts"].as_array().unwrap().len(),
+            0,
+            "{emitted}"
+        );
         assert_eq!(emitted["sourceMemento"]["file"], "src/lib.rs");
         assert_eq!(
             emitted["sourceMemento"]["sourceFunctionName"],
             "tests::emits_fact"
         );
-        assert_eq!(emitted["sourceMemento"]["span"]["start_line"], 4);
-        assert_eq!(emitted["sourceMemento"]["span"]["end_line"], 7);
+        assert_eq!(emitted["sourceMemento"]["span"]["start_line"], 7);
+        assert_eq!(emitted["sourceMemento"]["span"]["end_line"], 10);
         assert!(emitted["sourceMemento"].get("body_text").is_none());
         assert!(emitted["sourceMemento"].get("ast_template").is_none());
         let fact_memento = &emitted["facts"][0]["sourceMemento"];
         assert_eq!(fact_memento["file"], "src/lib.rs");
         assert_eq!(fact_memento["sourceFunctionName"], "tests::emits_fact");
-        assert_eq!(fact_memento["span"]["start_line"], 6);
-        assert_eq!(fact_memento["span"]["end_line"], 6);
+        assert_eq!(fact_memento["span"]["start_line"], 9);
+        assert_eq!(fact_memento["span"]["end_line"], 9);
         assert!(fact_memento.get("body_text").is_none());
         assert!(fact_memento.get("ast_template").is_none());
+
+        let fact_and_support = audits
+            .iter()
+            .find(|row| row["assertionSource"] == "src/lib.rs::tests::fact_and_support")
+            .expect("fact+support assertion source is accounted");
+        assert_eq!(
+            fact_and_support["status"], "facts-emitted",
+            "{fact_and_support}"
+        );
+        assert_eq!(
+            fact_and_support["facts"].as_array().unwrap().len(),
+            1,
+            "{fact_and_support}"
+        );
+        assert_eq!(
+            fact_and_support["supportFacts"].as_array().unwrap().len(),
+            1,
+            "{fact_and_support}"
+        );
+        assert_ne!(
+            fact_and_support["facts"][0]["contract"],
+            fact_and_support["supportFacts"][0]["contract"],
+            "kit emits separate contracts; linker/conjoiner owns composing them: {fact_and_support}"
+        );
+
+        let support_only = audits
+            .iter()
+            .find(|row| row["assertionSource"] == "src/lib.rs::tests::support_only")
+            .expect("support-only assertion source is accounted");
+        assert_eq!(support_only["status"], "support-only", "{support_only}");
+        assert_eq!(
+            support_only["facts"].as_array().unwrap().len(),
+            0,
+            "{support_only}"
+        );
+        assert_eq!(
+            support_only["supportFacts"].as_array().unwrap().len(),
+            1,
+            "{support_only}"
+        );
 
         let no_fact = audits
             .iter()
@@ -1936,9 +2031,17 @@ mod tests {
             .find(|entry| entry["name"] == fact_contract)
             .expect("fact contract is present in ir");
         assert_eq!(contract["sourceWarrants"][0]["file"], "src/lib.rs");
-        assert_eq!(contract["sourceWarrants"][0]["span"]["start_line"], 6);
-        assert_eq!(contract["sourceWarrants"][0]["span"]["end_line"], 6);
+        assert_eq!(contract["sourceWarrants"][0]["span"]["start_line"], 9);
+        assert_eq!(contract["sourceWarrants"][0]["span"]["end_line"], 9);
         assert_eq!(contract["sourceWarrants"][0], *fact_memento);
+
+        let support_contract = fact_and_support["supportFacts"][0]["contract"]
+            .as_str()
+            .expect("support contract name");
+        assert!(
+            ir.iter().any(|entry| entry["name"] == support_contract),
+            "support contract is still emitted to ir for linker/conjoiner composition: {response}"
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }

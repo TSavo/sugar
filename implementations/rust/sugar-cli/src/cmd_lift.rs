@@ -1571,22 +1571,29 @@ fn render_assertion_surface_accounting(report: &LiftSourceReport) -> String {
         .iter()
         .map(assertion_surface_fact_count)
         .sum::<usize>();
+    let total_support = report
+        .assertion_surface_audits
+        .iter()
+        .map(assertion_surface_support_fact_count)
+        .sum::<usize>();
     let no_fact_count = report
         .assertion_surface_audits
         .iter()
         .filter(|row| assertion_surface_fact_count(row) == 0)
+        .filter(|row| assertion_surface_support_fact_count(row) == 0)
         .count();
     let mut out = format!(
-        "assertion surface accounting: sources={} facts={} no_facts={}\n",
+        "assertion surface accounting: sources={} facts={} support={} no_facts={}\n",
         report.assertion_surface_audits.len(),
         total_facts,
+        total_support,
         no_fact_count
     );
 
     let mut rows = report.assertion_surface_audits.iter().collect::<Vec<_>>();
     rows.sort_by_key(|row| {
         (
-            assertion_surface_fact_count(row) == 0,
+            assertion_surface_row_class(row),
             row.get("file")
                 .and_then(Value::as_str)
                 .unwrap_or_default()
@@ -1606,18 +1613,51 @@ fn render_assertion_surface_accounting(report: &LiftSourceReport) -> String {
         for row in emitted {
             out.push_str(&format_assertion_surface_row(row));
             if let Some(facts) = row.get("facts").and_then(Value::as_array) {
-                for fact in facts {
-                    if let Some(contract_name) = assertion_surface_fact_contract(fact) {
-                        if let Some(contract) = facts_by_contract.get(contract_name) {
-                            out.push_str(&format!(
-                                "    - {}\n",
-                                format_contract_asserted_fact(report, contract)
-                                    .unwrap_or_else(|| format_contract_fol(contract))
-                            ));
-                        } else {
-                            out.push_str(&format!("    - contract: {contract_name}\n"));
-                        }
-                    }
+                render_assertion_surface_contract_refs(
+                    &mut out,
+                    "facts",
+                    report,
+                    &facts_by_contract,
+                    facts,
+                    true,
+                );
+            }
+            if let Some(support_facts) = row.get("supportFacts").and_then(Value::as_array) {
+                render_assertion_surface_contract_refs(
+                    &mut out,
+                    "support",
+                    report,
+                    &facts_by_contract,
+                    support_facts,
+                    false,
+                );
+            }
+        }
+    }
+
+    let support_only = rows
+        .iter()
+        .copied()
+        .filter(|row| assertion_surface_fact_count(row) == 0)
+        .filter(|row| assertion_surface_support_fact_count(row) > 0)
+        .collect::<Vec<_>>();
+    if !support_only.is_empty() {
+        out.push_str("assertion support emitted:\n");
+        for row in support_only {
+            out.push_str(&format_assertion_surface_row(row));
+            if let Some(support_facts) = row.get("supportFacts").and_then(Value::as_array) {
+                render_assertion_surface_contract_refs(
+                    &mut out,
+                    "support",
+                    report,
+                    &facts_by_contract,
+                    support_facts,
+                    false,
+                );
+            }
+            if let Some(reason) = row.get("reason").and_then(Value::as_str) {
+                if !reason.is_empty() {
+                    out.push_str(&format!("    reason: {reason}\n"));
                 }
             }
         }
@@ -1627,6 +1667,7 @@ fn render_assertion_surface_accounting(report: &LiftSourceReport) -> String {
         .iter()
         .copied()
         .filter(|row| assertion_surface_fact_count(row) == 0)
+        .filter(|row| assertion_surface_support_fact_count(row) == 0)
         .collect::<Vec<_>>();
     if !no_facts.is_empty() {
         out.push_str("assertion sources without facts:\n");
@@ -1643,6 +1684,45 @@ fn render_assertion_surface_accounting(report: &LiftSourceReport) -> String {
     out
 }
 
+fn render_assertion_surface_contract_refs(
+    out: &mut String,
+    label: &str,
+    report: &LiftSourceReport,
+    facts_by_contract: &BTreeMap<&str, &Value>,
+    facts: &[Value],
+    observed_fact: bool,
+) {
+    if facts.is_empty() {
+        return;
+    }
+    out.push_str(&format!("    {label}:\n"));
+    for fact in facts {
+        if let Some(contract_name) = assertion_surface_fact_contract(fact) {
+            if let Some(contract) = facts_by_contract.get(contract_name) {
+                let rendered = if observed_fact {
+                    format_contract_asserted_fact(report, contract)
+                        .unwrap_or_else(|| format_contract_fol(contract))
+                } else {
+                    format_contract_fol(contract)
+                };
+                out.push_str(&format!("      - {rendered}\n"));
+            } else {
+                out.push_str(&format!("      - contract: {contract_name}\n"));
+            }
+        }
+    }
+}
+
+fn assertion_surface_row_class(row: &Value) -> u8 {
+    if assertion_surface_fact_count(row) > 0 {
+        0
+    } else if assertion_surface_support_fact_count(row) > 0 {
+        1
+    } else {
+        2
+    }
+}
+
 fn assertion_surface_name(row: &Value) -> &str {
     row.get("assertionSource")
         .or_else(|| row.get("assertion_source"))
@@ -1652,6 +1732,14 @@ fn assertion_surface_name(row: &Value) -> &str {
 
 fn assertion_surface_fact_count(row: &Value) -> usize {
     row.get("facts")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0)
+}
+
+fn assertion_surface_support_fact_count(row: &Value) -> usize {
+    row.get("supportFacts")
+        .or_else(|| row.get("support_facts"))
         .and_then(Value::as_array)
         .map(Vec::len)
         .unwrap_or(0)
@@ -1679,8 +1767,9 @@ fn format_assertion_surface_row(row: &Value) -> String {
         .and_then(Value::as_str)
         .unwrap_or("unknown");
     let facts = assertion_surface_fact_count(row);
+    let support = assertion_surface_support_fact_count(row);
     format!(
-        "  - {file}:{line} {} {status} facts={facts}\n",
+        "  - {file}:{line} {} {status} facts={facts} support={support}\n",
         assertion_surface_name(row)
     )
 }
@@ -4114,12 +4203,23 @@ mod tests {
                             {"kind": "const", "value": 2, "sort": {"name": "Int"}}
                         ]
                     }
+                },
+                {
+                    "kind": "contract",
+                    "name": "src/lib.rs::tests::support_only::panic-free::answer",
+                    "inv": {
+                        "kind": "atomic",
+                        "name": "panic-free",
+                        "args": [
+                            {"kind": "ctor", "name": "call:answer", "args": []}
+                        ]
+                    }
                 }
             ],
             "sourceLedger": {
-                "source_loci": 2,
+                "source_loci": 3,
                 "source_warranted": 1,
-                "source_support": 0,
+                "source_support": 1,
                 "source_refused": 0,
                 "source_inactive": 0,
                 "source_refuted": 0,
@@ -4150,6 +4250,23 @@ mod tests {
                     },
                     "facts": [
                         {"contract": "src/lib.rs::tests::emits_fact"}
+                    ],
+                    "supportFacts": []
+                },
+                {
+                    "kind": "assertion-surface-audit",
+                    "surface": "example-assertions",
+                    "assertionSource": "src/lib.rs::tests::support_only",
+                    "file": "src/lib.rs",
+                    "line": 30,
+                    "status": "support-only",
+                    "reason": "support contracts emitted; no scalar universe emitted by kit",
+                    "facts": [],
+                    "supportFacts": [
+                        {
+                            "kind": "support",
+                            "contract": "src/lib.rs::tests::support_only::panic-free::answer"
+                        }
                     ]
                 },
                 {
@@ -4160,7 +4277,8 @@ mod tests {
                     "line": 20,
                     "status": "no-facts-emitted",
                     "reason": "no liftable scalar assertions",
-                    "facts": []
+                    "facts": [],
+                    "supportFacts": []
                 }
             ]
         });
@@ -4170,7 +4288,7 @@ mod tests {
         let parsed: Value = serde_json::from_str(&rendered_json).expect("valid json");
 
         assert!(
-            human.contains("assertion surface accounting: sources=2 facts=1 no_facts=1"),
+            human.contains("assertion surface accounting: sources=3 facts=1 support=1 no_facts=1"),
             "{human}"
         );
         assert!(human.contains("assertion facts emitted:"), "{human}");
@@ -4180,6 +4298,23 @@ mod tests {
         );
         assert!(
             human.contains("src/lib.rs::tests::emits_fact :: 2 = 2"),
+            "{human}"
+        );
+        assert!(human.contains("assertion support emitted:"), "{human}");
+        assert!(
+            human.contains(
+                "src/lib.rs:30 src/lib.rs::tests::support_only support-only facts=0 support=1"
+            ),
+            "{human}"
+        );
+        assert!(
+            human.contains(
+                "src/lib.rs::tests::support_only::panic-free::answer :: panic-free(call:answer())"
+            ),
+            "{human}"
+        );
+        assert!(
+            human.contains("reason: support contracts emitted; no scalar universe emitted by kit"),
             "{human}"
         );
         assert!(
@@ -4196,7 +4331,7 @@ mod tests {
         );
         assert_eq!(
             parsed["assertionSurfaceAudits"].as_array().unwrap().len(),
-            2
+            3
         );
     }
 

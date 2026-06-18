@@ -22,8 +22,8 @@ use crate::{
     closure_body_is_side_effecting, closure_single_param_ident, collect_assertion_entries,
     const_fold_acc_update, const_int_acc_init, count_asserts_in_stmts, peel_fold_adaptors,
     resolve_index_in_formula, strip_refs_groups, subst_var_in_formula, translate_term_in_scope,
-    tuple_components, wrap_rev, ConstVal, Desugared, Outcome, Sugar, SugarCtx, Warrant,
-    SUGAR_SEQ_CAP,
+    tuple_components, wrap_rev, AssertionFactKind, ConstVal, Desugared, Outcome, Sugar, SugarCtx,
+    Warrant, SUGAR_SEQ_CAP,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -160,7 +160,11 @@ impl Sugar for FoldSugar {
                 &ctx.scope.plan.interior_mut,
                 &BTreeMap::new(),
             );
-            if !body_skipped.is_empty() || body_entries.len() != n_body {
+            let warranted = body_entries
+                .iter()
+                .filter(|entry| matches!(entry.kind, AssertionFactKind::Warranted))
+                .count();
+            if !body_skipped.is_empty() || warranted != n_body {
                 return None;
             }
             let body_conj = and_(body_entries.iter().map(|e| e.atom.clone()).collect());
@@ -263,6 +267,7 @@ impl Sugar for FoldSugar {
             Some(Desugared::Constraints {
                 atom: conj,
                 n: n_body,
+                kind: AssertionFactKind::Warranted,
                 warrant,
             })
         })())

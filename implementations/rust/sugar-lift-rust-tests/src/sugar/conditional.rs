@@ -16,8 +16,8 @@ use crate::sugar::backstop::boxed;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{
     bool_const, closure_body_is_side_effecting, collect_assertion_entries, const_fold_bool_guard,
-    count_asserts_in_stmts, loop_body_mutates, lower_assert_condition, Desugared, Outcome, Sugar,
-    SugarCtx, Warrant,
+    count_asserts_in_stmts, loop_body_mutates, lower_assert_condition, AssertionFactKind,
+    Desugared, Outcome, Sugar, SugarCtx, Warrant,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -118,6 +118,7 @@ impl Sugar for ConditionalSugar {
             Some(Desugared::Constraints {
                 atom,
                 n: then_count + else_count,
+                kind: AssertionFactKind::Warranted,
                 warrant,
             })
         })())
@@ -154,7 +155,11 @@ impl ConditionalSugar {
             &ctx.scope.plan.interior_mut,
             &BTreeMap::new(),
         );
-        if !body_skipped.is_empty() || body_entries.len() != expected {
+        let warranted = body_entries
+            .iter()
+            .filter(|entry| matches!(entry.kind, AssertionFactKind::Warranted))
+            .count();
+        if !body_skipped.is_empty() || warranted != expected {
             return None;
         }
         Some(and_(body_entries.iter().map(|e| e.atom.clone()).collect()))

@@ -19,8 +19,9 @@ use crate::sugar::method_family;
 use crate::{
     bounded_domain_from_expr, capture_literal_arrays, collect_assertion_entries,
     count_asserts_in_stmts, loop_body_mutates, resolve_index_in_formula, subst_var_in_formula,
-    term_as_int, translate_term_in_scope, BoundedDomain, Desugared, FloatWidthScope, LiftOptions,
-    Outcome, ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant, SUGAR_SEQ_CAP,
+    term_as_int, translate_term_in_scope, AssertionFactKind, BoundedDomain, Desugared,
+    FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant,
+    SUGAR_SEQ_CAP,
 };
 
 /// and `try_lift_for_each_forall` (a `.for_each(|var| body)` adaptor): a `for`
@@ -79,7 +80,11 @@ fn lift_bounded_forall(
         &scope.plan.interior_mut,
         &BTreeMap::new(),
     );
-    if !body_skipped.is_empty() || body_entries.len() != n_body {
+    let warranted = body_entries
+        .iter()
+        .filter(|entry| matches!(entry.kind, AssertionFactKind::Warranted))
+        .count();
+    if !body_skipped.is_empty() || warranted != n_body {
         return None;
     }
     let body_conj = and_(body_entries.iter().map(|e| e.atom.clone()).collect());
@@ -305,6 +310,7 @@ impl Sugar for ForAllSugar {
             Some(Desugared::Constraints {
                 atom: quantified,
                 n: n_body,
+                kind: AssertionFactKind::Warranted,
                 warrant,
             })
         })())

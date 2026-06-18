@@ -42,8 +42,9 @@ use syn::{Expr, ImplItemFn, ItemFn, Stmt};
 use std::collections::BTreeMap;
 
 use crate::{
-    child_block_scope, collect_assertion_entries, refusal_disposition,
-    resolve_inlinable_helper_call_scoped, resolve_inlinable_method_call_scoped, substitute_stmts,
+    child_block_scope, collect_assertion_entries, count_asserts_in_stmts,
+    helper_body_runtime_terminal_reason, refusal_disposition, resolve_inlinable_helper_call_scoped,
+    resolve_inlinable_method_call_scoped, stmts_have_runtime_terminal_body_shape, substitute_stmts,
     AssertionEntry, Disposition, ExprBindings, FactoryAuditLog, FloatWidthScope, LiftOptions,
     ReductionCtx, TemporalScope, MAX_MACRO_EXPANSION_DEPTH,
 };
@@ -300,10 +301,31 @@ fn desugar_substituted_stmts(
     let mut ts: Vec<String> = Vec::new();
     let mut tl = 0usize;
     let mut th = reduced_helpers.clone();
+    if stmts_have_runtime_terminal_body_shape(&subst) {
+        let count = count_asserts_in_stmts(&subst);
+        if count == 0 {
+            return CallsiteOutcome::Bail(BailCause::NotInlinable);
+        }
+        th.insert(name.to_string());
+        return CallsiteOutcome::Dug(InlineCommit {
+            entries: te,
+            skipped: vec![helper_body_runtime_terminal_reason(name); count],
+            macros_lifted: tl,
+            reduced_helpers: th,
+            name: name.to_string(),
+        });
+    }
+    let trial_options;
+    let trial_options_ref = if options.panic_freedom_enabled() {
+        trial_options = options.clone().without_panic_freedom();
+        &trial_options
+    } else {
+        options
+    };
     collect_assertion_entries(
         &subst,
         &child_block_scope(local_scope, stmt_idx),
-        options,
+        trial_options_ref,
         reducer,
         float_widths,
         &mut te,
