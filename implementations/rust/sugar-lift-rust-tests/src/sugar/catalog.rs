@@ -10,13 +10,13 @@ use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::{
     array_repeat, array_term, await_term, binop, block_term, call, cast_term,
     closure_iter_advance_body, closure_mutating_body, closure_opaque_accessor,
-    closure_runtime_receiver, closure_term, closure_tls_accessor, conditional, const_block,
-    control_flow_term, enumerate, field_term, filter, filter_map, fold, for_each, forall_loop,
-    impl_method, index, iter_terminal, iterator, literal, macro_term, map, match_node,
-    match_scrutinee, method, monadic, path, range_term, raw_addr_term, reference_term, repeat_term,
-    rev, skip, skip_while, statement_control_flow, statement_loop_advance, statement_reflection,
-    statement_runtime_expr, struct_term, take, take_while, term_literal, transparent_term,
-    tuple_term, unary,
+    closure_runtime_receiver, closure_term, closure_tls_accessor, concat_macro, conditional,
+    const_block, control_flow_term, enumerate, field_term, filter, filter_map, fold, for_each,
+    forall_loop, format_macro, impl_method, index, iter_terminal, iterator, literal, macro_term,
+    map, match_node, match_scrutinee, method, monadic, path, range_term, raw_addr_term,
+    reference_term, repeat_term, rev, skip, skip_while, statement_control_flow,
+    statement_loop_advance, statement_reflection, statement_runtime_expr, string_add, struct_term,
+    take, take_while, term_literal, to_string, transparent_term, tuple_term, unary,
 };
 use crate::Sugar;
 
@@ -34,6 +34,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &repeat_term::EXPR_SUGAR,
     &struct_term::EXPR_SUGAR,
     &iter_terminal::EXPR_SUGAR,
+    &to_string::EXPR_SUGAR,
     &method::EXPR_SUGAR,
     &await_term::EXPR_SUGAR,
     &reference_term::EXPR_SUGAR,
@@ -42,8 +43,11 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &range_term::EXPR_SUGAR,
     &field_term::EXPR_SUGAR,
     &index::EXPR_SUGAR,
+    &string_add::EXPR_SUGAR,
     &binop::EXPR_SUGAR,
     &transparent_term::TERM_EXPR_SUGAR,
+    &format_macro::EXPR_SUGAR,
+    &concat_macro::EXPR_SUGAR,
     &macro_term::EXPR_SUGAR,
     &closure_term::EXPR_SUGAR,
     &block_term::EXPR_SUGAR,
@@ -390,6 +394,82 @@ mod tests {
         assert!(
             names.contains(&"method"),
             "unknown receiver map should still be claimed by generic MethodSugar: {names:?}"
+        );
+    }
+
+    #[test]
+    fn format_macro_prioritizes_format_before_generic_macro_sugar() {
+        let expr: Expr = syn::parse_str("format!(\"{}\", 1)").unwrap();
+        let names = candidate_names(&expr);
+        let format = names
+            .iter()
+            .position(|name| *name == "format_macro")
+            .expect("format! should be claimed by FormatMacroSugar");
+        let macro_term = names
+            .iter()
+            .position(|name| *name == "macro_term")
+            .expect("format! should also be claimed by generic MacroTermSugar");
+
+        assert!(
+            format < macro_term,
+            "FormatMacroSugar should outrank generic MacroTermSugar: {names:?}"
+        );
+    }
+
+    #[test]
+    fn concat_macro_prioritizes_concat_before_generic_macro_sugar() {
+        let expr: Expr = syn::parse_str("concat!(\"a\", \"b\")").unwrap();
+        let names = candidate_names(&expr);
+        let concat = names
+            .iter()
+            .position(|name| *name == "concat_macro")
+            .expect("concat! should be claimed by ConcatMacroSugar");
+        let macro_term = names
+            .iter()
+            .position(|name| *name == "macro_term")
+            .expect("concat! should also be claimed by generic MacroTermSugar");
+
+        assert!(
+            concat < macro_term,
+            "ConcatMacroSugar should outrank generic MacroTermSugar: {names:?}"
+        );
+    }
+
+    #[test]
+    fn to_string_method_prioritizes_to_string_before_generic_method_sugar() {
+        let expr: Expr = syn::parse_str("\"x\".to_string()").unwrap();
+        let names = candidate_names(&expr);
+        let to_string = names
+            .iter()
+            .position(|name| *name == "to_string")
+            .expect("to_string should be claimed by ToStringSugar");
+        let method = names
+            .iter()
+            .position(|name| *name == "method")
+            .expect("to_string should also be claimed by generic MethodSugar");
+
+        assert!(
+            to_string < method,
+            "ToStringSugar should outrank generic MethodSugar: {names:?}"
+        );
+    }
+
+    #[test]
+    fn string_add_prioritizes_string_add_before_generic_binop_sugar() {
+        let expr: Expr = syn::parse_str("\"a\".to_string() + \"b\"").unwrap();
+        let names = candidate_names(&expr);
+        let string_add = names
+            .iter()
+            .position(|name| *name == "string_add")
+            .expect("string add should be claimed by StringAddSugar");
+        let binop = names
+            .iter()
+            .position(|name| *name == "binop")
+            .expect("string add should also be claimed by generic BinopSugar");
+
+        assert!(
+            string_add < binop,
+            "StringAddSugar should outrank generic BinopSugar: {names:?}"
         );
     }
 

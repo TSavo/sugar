@@ -11,22 +11,21 @@
 // (`"+"`/`"-"`/`"*"`/`"int-div"`/`"int-rem"`/`"bit-and"`/.../`"shift-right"`).
 //
 // THIS NODE IS THE COMPOSER ONLY. The `Expr::Binary` shape has a PREAMBLE before the
-// arithmetic ctor (the `FormatSugar` string-`+` hook, then the comparison branch that
-// fires when `relation_from_binop(&op).is_some()`, then the `term_binop_name` lookup
-// itself -- a `None` there is the "unsupported term operator" refusal). Those early
-// returns and the op-name resolution are owned by `recognize`, which builds this node
-// only for the arithmetic tail. This node composes its two pre-built children and emits
-// the arithmetic ctor over their terms, propagating a child `Hit` verbatim.
+// arithmetic ctor (the comparison branch that fires when `relation_from_binop(&op)` is
+// `Some`, then the `term_binop_name` lookup itself -- a `None` there is the "unsupported
+// term operator" refusal). Those early returns and the op-name resolution are owned by
+// `recognize`, which builds this node only for the arithmetic tail. This node composes
+// its two pre-built children and emits the arithmetic ctor over their terms, propagating
+// a child `Hit` verbatim.
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use sugar_ir_symbolic::{str_const, Term};
+use sugar_ir_symbolic::Term;
 use syn::Expr;
 
 use crate::sugar::compare::CompareSugar;
 use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::sugar::format::{stable_let_bindings, try_resolve_format};
 use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
 use crate::{
     bool_const, const_eval, relation_from_binop, term_binop_name, token_key, ConstVal, Desugared,
@@ -34,26 +33,16 @@ use crate::{
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("binop", recognize);
+    crate::sugar::claim::ExprSugarClaim::fallback_term("binop", recognize);
 
 /// TERM recognizer for `Expr::Binary`. Mirrors the source-of-truth arm in order: the
-/// FormatSugar string-`+` hook FIRST (only for `Add`; a resolved `str_const`, or a
-/// reasoned-Hit on `Err`), then the comparison branch (const-fold to a Bool, else the
-/// `cmp:*` [`CompareSugar`]), then the arithmetic-op [`BinOpSugar`] (or the
+/// comparison branch (const-fold to a Bool, else the `cmp:*` [`CompareSugar`]), then
+/// the arithmetic-op [`BinOpSugar`] (or the
 /// `term_binop_name`-`None` "unsupported term operator" reasoned-Hit).
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Binary(binary) = expr else {
         return None;
     };
-    let scope = fcx.scope();
-    if matches!(binary.op, syn::BinOp::Add(_)) {
-        let stable = stable_let_bindings(scope);
-        match try_resolve_format(expr, &stable) {
-            Ok(Some(s)) => return Some(resolved_term(str_const(s))),
-            Err(reason) => return Some(reasoned_hit(reason)),
-            Ok(None) => {}
-        }
-    }
     if let Some(rel) = relation_from_binop(&binary.op) {
         if let Some(ConstVal::Bool(b)) = const_eval(expr, &BTreeMap::new()) {
             return Some(resolved_term(bool_const(b)));

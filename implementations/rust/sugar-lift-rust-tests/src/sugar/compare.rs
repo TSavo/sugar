@@ -12,11 +12,10 @@
 // contradictory comparisons over the same operands are DISTINCT terms (the teeth).
 //
 // THIS NODE IS THE COMPOSER ONLY. The `Expr::Binary` shape has a PREAMBLE before the
-// constructive ctor (the `FormatSugar` string-`+` hook, and the const-fold to a Bool
-// literal via `const_eval`) -- those early returns are owned by `binop::recognize`,
-// which builds this node only for the non-const comparison tail. This node composes
-// its two pre-built children and emits the `cmp:*` ctor over their terms, propagating
-// a child `Hit` verbatim.
+// constructive ctor (the const-fold to a Bool literal via `const_eval`) -- that early
+// return is owned by `binop::recognize`, which builds this node only for the non-const
+// comparison tail. This node composes its two pre-built children and emits the `cmp:*`
+// ctor over their terms, propagating a child `Hit` verbatim.
 
 use std::rc::Rc;
 

@@ -101,18 +101,35 @@ pub(crate) fn decompose_format(
     })
 }
 
+pub(crate) fn is_format_macro_shape(expr: &Expr) -> bool {
+    matches!(strip_refs_groups(expr), Expr::Macro(m) if macro_is(m, "format"))
+}
+
+pub(crate) fn is_concat_macro_shape(expr: &Expr) -> bool {
+    matches!(strip_refs_groups(expr), Expr::Macro(m) if macro_is(m, "concat"))
+}
+
+pub(crate) fn is_to_string_shape(expr: &Expr) -> bool {
+    matches!(
+        strip_refs_groups(expr),
+        Expr::MethodCall(c) if c.method == "to_string" && c.args.is_empty()
+    )
+}
+
+pub(crate) fn is_string_add_shape(expr: &Expr) -> bool {
+    matches!(
+        strip_refs_groups(expr),
+        Expr::Binary(b) if matches!(b.op, syn::BinOp::Add(_))
+    )
+}
+
 /// Is `expr` one of the recognized format-producing shapes? (Recognition only — the
 /// operands need not be literals here.)
 fn is_format_shape(expr: &Expr) -> bool {
-    match strip_refs_groups(expr) {
-        Expr::Macro(m) => {
-            let id = m.mac.path.segments.last().map(|s| s.ident.to_string());
-            matches!(id.as_deref(), Some("format") | Some("concat"))
-        }
-        Expr::MethodCall(c) => c.method == "to_string" && c.args.is_empty(),
-        Expr::Binary(b) => matches!(b.op, syn::BinOp::Add(_)),
-        _ => false,
-    }
+    is_format_macro_shape(expr)
+        || is_concat_macro_shape(expr)
+        || is_to_string_shape(expr)
+        || is_string_add_shape(expr)
 }
 
 // ── The core: resolve a format-producing expr to its ONE string value ────────────

@@ -47,6 +47,7 @@ pub mod sugar {
     pub mod closure_term;
     pub mod closure_tls_accessor;
     pub mod compare;
+    pub mod concat_macro;
     pub mod conditional;
     pub mod configuration;
     pub mod const_block;
@@ -62,6 +63,7 @@ pub mod sugar {
     pub mod forall;
     pub mod forall_loop;
     pub mod format;
+    pub mod format_macro;
     pub mod identity;
     pub mod impl_method;
     pub mod index;
@@ -89,12 +91,14 @@ pub mod sugar {
     pub mod statement_position;
     pub mod statement_reflection;
     pub mod statement_runtime_expr;
+    pub mod string_add;
     pub mod struct_term;
     pub mod take;
     pub mod take_while;
     pub mod temporal_read;
     pub mod term_leaf;
     pub mod term_literal;
+    pub mod to_string;
     pub mod transparent_term;
     pub mod tuple_term;
     pub mod unary;

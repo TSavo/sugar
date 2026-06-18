@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// TERM recognizer for `Expr::Macro`: the FormatSugar dig (`format!`/`concat!` dissolve
-// to a `str_const`), the mut-local temporal-instability refusal, then -- for a
+// TERM recognizer for `Expr::Macro`: the mut-local temporal-instability refusal, then -- for a
 // `macro_rules!` we HOLD THE DEFINITION FOR -- an EXPANSION dig that feeds the macro's
 // own body back to the factory (`my_macro!(2,3)` -> `2 + 3` -> `+(2,3)`, which grounds),
 // and only ELSE the opaque `macro:<tokens>` EUF var.
@@ -22,15 +21,14 @@ use sugar_ir_symbolic::{make_var, Term};
 use syn::Expr;
 
 use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::sugar::format::{stable_let_bindings, try_resolve_format};
-use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
+use crate::sugar::term_leaf::reasoned_hit;
 use crate::{
-    macro_literal_contains_mut_local, str_const, sugar_ctx, token_key, Desugared, Outcome, Sugar,
-    SugarCtx, MAX_MACRO_EXPANSION_DEPTH,
+    macro_literal_contains_mut_local, sugar_ctx, token_key, Desugared, Outcome, Sugar, SugarCtx,
+    MAX_MACRO_EXPANSION_DEPTH,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("macro_term", recognize);
+    crate::sugar::claim::ExprSugarClaim::fallback_term("macro_term", recognize);
 
 /// TERM recognizer for `Expr::Macro`.
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
@@ -38,15 +36,6 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         return None;
     };
     let scope = fcx.scope();
-    let seg = m.mac.path.segments.last().map(|s| s.ident.to_string());
-    if matches!(seg.as_deref(), Some("format") | Some("concat")) {
-        let stable = stable_let_bindings(scope);
-        match try_resolve_format(expr, &stable) {
-            Ok(Some(s)) => return Some(resolved_term(str_const(s))),
-            Err(reason) => return Some(reasoned_hit(reason)),
-            Ok(None) => {}
-        }
-    }
     let token_str = token_key(expr);
     let contains_mut_local = m.mac.tokens.clone().into_iter().any(|tt| match &tt {
         proc_macro2::TokenTree::Ident(id) => scope.is_mut_local(&id.to_string()),

@@ -6,21 +6,20 @@
 // arg children in source order, and emits `method:<m>` over `[receiver, args..]`.
 //
 // The recognizer runs the source-of-truth preamble in order: a CLOSED
-// `try_fold`/`try_rfold` grounds to a literal and re-builds THAT; a `<literal>.
-// to_string()` dissolves to a `str_const`; a closure-bearing adaptor in term position
-// refuses with collection provenance; otherwise the EUF `method:` ctor node. This is
-// the TERM-position node — DISTINCT from the COMPOSITE `fold`/`for_each`/closure-
+// `try_fold`/`try_rfold` grounds to a literal and re-builds THAT; a closure-bearing
+// adaptor in term position refuses with collection provenance; otherwise the EUF
+// `method:` ctor node. This is the TERM-position node — DISTINCT from the COMPOSITE
+// `fold`/`for_each`/closure-
 // adaptor/match-scrutinee dispatch the COMPOSITE catalog routes `Expr::MethodCall` to.
 // Byte-identical to the old fat factory's `Expr::MethodCall` term arm.
 
 use std::rc::Rc;
 
-use sugar_ir_symbolic::{make_var, str_const, Term};
+use sugar_ir_symbolic::{make_var, Term};
 use syn::Expr;
 
 use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::sugar::format::{stable_let_bindings, try_resolve_format};
-use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
+use crate::sugar::term_leaf::reasoned_hit;
 use crate::try_fold_eval;
 use crate::{
     angle_args_key, closure_adaptor_refusal, is_consuming_iterator_method,
@@ -40,15 +39,6 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     if matches!(call.method.to_string().as_str(), "try_fold" | "try_rfold") {
         if let Some(grounded) = try_fold_eval::eval_try_fold_operand(expr, scope) {
             return Some(build_term(&grounded, fcx));
-        }
-    }
-    // FormatSugar: `<literal>.to_string()` dissolves to a `str_const`.
-    if call.method == "to_string" && call.args.is_empty() {
-        let stable = stable_let_bindings(scope);
-        match try_resolve_format(expr, &stable) {
-            Ok(Some(s)) => return Some(resolved_term(str_const(s))),
-            Err(reason) => return Some(reasoned_hit(reason)),
-            Ok(None) => {}
         }
     }
     // A closure-bearing adaptor in term position refuses with collection provenance.

@@ -19,10 +19,8 @@
 //   * a `let p = "pat";` / `const PAT: &str = "pat";` builds to whatever resolves
 //     the binding (digs NOW via the in-scope `let`-binding resolver);
 //   * a `concat!("a", "b")` builds to a `ConcatSugar` (digs NOW — string literals);
-//   * a `format!(…)` pattern builds to a `FormatSugar`, which DOES NOT EXIST yet,
-//     so it `Hit`s TODAY (a genuinely runtime pattern) — and will dig FOR FREE the
-//     instant `FormatSugar` lands, with ZERO change to `RegexSugar`. That is the
-//     whole point: `Regex ∘ Format ∘ Literal` composes.
+//   * a `format!(…)` pattern remains the pattern-composition frontier until regex
+//     pattern children route through the format producer sugars.
 // The node bails (`Hit`) ONLY if the pattern operand `desugar`s to `Hit` (runtime /
 // unsupported), NEVER merely because the pattern is not an inline literal.
 //
@@ -72,9 +70,9 @@ impl RegexMatch {
     /// resolved string off the `Outcome` via `Desugared::as_string_literal`. A
     /// `Dug` carries the resolved literal (a literal / const-string / `concat!`
     /// all flow through this one path); a `Hit` is a genuinely runtime /
-    /// unsupported pattern (a `format!(…)` with no FormatSugar yet) — the caller
-    /// declines on `Hit`, the composition frontier. This is the WHOLE compositional
-    /// contract: `RegexSugar` consumes whatever its pattern child dug to.
+    /// unsupported pattern (`format!(…)` is still the pattern-composition frontier) —
+    /// the caller declines on `Hit`. This is the WHOLE compositional contract:
+    /// `RegexSugar` consumes whatever its pattern child dug to.
     pub(crate) fn resolve_pattern(&self, ctx: &SugarCtx) -> Outcome {
         self.pattern.desugar(ctx)
     }
@@ -197,16 +195,16 @@ fn unwrap_grouping(expr: &Expr) -> &Expr {
 // ── The pattern operand as a child `Sugar` ──────────────────────────────────
 //
 // `build_pattern_sugar` is the recursive `build` for the pattern operand of
-// `Regex::new(<pattern>)`. It mirrors the closed set of resolvers that exist
-// TODAY; an operand it cannot resolve builds to `UnsupportedPatternSugar`, which
-// `Hit`s (the `format!(…)` frontier). Adding a new pattern producer (FormatSugar)
-// = adding one arm here; `RegexSugar` itself never changes.
+// `Regex::new(<pattern>)`. It mirrors the closed set of pattern-child resolvers that
+// exist today; an operand it cannot resolve builds to `UnsupportedPatternSugar`, which
+// `Hit`s (the `format!(…)` frontier). Adding a new pattern-child producer = adding
+// one arm here; `RegexSugar` itself never changes.
 
 /// Build the pattern operand into a child `Sugar`. The operand digs to a string
 /// literal NOW for: an inline `&str` literal; a `let`/`const`-bound name that
 /// resolves to one; a `concat!(…)` of string literals. It `Hit`s for a runtime /
-/// unsupported producer (a `format!(…)`, a bare runtime variable) — the
-/// composition frontier that flips to dig when its producer `Sugar` lands.
+/// unsupported producer (a `format!(…)`, a bare runtime variable) — the current
+/// pattern-composition frontier.
 pub(crate) fn build_pattern_sugar(
     pattern: Expr,
     let_bindings: &BTreeMap<String, Expr>,
