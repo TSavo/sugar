@@ -7,9 +7,9 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use serde_json::Value as Json;
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value};
-use sugar_ir_compiler_maude::{compile_artifact, MaudeQueries, DIALECT};
+use sugar_ir_compiler::CompiledFormula;
+use sugar_ir_compiler_maude::{MaudeQueries, TrsSpec, DIALECT};
 
 use crate::solvers::ceta::{run_command_capture, CetaGate, CetaGateConfig, CetaGateReceipt};
 use crate::solvers::{SolveResult, Solver, SolverIdentity};
@@ -103,37 +103,29 @@ impl Solver for MaudeSubprocessSolver {
         self.identity.clone()
     }
 
-    fn solve(&self, input: &str) -> SolveResult {
+    fn solve(&self, _input: &str) -> SolveResult {
         let started = Instant::now();
-        let ir: Json = match serde_json::from_str(input) {
-            Ok(j) => j,
+        unknown_result(
+            &self.name,
+            &self.version,
+            started,
+            false,
+            "maude: compiled metadata missing; route ProofIR through the IR compiler registry"
+                .to_string(),
+            String::new(),
+        )
+    }
+
+    fn solve_compiled(&self, compiled: &CompiledFormula) -> SolveResult {
+        let started = Instant::now();
+        let (queries, trs) = match maude_metadata(compiled) {
+            Ok(metadata) => metadata,
             Err(e) => {
-                return unknown_result(
-                    &self.name,
-                    &self.version,
-                    started,
-                    false,
-                    format!("maude: failed to parse IR-JSON: {e}"),
-                    String::new(),
-                );
+                return unknown_result(&self.name, &self.version, started, false, e, String::new());
             }
         };
 
-        let artifact = match compile_artifact(&ir) {
-            Ok(a) => a,
-            Err(e) => {
-                return unknown_result(
-                    &self.name,
-                    &self.version,
-                    started,
-                    false,
-                    format!("maude: compilation error: {e}"),
-                    String::new(),
-                );
-            }
-        };
-
-        let full_source = format!("{}{}", artifact.compiled.preamble, artifact.compiled.body);
+        let full_source = compiled.script();
         let module_cid = module_cid(&full_source);
         let maude_version =
             read_maude_version(&self.binary).unwrap_or_else(|_| self.version.clone());
@@ -142,7 +134,6 @@ impl Solver for MaudeSubprocessSolver {
         let maude_source = full_source.clone();
         let maude_binary = self.binary.clone();
         let maude_timeout = self.timeout;
-        let trs = artifact.trs.clone();
         let (maude_run, ceta_result) = std::thread::scope(|scope| {
             let maude_handle =
                 scope.spawn(|| run_maude_file(&maude_binary, &maude_source, maude_timeout));
@@ -173,7 +164,7 @@ impl Solver for MaudeSubprocessSolver {
                 let receipt = build_receipt(
                     &maude_version,
                     &module_cid,
-                    &artifact.queries,
+                    &queries,
                     Vec::new(),
                     MaudeDecision::NoMatch,
                     ObligationVerdict::Undecidable,
@@ -192,7 +183,7 @@ impl Solver for MaudeSubprocessSolver {
                 let receipt = build_receipt(
                     &maude_version,
                     &module_cid,
-                    &artifact.queries,
+                    &queries,
                     Vec::new(),
                     MaudeDecision::NoMatch,
                     ObligationVerdict::Undecidable,
@@ -210,7 +201,7 @@ impl Solver for MaudeSubprocessSolver {
                 let receipt = build_receipt(
                     &maude_version,
                     &module_cid,
-                    &artifact.queries,
+                    &queries,
                     Vec::new(),
                     MaudeDecision::NoMatch,
                     ObligationVerdict::Undecidable,
@@ -237,7 +228,7 @@ impl Solver for MaudeSubprocessSolver {
         let receipt = build_receipt(
             &maude_version,
             &module_cid,
-            &artifact.queries,
+            &queries,
             parsed.normal_forms,
             parsed.decision,
             verdict,
@@ -332,6 +323,30 @@ fn module_cid(source: &str) -> String {
     let value = Value::string(source.to_string());
     let canonical = encode_jcs(&value);
     blake3_512_of(canonical.as_bytes())
+}
+
+fn maude_metadata(compiled: &CompiledFormula) -> Result<(MaudeQueries, TrsSpec), String> {
+    let maude = compiled
+        .metadata
+        .get("maude")
+        .ok_or_else(|| "maude: compiler metadata missing `maude` object".to_string())?;
+    let queries = maude
+        .get("queries")
+        .cloned()
+        .ok_or_else(|| "maude: compiler metadata missing `maude.queries`".to_string())
+        .and_then(|value| {
+            serde_json::from_value::<MaudeQueries>(value)
+                .map_err(|e| format!("maude: decode compiler metadata queries: {e}"))
+        })?;
+    let trs = maude
+        .get("trs")
+        .cloned()
+        .ok_or_else(|| "maude: compiler metadata missing `maude.trs`".to_string())
+        .and_then(|value| {
+            serde_json::from_value::<TrsSpec>(value)
+                .map_err(|e| format!("maude: decode compiler metadata trs: {e}"))
+        })?;
+    Ok((queries, trs))
 }
 
 fn build_receipt(

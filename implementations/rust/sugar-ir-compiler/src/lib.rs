@@ -10,6 +10,7 @@
 pub mod error;
 pub mod manifest;
 pub mod registry;
+pub mod server;
 pub mod subprocess;
 
 use serde::{Deserialize, Serialize};
@@ -38,6 +39,17 @@ pub struct CompiledFormula {
     /// soundly translate. Empty when all positions were handled.
     #[serde(default)]
     pub opacity_manifest: OpacityManifest,
+    /// Dialect-specific structured compiler metadata. Solver adapters
+    /// that need more than the emitted source (for example Maude's CeTA
+    /// TRS input) read it here instead of recompiling ProofIR.
+    #[serde(default)]
+    pub metadata: Json,
+}
+
+impl CompiledFormula {
+    pub fn script(&self) -> String {
+        format!("{}{}", self.preamble, self.body)
+    }
 }
 
 /// Opacity manifest emitted alongside a compiled formula. Records

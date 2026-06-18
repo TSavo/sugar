@@ -26,6 +26,28 @@ fn unique_dir(suffix: &str) -> PathBuf {
     p
 }
 
+fn install_smt_compiler_manifest(project: &Path) {
+    let manifest_dir = project.join(".sugar").join("ir-compilers").join("smt-lib");
+    fs::create_dir_all(&manifest_dir).expect("mkdir ir compiler manifest");
+    let rust_workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("sugar-cli has a parent workspace");
+    fs::write(
+        manifest_dir.join("manifest.toml"),
+        format!(
+            r#"name = "smt-lib-reference"
+version = "0.1.0"
+protocol_version = "sugar-ir-compiler/1"
+command = ["cargo", "run", "-p", "sugar-ir-compiler-smt-lib", "--bin", "sugar-ir-smt-lib", "--quiet", "--"]
+working_dir = "{}"
+dialects = ["smt-lib-v2.6"]
+"#,
+            rust_workspace.display()
+        ),
+    )
+    .expect("write ir compiler manifest");
+}
+
 fn json_to_canonical_jcs(j: &Json) -> String {
     fn to_cv(j: &Json) -> std::sync::Arc<sugar_canonicalizer::Value> {
         use sugar_canonicalizer::Value as CV;
@@ -143,6 +165,7 @@ fn publish_forall_project() -> PathBuf {
     let dir = unique_dir("vampire");
     let proof_dir = dir.join(".sugar");
     fs::create_dir_all(&proof_dir).expect("mkdir .sugar");
+    install_smt_compiler_manifest(&dir);
     fs::write(
         proof_dir.join("config.toml"),
         r#"[solvers]

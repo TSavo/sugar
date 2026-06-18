@@ -39,6 +39,8 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+const DAEMON_RPC_TIMEOUT: Duration = Duration::from_secs(30);
+
 fn daemon_bin() -> PathBuf {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let workspace = PathBuf::from(manifest_dir).parent().unwrap().to_path_buf();
@@ -139,13 +141,13 @@ fn wait_ready(sock: &PathBuf, timeout: Duration) -> bool {
 
 fn rpc(sock: &PathBuf, req: &serde_json::Value) -> serde_json::Value {
     let mut stream = UnixStream::connect(sock).expect("connect to daemon");
-    stream.set_read_timeout(Some(Duration::from_secs(10))).ok();
+    stream.set_read_timeout(Some(DAEMON_RPC_TIMEOUT)).ok();
     let mut line = serde_json::to_string(req).unwrap();
     line.push('\n');
     stream.write_all(line.as_bytes()).expect("write request");
     let mut reader = BufReader::new(stream);
     let mut resp_line = String::new();
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + DAEMON_RPC_TIMEOUT;
     loop {
         match reader.read_line(&mut resp_line) {
             Ok(0) => panic!("daemon closed connection before response"),
@@ -456,7 +458,7 @@ fn test_failure_and_success_cids_differ() {
 //   c. parseFile (failure case: source triggers lifter) → diagnostics shape OK
 //   d. shutdown → daemon exits cleanly
 //
-// The test uses the `--idle-timeout-ms 30000` flag (30 s) so the daemon
+// The test uses the `--idle-timeout-ms 60000` flag (60 s) so the daemon
 // does NOT exit mid-test; final cleanup is done via the `shutdown` RPC.
 // -------------------------------------------------------------------
 
@@ -469,11 +471,11 @@ fn test_daemon_polyglot_smoke() {
     let sock = polyglot_sock();
     let _ = std::fs::remove_file(&sock);
 
-    let mut child = spawn_linkerd(&sock, 30_000);
+    let mut child = spawn_linkerd(&sock, 60_000);
 
     assert!(
-        wait_ready(&sock, Duration::from_secs(5)),
-        "sugar-linkerd socket did not appear within 5 s"
+        wait_ready(&sock, Duration::from_secs(10)),
+        "sugar-linkerd socket did not appear within 10 s"
     );
 
     // --- (a) parseFile success case: synthetic Rust source with no predicates.

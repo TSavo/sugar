@@ -90,6 +90,7 @@ impl IrCompiler for CoqCompiler {
                 compiler_version: COMPILER_VERSION.to_string(),
                 opacities: vec![],
             },
+            metadata: Json::Null,
         })
     }
 

@@ -2548,6 +2548,7 @@ pub fn compile_formula(formula: &Formula) -> CompiledFormula {
         body,
         free_vars: free_vars_vec,
         opacity_manifest,
+        metadata: serde_json::Value::Null,
     }
 }
 
@@ -2650,6 +2651,7 @@ pub fn compile_asserted_formula(formula: &Formula) -> CompiledFormula {
         body,
         free_vars: free_vars_vec,
         opacity_manifest,
+        metadata: serde_json::Value::Null,
     }
 }
 

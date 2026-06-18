@@ -10,3 +10,7 @@ description = "Sugar IR compiler protocol: trait, dispatcher, JSON-RPC subproces
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+tracing = "0.1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

@@ -103,6 +103,7 @@ pub fn compile_to_parts(ir: &Json) -> Result<CompiledFormula, CompileError> {
             body,
             free_vars: vec![],
             opacity_manifest: opacity_manifest(ctx.opacities),
+            metadata: Json::Null,
         });
     }
 
@@ -155,6 +156,7 @@ pub fn compile_to_parts(ir: &Json) -> Result<CompiledFormula, CompileError> {
         body,
         free_vars,
         opacity_manifest: opacity_manifest(ctx.opacities),
+        metadata: Json::Null,
     })
 }
 

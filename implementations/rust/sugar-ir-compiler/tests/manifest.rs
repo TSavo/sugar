@@ -37,7 +37,8 @@ fn discover_parses_well_formed_manifest() {
 name = "smt-lib-reference"
 version = "0.1.0"
 protocol_version = "sugar-ir-compiler/1"
-binary = "/usr/local/bin/sugar-ir-smt-lib"
+command = ["/usr/local/bin/sugar-ir-smt-lib", "--rpc"]
+working_dir = "/tmp"
 dialects = ["smt-lib-v2.6"]
 "#,
     )
@@ -49,7 +50,14 @@ dialects = ["smt-lib-v2.6"]
     assert_eq!(m.name, "smt-lib-reference");
     assert_eq!(m.version, "0.1.0");
     assert_eq!(m.protocol_version, "sugar-ir-compiler/1");
-    assert_eq!(m.binary, PathBuf::from("/usr/local/bin/sugar-ir-smt-lib"));
+    assert_eq!(
+        m.command,
+        vec![
+            "/usr/local/bin/sugar-ir-smt-lib".to_string(),
+            "--rpc".to_string()
+        ]
+    );
+    assert_eq!(m.working_dir, Some(PathBuf::from("/tmp")));
     assert_eq!(m.dialects, vec!["smt-lib-v2.6".to_string()]);
 
     fs::remove_dir_all(&root).ok();
@@ -70,7 +78,7 @@ fn parse_handles_multi_dialect_array() {
 name = "multi"
 version = "0.2"
 protocol_version = "sugar-ir-compiler/1"
-binary = "multi-bin"
+command = ["multi-bin"]
 dialects = ["smt-lib-v2.6", "smt-lib-v2.6-bv"]
 "#;
     let m = manifest::parse(body).expect("parse");

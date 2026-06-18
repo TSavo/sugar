@@ -19,7 +19,9 @@
 // SOLVER POLARITY. The shared SMT path (`smt_emitter::emit`) renders the
 // NEGATED-VALIDITY form (`assert (not goal); check-sat`), so the z3 kit maps
 // `unsat -> Discharged`. This pass needs the OPPOSITE: the RAW satisfiability
-// of the invariant itself (`assert <inv>; check-sat`, via `emit_asserted`).
+// of the invariant itself. The manifest-backed compiler emits
+// `assert (not goal); check-sat`, so this pass asks it to compile
+// `goal = not(inv)`, yielding `assert inv; check-sat`.
 // So we INVERT the solver verdict:
 //   raw z3 `sat`   (solver reports Unsatisfied) -> PROVEN-consistent
 //   raw z3 `unsat` (solver reports Discharged)  -> REFUSED-contradictory
@@ -65,12 +67,12 @@ use rayon::prelude::*;
 use serde_json::{json, Value as Json};
 use tracing::{debug, info, warn};
 
-use crate::solvers::{run_plan, SolverHandle, SolverInvocation, SolverPlan};
+use crate::solvers::{run_plan_with_compilers, SolverHandle, SolverInvocation, SolverPlan};
 use crate::types::{
     memento_body, memento_body_field, memento_kind, MementoPool, ObligationVerdict,
 };
 use sugar_canonicalizer::blake3_512_of;
-use sugar_ir_compiler_smt_lib::emit_asserted;
+use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 
 /// Outcome of a single contract's consistency check.
 #[derive(Debug, Clone)]
@@ -907,6 +909,7 @@ fn check_inv_consistency(
     linked_posts: Vec<LinkedPostInstance>,
     plan: &SolverPlan,
     registry: &HashMap<String, SolverHandle>,
+    compilers: &CompilerRegistry,
 ) -> ConsistencyResult {
     let inv = with_local_forall_instances(canonicalize_formula_json(&inv), property_name);
     if let Some(reason) = structural_contradiction_reason(&inv) {
@@ -928,29 +931,8 @@ fn check_inv_consistency(
             )),
         };
     }
-    let smt = match emit_asserted(&inv) {
-        Ok(s) => s,
-        Err(e) => {
-            let verdict = ObligationVerdict::Undecidable;
-            return ConsistencyResult {
-                contract_cid: cid,
-                property_name: property_name.to_string(),
-                verdict,
-                reason: format!("consistency smt-emit (encoding STOP): {e}"),
-                witnessed: false,
-                verification: Some(consistency_verification_detail(
-                    property_name,
-                    &inv,
-                    &linked_posts,
-                    None,
-                    verdict,
-                    Some(&format!("smt-emit: {e}")),
-                    &[],
-                )),
-            };
-        }
-    };
-    let (raw, raw_reason, invs) = run_plan(plan, registry, &smt, Some(&inv));
+    let raw_sat_goal = json!({ "kind": "not", "operands": [inv.clone()] });
+    let (raw, raw_reason, invs) = run_plan_with_compilers(plan, registry, compilers, &raw_sat_goal);
     let (verdict, label) = consistency_verdict(raw);
     let reason = format!("{label} `{property_name}` [{raw_reason}]");
     if verdict == ObligationVerdict::Undecidable {
@@ -1523,6 +1505,7 @@ pub fn verify_consistency(
     pool: &MementoPool,
     plan: &SolverPlan,
     registry: &HashMap<String, SolverHandle>,
+    compilers: &CompilerRegistry,
 ) -> Vec<ConsistencyResult> {
     let candidates: Vec<(&String, &Json)> = pool
         .mementos
@@ -1652,6 +1635,7 @@ pub fn verify_consistency(
                     linked_posts,
                     plan,
                     registry,
+                    compilers,
                 ));
             } else {
                 for (cid, body) in inv_cids.iter().zip(inv_bodies.iter()) {
@@ -1665,6 +1649,7 @@ pub fn verify_consistency(
                         linked_posts,
                         plan,
                         registry,
+                        compilers,
                     ));
                 }
             }
@@ -1729,6 +1714,12 @@ mod tests {
     fn z3_plan_and_registry() -> (SolverPlan, HashMap<String, SolverHandle>) {
         let registry = registry::build_default_z3("z3");
         (SolverPlan::Single("z3".into()), registry)
+    }
+
+    fn test_compilers() -> CompilerRegistry {
+        let mut compilers = CompilerRegistry::new();
+        compilers.register(Arc::new(sugar_ir_compiler_smt_lib::SmtLibCompiler::new()));
+        compilers
     }
 
     fn ne(a: Json, b: Json) -> Json {
@@ -1869,7 +1860,7 @@ mod tests {
             eqf(var("r"), int(6)),
         );
         insert_contract(&mut pool, "blake3-512:numpy5", name, eqf(var("r"), int(5)));
-        let res = verify_consistency(&pool, &plan, &reg);
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
         assert_eq!(
             res.len(),
             1,
@@ -1885,7 +1876,7 @@ mod tests {
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:a", name, eqf(var("r"), int(5)));
         insert_contract(&mut pool, "blake3-512:b", name, gt(var("r"), int(0)));
-        let res = verify_consistency(&pool, &plan, &reg);
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
         assert_eq!(res.len(), 1);
         assert_eq!(
             res[0].verdict,
@@ -1896,7 +1887,7 @@ mod tests {
         // a LONE contract is untouched -> PROVEN
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:solo", name, eqf(var("r"), int(5)));
-        let res = verify_consistency(&pool, &plan, &reg);
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
         assert_eq!(res.len(), 1);
         assert_eq!(res[0].verdict, ObligationVerdict::Discharged);
     }
@@ -1929,7 +1920,7 @@ mod tests {
             "make_value#euf#c:callresult_make_value_a0()::assertion",
             inv,
         );
-        let res = verify_consistency(&pool, &plan, &reg);
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
         assert_eq!(res.len(), 1, "one conjoined obligation: {res:?}");
         assert_eq!(
             res[0].verdict,
@@ -1963,7 +1954,7 @@ mod tests {
             "tokio_await_scalar_contradiction",
             inv,
         );
-        let res = verify_consistency(&pool, &plan, &reg);
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
         assert_eq!(res.len(), 1, "one conjoined obligation: {res:?}");
         assert_eq!(
             res[0].verdict,
@@ -1995,7 +1986,7 @@ mod tests {
             "two_distinct_calls#euf#c:callresult_x::assertion",
             inv,
         );
-        let res = verify_consistency(&pool, &plan, &reg);
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
         assert_eq!(res.len(), 1, "one obligation: {res:?}");
         assert_eq!(
             res[0].verdict,
@@ -2035,7 +2026,7 @@ mod tests {
             name,
             lt(callg.clone(), int(5)),
         );
-        let res = verify_consistency(&pool, &plan, &reg);
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
         assert_eq!(
             res.len(),
             1,
@@ -2069,7 +2060,7 @@ mod tests {
             name,
             lt(callg.clone(), int(5)),
         );
-        let res = verify_consistency(&pool, &plan, &reg);
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
         assert_eq!(res.len(), 1, "still ONE contract: {res:?}");
         assert_eq!(
             res[0].verdict,
@@ -2134,7 +2125,7 @@ mod tests {
             eqf(call_enc(string_const("def")), string_const("zzz")),
         );
 
-        let res = verify_consistency(&pool, &plan, &reg);
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
         assert_eq!(res.len(), 2, "two fresh consumer assertions: {res:?}");
         let good = res
             .iter()
@@ -2205,7 +2196,7 @@ mod tests {
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:strrow", name, universe);
         insert_contract(&mut pool, "blake3-512:introw", name, eqf(callf, int(7)));
-        let res = verify_consistency(&pool, &plan, &reg);
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
         assert_eq!(
             res.len(),
             1,
@@ -2254,7 +2245,7 @@ mod tests {
         // The universal alone is consistent (PROVEN).
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:fa", name, forall.clone());
-        let res = verify_consistency(&pool, &plan, &reg);
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
         assert_eq!(res.len(), 1);
         assert_eq!(
             res[0].verdict,
@@ -2269,7 +2260,7 @@ mod tests {
         ]});
         let mut pool = MementoPool::default();
         insert_contract(&mut pool, "blake3-512:fc", name, contradiction);
-        let res = verify_consistency(&pool, &plan, &reg);
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
         assert_eq!(res.len(), 1);
         assert_eq!(
             res[0].verdict,
@@ -2317,7 +2308,7 @@ mod tests {
             "g#euf#c:callresult_g_a1(i:2)::assertion",
             point_inv,
         );
-        let res = verify_consistency(&pool, &plan, &reg);
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
         assert_eq!(res.len(), 2, "two separate obligations: {res:?}");
         // Pin WHICH row refutes: the point-claim must be the Unsatisfied one and
         // the loop universal itself must stay internally consistent. An any()
@@ -2454,7 +2445,7 @@ mod tests {
             "z3".into(),
             Arc::new(StubSolver::new("z3", ObligationVerdict::Unsatisfied)) as SolverHandle,
         );
-        let res = verify_consistency(&pool, &plan, &registry);
+        let res = verify_consistency(&pool, &plan, &registry, &test_compilers());
         let point = res
             .iter()
             .find(|r| r.contract_cid == "blake3-512:point")
@@ -2505,6 +2496,7 @@ mod tests {
             Vec::new(),
             &plan,
             &registry,
+            &test_compilers(),
         );
 
         assert_eq!(res.verdict, ObligationVerdict::Unsatisfied, "{res:?}");
@@ -2541,7 +2533,12 @@ mod tests {
             point_inv,
         );
         let reg = HashMap::new();
-        let res = verify_consistency(&pool, &SolverPlan::Single("unused".into()), &reg);
+        let res = verify_consistency(
+            &pool,
+            &SolverPlan::Single("unused".into()),
+            &reg,
+            &test_compilers(),
+        );
         let point = res
             .iter()
             .find(|r| r.contract_cid == "blake3-512:point")
@@ -2580,7 +2577,12 @@ mod tests {
             point_inv,
         );
         let reg = HashMap::new();
-        let res = verify_consistency(&pool, &SolverPlan::Single("unused".into()), &reg);
+        let res = verify_consistency(
+            &pool,
+            &SolverPlan::Single("unused".into()),
+            &reg,
+            &test_compilers(),
+        );
         let point = res
             .iter()
             .find(|r| r.contract_cid == "blake3-512:point")
@@ -2628,7 +2630,7 @@ mod tests {
             "g#euf#c:callresult_g_a1(i:2)::assertion",
             point_inv,
         );
-        let res = verify_consistency(&pool, &plan, &reg);
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
         assert_eq!(res.len(), 2, "two separate obligations: {res:?}");
         let point = res
             .iter()
@@ -2675,7 +2677,7 @@ mod tests {
             "g#euf#c:callresult_g_a1(i:2)::assertion",
             json!({"kind":"and","operands":[eqf(callg(int(2)), int(2))]}),
         );
-        let res = verify_consistency(&pool, &plan, &reg);
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
         let point = res
             .iter()
             .find(|r| r.contract_cid == "blake3-512:wpoint")
@@ -2710,7 +2712,7 @@ mod tests {
         pool.insert("blake3-512:witnessmember".to_string(), witness);
         insert_contract(&mut pool, "blake3-512:c5", name, eqf(var("r"), int(5)));
         insert_contract(&mut pool, "blake3-512:c6", name, eqf(var("r"), int(6)));
-        let res = verify_consistency(&pool, &plan, &reg);
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
         assert!(
             res.iter()
                 .any(|r| r.verdict == ObligationVerdict::Unsatisfied),
@@ -2739,7 +2741,7 @@ mod tests {
             "test_add",
             eqf(var("r"), int(6)),
         );
-        let res = verify_consistency(&pool, &plan, &reg);
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
         // per-contract: each is internally satisfiable -> both Discharged, none refused.
         assert_eq!(
             res.len(),
@@ -2834,7 +2836,7 @@ mod tests {
         let inv = ne(var("x"), none());
         let pool = pool_with_contract("test_consistent", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry);
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
         assert_eq!(results.len(), 1, "exactly one candidate");
         assert_eq!(
             results[0].verdict,
@@ -2859,7 +2861,7 @@ mod tests {
         ]});
         let pool = pool_with_contract("test_contradictory", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry);
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
         assert_eq!(results.len(), 1, "exactly one candidate");
         assert_eq!(
             results[0].verdict,
@@ -2891,7 +2893,7 @@ mod tests {
         });
         pool.insert("blake3-512:bridge".into(), env);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry);
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
         assert!(
             results.is_empty(),
             "pre-bearing contract must not be a consistency candidate"
@@ -2917,7 +2919,7 @@ mod tests {
         });
         pool.insert("blake3-512:inv-post".into(), env);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry);
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
 
         assert_eq!(
             results.len(),
@@ -2941,7 +2943,7 @@ mod tests {
         let facts_inv = eqf(var("y"), none());
         let pool = pool_with_contract("make_value@t.py:6:8::facts", facts_inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry);
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
         assert!(
             results.is_empty(),
             "::facts setup-binding contract must not be a consistency candidate; got: {:?}",
@@ -2956,7 +2958,7 @@ mod tests {
         let facts_inv = eqf(var("y"), none());
         let pool = pool_with_contract("make_value@t.py:6:8::facts::1", facts_inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry);
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
         assert!(
             results.is_empty(),
             "::facts::N setup-binding contract must not be a consistency candidate; got: {:?}",
@@ -2974,7 +2976,7 @@ mod tests {
         let inv = ne(var("y"), none());
         let pool = pool_with_contract("make_value@t.py:6:8::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry);
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
         assert_eq!(
             results.len(),
             1,
@@ -2990,7 +2992,7 @@ mod tests {
         let inv = ne(var("x"), none());
         let pool = pool_with_contract("test_x_consistent", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry);
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
         assert_eq!(
             results.len(),
             1,
@@ -3014,7 +3016,7 @@ mod tests {
         let inv = eqf(var("r"), string_const(r#"{"a":1}"#));
         let pool = pool_with_contract("encode_jcs::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry);
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
         assert_eq!(results.len(), 1, "exactly one candidate");
         assert_eq!(
             results[0].verdict,
@@ -3044,7 +3046,7 @@ mod tests {
         ]});
         let pool = pool_with_contract("encode_jcs_two_literals::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry);
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
         assert_eq!(results.len(), 1, "exactly one candidate");
         assert_eq!(
             results[0].verdict,
@@ -3067,7 +3069,7 @@ mod tests {
         let inv = eqf(var("r"), string_const(r#"{"a":"x"}"#));
         let pool = pool_with_contract("encode_jcs_brace::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry);
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
         assert_eq!(results.len(), 1, "exactly one candidate");
         assert_ne!(
             results[0].verdict,
@@ -3101,7 +3103,7 @@ mod tests {
         ]});
         let pool = pool_with_contract("cross_str_int::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry);
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].verdict,
@@ -3120,7 +3122,7 @@ mod tests {
         ]});
         let pool = pool_with_contract("cross_none_int::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry);
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].verdict,
@@ -3141,7 +3143,7 @@ mod tests {
         ]});
         let pool = pool_with_contract("cross_none_false::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry);
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].verdict,
@@ -3163,7 +3165,7 @@ mod tests {
         ]});
         let pool = pool_with_contract("cross_true_one::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry);
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].verdict,
@@ -3182,7 +3184,7 @@ mod tests {
         ]});
         let pool = pool_with_contract("same_str::assertion", inv);
         let (plan, registry) = z3_plan_and_registry();
-        let results = verify_consistency(&pool, &plan, &registry);
+        let results = verify_consistency(&pool, &plan, &registry, &test_compilers());
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].verdict, ObligationVerdict::Unsatisfied);
     }

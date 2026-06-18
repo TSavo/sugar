@@ -27,6 +27,32 @@ fn unique_dir(suffix: &str) -> PathBuf {
     p
 }
 
+fn rust_workspace() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("sugar-cli has a parent workspace")
+        .to_path_buf()
+}
+
+fn install_smt_compiler_manifest(project: &Path) {
+    let manifest_dir = project.join(".sugar").join("ir-compilers").join("smt-lib");
+    fs::create_dir_all(&manifest_dir).expect("mkdir ir compiler manifest");
+    fs::write(
+        manifest_dir.join("manifest.toml"),
+        format!(
+            r#"name = "smt-lib-reference"
+version = "0.1.0"
+protocol_version = "sugar-ir-compiler/1"
+command = ["cargo", "run", "-p", "sugar-ir-compiler-smt-lib", "--bin", "sugar-ir-smt-lib", "--quiet", "--"]
+working_dir = "{}"
+dialects = ["smt-lib-v2.6"]
+"#,
+            rust_workspace().display()
+        ),
+    )
+    .expect("write ir compiler manifest");
+}
+
 fn int_sort() -> Json {
     json!({"kind": "primitive", "name": "Int"})
 }
@@ -160,6 +186,7 @@ fn publish_contradictory_implication_project() -> PathBuf {
     let project = unique_dir("contradictory-implication");
     let proof_dir = project.join(".sugar");
     fs::create_dir_all(&proof_dir).expect("mkdir proof dir");
+    install_smt_compiler_manifest(&project);
 
     let producer_env = json!({
         "evidence": {
@@ -253,6 +280,7 @@ fn publish_contradictory_implication_project() -> PathBuf {
 }
 
 fn install_dependency_proof_stub(project_dir: &Path, proof_cid: &str, proof_bytes: &[u8]) {
+    install_smt_compiler_manifest(project_dir);
     let bin = project_dir.join("resolve-deps-stub.sh");
     let proof_bytes_base64 = BASE64.encode(proof_bytes);
     fs::write(

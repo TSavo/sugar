@@ -65,6 +65,32 @@ fn unique_dir(suffix: &str) -> PathBuf {
     p
 }
 
+fn rust_workspace() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("sugar-cli has a parent workspace")
+        .to_path_buf()
+}
+
+fn install_smt_compiler_manifest(project: &Path) {
+    let manifest_dir = project.join(".sugar").join("ir-compilers").join("smt-lib");
+    fs::create_dir_all(&manifest_dir).expect("mkdir ir compiler manifest");
+    fs::write(
+        manifest_dir.join("manifest.toml"),
+        format!(
+            r#"name = "smt-lib-reference"
+version = "0.1.0"
+protocol_version = "sugar-ir-compiler/1"
+command = ["cargo", "run", "-p", "sugar-ir-compiler-smt-lib", "--bin", "sugar-ir-smt-lib", "--quiet", "--"]
+working_dir = "{}"
+dialects = ["smt-lib-v2.6"]
+"#,
+            rust_workspace().display()
+        ),
+    )
+    .expect("write ir compiler manifest");
+}
+
 fn int_const(n: i64) -> Json {
     json!({"kind": "const", "value": n, "sort": {"kind": "primitive", "name": "Int"}})
 }
@@ -175,13 +201,14 @@ fn mint_halve_project(suffix: &str, op: &str, arg: i64, rhs: i64) -> PathBuf {
     let surface = "mock";
     let project = unique_dir(suffix);
     fs::create_dir_all(project.join(".sugar")).expect("mkdir .sugar");
+    install_smt_compiler_manifest(&project);
     fs::write(
         project.join(".sugar").join("config.toml"),
         format!(
             "[authoring]\nsurface = \"{surface}\"\n\n\
              [solvers]\ndefault = \"z3\"\n\n\
              [solvers.dispatch]\nlinear_arithmetic = \"z3\"\ndefault = \"z3\"\n\n\
-             [solvers.z3]\nbinary = \"z3\"\nflags = [\"-smt2\", \"-in\"]\n"
+             [solvers.z3]\nbinary = \"z3\"\nir_compiler = \"smt-lib-v2.6\"\nflags = [\"-smt2\", \"-in\"]\n"
         ),
     )
     .expect("write config.toml");
@@ -275,23 +302,31 @@ fn rust_division_seam_transcript() {
 /// `lift::lift_function_postcondition`); it is `syn`-based, no charon needed.
 /// Returns the op-symbol the lifter actually emits for the body's `/`.
 fn production_post_op_for_division() -> String {
-    let bin = std::env::var("CARGO_BIN_EXE_sugar")
-        .ok()
-        .and_then(|p| {
-            // The walk-rpc binary sits next to the sugar binary in the
-            // cargo target dir (target/<profile>/sugar-walk-rpc).
-            let dir = PathBuf::from(&p).parent()?.to_path_buf();
-            let cand = dir.join("sugar-walk-rpc");
-            cand.exists().then_some(cand)
-        })
-        .expect("sugar-walk-rpc must be built alongside sugar (cargo builds workspace bins)");
-
     let req = json!({
         "jsonrpc": "2.0", "id": 1, "method": "walk.contract",
         "params": {"src": "fn halve(x: i64) -> i64 { x / 2 }", "fn_name": "halve", "file": "halve.rs"}
     });
     use std::io::Write;
-    let mut child = Command::new(&bin)
+    let mut command = if let Some(bin) = std::env::var("CARGO_BIN_EXE_sugar").ok().and_then(|p| {
+        let dir = PathBuf::from(&p).parent()?.to_path_buf();
+        let cand = dir.join("sugar-walk-rpc");
+        cand.exists().then_some(cand)
+    }) {
+        Command::new(bin)
+    } else {
+        let mut command = Command::new("cargo");
+        command
+            .arg("run")
+            .arg("-p")
+            .arg("sugar-walk")
+            .arg("--bin")
+            .arg("sugar-walk-rpc")
+            .arg("--quiet")
+            .arg("--")
+            .current_dir(rust_workspace());
+        command
+    };
+    let mut child = command
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()

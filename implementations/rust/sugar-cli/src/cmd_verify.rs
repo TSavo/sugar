@@ -54,12 +54,14 @@ use clap::Parser;
 use owo_colors::OwoColorize;
 use serde_json::{json, Value as Json};
 use sugar_canonicalizer::{blake3_512_of, encode_jcs};
+use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 use sugar_proof_envelope::{ed25519_pubkey_string, ed25519_sign_string};
 use sugar_verifier::body_discharge;
+use sugar_verifier::compiler_registry;
 use sugar_verifier::solvers::registry;
 use sugar_verifier::{
     classify, enumerate_callsites, instantiate, load_all_proofs, memento_body, memento_kind,
-    resolve_target, run_plan, smt_emitter, DispatchConfig, FormulaTheory, MementoPool,
+    resolve_target, run_plan_with_compilers, DispatchConfig, FormulaTheory, MementoPool,
     ObligationVerdict, Runner, RunnerConfig, SolverHandle, SolverPlan, SolversConfig,
 };
 use tracing::{debug, info};
@@ -399,6 +401,7 @@ pub fn run(args: VerifyArgs) -> u8 {
     // The kit author's declared `[solvers]` plan wins; otherwise the
     // default verify dispatch table over a single-Z3 registry.
     let (plan, solver_registry, plan_is_default) = build_plan_and_registry(&project_root, &args.z3);
+    let compiler_registry = compiler_registry::build(&project_root);
 
     if !quiet && !json_out {
         let plan_label = match (&plan, plan_is_default) {
@@ -448,6 +451,7 @@ pub fn run(args: VerifyArgs) -> u8 {
             &pool,
             &plan,
             &solver_registry,
+            &compiler_registry,
             &witness_dir,
             &signer_seed,
             signer_is_authoritative,
@@ -458,6 +462,7 @@ pub fn run(args: VerifyArgs) -> u8 {
             claim,
             &plan,
             &solver_registry,
+            &compiler_registry,
             &witness_dir,
             &signer_seed,
             signer_is_authoritative,
@@ -739,6 +744,7 @@ fn verify_direct_formula_claim(
     claim: &DirectFormulaClaim,
     plan: &SolverPlan,
     solver_registry: &std::collections::HashMap<String, SolverHandle>,
+    compiler_registry: &CompilerRegistry,
     witness_dir: &std::path::Path,
     signer_seed: &[u8; 32],
     signer_is_authoritative: bool,
@@ -760,15 +766,8 @@ fn verify_direct_formula_claim(
     result.obligation_class = theory.as_str().to_string();
     result.routed_solver = routed_seat(plan, theory);
 
-    let smt = match smt_emitter::emit(&claim.formula) {
-        Ok(s) => s,
-        Err(e) => {
-            result.reason = format!("smt-emit: {e}");
-            return result;
-        }
-    };
-
-    let (verdict, reason, invs) = run_plan(plan, solver_registry, &smt, Some(&claim.formula));
+    let (verdict, reason, invs) =
+        run_plan_with_compilers(plan, solver_registry, compiler_registry, &claim.formula);
     result.verdict = verdict;
     result.reason = reason;
     result.discharging_solver = invs
@@ -812,6 +811,7 @@ fn verify_one_claim(
     pool: &MementoPool,
     plan: &SolverPlan,
     solver_registry: &std::collections::HashMap<String, SolverHandle>,
+    compiler_registry: &CompilerRegistry,
     witness_dir: &std::path::Path,
     signer_seed: &[u8; 32],
     signer_is_authoritative: bool,
@@ -1079,30 +1079,23 @@ fn verify_one_claim(
         }
     };
 
-    // Classify the obligation for the dispatch table + emit SMT-LIB.
+    // Classify the obligation for the dispatch table.
     let theory = classify(&obligation);
     result.obligation_class = theory.as_str().to_string();
     result.routed_solver = routed_seat(plan, theory);
 
-    let smt = match smt_emitter::emit(&obligation) {
-        Ok(s) => s,
-        Err(e) => {
-            result.reason = format!("smt-emit: {e}");
-            return result;
-        }
-    };
     debug!(
         bridge = %cs.bridge_ir_name,
         panic_guarded,
         obligation_class = %result.obligation_class,
         routed_solver = %result.routed_solver,
-        smt = %smt,
-        "verify_one_claim: emitted SMT-LIB for the obligation (this is the exact script the \
-         solver checks; for a guarded panic site it must be a valid `P => P` implication)"
+        obligation = %obligation,
+        "verify_one_claim: dispatching ProofIR obligation through the configured compiler registry"
     );
 
     // Dispatch through the solver-dispatch table.
-    let (verdict, reason, invs) = run_plan(plan, solver_registry, &smt, Some(&obligation));
+    let (verdict, reason, invs) =
+        run_plan_with_compilers(plan, solver_registry, compiler_registry, &obligation);
     info!(
         bridge = %cs.bridge_ir_name,
         panic_guarded,
@@ -1526,6 +1519,14 @@ fn short_cid(cid: &str) -> String {
 mod tests {
     use super::*;
 
+    fn test_compilers() -> CompilerRegistry {
+        let mut compilers = CompilerRegistry::new();
+        compilers.register(std::sync::Arc::new(
+            sugar_ir_compiler_smt_lib::SmtLibCompiler::new(),
+        ));
+        compilers
+    }
+
     #[test]
     fn dispatch_table_routes_each_theory_class() {
         // The solver-dispatch table is the structure: every theory class
@@ -1776,6 +1777,7 @@ mod tests {
             &pool,
             &plan,
             &registry,
+            &test_compilers(),
             &witness_dir,
             &VERIFY_SIGNER_SEED_DEV,
             false,
@@ -1803,6 +1805,7 @@ mod tests {
             &pool,
             &plan,
             &registry,
+            &test_compilers(),
             &witness_dir,
             &VERIFY_SIGNER_SEED_DEV,
             false,
@@ -2142,6 +2145,7 @@ mod tests {
             &pool,
             &plan,
             &registry,
+            &test_compilers(),
             &witness_dir,
             &VERIFY_SIGNER_SEED_DEV,
             false,
@@ -2171,6 +2175,7 @@ mod tests {
             &pool,
             &plan,
             &registry,
+            &test_compilers(),
             &witness_dir,
             &VERIFY_SIGNER_SEED_DEV,
             false,
@@ -2210,6 +2215,7 @@ mod tests {
             &pool,
             &plan,
             &registry,
+            &test_compilers(),
             &witness_dir,
             &VERIFY_SIGNER_SEED_DEV,
             false,
@@ -2244,6 +2250,7 @@ mod tests {
             &pool,
             &plan,
             &registry,
+            &test_compilers(),
             &witness_dir,
             &VERIFY_SIGNER_SEED_DEV,
             false,
@@ -2269,6 +2276,7 @@ mod tests {
             &pool,
             &plan,
             &registry,
+            &test_compilers(),
             &witness_dir,
             &VERIFY_SIGNER_SEED_DEV,
             false,

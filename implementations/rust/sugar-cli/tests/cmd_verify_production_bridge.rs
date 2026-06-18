@@ -61,6 +61,28 @@ fn unique_dir(suffix: &str) -> PathBuf {
     p
 }
 
+fn install_smt_compiler_manifest(project: &Path) {
+    let manifest_dir = project.join(".sugar").join("ir-compilers").join("smt-lib");
+    fs::create_dir_all(&manifest_dir).expect("mkdir ir compiler manifest");
+    let rust_workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("sugar-cli has a parent workspace");
+    fs::write(
+        manifest_dir.join("manifest.toml"),
+        format!(
+            r#"name = "smt-lib-reference"
+version = "0.1.0"
+protocol_version = "sugar-ir-compiler/1"
+command = ["cargo", "run", "-p", "sugar-ir-compiler-smt-lib", "--bin", "sugar-ir-smt-lib", "--quiet", "--"]
+working_dir = "{}"
+dialects = ["smt-lib-v2.6"]
+"#,
+            rust_workspace.display()
+        ),
+    )
+    .expect("write ir compiler manifest");
+}
+
 /// An Int-sorted IR const term.
 fn int_const(n: i64) -> Json {
     json!({"kind": "const", "value": n, "sort": {"kind": "primitive", "name": "Int"}})
@@ -230,6 +252,7 @@ fn mint_project_from_ir(suffix: &str, ir_doc: Json) -> (PathBuf, PathBuf) {
     let surface = "mock";
     let project = unique_dir(suffix);
     fs::create_dir_all(project.join(".sugar")).expect("mkdir .sugar");
+    install_smt_compiler_manifest(&project);
     // A real kit's config.toml declares its lift surface and may declare its
     // solver plan. This fixture keeps an explicit z3 plan so the production
     // bridge test exercises configured solver dispatch. The `-smt2 -in` flags
@@ -241,7 +264,7 @@ fn mint_project_from_ir(suffix: &str, ir_doc: Json) -> (PathBuf, PathBuf) {
             "[authoring]\nsurface = \"{surface}\"\n\n\
              [solvers]\ndefault = \"z3\"\n\n\
              [solvers.dispatch]\nlinear_arithmetic = \"z3\"\ndefault = \"z3\"\n\n\
-             [solvers.z3]\nbinary = \"z3\"\nflags = [\"-smt2\", \"-in\"]\n"
+             [solvers.z3]\nbinary = \"z3\"\nir_compiler = \"smt-lib-v2.6\"\nflags = [\"-smt2\", \"-in\"]\n"
         ),
     )
     .expect("write config.toml");

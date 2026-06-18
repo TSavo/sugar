@@ -364,7 +364,7 @@ binary = "stub:unsat"
 binary = "stub:unsat"
 
 [solvers.coq]
-binary = "coqc"
+binary = "/definitely/missing/coqc"
 ir_compiler = "coq"
 "#;
     let cfg = sugar_verifier::solvers::SolversConfig::from_toml(toml).expect("parse toml");
@@ -381,18 +381,16 @@ ir_compiler = "coq"
         other => panic!("expected Portfolio plan, got {:?}", other),
     }
 
-    // The registry resolved "coq" to a CoqSubprocessSolver. We
-    // detect this by behavior: a CoqSubprocessSolver returns
-    // Undecidable with an IR-JSON parse error when handed SMT-LIB,
-    // because Coq does not speak SMT-LIB. A generic SubprocessSolver
-    // pointed at /missing/coqc would instead spawn-fail. The error
-    // message lets us tell which kind of solver was registered.
+    // The registry resolved "coq" to a CoqSubprocessSolver. Solver
+    // execution consumes compiled Coq text now; ProofIR-to-Coq lowering
+    // happens at the compiler registry boundary before the solver is called.
     let coq = registry.get("coq").expect("coq registered");
-    let res = coq.solve("(check-sat)");
+    assert_eq!(coq.ir_compiler(), "coq");
+    let res = coq.solve("Theorem sugar_obligation : True.\nProof. exact I. Qed.\n");
     assert_eq!(res.verdict, ObligationVerdict::Undecidable);
     assert!(
-        res.error.contains("IR-JSON") || res.error.contains("parse"),
-        "expected IR-JSON parse error from CoqSubprocessSolver, got: {}",
+        res.error.contains("spawn") && !res.error.contains("IR-JSON"),
+        "expected Coq subprocess spawn error after compiled input, got: {}",
         res.error
     );
 }

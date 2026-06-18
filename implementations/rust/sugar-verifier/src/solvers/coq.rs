@@ -16,9 +16,7 @@
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use serde_json::Value as Json;
-use sugar_ir_compiler::IrCompiler;
-use sugar_ir_compiler_coq::{CoqCompiler, DIALECT};
+use sugar_ir_compiler_coq::DIALECT;
 
 use crate::solvers::{SolveResult, Solver, SolverIdentity};
 use crate::types::ObligationVerdict;
@@ -69,41 +67,8 @@ impl Solver for CoqSubprocessSolver {
         self.identity.clone()
     }
 
-    fn solve(&self, smt: &str) -> SolveResult {
+    fn solve(&self, coq_source: &str) -> SolveResult {
         let started = Instant::now();
-
-        // Parse the input as IR-JSON (not SMT-LIB)
-        let ir: Json = match serde_json::from_str(smt) {
-            Ok(j) => j,
-            Err(e) => {
-                return SolveResult {
-                    verdict: ObligationVerdict::Undecidable,
-                    solver_name: self.name.clone(),
-                    solver_version: self.version.clone(),
-                    error: format!("coq: failed to parse IR-JSON: {e}"),
-                    solver_stdout: String::new(),
-                    wall_clock: started.elapsed(),
-                    timed_out: false,
-                };
-            }
-        };
-
-        // Compile IR to Coq syntax
-        let compiler = CoqCompiler::new();
-        let compiled = match compiler.compile(&ir, DIALECT) {
-            Ok(c) => c,
-            Err(e) => {
-                return SolveResult {
-                    verdict: ObligationVerdict::Undecidable,
-                    solver_name: self.name.clone(),
-                    solver_version: self.version.clone(),
-                    error: format!("coq: compilation error: {e}"),
-                    solver_stdout: String::new(),
-                    wall_clock: started.elapsed(),
-                    timed_out: false,
-                };
-            }
-        };
 
         // Write to temp file
         let tmp_dir = std::env::temp_dir().join(format!(
@@ -124,8 +89,7 @@ impl Solver for CoqSubprocessSolver {
         }
 
         let v_file = tmp_dir.join("proof.v");
-        let full_source = format!("{}\n{}", compiled.preamble, compiled.body);
-        if let Err(e) = std::fs::write(&v_file, full_source) {
+        if let Err(e) = std::fs::write(&v_file, coq_source) {
             return SolveResult {
                 verdict: ObligationVerdict::Undecidable,
                 solver_name: self.name.clone(),

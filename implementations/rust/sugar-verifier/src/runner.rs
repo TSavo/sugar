@@ -24,6 +24,7 @@ use crate::formula_rewrite;
 use rayon::prelude::*;
 use serde_json::json;
 use serde_json::Value as Json;
+use sugar_ir_compiler::registry::Registry as CompilerRegistry;
 use tracing::{debug, info, warn};
 
 use crate::body_discharge::callee_post_guard_fact;
@@ -31,13 +32,14 @@ use crate::handshake::{
     formula_hash, implication_property_hash, locate_producer_post, try_tier1, try_tier2,
 };
 use crate::solvers::{
-    plan::SolverInvocation, registry, run_plan, SolverHandle, SolverPlan, SolversConfig,
+    plan::SolverInvocation, registry, run_plan_with_compilers, SolverHandle, SolverPlan,
+    SolversConfig,
 };
 use crate::types::{memento_body, CallSite, MementoPool, ObligationVerdict, Report};
 use crate::{
-    body_discharge, call_edge_loader, enumerate_callsites, instantiate,
+    body_discharge, call_edge_loader, compiler_registry, enumerate_callsites, instantiate,
     load_all_proofs::{self, ProofBytes},
-    report as report_stage, resolve_target, smt_emitter,
+    report as report_stage, resolve_target,
 };
 
 pub const VERIFIER_STAGE_VOCABULARY: &[&str] = &[
@@ -152,6 +154,7 @@ pub struct Runner {
     cfg: RunnerConfig,
     plan: SolverPlan,
     registry: HashMap<String, SolverHandle>,
+    compilers: CompilerRegistry,
 }
 
 impl Runner {
@@ -161,10 +164,12 @@ impl Runner {
         //   2. .sugar/config.toml under project_root
         //   3. fallback: single Z3 at cfg.z3_path
         let (plan, registry) = build_plan_and_registry(&cfg);
+        let compilers = compiler_registry::build(&cfg.project_root);
         Self {
             cfg,
             plan,
             registry,
+            compilers,
         }
     }
 
@@ -271,6 +276,7 @@ impl Runner {
                     &pool,
                     &self.plan,
                     &self.registry,
+                    &self.compilers,
                     &self.cfg,
                     &n_hash,
                     &n_cache,
@@ -346,7 +352,8 @@ impl Runner {
         // The Runner's callsite enumeration never touches a contract's own
         // post, so this is where a body-discharge-eligible contract is
         // actually verified. Results flow into the same buckets.
-        let self_post_results = verify_contract_self_posts(&pool, &self.plan, &self.registry);
+        let self_post_results =
+            verify_contract_self_posts(&pool, &self.plan, &self.registry, &self.compilers);
         for spr in &self_post_results {
             match spr.verdict {
                 ObligationVerdict::Discharged => {
@@ -397,8 +404,12 @@ impl Runner {
         // refuses their internal consistency. Discharged => PROVEN-consistent;
         // Unsatisfied => REFUSED-contradictory; Undecidable => encoding STOP
         // surfaced as a violation (never silently passed).
-        let consistency_results =
-            crate::consistency::verify_consistency(&pool, &self.plan, &self.registry);
+        let consistency_results = crate::consistency::verify_consistency(
+            &pool,
+            &self.plan,
+            &self.registry,
+            &self.compilers,
+        );
         for cr in &consistency_results {
             match cr.verdict {
                 ObligationVerdict::Discharged => {
@@ -567,6 +578,7 @@ impl Runner {
         let cfg = &self.cfg;
         let plan = &self.plan;
         let registry = &self.registry;
+        let compilers = &self.compilers;
 
         let minted_sink = Mutex::new(Vec::new());
         let per_results: Vec<CallsiteResult> = callsites
@@ -577,6 +589,7 @@ impl Runner {
                     &pool,
                     plan,
                     registry,
+                    compilers,
                     cfg,
                     &n_hash,
                     &n_cache,
@@ -637,7 +650,7 @@ impl Runner {
         // eligible-but-never-verified. Each result flows into the SAME
         // reflexive / substantive / residue buckets so the proof-run split
         // is unified.
-        let self_post_results = verify_contract_self_posts(&pool, plan, registry);
+        let self_post_results = verify_contract_self_posts(&pool, plan, registry, compilers);
         for spr in &self_post_results {
             match spr.verdict {
                 ObligationVerdict::Discharged => {
@@ -684,7 +697,8 @@ impl Runner {
 
         // Receipt 1: test-assertion consistency pass (see the matching block
         // in the primary run path).
-        let consistency_results = crate::consistency::verify_consistency(&pool, plan, registry);
+        let consistency_results =
+            crate::consistency::verify_consistency(&pool, plan, registry, compilers);
         for cr in &consistency_results {
             match cr.verdict {
                 ObligationVerdict::Discharged => {
@@ -1159,6 +1173,7 @@ fn verify_contract_self_posts(
     pool: &MementoPool,
     plan: &SolverPlan,
     registry: &HashMap<String, SolverHandle>,
+    compilers: &CompilerRegistry,
 ) -> Vec<SelfPostResult> {
     use crate::types::{memento_body, memento_kind};
 
@@ -1184,18 +1199,8 @@ fn verify_contract_self_posts(
                 libsugar::wp::substitute_in_formula(post, "result", &value_expr);
             let obligation_json = serde_json::to_value(&obligation_formula).ok()?;
 
-            let smt = match smt_emitter::emit(&obligation_json) {
-                Ok(s) => s,
-                Err(e) => {
-                    return Some(SelfPostResult {
-                        contract_cid: (*cid).clone(),
-                        verdict: ObligationVerdict::Undecidable,
-                        reason: format!("self-post smt-emit: {e}"),
-                        method: None,
-                    });
-                }
-            };
-            let (verdict, reason, _invs) = run_plan(plan, registry, &smt, Some(&obligation_json));
+            let (verdict, reason, _invs) =
+                run_plan_with_compilers(plan, registry, compilers, &obligation_json);
             let method = if verdict == ObligationVerdict::Discharged {
                 let m = body_discharge::classify_discharge_method(&obligation_json);
                 Some(m)
@@ -1222,6 +1227,7 @@ fn work_one(
     pool: &MementoPool,
     plan: &SolverPlan,
     registry: &HashMap<String, SolverHandle>,
+    compilers: &CompilerRegistry,
     cfg: &RunnerConfig,
     n_hash: &AtomicUsize,
     n_cache: &AtomicUsize,
@@ -1279,20 +1285,8 @@ fn work_one(
                 tier,
             })) => {
                 let body_tier = Some(tier.as_str().to_string());
-                let smt = match smt_emitter::emit(&reduced) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        n_residue.fetch_add(1, Ordering::Relaxed);
-                        return (
-                            cs.clone(),
-                            ObligationVerdict::Undecidable,
-                            format!("smt-emit: {e}"),
-                            None,
-                            body_tier,
-                        );
-                    }
-                };
-                let (verdict, mut reason, invs) = run_plan(plan, registry, &smt, Some(&reduced));
+                let (verdict, mut reason, invs) =
+                    run_plan_with_compilers(plan, registry, compilers, &reduced);
                 let mut discharge_method = None;
                 n_invoc.fetch_add(invs.len(), Ordering::Relaxed);
                 if verdict == ObligationVerdict::Discharged {
@@ -1536,9 +1530,8 @@ fn work_one(
         }
     }
 
-    // Tier 3: build SMT-LIB and run the configured plan.
-    let smt: String;
-    let formula_for_dispatch: Option<Json>;
+    // Tier 3: build the ProofIR obligation and run the configured plan.
+    let formula_for_dispatch: Json;
     let used_implication_form: bool;
 
     if let (Some((post_formula, _)), Some(pre_formula)) = (producer_post.as_ref(), consumer_pre) {
@@ -1574,38 +1567,11 @@ fn work_one(
                 new_formula,
                 reason: _,
             } => {
-                // Use the reduced formula for SMT emission
-                smt = match smt_emitter::emit(&new_formula) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        n_residue.fetch_add(1, Ordering::Relaxed);
-                        return (
-                            cs.clone(),
-                            ObligationVerdict::Undecidable,
-                            format!("smt-emit: {e}"),
-                            None,
-                            None,
-                        );
-                    }
-                };
-                formula_for_dispatch = Some(new_formula);
+                formula_for_dispatch = new_formula;
                 // Continue to solver with reduced formula
             }
             formula_rewrite::TacticResult::NoChange => {
-                smt = match smt_emitter::emit(&implication) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        n_residue.fetch_add(1, Ordering::Relaxed);
-                        return (
-                            cs.clone(),
-                            ObligationVerdict::Undecidable,
-                            format!("smt-emit: {e}"),
-                            None,
-                            None,
-                        );
-                    }
-                };
-                formula_for_dispatch = Some(implication);
+                formula_for_dispatch = implication;
             }
         }
     } else {
@@ -1708,27 +1674,15 @@ fn work_one(
             );
             guarded
         };
-        smt = match smt_emitter::emit(&guarded_formula) {
-            Ok(s) => s,
-            Err(e) => {
-                n_residue.fetch_add(1, Ordering::Relaxed);
-                return (
-                    cs.clone(),
-                    ObligationVerdict::Undecidable,
-                    format!("smt-emit: {e}"),
-                    None,
-                    None,
-                );
-            }
-        };
-        formula_for_dispatch = Some(guarded_formula);
+        formula_for_dispatch = guarded_formula;
     }
 
     debug!(
         bridge = %cs.bridge_ir_name,
         "work_one: invoking solver plan (tier 3)"
     );
-    let (verdict, reason, invs) = run_plan(plan, registry, &smt, formula_for_dispatch.as_ref());
+    let (verdict, reason, invs) =
+        run_plan_with_compilers(plan, registry, compilers, &formula_for_dispatch);
 
     debug!(
         bridge = %cs.bridge_ir_name,
@@ -1758,6 +1712,10 @@ fn work_one(
                 if inv.result.verdict == ObligationVerdict::Discharged {
                     let prover_tag =
                         format!("{}@{}", inv.result.solver_name, inv.result.solver_version);
+                    let solver_input = compilers
+                        .compile(&formula_for_dispatch, &inv.compiler)
+                        .map(|compiled| compiled.script())
+                        .unwrap_or_default();
                     match mint_and_cache(
                         cache_dir,
                         seed,
@@ -1766,7 +1724,7 @@ fn work_one(
                         &pre_hash,
                         producer_post.as_ref().map(|(p, _)| p.clone()),
                         consumer_pre.cloned(),
-                        &smt,
+                        &solver_input,
                         &prover_tag,
                         inv.result.wall_clock.as_millis() as i64,
                     ) {
@@ -1879,7 +1837,7 @@ fn mint_and_cache(
     pre_hash: &str,
     post_formula: Option<Json>,
     pre_formula: Option<Json>,
-    smt_lib_input: &str,
+    solver_input: &str,
     prover_tag: &str,
     prover_run_ms: i64,
 ) -> Result<(String, Json), Box<dyn std::error::Error>> {
@@ -1960,10 +1918,10 @@ fn mint_and_cache(
         ),
         ("producerPubkey".into(), Value::string(pubkey.clone())),
     ];
-    if !smt_lib_input.is_empty() {
+    if !solver_input.is_empty() {
         metadata_kvs.push((
-            "smtLibInput".into(),
-            Value::string(smt_lib_input.to_string()),
+            "solverInput".into(),
+            Value::string(solver_input.to_string()),
         ));
     }
     metadata_kvs.push(("proofWitness".into(), Value::string("(unsat)".to_string())));
