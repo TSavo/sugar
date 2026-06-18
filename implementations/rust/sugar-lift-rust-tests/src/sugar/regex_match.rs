@@ -18,9 +18,9 @@
 //   * an inline `"pat"` literal builds to a string `LiteralSugar` (digs NOW);
 //   * a `let p = "pat";` / `const PAT: &str = "pat";` builds to whatever resolves
 //     the binding (digs NOW via the in-scope `let`-binding resolver);
-//   * a `concat!("a", "b")` builds to a `ConcatSugar` (digs NOW — string literals);
-//   * a `format!(…)` pattern remains the pattern-composition frontier until regex
-//     pattern children route through the format producer sugars.
+//   * a `concat!("a", "b")` / `format!(...)` builds through the ordinary term
+//     catalog and bottoms out in a string `Term` when its operands are closed;
+//   * a pure in-source helper such as `pattern()` composes through `CallSugar`.
 // The node bails (`Hit`) ONLY if the pattern operand `desugar`s to `Hit` (runtime /
 // unsupported), NEVER merely because the pattern is not an inline literal.
 //
@@ -41,10 +41,11 @@
 
 use std::collections::BTreeMap;
 
-use syn::{Expr, ExprLit, Lit};
+use syn::Expr;
 
 use crate::sugar::bound::BoundSugar;
-use crate::{strip_refs_groups, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx};
+use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::{strip_refs_groups, Outcome, Sugar, SugarCtx};
 
 /// A recognized rust regex-match assertion: the pattern operand built into an
 /// inner `Sugar`, and the subject expr. lib.rs drives `desugar` to resolve the
@@ -68,24 +69,12 @@ impl RegexMatch {
     /// Resolve the pattern operand by DESUGARING the inner pattern `Sugar`
     /// (mirroring `MapSugar`'s `self.inner.desugar(ctx)`). The caller reads the
     /// resolved string off the `Outcome` via `Desugared::as_string_literal`. A
-    /// `Dug` carries the resolved literal (a literal / const-string / `concat!`
-    /// all flow through this one path); a `Hit` is a genuinely runtime /
-    /// unsupported pattern (`format!(…)` is still the pattern-composition frontier) —
-    /// the caller declines on `Hit`. This is the WHOLE compositional contract:
-    /// `RegexSugar` consumes whatever its pattern child dug to.
+    /// `Dug` carries the resolved literal term; a `Hit` is a genuinely runtime /
+    /// unsupported pattern, so the caller declines on `Hit`. This is the WHOLE
+    /// compositional contract: `RegexSugar` consumes whatever its pattern child dug to.
     pub(crate) fn resolve_pattern(&self, ctx: &SugarCtx) -> Outcome {
         self.pattern.desugar(ctx)
     }
-}
-
-/// Build a `&str` literal expr from a Rust string value (fallback when the debug
-/// round-trip does not parse, which it always does for `{:?}` of a `String`).
-fn string_literal_expr(s: &str) -> Expr {
-    let lit = syn::LitStr::new(s, proc_macro2::Span::call_site());
-    Expr::Lit(ExprLit {
-        attrs: Vec::new(),
-        lit: Lit::Str(lit),
-    })
 }
 
 /// Build arm: recognize a rust regex-match SHAPE and `build` the pattern operand
@@ -99,6 +88,7 @@ fn string_literal_expr(s: &str) -> Expr {
 pub(crate) fn recognize_regex_match(
     expr: &Expr,
     let_bindings: &BTreeMap<String, Expr>,
+    fcx: &SugarBuildCtx,
 ) -> Option<RegexMatch> {
     match unwrap_grouping(expr) {
         // `<regex>.is_match(subj)`
@@ -108,7 +98,7 @@ pub(crate) fn recognize_regex_match(
             }
             let pattern_expr = regex_pattern_expr(&call.receiver, let_bindings)?;
             Some(RegexMatch {
-                pattern: build_pattern_sugar(pattern_expr, let_bindings),
+                pattern: build_pattern_sugar(pattern_expr, let_bindings, fcx),
                 subject: unwrap_grouping(&call.args[0]).clone(),
                 method: "is_match",
             })
@@ -127,7 +117,7 @@ pub(crate) fn recognize_regex_match(
             }
             let pattern_expr = regex_pattern_expr(&find.receiver, let_bindings)?;
             Some(RegexMatch {
-                pattern: build_pattern_sugar(pattern_expr, let_bindings),
+                pattern: build_pattern_sugar(pattern_expr, let_bindings, fcx),
                 subject: unwrap_grouping(&find.args[0]).clone(),
                 method: "find",
             })
@@ -195,129 +185,34 @@ fn unwrap_grouping(expr: &Expr) -> &Expr {
 // ── The pattern operand as a child `Sugar` ──────────────────────────────────
 //
 // `build_pattern_sugar` is the recursive `build` for the pattern operand of
-// `Regex::new(<pattern>)`. It mirrors the closed set of pattern-child resolvers that
-// exist today; an operand it cannot resolve builds to `UnsupportedPatternSugar`, which
-// `Hit`s (the `format!(…)` frontier). Adding a new pattern-child producer = adding
-// one arm here; `RegexSugar` itself never changes.
+// `Regex::new(<pattern>)`. A bare stable binding gets a `BoundSugar` provenance wrapper;
+// everything else goes through the ordinary term factory.
 
 /// Build the pattern operand into a child `Sugar`. The operand digs to a string
-/// literal NOW for: an inline `&str` literal; a `let`/`const`-bound name that
-/// resolves to one; a `concat!(…)` of string literals. It `Hit`s for a runtime /
-/// unsupported producer (a `format!(…)`, a bare runtime variable) — the current
-/// pattern-composition frontier.
+/// literal when the recursive factory bottoms it out as a string term. Runtime or
+/// unsupported producers decline later when the resolved term is not a string const.
 pub(crate) fn build_pattern_sugar(
     pattern: Expr,
     let_bindings: &BTreeMap<String, Expr>,
+    fcx: &SugarBuildCtx,
 ) -> Box<dyn Sugar> {
-    Box::new(PatternSugar {
-        pattern,
-        let_bindings: let_bindings.clone(),
-    })
-}
-
-/// The pattern-operand `Sugar`: resolves the operand to a single string-literal
-/// element `Seq`, or `Hit`s on a runtime / unsupported producer. This is the
-/// "LiteralSugar of String kind" the pattern must DESUGAR to — composed through
-/// the const/let resolver and `concat!`, not a hardcoded inline match.
-struct PatternSugar {
-    pattern: Expr,
-    let_bindings: BTreeMap<String, Expr>,
-}
-
-impl Sugar for PatternSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        // A `let p = "pat";` / `const PAT: &str = "pat";` reference resolves through a
-        // first-class `BoundSugar` node, NOT an ad-hoc `let_bindings.get(name)`
-        // recursion inlined here: the binding reference is a composed `Sugar` whose
-        // outcome is whatever the bound init's `Sugar` (another `PatternSugar` over the
-        // init) collapses to, with the binding `name` carried as provenance. The
-        // resolved string is byte-identical to recursing the init directly -- the
-        // binding reference is transparent. Shadowing is handled UPSTREAM: `let_bindings`
-        // is the binding in effect at the reference's program point.
-        if let Some((name, bound)) = self.let_bound_reference() {
-            return BoundSugar::new(
-                name,
-                Box::new(PatternSugar {
-                    pattern: bound,
-                    let_bindings: self.let_bindings.clone(),
-                }),
-            )
-            .desugar(ctx);
-        }
-        match resolve_string_literal(&self.pattern, &self.let_bindings) {
-            Some(s) => Outcome::Dug(Desugared::Seq(vec![DesugaredElem {
-                expr: string_literal_expr(&s),
-                value: None,
-            }])),
-            // A runtime / unsupported pattern producer (e.g. `format!(…)`, a bare
-            // runtime variable). Bails TODAY; digs FOR FREE when its producer lands.
-            None => Outcome::from_opt(None),
-        }
+    if let Some((name, bound)) = let_bound_reference(&pattern, let_bindings) {
+        return BoundSugar::new(name, build_pattern_sugar(bound, let_bindings, fcx));
     }
+    build_term(&pattern, fcx)
 }
 
-impl PatternSugar {
-    /// If the pattern operand is a bare `let`/`const`-bound NAME in scope, return the
-    /// `(name, bound-init-expr)` so the resolution routes through `BoundSugar`. `None`
-    /// for an inline literal, a `concat!`, an unbound path, or any non-path operand --
-    /// those resolve directly through `resolve_string_literal` (the literal/concat
-    /// base cases), never through a binding node. This is the SINGLE binding-reference
-    /// recognizer for the pattern operand (lifted out of `resolve_string_literal`'s
-    /// inlined path arm, so the binding resolution is now a uniform composed node).
-    fn let_bound_reference(&self) -> Option<(String, Expr)> {
-        match strip_refs_groups(&self.pattern) {
-            Expr::Path(path) if path.qself.is_none() => {
-                let name = path.path.get_ident()?.to_string();
-                let bound = self.let_bindings.get(&name)?;
-                Some((name, bound.clone()))
-            }
-            _ => None,
-        }
-    }
-}
-
-/// Resolve a pattern operand expr to its string-literal value, composing the
-/// resolvers that exist today: inline `&str` literal, `let`/`const`-bound name, and
-/// `concat!(<string literals>)`. This is the FRAGMENT-LEVEL resolver: it is the base
-/// case the operand-level `BoundSugar` ultimately delegates to (via a `PatternSugar`
-/// over a bound init), and it also resolves nested `concat!` fragments that may
-/// themselves be bound names. The TOP-LEVEL operand binding reference is intercepted
-/// in `PatternSugar::desugar` and routed through `BoundSugar` BEFORE reaching here, so
-/// the operand's binding resolution is the uniform composed node; the path arm here
-/// only fires for fragments NESTED inside a `concat!` (and for the in-isolation unit
-/// tests of this pure resolver). Returns `None` for a runtime / unsupported producer —
-/// the floor must be a WRITTEN literal (reached through any number of pure resolver
-/// indirections), never runtime data.
-fn resolve_string_literal(expr: &Expr, let_bindings: &BTreeMap<String, Expr>) -> Option<String> {
-    match strip_refs_groups(expr) {
-        // Inline `&str` literal — the base case (LiteralSugar of String kind).
-        Expr::Lit(ExprLit {
-            lit: Lit::Str(s), ..
-        }) => Some(s.value()),
-        // `let p = "pat";` / `const PAT: &str = "pat";` — a fragment-level (or
-        // unit-test) binding indirection to the written literal. (The TOP-LEVEL
-        // operand binding reference is routed through `BoundSugar` upstream; this arm
-        // resolves a binding NESTED inside a `concat!` fragment.)
+/// If the pattern operand is a bare stable binding name, return the binding and route
+/// it through `BoundSugar`. Other shapes go straight to the recursive term factory.
+fn let_bound_reference(
+    pattern: &Expr,
+    let_bindings: &BTreeMap<String, Expr>,
+) -> Option<(String, Expr)> {
+    match strip_refs_groups(pattern) {
         Expr::Path(path) if path.qself.is_none() => {
             let name = path.path.get_ident()?.to_string();
             let bound = let_bindings.get(&name)?;
-            resolve_string_literal(bound, let_bindings)
-        }
-        // `concat!("a", "b", …)` — a pure compile-time concatenation of string
-        // literals (a resolver that exists today). Each fragment must itself
-        // resolve to a string literal.
-        Expr::Macro(m) if m.mac.path.is_ident("concat") => {
-            let parsed = m
-                .mac
-                .parse_body_with(
-                    syn::punctuated::Punctuated::<Expr, syn::Token![,]>::parse_terminated,
-                )
-                .ok()?;
-            let mut out = String::new();
-            for frag in parsed {
-                out.push_str(&resolve_string_literal(&frag, let_bindings)?);
-            }
-            Some(out)
+            Some((name, bound.clone()))
         }
         _ => None,
     }
@@ -325,10 +220,9 @@ fn resolve_string_literal(expr: &Expr, let_bindings: &BTreeMap<String, Expr>) ->
 
 #[cfg(test)]
 mod tests {
-    // The recognizer + pattern resolver are exercised end-to-end through the
-    // lift in tests/assertion_lift.rs (str.in-regex atom shape, composition via a
-    // const-string pattern, non-regular refusal, over-fire guard). Here we unit-
-    // test the pure resolver and the build-arm recognition in isolation.
+    // The recognizer + pattern resolver are exercised end-to-end through the lift
+    // tests (str.in-regex atom shape, composition via the factory, non-regular refusal,
+    // over-fire guard). Here we unit-test the build-arm recognition in isolation.
     use super::*;
     use std::collections::BTreeMap;
 
@@ -340,54 +234,12 @@ mod tests {
         BTreeMap::new()
     }
 
-    // ── resolve_string_literal: the compositional pattern resolver ──
-
-    #[test]
-    fn resolves_inline_literal() {
-        assert_eq!(
-            resolve_string_literal(&parse(r#""^[a-z]+$""#), &no_bindings()).as_deref(),
-            Some("^[a-z]+$")
-        );
-    }
-
-    #[test]
-    fn resolves_let_bound_literal() {
-        // `let x = "myregex"; Regex::new(x)` — the pattern is a String literal one
-        // indirection away. Composes through the binding resolver.
-        let mut binds = BTreeMap::new();
-        binds.insert("x".to_string(), parse(r#""myregex""#));
-        assert_eq!(
-            resolve_string_literal(&parse("x"), &binds).as_deref(),
-            Some("myregex")
-        );
-    }
-
-    #[test]
-    fn resolves_chained_const_indirection() {
-        let mut binds = BTreeMap::new();
-        binds.insert("A".to_string(), parse(r#""pat""#));
-        binds.insert("B".to_string(), parse("A"));
-        assert_eq!(
-            resolve_string_literal(&parse("B"), &binds).as_deref(),
-            Some("pat")
-        );
-    }
-
-    #[test]
-    fn resolves_concat_of_literals() {
-        // `concat!("^", "[a-z]+", "$")` — a pure resolver that exists today.
-        assert_eq!(
-            resolve_string_literal(&parse(r#"concat!("^", "[a-z]+", "$")"#), &no_bindings())
-                .as_deref(),
-            Some("^[a-z]+$")
-        );
-    }
-
-    #[test]
-    fn declines_runtime_pattern() {
-        // A `format!(…)` / bare runtime value does NOT resolve to a literal today.
-        assert!(resolve_string_literal(&parse(r#"format!("{}", x)"#), &no_bindings()).is_none());
-        assert!(resolve_string_literal(&parse("user_input"), &no_bindings()).is_none());
+    fn with_fcx<T>(f: impl FnOnce(&SugarBuildCtx<'_, '_>) -> T) -> T {
+        let scope = crate::TemporalScope::new("test", crate::TemporalPlan::default());
+        let options = crate::LiftOptions::default();
+        let inits: BTreeMap<String, &Expr> = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &inits);
+        f(&fcx)
     }
 
     // ── recognize_regex_match: the build-arm shapes ──
@@ -395,19 +247,14 @@ mod tests {
     #[test]
     fn recognizes_inline_is_match() {
         let e = parse(r#"Regex::new("^[a-z]+$").unwrap().is_match(s)"#);
-        let m = recognize_regex_match(&e, &no_bindings()).expect("recognized");
+        let m = with_fcx(|fcx| recognize_regex_match(&e, &no_bindings(), fcx)).expect("recognized");
         assert_eq!(m.method, "is_match");
-        // The pattern operand resolves to the inline literal.
-        assert_eq!(
-            resolve_string_literal(&parse(r#""^[a-z]+$""#), &no_bindings()).as_deref(),
-            Some("^[a-z]+$")
-        );
     }
 
     #[test]
     fn recognizes_find_is_some() {
         let e = parse(r#"Regex::new("[0-9]+").unwrap().find(s).is_some()"#);
-        let m = recognize_regex_match(&e, &no_bindings()).expect("recognized");
+        let m = with_fcx(|fcx| recognize_regex_match(&e, &no_bindings(), fcx)).expect("recognized");
         assert_eq!(m.method, "find");
     }
 
@@ -418,18 +265,19 @@ mod tests {
         let mut binds = BTreeMap::new();
         binds.insert("PAT".to_string(), parse(r#""a.c""#));
         let e = parse(r#"Regex::new(PAT).unwrap().is_match(s)"#);
-        let m = recognize_regex_match(&e, &binds).expect("recognized const-string pattern");
+        let m = with_fcx(|fcx| recognize_regex_match(&e, &binds, fcx))
+            .expect("recognized const-string pattern");
         assert_eq!(m.method, "is_match");
     }
 
     #[test]
     fn recognizes_runtime_pattern_shape_but_resolves_to_none() {
         // `Regex::new(format!(…))` IS recognized (it is a Regex::new construction);
-        // the pattern operand only fails to RESOLVE (the composition frontier). The
-        // recognizer does not pre-judge resolvability — that is the dig's job.
+        // this one only fails to RESOLVE because the format argument is runtime. The
+        // recognizer does not pre-judge resolvability -- that is the dig's job.
         let e = parse(r#"Regex::new(format!("{}", x)).unwrap().is_match(s)"#);
-        let m = recognize_regex_match(&e, &no_bindings()).expect("recognized regex construction");
-        assert!(resolve_string_literal(&parse(r#"format!("{}", x)"#), &no_bindings()).is_none());
+        let m = with_fcx(|fcx| recognize_regex_match(&e, &no_bindings(), fcx))
+            .expect("recognized regex construction");
         assert_eq!(m.method, "is_match");
     }
 
@@ -437,28 +285,36 @@ mod tests {
 
     #[test]
     fn declines_foreign_is_match() {
-        assert!(recognize_regex_match(&parse(r#"matcher.is_match(s)"#), &no_bindings()).is_none());
+        assert!(with_fcx(|fcx| {
+            recognize_regex_match(&parse(r#"matcher.is_match(s)"#), &no_bindings(), fcx).is_none()
+        }));
     }
 
     #[test]
     fn declines_non_regex_call() {
-        assert!(
-            recognize_regex_match(&parse(r#"Foo::new("x").is_match(s)"#), &no_bindings()).is_none()
-        );
+        assert!(with_fcx(|fcx| {
+            recognize_regex_match(&parse(r#"Foo::new("x").is_match(s)"#), &no_bindings(), fcx)
+                .is_none()
+        }));
     }
 
     #[test]
     fn declines_find_without_is_some() {
-        assert!(recognize_regex_match(
-            &parse(r#"Regex::new("a").unwrap().find(s)"#),
-            &no_bindings()
-        )
-        .is_none());
+        assert!(with_fcx(|fcx| {
+            recognize_regex_match(
+                &parse(r#"Regex::new("a").unwrap().find(s)"#),
+                &no_bindings(),
+                fcx,
+            )
+            .is_none()
+        }));
     }
 
     #[test]
     fn declines_unbound_path_receiver() {
-        assert!(recognize_regex_match(&parse(r#"re.is_match(s)"#), &no_bindings()).is_none());
+        assert!(with_fcx(|fcx| {
+            recognize_regex_match(&parse(r#"re.is_match(s)"#), &no_bindings(), fcx).is_none()
+        }));
     }
 
     // ── let_bound_reference: the operand-level binding recognizer (routes through
@@ -466,45 +322,32 @@ mod tests {
     //    discrimination (the shapes that must NOT be treated as a binding reference),
     //    structural (an in-shape path that is unbound). ──
 
-    fn pattern_sugar(src: &str, binds: BTreeMap<String, Expr>) -> PatternSugar {
-        PatternSugar {
-            pattern: parse(src),
-            let_bindings: binds,
-        }
-    }
-
     #[test]
     fn let_bound_reference_recognizes_bound_path() {
         // POSITIVE: a bare name bound in scope -> (name, bound-init) so resolution
         // routes through `BoundSugar`.
         let mut binds = BTreeMap::new();
         binds.insert("p".to_string(), parse(r#""a.c""#));
-        let ps = pattern_sugar("p", binds);
-        let (name, bound) = ps.let_bound_reference().expect("bound path recognized");
+        let (name, bound) =
+            let_bound_reference(&parse("p"), &binds).expect("bound path recognized");
         assert_eq!(name, "p");
         // The bound init is the written literal expr.
-        assert_eq!(
-            resolve_string_literal(&bound, &BTreeMap::new()).as_deref(),
-            Some("a.c")
-        );
+        assert!(matches!(strip_refs_groups(&bound), Expr::Lit(_)));
     }
 
     #[test]
     fn let_bound_reference_declines_inline_literal_and_concat() {
         // DISCRIMINATION: an inline literal and a `concat!` are NOT binding references
-        // -- they resolve directly through `resolve_string_literal`, never `BoundSugar`.
-        let ps_lit = pattern_sugar(r#""^[a-z]+$""#, BTreeMap::new());
-        assert!(ps_lit.let_bound_reference().is_none());
-        let ps_concat = pattern_sugar(r#"concat!("^", "x")"#, BTreeMap::new());
-        assert!(ps_concat.let_bound_reference().is_none());
+        // -- they resolve directly through the factory, never `BoundSugar`.
+        assert!(let_bound_reference(&parse(r#""^[a-z]+$""#), &BTreeMap::new()).is_none());
+        assert!(let_bound_reference(&parse(r#"concat!("^", "x")"#), &BTreeMap::new()).is_none());
     }
 
     #[test]
     fn let_bound_reference_declines_unbound_path() {
         // STRUCTURAL: a bare path of the right SHAPE but NOT bound in scope is declined
-        // (no init to wrap) -- the operand falls through to `resolve_string_literal`,
-        // which also declines it (a runtime variable). No `BoundSugar` is built.
-        let ps = pattern_sugar("user_input", BTreeMap::new());
-        assert!(ps.let_bound_reference().is_none());
+        // (no init to wrap) -- the operand falls through to the recursive factory.
+        // No `BoundSugar` is built.
+        assert!(let_bound_reference(&parse("user_input"), &BTreeMap::new()).is_none());
     }
 }
