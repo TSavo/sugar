@@ -14,6 +14,7 @@ use crate::Sugar;
 pub(crate) enum SugarRole {
     Term,
     Composite,
+    Constraint,
     StatementEffect,
     ClosureAdaptorVerdict,
     MatchScrutineeVerdict,
@@ -68,6 +69,15 @@ impl ExprSugarClaim {
         Self::new(
             name,
             SugarRole::Composite,
+            SugarPriority::Primary,
+            recognize,
+        )
+    }
+
+    pub(crate) const fn constraint(name: &'static str, recognize: ExprRecognizer) -> Self {
+        Self::new(
+            name,
+            SugarRole::Constraint,
             SugarPriority::Primary,
             recognize,
         )

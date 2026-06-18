@@ -6,23 +6,26 @@ use syn::{Expr, Item};
 
 use crate::sugar::backstop::unsupported;
 use crate::sugar::claim::{ExprSugarClaim, ItemSugarClaim, SugarCandidate, SugarRole};
-use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::factory::{AccountedSugar, FactoryAuditSeed, SugarBuildCtx};
 use crate::sugar::{
     array_repeat, array_term, await_term, binop, block_term, call, cast_term,
     closure_iter_advance_body, closure_mutating_body, closure_opaque_accessor,
     closure_runtime_receiver, closure_term, closure_tls_accessor, concat_macro, conditional,
-    const_block, control_flow_term, enumerate, field_term, filter, filter_map, fold, for_each,
-    forall_loop, format_macro, impl_method, index, iter_terminal, iterator, literal, macro_term,
-    map, match_node, match_scrutinee, method, monadic, path, range_term, raw_addr_term,
+    const_block, constraint, control_flow_term, enumerate, field_term, filter, filter_map, fold,
+    for_each, forall_loop, format_macro, impl_method, index, iter_terminal, iterator, literal,
+    macro_term, map, match_node, match_scrutinee, method, monadic, path, range_term, raw_addr_term,
     reference_term, repeat_term, rev, skip, skip_while, statement_control_flow,
     statement_loop_advance, statement_reflection, statement_runtime_expr, string_add, struct_term,
     take, take_while, term_literal, to_string, transparent_term, tuple_term, unary,
 };
-use crate::Sugar;
+use crate::{FactoryCandidateAudit, Sugar};
 
 /// The unified expression-Sugar catalog. This is wiring only: each entry points at
 /// metadata owned by the Sugar module itself.
 const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
+    &constraint::RELATION_MACRO_SUGAR,
+    &constraint::BOOL_MACRO_SUGAR,
+    &constraint::IF_PANIC_SUGAR,
     &monadic::EXPR_SUGAR,
     &term_literal::EXPR_SUGAR,
     &const_block::EXPR_SUGAR,
@@ -108,9 +111,20 @@ pub(crate) fn select_expr_role(
 }
 
 pub(crate) fn build_expr_role(expr: &Expr, fcx: &SugarBuildCtx, role: SugarRole) -> Box<dyn Sugar> {
-    select_expr_role(matching_expr_claims(expr, fcx), role)
-        .map(|candidate| candidate.into_node())
-        .unwrap_or_else(unsupported)
+    let mut candidates = matching_expr_claims(expr, fcx);
+    let selected_index = candidates
+        .iter()
+        .position(|candidate| candidate.role() == role);
+    let candidate_audits = candidate_audits(&candidates, selected_index);
+    let selected = selected_index.map(|index| candidates[index].name());
+    let node = match selected_index {
+        Some(index) => candidates.swap_remove(index).into_node(),
+        None => unsupported(),
+    };
+    AccountedSugar::new(
+        FactoryAuditSeed::expr(expr, role, selected, candidate_audits),
+        node,
+    )
 }
 
 pub(crate) fn matching_item_claims(item: &Item, fcx: &SugarBuildCtx) -> Vec<SugarCandidate> {
@@ -134,9 +148,36 @@ pub(crate) fn select_item_role(
 }
 
 pub(crate) fn build_item_role(item: &Item, fcx: &SugarBuildCtx, role: SugarRole) -> Box<dyn Sugar> {
-    select_item_role(matching_item_claims(item, fcx), role)
-        .map(|candidate| candidate.into_node())
-        .unwrap_or_else(unsupported)
+    let mut candidates = matching_item_claims(item, fcx);
+    let selected_index = candidates
+        .iter()
+        .position(|candidate| candidate.role() == role);
+    let candidate_audits = candidate_audits(&candidates, selected_index);
+    let selected = selected_index.map(|index| candidates[index].name());
+    let node = match selected_index {
+        Some(index) => candidates.swap_remove(index).into_node(),
+        None => unsupported(),
+    };
+    AccountedSugar::new(
+        FactoryAuditSeed::item(item, role, selected, candidate_audits),
+        node,
+    )
+}
+
+fn candidate_audits(
+    candidates: &[SugarCandidate],
+    selected_index: Option<usize>,
+) -> Vec<FactoryCandidateAudit> {
+    candidates
+        .iter()
+        .enumerate()
+        .map(|(index, candidate)| FactoryCandidateAudit {
+            name: candidate.name(),
+            role: format!("{:?}", candidate.role()),
+            priority: format!("{:?}", candidate.priority()),
+            selected: selected_index == Some(index),
+        })
+        .collect()
 }
 
 fn assert_no_ambiguous_role_priority(candidates: &[SugarCandidate]) {
@@ -173,7 +214,10 @@ mod tests {
 
     use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
     use crate::sugar::factory::SugarBuildCtx;
-    use crate::{LiftOptions, Outcome, Sugar, SugarCtx, TemporalPlan, TemporalScope};
+    use crate::{
+        FactoryAuditLog, FactoryDisposition, LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx,
+        TemporalPlan, TemporalScope,
+    };
 
     struct NoopSugar;
 
@@ -229,6 +273,27 @@ mod tests {
             .filter(|candidate| candidate.role() == role)
             .map(|candidate| candidate.name())
             .collect()
+    }
+
+    fn run_expr_with_audit(expr: &Expr, role: SugarRole) -> Vec<crate::FactoryAudit> {
+        let scope = TemporalScope::new("catalog-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let items = Vec::<Item>::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let mut float_widths = crate::FloatWidthScope::new();
+        let audits = FactoryAuditLog::default();
+        let ctx = crate::sugar_ctx_with_factory_audits(
+            &scope,
+            &options,
+            &reducer,
+            &mut float_widths,
+            0,
+            Some(&audits),
+        );
+        super::build_expr_role(expr, &fcx, role).desugar(&ctx);
+        audits.into_inner()
     }
 
     static FIRST: ExprSugarClaim =
@@ -364,6 +429,22 @@ mod tests {
     }
 
     #[test]
+    fn arbitrary_predicate_method_names_are_not_builtin_constraint_semantics() {
+        let expr: Expr = syn::parse_str("value().is(3)").unwrap();
+        let constraint_names = candidate_names_for_role(&expr, SugarRole::Constraint);
+        let term_names = candidate_names_for_role(&expr, SugarRole::Term);
+
+        assert!(
+            constraint_names.is_empty(),
+            "method names like `is`/`isnt` are examples, not builtin constraint semantics: {constraint_names:?}"
+        );
+        assert!(
+            term_names.contains(&"method"),
+            "without a source-shaped or vendor-backed assertion Sugar this is generic MethodSugar: {term_names:?}"
+        );
+    }
+
+    #[test]
     fn map_method_call_prioritizes_map_before_generic_method_sugar() {
         let expr: Expr = syn::parse_str("[1, 2].iter().map(|x| x * 2)").unwrap();
         let names = candidate_names(&expr);
@@ -413,6 +494,25 @@ mod tests {
         assert!(
             format < macro_term,
             "FormatMacroSugar should outrank generic MacroTermSugar: {names:?}"
+        );
+    }
+
+    #[test]
+    fn referenced_format_macro_prioritizes_format_before_reference_wrapper() {
+        let expr: Expr = syn::parse_str("&format!(\"{}\", 1)").unwrap();
+        let names = candidate_names(&expr);
+        let format = names
+            .iter()
+            .position(|name| *name == "format_macro")
+            .expect("&format! should be claimed by FormatMacroSugar");
+        let reference = names
+            .iter()
+            .position(|name| *name == "reference_term")
+            .expect("&format! should still have the generic reference wrapper candidate");
+
+        assert!(
+            format < reference,
+            "FormatMacroSugar should outrank ReferenceTermSugar for referenced format terms: {names:?}"
         );
     }
 
@@ -731,5 +831,66 @@ mod tests {
         let names = item_candidate_names_for_role(&item, SugarRole::StatementItem);
 
         assert_eq!(names, vec!["impl_method"]);
+    }
+
+    #[test]
+    fn factory_audit_marks_literal_term_warranted() {
+        let expr: Expr = syn::parse_str("1 + 2").unwrap();
+        let audits = run_expr_with_audit(&expr, SugarRole::Term);
+        let audit = audits
+            .iter()
+            .find(|audit| audit.site == "1 + 2" && audit.requested_role == "Term")
+            .expect("binary expression site is audited");
+
+        assert_eq!(audit.selected, Some("binop"));
+        assert_eq!(audit.disposition, FactoryDisposition::Warranted);
+        assert_eq!(audit.output, "term");
+        assert!(audit.reason.is_none(), "{audit:?}");
+    }
+
+    #[test]
+    fn factory_audit_marks_no_candidate_site_unresolved() {
+        let expr: Expr = syn::parse_str("|| 1").unwrap();
+        let expected_site = crate::token_key(&expr);
+        let audits = run_expr_with_audit(&expr, SugarRole::Composite);
+        let audit = audits
+            .iter()
+            .find(|audit| audit.site == expected_site && audit.requested_role == "Composite")
+            .expect("closure composite site is audited");
+
+        assert_eq!(audit.selected, None);
+        assert_eq!(audit.candidates.len(), 1, "{audit:?}");
+        assert_eq!(audit.candidates[0].name, "closure_term");
+        assert_eq!(audit.candidates[0].role, "Term");
+        assert!(!audit.candidates[0].selected);
+        assert_eq!(audit.line, 1);
+        assert_eq!(audit.disposition, FactoryDisposition::Unresolved);
+        assert!(
+            audit
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("write more Sugar for this AST")),
+            "{audit:?}"
+        );
+    }
+
+    #[test]
+    fn factory_audit_marks_named_effect_refused() {
+        let expr: Expr = syn::parse_str("&mut x").unwrap();
+        let audits = run_expr_with_audit(&expr, SugarRole::Term);
+        let audit = audits
+            .iter()
+            .find(|audit| audit.site == "& mut x" && audit.requested_role == "Term")
+            .expect("mutable-reference term site is audited");
+
+        assert_eq!(audit.selected, Some("reference_term"));
+        assert_eq!(audit.disposition, FactoryDisposition::Refused);
+        assert!(
+            audit
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("effectful / raw-pointer")),
+            "{audit:?}"
+        );
     }
 }

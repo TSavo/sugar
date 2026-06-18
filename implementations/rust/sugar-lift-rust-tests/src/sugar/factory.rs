@@ -52,11 +52,17 @@
 
 use std::collections::BTreeMap;
 
-use syn::Expr;
+use quote::ToTokens;
+use syn::spanned::Spanned;
+use syn::{Expr, Item};
 
 use crate::sugar::catalog;
 use crate::sugar::claim::SugarRole;
-use crate::{LiftOptions, Sugar, TemporalScope};
+use crate::{
+    refusal_disposition, token_key, Desugared, Disposition, Effect, FactoryAudit,
+    FactoryCandidateAudit, FactoryDisposition, LiftOptions, Outcome, Sugar, SugarCtx,
+    TemporalScope, STRUCTURAL_BACKSTOP_REASON,
+};
 
 /// What a recognizer needs from its environment to construct a node: the temporal
 /// `scope` (binding / mutability oracle), the lift `options`, and the in-scope `let`
@@ -99,6 +105,18 @@ pub(crate) fn build_expr(expr: &Expr, fcx: &SugarBuildCtx, role: SugarRole) -> B
     catalog::build_expr_role(expr, fcx, role)
 }
 
+pub(crate) fn has_expr_role(expr: &Expr, fcx: &SugarBuildCtx, role: SugarRole) -> bool {
+    catalog::matching_expr_claims(expr, fcx)
+        .iter()
+        .any(|candidate| candidate.role() == role)
+}
+
+pub(crate) fn has_item_role(item: &Item, fcx: &SugarBuildCtx, role: SugarRole) -> bool {
+    catalog::matching_item_claims(item, fcx)
+        .iter()
+        .any(|candidate| candidate.role() == role)
+}
+
 /// Compatibility TERM wrapper: ask the unified candidate catalog, then return the first
 /// candidate whose old source-position role is `Term`, else the structural backstop.
 /// TOTAL — every shape news a node (a reasoned leaf for the no-value shapes).
@@ -112,4 +130,150 @@ pub(crate) fn build_term(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
 /// backstop. Total: an unowned shape becomes the [`UnsupportedSugar`] backstop.
 pub(crate) fn build_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
     build_expr(expr, fcx, SugarRole::Composite)
+}
+
+pub(crate) fn has_composite(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
+    has_expr_role(expr, fcx, SugarRole::Composite)
+}
+
+/// CONSTRAINT wrapper: ask the unified candidate catalog for a source assertion /
+/// predicate / obligation shape. The human spelling may be `assert_eq!`, `assert!`,
+/// or a framework-specific assertion; the role is the semantic output: a ProofIR
+/// constraint terminal.
+pub(crate) fn build_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
+    build_expr(expr, fcx, SugarRole::Constraint)
+}
+
+pub(crate) fn has_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
+    has_expr_role(expr, fcx, SugarRole::Constraint)
+}
+
+pub(crate) struct FactoryAuditSeed {
+    ast_kind: &'static str,
+    site: String,
+    line: usize,
+    requested_role: String,
+    selected: Option<&'static str>,
+    candidates: Vec<FactoryCandidateAudit>,
+}
+
+impl FactoryAuditSeed {
+    pub(crate) fn expr(
+        expr: &Expr,
+        requested_role: SugarRole,
+        selected: Option<&'static str>,
+        candidates: Vec<FactoryCandidateAudit>,
+    ) -> Self {
+        Self {
+            ast_kind: "expr",
+            site: token_key(expr),
+            line: expr.span().start().line,
+            requested_role: format!("{requested_role:?}"),
+            selected,
+            candidates,
+        }
+    }
+
+    pub(crate) fn item(
+        item: &Item,
+        requested_role: SugarRole,
+        selected: Option<&'static str>,
+        candidates: Vec<FactoryCandidateAudit>,
+    ) -> Self {
+        Self {
+            ast_kind: "item",
+            site: item.to_token_stream().to_string(),
+            line: item.span().start().line,
+            requested_role: format!("{requested_role:?}"),
+            selected,
+            candidates,
+        }
+    }
+
+    fn audit(&self, outcome: &Outcome) -> FactoryAudit {
+        let (disposition, output, reason) = self.disposition(outcome);
+        FactoryAudit {
+            ast_kind: self.ast_kind,
+            site: self.site.clone(),
+            line: self.line,
+            requested_role: self.requested_role.clone(),
+            selected: self.selected,
+            candidates: self.candidates.clone(),
+            disposition,
+            output,
+            reason,
+        }
+    }
+
+    fn disposition(&self, outcome: &Outcome) -> (FactoryDisposition, &'static str, Option<String>) {
+        match outcome {
+            Outcome::Dug(Desugared::Constraints { .. }) => {
+                (FactoryDisposition::Warranted, "constraints", None)
+            }
+            Outcome::Dug(Desugared::Term(_)) => (FactoryDisposition::Warranted, "term", None),
+            Outcome::Dug(Desugared::Seq(seq)) if seq.is_empty() => (
+                FactoryDisposition::Support,
+                "empty-sequence",
+                Some("inert: empty sequence; no obligation emitted".to_string()),
+            ),
+            Outcome::Dug(Desugared::Seq(_)) => (FactoryDisposition::Warranted, "sequence", None),
+            Outcome::Hit(Effect::Unsupported { reason })
+                if reason == STRUCTURAL_BACKSTOP_REASON =>
+            {
+                (
+                    FactoryDisposition::Unresolved,
+                    "structural-backstop",
+                    Some(self.unresolved_reason()),
+                )
+            }
+            Outcome::Hit(effect) => {
+                let reason = effect.reason();
+                match refusal_disposition(&reason) {
+                    Disposition::Refused => (FactoryDisposition::Refused, "effect", Some(reason)),
+                    Disposition::Inactive => (
+                        FactoryDisposition::Support,
+                        "inactive",
+                        Some(format!("inert: {reason}")),
+                    ),
+                    Disposition::Unclassified => (
+                        FactoryDisposition::Unresolved,
+                        "structural-backstop",
+                        Some(format!("{reason}; write more Sugar for this AST")),
+                    ),
+                }
+            }
+        }
+    }
+
+    fn unresolved_reason(&self) -> String {
+        match self.selected {
+            Some(selected) => format!(
+                "Sugar `{selected}` did not desugar `{}` to bedrock for role {}; write more Sugar for this AST",
+                self.site, self.requested_role
+            ),
+            None => format!(
+                "no Sugar candidate for role {} at `{}`; write more Sugar for this AST",
+                self.requested_role, self.site
+            ),
+        }
+    }
+}
+
+pub(crate) struct AccountedSugar {
+    seed: FactoryAuditSeed,
+    inner: Box<dyn Sugar>,
+}
+
+impl AccountedSugar {
+    pub(crate) fn new(seed: FactoryAuditSeed, inner: Box<dyn Sugar>) -> Box<dyn Sugar> {
+        Box::new(Self { seed, inner })
+    }
+}
+
+impl Sugar for AccountedSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        let outcome = self.inner.desugar(ctx);
+        ctx.record_factory_audit(self.seed.audit(&outcome));
+        outcome
+    }
 }

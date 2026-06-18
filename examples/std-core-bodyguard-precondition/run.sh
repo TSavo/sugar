@@ -9,6 +9,7 @@ SUGAR="$BIN_DIR/sugar"
 WALK_RPC="$BIN_DIR/sugar-walk-rpc"
 WITNESS_RPC="$BIN_DIR/witness_rpc"
 DISCHARGE_CLI="$BIN_DIR/discharge_cli"
+source "$REPO/scripts/stdlib-solver-portfolio.sh"
 WORK="${STD_CORE_BODYGUARD_WORK:-$HERE/.work}"
 STD_CORE_RUST_TOOLCHAIN="${STD_CORE_RUST_TOOLCHAIN:-1.96.0}"
 
@@ -58,7 +59,11 @@ if [ "${STD_CORE_BODYGUARD_SKIP_LOCAL_BUILD:-0}" != "1" ]; then
     -p sugar-cli --bin sugar \
     -p sugar-walk --bin sugar-walk-rpc \
     -p sugar-lift-rust-cargo-test-witness --bin witness_rpc \
-    -p sugar-lift-rust-cargo-test-witness --bin discharge_cli >/dev/null
+    -p sugar-lift-rust-cargo-test-witness --bin discharge_cli \
+    -p sugar-ir-compiler-smt-lib --bin sugar-ir-smt-lib \
+    -p sugar-ir-compiler-coq --bin sugar-ir-coq \
+    -p sugar-ir-compiler-lean --bin sugar-ir-lean \
+    -p sugar-ir-compiler-maude --bin sugar-ir-maude >/dev/null
 fi
 
 for bin in "$SUGAR" "$WALK_RPC" "$WITNESS_RPC" "$DISCHARGE_CLI"; do
@@ -362,18 +367,9 @@ language = "rust"
 family = "concept:family:sugar"
 library = "$package"
 version = "0.1.0"
-
-[solvers]
-mode = "first-wins"
-portfolio = ["z3"]
-
-[solvers.z3]
-binary = "z3"
-ir_compiler = "smt-lib-v2.6"
-flags = ["-smt2", "-in"]
-timeout_seconds = 30
-version = "4.x"
 TOML
+  append_sugar_solver_portfolio "$dir/.sugar/config.toml" "$REPO"
+  write_sugar_ir_compiler_manifests "$dir" "$BIN_DIR"
 
   cat > "$dir/.sugar/lift/rust-fn-contracts/manifest.toml" <<TOML
 name = "rust-fn-contracts-lift"

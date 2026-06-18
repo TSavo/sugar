@@ -17,8 +17,9 @@ Usage:
 Pinned JSON shape (all fields exact-matched):
     {
       "assertion_multiset_cid": "blake3-512:...",  # the corpus universe
-      "silent": 0,                                  # genuinely-unreached (HARD: 0)
-      "unaccounted": -52,                           # net accounting identity
+      "silent": 0,                                  # missing assertions (HARD: 0)
+      "missing_assertions": 0,                      # source assertions not reached
+      "callsite_expansion": 52,                     # extra obligations from source digs
       "discharged": 5882,                           # lifted to FOL (hermetic)
       "refused": 291,                               # terminal, with reason
       "unclassified": 196,                          # the roadmap; drive to 0
@@ -46,8 +47,9 @@ def parse_headline(text: str) -> dict:
         "discharged": i(grab(r"discharged \(lifted to FOL\):\s*(-?\d+)")),
         "refused": i(grab(r"refused\s+\(TERMINAL[^:]*:\s*(-?\d+)")),
         "unclassified": i(grab(r"unclassified \(lifter[^:]*:\s*(-?\d+)")),
-        "silent": i(grab(r"genuinely unreached \(SILENT\):\s*(-?\d+)")),
-        "unaccounted": i(grab(r"unaccounted \(net\):\s*(-?\d+)")),
+        "silent": i(grab(r"missing assertions \(SILENT\):\s*(-?\d+)")),
+        "missing_assertions": i(grab(r"missing assertions \(SILENT\):\s*(-?\d+)")),
+        "callsite_expansion": i(grab(r"callsite-expanded obligations:\s*(-?\d+)")),
         "cid": grab(r"assertion multiset cid:\s*(blake3-512:[0-9a-f]+)"),
     }
 
@@ -58,8 +60,10 @@ EXACT = [
      "corpus assertion universe changed (rust version bump?); re-pin deliberately"),
     ("silent", "silent",
      "an assertion was SILENTLY dropped -- unsound; this must stay 0"),
-    ("unaccounted", "unaccounted",
-     "the accounting identity shifted"),
+    ("missing_assertions", "missing_assertions",
+     "source assertion accounting has a missing site"),
+    ("callsite_expansion", "callsite_expansion",
+     "source callsite expansion count shifted"),
     ("discharged", "discharged",
      "lifted-to-FOL count is not what the commit claimed"),
     ("refused", "refused",
@@ -107,7 +111,8 @@ def main() -> int:
     print(
         f"coretests invariants: OK  (unclassified={got['unclassified']}, "
         f"refused={got['refused']}, discharged={got['discharged']}, SILENT={got['silent']}, "
-        f"unaccounted={got['unaccounted']}, CID pinned{moved})"
+        f"missing={got['missing_assertions']}, expanded={got['callsite_expansion']}, "
+        f"CID pinned{moved})"
     )
     return 0
 

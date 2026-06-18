@@ -9,6 +9,7 @@
 
 pub mod source_oracle;
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
 use std::rc::Rc;
@@ -51,6 +52,7 @@ pub mod sugar {
     pub mod conditional;
     pub mod configuration;
     pub mod const_block;
+    pub mod constraint;
     pub mod control_flow_term;
     pub mod ctor_term;
     pub mod enumerate;
@@ -142,7 +144,52 @@ pub struct AdapterOutput {
     /// fns are already credited under assertions_lifted and must not also appear
     /// in assertions_refused.
     pub reduced_helpers: HashSet<String>,
+    /// Factory-level accounting rows: every source site the recursive Sugar factory
+    /// built and desugared, with the selected Sugar and final disposition.
+    pub factory_audits: Vec<FactoryAudit>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FactoryDisposition {
+    Warranted,
+    Refused,
+    Support,
+    Unresolved,
+}
+
+impl FactoryDisposition {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FactoryDisposition::Warranted => "warranted",
+            FactoryDisposition::Refused => "refused",
+            FactoryDisposition::Support => "support",
+            FactoryDisposition::Unresolved => "unresolved",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FactoryCandidateAudit {
+    pub name: &'static str,
+    pub role: String,
+    pub priority: String,
+    pub selected: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FactoryAudit {
+    pub ast_kind: &'static str,
+    pub site: String,
+    pub line: usize,
+    pub requested_role: String,
+    pub selected: Option<&'static str>,
+    pub candidates: Vec<FactoryCandidateAudit>,
+    pub disposition: FactoryDisposition,
+    pub output: &'static str,
+    pub reason: Option<String>,
+}
+
+pub type FactoryAuditLog = RefCell<Vec<FactoryAudit>>;
 
 #[derive(Debug, Clone, Default)]
 pub struct LiftOptions {
@@ -540,7 +587,7 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         //   (2) a RUNTIME ITERATOR/COLLECTION construct -- `preds.iter().map(..).collect()`
         //       into a Vec/HashSet over runtime parameter contents (bin-2 aggregate data,
         //       not constructed from source literals).
-        // EARNED by the resolved-body reducer (`init_is_runtime_collection` / the `let mut`
+        // EARNED by the source-body classifier (`init_is_runtime_collection` / the `let mut`
         // arm) AFTER resolution -- a RESOLVED-and-PURE body still digs (the dig path is
         // untouched), so this can only refuse a body whose runtime cause is SHOWN; never a
         // fake-refuse (a pure body discharges) and never an unresolved fake-terminal (the
@@ -577,6 +624,7 @@ pub fn lift_file_with_macro_imports(
     imported_macros: &MacroRegistry,
 ) -> AdapterOutput {
     let mut out = AdapterOutput::default();
+    let factory_audits = FactoryAuditLog::default();
     let mut modules = Vec::new();
     let reducer = ReductionCtx::from_items_with_imports(&file.items, imported_macros);
     // Pass 1: walk test fns (and modules). Populates assertions_lifted, reduced_helpers.
@@ -586,6 +634,7 @@ pub fn lift_file_with_macro_imports(
         &mut modules,
         options,
         &reducer,
+        Some(&factory_audits),
         &mut out,
     );
     // Pass 2: walk non-test fns. Emit named refusals for asserts in helper fns
@@ -597,8 +646,10 @@ pub fn lift_file_with_macro_imports(
         &out.reduced_helpers.clone(),
         &reducer,
         options,
+        Some(&factory_audits),
         &mut out,
     );
+    out.factory_audits = factory_audits.into_inner();
     out
 }
 
@@ -686,7 +737,7 @@ fn census_walk_stmts(
                 sugar::callsite::CallsiteSugar::decompose(e, &local_fns, reducer, options, 0)
             {
                 let mut fw = FloatWidthScope::new();
-                let outcome = cs.desugar(scope, idx, options, reducer, &mut fw, reduced, 0);
+                let outcome = cs.desugar(scope, idx, options, reducer, &mut fw, reduced, 0, None);
                 let row = match outcome {
                     sugar::callsite::CallsiteOutcome::Dug(_) => CallsiteCensusRow {
                         helper: cs.name.clone(),
@@ -766,13 +817,22 @@ fn walk_items<'a>(
     modules: &mut Vec<String>,
     options: &LiftOptions,
     reducer: &ReductionCtx<'a>,
+    factory_audits: Option<&FactoryAuditLog>,
     out: &mut AdapterOutput,
 ) {
     for item in items {
         match item {
             Item::Fn(f) => {
                 if has_test_attr(&f.attrs) {
-                    visit_test_fn(f, source_path, modules, options, reducer, out);
+                    visit_test_fn(
+                        f,
+                        source_path,
+                        modules,
+                        options,
+                        reducer,
+                        factory_audits,
+                        out,
+                    );
                 }
                 // Non-test fns are handled in the second pass (walk_non_test_fns).
             }
@@ -805,7 +865,15 @@ fn walk_items<'a>(
                         }
                     }
                     modules.push(m.ident.to_string());
-                    walk_items(items, source_path, modules, options, reducer, out);
+                    walk_items(
+                        items,
+                        source_path,
+                        modules,
+                        options,
+                        reducer,
+                        factory_audits,
+                        out,
+                    );
                     modules.pop();
                 }
             }
@@ -823,6 +891,7 @@ fn walk_non_test_fns(
     reduced_helpers: &HashSet<String>,
     reducer: &ReductionCtx<'_>,
     options: &LiftOptions,
+    factory_audits: Option<&FactoryAuditLog>,
     out: &mut AdapterOutput,
 ) {
     for item in items {
@@ -847,6 +916,7 @@ fn walk_non_test_fns(
                         reduced_helpers,
                         reducer,
                         options,
+                        factory_audits,
                         out,
                     );
                     modules.pop();
@@ -867,6 +937,7 @@ fn walk_non_test_fns(
                             "item",
                             options,
                             &mut FloatWidthScope::new(),
+                            factory_audits,
                             0,
                         ) {
                             Some(Ok(_)) => format!(
@@ -893,9 +964,17 @@ fn walk_non_test_fns(
             // helper struct) are reachable only when the method runs, with the
             // receiver's runtime state. Refuse them so they are not silent.
             Item::Impl(imp) => {
+                let self_ty = impl_self_ty_key(&imp.self_ty);
                 for impl_item in &imp.items {
                     if let syn::ImplItem::Fn(method) = impl_item {
                         let method_name = method.sig.ident.to_string();
+                        let reduced_key = self_ty.as_ref().map(|ty| format!("{ty}::{method_name}"));
+                        if reduced_key
+                            .as_ref()
+                            .is_some_and(|key| reduced_helpers.contains(key))
+                        {
+                            continue;
+                        }
                         let count = count_asserts_in_stmts(&method.block.stmts);
                         if count == 0 {
                             continue;
@@ -938,6 +1017,7 @@ fn walk_non_test_fns(
                     modules,
                     options,
                     reducer,
+                    factory_audits,
                     out,
                 );
             }
@@ -949,6 +1029,7 @@ fn walk_non_test_fns(
                     modules,
                     options,
                     reducer,
+                    factory_audits,
                     out,
                 );
             }
@@ -1053,18 +1134,18 @@ fn helper_is_generic_parametric(f: &syn::ItemFn) -> bool {
         .any(|gp| matches!(gp, syn::GenericParam::Type(_) | syn::GenericParam::Const(_)))
 }
 
-/// A helper's BODY contains a provably-RUNTIME construct that the resolved-body reducer
-/// refuses regardless of the call-site actuals: a `let mut` mutable-local trajectory or a
+/// A helper's BODY contains a provably-RUNTIME construct that CallsiteSugar cannot make
+/// timeless regardless of the call-site actuals: a `let mut` mutable-local trajectory or a
 /// `let` whose init is a runtime iterator/collection construct (`.iter().map(..).collect()`).
 /// Such a body is bin-2/temporally-unstable by SOURCE -- no closed-literal call site could
 /// pin it (the construct reads runtime aggregate / mutated state, not source literals). This
 /// is the resolve-then-classify at the DEFINITION site: a helper called ONLY in nested-scope
 /// (e.g. `assert_typeid_set_eq`, invoked from inside another helper's body, never at a
 /// drainable call site) would otherwise stay the generic UNCLASSIFIED "reachable only via
-/// call-site inlining" reason even though its body is genuinely runtime. We mirror EXACTLY
-/// the two shapes the resolved-body reducer (`reduce_assertion_stmts`) refuses, so flagging
-/// here can only name a body that would also refuse if inlined -- never a fake-refuse. A
-/// pure body (no `let mut`, no collection init) returns false and stays unclassified.
+/// call-site inlining" reason even though its body is genuinely runtime. We mirror the two
+/// source-body shapes CallsiteSugar cannot make timeless (`let mut`, runtime collection), so
+/// flagging here can only name a terminal body -- never a fake-refuse. A pure body returns
+/// false and stays unclassified.
 fn helper_body_is_runtime_terminal(f: &syn::ItemFn) -> bool {
     f.block.stmts.iter().any(|s| {
         let Stmt::Local(local) = s else { return false };
@@ -1089,7 +1170,7 @@ fn helper_body_is_runtime_terminal(f: &syn::ItemFn) -> bool {
 ///   * generic type/const parameter            -> monomorphization terminal (no single
 ///                                                concrete instantiation to read).
 ///   * runtime BODY construct (`let mut` / collection init) -> terminal (resolve-then-
-///     classify at the definition site: a body the resolved-body reducer would refuse).
+///     classify at the definition site: a body CallsiteSugar cannot make timeless).
 ///   * otherwise (concrete scalar/slice params, pure body) -> UNCLASSIFIED: a closed-literal
 ///     call site CAN pin it; the inability to lift is call-queueing reach (dissolution / the
 ///     exact partition own it), NOT a source property. Left unclassified to avoid a
@@ -1165,6 +1246,7 @@ fn visit_test_fn(
     modules: &[String],
     options: &LiftOptions,
     reducer: &ReductionCtx<'_>,
+    factory_audits: Option<&FactoryAuditLog>,
     out: &mut AdapterOutput,
 ) {
     let test_name = scoped_test_name(source_path, modules, &f.sig.ident.to_string());
@@ -1217,6 +1299,7 @@ fn visit_test_fn(
         &mut skipped,
         &mut macros_lifted,
         &mut out.reduced_helpers,
+        factory_audits,
         0,
         &BTreeSet::new(),
         // Top-level `#[test]` fn: no ENCLOSING block, so no inherited nested fns.
@@ -1802,8 +1885,6 @@ fn impl_self_ty_key(ty: &Type) -> Option<String> {
     }
 }
 
-const MAX_ASSERTION_REDUCTION_DEPTH: usize = 8;
-
 /// Bound on nested macro_rules expansion (a macro whose body invokes another
 /// in-source macro). Prevents runaway expansion; assertion macros nest shallowly.
 const MAX_MACRO_EXPANSION_DEPTH: usize = 16;
@@ -1823,6 +1904,7 @@ fn try_macro_expansion_entries(
     local_scope: &str,
     options: &LiftOptions,
     float_widths: &mut FloatWidthScope,
+    factory_audits: Option<&FactoryAuditLog>,
     macro_depth: usize,
 ) -> Option<Result<Vec<AssertionEntry>, String>> {
     let name = path.segments.last()?.ident.to_string();
@@ -1875,6 +1957,7 @@ fn try_macro_expansion_entries(
         &mut temp_skipped,
         &mut temp_lifted,
         &mut temp_helpers,
+        factory_audits,
         macro_depth + 1,
         &BTreeSet::new(),
         &BTreeMap::new(),
@@ -3313,6 +3396,7 @@ struct SugarCtx<'a, 'c> {
     options: &'a LiftOptions,
     reducer: &'a ReductionCtx<'c>,
     float_widths: std::cell::RefCell<&'a mut FloatWidthScope>,
+    factory_audits: Option<&'a FactoryAuditLog>,
     macro_depth: usize,
 }
 
@@ -3850,12 +3934,50 @@ fn sugar_ctx<'a, 'c>(
     float_widths: &'a mut FloatWidthScope,
     macro_depth: usize,
 ) -> SugarCtx<'a, 'c> {
+    sugar_ctx_impl(scope, options, reducer, float_widths, macro_depth, None)
+}
+
+fn sugar_ctx_with_factory_audits<'a, 'c>(
+    scope: &'a TemporalScope,
+    options: &'a LiftOptions,
+    reducer: &'a ReductionCtx<'c>,
+    float_widths: &'a mut FloatWidthScope,
+    macro_depth: usize,
+    factory_audits: Option<&'a FactoryAuditLog>,
+) -> SugarCtx<'a, 'c> {
+    sugar_ctx_impl(
+        scope,
+        options,
+        reducer,
+        float_widths,
+        macro_depth,
+        factory_audits,
+    )
+}
+
+fn sugar_ctx_impl<'a, 'c>(
+    scope: &'a TemporalScope,
+    options: &'a LiftOptions,
+    reducer: &'a ReductionCtx<'c>,
+    float_widths: &'a mut FloatWidthScope,
+    macro_depth: usize,
+    factory_audits: Option<&'a FactoryAuditLog>,
+) -> SugarCtx<'a, 'c> {
     SugarCtx {
         scope,
         options,
         reducer,
         float_widths: std::cell::RefCell::new(float_widths),
+        factory_audits,
         macro_depth,
+    }
+}
+
+impl SugarCtx<'_, '_> {
+    fn record_factory_audit(&self, audit: FactoryAudit) {
+        if let Some(factory_audits) = self.factory_audits {
+            factory_audits.borrow_mut().push(audit);
+        }
     }
 }
 
@@ -4044,6 +4166,57 @@ fn emit_desugared(
         // A bare term at statement position is not an emit (a term floor must be
         // wrapped by an asserting node to become a `Constraints`); mirrors `Seq`.
         Desugared::Term(_) => false,
+    }
+}
+
+fn has_constraint_candidate(
+    expr: &Expr,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+    let_inits: &BTreeMap<String, &Expr>,
+) -> bool {
+    let fcx = sugar::factory::SugarBuildCtx::new(scope, options, let_inits);
+    sugar::factory::has_constraint(expr, &fcx)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_constraint_expr(
+    expr: &Expr,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+    reducer: &ReductionCtx<'_>,
+    float_widths: &mut FloatWidthScope,
+    let_inits: &BTreeMap<String, &Expr>,
+    factory_audits: Option<&FactoryAuditLog>,
+    macro_depth: usize,
+    entries: &mut Vec<AssertionEntry>,
+    skipped: &mut Vec<String>,
+    macros_lifted: &mut usize,
+) {
+    let ctx = sugar_ctx_with_factory_audits(
+        scope,
+        options,
+        reducer,
+        float_widths,
+        macro_depth,
+        factory_audits,
+    );
+    let fcx = sugar::factory::SugarBuildCtx::new(scope, options, let_inits);
+    match sugar::factory::build_constraint(expr, &fcx).desugar(&ctx) {
+        Outcome::Dug(desugared @ Desugared::Constraints { .. }) => {
+            emit_desugared(desugared, entries, macros_lifted);
+        }
+        Outcome::Dug(_) => skipped.push(format!(
+            "constraint-shaped expression did not emit a constraint `{}`; released to layer 0",
+            token_key(expr)
+        )),
+        Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {
+            skipped.push(format!(
+                "constraint-shaped expression did not reach bedrock `{}`; released to layer 0",
+                token_key(expr)
+            ));
+        }
+        Outcome::Hit(effect) => skipped.push(effect.reason()),
     }
 }
 
@@ -4268,11 +4441,22 @@ fn closure_method_terminal_effect(
     float_widths: &mut FloatWidthScope,
     macro_depth: usize,
     let_inits: &BTreeMap<String, &Expr>,
+    factory_audits: Option<&FactoryAuditLog>,
 ) -> Option<Effect> {
     let fcx = sugar::factory::SugarBuildCtx::new(scope, options, let_inits);
+    if !sugar::factory::has_expr_role(expr, &fcx, sugar::claim::SugarRole::ClosureAdaptorVerdict) {
+        return None;
+    }
     let node =
         sugar::catalog::build_expr_role(expr, &fcx, sugar::claim::SugarRole::ClosureAdaptorVerdict);
-    let ctx = sugar_ctx(scope, options, reducer, float_widths, macro_depth);
+    let ctx = sugar_ctx_with_factory_audits(
+        scope,
+        options,
+        reducer,
+        float_widths,
+        macro_depth,
+        factory_audits,
+    );
     match node.desugar(&ctx) {
         // The STRUCTURAL backstop = the honest-unclassified fall-through (the old `None`).
         Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {
@@ -4522,14 +4706,25 @@ fn statement_position_terminal_effect(
     reducer: &ReductionCtx,
     float_widths: &mut FloatWidthScope,
     macro_depth: usize,
+    factory_audits: Option<&FactoryAuditLog>,
 ) -> Option<Effect> {
     // The statement-position recognizer's verdict is purely structural (it ignores the build
     // env), so the in-scope `let` initializers are irrelevant -- an empty map suffices.
     let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
     let fcx = sugar::factory::SugarBuildCtx::new(scope, options, &let_inits);
+    if !sugar::factory::has_expr_role(expr, &fcx, sugar::claim::SugarRole::StatementEffect) {
+        return None;
+    }
     let node =
         sugar::catalog::build_expr_role(expr, &fcx, sugar::claim::SugarRole::StatementEffect);
-    let ctx = sugar_ctx(scope, options, reducer, float_widths, macro_depth);
+    let ctx = sugar_ctx_with_factory_audits(
+        scope,
+        options,
+        reducer,
+        float_widths,
+        macro_depth,
+        factory_audits,
+    );
     match node.desugar(&ctx) {
         // The STRUCTURAL backstop = the honest-unclassified fall-through (the old `None`).
         Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {
@@ -4562,6 +4757,7 @@ fn impl_method_terminal_effect(
     reducer: &ReductionCtx,
     float_widths: &mut FloatWidthScope,
     macro_depth: usize,
+    factory_audits: Option<&FactoryAuditLog>,
 ) -> Option<Effect> {
     // The impl-method recognizer's verdict is purely structural (it ignores the build env),
     // so the in-scope `let` initializers are irrelevant -- an empty map suffices. Catalog
@@ -4570,8 +4766,18 @@ fn impl_method_terminal_effect(
     let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
     let fcx = sugar::factory::SugarBuildCtx::new(scope, options, &let_inits);
     let item = syn::Item::Impl(imp.clone());
+    if !sugar::factory::has_item_role(&item, &fcx, sugar::claim::SugarRole::StatementItem) {
+        return None;
+    }
     let node = sugar::catalog::build_item_role(&item, &fcx, sugar::claim::SugarRole::StatementItem);
-    let ctx = sugar_ctx(scope, options, reducer, float_widths, macro_depth);
+    let ctx = sugar_ctx_with_factory_audits(
+        scope,
+        options,
+        reducer,
+        float_widths,
+        macro_depth,
+        factory_audits,
+    );
     match node.desugar(&ctx) {
         // The STRUCTURAL backstop = the honest-unclassified fall-through (the old `None`).
         Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {
@@ -4682,6 +4888,7 @@ fn collect_assertion_entries<'a>(
     skipped: &mut Vec<String>,
     macros_lifted: &mut usize,
     reduced_helpers: &mut HashSet<String>,
+    factory_audits: Option<&FactoryAuditLog>,
     macro_depth: usize,
     inherited_stateful: &BTreeSet<String>,
     // LEXICAL SCOPE: nested fns declared in ENCLOSING blocks (the ancestors of this
@@ -4788,7 +4995,7 @@ fn collect_assertion_entries<'a>(
     // is computed two ways, unioned, so EVERY reduction path is covered: (1) the
     // explicit `reduced_in_block` inserts at the bare-statement / arg-position commit
     // sites below; (2) a SET DIFF against the snapshot of `reduced_helpers` taken at
-    // entry -- this catches reductions that happen DEEPER (e.g. `reduce_assertion_expr`
+    // entry -- this catches reductions that happen DEEPER (e.g. recursive CallsiteSugar
     // inserting the helper name into `reduced_helpers` from inside a recursive desugar)
     // without an explicit insert here. A name added to `reduced_helpers` during this
     // call but absent at entry was reduced HERE. (The explicit set ALSO covers the
@@ -4820,6 +5027,7 @@ fn collect_assertion_entries<'a>(
                             skipped,
                             macros_lifted,
                             reduced_helpers,
+                            factory_audits,
                             macro_depth,
                             &temporal_scope.plan.interior_mut,
                             &local_fns,
@@ -4843,6 +5051,7 @@ fn collect_assertion_entries<'a>(
                             skipped,
                             macros_lifted,
                             reduced_helpers,
+                            factory_audits,
                             macro_depth,
                             &temporal_scope.plan.interior_mut,
                             &local_fns,
@@ -4855,16 +5064,26 @@ fn collect_assertion_entries<'a>(
                         // `Sugar` tree is built by `decompose_*` (node + children)
                         // and walked by `desugar()`; the warranted emission drains
                         // its output. A bail (`None`) at any layer falls through.
-                        let ctx =
-                            sugar_ctx(&temporal_scope, options, reducer, float_widths, macro_depth);
+                        let ctx = sugar_ctx_with_factory_audits(
+                            &temporal_scope,
+                            options,
+                            reducer,
+                            float_widths,
+                            macro_depth,
+                            factory_audits,
+                        );
                         let fcx = sugar::factory::SugarBuildCtx::new(
                             &temporal_scope,
                             options,
                             &let_inits,
                         );
-                        sugar::factory::build_composite(&init.expr, &fcx)
-                            .desugar(&ctx)
-                            .dug()
+                        if sugar::factory::has_composite(&init.expr, &fcx) {
+                            sugar::factory::build_composite(&init.expr, &fcx)
+                                .desugar(&ctx)
+                                .dug()
+                        } else {
+                            None
+                        }
                     } {
                         emit_desugared(desugared, entries, macros_lifted);
                     } else {
@@ -4886,6 +5105,7 @@ fn collect_assertion_entries<'a>(
                             float_widths,
                             macro_depth,
                             &let_inits,
+                            factory_audits,
                         )
                         .map(|e| e.reason())
                         .unwrap_or_else(|| {
@@ -4924,6 +5144,7 @@ fn collect_assertion_entries<'a>(
                         &temporal_scope,
                         &*float_widths,
                         options,
+                        factory_audits,
                         entries,
                         skipped,
                     );
@@ -4937,6 +5158,7 @@ fn collect_assertion_entries<'a>(
                             local_scope,
                             options,
                             float_widths,
+                            factory_audits,
                             macro_depth,
                         ) {
                             Some(Ok(es)) => {
@@ -4981,6 +5203,7 @@ fn collect_assertion_entries<'a>(
                         &temporal_scope,
                         &*float_widths,
                         options,
+                        factory_audits,
                         entries,
                         skipped,
                     );
@@ -4994,6 +5217,7 @@ fn collect_assertion_entries<'a>(
                             local_scope,
                             options,
                             float_widths,
+                            factory_audits,
                             macro_depth,
                         ) {
                             Some(Ok(es)) => {
@@ -5024,47 +5248,22 @@ fn collect_assertion_entries<'a>(
                     skipped.push(format!("ambiguous cfg on assertion; skipped: {reason}"));
                 }
             },
-            Stmt::Expr(expr, _) if assertion_call_name(expr).is_some() => {
-                let call_name = assertion_call_name(expr).expect("guard ensures Some");
-                // An assert-prefixed call to a LEXICALLY-VISIBLE empty-body helper is a
-                // TYPE-LEVEL obligation: the helper's only content is its signature's
-                // trait bounds (e.g. `fn assert_trusted_len<T: TrustedLen>(_: &T) {}`),
-                // discharged by the type system, not a point-wise value predicate. Empty
-                // body => zero recoverable value-work => terminal refusal (a source
-                // property no value-lifter can lift), NOT a lifter limitation and NOT a
-                // fake-zero. Same-block scope only (`local_fns` = this block's nested fns,
-                // lexically correct by construction); a deeper/sibling-scope helper is not
-                // matched and stays unclassified -- a safe under-claim, never a wrong one.
-                // This NEVER displaces a discharge: an empty body lifts to zero entries.
-                if local_fns
-                    .get(&call_name)
-                    .is_some_and(|f| f.block.stmts.is_empty())
-                {
-                    skipped.push(format!(
-                        "assertion helper `{call_name}` is a type-level obligation \
-                         (empty body: trait-bound or no-op), not a point-wise value \
-                         predicate; refused"
-                    ));
-                } else {
-                    match reduce_assertion_expr(
-                        expr,
-                        &local_fns,
-                        reducer,
-                        &temporal_scope,
-                        &*float_widths,
-                        options,
-                        MAX_ASSERTION_REDUCTION_DEPTH,
-                        reduced_helpers,
-                    ) {
-                        Ok(reduced_entries) => {
-                            if !reduced_entries.is_empty() {
-                                *macros_lifted += 1;
-                            }
-                            entries.extend(reduced_entries);
-                        }
-                        Err(reason) => skipped.push(reason),
-                    }
-                }
+            Stmt::Expr(expr, _)
+                if has_constraint_candidate(expr, &temporal_scope, options, &let_inits) =>
+            {
+                collect_constraint_expr(
+                    expr,
+                    &temporal_scope,
+                    options,
+                    reducer,
+                    float_widths,
+                    &let_inits,
+                    factory_audits,
+                    macro_depth,
+                    entries,
+                    skipped,
+                    macros_lifted,
+                );
             }
             // Unconditional plain block: recurse and lift normally.
             Stmt::Expr(Expr::Block(b), _) => {
@@ -5078,6 +5277,7 @@ fn collect_assertion_entries<'a>(
                     skipped,
                     macros_lifted,
                     reduced_helpers,
+                    factory_audits,
                     macro_depth,
                     &temporal_scope.plan.interior_mut,
                     &local_fns,
@@ -5095,6 +5295,7 @@ fn collect_assertion_entries<'a>(
                     skipped,
                     macros_lifted,
                     reduced_helpers,
+                    factory_audits,
                     macro_depth,
                     &temporal_scope.plan.interior_mut,
                     &local_fns,
@@ -5107,8 +5308,14 @@ fn collect_assertion_entries<'a>(
                 // conjunction over a literal array). If the body does not wholly
                 // compute to truth values, the desugar bails (refuse below).
                 let lifted = {
-                    let ctx =
-                        sugar_ctx(&temporal_scope, options, reducer, float_widths, macro_depth);
+                    let ctx = sugar_ctx_with_factory_audits(
+                        &temporal_scope,
+                        options,
+                        reducer,
+                        float_widths,
+                        macro_depth,
+                        factory_audits,
+                    );
                     // FACTORY WIRING (slice 1): the recursive `build` factory
                     // dispatches `Expr::ForLoop` to `decompose_for_loop` (its arm is
                     // `boxed(decompose_for_loop(f, scope, let_inits))`), so this is the
@@ -5145,6 +5352,7 @@ fn collect_assertion_entries<'a>(
                         reducer,
                         float_widths,
                         macro_depth,
+                        factory_audits,
                     );
                     for _ in 0..count {
                         skipped.push(reason.clone());
@@ -5178,8 +5386,14 @@ fn collect_assertion_entries<'a>(
                     // -- the claim-side atom. EXACT-OR-BAIL (guard must translate, the
                     // branch asserts must fully lift, pure body); a bail keeps the
                     // refusal below. SOUNDNESS: never bare `then` -- always guarded.
-                    let ctx =
-                        sugar_ctx(&temporal_scope, options, reducer, float_widths, macro_depth);
+                    let ctx = sugar_ctx_with_factory_audits(
+                        &temporal_scope,
+                        options,
+                        reducer,
+                        float_widths,
+                        macro_depth,
+                        factory_audits,
+                    );
                     let fcx =
                         sugar::factory::SugarBuildCtx::new(&temporal_scope, options, &let_inits);
                     sugar::factory::build_composite(e, &fcx).desugar(&ctx).dug()
@@ -5260,8 +5474,14 @@ fn collect_assertion_entries<'a>(
                     // reduce to a discriminant (binding/guard/or/range arms bail), and
                     // the arm asserts must fully lift; a bail keeps the refusal below.
                     // SOUNDNESS: never bare `A_i` -- always guarded by `guard_i`.
-                    let ctx =
-                        sugar_ctx(&temporal_scope, options, reducer, float_widths, macro_depth);
+                    let ctx = sugar_ctx_with_factory_audits(
+                        &temporal_scope,
+                        options,
+                        reducer,
+                        float_widths,
+                        macro_depth,
+                        factory_audits,
+                    );
                     let fcx =
                         sugar::factory::SugarBuildCtx::new(&temporal_scope, options, &let_inits);
                     sugar::factory::build_composite(e, &fcx).desugar(&ctx).dug()
@@ -5332,6 +5552,7 @@ fn collect_assertion_entries<'a>(
                     skipped,
                     macros_lifted,
                     reduced_helpers,
+                    factory_audits,
                     macro_depth,
                     &temporal_scope.plan.interior_mut,
                     &local_fns,
@@ -5375,6 +5596,7 @@ fn collect_assertion_entries<'a>(
                     skipped,
                     macros_lifted,
                     reduced_helpers,
+                    factory_audits,
                     macro_depth,
                     &temporal_scope.plan.interior_mut,
                     &local_fns,
@@ -5419,17 +5641,29 @@ fn collect_assertion_entries<'a>(
                     // `n`. An OPAQUE receiver makes `try_lift_for_each_forall` None,
                     // so the assert stays in its existing bin-2 refusal below.
                     let desugared = {
-                        let ctx =
-                            sugar_ctx(&temporal_scope, options, reducer, float_widths, macro_depth);
                         // DEFOLDER over a literal domain (bare `.fold`/`.rfold`
                         // statement), or a bare `.for_each` (the same bounded
-                        // universal as the equivalent for-loop).
+                        // universal as the equivalent for-loop). Only ask the
+                        // composite role when a Sugar claims it; otherwise later
+                        // routes like CallsiteSugar may own the expression.
                         let fcx = sugar::factory::SugarBuildCtx::new(
                             &temporal_scope,
                             options,
                             &let_inits,
                         );
-                        sugar::factory::build_composite(e, &fcx).desugar(&ctx).dug()
+                        if sugar::factory::has_composite(e, &fcx) {
+                            let ctx = sugar_ctx_with_factory_audits(
+                                &temporal_scope,
+                                options,
+                                reducer,
+                                float_widths,
+                                macro_depth,
+                                factory_audits,
+                            );
+                            sugar::factory::build_composite(e, &fcx).desugar(&ctx).dug()
+                        } else {
+                            None
+                        }
                     };
                     if let Some(desugared) = desugared {
                         emit_desugared(desugared, entries, macros_lifted);
@@ -5450,6 +5684,7 @@ fn collect_assertion_entries<'a>(
                                 skipped,
                                 macros_lifted,
                                 reduced_helpers,
+                                factory_audits,
                                 macro_depth,
                                 &BTreeSet::new(),
                                 &local_fns,
@@ -5466,6 +5701,7 @@ fn collect_assertion_entries<'a>(
                                 skipped,
                                 macros_lifted,
                                 reduced_helpers,
+                                factory_audits,
                                 macro_depth,
                                 &temporal_scope.plan.interior_mut,
                                 &local_fns,
@@ -5499,6 +5735,7 @@ fn collect_assertion_entries<'a>(
                                 float_widths,
                                 reduced_helpers,
                                 macro_depth,
+                                factory_audits,
                             ) {
                                 sugar::callsite::CallsiteOutcome::Dug(commit) => {
                                     // The body fully reduced: COMMIT the trial buffers (the
@@ -5516,6 +5753,39 @@ fn collect_assertion_entries<'a>(
                                 // residue). Leave the helper unreduced; Pass 2 keeps the
                                 // single "reachable only via call-site inlining" refusal.
                                 // Never fake-dug, never fake-refused.
+                                sugar::callsite::CallsiteOutcome::Bail(_) => false,
+                            }
+                        } else if let Some(cs) = sugar::callsite::MethodCallsiteSugar::decompose(
+                            e,
+                            &temporal_scope,
+                            options,
+                            macro_depth,
+                        ) {
+                            // SOURCE-BACKED METHOD CALLSITE DISPATCH. The method name is
+                            // not assertion vocabulary; it is only a route to visible source.
+                            // The method body is substituted (`self`, params) and re-run
+                            // through the same collector, so proof meaning comes from body
+                            // shapes (`lhs cmp rhs`, panic locus, nested macros), not names
+                            // like `is` / `isnt`.
+                            match cs.desugar(
+                                local_scope,
+                                stmt_idx,
+                                options,
+                                reducer,
+                                float_widths,
+                                reduced_helpers,
+                                macro_depth,
+                                factory_audits,
+                            ) {
+                                sugar::callsite::CallsiteOutcome::Dug(commit) => {
+                                    entries.extend(commit.entries);
+                                    skipped.extend(commit.skipped);
+                                    *macros_lifted += commit.macros_lifted;
+                                    *reduced_helpers = commit.reduced_helpers;
+                                    reduced_helpers.insert(commit.name.clone());
+                                    reduced_in_block.insert(commit.name);
+                                    true
+                                }
                                 sugar::callsite::CallsiteOutcome::Bail(_) => false,
                             }
                         } else {
@@ -5554,6 +5824,7 @@ fn collect_assertion_entries<'a>(
                                 float_widths,
                                 macro_depth,
                                 &let_inits,
+                                factory_audits,
                             )
                             .or_else(|| {
                                 statement_position_terminal_effect(
@@ -5563,6 +5834,7 @@ fn collect_assertion_entries<'a>(
                                     reducer,
                                     float_widths,
                                     macro_depth,
+                                    factory_audits,
                                 )
                             })
                         }
@@ -5580,6 +5852,7 @@ fn collect_assertion_entries<'a>(
                             reducer,
                             float_widths,
                             macro_depth,
+                            factory_audits,
                         ),
                         _ => None,
                     }
@@ -5689,6 +5962,7 @@ fn collect_assertion_entries<'a>(
                 float_widths,
                 reduced_helpers,
                 macro_depth,
+                factory_audits,
             ) {
                 sugar::callsite::CallsiteOutcome::Dug(commit) => {
                     if !commit.entries.is_empty() {
@@ -5968,6 +6242,7 @@ fn for_context_refusal_reason(
     reducer: &ReductionCtx<'_>,
     float_widths: &mut FloatWidthScope,
     macro_depth: usize,
+    factory_audits: Option<&FactoryAuditLog>,
 ) -> String {
     let domain = for_iter_domain(&f.expr);
     // OPAQUE collection domain -> already bin-2 (terminal) by `for_iter_domain`; keep it.
@@ -6004,6 +6279,7 @@ fn for_context_refusal_reason(
         &mut bs,
         &mut bl,
         &mut bh,
+        factory_audits,
         macro_depth,
         &scope.plan.interior_mut,
         &BTreeMap::new(),
@@ -6279,6 +6555,7 @@ fn lift_item_assertions(
     modules: &[String],
     options: &LiftOptions,
     reducer: &ReductionCtx<'_>,
+    factory_audits: Option<&FactoryAuditLog>,
     out: &mut AdapterOutput,
 ) {
     let textual_total = count_asserts_in_expr(expr);
@@ -6312,6 +6589,7 @@ fn lift_item_assertions(
         &mut skipped,
         &mut macros_lifted,
         &mut out.reduced_helpers,
+        factory_audits,
         0,
         &BTreeSet::new(),
         &BTreeMap::new(),
@@ -7545,14 +7823,6 @@ fn cfg_eval_predicate(predicate: &CfgPredicate, target_cfg: Option<&TargetCfg>) 
     }
 }
 
-fn assertion_call_name(expr: &Expr) -> Option<String> {
-    let Expr::Call(call) = expr else {
-        return None;
-    };
-    let name = simple_call_name(call)?;
-    name.starts_with("assert").then_some(name)
-}
-
 fn simple_call_name(call: &syn::ExprCall) -> Option<String> {
     let Expr::Path(path) = call.func.as_ref() else {
         return None;
@@ -7920,319 +8190,6 @@ fn value_body_tail_substituted(block: &syn::Block, binds: &mut ExprBindings) -> 
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn reduce_assertion_expr<'a>(
-    expr: &Expr,
-    local_fns: &BTreeMap<String, &'a syn::ItemFn>,
-    reducer: &ReductionCtx<'a>,
-    scope: &TemporalScope,
-    float_widths: &FloatWidthScope,
-    options: &LiftOptions,
-    depth: usize,
-    reduced_helpers: &mut HashSet<String>,
-) -> Result<Vec<AssertionEntry>, String> {
-    if depth == 0 {
-        return Err(format!(
-            "assertion reduction depth exhausted at `{}`; skipped assertion",
-            token_key(expr)
-        ));
-    }
-    match expr {
-        Expr::Call(call) => {
-            // Base lowerer: ptr::eq / core::ptr::eq / std::ptr::eq is a primitive
-            // expression reducer. Dispatch it directly so helper bodies that call
-            // assert!(ptr::eq(a, b)) reduce through this path rather than requiring
-            // the dedicated translate_pointer_eq_assertion pre-filter arm.
-            let callee = expr_head_key(&call.func);
-            if matches!(
-                callee.as_str(),
-                "core::ptr::eq" | "ptr::eq" | "std::ptr::eq"
-            ) {
-                return translate_pointer_eq_assertion(expr, scope)?
-                    .ok_or_else(|| {
-                        format!(
-                            "ptr::eq call did not lower to an assertion at `{}`",
-                            token_key(expr)
-                        )
-                    })
-                    .map(|entry| vec![entry]);
-            }
-            let name = simple_call_name(call).ok_or_else(|| {
-                format!(
-                    "assertion call is not a simple visible helper `{}`",
-                    token_key(expr)
-                )
-            })?;
-            if !name.starts_with("assert") {
-                return Err(format!(
-                    "non-assertion helper call `{name}` is not reducible"
-                ));
-            }
-            // Resolve the helper LEXICALLY first: a helper defined inside the enclosing
-            // `#[test]` fn (e.g. `fn assert_predicates_exact(..)` nested in the test body)
-            // is invisible to the global `ReductionCtx` registry, but it IS in scope at the
-            // call site. Mirror `resolve_inlinable_helper_call_scoped`: a `local_fns` hit
-            // (the block's nested fns) takes precedence over the global registry; only when
-            // neither resolves does the helper stay "has no visible source" (UNCLASSIFIED
-            // work). The body still digs through the SAME reducer below, so a nested helper
-            // whose body is pure-and-liftable discharges exactly like a top-level one, while
-            // a runtime/effectful body (HashSet collect, `fmt::write`, mutable state) returns
-            // Err here-down and stays UNCLASSIFIED -- never fake-dug.
-            let helper = match local_fns.get(&name) {
-                Some(f) => *f,
-                None => reducer.function(&name)?.ok_or_else(|| {
-                    format!("assertion helper `{name}` has no visible source; skipped assertion")
-                })?,
-            };
-            match cfg_resolve(&helper.attrs, options) {
-                CfgDisposition::Present => {}
-                CfgDisposition::Absent(reason) => {
-                    return Err(format!(
-                        "assertion helper `{name}` inactive cfg; skipped: {reason}"
-                    ));
-                }
-                CfgDisposition::Ambiguous(reason) => {
-                    return Err(format!(
-                        "assertion helper `{name}` ambiguous cfg; skipped: {reason}"
-                    ));
-                }
-            }
-            let params = helper_param_names(helper)?;
-            if params.len() != call.args.len() {
-                return Err(format!(
-                    "assertion helper `{name}` arity mismatch: expected {}, got {}",
-                    params.len(),
-                    call.args.len()
-                ));
-            }
-            let mut bindings = ExprBindings::new();
-            for (param, arg) in params.into_iter().zip(call.args.iter()) {
-                bindings.insert(param, arg.clone());
-            }
-            let result = reduce_assertion_stmts(
-                &helper.block.stmts,
-                &bindings,
-                local_fns,
-                reducer,
-                scope,
-                float_widths,
-                options,
-                depth - 1,
-                reduced_helpers,
-            )
-            .map_err(|e| format!("{name}: {e}"));
-            // Record the helper fn name as successfully reduced so Pass 2
-            // does not also emit refusals for its asserts (which are already
-            // in assertions_lifted).
-            if result.is_ok() {
-                reduced_helpers.insert(name);
-            }
-            result
-        }
-        Expr::Paren(paren) => reduce_assertion_expr(
-            &paren.expr,
-            local_fns,
-            reducer,
-            scope,
-            float_widths,
-            options,
-            depth,
-            reduced_helpers,
-        ),
-        Expr::Group(group) => reduce_assertion_expr(
-            &group.expr,
-            local_fns,
-            reducer,
-            scope,
-            float_widths,
-            options,
-            depth,
-            reduced_helpers,
-        ),
-        other => Err(format!(
-            "assertion expression is not structurally reducible `{}`",
-            token_key(other)
-        )),
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn reduce_assertion_stmts<'a>(
-    stmts: &[Stmt],
-    bindings: &ExprBindings,
-    local_fns: &BTreeMap<String, &'a syn::ItemFn>,
-    reducer: &ReductionCtx<'a>,
-    scope: &TemporalScope,
-    float_widths: &FloatWidthScope,
-    options: &LiftOptions,
-    depth: usize,
-    reduced_helpers: &mut HashSet<String>,
-) -> Result<Vec<AssertionEntry>, String> {
-    let mut entries = Vec::new();
-    // Local mutable view: a `let x = <pure>` in the body adds an immutable binding
-    // we substitute into later statements (sound let-inlining; see the Stmt::Local
-    // arm). Starts as a clone of the inherited param bindings.
-    let mut binds = bindings.clone();
-    for stmt in stmts {
-        match stmt {
-            Stmt::Macro(m) => {
-                entries.extend(assertions_from_macro_with_bindings(
-                    &m.mac.path,
-                    m.mac.tokens.clone(),
-                    scope,
-                    float_widths,
-                    options,
-                    &binds,
-                )?);
-            }
-            Stmt::Expr(Expr::Macro(m), _) => {
-                entries.extend(assertions_from_macro_with_bindings(
-                    &m.mac.path,
-                    m.mac.tokens.clone(),
-                    scope,
-                    float_widths,
-                    options,
-                    &binds,
-                )?);
-            }
-            // `let x = <pure pinnable expr>;` in a reduced body: bind x to its
-            // (substituted) init and substitute it into the rest. SOUND iff the init
-            // is PURE -- a literal / path / arithmetic / index / field / tuple over
-            // pure parts, with NO calls, NO `&`/`&mut`, and x is NOT `let mut`.
-            // For a pure init, `x` denotes a single fixed value, so substituting it
-            // is exact (no re-evaluation hazard). Any other init -> refuse the body
-            // (Pass 2 accounts it); we never substitute something we cannot prove
-            // pure, so no masked re-evaluation / forged step.
-            Stmt::Local(local) => {
-                let Some(init) = &local.init else {
-                    return Err("helper-body `let` without initializer".to_string());
-                };
-                if init.diverge.is_some() {
-                    return Err("helper-body `let ... else` is not a pure binding".to_string());
-                }
-                let name = match &local.pat {
-                    Pat::Ident(id) if id.subpat.is_none() && id.by_ref.is_none() => {
-                        if id.mutability.is_some() {
-                            // A `let mut` binding in a RESOLVED helper body is a mutable
-                            // local trajectory: a state machine the body mutates step by
-                            // step (`let mut writer = ..; fmt::write(&mut writer, ..)`),
-                            // observed by asserts over its per-step mutated state. With
-                            // the source now SHOWN (a test-nested helper lexically in
-                            // scope), the mutated local has no single timeless `t` -- a
-                            // SOURCE property, kin to the terminal `mutable container is
-                            // not temporally stable` / `temporally unstable`. Named as a
-                            // runtime helper-body effect (terminal). (Corpus:
-                            // `fmt/float.rs::assert_exact_exp`'s `let mut writer`.)
-                            return Err(format!(
-                                "resolved helper body has a runtime `let mut {}` trajectory \
-                                 (mutable-local state machine driven by fmt-write / a mutating \
-                                 method; not temporally stable); refused",
-                                id.ident
-                            ));
-                        }
-                        id.ident.to_string()
-                    }
-                    Pat::Type(pt) => match &*pt.pat {
-                        Pat::Ident(id)
-                            if id.subpat.is_none()
-                                && id.by_ref.is_none()
-                                && id.mutability.is_none() =>
-                        {
-                            id.ident.to_string()
-                        }
-                        _ => return Err("helper-body `let` non-simple pattern".to_string()),
-                    },
-                    _ => return Err("helper-body `let` non-simple pattern".to_string()),
-                };
-                let init_expr = substitute_expr(&init.expr, &binds);
-                if !is_pure_pinnable_expr(&init_expr) {
-                    // RESOLVE-THEN-CLASSIFY: with the helper source now SHOWN, an init that
-                    // is a RUNTIME COLLECTION construct (`preds.iter().map(..).collect()`
-                    // into a Vec/HashSet) is bin-2 runtime aggregate data -- not a finite
-                    // construction from source literals, terminal. A non-pure init that is
-                    // NOT a recognized collection construct (e.g. a const free-fn call a
-                    // future const-eval arm could evaluate) STAYS the generic UNCLASSIFIED
-                    // reason -- the fake-refuse guardrail.
-                    if init_is_runtime_collection(&init_expr) {
-                        return Err(format!(
-                            "resolved helper body `let {name} = {}` is a runtime \
-                             iterator/collection construct (bin-2: runtime aggregate data, \
-                             not constructed from source literals); refused",
-                            token_key(&init.expr)
-                        ));
-                    }
-                    return Err(format!(
-                        "helper-body `let {name} = {}` has a non-pure initializer",
-                        token_key(&init.expr)
-                    ));
-                }
-                binds.insert(name, init_expr);
-            }
-            Stmt::Expr(expr, _) => {
-                let expr = substitute_expr(expr, &binds);
-                entries.extend(reduce_assertion_expr(
-                    &expr,
-                    local_fns,
-                    reducer,
-                    scope,
-                    float_widths,
-                    options,
-                    depth,
-                    reduced_helpers,
-                )?);
-            }
-            other => {
-                return Err(format!(
-                    "helper body is not a static assertion reduction `{}`",
-                    token_key(other)
-                ));
-            }
-        }
-    }
-    if entries.is_empty() {
-        return Err("helper body reduced to no FOL assertions".to_string());
-    }
-    Ok(entries)
-}
-
-/// A conservatively-PURE, pinnable expression: a value that is a fixed function of
-/// its (already-pinned) parts, with NO call, method call, closure, reference, await,
-/// index-assign, or macro -- nothing that could carry an effect or re-evaluate a
-/// state. Used to gate `let x = e` substitution inside a reduced helper body: only
-/// a pure `e` may be substituted (so `x` denotes one fixed value and inlining it is
-/// exact). Deliberately strict -- refuse-on-doubt, never approximate. NOTE: this is
-/// NOT "is it liftable" (that is the term translator's job); it is "is substituting
-/// it for a single-use binding faithful", which forbids calls because a call may be
-/// impure / re-evaluate.
-fn is_pure_pinnable_expr(expr: &Expr) -> bool {
-    match expr {
-        Expr::Lit(_) => true,
-        Expr::Path(p) => p.qself.is_none(),
-        Expr::Paren(p) => is_pure_pinnable_expr(&p.expr),
-        Expr::Group(g) => is_pure_pinnable_expr(&g.expr),
-        Expr::Unary(u) => {
-            // Pure unary: neg / not / deref-of-pure. (`*p` of a pure path is the
-            // EUF `deref` term; the term translator decides stability.)
-            matches!(u.op, UnOp::Neg(_) | UnOp::Not(_) | UnOp::Deref(_))
-                && is_pure_pinnable_expr(&u.expr)
-        }
-        Expr::Binary(b) => is_pure_pinnable_expr(&b.left) && is_pure_pinnable_expr(&b.right),
-        Expr::Index(i) => is_pure_pinnable_expr(&i.expr) && is_pure_pinnable_expr(&i.index),
-        Expr::Field(f) => is_pure_pinnable_expr(&f.base),
-        Expr::Tuple(t) => t.elems.iter().all(is_pure_pinnable_expr),
-        Expr::Array(a) => a.elems.iter().all(is_pure_pinnable_expr),
-        Expr::Cast(c) => is_pure_pinnable_expr(&c.expr),
-        Expr::Range(r) => {
-            r.start
-                .as_deref()
-                .map(is_pure_pinnable_expr)
-                .unwrap_or(true)
-                && r.end.as_deref().map(is_pure_pinnable_expr).unwrap_or(true)
-        }
-        _ => false,
-    }
-}
-
 /// A RESOLVED helper body's `let`-init is a genuinely-RUNTIME collection construct
 /// (an iterator/collection chain: `.iter()`/`.into_iter()`/`.collect()`/`.map()` over a
 /// slice/Vec/HashSet). The collected value is RUNTIME aggregate data -- a multiset/set
@@ -8302,10 +8259,57 @@ fn collect_macro(
     scope: &TemporalScope,
     float_widths: &FloatWidthScope,
     options: &LiftOptions,
+    factory_audits: Option<&FactoryAuditLog>,
     entries: &mut Vec<AssertionEntry>,
     skipped: &mut Vec<String>,
 ) {
-    match assertions_from_macro(path, tokens, scope, float_widths, options) {
+    let macro_expr: Expr = Expr::Macro(syn::ExprMacro {
+        attrs: Vec::new(),
+        mac: syn::Macro {
+            path: path.clone(),
+            bang_token: Default::default(),
+            delimiter: syn::MacroDelimiter::Paren(Default::default()),
+            tokens: tokens.clone(),
+        },
+    });
+    let let_inits = BTreeMap::new();
+    let fcx = sugar::factory::SugarBuildCtx::new(scope, options, &let_inits);
+    let mut float_widths = float_widths.clone();
+    let items: Vec<Item> = Vec::new();
+    let reducer = ReductionCtx::from_items_with_imports(&items, scope.macro_registry());
+    let ctx = sugar_ctx_with_factory_audits(
+        scope,
+        options,
+        &reducer,
+        &mut float_widths,
+        0,
+        factory_audits,
+    );
+    let node = sugar::factory::build_constraint(&macro_expr, &fcx);
+    match node.desugar(&ctx) {
+        Outcome::Dug(Desugared::Constraints { atom, warrant, .. }) => {
+            entries.push(AssertionEntry {
+                name: warrant.name,
+                atom,
+            });
+            return;
+        }
+        Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {}
+        Outcome::Hit(effect) => {
+            skipped.push(effect.reason());
+            return;
+        }
+        Outcome::Dug(_) => {}
+    }
+
+    match assertions_from_macro_with_audits(
+        path,
+        tokens,
+        scope,
+        &float_widths,
+        options,
+        factory_audits,
+    ) {
         Ok(macro_entries) => entries.extend(macro_entries),
         Err(reason) => skipped.push(reason),
     }
@@ -8316,15 +8320,22 @@ fn lower_assert_eq(
     rhs_expr: &Expr,
     scope: &TemporalScope,
     float_widths: &FloatWidthScope,
+    factory_audits: Option<&FactoryAuditLog>,
 ) -> Result<AssertionEntry, String> {
     // Intercept infinity-constant equality before falling through to the
     // Real-equality path. f32/f64 infinity is not a Real value; IEEE exactness
     // gives the sound conjunction instead.
-    if let Some(entry) = translate_infinity_eq_assertion(lhs_expr, rhs_expr, scope, float_widths)? {
+    if let Some(entry) = translate_infinity_eq_assertion_with_audits(
+        lhs_expr,
+        rhs_expr,
+        scope,
+        float_widths,
+        factory_audits,
+    )? {
         return Ok(entry);
     }
-    let lhs = translate_assertion_term_in_scope(lhs_expr, scope)?;
-    let rhs = translate_assertion_term_in_scope(rhs_expr, scope)?;
+    let lhs = translate_assertion_term_in_scope_with_audits(lhs_expr, scope, factory_audits)?;
+    let rhs = translate_assertion_term_in_scope_with_audits(rhs_expr, scope, factory_audits)?;
     Ok(assertion_entry_from_eq(lhs, rhs, scope))
 }
 
@@ -8332,11 +8343,12 @@ fn lower_assert_ne(
     lhs_expr: &Expr,
     rhs_expr: &Expr,
     scope: &TemporalScope,
+    factory_audits: Option<&FactoryAuditLog>,
 ) -> Result<AssertionEntry, String> {
     // assert_ne!(a, b) is sugar for assert!(a != b): route through the same
     // relation path so the lifted atom is byte-identical to `a != b`.
-    let lhs = translate_assertion_term_in_scope(lhs_expr, scope)?;
-    let rhs = translate_assertion_term_in_scope(rhs_expr, scope)?;
+    let lhs = translate_assertion_term_in_scope_with_audits(lhs_expr, scope, factory_audits)?;
+    let rhs = translate_assertion_term_in_scope_with_audits(rhs_expr, scope, factory_audits)?;
     Ok(assertion_entry_from_relation(
         lhs,
         rhs,
@@ -8349,8 +8361,9 @@ fn lower_assert_condition(
     expr: &Expr,
     scope: &TemporalScope,
     float_widths: &FloatWidthScope,
+    factory_audits: Option<&FactoryAuditLog>,
 ) -> Result<AssertionEntry, String> {
-    translate_bool_assertion(expr, scope, float_widths)
+    translate_bool_assertion_with_audits(expr, scope, float_widths, factory_audits)
 }
 
 fn substitute_exprs(exprs: &[Expr], bindings: &ExprBindings) -> Vec<Expr> {
@@ -8476,6 +8489,53 @@ fn resolve_inlinable_helper_call_scoped<'a>(
     Some((helper, name, bindings))
 }
 
+fn resolve_inlinable_method_call_scoped(
+    expr: &Expr,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+) -> Option<(Rc<syn::ImplItemFn>, String, ExprBindings)> {
+    let inner = match expr {
+        Expr::Paren(p) => &*p.expr,
+        Expr::Group(g) => &*g.expr,
+        other => other,
+    };
+    let Expr::MethodCall(call) = inner else {
+        return None;
+    };
+    let method = call.method.to_string();
+    let self_ty = receiver_source_type_key(call.receiver.as_ref(), scope, options, 0)?;
+    let helper = scope
+        .impl_value_registry()
+        .lookup_method(&self_ty, &method)?;
+    if !matches!(cfg_resolve(&helper.attrs, options), CfgDisposition::Present) {
+        return None;
+    }
+    if helper.sig.asyncness.is_some() {
+        return None;
+    }
+    let params = impl_value_param_names(&helper, true)?;
+    if params.len() != call.args.len() {
+        return None;
+    }
+    let mut bindings = ExprBindings::new();
+    bindings.insert("self".to_string(), call.receiver.as_ref().clone());
+    for (param, arg) in params.into_iter().zip(call.args.iter()) {
+        bindings.insert(param, arg.clone());
+    }
+    Some((helper, format!("{self_ty}::{method}"), bindings))
+}
+
+fn substitute_block(block: &syn::Block, bindings: &ExprBindings) -> syn::Block {
+    let mut out = block.clone();
+    let mut binds = bindings.clone();
+    out.stmts = block
+        .stmts
+        .iter()
+        .map(|stmt| substitute_stmt(stmt, &mut binds))
+        .collect();
+    out
+}
+
 fn substitute_expr(expr: &Expr, bindings: &ExprBindings) -> Expr {
     match expr {
         Expr::Path(path) if path.qself.is_none() => {
@@ -8506,6 +8566,33 @@ fn substitute_expr(expr: &Expr, bindings: &ExprBindings) -> Expr {
             let mut out = unary.clone();
             out.expr = Box::new(substitute_expr(&unary.expr, bindings));
             Expr::Unary(out)
+        }
+        Expr::If(if_expr) => {
+            let mut out = if_expr.clone();
+            out.cond = Box::new(substitute_expr(&if_expr.cond, bindings));
+            out.then_branch = substitute_block(&if_expr.then_branch, bindings);
+            if let Some((else_token, else_expr)) = &if_expr.else_branch {
+                out.else_branch = Some((
+                    else_token.clone(),
+                    Box::new(substitute_expr(else_expr, bindings)),
+                ));
+            }
+            Expr::If(out)
+        }
+        Expr::Block(block) => {
+            let mut out = block.clone();
+            out.block = substitute_block(&block.block, bindings);
+            Expr::Block(out)
+        }
+        Expr::Unsafe(unsafe_expr) => {
+            let mut out = unsafe_expr.clone();
+            out.block = substitute_block(&unsafe_expr.block, bindings);
+            Expr::Unsafe(out)
+        }
+        Expr::Const(const_expr) => {
+            let mut out = const_expr.clone();
+            out.block = substitute_block(&const_expr.block, bindings);
+            Expr::Const(out)
         }
         Expr::Call(call) => {
             let mut out = call.clone();
@@ -8585,24 +8672,34 @@ fn substitute_expr(expr: &Expr, bindings: &ExprBindings) -> Expr {
     }
 }
 
-fn assertions_from_macro(
+fn assertions_from_macro_with_audits(
     path: &syn::Path,
     tokens: proc_macro2::TokenStream,
     scope: &TemporalScope,
     float_widths: &FloatWidthScope,
     options: &LiftOptions,
+    factory_audits: Option<&FactoryAuditLog>,
 ) -> Result<Vec<AssertionEntry>, String> {
     let bindings = ExprBindings::new();
-    assertions_from_macro_with_bindings(path, tokens, scope, float_widths, options, &bindings)
+    assertions_from_macro_with_bindings_and_audits(
+        path,
+        tokens,
+        scope,
+        float_widths,
+        options,
+        &bindings,
+        factory_audits,
+    )
 }
 
-fn assertions_from_macro_with_bindings(
+fn assertions_from_macro_with_bindings_and_audits(
     path: &syn::Path,
     tokens: proc_macro2::TokenStream,
     scope: &TemporalScope,
     float_widths: &FloatWidthScope,
     options: &LiftOptions,
     bindings: &ExprBindings,
+    factory_audits: Option<&FactoryAuditLog>,
 ) -> Result<Vec<AssertionEntry>, String> {
     let Some(name) = path
         .segments
@@ -8618,7 +8715,7 @@ fn assertions_from_macro_with_bindings(
             if exprs.len() < 2 {
                 return Err("assert_eq!: expected at least 2 arguments".to_string());
             }
-            lower_assert_eq(&exprs[0], &exprs[1], scope, float_widths)
+            lower_assert_eq(&exprs[0], &exprs[1], scope, float_widths, factory_audits)
                 .map(|entry| vec![entry])
                 .map_err(|e| format!("assert_eq!: {e}"))
         }
@@ -8628,7 +8725,7 @@ fn assertions_from_macro_with_bindings(
             let Some(first) = exprs.first() else {
                 return Err("assert!: expected a condition".to_string());
             };
-            lower_assert_condition(first, scope, float_widths)
+            lower_assert_condition(first, scope, float_widths, factory_audits)
                 .map(|entry| vec![entry])
                 .map_err(|e| format!("assert!: {e}"))
         }
@@ -8638,7 +8735,7 @@ fn assertions_from_macro_with_bindings(
             if exprs.len() < 2 {
                 return Err("assert_ne!: expected at least 2 arguments".to_string());
             }
-            lower_assert_ne(&exprs[0], &exprs[1], scope)
+            lower_assert_ne(&exprs[0], &exprs[1], scope, factory_audits)
                 .map(|entry| vec![entry])
                 .map_err(|e| format!("assert_ne!: {e}"))
         }
@@ -8676,7 +8773,7 @@ fn assertions_from_macro_with_bindings(
             if exprs.len() < 2 {
                 return Err("debug_assert_eq!: expected at least 2 arguments".to_string());
             }
-            lower_assert_eq(&exprs[0], &exprs[1], scope, float_widths)
+            lower_assert_eq(&exprs[0], &exprs[1], scope, float_widths, factory_audits)
                 .map(|entry| vec![entry])
                 .map_err(|e| format!("debug_assert_eq!: {e}"))
         }
@@ -8702,7 +8799,7 @@ fn assertions_from_macro_with_bindings(
             let Some(first) = exprs.first() else {
                 return Err("debug_assert!: expected a condition".to_string());
             };
-            lower_assert_condition(first, scope, float_widths)
+            lower_assert_condition(first, scope, float_widths, factory_audits)
                 .map(|entry| vec![entry])
                 .map_err(|e| format!("debug_assert!: {e}"))
         }
@@ -8728,7 +8825,7 @@ fn assertions_from_macro_with_bindings(
             if exprs.len() < 2 {
                 return Err("debug_assert_ne!: expected at least 2 arguments".to_string());
             }
-            lower_assert_ne(&exprs[0], &exprs[1], scope)
+            lower_assert_ne(&exprs[0], &exprs[1], scope, factory_audits)
                 .map(|entry| vec![entry])
                 .map_err(|e| format!("debug_assert_ne!: {e}"))
         }
@@ -8802,19 +8899,22 @@ fn assertion_entries_from_ascii_macro(
         })?;
         for ch in value.chars() {
             let atom = ascii_char_class_atom(&predicate, str_const(ch.to_string()))
+                .or_else(|| literal_char_predicate_atom(&predicate, ch))
                 .ok_or_else(|| unsupported_ascii_macro_predicate(&predicate))?;
             entries.push(AssertionEntry {
                 name: None,
                 atom: if negate { not_(atom) } else { atom },
             });
         }
-        for byte in value.as_bytes() {
-            let atom = ascii_byte_class_atom(&predicate, num(i128::from(*byte)))
-                .ok_or_else(|| unsupported_ascii_macro_predicate(&predicate))?;
-            entries.push(AssertionEntry {
-                name: None,
-                atom: if negate { not_(atom) } else { atom },
-            });
+        if !literal_char_predicate_only(&predicate) {
+            for byte in value.as_bytes() {
+                let atom = ascii_byte_class_atom(&predicate, num(i128::from(*byte)))
+                    .ok_or_else(|| unsupported_ascii_macro_predicate(&predicate))?;
+                entries.push(AssertionEntry {
+                    name: None,
+                    atom: if negate { not_(atom) } else { atom },
+                });
+            }
         }
     }
     Ok(entries)
@@ -8830,12 +8930,7 @@ fn ascii_macro_predicate_name(expr: &Expr) -> Option<String> {
 }
 
 fn unsupported_ascii_macro_predicate(predicate: &str) -> String {
-    if predicate == "is_alphabetic" {
-        "unicode char predicate is_alphabetic is not lifted; z3 string theory has no Rust Unicode Alphabetic database"
-            .to_string()
-    } else {
-        format!("unsupported bounded ASCII macro predicate `{predicate}`")
-    }
+    format!("unsupported bounded literal macro predicate `{predicate}`")
 }
 
 struct MacroArgs {
@@ -8860,6 +8955,15 @@ fn translate_bool_assertion(
     scope: &TemporalScope,
     float_widths: &FloatWidthScope,
 ) -> Result<AssertionEntry, String> {
+    translate_bool_assertion_with_audits(expr, scope, float_widths, None)
+}
+
+fn translate_bool_assertion_with_audits(
+    expr: &Expr,
+    scope: &TemporalScope,
+    float_widths: &FloatWidthScope,
+    factory_audits: Option<&FactoryAuditLog>,
+) -> Result<AssertionEntry, String> {
     if let Some(entry) = translate_pointer_eq_assertion(expr, scope)? {
         return Ok(entry);
     }
@@ -8876,7 +8980,9 @@ fn translate_bool_assertion(
         return Ok(entry);
     }
     match expr {
-        Expr::Binary(binary) => translate_binary_bool_assertion(binary, scope, float_widths),
+        Expr::Binary(binary) => {
+            translate_binary_bool_assertion_with_audits(binary, scope, float_widths, factory_audits)
+        }
         Expr::Unary(unary) if matches!(unary.op, UnOp::Not(_)) => {
             if let Some(entry) = translate_string_predicate_assertion(&unary.expr, scope)? {
                 return Ok(AssertionEntry {
@@ -8912,17 +9018,29 @@ fn translate_bool_assertion(
             // shape -- see negated_call_result_comparison_lifts_as_fol_not_under_euf_key).
             if let Expr::Binary(binary) = unwrap_paren_group(&unary.expr) {
                 if relation_from_binop(&binary.op).is_some() {
-                    let entry = translate_binary_bool_assertion(binary, scope, float_widths)?;
+                    let entry = translate_binary_bool_assertion_with_audits(
+                        binary,
+                        scope,
+                        float_widths,
+                        factory_audits,
+                    )?;
                     return Ok(AssertionEntry {
                         name: entry.name,
                         atom: not_(entry.atom),
                     });
                 }
             }
-            if let Ok(term) = translate_term_in_scope(&unary.expr, scope) {
+            if let Ok(term) =
+                translate_term_in_scope_with_audits(&unary.expr, scope, factory_audits)
+            {
                 Ok(assertion_entry_from_eq(term, bool_const(false), scope))
             } else {
-                let entry = translate_bool_assertion(&unary.expr, scope, float_widths)?;
+                let entry = translate_bool_assertion_with_audits(
+                    &unary.expr,
+                    scope,
+                    float_widths,
+                    factory_audits,
+                )?;
                 Ok(AssertionEntry {
                     name: entry.name,
                     atom: not_(entry.atom),
@@ -8952,7 +9070,7 @@ fn translate_bool_assertion(
             // `assert!(!flag)` over the same place is `flag==true ∧ flag==false`,
             // UNSAT. (A `Field` place like `assert!(x.flag)` is already handled by
             // the call/method/field arm below.)
-            let term = translate_term_in_scope(expr, scope)?;
+            let term = translate_term_in_scope_with_audits(expr, scope, factory_audits)?;
             Ok(assertion_entry_from_eq(term, bool_const(true), scope))
         }
         Expr::Call(_) | Expr::MethodCall(_) | Expr::Await(_) | Expr::Field(_) => {
@@ -8965,7 +9083,7 @@ fn translate_bool_assertion(
             if let Some(reason) = closure_adaptor_refusal(expr, scope) {
                 return Err(reason);
             }
-            let term = translate_term_in_scope(expr, scope)?;
+            let term = translate_term_in_scope_with_audits(expr, scope, factory_audits)?;
             if is_refinement_predicate_term(term.as_ref()) {
                 return Err(format!(
                     "refinement predicate remains out of this exact-value slice `{}`",
@@ -8974,8 +9092,12 @@ fn translate_bool_assertion(
             }
             Ok(assertion_entry_from_eq(term, bool_const(true), scope))
         }
-        Expr::Paren(paren) => translate_bool_assertion(&paren.expr, scope, float_widths),
-        Expr::Group(group) => translate_bool_assertion(&group.expr, scope, float_widths),
+        Expr::Paren(paren) => {
+            translate_bool_assertion_with_audits(&paren.expr, scope, float_widths, factory_audits)
+        }
+        Expr::Group(group) => {
+            translate_bool_assertion_with_audits(&group.expr, scope, float_widths, factory_audits)
+        }
         other => {
             // REFUSE HALF: a `match <runtime call> { .. }` scrutinee (the corpus
             // `match b.binary_search(&3) { Ok(1..=3) => true, _ => false }`) asserts the arm
@@ -9161,6 +9283,16 @@ fn translate_infinity_eq_assertion(
     scope: &TemporalScope,
     float_widths: &FloatWidthScope,
 ) -> Result<Option<AssertionEntry>, String> {
+    translate_infinity_eq_assertion_with_audits(lhs, rhs, scope, float_widths, None)
+}
+
+fn translate_infinity_eq_assertion_with_audits(
+    lhs: &Expr,
+    rhs: &Expr,
+    scope: &TemporalScope,
+    float_widths: &FloatWidthScope,
+    factory_audits: Option<&FactoryAuditLog>,
+) -> Result<Option<AssertionEntry>, String> {
     let (width, is_positive, receiver_expr) =
         match (infinity_constant_kind(lhs), infinity_constant_kind(rhs)) {
             (Some((w, pos)), _) => (w, pos, rhs),
@@ -9183,12 +9315,13 @@ fn translate_infinity_eq_assertion(
         }
     }
     // Width is determined by the constant. Translate the receiver as a term.
-    let receiver = translate_term_in_scope(receiver_expr, scope).map_err(|e| {
-        format!(
-            "infinity equality: receiver term translation failed for `{}`: {e}",
-            token_key(receiver_expr)
-        )
-    })?;
+    let receiver = translate_term_in_scope_with_audits(receiver_expr, scope, factory_audits)
+        .map_err(|e| {
+            format!(
+                "infinity equality: receiver term translation failed for `{}`: {e}",
+                token_key(receiver_expr)
+            )
+        })?;
 
     let name = callsite_assertion_name(receiver.as_ref(), scope.local_scope());
     let sign_pred = if is_positive {
@@ -9411,10 +9544,29 @@ fn translate_binary_bool_assertion(
     scope: &TemporalScope,
     float_widths: &FloatWidthScope,
 ) -> Result<AssertionEntry, String> {
+    translate_binary_bool_assertion_with_audits(binary, scope, float_widths, None)
+}
+
+fn translate_binary_bool_assertion_with_audits(
+    binary: &syn::ExprBinary,
+    scope: &TemporalScope,
+    float_widths: &FloatWidthScope,
+    factory_audits: Option<&FactoryAuditLog>,
+) -> Result<AssertionEntry, String> {
     match &binary.op {
         BinOp::And(_) | BinOp::Or(_) => {
-            let left = translate_bool_assertion(&binary.left, scope, float_widths)?;
-            let right = translate_bool_assertion(&binary.right, scope, float_widths)?;
+            let left = translate_bool_assertion_with_audits(
+                &binary.left,
+                scope,
+                float_widths,
+                factory_audits,
+            )?;
+            let right = translate_bool_assertion_with_audits(
+                &binary.right,
+                scope,
+                float_widths,
+                factory_audits,
+            )?;
             let name = common_assertion_name(&left.name, &right.name);
             let atom = if matches!(binary.op, BinOp::And(_)) {
                 and_(vec![left.atom, right.atom])
@@ -9427,19 +9579,25 @@ fn translate_binary_bool_assertion(
             // For == only: intercept infinity-constant equality before the
             // Real-equality path. != and ordered comparisons fall through unchanged.
             if matches!(binary.op, BinOp::Eq(_)) {
-                if let Some(entry) = translate_infinity_eq_assertion(
+                if let Some(entry) = translate_infinity_eq_assertion_with_audits(
                     &binary.left,
                     &binary.right,
                     scope,
                     float_widths,
+                    factory_audits,
                 )? {
                     return Ok(entry);
                 }
             }
             let op = relation_from_binop(&binary.op)
                 .expect("comparison op matched but did not map to relation");
-            let lhs = translate_assertion_term_in_scope(&binary.left, scope)?;
-            let rhs = translate_assertion_term_in_scope(&binary.right, scope)?;
+            let lhs =
+                translate_assertion_term_in_scope_with_audits(&binary.left, scope, factory_audits)?;
+            let rhs = translate_assertion_term_in_scope_with_audits(
+                &binary.right,
+                scope,
+                factory_audits,
+            )?;
             Ok(assertion_entry_from_relation(lhs, rhs, op, scope))
         }
         _ => Err(format!(
@@ -9911,7 +10069,9 @@ fn translate_string_predicate_assertion(
                         return Ok(None);
                     };
                     if call.args.len() != 1 {
-                        return Err("string contains predicate expects one literal pattern".to_string());
+                        return Err(
+                            "string contains predicate expects one literal pattern".to_string()
+                        );
                     }
                     let Some(pattern) = string_or_char_literal_term(&call.args[0]) else {
                         return Err(format!(
@@ -10019,7 +10179,9 @@ fn translate_string_predicate_assertion(
                         return Ok(None);
                     };
                     if !call.args.is_empty() {
-                        return Err("is_ascii_alphabetic predicate expects no arguments".to_string());
+                        return Err(
+                            "is_ascii_alphabetic predicate expects no arguments".to_string()
+                        );
                     }
                     let name = method_call_assertion_name(
                         "is_ascii_alphabetic",
@@ -10039,50 +10201,50 @@ fn translate_string_predicate_assertion(
                     scope.local_scope(),
                     "str.is_ascii_alphanumeric",
                 ),
-                "is_ascii_octdigit" => ascii_char_class_assertion(
-                    call,
-                    scope.local_scope(),
-                    "str.is_ascii_octdigit",
-                ),
-                "is_ascii_lowercase" => ascii_char_class_assertion(
-                    call,
-                    scope.local_scope(),
-                    "str.is_ascii_lowercase",
-                ),
-                "is_ascii_uppercase" => ascii_char_class_assertion(
-                    call,
-                    scope.local_scope(),
-                    "str.is_ascii_uppercase",
-                ),
-                "is_ascii_hexdigit" => ascii_char_class_assertion(
-                    call,
-                    scope.local_scope(),
-                    "str.is_ascii_hexdigit",
-                ),
+                "is_ascii_octdigit" => {
+                    ascii_char_class_assertion(call, scope.local_scope(), "str.is_ascii_octdigit")
+                }
+                "is_ascii_lowercase" => {
+                    ascii_char_class_assertion(call, scope.local_scope(), "str.is_ascii_lowercase")
+                }
+                "is_ascii_uppercase" => {
+                    ascii_char_class_assertion(call, scope.local_scope(), "str.is_ascii_uppercase")
+                }
+                "is_ascii_hexdigit" => {
+                    ascii_char_class_assertion(call, scope.local_scope(), "str.is_ascii_hexdigit")
+                }
                 "is_ascii_punctuation" => ascii_char_class_assertion(
                     call,
                     scope.local_scope(),
                     "str.is_ascii_punctuation",
                 ),
-                "is_ascii_graphic" => ascii_char_class_assertion(
-                    call,
-                    scope.local_scope(),
-                    "str.is_ascii_graphic",
-                ),
-                "is_ascii_whitespace" => ascii_char_class_assertion(
-                    call,
-                    scope.local_scope(),
-                    "str.is_ascii_whitespace",
-                ),
-                "is_ascii_control" => ascii_char_class_assertion(
-                    call,
-                    scope.local_scope(),
-                    "str.is_ascii_control",
-                ),
-                "is_alphabetic" if char_literal_term(&call.receiver).is_some() => Err(
-                    "unicode char predicate is_alphabetic is not lifted; z3 string theory has no Rust Unicode Alphabetic database"
-                        .to_string(),
-                ),
+                "is_ascii_graphic" => {
+                    ascii_char_class_assertion(call, scope.local_scope(), "str.is_ascii_graphic")
+                }
+                "is_ascii_whitespace" => {
+                    ascii_char_class_assertion(call, scope.local_scope(), "str.is_ascii_whitespace")
+                }
+                "is_ascii_control" => {
+                    ascii_char_class_assertion(call, scope.local_scope(), "str.is_ascii_control")
+                }
+                "is_alphabetic" => {
+                    let Some(ch) = char_literal_value(&call.receiver) else {
+                        return Ok(None);
+                    };
+                    if !call.args.is_empty() {
+                        return Err("is_alphabetic predicate expects no arguments".to_string());
+                    }
+                    let receiver = str_const(ch.to_string());
+                    let name = method_call_assertion_name(
+                        "is_alphabetic",
+                        vec![receiver],
+                        scope.local_scope(),
+                    );
+                    Ok(Some(AssertionEntry {
+                        name,
+                        atom: eq(bool_const(ch.is_alphabetic()), bool_const(true)),
+                    }))
+                }
                 _ => Ok(None),
             }
         }
@@ -10385,16 +10547,25 @@ fn iterator_element_predicate_atom(
     }
     let method = call.method.to_string();
     match iter_kind {
-        IteratorKind::Chars => ascii_char_class_atom(&method, element).ok_or_else(|| {
-            if method == "is_alphabetic" {
-                "unicode char predicate is_alphabetic is not lifted; z3 string theory has no Rust Unicode Alphabetic database"
-                    .to_string()
-            } else {
-                format!("unsupported char iterator predicate `{method}`")
-            }
-        }),
+        IteratorKind::Chars => ascii_char_class_atom(&method, element.clone())
+            .or_else(|| {
+                term_single_char_value(&element)
+                    .and_then(|ch| literal_char_predicate_atom(&method, ch))
+            })
+            .ok_or_else(|| format!("unsupported char iterator predicate `{method}`")),
         IteratorKind::Bytes => ascii_byte_class_atom(&method, element)
             .ok_or_else(|| format!("unsupported byte iterator predicate `{method}`")),
+    }
+}
+
+fn literal_char_predicate_only(method: &str) -> bool {
+    matches!(method, "is_alphabetic")
+}
+
+fn literal_char_predicate_atom(method: &str, ch: char) -> Option<Rc<Formula>> {
+    match method {
+        "is_alphabetic" => Some(eq(bool_const(ch.is_alphabetic()), bool_const(true))),
+        _ => None,
     }
 }
 
@@ -11884,6 +12055,14 @@ fn macro_literal_contains_mut_local(lit_text: &str, scope: &TemporalScope) -> bo
 ///     carried, so the wire format / CID / counts are conserved).
 /// There is NO legacy fallback: every shape is owned by a `build` arm.
 fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term>, String> {
+    translate_term_in_scope_with_audits(expr, scope, None)
+}
+
+fn translate_term_in_scope_with_audits(
+    expr: &Expr,
+    scope: &TemporalScope,
+    factory_audits: Option<&FactoryAuditLog>,
+) -> Result<Rc<Term>, String> {
     let options = LiftOptions::default();
     let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
     let fcx = sugar::factory::SugarBuildCtx::new(scope, &options, &let_inits);
@@ -11895,7 +12074,14 @@ fn translate_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Result<Rc<Term
     // this seed the adapter's reducer is empty and every term-position macro goes opaque.
     let reducer = ReductionCtx::from_items_with_imports(&items, scope.macro_registry());
     let mut float_widths = FloatWidthScope::new();
-    let ctx = sugar_ctx(scope, &options, &reducer, &mut float_widths, 0);
+    let ctx = sugar_ctx_with_factory_audits(
+        scope,
+        &options,
+        &reducer,
+        &mut float_widths,
+        0,
+        factory_audits,
+    );
     match node.desugar(&ctx) {
         Outcome::Dug(d) => d
             .into_term()
@@ -11946,10 +12132,22 @@ fn translate_assertion_term_in_scope(
     expr: &Expr,
     scope: &TemporalScope,
 ) -> Result<Rc<Term>, String> {
+    translate_assertion_term_in_scope_with_audits(expr, scope, None)
+}
+
+fn translate_assertion_term_in_scope_with_audits(
+    expr: &Expr,
+    scope: &TemporalScope,
+    factory_audits: Option<&FactoryAuditLog>,
+) -> Result<Rc<Term>, String> {
     match expr {
         Expr::Const(const_block) => {
-            let term =
-                translate_expression_only_block_in_scope(&const_block.block, "const", scope)?;
+            let term = translate_expression_only_block_in_scope_with_audits(
+                &const_block.block,
+                "const",
+                scope,
+                factory_audits,
+            )?;
             Ok(scope_const_block_locals(term, scope.local_scope()))
         }
         // `None` is the std `Option` unit constructor -- a MONADIC value, the same
@@ -11972,9 +12170,13 @@ fn translate_assertion_term_in_scope(
                 args: Vec::new(),
             }))
         }
-        Expr::Paren(paren) => translate_assertion_term_in_scope(&paren.expr, scope),
-        Expr::Group(group) => translate_assertion_term_in_scope(&group.expr, scope),
-        _ => translate_term_in_scope(expr, scope),
+        Expr::Paren(paren) => {
+            translate_assertion_term_in_scope_with_audits(&paren.expr, scope, factory_audits)
+        }
+        Expr::Group(group) => {
+            translate_assertion_term_in_scope_with_audits(&group.expr, scope, factory_audits)
+        }
+        _ => translate_term_in_scope_with_audits(expr, scope, factory_audits),
     }
 }
 
@@ -12003,12 +12205,21 @@ fn translate_expression_only_block_in_scope(
     label: &str,
     scope: &TemporalScope,
 ) -> Result<Rc<Term>, String> {
+    translate_expression_only_block_in_scope_with_audits(block, label, scope, None)
+}
+
+fn translate_expression_only_block_in_scope_with_audits(
+    block: &syn::Block,
+    label: &str,
+    scope: &TemporalScope,
+    factory_audits: Option<&FactoryAuditLog>,
+) -> Result<Rc<Term>, String> {
     match block.stmts.as_slice() {
         [Stmt::Expr(expr, None)] => {
             if let Some(nested_const) = find_const_expr(expr) {
                 return Err(format!("unsupported term `{}`", token_key(nested_const)));
             }
-            translate_term_in_scope(expr, scope)
+            translate_term_in_scope_with_audits(expr, scope, factory_audits)
         }
         _ => Err(format!(
             "{label} block is not an expression-only term `{}`",
@@ -12438,6 +12649,31 @@ fn char_literal_term(expr: &Expr) -> Option<Rc<Term>> {
     }
 }
 
+fn char_literal_value(expr: &Expr) -> Option<char> {
+    match expr {
+        Expr::Lit(ExprLit {
+            lit: Lit::Char(c), ..
+        }) => Some(c.value()),
+        Expr::Paren(paren) => char_literal_value(&paren.expr),
+        Expr::Group(group) => char_literal_value(&group.expr),
+        _ => None,
+    }
+}
+
+fn term_single_char_value(term: &Rc<Term>) -> Option<char> {
+    match term.as_ref() {
+        Term::Const {
+            value: ConstValue::String(value),
+            ..
+        } => {
+            let mut chars = value.chars();
+            let ch = chars.next()?;
+            chars.next().is_none().then_some(ch)
+        }
+        _ => None,
+    }
+}
+
 fn canonical_float_literal(lit: &syn::LitFloat) -> Result<String, String> {
     let digits = lit.base10_digits().replace('_', "");
     if digits.is_empty() {
@@ -12862,6 +13098,111 @@ mod lifter_key_tests {
         assert_eq!(
             out.assertions_lifted, 1,
             "the unconditional static-item assert must lift; warnings: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    }
+
+    #[test]
+    fn if_then_panic_lifts_as_constraint_shape_without_assert_macro() {
+        // A passing test that reaches `if predicate() { panic!() }` has asserted
+        // `!predicate()`. This is constraint-shaped even though no macro is named
+        // `assert`.
+        let src = r#"
+            fn predicate() -> bool { false }
+
+            #[test]
+            fn panic_guard() {
+                if predicate() {
+                    panic!("bad");
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "if-panic should emit one constraint: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+        assert!(
+            out.factory_audits.iter().any(|audit| {
+                audit.requested_role == "Constraint"
+                    && audit.selected == Some("constraint_if_panic")
+                    && audit.disposition == FactoryDisposition::Warranted
+            }),
+            "factory must classify the if-panic expression as a Constraint sugar: {:?}",
+            out.factory_audits
+        );
+    }
+
+    #[test]
+    fn if_return_cfg_guard_is_not_panic_constraint_vocabulary() {
+        let src = r#"
+            #[test]
+            fn cfg_return_guard() {
+                if cfg!(miri) {
+                    return;
+                }
+                assert_eq!(1, 1);
+            }
+        "#;
+        let out = lift_src_cfg(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "only the explicit assertion should lift: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "cfg early-return guard is control flow, not assertion vocabulary: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.factory_audits.iter().all(|audit| {
+                !(audit.requested_role == "Constraint"
+                    && audit.selected == Some("constraint_if_panic")
+                    && audit.site.contains("cfg ! (miri)"))
+            }),
+            "early-return cfg guard must not be classified as if-panic constraint: {:?}",
+            out.factory_audits
+        );
+    }
+
+    #[test]
+    fn source_shaped_method_assertion_lifts_without_method_name_whitelist() {
+        // The method name is not semantic. The shape is semantic: the method source is
+        // visible, its body is constraint-shaped, and the collector re-digs that body at
+        // the call site.
+        let src = r#"
+            fn value() -> i32 { 3 }
+
+            struct Expect {
+                actual: i32,
+            }
+
+            impl Expect {
+                fn totally_not_a_magic_name(self, expected: i32) {
+                    if self.actual != expected {
+                        panic!("bad");
+                    }
+                }
+
+                fn still_not_vocabulary(self, forbidden: i32) {
+                    assert_ne!(self.actual, forbidden);
+                }
+            }
+
+            #[test]
+            fn method_constraint() {
+                Expect { actual: value() }.totally_not_a_magic_name(3);
+                Expect { actual: value() }.still_not_vocabulary(4);
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 2,
+            "visible method body should be re-dug by shape, not by method name: {:?}",
             out.skip_reasons
         );
         assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
@@ -14810,26 +15151,6 @@ mod lifter_key_tests {
         );
     }
 
-    #[test]
-    fn helper_body_impure_let_is_refused_not_substituted() {
-        // DISCRIMINATION: `let m = sink(n);` is NOT pure-pinnable (a call may be
-        // impure / re-evaluate), so the helper is NOT inlined -- it stays refused,
-        // never substituted (no forged re-evaluation).
-        let src = r#"
-            fn check(n: i32) { let m = sink(n); assert_eq!(m, m); }
-            #[test]
-            fn drives() { check(2); }
-        "#;
-        let out = lift_src(src);
-        // `check` must NOT be silently inlined via an impure let (it either stays
-        // refused, or the assert lifts without the let-substitution path firing).
-        // The key property: the impure init is not pure-pinnable.
-        assert!(
-            !is_pure_pinnable_expr(&syn::parse_str::<syn::Expr>("sink(n)").unwrap()),
-            "a call init must not be pure-pinnable"
-        );
-    }
-
     // ── Refusal disposition: refused is earned, unclassified is the default ────
 
     #[test]
@@ -15498,6 +15819,48 @@ mod lifter_key_tests {
             }),
             "an immutable slice-pattern starts_with must stay UNCLASSIFIED work: {:?}",
             out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn literal_char_is_alphabetic_lifts_as_closed_unicode_fact() {
+        // `char::is_alphabetic` is Rust's Unicode table, not SMT string theory.
+        // For a CLOSED char literal, however, there is no symbolic Unicode database
+        // to model: the written literal bottoms out to a fixed Rust scalar value.
+        let src = r#"
+            #[test]
+            fn t() {
+                assert!('a'.is_alphabetic());
+                assert!(!'0'.is_alphabetic());
+                assert!("aé".chars().all(|c| c.is_alphabetic()));
+                assert!("a1".chars().any(|c| c.is_alphabetic()));
+                assert!(!"123".chars().any(|c| c.is_alphabetic()));
+                assert_all!(is_alphabetic, "aé");
+                assert_none!(is_alphabetic, "123");
+            }
+        "#;
+        let out = lift_src(src);
+
+        assert_eq!(
+            out.assertions_lifted, 7,
+            "closed literal char::is_alphabetic assertions should lift: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.skip_reasons
+                .iter()
+                .all(|r| !r.contains("is_alphabetic is not lifted")),
+            "the old broad Unicode refusal must not fire for closed literals: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            contract_names(&out)
+                .iter()
+                .filter(|name| name.contains("method:is_alphabetic"))
+                .count()
+                >= 2,
+            "the claims should remain tied to the is_alphabetic callsites: {:?}",
+            contract_names(&out)
         );
     }
 

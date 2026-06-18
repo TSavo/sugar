@@ -33,8 +33,9 @@
 // happened (the typed `Outcome`/`Effect` machinery) for the STEP-1 census.
 
 use std::collections::{BTreeSet, HashSet};
+use std::rc::Rc;
 
-use syn::{Expr, ItemFn};
+use syn::{Expr, ImplItemFn, ItemFn, Stmt};
 
 // Child of crate root: sees crate-root-private items (the Sugar hierarchy, the
 // collector, the resolver, the substitution, the disposition classifier).
@@ -42,8 +43,9 @@ use std::collections::BTreeMap;
 
 use crate::{
     child_block_scope, collect_assertion_entries, refusal_disposition,
-    resolve_inlinable_helper_call_scoped, substitute_stmts, AssertionEntry, Disposition,
-    ExprBindings, FloatWidthScope, LiftOptions, ReductionCtx, MAX_MACRO_EXPANSION_DEPTH,
+    resolve_inlinable_helper_call_scoped, resolve_inlinable_method_call_scoped, substitute_stmts,
+    AssertionEntry, Disposition, ExprBindings, FactoryAuditLog, FloatWidthScope, LiftOptions,
+    ReductionCtx, TemporalScope, MAX_MACRO_EXPANSION_DEPTH,
 };
 
 /// A call-site inlining opportunity, decomposed from a bare call statement. The
@@ -54,6 +56,16 @@ use crate::{
 /// from (the helper is `&'a ItemFn`, owned by the parsed `syn::File`).
 pub(crate) struct CallsiteSugar<'a> {
     pub(crate) helper: &'a ItemFn,
+    pub(crate) name: String,
+    pub(crate) closed_args: ExprBindings,
+}
+
+/// A source-backed method-call inlining opportunity. The method name is not assertion
+/// vocabulary; it is only a path to visible source. Its body is substituted and
+/// re-entered through the same collector, so assertion meaning comes from shapes such as
+/// `lhs cmp rhs`, `assert!(...)`, or `if cond { panic!() }`.
+pub(crate) struct MethodCallsiteSugar {
+    pub(crate) helper: Rc<ImplItemFn>,
     pub(crate) name: String,
     pub(crate) closed_args: ExprBindings,
 }
@@ -204,49 +216,129 @@ impl<'a> CallsiteSugar<'a> {
         float_widths: &mut FloatWidthScope,
         reduced_helpers: &HashSet<String>,
         macro_depth: usize,
+        factory_audits: Option<&FactoryAuditLog>,
     ) -> CallsiteOutcome {
-        let subst = substitute_stmts(&self.helper.block.stmts, &self.closed_args);
-        let mut te: Vec<AssertionEntry> = Vec::new();
-        let mut ts: Vec<String> = Vec::new();
-        let mut tl = 0usize;
-        let mut th = reduced_helpers.clone();
-        collect_assertion_entries(
-            &subst,
-            &child_block_scope(local_scope, stmt_idx),
+        desugar_substituted_stmts(
+            &self.name,
+            &self.helper.block.stmts,
+            &self.closed_args,
+            local_scope,
+            stmt_idx,
             options,
             reducer,
             float_widths,
-            &mut te,
-            &mut ts,
-            &mut tl,
-            &mut th,
-            macro_depth + 1,
-            &BTreeSet::new(),
-            &BTreeMap::new(),
-        );
-        let unclassified: Vec<&String> = ts
-            .iter()
-            .filter(|r| matches!(refusal_disposition(r), Disposition::Unclassified))
-            .collect();
-        if unclassified.is_empty() {
-            th.insert(self.name.clone());
-            CallsiteOutcome::Dug(InlineCommit {
-                entries: te,
-                skipped: ts,
-                macros_lifted: tl,
-                reduced_helpers: th,
-                name: self.name.clone(),
-            })
-        } else {
-            let mut sample_reasons: Vec<String> =
-                unclassified.iter().map(|r| (*r).clone()).collect();
-            sample_reasons.sort();
-            sample_reasons.dedup();
-            CallsiteOutcome::Bail(BailCause::UnclassifiedResidue {
-                added_unclassified: unclassified.len(),
-                sample_reasons,
-            })
+            reduced_helpers,
+            macro_depth,
+            factory_audits,
+        )
+    }
+}
+
+impl MethodCallsiteSugar {
+    pub(crate) fn decompose(
+        expr: &Expr,
+        scope: &TemporalScope,
+        options: &LiftOptions,
+        macro_depth: usize,
+    ) -> Option<MethodCallsiteSugar> {
+        if macro_depth >= MAX_MACRO_EXPANSION_DEPTH {
+            return None;
         }
+        let (helper, name, closed_args) =
+            resolve_inlinable_method_call_scoped(expr, scope, options)?;
+        Some(MethodCallsiteSugar {
+            helper,
+            name,
+            closed_args,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn desugar(
+        &self,
+        local_scope: &str,
+        stmt_idx: usize,
+        options: &LiftOptions,
+        reducer: &ReductionCtx<'_>,
+        float_widths: &mut FloatWidthScope,
+        reduced_helpers: &HashSet<String>,
+        macro_depth: usize,
+        factory_audits: Option<&FactoryAuditLog>,
+    ) -> CallsiteOutcome {
+        desugar_substituted_stmts(
+            &self.name,
+            &self.helper.block.stmts,
+            &self.closed_args,
+            local_scope,
+            stmt_idx,
+            options,
+            reducer,
+            float_widths,
+            reduced_helpers,
+            macro_depth,
+            factory_audits,
+        )
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn desugar_substituted_stmts(
+    name: &str,
+    stmts: &[Stmt],
+    closed_args: &ExprBindings,
+    local_scope: &str,
+    stmt_idx: usize,
+    options: &LiftOptions,
+    reducer: &ReductionCtx<'_>,
+    float_widths: &mut FloatWidthScope,
+    reduced_helpers: &HashSet<String>,
+    macro_depth: usize,
+    factory_audits: Option<&FactoryAuditLog>,
+) -> CallsiteOutcome {
+    let subst = substitute_stmts(stmts, closed_args);
+    let mut te: Vec<AssertionEntry> = Vec::new();
+    let mut ts: Vec<String> = Vec::new();
+    let mut tl = 0usize;
+    let mut th = reduced_helpers.clone();
+    collect_assertion_entries(
+        &subst,
+        &child_block_scope(local_scope, stmt_idx),
+        options,
+        reducer,
+        float_widths,
+        &mut te,
+        &mut ts,
+        &mut tl,
+        &mut th,
+        factory_audits,
+        macro_depth + 1,
+        &BTreeSet::new(),
+        &BTreeMap::new(),
+    );
+    let unclassified: Vec<&String> = ts
+        .iter()
+        .filter(|r| matches!(refusal_disposition(r), Disposition::Unclassified))
+        .collect();
+    if unclassified.is_empty() {
+        if te.is_empty() && ts.is_empty() && tl == 0 {
+            return CallsiteOutcome::Bail(BailCause::NotInlinable);
+        }
+        th.insert(name.to_string());
+        CallsiteOutcome::Dug(InlineCommit {
+            entries: te,
+            skipped: ts,
+            macros_lifted: tl,
+            reduced_helpers: th,
+            name: name.to_string(),
+        })
+    } else {
+        let mut sample_reasons: Vec<String> = unclassified.iter().map(|r| (*r).clone()).collect();
+        sample_reasons.sort();
+        sample_reasons.dedup();
+        CallsiteOutcome::Bail(BailCause::UnclassifiedResidue {
+            added_unclassified: unclassified.len(),
+            sample_reasons,
+        })
     }
 }
 

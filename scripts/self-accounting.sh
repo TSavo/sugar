@@ -48,8 +48,8 @@ for c in "${RUST_CRATES[@]}"; do
   out="$("$SWEEP" "implementations/rust/$c/src" 2>/dev/null)"
   a=$(echo "$out" | rg -o "assertion macros seen: \d+" | rg -o "\d+")
   d=$(echo "$out" | rg -o "discharged \(lifted to FOL\): +\d+" | rg -o "\d+$")
-  rf=$(echo "$out" | rg -o "refused \(named reason\): +\d+" | rg -o "\d+$")
-  s=$(echo "$out" | rg -o "genuinely unreached \(SILENT\): +\d+" | rg -o "\d+$" | head -1)
+  rf=$(echo "$out" | rg -o "refused +\(TERMINAL[^:]*: +\d+" | rg -o "\d+$")
+  s=$(echo "$out" | rg -o "missing assertions \(SILENT\): +\d+" | rg -o "\d+$" | head -1)
   printf "   %-28s asserts=%-5s lifted=%-5s refused=%-4s SILENT=%s\n" "$c" "$a" "$d" "$rf" "$s"
   r_assert=$((r_assert+a)); r_lift=$((r_lift+d)); r_ref=$((r_ref+rf)); r_silent=$((r_silent+s))
 done

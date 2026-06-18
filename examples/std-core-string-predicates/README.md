@@ -16,7 +16,8 @@ Claimed GOOD slice:
   and bounded `assert_all!` / `assert_none!` ASCII class rows from the
   `test_is_ascii_*` functions.
 - `library/core/src/char/methods.rs`: documented doctest point examples for
-  `char::is_ascii` and `char::is_ascii_alphabetic`.
+  `char::is_ascii`, `char::is_ascii_alphabetic`, and literal-bedrocked
+  `char::is_alphabetic`.
 
 The script also builds a BAD negative-control twin by contradicting one vendor
 point assertion and one bounded `assert_all!` / `assert_none!` macro row. Those
@@ -25,9 +26,9 @@ are refused when z3 sees an UNSAT conjunction.
 
 Conservative residuals:
 
-- Unicode `char::is_alphabetic` is not lifted. Rust delegates that to the
-  Unicode Character Database; z3 string theory does not encode Rust's Unicode
-  `Alphabetic` table here.
+- Unicode `char::is_alphabetic` lifts only when the char source bedrocks in
+  written literals. Non-literal Unicode classification remains residual; z3
+  string theory does not encode Rust's full Unicode `Alphabetic` table here.
 - Non-literal receivers such as `let data = "..."; assert!(data.contains(...))`
   remain residual until the lifter tracks bindings.
 - Iterator predicates that are not literal `chars()/bytes()` walks remain
@@ -35,4 +36,4 @@ Conservative residuals:
 - `assert_all!` / `assert_none!` with non-literal sources or unsupported
   predicate names remains residual. Other coretests custom assertion macros
   such as float, bit, range, chunk, and pattern helpers are not part of this
-  exact ASCII slice.
+  exact literal-predicate slice.

@@ -5,14 +5,19 @@
 // `&mut <place>` -> reasoned Hit (mutable reference). Byte-identical to the
 // `Expr::Reference` arms of the old fat factory.
 
+use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
 use crate::sugar::ctor_term::CtorSugar;
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::term_leaf::reasoned_hit;
 use crate::{is_immutable_value_expr, token_key, Effect, Sugar, UnsupportedTermCause};
 use syn::Expr;
 
-pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("reference_term", recognize);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "reference_term",
+    SugarRole::Term,
+    SugarPriority::Secondary,
+    recognize,
+);
 
 /// TERM recognizer for `Expr::Reference`.
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {

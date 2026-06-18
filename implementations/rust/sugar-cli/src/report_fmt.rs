@@ -4,6 +4,7 @@
 
 use owo_colors::OwoColorize;
 use serde_json::{json, Value as Json};
+use std::fmt::Write as _;
 use sugar_verifier::superposition::{reports_from_report, Strength, SuperpositionReport};
 use sugar_verifier::{LoadError, Report, ReportRow};
 
@@ -129,12 +130,18 @@ fn load_error_to_json(e: &LoadError) -> Json {
     })
 }
 
-pub fn print_report_pretty(r: &Report, quiet: bool) {
+pub fn format_report_pretty(r: &Report, quiet: bool) -> String {
+    let mut out = String::new();
     if !quiet {
-        println!("{}", "Sugar verifier report".bold());
-        println!("  total callsites : {}", r.total_callsites);
-        println!("  discharged      : {}", r.discharged.to_string().green());
-        println!(
+        let _ = writeln!(out, "{}", "Sugar verifier report".bold());
+        let _ = writeln!(out, "  total callsites : {}", r.total_callsites);
+        let _ = writeln!(
+            out,
+            "  discharged      : {}",
+            r.discharged.to_string().green()
+        );
+        let _ = writeln!(
+            out,
             "  violations      : {}",
             if r.violations == 0 {
                 r.violations.to_string().green().to_string()
@@ -142,7 +149,8 @@ pub fn print_report_pretty(r: &Report, quiet: bool) {
                 r.violations.to_string().red().to_string()
             }
         );
-        println!(
+        let _ = writeln!(
+            out,
             "  load errors     : {}",
             if r.load_errors.is_empty() {
                 "0".green().to_string()
@@ -150,7 +158,7 @@ pub fn print_report_pretty(r: &Report, quiet: bool) {
                 r.load_errors.len().to_string().red().to_string()
             }
         );
-        println!();
+        out.push('\n');
         for row in &r.rows {
             let status_pretty = match row.status.as_str() {
                 "discharged" => "discharged".green().to_string(),
@@ -158,7 +166,8 @@ pub fn print_report_pretty(r: &Report, quiet: bool) {
                 "undecidable" => "undecidable".yellow().to_string(),
                 other => other.to_string(),
             };
-            println!(
+            let _ = writeln!(
+                out,
                 "  [{}] {}  ({} -> {})",
                 status_pretty,
                 row.callsite.bridge_ir_name,
@@ -166,46 +175,47 @@ pub fn print_report_pretty(r: &Report, quiet: bool) {
                 row.callsite.bridge_target_layer
             );
             if !row.reason.is_empty() {
-                println!("      reason: {}", row.reason);
+                let _ = writeln!(out, "      reason: {}", row.reason);
             }
             if let Some(tier) = &row.body_discharge_tier {
-                println!("      body tier: {}", tier);
+                let _ = writeln!(out, "      body tier: {}", tier);
             }
             if let Some(verification) = &row.verification {
-                print_verification_detail(verification);
+                format_verification_detail(&mut out, verification);
             }
         }
         let superpositions = reports_from_report(r);
         if !superpositions.is_empty() {
-            println!();
-            println!("{}", "Superposition (strength per symbol):".bold());
+            out.push('\n');
+            let _ = writeln!(out, "{}", "Superposition (strength per symbol):".bold());
             for s in &superpositions {
                 let strength_pretty = match s.strength {
                     Strength::Strong => s.strength.tag().green().to_string(),
                     Strength::Weak => s.strength.tag().yellow().to_string(),
                     Strength::Undecidable => s.strength.tag().red().to_string(),
                 };
-                println!("  [{}] {}", strength_pretty, s.symbol);
+                let _ = writeln!(out, "  [{}] {}", strength_pretty, s.symbol);
                 if !s.findings.is_empty() {
-                    println!("      findings: {}", s.findings.len());
+                    let _ = writeln!(out, "      findings: {}", s.findings.len());
                 }
                 if !s.levers.is_empty() {
-                    println!("      collapse: {}", s.levers.join(" | "));
+                    let _ = writeln!(out, "      collapse: {}", s.levers.join(" | "));
                 }
             }
         }
         if !r.load_errors.is_empty() {
-            println!();
-            println!("{}", "Load errors:".red().bold());
+            out.push('\n');
+            let _ = writeln!(out, "{}", "Load errors:".red().bold());
             for e in &r.load_errors {
-                println!("  {}: {}", e.proof_path, e.reason);
+                let _ = writeln!(out, "  {}: {}", e.proof_path, e.reason);
             }
         }
         if !r.call_edges.is_empty() {
-            println!();
-            println!("{}", "Call edges:".dimmed());
+            out.push('\n');
+            let _ = writeln!(out, "{}", "Call edges:".dimmed());
             for ce in &r.call_edges {
-                println!(
+                let _ = writeln!(
+                    out,
                     "  {} -> {}  ({})",
                     ce.source_contract_cid.chars().take(32).collect::<String>(),
                     ce.target_contract_cid.chars().take(32).collect::<String>(),
@@ -214,23 +224,28 @@ pub fn print_report_pretty(r: &Report, quiet: bool) {
             }
         }
     }
+    out
+}
+
+pub fn print_report_pretty(r: &Report, quiet: bool) {
+    print!("{}", format_report_pretty(r, quiet));
 }
 
 fn compact_json(v: &Json) -> String {
     serde_json::to_string(v).unwrap_or_else(|_| v.to_string())
 }
 
-fn print_verification_detail(v: &Json) {
+fn format_verification_detail(out: &mut String, v: &Json) {
     let kind = v
         .get("kind")
         .and_then(|x| x.as_str())
         .unwrap_or("verification");
-    println!("      verifier: {kind}");
+    let _ = writeln!(out, "      verifier: {kind}");
     if let Some(formula) = v.get("checkedFormula") {
-        println!("        checked: {}", compact_json(formula));
+        let _ = writeln!(out, "        checked: {}", compact_json(formula));
     }
     if let Some(posts) = v.get("linkedPosts").and_then(|x| x.as_array()) {
-        println!("        linked posts: {}", posts.len());
+        let _ = writeln!(out, "        linked posts: {}", posts.len());
         for post in posts {
             let source = post
                 .get("sourceSymbol")
@@ -240,17 +255,17 @@ fn print_verification_detail(v: &Json) {
                 .get("targetContractCid")
                 .and_then(|x| x.as_str())
                 .unwrap_or("<unknown>");
-            println!("          {} -> {}", source, target);
+            let _ = writeln!(out, "          {} -> {}", source, target);
             if let Some(call) = post.get("call") {
-                println!("            call: {}", compact_json(call));
+                let _ = writeln!(out, "            call: {}", compact_json(call));
             }
             if let Some(instantiated) = post.get("instantiatedPost") {
-                println!("            post: {}", compact_json(instantiated));
+                let _ = writeln!(out, "            post: {}", compact_json(instantiated));
             }
         }
     }
     if let Some(invs) = v.get("solverInvocations").and_then(|x| x.as_array()) {
-        println!("        solver invocations: {}", invs.len());
+        let _ = writeln!(out, "        solver invocations: {}", invs.len());
         for inv in invs {
             let solver = inv.get("solver").and_then(|x| x.as_str()).unwrap_or("?");
             let compiler = inv.get("compiler").and_then(|x| x.as_str()).unwrap_or("?");
@@ -260,22 +275,24 @@ fn print_verification_detail(v: &Json) {
                 .and_then(|x| x.as_bool())
                 .unwrap_or(false);
             if let Some(ms) = inv.get("wallClockMs").and_then(|x| x.as_u64()) {
-                println!(
+                let _ = writeln!(
+                    out,
                     "          {solver} via {compiler}: {verdict} ({ms}ms, authoritative={authoritative})"
                 );
             } else {
-                println!(
+                let _ = writeln!(
+                    out,
                     "          {solver} via {compiler}: {verdict} (authoritative={authoritative})"
                 );
             }
             if let Some(cid) = inv.get("solverArtifactCid").and_then(|x| x.as_str()) {
-                println!("            artifact: {cid}");
+                let _ = writeln!(out, "            artifact: {cid}");
             }
             if let Some(cid) = inv.get("solverInvocationCid").and_then(|x| x.as_str()) {
-                println!("            invocation: {cid}");
+                let _ = writeln!(out, "            invocation: {cid}");
             }
             if let Some(cid) = inv.get("solverVendorMementoCid").and_then(|x| x.as_str()) {
-                println!("            vendor memento: {cid}");
+                let _ = writeln!(out, "            vendor memento: {cid}");
             }
         }
     }

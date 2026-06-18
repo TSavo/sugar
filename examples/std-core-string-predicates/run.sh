@@ -8,6 +8,7 @@ RUST="$REPO/implementations/rust"
 BIN_DIR="$RUST/target/debug"
 SUGAR="$BIN_DIR/sugar"
 ASSERT_RPC="$BIN_DIR/rust_test_assertions_rpc"
+source "$REPO/scripts/stdlib-solver-portfolio.sh"
 WORK="${STD_CORE_STRING_PREDICATES_WORK:-$HERE/.work}"
 GOOD="$WORK/good"
 BAD="$WORK/bad"
@@ -15,14 +16,18 @@ STD_CORE_RUST_TOOLCHAIN="${STD_CORE_RUST_TOOLCHAIN:-1.96.0}"
 
 echo "SCOPE: Rust std/core and alloc string predicate rows, zero std source changes."
 echo "SCOPE: GOOD claims are vendor point assertions only; BAD is an explicit negative-control twin."
-echo "SCOPE: lifted predicates = contains, starts_with/prefix-of, ends_with/suffix-of, str.len, str.is_ascii, literal chars().all/.any, literal bytes().is_ascii, char ASCII classes, and bounded assert_all/assert_none ASCII macro rows."
-echo "SCOPE: residuals = Unicode is_alphabetic, non-literal receivers, non-literal iterator/macro sources, unsupported closure bodies, and non-ASCII custom assertion macros."
+echo "SCOPE: lifted predicates = contains, starts_with/prefix-of, ends_with/suffix-of, str.len, str.is_ascii, literal chars().all/.any, literal bytes().is_ascii, char ASCII classes, literal char is_alphabetic, and bounded assert_all/assert_none literal macro rows."
+echo "SCOPE: residuals = non-literal receivers, non-literal iterator/macro sources, unsupported closure bodies, and non-bedrockable custom assertion macros."
 
 if [ "${STD_CORE_STRING_PREDICATES_SKIP_LOCAL_BUILD:-0}" != "1" ]; then
   echo "== build local proof binaries =="
   cargo build --manifest-path "$RUST/Cargo.toml" \
     -p sugar-cli --bin sugar \
-    -p sugar-lift-rust-tests --bin rust_test_assertions_rpc >/dev/null
+    -p sugar-lift-rust-tests --bin rust_test_assertions_rpc \
+    -p sugar-ir-compiler-smt-lib --bin sugar-ir-smt-lib \
+    -p sugar-ir-compiler-coq --bin sugar-ir-coq \
+    -p sugar-ir-compiler-lean --bin sugar-ir-lean \
+    -p sugar-ir-compiler-maude --bin sugar-ir-maude >/dev/null
 fi
 
 for bin in "$SUGAR" "$ASSERT_RPC"; do
@@ -147,23 +152,13 @@ kind = "lift"
 surface = "rust-test-assertions"
 emit = "ir-document"
 
-[solvers]
-default = "z3"
-
-[solvers.dispatch]
-strings = "z3"
-linear_arithmetic = "z3"
-default = "z3"
-
-[solvers.z3]
-binary = "z3"
-flags = ["-smt2", "-in"]
-
 [platform_profile]
 language = "rust"
 library = "rust-std-core-string-predicates"
 version = "$RUSTC_VERSION"
 TOML
+  append_sugar_solver_portfolio "$project/.sugar/config.toml" "$REPO"
+  write_sugar_ir_compiler_manifests "$project" "$BIN_DIR"
 
   cat > "$project/.sugar/lift/rust-test-assertions/manifest.toml" <<TOML
 name = "rust-test-assertions-lift"
