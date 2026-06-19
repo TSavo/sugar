@@ -7896,6 +7896,31 @@ fn closure_adaptor_refusal(expr: &Expr, scope: &TemporalScope) -> Option<String>
     }
     let collection = iter_adaptor_base(&call.receiver);
     let domain = for_iter_domain(collection);
+    // TERMINAL (bin-2 CAPTURED RUNTIME MUTATION over a literal domain): the DOMAIN is a
+    // finite source construction, but the transform closure mutates captured runtime
+    // state (`seen.push(n)` in `literal.iter().map(|n| { seen.push(n); ... })`). The
+    // asserted value is entangled with a runtime state transition, so it has crossed the
+    // same membrane as a side-effecting closure assertion. This intentionally detects
+    // captured-state mutation, not every multi-statement closure, so pure-but-unmodeled
+    // value transforms stay in the honest bin-1 work bucket.
+    if for_iter_domain_is_literal(collection)
+        && call
+            .args
+            .iter()
+            .any(closure_body_mutates_captured_runtime_state)
+    {
+        tracing::info!(
+            target: "sugar_lift_rust_tests::closure_adaptor",
+            method = %method,
+            domain = %domain,
+            "closure adaptor refused captured runtime mutation"
+        );
+        return Some(format!(
+            "iterator/option adaptor `.{method}(|..| ..)` over {domain} whose closure body \
+             MUTATES captured runtime state (bin-2: runtime side effect during value \
+             construction, not constructed from source literals); refused"
+        ));
+    }
     // TERMINAL (bin-2 BODY READ over a literal domain): the DOMAIN is a finite literal
     // construction, but the closure body READS a provably-MUTABLE captured local
     // (`assert!([..].iter().any(|v| &xs == *v))` where `let mut xs = [0; 6]` is mutated
@@ -7967,6 +7992,134 @@ fn closure_adaptor_refusal(expr: &Expr, scope: &TemporalScope) -> Option<String>
         "iterator/option adaptor `.{method}(|..| ..)` over {domain}; not yet lifted; \
          released to layer 0"
     ))
+}
+
+fn closure_body_mutates_captured_runtime_state(expr: &Expr) -> bool {
+    let Expr::Closure(cl) = expr else {
+        return false;
+    };
+    let mut param_vec = Vec::new();
+    for pat in &cl.inputs {
+        collect_pat_idents(pat, &mut param_vec);
+    }
+    let params: BTreeSet<String> = param_vec.into_iter().collect();
+    let locals = closure_local_bindings(cl);
+
+    struct Scan<'a> {
+        params: &'a BTreeSet<String>,
+        locals: &'a BTreeSet<String>,
+        found: bool,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Scan<'_> {
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            if CLOSURE_BODY_MUTATING_METHODS.contains(&call.method.to_string().as_str())
+                && expr_refs_captured_name(&call.receiver, self.params, self.locals)
+            {
+                self.found = true;
+                return;
+            }
+            syn::visit::visit_expr_method_call(self, call);
+        }
+
+        fn visit_expr_assign(&mut self, assign: &'ast syn::ExprAssign) {
+            if expr_refs_captured_name(&assign.left, self.params, self.locals) {
+                self.found = true;
+                return;
+            }
+            syn::visit::visit_expr_assign(self, assign);
+        }
+
+        fn visit_expr_binary(&mut self, binary: &'ast syn::ExprBinary) {
+            if is_assignment_binop(&binary.op)
+                && expr_refs_captured_name(&binary.left, self.params, self.locals)
+            {
+                self.found = true;
+                return;
+            }
+            syn::visit::visit_expr_binary(self, binary);
+        }
+
+        fn visit_expr_reference(&mut self, reference: &'ast syn::ExprReference) {
+            if reference.mutability.is_some()
+                && expr_refs_captured_name(&reference.expr, self.params, self.locals)
+            {
+                self.found = true;
+                return;
+            }
+            syn::visit::visit_expr_reference(self, reference);
+        }
+
+        fn visit_expr_closure(&mut self, _closure: &'ast syn::ExprClosure) {
+            // A nested closure is not executed by merely constructing this adaptor body.
+        }
+    }
+
+    let mut scan = Scan {
+        params: &params,
+        locals: &locals,
+        found: false,
+    };
+    syn::visit::Visit::visit_expr(&mut scan, &cl.body);
+    scan.found
+}
+
+fn closure_local_bindings(cl: &syn::ExprClosure) -> BTreeSet<String> {
+    struct Locals {
+        names: BTreeSet<String>,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Locals {
+        fn visit_local(&mut self, local: &'ast syn::Local) {
+            let mut names = Vec::new();
+            collect_pat_idents(&local.pat, &mut names);
+            self.names.extend(names);
+            syn::visit::visit_local(self, local);
+        }
+
+        fn visit_expr_closure(&mut self, _closure: &'ast syn::ExprClosure) {
+            // Nested closure locals belong to that closure, not to this adaptor body.
+        }
+    }
+
+    let mut locals = Locals {
+        names: BTreeSet::new(),
+    };
+    syn::visit::Visit::visit_expr(&mut locals, &cl.body);
+    locals.names
+}
+
+fn expr_refs_captured_name(
+    expr: &Expr,
+    params: &BTreeSet<String>,
+    locals: &BTreeSet<String>,
+) -> bool {
+    struct Refs<'a> {
+        params: &'a BTreeSet<String>,
+        locals: &'a BTreeSet<String>,
+        found: bool,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Refs<'_> {
+        fn visit_expr_path(&mut self, path: &'ast syn::ExprPath) {
+            if let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) {
+                if !self.params.contains(&name) && !self.locals.contains(&name) {
+                    self.found = true;
+                    return;
+                }
+            }
+            syn::visit::visit_expr_path(self, path);
+        }
+
+        fn visit_expr_closure(&mut self, _closure: &'ast syn::ExprClosure) {
+            // Nested closures have their own capture semantics.
+        }
+    }
+
+    let mut refs = Refs {
+        params,
+        locals,
+        found: false,
+    };
+    syn::visit::Visit::visit_expr(&mut refs, expr);
+    refs.found
 }
 
 fn closure_body_calls_through_param(expr: &Expr) -> bool {
@@ -8122,7 +8275,16 @@ fn iter_adaptor_base(expr: &Expr) -> &Expr {
         if c.args.is_empty()
             && matches!(
                 c.method.to_string().as_str(),
-                "iter" | "into_iter" | "iter_mut" | "chars" | "bytes" | "keys" | "values"
+                "iter"
+                    | "into_iter"
+                    | "iter_mut"
+                    | "chars"
+                    | "bytes"
+                    | "keys"
+                    | "values"
+                    | "cloned"
+                    | "copied"
+                    | "fuse"
             )
         {
             return iter_adaptor_base(&c.receiver);
@@ -16243,6 +16405,50 @@ mod lifter_key_tests {
                 .iter()
                 .all(|reason| !reason.contains("not yet lifted")),
             "runtime closure call must not remain in the generic adaptor work bucket: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn map_over_literal_domain_with_mutating_capture_body_is_refused_bin2() {
+        let src = r#"
+            #[test]
+            fn map_body_mutates_capture() {
+                let mut seen = Vec::new();
+                let value = [1, 2, 3]
+                    .iter()
+                    .cloned()
+                    .map(|n| {
+                        seen.push(n);
+                        n * 10
+                    })
+                    .nth(1);
+                assert_eq!(value, Some(20));
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted,
+            0,
+            "a value produced through captured runtime mutation must not fake-discharge: {:?}",
+            contract_names(&out)
+        );
+        assert!(
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("MUTATES captured runtime state")),
+            "the mutating map body must be named as a bin-2 refusal; got {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.skip_reasons.iter().all(|r| {
+                !r.contains("not yet lifted")
+                    && matches!(
+                        refusal_disposition(r),
+                        Disposition::Refused | Disposition::Inactive
+                    )
+            }),
+            "the mutating map body must not remain in the generic adaptor work bucket: {:?}",
             out.skip_reasons
         );
     }
