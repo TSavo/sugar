@@ -1,0 +1,173 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// LetSugar: a `let <pat> = <init>;` statement is not a semantic wall. The initializer
+// is a normal Rust expression surface: if it contains a fact-emitting expression
+// (`assert*!`, a learned assertion macro expansion, `if`/`match` panic locus, or an
+// unconditional block that contains any of those), the collector must re-enter that
+// surface instead of hiding it behind the generic "let initializer" accounting bucket.
+//
+// This module does not interpret assertion vocabulary and does not decide the fact.
+// It only presents initializer expression shapes back to the existing factory/collector.
+// The downstream sugar walk still has exactly two outcomes: Dug or Hit.
+
+use syn::{Expr, Stmt};
+
+/// Statements whose fact surfaces are executed while evaluating a `let` initializer.
+///
+/// Returning statements here means "run the ordinary statement collector on this
+/// initializer"; it does not mean the initializer is liftable. The collector/factory
+/// still owns whether the surface emits a warranted fact, refuses with a named effect,
+/// or falls through to future sugar work.
+pub(crate) fn initializer_fact_stmts(expr: &Expr) -> Option<Vec<Stmt>> {
+    match expr {
+        Expr::Block(block) => Some(block.block.stmts.clone()),
+        Expr::Unsafe(unsafe_expr) => Some(unsafe_expr.block.stmts.clone()),
+        Expr::Const(const_expr) => Some(const_expr.block.stmts.clone()),
+        Expr::Macro(expr_macro) => Some(vec![Stmt::Expr(Expr::Macro(expr_macro.clone()), None)]),
+        Expr::If(_) | Expr::Match(_) => Some(vec![Stmt::Expr(expr.clone(), None)]),
+        Expr::Paren(paren) => initializer_fact_stmts(&paren.expr),
+        Expr::Group(group) => initializer_fact_stmts(&group.expr),
+        _ => {
+            let mut stmts = Vec::new();
+            collect_eager_fact_stmts(expr, &mut stmts);
+            (!stmts.is_empty()).then_some(stmts)
+        }
+    }
+}
+
+fn collect_eager_fact_stmts(expr: &Expr, out: &mut Vec<Stmt>) {
+    match expr {
+        Expr::Macro(expr_macro) if crate::is_assert_macro_path(&expr_macro.mac.path) => {
+            out.push(Stmt::Expr(Expr::Macro(expr_macro.clone()), None));
+        }
+        Expr::MethodCall(method) => {
+            collect_eager_fact_stmts(&method.receiver, out);
+            for arg in &method.args {
+                collect_eager_fact_stmts(arg, out);
+            }
+        }
+        Expr::Call(call) => {
+            collect_eager_fact_stmts(&call.func, out);
+            for arg in &call.args {
+                collect_eager_fact_stmts(arg, out);
+            }
+        }
+        Expr::Field(field) => collect_eager_fact_stmts(&field.base, out),
+        Expr::Index(index) => {
+            collect_eager_fact_stmts(&index.expr, out);
+            collect_eager_fact_stmts(&index.index, out);
+        }
+        Expr::Await(await_expr) => collect_eager_fact_stmts(&await_expr.base, out),
+        Expr::Try(try_expr) => collect_eager_fact_stmts(&try_expr.expr, out),
+        Expr::Reference(reference) => collect_eager_fact_stmts(&reference.expr, out),
+        Expr::Unary(unary) => collect_eager_fact_stmts(&unary.expr, out),
+        Expr::Cast(cast) => collect_eager_fact_stmts(&cast.expr, out),
+        Expr::Binary(binary) => {
+            collect_eager_fact_stmts(&binary.left, out);
+            collect_eager_fact_stmts(&binary.right, out);
+        }
+        Expr::Assign(assign) => {
+            collect_eager_fact_stmts(&assign.left, out);
+            collect_eager_fact_stmts(&assign.right, out);
+        }
+        Expr::Range(range) => {
+            if let Some(start) = &range.start {
+                collect_eager_fact_stmts(start, out);
+            }
+            if let Some(end) = &range.end {
+                collect_eager_fact_stmts(end, out);
+            }
+        }
+        Expr::Array(array) => {
+            for elem in &array.elems {
+                collect_eager_fact_stmts(elem, out);
+            }
+        }
+        Expr::Repeat(repeat) => {
+            collect_eager_fact_stmts(&repeat.expr, out);
+            collect_eager_fact_stmts(&repeat.len, out);
+        }
+        Expr::Tuple(tuple) => {
+            for elem in &tuple.elems {
+                collect_eager_fact_stmts(elem, out);
+            }
+        }
+        Expr::Struct(struct_expr) => {
+            for field in &struct_expr.fields {
+                collect_eager_fact_stmts(&field.expr, out);
+            }
+            if let Some(rest) = &struct_expr.rest {
+                collect_eager_fact_stmts(rest, out);
+            }
+        }
+        Expr::Paren(paren) => collect_eager_fact_stmts(&paren.expr, out),
+        Expr::Group(group) => collect_eager_fact_stmts(&group.expr, out),
+        // A closure / async block body is not executed while evaluating the initializer.
+        // Driver/handoff sugar owns those boundaries.
+        Expr::Closure(_) | Expr::Async(_) => {}
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quote::ToTokens;
+    use syn::parse_quote;
+
+    #[test]
+    fn macro_initializer_is_a_fact_surface() {
+        let expr: Expr = parse_quote!(assert_eq!(1, 1));
+        let stmts = initializer_fact_stmts(&expr).expect("macro initializers are surfaced");
+        assert_eq!(stmts.len(), 1);
+        assert_eq!(
+            stmts[0].to_token_stream().to_string(),
+            "assert_eq ! (1 , 1)"
+        );
+    }
+
+    #[test]
+    fn plain_call_initializer_is_not_a_fact_surface() {
+        let expr: Expr = parse_quote!(make_value(1));
+        assert!(initializer_fact_stmts(&expr).is_none());
+    }
+
+    #[test]
+    fn match_initializer_is_a_fact_surface() {
+        let expr: Expr = parse_quote!(match x {
+            Ok(v) => v,
+            Err(e) => panic!("{e:?}"),
+        });
+        let stmts = initializer_fact_stmts(&expr).expect("match initializers are surfaced");
+        assert_eq!(stmts.len(), 1);
+        assert!(matches!(&stmts[0], Stmt::Expr(Expr::Match(_), None)));
+    }
+
+    #[test]
+    fn method_chain_assertion_macro_receiver_is_a_fact_surface() {
+        let expr: Expr = parse_quote!(assert_ok!(read().await).unwrap());
+        let stmts = initializer_fact_stmts(&expr).expect("eager receiver macro is surfaced");
+        assert_eq!(stmts.len(), 1);
+        assert_eq!(
+            stmts[0].to_token_stream().to_string(),
+            "assert_ok ! (read () . await)"
+        );
+    }
+
+    #[test]
+    fn field_access_assertion_macro_receiver_is_a_fact_surface() {
+        let expr: Expr = parse_quote!(assert_ok!(listener.accept()).0);
+        let stmts = initializer_fact_stmts(&expr).expect("eager field base macro is surfaced");
+        assert_eq!(stmts.len(), 1);
+        assert_eq!(
+            stmts[0].to_token_stream().to_string(),
+            "assert_ok ! (listener . accept ())"
+        );
+    }
+
+    #[test]
+    fn closure_body_assertion_macro_is_not_eager_fact_surface() {
+        let expr: Expr = parse_quote!(thread::spawn(move || assert_ok!(listener.accept()).0));
+        assert!(initializer_fact_stmts(&expr).is_none());
+    }
+}

@@ -33,6 +33,27 @@ pub(crate) fn relation_runtime_boundary_reason(
         .map(|boundary| boundary.reason())
 }
 
+pub(crate) fn panic_payload_match_value_reason(
+    m: &syn::ExprMatch,
+    ctx: &SugarCtx,
+) -> Option<String> {
+    if !expr_is_catch_unwind_source(&m.expr, ctx, 0)
+        || !m
+            .arms
+            .iter()
+            .any(|arm| expr_downcasts_panic_payload(&arm.body))
+    {
+        return None;
+    }
+    Some(
+        RuntimeTermBoundary {
+            site: token_key(&Expr::Match(m.clone())),
+            cause: "panic payload downcast reads runtime exception state",
+        }
+        .reason(),
+    )
+}
+
 fn runtime_boundary_term(expr: &Expr, ctx: &SugarCtx, depth: usize) -> Option<RuntimeTermBoundary> {
     if depth > 16 {
         return None;

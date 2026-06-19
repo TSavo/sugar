@@ -7291,6 +7291,226 @@ fn t() {
 }
 
 #[test]
+fn let_initializer_assertion_macro_emits_fact() {
+    let src = r#"
+fn add(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+#[test]
+fn t() {
+    let _ = assert_eq!(add(1, 1), 2);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/let_init_assert.rs");
+
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "the initializer assertion should emit a fact: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .all(|r| !r.contains("let-initializer expression")),
+        "the let position must not hide an assertion fact: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn let_initializer_assertion_macro_lifts_and_binds_success_payload() {
+    let src = r#"
+macro_rules! assert_ok {
+    ($e:expr) => {{
+        match $e {
+            Ok(v) => v,
+            Err(e) => panic!("assertion failed: Err({:?})", e),
+        }
+    }};
+}
+
+#[test]
+fn t() {
+    let value = assert_ok!(Ok::<i32, i32>(3));
+    assert_eq!(value, 3);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/let_init.rs");
+
+    assert!(
+        !out.skip_reasons
+            .iter()
+            .any(|r| r.contains("let-initializer expression: not a top-level point-wise")),
+        "the initializer position must not hide the assertion macro: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.assertions_lifted >= 2,
+        "the assert_ok! initializer and the bound-payload assert_eq! should both lift: lifted={} skips={:?}",
+        out.assertions_lifted,
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn let_initializer_learned_assertion_vocabulary_names_runtime_boundary() {
+    let src = r#"
+macro_rules! assert_ok {
+    ($e:expr) => {{
+        match $e {
+            Ok(v) => v,
+            Err(e) => panic!("assertion failed: Err({:?})", e),
+        }
+    }};
+}
+
+async fn runtime_result() -> Result<i32, i32> {
+    Ok(3)
+}
+
+#[test]
+fn t() {
+    let _server = async {
+        let value = assert_ok!(runtime_result().await);
+        assert_eq!(value, 3);
+    };
+}
+"#;
+    let out = lift_file(&parse(src), "tests/let_init_runtime_assert_vocab.rs");
+
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("dormant async future construction")
+                && r.contains("assert_ok")),
+        "assert_ok!'s learned vocabulary inside a dormant async let initializer must report the inert future boundary: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .all(|r| !r.contains("let-initializer expression")),
+        "the let position must not hide learned assertion vocabulary: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn let_initializer_assertion_vocabulary_under_value_chain_is_not_hidden() {
+    let src = r#"
+macro_rules! assert_ok {
+    ($e:expr) => {{
+        match $e {
+            Ok(v) => v,
+            Err(e) => panic!("assertion failed: Err({:?})", e),
+        }
+    }};
+}
+
+async fn runtime_result() -> Result<Option<i32>, i32> {
+    Ok(Some(3))
+}
+
+#[demo_runtime::test]
+async fn t() {
+    let value = assert_ok!(runtime_result().await).unwrap();
+    assert_eq!(value, 3);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/let_init_assert_vocab_chain.rs");
+
+    assert!(
+        out.assertions_lifted >= 2,
+        "the value-producing assertion macro and downstream equality should lift: lifted={} skips={:?} facts={:?} decls={:?}",
+        out.assertions_lifted,
+        out.skip_reasons,
+        out.assertion_facts,
+        out.decls
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .all(|r| !r.contains("let-initializer expression")),
+        "the value chain must not hide learned assertion vocabulary behind the let bucket: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn let_initializer_learns_assertion_shape_after_dropping_macro_name() {
+    let src = r#"
+macro_rules! must_ok {
+    ($e:expr) => {{
+        match $e {
+            Ok(v) => v,
+            Err(e) => panic!("not ok: {:?}", e),
+        }
+    }};
+}
+
+#[test]
+fn t() {
+    let value = must_ok!(Ok::<i32, i32>(3));
+    assert_eq!(value, 3);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/let_init_learn_shape.rs");
+
+    assert!(
+        out.assertions_lifted >= 2,
+        "non-assert-named macros must be transparent when their expansion is assertion-shaped: lifted={} skips={:?} facts={:?} decls={:?}",
+        out.assertions_lifted,
+        out.skip_reasons,
+        out.assertion_facts,
+        out.decls
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .all(|r| !r.contains("let-initializer expression")),
+        "the let position must not hide learned assertion shape: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn top_level_scanner_discovers_vendor_surface_by_macro_body_shape() {
+    let src = r#"
+macro_rules! must_ok {
+    ($e:expr) => {{
+        match $e {
+            Ok(v) => v,
+            Err(e) => panic!("not ok: {:?}", e),
+        }
+    }};
+}
+
+#[vendor_harness]
+fn t() {
+    let _value = must_ok!(Ok::<i32, i32>(3));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/vendor_surface_shape.rs");
+
+    assert!(
+        out.assertions_lifted >= 1,
+        "the scanner must discover assertion surfaces from visible macro body shape, not #[test] or assert* names: lifted={} skipped={:?} facts={:?} decls={:?}",
+        out.assertions_lifted,
+        out.skip_reasons,
+        out.assertion_facts,
+        out.decls
+    );
+    assert!(
+        out.assertion_facts
+            .iter()
+            .any(|fact| fact.item_name.ends_with("t")),
+        "the discovered vendor surface should be attributed to the function body: {:?}",
+        out.assertion_facts
+    );
+}
+
+#[test]
 fn spawned_async_assert_stays_refused() {
     // A spawned future may never run: its asserts are NOT unconditional and
     // must stay refused, not lifted (false-pass guard).
@@ -12653,6 +12873,56 @@ fn assert_contract_edge(doc: &serde_json::Value, source: &str, symbol: &str, tar
             "{key} must be a prefixed CID, got {cid}: {edge:#}"
         );
     }
+}
+
+#[test]
+fn rpc_unit_driver_emits_callable_param_precondition_bridge() {
+    // `driver` returns unit, so the old value-output rule had no contract to mint.
+    // But the body calls the callable parameter `f`; normal return from `driver(f)`
+    // therefore carries a real bridge precondition: `f()` returned normally. The
+    // closure body is not anonymously inlined here; the report must expose the
+    // source contract that the callsite support fact warrants digging into.
+    let doc = run_rpc_lift(
+        "src/driver_bridge.rs",
+        r#"
+fn driver<F: Fn()>(f: F) {
+    f();
+}
+
+#[test]
+fn caller() {
+    driver(|| {
+        assert_eq!(1, 1);
+    });
+}
+"#,
+    );
+
+    assert_eq!(
+        locus_status(&doc, "driver"),
+        Some("warranted"),
+        "unit driver callsites still warrant a source contract: {doc:#}"
+    );
+    let driver = ir_entry_named(&doc, "rust-source::driver")
+        .unwrap_or_else(|| panic!("missing driver function contract: {doc:#}"));
+    assert_eq!(driver["kind"], serde_json::json!("function-contract"));
+    assert_eq!(
+        driver["bridgeSourceSymbol"],
+        serde_json::json!("call:driver")
+    );
+    assert!(
+        driver["pre"].to_string().contains("call:f") && driver["pre"].to_string().contains("panic"),
+        "driver precondition must expose the callable-parameter panic-free bridge: {driver:#}"
+    );
+    assert!(
+        doc["callEdges"]
+            .as_array()
+            .is_some_and(|edges| edges.iter().any(|edge| {
+                edge["targetSymbol"] == serde_json::json!("call:driver")
+                    && edge["targetContract"] == serde_json::json!("rust-source::driver")
+            })),
+        "caller support fact must bridge into the driver source contract: {doc:#}"
+    );
 }
 
 #[test]

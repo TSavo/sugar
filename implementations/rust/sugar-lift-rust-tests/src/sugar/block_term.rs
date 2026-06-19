@@ -9,7 +9,7 @@ use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::term_leaf::reasoned_hit;
 use crate::sugar::unsafe_memory;
 use crate::{token_key, Sugar};
-use syn::{Expr, Stmt};
+use syn::{Expr, Item, Stmt};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("block_term", recognize);
@@ -17,17 +17,32 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// TERM recognizer for `Expr::Unsafe` / `Expr::Block`.
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {
-        Expr::Unsafe(block) => Some(match block.block.stmts.as_slice() {
-            [Stmt::Expr(tail, None)] => build_term(tail, fcx),
-            stmts if unsafe_memory::unsafe_memory_boundary_stmts(stmts) => {
-                reasoned_hit(unsafe_memory::runtime_memory_reason(&token_key(expr)))
-            }
-            _ => reasoned_hit(format!("unsupported term `{}`", token_key(expr))),
+        Expr::Unsafe(block) => Some(if let Some(tail) = inert_prefix_tail(&block.block.stmts) {
+            build_term(tail, fcx)
+        } else if unsafe_memory::unsafe_memory_boundary_stmts(&block.block.stmts) {
+            reasoned_hit(unsafe_memory::runtime_memory_reason(&token_key(expr)))
+        } else {
+            reasoned_hit(format!("unsupported term `{}`", token_key(expr)))
         }),
-        Expr::Block(block) => Some(match block.block.stmts.as_slice() {
-            [Stmt::Expr(tail, None)] => build_term(tail, fcx),
-            _ => reasoned_hit(format!("unsupported term `{}`", token_key(expr))),
-        }),
+        Expr::Block(block) => Some(
+            inert_prefix_tail(&block.block.stmts)
+                .map(|tail| build_term(tail, fcx))
+                .unwrap_or_else(|| reasoned_hit(format!("unsupported term `{}`", token_key(expr)))),
+        ),
+        _ => None,
+    }
+}
+
+fn inert_prefix_tail(stmts: &[Stmt]) -> Option<&Expr> {
+    let (last, prefix) = stmts.split_last()?;
+    if !prefix
+        .iter()
+        .all(|stmt| matches!(stmt, Stmt::Item(Item::Use(_))))
+    {
+        return None;
+    }
+    match last {
+        Stmt::Expr(tail, None) => Some(tail),
         _ => None,
     }
 }
