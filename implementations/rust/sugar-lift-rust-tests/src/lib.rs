@@ -396,8 +396,8 @@ pub enum Disposition {
 /// `ambiguous cfg` (a missing target input, recoverable by pinning the cfg).
 /// Default = Unclassified.
 ///   * `effectful / raw-pointer / mutable-reference term` -- an `unsupported term` whose
-///                            SHAPE is a `&mut` borrow or a raw pointer
-///                            (`&raw const`/`&raw mut`): no single
+///                            SHAPE is a `&mut` borrow, raw address, or raw-pointer cast
+///                            (`&raw const`/`&raw mut`/`as *const`/`as *mut`): no single
 ///                            timeless value constructible from source literals. (DISTINCT from
 ///                            a bare `unsupported term`, which stays Unclassified work.)
 ///   * `operand is a runtime non-scalar result` -- an `assert!(match <runtime call> { .. })`
@@ -619,10 +619,11 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // fake-refuse guardrail; left to dissolution / the exact partition).
         || reason.contains("reachable only via monomorphization of a generic")
         // TERMINAL: an `unsupported term` whose SHAPE is genuinely effectful / non-constructible
-        // -- a `&mut` borrow or a raw pointer (`&raw const`/`&raw mut`). None is a single timeless value constructible from source
+        // -- a `&mut` borrow, raw address, or raw-pointer cast (`&raw const`/`&raw mut`/
+        // `as *const`/`as *mut`). None is a single timeless value constructible from source
         // literals (kin to `mutable container is not temporally stable` / `bin-2` / "function
         // names are sugar"). EARNED by `UnsupportedTermEffect` at the specific term arm (the
-        // `&mut` fall-through and `Expr::RawAddr`); a PURE untranslated
+        // `&mut` fall-through, `Expr::RawAddr`, and raw pointer target `Expr::Cast`); a PURE untranslated
         // term (`1i32 as f64`, an untranscribed pure method) has NONE of these shapes and STAYS
         // the bare `unsupported term` reason -- UNCLASSIFIED work (the fake-refuse guardrail).
         // (THE DRAIN: the `ptr.rs`/`cell.rs`/`option.rs`/`async_iter`/`waker.rs`
@@ -4534,8 +4535,9 @@ enum Effect {
     /// verbatim:
     ///   * a term-shaped `unsupported term` whose SHAPE is a genuinely effectful /
     ///     non-constructible place (a `&mut` borrow of a non-immutable-value place, a raw
-    ///     pointer `&raw const`/`&raw mut`, a `const { <bare path> }` block). EARNED at the
-    ///     specific term arm; a PURE untranslated term is NOT given this reason.
+    ///     pointer `&raw const`/`&raw mut`, a raw pointer cast, a `const { <bare path> }`
+    ///     block). EARNED at the specific term arm; a PURE untranslated term is NOT given
+    ///     this reason.
     ///   * the bare structural bail of a `Sugar::desugar` dig that did not reach truth (the
     ///     old `None`), with `STRUCTURAL_BACKSTOP_REASON` -- NEVER emitted to `skip_reasons`
     ///     (the fall-through consumer discards it via `Outcome::dug` and emits its own reason).
@@ -4553,6 +4555,8 @@ enum UnsupportedTermCause {
     MutableReference,
     /// `&raw const`/`&raw mut`: a raw pointer (runtime address).
     RawPointer,
+    /// `expr as *const T` / `expr as *mut T`: a raw pointer/provenance cast.
+    RawPointerCast,
 }
 
 impl UnsupportedTermCause {
@@ -4560,6 +4564,7 @@ impl UnsupportedTermCause {
         match self {
             UnsupportedTermCause::MutableReference => "a `&mut` borrow",
             UnsupportedTermCause::RawPointer => "a raw pointer (`&raw const`/`&raw mut`)",
+            UnsupportedTermCause::RawPointerCast => "a raw pointer cast (`as *const`/`as *mut`)",
         }
     }
 
@@ -4681,7 +4686,7 @@ impl Effect {
     }
 
     /// Build the term-shaped `Effect::Unsupported` for a genuinely effectful / non-
-    /// constructible TERM (a `&mut` borrow or a raw pointer). The
+    /// constructible TERM (a `&mut` borrow, a raw address, or a raw-pointer cast). The
     /// reason carries the `unsupported term` prefix + named cause verbatim (the term path's
     /// prior emission shape). A PURE untranslated term is NOT given this -- it keeps its bare
     /// `unsupported term` reason elsewhere (the inverse-sin guardrail).
