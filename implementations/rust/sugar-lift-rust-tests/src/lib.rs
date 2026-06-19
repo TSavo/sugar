@@ -5136,7 +5136,7 @@ fn emit_panic_freedom_callsites_in_stmt(
     if !options.panic_freedom_enabled() {
         return;
     }
-    for expr in callsite_exprs_in_stmt(stmt, options) {
+    for expr in callsite_exprs_in_stmt(stmt, scope, options) {
         let key = panic_freedom_site_key(&expr);
         if !seen.insert(key) {
             continue;
@@ -5409,9 +5409,10 @@ fn panic_freedom_site_key(expr: &Expr) -> String {
     format!("{}:{}:{}", start.line, start.column, token_key(expr))
 }
 
-fn callsite_exprs_in_stmt(stmt: &Stmt, options: &LiftOptions) -> Vec<Expr> {
+fn callsite_exprs_in_stmt(stmt: &Stmt, scope: &TemporalScope, options: &LiftOptions) -> Vec<Expr> {
     let mut visitor = PanicFreedomCallsiteVisitor {
         out: Vec::new(),
+        scope,
         options,
     };
     match stmt {
@@ -5435,6 +5436,7 @@ fn callsite_exprs_in_stmt(stmt: &Stmt, options: &LiftOptions) -> Vec<Expr> {
 
 struct PanicFreedomCallsiteVisitor<'a> {
     out: Vec<Expr>,
+    scope: &'a TemporalScope,
     options: &'a LiftOptions,
 }
 
@@ -5476,6 +5478,9 @@ impl<'ast> syn::visit::Visit<'ast> for PanicFreedomCallsiteVisitor<'_> {
 
     fn visit_expr_for_loop(&mut self, expr: &'ast syn::ExprForLoop) {
         self.visit_expr(&expr.expr);
+        if bounded_domain_from_expr(&expr.expr, self.scope).is_some() {
+            self.visit_block(&expr.body);
+        }
     }
 
     fn visit_expr_while(&mut self, expr: &'ast syn::ExprWhile) {
@@ -6152,6 +6157,71 @@ fn catch_unwind_closure_block_stmts(expr: &Expr) -> Option<&[Stmt]> {
     }
 }
 
+fn const_selected_if_branch_stmts<'a>(
+    if_expr: &'a syn::ExprIf,
+    options: &LiftOptions,
+) -> Option<&'a [Stmt]> {
+    match const_fold_bool_guard(&if_expr.cond, options)? {
+        true => Some(&if_expr.then_branch.stmts),
+        false => match &if_expr.else_branch {
+            Some((_, else_expr)) => unconditional_block_stmts(else_expr),
+            None => Some(&[]),
+        },
+    }
+}
+
+fn const_selected_match_arm_stmts(
+    match_expr: &syn::ExprMatch,
+    options: &LiftOptions,
+) -> Option<Vec<Stmt>> {
+    let scrutinee = const_eval(&match_expr.expr, &BTreeMap::new())?;
+    for arm in &match_expr.arms {
+        match cfg_resolve(&arm.attrs, options) {
+            CfgDisposition::Present => {}
+            CfgDisposition::Absent(_) => continue,
+            CfgDisposition::Ambiguous(_) => return None,
+        }
+        if arm.guard.is_some() {
+            return None;
+        }
+        if const_val_matches_pat(&scrutinee, &arm.pat)? {
+            return Some(stmts_from_match_arm_body(&arm.body));
+        }
+    }
+    Some(Vec::new())
+}
+
+fn const_val_matches_pat(value: &ConstVal, pat: &Pat) -> Option<bool> {
+    match pat {
+        Pat::Lit(lit) => {
+            let lit_expr = Expr::Lit(lit.clone());
+            Some(const_eval(&lit_expr, &BTreeMap::new())? == *value)
+        }
+        Pat::Wild(_) => Some(true),
+        Pat::Tuple(tuple) if tuple.elems.is_empty() => {
+            Some(matches!(value, ConstVal::Tuple(items) if items.is_empty()))
+        }
+        Pat::Paren(paren) => const_val_matches_pat(value, &paren.pat),
+        Pat::Reference(reference) => const_val_matches_pat(value, &reference.pat),
+        Pat::Or(or_pat) => {
+            let mut matched = false;
+            for case in &or_pat.cases {
+                matched |= const_val_matches_pat(value, case)?;
+            }
+            Some(matched)
+        }
+        _ => None,
+    }
+}
+
+fn stmts_from_match_arm_body(body: &Expr) -> Vec<Stmt> {
+    match body {
+        Expr::Block(block) => block.block.stmts.clone(),
+        Expr::Unsafe(unsafe_expr) => unsafe_expr.block.stmts.clone(),
+        other => vec![Stmt::Expr(other.clone(), None)],
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn collect_assertion_entries<'a>(
     stmts: &'a [Stmt],
@@ -6669,7 +6739,23 @@ fn collect_assertion_entries<'a>(
                 // Panic locus: `if let PAT = e { .. } else { panic!() }` asserts
                 // e matches PAT. Lift it; otherwise try the guarded-implication
                 // (`ConditionalSugar`); otherwise refuse the conditional.
-                if let Some(entry) = panic_locus_if_entry(i, &temporal_scope) {
+                if let Some(stmts) = const_selected_if_branch_stmts(i, options) {
+                    collect_assertion_entries(
+                        stmts,
+                        &child_block_scope(local_scope, stmt_idx),
+                        options,
+                        reducer,
+                        float_widths,
+                        entries,
+                        skipped,
+                        macros_lifted,
+                        reduced_helpers,
+                        factory_audits,
+                        macro_depth,
+                        &temporal_scope.plan.interior_mut,
+                        &local_fns,
+                    );
+                } else if let Some(entry) = panic_locus_if_entry(i, &temporal_scope) {
                     entries.push(entry);
                     *macros_lifted += 1;
                 } else if let Some(desugared) = {
@@ -6721,6 +6807,25 @@ fn collect_assertion_entries<'a>(
                 }
             }
             Stmt::Expr(e @ Expr::Match(m), _) => {
+                if count_asserts_in_expr(e) == 0 {
+                    if let Some(stmts) = const_selected_match_arm_stmts(m, options) {
+                        collect_assertion_entries(
+                            &stmts,
+                            &child_block_scope(local_scope, stmt_idx),
+                            options,
+                            reducer,
+                            float_widths,
+                            entries,
+                            skipped,
+                            macros_lifted,
+                            reduced_helpers,
+                            factory_audits,
+                            macro_depth,
+                            &temporal_scope.plan.interior_mut,
+                            &local_fns,
+                        );
+                    }
+                }
                 // OPAQUE-REFLECTION qualified continue path (value NOT in scope): a
                 // `match Type::of::<T>().kind { TypeKind::X(b) => assert_eq!(b.field, ..) }`
                 // reads its asserted values out of compile-time reflection over runtime
@@ -14826,6 +14931,187 @@ mod lifter_key_tests {
         assert!(
             dump.contains("panic") && dump.contains("not") && dump.contains("answer"),
             "nested callsite should emit not(panic(callsite)): {dump}"
+        );
+    }
+
+    #[test]
+    fn visited_unconditional_if_body_callsite_gets_not_panic_support() {
+        // A branch known to execute is a visited surface even without an explicit
+        // scalar assertion. It must still contribute the non-panic floor for the
+        // callsite inside the body.
+        let src = r#"
+            fn branch_probe() {}
+
+            #[test]
+            fn visited_if_body() {
+                if true {
+                    branch_probe();
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "support-only callsite floors do not increment scalar assertion count"
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("panic") && dump.contains("not") && dump.contains("branch_probe"),
+            "visited if-body callsite should emit not(panic(branch_probe)): {dump}"
+        );
+    }
+
+    #[test]
+    fn unvisited_const_if_body_callsite_does_not_get_not_panic_support() {
+        let src = r#"
+            fn branch_probe() {}
+
+            #[test]
+            fn unvisited_if_body() {
+                if false {
+                    branch_probe();
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(out.assertions_lifted, 0);
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            !dump.contains("branch_probe"),
+            "unvisited if-body callsite should not emit support: {dump}"
+        );
+    }
+
+    #[test]
+    fn visited_finite_for_body_callsite_gets_not_panic_support() {
+        let src = r#"
+            fn branch_probe(_: i32) {}
+
+            #[test]
+            fn visited_for_body() {
+                for x in [1i32, 2, 3] {
+                    branch_probe(x);
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "support-only loop callsites do not increment scalar assertion count"
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("panic") && dump.contains("not") && dump.contains("branch_probe"),
+            "visited finite for body callsite should emit not(panic(branch_probe)): {dump}"
+        );
+    }
+
+    #[test]
+    fn visited_for_each_body_callsite_gets_not_panic_support() {
+        let src = r#"
+            fn branch_probe(_: i32) {}
+
+            #[test]
+            fn visited_for_each_body() {
+                [1i32, 2, 3].into_iter().for_each(|x| {
+                    branch_probe(x);
+                });
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "support-only for_each callsites do not increment scalar assertion count"
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("panic") && dump.contains("not") && dump.contains("branch_probe"),
+            "visited for_each body callsite should emit not(panic(branch_probe)): {dump}"
+        );
+    }
+
+    #[test]
+    fn visited_method_chain_emits_panic_support_for_each_callsite() {
+        let src = r#"
+            #[test]
+            fn visited_chain() {
+                [1..3].iter().next().next().next();
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "support-only method chains do not increment scalar assertion count"
+        );
+        let support_contracts: Vec<&str> = out
+            .assertion_facts
+            .iter()
+            .filter(|fact| fact.kind == AssertionFactKind::Support)
+            .map(|fact| fact.contract_name.as_str())
+            .collect();
+        assert_eq!(
+            support_contracts.len(),
+            4,
+            "iter + three next calls should each emit one support fact: {support_contracts:?}"
+        );
+        assert!(
+            support_contracts
+                .iter()
+                .any(|contract| contract.contains("method:iter")),
+            "the iterator construction callsite must be support-accounted: {support_contracts:?}"
+        );
+        assert_eq!(
+            support_contracts
+                .iter()
+                .filter(|contract| contract.contains("method:next"))
+                .count(),
+            3,
+            "each next boundary should get its own support fact: {support_contracts:?}"
+        );
+        let no_panic_supports = out
+            .factory_audits
+            .iter()
+            .filter(|audit| {
+                audit.requested_role == "Constraint"
+                    && audit.selected == Some("constraint_no_panic_call")
+                    && audit.disposition == FactoryDisposition::Support
+            })
+            .count();
+        assert_eq!(
+            no_panic_supports, 4,
+            "every visited chain callsite should route through NoPanicCallSugar: {:?}",
+            out.factory_audits
+        );
+    }
+
+    #[test]
+    fn visited_literal_match_arm_callsite_gets_not_panic_support() {
+        let src = r#"
+            fn selected_probe() {}
+            fn unselected_probe() {}
+
+            #[test]
+            fn visited_match_arm() {
+                match 2 {
+                    1 => unselected_probe(),
+                    2 => selected_probe(),
+                    _ => unselected_probe(),
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "support-only match callsites do not increment scalar assertion count"
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("panic") && dump.contains("not") && dump.contains("selected_probe"),
+            "selected literal match arm should emit not(panic(selected_probe)): {dump}"
+        );
+        assert!(
+            !dump.contains("unselected_probe"),
+            "unselected literal match arms must not emit support: {dump}"
         );
     }
 
