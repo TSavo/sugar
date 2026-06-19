@@ -11,13 +11,13 @@ use crate::sugar::{
     array_repeat, array_term, assign_op, await_term, binop, block_term, bound_path, call,
     cast_term, closure_iter_advance_body, closure_mutating_body, closure_opaque_accessor,
     closure_runtime_receiver, closure_term, closure_tls_accessor, concat_macro, conditional,
-    const_block, const_path, constraint, control_flow_term, cstr, dormant_mut_ref, enumerate,
-    field_term, filter, filter_map, fold, for_each, for_replay, forall_loop, format_macro,
-    impl_method, index, iter_terminal, iterator, literal, macro_term, map, match_node,
-    match_scrutinee, method, monadic, path, range_term, raw_addr_term, reference_term, repeat_term,
-    rev, skip, skip_while, statement_control_flow, statement_loop_advance, statement_reflection,
-    statement_runtime_expr, string_add, struct_term, take, take_while, term_literal, to_string,
-    transparent_term, tuple_term, unary,
+    const_block, const_item, const_path, constraint, control_flow_term, cstr, dormant_mut_ref,
+    enumerate, field_term, filter, filter_map, fold, for_each, for_replay, forall_loop,
+    format_macro, impl_method, index, iter_terminal, iterator, literal, macro_term, map,
+    match_node, match_scrutinee, method, monadic, path, range_term, raw_addr_term, reference_term,
+    repeat_term, rev, skip, skip_while, statement_control_flow, statement_loop_advance,
+    statement_reflection, statement_runtime_expr, string_add, struct_term, take, take_while,
+    term_literal, to_string, transparent_term, tuple_term, unary,
 };
 use crate::{FactoryCandidateAudit, Sugar};
 
@@ -97,7 +97,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &match_scrutinee::VERDICT_EXPR_SUGAR,
 ];
 
-const ITEM_CLAIMS: &[&ItemSugarClaim] = &[&impl_method::ITEM_SUGAR];
+const ITEM_CLAIMS: &[&ItemSugarClaim] = &[&const_item::ITEM_SUGAR, &impl_method::ITEM_SUGAR];
 
 /// Ask every expression Sugar whether it handles this source site. Multiple
 /// candidates are first-class; equal-priority candidates for the same role are not.
@@ -899,6 +899,36 @@ mod tests {
         let names = item_candidate_names_for_role(&item, SugarRole::StatementItem);
 
         assert_eq!(names, vec!["impl_method"]);
+    }
+
+    #[test]
+    fn assertion_free_const_item_is_a_catalog_claim() {
+        let item: Item = syn::parse_str("const SIZE: usize = 1 << 47;").unwrap();
+        let names = item_candidate_names_for_role(&item, SugarRole::StatementItem);
+
+        assert_eq!(names, vec!["const_item"]);
+    }
+
+    #[test]
+    fn asserting_const_item_declines_inert_catalog_claim() {
+        let item: Item = syn::parse_str("const _: () = { assert!(1 == 1); };").unwrap();
+        let names = item_candidate_names_for_role(&item, SugarRole::StatementItem);
+
+        assert!(
+            names.is_empty(),
+            "asserting const items must recurse into their body, not be inert support: {names:?}"
+        );
+    }
+
+    #[test]
+    fn block_const_item_declines_inert_catalog_claim() {
+        let item: Item = syn::parse_str("const VALUE: usize = { helper() };").unwrap();
+        let names = item_candidate_names_for_role(&item, SugarRole::StatementItem);
+
+        assert!(
+            names.is_empty(),
+            "block const items must recurse into their visited statements: {names:?}"
+        );
     }
 
     #[test]
