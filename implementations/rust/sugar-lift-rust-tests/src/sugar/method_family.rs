@@ -21,3 +21,13 @@ pub(crate) fn resolves_literal_sequence<'a>(
     };
     is_literal_sequence_base(base)
 }
+
+pub(crate) fn resolves_literal_array_sequence<'a>(
+    expr: &'a Expr,
+    let_inits: &BTreeMap<String, &'a Expr>,
+) -> bool {
+    let Some((base, _)) = peel_fold_adaptors(expr, let_inits, 0) else {
+        return false;
+    };
+    matches!(strip_refs_groups(base), Expr::Array(_))
+}

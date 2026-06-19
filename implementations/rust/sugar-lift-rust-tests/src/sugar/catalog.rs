@@ -13,11 +13,12 @@ use crate::sugar::{
     closure_runtime_receiver, closure_term, closure_tls_accessor, collect, concat_macro,
     conditional, const_block, const_item, const_path, constraint, control_flow_term, cstr,
     dormant_mut_ref, enumerate, field_term, filter, filter_map, fold, for_each, for_replay,
-    forall_loop, format_macro, identity_map, impl_method, index, iter_terminal, iterator, literal,
-    macro_term, map, match_node, match_scrutinee, method, monadic, path, range_term, raw_addr_term,
-    reference_term, repeat_term, rev, skip, skip_while, statement_control_flow,
-    statement_loop_advance, statement_reflection, statement_runtime_expr, string_add, struct_term,
-    take, take_while, term_literal, to_string, transparent_term, tuple_term, unary, vec_macro,
+    forall_loop, format_macro, function_map, identity_map, impl_method, index, iter_terminal,
+    iterator, literal, macro_term, map, match_node, match_scrutinee, method, monadic, path,
+    range_term, raw_addr_term, reference_term, repeat_term, rev, skip, skip_while,
+    statement_control_flow, statement_loop_advance, statement_reflection, statement_runtime_expr,
+    string_add, struct_term, take, take_while, term_literal, to_string, transparent_term,
+    tuple_term, unary, vec_macro,
 };
 use crate::{FactoryCandidateAudit, Sugar};
 
@@ -49,6 +50,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &collect::EXPR_SUGAR,
     &iter_terminal::EXPR_SUGAR,
     &to_string::EXPR_SUGAR,
+    &function_map::TERM_EXPR_SUGAR,
     &method::EXPR_SUGAR,
     &await_term::EXPR_SUGAR,
     &reference_term::EXPR_SUGAR,
@@ -80,6 +82,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &enumerate::EXPR_SUGAR,
     &filter::EXPR_SUGAR,
     &identity_map::EXPR_SUGAR,
+    &function_map::EXPR_SUGAR,
     &map::EXPR_SUGAR,
     &filter_map::EXPR_SUGAR,
     &skip::EXPR_SUGAR,
