@@ -337,6 +337,7 @@ pub(crate) fn desugar_substituted_stmts(
         macro_depth + 1,
         &BTreeSet::new(),
         &BTreeMap::new(),
+        &crate::LayoutTypeRegistry::new(),
     );
     let unclassified: Vec<&String> = ts
         .iter()

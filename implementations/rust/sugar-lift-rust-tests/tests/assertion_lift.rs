@@ -269,6 +269,151 @@ fn use_super_glob_feeds_parent_consts_to_const_sugar() {
 }
 
 #[test]
+fn size_of_and_primitive_max_consts_are_compiler_axiom_sugar() {
+    let src = r#"
+        use std::mem;
+
+        #[allow(non_camel_case_types)]
+        struct ucred {
+            pid: u32,
+            uid: u32,
+            gid: u32,
+        }
+
+        #[test]
+        fn ucred_layout_axioms() {
+            let ucred_size = mem::size_of::<ucred>();
+
+            assert!(mem::size_of::<u32>() <= mem::size_of::<usize>());
+            assert!(ucred_size <= u32::MAX as usize);
+        }
+    "#;
+    let out = lift_file(&parse(src), "net/unix/ucred.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "size_of/primitive const assertions should lift; skip reasons: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.factory_audits
+            .iter()
+            .any(|audit| { audit.requested_role == "Term" && audit.selected == Some("sizeof") }),
+        "factory should route size_of calls through SizeOfSugar: {:?}",
+        out.factory_audits
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        !dump.contains("call:mem::size_of")
+            && !dump.contains("u32::MAX")
+            && !dump.contains("sizeof:ucred"),
+        "compiler axioms should reduce before ProofIR emission: {dump}"
+    );
+    assert!(
+        dump.contains("Int(12)"),
+        "local ucred layout should be rustc-evaluated to its concrete size: {dump}"
+    );
+}
+
+#[test]
+fn size_of_concrete_std_type_uses_rustc_layout_axiom() {
+    let src = r#"
+        #[test]
+        fn non_primitive_layout_axiom() {
+            assert!(std::mem::size_of::<std::num::NonZeroU32>() == 4);
+        }
+    "#;
+    let out = lift_file(&parse(src), "num/nonzero.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "rustc-backed size_of assertion should lift; skip reasons: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        !dump.contains("sizeof:std::num::NonZeroU32"),
+        "concrete std type layout should be emitted as a literal, not a symbolic layout term: {dump}"
+    );
+}
+
+#[test]
+fn bitwise_bool_operator_assertion_recurses_into_size_of_terms() {
+    let src = r#"
+        #[test]
+        fn bool_bitand_layout_axiom() {
+            assert!((std::mem::size_of::<u32>() == 4) & true);
+        }
+    "#;
+    let out = lift_file(&parse(src), "layout/bool_bitand.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bool bitwise operator assertions should lift through term sugar; skip reasons: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.factory_audits
+            .iter()
+            .any(|audit| { audit.requested_role == "Term" && audit.selected == Some("sizeof") }),
+        "bitwise bool operator should recurse into SizeOfSugar: {:?}",
+        out.factory_audits
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        !dump.contains("call:std::mem::size_of") && !dump.contains("sizeof:u32"),
+        "size_of under bool bitwise operator should reduce before ProofIR emission: {dump}"
+    );
+}
+
+#[test]
+fn size_of_local_type_prelude_includes_local_dependencies() {
+    let src = r#"
+        struct Inner(u32);
+        struct Outer(Inner, u32);
+
+        #[test]
+        fn nested_layout_axiom() {
+            assert!(std::mem::size_of::<Outer>() == 8);
+        }
+    "#;
+    let out = lift_file(&parse(src), "layout/nested.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "local dependent type layout should lift; skip reasons: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        !dump.contains("sizeof:Outer") && dump.contains("Int(8)"),
+        "dependent local layout should be rustc-evaluated to a literal: {dump}"
+    );
+}
+
+#[test]
+fn size_of_function_local_type_uses_block_layout_prelude() {
+    let src = r#"
+        #[test]
+        fn function_local_layout_axiom() {
+            struct Local(u32, u32);
+
+            assert!(std::mem::size_of::<Local>() == 8);
+        }
+    "#;
+    let out = lift_file(&parse(src), "layout/function_local.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "function-local type layout should lift; skip reasons: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        !dump.contains("sizeof:Local") && dump.contains("Int(8)"),
+        "function-local layout should be rustc-evaluated to a literal: {dump}"
+    );
+}
+
+#[test]
 fn use_super_glob_preserves_sibling_module_const_namespace() {
     let node = r#"
         const B: usize = 6;

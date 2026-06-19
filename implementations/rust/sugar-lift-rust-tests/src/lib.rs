@@ -108,6 +108,7 @@ pub mod sugar {
     pub mod regex_match;
     pub mod repeat_term;
     pub mod rev;
+    pub mod sizeof;
     pub mod skip;
     pub mod skip_while;
     pub mod statement_async_future;
@@ -424,6 +425,11 @@ pub enum Disposition {
 ///                            to read (its truth is per-monomorphization); a SOURCE
 ///                            property, terminal. (Distinct from the concrete-helper
 ///                            `reachable only via call-site inlining`, which stays work.)
+///   * `layout is unknown to this lift` -- a `mem::size_of::<T>()` whose type argument
+///                            could not be compiled in a monomorphic rustc harness. The
+///                            code either does not compile as written or needs a concrete
+///                            monomorphization/callsite before the compiler axiom has a
+///                            scalar value.
 pub fn refusal_disposition(reason: &str) -> Disposition {
     // INACTIVE: cfg-disabled for this target -- not in this build's universe.
     if reason.contains("inactive cfg") || reason.contains("inactive const if branch") {
@@ -642,6 +648,12 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // it STAYS the unclassified "reachable only via call-site inlining" reason (the
         // fake-refuse guardrail; left to dissolution / the exact partition).
         || reason.contains("reachable only via monomorphization of a generic")
+        // TERMINAL: `mem::size_of::<T>()` where this lift cannot compile a monomorphic
+        // harness for `T`. rustc gives a scalar only for concrete layouts; an unbound
+        // `T` does not compile, and a generic `T` has no single scalar until a callsite
+        // monomorphizes it. The sugar owns the stop instead of emitting a fake symbolic
+        // layout term.
+        || reason.contains("layout is unknown to this lift")
         // TERMINAL: an `unsupported term` whose SHAPE is genuinely effectful / non-constructible
         // -- a `&mut` borrow, raw address, or raw-pointer cast (`&raw const`/`&raw mut`/
         // `as *const`/`as *mut`). None is a single timeless value constructible from source
@@ -1477,6 +1489,7 @@ fn lift_source_assertion_contracts_in_stmts(
         .with_macro_registry(reducer.macro_registry_snapshot())
         .with_fn_registry(reducer.fn_registry_snapshot(&BTreeMap::new()))
         .with_impl_value_registry(reducer.impl_value_registry_snapshot())
+        .with_layout_type_registry(reducer.layout_type_registry_snapshot())
         .with_const_registry(reducer.const_registry_snapshot());
     let entries =
         source_assertion_entries_in_stmts(stmts, &scope, options, reducer, factory_audits);
@@ -1822,6 +1835,7 @@ fn visit_test_fn(
         &BTreeSet::new(),
         // Top-level `#[test]` fn: no ENCLOSING block, so no inherited nested fns.
         &BTreeMap::new(),
+        &LayoutTypeRegistry::new(),
     );
     if is_should_panic {
         emit_should_panic_temporal_callsites(
@@ -1971,6 +1985,7 @@ struct ReductionCtx<'a> {
     ambiguous_functions: BTreeSet<String>,
     imported_fns: FnRegistry,
     impl_values: ImplValueRegistry,
+    layout_types: LayoutTypeRegistry,
     consts: ConstRegistry,
     /// In-source `macro_rules!` definitions, by name, parsed into rules. These
     /// are what lets the lifter walk into a macro's definition and expand it,
@@ -2008,6 +2023,7 @@ impl<'a> ReductionCtx<'a> {
             ambiguous_functions: BTreeSet::new(),
             imported_fns: FnRegistry::new(),
             impl_values: ImplValueRegistry::new(),
+            layout_types: LayoutTypeRegistry::new(),
             consts: ConstRegistry::new(),
             macros: BTreeMap::new(),
             ambiguous_macros: BTreeSet::new(),
@@ -2046,6 +2062,9 @@ impl<'a> ReductionCtx<'a> {
                 }
                 Item::Impl(imp) => {
                     self.insert_impl_values(imp);
+                }
+                Item::Struct(_) | Item::Enum(_) | Item::Union(_) | Item::Type(_) => {
+                    self.layout_types.insert_item(item.clone());
                 }
                 Item::Const(c) => {
                     self.consts
@@ -2191,6 +2210,10 @@ impl<'a> ReductionCtx<'a> {
 
     fn impl_value_registry_snapshot(&self) -> ImplValueRegistry {
         self.impl_values.clone()
+    }
+
+    fn layout_type_registry_snapshot(&self) -> LayoutTypeRegistry {
+        self.layout_types.clone()
     }
 
     fn const_registry_snapshot(&self) -> ConstRegistry {
@@ -2564,6 +2587,161 @@ fn fn_signature(f: &syn::ItemFn) -> String {
     f.to_token_stream().to_string()
 }
 
+/// In-source type items visible to a scope. `SizeOfSugar` uses this to interrogate
+/// rustc about concrete local layouts: if `size_of::<ucred>()` appears in source and
+/// we hold `struct ucred { .. }`, the harness includes that item and asks rustc for
+/// the monomorphic answer. No type inference happens here; absent or ambiguous items
+/// simply make the harness fail and `SizeOfSugar` reports a named layout boundary.
+#[derive(Default, Clone)]
+pub(crate) struct LayoutTypeRegistry {
+    items: BTreeMap<String, std::rc::Rc<Item>>,
+    ambiguous: BTreeSet<String>,
+}
+
+impl std::fmt::Debug for LayoutTypeRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LayoutTypeRegistry")
+            .field("items", &self.items.keys().collect::<Vec<_>>())
+            .field("ambiguous", &self.ambiguous)
+            .finish()
+    }
+}
+
+impl LayoutTypeRegistry {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn insert_item(&mut self, item: Item) {
+        let Some(name) = layout_item_name(&item) else {
+            return;
+        };
+        if self.ambiguous.contains(&name) {
+            return;
+        }
+        let item = std::rc::Rc::new(item);
+        match self.items.get(&name) {
+            Some(existing) if item_signature(existing) == item_signature(&item) => {}
+            Some(_) => {
+                self.items.remove(&name);
+                self.ambiguous.insert(name);
+            }
+            None => {
+                self.items.insert(name, item);
+            }
+        }
+    }
+
+    fn merge_all(&mut self, imported: &LayoutTypeRegistry) {
+        for item in imported.items.values() {
+            self.insert_item((**item).clone());
+        }
+    }
+
+    pub(crate) fn prelude_for_type(&self, ty: &Type) -> String {
+        let mut seen = BTreeSet::new();
+        let mut items = Vec::new();
+        self.collect_type_prelude(ty, &mut seen, &mut items);
+        items.join("\n")
+    }
+
+    fn collect_type_prelude(
+        &self,
+        ty: &Type,
+        seen: &mut BTreeSet<String>,
+        items: &mut Vec<String>,
+    ) {
+        match ty {
+            Type::Path(path) if path.qself.is_none() => {
+                if path.path.segments.len() == 1 {
+                    if let Some(segment) = path.path.segments.first() {
+                        let name = segment.ident.to_string();
+                        if seen.insert(name.clone()) {
+                            if let Some(item) = self.items.get(&name) {
+                                self.collect_layout_item_type_deps(item, seen, items);
+                                items.push(item.to_token_stream().to_string());
+                            }
+                        }
+                        collect_path_arg_types(&segment.arguments, |arg_ty| {
+                            self.collect_type_prelude(arg_ty, seen, items);
+                        });
+                    }
+                } else {
+                    for segment in &path.path.segments {
+                        collect_path_arg_types(&segment.arguments, |arg_ty| {
+                            self.collect_type_prelude(arg_ty, seen, items);
+                        });
+                    }
+                }
+            }
+            Type::Reference(reference) => self.collect_type_prelude(&reference.elem, seen, items),
+            Type::Ptr(ptr) => self.collect_type_prelude(&ptr.elem, seen, items),
+            Type::Tuple(tuple) => {
+                for elem in &tuple.elems {
+                    self.collect_type_prelude(elem, seen, items);
+                }
+            }
+            Type::Array(array) => self.collect_type_prelude(&array.elem, seen, items),
+            Type::Slice(slice) => self.collect_type_prelude(&slice.elem, seen, items),
+            _ => {}
+        }
+    }
+
+    fn collect_layout_item_type_deps(
+        &self,
+        item: &Item,
+        seen: &mut BTreeSet<String>,
+        items: &mut Vec<String>,
+    ) {
+        match item {
+            Item::Struct(item) => {
+                for field in &item.fields {
+                    self.collect_type_prelude(&field.ty, seen, items);
+                }
+            }
+            Item::Enum(item) => {
+                for variant in &item.variants {
+                    for field in &variant.fields {
+                        self.collect_type_prelude(&field.ty, seen, items);
+                    }
+                }
+            }
+            Item::Union(item) => {
+                for field in &item.fields.named {
+                    self.collect_type_prelude(&field.ty, seen, items);
+                }
+            }
+            Item::Type(item) => self.collect_type_prelude(&item.ty, seen, items),
+            _ => {}
+        }
+    }
+}
+
+fn layout_item_name(item: &Item) -> Option<String> {
+    match item {
+        Item::Struct(item) => Some(item.ident.to_string()),
+        Item::Enum(item) => Some(item.ident.to_string()),
+        Item::Union(item) => Some(item.ident.to_string()),
+        Item::Type(item) => Some(item.ident.to_string()),
+        _ => None,
+    }
+}
+
+fn item_signature(item: &Item) -> String {
+    item.to_token_stream().to_string()
+}
+
+fn collect_path_arg_types<'a>(arguments: &'a syn::PathArguments, mut visit: impl FnMut(&'a Type)) {
+    let syn::PathArguments::AngleBracketed(args) = arguments else {
+        return;
+    };
+    for arg in &args.args {
+        if let syn::GenericArgument::Type(ty) = arg {
+            visit(ty);
+        }
+    }
+}
+
 /// In-source value-function definitions indexed by source file. `UseSugar` reads this
 /// source graph to materialize compiler-visible imports (`use super::*`) into the
 /// local value-function registry carried on `TemporalScope`; call/value sugar then
@@ -2615,6 +2793,19 @@ fn scan_function_items(items: &[Item], registry: &mut FnRegistry) {
             _ => {}
         }
     }
+}
+
+fn layout_type_registry_for_stmts(stmts: &[Stmt]) -> LayoutTypeRegistry {
+    let mut registry = LayoutTypeRegistry::new();
+    for stmt in stmts {
+        if let Stmt::Item(
+            item @ (Item::Struct(_) | Item::Enum(_) | Item::Union(_) | Item::Type(_)),
+        ) = stmt
+        {
+            registry.insert_item(item.clone());
+        }
+    }
+    registry
 }
 
 /// In-source inherent impl VALUE methods, owned so they can ride on `TemporalScope`
@@ -2792,6 +2983,7 @@ fn try_macro_expansion_entries(
         macro_depth + 1,
         &BTreeSet::new(),
         &BTreeMap::new(),
+        &LayoutTypeRegistry::new(),
     );
     if temp_entries.is_empty() {
         Some(Err(format!(
@@ -3006,6 +3198,9 @@ pub(crate) struct TemporalScope {
     /// commit only if the result fully grounds. Empty by default keeps every method call
     /// on the opaque `method:` fallback.
     impl_value_registry: ImplValueRegistry,
+    /// In-source type items visible to this scope. `SizeOfSugar` uses these as the
+    /// prelude for rustc layout interrogation when a concrete local type is named.
+    layout_type_registry: LayoutTypeRegistry,
     /// In-source const item initializers visible to this scope. A const path is a
     /// compiler axiom, so `ConstSugar` resolves it to this initializer and recursively
     /// asks the factory to desugar the initializer term.
@@ -3045,6 +3240,7 @@ impl TemporalScope {
             macro_registry: MacroRegistry::new(),
             fn_registry: FnRegistry::new(),
             impl_value_registry: ImplValueRegistry::new(),
+            layout_type_registry: LayoutTypeRegistry::new(),
             const_registry: ConstRegistry::new(),
             inlined_value_helpers: std::cell::RefCell::new(BTreeSet::new()),
             dormant_mut_ref: sugar::dormant_mut_ref::DormantMutRefState::default(),
@@ -3110,6 +3306,16 @@ impl TemporalScope {
     /// The in-source inherent impl value registry visible at this scope.
     fn impl_value_registry(&self) -> &ImplValueRegistry {
         &self.impl_value_registry
+    }
+
+    /// Record the in-source layout type registry visible at this scope.
+    fn with_layout_type_registry(mut self, registry: LayoutTypeRegistry) -> Self {
+        self.layout_type_registry = registry;
+        self
+    }
+
+    pub(crate) fn layout_prelude_for_type(&self, ty: &Type) -> String {
+        self.layout_type_registry.prelude_for_type(ty)
     }
 
     /// Record the in-source const registry visible at this scope.
@@ -5471,12 +5677,15 @@ fn should_panic_temporal_callsite_records(
             local_fns.insert(f.sig.ident.to_string(), f);
         }
     }
+    let mut layout_types = reducer.layout_type_registry_snapshot();
+    layout_types.merge_all(&layout_type_registry_for_stmts(stmts));
     let temporal_plan = temporal_plan_for_stmts(stmts, &BTreeSet::new());
     let mut temporal_scope = TemporalScope::new(local_scope, temporal_plan)
         .with_literal_arrays(capture_scalar_literal_arrays(stmts))
         .with_macro_registry(reducer.macro_registry_snapshot())
         .with_fn_registry(reducer.fn_registry_snapshot(&local_fns))
         .with_impl_value_registry(reducer.impl_value_registry_snapshot())
+        .with_layout_type_registry(layout_types)
         .with_const_registry(reducer.const_registry_snapshot());
     let mut float_widths = FloatWidthScope::new();
     let mut records = Vec::new();
@@ -6524,6 +6733,7 @@ fn collect_assertion_entries<'a>(
     // refuse) a body whose cause is now SHOWN; it never fake-digs (a runtime body bails
     // / refuses) and never fake-refuses (a pure body discharges through the dig path).
     enclosing_fns: &BTreeMap<String, &'a syn::ItemFn>,
+    enclosing_layout_types: &LayoutTypeRegistry,
 ) {
     // A NESTED BLOCK carries the `#b<idx>` marker (`child_block_scope`); a function
     // body / macro-expansion / loop scope does not. Inside a nested block we relabel
@@ -6566,6 +6776,9 @@ fn collect_assertion_entries<'a>(
             local_fns.insert(f.sig.ident.to_string(), f);
         }
     }
+    let mut layout_types = reducer.layout_type_registry_snapshot();
+    layout_types.merge_all(enclosing_layout_types);
+    layout_types.merge_all(&layout_type_registry_for_stmts(stmts));
     // Carry the in-source value-`fn` registry (file-level fns overlaid with the lexically
     // in-scope nested helpers) so a TERM-POSITION value call (`h(2)` in `assert_eq!(h(2),
     // 3)`) can be RESOLVED to its body and β-reduced at desugar time even through the thin
@@ -6576,6 +6789,7 @@ fn collect_assertion_entries<'a>(
     temporal_scope = temporal_scope.with_fn_registry(reducer.fn_registry_snapshot(&local_fns));
     temporal_scope =
         temporal_scope.with_impl_value_registry(reducer.impl_value_registry_snapshot());
+    temporal_scope = temporal_scope.with_layout_type_registry(layout_types.clone());
     temporal_scope = temporal_scope.with_const_registry(reducer.const_registry_snapshot());
     // Map of this block's simple `let <ident> = <init>;` bindings, so the DEFOLDER can
     // resolve a fold receiver that is a binding (`it.fold(..)` where `it = xs.iter()`,
@@ -6667,6 +6881,7 @@ fn collect_assertion_entries<'a>(
                             macro_depth,
                             &temporal_scope.plan.interior_mut,
                             &local_fns,
+                            &layout_types,
                         );
                     } else if let Some(stmts) = catch_unwind_closure_block_stmts(&init.expr) {
                         // `let <pat> = catch_unwind(|| { .. })`: the closure runs
@@ -6691,6 +6906,7 @@ fn collect_assertion_entries<'a>(
                             macro_depth,
                             &temporal_scope.plan.interior_mut,
                             &local_fns,
+                            &layout_types,
                         );
                     } else if let Some(desugared) = {
                         // DESUGAR (the typed `Sugar` spine): a `.fold`/`.rfold`
@@ -6930,6 +7146,7 @@ fn collect_assertion_entries<'a>(
                     macro_depth,
                     &temporal_scope.plan.interior_mut,
                     &local_fns,
+                    &layout_types,
                 );
             }
             // Unconditional unsafe block: recurse and lift normally.
@@ -6948,6 +7165,7 @@ fn collect_assertion_entries<'a>(
                     macro_depth,
                     &temporal_scope.plan.interior_mut,
                     &local_fns,
+                    &layout_types,
                 );
             }
             // Control-flow contexts: asserts are conditional or parametric; refuse.
@@ -7042,6 +7260,7 @@ fn collect_assertion_entries<'a>(
                         macro_depth,
                         &temporal_scope.plan.interior_mut,
                         &local_fns,
+                        &layout_types,
                     );
                     for _ in 0..inactive_asserts {
                         skipped.push("inactive const if branch on assertion; skipped".to_string());
@@ -7114,6 +7333,7 @@ fn collect_assertion_entries<'a>(
                             macro_depth,
                             &temporal_scope.plan.interior_mut,
                             &local_fns,
+                            &layout_types,
                         );
                     }
                 }
@@ -7244,6 +7464,7 @@ fn collect_assertion_entries<'a>(
                     macro_depth,
                     &temporal_scope.plan.interior_mut,
                     &local_fns,
+                    &layout_types,
                 );
             }
             // A `const`/`static` ITEM declared inside a test fn body
@@ -7305,6 +7526,7 @@ fn collect_assertion_entries<'a>(
                         macro_depth,
                         &temporal_scope.plan.interior_mut,
                         &local_fns,
+                        &layout_types,
                     );
                 }
             }
@@ -7393,6 +7615,7 @@ fn collect_assertion_entries<'a>(
                                 macro_depth,
                                 &BTreeSet::new(),
                                 &local_fns,
+                                &layout_types,
                             );
                             true
                         } else if let Some(stmts) = unconditional_block_stmts(e) {
@@ -7410,6 +7633,7 @@ fn collect_assertion_entries<'a>(
                                 macro_depth,
                                 &temporal_scope.plan.interior_mut,
                                 &local_fns,
+                                &layout_types,
                             );
                             true
                         } else if let Some(closure) =
@@ -7429,6 +7653,7 @@ fn collect_assertion_entries<'a>(
                                 macro_depth,
                                 &temporal_scope.plan.interior_mut,
                                 &local_fns,
+                                &layout_types,
                             );
                             true
                         } else if let Some(cs) = sugar::closure::ClosureDriverSugar::decompose(
@@ -8095,6 +8320,7 @@ fn for_context_refusal_reason(
         macro_depth,
         &scope.plan.interior_mut,
         &BTreeMap::new(),
+        &LayoutTypeRegistry::new(),
     );
     let body_over_opaque = bs.iter().any(|r| {
         r.contains("OPAQUE")
@@ -8649,6 +8875,7 @@ fn lift_item_assertions(
         0,
         &BTreeSet::new(),
         &BTreeMap::new(),
+        &LayoutTypeRegistry::new(),
     );
     out.assertions_lifted += macros_lifted;
     out.assertions_refused += skipped.len();
@@ -11733,10 +11960,11 @@ fn translate_binary_bool_assertion_with_audits(
             )?;
             Ok(assertion_entry_from_relation(lhs, rhs, op, scope))
         }
-        _ => Err(format!(
-            "only scalar comparison/connective assertions are liftable, got `{}`",
-            token_key(binary)
-        )),
+        _ => {
+            let expr = Expr::Binary(binary.clone());
+            let term = translate_term_in_scope_with_audits(&expr, scope, factory_audits)?;
+            Ok(assertion_entry_from_eq(term, bool_const(true), scope))
+        }
     }
 }
 
@@ -18916,6 +19144,7 @@ mod lifter_key_tests {
             "assert_eq!: signed zero float literal remains an IEEE refinement `- 0.0f32`",
             "float refinement predicate `is_nan` requires known f32/f64 receiver width `\"NaN\" . parse :: < f16 > () . unwrap () . is_nan ()`",
             "assertion in non-#[test] item `test_num` reachable only via monomorphization of a generic type/const parameter (runtime instantiation: no single concrete type to read; not statically constructible at any call site); refused",
+            "assert!: unsupported term `mem::size_of::<T>()`: layout is unknown to this lift (rustc could not compile a monomorphic size_of harness for this type); refused",
             "assert_eq!: unsupported term `& mut x`: effectful / raw-pointer / mutable-reference term (a `&mut` borrow) is not a constructible timeless value; refused",
             "assert_eq!: unsupported term `& raw const garlic`: effectful / raw-pointer / mutable-reference term (a raw pointer (`&raw const`/`&raw mut`)) is not a constructible timeless value; refused",
             "assert!: only scalar equality is liftable; operand is a runtime non-scalar result `match b . binary_search (& 3) { Ok (1 ..= 3) => true , _ => false , }` (a `match` over a runtime call result, not constructible from source literals); refused",

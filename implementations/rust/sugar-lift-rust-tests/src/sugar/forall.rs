@@ -79,6 +79,7 @@ fn lift_bounded_forall(
         macro_depth,
         &scope.plan.interior_mut,
         &BTreeMap::new(),
+        &scope.layout_type_registry,
     );
     let warranted = body_entries
         .iter()
