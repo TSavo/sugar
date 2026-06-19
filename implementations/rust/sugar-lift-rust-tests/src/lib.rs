@@ -1747,6 +1747,14 @@ fn visit_test_fn(
         CfgDisposition::Absent(reason) => {
             // Refuse every assert in the fn body so they are not silent drops.
             let assert_count = count_asserts_in_stmts(&f.block.stmts);
+            trace_cfg_accounting_skip(
+                "test_fn",
+                source_path,
+                &test_name,
+                "inactive",
+                assert_count,
+                &reason,
+            );
             let skip_reason = format!("inactive cfg on test fn; skipped: {reason}");
             for _ in 0..assert_count {
                 out.assertions_refused += 1;
@@ -1762,6 +1770,14 @@ fn visit_test_fn(
         CfgDisposition::Ambiguous(reason) => {
             // Refuse every assert in the fn body so they are not silent drops.
             let assert_count = count_asserts_in_stmts(&f.block.stmts);
+            trace_cfg_accounting_skip(
+                "test_fn",
+                source_path,
+                &test_name,
+                "ambiguous",
+                assert_count,
+                &reason,
+            );
             let skip_reason = format!("ambiguous cfg on test fn; skipped: {reason}");
             for _ in 0..assert_count {
                 out.assertions_refused += 1;
@@ -3401,6 +3417,7 @@ fn account_skipped_module(
     out: &mut AdapterOutput,
 ) {
     let count = count_asserts_in_items(items);
+    trace_cfg_accounting_skip("module", source_path, module_name, kind, count, reason);
     let skip = format!("{kind} cfg on module; skipped: {reason}");
     for _ in 0..count {
         out.assertions_refused += 1;
@@ -3411,6 +3428,39 @@ fn account_skipped_module(
         item_name: module_name.to_string(),
         reason: format!("rust test assertions: {kind} cfg; skipped module: {reason}"),
     });
+}
+
+fn trace_cfg_accounting_skip(
+    surface: &'static str,
+    source_path: &str,
+    item_name: &str,
+    kind: &str,
+    assertion_count: usize,
+    reason: &str,
+) {
+    if kind == "ambiguous" {
+        tracing::warn!(
+            target: "sugar_lift_rust_tests::cfg_accounting",
+            surface = surface,
+            source_path = source_path,
+            item_name = item_name,
+            kind = kind,
+            assertion_count = assertion_count,
+            reason = reason,
+            "cfg-gated assertion surface skipped"
+        );
+    } else {
+        tracing::debug!(
+            target: "sugar_lift_rust_tests::cfg_accounting",
+            surface = surface,
+            source_path = source_path,
+            item_name = item_name,
+            kind = kind,
+            assertion_count = assertion_count,
+            reason = reason,
+            "cfg-gated assertion surface skipped"
+        );
+    }
 }
 
 pub(crate) fn count_asserts_in_expr(expr: &Expr) -> usize {
