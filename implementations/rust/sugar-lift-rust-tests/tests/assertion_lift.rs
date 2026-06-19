@@ -3351,6 +3351,39 @@ fn pointer_cast_result() {
 }
 
 #[test]
+fn unsafe_clone_to_uninit_block_is_refused_runtime_memory_boundary() {
+    let src = r#"
+#[test]
+fn clone_to_uninit_block() {
+    assert_eq!(
+        a.as_bytes(),
+        unsafe {
+            a.clone_to_uninit(MaybeUninit::uninit().as_mut_ptr().cast());
+            MaybeUninit::uninit().assume_init()
+        }
+        .as_slice()
+    );
+}
+"#;
+    let out = lift_file(&parse(src), "tests/clone.rs");
+    let r = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains("clone_to_uninit") && r.contains("runtime expression-statement"))
+        .unwrap_or_else(|| {
+            panic!(
+                "expected unsafe memory terminal refusal, got {:?}",
+                out.skip_reasons
+            )
+        });
+    assert_eq!(
+        disp2(r),
+        sugar_lift_rust_tests::Disposition::Refused,
+        "unsafe memory block must be terminal: {r}"
+    );
+}
+
+#[test]
 fn non_test_assert_bound_condition_lifts_as_precondition() {
     let src = r#"
 fn assert_capacity(capacity: usize) {

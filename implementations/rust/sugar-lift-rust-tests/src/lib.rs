@@ -120,6 +120,7 @@ pub mod sugar {
     pub mod tuple_term;
     pub mod unary;
     pub mod unit_path;
+    pub mod unsafe_memory;
     pub mod use_item;
     pub mod vec_macro;
 }
