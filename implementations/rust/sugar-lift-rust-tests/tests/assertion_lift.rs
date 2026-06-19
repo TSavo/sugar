@@ -5622,19 +5622,18 @@ fn fmt_distinct() {
 }
 
 #[test]
-fn vec_and_offset_of_lift_as_macro_terms() {
+fn vec_lifts_as_macro_term() {
     // Generality: the arm is not format-specific; any macro in term position lifts.
     let src = r#"
 #[test]
 fn other_macros() {
     assert_eq!(vec![1, 2, 3], vec![1, 2, 3]);
-    assert_eq!(offset_of!(Foo, x), 0);
 }
 "#;
     let out = lift_file(&parse(src), "tests/fmt.rs");
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
     let ops = inv_operands(&out.decls[0]);
-    assert_eq!(ops.len(), 2);
+    assert_eq!(ops.len(), 1);
     // vec! == vec! is reflexive over one coalesced term.
     assert_eq!(eq_lhs_name(&ops[0]), {
         match ops[0].as_ref() {
@@ -5645,11 +5644,6 @@ fn other_macros() {
             other => panic!("expected equality, got {other:?}"),
         }
     });
-    let off = eq_lhs_name(&ops[1]);
-    assert!(
-        off.starts_with("macro:") && off.contains("offset_of"),
-        "offset_of! must lift as a macro term, got {off}"
-    );
 }
 
 // --- deref and reference structural terms tranche (T-DEREF) ---
@@ -13166,6 +13160,253 @@ fn t() {
     }
 }
 
+#[test]
+fn offset_of_macro_lowers_to_rustc_layout_literal_with_teeth() {
+    let good = r#"
+#[test]
+fn t() {
+    #[repr(C)]
+    struct Foo {
+        x: u8,
+        y: u16,
+    }
+
+    assert_eq!(offset_of!(Foo, y), 2);
+}
+"#;
+    let out = lift_file(&parse(good), "tests/offset_of.rs");
+    assert_eq!(out.decls.len(), 1, "warnings: {:?}", out.warnings);
+    let (lhs, rhs) = single_eq_atom(&out.decls[0]);
+    assert!(
+        matches!(
+            lhs.as_ref(),
+            Term::Const {
+                value: ConstValue::Int(2),
+                ..
+            }
+        ),
+        "offset_of!(Foo, y) must lower to the rustc layout literal 2, got {lhs:?}"
+    );
+    assert!(
+        matches!(
+            rhs.as_ref(),
+            Term::Const {
+                value: ConstValue::Int(2),
+                ..
+            }
+        ),
+        "expected RHS literal 2, got {rhs:?}"
+    );
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        !doc.contains("macro:"),
+        "offset_of! is a compiler layout axiom, not an opaque macro term: {doc}"
+    );
+    if let Some(sat) = z3_sat_of_inv(&out.decls[0], "offset_of_good") {
+        assert!(sat, "offset_of!(Foo, y) == 2 must be SAT");
+    }
+
+    let bad = r#"
+#[test]
+fn t() {
+    #[repr(C)]
+    struct Foo {
+        x: u8,
+        y: u16,
+    }
+
+    assert_eq!(offset_of!(Foo, y), 3);
+}
+"#;
+    let bad_out = lift_file(&parse(bad), "tests/offset_of.rs");
+    assert_eq!(bad_out.decls.len(), 1, "warnings: {:?}", bad_out.warnings);
+    let (bad_lhs, _) = single_eq_atom(&bad_out.decls[0]);
+    assert!(
+        matches!(
+            bad_lhs.as_ref(),
+            Term::Const {
+                value: ConstValue::Int(2),
+                ..
+            }
+        ),
+        "bad twin must still lower LHS to literal 2, got {bad_lhs:?}"
+    );
+    if let Some(sat) = z3_sat_of_inv(&bad_out.decls[0], "offset_of_bad") {
+        assert!(
+            !sat,
+            "offset_of!(Foo, y) == 3 must be UNSAT once the compiler axiom is literal"
+        );
+    }
+}
+
+#[test]
+fn std_shaped_offset_of_macro_import_is_compiler_axiom_sugar() {
+    let dep = r#"
+macro_rules! offset_of {
+    ($Container:ty, $($fields:expr)+ $(,)?) => {
+        const { builtin # offset_of($Container, $($fields)+) }
+    };
+}
+"#;
+    let mut macros = MacroRegistry::new();
+    macros.scan_source(dep);
+    let consts = ConstSourceRegistry::new();
+    let src = r#"
+#[test]
+fn t() {
+    #[repr(C)]
+    struct Foo {
+        x: u8,
+        y: u16,
+    }
+
+    assert_eq!(offset_of!(Foo, y), 2);
+}
+"#;
+    let out = lift_file_with_source_imports(
+        &parse(src),
+        "tests/std_shaped_offset_of.rs",
+        &LiftOptions::default(),
+        &macros,
+        &consts,
+    );
+    assert_eq!(out.decls.len(), 1, "warnings: {:?}", out.warnings);
+    assert!(
+        out.factory_audits
+            .iter()
+            .any(|audit| audit.requested_role == "Term" && audit.selected == Some("offset_of")),
+        "std-shaped offset_of macro should be owned by OffsetOfSugar: {:?}",
+        out.factory_audits
+    );
+    let (lhs, rhs) = single_eq_atom(&out.decls[0]);
+    assert!(
+        matches!(
+            lhs.as_ref(),
+            Term::Const {
+                value: ConstValue::Int(2),
+                ..
+            }
+        ) && matches!(
+            rhs.as_ref(),
+            Term::Const {
+                value: ConstValue::Int(2),
+                ..
+            }
+        ),
+        "std-shaped offset_of macro should lower to exact literals, got {lhs:?} == {rhs:?}"
+    );
+}
+
+#[test]
+fn source_macro_named_offset_of_is_not_stolen_by_layout_sugar() {
+    let dep = r#"
+macro_rules! offset_of {
+    ($Container:ty, $field:ident) => {
+        7
+    };
+}
+"#;
+    let mut macros = MacroRegistry::new();
+    macros.scan_source(dep);
+    let consts = ConstSourceRegistry::new();
+    let src = r#"
+#[test]
+fn t() {
+    struct Foo {
+        x: u8,
+        y: u16,
+    }
+
+    assert_eq!(offset_of!(Foo, y), 7);
+}
+"#;
+    let out = lift_file_with_source_imports(
+        &parse(src),
+        "tests/source_macro_named_offset_of.rs",
+        &LiftOptions::default(),
+        &macros,
+        &consts,
+    );
+    assert_eq!(out.decls.len(), 1, "warnings: {:?}", out.warnings);
+    assert!(
+        out.factory_audits
+            .iter()
+            .any(|audit| audit.requested_role == "Term" && audit.selected == Some("macro_term")),
+        "ordinary source macro named offset_of should expand through MacroSugar: {:?}",
+        out.factory_audits
+    );
+    assert!(
+        !out.factory_audits
+            .iter()
+            .any(|audit| audit.requested_role == "Term" && audit.selected == Some("offset_of")),
+        "ordinary source macro named offset_of must not be stolen by OffsetOfSugar: {:?}",
+        out.factory_audits
+    );
+    let (lhs, rhs) = single_eq_atom(&out.decls[0]);
+    assert!(
+        matches!(
+            lhs.as_ref(),
+            Term::Const {
+                value: ConstValue::Int(7),
+                ..
+            }
+        ) && matches!(
+            rhs.as_ref(),
+            Term::Const {
+                value: ConstValue::Int(7),
+                ..
+            }
+        ),
+        "ordinary source macro should expand to its literal body, got {lhs:?} == {rhs:?}"
+    );
+}
+
+#[test]
+fn offset_of_harness_does_not_import_unrelated_layout_items() {
+    let src = r#"
+#[cfg(panic = "unwind")]
+struct CloneUntilPanic {
+    limit: usize,
+    rc: Rc<()>,
+}
+
+#[test]
+fn t() {
+    #[repr(C)]
+    struct Foo {
+        x: u8,
+        y: u16,
+    }
+
+    assert_eq!(offset_of!(Foo, y), 2);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/offset_of_unrelated_context.rs");
+    assert_eq!(out.decls.len(), 1, "warnings: {:?}", out.warnings);
+    assert_eq!(
+        out.assertions_refused, 0,
+        "unrelated layout items must not poison offset_of harnesses: {:?}",
+        out.skip_reasons
+    );
+    let (lhs, rhs) = single_eq_atom(&out.decls[0]);
+    assert!(
+        matches!(
+            lhs.as_ref(),
+            Term::Const {
+                value: ConstValue::Int(2),
+                ..
+            }
+        ) && matches!(
+            rhs.as_ref(),
+            Term::Const {
+                value: ConstValue::Int(2),
+                ..
+            }
+        ),
+        "target offset should still lower through rustc, got {lhs:?} == {rhs:?}"
+    );
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // TERM-POSITION VALUE-CALL INLINING (capability #1) — the value teeth.
 //
@@ -14232,4 +14473,94 @@ fn t() {
             "the bad twin `v == 6 AND v == 7` must be UNSAT under z3 (the anchor-flip teeth)"
         );
     }
+}
+
+#[test]
+fn runtime_match_arm_block_assert_is_accounted_not_unenumerated() {
+    let src = r#"
+#[test]
+fn t() {
+    let err: Result<(), &'static str> = Err("expected");
+    match err {
+        Ok(_) => unreachable!(),
+        Err(payload) => {
+            let msg = payload;
+            assert_eq!(msg, "expected");
+        }
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/mem.rs");
+    assert!(
+        !out.skip_reasons
+            .iter()
+            .any(|r| r.contains("unenumerated statement position")),
+        "match arm assertions must be accounted by the match path, not the safety net: {:?}",
+        out.skip_reasons
+    );
+    assert_eq!(
+        out.assertions_lifted + out.assertions_refused,
+        1,
+        "the assertion arm should be accounted: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn const_block_let_else_assert_is_accounted_not_unenumerated() {
+    let src = r#"
+#[test]
+fn t() {
+    const {
+        let Some(value) = Some(3usize) else { panic!() };
+        assert!(value == 3);
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/mem/type_info.rs");
+    assert!(
+        !out.skip_reasons
+            .iter()
+            .any(|r| r.contains("unenumerated statement position")),
+        "const block assertions must be accounted by const recursion, not the safety net: {:?}",
+        out.skip_reasons
+    );
+    assert_eq!(
+        out.assertions_lifted + out.assertions_refused,
+        1,
+        "the assertion surface should be accounted: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn const_block_reflection_let_else_assert_is_accounted_not_unenumerated() {
+    let src = r#"
+#[test]
+fn t() {
+    const {
+        struct TestStruct {
+            first: u8,
+        }
+
+        let Type { kind: Struct(ty), size, .. } = Type::of::<TestStruct>() else { panic!() };
+        assert!(size == Some(size_of::<TestStruct>()));
+        assert!(ty.fields.len() == 1);
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/mem/type_info.rs");
+    assert!(
+        !out.skip_reasons
+            .iter()
+            .any(|r| r.contains("unenumerated statement position")),
+        "const reflection asserts must be accounted by the const/reflection path, not the safety net: {:?}",
+        out.skip_reasons
+    );
+    assert_eq!(
+        out.assertions_lifted + out.assertions_refused,
+        2,
+        "both const reflection assertion surfaces should be accounted: {:?}",
+        out.skip_reasons
+    );
 }
