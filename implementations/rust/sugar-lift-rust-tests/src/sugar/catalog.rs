@@ -8,25 +8,28 @@ use crate::sugar::backstop::unsupported;
 use crate::sugar::claim::{ExprSugarClaim, ItemSugarClaim, SugarCandidate, SugarRole};
 use crate::sugar::factory::{AccountedSugar, FactoryAuditSeed, SugarBuildCtx};
 use crate::sugar::{
-    array_repeat, array_term, assign_op, await_term, binop, block_term, bound_path, call,
-    cast_term, char_range_collect_string, char_range_filter_map, closure_iter_advance_body,
+    array_repeat, array_term, assign_op, await_term, binop, block_term, bool_bitwise, bound_path,
+    call, cast_term, char_range_collect_string, char_range_filter_map, closure_iter_advance_body,
     closure_mutating_body, closure_opaque_accessor, closure_runtime_receiver, closure_term,
     closure_tls_accessor, collect, concat_macro, conditional, const_block, const_item, const_path,
     constraint, control_flow_term, cstr, dormant_mut_ref, enumerate, field_term, filter,
-    filter_map, fold, for_each, for_replay, forall_loop, format_macro, function_map, identity_map,
-    impl_method, index, intersperse_collect_string, intersperse_concat, iter_terminal, iterator,
-    literal, literal_slice, macro_term, map, match_node, match_scrutinee, method, monadic, path,
-    range_term, raw_addr_term, reference_term, repeat_term, rev, sizeof, skip, skip_while,
-    statement_async_future, statement_control_flow, statement_future_handoff,
-    statement_loop_advance, statement_reflection, statement_runtime_expr, string_add, struct_term,
-    take, take_while, term_literal, to_string, transparent_term, try_from_fn, try_map, tuple_term,
-    unary, unsafe_memory, vec_macro,
+    filter_map, float_refinement, fold, for_each, for_replay, forall_loop, format_macro,
+    function_map, identity_map, impl_method, index, infinity_eq, intersperse_collect_string,
+    intersperse_concat, iter_terminal, iterator, literal, literal_iterator_quantifier,
+    literal_slice, macro_term, map, match_node, match_scrutinee, matches_macro, method, monadic,
+    path, range_term, raw_addr_term, reference_term, regex_match, repeat_term, rev, sizeof, skip,
+    skip_while, statement_async_future, statement_control_flow, statement_future_handoff,
+    statement_loop_advance, statement_reflection, statement_runtime_expr, string_add,
+    string_predicate, struct_term, take, take_while, term_literal, to_string, transparent_term,
+    try_from_fn, try_map, tuple_term, unary, unsafe_memory, vec_macro,
 };
 use crate::{FactoryCandidateAudit, Sugar};
 
 /// The unified expression-Sugar catalog. This is wiring only: each entry points at
 /// metadata owned by the Sugar module itself.
 const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
+    &constraint::BOUNDED_LITERAL_MACRO_SUGAR,
+    &infinity_eq::CONSTRAINT_EXPR_SUGAR,
     &constraint::RELATION_MACRO_SUGAR,
     &char_range_filter_map::EXPR_SUGAR,
     &constraint::ASSERT_MACRO_SUGAR,
@@ -34,6 +37,13 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &constraint::NO_PANIC_CALL_SUGAR,
     &assign_op::EXPR_SUGAR,
     &statement_runtime_expr::CONSTRAINT_EXPR_SUGAR,
+    &bool_bitwise::CONSTRAINT_EXPR_SUGAR,
+    &matches_macro::CONSTRAINT_EXPR_SUGAR,
+    &literal_iterator_quantifier::CONSTRAINT_EXPR_SUGAR,
+    &match_scrutinee::CONSTRAINT_EXPR_SUGAR,
+    &regex_match::CONSTRAINT_EXPR_SUGAR,
+    &string_predicate::CONSTRAINT_EXPR_SUGAR,
+    &float_refinement::CONSTRAINT_EXPR_SUGAR,
     &constraint::BOOL_EXPR_SUGAR,
     &monadic::EXPR_SUGAR,
     &cstr::EXPR_SUGAR,
@@ -143,7 +153,7 @@ pub(crate) fn select_expr_role(
 }
 
 pub(crate) fn build_expr_role(expr: &Expr, fcx: &SugarBuildCtx, role: SugarRole) -> Box<dyn Sugar> {
-    let mut candidates = matching_expr_claims(expr, fcx);
+    let mut candidates = matching_expr_claims_for_role(expr, fcx, role);
     let selected_index = candidates
         .iter()
         .position(|candidate| candidate.role() == role);
@@ -157,6 +167,21 @@ pub(crate) fn build_expr_role(expr: &Expr, fcx: &SugarBuildCtx, role: SugarRole)
         FactoryAuditSeed::expr(expr, role, selected, candidate_audits),
         node,
     )
+}
+
+fn matching_expr_claims_for_role(
+    expr: &Expr,
+    fcx: &SugarBuildCtx,
+    role: SugarRole,
+) -> Vec<SugarCandidate> {
+    let mut candidates: Vec<_> = EXPR_CLAIMS
+        .iter()
+        .filter(|claim| claim.role() == role)
+        .filter_map(|claim| (*claim).candidate(expr, fcx))
+        .collect();
+    candidates.sort_by_key(|candidate| candidate.priority());
+    assert_no_ambiguous_role_priority(&candidates);
+    candidates
 }
 
 pub(crate) fn matching_item_claims(item: &Item, fcx: &SugarBuildCtx) -> Vec<SugarCandidate> {
@@ -180,7 +205,7 @@ pub(crate) fn select_item_role(
 }
 
 pub(crate) fn build_item_role(item: &Item, fcx: &SugarBuildCtx, role: SugarRole) -> Box<dyn Sugar> {
-    let mut candidates = matching_item_claims(item, fcx);
+    let mut candidates = matching_item_claims_for_role(item, fcx, role);
     let selected_index = candidates
         .iter()
         .position(|candidate| candidate.role() == role);
@@ -194,6 +219,21 @@ pub(crate) fn build_item_role(item: &Item, fcx: &SugarBuildCtx, role: SugarRole)
         FactoryAuditSeed::item(item, role, selected, candidate_audits),
         node,
     )
+}
+
+fn matching_item_claims_for_role(
+    item: &Item,
+    fcx: &SugarBuildCtx,
+    role: SugarRole,
+) -> Vec<SugarCandidate> {
+    let mut candidates: Vec<_> = ITEM_CLAIMS
+        .iter()
+        .filter(|claim| claim.role() == role)
+        .filter_map(|claim| (*claim).candidate(item, fcx))
+        .collect();
+    candidates.sort_by_key(|candidate| candidate.priority());
+    assert_no_ambiguous_role_priority(&candidates);
+    candidates
 }
 
 fn candidate_audits(
@@ -466,10 +506,11 @@ mod tests {
         let constraint_names = candidate_names_for_role(&expr, SugarRole::Constraint);
         let term_names = candidate_names_for_role(&expr, SugarRole::Term);
 
-        assert!(
-            constraint_names == vec!["constraint_no_panic_call"],
+        assert_eq!(
+            constraint_names,
+            vec!["constraint_bool_expr"],
             "method names like `is`/`isnt` are examples, not builtin assertion semantics; \
-             only inert callsite support should claim this shape: {constraint_names:?}"
+             the generic bool-call shape owns the constraint without name-specific meaning"
         );
         assert!(
             term_names.contains(&"method"),
@@ -868,10 +909,7 @@ mod tests {
         let expr: Expr = syn::parse_str("*ref_mut.get_mut() += 5").unwrap();
         let names = candidate_names_for_role(&expr, SugarRole::Constraint);
 
-        assert_eq!(
-            names,
-            vec!["constraint_runtime_expr", "constraint_bool_expr"]
-        );
+        assert_eq!(names, vec!["constraint_runtime_expr"]);
         assert_eq!(
             selected_candidate_name_for_role(&expr, SugarRole::Constraint),
             Some("constraint_runtime_expr")
@@ -1059,10 +1097,10 @@ mod tests {
             .expect("closure composite site is audited");
 
         assert_eq!(audit.selected, None);
-        assert_eq!(audit.candidates.len(), 1, "{audit:?}");
-        assert_eq!(audit.candidates[0].name, "closure_term");
-        assert_eq!(audit.candidates[0].role, "Term");
-        assert!(!audit.candidates[0].selected);
+        assert!(
+            audit.candidates.is_empty(),
+            "role-filtered unresolved sites should not leak candidates from other roles: {audit:?}"
+        );
         assert_eq!(audit.line, 1);
         assert_eq!(audit.disposition, FactoryDisposition::Unresolved);
         assert!(

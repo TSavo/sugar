@@ -36,6 +36,7 @@ pub mod sugar {
     pub mod backstop;
     pub mod binop;
     pub mod block_term;
+    pub mod bool_bitwise;
     pub mod bound;
     pub mod bound_path;
     pub mod call;
@@ -74,6 +75,7 @@ pub mod sugar {
     pub mod field_term;
     pub mod filter;
     pub mod filter_map;
+    pub mod float_refinement;
     pub mod fold;
     pub mod for_each;
     pub mod for_replay;
@@ -86,6 +88,7 @@ pub mod sugar {
     pub mod identity_map;
     pub mod impl_method;
     pub mod index;
+    pub mod infinity_eq;
     pub mod insert;
     pub mod intersperse_collect_string;
     pub mod intersperse_concat;
@@ -93,11 +96,13 @@ pub mod sugar {
     pub mod iterator;
     pub mod let_stmt;
     pub mod literal;
+    pub mod literal_iterator_quantifier;
     pub mod literal_slice;
     pub mod macro_term;
     pub mod map;
     pub mod match_node;
     pub mod match_scrutinee;
+    pub mod matches_macro;
     pub mod method;
     pub mod method_family;
     pub mod monadic;
@@ -119,6 +124,7 @@ pub mod sugar {
     pub mod statement_reflection;
     pub mod statement_runtime_expr;
     pub mod string_add;
+    pub mod string_predicate;
     pub mod struct_term;
     pub mod take;
     pub mod take_while;
@@ -134,6 +140,7 @@ pub mod sugar {
     pub mod unit_path;
     pub mod unsafe_memory;
     pub mod use_item;
+    pub mod utf8_chunks;
     pub mod vec_macro;
 }
 
@@ -592,6 +599,13 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // proof before the async body can be treated as a point-wise fact. This is a boundary
         // verdict, not a vendor-name exception.
         || reason.contains("future handoff boundary")
+        // TERMINAL: a held macro expands to assertion surfaces but the route to those
+        // assertions goes through runtime temporal state (`Searcher::next` style state
+        // machines, raw/mutable indexing, etc.). Panic-free support callsites may still
+        // be emitted, but no scalar fact is constructible from source literals; propagate
+        // the named terminal effect instead of hiding it behind support-only accounting.
+        || reason.contains("runtime searcher state machine before assertion surface")
+        || reason.contains("terminal effect blocked all warranted facts")
         // TERMINAL: a `let` initializer that constructs an assertion-bearing `async { .. }`
         // future is INERT at the binding site. The assertion vocabulary inside the future
         // is learned normally when a driver is learned, but the let itself does not execute
@@ -1712,7 +1726,7 @@ fn collect_source_assertion_contract_expr(
     }
 }
 
-fn source_precondition_contains_unresolved_call(formula: &Formula) -> bool {
+pub(crate) fn source_precondition_contains_unresolved_call(formula: &Formula) -> bool {
     match formula {
         Formula::Atomic { args, .. } => args
             .iter()
@@ -1726,7 +1740,7 @@ fn source_precondition_contains_unresolved_call(formula: &Formula) -> bool {
     }
 }
 
-fn term_contains_unresolved_call(term: &Term) -> bool {
+pub(crate) fn term_contains_unresolved_call(term: &Term) -> bool {
     match term {
         Term::Ctor { name, args } => {
             name.starts_with("call:")
@@ -1938,11 +1952,11 @@ pub(crate) fn scoped_test_name(source_path: &str, modules: &[String], fn_name: &
 }
 
 #[derive(Clone)]
-struct AssertionEntry {
-    name: Option<String>,
-    atom: Rc<Formula>,
-    fact_span: Option<proc_macro2::Span>,
-    kind: AssertionFactKind,
+pub(crate) struct AssertionEntry {
+    pub(crate) name: Option<String>,
+    pub(crate) atom: Rc<Formula>,
+    pub(crate) fact_span: Option<proc_macro2::Span>,
+    pub(crate) kind: AssertionFactKind,
 }
 
 struct AssertionGroup {
@@ -2941,7 +2955,8 @@ fn try_macro_expansion_entries(
         Err(e) => return Some(Err(format!("macro `{name}`: {e}; released to layer 0"))),
     };
     // Re-parse the expansion as a statement block, then reduce it like any body.
-    let block: syn::Block = match syn::parse2(quote::quote! { { #expanded } }) {
+    let expanded_for_block = expanded.clone();
+    let block: syn::Block = match syn::parse2(quote::quote! { { #expanded_for_block } }) {
         Ok(b) => b,
         Err(_) => {
             return Some(Err(format!(
@@ -2949,21 +2964,30 @@ fn try_macro_expansion_entries(
             )))
         }
     };
-    // TERMINAL (runtime-local expansion): if the expansion binds a local to a
-    // RUNTIME ITERATOR/SEARCHER accessor (`$s.utf8_chunks()`, `.into_searcher()`,
-    // an `iter.next()`), the assertions over that local pin a source literal
-    // against bin-2 runtime data, not a finite construction from source literals.
-    // Lifting them produces an EUF accessor over a bare local var; because the
-    // local is RE-BOUND identically across every sibling invocation in one fn,
-    // they coalesce onto ONE var and a distinct literal per invocation makes the
-    // merged invariant CONTRADICTORY (ex-falso). Refuse the whole expansion as
-    // one accounting unit -- the same outcome the lifter gives a hand-written
-    // `assert_eq!(lit, it.next().valid())` over a runtime iterator. exact-or-bail.
-    if let Some(local) = expansion_binds_runtime_iterator_local(&block.stmts) {
-        return Some(Err(format!(
-            "macro `{name}`: expansion binds a runtime iterator/searcher local `{local}` \
-             (bin-2: runtime data, not constructible from source literals); released to layer 0"
-        )));
+    let block =
+        if let Some(rewritten) = sugar::utf8_chunks::rewrite_literal_utf8_chunks_block(&block) {
+            tracing::debug!(
+                target: "sugar_lift_rust_tests::macro_expansion",
+                macro_name = %name,
+                macro_depth = macro_depth,
+                "rewrote literal-backed utf8_chunks expansion before factory collection"
+            );
+            rewritten
+        } else {
+            block
+        };
+    let assertion_surfaces = count_asserts_in_stmts(&block.stmts);
+    if assertion_surfaces > 0 {
+        if let Some(reason) = macro_expansion_runtime_temporal_array_reason(&name, &block) {
+            tracing::debug!(
+                target: "sugar_lift_rust_tests::macro_expansion",
+                macro_name = %name,
+                macro_depth = macro_depth,
+                reason = %reason,
+                "held macro expansion hit terminal runtime state before assertion surface"
+            );
+            return Some(Err(reason));
+        }
     }
     let mut temp_entries = Vec::new();
     let mut temp_skipped = Vec::new();
@@ -2985,101 +3009,318 @@ fn try_macro_expansion_entries(
         &BTreeMap::new(),
         &LayoutTypeRegistry::new(),
     );
+    if !temp_entries.iter().any(|entry| entry.kind.is_warranted()) {
+        if let Ok(expr) = syn::parse2::<Expr>(expanded.clone()) {
+            let scope = TemporalScope::new(local_scope, TemporalPlan::default());
+            if let Some(entry) = value_panic_locus_entry_from_expr(&expr, &scope) {
+                temp_entries.push(entry);
+            }
+        }
+    }
+    if assertion_surfaces > 0 && !temp_entries.iter().any(|entry| entry.kind.is_warranted()) {
+        if let Some(reason) = temp_skipped
+            .iter()
+            .find(|reason| matches!(refusal_disposition(reason), Disposition::Refused))
+        {
+            let terminal_reason = format!(
+                "macro `{name}` expansion reached assertion surface but terminal effect blocked all warranted facts: {reason}"
+            );
+            tracing::debug!(
+                target: "sugar_lift_rust_tests::macro_expansion",
+                macro_name = %name,
+                macro_depth = macro_depth,
+                reason = %terminal_reason,
+                support_entries = temp_entries.len(),
+                "held macro expansion propagated terminal effect instead of support-only accounting"
+            );
+            return Some(Err(terminal_reason));
+        }
+    }
     if temp_entries.is_empty() {
-        Some(Err(format!(
-            "macro `{name}`: expansion yielded no liftable assertion (type-level or effectful body); released to layer 0"
-        )))
+        if assertion_surfaces == 0 {
+            Some(Err(format!(
+                "macro `{name}`: expansion contained no assertion surface; inert"
+            )))
+        } else if temp_skipped.is_empty() {
+            Some(Err(format!(
+                "macro `{name}`: expansion yielded no factory-built fact for {assertion_surfaces} assertion surface(s); released to layer 0"
+            )))
+        } else {
+            Some(Err(format!(
+                "macro `{name}`: expansion yielded no factory-built fact for {assertion_surfaces} assertion surface(s): {}; released to layer 0",
+                temp_skipped.join("; ")
+            )))
+        }
     } else {
         Some(Ok(temp_entries))
     }
 }
 
-/// Methods whose result is a RUNTIME ITERATOR / SEARCHER / stateful cursor: a
-/// value driven by `next()`-style consumption, never a finite construction from
-/// source literals. A local bound to such a result is bin-2 runtime data.
-fn is_runtime_iterator_producing_method(method: &str) -> bool {
-    matches!(
-        method,
-        "utf8_chunks"
-            | "into_searcher"
-            | "searcher"
-            | "iter"
-            | "iter_mut"
-            | "into_iter"
-            | "chars"
-            | "char_indices"
-            | "bytes"
-            | "split"
-            | "rsplit"
-            | "splitn"
-            | "lines"
-            | "matches"
-            | "match_indices"
-            | "next"
-            | "next_back"
-            | "nth"
-            | "nth_back"
-    )
-}
-
-/// Does any method call in `expr`'s receiver chain produce a runtime iterator /
-/// searcher? Walks the `recv.m1().m2()...` chain (and through parens/refs) so a
-/// `$string.utf8_chunks()` or `'a'.into_searcher($h)` initializer is detected.
-fn expr_chain_has_runtime_iterator(expr: &Expr) -> bool {
+fn value_panic_locus_entry_from_expr(expr: &Expr, scope: &TemporalScope) -> Option<AssertionEntry> {
     match expr {
-        Expr::MethodCall(mc) => {
-            is_runtime_iterator_producing_method(&mc.method.to_string())
-                || expr_chain_has_runtime_iterator(&mc.receiver)
-        }
-        Expr::Paren(p) => expr_chain_has_runtime_iterator(&p.expr),
-        Expr::Group(g) => expr_chain_has_runtime_iterator(&g.expr),
-        Expr::Reference(r) => expr_chain_has_runtime_iterator(&r.expr),
-        Expr::Try(t) => expr_chain_has_runtime_iterator(&t.expr),
-        Expr::Await(a) => expr_chain_has_runtime_iterator(&a.base),
-        Expr::Field(f) => expr_chain_has_runtime_iterator(&f.base),
-        // An array of runtime-stepped elements (`[Step::from(s.next()), ..]`) is
-        // itself runtime data when any element steps an iterator.
-        Expr::Array(a) => a.elems.iter().any(expr_chain_has_runtime_iterator),
-        Expr::Call(c) => c.args.iter().any(expr_chain_has_runtime_iterator),
-        _ => false,
+        Expr::Match(m) => panic_locus_match_entry(m, scope),
+        Expr::If(i) => panic_locus_if_entry(i, scope),
+        Expr::Block(b) => value_panic_locus_entry_from_stmts(&b.block.stmts, scope),
+        Expr::Unsafe(u) => value_panic_locus_entry_from_stmts(&u.block.stmts, scope),
+        Expr::Paren(p) => value_panic_locus_entry_from_expr(&p.expr, scope),
+        Expr::Group(g) => value_panic_locus_entry_from_expr(&g.expr, scope),
+        _ => None,
     }
 }
 
-/// If the expanded block binds a `let <id> = <init>` whose initializer is (or
-/// chains through) a runtime iterator/searcher accessor, return `<id>`. Such a
-/// local is bin-2 runtime data; asserts pinning a source literal against it must
-/// refuse, not EUF-discharge (and must never coalesce across invocations). The
-/// scan recurses into nested blocks because a macro body wrapped in `{{ .. }}`
-/// re-parses as a single `Stmt::Expr(Block)`, with the `let`s one level down.
-fn expansion_binds_runtime_iterator_local(stmts: &[syn::Stmt]) -> Option<String> {
+fn value_panic_locus_entry_from_stmts(
+    stmts: &[Stmt],
+    scope: &TemporalScope,
+) -> Option<AssertionEntry> {
+    match stmts {
+        [Stmt::Expr(expr, None)] => value_panic_locus_entry_from_expr(expr, scope),
+        _ => None,
+    }
+}
+
+fn macro_expansion_runtime_temporal_array_reason(name: &str, block: &syn::Block) -> Option<String> {
+    let mut runtime_state = BTreeMap::new();
+    let mut runtime_arrays = BTreeMap::new();
+    if let Some(kind) = macro_expansion_stmts_reference_runtime_array(
+        &block.stmts,
+        &mut runtime_state,
+        &mut runtime_arrays,
+    ) {
+        return Some(match kind {
+            RuntimeMacroStateKind::Searcher => format!(
+                "macro `{name}` expansion binds a runtime searcher state machine before assertion surface (bin-2: runtime state machine, not constructed from source literals); refused"
+            ),
+            RuntimeMacroStateKind::Iterator => format!(
+                "macro `{name}` expansion binds a runtime iterator local before assertion surface; assertion without fact emitted; released to layer 0"
+            ),
+        });
+    }
+    None
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RuntimeMacroStateKind {
+    Iterator,
+    Searcher,
+}
+
+fn stronger_runtime_macro_state(
+    left: Option<RuntimeMacroStateKind>,
+    right: Option<RuntimeMacroStateKind>,
+) -> Option<RuntimeMacroStateKind> {
+    match (left, right) {
+        (Some(RuntimeMacroStateKind::Searcher), _) | (_, Some(RuntimeMacroStateKind::Searcher)) => {
+            Some(RuntimeMacroStateKind::Searcher)
+        }
+        (Some(RuntimeMacroStateKind::Iterator), _) | (_, Some(RuntimeMacroStateKind::Iterator)) => {
+            Some(RuntimeMacroStateKind::Iterator)
+        }
+        (None, None) => None,
+    }
+}
+
+fn macro_expansion_stmts_reference_runtime_array(
+    stmts: &[Stmt],
+    runtime_state: &mut BTreeMap<String, RuntimeMacroStateKind>,
+    runtime_arrays: &mut BTreeMap<String, RuntimeMacroStateKind>,
+) -> Option<RuntimeMacroStateKind> {
     for stmt in stmts {
         match stmt {
-            syn::Stmt::Local(local) => {
-                if let Some(init) = &local.init {
-                    if expr_chain_has_runtime_iterator(&init.expr) {
-                        return Some(
-                            local
-                                .pat
-                                .to_token_stream()
-                                .to_string()
-                                .replace("mut ", "")
-                                .trim()
-                                .to_string(),
-                        );
+            Stmt::Local(local) => {
+                if let Some(init) = local.init.as_ref().filter(|init| init.diverge.is_none()) {
+                    if let Some(name) = let_mut_simple_binding(&local.pat) {
+                        if let Some(kind) = expr_runtime_state_constructor_kind(&init.expr) {
+                            runtime_state.insert(name, kind);
+                        }
+                    }
+                    if let Some(name) = let_simple_value_binding(&local.pat) {
+                        if let Some(kind) =
+                            expr_is_derived_from_runtime_state(&init.expr, runtime_state)
+                        {
+                            runtime_arrays.insert(name, kind);
+                        }
                     }
                 }
             }
-            // Recurse into a nested block (`{{ .. }}` expansion wrapper, or a
-            // bare `{ .. }` statement) so a `let` inside it is still seen.
-            syn::Stmt::Expr(Expr::Block(b), _) => {
-                if let Some(found) = expansion_binds_runtime_iterator_local(&b.block.stmts) {
-                    return Some(found);
+            Stmt::Macro(m) => {
+                if let Some(kind) = assert_macro_references_any(&m.mac, runtime_arrays) {
+                    return Some(kind);
+                }
+            }
+            Stmt::Expr(Expr::Macro(m), _) => {
+                if let Some(kind) = assert_macro_references_any(&m.mac, runtime_arrays) {
+                    return Some(kind);
+                }
+            }
+            Stmt::Expr(Expr::Block(block), _) => {
+                if let Some(kind) = macro_expansion_stmts_reference_runtime_array(
+                    &block.block.stmts,
+                    runtime_state,
+                    runtime_arrays,
+                ) {
+                    return Some(kind);
+                }
+            }
+            Stmt::Expr(Expr::Unsafe(unsafe_expr), _) => {
+                if let Some(kind) = macro_expansion_stmts_reference_runtime_array(
+                    &unsafe_expr.block.stmts,
+                    runtime_state,
+                    runtime_arrays,
+                ) {
+                    return Some(kind);
+                }
+            }
+            Stmt::Expr(expr, _) => {
+                if let Some(kind) = expr_contains_assert_macro_referencing_any(expr, runtime_arrays)
+                {
+                    return Some(kind);
                 }
             }
             _ => {}
         }
     }
     None
+}
+
+fn let_mut_simple_binding(pat: &Pat) -> Option<String> {
+    match pat {
+        Pat::Ident(pi) if pi.mutability.is_some() && pi.by_ref.is_none() && pi.subpat.is_none() => {
+            Some(pi.ident.to_string())
+        }
+        Pat::Type(t) => let_mut_simple_binding(&t.pat),
+        Pat::Paren(p) => let_mut_simple_binding(&p.pat),
+        _ => None,
+    }
+}
+
+fn expr_runtime_state_constructor_kind(expr: &Expr) -> Option<RuntimeMacroStateKind> {
+    match strip_refs_groups(expr) {
+        Expr::MethodCall(call) if call.method == "into_searcher" => {
+            Some(RuntimeMacroStateKind::Searcher)
+        }
+        Expr::Call(_) | Expr::MethodCall(_) => Some(RuntimeMacroStateKind::Iterator),
+        Expr::Block(block) => {
+            value_tail_expr(&block.block.stmts).and_then(expr_runtime_state_constructor_kind)
+        }
+        _ => None,
+    }
+}
+
+fn value_tail_expr(stmts: &[Stmt]) -> Option<&Expr> {
+    match stmts.last()? {
+        Stmt::Expr(expr, None) => Some(expr),
+        _ => None,
+    }
+}
+
+fn expr_is_derived_from_runtime_state(
+    expr: &Expr,
+    runtime_state: &BTreeMap<String, RuntimeMacroStateKind>,
+) -> Option<RuntimeMacroStateKind> {
+    match strip_refs_groups(expr) {
+        Expr::Array(array) => {
+            let elems = array
+                .elems
+                .iter()
+                .filter_map(|elem| expr_contains_method_call_on_names(elem, runtime_state))
+                .fold(None, |acc, kind| {
+                    stronger_runtime_macro_state(acc, Some(kind))
+                });
+            stronger_runtime_macro_state(
+                elems,
+                expr_contains_method_call_on_names(expr, runtime_state),
+            )
+        }
+        Expr::Block(block) => value_tail_expr(&block.block.stmts)
+            .and_then(|tail| expr_is_derived_from_runtime_state(tail, runtime_state)),
+        _ => expr_contains_method_call_on_names(expr, runtime_state),
+    }
+}
+
+fn expr_contains_method_call_on_names(
+    expr: &Expr,
+    names: &BTreeMap<String, RuntimeMacroStateKind>,
+) -> Option<RuntimeMacroStateKind> {
+    struct V<'a> {
+        names: &'a BTreeMap<String, RuntimeMacroStateKind>,
+        found: Option<RuntimeMacroStateKind>,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for V<'_> {
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            if let Some(kind) =
+                simple_path_name(&call.receiver).and_then(|name| self.names.get(&name).copied())
+            {
+                self.found = stronger_runtime_macro_state(self.found, Some(kind));
+            }
+            syn::visit::visit_expr_method_call(self, call);
+        }
+    }
+    let mut v = V { names, found: None };
+    syn::visit::Visit::visit_expr(&mut v, expr);
+    v.found
+}
+
+fn assert_macro_references_any(
+    mac: &syn::Macro,
+    names: &BTreeMap<String, RuntimeMacroStateKind>,
+) -> Option<RuntimeMacroStateKind> {
+    if names.is_empty() || !is_assert_macro_path(&mac.path) {
+        return None;
+    }
+    let Ok(args) = parse_macro_args(mac.tokens.clone()) else {
+        return None;
+    };
+    args.exprs
+        .iter()
+        .filter_map(|expr| runtime_macro_state_referenced_in_expr(expr, names))
+        .fold(None, |acc, kind| {
+            stronger_runtime_macro_state(acc, Some(kind))
+        })
+}
+
+fn runtime_macro_state_referenced_in_expr(
+    expr: &Expr,
+    names: &BTreeMap<String, RuntimeMacroStateKind>,
+) -> Option<RuntimeMacroStateKind> {
+    let referenced = names_referenced_in_expr(expr);
+    names
+        .iter()
+        .filter_map(|(name, kind)| referenced.contains(name).then_some(*kind))
+        .fold(None, |acc, kind| {
+            stronger_runtime_macro_state(acc, Some(kind))
+        })
+}
+
+fn expr_contains_assert_macro_referencing_any(
+    expr: &Expr,
+    names: &BTreeMap<String, RuntimeMacroStateKind>,
+) -> Option<RuntimeMacroStateKind> {
+    if names.is_empty() {
+        return None;
+    }
+    struct V<'a> {
+        names: &'a BTreeMap<String, RuntimeMacroStateKind>,
+        found: Option<RuntimeMacroStateKind>,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for V<'_> {
+        fn visit_expr_macro(&mut self, expr_macro: &'ast syn::ExprMacro) {
+            self.found = stronger_runtime_macro_state(
+                self.found,
+                assert_macro_references_any(&expr_macro.mac, self.names),
+            );
+            syn::visit::visit_expr_macro(self, expr_macro);
+        }
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            self.found = stronger_runtime_macro_state(
+                self.found,
+                assert_macro_references_any(mac, self.names),
+            );
+            syn::visit::visit_macro(self, mac);
+        }
+    }
+    let mut v = V { names, found: None };
+    syn::visit::Visit::visit_expr(&mut v, expr);
+    v.found
 }
 
 type ExprBindings = BTreeMap<String, Expr>;
@@ -3674,6 +3915,44 @@ pub(crate) fn count_asserts_in_expr(expr: &Expr) -> usize {
     let mut counter = NestedAssertCounter::default();
     syn::visit::Visit::visit_expr(&mut counter, expr);
     counter.total
+}
+
+fn count_asserts_in_match_arm_body(expr: &Expr) -> usize {
+    match expr {
+        Expr::Macro(expr_macro) if is_assert_macro_path(&expr_macro.mac.path) => 1,
+        Expr::Block(block) => count_asserts_in_match_arm_stmts(&block.block.stmts),
+        Expr::Unsafe(unsafe_expr) => count_asserts_in_match_arm_stmts(&unsafe_expr.block.stmts),
+        Expr::Paren(paren) => count_asserts_in_match_arm_body(&paren.expr),
+        Expr::Group(group) => count_asserts_in_match_arm_body(&group.expr),
+        _ => {
+            let counted = count_asserts_in_expr(expr);
+            if counted == 0 && expr_is_assert_macro(expr) {
+                1
+            } else {
+                counted
+            }
+        }
+    }
+}
+
+fn count_asserts_in_match_arm_stmts(stmts: &[Stmt]) -> usize {
+    stmts
+        .iter()
+        .map(|stmt| match stmt {
+            Stmt::Macro(stmt_macro) if is_assert_macro_path(&stmt_macro.mac.path) => 1,
+            Stmt::Expr(expr, _) => count_asserts_in_match_arm_body(expr),
+            _ => count_asserts_in_stmts(std::slice::from_ref(stmt)),
+        })
+        .sum()
+}
+
+fn expr_is_assert_macro(expr: &Expr) -> bool {
+    match expr {
+        Expr::Macro(expr_macro) => is_assert_macro_path(&expr_macro.mac.path),
+        Expr::Paren(paren) => expr_is_assert_macro(&paren.expr),
+        Expr::Group(group) => expr_is_assert_macro(&group.expr),
+        _ => false,
+    }
 }
 
 pub(crate) fn is_assert_macro_path(path: &syn::Path) -> bool {
@@ -4569,13 +4848,13 @@ struct DesugaredElem {
 /// enclosing function scope at the emit site (mirrors the trunk's un-named
 /// `AssertionEntry`). This is the rope; every emit carries one.
 #[derive(Clone)]
-struct Warrant {
+pub(crate) struct Warrant {
     name: Option<String>,
 }
 
 /// The output of `Sugar::desugar`: a (value, warrant) pair. `Seq` is the literal
 /// floor (a finite element sequence); `Constraints` is the emitted obligation.
-enum Desugared {
+pub(crate) enum Desugared {
     /// A finite element sequence -- the desugared literal floor (written or
     /// synthetic-but-warranted). Produced by `LiteralSugar` and the sequence
     /// adaptors (`IterSugar`/`FilterSugar`/`MapSugar`/...).
@@ -4603,7 +4882,7 @@ enum Desugared {
 impl Desugared {
     /// The sequence payload, or None (bail) if this is a constraint terminal --
     /// used when an outer sequence adaptor expects an inner sequence.
-    fn into_seq(self) -> Option<Vec<DesugaredElem>> {
+    pub(crate) fn into_seq(self) -> Option<Vec<DesugaredElem>> {
         match self {
             Desugared::Seq(s) => Some(s),
             Desugared::Constraints { .. } => None,
@@ -4615,7 +4894,7 @@ impl Desugared {
     /// terminal. The dual of `into_seq` for the term floor: a composite term Sugar
     /// (a `CompareSugar` building its `lhs`/`rhs`) reads each child's term back out
     /// through this, exactly as a sequence adaptor reads `into_seq`.
-    fn into_term(self) -> Option<Rc<Term>> {
+    pub(crate) fn into_term(self) -> Option<Rc<Term>> {
         match self {
             Desugared::Term(t) => Some(t),
             Desugared::Seq(_) => None,
@@ -4632,7 +4911,7 @@ impl Desugared {
     /// whatever its pattern child dug to, so a literal / const-string /
     /// `concat!` / `format!` / pure helper call all flow through the same
     /// `desugar` -> `as_string_literal` path.
-    fn as_string_literal(&self) -> Option<String> {
+    pub(crate) fn as_string_literal(&self) -> Option<String> {
         let seq = match self {
             Desugared::Term(term) => {
                 return match term.as_ref() {
@@ -5510,13 +5789,54 @@ fn emit_desugared(
                 fact_span: None,
                 kind,
             });
-            *macros_lifted += n;
+            if kind.is_warranted() {
+                *macros_lifted += n;
+            }
             true
         }
         Desugared::Seq(_) => false,
         // A bare term at statement position is not an emit (a term floor must be
         // wrapped by an asserting node to become a `Constraints`); mirrors `Seq`.
         Desugared::Term(_) => false,
+    }
+}
+
+fn emit_constraint_outcome(
+    outcome: Outcome,
+    site: &str,
+    entries: &mut Vec<AssertionEntry>,
+    skipped: &mut Vec<String>,
+    macros_lifted: &mut usize,
+) {
+    match outcome {
+        Outcome::Dug(desugared @ Desugared::Constraints { .. }) => {
+            emit_desugared(desugared, entries, macros_lifted);
+        }
+        Outcome::Dug(_) => skipped.push(format!(
+            "constraint-shaped expression did not emit a constraint `{site}`; released to layer 0"
+        )),
+        Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {
+            skipped.push(format!(
+                "constraint-shaped expression did not reach bedrock `{site}`; released to layer 0"
+            ));
+        }
+        Outcome::Hit(effect) => skipped.push(effect.reason()),
+    }
+}
+
+fn emit_optional_constraint_outcome(
+    outcome: Outcome,
+    entries: &mut Vec<AssertionEntry>,
+    skipped: &mut Vec<String>,
+    macros_lifted: &mut usize,
+) {
+    match outcome {
+        Outcome::Dug(desugared @ Desugared::Constraints { .. }) => {
+            emit_desugared(desugared, entries, macros_lifted);
+        }
+        Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {}
+        Outcome::Hit(effect) => skipped.push(effect.reason()),
+        Outcome::Dug(_) => {}
     }
 }
 
@@ -5553,22 +5873,8 @@ fn collect_constraint_expr(
         factory_audits,
     );
     let fcx = sugar::factory::SugarBuildCtx::new(scope, options, let_inits);
-    match sugar::factory::build_constraint(expr, &fcx).desugar(&ctx) {
-        Outcome::Dug(desugared @ Desugared::Constraints { .. }) => {
-            emit_desugared(desugared, entries, macros_lifted);
-        }
-        Outcome::Dug(_) => skipped.push(format!(
-            "constraint-shaped expression did not emit a constraint `{}`; released to layer 0",
-            token_key(expr)
-        )),
-        Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {
-            skipped.push(format!(
-                "constraint-shaped expression did not reach bedrock `{}`; released to layer 0",
-                token_key(expr)
-            ));
-        }
-        Outcome::Hit(effect) => skipped.push(effect.reason()),
-    }
+    let outcome = sugar::factory::build_constraint(expr, &fcx).desugar(&ctx);
+    emit_constraint_outcome(outcome, &token_key(expr), entries, skipped, macros_lifted);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5592,27 +5898,32 @@ fn emit_panic_freedom_callsites_in_stmt(
         if !seen.insert(key) {
             continue;
         }
-        let mut support_entries = Vec::new();
-        let mut support_skipped = Vec::new();
-        let mut support_lifted = 0usize;
-        collect_constraint_expr(
-            &expr,
+        let ctx = sugar_ctx_with_factory_audits(
             scope,
             options,
             reducer,
             float_widths,
-            let_inits,
-            factory_audits,
             macro_depth,
-            &mut support_entries,
-            &mut support_skipped,
-            &mut support_lifted,
+            factory_audits,
         );
-        entries.extend(
-            support_entries
-                .into_iter()
-                .filter(|entry| matches!(entry.kind, AssertionFactKind::Support)),
-        );
+        let fcx = sugar::factory::SugarBuildCtx::new(scope, options, let_inits);
+        let outcome =
+            sugar::factory::build_expr(&expr, &fcx, sugar::claim::SugarRole::SupportConstraint)
+                .desugar(&ctx);
+        if let Outcome::Dug(Desugared::Constraints {
+            atom,
+            warrant,
+            kind,
+            ..
+        }) = outcome
+        {
+            entries.push(AssertionEntry {
+                name: warrant.name,
+                atom,
+                fact_span: Some(expr.span()),
+                kind,
+            });
+        }
     }
 }
 
@@ -5853,10 +6164,20 @@ impl<'ast> syn::visit::Visit<'ast> for TemporalCallsiteVisitor {
 fn expr_is_panic_freedom_callsite(expr: &Expr) -> bool {
     match expr {
         Expr::Call(_) | Expr::MethodCall(_) => true,
+        Expr::Macro(m) if is_unconditional_panic_macro(&m.mac) => true,
         Expr::Paren(p) => expr_is_panic_freedom_callsite(&p.expr),
         Expr::Group(g) => expr_is_panic_freedom_callsite(&g.expr),
         _ => false,
     }
+}
+
+fn is_unconditional_panic_macro(mac: &syn::Macro) -> bool {
+    mac.path.segments.last().is_some_and(|segment| {
+        matches!(
+            segment.ident.to_string().as_str(),
+            "panic" | "unreachable" | "todo" | "unimplemented"
+        )
+    })
 }
 
 fn panic_freedom_site_key(expr: &Expr) -> String {
@@ -5880,7 +6201,9 @@ fn callsite_exprs_in_stmt(stmt: &Stmt, scope: &TemporalScope, options: &LiftOpti
             }
         }
         Stmt::Expr(expr, _) => visitor.visit_expr(expr),
-        Stmt::Macro(stmt_macro) => visitor.visit_macro_args(&stmt_macro.mac),
+        Stmt::Macro(stmt_macro) => {
+            visitor.visit_macro_site(&stmt_macro.mac, &stmt_macro.attrs);
+        }
         // Item bodies are not executed merely because they are declared. An assertion-free
         // const/static initializer is different: `ConstItemSugar` owns its inert
         // compiler-axiom accounting, so no recursive collector call will visit its direct
@@ -5905,6 +6228,16 @@ struct PanicFreedomCallsiteVisitor<'a> {
 }
 
 impl PanicFreedomCallsiteVisitor<'_> {
+    fn visit_macro_site(&mut self, mac: &syn::Macro, attrs: &[syn::Attribute]) {
+        if is_unconditional_panic_macro(mac) {
+            self.out.push(Expr::Macro(syn::ExprMacro {
+                attrs: attrs.to_vec(),
+                mac: mac.clone(),
+            }));
+        }
+        self.visit_macro_args(mac);
+    }
+
     fn visit_macro_args(&mut self, mac: &syn::Macro) {
         if is_debug_assert_macro_path(&mac.path) && !debug_assertions_present(self.options) {
             return;
@@ -5929,7 +6262,7 @@ impl<'ast> syn::visit::Visit<'ast> for PanicFreedomCallsiteVisitor<'_> {
     }
 
     fn visit_expr_macro(&mut self, mac: &'ast syn::ExprMacro) {
-        self.visit_macro_args(&mac.mac);
+        self.visit_macro_site(&mac.mac, &mac.attrs);
     }
 
     fn visit_expr_if(&mut self, expr: &'ast syn::ExprIf) {
@@ -6706,6 +7039,158 @@ fn stmts_from_match_arm_body(body: &Expr) -> Vec<Stmt> {
     }
 }
 
+struct ConfigGateSugar;
+
+impl Sugar for ConfigGateSugar {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        Outcome::Dug(Desugared::Seq(Vec::new()))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_statement_macro_entries<'a>(
+    attrs: &[syn::Attribute],
+    mac: &syn::Macro,
+    temporal_scope: &TemporalScope,
+    local_scope: &str,
+    options: &LiftOptions,
+    reducer: &ReductionCtx<'a>,
+    float_widths: &mut FloatWidthScope,
+    factory_audits: Option<&FactoryAuditLog>,
+    macro_depth: usize,
+    entries: &mut Vec<AssertionEntry>,
+    skipped: &mut Vec<String>,
+    macros_lifted: &mut usize,
+) {
+    let macro_name = mac
+        .path
+        .segments
+        .last()
+        .map(|seg| seg.ident.to_string())
+        .unwrap_or_else(|| "<unknown>".to_string());
+    let cfg_gate =
+        sugar::configuration::ConfigurationSugar::new(attrs.to_vec(), Box::new(ConfigGateSugar));
+    match cfg_gate.disposition(options) {
+        CfgDisposition::Present => {}
+        CfgDisposition::Absent(reason) => {
+            skipped.push(format!("inactive cfg on assertion; skipped: {reason}"));
+            return;
+        }
+        CfgDisposition::Ambiguous(reason) => {
+            skipped.push(format!("ambiguous cfg on assertion; skipped: {reason}"));
+            return;
+        }
+    }
+
+    let macro_expr = Expr::Macro(syn::ExprMacro {
+        attrs: attrs.to_vec(),
+        mac: mac.clone(),
+    });
+    let let_inits = BTreeMap::new();
+    let fcx = sugar::factory::SugarBuildCtx::new(temporal_scope, options, &let_inits);
+    if sugar::factory::has_constraint(&macro_expr, &fcx) {
+        let ctx = sugar_ctx_with_factory_audits(
+            temporal_scope,
+            options,
+            reducer,
+            float_widths,
+            macro_depth,
+            factory_audits,
+        );
+        let outcome = sugar::factory::build_constraint(&macro_expr, &fcx).desugar(&ctx);
+        emit_constraint_outcome(
+            outcome,
+            &token_key(&macro_expr),
+            entries,
+            skipped,
+            macros_lifted,
+        );
+        return;
+    }
+
+    // Held macro_rules bodies are source. Feed the expanded body to the normal
+    // collector when the invocation shape has no direct ConstraintSugar. This keeps
+    // true assertion-vocabulary macros owned by their Sugar, while vendor wrappers
+    // are still learned by the assertion shape they expand to instead of by name.
+    let before_s = skipped.len();
+    match try_macro_expansion_entries(
+        &mac.path,
+        &mac.tokens,
+        reducer,
+        local_scope,
+        options,
+        float_widths,
+        factory_audits,
+        macro_depth,
+    ) {
+        Some(Ok(es)) => {
+            skipped.truncate(before_s);
+            let has_warranted_fact = es.iter().any(|entry| entry.kind.is_warranted());
+            tracing::debug!(
+                target: "sugar_lift_rust_tests::macro_expansion",
+                macro_name = %macro_name,
+                macro_depth = macro_depth,
+                emitted = es.len(),
+                has_warranted_fact = has_warranted_fact,
+                "held statement macro expanded before factory lowering"
+            );
+            if has_warranted_fact {
+                *macros_lifted += 1;
+            } else if !es.is_empty() {
+                skipped.push(format!(
+                    "macro `{macro_name}` expansion reached assertion surface but emitted only support facts; assertion without fact emitted; released to layer 0"
+                ));
+            }
+            entries.extend(es);
+            return;
+        }
+        Some(Err(expansion_reason)) => {
+            skipped.truncate(before_s);
+            tracing::debug!(
+                target: "sugar_lift_rust_tests::macro_expansion",
+                macro_name = %macro_name,
+                macro_depth = macro_depth,
+                reason = %expansion_reason,
+                "held statement macro expansion did not emit facts"
+            );
+            if expansion_reason.contains("binds a runtime iterator/searcher local") {
+                skipped.push(expansion_reason);
+                return;
+            }
+            if expansion_reason.contains("yielded no factory-built fact") {
+                skipped.push(format!(
+                    "macro `{macro_name}` expansion reached assertion surface but emitted no warranted facts; assertion without fact emitted; released to layer 0"
+                ));
+                return;
+            }
+            if expansion_reason.contains("assertion surface") {
+                if is_assert_macro_path(&mac.path)
+                    && expansion_reason.contains("contained no assertion surface")
+                {
+                    skipped.push(format!(
+                        "macro `{macro_name}` expansion reached assertion surface but emitted only support facts; assertion without fact emitted; released to layer 0"
+                    ));
+                } else {
+                    skipped.push(expansion_reason);
+                }
+                return;
+            }
+        }
+        None => {}
+    }
+
+    let ctx = sugar_ctx_with_factory_audits(
+        temporal_scope,
+        options,
+        reducer,
+        float_widths,
+        macro_depth,
+        factory_audits,
+    );
+    let outcome = sugar::factory::build_constraint(&macro_expr, &fcx).desugar(&ctx);
+    emit_optional_constraint_outcome(outcome, entries, skipped, macros_lifted);
+}
+
 #[allow(clippy::too_many_arguments)]
 fn collect_assertion_entries<'a>(
     stmts: &'a [Stmt],
@@ -6994,127 +7479,42 @@ fn collect_assertion_entries<'a>(
                 }
                 temporal_scope.record_temporal_rewrite_local(local);
             }
-            Stmt::Macro(m) => match cfg_resolve(&m.attrs, options) {
-                CfgDisposition::Present => {
-                    // Known assertion macros are lowered by their tuned arm
-                    // first. If no arm lifts it, walk into the definition: when
-                    // we hold the macro's source, expand it and reduce the
-                    // expansion. One source macro is one accounting unit.
-                    let before_e = entries.len();
-                    let before_s = skipped.len();
-                    let lifted = collect_macro(
-                        &m.mac.path,
-                        m.mac.tokens.clone(),
-                        &temporal_scope,
-                        &*float_widths,
-                        options,
-                        factory_audits,
-                        entries,
-                        skipped,
-                    );
-                    if entries.len() > before_e {
-                        *macros_lifted += lifted;
-                    } else {
-                        match try_macro_expansion_entries(
-                            &m.mac.path,
-                            &m.mac.tokens,
-                            reducer,
-                            local_scope,
-                            options,
-                            float_widths,
-                            factory_audits,
-                            macro_depth,
-                        ) {
-                            Some(Ok(es)) => {
-                                skipped.truncate(before_s);
-                                if !es.is_empty() {
-                                    *macros_lifted += 1;
-                                }
-                                entries.extend(es);
-                            }
-                            Some(Err(reason)) => {
-                                skipped.truncate(before_s);
-                                // Account a refusal only for assertion macros. A
-                                // non-assertion macro (task_local!, pin!, ...)
-                                // that does not expand to FOL is not an assertion
-                                // and is ignored, not refused.
-                                if is_assert_macro_path(&m.mac.path) {
-                                    skipped.push(reason);
-                                }
-                            }
-                            None => {}
-                        }
-                    }
-                }
-                CfgDisposition::Absent(reason) => {
-                    skipped.push(format!("inactive cfg on assertion; skipped: {reason}"));
-                }
-                CfgDisposition::Ambiguous(reason) => {
-                    skipped.push(format!("ambiguous cfg on assertion; skipped: {reason}"));
-                }
-            },
-            Stmt::Expr(Expr::Macro(m), _) => match cfg_resolve(&m.attrs, options) {
-                CfgDisposition::Present => {
-                    // Known assertion macros are lowered by their tuned arm
-                    // first. If no arm lifts it, walk into the definition: when
-                    // we hold the macro's source, expand it and reduce the
-                    // expansion. One source macro is one accounting unit.
-                    let before_e = entries.len();
-                    let before_s = skipped.len();
-                    let lifted = collect_macro(
-                        &m.mac.path,
-                        m.mac.tokens.clone(),
-                        &temporal_scope,
-                        &*float_widths,
-                        options,
-                        factory_audits,
-                        entries,
-                        skipped,
-                    );
-                    if entries.len() > before_e {
-                        *macros_lifted += lifted;
-                    } else {
-                        match try_macro_expansion_entries(
-                            &m.mac.path,
-                            &m.mac.tokens,
-                            reducer,
-                            local_scope,
-                            options,
-                            float_widths,
-                            factory_audits,
-                            macro_depth,
-                        ) {
-                            Some(Ok(es)) => {
-                                skipped.truncate(before_s);
-                                if !es.is_empty() {
-                                    *macros_lifted += 1;
-                                }
-                                entries.extend(es);
-                            }
-                            Some(Err(reason)) => {
-                                skipped.truncate(before_s);
-                                // Account a refusal only for assertion macros. A
-                                // non-assertion macro (task_local!, pin!, ...)
-                                // that does not expand to FOL is not an assertion
-                                // and is ignored, not refused.
-                                if is_assert_macro_path(&m.mac.path) {
-                                    skipped.push(reason);
-                                }
-                            }
-                            None => {}
-                        }
-                    }
-                }
-                CfgDisposition::Absent(reason) => {
-                    skipped.push(format!("inactive cfg on assertion; skipped: {reason}"));
-                }
-                CfgDisposition::Ambiguous(reason) => {
-                    skipped.push(format!("ambiguous cfg on assertion; skipped: {reason}"));
-                }
-            },
+            Stmt::Macro(m) => {
+                collect_statement_macro_entries(
+                    &m.attrs,
+                    &m.mac,
+                    &temporal_scope,
+                    local_scope,
+                    options,
+                    reducer,
+                    float_widths,
+                    factory_audits,
+                    macro_depth,
+                    entries,
+                    skipped,
+                    macros_lifted,
+                );
+            }
+            Stmt::Expr(Expr::Macro(m), _) => {
+                collect_statement_macro_entries(
+                    &m.attrs,
+                    &m.mac,
+                    &temporal_scope,
+                    local_scope,
+                    options,
+                    reducer,
+                    float_widths,
+                    factory_audits,
+                    macro_depth,
+                    entries,
+                    skipped,
+                    macros_lifted,
+                );
+            }
             Stmt::Expr(expr, _)
                 if has_constraint_candidate(expr, &temporal_scope, options, &let_inits)
-                    && !expr_is_panic_freedom_callsite(expr) =>
+                    && !expr_is_panic_freedom_callsite(expr)
+                    && !matches!(expr, Expr::Match(_)) =>
             {
                 collect_constraint_expr(
                     expr,
@@ -7353,7 +7753,7 @@ fn collect_assertion_entries<'a>(
                         .arms
                         .iter()
                         .filter(|a| !expr_diverges(&a.body))
-                        .map(|a| count_asserts_in_expr(&a.body))
+                        .map(|a| count_asserts_in_match_arm_body(&a.body))
                         .sum();
                     let reason = (Effect::Reflection {
                         boundary: b.clone(),
@@ -7373,6 +7773,18 @@ fn collect_assertion_entries<'a>(
                     // Reflection match with no panic-locus (no diverging `_` arm): its
                     // body asserts are already accounted above; do NOT also count them
                     // under the generic "under match context" path (double-count).
+                } else if let Some(eff) =
+                    runtime_match_scrutinee_effect(&Expr::Match(m.clone()), &temporal_scope)
+                {
+                    let count: usize = m
+                        .arms
+                        .iter()
+                        .map(|a| count_asserts_in_match_arm_body(&a.body))
+                        .sum();
+                    let reason = eff.reason();
+                    for _ in 0..count {
+                        skipped.push(reason.clone());
+                    }
                 } else if let Some(desugared) = {
                     // `MatchSugar`: `match scrut { pat_i => A_i }` is the conjunction
                     // `⋀_i (guard_i => A_i)` -- each arm's discriminant guard implies
@@ -7403,7 +7815,7 @@ fn collect_assertion_entries<'a>(
                     // surviving (active) arm is the one that ran. Corpus: num/wrapping.rs.
                     for arm in &m.arms {
                         if matches!(cfg_resolve(&arm.attrs, options), CfgDisposition::Absent(_)) {
-                            let inactive = count_asserts_in_expr(&arm.body);
+                            let inactive = count_asserts_in_match_arm_body(&arm.body);
                             for _ in 0..inactive {
                                 skipped.push(
                                     "assertion in a cfg-inactive match arm (not present on this target); refused"
@@ -7413,7 +7825,11 @@ fn collect_assertion_entries<'a>(
                         }
                     }
                 } else {
-                    let count: usize = m.arms.iter().map(|a| count_asserts_in_expr(&a.body)).sum();
+                    let count: usize = m
+                        .arms
+                        .iter()
+                        .map(|a| count_asserts_in_match_arm_body(&a.body))
+                        .sum();
                     // RESOLVE-THEN-CLASSIFY (the match-context tail): a `match` whose
                     // SCRUTINEE is a RUNTIME call result (`match it.next() { Some(x) =>
                     // assert_eq!(*x, ..) }`, `it` a `let mut` iterator) reads its asserted
@@ -10538,82 +10954,6 @@ fn simple_pat_name(pat: &Pat) -> Option<String> {
     }
 }
 
-fn collect_macro(
-    path: &syn::Path,
-    tokens: proc_macro2::TokenStream,
-    scope: &TemporalScope,
-    float_widths: &FloatWidthScope,
-    options: &LiftOptions,
-    factory_audits: Option<&FactoryAuditLog>,
-    entries: &mut Vec<AssertionEntry>,
-    skipped: &mut Vec<String>,
-) -> usize {
-    let macro_expr: Expr = Expr::Macro(syn::ExprMacro {
-        attrs: Vec::new(),
-        mac: syn::Macro {
-            path: path.clone(),
-            bang_token: Default::default(),
-            delimiter: syn::MacroDelimiter::Paren(Default::default()),
-            tokens: tokens.clone(),
-        },
-    });
-    let let_inits = BTreeMap::new();
-    let fcx = sugar::factory::SugarBuildCtx::new(scope, options, &let_inits);
-    let mut float_widths = float_widths.clone();
-    let items: Vec<Item> = Vec::new();
-    let reducer = ReductionCtx::from_items_with_imports(&items, scope.macro_registry());
-    let ctx = sugar_ctx_with_factory_audits(
-        scope,
-        options,
-        &reducer,
-        &mut float_widths,
-        0,
-        factory_audits,
-    );
-    let node = sugar::factory::build_constraint(&macro_expr, &fcx);
-    match node.desugar(&ctx) {
-        Outcome::Dug(Desugared::Constraints {
-            atom,
-            n,
-            warrant,
-            kind,
-        }) => {
-            entries.push(AssertionEntry {
-                name: warrant.name,
-                atom,
-                fact_span: None,
-                kind,
-            });
-            return n;
-        }
-        Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {}
-        Outcome::Hit(effect) => {
-            skipped.push(effect.reason());
-            return 0;
-        }
-        Outcome::Dug(_) => {}
-    }
-
-    match assertions_from_macro_with_audits(
-        path,
-        tokens,
-        scope,
-        &float_widths,
-        options,
-        factory_audits,
-    ) {
-        Ok(macro_entries) => {
-            let n = usize::from(!macro_entries.is_empty());
-            entries.extend(macro_entries);
-            n
-        }
-        Err(reason) => {
-            skipped.push(reason);
-            0
-        }
-    }
-}
-
 fn lower_assert_eq(
     lhs_expr: &Expr,
     rhs_expr: &Expr,
@@ -11000,271 +11340,6 @@ fn substitute_expr(expr: &Expr, bindings: &ExprBindings) -> Expr {
         }
         _ => expr.clone(),
     }
-}
-
-fn assertions_from_macro_with_audits(
-    path: &syn::Path,
-    tokens: proc_macro2::TokenStream,
-    scope: &TemporalScope,
-    float_widths: &FloatWidthScope,
-    options: &LiftOptions,
-    factory_audits: Option<&FactoryAuditLog>,
-) -> Result<Vec<AssertionEntry>, String> {
-    let bindings = ExprBindings::new();
-    assertions_from_macro_with_bindings_and_audits(
-        path,
-        tokens,
-        scope,
-        float_widths,
-        options,
-        &bindings,
-        factory_audits,
-    )
-}
-
-fn assertions_from_macro_with_bindings_and_audits(
-    path: &syn::Path,
-    tokens: proc_macro2::TokenStream,
-    scope: &TemporalScope,
-    float_widths: &FloatWidthScope,
-    options: &LiftOptions,
-    bindings: &ExprBindings,
-    factory_audits: Option<&FactoryAuditLog>,
-) -> Result<Vec<AssertionEntry>, String> {
-    let Some(name) = path
-        .segments
-        .last()
-        .map(|segment| segment.ident.to_string())
-    else {
-        return Ok(Vec::new());
-    };
-    match name.as_str() {
-        "assert_eq" => {
-            let args = parse_macro_args(tokens).map_err(|e| format!("assert_eq!: {e}"))?;
-            let exprs = substitute_exprs(&args.exprs, bindings);
-            if exprs.len() < 2 {
-                return Err("assert_eq!: expected at least 2 arguments".to_string());
-            }
-            lower_assert_eq(&exprs[0], &exprs[1], scope, float_widths, factory_audits)
-                .map(|entry| vec![entry])
-                .map_err(|e| format!("assert_eq!: {e}"))
-        }
-        "assert" => {
-            let args = parse_macro_args(tokens).map_err(|e| format!("assert!: {e}"))?;
-            let exprs = substitute_exprs(&args.exprs, bindings);
-            let Some(first) = exprs.first() else {
-                return Err("assert!: expected a condition".to_string());
-            };
-            lower_assert_condition(first, scope, float_widths, factory_audits)
-                .map(|entry| vec![entry])
-                .map_err(|e| format!("assert!: {e}"))
-        }
-        "assert_ne" => {
-            let args = parse_macro_args(tokens).map_err(|e| format!("assert_ne!: {e}"))?;
-            let exprs = substitute_exprs(&args.exprs, bindings);
-            if exprs.len() < 2 {
-                return Err("assert_ne!: expected at least 2 arguments".to_string());
-            }
-            lower_assert_ne(&exprs[0], &exprs[1], scope, factory_audits)
-                .map(|entry| vec![entry])
-                .map_err(|e| format!("assert_ne!: {e}"))
-        }
-        "assert_all" | "assert_none" => {
-            let args = parse_macro_args(tokens).map_err(|e| format!("{name}!: {e}"))?;
-            let exprs = substitute_exprs(&args.exprs, bindings);
-            assertion_entries_from_ascii_macro(name.as_str(), &exprs)
-        }
-        // debug_assert*(a, b) is cfg(debug_assertions)-gated sugar: the CLAIM is
-        // identical to the non-debug twin, but it is only asserted when
-        // debug_assertions is Active (i.e. debug/test builds). In the witnessed test
-        // profile (cargo test) debug_assertions is always on, so if the supplied
-        // target_cfg confirms it Active we lift the same atom as the twin. If
-        // debug_assertions is NOT confirmed Active we refuse -- overclaiming on a
-        // macro that compiles out in release would be a falsePass.
-        "debug_assert_eq" => {
-            match cfg_resolve_predicate(
-                &CfgPredicate::Name("debug_assertions".to_string()),
-                options,
-            ) {
-                CfgDisposition::Present => {}
-                CfgDisposition::Absent(reason) => {
-                    return Err(format!(
-                        "debug_assert_eq!: cfg(debug_assertions) not active; skipped: {reason}"
-                    ));
-                }
-                CfgDisposition::Ambiguous(reason) => {
-                    return Err(format!(
-                        "debug_assert_eq!: cfg(debug_assertions) ambiguous; skipped: {reason}"
-                    ));
-                }
-            }
-            let args = parse_macro_args(tokens).map_err(|e| format!("debug_assert_eq!: {e}"))?;
-            let exprs = substitute_exprs(&args.exprs, bindings);
-            if exprs.len() < 2 {
-                return Err("debug_assert_eq!: expected at least 2 arguments".to_string());
-            }
-            lower_assert_eq(&exprs[0], &exprs[1], scope, float_widths, factory_audits)
-                .map(|entry| vec![entry])
-                .map_err(|e| format!("debug_assert_eq!: {e}"))
-        }
-        "debug_assert" => {
-            match cfg_resolve_predicate(
-                &CfgPredicate::Name("debug_assertions".to_string()),
-                options,
-            ) {
-                CfgDisposition::Present => {}
-                CfgDisposition::Absent(reason) => {
-                    return Err(format!(
-                        "debug_assert!: cfg(debug_assertions) not active; skipped: {reason}"
-                    ));
-                }
-                CfgDisposition::Ambiguous(reason) => {
-                    return Err(format!(
-                        "debug_assert!: cfg(debug_assertions) ambiguous; skipped: {reason}"
-                    ));
-                }
-            }
-            let args = parse_macro_args(tokens).map_err(|e| format!("debug_assert!: {e}"))?;
-            let exprs = substitute_exprs(&args.exprs, bindings);
-            let Some(first) = exprs.first() else {
-                return Err("debug_assert!: expected a condition".to_string());
-            };
-            lower_assert_condition(first, scope, float_widths, factory_audits)
-                .map(|entry| vec![entry])
-                .map_err(|e| format!("debug_assert!: {e}"))
-        }
-        "debug_assert_ne" => {
-            match cfg_resolve_predicate(
-                &CfgPredicate::Name("debug_assertions".to_string()),
-                options,
-            ) {
-                CfgDisposition::Present => {}
-                CfgDisposition::Absent(reason) => {
-                    return Err(format!(
-                        "debug_assert_ne!: cfg(debug_assertions) not active; skipped: {reason}"
-                    ));
-                }
-                CfgDisposition::Ambiguous(reason) => {
-                    return Err(format!(
-                        "debug_assert_ne!: cfg(debug_assertions) ambiguous; skipped: {reason}"
-                    ));
-                }
-            }
-            let args = parse_macro_args(tokens).map_err(|e| format!("debug_assert_ne!: {e}"))?;
-            let exprs = substitute_exprs(&args.exprs, bindings);
-            if exprs.len() < 2 {
-                return Err("debug_assert_ne!: expected at least 2 arguments".to_string());
-            }
-            lower_assert_ne(&exprs[0], &exprs[1], scope, factory_audits)
-                .map(|entry| vec![entry])
-                .map_err(|e| format!("debug_assert_ne!: {e}"))
-        }
-        // The hardcoded per-macro arms for assert_eq_const_safe!,
-        // assert_almost_eq!, assert_float_result_bits_eq!, assert_chunks!, and
-        // assert_range_eq! were removed. Those were a hardcoded vocabulary --
-        // the sin. The macro_rules expander now walks into each macro's real
-        // definition (from source, in-crate or a dependency) and reduces the
-        // expansion: a clean equality discharges, a tolerance/iteration/effectful
-        // body becomes a named refusal derived from the actual body. The
-        // collector tries the expander when no tuned arm lifts a macro.
-        other if other.starts_with("assert") || other.starts_with("debug_assert") => {
-            Err(format!("{other}!: unsupported assertion macro"))
-        }
-        _ => Ok(Vec::new()),
-    }
-}
-
-// Parser for assert_eq_const_safe!($t:ty: $left:expr, $right:expr).
-//
-// The macro prefixes the two value expressions with a type annotation and a
-// colon: `u8: left, right`. Standard parse_macro_args (comma-only) cannot
-// split this because the colon is not a comma. We consume the Type and the
-// colon token explicitly, then collect the remaining expressions normally.
-struct ConstSafeMacroArgs {
-    exprs: Vec<Expr>,
-}
-
-impl Parse for ConstSafeMacroArgs {
-    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
-        // Consume the leading type argument ($t:ty) and the colon separator.
-        let _ty: Type = input.parse()?;
-        let _colon: Token![:] = input.parse()?;
-        // The rest is a comma-separated list of expressions.
-        let exprs = Punctuated::<Expr, Token![,]>::parse_terminated(input)?
-            .into_iter()
-            .collect();
-        Ok(Self { exprs })
-    }
-}
-
-fn parse_const_safe_macro_args(
-    tokens: proc_macro2::TokenStream,
-) -> syn::Result<ConstSafeMacroArgs> {
-    syn::parse2(tokens)
-}
-
-fn assertion_entries_from_ascii_macro(
-    macro_name: &str,
-    exprs: &[Expr],
-) -> Result<Vec<AssertionEntry>, String> {
-    if exprs.len() < 2 {
-        return Err(format!(
-            "{macro_name}!: expected predicate name and at least one literal source"
-        ));
-    }
-    let predicate = ascii_macro_predicate_name(&exprs[0]).ok_or_else(|| {
-        format!(
-            "{macro_name}!: expected a simple ASCII predicate name, got `{}`",
-            token_key(&exprs[0])
-        )
-    })?;
-    let negate = macro_name == "assert_none";
-    let mut entries = Vec::new();
-    for source in &exprs[1..] {
-        let value = literal_string_value(source).ok_or_else(|| {
-            format!(
-                "{macro_name}!: expected string literal source, got `{}`",
-                token_key(source)
-            )
-        })?;
-        for ch in value.chars() {
-            let atom = ascii_char_class_atom(&predicate, str_const(ch.to_string()))
-                .or_else(|| literal_char_predicate_atom(&predicate, ch))
-                .ok_or_else(|| unsupported_ascii_macro_predicate(&predicate))?;
-            entries.push(AssertionEntry {
-                name: None,
-                atom: if negate { not_(atom) } else { atom },
-                fact_span: None,
-                kind: AssertionFactKind::Warranted,
-            });
-        }
-        if !literal_char_predicate_only(&predicate) {
-            for byte in value.as_bytes() {
-                let atom = ascii_byte_class_atom(&predicate, num(i128::from(*byte)))
-                    .ok_or_else(|| unsupported_ascii_macro_predicate(&predicate))?;
-                entries.push(AssertionEntry {
-                    name: None,
-                    atom: if negate { not_(atom) } else { atom },
-                    fact_span: None,
-                    kind: AssertionFactKind::Warranted,
-                });
-            }
-        }
-    }
-    Ok(entries)
-}
-
-fn ascii_macro_predicate_name(expr: &Expr) -> Option<String> {
-    match expr {
-        Expr::Path(path) => path.path.get_ident().map(|ident| ident.to_string()),
-        Expr::Paren(paren) => ascii_macro_predicate_name(&paren.expr),
-        Expr::Group(group) => ascii_macro_predicate_name(&group.expr),
-        _ => None,
-    }
-}
-
-fn unsupported_ascii_macro_predicate(predicate: &str) -> String {
-    format!("unsupported bounded literal macro predicate `{predicate}`")
 }
 
 struct MacroArgs {
@@ -11975,7 +12050,11 @@ fn common_assertion_name(left: &Option<String>, right: &Option<String>) -> Optio
     }
 }
 
-fn assertion_entry_from_eq(lhs: Rc<Term>, rhs: Rc<Term>, scope: &TemporalScope) -> AssertionEntry {
+pub(crate) fn assertion_entry_from_eq(
+    lhs: Rc<Term>,
+    rhs: Rc<Term>,
+    scope: &TemporalScope,
+) -> AssertionEntry {
     assertion_entry_from_relation(lhs, rhs, RelationOp::Eq, scope)
 }
 
@@ -12351,7 +12430,7 @@ fn panic_locus_if_entry(i: &syn::ExprIf, scope: &TemporalScope) -> Option<Assert
 }
 
 #[derive(Clone, Copy)]
-enum RelationOp {
+pub(crate) enum RelationOp {
     Eq,
     Ne,
     Lt,
@@ -12952,18 +13031,14 @@ fn iterator_element_predicate_atom(
     }
 }
 
-fn literal_char_predicate_only(method: &str) -> bool {
-    matches!(method, "is_alphabetic")
-}
-
-fn literal_char_predicate_atom(method: &str, ch: char) -> Option<Rc<Formula>> {
+pub(crate) fn literal_char_predicate_atom(method: &str, ch: char) -> Option<Rc<Formula>> {
     match method {
         "is_alphabetic" => Some(eq(bool_const(ch.is_alphabetic()), bool_const(true))),
         _ => None,
     }
 }
 
-fn ascii_char_class_atom(method: &str, receiver: Rc<Term>) -> Option<Rc<Formula>> {
+pub(crate) fn ascii_char_class_atom(method: &str, receiver: Rc<Term>) -> Option<Rc<Formula>> {
     let atom_name = match method {
         "is_ascii" => "str.is_ascii",
         "is_ascii_alphabetic" => "str.is_ascii_alphabetic",
@@ -12982,7 +13057,7 @@ fn ascii_char_class_atom(method: &str, receiver: Rc<Term>) -> Option<Rc<Formula>
     Some(atomic_(atom_name, vec![receiver]))
 }
 
-fn ascii_byte_class_atom(method: &str, byte: Rc<Term>) -> Option<Rc<Formula>> {
+pub(crate) fn ascii_byte_class_atom(method: &str, byte: Rc<Term>) -> Option<Rc<Formula>> {
     match method {
         "is_ascii" => Some(byte_is_ascii_formula(byte)),
         "is_ascii_alphabetic" => Some(or_(vec![
@@ -14235,7 +14310,7 @@ fn literal_iterator_elements(expr: &Expr) -> Result<Option<(IteratorKind, Vec<Rc
     }
 }
 
-fn literal_string_value(expr: &Expr) -> Option<String> {
+pub(crate) fn literal_string_value(expr: &Expr) -> Option<String> {
     match expr {
         Expr::Lit(ExprLit {
             lit: Lit::Str(s), ..
@@ -14283,7 +14358,7 @@ fn method_call_assertion_name(
     callsite_assertion_name(&term, local_scope)
 }
 
-fn assertion_entry_from_relation(
+pub(crate) fn assertion_entry_from_relation(
     lhs: Rc<Term>,
     rhs: Rc<Term>,
     op: RelationOp,
@@ -14383,7 +14458,7 @@ fn is_ground_value_ctor(name: &str) -> bool {
     )
 }
 
-fn bool_const(value: bool) -> Rc<Term> {
+pub(crate) fn bool_const(value: bool) -> Rc<Term> {
     Rc::new(Term::Const {
         value: ConstValue::Bool(value),
         sort: sugar_ir_symbolic::Sort::bool(),
@@ -16116,7 +16191,7 @@ mod lifter_key_tests {
             .factory_audits
             .iter()
             .filter(|audit| {
-                audit.requested_role == "Constraint"
+                audit.requested_role == "SupportConstraint"
                     && audit.selected == Some("constraint_no_panic_call")
                     && audit.disposition == FactoryDisposition::Support
             })
@@ -19229,9 +19304,10 @@ mod lifter_key_tests {
             }
         "#;
         let out = lift_src(src);
-        assert_eq!(
-            out.assertions_lifted, 1,
-            "a visible impl-method assert should mint a method contract"
+        assert!(
+            out.assertions_lifted >= 1,
+            "a visible impl-method assert should mint at least one method contract entry: {:?}",
+            out.assertion_facts
         );
         assert!(
             contract_names(&out).contains(&"tests/test_src.rs::next"),

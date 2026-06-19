@@ -8,18 +8,32 @@
 
 use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
 use crate::sugar::configuration;
-use crate::sugar::constraint_runtime_boundary::relation_runtime_boundary_reason;
-use crate::sugar::factory::{build_constraint, SugarBuildCtx};
-use crate::{
-    callsite_assertion_name, lower_assert_condition, lower_assert_eq, lower_assert_ne,
-    parse_macro_args, token_key, AssertionFactKind, CfgDisposition, CfgPredicate, Desugared,
-    Effect, Outcome, RelationOp, Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON,
-};
-use sugar_ir_symbolic::{and_, atomic_, not_, str_const};
-use syn::{Expr, ExprIf, ExprLit, ExprMacro, Lit, UnOp};
+use crate::sugar::constraint_runtime_boundary;
+use std::rc::Rc;
 
-pub(crate) const RELATION_MACRO_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::constraint("constraint_relation_macro", recognize_relation_macro);
+use crate::sugar::factory::{build_constraint, build_term, SugarBuildCtx};
+use crate::{
+    ascii_byte_class_atom, ascii_char_class_atom, assertion_entry_from_relation, bool_const,
+    callsite_assertion_name, literal_char_predicate_atom, literal_string_value, parse_macro_args,
+    token_key, AssertionFactKind, CfgDisposition, CfgPredicate, Desugared, Effect, Outcome,
+    RelationOp, Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON,
+};
+use sugar_ir_symbolic::{and_, atomic_, eq, not_, num, str_const, ConstValue, Formula, Term};
+use syn::{BinOp, Expr, ExprIf, ExprLit, ExprMacro, Lit, UnOp};
+
+pub(crate) const RELATION_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "constraint_relation_macro",
+    SugarRole::Constraint,
+    SugarPriority::Secondary,
+    recognize_relation_macro,
+);
+
+pub(crate) const BOUNDED_LITERAL_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "constraint_bounded_literal_macro",
+    SugarRole::Constraint,
+    SugarPriority::Primary,
+    recognize_bounded_literal_macro,
+);
 
 pub(crate) const ASSERT_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_assert_macro",
@@ -44,20 +58,107 @@ pub(crate) const IF_PANIC_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
 
 pub(crate) const NO_PANIC_CALL_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_no_panic_call",
-    SugarRole::Constraint,
+    SugarRole::SupportConstraint,
     SugarPriority::Primary,
     recognize_no_panic_call,
 );
 
 struct RelationMacroSugar {
     name: String,
-    lhs: Expr,
-    rhs: Expr,
+    lhs: Box<dyn Sugar>,
+    rhs: Box<dyn Sugar>,
+    lhs_expr: Expr,
+    rhs_expr: Expr,
     op: RelationOp,
     debug_gated: bool,
 }
 
-fn recognize_relation_macro(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+struct BoundedLiteralMacroSugar {
+    negate: bool,
+    predicate: String,
+    sources: Vec<String>,
+}
+
+fn recognize_bounded_literal_macro(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let Expr::Macro(ExprMacro { mac, .. }) = expr else {
+        return None;
+    };
+    let name = mac.path.segments.last()?.ident.to_string();
+    let negate = match name.as_str() {
+        "assert_all" => false,
+        "assert_none" => true,
+        _ => return None,
+    };
+    let args = parse_macro_args(mac.tokens.clone()).ok()?;
+    let predicate = bounded_literal_predicate_name(args.exprs.first()?)?;
+    let sources: Vec<String> = args.exprs[1..]
+        .iter()
+        .map(literal_string_value)
+        .collect::<Option<_>>()?;
+    if sources.is_empty() {
+        return None;
+    }
+    Some(Box::new(BoundedLiteralMacroSugar {
+        negate,
+        predicate,
+        sources,
+    }))
+}
+
+impl Sugar for BoundedLiteralMacroSugar {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        let mut atoms = Vec::new();
+        for source in &self.sources {
+            for ch in source.chars() {
+                let atom = ascii_char_class_atom(&self.predicate, str_const(ch.to_string()))
+                    .or_else(|| literal_char_predicate_atom(&self.predicate, ch));
+                let Some(atom) = atom else {
+                    return unsupported(format!(
+                        "unsupported bounded literal macro predicate `{}`",
+                        self.predicate
+                    ));
+                };
+                atoms.push(if self.negate { not_(atom) } else { atom });
+            }
+            if !bounded_literal_char_only_predicate(&self.predicate) {
+                for byte in source.as_bytes() {
+                    let Some(atom) = ascii_byte_class_atom(&self.predicate, num(i128::from(*byte)))
+                    else {
+                        return unsupported(format!(
+                            "unsupported bounded literal macro predicate `{}`",
+                            self.predicate
+                        ));
+                    };
+                    atoms.push(if self.negate { not_(atom) } else { atom });
+                }
+            }
+        }
+        if atoms.is_empty() {
+            return unsupported("bounded literal macro emitted no predicate atoms".to_string());
+        }
+        Outcome::Dug(Desugared::Constraints {
+            atom: and_(atoms),
+            n: 1,
+            kind: AssertionFactKind::Warranted,
+            warrant: Warrant { name: None },
+        })
+    }
+}
+
+fn bounded_literal_predicate_name(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Path(path) => path.path.get_ident().map(|ident| ident.to_string()),
+        Expr::Paren(paren) => bounded_literal_predicate_name(&paren.expr),
+        Expr::Group(group) => bounded_literal_predicate_name(&group.expr),
+        _ => None,
+    }
+}
+
+fn bounded_literal_char_only_predicate(method: &str) -> bool {
+    matches!(method, "is_alphabetic")
+}
+
+fn recognize_relation_macro(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Macro(ExprMacro { mac, .. }) = expr else {
         return None;
     };
@@ -75,8 +176,10 @@ fn recognize_relation_macro(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn
     }
     Some(Box::new(RelationMacroSugar {
         name,
-        lhs: args.exprs[0].clone(),
-        rhs: args.exprs[1].clone(),
+        lhs: build_term(&args.exprs[0], fcx),
+        rhs: build_term(&args.exprs[1], fcx),
+        lhs_expr: args.exprs[0].clone(),
+        rhs_expr: args.exprs[1].clone(),
         op,
         debug_gated,
     }))
@@ -87,37 +190,24 @@ impl Sugar for RelationMacroSugar {
         if let Err(reason) = ensure_debug_assertions_active(&self.name, self.debug_gated, ctx) {
             return unsupported(reason);
         }
-        let result = match self.op {
-            RelationOp::Eq => lower_assert_eq(
-                &self.lhs,
-                &self.rhs,
-                ctx.scope,
-                &ctx.float_widths.borrow(),
-                ctx.factory_audits,
-            ),
-            RelationOp::Ne => lower_assert_ne(&self.lhs, &self.rhs, ctx.scope, ctx.factory_audits),
-            _ => unreachable!("relation macro sugar only owns equality and inequality macros"),
-        };
-        match result {
-            Ok(entry) => constraint_from_entry(entry),
-            Err(reason) => {
-                if let Some(boundary) = relation_runtime_boundary_reason(&self.lhs, &self.rhs, ctx)
-                {
-                    return unsupported(format!("{}!: {boundary}", self.name));
-                }
-                unsupported(format!("{}!: {reason}", self.name))
-            }
+        if let Some(reason) = constraint_runtime_boundary::relation_runtime_boundary_reason(
+            &self.lhs_expr,
+            &self.rhs_expr,
+            ctx,
+        ) {
+            return unsupported(format!("{}!: {reason}", self.name));
         }
+        relation_constraint(&self.name, &*self.lhs, &*self.rhs, self.op, ctx)
     }
 }
 
 struct AssertSugar {
     name: String,
-    expr: Expr,
+    payload: Box<dyn Sugar>,
     debug_gated: bool,
 }
 
-fn recognize_assert_macro(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_assert_macro(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Macro(ExprMacro { mac, .. }) = expr else {
         return None;
     };
@@ -131,7 +221,7 @@ fn recognize_assert_macro(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn S
     let expr = args.exprs.first()?.clone();
     Some(Box::new(AssertSugar {
         name,
-        expr,
+        payload: build_constraint(&expr, fcx),
         debug_gated,
     }))
 }
@@ -141,112 +231,217 @@ impl Sugar for AssertSugar {
         if let Err(reason) = ensure_debug_assertions_active(&self.name, self.debug_gated, ctx) {
             return unsupported(reason);
         }
-        if let Some(outcome) = desugar_assert_payload_constraint(&self.expr, ctx) {
-            return outcome;
-        }
-        constraint_from_entry_result(
-            &self.name,
-            lower_assert_condition(
-                &self.expr,
-                ctx.scope,
-                &ctx.float_widths.borrow(),
-                ctx.factory_audits,
-            ),
-        )
+        self.payload.desugar(ctx)
     }
 }
 
-struct BoolExprSugar {
-    expr: Expr,
+enum BoolExprKind {
+    Connective {
+        left: Box<dyn Sugar>,
+        right: Box<dyn Sugar>,
+        is_and: bool,
+    },
+    Relation {
+        lhs: Box<dyn Sugar>,
+        rhs: Box<dyn Sugar>,
+        lhs_expr: Expr,
+        rhs_expr: Expr,
+        op: RelationOp,
+    },
+    Not(Box<dyn Sugar>),
+    Literal(bool),
+    PredicateTerm {
+        term: Box<dyn Sugar>,
+        asserted: bool,
+    },
+    Wrapper(Box<dyn Sugar>),
 }
 
-fn recognize_bool_expr(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+struct BoolExprSugar {
+    kind: BoolExprKind,
+}
+
+fn recognize_bool_expr(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {
-        Expr::Binary(_) => Some(Box::new(BoolExprSugar { expr: expr.clone() })),
-        Expr::Unary(unary) if matches!(unary.op, UnOp::Not(_)) => {
-            Some(Box::new(BoolExprSugar { expr: expr.clone() }))
+        Expr::Binary(binary) if matches!(binary.op, BinOp::And(_) | BinOp::Or(_)) => {
+            Some(Box::new(BoolExprSugar {
+                kind: BoolExprKind::Connective {
+                    left: build_constraint(&binary.left, fcx),
+                    right: build_constraint(&binary.right, fcx),
+                    is_and: matches!(binary.op, BinOp::And(_)),
+                },
+            }))
         }
+        Expr::Binary(binary) => {
+            let op = relation_from_binop(&binary.op)?;
+            Some(Box::new(BoolExprSugar {
+                kind: BoolExprKind::Relation {
+                    lhs: build_term(&binary.left, fcx),
+                    rhs: build_term(&binary.right, fcx),
+                    lhs_expr: (*binary.left).clone(),
+                    rhs_expr: (*binary.right).clone(),
+                    op,
+                },
+            }))
+        }
+        Expr::Unary(unary) if matches!(unary.op, UnOp::Not(_)) => Some(Box::new(BoolExprSugar {
+            kind: BoolExprKind::Not(build_constraint(&unary.expr, fcx)),
+        })),
         Expr::Lit(ExprLit {
-            lit: Lit::Bool(_), ..
-        }) => Some(Box::new(BoolExprSugar { expr: expr.clone() })),
-        Expr::Paren(_) | Expr::Group(_) => Some(Box::new(BoolExprSugar { expr: expr.clone() })),
+            lit: Lit::Bool(value),
+            ..
+        }) => Some(Box::new(BoolExprSugar {
+            kind: BoolExprKind::Literal(value.value),
+        })),
+        expr if is_predicate_term_expr(expr) => Some(Box::new(BoolExprSugar {
+            kind: BoolExprKind::PredicateTerm {
+                term: build_term(expr, fcx),
+                asserted: true,
+            },
+        })),
+        Expr::Paren(paren) => Some(Box::new(BoolExprSugar {
+            kind: BoolExprKind::Wrapper(build_constraint(&paren.expr, fcx)),
+        })),
+        Expr::Group(group) => Some(Box::new(BoolExprSugar {
+            kind: BoolExprKind::Wrapper(build_constraint(&group.expr, fcx)),
+        })),
         _ => None,
     }
 }
 
 impl Sugar for BoolExprSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        constraint_from_entry_result(
-            "assert",
-            lower_assert_condition(
-                &self.expr,
-                ctx.scope,
-                &ctx.float_widths.borrow(),
-                ctx.factory_audits,
-            ),
-        )
-    }
-}
-
-fn desugar_assert_payload_constraint(expr: &Expr, ctx: &SugarCtx) -> Option<Outcome> {
-    if assert_payload_should_use_bool_fallback(expr, ctx) {
-        return None;
-    }
-    let empty = std::collections::BTreeMap::new();
-    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &empty);
-    if !crate::sugar::factory::has_constraint(expr, &fcx) {
-        return None;
-    }
-    match build_constraint(expr, &fcx).desugar(ctx) {
-        Outcome::Dug(Desugared::Constraints {
-            atom,
-            kind,
-            warrant,
-            ..
-        }) => Some(Outcome::Dug(Desugared::Constraints {
-            atom,
-            n: 1,
-            kind,
-            warrant,
-        })),
-        Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {
-            None
+        match &self.kind {
+            BoolExprKind::Connective {
+                left,
+                right,
+                is_and,
+            } => {
+                let left = match constraint_payload(&**left, ctx) {
+                    Ok(payload) => payload,
+                    Err(outcome) => return outcome,
+                };
+                let right = match constraint_payload(&**right, ctx) {
+                    Ok(payload) => payload,
+                    Err(outcome) => return outcome,
+                };
+                let atom = if *is_and {
+                    and_(vec![left.atom, right.atom])
+                } else {
+                    sugar_ir_symbolic::or_(vec![left.atom, right.atom])
+                };
+                Outcome::Dug(Desugared::Constraints {
+                    atom,
+                    n: 1,
+                    kind: if left.kind.is_warranted() || right.kind.is_warranted() {
+                        AssertionFactKind::Warranted
+                    } else {
+                        AssertionFactKind::Support
+                    },
+                    warrant: Warrant {
+                        name: common_constraint_name(&left.name, &right.name),
+                    },
+                })
+            }
+            BoolExprKind::Relation {
+                lhs,
+                rhs,
+                lhs_expr,
+                rhs_expr,
+                op,
+            } => {
+                if let Some(reason) = constraint_runtime_boundary::relation_runtime_boundary_reason(
+                    lhs_expr, rhs_expr, ctx,
+                ) {
+                    return unsupported(format!("assert!: {reason}"));
+                }
+                relation_constraint("assert", &**lhs, &**rhs, *op, ctx)
+            }
+            BoolExprKind::Not(inner) => {
+                let inner = match constraint_payload(&**inner, ctx) {
+                    Ok(payload) => payload,
+                    Err(outcome) => return outcome,
+                };
+                if let Some(atom) = bool_true_assertion_as_false(inner.atom.as_ref()) {
+                    return Outcome::Dug(Desugared::Constraints {
+                        atom,
+                        n: 1,
+                        kind: inner.kind,
+                        warrant: Warrant { name: inner.name },
+                    });
+                }
+                Outcome::Dug(Desugared::Constraints {
+                    atom: not_(inner.atom),
+                    n: 1,
+                    kind: inner.kind,
+                    warrant: Warrant { name: inner.name },
+                })
+            }
+            BoolExprKind::Literal(value) => {
+                let entry = assertion_entry_from_relation(
+                    bool_const(*value),
+                    bool_const(true),
+                    RelationOp::Eq,
+                    ctx.scope,
+                );
+                constraint_from_entry(entry)
+            }
+            BoolExprKind::PredicateTerm { term, asserted } => {
+                let term = match term_payload(&**term, ctx) {
+                    Ok(term) => term,
+                    Err(outcome) => return outcome,
+                };
+                constraint_from_entry(assertion_entry_from_relation(
+                    term,
+                    bool_const(*asserted),
+                    RelationOp::Eq,
+                    ctx.scope,
+                ))
+            }
+            BoolExprKind::Wrapper(inner) => inner.desugar(ctx),
         }
-        Outcome::Hit(effect) => Some(Outcome::Hit(effect)),
-        Outcome::Dug(_) => None,
     }
 }
 
-fn assert_payload_should_use_bool_fallback(expr: &Expr, ctx: &SugarCtx) -> bool {
-    match expr {
-        Expr::Call(_) | Expr::MethodCall(_) | Expr::Await(_) | Expr::Field(_) => true,
-        Expr::Path(path) => path.path.get_ident().is_some_and(|ident| {
-            ctx.scope
-                .stable_let_binding_for_term(&ident.to_string())
-                .is_some_and(bound_assert_payload_should_use_bool_fallback)
-        }),
-        Expr::Paren(paren) => assert_payload_should_use_bool_fallback(&paren.expr, ctx),
-        Expr::Group(group) => assert_payload_should_use_bool_fallback(&group.expr, ctx),
-        _ => false,
-    }
+fn is_predicate_term_expr(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Path(_) | Expr::Call(_) | Expr::MethodCall(_) | Expr::Await(_) | Expr::Field(_)
+    )
 }
 
-fn bound_assert_payload_should_use_bool_fallback(expr: &Expr) -> bool {
-    match expr {
-        Expr::Call(_) | Expr::MethodCall(_) | Expr::Await(_) | Expr::Field(_) => true,
-        Expr::Path(_) => true,
-        Expr::Paren(paren) => bound_assert_payload_should_use_bool_fallback(&paren.expr),
-        Expr::Group(group) => bound_assert_payload_should_use_bool_fallback(&group.expr),
-        _ => false,
+fn bool_true_assertion_as_false(atom: &Formula) -> Option<Rc<Formula>> {
+    let Formula::Atomic { name, args } = atom else {
+        return None;
+    };
+    if name != "=" || args.len() != 2 {
+        return None;
     }
+    if is_bool_const(args[1].as_ref(), true) {
+        return Some(eq(args[0].clone(), bool_const(false)));
+    }
+    if is_bool_const(args[0].as_ref(), true) {
+        return Some(eq(bool_const(false), args[1].clone()));
+    }
+    None
+}
+
+fn is_bool_const(term: &Term, expected: bool) -> bool {
+    matches!(
+        term,
+        Term::Const {
+            value: ConstValue::Bool(value),
+            ..
+        } if *value == expected
+    )
 }
 
 struct IfPanicSugar {
-    cond: Expr,
+    cond: Box<dyn Sugar>,
     negate: bool,
 }
 
-fn recognize_if_panic(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_if_panic(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::If(if_expr) = expr else {
         return None;
     };
@@ -257,11 +452,11 @@ fn recognize_if_panic(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
     let else_diverges = else_branch_diverges(if_expr);
     match (then_diverges, else_diverges) {
         (true, false) => Some(Box::new(IfPanicSugar {
-            cond: (*if_expr.cond).clone(),
+            cond: build_constraint(&if_expr.cond, fcx),
             negate: true,
         })),
         (false, true) => Some(Box::new(IfPanicSugar {
-            cond: (*if_expr.cond).clone(),
+            cond: build_constraint(&if_expr.cond, fcx),
             negate: false,
         })),
         _ => None,
@@ -270,25 +465,20 @@ fn recognize_if_panic(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
 
 impl Sugar for IfPanicSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let entry = match lower_assert_condition(
-            &self.cond,
-            ctx.scope,
-            &ctx.float_widths.borrow(),
-            ctx.factory_audits,
-        ) {
-            Ok(entry) => entry,
-            Err(reason) => return unsupported(format!("if-panic constraint: {reason}")),
+        let payload = match constraint_payload(&*self.cond, ctx) {
+            Ok(payload) => payload,
+            Err(outcome) => return outcome,
         };
         let atom = if self.negate {
-            not_(entry.atom)
+            not_(payload.atom)
         } else {
-            entry.atom
+            payload.atom
         };
         Outcome::Dug(Desugared::Constraints {
             atom,
             n: 1,
-            kind: AssertionFactKind::Warranted,
-            warrant: Warrant { name: entry.name },
+            kind: payload.kind,
+            warrant: Warrant { name: payload.name },
         })
     }
 }
@@ -462,16 +652,6 @@ fn ensure_debug_assertions_active(
     }
 }
 
-fn constraint_from_entry_result(
-    name: &str,
-    result: Result<crate::AssertionEntry, String>,
-) -> Outcome {
-    match result {
-        Ok(entry) => constraint_from_entry(entry),
-        Err(reason) => unsupported(format!("{name}!: {reason}")),
-    }
-}
-
 fn constraint_from_entry(entry: crate::AssertionEntry) -> Outcome {
     Outcome::Dug(Desugared::Constraints {
         atom: entry.atom,
@@ -479,6 +659,88 @@ fn constraint_from_entry(entry: crate::AssertionEntry) -> Outcome {
         kind: AssertionFactKind::Warranted,
         warrant: Warrant { name: entry.name },
     })
+}
+
+struct ConstraintPayload {
+    atom: Rc<Formula>,
+    kind: AssertionFactKind,
+    name: Option<String>,
+}
+
+fn constraint_payload(node: &dyn Sugar, ctx: &SugarCtx) -> Result<ConstraintPayload, Outcome> {
+    match node.desugar(ctx) {
+        Outcome::Dug(Desugared::Constraints {
+            atom,
+            kind,
+            warrant,
+            ..
+        }) => Ok(ConstraintPayload {
+            atom,
+            kind,
+            name: warrant.name,
+        }),
+        Outcome::Dug(_) => Err(Outcome::Hit(Effect::Unsupported {
+            reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
+        })),
+        Outcome::Hit(effect) => Err(Outcome::Hit(effect)),
+    }
+}
+
+fn relation_constraint(
+    name: &str,
+    lhs: &dyn Sugar,
+    rhs: &dyn Sugar,
+    op: RelationOp,
+    ctx: &SugarCtx,
+) -> Outcome {
+    let lhs = match term_payload(lhs, ctx) {
+        Ok(term) => term,
+        Err(outcome) => return prefixed_backstop(name, outcome),
+    };
+    let rhs = match term_payload(rhs, ctx) {
+        Ok(term) => term,
+        Err(outcome) => return prefixed_backstop(name, outcome),
+    };
+    constraint_from_entry(assertion_entry_from_relation(lhs, rhs, op, ctx.scope))
+}
+
+fn term_payload(node: &dyn Sugar, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
+    match node.desugar(ctx) {
+        Outcome::Dug(desugared) => desugared.into_term().ok_or_else(|| {
+            Outcome::Hit(Effect::Unsupported {
+                reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
+            })
+        }),
+        Outcome::Hit(effect) => Err(Outcome::Hit(effect)),
+    }
+}
+
+fn prefixed_backstop(name: &str, outcome: Outcome) -> Outcome {
+    match outcome {
+        Outcome::Hit(Effect::Unsupported { reason }) if reason != STRUCTURAL_BACKSTOP_REASON => {
+            unsupported(format!("{name}!: {reason}"))
+        }
+        other => other,
+    }
+}
+
+fn common_constraint_name(left: &Option<String>, right: &Option<String>) -> Option<String> {
+    match (left, right) {
+        (Some(left), Some(right)) if left == right => Some(left.clone()),
+        _ => None,
+    }
+}
+
+fn relation_from_binop(op: &BinOp) -> Option<RelationOp> {
+    match op {
+        BinOp::Eq(_) => Some(RelationOp::Eq),
+        BinOp::Ne(_) => Some(RelationOp::Ne),
+        BinOp::Lt(_) => Some(RelationOp::Lt),
+        BinOp::Le(_) => Some(RelationOp::Le),
+        BinOp::Gt(_) => Some(RelationOp::Gt),
+        BinOp::Ge(_) => Some(RelationOp::Ge),
+        _ => None,
+    }
 }
 
 fn unsupported(reason: String) -> Outcome {
