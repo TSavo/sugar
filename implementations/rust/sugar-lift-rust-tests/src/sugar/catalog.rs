@@ -28,6 +28,11 @@ use crate::{FactoryCandidateAudit, Sugar};
 /// The unified expression-Sugar catalog. This is wiring only: each entry points at
 /// metadata owned by the Sugar module itself.
 const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
+    &infinity_eq::ASSERTION_SURFACE_EXPR_SUGAR,
+    &char_range_filter_map::ASSERTION_SURFACE_EXPR_SUGAR,
+    &constraint::BOUNDED_LITERAL_MACRO_ASSERTION_SURFACE,
+    &constraint::RELATION_MACRO_ASSERTION_SURFACE,
+    &constraint::ASSERT_MACRO_ASSERTION_SURFACE,
     &constraint::BOUNDED_LITERAL_MACRO_SUGAR,
     &infinity_eq::CONSTRAINT_EXPR_SUGAR,
     &constraint::RELATION_MACRO_SUGAR,
@@ -131,28 +136,6 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
 
 const ITEM_CLAIMS: &[&ItemSugarClaim] = &[&const_item::ITEM_SUGAR, &impl_method::ITEM_SUGAR];
 
-/// Ask every expression Sugar whether it handles this source site. Multiple
-/// candidates are first-class; equal-priority candidates for the same role are not.
-pub(crate) fn matching_expr_claims(expr: &Expr, fcx: &SugarBuildCtx) -> Vec<SugarCandidate> {
-    let mut candidates: Vec<_> = EXPR_CLAIMS
-        .iter()
-        .filter_map(|claim| (*claim).candidate(expr, fcx))
-        .collect();
-    candidates.sort_by_key(|candidate| candidate.priority());
-    assert_no_ambiguous_role_priority(&candidates);
-    candidates
-}
-
-pub(crate) fn select_expr_role(
-    candidates: Vec<SugarCandidate>,
-    role: SugarRole,
-) -> Option<SugarCandidate> {
-    assert_no_ambiguous_role_priority(&candidates);
-    candidates
-        .into_iter()
-        .find(|candidate| candidate.role() == role)
-}
-
 pub(crate) fn build_expr_role(expr: &Expr, fcx: &SugarBuildCtx, role: SugarRole) -> Box<dyn Sugar> {
     let mut candidates = matching_expr_claims_for_role(expr, fcx, role);
     let selected_index = candidates
@@ -170,7 +153,7 @@ pub(crate) fn build_expr_role(expr: &Expr, fcx: &SugarBuildCtx, role: SugarRole)
     )
 }
 
-fn matching_expr_claims_for_role(
+pub(crate) fn matching_expr_claims_for_role(
     expr: &Expr,
     fcx: &SugarBuildCtx,
     role: SugarRole,
@@ -183,26 +166,6 @@ fn matching_expr_claims_for_role(
     candidates.sort_by_key(|candidate| candidate.priority());
     assert_no_ambiguous_role_priority(&candidates);
     candidates
-}
-
-pub(crate) fn matching_item_claims(item: &Item, fcx: &SugarBuildCtx) -> Vec<SugarCandidate> {
-    let mut candidates: Vec<_> = ITEM_CLAIMS
-        .iter()
-        .filter_map(|claim| (*claim).candidate(item, fcx))
-        .collect();
-    candidates.sort_by_key(|candidate| candidate.priority());
-    assert_no_ambiguous_role_priority(&candidates);
-    candidates
-}
-
-pub(crate) fn select_item_role(
-    candidates: Vec<SugarCandidate>,
-    role: SugarRole,
-) -> Option<SugarCandidate> {
-    assert_no_ambiguous_role_priority(&candidates);
-    candidates
-        .into_iter()
-        .find(|candidate| candidate.role() == role)
 }
 
 pub(crate) fn build_item_role(item: &Item, fcx: &SugarBuildCtx, role: SugarRole) -> Box<dyn Sugar> {
@@ -222,7 +185,7 @@ pub(crate) fn build_item_role(item: &Item, fcx: &SugarBuildCtx, role: SugarRole)
     )
 }
 
-fn matching_item_claims_for_role(
+pub(crate) fn matching_item_claims_for_role(
     item: &Item,
     fcx: &SugarBuildCtx,
     role: SugarRole,
@@ -309,7 +272,21 @@ mod tests {
         let options = LiftOptions::default();
         let let_inits = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
-        super::matching_expr_claims(expr, &fcx)
+        let mut candidates: Vec<_> = [
+            SugarRole::Term,
+            SugarRole::Composite,
+            SugarRole::Constraint,
+            SugarRole::AssertionSurface,
+            SugarRole::SupportConstraint,
+            SugarRole::StatementEffect,
+            SugarRole::ClosureAdaptorVerdict,
+            SugarRole::MatchScrutineeVerdict,
+        ]
+        .into_iter()
+        .flat_map(|role| super::matching_expr_claims_for_role(expr, &fcx, role))
+        .collect();
+        candidates.sort_by_key(|candidate| candidate.priority());
+        candidates
             .into_iter()
             .map(|candidate| candidate.name())
             .collect()
@@ -320,9 +297,8 @@ mod tests {
         let options = LiftOptions::default();
         let let_inits = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
-        super::matching_expr_claims(expr, &fcx)
+        super::matching_expr_claims_for_role(expr, &fcx, role)
             .into_iter()
-            .filter(|candidate| candidate.role() == role)
             .map(|candidate| candidate.name())
             .collect()
     }
@@ -332,7 +308,9 @@ mod tests {
         let options = LiftOptions::default();
         let let_inits = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
-        super::select_expr_role(super::matching_expr_claims(expr, &fcx), role)
+        super::matching_expr_claims_for_role(expr, &fcx, role)
+            .into_iter()
+            .next()
             .map(|candidate| candidate.name())
     }
 
@@ -341,9 +319,8 @@ mod tests {
         let options = LiftOptions::default();
         let let_inits = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
-        super::matching_item_claims(item, &fcx)
+        super::matching_item_claims_for_role(item, &fcx, role)
             .into_iter()
-            .filter(|candidate| candidate.role() == role)
             .map(|candidate| candidate.name())
             .collect()
     }
@@ -389,7 +366,7 @@ mod tests {
             SECOND.candidate(&expr, &fcx).unwrap(),
         ];
 
-        let _ = super::select_expr_role(candidates, SugarRole::Term);
+        super::assert_no_ambiguous_role_priority(&candidates);
     }
 
     #[test]
@@ -897,7 +874,7 @@ mod tests {
     #[test]
     fn statement_runtime_expr_effect_is_a_catalog_claim() {
         let expr: Expr = syn::parse_str(
-            "(assert_matches!(*MutRefWithDrop(&mut val).0, 0), std::mem::take(&mut val))",
+            "(assert_eq!(*MutRefWithDrop(&mut val).0, 0), std::mem::take(&mut val))",
         )
         .unwrap();
         let names = candidate_names_for_role(&expr, SugarRole::StatementEffect);

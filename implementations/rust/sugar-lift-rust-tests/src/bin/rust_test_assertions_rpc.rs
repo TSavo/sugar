@@ -2178,12 +2178,13 @@ mod tests {
         );
         assert!(
             audits.iter().any(|audit| {
-                audit["requested_role"] == "Constraint"
+                audit["requested_role"] == "AssertionSurface"
+                    && audit["selected"] == "assertion_surface_relation_macro"
                     && audit["site"]
                         .as_str()
                         .is_some_and(|site| site.contains("assert_eq"))
             }),
-            "assertion macro spelling should be factory-accounted as a constraint Sugar: {audits:?}"
+            "assertion macro spelling should be factory-accounted as assertion-surface Sugar: {audits:?}"
         );
 
         let _ = std::fs::remove_dir_all(root);

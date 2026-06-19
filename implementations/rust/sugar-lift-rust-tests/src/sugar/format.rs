@@ -1605,7 +1605,7 @@ pub(crate) fn lift_flt2dec_helper(
     }
     impl<'ast> syn::visit::Visit<'ast> for MacroWalk {
         fn visit_macro(&mut self, m: &'ast syn::Macro) {
-            if crate::is_assert_macro_path(&m.path) {
+            if crate::macro_is_assertion_surface(m) {
                 self.macros.push(m.clone());
             }
             syn::visit::visit_macro(self, m);

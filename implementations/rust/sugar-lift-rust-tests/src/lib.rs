@@ -2024,6 +2024,71 @@ struct ReductionCtx<'a> {
     imported: MacroRegistry,
 }
 
+fn declarative_macro_def(item: &syn::ItemMacro) -> Option<(String, proc_macro2::TokenStream)> {
+    if !(item.mac.path.is_ident("macro_rules") || item.mac.path.is_ident("macro")) {
+        return None;
+    }
+    let ident = item.ident.as_ref()?.to_string();
+    Some((ident, item.mac.tokens.clone()))
+}
+
+fn declarative_verbatim_macro_def(
+    tokens: &proc_macro2::TokenStream,
+) -> Option<(String, proc_macro2::TokenStream)> {
+    let trees: Vec<proc_macro2::TokenTree> = tokens.clone().into_iter().collect();
+    let mut i = 0;
+    while i + 2 < trees.len() {
+        let proc_macro2::TokenTree::Ident(keyword) = &trees[i] else {
+            i += 1;
+            continue;
+        };
+        if keyword != "macro" {
+            i += 1;
+            continue;
+        }
+        let Some(proc_macro2::TokenTree::Ident(name)) = trees.get(i + 1) else {
+            return None;
+        };
+        let name = name.to_string();
+        let Some(proc_macro2::TokenTree::Group(first_group)) = trees.get(i + 2) else {
+            return None;
+        };
+        match first_group.delimiter() {
+            proc_macro2::Delimiter::Parenthesis => {
+                let Some(proc_macro2::TokenTree::Group(body_group)) = trees.get(i + 3) else {
+                    return None;
+                };
+                if body_group.delimiter() != proc_macro2::Delimiter::Brace {
+                    return None;
+                }
+                let mut normalized = proc_macro2::TokenStream::new();
+                normalized.extend([
+                    proc_macro2::TokenTree::Group(first_group.clone()),
+                    proc_macro2::TokenTree::Group(body_group.clone()),
+                ]);
+                tracing::debug!(
+                    target: "sugar_lift_rust_tests::macro_match",
+                    macro_name = %name,
+                    shape = "pub-macro-single-rule",
+                    "learned declarative macro from verbatim item"
+                );
+                return Some((name, normalized));
+            }
+            proc_macro2::Delimiter::Brace => {
+                tracing::debug!(
+                    target: "sugar_lift_rust_tests::macro_match",
+                    macro_name = %name,
+                    shape = "pub-macro-rule-list",
+                    "learned declarative macro from verbatim item"
+                );
+                return Some((name, first_group.stream()));
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
 impl<'a> ReductionCtx<'a> {
     fn from_items(items: &'a [Item]) -> Self {
         Self::from_items_with_imports(items, &MacroRegistry::new())
@@ -2079,9 +2144,14 @@ impl<'a> ReductionCtx<'a> {
                     // into a fn-local macro's real definition the same way it does a file/dep one.
                     self.collect_macros_in_block(&f.block);
                 }
-                Item::Macro(m) if m.mac.path.is_ident("macro_rules") => {
-                    if let Some(ident) = &m.ident {
-                        self.insert_macro(&ident.to_string(), m.mac.tokens.clone());
+                Item::Macro(m) => {
+                    if let Some((ident, tokens)) = declarative_macro_def(m) {
+                        self.insert_macro(&ident, tokens);
+                    }
+                }
+                Item::Verbatim(tokens) => {
+                    if let Some((ident, tokens)) = declarative_verbatim_macro_def(tokens) {
+                        self.insert_macro(&ident, tokens);
                     }
                 }
                 Item::Impl(imp) => {
@@ -2133,9 +2203,14 @@ impl<'a> ReductionCtx<'a> {
     fn collect_macros_in_block(&mut self, block: &'a syn::Block) {
         for stmt in &block.stmts {
             match stmt {
-                syn::Stmt::Item(Item::Macro(m)) if m.mac.path.is_ident("macro_rules") => {
-                    if let Some(ident) = &m.ident {
-                        self.insert_macro(&ident.to_string(), m.mac.tokens.clone());
+                syn::Stmt::Item(Item::Macro(m)) => {
+                    if let Some((ident, tokens)) = declarative_macro_def(m) {
+                        self.insert_macro(&ident, tokens);
+                    }
+                }
+                syn::Stmt::Item(Item::Verbatim(tokens)) => {
+                    if let Some((ident, tokens)) = declarative_verbatim_macro_def(tokens) {
+                        self.insert_macro(&ident, tokens);
                     }
                 }
                 syn::Stmt::Item(Item::Fn(f)) => self.collect_macros_in_block(&f.block),
@@ -2460,9 +2535,14 @@ impl MacroRegistry {
     fn scan_items(&mut self, items: &[Item]) {
         for item in items {
             match item {
-                Item::Macro(m) if m.mac.path.is_ident("macro_rules") => {
-                    if let Some(ident) = &m.ident {
-                        self.insert(&ident.to_string(), m.mac.tokens.clone());
+                Item::Macro(m) => {
+                    if let Some((ident, tokens)) = declarative_macro_def(m) {
+                        self.insert(&ident, tokens);
+                    }
+                }
+                Item::Verbatim(tokens) => {
+                    if let Some((ident, tokens)) = declarative_verbatim_macro_def(tokens) {
+                        self.insert(&ident, tokens);
                     }
                 }
                 Item::Mod(m) => {
@@ -2935,6 +3015,15 @@ fn impl_self_ty_key(ty: &Type) -> Option<String> {
 /// in-source macro). Prevents runaway expansion; assertion macros nest shallowly.
 const MAX_MACRO_EXPANSION_DEPTH: usize = 16;
 
+fn temporal_scope_from_reducer(local_scope: &str, reducer: &ReductionCtx<'_>) -> TemporalScope {
+    TemporalScope::new(local_scope, TemporalPlan::default())
+        .with_macro_registry(reducer.macro_registry_snapshot())
+        .with_fn_registry(reducer.fn_registry_snapshot(&BTreeMap::new()))
+        .with_impl_value_registry(reducer.impl_value_registry_snapshot())
+        .with_layout_type_registry(reducer.layout_type_registry_snapshot())
+        .with_const_registry(reducer.const_registry_snapshot())
+}
+
 /// Walk into an in-source `macro_rules!` definition and reduce its expansion.
 /// Returns:
 ///   - `None` if `path` is not an in-source macro we learned (caller falls back).
@@ -2954,24 +3043,72 @@ fn try_macro_expansion_entries(
     macro_depth: usize,
 ) -> Option<Result<Vec<AssertionEntry>, String>> {
     let name = path.segments.last()?.ident.to_string();
-    let rules = reducer.macro_rules(&name)?;
+    let rules = match reducer.macro_rules(&name) {
+        Some(rules) => {
+            tracing::debug!(
+                target: "sugar_lift_rust_tests::macro_match",
+                macro_name = %name,
+                macro_depth = macro_depth,
+                "source macro_rules body found for assertion-surface probe"
+            );
+            rules
+        }
+        None => {
+            tracing::debug!(
+                target: "sugar_lift_rust_tests::macro_match",
+                macro_name = %name,
+                macro_depth = macro_depth,
+                "no source macro_rules body found for assertion-surface probe"
+            );
+            return None;
+        }
+    };
     if macro_depth >= MAX_MACRO_EXPANSION_DEPTH {
+        tracing::debug!(
+            target: "sugar_lift_rust_tests::macro_match",
+            macro_name = %name,
+            macro_depth = macro_depth,
+            max_depth = MAX_MACRO_EXPANSION_DEPTH,
+            "source macro expansion refused by depth guard"
+        );
         return Some(Err(format!(
             "macro `{name}`: expansion depth exceeded; released to layer 0"
         )));
     }
     let expanded = match macro_expand::expand(&rules, tokens.clone()) {
         Ok(ts) => ts,
-        Err(e) => return Some(Err(format!("macro `{name}`: {e}; released to layer 0"))),
+        Err(e) => {
+            tracing::debug!(
+                target: "sugar_lift_rust_tests::macro_match",
+                macro_name = %name,
+                macro_depth = macro_depth,
+                error = %e,
+                "source macro expansion failed"
+            );
+            return Some(Err(format!("macro `{name}`: {e}; released to layer 0")));
+        }
     };
+    tracing::trace!(
+        target: "sugar_lift_rust_tests::macro_match",
+        macro_name = %name,
+        macro_depth = macro_depth,
+        expanded_tokens = %expanded,
+        "source macro expanded before factory recursion"
+    );
     // Re-parse the expansion as a statement block, then reduce it like any body.
     let expanded_for_block = expanded.clone();
     let block: syn::Block = match syn::parse2(quote::quote! { { #expanded_for_block } }) {
         Ok(b) => b,
         Err(_) => {
+            tracing::debug!(
+                target: "sugar_lift_rust_tests::macro_match",
+                macro_name = %name,
+                macro_depth = macro_depth,
+                "source macro expansion did not parse as a statement block"
+            );
             return Some(Err(format!(
                 "macro `{name}`: expansion did not parse as statements; released to layer 0"
-            )))
+            )));
         }
     };
     let block =
@@ -2987,6 +3124,14 @@ fn try_macro_expansion_entries(
             block
         };
     let assertion_surfaces = count_asserts_in_stmts(&block.stmts);
+    tracing::debug!(
+        target: "sugar_lift_rust_tests::macro_match",
+        macro_name = %name,
+        macro_depth = macro_depth,
+        expanded_stmt_count = block.stmts.len(),
+        assertion_surfaces = assertion_surfaces,
+        "source macro expansion parsed; recursing through factory collector"
+    );
     if assertion_surfaces > 0 {
         if let Some(reason) = macro_expansion_runtime_temporal_array_reason(&name, &block) {
             tracing::debug!(
@@ -3019,11 +3164,31 @@ fn try_macro_expansion_entries(
         &BTreeMap::new(),
         &LayoutTypeRegistry::new(),
     );
+    tracing::debug!(
+        target: "sugar_lift_rust_tests::macro_match",
+        macro_name = %name,
+        macro_depth = macro_depth,
+        entries = temp_entries.len(),
+        warranted_entries = temp_entries.iter().filter(|entry| entry.kind.is_warranted()).count(),
+        skipped = temp_skipped.len(),
+        lifted = temp_lifted,
+        "source macro expansion factory recursion complete"
+    );
     if !temp_entries.iter().any(|entry| entry.kind.is_warranted()) {
         if let Ok(expr) = syn::parse2::<Expr>(expanded.clone()) {
-            let scope = TemporalScope::new(local_scope, TemporalPlan::default());
+            let scope = temporal_scope_from_reducer(local_scope, reducer);
             if let Some(entry) = value_panic_locus_entry_from_expr(&expr, &scope) {
                 temp_entries.push(entry);
+            } else if let Some(reason) = panic_locus_refusal_reason_from_expr(&expr, &scope) {
+                let terminal_reason = format!("macro `{name}` expansion {reason}");
+                tracing::debug!(
+                    target: "sugar_lift_rust_tests::macro_expansion",
+                    macro_name = %name,
+                    macro_depth = macro_depth,
+                    reason = %terminal_reason,
+                    "held macro expansion recognized panic-locus surface but refused scrutinee"
+                );
+                return Some(Err(terminal_reason));
             }
         }
     }
@@ -3042,6 +3207,25 @@ fn try_macro_expansion_entries(
                 reason = %terminal_reason,
                 support_entries = temp_entries.len(),
                 "held macro expansion propagated terminal effect instead of support-only accounting"
+            );
+            return Some(Err(terminal_reason));
+        }
+    }
+    if assertion_surfaces == 0 && !temp_entries.iter().any(|entry| entry.kind.is_warranted()) {
+        if let Some(reason) = temp_skipped
+            .iter()
+            .find(|reason| matches!(refusal_disposition(reason), Disposition::Refused))
+        {
+            let terminal_reason = format!(
+                "macro `{name}` expansion reached nested assertion surface but terminal effect blocked all warranted facts: {reason}"
+            );
+            tracing::debug!(
+                target: "sugar_lift_rust_tests::macro_expansion",
+                macro_name = %name,
+                macro_depth = macro_depth,
+                reason = %terminal_reason,
+                support_entries = temp_entries.len(),
+                "held macro expansion propagated nested terminal effect instead of inert accounting"
             );
             return Some(Err(terminal_reason));
         }
@@ -3085,6 +3269,46 @@ fn value_panic_locus_entry_from_stmts(
     match stmts {
         [Stmt::Expr(expr, None)] => value_panic_locus_entry_from_expr(expr, scope),
         _ => None,
+    }
+}
+
+fn panic_locus_refusal_reason_from_expr(expr: &Expr, scope: &TemporalScope) -> Option<String> {
+    match expr {
+        Expr::Match(m) => panic_locus_match_refusal_reason(m, scope),
+        Expr::If(i) => panic_locus_if_refusal_reason(i, scope),
+        Expr::Block(b) => panic_locus_refusal_reason_from_stmts(&b.block.stmts, scope),
+        Expr::Unsafe(u) => panic_locus_refusal_reason_from_stmts(&u.block.stmts, scope),
+        Expr::Paren(p) => panic_locus_refusal_reason_from_expr(&p.expr, scope),
+        Expr::Group(g) => panic_locus_refusal_reason_from_expr(&g.expr, scope),
+        _ => None,
+    }
+}
+
+fn panic_locus_refusal_reason_from_stmts(stmts: &[Stmt], scope: &TemporalScope) -> Option<String> {
+    match stmts {
+        [Stmt::Expr(expr, None)] => panic_locus_refusal_reason_from_expr(expr, scope),
+        _ => None,
+    }
+}
+
+fn panic_locus_surface_shape_from_expr(expr: &Expr, scope: &TemporalScope) -> bool {
+    match expr {
+        Expr::Match(m) => panic_locus_match_survivor(m, scope)
+            .is_some_and(|(_, pat)| pattern_has_panic_locus_teeth(pat)),
+        Expr::If(i) => panic_locus_if_survivor(i, scope)
+            .is_some_and(|(_, pat)| pattern_has_panic_locus_teeth(pat)),
+        Expr::Block(b) => panic_locus_surface_shape_from_stmts(&b.block.stmts, scope),
+        Expr::Unsafe(u) => panic_locus_surface_shape_from_stmts(&u.block.stmts, scope),
+        Expr::Paren(p) => panic_locus_surface_shape_from_expr(&p.expr, scope),
+        Expr::Group(g) => panic_locus_surface_shape_from_expr(&g.expr, scope),
+        _ => false,
+    }
+}
+
+fn panic_locus_surface_shape_from_stmts(stmts: &[Stmt], scope: &TemporalScope) -> bool {
+    match stmts {
+        [Stmt::Expr(expr, None)] => panic_locus_surface_shape_from_expr(expr, scope),
+        _ => false,
     }
 }
 
@@ -3274,7 +3498,7 @@ fn assert_macro_references_any(
     mac: &syn::Macro,
     names: &BTreeMap<String, RuntimeMacroStateKind>,
 ) -> Option<RuntimeMacroStateKind> {
-    if names.is_empty() || !is_assert_macro_path(&mac.path) {
+    if names.is_empty() || !macro_is_assertion_surface(mac) {
         return None;
     }
     let Ok(args) = parse_macro_args(mac.tokens.clone()) else {
@@ -3334,6 +3558,12 @@ fn expr_contains_assert_macro_referencing_any(
 }
 
 type ExprBindings = BTreeMap<String, Expr>;
+
+#[derive(Clone)]
+struct ScopedModuleFn<'a> {
+    function: &'a syn::ItemFn,
+    const_bindings: ExprBindings,
+}
 
 #[derive(Debug, Clone, Default)]
 struct TemporalPlan {
@@ -3835,7 +4065,7 @@ struct NestedAssertCounter {
 
 impl<'ast> syn::visit::Visit<'ast> for NestedAssertCounter {
     fn visit_macro(&mut self, m: &'ast syn::Macro) {
-        if is_assert_macro_path(&m.path) {
+        if macro_is_assertion_surface(m) {
             self.total += 1;
         }
         syn::visit::visit_macro(self, m);
@@ -3844,6 +4074,99 @@ impl<'ast> syn::visit::Visit<'ast> for NestedAssertCounter {
 
 pub(crate) fn count_asserts_in_stmts(stmts: &[Stmt]) -> usize {
     let mut counter = NestedAssertCounter::default();
+    for stmt in stmts {
+        syn::visit::Visit::visit_stmt(&mut counter, stmt);
+    }
+    counter.total
+}
+
+struct SourceAwareAssertCounter<'r, 'ctx> {
+    reducer: &'r ReductionCtx<'ctx>,
+    macro_depth: usize,
+    total: usize,
+}
+
+impl<'ast, 'r, 'ctx> syn::visit::Visit<'ast> for SourceAwareAssertCounter<'r, 'ctx> {
+    fn visit_macro(&mut self, m: &'ast syn::Macro) {
+        if macro_is_assertion_surface(m) {
+            self.total += 1;
+            return;
+        }
+        if let Some(count) = source_macro_assertion_site_count(m, self.reducer, self.macro_depth) {
+            self.total += count;
+            return;
+        }
+        syn::visit::visit_macro(self, m);
+    }
+}
+
+fn source_macro_assertion_site_count(
+    mac: &syn::Macro,
+    reducer: &ReductionCtx<'_>,
+    macro_depth: usize,
+) -> Option<usize> {
+    let name = mac.path.segments.last()?.ident.to_string();
+    let rules = reducer.macro_rules(&name)?;
+    if macro_depth >= MAX_MACRO_EXPANSION_DEPTH {
+        tracing::debug!(
+            target: "sugar_lift_rust_tests::macro_match",
+            macro_name = %name,
+            macro_depth = macro_depth,
+            max_depth = MAX_MACRO_EXPANSION_DEPTH,
+            "source-aware assertion-site count stopped by macro depth guard"
+        );
+        return Some(0);
+    }
+    let expanded = match macro_expand::expand(&rules, mac.tokens.clone()) {
+        Ok(expanded) => expanded,
+        Err(e) => {
+            tracing::debug!(
+                target: "sugar_lift_rust_tests::macro_match",
+                macro_name = %name,
+                macro_depth = macro_depth,
+                error = %e,
+                "source-aware assertion-site count could not expand macro"
+            );
+            return Some(0);
+        }
+    };
+    let block: syn::Block = match syn::parse2(quote::quote! { { #expanded } }) {
+        Ok(block) => block,
+        Err(_) => {
+            tracing::debug!(
+                target: "sugar_lift_rust_tests::macro_match",
+                macro_name = %name,
+                macro_depth = macro_depth,
+                "source-aware assertion-site count could not parse expansion as statements"
+            );
+            return Some(0);
+        }
+    };
+    let nested =
+        count_assertion_surface_sites_in_stmts_with_source(&block.stmts, reducer, macro_depth + 1);
+    let scope = temporal_scope_from_reducer("<assertion-surface-accounting>", reducer);
+    let panic_locus_surface = panic_locus_surface_shape_from_stmts(&block.stmts, &scope);
+    tracing::debug!(
+        target: "sugar_lift_rust_tests::macro_match",
+        macro_name = %name,
+        macro_depth = macro_depth,
+        nested_assertion_sites = nested,
+        panic_locus_surface = panic_locus_surface,
+        "source-aware assertion-site count inspected learned macro body"
+    );
+    Some(usize::from(nested > 0 || panic_locus_surface))
+}
+
+fn count_assertion_surface_sites_in_stmts_with_source(
+    stmts: &[Stmt],
+    reducer: &ReductionCtx<'_>,
+    macro_depth: usize,
+) -> usize {
+    let mut counter = SourceAwareAssertCounter {
+        reducer,
+        macro_depth,
+        total: 0,
+    };
     for stmt in stmts {
         syn::visit::Visit::visit_stmt(&mut counter, stmt);
     }
@@ -3929,14 +4252,14 @@ pub(crate) fn count_asserts_in_expr(expr: &Expr) -> usize {
 
 fn count_asserts_in_match_arm_body(expr: &Expr) -> usize {
     match expr {
-        Expr::Macro(expr_macro) if is_assert_macro_path(&expr_macro.mac.path) => 1,
+        Expr::Macro(expr_macro) if macro_is_assertion_surface(&expr_macro.mac) => 1,
         Expr::Block(block) => count_asserts_in_match_arm_stmts(&block.block.stmts),
         Expr::Unsafe(unsafe_expr) => count_asserts_in_match_arm_stmts(&unsafe_expr.block.stmts),
         Expr::Paren(paren) => count_asserts_in_match_arm_body(&paren.expr),
         Expr::Group(group) => count_asserts_in_match_arm_body(&group.expr),
         _ => {
             let counted = count_asserts_in_expr(expr);
-            if counted == 0 && expr_is_assert_macro(expr) {
+            if counted == 0 && expr_is_assertion_surface(expr) {
                 1
             } else {
                 counted
@@ -3949,34 +4272,88 @@ fn count_asserts_in_match_arm_stmts(stmts: &[Stmt]) -> usize {
     stmts
         .iter()
         .map(|stmt| match stmt {
-            Stmt::Macro(stmt_macro) if is_assert_macro_path(&stmt_macro.mac.path) => 1,
+            Stmt::Macro(stmt_macro) if macro_is_assertion_surface(&stmt_macro.mac) => 1,
             Stmt::Expr(expr, _) => count_asserts_in_match_arm_body(expr),
             _ => count_asserts_in_stmts(std::slice::from_ref(stmt)),
         })
         .sum()
 }
 
-fn expr_is_assert_macro(expr: &Expr) -> bool {
+pub(crate) fn expr_is_assertion_surface(expr: &Expr) -> bool {
     match expr {
-        Expr::Macro(expr_macro) => is_assert_macro_path(&expr_macro.mac.path),
-        Expr::Paren(paren) => expr_is_assert_macro(&paren.expr),
-        Expr::Group(group) => expr_is_assert_macro(&group.expr),
+        Expr::Macro(expr_macro) => macro_is_assertion_surface(&expr_macro.mac),
+        Expr::Paren(paren) => expr_is_assertion_surface(&paren.expr),
+        Expr::Group(group) => expr_is_assertion_surface(&group.expr),
         _ => false,
     }
 }
 
-pub(crate) fn is_assert_macro_path(path: &syn::Path) -> bool {
-    if let Some(seg) = path.segments.last() {
-        // The lifter treats any macro whose name starts with assert / debug_assert
-        // as an assertion (the standard six plus stdlib custom macros like
-        // assert_all!, assert_none!, assert_eq_const_safe!). The nested-assert
-        // counter must use the same universe as the sweep denominator so the
-        // discharged + refused + silent reconciliation is exact.
-        let name = seg.ident.to_string();
-        name.starts_with("assert") || name.starts_with("debug_assert")
-    } else {
-        false
+pub fn macro_is_assertion_surface(mac: &syn::Macro) -> bool {
+    let expr = Expr::Macro(syn::ExprMacro {
+        attrs: Vec::new(),
+        mac: mac.clone(),
+    });
+    let scope = TemporalScope::new("<assertion-surface-accounting>", TemporalPlan::default());
+    let options = LiftOptions::default();
+    let let_inits = BTreeMap::new();
+    let fcx = sugar::factory::SugarBuildCtx::new(&scope, &options, &let_inits);
+    sugar::factory::has_assertion_surface(&expr, &fcx)
+}
+
+pub fn assertion_surface_site_cid(mac: &syn::Macro) -> String {
+    let path = mac
+        .path
+        .segments
+        .iter()
+        .map(|s| s.ident.to_string())
+        .collect::<Vec<_>>()
+        .join("::");
+    let body = mac.tokens.to_string();
+    sugar_canonicalizer::blake3_512_of(format!("{path}!({body})").as_bytes())
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct AssertionSurfaceCensus {
+    pub total: usize,
+    pub site_cids: Vec<String>,
+}
+
+struct AssertionSurfaceCensusVisitor<'r, 'ctx> {
+    reducer: &'r ReductionCtx<'ctx>,
+    macro_depth: usize,
+    census: AssertionSurfaceCensus,
+}
+
+impl<'ast, 'r, 'ctx> syn::visit::Visit<'ast> for AssertionSurfaceCensusVisitor<'r, 'ctx> {
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        let direct = macro_is_assertion_surface(mac);
+        let source_learned = if direct {
+            false
+        } else {
+            source_macro_assertion_site_count(mac, self.reducer, self.macro_depth)
+                .is_some_and(|count| count > 0)
+        };
+        if direct || source_learned {
+            self.census.total += 1;
+            self.census.site_cids.push(assertion_surface_site_cid(mac));
+            return;
+        }
+        syn::visit::visit_macro(self, mac);
     }
+}
+
+pub fn assertion_surface_census(
+    file: &syn::File,
+    imported: &MacroRegistry,
+) -> AssertionSurfaceCensus {
+    let reducer = ReductionCtx::from_items_with_imports(&file.items, imported);
+    let mut visitor = AssertionSurfaceCensusVisitor {
+        reducer: &reducer,
+        macro_depth: 0,
+        census: AssertionSurfaceCensus::default(),
+    };
+    syn::visit::Visit::visit_file(&mut visitor, file);
+    visitor.census
 }
 
 fn is_debug_assert_macro_path(path: &syn::Path) -> bool {
@@ -7098,30 +7475,47 @@ fn collect_statement_macro_entries<'a>(
     });
     let let_inits = BTreeMap::new();
     let fcx = sugar::factory::SugarBuildCtx::new(temporal_scope, options, &let_inits);
-    if sugar::factory::has_constraint(&macro_expr, &fcx) {
-        let ctx = sugar_ctx_with_factory_audits(
-            temporal_scope,
-            options,
-            reducer,
-            float_widths,
-            macro_depth,
-            factory_audits,
-        );
-        let outcome = sugar::factory::build_constraint(&macro_expr, &fcx).desugar(&ctx);
-        emit_constraint_outcome(
-            outcome,
-            &token_key(&macro_expr),
-            entries,
-            skipped,
-            macros_lifted,
+    let ctx = sugar_ctx_with_factory_audits(
+        temporal_scope,
+        options,
+        reducer,
+        float_widths,
+        macro_depth,
+        factory_audits,
+    );
+
+    let has_direct_surface = sugar::factory::has_assertion_surface(&macro_expr, &fcx);
+    tracing::debug!(
+        target: "sugar_lift_rust_tests::macro_match",
+        macro_name = %macro_name,
+        macro_depth = macro_depth,
+        direct_assertion_surface = has_direct_surface,
+        "statement macro factory assertion-surface probe"
+    );
+
+    if has_direct_surface {
+        let before_entries = entries.len();
+        let before_skipped = skipped.len();
+        let before_lifted = *macros_lifted;
+        let outcome = sugar::factory::build_assertion_surface(&macro_expr, &fcx).desugar(&ctx);
+        emit_optional_constraint_outcome(outcome, entries, skipped, macros_lifted);
+        tracing::debug!(
+            target: "sugar_lift_rust_tests::macro_match",
+            macro_name = %macro_name,
+            macro_depth = macro_depth,
+            emitted_entries = entries.len().saturating_sub(before_entries),
+            emitted_skips = skipped.len().saturating_sub(before_skipped),
+            lifted_delta = (*macros_lifted).saturating_sub(before_lifted),
+            "statement macro direct assertion-surface desugar complete"
         );
         return;
     }
 
     // Held macro_rules bodies are source. Feed the expanded body to the normal
-    // collector when the invocation shape has no direct ConstraintSugar. This keeps
-    // true assertion-vocabulary macros owned by their Sugar, while vendor wrappers
-    // are still learned by the assertion shape they expand to instead of by name.
+    // collector when the invocation shape has no direct AssertionSurface sugar. This
+    // keeps true assertion-vocabulary macros owned by their Sugar, while vendor
+    // wrappers are still learned by the assertion shape they expand to instead of by
+    // name.
     let before_s = skipped.len();
     match try_macro_expansion_entries(
         &mac.path,
@@ -7174,12 +7568,8 @@ fn collect_statement_macro_entries<'a>(
                 return;
             }
             if expansion_reason.contains("assertion surface") {
-                if is_assert_macro_path(&mac.path)
-                    && expansion_reason.contains("contained no assertion surface")
-                {
-                    skipped.push(format!(
-                        "macro `{macro_name}` expansion reached assertion surface but emitted only support facts; assertion without fact emitted; released to layer 0"
-                    ));
+                if expansion_reason.contains("contained no assertion surface") {
+                    return;
                 } else {
                     skipped.push(expansion_reason);
                 }
@@ -7189,16 +7579,12 @@ fn collect_statement_macro_entries<'a>(
         None => {}
     }
 
-    let ctx = sugar_ctx_with_factory_audits(
-        temporal_scope,
-        options,
-        reducer,
-        float_widths,
-        macro_depth,
-        factory_audits,
+    tracing::debug!(
+        target: "sugar_lift_rust_tests::macro_match",
+        macro_name = %macro_name,
+        macro_depth = macro_depth,
+        "statement macro is not direct assertion surface and has no source expansion"
     );
-    let outcome = sugar::factory::build_constraint(&macro_expr, &fcx).desugar(&ctx);
-    emit_optional_constraint_outcome(outcome, entries, skipped, macros_lifted);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -7271,6 +7657,7 @@ fn collect_assertion_entries<'a>(
             local_fns.insert(f.sig.ident.to_string(), f);
         }
     }
+    let module_fns = module_scoped_fns_for_stmts(stmts);
     let mut layout_types = reducer.layout_type_registry_snapshot();
     layout_types.merge_all(enclosing_layout_types);
     layout_types.merge_all(&layout_type_registry_for_stmts(stmts));
@@ -7621,7 +8008,11 @@ fn collect_assertion_entries<'a>(
                     // no runtime cause detected -- e.g. a `let`-SSA + conditional over the
                     // loop var) STAYS UNCLASSIFIED here (the inverse of fake-dig is
                     // fake-REFUSE, equally forbidden -- never refuse to zero the count).
-                    let count = count_asserts_in_stmts(&f.body.stmts);
+                    let count = count_assertion_surface_sites_in_stmts_with_source(
+                        &f.body.stmts,
+                        reducer,
+                        macro_depth,
+                    );
                     let reason = for_context_refusal_reason(
                         f,
                         &temporal_scope,
@@ -7762,7 +8153,7 @@ fn collect_assertion_entries<'a>(
                     let body_asserts: usize = m
                         .arms
                         .iter()
-                        .filter(|a| !expr_diverges(&a.body))
+                        .filter(|a| !expr_diverges_in_scope(&a.body, &temporal_scope))
                         .map(|a| count_asserts_in_match_arm_body(&a.body))
                         .sum();
                     let reason = (Effect::Reflection {
@@ -8120,6 +8511,33 @@ fn collect_assertion_entries<'a>(
                                     );
                                     false
                                 }
+                            }
+                        } else if let Some((name, bindings, function)) =
+                            resolve_module_scoped_fn_call(e, &module_fns, options)
+                        {
+                            match sugar::callsite::desugar_substituted_stmts(
+                                &name,
+                                &function.block.stmts,
+                                &bindings,
+                                local_scope,
+                                stmt_idx,
+                                options,
+                                reducer,
+                                float_widths,
+                                reduced_helpers,
+                                macro_depth,
+                                factory_audits,
+                            ) {
+                                sugar::callsite::CallsiteOutcome::Dug(commit) => {
+                                    entries.extend(commit.entries);
+                                    skipped.extend(commit.skipped);
+                                    *macros_lifted += commit.macros_lifted;
+                                    *reduced_helpers = commit.reduced_helpers;
+                                    reduced_helpers.insert(commit.name.clone());
+                                    reduced_in_block.insert(commit.name);
+                                    true
+                                }
+                                sugar::callsite::CallsiteOutcome::Bail(_) => false,
                             }
                         } else if let Some(cs) = sugar::callsite::CallsiteSugar::decompose(
                             e,
@@ -8505,7 +8923,7 @@ fn collect_arg_position_call_sites(stmts: &[Stmt], fn_name: &str, arity: usize) 
         // (`assert_ne!(hash(&val), hash(&zero_byte(val, 0)))`) hides the helper call in
         // its tokens; parse the comma-separated operands and visit them.
         fn visit_macro(&mut self, m: &'ast syn::Macro) {
-            if is_assert_macro_path(&m.path) {
+            if macro_is_assertion_surface(m) {
                 if let Ok(args) = parse_macro_args(m.tokens.clone()) {
                     for a in &args.exprs {
                         syn::visit::Visit::visit_expr(self, a);
@@ -10544,6 +10962,113 @@ pub(crate) fn simple_call_name(call: &syn::ExprCall) -> Option<String> {
     path.path.get_ident().map(|ident| ident.to_string())
 }
 
+fn call_path_name(call: &syn::ExprCall) -> Option<String> {
+    let Expr::Path(path) = call.func.as_ref() else {
+        return None;
+    };
+    if path.qself.is_some()
+        || path
+            .path
+            .segments
+            .iter()
+            .any(|segment| !matches!(segment.arguments, syn::PathArguments::None))
+    {
+        return None;
+    }
+    Some(
+        path.path
+            .segments
+            .iter()
+            .map(|segment| segment.ident.to_string())
+            .collect::<Vec<_>>()
+            .join("::"),
+    )
+}
+
+fn module_scoped_fns_for_stmts<'a>(stmts: &'a [Stmt]) -> BTreeMap<String, ScopedModuleFn<'a>> {
+    let mut out = BTreeMap::new();
+    for stmt in stmts {
+        let Stmt::Item(Item::Mod(module)) = stmt else {
+            continue;
+        };
+        let Some((_, items)) = &module.content else {
+            continue;
+        };
+        collect_module_scoped_fns(&module.ident.to_string(), items, &mut out);
+    }
+    out
+}
+
+fn collect_module_scoped_fns<'a>(
+    prefix: &str,
+    items: &'a [Item],
+    out: &mut BTreeMap<String, ScopedModuleFn<'a>>,
+) {
+    let const_bindings = module_const_bindings(items);
+    for item in items {
+        match item {
+            Item::Fn(function) => {
+                out.insert(
+                    format!("{prefix}::{}", function.sig.ident),
+                    ScopedModuleFn {
+                        function,
+                        const_bindings: const_bindings.clone(),
+                    },
+                );
+            }
+            Item::Mod(module) => {
+                if let Some((_, items)) = &module.content {
+                    collect_module_scoped_fns(&format!("{prefix}::{}", module.ident), items, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn module_const_bindings(items: &[Item]) -> ExprBindings {
+    let mut bindings = ExprBindings::new();
+    for item in items {
+        if let Item::Const(konst) = item {
+            bindings.insert(konst.ident.to_string(), (*konst.expr).clone());
+        }
+    }
+    bindings
+}
+
+fn resolve_module_scoped_fn_call<'a>(
+    expr: &Expr,
+    module_fns: &'a BTreeMap<String, ScopedModuleFn<'a>>,
+    options: &LiftOptions,
+) -> Option<(String, ExprBindings, &'a syn::ItemFn)> {
+    let inner = match expr {
+        Expr::Paren(p) => &*p.expr,
+        Expr::Group(g) => &*g.expr,
+        other => other,
+    };
+    let Expr::Call(call) = inner else { return None };
+    let name = call_path_name(call)?;
+    let scoped = module_fns.get(&name)?;
+    if count_asserts_in_stmts(&scoped.function.block.stmts) == 0 {
+        return None;
+    }
+    if !matches!(
+        cfg_resolve(&scoped.function.attrs, options),
+        CfgDisposition::Present
+    ) {
+        return None;
+    }
+    let params = helper_param_names(scoped.function).ok()?;
+    if params.len() != call.args.len() {
+        return None;
+    }
+    let mut bindings = scoped.const_bindings.clone();
+    for (param, arg) in params.into_iter().zip(call.args.iter()) {
+        bindings.insert(param, arg.clone());
+    }
+    Some((name, bindings, scoped.function))
+}
+
 /// TERM-POSITION value-call inlining (capability #1). Resolve a free-function call
 /// `f(a, b, ...)` whose callee is an in-source, pure, VALUE-returning fn we hold the
 /// source of (via `scope.fn_registry()`), β-reduce its body with `param := <arg expr>`
@@ -12194,6 +12719,66 @@ fn stmt_diverges(s: &Stmt) -> bool {
     }
 }
 
+fn expr_diverges_in_scope(expr: &Expr, scope: &TemporalScope) -> bool {
+    match expr {
+        Expr::Macro(m) => m.mac.path.segments.last().is_some_and(|s| {
+            matches!(
+                s.ident.to_string().as_str(),
+                "panic" | "unreachable" | "todo" | "unimplemented"
+            )
+        }),
+        Expr::Block(b) => b
+            .block
+            .stmts
+            .last()
+            .is_some_and(|stmt| stmt_diverges_in_scope(stmt, scope)),
+        Expr::Unsafe(u) => u
+            .block
+            .stmts
+            .last()
+            .is_some_and(|stmt| stmt_diverges_in_scope(stmt, scope)),
+        Expr::Return(_) => true,
+        Expr::Paren(p) => expr_diverges_in_scope(&p.expr, scope),
+        Expr::Group(g) => expr_diverges_in_scope(&g.expr, scope),
+        Expr::Call(c) => {
+            if expr_diverges(expr) {
+                return true;
+            }
+            let Expr::Path(path) = &*c.func else {
+                return false;
+            };
+            let Some(name) = path.path.segments.last().map(|seg| seg.ident.to_string()) else {
+                return false;
+            };
+            scope
+                .fn_registry()
+                .lookup(&name)
+                .is_some_and(|f| fn_returns_never(&f))
+        }
+        _ => expr_diverges(expr),
+    }
+}
+
+fn stmt_diverges_in_scope(stmt: &Stmt, scope: &TemporalScope) -> bool {
+    match stmt {
+        Stmt::Expr(expr, _) => expr_diverges_in_scope(expr, scope),
+        Stmt::Macro(m) => m.mac.path.segments.last().is_some_and(|seg| {
+            matches!(
+                seg.ident.to_string().as_str(),
+                "panic" | "unreachable" | "todo" | "unimplemented"
+            )
+        }),
+        _ => false,
+    }
+}
+
+fn fn_returns_never(f: &syn::ItemFn) -> bool {
+    matches!(
+        &f.sig.output,
+        syn::ReturnType::Type(_, ty) if matches!(&**ty, syn::Type::Never(_))
+    )
+}
+
 fn path_to_variant_string(p: &syn::Path) -> String {
     p.segments
         .iter()
@@ -12437,6 +13022,74 @@ fn tuple_pattern_entry(
     })
 }
 
+fn scalar_pattern_entry(
+    subject: &Expr,
+    pat: &syn::Pat,
+    scope: &TemporalScope,
+) -> Option<AssertionEntry> {
+    let subject_term = translate_term_in_scope(subject, scope).ok()?;
+    let atom = scalar_pattern_atom(&subject_term, pat)?;
+    let name = callsite_assertion_name(subject_term.as_ref(), scope.local_scope());
+    Some(AssertionEntry {
+        name,
+        atom,
+        fact_span: None,
+        kind: AssertionFactKind::Warranted,
+    })
+}
+
+fn scalar_pattern_atom(subject: &Rc<Term>, pat: &syn::Pat) -> Option<Rc<Formula>> {
+    match strip_pat_ref_paren(pat) {
+        syn::Pat::Lit(lit) => Some(eq(subject.clone(), lit_membership_term(&lit.lit)?)),
+        syn::Pat::Range(_) => pattern_membership_formula(subject, pat),
+        syn::Pat::Or(or_pat) => {
+            let mut cases = Vec::with_capacity(or_pat.cases.len());
+            for case in &or_pat.cases {
+                cases.push(scalar_pattern_atom(subject, case)?);
+            }
+            Some(or_(cases))
+        }
+        // Wildcard / binding patterns have no teeth. They are valid Rust
+        // patterns, but a passing panic-locus over them tells us no scalar fact.
+        _ => None,
+    }
+}
+
+fn pattern_has_panic_locus_teeth(pat: &syn::Pat) -> bool {
+    if pattern_variant_path(pat).is_some() {
+        return true;
+    }
+    scalar_pattern_has_teeth(pat) || tuple_pattern_has_teeth(pat)
+}
+
+fn scalar_pattern_has_teeth(pat: &syn::Pat) -> bool {
+    match strip_pat_ref_paren(pat) {
+        syn::Pat::Lit(_) | syn::Pat::Range(_) => true,
+        syn::Pat::Or(or_pat) => or_pat.cases.iter().all(scalar_pattern_has_teeth),
+        _ => false,
+    }
+}
+
+fn tuple_pattern_has_teeth(pat: &syn::Pat) -> bool {
+    let tuple = match strip_pat_ref_paren(pat) {
+        syn::Pat::Tuple(tuple) => tuple,
+        _ => return false,
+    };
+    let mut toothed = false;
+    for elem in &tuple.elems {
+        let elem = strip_pat_ref_paren(elem);
+        if matches!(elem, syn::Pat::Wild(_)) {
+            continue;
+        }
+        if strict_variant_path(elem).is_some() || matches!(elem, syn::Pat::Lit(_)) {
+            toothed = true;
+            continue;
+        }
+        return false;
+    }
+    toothed
+}
+
 /// Strip leading `&pat` / `(pat)` wrappers from a pattern, returning the inner.
 fn strip_pat_ref_paren(pat: &syn::Pat) -> &syn::Pat {
     match pat {
@@ -12485,9 +13138,24 @@ fn panic_locus_entry(
     ))
 }
 
-/// Panic-locus lifting for a `match`: if every arm but one diverges (panics),
-/// the test passing proves the scrutinee matches the surviving arm's pattern.
-fn panic_locus_match_entry(m: &syn::ExprMatch, scope: &TemporalScope) -> Option<AssertionEntry> {
+fn panic_locus_pattern_entry(
+    subject: &Expr,
+    pattern: &syn::Pat,
+    scope: &TemporalScope,
+) -> Option<AssertionEntry> {
+    if let Some(variant) = pattern_variant_path(pattern) {
+        return panic_locus_entry(subject, &variant, scope);
+    }
+    if let Some(entry) = scalar_pattern_entry(subject, pattern, scope) {
+        return Some(entry);
+    }
+    tuple_pattern_entry(subject, pattern, scope)
+}
+
+fn panic_locus_match_survivor<'a>(
+    m: &'a syn::ExprMatch,
+    scope: &TemporalScope,
+) -> Option<(&'a Expr, &'a syn::Pat)> {
     if m.arms.len() < 2 {
         return None;
     }
@@ -12497,7 +13165,7 @@ fn panic_locus_match_entry(m: &syn::ExprMatch, scope: &TemporalScope) -> Option<
         if arm.guard.is_some() {
             return None; // a guard changes which values reach the arm
         }
-        if expr_diverges(&arm.body) {
+        if expr_diverges_in_scope(&arm.body, scope) {
             diverging += 1;
         } else {
             surviving.push(arm);
@@ -12506,21 +13174,60 @@ fn panic_locus_match_entry(m: &syn::ExprMatch, scope: &TemporalScope) -> Option<
     if diverging == 0 || surviving.len() != 1 {
         return None;
     }
-    let variant = pattern_variant_path(&surviving[0].pat)?;
-    panic_locus_entry(&m.expr, &variant, scope)
+    Some((&m.expr, &surviving[0].pat))
 }
 
-/// Panic-locus lifting for `if let PAT = SUBJ { .. } else { panic!() }`.
-fn panic_locus_if_entry(i: &syn::ExprIf, scope: &TemporalScope) -> Option<AssertionEntry> {
+fn panic_locus_if_survivor<'a>(
+    i: &'a syn::ExprIf,
+    scope: &TemporalScope,
+) -> Option<(&'a Expr, &'a syn::Pat)> {
     let Expr::Let(cond) = &*i.cond else {
         return None;
     };
     let (_, else_expr) = i.else_branch.as_ref()?;
-    if !expr_diverges(else_expr) {
+    if !expr_diverges_in_scope(else_expr, scope) {
         return None;
     }
-    let variant = pattern_variant_path(&cond.pat)?;
-    panic_locus_entry(&cond.expr, &variant, scope)
+    Some((&cond.expr, &cond.pat))
+}
+
+fn panic_locus_subject_refusal_reason(
+    subject: &Expr,
+    pattern: &syn::Pat,
+    scope: &TemporalScope,
+) -> Option<String> {
+    if !pattern_has_panic_locus_teeth(pattern)
+        || panic_locus_pattern_entry(subject, pattern, scope).is_some()
+    {
+        return None;
+    }
+    let reason = translate_term_in_scope(subject, scope).err()?;
+    Some(format!(
+        "reached assertion surface but panic-locus match scrutinee is not a liftable term: {reason}"
+    ))
+}
+
+fn panic_locus_match_refusal_reason(m: &syn::ExprMatch, scope: &TemporalScope) -> Option<String> {
+    let (subject, pattern) = panic_locus_match_survivor(m, scope)?;
+    panic_locus_subject_refusal_reason(subject, pattern, scope)
+}
+
+fn panic_locus_if_refusal_reason(i: &syn::ExprIf, scope: &TemporalScope) -> Option<String> {
+    let (subject, pattern) = panic_locus_if_survivor(i, scope)?;
+    panic_locus_subject_refusal_reason(subject, pattern, scope)
+}
+
+/// Panic-locus lifting for a `match`: if every arm but one diverges (panics),
+/// the test passing proves the scrutinee matches the surviving arm's pattern.
+fn panic_locus_match_entry(m: &syn::ExprMatch, scope: &TemporalScope) -> Option<AssertionEntry> {
+    let (subject, pattern) = panic_locus_match_survivor(m, scope)?;
+    panic_locus_pattern_entry(subject, pattern, scope)
+}
+
+/// Panic-locus lifting for `if let PAT = SUBJ { .. } else { panic!() }`.
+fn panic_locus_if_entry(i: &syn::ExprIf, scope: &TemporalScope) -> Option<AssertionEntry> {
+    let (subject, pattern) = panic_locus_if_survivor(i, scope)?;
+    panic_locus_pattern_entry(subject, pattern, scope)
 }
 
 #[derive(Clone, Copy)]
@@ -19456,15 +20163,14 @@ mod lifter_key_tests {
 
     #[test]
     fn runtime_expr_statement_through_mut_borrow_is_refused() {
-        // REFUSE: the borrow/drop-scoping tuple statement (corpus:
-        // macros.rs::temporary_scope_introduction). The asserted value is read through a
-        // `&mut` borrow and the sibling element `mem::take`s the same local -- mutably
-        // aliased, no single timeless `t`.
+        // REFUSE: the borrow/drop-scoping tuple statement. The asserted value is read
+        // through a `&mut` borrow and the sibling element `mem::take`s the same local
+        // -- mutably aliased, no single timeless `t`.
         let src = r#"
             #[test]
             fn t() {
                 let mut val = 0;
-                (assert_matches!(*MutRefWithDrop(&mut val).0, 0), std::mem::take(&mut val));
+                (assert_eq!(*MutRefWithDrop(&mut val).0, 0), std::mem::take(&mut val));
             }
         "#;
         let out = lift_src(src);

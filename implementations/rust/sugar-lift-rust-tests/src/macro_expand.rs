@@ -1,4 +1,4 @@
-//! A correctness-first `macro_rules!` expander for the assertion lifter.
+//! A correctness-first declarative macro expander for the assertion lifter.
 //!
 //! The lifter desugars a language using the language: `a(x)` desugars to `a(x)`,
 //! then we walk into the definition of `a`. For a `macro_rules!` macro, walking
@@ -20,7 +20,8 @@ use std::collections::BTreeMap;
 
 use proc_macro2::{Delimiter, Spacing, TokenStream, TokenTree};
 
-/// One `(matcher) => { body }` arm of a `macro_rules!` definition.
+/// One declarative macro rule: either `(matcher) => { body }` (`macro_rules!`
+/// and rule-list `pub macro`) or `(matcher) { body }` (single-rule `pub macro`).
 pub(crate) struct MacroRule {
     matcher: Vec<TokenTree>,
     body: TokenStream,
@@ -37,9 +38,11 @@ enum Binding {
 
 type Bindings = BTreeMap<String, Binding>;
 
-/// Parse the token stream of a `macro_rules!` body into its rules.
-/// The grammar is `(matcher) => { body } ;` repeated. Returns `Err` if the
-/// shape is not recognized so the caller refuses rather than mis-parses.
+/// Parse the token stream of a declarative macro body into its rules.
+/// The grammar is `(matcher) => { body } ;` repeated for `macro_rules!` and
+/// rule-list `pub macro`, or `(matcher) { body }` for single-rule `pub macro`.
+/// Returns `Err` if the shape is not recognized so the caller refuses rather
+/// than mis-parses.
 pub(crate) fn parse_rules(tokens: TokenStream) -> Result<Vec<MacroRule>, String> {
     let trees: Vec<TokenTree> = tokens.into_iter().collect();
     let mut rules = Vec::new();
@@ -51,22 +54,31 @@ pub(crate) fn parse_rules(tokens: TokenStream) -> Result<Vec<MacroRule>, String>
             other => return Err(format!("macro_rules: expected matcher group, got {other}")),
         };
         i += 1;
-        // `=>`
+        // `=>` for macro_rules / rule-list `pub macro`, or directly a body
+        // group for single-rule `pub macro name($matcher) { body }`.
         let arrow_ok = matches!(trees.get(i), Some(TokenTree::Punct(p)) if p.as_char() == '=' && p.spacing() == Spacing::Joint)
             && matches!(trees.get(i + 1), Some(TokenTree::Punct(p)) if p.as_char() == '>');
-        if !arrow_ok {
-            return Err("macro_rules: expected `=>` after matcher".to_string());
+        if arrow_ok {
+            i += 2;
         }
-        i += 2;
         // body group
         let body = match trees.get(i) {
             Some(TokenTree::Group(g)) => g.stream(),
-            other => return Err(format!("macro_rules: expected body group, got {other:?}")),
+            other if arrow_ok => {
+                return Err(format!("macro_rules: expected body group, got {other:?}"));
+            }
+            other => {
+                return Err(format!(
+                    "declarative macro: expected `=>` or body group after matcher, got {other:?}"
+                ));
+            }
         };
         i += 1;
         rules.push(MacroRule { matcher, body });
-        // optional `;` separator
-        if matches!(trees.get(i), Some(TokenTree::Punct(p)) if p.as_char() == ';') {
+        // optional rule separator: `macro_rules!` normally uses `;`, while
+        // `pub macro` rule lists use `,`.
+        if matches!(trees.get(i), Some(TokenTree::Punct(p)) if p.as_char() == ';' || p.as_char() == ',')
+        {
             i += 1;
         }
     }
@@ -381,7 +393,7 @@ fn capture_fragment(
             .map(|t| (std::iter::once(t.clone()).collect(), 1)),
         // Greedy fragments: consume token-trees until the follow token matches
         // or input ends. Validate `expr` by re-parsing.
-        "expr" | "ty" | "pat" | "path" | "block" => {
+        "expr" | "ty" | "pat" | "pat_param" | "path" | "block" => {
             let mut n = 0;
             while n < input.len() {
                 if let Some(f) = follow {
@@ -581,6 +593,31 @@ mod tests {
             out.to_string(),
             quote! { assert_eq!(make(), 42) }.to_string()
         );
+    }
+
+    #[test]
+    fn expands_single_rule_pub_macro_shape() {
+        let def = quote! { ($($arg:tt)*) { assert!($($arg)*); } };
+        let out = expand(&rules_of(def), quote! { value.is_ok() }).expect("expand");
+        assert_eq!(
+            out.to_string(),
+            quote! { assert!(value.is_ok()); }.to_string()
+        );
+    }
+
+    #[test]
+    fn expands_rule_list_pub_macro_with_pat_param() {
+        let def = quote! {
+            ($left:expr, $(|)? $( $pattern:pat_param )|+ $(,)?) => {{
+                match $left {
+                    $( $pattern )|+ => {}
+                    _ => { panic!(); }
+                }
+            }},
+        };
+        let out = expand(&rules_of(def), quote! { value, Some(_) }).expect("expand");
+        assert!(out.to_string().contains("match value"), "{out}");
+        assert!(out.to_string().contains("Some (_)"), "{out}");
     }
 
     #[test]

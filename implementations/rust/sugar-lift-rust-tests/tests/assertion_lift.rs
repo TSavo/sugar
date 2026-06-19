@@ -5957,6 +5957,42 @@ fn loop_test() {
 }
 
 #[test]
+fn source_macro_under_unlifted_for_loop_is_named_refusal_not_silent() {
+    // The assertion vocabulary is learned from the macro body, not from the macro
+    // name. If the enclosing for-loop cannot be lifted, the source-expanded
+    // assertion site still needs one named refusal.
+    let src = r#"
+macro_rules! assert_almost_eq {
+    ($a:expr, $b:expr) => {
+        if $a != $b {
+            assert!($a - $b < 200);
+        }
+    };
+}
+
+#[test]
+fn loop_test() {
+    let step = if cfg!(miri) { 1 } else { 37 };
+    for i in (0..10).step_by(step) {
+        assert_almost_eq!(i, i);
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/source_macro_for.rs");
+    assert_eq!(out.assertions_lifted, 0);
+    assert_eq!(
+        out.assertions_refused, 1,
+        "source-expanded assertion macro under unlifted loop must be accounted once: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.skip_reasons.iter().any(|r| r.contains("for context")),
+        "source-expanded assertion macro under loop must carry the loop refusal: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
 fn method_call_assignment_statement_is_refused_not_unclassified() {
     let src = r#"
 use core::cell::UnsafeCell;
@@ -7724,6 +7760,106 @@ fn t() {
             .any(|fact| fact.item_name.ends_with("t")),
         "the discovered vendor surface should be attributed to the function body: {:?}",
         out.assertion_facts
+    );
+}
+
+#[test]
+fn bare_predicate_macro_statement_is_inert_not_assertion_fact() {
+    let src = r#"
+#[test]
+fn t() {
+    matches!(1, | 1 | 2 | 3);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/bare_matches.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "a bare predicate statement is not an assertion fact: {:?}",
+        out.assertion_facts
+    );
+    assert_eq!(
+        out.assertions_refused, 0,
+        "a bare predicate statement should be inert accounting, not roadmap work: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .all(|reason| !reason.contains("matches! pattern")),
+        "unused matches! must not try to emit a fact: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn non_assert_macro_expansion_without_assertion_surface_is_inert() {
+    let src = r#"
+macro_rules! helper {
+    () => { 1 + 1; };
+}
+
+#[test]
+fn t() {
+    helper!();
+}
+"#;
+    let out = lift_file(&parse(src), "tests/inert_macro.rs");
+    assert_eq!(out.assertions_lifted, 0, "{:?}", out.assertion_facts);
+    assert_eq!(
+        out.assertions_refused, 0,
+        "a visible non-assert macro with no assertion-shaped body is support/inert, not unclassified: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn macro_generated_module_run_calls_recurse_with_module_consts() {
+    let src = r#"
+#[test]
+fn t() {
+    macro_rules! suite {
+        ( $( $fn:ident => [$a:expr, $nine:expr]; )* ) => {
+            $(
+                mod $fn {
+                    const CHAR_A: bool = 'a'.$fn();
+                    const CHAR_NINE: bool = '9'.$fn();
+
+                    pub fn run() {
+                        assert_eq!(CHAR_A, $a);
+                        assert_eq!(CHAR_NINE, $nine);
+                    }
+                }
+            )*
+
+            $( $fn::run(); )*
+        }
+    }
+
+    suite! {
+        is_ascii_alphabetic => [true, false];
+        is_ascii_digit => [false, true];
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/module_suite.rs");
+    let warranted = out
+        .assertion_facts
+        .iter()
+        .filter(|fact| fact.kind == AssertionFactKind::Warranted)
+        .count();
+    assert_eq!(
+        warranted, 4,
+        "macro-generated module::run callsites should recurse through module consts: skips={:?} facts={:?} decls={:?}",
+        out.skip_reasons,
+        out.assertion_facts,
+        out.decls
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .all(|reason| !reason.contains("support facts")),
+        "module recursion must not stop at support-only macro accounting: {:?}",
+        out.skip_reasons
     );
 }
 
@@ -11750,6 +11886,178 @@ fn t() {
             sugar_lift_rust_tests::Disposition::Refused
         ),
         "terminal macro expansion must be refused, not unclassified: {reason}"
+    );
+}
+
+#[test]
+fn macro_expansion_match_panic_locus_uses_visible_never_return_helper() {
+    // The macro name is irrelevant. The learned source expansion is a constraint
+    // shape: one surviving match arm, one failure arm that calls a visible `-> !`
+    // helper. That must lift through the same panic-locus machinery as a direct
+    // `panic!()` arm.
+    let src = r#"
+fn fail() -> ! { panic!() }
+
+macro_rules! check_shape {
+    ($value:expr) => {{
+        match $value {
+            Some(_) => {}
+            _ => { fail(); }
+        }
+    }};
+}
+
+#[test]
+fn t() {
+    check_shape!(Some(1));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/macro_match_panic.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "match panic-locus macro should emit one warranted fact; skips: {:?}; decls: {:?}",
+        out.skip_reasons, out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let dump = format!("{:?}", warranted_decls(&out));
+    assert!(dump.contains("variant_of"), "{dump}");
+    assert!(dump.contains("variant::Some"), "{dump}");
+}
+
+#[test]
+fn macro_expansion_match_literal_panic_locus_emits_pattern_constraint() {
+    // `assert_matches!(x, 0)` expands to this shape in std. The source-owned
+    // semantics are not the macro name; they are the panic-locus match whose
+    // surviving arm pins the scrutinee to a literal pattern.
+    let src = r#"
+fn fail() -> ! { panic!() }
+
+macro_rules! check_zero {
+    ($value:expr) => {{
+        match $value {
+            0 => {}
+            _ => { fail(); }
+        }
+    }};
+}
+
+#[test]
+fn t() {
+    check_zero!(0);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/macro_match_literal_panic.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "literal panic-locus macro should emit one warranted fact; skips: {:?}; decls: {:?}",
+        out.skip_reasons, out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let dump = format!("{:?}", warranted_decls(&out));
+    assert!(dump.contains("Int(0)"), "{dump}");
+}
+
+#[test]
+fn macro_expansion_match_literal_panic_locus_refuses_unliftable_scrutinee() {
+    // The expanded macro is still an assertion surface even when the scrutinee
+    // cannot be turned into a timeless term. That must be refused with the
+    // term boundary reason, not counted as inert source.
+    let src = r#"
+fn fail() -> ! { panic!() }
+
+macro_rules! check_zero {
+    ($value:expr) => {{
+        match $value {
+            0 => {}
+            _ => { fail(); }
+        }
+    }};
+}
+
+#[test]
+fn t() {
+    let mut value = 0;
+    check_zero!(*&mut value);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/macro_match_literal_refused.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "unliftable panic-locus subject must not discharge; decls: {:?}",
+        out.decls
+    );
+    assert_eq!(
+        out.assertions_refused, 1,
+        "recognized panic-locus macro should be refused once; skips: {:?}",
+        out.skip_reasons
+    );
+    let reason = out
+        .skip_reasons
+        .iter()
+        .find(|reason| reason.contains("panic-locus match scrutinee is not a liftable term"))
+        .unwrap_or_else(|| panic!("missing panic-locus refusal: {:?}", out.skip_reasons));
+    assert!(
+        reason.contains("effectful / raw-pointer / mutable-reference term"),
+        "refusal must carry the concrete term boundary: {reason}"
+    );
+    assert!(
+        matches!(
+            sugar_lift_rust_tests::refusal_disposition(reason),
+            sugar_lift_rust_tests::Disposition::Refused
+        ),
+        "panic-locus unliftable subject must be terminal refused: {reason}"
+    );
+}
+
+#[test]
+fn nested_macro_terminal_effect_is_not_swallowed_as_inert() {
+    // Outer learned macro bodies can expand to another learned macro before the
+    // assertion surface appears. A terminal refusal inside the nested expansion
+    // must propagate to the source invocation; otherwise the outer macro looks
+    // "inert" and becomes a silent delta.
+    let src = r#"
+macro_rules! inner_assert {
+    ($left:expr, $right:expr) => {
+        assert_eq!($left, $right);
+    };
+}
+macro_rules! outer_assert {
+    ($left:expr, $right:expr) => {
+        inner_assert!($left, $right);
+    };
+}
+#[test]
+fn t() {
+    outer_assert!(0xDEAD_BEEF_FACE_FEED_0123_4567_89AB_CDEFu128, 0);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/nested_macro_terminal.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "terminal nested macro assertion must not discharge: {:?}",
+        out.skip_reasons
+    );
+    assert_eq!(
+        out.assertions_refused, 1,
+        "terminal nested macro assertion must be refused once, not swallowed: {:?}",
+        out.skip_reasons
+    );
+    let reason = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains("nested assertion surface"))
+        .unwrap_or_else(|| {
+            panic!(
+                "nested terminal macro refusal must be propagated; skip reasons: {:?}",
+                out.skip_reasons
+            )
+        });
+    assert!(
+        matches!(
+            sugar_lift_rust_tests::refusal_disposition(reason),
+            sugar_lift_rust_tests::Disposition::Refused
+        ),
+        "nested terminal macro expansion must be refused, not unclassified: {reason}"
     );
 }
 
