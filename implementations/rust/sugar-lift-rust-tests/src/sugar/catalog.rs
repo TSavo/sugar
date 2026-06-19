@@ -29,6 +29,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &constraint::IF_PANIC_SUGAR,
     &constraint::NO_PANIC_CALL_SUGAR,
     &assign_op::EXPR_SUGAR,
+    &statement_runtime_expr::CONSTRAINT_EXPR_SUGAR,
     &constraint::BOOL_EXPR_SUGAR,
     &monadic::EXPR_SUGAR,
     &cstr::EXPR_SUGAR,
@@ -755,6 +756,21 @@ mod tests {
         let names = candidate_names_for_role(&expr, SugarRole::StatementEffect);
 
         assert_eq!(names, vec!["statement_runtime_expr"]);
+    }
+
+    #[test]
+    fn runtime_assignment_constraint_outranks_bool_fallback() {
+        let expr: Expr = syn::parse_str("*ref_mut.get_mut() += 5").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Constraint);
+
+        assert_eq!(
+            names,
+            vec!["constraint_runtime_expr", "constraint_bool_expr"]
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Constraint),
+            Some("constraint_runtime_expr")
+        );
     }
 
     #[test]

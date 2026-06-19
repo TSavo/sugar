@@ -30,7 +30,7 @@ pub(crate) const ASSERT_MACRO_SUGAR: ExprSugarClaim =
 pub(crate) const BOOL_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_bool_expr",
     SugarRole::Constraint,
-    SugarPriority::Secondary,
+    SugarPriority::Tertiary,
     recognize_bool_expr,
 );
 

@@ -5696,6 +5696,42 @@ fn loop_test() {
 }
 
 #[test]
+fn method_call_assignment_statement_is_refused_not_unclassified() {
+    let src = r#"
+use core::cell::UnsafeCell;
+
+#[test]
+fn t() {
+    let mut x = UnsafeCell::new(10);
+    let ref_mut = &mut x;
+    unsafe {
+        *ref_mut.get_mut() += 5;
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "coretests/tests/cell.rs");
+    assert!(
+        out.skip_reasons.iter().any(|r| {
+            r.contains("runtime expression-statement")
+                && r.contains("mutation")
+                && sugar_lift_rust_tests::refusal_disposition(r)
+                    == sugar_lift_rust_tests::Disposition::Refused
+        }),
+        "method-call assignment statement should be refused with a named mutation/runtime boundary, not left unclassified: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.factory_audits.iter().all(|audit| {
+            !(audit.site.contains("get_mut")
+                && audit.site.contains("+=")
+                && audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Unresolved)
+        }),
+        "factory should not leave the method-call assignment unresolved: {:?}",
+        out.factory_audits
+    );
+}
+
+#[test]
 fn assert_in_if_branch_lifts_as_guarded_implication() {
     // Doctrine (ConditionalSugar): a conditional assert is the implication it
     // literally states -- `if c { assert_eq!(1, 2) }` lifts as `c => (1 == 2)`,

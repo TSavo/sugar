@@ -51,9 +51,14 @@ pub(crate) fn has_loop_advance(expr: &Expr) -> bool {
 /// RUNTIME expression-statement detector: a statement whose asserted value is read
 /// through a `&mut` borrow or mutation.
 pub(crate) fn has_runtime_expr(expr: &Expr) -> bool {
-    if !carries_assert(expr) {
-        return false;
-    }
+    carries_assert(expr) && has_runtime_boundary(expr)
+}
+
+/// Runtime mutation / mutable-borrow boundary, independent of whether the
+/// expression also contains an assertion macro. Constraint-position callers use
+/// this for visited callsites such as `*x.get_mut() += 1`, where the statement
+/// itself is the panic-free surface but the value is not timeless.
+pub(crate) fn has_runtime_boundary(expr: &Expr) -> bool {
     #[derive(Default)]
     struct Scan {
         runtime: bool,
@@ -92,6 +97,31 @@ pub(crate) fn has_runtime_expr(expr: &Expr) -> bool {
     let mut scan = Scan::default();
     syn::visit::Visit::visit_expr(&mut scan, expr);
     scan.runtime
+}
+
+/// Top-level mutation expression that can appear as a visited statement
+/// surface. This deliberately does not recurse into enclosing `for` / `if` /
+/// `match` bodies; those shapes have their own Sugar.
+pub(crate) fn is_runtime_mutation_statement(expr: &Expr) -> bool {
+    match expr {
+        Expr::Assign(_) => true,
+        Expr::Binary(binary) => matches!(
+            binary.op,
+            BinOp::AddAssign(_)
+                | BinOp::SubAssign(_)
+                | BinOp::MulAssign(_)
+                | BinOp::DivAssign(_)
+                | BinOp::RemAssign(_)
+                | BinOp::BitXorAssign(_)
+                | BinOp::BitAndAssign(_)
+                | BinOp::BitOrAssign(_)
+                | BinOp::ShlAssign(_)
+                | BinOp::ShrAssign(_)
+        ),
+        Expr::Paren(paren) => is_runtime_mutation_statement(&paren.expr),
+        Expr::Group(group) => is_runtime_mutation_statement(&group.expr),
+        _ => false,
+    }
 }
 
 /// True if a loop body advances a runtime iterator (`iter.next()` / `.size_hint()`).
