@@ -3106,6 +3106,16 @@ impl TemporalScope {
     /// is not its written init).
     fn record_let_binding(&mut self, name: &str, init: Expr) {
         let rewritten = substitute_expr(&init, &self.let_bindings);
+        if names_referenced_in_expr(&rewritten).contains(name) {
+            tracing::debug!(
+                target: "sugar_lift_rust_tests::temporal_scope",
+                binding = name,
+                init = %token_key(&rewritten),
+                "declined self-referential stable let binding"
+            );
+            self.let_bindings.remove(name);
+            return;
+        }
         self.let_bindings.insert(name.to_string(), rewritten);
     }
 
@@ -10453,6 +10463,30 @@ fn substitute_expr(expr: &Expr, bindings: &ExprBindings) -> Expr {
             }
             Expr::If(out)
         }
+        Expr::Match(match_expr) => {
+            let mut out = match_expr.clone();
+            out.expr = Box::new(substitute_expr(&match_expr.expr, bindings));
+            out.arms = match_expr
+                .arms
+                .iter()
+                .map(|arm| {
+                    let mut arm_out = arm.clone();
+                    let mut arm_bindings = bindings.clone();
+                    for name in pat_idents(&arm.pat) {
+                        arm_bindings.remove(&name);
+                    }
+                    if let Some((if_token, guard)) = &arm.guard {
+                        arm_out.guard = Some((
+                            if_token.clone(),
+                            Box::new(substitute_expr(guard, &arm_bindings)),
+                        ));
+                    }
+                    arm_out.body = Box::new(substitute_expr(&arm.body, &arm_bindings));
+                    arm_out
+                })
+                .collect();
+            Expr::Match(out)
+        }
         Expr::Block(block) => {
             let mut out = block.clone();
             out.block = substitute_block(&block.block, bindings);
@@ -15345,6 +15379,51 @@ mod lifter_key_tests {
             out.assertions_lifted == 1 || !out.skip_reasons.is_empty(),
             "shadowed macro binding should lift or be accounted for without recursion: {:?}",
             out
+        );
+    }
+
+    #[test]
+    fn substitute_expr_snapshots_shadowed_match_scrutinee() {
+        let expr: Expr = syn::parse_str(
+            r#"match read1.reunite(write2) {
+                Ok(_) => panic!("bad"),
+                Err(err) => err.0,
+            }"#,
+        )
+        .expect("match expression");
+        let old_read: Expr = syn::parse_str("old_read").expect("old binding expr");
+        let mut bindings = ExprBindings::new();
+        bindings.insert("read1".to_string(), old_read);
+
+        let rewritten = substitute_expr(&expr, &bindings);
+        let text = token_key(&rewritten);
+
+        assert!(
+            text.contains("old_read . reunite (write2)"),
+            "match scrutinee must be evaluated against the previous binding: {text}"
+        );
+        assert!(
+            !text.contains("match read1 . reunite"),
+            "shadowed match initializer must not keep a self-recursive read1: {text}"
+        );
+    }
+
+    #[test]
+    fn self_referential_shadowed_match_binding_is_not_recorded() {
+        let init: Expr = syn::parse_str(
+            r#"match read1.reunite(write2) {
+                Ok(_) => panic!("bad"),
+                Err(err) => err.0,
+            }"#,
+        )
+        .expect("match expression");
+        let mut scope = TemporalScope::new("shadowed_match", TemporalPlan::default());
+
+        scope.record_let_binding("read1", init);
+
+        assert!(
+            scope.stable_let_binding_for_term("read1").is_none(),
+            "a shadowed binding that still references its own name must not become a stable binding"
         );
     }
 
