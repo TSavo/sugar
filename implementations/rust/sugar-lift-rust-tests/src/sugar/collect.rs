@@ -18,8 +18,9 @@ use crate::sugar::method;
 use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::{
-    canonical_term_sig, closure_single_param_ident, const_eval, strip_refs_groups, ConstVal,
-    Desugared, Outcome, Sugar, SugarCtx,
+    canonical_term_sig, closure_single_param_ident, const_eval, const_fold_int_term,
+    strip_refs_groups, term_as_int, BoundedDomain, ConstVal, Desugared, DesugaredElem, Outcome,
+    Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -55,6 +56,7 @@ struct CollectSugar {
 enum CollectPlan {
     MapMonadic {
         base: Box<dyn Sugar>,
+        base_expr: Expr,
         closure: ExprClosure,
         kind: CollectKind,
     },
@@ -85,6 +87,7 @@ impl CollectPlan {
         let kind = monadic_kind_of_closure(closure)?;
         Some(Self::MapMonadic {
             base: build_composite(&call.receiver, fcx),
+            base_expr: (*call.receiver).clone(),
             closure: closure.clone(),
             kind,
         })
@@ -94,10 +97,14 @@ impl CollectPlan {
         match self {
             CollectPlan::MapMonadic {
                 base,
+                base_expr,
                 closure,
                 kind,
             } => {
-                let seq = base.desugar(ctx).dug()?.into_seq()?;
+                let seq = match base.desugar(ctx) {
+                    Outcome::Dug(d) => d.into_seq()?,
+                    Outcome::Hit(_) => empty_literal_sequence(base_expr, ctx)?,
+                };
                 let mut collected = Vec::with_capacity(seq.len());
                 for elem in seq {
                     let value = elem.value.as_ref()?;
@@ -138,6 +145,27 @@ impl CollectPlan {
                 })
             }
         }
+    }
+}
+
+fn empty_literal_sequence(expr: &Expr, ctx: &SugarCtx) -> Option<Vec<DesugaredElem>> {
+    match strip_refs_groups(expr) {
+        Expr::Array(arr) if arr.elems.is_empty() => Some(Vec::new()),
+        Expr::Range(_) => {
+            let BoundedDomain::Range {
+                start,
+                end,
+                inclusive,
+            } = crate::bounded_domain_from_expr(expr, ctx.scope)?
+            else {
+                return None;
+            };
+            let s = term_as_int(&start).or_else(|| const_fold_int_term(&start))?;
+            let e = term_as_int(&end).or_else(|| const_fold_int_term(&end))?;
+            let end_exclusive = if inclusive { e.checked_add(1)? } else { e };
+            (end_exclusive <= s).then(Vec::new)
+        }
+        _ => None,
     }
 }
 

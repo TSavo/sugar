@@ -16071,6 +16071,36 @@ mod lifter_key_tests {
     }
 
     #[test]
+    fn collect_option_and_result_over_empty_literal_map_lift_to_empty_vec() {
+        let src = r#"
+            #[test]
+            fn collect_empty() {
+                let opt: Option<Vec<isize>> = (0..0).map(|_| Some(0)).collect();
+                assert!(opt == Some(vec![]));
+
+                let res: Result<Vec<isize>, ()> = (0..0).map(|_| Ok::<isize, ()>(0)).collect();
+                assert!(res == Ok(vec![]));
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 2,
+            "empty Option/Result collect over a literal range should lift both assertions; reasons: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "empty literal collect should not be refused: {:?}",
+            out.skip_reasons
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("opt:some") && dump.contains("res:ok") && dump.contains("literal:Vec()"),
+            "empty collect should construct Option/Result over literal:Vec(): {dump}"
+        );
+    }
+
+    #[test]
     fn collect_option_over_literal_map_short_circuits_to_none() {
         let src = r#"
             #[test]
