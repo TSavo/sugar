@@ -10203,6 +10203,53 @@ fn iter_sum_through_map_filter_and_closed_range_digs() {
 }
 
 #[test]
+fn iter_sum_through_source_function_map_chain_digs() {
+    let src = r#"
+#[test]
+fn test_functor_laws() {
+    fn identity<T>(x: T) -> T {
+        x
+    }
+    assert_eq!((0..10).map(identity).sum::<usize>(), (0..10).sum());
+
+    fn f(x: usize) -> usize {
+        x + 3
+    }
+    fn g(x: usize) -> usize {
+        x * 2
+    }
+    fn h(x: usize) -> usize {
+        g(f(x))
+    }
+    assert_eq!((0..10).map(f).map(g).sum::<usize>(), (0..10).map(h).sum());
+}
+"#;
+    let out = lift_file(&parse(src), "tests/iter/mod.rs");
+    assert_eq!(out.seen, 1);
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    let pairs = out
+        .decls
+        .iter()
+        .flat_map(dug_eq_int_pairs)
+        .collect::<Vec<_>>();
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        pairs.contains(&(45, 45)) && pairs.contains(&(150, 150)),
+        "function-map sums should ground to exact totals, pairs: {pairs:?}; decls: {dump}"
+    );
+    let main = out
+        .decls
+        .iter()
+        .find(|decl| decl.name == "tests/iter/mod.rs::test_functor_laws")
+        .expect("missing main function-map sum contract");
+    let main_dump = format!("{main:?}");
+    assert!(
+        !main_dump.contains("method:sum") && !main_dump.contains("method:map"),
+        "function-map sum equality should ground instead of staying opaque: {main_dump}"
+    );
+}
+
+#[test]
 fn iter_sum_over_runtime_collection_is_not_value_grounded() {
     // BAIL (the hard soundness line, guardrail #1): the receiver `v` is a RUNTIME value
     // (a call result), NOT a written literal. The build-time syntactic-literal gate

@@ -3741,6 +3741,12 @@ fn peel_fold_adaptors<'a>(
                                 Box::new(move |inner| Box::new(sugar::map::MapSugar { inner, f }))
                             }
                         }
+                        func if matches!(strip_refs_groups(func), Expr::Path(_)) => {
+                            let func = strip_refs_groups(func).clone();
+                            Box::new(move |inner| {
+                                Box::new(sugar::function_map::FunctionMapSugar { inner, func })
+                            })
+                        }
                         _ => return None,
                     },
                     ("filter_map", 1) => match &m.args[0] {

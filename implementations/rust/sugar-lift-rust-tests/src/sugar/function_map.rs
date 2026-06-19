@@ -4,15 +4,16 @@
 // Closure maps are owned by `MapSugar`; this node owns the stdlib shape where the
 // transform is a visible source function such as `const fn doubler(x) { x * 2 }`.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, rc::Rc};
 
+use sugar_ir_symbolic::{ConstValue, Term};
 use syn::Expr;
 
 use crate::sugar::factory::{build_composite, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::{
-    const_eval, literal_aggregate_term_in_scope, resolve_value_call_inline, strip_refs_groups,
-    Desugared, DesugaredElem, Outcome, Sugar, SugarCtx,
+    const_eval, const_fold_int_term, literal_aggregate_term_in_scope, resolve_value_call_inline,
+    strip_refs_groups, ConstVal, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -113,8 +114,7 @@ fn reduce_function_map(
     for elem in seq {
         let value = elem.value.as_ref()?;
         let arg = value.to_expr()?;
-        let resolved = resolve_value_call_inline(func, &[arg], ctx.scope, ctx.options)?;
-        let mapped = const_eval(&resolved, &BTreeMap::new())?;
+        let mapped = eval_function_value(func, arg, ctx)?;
         let expr = mapped.to_expr()?;
         out.push(DesugaredElem {
             expr,
@@ -128,6 +128,29 @@ fn reduce_function_map(
         "literal function map reduced"
     );
     Some(out)
+}
+
+fn eval_function_value(func: &Expr, arg: Expr, ctx: &SugarCtx) -> Option<ConstVal> {
+    if let Some(term) = ctx.try_inline_value_call(func, std::slice::from_ref(&arg)) {
+        if let Some(value) = const_val_from_term(&term) {
+            return Some(value);
+        }
+    }
+    let resolved = resolve_value_call_inline(func, &[arg], ctx.scope, ctx.options)?;
+    const_eval(&resolved, &BTreeMap::new())
+}
+
+fn const_val_from_term(term: &Rc<Term>) -> Option<ConstVal> {
+    if let Some(n) = const_fold_int_term(term) {
+        return Some(ConstVal::Int(n));
+    }
+    match term.as_ref() {
+        Term::Const {
+            value: ConstValue::Bool(value),
+            ..
+        } => Some(ConstVal::Bool(*value)),
+        _ => None,
+    }
 }
 
 fn simple_fn_name(expr: &Expr) -> Option<String> {
