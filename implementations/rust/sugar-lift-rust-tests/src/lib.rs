@@ -84,9 +84,12 @@ pub mod sugar {
     pub mod impl_method;
     pub mod index;
     pub mod insert;
+    pub mod intersperse_collect_string;
+    pub mod intersperse_concat;
     pub mod iter_terminal;
     pub mod iterator;
     pub mod literal;
+    pub mod literal_slice;
     pub mod macro_term;
     pub mod map;
     pub mod match_node;
@@ -16501,6 +16504,95 @@ mod lifter_key_tests {
             closure_adaptor_refusal(&expr, &scope),
             None,
             "identity map has an owned Sugar and must not stay in the generic adaptor bucket"
+        );
+    }
+
+    #[test]
+    fn intersperse_concat_over_literal_string_array_lifts_to_string_literal() {
+        let src = r#"
+            #[test]
+            fn intersperse_concat() {
+                let xs = ["a", "", "b", "c"];
+                let v: Vec<&str> = xs.iter().map(|x| *x).intersperse(", ").collect();
+                let text: String = v.concat();
+                assert_eq!(text, "a, , b, c".to_string());
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "literal intersperse concat should lift: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "literal intersperse concat should not be refused: {:?}",
+            out.skip_reasons
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("String(\"a, , b, c\")"),
+            "intersperse concat should materialize the joined string: {dump}"
+        );
+    }
+
+    #[test]
+    fn literal_empty_slice_intersperse_next_lifts_none() {
+        let src = r#"
+            #[test]
+            fn empty_slice_next() {
+                let ys = [0, 1, 2, 3];
+                let mut it = ys[..0].iter().map(|x| *x).intersperse(1);
+                assert!(it.next() == None);
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "empty literal slice next should lift: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "empty literal slice next should not be refused: {:?}",
+            out.skip_reasons
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("opt:none"),
+            "empty literal slice next should materialize None: {dump}"
+        );
+    }
+
+    #[test]
+    fn intersperse_collect_string_over_literal_int_array_lifts_to_string_literal() {
+        let src = r#"
+            #[test]
+            fn intersperse_collect_string() {
+                let contents = [1, 2, 3];
+                let contents_string = contents
+                    .into_iter()
+                    .map(|id| id.to_string())
+                    .intersperse(", ".to_owned())
+                    .collect::<String>();
+                assert_eq!(contents_string, "1, 2, 3");
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "literal intersperse collect string should lift: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "literal intersperse collect string should not be refused: {:?}",
+            out.skip_reasons
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("String(\"1, 2, 3\")"),
+            "literal intersperse collect string should materialize the joined string: {dump}"
         );
     }
 

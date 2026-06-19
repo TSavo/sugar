@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 
 use syn::Expr;
 
+use crate::sugar::literal_slice;
 use crate::{peel_fold_adaptors, strip_refs_groups};
 
 pub(crate) fn is_literal_sequence_base(expr: &Expr) -> bool {
@@ -19,7 +20,7 @@ pub(crate) fn resolves_literal_sequence<'a>(
     let Some((base, _)) = peel_fold_adaptors(expr, let_inits, 0) else {
         return false;
     };
-    is_literal_sequence_base(base)
+    is_literal_sequence_base(base) || literal_slice::is_literal_slice_base(base, let_inits)
 }
 
 pub(crate) fn resolves_literal_array_sequence<'a>(
