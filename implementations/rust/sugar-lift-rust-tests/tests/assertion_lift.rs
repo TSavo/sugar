@@ -1655,6 +1655,37 @@ fn decoded_len_est() {
 }
 
 #[test]
+fn bound_call_result_assertion_uses_initializer_callsite_key() {
+    let src = r#"
+fn make_value() -> i32 { opaque() }
+
+#[test]
+fn bound_scalar_is_six() {
+    let got = make_value();
+    assert_eq!(got, 6);
+}
+"#;
+    let out = lift_file(&parse(src), "src/lib.rs");
+    assert_eq!(out.seen, 1);
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    assert_warranted_decl_count(&out, 1);
+
+    let decl = single_warranted_decl(&out);
+    assert_eq!(
+        decl.name,
+        "src/lib.rs::bound_scalar_is_six::make_value#euf#c:callresult_make_value_a0()::assertion"
+    );
+    assert!(
+        !decl.name.contains("got"),
+        "bound variable must not own the contract identity: {}",
+        decl.name
+    );
+    let operands = inv_operands(decl);
+    assert_eq!(operands.len(), 1);
+    assert_eq_atom(&operands[0], 6);
+}
+
+#[test]
 fn direct_generic_call_result_assertions_include_type_args_in_euf_key() {
     let src = r#"
 fn size_of<T>() -> usize { 1 }
@@ -4210,7 +4241,11 @@ fn test_is_ascii_alphabetic() {
     );
 
     let operands = inv_operands(&out.decls[0]);
-    assert_eq!(operands.len(), 8);
+    assert_eq!(
+        operands.len(),
+        2,
+        "each bounded literal macro is one sugar-owned conjunction: {operands:?}"
+    );
     let inv = out.decls[0].inv.as_deref().expect("macro row has inv");
     assert_eq!(formula_count_atomic_name(inv, "str.is_ascii_alphabetic"), 2);
     assert_eq!(formula_count_atomic_name(inv, "str.is_ascii_digit"), 2);
@@ -4222,6 +4257,43 @@ fn test_is_ascii_alphabetic() {
         formula_count_connective_kind(inv, "not") >= 4,
         "assert_none! must negate each bounded element: {inv:?}"
     );
+}
+
+#[test]
+fn visible_vendor_assert_all_definition_does_not_hide_direct_bounded_sugar() {
+    let src = r#"
+macro_rules! assert_all {
+    ($what:ident, $($str:tt),+) => {{
+        $(
+            for b in $str.chars() {
+                if !b.$what() {
+                    panic!("expected");
+                }
+            }
+            for b in $str.as_bytes().iter() {
+                if !b.$what() {
+                    panic!("expected");
+                }
+            }
+        )+
+    }};
+    ($what:ident, $($str:tt),+,) => (assert_all!($what,$($str),+))
+}
+
+#[test]
+fn test_is_ascii_alphabetic() {
+    assert_all!(is_ascii_alphabetic, "Az",);
+}
+"#;
+    let out = lift_file(&parse(src), "coretests/tests/ascii.rs");
+    assert_eq!(out.seen, 1);
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    assert_warranted_decl_count(&out, 1);
+    let inv = single_warranted_decl(&out)
+        .inv
+        .as_deref()
+        .expect("bounded macro emits inv");
+    assert_eq!(formula_count_atomic_name(inv, "str.is_ascii_alphabetic"), 2);
 }
 
 // NOTE: these three EUF-callsite-key tests use an OPAQUE-bodied `value() { opaque() }`
@@ -11476,19 +11548,16 @@ fn t() {
 }
 
 #[test]
-fn assert_chunks_style_macro_matcher_matches_but_runtime_local_body_bails() {
+fn assert_chunks_style_macro_rewrites_utf8_chunks_to_literal_facts() {
     // The `str_lossy.rs` shape: an in-source `macro_rules!` whose matcher has a
     // metavar-bearing delimiter group inside a separated repetition with an
     // OPTIONAL trailing comma. Two things are checked together:
     //  (1) the MATCHER must match -- recurse into the `(..)` group to bind the
     //      inner metavars, and the trailing comma must not break the match (the
     //      refusal is NOT "no rule matched");
-    //  (2) the expanded BODY binds a runtime iterator local (`let mut iter =
-    //      $string.utf8_chunks(); let chunk = iter.next()`), so the asserts pin a
-    //      source literal against bin-2 runtime data -- exact-or-BAIL. Lifting
-    //      them would coalesce the per-invocation `chunk` onto ONE EUF var and a
-    //      distinct literal per invocation makes the merged invariant
-    //      CONTRADICTORY (ex-falso). The expansion must REFUSE as runtime data.
+    //  (2) the expanded BODY is literal-backed stdlib temporal sugar:
+    //      `b"..".utf8_chunks().next()` can be replayed into the exact literal
+    //      valid / invalid chunks, so the assertions must produce warranted facts.
     let src = r#"
 macro_rules! assert_chunks {
     ( $string:expr, $(($valid:expr, $invalid:expr)),* $(,)? ) => {{
@@ -11496,7 +11565,9 @@ macro_rules! assert_chunks {
         $(
             let chunk = iter.next().expect("missing chunk");
             assert_eq!($valid, chunk.valid());
+            assert_eq!($invalid, chunk.invalid());
         )*
+        assert_eq!(None, iter.next());
     }};
 }
 
@@ -11516,24 +11587,23 @@ fn t() {
         "the metavar-group / trailing-comma matcher shape must MATCH (no 'no rule matched'): {:?}",
         out.skip_reasons
     );
-    // (2) The runtime-iterator-local body bails with the named runtime cause.
+    // (2) The expanded assertion surfaces were visited and rewritten to literals.
     assert!(
-        out.skip_reasons
+        !out.skip_reasons
             .iter()
-            .any(|r| r.contains("binds a runtime iterator/searcher local")),
-        "a runtime-iterator-local expansion must refuse as bin-2 runtime data: {:?}",
-        out.skip_reasons
-    );
-    // No fake-discharge: nothing lifted, and in particular NO `valid(chunk)` EUF
-    // atom (which would coalesce across invocations into an ex-falso contract).
-    assert_eq!(
-        out.assertions_lifted, 0,
-        "a runtime-local expansion must NOT discharge: {:?}",
+            .any(|r| r.contains("runtime iterator local before assertion surface")),
+        "literal-backed utf8_chunks must not be treated as an opaque runtime iterator: {:?}",
         out.skip_reasons
     );
     assert!(
-        !out.decls.iter().any(|d| d.name.contains("method:valid")),
-        "no EUF `valid(chunk)` decl may be minted from a runtime-local expansion"
+        out.assertions_lifted > 0,
+        "literal-backed utf8_chunks expansion must discharge: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        !warranted_decls(&out).is_empty(),
+        "literal-backed utf8_chunks expansion must mint warranted scalar facts: {:?}",
+        warranted_decls(&out)
     );
 }
 
@@ -11577,6 +11647,60 @@ fn t() {
             .iter()
             .map(|d| d.name.clone())
             .collect::<Vec<_>>()
+    );
+    let reason = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains("runtime searcher state machine"))
+        .expect("runtime-searcher macro expansion must name the terminal boundary");
+    assert!(
+        matches!(
+            sugar_lift_rust_tests::refusal_disposition(reason),
+            sugar_lift_rust_tests::Disposition::Refused
+        ),
+        "runtime-searcher macro expansion must be refused, not unclassified: {reason}"
+    );
+}
+
+#[test]
+fn macro_expansion_terminal_runtime_effect_is_refused_not_support_only() {
+    // A held macro expands to an assertion surface over an atomic load. Panic-free
+    // support callsites are useful, but they are not scalar facts; the macro
+    // outcome must preserve the terminal runtime effect rather than hiding the
+    // site as support-only unclassified.
+    let src = r#"
+macro_rules! atomic_assert {
+    ($a:expr) => {
+        assert_eq!($a.load(Ordering::Relaxed), 1);
+    };
+}
+#[test]
+fn t() {
+    atomic_assert!(flag);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/atomic_macro.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "terminal macro expansion must not discharge a scalar assertion: {:?}",
+        out.skip_reasons
+    );
+    let reason = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains("terminal effect blocked all warranted facts"))
+        .unwrap_or_else(|| {
+            panic!(
+                "terminal effect must be propagated out of macro expansion; skip reasons: {:?}",
+                out.skip_reasons
+            )
+        });
+    assert!(
+        matches!(
+            sugar_lift_rust_tests::refusal_disposition(reason),
+            sugar_lift_rust_tests::Disposition::Refused
+        ),
+        "terminal macro expansion must be refused, not unclassified: {reason}"
     );
 }
 
@@ -12431,6 +12555,49 @@ fn format_runtime_arg_does_not_overfire() {
     assert!(
         !lhs_is_forged_zero,
         "a runtime-arg format! must NOT forge a reconstructed string literal: {doc}"
+    );
+}
+
+#[test]
+fn statement_macro_rules_body_is_factory_input_for_assertion_shape() {
+    let src = r#"
+macro_rules! compile_guard {
+    ($e:expr) => { const { assert!($e); } };
+    ($e:expr, $msg:expr) => { const { assert!($e, $msg); } };
+}
+
+macro_rules! imm_bits_guard {
+    ($imm:ident, $bits:expr) => {{
+        compile_guard!(0 <= $imm && $imm < (1 << $bits), "immediate out of range");
+    }};
+}
+
+#[test]
+fn t() {
+    const IMM: u32 = 3;
+    compile_guard!(1 + 1 == 2);
+    imm_bits_guard!(IMM, 4);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/assertion_shape_macro.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "held vendor macros should lift through their assertion-shaped expanded bodies; skips: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let unresolved_wrapper_macro_audits: Vec<_> = out
+        .factory_audits
+        .iter()
+        .filter(|audit| {
+            audit.disposition.as_str() == "unresolved"
+                && (audit.site.contains("compile_guard") || audit.site.contains("imm_bits_guard"))
+        })
+        .collect();
+    assert!(
+        unresolved_wrapper_macro_audits.is_empty(),
+        "factory should audit the expanded body, not the vendor wrapper macro: {:?}",
+        unresolved_wrapper_macro_audits
     );
 }
 

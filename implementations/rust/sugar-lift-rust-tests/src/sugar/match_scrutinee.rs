@@ -43,6 +43,12 @@ pub(crate) const VERDICT_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
         recognize_verdict,
     );
 
+pub(crate) const CONSTRAINT_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::constraint(
+        "constraint_match_scrutinee",
+        recognize_verdict,
+    );
+
 /// MATCH-position recognizer ([`MatchScrutineeSugar`] via [`decompose_match_scrutinee`]):
 /// `Some` only for an `Expr::Match` over a RUNTIME call-result scrutinee, else `None`.
 pub(crate) fn recognize_verdict(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {

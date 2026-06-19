@@ -125,7 +125,7 @@ fn is_atomic_ordering_arg(expr: &Expr) -> bool {
             _ => {}
         }
     }
-    saw_ordering_type || saw_ordering_variant
+    saw_ordering_type && saw_ordering_variant
 }
 
 fn panic_payload_deref_boundary(

@@ -44,8 +44,21 @@ use std::collections::BTreeMap;
 use syn::Expr;
 
 use crate::sugar::bound::BoundSugar;
+use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::{strip_refs_groups, Outcome, Sugar, SugarCtx};
+use crate::sugar::format::stable_let_bindings;
+use crate::{
+    callsite_assertion_name, strip_refs_groups, AssertionFactKind, Desugared, Effect, Outcome,
+    Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON,
+};
+use sugar_ir_symbolic::{atomic_, str_const, Formula, Term};
+
+pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "constraint_regex_match",
+    SugarRole::Constraint,
+    SugarPriority::Primary,
+    recognize_constraint,
+);
 
 /// A recognized rust regex-match assertion: the pattern operand built into an
 /// inner `Sugar`, and the subject expr. lib.rs drives `desugar` to resolve the
@@ -63,6 +76,58 @@ pub(crate) struct RegexMatch {
     /// The regex method that named this membership (`is_match` / `find`), for the
     /// EUF callsite name.
     pub(crate) method: &'static str,
+}
+
+struct RegexMatchSugar {
+    matched: RegexMatch,
+    subject: Box<dyn Sugar>,
+}
+
+fn recognize_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let stable = stable_let_bindings(fcx.scope());
+    let matched = recognize_regex_match(expr, &stable, fcx)?;
+    let subject = build_term(&matched.subject, fcx);
+    Some(Box::new(RegexMatchSugar { matched, subject }))
+}
+
+impl Sugar for RegexMatchSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        let pattern_str = match self.matched.resolve_pattern(ctx) {
+            Outcome::Dug(desugared) => match desugared.as_string_literal() {
+                Some(pattern) => pattern,
+                None => {
+                    return Outcome::Hit(Effect::Unsupported {
+                        reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
+                    });
+                }
+            },
+            Outcome::Hit(effect) => return Outcome::Hit(effect),
+        };
+        if let Err(e) = sugar_ir_compiler_smt_lib::regex_regln::regex_to_regln(&pattern_str) {
+            return unsupported(match e {
+                sugar_ir_compiler_smt_lib::regex_regln::RegexError::NotRegular(feat) => format!(
+                    "regex pattern `{}` uses a non-regular feature ({feat}) -- not expressible \
+                     as RegLan; refused by name (no str.in-regex membership row)",
+                    pattern_str
+                ),
+                sugar_ir_compiler_smt_lib::regex_regln::RegexError::Malformed(msg) => format!(
+                    "regex pattern `{}` is malformed ({msg}); refused (no str.in-regex membership row)",
+                    pattern_str
+                ),
+            });
+        }
+        let subject = match term_payload(&*self.subject, ctx) {
+            Ok(term) => term,
+            Err(outcome) => return outcome,
+        };
+        let pattern = str_const(pattern_str);
+        let name = method_assertion_name(
+            self.matched.method,
+            vec![subject.clone(), pattern.clone()],
+            ctx.scope.local_scope(),
+        );
+        constraint(atomic_("str.in-regex", vec![subject, pattern]), name)
+    }
 }
 
 impl RegexMatch {
@@ -216,6 +281,42 @@ fn let_bound_reference(
         }
         _ => None,
     }
+}
+
+fn constraint(atom: std::rc::Rc<Formula>, name: Option<String>) -> Outcome {
+    Outcome::Dug(Desugared::Constraints {
+        atom,
+        n: 1,
+        kind: AssertionFactKind::Warranted,
+        warrant: Warrant { name },
+    })
+}
+
+fn term_payload(node: &dyn Sugar, ctx: &SugarCtx) -> Result<std::rc::Rc<Term>, Outcome> {
+    match node.desugar(ctx) {
+        Outcome::Dug(desugared) => desugared.into_term().ok_or_else(|| {
+            Outcome::Hit(Effect::Unsupported {
+                reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
+            })
+        }),
+        Outcome::Hit(effect) => Err(Outcome::Hit(effect)),
+    }
+}
+
+fn method_assertion_name(
+    method: &str,
+    args: Vec<std::rc::Rc<Term>>,
+    local_scope: &str,
+) -> Option<String> {
+    let term = Term::Ctor {
+        name: format!("method:{method}"),
+        args,
+    };
+    callsite_assertion_name(&term, local_scope)
+}
+
+fn unsupported(reason: String) -> Outcome {
+    Outcome::Hit(Effect::Unsupported { reason })
 }
 
 #[cfg(test)]

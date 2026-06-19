@@ -15,6 +15,7 @@ pub(crate) enum SugarRole {
     Term,
     Composite,
     Constraint,
+    SupportConstraint,
     StatementEffect,
     ClosureAdaptorVerdict,
     MatchScrutineeVerdict,
@@ -132,6 +133,10 @@ impl ExprSugarClaim {
             recognize,
         )
     }
+
+    pub(crate) fn role(&self) -> SugarRole {
+        self.role
+    }
 }
 
 /// A Sugar's claim that it knows how to recognize one source-item position.
@@ -166,6 +171,10 @@ impl ItemSugarClaim {
             SugarPriority::Primary,
             recognize,
         )
+    }
+
+    pub(crate) fn role(&self) -> SugarRole {
+        self.role
     }
 
     pub(crate) fn candidate(
