@@ -23,6 +23,13 @@ pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     recognize,
 );
 
+pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "assertion_surface_infinity_eq",
+    SugarRole::AssertionSurface,
+    SugarPriority::Primary,
+    recognize,
+);
+
 struct InfinityEqSugar {
     name: String,
     receiver: Box<dyn Sugar>,

@@ -21,6 +21,13 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     recognize,
 );
 
+pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "char_range_filter_map_eq_assertion_surface",
+    SugarRole::AssertionSurface,
+    SugarPriority::Primary,
+    recognize,
+);
+
 struct CharRangeFilterMapSugar {
     site: String,
 }

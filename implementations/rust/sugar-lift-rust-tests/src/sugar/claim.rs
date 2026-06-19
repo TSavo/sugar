@@ -15,6 +15,7 @@ pub(crate) enum SugarRole {
     Term,
     Composite,
     Constraint,
+    AssertionSurface,
     SupportConstraint,
     StatementEffect,
     ClosureAdaptorVerdict,

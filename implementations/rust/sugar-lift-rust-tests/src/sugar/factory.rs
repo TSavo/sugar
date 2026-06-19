@@ -143,15 +143,11 @@ pub(crate) fn build_expr(expr: &Expr, fcx: &SugarBuildCtx, role: SugarRole) -> B
 }
 
 pub(crate) fn has_expr_role(expr: &Expr, fcx: &SugarBuildCtx, role: SugarRole) -> bool {
-    catalog::matching_expr_claims(expr, fcx)
-        .iter()
-        .any(|candidate| candidate.role() == role)
+    !catalog::matching_expr_claims_for_role(expr, fcx, role).is_empty()
 }
 
 pub(crate) fn has_item_role(item: &Item, fcx: &SugarBuildCtx, role: SugarRole) -> bool {
-    catalog::matching_item_claims(item, fcx)
-        .iter()
-        .any(|candidate| candidate.role() == role)
+    !catalog::matching_item_claims_for_role(item, fcx, role).is_empty()
 }
 
 /// Compatibility TERM wrapper: ask the unified candidate catalog, then return the first
@@ -183,6 +179,18 @@ pub(crate) fn build_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Suga
 
 pub(crate) fn has_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
     has_expr_role(expr, fcx, SugarRole::Constraint)
+}
+
+/// ASSERTION-SURFACE wrapper: ask the catalog for syntax that emits a fact at
+/// statement position. Predicate sugars such as `matches!(..)` are still
+/// `Constraint`; they only become facts when an assertion surface wraps them or
+/// a source macro expands to one.
+pub(crate) fn build_assertion_surface(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
+    build_expr(expr, fcx, SugarRole::AssertionSurface)
+}
+
+pub(crate) fn has_assertion_surface(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
+    has_expr_role(expr, fcx, SugarRole::AssertionSurface)
 }
 
 pub(crate) struct FactoryAuditSeed {

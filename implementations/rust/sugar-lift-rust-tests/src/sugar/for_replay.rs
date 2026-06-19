@@ -17,10 +17,11 @@ use crate::sugar::extract_if::{ExtractIfSugar, ReplayAction};
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::insert::InsertSugar;
 use crate::{
-    const_fold_int_term, count_asserts_in_stmts, is_assert_macro_path, path_to_variant_string,
-    simple_call_name, simple_pat_name, strip_refs_groups, substitute_expr, substitute_macro_tokens,
-    term_as_int, translate_term_in_scope, AssertionFactKind, Desugared, Effect, ExprBindings,
-    Outcome, Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON, SUGAR_SEQ_CAP,
+    const_fold_int_term, count_asserts_in_stmts, macro_is_assertion_surface,
+    path_to_variant_string, simple_call_name, simple_pat_name, strip_refs_groups, substitute_expr,
+    substitute_macro_tokens, term_as_int, translate_term_in_scope, AssertionFactKind, Desugared,
+    Effect, ExprBindings, Outcome, Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON,
+    SUGAR_SEQ_CAP,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
@@ -109,11 +110,11 @@ fn body_has_const_if_local_replay_shape(stmts: &[Stmt]) -> bool {
                 }
                 saw_if_local = true;
             }
-            Stmt::Macro(stmt_macro) if is_assert_macro_path(&stmt_macro.mac.path) => {
+            Stmt::Macro(stmt_macro) if macro_is_assertion_surface(&stmt_macro.mac) => {
                 saw_assert = true;
             }
             Stmt::Expr(Expr::Macro(expr_macro), _)
-                if is_assert_macro_path(&expr_macro.mac.path) =>
+                if macro_is_assertion_surface(&expr_macro.mac) =>
             {
                 saw_assert = true;
             }

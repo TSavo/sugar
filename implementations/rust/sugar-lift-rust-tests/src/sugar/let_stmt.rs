@@ -37,7 +37,7 @@ pub(crate) fn initializer_fact_stmts(expr: &Expr) -> Option<Vec<Stmt>> {
 
 fn collect_eager_fact_stmts(expr: &Expr, out: &mut Vec<Stmt>) {
     match expr {
-        Expr::Macro(expr_macro) if crate::is_assert_macro_path(&expr_macro.mac.path) => {
+        Expr::Macro(expr_macro) if crate::macro_is_assertion_surface(&expr_macro.mac) => {
             out.push(Stmt::Expr(Expr::Macro(expr_macro.clone()), None));
         }
         Expr::MethodCall(method) => {
@@ -144,24 +144,20 @@ mod tests {
     }
 
     #[test]
-    fn method_chain_assertion_macro_receiver_is_a_fact_surface() {
+    fn method_chain_unknown_macro_receiver_is_not_an_eager_fact_surface() {
         let expr: Expr = parse_quote!(assert_ok!(read().await).unwrap());
-        let stmts = initializer_fact_stmts(&expr).expect("eager receiver macro is surfaced");
-        assert_eq!(stmts.len(), 1);
-        assert_eq!(
-            stmts[0].to_token_stream().to_string(),
-            "assert_ok ! (read () . await)"
+        assert!(
+            initializer_fact_stmts(&expr).is_none(),
+            "unknown value macros in chains need source expansion; no name-prefix promotion"
         );
     }
 
     #[test]
-    fn field_access_assertion_macro_receiver_is_a_fact_surface() {
+    fn field_access_unknown_macro_receiver_is_not_an_eager_fact_surface() {
         let expr: Expr = parse_quote!(assert_ok!(listener.accept()).0);
-        let stmts = initializer_fact_stmts(&expr).expect("eager field base macro is surfaced");
-        assert_eq!(stmts.len(), 1);
-        assert_eq!(
-            stmts[0].to_token_stream().to_string(),
-            "assert_ok ! (listener . accept ())"
+        assert!(
+            initializer_fact_stmts(&expr).is_none(),
+            "unknown value macros in field bases need source expansion; no name-prefix promotion"
         );
     }
 

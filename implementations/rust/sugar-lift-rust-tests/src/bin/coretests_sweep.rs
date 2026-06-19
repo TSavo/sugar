@@ -2,7 +2,7 @@
 //
 // Walks a corpus of Rust test files (coretests/tests/**), runs the assertion
 // lifter over each, and produces a ledger that classifies EVERY assertion
-// macro invocation into exactly one of three bins:
+// surface invocation into exactly one of three bins:
 //
 //   discharged  -- lifted to a FOL atom (one invariant operand per assertion)
 //   refused     -- the lifter emitted a named warning (loudly-bounded-lossy)
@@ -22,8 +22,8 @@ use sugar_lift_rust_tests::cargo_cfg::{
 };
 use sugar_lift_rust_tests::closed_eval::{self, HarnessResult};
 use sugar_lift_rust_tests::{
-    lift_file_with_all_source_imports, refusal_disposition, ConstSourceRegistry, Disposition,
-    FunctionSourceRegistry, MacroRegistry,
+    assertion_surface_census, lift_file_with_all_source_imports, refusal_disposition,
+    ConstSourceRegistry, Disposition, FunctionSourceRegistry, MacroRegistry,
 };
 use syn::visit::{self, Visit};
 use tracing::{debug, info, warn};
@@ -119,52 +119,72 @@ fn dissolve_count(prelude: &str, setup: &str, asserts: &[String], dir: &std::pat
     }
 }
 
-/// The lifter's assertion universe: any macro whose name starts with assert or
-/// debug_assert. This covers the standard six plus stdlib custom macros
-/// (assert_all!, assert_none!, assert_eq_const_safe!, ...) that the lifter
-/// lifts or refuses. The independent denominator must match this universe or
-/// the report will show callsite expansion rather than a fake negative gap.
+/// Legacy sweep denominator: any macro whose name starts with assert or
+/// debug_assert. Kept while the tracing proves which residual sites are real
+/// factory/accounting gaps versus prefix-only ghosts. This is diagnostic, not a
+/// source of assertion semantics.
 fn is_assert_macro_name(name: &str) -> bool {
     name.starts_with("assert") || name.starts_with("debug_assert")
 }
 
-/// A content CID for one assertion invocation: the macro path plus its
-/// token stream, normalized. proc_macro2's Display collapses original
-/// whitespace to single spaces, so two byte-different-but-token-identical
-/// assertions share a CID (formatting is sugar) while a changed asserted
-/// value moves it (the obligation actually changed). This is the per-member
-/// identity that lets the residual diff a MULTISET (membership + multiplicity), not just a cardinality.
-fn assertion_site_cid(m: &syn::Macro) -> String {
-    let path = m
-        .path
+fn macro_path_string(mac: &syn::Macro) -> String {
+    mac.path
         .segments
         .iter()
         .map(|s| s.ident.to_string())
         .collect::<Vec<_>>()
-        .join("::");
-    let body = m.tokens.to_string();
-    sugar_canonicalizer::blake3_512_of(format!("{path}!({body})").as_bytes())
+        .join("::")
 }
 
-/// Counts assertion-macro invocations independently of the lifter, so we can
-/// reconcile against the lifter's own accounting and surface silent drops.
-/// Also collects a content CID per site so the unproven set is identifiable
-/// by member, not only by count.
+/// Diagnostic only: the old prefix denominator. This does not contribute to the
+/// accounting identity; it tells us when a human-looking assert name is not a
+/// direct factory assertion surface, so the trace can explain apparent residuals.
 #[derive(Default)]
-struct AssertCounter {
+struct LegacyPrefixCounter {
     total: usize,
-    site_cids: Vec<String>,
+    not_direct_factory: usize,
 }
 
-impl<'ast> Visit<'ast> for AssertCounter {
-    fn visit_macro(&mut self, m: &'ast syn::Macro) {
-        if let Some(seg) = m.path.segments.last() {
-            if is_assert_macro_name(&seg.ident.to_string()) {
+impl<'ast> Visit<'ast> for LegacyPrefixCounter {
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        if let Some(seg) = mac.path.segments.last() {
+            let name = seg.ident.to_string();
+            let prefix_counted = is_assert_macro_name(&name);
+            let factory_surface = sugar_lift_rust_tests::macro_is_assertion_surface(mac);
+            if prefix_counted {
                 self.total += 1;
-                self.site_cids.push(assertion_site_cid(m));
+                let site_cid = sugar_lift_rust_tests::assertion_surface_site_cid(mac);
+                if factory_surface {
+                    tracing::trace!(
+                        target: "coretests_sweep::assertion_denominator",
+                        macro_name = %name,
+                        macro_path = %macro_path_string(mac),
+                        site_cid = %site_cid,
+                        tokens = %mac.tokens,
+                        "legacy prefix denominator counted a factory assertion surface"
+                    );
+                } else {
+                    self.not_direct_factory += 1;
+                    tracing::debug!(
+                        target: "coretests_sweep::assertion_denominator",
+                        macro_name = %name,
+                        macro_path = %macro_path_string(mac),
+                        site_cid = %site_cid,
+                        tokens = %mac.tokens,
+                        "legacy prefix denominator counted macro that the factory did not classify as a direct assertion surface"
+                    );
+                }
+            } else if factory_surface {
+                tracing::warn!(
+                    target: "coretests_sweep::assertion_denominator",
+                    macro_name = %name,
+                    macro_path = %macro_path_string(mac),
+                    tokens = %mac.tokens,
+                    "factory assertion surface was not counted by the legacy prefix denominator"
+                );
             }
         }
-        visit::visit_macro(self, m);
+        visit::visit_macro(self, mac);
     }
 }
 
@@ -430,9 +450,21 @@ fn main() {
         };
         totals.parse_ok += 1;
 
-        let mut counter = AssertCounter::default();
-        counter.visit_file(&file);
-        all_site_cids.extend(counter.site_cids.iter().cloned());
+        let census = assertion_surface_census(&file, &registry);
+        all_site_cids.extend(census.site_cids.iter().cloned());
+
+        let mut legacy_prefix = LegacyPrefixCounter::default();
+        legacy_prefix.visit_file(&file);
+        if legacy_prefix.not_direct_factory > 0 {
+            debug!(
+                target: "coretests_sweep::assertion_denominator",
+                file = %rel,
+                legacy_prefix_macros = legacy_prefix.total,
+                not_direct_factory = legacy_prefix.not_direct_factory,
+                assertion_surface_sites = census.total,
+                "legacy prefix diagnostic found macros that are not direct factory assertion surfaces"
+            );
+        }
 
         if callsite_census {
             for row in sugar_lift_rust_tests::callsite_census(&file, &options, &registry) {
@@ -450,7 +482,7 @@ fn main() {
         let discharged = out.assertions_lifted;
         let refused_total = out.assertions_refused;
 
-        totals.assert_macros += counter.total;
+        totals.assert_macros += census.total;
         totals.test_fns_seen += out.seen;
         totals.test_fns_lifted += out.lifted;
         totals.discharged += discharged;
@@ -532,8 +564,19 @@ fn main() {
         // Raw-accounting delta. Positive means a real assert macro the collector
         // never reached. Negative means the source body was dug at multiple
         // callsites, creating more obligations than textual assert macros.
-        let raw_delta = counter.total as i64 - discharged as i64 - refused as i64;
-        rows.push((rel, counter.total, discharged, refused, raw_delta, true));
+        let raw_delta = census.total as i64 - discharged as i64 - refused as i64;
+        if raw_delta > 0 {
+            warn!(
+                file = %rel,
+                assertion_surface_sites = census.total,
+                discharged = discharged,
+                refused = refused,
+                missing = raw_delta,
+                legacy_prefix_not_direct_factory = legacy_prefix.not_direct_factory,
+                "coretests sweep file has missing assertion delta"
+            );
+        }
+        rows.push((rel, census.total, discharged, refused, raw_delta, true));
     }
     info!(
         files = totals.files,
@@ -545,7 +588,7 @@ fn main() {
         "coretests sweep lift complete"
     );
 
-    // Headline reconciliation at macro granularity. `refused + unclassified` is the
+    // Headline reconciliation at assertion-surface granularity. `refused + unclassified` is the
     // full named non-discharged set; only their sum reconciles against the textual
     // macro count.
     let named_non_discharged = totals.refused + totals.unclassified + totals.inactive;
@@ -555,7 +598,7 @@ fn main() {
     // assert as several point-wise instances. Those are different facts, so the
     // public report keeps them separate:
     //
-    //   raw assertions + callsite expansion - missing assertions = obligations.
+    //   raw assertion surfaces + callsite expansion - missing assertions = obligations.
     let missing_assertions: i64 = rows.iter().map(|r| r.4.max(0)).sum();
     let callsite_expansion: i64 = rows.iter().map(|r| (-r.4).max(0)).sum();
     let accounted_obligations = totals.discharged + named_non_discharged;
@@ -573,7 +616,7 @@ fn main() {
         "files: {} (parse_ok {}, parse_fail {})",
         totals.files, totals.parse_ok, totals.parse_fail
     );
-    println!("assertion macros seen: {}", totals.assert_macros);
+    println!("assertion surface sites seen: {}", totals.assert_macros);
     println!(
         "  discharged (lifted to FOL):  {:>6}  ({:.1}%)",
         totals.discharged,
@@ -610,7 +653,7 @@ fn main() {
         callsite_expansion
     );
     println!(
-        "  accounting identity: {} raw + {} expanded - {} missing = {} accounted",
+        "  accounting identity: {} raw surfaces + {} expanded - {} missing = {} accounted",
         totals.assert_macros, callsite_expansion, missing_assertions, accounted_obligations
     );
     println!(
@@ -1009,9 +1052,9 @@ mod tests {
 
     #[test]
     fn site_cid_is_whitespace_insensitive_but_value_sensitive() {
-        let base = assertion_site_cid(&mac("assert_eq!(a, 2)"));
-        let spaced = assertion_site_cid(&mac("assert_eq!(a ,   2)"));
-        let revalued = assertion_site_cid(&mac("assert_eq!(a, 3)"));
+        let base = sugar_lift_rust_tests::assertion_surface_site_cid(&mac("assert_eq!(a, 2)"));
+        let spaced = sugar_lift_rust_tests::assertion_surface_site_cid(&mac("assert_eq!(a ,   2)"));
+        let revalued = sugar_lift_rust_tests::assertion_surface_site_cid(&mac("assert_eq!(a, 3)"));
         assert!(base.starts_with("blake3-512:"), "{base}");
         assert_eq!(base, spaced, "whitespace must not move the site cid");
         assert_ne!(base, revalued, "a changed asserted value must move it");
@@ -1020,20 +1063,88 @@ mod tests {
     #[test]
     fn site_cid_distinguishes_macro_path() {
         assert_ne!(
-            assertion_site_cid(&mac("assert!(a)")),
-            assertion_site_cid(&mac("debug_assert!(a)")),
+            sugar_lift_rust_tests::assertion_surface_site_cid(&mac("assert!(a)")),
+            sugar_lift_rust_tests::assertion_surface_site_cid(&mac("debug_assert!(a)")),
             "assert! and debug_assert! are different obligations"
         );
     }
 
     #[test]
-    fn assert_counter_collects_one_site_cid_per_assertion() {
+    fn assertion_surface_census_collects_one_site_cid_per_assertion() {
         let file: syn::File =
             syn::parse_str("fn t() { assert!(a); assert_eq!(b, 1); }").expect("parse file");
-        let mut c = AssertCounter::default();
-        c.visit_file(&file);
-        assert_eq!(c.total, 2);
-        assert_eq!(c.site_cids.len(), 2, "one site cid per assertion macro");
+        let census = sugar_lift_rust_tests::assertion_surface_census(
+            &file,
+            &sugar_lift_rust_tests::MacroRegistry::new(),
+        );
+        assert_eq!(census.total, 2);
+        assert_eq!(
+            census.site_cids.len(),
+            2,
+            "one site cid per assertion surface"
+        );
+    }
+
+    #[test]
+    fn assertion_surface_census_learns_source_macro_shape_without_prefix() {
+        let file: syn::File = syn::parse_str(
+            r#"
+macro_rules! check {
+    ($value:expr) => { assert_eq!($value, 1); };
+}
+fn t() { check!(x); }
+"#,
+        )
+        .expect("parse file");
+        let census = sugar_lift_rust_tests::assertion_surface_census(
+            &file,
+            &sugar_lift_rust_tests::MacroRegistry::new(),
+        );
+        assert_eq!(census.total, 1);
+        assert_eq!(census.site_cids.len(), 1);
+    }
+
+    #[test]
+    fn assertion_surface_census_learns_pub_macro_shape_without_prefix() {
+        let file: syn::File = syn::parse_str(
+            r#"
+pub macro check($value:expr) {
+    assert_eq!($value, 1);
+}
+fn t() { check!(x); }
+"#,
+        )
+        .expect("parse file");
+        let census = sugar_lift_rust_tests::assertion_surface_census(
+            &file,
+            &sugar_lift_rust_tests::MacroRegistry::new(),
+        );
+        assert_eq!(census.total, 1);
+        assert_eq!(census.site_cids.len(), 1);
+    }
+
+    #[test]
+    fn assertion_surface_census_learns_panic_locus_macro_shape_without_prefix() {
+        let file: syn::File = syn::parse_str(
+            r#"
+macro_rules! check_zero {
+    ($value:expr) => {{
+        match $value {
+            0 => {}
+            _ => { panic!(); }
+        }
+    }};
+}
+fn t() { check_zero!(x); }
+"#,
+        )
+        .expect("parse file");
+        let census = sugar_lift_rust_tests::assertion_surface_census(
+            &file,
+            &sugar_lift_rust_tests::MacroRegistry::new(),
+        );
+        assert_eq!(census.total, 1);
+        assert_eq!(census.site_cids.len(), 1);
     }
 
     #[test]

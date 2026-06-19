@@ -28,6 +28,13 @@ pub(crate) const RELATION_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     recognize_relation_macro,
 );
 
+pub(crate) const RELATION_MACRO_ASSERTION_SURFACE: ExprSugarClaim = ExprSugarClaim::new(
+    "assertion_surface_relation_macro",
+    SugarRole::AssertionSurface,
+    SugarPriority::Secondary,
+    recognize_relation_macro,
+);
+
 pub(crate) const BOUNDED_LITERAL_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_bounded_literal_macro",
     SugarRole::Constraint,
@@ -35,9 +42,23 @@ pub(crate) const BOUNDED_LITERAL_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::n
     recognize_bounded_literal_macro,
 );
 
+pub(crate) const BOUNDED_LITERAL_MACRO_ASSERTION_SURFACE: ExprSugarClaim = ExprSugarClaim::new(
+    "assertion_surface_bounded_literal_macro",
+    SugarRole::AssertionSurface,
+    SugarPriority::Primary,
+    recognize_bounded_literal_macro,
+);
+
 pub(crate) const ASSERT_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_assert_macro",
     SugarRole::Constraint,
+    SugarPriority::Secondary,
+    recognize_assert_macro,
+);
+
+pub(crate) const ASSERT_MACRO_ASSERTION_SURFACE: ExprSugarClaim = ExprSugarClaim::new(
+    "assertion_surface_assert_macro",
+    SugarRole::AssertionSurface,
     SugarPriority::Secondary,
     recognize_assert_macro,
 );
