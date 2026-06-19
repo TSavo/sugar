@@ -41,6 +41,7 @@ pub mod sugar {
     pub mod callsite;
     pub mod cast_term;
     pub mod catalog;
+    pub mod char_range_collect_string;
     pub mod char_range_filter_map;
     pub mod claim;
     pub mod closure_adaptor;
@@ -16593,6 +16594,33 @@ mod lifter_key_tests {
         assert!(
             dump.contains("String(\"1, 2, 3\")"),
             "literal intersperse collect string should materialize the joined string: {dump}"
+        );
+    }
+
+    #[test]
+    fn char_range_collect_string_lifts_ascii_chars_to_string_literal() {
+        let src = r#"
+            #[test]
+            fn char_range_collect_string() {
+                let want = (65u8..68u8).map(|b| b as char).collect::<String>();
+                assert_eq!(want, "ABC");
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "literal char range collect string should lift: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "literal char range collect string should not be refused: {:?}",
+            out.skip_reasons
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("String(\"ABC\")"),
+            "literal char range collect string should materialize ABC: {dump}"
         );
     }
 
