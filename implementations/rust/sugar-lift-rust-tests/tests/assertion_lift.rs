@@ -10779,34 +10779,26 @@ fn t() {
 }
 
 #[test]
-fn const_block_bare_path_term_is_refused_name_is_sugar() {
-    // REFUSE: `const { Zst }` -- a const block over a bare PATH is a name (sugar), not a keyed
-    // value term. (corpus: array.rs `assert_eq!(.., Some([const { Zst }; 10]))` -- the const
-    // block is the array-repeat element; its Err propagates through the literal-count unroll.)
+fn const_block_unit_path_term_lifts_as_literal_value() {
+    // COMPILER AXIOM: `const { Zst }` in value position is a const-valid unit
+    // constructor path. It is not a terminal runtime boundary; array-repeat can
+    // unroll it as a literal identity value.
     let src = r#"
 #[test]
 fn t() {
-    assert_eq!(x, [const { Zst }; 3]);
+    assert_eq!([const { Zst }; 3], [const { Zst }; 3]);
 }
 "#;
     let out = lift_file(&parse(src), "tests/constzst.rs");
-    let r = out
-        .skip_reasons
-        .iter()
-        .find(|r| {
-            r.contains("effectful / raw-pointer / mutable-reference term")
-                && r.contains("const { <path> }")
-        })
-        .unwrap_or_else(|| {
-            panic!(
-                "expected a const-block-path terminal, got {:?}",
-                out.skip_reasons
-            )
-        });
     assert_eq!(
-        disp2(r),
-        sugar_lift_rust_tests::Disposition::Refused,
-        "must be terminal: {r}"
+        out.assertions_lifted, 1,
+        "const-block unit path should lift; reasons: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.skip_reasons.is_empty(),
+        "const-block unit path should not be refused: {:?}",
+        out.skip_reasons
     );
 }
 

@@ -17,6 +17,7 @@ use crate::sugar::factory::{build_composite, SugarBuildCtx};
 use crate::sugar::method;
 use crate::sugar::method_family;
 use crate::sugar::monadic;
+use crate::sugar::unit_path::unit_path_literal_name;
 use crate::{
     canonical_term_sig, closure_single_param_ident, const_eval, const_fold_int_term,
     strip_refs_groups, term_as_int, BoundedDomain, ConstVal, Desugared, DesugaredElem, Outcome,
@@ -290,6 +291,7 @@ fn const_val_term(value: &ConstVal) -> Option<Rc<Term>> {
             sort: Sort::bool(),
         })),
         ConstVal::Char(c) => Some(str_const(c.to_string())),
+        ConstVal::UnitPath(path) => Some(make_var(unit_path_literal_name(path))),
         ConstVal::Tuple(parts) => {
             let terms = parts
                 .iter()

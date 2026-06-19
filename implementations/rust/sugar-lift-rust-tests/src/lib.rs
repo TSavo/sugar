@@ -115,9 +115,11 @@ pub mod sugar {
     pub mod term_literal;
     pub mod to_string;
     pub mod transparent_term;
+    pub mod try_from_fn;
     pub mod try_map;
     pub mod tuple_term;
     pub mod unary;
+    pub mod unit_path;
     pub mod use_item;
     pub mod vec_macro;
 }
@@ -394,8 +396,8 @@ pub enum Disposition {
 /// `ambiguous cfg` (a missing target input, recoverable by pinning the cfg).
 /// Default = Unclassified.
 ///   * `effectful / raw-pointer / mutable-reference term` -- an `unsupported term` whose
-///                            SHAPE is a `&mut` borrow, a raw pointer (`&raw const`/`&raw mut`),
-///                            or a `const { <path> }` block (a name is sugar): no single
+///                            SHAPE is a `&mut` borrow or a raw pointer
+///                            (`&raw const`/`&raw mut`): no single
 ///                            timeless value constructible from source literals. (DISTINCT from
 ///                            a bare `unsupported term`, which stays Unclassified work.)
 ///   * `operand is a runtime non-scalar result` -- an `assert!(match <runtime call> { .. })`
@@ -617,15 +619,14 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // fake-refuse guardrail; left to dissolution / the exact partition).
         || reason.contains("reachable only via monomorphization of a generic")
         // TERMINAL: an `unsupported term` whose SHAPE is genuinely effectful / non-constructible
-        // -- a `&mut` borrow, a raw pointer (`&raw const`/`&raw mut`), or a `const { <path> }`
-        // block (a name is sugar). None is a single timeless value constructible from source
+        // -- a `&mut` borrow or a raw pointer (`&raw const`/`&raw mut`). None is a single timeless value constructible from source
         // literals (kin to `mutable container is not temporally stable` / `bin-2` / "function
         // names are sugar"). EARNED by `UnsupportedTermEffect` at the specific term arm (the
-        // `&mut` fall-through, `Expr::RawAddr`, and `const { <path> }`); a PURE untranslated
+        // `&mut` fall-through and `Expr::RawAddr`); a PURE untranslated
         // term (`1i32 as f64`, an untranscribed pure method) has NONE of these shapes and STAYS
         // the bare `unsupported term` reason -- UNCLASSIFIED work (the fake-refuse guardrail).
-        // (THE DRAIN: the `ptr.rs`/`cell.rs`/`option.rs`/`async_iter`/`array.rs`/`waker.rs`
-        // `&mut`/`&raw`/`const{Zst}` rows fell to unclassified only because the bare reason was
+        // (THE DRAIN: the `ptr.rs`/`cell.rs`/`option.rs`/`async_iter`/`waker.rs`
+        // `&mut`/`&raw` rows fell to unclassified only because the bare reason was
         // not whitelisted; not a fake-zero -- the effectful shape is detected syntactically.)
         || reason.contains("effectful / raw-pointer / mutable-reference term")
         // TERMINAL: an `assert!(match <runtime call> { .. })` whose scrutinee is a RUNTIME
@@ -3823,10 +3824,11 @@ fn peel_fold_adaptors<'a>(
 /// An EXACT const value the defolder is willing to compute for a transforming-adaptor
 /// closure (`.filter`/`.map`/`.skip_while`/...). DELIBERATELY NARROW: only the value
 /// kinds whose Rust semantics we can replicate with certainty -- integer, bool, char,
-/// byte (an int), and tuples thereof. NO float (equality edge cases / NaN), NO string
-/// (allocation / encoding), NO arbitrary struct. A wrong DIG is a fake-discharge, so the
-/// evaluator is exact-or-None everywhere: the instant an expression is outside this
-/// closed set, `const_eval` returns None and the whole defold bails.
+/// byte (an int), unit-path value constructors, and tuples thereof. NO float
+/// (equality edge cases / NaN), NO string (allocation / encoding), NO arbitrary
+/// struct with fields. A wrong DIG is a fake-discharge, so the evaluator is
+/// exact-or-None everywhere: the instant an expression is outside this closed set,
+/// `const_eval` returns None and the whole defold bails.
 #[derive(Clone, Debug, PartialEq)]
 enum ConstVal {
     // i128 carrier -- same widening as the lifted-term Int const: a wide
@@ -3834,6 +3836,7 @@ enum ConstVal {
     Int(i128),
     Bool(bool),
     Char(char),
+    UnitPath(String),
     Tuple(Vec<ConstVal>),
 }
 
@@ -3845,6 +3848,7 @@ impl ConstVal {
             ConstVal::Int(n) => n.to_string(),
             ConstVal::Bool(b) => b.to_string(),
             ConstVal::Char(c) => format!("{c:?}"), // debug form emits a valid char literal
+            ConstVal::UnitPath(path) => path.clone(),
             // a tuple element fed to a later adaptor stays a ConstVal; only scalars are
             // ever materialized back to an Expr (the fold item). A tuple item is uncommon
             // and we conservatively decline materializing it.
@@ -3883,8 +3887,12 @@ fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal>
             _ => None,
         },
         Expr::Path(p) => {
-            let id = p.path.get_ident()?.to_string();
-            env.get(&id).cloned()
+            if let Some(id) = p.path.get_ident().map(ToString::to_string) {
+                if let Some(value) = env.get(&id) {
+                    return Some(value.clone());
+                }
+            }
+            sugar::unit_path::unit_path_name(&p.path).map(ConstVal::UnitPath)
         }
         Expr::Paren(pr) => const_eval(&pr.expr, env),
         Expr::Group(g) => const_eval(&g.expr, env),
@@ -4037,9 +4045,8 @@ fn const_eval_unary_closure(closure: &syn::ExprClosure, arg: &ConstVal) -> Optio
     if closure.inputs.len() != 1 {
         return None;
     }
-    let param = closure_single_param_ident(&closure.inputs[0])?;
     let mut env = BTreeMap::new();
-    env.insert(param, arg.clone());
+    bind_const_closure_arg(&closure.inputs[0], arg, &mut env)?;
     let body: &Expr = match &*closure.body {
         Expr::Block(b) => match b.block.stmts.as_slice() {
             [Stmt::Expr(e, None)] => e,
@@ -4068,9 +4075,8 @@ fn const_eval_option_closure(
     if closure.inputs.len() != 1 {
         return None;
     }
-    let param = closure_single_param_ident(&closure.inputs[0])?;
     let mut env = BTreeMap::new();
-    env.insert(param, arg.clone());
+    bind_const_closure_arg(&closure.inputs[0], arg, &mut env)?;
     let body: &Expr = match &*closure.body {
         Expr::Block(b) => match b.block.stmts.as_slice() {
             [Stmt::Expr(e, None)] => e,
@@ -4120,6 +4126,27 @@ fn const_eval_option_expr(
             let else_opt = const_eval_option_expr(&else_branch.1, env)?;
             Some(if cond { then_opt } else { else_opt })
         }
+        _ => None,
+    }
+}
+
+fn bind_const_closure_arg(
+    pat: &Pat,
+    arg: &ConstVal,
+    env: &mut BTreeMap<String, ConstVal>,
+) -> Option<()> {
+    match pat {
+        Pat::Ident(p) if p.subpat.is_none() => {
+            env.insert(p.ident.to_string(), arg.clone());
+            Some(())
+        }
+        Pat::Tuple(tuple) if tuple.elems.is_empty() => {
+            matches!(arg, ConstVal::Tuple(items) if items.is_empty()).then_some(())
+        }
+        Pat::Wild(_) => Some(()),
+        Pat::Paren(paren) => bind_const_closure_arg(&paren.pat, arg, env),
+        Pat::Reference(reference) => bind_const_closure_arg(&reference.pat, arg, env),
+        Pat::Type(typed) => bind_const_closure_arg(&typed.pat, arg, env),
         _ => None,
     }
 }
@@ -4526,8 +4553,6 @@ enum UnsupportedTermCause {
     MutableReference,
     /// `&raw const`/`&raw mut`: a raw pointer (runtime address).
     RawPointer,
-    /// `const { <bare path> }`: a const-block over a bare name (a ZST/fn-item reference; sugar).
-    ConstBlockPath,
 }
 
 impl UnsupportedTermCause {
@@ -4535,7 +4560,6 @@ impl UnsupportedTermCause {
         match self {
             UnsupportedTermCause::MutableReference => "a `&mut` borrow",
             UnsupportedTermCause::RawPointer => "a raw pointer (`&raw const`/`&raw mut`)",
-            UnsupportedTermCause::ConstBlockPath => "a `const { <path> }` block (a name is sugar)",
         }
     }
 
@@ -4657,7 +4681,7 @@ impl Effect {
     }
 
     /// Build the term-shaped `Effect::Unsupported` for a genuinely effectful / non-
-    /// constructible TERM (a `&mut` borrow, a raw pointer, a `const { <path> }` block). The
+    /// constructible TERM (a `&mut` borrow or a raw pointer). The
     /// reason carries the `unsupported term` prefix + named cause verbatim (the term path's
     /// prior emission shape). A PURE untranslated term is NOT given this -- it keeps its bare
     /// `unsupported term` reason elsewhere (the inverse-sin guardrail).
@@ -16426,6 +16450,67 @@ mod lifter_key_tests {
     }
 
     #[test]
+    fn try_from_fn_lifts_visible_const_fn_to_some_literal_array() {
+        let src = r#"
+            #[test]
+            fn const_fn_try_from_fn() {
+                const fn maybe_doubler(x: usize) -> Option<usize> {
+                    x.checked_mul(2)
+                }
+                assert_eq!(const { std::array::try_from_fn::<_, 5, _>(maybe_doubler) }, Some([0, 2, 4, 6, 8]));
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "array::try_from_fn over visible const fn should lift; reasons: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "literal try_from_fn should not be refused: {:?}",
+            out.skip_reasons
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("opt:some")
+                && dump.contains("literal:Array(i:0,i:2,i:4,i:6,i:8)")
+                && !dump.contains("call:std::array::try_from_fn"),
+            "try_from_fn should materialize Some(mapped array): {dump}"
+        );
+    }
+
+    #[test]
+    fn try_map_over_unit_array_lifts_zst_some_array() {
+        let src = r#"
+            #[test]
+            fn const_fn_try_map_zst() {
+                #[derive(Debug, PartialEq)]
+                struct Zst;
+                assert_eq!([(); 3].try_map(|()| Some(Zst)), Some([const { Zst }; 3]));
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "literal unit-array try_map over ZST closure should lift; reasons: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "ZST try_map should not be refused: {:?}",
+            out.skip_reasons
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("opt:some")
+                && dump.contains("literal:Array(v:literal:unitpath:Zst")
+                && !dump.contains("method:try_map"),
+            "try_map over unit array should materialize a Some(ZST array): {dump}"
+        );
+    }
+
+    #[test]
     fn collect_option_over_literal_map_short_circuits_to_none() {
         let src = r#"
             #[test]
@@ -18020,7 +18105,6 @@ mod lifter_key_tests {
             "assertion in non-#[test] item `test_num` reachable only via monomorphization of a generic type/const parameter (runtime instantiation: no single concrete type to read; not statically constructible at any call site); refused",
             "assert_eq!: unsupported term `& mut x`: effectful / raw-pointer / mutable-reference term (a `&mut` borrow) is not a constructible timeless value; refused",
             "assert_eq!: unsupported term `& raw const garlic`: effectful / raw-pointer / mutable-reference term (a raw pointer (`&raw const`/`&raw mut`)) is not a constructible timeless value; refused",
-            "assert_eq!: unsupported term `const { Zst }`: effectful / raw-pointer / mutable-reference term (a `const { <path> }` block (a name is sugar)) is not a constructible timeless value; refused",
             "assert!: only scalar equality is liftable; operand is a runtime non-scalar result `match b . binary_search (& 3) { Ok (1 ..= 3) => true , _ => false , }` (a `match` over a runtime call result, not constructible from source literals); refused",
             "assert_eq!: array-repeat `[_; N]` has a non-literal length -- not a finite construction from the literal; refused by name: `[0u8 ; SIZE]`",
         ] {
