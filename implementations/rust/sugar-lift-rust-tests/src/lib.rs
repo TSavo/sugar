@@ -58,6 +58,7 @@ pub mod sugar {
     pub mod const_path;
     pub mod constraint;
     pub mod control_flow_term;
+    pub mod cstr;
     pub mod ctor_term;
     pub mod dormant_mut_ref;
     pub mod enumerate;

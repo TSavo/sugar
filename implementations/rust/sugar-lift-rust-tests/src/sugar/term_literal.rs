@@ -45,7 +45,7 @@
 // separate sequence-floor claims (`LiteralSugar`); scalar literals stay here via
 // `translate_lit`.
 
-use syn::{Expr, ExprLit};
+use syn::{Expr, ExprLit, Lit};
 
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{translate_lit, Desugared, Effect, Outcome, Sugar, SugarCtx};
@@ -57,7 +57,9 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// Byte-identical to the `Expr::Lit(lit) => translate_lit(lit)` arm.
 pub(crate) fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {
-        Expr::Lit(lit) => Some(Box::new(TermLiteralSugar { lit: lit.clone() })),
+        Expr::Lit(lit) if !matches!(lit.lit, Lit::CStr(_)) => {
+            Some(Box::new(TermLiteralSugar { lit: lit.clone() }))
+        }
         _ => None,
     }
 }
