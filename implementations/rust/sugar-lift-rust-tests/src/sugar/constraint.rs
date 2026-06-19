@@ -7,14 +7,15 @@
 // connective, panic locus), not a human method name.
 
 use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::configuration;
+use crate::sugar::factory::{build_constraint, SugarBuildCtx};
 use crate::{
-    callsite_assertion_name, cfg_resolve_predicate, lower_assert_condition, lower_assert_eq,
-    lower_assert_ne, parse_macro_args, token_key, AssertionFactKind, CfgDisposition, CfgPredicate,
-    Desugared, Effect, Outcome, RelationOp, Sugar, SugarCtx, Warrant,
+    callsite_assertion_name, lower_assert_condition, lower_assert_eq, lower_assert_ne,
+    parse_macro_args, token_key, AssertionFactKind, CfgDisposition, CfgPredicate, Desugared,
+    Effect, Outcome, RelationOp, Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON,
 };
 use sugar_ir_symbolic::{and_, atomic_, not_, str_const};
-use syn::{Expr, ExprIf, ExprMacro};
+use syn::{Expr, ExprIf, ExprLit, ExprMacro, Lit, UnOp};
 
 pub(crate) const RELATION_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_relation_macro",
@@ -23,8 +24,15 @@ pub(crate) const RELATION_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     recognize_relation_macro,
 );
 
-pub(crate) const BOOL_MACRO_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::constraint("constraint_bool_macro", recognize_bool_macro);
+pub(crate) const ASSERT_MACRO_SUGAR: ExprSugarClaim =
+    ExprSugarClaim::constraint("constraint_assert_macro", recognize_assert_macro);
+
+pub(crate) const BOOL_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "constraint_bool_expr",
+    SugarRole::Constraint,
+    SugarPriority::Secondary,
+    recognize_bool_expr,
+);
 
 pub(crate) const IF_PANIC_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_if_panic",
@@ -93,13 +101,13 @@ impl Sugar for RelationMacroSugar {
     }
 }
 
-struct BoolMacroSugar {
+struct AssertSugar {
     name: String,
     expr: Expr,
     debug_gated: bool,
 }
 
-fn recognize_bool_macro(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_assert_macro(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Macro(ExprMacro { mac, .. }) = expr else {
         return None;
     };
@@ -111,17 +119,20 @@ fn recognize_bool_macro(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sug
     };
     let args = parse_macro_args(mac.tokens.clone()).ok()?;
     let expr = args.exprs.first()?.clone();
-    Some(Box::new(BoolMacroSugar {
+    Some(Box::new(AssertSugar {
         name,
         expr,
         debug_gated,
     }))
 }
 
-impl Sugar for BoolMacroSugar {
+impl Sugar for AssertSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         if let Err(reason) = ensure_debug_assertions_active(&self.name, self.debug_gated, ctx) {
             return unsupported(reason);
+        }
+        if let Some(outcome) = desugar_assert_payload_constraint(&self.expr, ctx) {
+            return outcome;
         }
         constraint_from_entry_result(
             &self.name,
@@ -132,6 +143,91 @@ impl Sugar for BoolMacroSugar {
                 ctx.factory_audits,
             ),
         )
+    }
+}
+
+struct BoolExprSugar {
+    expr: Expr,
+}
+
+fn recognize_bool_expr(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    match expr {
+        Expr::Binary(_) => Some(Box::new(BoolExprSugar { expr: expr.clone() })),
+        Expr::Unary(unary) if matches!(unary.op, UnOp::Not(_)) => {
+            Some(Box::new(BoolExprSugar { expr: expr.clone() }))
+        }
+        Expr::Lit(ExprLit {
+            lit: Lit::Bool(_), ..
+        }) => Some(Box::new(BoolExprSugar { expr: expr.clone() })),
+        Expr::Paren(_) | Expr::Group(_) => Some(Box::new(BoolExprSugar { expr: expr.clone() })),
+        _ => None,
+    }
+}
+
+impl Sugar for BoolExprSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        constraint_from_entry_result(
+            "assert",
+            lower_assert_condition(
+                &self.expr,
+                ctx.scope,
+                &ctx.float_widths.borrow(),
+                ctx.factory_audits,
+            ),
+        )
+    }
+}
+
+fn desugar_assert_payload_constraint(expr: &Expr, ctx: &SugarCtx) -> Option<Outcome> {
+    if assert_payload_should_use_bool_fallback(expr, ctx) {
+        return None;
+    }
+    let empty = std::collections::BTreeMap::new();
+    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &empty);
+    if !crate::sugar::factory::has_constraint(expr, &fcx) {
+        return None;
+    }
+    match build_constraint(expr, &fcx).desugar(ctx) {
+        Outcome::Dug(Desugared::Constraints {
+            atom,
+            kind,
+            warrant,
+            ..
+        }) => Some(Outcome::Dug(Desugared::Constraints {
+            atom,
+            n: 1,
+            kind,
+            warrant,
+        })),
+        Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {
+            None
+        }
+        Outcome::Hit(effect) => Some(Outcome::Hit(effect)),
+        Outcome::Dug(_) => None,
+    }
+}
+
+fn assert_payload_should_use_bool_fallback(expr: &Expr, ctx: &SugarCtx) -> bool {
+    match expr {
+        Expr::Call(_) | Expr::MethodCall(_) | Expr::Await(_) | Expr::Field(_) => true,
+        Expr::Path(path) => path.path.get_ident().is_some_and(|ident| {
+            ctx.scope
+                .stable_let_binding_for_term(&ident.to_string())
+                .is_some_and(bound_assert_payload_should_use_bool_fallback)
+        }),
+        Expr::Paren(paren) => assert_payload_should_use_bool_fallback(&paren.expr, ctx),
+        Expr::Group(group) => assert_payload_should_use_bool_fallback(&group.expr, ctx),
+        _ => false,
+    }
+}
+
+fn bound_assert_payload_should_use_bool_fallback(expr: &Expr) -> bool {
+    match expr {
+        Expr::Call(_) | Expr::MethodCall(_) | Expr::Await(_) | Expr::Field(_) => true,
+        Expr::Path(_) => true,
+        Expr::Paren(paren) => bound_assert_payload_should_use_bool_fallback(&paren.expr),
+        Expr::Group(group) => bound_assert_payload_should_use_bool_fallback(&group.expr),
+        _ => false,
     }
 }
 
@@ -220,34 +316,32 @@ fn recognize_no_panic_call(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn S
 
 impl Sugar for NoPanicCallSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let (subject, name) = match &self.term_expr {
+        let (normal_universe, name) = match &self.term_expr {
             Some(expr) => {
-                let empty = std::collections::BTreeMap::new();
-                let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &empty);
-                let term = build_term(expr, &fcx);
-                let subject = match term.desugar(ctx) {
-                    Outcome::Dug(d) => match d.into_term() {
-                        Some(term) => term,
-                        None => return Outcome::from_opt(None),
-                    },
-                    Outcome::Hit(effect) => return Outcome::Hit(effect),
+                let Some(subject) = ctx.opaque_callsite_term(expr) else {
+                    return Outcome::from_opt(None);
                 };
+                let normal_universe = ctx
+                    .normal_return_universe_for_subject(expr, subject.clone())
+                    .unwrap_or_else(|| not_(atomic_("panic", vec![subject.clone()])));
                 let name = callsite_assertion_name(subject.as_ref(), ctx.scope.local_scope());
-                (subject, name)
+                (normal_universe, name)
             }
-            None => (
-                str_const(format!("{}::{}", ctx.scope.local_scope(), self.site)),
-                None,
-            ),
+            None => {
+                let subject = str_const(format!("{}::{}", ctx.scope.local_scope(), self.site));
+                (not_(atomic_("panic", vec![subject])), None)
+            }
         };
-        let atom = atomic_("panic-free", vec![subject]);
-        let atom = match self.kind {
-            NoPanicKind::ReturnsNormally => atom,
-            NoPanicKind::UnconditionalPanic => and_(vec![atom.clone(), not_(atom)]),
+        let (atom, kind) = match self.kind {
+            NoPanicKind::ReturnsNormally => (normal_universe, AssertionFactKind::Support),
+            NoPanicKind::UnconditionalPanic => (
+                and_(vec![normal_universe.clone(), not_(normal_universe)]),
+                AssertionFactKind::Warranted,
+            ),
         };
         let name = name.or_else(|| {
             Some(format!(
-                "{}::panic-free::{}",
+                "{}::panic-path::{}",
                 ctx.scope.local_scope(),
                 compact_warrant_fragment(&self.site)
             ))
@@ -255,7 +349,7 @@ impl Sugar for NoPanicCallSugar {
         Outcome::Dug(Desugared::Constraints {
             atom,
             n: 0,
-            kind: AssertionFactKind::Support,
+            kind,
             warrant: Warrant { name },
         })
     }
@@ -344,7 +438,7 @@ fn ensure_debug_assertions_active(
     if !debug_gated {
         return Ok(());
     }
-    match cfg_resolve_predicate(
+    match configuration::resolve_predicate(
         &CfgPredicate::Name("debug_assertions".to_string()),
         ctx.options,
     ) {
