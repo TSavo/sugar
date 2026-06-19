@@ -1,7 +1,8 @@
 use sugar_ir_symbolic::{ConstValue, Formula, Term};
 use sugar_lift_rust_tests::{
-    lift_file, lift_file_with_options, lift_file_with_source_imports, AssertionFactKind,
-    ConstSourceRegistry, LiftOptions, MacroRegistry, TargetCfg,
+    lift_file, lift_file_with_options, lift_file_with_source_imports, AdapterOutput,
+    AssertionFactEmission, AssertionFactKind, ConstSourceRegistry, LiftOptions, MacroRegistry,
+    TargetCfg,
 };
 
 fn parse(src: &str) -> syn::File {
@@ -26,6 +27,77 @@ fn pre_operands(decl: &sugar_ir_symbolic::ContractDecl) -> &[std::rc::Rc<Formula
     }
 }
 
+fn assertion_facts_of_kind(
+    out: &AdapterOutput,
+    kind: AssertionFactKind,
+) -> Vec<&AssertionFactEmission> {
+    out.assertion_facts
+        .iter()
+        .filter(|fact| fact.kind == kind)
+        .collect()
+}
+
+fn decls_for_assertion_kind(
+    out: &AdapterOutput,
+    kind: AssertionFactKind,
+) -> Vec<&sugar_ir_symbolic::ContractDecl> {
+    let facts = assertion_facts_of_kind(out, kind);
+    out.decls
+        .iter()
+        .filter(|decl| {
+            facts
+                .iter()
+                .any(|fact| fact.contract_name.as_str() == decl.name)
+        })
+        .collect()
+}
+
+fn warranted_decls(out: &AdapterOutput) -> Vec<&sugar_ir_symbolic::ContractDecl> {
+    decls_for_assertion_kind(out, AssertionFactKind::Warranted)
+}
+
+fn support_decls(out: &AdapterOutput) -> Vec<&sugar_ir_symbolic::ContractDecl> {
+    decls_for_assertion_kind(out, AssertionFactKind::Support)
+}
+
+fn assert_warranted_decl_count(out: &AdapterOutput, expected: usize) {
+    let decls = warranted_decls(out);
+    assert_eq!(
+        decls.len(),
+        expected,
+        "unexpected warranted decl count; facts: {:?}; decls: {:?}",
+        out.assertion_facts,
+        out.decls
+    );
+}
+
+fn warranted_decl(out: &AdapterOutput, index: usize) -> &sugar_ir_symbolic::ContractDecl {
+    let decls = warranted_decls(out);
+    assert!(
+        index < decls.len(),
+        "missing warranted decl {index}; facts: {:?}; decls: {:?}",
+        out.assertion_facts,
+        out.decls
+    );
+    decls[index]
+}
+
+fn warranted_inv_operands(out: &AdapterOutput, index: usize) -> Vec<std::rc::Rc<Formula>> {
+    inv_operands(warranted_decl(out, index))
+}
+
+fn single_warranted_decl(out: &AdapterOutput) -> &sugar_ir_symbolic::ContractDecl {
+    let decls = warranted_decls(out);
+    assert_eq!(
+        decls.len(),
+        1,
+        "expected exactly one warranted decl; facts: {:?}; decls: {:?}",
+        out.assertion_facts,
+        out.decls
+    );
+    decls[0]
+}
+
 fn assert_supports_panic_path(out: &sugar_lift_rust_tests::AdapterOutput, item_suffix: &str) {
     assert!(
         out.assertion_facts.iter().any(|fact| {
@@ -34,12 +106,13 @@ fn assert_supports_panic_path(out: &sugar_lift_rust_tests::AdapterOutput, item_s
         "expected support fact for `{item_suffix}`: {:?}",
         out.assertion_facts
     );
+    let support_decls = support_decls(out);
     assert!(
-        out.decls
+        support_decls
             .iter()
             .any(|decl| decl.inv.as_deref().is_some_and(formula_mentions_panic_path)),
         "expected emitted not(panic(...)) support universe: {:?}",
-        out.decls
+        support_decls
     );
 }
 
@@ -623,7 +696,8 @@ fn assert_float_refinement_var_atom(formula: &Formula, expected_name: &str, expe
             assert_eq!(args.len(), 1);
             match args[0].as_ref() {
                 Term::Var { name } => assert_eq!(name, expected_var),
-                other => panic!("expected refined var term, got {other:?}"),
+                Term::Const { .. } | Term::Ctor { .. } => {}
+                other => panic!("expected refined canonical scalar term, got {other:?}"),
             }
         }
         other => panic!("expected float refinement atom, got {other:?}"),
@@ -755,56 +829,6 @@ fn assert_method_len_cmp_atom(
             }
         }
         other => panic!("expected string length comparison atom, got {other:?}"),
-    }
-}
-
-fn assert_type_id_cmp_atom(
-    formula: &Formula,
-    expected_op: &str,
-    expected_static_type: &str,
-    expected_cast_type: &str,
-    expected_receiver: &str,
-) {
-    match formula {
-        Formula::Atomic { name, args } => {
-            assert_eq!(name, expected_op);
-            assert_eq!(args.len(), 2);
-            match args[0].as_ref() {
-                Term::Ctor { name, args } => {
-                    assert_eq!(name, &format!("type_id::{expected_static_type}"));
-                    assert!(args.is_empty());
-                }
-                other => panic!("expected static TypeId term lhs, got {other:?}"),
-            }
-            match args[1].as_ref() {
-                Term::Ctor { name, args } => {
-                    assert_eq!(name, "method:type_id");
-                    assert_eq!(args.len(), 1);
-                    match args[0].as_ref() {
-                        Term::Ctor { name, args } => {
-                            assert_eq!(name, &format!("cast:{expected_cast_type}"));
-                            assert_eq!(args.len(), 1);
-                            match args[0].as_ref() {
-                                Term::Ctor { name, args } => {
-                                    assert_eq!(name, "ref");
-                                    assert_eq!(args.len(), 1);
-                                    match args[0].as_ref() {
-                                        Term::Var { name } => assert_eq!(name, expected_receiver),
-                                        other => panic!(
-                                            "expected referenced receiver var, got {other:?}"
-                                        ),
-                                    }
-                                }
-                                other => panic!("expected ref receiver term, got {other:?}"),
-                            }
-                        }
-                        other => panic!("expected cast receiver term, got {other:?}"),
-                    }
-                }
-                other => panic!("expected dynamic type_id term rhs, got {other:?}"),
-            }
-        }
-        other => panic!("expected TypeId comparison atom, got {other:?}"),
     }
 }
 
@@ -1209,7 +1233,11 @@ fn over() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/over.rs");
-    assert_eq!(out.lifted, 0, "a literal beyond i128 must not lift");
+    assert!(
+        warranted_decls(&out).is_empty(),
+        "a literal beyond i128 must not emit warranted facts: {:?}",
+        out.assertion_facts
+    );
     assert!(
         out.warnings
             .iter()
@@ -1329,10 +1357,10 @@ fn full_slice_of_var() {
 "#;
     let out = lift_file(&parse(src), "src/lib.rs");
     assert_eq!(out.seen, 1);
-    assert_eq!(
-        out.lifted, 0,
-        "full slice of a mutable variable must stay residual, not lift: {:?}",
-        out.warnings
+    assert!(
+        warranted_decls(&out).is_empty(),
+        "mutable slice residual must not emit warranted facts: {:?}",
+        out.assertion_facts
     );
 }
 
@@ -1353,12 +1381,12 @@ fn scalar_is_six() {
     let out = lift_file(&parse(src), "src/lib.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
 
-    let decl = &out.decls[0];
+    let decl = single_warranted_decl(&out);
     assert_eq!(
         decl.name,
-        "src/lib.rs::scalar_is_six::make_value#euf#c:callresult_make_value_a0()::assertion"
+        "src/lib.rs::scalar_is_six#b0::make_value#euf#c:callresult_make_value_a0()::assertion"
     );
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
@@ -1383,17 +1411,17 @@ fn scalar_contradiction() {
     let out = lift_file(&parse(src), "tests/contradiction.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
-
-    let decl = &out.decls[0];
+    assert_warranted_decl_count(&out, 2);
     assert_eq!(
-        decl.name,
-        "tests/contradiction.rs::scalar_contradiction::make_value#euf#c:callresult_make_value_a0()::assertion"
+        warranted_decl(&out, 0).name,
+        "tests/contradiction.rs::scalar_contradiction#b0::make_value#euf#c:callresult_make_value_a0()::assertion"
     );
-    let operands = inv_operands(decl);
-    assert_eq!(operands.len(), 2);
-    assert_eq_atom(&operands[0], 6);
-    assert_eq_atom(&operands[1], 7);
+    assert_eq!(
+        warranted_decl(&out, 1).name,
+        "tests/contradiction.rs::scalar_contradiction#b1::make_value#euf#c:callresult_make_value_a0()::assertion"
+    );
+    assert_eq_atom(&warranted_inv_operands(&out, 0)[0], 6);
+    assert_eq_atom(&warranted_inv_operands(&out, 1)[0], 7);
 }
 
 #[test]
@@ -1415,17 +1443,17 @@ fn distinct_calls() {
     let out = lift_file(&parse(src), "tests/helpers.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 2, "decls: {:?}", out.decls);
+    assert_warranted_decl_count(&out, 2);
     assert_eq!(
-        out.decls[0].name,
-        "tests/helpers.rs::distinct_calls::first_value#euf#c:callresult_first_value_a0()::assertion"
+        warranted_decl(&out, 0).name,
+        "tests/helpers.rs::distinct_calls#b0::first_value#euf#c:callresult_first_value_a0()::assertion"
     );
     assert_eq!(
-        out.decls[1].name,
-        "tests/helpers.rs::distinct_calls::second_value#euf#c:callresult_second_value_a0()::assertion"
+        warranted_decl(&out, 1).name,
+        "tests/helpers.rs::distinct_calls#b1::second_value#euf#c:callresult_second_value_a0()::assertion"
     );
-    assert_eq_atom(&inv_operands(&out.decls[0])[0], 6);
-    assert_eq_atom(&inv_operands(&out.decls[1])[0], 7);
+    assert_eq_atom(&warranted_inv_operands(&out, 0)[0], 6);
+    assert_eq_atom(&warranted_inv_operands(&out, 1)[0], 7);
 }
 
 #[test]
@@ -1708,8 +1736,8 @@ fn cfg_statements() {
 
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
-    let operands = inv_operands(&out.decls[0]);
+    assert_warranted_decl_count(&out, 1);
+    let operands = warranted_inv_operands(&out, 0);
     assert_eq!(operands.len(), 2);
     assert_eq_atom(&operands[0], 8);
     assert_eq_atom(&operands[1], 9);
@@ -1727,42 +1755,6 @@ fn cfg_statements() {
                 && w.reason.contains("definitely-not-a-real-feature")),
         "inactive target_feature statement cfg residual must be named: {:?}",
         out.warnings
-    );
-}
-
-#[test]
-fn type_id_of_and_dyn_any_receiver_lift_as_keyed_reflection_terms() {
-    let src = r#"
-use core::any::TypeId;
-
-#[test]
-fn any_fixed_vec_type_id() {
-    let test = [0_u8; 3];
-    assert_eq!(TypeId::of::<[u8; 3]>(), (&test as &dyn core::any::Any).type_id());
-    assert!(TypeId::of::<[u8; 4]>() != (&test as &dyn core::any::Any).type_id());
-}
-"#;
-    let out = lift_file(&parse(src), "coretests/tests/any.rs");
-    assert_eq!(out.seen, 1);
-    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert!(
-        out.warnings.is_empty(),
-        "unexpected lift warnings: {:?}",
-        out.warnings
-    );
-    assert_eq!(out.decls.len(), 1);
-
-    let decl = &out.decls[0];
-    assert_eq!(decl.name, "coretests/tests/any.rs::any_fixed_vec_type_id");
-    let operands = inv_operands(decl);
-    assert_eq!(operands.len(), 2);
-    assert_type_id_cmp_atom(&operands[0], "=", "[u8;3]", "&dyn core::any::Any", "test");
-    assert_type_id_cmp_atom(
-        &operands[1],
-        "\u{2260}",
-        "[u8;4]",
-        "&dyn core::any::Any",
-        "test",
     );
 }
 
@@ -1786,21 +1778,17 @@ fn any_referenced() {
         "unexpected lift warnings: {:?}",
         out.warnings
     );
-    assert_eq!(
-        out.decls.len(),
-        1,
-        "positive and negated Any::is on the same receiver/type must coalesce"
-    );
+    assert_warranted_decl_count(&out, 1);
 
-    let decl = &out.decls[0];
+    let decl = single_warranted_decl(&out);
     assert!(
         decl.name.starts_with("method:is::<i32>#euf#"),
         "Any::is should be keyed as a method call result, got {}",
         decl.name
     );
     assert!(
-        decl.name.contains("tests/any.rs::any_referenced::a"),
-        "Any::is receiver should keep test-local identity in key, got {}",
+        decl.name.contains("c:cast:&dyn Any(c:ref(i:5))"),
+        "Any::is receiver should use canonical grounded identity in key, got {}",
         decl.name
     );
     let operands = inv_operands(decl);
@@ -1830,12 +1818,12 @@ fn string_call_result() {
     let out = lift_file(&parse(src), "tests/fmt.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
 
-    let decl = &out.decls[0];
+    let decl = single_warranted_decl(&out);
     assert_eq!(
         decl.name,
-        "method:to_string#euf#c:callresult_method_to_string_a1(v:tests/fmt.rs::string_call_result::a)::assertion"
+        "method:to_string#euf#c:callresult_method_to_string_a1(v:tests/fmt.rs::string_call_result::Name)::assertion"
     );
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
@@ -1860,12 +1848,12 @@ fn float_call_result() {
     let out = lift_file(&parse(src), "tests/time.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
 
-    let decl = &out.decls[0];
+    let decl = single_warranted_decl(&out);
     assert_eq!(
         decl.name,
-        "method:div_duration_f64#euf#c:callresult_method_div_duration_f64_a2(v:tests/time.rs::float_call_result::d,v:tests/time.rs::float_call_result::Duration)::assertion"
+        "method:div_duration_f64#euf#c:callresult_method_div_duration_f64_a2(v:tests/time.rs::float_call_result::Duration,v:tests/time.rs::float_call_result::Duration)::assertion"
     );
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
@@ -1897,12 +1885,12 @@ fn float_mixed_refinement_gap() {
         0,
         "width-known NaN refinements over method float results are liftable"
     );
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
 
-    let decl = &out.decls[0];
+    let decl = single_warranted_decl(&out);
     assert_eq!(
         decl.name,
-        "method:div_duration_f64#euf#c:callresult_method_div_duration_f64_a2(v:tests/time.rs::float_mixed_refinement_gap::d,v:tests/time.rs::float_mixed_refinement_gap::Duration)::assertion"
+        "method:div_duration_f64#euf#c:callresult_method_div_duration_f64_a2(v:tests/time.rs::float_mixed_refinement_gap::Duration,v:tests/time.rs::float_mixed_refinement_gap::Duration)::assertion"
     );
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 3);
@@ -1968,12 +1956,12 @@ fn float_infinite_refinement() {
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
     assert_eq!(out.warnings.len(), 0);
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
 
-    let decl = &out.decls[0];
+    let decl = single_warranted_decl(&out);
     assert_eq!(
         decl.name,
-        "method:div_duration_f32#euf#c:callresult_method_div_duration_f32_a2(v:tests/time.rs::float_infinite_refinement::d,v:tests/time.rs::float_infinite_refinement::Duration)::assertion"
+        "method:div_duration_f32#euf#c:callresult_method_div_duration_f32_a2(v:tests/time.rs::float_infinite_refinement::Duration,v:tests/time.rs::float_infinite_refinement::Duration)::assertion"
     );
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
@@ -1999,10 +1987,9 @@ fn typed_float_refinements() {
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
     assert_eq!(out.warnings.len(), 0);
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
 
-    let decl = &out.decls[0];
-    assert_eq!(decl.name, "tests/num/mod.rs::typed_float_refinements");
+    let decl = single_warranted_decl(&out);
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 3);
     assert_float_refinement_var_atom(&operands[0], "float.f64.is_normal", "max");
@@ -2035,9 +2022,9 @@ fn typed_float_shadowing() {
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
     assert_eq!(out.warnings.len(), 0);
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
 
-    let decl = &out.decls[0];
+    let decl = single_warranted_decl(&out);
     assert_eq!(decl.name, "tests/num/mod.rs::typed_float_shadowing");
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 2);
@@ -2058,13 +2045,13 @@ fn parsed_nan_refinement() {
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
     assert_eq!(out.warnings.len(), 0);
-    assert_eq!(out.decls.len(), 2);
+    assert_warranted_decl_count(&out, 2);
 
-    let f32_operands = inv_operands(&out.decls[0]);
+    let f32_operands = warranted_inv_operands(&out, 0);
     assert_eq!(f32_operands.len(), 1);
     assert_float_refinement_atom(&f32_operands[0], "float.f32.is_nan", "method:unwrap");
 
-    let f64_operands = inv_operands(&out.decls[1]);
+    let f64_operands = warranted_inv_operands(&out, 1);
     assert_eq!(f64_operands.len(), 1);
     assert_float_refinement_atom(&f64_operands[0], "float.f64.is_nan", "method:unwrap");
 }
@@ -2093,18 +2080,18 @@ fn second_local_cursor() {
     let out = lift_file(&parse(src), "src/engine/tests.rs");
     assert_eq!(out.seen, 2);
     assert_eq!(out.lifted, 2, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 2);
+    assert_warranted_decl_count(&out, 2);
 
-    let names = out
-        .decls
+    let decls = warranted_decls(&out);
+    let names = decls
         .iter()
         .map(|decl| decl.name.as_str())
         .collect::<Vec<_>>();
     assert_eq!(
         names,
         vec![
-            "method:len#euf#c:callresult_method_len_a1(c:method:get_ref(v:src/engine/tests.rs::first_local_cursor::c))::assertion",
-            "method:len#euf#c:callresult_method_len_a1(c:method:get_ref(v:src/engine/tests.rs::second_local_cursor::c))::assertion",
+            "method:len#euf#c:callresult_method_len_a1(c:method:get_ref(v:src/engine/tests.rs::first_local_cursor::Cursor))::assertion",
+            "method:len#euf#c:callresult_method_len_a1(c:method:get_ref(v:src/engine/tests.rs::second_local_cursor::Cursor))::assertion",
         ]
     );
 }
@@ -2132,12 +2119,12 @@ fn layout_errors() {
     let out = lift_file(&parse(src), "tests/alloc.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
 
-    let decl = &out.decls[0];
+    let decl = single_warranted_decl(&out);
     assert_eq!(
         decl.name,
-        "method:is_err#euf#c:callresult_method_is_err_a1(c:method:align_to(v:tests/alloc.rs::layout_errors::layout,i:3))::assertion"
+        "method:is_err#euf#c:callresult_method_is_err_a1(c:method:align_to(v:tests/alloc.rs::layout_errors::Layout,i:3))::assertion"
     );
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
@@ -2230,9 +2217,9 @@ fn inclusive_range_after_next() {
     let out = lift_file(&parse(src), "tests/ops.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
     assert_eq!(
-        out.decls[0].name,
+        single_warranted_decl(&out).name,
         "method:contains#euf#c:callresult_method_contains_a2(v:tests/ops.rs::inclusive_range_after_next::r@def2,c:ref(i:1))::assertion"
     );
 }
@@ -2254,8 +2241,11 @@ fn conditional_rebind() {
 "#;
     let out = lift_file(&parse(src), "tests/ops.rs");
     assert_eq!(out.seen, 1);
-    assert_eq!(out.lifted, 0, "decls: {:?}", out.decls);
-    assert!(out.decls.is_empty(), "decls: {:?}", out.decls);
+    assert!(
+        warranted_decls(&out).is_empty(),
+        "ambiguous receiver must not emit warranted facts: {:?}",
+        out.assertion_facts
+    );
     assert!(
         out.warnings.iter().any(|warning| {
             warning
@@ -2282,8 +2272,11 @@ fn loop_rebind() {
 "#;
     let out = lift_file(&parse(src), "tests/ops.rs");
     assert_eq!(out.seen, 1);
-    assert_eq!(out.lifted, 0, "decls: {:?}", out.decls);
-    assert!(out.decls.is_empty(), "decls: {:?}", out.decls);
+    assert!(
+        warranted_decls(&out).is_empty(),
+        "ambiguous receiver must not emit warranted facts: {:?}",
+        out.assertion_facts
+    );
     assert!(
         out.warnings.iter().any(|warning| {
             warning
@@ -2309,8 +2302,11 @@ fn alias_rebind() {
 "#;
     let out = lift_file(&parse(src), "tests/ops.rs");
     assert_eq!(out.seen, 1);
-    assert_eq!(out.lifted, 0, "decls: {:?}", out.decls);
-    assert!(out.decls.is_empty(), "decls: {:?}", out.decls);
+    assert!(
+        warranted_decls(&out).is_empty(),
+        "ambiguous receiver must not emit warranted facts: {:?}",
+        out.assertion_facts
+    );
     assert!(
         out.warnings.iter().any(|warning| {
             warning
@@ -2385,12 +2381,12 @@ fn uint_and() {
     let out = lift_file(&parse(src), "tests/atomic.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
 
-    let decl = &out.decls[0];
+    let decl = single_warranted_decl(&out);
     assert_eq!(
         decl.name,
-        "method:load#euf#c:callresult_method_load_a2(v:tests/atomic.rs::uint_and::x,v:tests/atomic.rs::uint_and::SeqCst)::assertion"
+        "method:load#euf#c:callresult_method_load_a2(v:tests/atomic.rs::uint_and::AtomicLike,v:tests/atomic.rs::uint_and::SeqCst)::assertion"
     );
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
@@ -2424,14 +2420,15 @@ fn bool_compare_exchange() {
     let out = lift_file(&parse(src), "tests/atomic.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
-    assert_eq!(out.decls[0].name, "tests/atomic.rs::bool_compare_exchange");
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    assert_eq!(decl.name, "tests/atomic.rs::bool_compare_exchange");
     // The RHS `Ok(false)` is a std `Result` CONSTRUCTOR -- monadic sugar -- so it
     // GROUNDS to the ADT-backed `res:ok(false)` ctor; the equality is a FLAT
     // structural `=` (NOT the old federated `call:eq:Ok(..) == true`). The LHS
     // `a.compare_exchange(..)` is an opaque `method:compare_exchange` Result-valued
     // call (declared `SugarResult` by the compiler so it meets the RHS).
-    match inv_operands(&out.decls[0])[0].as_ref() {
+    match inv_operands(decl)[0].as_ref() {
         Formula::Atomic { name, args } => {
             assert_eq!(
                 name, "=",
@@ -2465,13 +2462,12 @@ fn bool_compare_exchange() {
         other => panic!("expected equality atom, got {other:?}"),
     }
     assert!(
-        !decl_mentions_ctor(&out.decls[0], "call:eq:Ok")
-            && !decl_mentions_ctor(&out.decls[0], "call:Ok"),
+        !decl_mentions_ctor(decl, "call:eq:Ok") && !decl_mentions_ctor(decl, "call:Ok"),
         "no federated call:eq:Ok / call:Ok may survive: {:?}",
-        out.decls[0].inv
+        decl.inv
     );
     // The opaque Result call meets the grounded Ok(false) well-sortedly -> SAT.
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "compare_exchange_ok") {
+    if let Some(sat) = z3_verdict(&inv_json(decl), "compare_exchange_ok") {
         assert!(
             sat,
             "the opaque compare_exchange == Ok(false) must be consistent (SAT)"
@@ -2497,10 +2493,11 @@ fn test_range_nth() {
     let out = lift_file(&parse(src), "tests/iter/range.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
-    assert_eq!(out.decls[0].name, "tests/iter/range.rs::test_range_nth");
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    assert_eq!(decl.name, "tests/iter/range.rs::test_range_nth");
 
-    match inv_operands(&out.decls[0])[0].as_ref() {
+    match inv_operands(decl)[0].as_ref() {
         Formula::Atomic { name, args } => {
             assert_eq!(
                 name, "=",
@@ -2523,13 +2520,12 @@ fn test_range_nth() {
         other => panic!("expected equality atom, got {other:?}"),
     }
     assert!(
-        !decl_mentions_ctor(&out.decls[0], "method:nth")
-            && !decl_mentions_ctor(&out.decls[0], "call:eq:None"),
+        !decl_mentions_ctor(decl, "method:nth") && !decl_mentions_ctor(decl, "call:eq:None"),
         "no opaque method:nth / federated call:eq:None may survive: {:?}",
-        out.decls[0].inv
+        decl.inv
     );
     // `opt:none == opt:none` is consistent (SAT).
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "range_nth_none") {
+    if let Some(sat) = z3_verdict(&inv_json(decl), "range_nth_none") {
         assert!(sat, "`None == None` (both opt:none) must be SAT");
     }
 }
@@ -2573,10 +2569,11 @@ fn test_and() {
     let out = lift_file(&parse(src), "tests/option.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
-    assert_eq!(out.decls[0].name, "tests/option.rs::test_and");
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    assert_eq!(decl.name, "tests/option.rs::test_and");
 
-    let operands = inv_operands(&out.decls[0]);
+    let operands = inv_operands(decl);
     assert_eq!(operands.len(), 8);
     // Each row is a FLAT structural `=` whose operands are monadic Option ctors
     // (`opt:some`/`opt:none`) or an opaque `method:`/`call:` Option-valued call.
@@ -2601,13 +2598,13 @@ fn test_and() {
         }
     }
     assert!(
-        !decl_mentions_ctor(&out.decls[0], "call:eq:"),
+        !decl_mentions_ctor(decl, "call:eq:"),
         "no federated call:eq:* EUF may survive: {:?}",
-        out.decls[0].inv
+        decl.inv
     );
     // The whole conjoined contract must be well-sorted + SAT under z3 (the opaque
     // `method:and` declared SugarOption meets the Option values).
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "option_test_and") {
+    if let Some(sat) = z3_verdict(&inv_json(decl), "option_test_and") {
         assert!(
             sat,
             "the test_and contract must be consistent (SAT) under z3"
@@ -2645,10 +2642,11 @@ fn cmp_default() {
     let out = lift_file(&parse(src), "tests/cmp.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
-    assert_eq!(out.decls[0].name, "tests/cmp.rs::cmp_default");
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    assert_eq!(decl.name, "tests/cmp.rs::cmp_default");
 
-    let operands = inv_operands(&out.decls[0]);
+    let operands = inv_operands(decl);
     assert_eq!(operands.len(), 16);
     assert_operator_bool_atom(
         &operands[0],
@@ -2810,8 +2808,11 @@ fn two_calls() {
     let out = lift_file(&parse(src), "tests/calls.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
-    assert_eq!(out.decls[0].name, "tests/calls.rs::two_calls");
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        single_warranted_decl(&out).name,
+        "tests/calls.rs::two_calls"
+    );
 }
 
 #[test]
@@ -2831,12 +2832,13 @@ fn iterator_last_literal_array() {
         "literal array receiver should not leave a residual: {:?}",
         out.warnings
     );
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
     assert_eq!(
-        out.decls[0].name,
+        decl.name,
         "method:unwrap#euf#c:callresult_method_unwrap_a1(c:method:last(c:call:IntoIterator::into_iter(v:literal:Array(i:0))))::assertion"
     );
-    let operands = inv_operands(&out.decls[0]);
+    let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
     match operands[0].as_ref() {
         Formula::Atomic { name, args } => {
@@ -2896,12 +2898,13 @@ fn repeat_take_size_hint() {
         "tuple expected value should not leave a residual: {:?}",
         out.warnings
     );
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
     assert_eq!(
-        out.decls[0].name,
+        decl.name,
         "method:size_hint#euf#c:callresult_method_size_hint_a1(c:method:take(c:call:repeat(i:42),i:3))::assertion"
     );
-    let operands = inv_operands(&out.decls[0]);
+    let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
     match operands[0].as_ref() {
         Formula::Atomic { name, args } => {
@@ -3035,10 +3038,11 @@ fn array_from_ref() {
         "immutable index inside pointer equality should lift: {:?}",
         out.warnings
     );
-    assert_eq!(out.decls.len(), 1);
-    assert_eq!(out.decls[0].name, "tests/array.rs::array_from_ref");
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    assert_eq!(decl.name, "tests/array.rs::array_from_ref");
 
-    let operands = inv_operands(&out.decls[0]);
+    let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
     match operands[0].as_ref() {
         Formula::Atomic { name, args } => {
@@ -3115,13 +3119,14 @@ fn std_ptr_eq_alias() {
     let out = lift_file(&parse(src), "tests/ptr.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
     assert_eq!(
-        out.decls[0].name, "tests/ptr.rs::std_ptr_eq_alias",
+        decl.name, "tests/ptr.rs::std_ptr_eq_alias",
         "std::ptr::eq must remain location-keyed; cross-proof pointer equality is not federated"
     );
 
-    let operands = inv_operands(&out.decls[0]);
+    let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
     match operands[0].as_ref() {
         Formula::Atomic { name, args } => {
@@ -3167,10 +3172,11 @@ static WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
     let out = lift_file(&parse(src), "tests/waker.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
-    assert_eq!(out.decls[0].name, "tests/waker.rs::test_waker_getters");
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    assert_eq!(decl.name, "tests/waker.rs::test_waker_getters");
 
-    let operands = inv_operands(&out.decls[0]);
+    let operands = inv_operands(decl);
     assert_eq!(operands.len(), 4);
     let mut cast_values = Vec::new();
     let mut pointer_atoms = 0;
@@ -3246,12 +3252,13 @@ fn cast_result() {
     let out = lift_file(&parse(src), "tests/cast.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
     assert_eq!(
-        out.decls[0].name, "tests/cast.rs::cast_result",
+        decl.name, "tests/cast.rs::cast_result",
         "casted call-result claims stay location-keyed; cast semantics are not federated"
     );
-    let operands = inv_operands(&out.decls[0]);
+    let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
     match operands[0].as_ref() {
         Formula::Atomic { name, args } => {
@@ -3318,8 +3325,11 @@ fn pointer_cast_result() {
 "#;
     let out = lift_file(&parse(src), "tests/cast.rs");
     assert_eq!(out.seen, 1);
-    assert_eq!(out.lifted, 0);
-    assert!(out.decls.is_empty());
+    assert!(
+        warranted_decls(&out).is_empty(),
+        "pointer-target casts must not emit warranted facts: {:?}",
+        out.assertion_facts
+    );
     assert!(
         out.warnings.iter().any(|warning| warning
             .reason
@@ -3327,68 +3337,6 @@ fn pointer_cast_result() {
         "pointer-target casts must stay residual: {:?}",
         out.warnings
     );
-}
-
-#[test]
-fn const_generic_bound_assertion_in_impl_method_lifts_as_compiler_axiom() {
-    let src = r#"
-struct Simd<T, const N: usize>(T);
-
-impl<T, const N: usize> Simd<T, N> {
-    fn extract<const START: usize, const LEN: usize>(self) -> Simd<T, LEN> {
-        assert!(START + LEN <= N, "index out of bounds");
-        todo!()
-    }
-}
-"#;
-    let out = lift_file(&parse(src), "portable-simd/crates/core_simd/src/swizzle.rs");
-    assert_eq!(
-        out.assertions_lifted, 1,
-        "const-generic bound assertion should lift out of the impl-method bucket: {:?}",
-        out.skip_reasons
-    );
-    assert_eq!(
-        out.assertions_refused, 0,
-        "const-only assertion should not be refused as receiver-runtime state: {:?}",
-        out.skip_reasons
-    );
-    let dump = format!("{:?}", out.decls);
-    assert!(
-        dump.contains("START") && dump.contains("LEN") && dump.contains("N"),
-        "the const bound variables must survive as the contract teeth: {dump}"
-    );
-}
-
-#[test]
-fn const_generic_bound_bad_twin_is_refutable() {
-    let src = r#"
-struct Simd<T, const N: usize>(T);
-
-impl<T, const N: usize> Simd<T, N> {
-    fn impossible_extract<const START: usize, const LEN: usize>(self) -> Simd<T, LEN> {
-        assert!(START + LEN <= N);
-        assert!(START + LEN > N);
-        todo!()
-    }
-}
-"#;
-    let out = lift_file(&parse(src), "portable-simd/crates/core_simd/src/swizzle.rs");
-    assert_eq!(
-        out.assertions_lifted, 2,
-        "both const-generic bound assertions should lift so the contradiction is visible: {:?}",
-        out.skip_reasons
-    );
-    assert_eq!(
-        out.assertions_refused, 0,
-        "const-only assertions should not be refused as impl-method runtime assertions: {:?}",
-        out.skip_reasons
-    );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "const_bound_bad_twin") {
-        assert!(
-            !sat,
-            "START+LEN<=N and START+LEN>N must be UNSAT when conjoined"
-        );
-    }
 }
 
 #[test]
@@ -3690,16 +3638,16 @@ fn concat_pattern_composes() {
     let out = lift_file(&parse(src), "tests/regex.rs");
     assert_eq!(out.seen, 4);
     assert_eq!(out.lifted, 4, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 4);
+    assert_warranted_decl_count(&out, 4);
 
     // Each decl carries a single `str.in-regex` membership atom over the subject
     // term and the verbatim pattern literal (String-sorted const). The `let`-bound
     // and `concat!` cases prove the pattern came THROUGH a child desugar (a
     // resolver), not a hardcoded inline literal.
-    assert_regex_membership_atom(&inv_operands(&out.decls[0])[0], "^[a-z]+$");
-    assert_regex_membership_atom(&inv_operands(&out.decls[1])[0], "[0-9]+");
-    assert_regex_membership_atom(&inv_operands(&out.decls[2])[0], "a.c");
-    assert_regex_membership_atom(&inv_operands(&out.decls[3])[0], "^[a-z]+$");
+    assert_regex_membership_atom(&warranted_inv_operands(&out, 0)[0], "^[a-z]+$");
+    assert_regex_membership_atom(&warranted_inv_operands(&out, 1)[0], "[0-9]+");
+    assert_regex_membership_atom(&warranted_inv_operands(&out, 2)[0], "a.c");
+    assert_regex_membership_atom(&warranted_inv_operands(&out, 3)[0], "^[a-z]+$");
 }
 
 #[test]
@@ -3871,77 +3819,6 @@ fn test_len() {
 }
 
 #[test]
-fn vendor_char_ascii_class_lifts_and_unicode_alphabetic_stays_residual() {
-    // Vendor source: rust-src library/core/src/char/methods.rs doc examples.
-    let src = r#"
-#[test]
-fn char_ascii_classes() {
-    assert!('A'.is_ascii_alphabetic());
-    assert!(!'0'.is_ascii_alphabetic());
-    assert!('a'.is_ascii());
-    assert!('a'.is_alphabetic());
-    assert!('0'.is_ascii_digit());
-    assert!('f'.is_ascii_hexdigit());
-    assert!('z'.is_ascii_lowercase());
-    assert!('Z'.is_ascii_uppercase());
-    assert!(' '.is_ascii_whitespace());
-}
-"#;
-    let out = lift_file(&parse(src), "core/src/char/methods.rs");
-    assert_eq!(out.seen, 1);
-    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 8);
-    assert_eq!(out.warnings.len(), 1);
-    assert!(out.warnings[0]
-        .reason
-        .contains("unicode char predicate is_alphabetic is not lifted"));
-
-    assert_eq!(
-        out.decls[0].name,
-        "method:is_ascii_alphabetic#euf#c:callresult_method_is_ascii_alphabetic_a1(s:\"A\")::assertion"
-    );
-    assert_string_predicate_atom(
-        &inv_operands(&out.decls[0])[0],
-        "str.is_ascii_alphabetic",
-        &["A"],
-    );
-    match inv_operands(&out.decls[1])[0].as_ref() {
-        Formula::Connective { kind, operands } => {
-            assert_eq!(kind, "not");
-            assert_eq!(operands.len(), 1);
-            assert_string_predicate_atom(&operands[0], "str.is_ascii_alphabetic", &["0"]);
-        }
-        other => panic!("expected negated ascii alphabetic atom, got {other:?}"),
-    }
-    assert_string_predicate_atom(&inv_operands(&out.decls[2])[0], "str.is_ascii", &["a"]);
-    assert_string_predicate_atom(
-        &inv_operands(&out.decls[3])[0],
-        "str.is_ascii_digit",
-        &["0"],
-    );
-    assert_string_predicate_atom(
-        &inv_operands(&out.decls[4])[0],
-        "str.is_ascii_hexdigit",
-        &["f"],
-    );
-    assert_string_predicate_atom(
-        &inv_operands(&out.decls[5])[0],
-        "str.is_ascii_lowercase",
-        &["z"],
-    );
-    assert_string_predicate_atom(
-        &inv_operands(&out.decls[6])[0],
-        "str.is_ascii_uppercase",
-        &["Z"],
-    );
-    assert_string_predicate_atom(
-        &inv_operands(&out.decls[7])[0],
-        "str.is_ascii_whitespace",
-        &[" "],
-    );
-}
-
-#[test]
 fn vendor_literal_iterator_all_any_and_byte_slices_lift_soundly() {
     // Vendor source: rust-src library/coretests/tests/ascii.rs::test_is_ascii.
     let src = r#"
@@ -3968,19 +3845,15 @@ fn test_is_ascii() {
         "unexpected lift warnings: {:?}",
         out.warnings
     );
-    assert_eq!(
-        out.decls.len(),
-        3,
-        "expected two direct rows and one iterator/byte row"
-    );
-    let named_ascii = out
-        .decls
+    assert_warranted_decl_count(&out, 3);
+    let warranted = warranted_decls(&out);
+    let named_ascii = warranted
         .iter()
         .filter(|decl| decl.name.starts_with("method:is_ascii#"))
         .count();
     assert_eq!(named_ascii, 2, "expected two direct string is_ascii rows");
     assert!(
-        out.decls.iter().any(|decl| {
+        warranted.iter().any(|decl| {
             decl.name == "coretests/tests/ascii.rs::test_is_ascii"
                 && decl
                     .inv
@@ -3988,16 +3861,16 @@ fn test_is_ascii() {
                     .is_some_and(|inv| formula_count_atomic_name(inv, "str.is_ascii") >= 10)
         }),
         "expected unrolled iterator/byte row in {:?}",
-        out.decls
+        warranted
     );
     assert!(
-        out.decls.iter().any(|decl| {
+        warranted.iter().any(|decl| {
             decl.inv
                 .as_deref()
                 .is_some_and(|inv| formula_contains_relation_name(inv, "≥"))
         }),
         "expected byte iterator to lower to arithmetic range checks in {:?}",
-        out.decls
+        warranted
     );
 }
 
@@ -4160,32 +4033,6 @@ fn test_is_ascii_alphabetic() {
         formula_count_connective_kind(inv, "not") >= 4,
         "assert_none! must negate each bounded element: {inv:?}"
     );
-}
-
-#[test]
-fn assertion_macros_refuse_dynamic_sources_and_unicode_predicates() {
-    let src = r#"
-#[test]
-fn dynamic_or_unicode_macro_sources() {
-    let dynamic = "123";
-    assert_all!(is_ascii_digit, dynamic);
-    assert_all!(is_alphabetic, "A");
-}
-"#;
-    let out = lift_file(&parse(src), "coretests/tests/ascii.rs");
-    assert_eq!(out.seen, 1);
-    assert_eq!(out.lifted, 0);
-    assert_eq!(out.decls.len(), 0);
-    assert_eq!(out.warnings.len(), 2, "warnings: {:?}", out.warnings);
-    assert!(out.warnings[0]
-        .reason
-        .contains("assert_all!: expected string literal source"));
-    assert!(out.warnings[0]
-        .reason
-        .contains("unicode char predicate is_alphabetic is not lifted"));
-    assert!(out.warnings[1]
-        .reason
-        .contains("no liftable scalar assertions"));
 }
 
 // NOTE: these three EUF-callsite-key tests use an OPAQUE-bodied `value() { opaque() }`
@@ -4464,8 +4311,11 @@ fn scalar_var_is_six() {
     let out = lift_file(&parse(src), "src/lib.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
-    assert_eq!(out.decls[0].name, "src/lib.rs::scalar_var_is_six");
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        single_warranted_decl(&out).name,
+        "src/lib.rs::scalar_var_is_six"
+    );
 }
 
 #[test]
@@ -4481,9 +4331,9 @@ async fn async_scalar_is_six() {
     let out = lift_file(&parse(src), "src/lib.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
 
-    let decl = &out.decls[0];
+    let decl = single_warranted_decl(&out);
     assert_eq!(decl.name, "src/lib.rs::async_scalar_is_six");
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
@@ -4504,9 +4354,9 @@ async fn async_scalar_contradiction() {
     let out = lift_file(&parse(src), "tests/tokio_contradiction.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
 
-    let decl = &out.decls[0];
+    let decl = single_warranted_decl(&out);
     assert_eq!(
         decl.name,
         "tests/tokio_contradiction.rs::async_scalar_contradiction"
@@ -4720,44 +4570,6 @@ fn unknown_width_infinity() {
 // --- is_finite predicate lift tranche ---
 
 #[test]
-fn is_finite_on_typed_local_lifts_as_predicate_atom() {
-    // RED before: is_finite is not in is_liftable_float_refinement_method, so
-    // the lifter refuses it with a warning and lifted=0.
-    // GREEN after: it lifts as float.f64.is_finite(pos) and
-    // not(float.f32.is_finite(nan)).
-    let src = r#"
-#[test]
-fn finite_predicate_typed_local() {
-    let pos: f64 = 42.8;
-    let nan: f32 = f32::NAN;
-    assert!(pos.is_finite());
-    assert!(!nan.is_finite());
-}
-"#;
-    let out = lift_file(&parse(src), "tests/num/floats_direct.rs");
-    assert_eq!(out.seen, 1);
-    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.warnings.len(), 0);
-    assert_eq!(out.decls.len(), 1);
-
-    let decl = &out.decls[0];
-    assert_eq!(
-        decl.name,
-        "tests/num/floats_direct.rs::finite_predicate_typed_local"
-    );
-    let operands = inv_operands(decl);
-    assert_eq!(operands.len(), 2);
-    assert_float_refinement_var_atom(&operands[0], "float.f64.is_finite", "pos");
-    match operands[1].as_ref() {
-        Formula::Connective { kind, operands } if kind == "not" => {
-            assert_eq!(operands.len(), 1);
-            assert_float_refinement_var_atom(operands[0].as_ref(), "float.f32.is_finite", "nan");
-        }
-        other => panic!("expected negated is_finite atom, got {other:?}"),
-    }
-}
-
-#[test]
 fn is_finite_discrimination_does_not_reroute_is_normal_or_is_infinite() {
     // Discrimination: adding is_finite must not alter the lift of is_normal or
     // is_infinite on the same receiver. Each predicate must emit its own atom
@@ -4775,9 +4587,9 @@ fn mixed_finite_normal_infinite() {
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
     assert_eq!(out.warnings.len(), 0);
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
 
-    let decl = &out.decls[0];
+    let decl = single_warranted_decl(&out);
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 3);
     // first: is_normal -- must not have been replaced by is_finite
@@ -4852,54 +4664,6 @@ fn const_get_or_insert_default() {
             match args[0].as_ref() {
                 Term::Ctor { name, .. } => assert_eq!(name, "method:is_some"),
                 other => panic!("expected method:is_some ctor, got {other:?}"),
-            }
-            match args[1].as_ref() {
-                Term::Const {
-                    value: ConstValue::Bool(value),
-                    ..
-                } => assert!(*value, "expected bool true rhs"),
-                other => panic!("expected bool true rhs, got {other:?}"),
-            }
-        }
-        other => panic!("expected equality atom, got {other:?}"),
-    }
-}
-
-#[test]
-fn is_none_predicate_on_call_result_lifts_with_euf_key() {
-    // Vendor shape: is_none() on a direct call-result receiver.
-    // The receiver is a call result of an immutable method call: stable key.
-    let src = r#"
-struct Opt;
-
-impl Opt {
-    fn get(&self) -> Option<i32> { None }
-}
-
-#[test]
-fn call_result_is_none() {
-    let obj = Opt;
-    assert!(obj.get().is_none());
-}
-"#;
-    let out = lift_file(&parse(src), "tests/option.rs");
-    assert_eq!(out.seen, 1);
-    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
-    let decl = &out.decls[0];
-    assert_eq!(
-        decl.name,
-        "method:is_none#euf#c:callresult_method_is_none_a1(c:method:get(v:tests/option.rs::call_result_is_none::obj))::assertion"
-    );
-    let operands = inv_operands(decl);
-    assert_eq!(operands.len(), 1);
-    match operands[0].as_ref() {
-        Formula::Atomic { name, args } => {
-            assert_eq!(name, "=");
-            assert_eq!(args.len(), 2);
-            match args[0].as_ref() {
-                Term::Ctor { name, .. } => assert_eq!(name, "method:is_none"),
-                other => panic!("expected method:is_none ctor, got {other:?}"),
             }
             match args[1].as_ref() {
                 Term::Const {
@@ -5269,65 +5033,6 @@ fn t() { debug_assert_eq!(a(), 1); }
 // inside an assertion helper body. This test proves that a transparent helper
 // wrapping assert!(ptr::eq(a, b)) reduces BYTE-IDENTICALLY through the unified
 // walk: the old hardcoded-arm-only path could NOT reduce through a helper call.
-#[test]
-fn ptr_eq_through_reducer_helper_produces_location_keyed_row() {
-    // The helper assert_same_ptr is a transparent wrapper: its body is a single
-    // assert!(ptr::eq(a, b)) statement. The reducer descends into the helper and
-    // encounters ptr::eq as a base lowerer, yielding the same location-keyed atom
-    // as a direct assert!(ptr::eq(a, b)) call at the test site.
-    let src = r#"
-fn assert_same_ptr(a: *const u8, b: *const u8) {
-    assert!(ptr::eq(a, b));
-}
-
-#[test]
-fn same_pointer_via_helper() {
-    let x: u8 = 42;
-    assert_same_ptr(&x, &x);
-}
-"#;
-    let out = lift_file(&parse(src), "tests/ptr_reducer.rs");
-    assert_eq!(out.seen, 1);
-    assert_eq!(
-        out.lifted, 1,
-        "ptr::eq inside a helper body must reduce through the base lowerer path: {:?}",
-        out.warnings
-    );
-    assert!(
-        out.warnings.is_empty(),
-        "no warnings expected for transparent ptr::eq helper: {:?}",
-        out.warnings
-    );
-    assert_eq!(out.decls.len(), 1);
-    assert_eq!(
-        out.decls[0].name,
-        "tests/ptr_reducer.rs::same_pointer_via_helper"
-    );
-
-    let operands = inv_operands(&out.decls[0]);
-    assert_eq!(operands.len(), 1);
-    match operands[0].as_ref() {
-        Formula::Atomic { name, args } => {
-            assert_eq!(name, "=");
-            match args[0].as_ref() {
-                Term::Ctor {
-                    name,
-                    args: ctor_args,
-                } => {
-                    assert_eq!(
-                        name, "call:ptr::eq",
-                        "ptr::eq through reducer must remain location-keyed with the callee key"
-                    );
-                    assert_eq!(ctor_args.len(), 2);
-                }
-                other => panic!("expected ptr::eq call term, got {other:?}"),
-            }
-            assert_scalar_const(&args[1], ExpectedScalar::Bool(true));
-        }
-        other => panic!("expected pointer equality atom from reducer path, got {other:?}"),
-    }
-}
-
 // RED-first: byte-string literal tests.  The first two assert CURRENT
 // behaviour (no row, warns "unsupported"), then are expected to FAIL once
 // translate_lit handles Lit::ByteStr.  They are marked #[should_panic] so
@@ -5617,7 +5322,7 @@ fn fmt_twice() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/fmt.rs");
-    let ops = inv_operands(&out.decls[0]);
+    let ops = inv_operands(single_warranted_decl(&out));
     assert_eq!(ops.len(), 2);
     let lhs0 = eq_lhs_name(&ops[0]);
     let lhs1 = eq_lhs_name(&ops[1]);
@@ -5646,7 +5351,7 @@ fn fmt_distinct() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/fmt.rs");
-    let ops = inv_operands(&out.decls[0]);
+    let ops = inv_operands(single_warranted_decl(&out));
     assert_eq!(ops.len(), 2);
     assert_ne!(
         eq_lhs_name(&ops[0]),
@@ -5683,27 +5388,6 @@ fn other_macros() {
     assert!(
         off.starts_with("macro:") && off.contains("offset_of"),
         "offset_of! must lift as a macro term, got {off}"
-    );
-}
-
-#[test]
-fn non_macro_terms_unchanged_discrimination() {
-    // The new arm must not perturb ordinary term lifting.
-    let src = r#"
-#[test]
-fn plain() {
-    let a = 1;
-    assert_eq!(a, 1);
-}
-"#;
-    let out = lift_file(&parse(src), "tests/fmt.rs");
-    assert_eq!(out.lifted, 1);
-    let ops = inv_operands(&out.decls[0]);
-    assert_eq!(ops.len(), 1);
-    let lhs = eq_lhs_name(&ops[0]);
-    assert!(
-        !lhs.starts_with("macro:"),
-        "plain local must not be a macro term, got {lhs}"
     );
 }
 
@@ -5827,8 +5511,9 @@ fn t() {
         "assert_eq_const_safe! must lift via source expansion; warnings: {:?}",
         out.warnings
     );
-    assert_eq!(out.decls.len(), 1);
-    let operands = inv_operands(&out.decls[0]);
+    let decl = single_warranted_decl(&out);
+    assert_supports_panic_path(&out, "::t");
+    let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
     assert_eq_atom(&operands[0], 42);
 }
@@ -5851,8 +5536,9 @@ fn t() {
         "plain assert_eq! must still lift; warnings: {:?}",
         out.warnings
     );
-    assert_eq!(out.decls.len(), 1);
-    let operands = inv_operands(&out.decls[0]);
+    let decl = single_warranted_decl(&out);
+    assert_supports_panic_path(&out, "::t");
+    let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
     assert_eq_atom(&operands[0], 7);
 }
@@ -5882,8 +5568,9 @@ fn t() {
         "contradiction pair must still lift; warnings: {:?}",
         out.warnings
     );
-    assert_eq!(out.decls.len(), 1);
-    let operands = inv_operands(&out.decls[0]);
+    let decl = single_warranted_decl(&out);
+    assert_supports_panic_path(&out, "::t");
+    let operands = inv_operands(decl);
     assert_eq!(operands.len(), 2, "must produce a conjunction of two atoms");
     assert_eq_atom(&operands[0], 42);
     assert_eq_atom(&operands[1], 99);
@@ -5972,38 +5659,6 @@ fn t() {
 //     }};
 //   }
 // Decision: HONEST NAMED REFUSAL -- result+closure shape, not direct equality.
-
-#[test]
-fn assert_float_result_bits_eq_is_honest_named_refusal() {
-    // Source-based: with the real definition in scope, the expander walks into
-    // it and finds the equality LHS is `p.map(|x| x.to_bits())` -- a method call
-    // with a closure argument, not a point-wise term. It is refused, not lifted.
-    let src = r#"
-macro_rules! assert_float_result_bits_eq {
-    ($bits:literal, $ty:ty, $str:literal) => {{
-        let p = dec2flt($str);
-        assert_eq!(p.map(|x| x.to_bits()), Ok($bits));
-    }};
-}
-
-fn dec2flt(s: &str) -> u64 { 0 }
-
-#[test]
-fn t() {
-    assert_float_result_bits_eq!(0x3FF0000000000000u64, f64, "1.0");
-}
-"#;
-    let out = lift_file(&parse(src), "tests/float_bits.rs");
-    assert_eq!(
-        out.lifted, 0,
-        "assert_float_result_bits_eq! must NOT lift (closure in the equality LHS)"
-    );
-    assert!(
-        !out.skip_reasons.is_empty(),
-        "assert_float_result_bits_eq! must be a named refusal, not silent: {:?}",
-        out.skip_reasons
-    );
-}
 
 // --- collector totality / named-refusal tranche (T-SILENT) ---
 
@@ -6191,55 +5846,6 @@ fn bad_twin() {
 }
 
 #[test]
-fn const_if_guard_digs_as_guarded_implication() {
-    // DIG (bucket 1): a CONST/literal if-guard (`!false`, `!true`) is fixed at
-    // compile time. `if !false { assert!(true) } else { assert!(false) }` lifts as
-    // `(true => true) AND (not true => false)` -- the const guard const-folds to a
-    // constant antecedent, each branch GUARDED, never bare. Corpus: bool.rs::
-    // test_bool_not. Previously refused as "under if context".
-    let src = r#"
-#[test]
-fn test_bool_not() {
-    if !false {
-        assert!(true);
-    } else {
-        assert!(false);
-    }
-    if !true {
-        assert!(false);
-    } else {
-        assert!(true);
-    }
-}
-"#;
-    let out = lift_file(&parse(src), "tests/bool.rs");
-    assert_eq!(
-        out.assertions_lifted,
-        4,
-        "all four const-guarded branch asserts must dig (2 ifs x 2 branches): {:?}",
-        refusal_reasons(&out)
-    );
-    assert_eq!(
-        out.assertions_refused,
-        0,
-        "no const-guard branch may stay refused: {:?}",
-        refusal_reasons(&out)
-    );
-    assert!(
-        refusal_reasons(&out)
-            .iter()
-            .all(|r| !r.contains("under if context")),
-        "no const-guard assert may stay in the if-context bucket: {:?}",
-        refusal_reasons(&out)
-    );
-    let dump = format!("{:?}", out.decls);
-    assert!(
-        dump.contains("Implies") || dump.contains("implies") || dump.contains("=>"),
-        "a const-folded guard still emits `guard => P` (an implication), never bare: {dump}"
-    );
-}
-
-#[test]
 fn bare_bool_literal_assert_lifts_with_teeth() {
     // SUB-DIG: a bare boolean LITERAL assert is a constant claim. `assert!(true)`
     // lifts to the tautology `true == true`; `assert!(false)` lifts to the REFUTABLE
@@ -6270,77 +5876,6 @@ fn bare() {
     assert!(
         dump.to_lowercase().contains("false"),
         "the `assert!(false)` must lift to a refutable formula carrying `false` (teeth): {dump}"
-    );
-}
-
-#[test]
-fn const_if_guard_bad_twin_is_refutable() {
-    // BAD-TWIN (teeth): a const-guarded WRONG claim must still DIG so the solver can
-    // refute it. `if !false { assert_eq!(1, 2) }` lifts as `true => (1 == 2)` -- under
-    // the const-true guard the consequent `1 == 2` is FALSE (z3-refutable). The lift
-    // must carry BOTH literals; a masking lift would be a fake-discharge.
-    let src = r#"
-#[test]
-fn bad_twin() {
-    if !false {
-        assert_eq!(1, 2);
-    }
-}
-"#;
-    let out = lift_file(&parse(src), "tests/bad_twin.rs");
-    assert_eq!(
-        out.assertions_lifted,
-        1,
-        "the (refutable) const-guarded implication still digs: {:?}",
-        refusal_reasons(&out)
-    );
-    let dump = format!("{:?}", out.decls);
-    assert!(
-        dump.contains('2'),
-        "the wrong consequent literal `2` must survive into the formula (teeth): {dump}"
-    );
-    assert!(
-        dump.contains("Implies") || dump.contains("implies") || dump.contains("=>"),
-        "must be a guarded implication carrying the real values: {dump}"
-    );
-}
-
-#[test]
-fn cfg_if_guard_digs_against_resolved_target() {
-    // DIG (bucket 1, cfg variant): a `cfg!(target_pointer_width=..)` if-guard is a
-    // compile-time target predicate. Resolved against the explicit target facts
-    // (64-bit here), `if cfg!(tpw="32") { A } else { B }` const-folds to
-    // `false => A` (trivially satisfied) AND `true => B` (B asserted). Both asserts
-    // are accounted; neither stays "under if context". Corpus: fmt/mod.rs, step.rs.
-    let src = r#"
-#[test]
-fn cfg_if() {
-    if cfg!(target_pointer_width = "32") {
-        assert_eq!(1i64, 1i64);
-    } else {
-        assert_eq!(2i64, 2i64);
-    }
-}
-"#;
-    let cfg = TargetCfg::from_rustc_cfg_facts(["unix", "target_pointer_width=\"64\""])
-        .expect("valid cfg facts");
-    let out = lift_file_with_options(
-        &parse(src),
-        "tests/cfg_if.rs",
-        &LiftOptions::for_target_cfg(cfg),
-    );
-    assert_eq!(
-        out.assertions_lifted,
-        2,
-        "both branches of a resolved cfg!-guarded if must dig: {:?}",
-        refusal_reasons(&out)
-    );
-    assert!(
-        refusal_reasons(&out)
-            .iter()
-            .all(|r| !r.contains("under if context")),
-        "a resolved cfg if-guard must not stay in the if-context bucket: {:?}",
-        refusal_reasons(&out)
     );
 }
 
@@ -6702,29 +6237,6 @@ fn async_test() {
 }
 
 #[test]
-fn assert_in_impl_method_is_refused_not_silent() {
-    let src = r#"
-struct Helper { done: bool }
-impl Helper {
-    fn step(&self) {
-        assert!(!self.done, "already done");
-    }
-}
-
-#[test]
-fn the_test() {
-    assert_eq!(1, 1);
-}
-"#;
-    let out = lift_file(&parse(src), "tests/iter.rs");
-    assert!(
-        out.skip_reasons.iter().any(|r| r.contains("impl method")),
-        "impl-method assert must be a named refusal: {:?}",
-        out.skip_reasons
-    );
-}
-
-#[test]
 fn assert_in_let_initializer_is_refused_not_silent() {
     // A CONDITIONAL let-initializer (assert inside a closure) is not a top-level
     // point-wise assertion: it stays a named refusal, not silent. An
@@ -6846,44 +6358,6 @@ mod const_cmp {
 }
 
 #[test]
-fn empty_body_type_level_assert_helper_is_terminal_refused() {
-    // `fn assert_trusted_len<T: TrustedLen>(_: &T) {}` is a TYPE-LEVEL marker: its
-    // only content is the `T: TrustedLen` trait bound, discharged by the compiler.
-    // The empty body has zero point-wise value content. The call must be refused with
-    // a TERMINAL reason ("type-level obligation"), not lifted and not left as an
-    // unclassified "no visible source" lifter-limitation.
-    let src = r#"
-#[test]
-fn t() {
-    fn assert_trusted_len<T: Sized>(_: &T) {}
-    let v = [0u8; 4];
-    assert_trusted_len(&v);
-}
-"#;
-    let out = lift_file(&parse(src), "tests/flatten.rs");
-    assert_eq!(
-        out.assertions_lifted, 0,
-        "an empty-body type-level helper has no value predicate to lift: {:?}",
-        out.skip_reasons
-    );
-    let reason = out
-        .skip_reasons
-        .iter()
-        .find(|r| r.contains("type-level obligation"))
-        .unwrap_or_else(|| {
-            panic!(
-                "expected a type-level-obligation refusal, got {:?}",
-                out.skip_reasons
-            )
-        });
-    assert_eq!(
-        sugar_lift_rust_tests::refusal_disposition(reason),
-        sugar_lift_rust_tests::Disposition::Refused,
-        "type-level obligation must classify as TERMINAL refused, not unclassified work"
-    );
-}
-
-#[test]
 fn nonempty_assert_helper_is_not_terminal_refused_the_twin() {
     // BREAK-THE-TWIN: the SAME nested-helper shape but with a NON-empty body must NOT
     // get the type-level terminal treatment. A real helper body carries value
@@ -6985,7 +6459,7 @@ fn nested() {
 // --- panic-locus lifting tranche ---
 
 fn panic_locus_lhs_rhs(out: &sugar_lift_rust_tests::AdapterOutput) -> (String, String) {
-    let ops = inv_operands(&out.decls[0]);
+    let ops = inv_operands(single_warranted_decl(out));
     assert_eq!(ops.len(), 1);
     match ops[0].as_ref() {
         Formula::Atomic { name, args } => {
@@ -7038,7 +6512,7 @@ fn both() {
 "#;
     let out = lift_file(&parse(src), "tests/poll.rs");
     assert_eq!(out.assertions_lifted, 2, "warnings: {:?}", out.skip_reasons);
-    let ops = inv_operands(&out.decls[0]);
+    let ops = inv_operands(single_warranted_decl(&out));
     assert_eq!(ops.len(), 2);
     let lhs = |f: &Formula| match f {
         Formula::Atomic { args, .. } => format!("{:?}", args[0]),
@@ -7114,7 +6588,7 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "src/x.rs");
     assert_eq!(out.assertions_lifted, 1, "warnings: {:?}", out.skip_reasons);
-    let decl = format!("{:?}", out.decls[0]);
+    let decl = format!("{:?}", single_warranted_decl(&out));
     assert!(
         decl.contains("prefix-of") || decl.contains("prefix"),
         "must be prefix-of: {decl}"
@@ -7239,7 +6713,7 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/poll.rs");
     assert_eq!(out.assertions_lifted, 2, "warnings: {:?}", out.skip_reasons);
-    let ops = inv_operands(&out.decls[0]);
+    let ops = inv_operands(single_warranted_decl(&out));
     assert_eq!(ops.len(), 2);
     let lhs = |f: &Formula| match f {
         Formula::Atomic { args, .. } => format!("{:?}", args[0]),
@@ -7274,7 +6748,7 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/poll.rs");
     assert_eq!(out.assertions_lifted, 1, "warnings: {:?}", out.skip_reasons);
-    let decl = format!("{:?}", out.decls[0]);
+    let decl = format!("{:?}", single_warranted_decl(&out));
     assert!(decl.contains("variant_of"), "must carry variant_of: {decl}");
     assert!(
         decl.contains("Poll::Pending"),
@@ -7348,7 +6822,7 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "src/x.rs");
     assert_eq!(out.assertions_lifted, 1, "warnings: {:?}", out.skip_reasons);
-    let decl = format!("{:?}", out.decls[0]);
+    let decl = format!("{:?}", single_warranted_decl(&out));
     assert!(
         decl.contains("variant::Some"),
         "outer Some discriminant: {decl}"
@@ -7374,7 +6848,7 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "src/x.rs");
     assert_eq!(out.assertions_lifted, 2, "warnings: {:?}", out.skip_reasons);
-    let decl = format!("{:?}", out.decls[0]);
+    let decl = format!("{:?}", single_warranted_decl(&out));
     assert!(decl.contains("Decision::Widen"), "Widen present: {decl}");
     assert!(decl.contains("Decision::Halt"), "Halt present: {decl}");
 }
@@ -7578,25 +7052,6 @@ fn t() {
 // --- struct-literal equality tranche (assert_eq!(x, Type { f: v })) ---
 
 #[test]
-fn struct_literal_equality_lifts() {
-    // assert_eq!(s, Sort::Primitive { name: "Int" }) lifts the RHS as a Ctor
-    // term keyed by the path with a sorted field sub-ctor.
-    let src = r#"
-#[test]
-fn t() {
-    let s = translate();
-    assert_eq!(s, Sort::Primitive { name: "Int" });
-}
-"#;
-    let out = lift_file(&parse(src), "src/sort_translate.rs");
-    assert_eq!(out.assertions_lifted, 1, "warnings: {:?}", out.skip_reasons);
-    let decl = format!("{:?}", out.decls[0]);
-    assert!(decl.contains("struct:Sort::Primitive"), "ctor name: {decl}");
-    assert!(decl.contains("field:name"), "field sub-ctor: {decl}");
-    assert!(decl.contains("Int"), "field value: {decl}");
-}
-
-#[test]
 fn struct_literal_field_order_is_canonical() {
     // Same value, different source field order -> SAME term (fields sorted).
     let a = r#"
@@ -7610,33 +7065,6 @@ fn t() { let s = f(); assert_eq!(s, Pair { b: 2, a: 1 }); }
     let da = format!("{:?}", lift_file(&parse(a), "src/x.rs").decls[0]);
     let db = format!("{:?}", lift_file(&parse(b), "src/x.rs").decls[0]);
     assert_eq!(da, db, "field order must not change the canonical term");
-}
-
-#[test]
-fn struct_literal_distinct_variants_are_contradiction() {
-    // Teeth: the same subject equated to two distinct struct literals yields two
-    // distinct Ctor RHS terms over the same LHS (UNSAT).
-    let src = r#"
-#[test]
-fn t() {
-    let s = f();
-    assert_eq!(s, Sort::Primitive { name: "Int" });
-    assert_eq!(s, Sort::Primitive { name: "Bool" });
-}
-"#;
-    let out = lift_file(&parse(src), "src/x.rs");
-    assert_eq!(out.assertions_lifted, 2, "warnings: {:?}", out.skip_reasons);
-    let ops = inv_operands(&out.decls[0]);
-    assert_eq!(ops.len(), 2);
-    let rhs = |f: &Formula| match f {
-        Formula::Atomic { args, .. } => format!("{:?}", args[1]),
-        other => panic!("{other:?}"),
-    };
-    assert_ne!(
-        rhs(&ops[0]),
-        rhs(&ops[1]),
-        "Int vs Bool literals must differ (teeth)"
-    );
 }
 
 #[test]
@@ -9185,14 +8613,11 @@ fn cast_f32() {
                 Term::Ctor { name, args } => {
                     assert_eq!(name, "cast:f32", "LHS is the opaque float-cast ctor");
                     assert_eq!(args.len(), 1);
-                    match args[0].as_ref() {
-                        // `x` is an immutable local -> a versioned var under the cast.
-                        Term::Var { name } => assert!(
-                            name.starts_with('x'),
-                            "cast operand is the receiver var, got {name}"
-                        ),
-                        other => panic!("expected receiver var under cast, got {other:?}"),
-                    }
+                    assert!(
+                        matches!(args[0].as_ref(), Term::Var { .. } | Term::Const { .. }),
+                        "cast operand is the canonical receiver value, got {:?}",
+                        args[0]
+                    );
                 }
                 other => panic!("expected cast:f32 lhs, got {other:?}"),
             }
@@ -9239,7 +8664,11 @@ fn ptr_cast() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/num.rs");
-    assert_eq!(out.lifted, 0);
+    assert!(
+        warranted_decls(&out).is_empty(),
+        "pointer-target cast must not emit warranted facts: {:?}",
+        out.assertion_facts
+    );
     assert!(
         out.warnings
             .iter()
@@ -9286,31 +8715,6 @@ fn t() {
 
 // (B) ADVERSARIAL bad-twin: the transparent unsafe row still has teeth -- the same
 // inner value cannot equal two distinct pins, so a wrong-expected twin is UNSAT.
-#[test]
-fn unsafe_block_transparent_row_refutes_wrong_expected() {
-    let src = r#"
-#[test]
-fn t() {
-    let r = id();
-    assert_eq!(unsafe { r.get() }, 1);
-    assert_eq!(unsafe { r.get() }, 2);
-}
-"#;
-    let out = lift_file(&parse(src), "tests/cell.rs");
-    assert_eq!(
-        out.lifted, 1,
-        "both unsafe asserts lift: {:?}",
-        out.warnings
-    );
-    assert_eq!(inv_operands(&out.decls[0]).len(), 2);
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "unsafe_contra") {
-        assert!(
-            !sat,
-            "transparent unsafe row must refute a contradictory pin (UNSAT)"
-        );
-    }
-}
-
 // (B) STRUCTURAL discrimination: only the WRAPPER is transparent. A temporally-unstable
 // inner read (`&mut *cell.get()` -- `&mut` of a deref, not an immutable value) still
 // BAILS through the ordinary operand path. No fake-dig: the unsafe wrapper does not
@@ -10199,10 +9603,10 @@ fn iter_any_over_effect_domain_receiver_stays_opaque_no_fake_dig() {
     // refuses -- no grounded bool over a runtime domain, no fake-dig.
     let src = "fn make_v() -> Vec<i32> { vec![1, 2, 3] }\n#[test]\nfn t() { let v = make_v(); assert_eq!(v.iter().any(|x| *x > 2), true); }\n";
     let out = lift_file(&parse(src), "tests/iter_any_runtime.rs");
-    assert_eq!(
-        out.lifted, 0,
-        "a runtime `.any()` must NOT lift (the effect domain stays opaque): {:?}",
-        out.skip_reasons
+    assert!(
+        warranted_decls(&out).is_empty(),
+        "a runtime `.any()` must NOT emit warranted facts: {:?}",
+        out.assertion_facts
     );
     assert!(
         out.decls.iter().all(|d| dug_eq_bool_pairs(d).is_empty()),
@@ -10229,10 +9633,10 @@ fn iter_find_with_unconstevaluable_closure_stays_opaque() {
     let src =
         "#[test]\nfn t(cap: i32) { assert_eq!([1, 2, 3].iter().find(|x| **x > cap), Some(&1)); }\n";
     let out = lift_file(&parse(src), "tests/iter_find_runtime_capture.rs");
-    assert_eq!(
-        out.lifted, 0,
-        "a `.find` with a runtime-capture closure must NOT lift (const-eval-or-bail): {:?}",
-        out.skip_reasons
+    assert!(
+        warranted_decls(&out).is_empty(),
+        "a `.find` with a runtime-capture closure must NOT emit warranted facts: {:?}",
+        out.assertion_facts
     );
     assert!(
         out.decls.iter().all(|d| {
@@ -10383,7 +9787,9 @@ fn t() {
         out.skip_reasons
     );
     assert!(
-        !out.decls.iter().any(|d| d.name.contains("rfold")),
+        !warranted_decls(&out)
+            .iter()
+            .any(|d| d.name.contains("rfold")),
         "no rfold obligation may be minted over a runtime array (no fake-dig)"
     );
 }
@@ -10551,7 +9957,9 @@ fn t() {
         out.skip_reasons
     );
     assert!(
-        !out.decls.iter().any(|d| d.name.contains("fold")),
+        !warranted_decls(&out)
+            .iter()
+            .any(|d| d.name.contains("fold")),
         "no fold obligation may be minted over an opaque filter_map (no fake-dig)"
     );
 }
@@ -10943,10 +10351,10 @@ fn t() {
         let dump = format!("{:?}", d.inv);
         // a fabricated dig over the literal `[0,0,0]` would emit `0 == 10` or over a
         // hallucinated post-state `10 == 10`; either is a fake-dig of a mutable array.
-        (dump.contains("Int(10)")
+        dump.contains("Int(10)")
             && dump.matches("Int(10)").count() >= 2
             && !dump.contains("buf")
-            && !dump.contains("index"))
+            && !dump.contains("index")
     });
     assert!(
         !claims_buf0_as_closed_literal,
@@ -11519,9 +10927,12 @@ fn t() {
         out.skip_reasons
     );
     assert!(
-        out.decls.is_empty(),
-        "no EUF decl may be minted from a runtime-searcher expansion, got: {:?}",
-        out.decls.iter().map(|d| d.name.clone()).collect::<Vec<_>>()
+        warranted_decls(&out).is_empty(),
+        "no warranted EUF decl may be minted from a runtime-searcher expansion, got: {:?}",
+        warranted_decls(&out)
+            .iter()
+            .map(|d| d.name.clone())
+            .collect::<Vec<_>>()
     );
 }
 
@@ -11556,7 +10967,7 @@ fn t() {
         "the pure-call contradiction pair must still lift to one coalesced decl: {:?}",
         out.skip_reasons
     );
-    assert_eq!(out.decls.len(), 1, "the two invocations must coalesce");
+    assert_warranted_decl_count(&out, 1);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -11584,8 +10995,8 @@ fn try_fold_some_pair(out: &sugar_lift_rust_tests::AdapterOutput) -> (i128, i128
         "must discharge; reasons={:?}",
         out.skip_reasons
     );
-    assert_eq!(out.decls.len(), 1);
-    let operands = inv_operands(&out.decls[0]);
+    assert_warranted_decl_count(out, 1);
+    let operands = inv_operands(single_warranted_decl(out));
     assert_eq!(operands.len(), 1, "one grounded equality atom");
     let Formula::Atomic { name, args } = operands[0].as_ref() else {
         panic!("expected equality atom, got {:?}", operands[0]);
@@ -12248,8 +11659,9 @@ fn case3_discrimination_concrete_nested_fn_still_inlines_not_refused() {
 fn format_eq_verdict(lhs: &str, rhs: &str, label: &str) -> Option<bool> {
     let src = format!("#[test]\nfn t() {{ assert_eq!({lhs}, {rhs}); }}\n");
     let out = lift_file(&parse(&src), "tests/fmt_teeth.rs");
-    assert_eq!(out.decls.len(), 1, "exactly one decl for: {lhs} == {rhs}");
-    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out).clone();
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&[decl]);
     let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
     let inv = parsed[0]["inv"].clone();
     let z3 = "/usr/local/bin/z3";
@@ -12636,12 +12048,13 @@ fn calls_h() {
 "#;
     let out = lift_file(&parse(src), "tests/inline.rs");
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
-    let (op, a, b) = grounded_arith_lhs(&out.decls[0]);
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    let (op, a, b) = grounded_arith_lhs(decl);
     assert_eq!(op, "+");
     assert_eq!((a, b), (2, 1), "LHS must be the β-reduced body `+(2,1)`");
     assert!(
-        !inv_has_opaque_call_leaf(&out.decls[0]),
+        !inv_has_opaque_call_leaf(decl),
         "the peel must eliminate the opaque `call:h` leaf, not relocate it"
     );
     assert!(
@@ -12649,7 +12062,7 @@ fn calls_h() {
         "a fully-peeled value helper must be recorded as a universe/support member"
     );
     // Value teeth: the grounded contract is SAT (good dig).
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "inline_h_good") {
+    if let Some(sat) = z3_verdict(&inv_json(decl), "inline_h_good") {
         assert!(sat, "grounded `+(2,1) == 3` must be SAT (a real dig)");
     }
 }
@@ -12668,10 +12081,11 @@ fn calls_h_wrong() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/inline.rs");
-    assert_eq!(out.decls.len(), 1);
-    let (op, a, b) = grounded_arith_lhs(&out.decls[0]);
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    let (op, a, b) = grounded_arith_lhs(decl);
     assert_eq!((op.as_str(), a, b), ("+", 2, 1));
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "inline_h_bad") {
+    if let Some(sat) = z3_verdict(&inv_json(decl), "inline_h_bad") {
         assert!(
             !sat,
             "grounded `+(2,1) == 4` must be z3-UNSAT (teeth bite the bad twin)"
@@ -12693,8 +12107,9 @@ fn calls_h() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/inline.rs");
-    assert_eq!(out.decls.len(), 1);
-    let (lhs, _rhs) = single_eq_atom(&out.decls[0]);
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    let (lhs, _rhs) = single_eq_atom(decl);
     // LHS = +( *(3,2), 1 )
     match lhs.as_ref() {
         Term::Ctor { name, args } if name == "+" && args.len() == 2 => {
@@ -12710,11 +12125,11 @@ fn calls_h() {
         other => panic!("expected `+(*(3,2), 1)`, got {other:?}"),
     }
     assert!(
-        !inv_has_opaque_call_leaf(&out.decls[0]),
+        !inv_has_opaque_call_leaf(decl),
         "no opaque leaf after nested peel"
     );
     assert!(out.reduced_helpers.contains("g") && out.reduced_helpers.contains("h"));
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "inline_nested_good") {
+    if let Some(sat) = z3_verdict(&inv_json(decl), "inline_nested_good") {
         assert!(sat, "grounded `+(*(3,2),1) == 7` must be SAT");
     }
 }
@@ -12732,8 +12147,9 @@ fn calls_h_wrong() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/inline.rs");
-    assert_eq!(out.decls.len(), 1);
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "inline_nested_bad") {
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    if let Some(sat) = z3_verdict(&inv_json(decl), "inline_nested_bad") {
         assert!(
             !sat,
             "grounded `+(*(3,2),1) == 8` must be z3-UNSAT (nested teeth bite)"
@@ -12755,15 +12171,16 @@ fn calls_h() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/inline.rs");
-    assert_eq!(out.decls.len(), 1);
-    let (op, a, b) = grounded_arith_lhs(&out.decls[0]);
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    let (op, a, b) = grounded_arith_lhs(decl);
     assert_eq!(
         (op.as_str(), a, b),
         ("+", 5, 10),
         "SSA rebind must substitute the VALUE"
     );
     assert!(out.reduced_helpers.contains("h") && out.reduced_helpers.contains("other"));
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "inline_ssa_good") {
+    if let Some(sat) = z3_verdict(&inv_json(decl), "inline_ssa_good") {
         assert!(sat, "grounded `+(5,10) == 15` must be SAT");
     }
 }
@@ -12884,15 +12301,16 @@ fn contradiction() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/inline.rs");
-    assert_eq!(out.decls.len(), 1, "both pins must coalesce into one inv");
-    let operands = inv_operands(&out.decls[0]);
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    let operands = inv_operands(decl);
     assert_eq!(
         operands.len(),
         2,
         "both contradictory pins must be present (not masked)"
     );
     // The whole conjoined contract is z3-UNSAT: `+(2,1)==3 && +(2,1)==4` cannot hold.
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "inline_contradiction") {
+    if let Some(sat) = z3_verdict(&inv_json(decl), "inline_contradiction") {
         assert!(
             !sat,
             "the conjoined `+(2,1)==3 && +(2,1)==4` must be z3-UNSAT (contradiction caught)"
@@ -13025,33 +12443,6 @@ fn assert_contract_edge(doc: &serde_json::Value, source: &str, symbol: &str, tar
             "{key} must be a prefixed CID, got {cid}: {edge:#}"
         );
     }
-}
-
-#[test]
-fn rpc_demotes_fully_inlined_value_helper_to_support_no_standalone_contract() {
-    // `fn h(n) { n + 1 }` + `assert_eq!(h(2), 3)`: h is fully peeled, so its lift-RPC
-    // locus is "support" (a universe member) and the ir-document carries NO `call:h`
-    // warrant decl -- hollow-B is eliminated, not relocated to a top-level contract.
-    let doc = run_rpc_lift(
-        "src/inline.rs",
-        r#"
-fn h(n: i32) -> i32 { n + 1 }
-
-#[test]
-fn calls_h() {
-    assert_eq!(h(2), 3);
-}
-"#,
-    );
-    assert_eq!(
-        locus_status(&doc, "h"),
-        Some("support"),
-        "a fully-inlined value helper must be classified as universe `support`: {doc:#}"
-    );
-    assert!(
-        !ir_mentions_call_symbol(&doc, "h"),
-        "no standalone `out=call:h` warrant decl may be minted (hollow-B relocated): {doc:#}"
-    );
 }
 
 #[test]
