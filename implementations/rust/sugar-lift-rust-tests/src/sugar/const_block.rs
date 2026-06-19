@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// TERM recognizer for `Expr::Const` (`const { EXPR }`). A bare-path const block is a
-// NAME (sugar) -> reasoned Hit; a computed const block translates its expression-only
-// tail and scopes its locals. Byte-identical to the `Expr::Const` arm of the old fat
-// factory.
+// TERM recognizer for `Expr::Const` (`const { EXPR }`). A const block translates
+// its expression-only tail and scopes its locals; bare paths recurse into the
+// ordinary term catalog, where `ConstSugar`, `UnitPathSugar`, or `PathSugar` own
+// the source meaning.
 
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
+use crate::sugar::unit_path::{unit_path_literal_name, unit_path_name};
 use crate::{
-    scope_const_block_locals, token_key, translate_expression_only_block_in_scope, Effect, Sugar,
-    UnsupportedTermCause,
+    make_var, scope_const_block_locals, token_key, translate_expression_only_block_in_scope, Sugar,
 };
 use syn::{Expr, Stmt};
 
@@ -22,10 +22,18 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         return None;
     };
     let scope = fcx.scope();
-    if let [Stmt::Expr(Expr::Path(_), None)] = const_block.block.stmts.as_slice() {
-        let effect =
-            Effect::unsupported_term(&token_key(expr), UnsupportedTermCause::ConstBlockPath);
-        return Some(reasoned_hit(effect.reason()));
+    if let [Stmt::Expr(Expr::Path(path), None)] = const_block.block.stmts.as_slice() {
+        if path.qself.is_none() {
+            if let Some(name) = unit_path_name(&path.path) {
+                return Some(resolved_term(make_var(unit_path_literal_name(&name))));
+            }
+            if scope.const_expr_for_path(&path.path).is_none() {
+                return Some(reasoned_hit(format!(
+                    "unsupported term `{}`",
+                    token_key(expr)
+                )));
+            }
+        }
     }
     match translate_expression_only_block_in_scope(&const_block.block, "const", scope) {
         Ok(term) => Some(resolved_term(scope_const_block_locals(
