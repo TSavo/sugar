@@ -2,12 +2,12 @@
 //
 // `UseSugar`: compiler import facts, not type checking. For compiling Rust, the
 // compiler has already accepted `use super::*`; this sugar materializes the visible
-// parent const items into the current const registry so `ConstSugar` can recurse into
-// their initializer expressions.
+// parent const items / value functions into the current registries so `ConstSugar`
+// and value-call sugar can recurse into their source.
 
 use syn::{Item, UseTree};
 
-use crate::{ConstRegistry, ConstSourceRegistry};
+use crate::{ConstRegistry, ConstSourceRegistry, FnRegistry, FunctionSourceRegistry};
 
 pub(crate) fn const_imports_for_items(
     items: &[Item],
@@ -30,6 +30,27 @@ pub(crate) fn const_imports_for_items(
     out
 }
 
+pub(crate) fn fn_imports_for_items(
+    items: &[Item],
+    source_path: &str,
+    source_fns: &FunctionSourceRegistry,
+) -> FnRegistry {
+    let mut out = FnRegistry::new();
+    for item in items {
+        match item {
+            Item::Use(u) => collect_use_tree_fns(&u.tree, source_path, source_fns, &mut out),
+            Item::Mod(m) => {
+                if let Some((_, items)) = &m.content {
+                    let nested = fn_imports_for_items(items, source_path, source_fns);
+                    out.merge_all(&nested);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 fn collect_use_tree(
     tree: &UseTree,
     source_path: &str,
@@ -43,6 +64,25 @@ fn collect_use_tree(
         UseTree::Group(group) => {
             for item in &group.items {
                 collect_use_tree(item, source_path, source_consts, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_use_tree_fns(
+    tree: &UseTree,
+    source_path: &str,
+    source_fns: &FunctionSourceRegistry,
+    out: &mut FnRegistry,
+) {
+    match tree {
+        UseTree::Path(path) if path.ident == "super" => {
+            collect_super_use_tree_fns(&path.tree, source_path, source_fns, out)
+        }
+        UseTree::Group(group) => {
+            for item in &group.items {
+                collect_use_tree_fns(item, source_path, source_fns, out);
             }
         }
         _ => {}
@@ -74,6 +114,37 @@ fn collect_super_use_tree(
         UseTree::Group(group) => {
             for item in &group.items {
                 collect_super_use_tree(item, source_path, source_consts, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_super_use_tree_fns(
+    tree: &UseTree,
+    source_path: &str,
+    source_fns: &FunctionSourceRegistry,
+    out: &mut FnRegistry,
+) {
+    let Some(parent_path) = parent_module_source_path(source_path) else {
+        return;
+    };
+    match tree {
+        UseTree::Glob(_) => {
+            if let Some(parent_fns) = source_fns.registry_for_source(&parent_path) {
+                out.merge_all(parent_fns);
+            }
+        }
+        UseTree::Name(name) => {
+            if let Some(parent_fns) = source_fns.registry_for_source(&parent_path) {
+                if let Some(item) = parent_fns.lookup(&name.ident.to_string()) {
+                    out.insert(&name.ident.to_string(), item);
+                }
+            }
+        }
+        UseTree::Group(group) => {
+            for item in &group.items {
+                collect_super_use_tree_fns(item, source_path, source_fns, out);
             }
         }
         _ => {}

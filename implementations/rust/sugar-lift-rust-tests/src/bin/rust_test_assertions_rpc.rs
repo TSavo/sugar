@@ -11,8 +11,9 @@ use sugar_canonicalizer::{blake3_512_of, encode_jcs};
 use sugar_ir_symbolic::serialize::{formula_to_value, marshal_declarations};
 use sugar_lift_rust_tests::source_oracle;
 use sugar_lift_rust_tests::{
-    lift_file_with_source_imports, AssertionFactEmission, AssertionFactKind, ConstSourceRegistry,
-    FactoryAudit, LiftOptions, MacroRegistry, TargetCfg,
+    lift_file_with_all_source_imports, AssertionFactEmission, AssertionFactKind,
+    ConstSourceRegistry, FactoryAudit, FunctionSourceRegistry, LiftOptions, MacroRegistry,
+    TargetCfg,
 };
 use sugar_verifier::types::{memento_body, memento_body_field, memento_kind};
 use tracing::{debug, info, warn};
@@ -138,6 +139,7 @@ fn lift(params: &Value) -> Value {
     let parsed_sources = read_parsed_sources(&workspace_root, &rel_paths, &mut diagnostics);
     let macro_imports = MacroRegistry::new();
     let const_imports = build_const_source_registry(&parsed_sources);
+    let fn_imports = build_function_source_registry(&parsed_sources);
     for (file_index, source) in parsed_sources.iter().enumerate() {
         let rel = source.rel.as_str();
         info!(
@@ -148,8 +150,14 @@ fn lift(params: &Value) -> Value {
         );
         let src = source.src.as_str();
         let file = &source.file;
-        let out =
-            lift_file_with_source_imports(file, rel, &options, &macro_imports, &const_imports);
+        let out = lift_file_with_all_source_imports(
+            file,
+            rel,
+            &options,
+            &macro_imports,
+            &const_imports,
+            &fn_imports,
+        );
         let mut source_cache = FileSourceOracleCache::new(rel, src);
         info!(
             file = rel,
@@ -421,6 +429,14 @@ fn read_parsed_sources(
 
 fn build_const_source_registry(parsed_sources: &[ParsedSource]) -> ConstSourceRegistry {
     let mut registry = ConstSourceRegistry::new();
+    for source in parsed_sources {
+        registry.scan_file(&source.rel, &source.file);
+    }
+    registry
+}
+
+fn build_function_source_registry(parsed_sources: &[ParsedSource]) -> FunctionSourceRegistry {
+    let mut registry = FunctionSourceRegistry::new();
     for source in parsed_sources {
         registry.scan_file(&source.rel, &source.file);
     }

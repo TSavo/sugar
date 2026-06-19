@@ -19,8 +19,8 @@ use std::collections::BTreeMap;
 
 use sugar_lift_rust_tests::closed_eval::{self, HarnessResult};
 use sugar_lift_rust_tests::{
-    lift_file_with_source_imports, refusal_disposition, ConstSourceRegistry, Disposition,
-    LiftOptions, MacroRegistry, TargetCfg,
+    lift_file_with_all_source_imports, refusal_disposition, ConstSourceRegistry, Disposition,
+    FunctionSourceRegistry, LiftOptions, MacroRegistry, TargetCfg,
 };
 use syn::visit::{self, Visit};
 
@@ -287,6 +287,7 @@ fn main() {
     // itself plus each dependency source tree.
     let mut registry = MacroRegistry::new();
     let mut const_registry = ConstSourceRegistry::new();
+    let mut fn_registry = FunctionSourceRegistry::new();
     let mut scan_dirs: Vec<&str> = vec![corpus.as_str()];
     scan_dirs.extend(dep_dirs.iter().map(|s| s.as_str()));
     for dir in &scan_dirs {
@@ -299,6 +300,7 @@ fn main() {
                 if let Ok(src) = std::fs::read_to_string(p) {
                     registry.scan_source(&src);
                     const_registry.scan_source(&rel_path_for_scan_root(p, dir), &src);
+                    fn_registry.scan_source(&rel_path_for_scan_root(p, dir), &src);
                 }
             }
         }
@@ -407,7 +409,14 @@ fn main() {
                 census_rows.push((rel.clone(), row));
             }
         }
-        let out = lift_file_with_source_imports(&file, &rel, &options, &registry, &const_registry);
+        let out = lift_file_with_all_source_imports(
+            &file,
+            &rel,
+            &options,
+            &registry,
+            &const_registry,
+            &fn_registry,
+        );
         let discharged = out.assertions_lifted;
         let refused_total = out.assertions_refused;
 
