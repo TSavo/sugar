@@ -106,6 +106,7 @@ pub mod sugar {
     pub mod method;
     pub mod method_family;
     pub mod monadic;
+    pub mod offset_of;
     pub mod path;
     pub mod range_term;
     pub mod raw_addr_term;
@@ -1974,6 +1975,17 @@ fn visit_test_fn(
         let reason =
             "assertion in an unenumerated statement position within the test fn; released to layer 0"
                 .to_string();
+        tracing::warn!(
+            target: "sugar_lift_rust_tests::assertion_accounting",
+            source_path = source_path,
+            test_name = %test_name,
+            textual_total = textual_total,
+            accounted = accounted,
+            macros_lifted = macros_lifted,
+            skipped = skipped.len(),
+            gap = gap,
+            "assertion surface safety net found unenumerated statement position"
+        );
         for _ in 0..gap {
             out.assertions_refused += 1;
             out.skip_reasons.push(reason.clone());
@@ -2785,6 +2797,7 @@ fn fn_signature(f: &syn::ItemFn) -> String {
 pub(crate) struct LayoutTypeRegistry {
     items: BTreeMap<String, std::rc::Rc<Item>>,
     ambiguous: BTreeSet<String>,
+    aux_items: BTreeMap<String, std::rc::Rc<Item>>,
 }
 
 impl std::fmt::Debug for LayoutTypeRegistry {
@@ -2792,6 +2805,7 @@ impl std::fmt::Debug for LayoutTypeRegistry {
         f.debug_struct("LayoutTypeRegistry")
             .field("items", &self.items.keys().collect::<Vec<_>>())
             .field("ambiguous", &self.ambiguous)
+            .field("aux_items", &self.aux_items.keys().collect::<Vec<_>>())
             .finish()
     }
 }
@@ -2802,6 +2816,12 @@ impl LayoutTypeRegistry {
     }
 
     fn insert_item(&mut self, item: Item) {
+        if matches!(item, Item::Impl(_) | Item::ForeignMod(_)) {
+            self.aux_items
+                .entry(item_signature(&item))
+                .or_insert_with(|| std::rc::Rc::new(item));
+            return;
+        }
         let Some(name) = layout_item_name(&item) else {
             return;
         };
@@ -2825,12 +2845,39 @@ impl LayoutTypeRegistry {
         for item in imported.items.values() {
             self.insert_item((**item).clone());
         }
+        for item in imported.aux_items.values() {
+            self.insert_item((**item).clone());
+        }
     }
 
     pub(crate) fn prelude_for_type(&self, ty: &Type) -> String {
         let mut seen = BTreeSet::new();
         let mut items = Vec::new();
         self.collect_type_prelude(ty, &mut seen, &mut items);
+        items.join("\n")
+    }
+
+    pub(crate) fn offset_prelude_for_type(&self, ty: &Type) -> String {
+        let mut seen = BTreeSet::new();
+        let mut items = Vec::new();
+        let mut included_aux = BTreeSet::new();
+        self.collect_type_prelude(ty, &mut seen, &mut items);
+        loop {
+            let mut added_aux = false;
+            for item in self.aux_items.values() {
+                let sig = item_signature(item);
+                if included_aux.contains(&sig) || !item_mentions_any(item, &seen) {
+                    continue;
+                }
+                self.collect_layout_item_type_deps(item, &mut seen, &mut items);
+                items.push(item.to_token_stream().to_string());
+                included_aux.insert(sig);
+                added_aux = true;
+            }
+            if !added_aux {
+                break;
+            }
+        }
         items.join("\n")
     }
 
@@ -2841,9 +2888,12 @@ impl LayoutTypeRegistry {
         items: &mut Vec<String>,
     ) {
         match ty {
-            Type::Path(path) if path.qself.is_none() => {
-                if path.path.segments.len() == 1 {
-                    if let Some(segment) = path.path.segments.first() {
+            Type::Path(path) => {
+                if let Some(qself) = &path.qself {
+                    self.collect_type_prelude(&qself.ty, seen, items);
+                }
+                for segment in &path.path.segments {
+                    if path.qself.is_some() || path.path.segments.len() == 1 {
                         let name = segment.ident.to_string();
                         if seen.insert(name.clone()) {
                             if let Some(item) = self.items.get(&name) {
@@ -2851,20 +2901,32 @@ impl LayoutTypeRegistry {
                                 items.push(item.to_token_stream().to_string());
                             }
                         }
-                        collect_path_arg_types(&segment.arguments, |arg_ty| {
-                            self.collect_type_prelude(arg_ty, seen, items);
-                        });
                     }
-                } else {
-                    for segment in &path.path.segments {
-                        collect_path_arg_types(&segment.arguments, |arg_ty| {
-                            self.collect_type_prelude(arg_ty, seen, items);
-                        });
-                    }
+                    collect_path_arg_types(&segment.arguments, |arg_ty| {
+                        self.collect_type_prelude(arg_ty, seen, items);
+                    });
                 }
             }
             Type::Reference(reference) => self.collect_type_prelude(&reference.elem, seen, items),
             Type::Ptr(ptr) => self.collect_type_prelude(&ptr.elem, seen, items),
+            Type::TraitObject(trait_object) => {
+                for bound in &trait_object.bounds {
+                    if let syn::TypeParamBound::Trait(trait_bound) = bound {
+                        for segment in &trait_bound.path.segments {
+                            let name = segment.ident.to_string();
+                            if seen.insert(name.clone()) {
+                                if let Some(item) = self.items.get(&name) {
+                                    self.collect_layout_item_type_deps(item, seen, items);
+                                    items.push(item.to_token_stream().to_string());
+                                }
+                            }
+                            collect_path_arg_types(&segment.arguments, |arg_ty| {
+                                self.collect_type_prelude(arg_ty, seen, items);
+                            });
+                        }
+                    }
+                }
+            }
             Type::Tuple(tuple) => {
                 for elem in &tuple.elems {
                     self.collect_type_prelude(elem, seen, items);
@@ -2901,6 +2963,39 @@ impl LayoutTypeRegistry {
                 }
             }
             Item::Type(item) => self.collect_type_prelude(&item.ty, seen, items),
+            Item::Trait(item) => {
+                for supertrait in &item.supertraits {
+                    if let syn::TypeParamBound::Trait(trait_bound) = supertrait {
+                        for segment in &trait_bound.path.segments {
+                            collect_path_arg_types(&segment.arguments, |arg_ty| {
+                                self.collect_type_prelude(arg_ty, seen, items);
+                            });
+                        }
+                    }
+                }
+            }
+            Item::Impl(item) => {
+                self.collect_type_prelude(&item.self_ty, seen, items);
+                if let Some((_, trait_path, _)) = &item.trait_ {
+                    for segment in &trait_path.segments {
+                        let name = segment.ident.to_string();
+                        if seen.insert(name.clone()) {
+                            if let Some(item) = self.items.get(&name) {
+                                self.collect_layout_item_type_deps(item, seen, items);
+                                items.push(item.to_token_stream().to_string());
+                            }
+                        }
+                        collect_path_arg_types(&segment.arguments, |arg_ty| {
+                            self.collect_type_prelude(arg_ty, seen, items);
+                        });
+                    }
+                }
+                for impl_item in &item.items {
+                    if let syn::ImplItem::Type(assoc) = impl_item {
+                        self.collect_type_prelude(&assoc.ty, seen, items);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -2912,6 +3007,7 @@ fn layout_item_name(item: &Item) -> Option<String> {
         Item::Enum(item) => Some(item.ident.to_string()),
         Item::Union(item) => Some(item.ident.to_string()),
         Item::Type(item) => Some(item.ident.to_string()),
+        Item::Trait(item) => Some(item.ident.to_string()),
         _ => None,
     }
 }
@@ -2920,13 +3016,27 @@ fn item_signature(item: &Item) -> String {
     item.to_token_stream().to_string()
 }
 
+fn item_mentions_any(item: &Item, names: &BTreeSet<String>) -> bool {
+    token_stream_mentions_any(item.to_token_stream(), names)
+}
+
+fn token_stream_mentions_any(tokens: proc_macro2::TokenStream, names: &BTreeSet<String>) -> bool {
+    tokens.into_iter().any(|tt| match tt {
+        proc_macro2::TokenTree::Ident(ident) => names.contains(&ident.to_string()),
+        proc_macro2::TokenTree::Group(group) => token_stream_mentions_any(group.stream(), names),
+        _ => false,
+    })
+}
+
 fn collect_path_arg_types<'a>(arguments: &'a syn::PathArguments, mut visit: impl FnMut(&'a Type)) {
     let syn::PathArguments::AngleBracketed(args) = arguments else {
         return;
     };
     for arg in &args.args {
-        if let syn::GenericArgument::Type(ty) = arg {
-            visit(ty);
+        match arg {
+            syn::GenericArgument::Type(ty) => visit(ty),
+            syn::GenericArgument::AssocType(assoc) => visit(&assoc.ty),
+            _ => {}
         }
     }
 }
@@ -2988,7 +3098,13 @@ fn layout_type_registry_for_stmts(stmts: &[Stmt]) -> LayoutTypeRegistry {
     let mut registry = LayoutTypeRegistry::new();
     for stmt in stmts {
         if let Stmt::Item(
-            item @ (Item::Struct(_) | Item::Enum(_) | Item::Union(_) | Item::Type(_)),
+            item @ (Item::Struct(_)
+            | Item::Enum(_)
+            | Item::Union(_)
+            | Item::Type(_)
+            | Item::Trait(_)
+            | Item::Impl(_)
+            | Item::ForeignMod(_)),
         ) = stmt
         {
             registry.insert_item(item.clone());
@@ -3950,6 +4066,10 @@ impl TemporalScope {
 
     pub(crate) fn layout_prelude_for_type(&self, ty: &Type) -> String {
         self.layout_type_registry.prelude_for_type(ty)
+    }
+
+    pub(crate) fn offset_prelude_for_type(&self, ty: &Type) -> String {
+        self.layout_type_registry.offset_prelude_for_type(ty)
     }
 
     /// Record the in-source const registry visible at this scope.
@@ -6364,19 +6484,45 @@ fn emit_constraint_outcome(
     }
 }
 
-fn emit_optional_constraint_outcome(
+fn emit_assertion_surface_outcome(
     outcome: Outcome,
+    site: &str,
     entries: &mut Vec<AssertionEntry>,
     skipped: &mut Vec<String>,
     macros_lifted: &mut usize,
 ) {
     match outcome {
-        Outcome::Dug(desugared @ Desugared::Constraints { .. }) => {
-            emit_desugared(desugared, entries, macros_lifted);
+        Outcome::Dug(Desugared::Constraints {
+            atom,
+            n,
+            kind,
+            warrant,
+        }) => {
+            entries.push(AssertionEntry {
+                name: warrant.name,
+                atom,
+                fact_span: None,
+                kind,
+            });
+            if kind.is_warranted() {
+                *macros_lifted += n;
+            } else {
+                skipped.push(format!(
+                    "assertion surface `{site}` emitted only support facts; assertion without warranted fact emitted; released to layer 0"
+                ));
+            }
         }
-        Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {}
+        Outcome::Dug(_) => {
+            skipped.push(format!(
+                "assertion surface `{site}` did not emit a constraint; released to layer 0"
+            ));
+        }
+        Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {
+            skipped.push(format!(
+                "assertion surface `{site}` did not reach bedrock; released to layer 0"
+            ));
+        }
         Outcome::Hit(effect) => skipped.push(effect.reason()),
-        Outcome::Dug(_) => {}
     }
 }
 
@@ -7651,7 +7797,8 @@ fn collect_statement_macro_entries<'a>(
         let before_skipped = skipped.len();
         let before_lifted = *macros_lifted;
         let outcome = sugar::factory::build_assertion_surface(&macro_expr, &fcx).desugar(&ctx);
-        emit_optional_constraint_outcome(outcome, entries, skipped, macros_lifted);
+        let site = macro_expr.to_token_stream().to_string();
+        emit_assertion_surface_outcome(outcome, &site, entries, skipped, macros_lifted);
         tracing::debug!(
             target: "sugar_lift_rust_tests::macro_match",
             macro_name = %macro_name,
