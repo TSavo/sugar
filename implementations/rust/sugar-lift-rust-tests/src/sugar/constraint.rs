@@ -8,6 +8,7 @@
 
 use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
 use crate::sugar::configuration;
+use crate::sugar::constraint_runtime_boundary::relation_runtime_boundary_reason;
 use crate::sugar::factory::{build_constraint, SugarBuildCtx};
 use crate::{
     callsite_assertion_name, lower_assert_condition, lower_assert_eq, lower_assert_ne,
@@ -97,7 +98,16 @@ impl Sugar for RelationMacroSugar {
             RelationOp::Ne => lower_assert_ne(&self.lhs, &self.rhs, ctx.scope, ctx.factory_audits),
             _ => unreachable!("relation macro sugar only owns equality and inequality macros"),
         };
-        constraint_from_entry_result(&self.name, result)
+        match result {
+            Ok(entry) => constraint_from_entry(entry),
+            Err(reason) => {
+                if let Some(boundary) = relation_runtime_boundary_reason(&self.lhs, &self.rhs, ctx)
+                {
+                    return unsupported(format!("{}!: {boundary}", self.name));
+                }
+                unsupported(format!("{}!: {reason}", self.name))
+            }
+        }
     }
 }
 
