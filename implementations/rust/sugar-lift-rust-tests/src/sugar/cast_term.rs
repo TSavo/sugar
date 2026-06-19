@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// TERM recognizer for `Expr::Cast` (`x as T`): a shared `dyn Any` cast or a scalar
-// cast -> `cast:<T>` ctor over the child; any other cast -> reasoned Hit. Byte-
-// identical to the `Expr::Cast` arm of the old fat factory.
+// TERM recognizer for `Expr::Cast` (`x as T`): an inferred target (`as _`) is
+// compiler type inference and therefore transparent; a shared `dyn Any` cast or a
+// scalar cast -> `cast:<T>` ctor over the child; any other cast -> reasoned Hit.
 
 use crate::sugar::ctor_term::CtorSugar;
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::term_leaf::reasoned_hit;
 use crate::{is_shared_dyn_any_type, scalar_cast_type_key, token_key, type_key, Sugar};
-use syn::Expr;
+use syn::{Expr, Type};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("cast_term", recognize);
@@ -18,6 +18,9 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     let Expr::Cast(cast) = expr else {
         return None;
     };
+    if matches!(cast.ty.as_ref(), Type::Infer(_)) {
+        return Some(build_term(&cast.expr, fcx));
+    }
     if is_shared_dyn_any_type(&cast.ty) {
         return Some(Box::new(CtorSugar::new(
             format!("cast:{}", type_key(&cast.ty)),

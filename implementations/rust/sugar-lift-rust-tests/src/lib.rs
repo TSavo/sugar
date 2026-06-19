@@ -53,6 +53,7 @@ pub mod sugar {
     pub mod conditional;
     pub mod configuration;
     pub mod const_block;
+    pub mod const_bound;
     pub mod const_path;
     pub mod constraint;
     pub mod control_flow_term;
@@ -74,6 +75,7 @@ pub mod sugar {
     pub mod identity;
     pub mod impl_method;
     pub mod index;
+    pub mod insert;
     pub mod iter_terminal;
     pub mod iterator;
     pub mod literal;
@@ -997,7 +999,15 @@ fn walk_non_test_fns(
         match item {
             Item::Fn(f) => {
                 if !has_test_attr(&f.attrs) {
-                    visit_non_test_fn(f, source_path, modules, reduced_helpers, out);
+                    visit_non_test_fn(
+                        f,
+                        source_path,
+                        modules,
+                        reduced_helpers,
+                        reducer,
+                        factory_audits,
+                        out,
+                    );
                 }
             }
             Item::Mod(m) => {
@@ -1078,6 +1088,19 @@ fn walk_non_test_fns(
                         if count == 0 {
                             continue;
                         }
+                        let item_name = scoped_test_name(source_path, modules, &method_name);
+                        let lifted = lift_source_assertion_contracts_in_stmts(
+                            &method.block.stmts,
+                            source_path,
+                            &item_name,
+                            reducer,
+                            factory_audits,
+                            out,
+                        );
+                        let count = count.saturating_sub(lifted);
+                        if count == 0 {
+                            continue;
+                        }
                         // TERMINAL (NAMED Effect): an assertion in an impl method body
                         // is reachable ONLY when the method runs, observing the receiver's
                         // RUNTIME state (`self.done`, `self.exhausted`, an atomic `.load`,
@@ -1097,12 +1120,55 @@ fn walk_non_test_fns(
                         }
                         out.warnings.push(LiftWarning {
                             source_path: source_path.to_string(),
-                            item_name: scoped_test_name(source_path, modules, &method_name),
+                            item_name,
                             reason: format!(
                                 "rust test assertions: unsupported assertion surface; released to layer 0: {reason}"
                             ),
                         });
                     }
+                }
+            }
+            Item::Trait(trait_item) => {
+                for item in &trait_item.items {
+                    let syn::TraitItem::Fn(method) = item else {
+                        continue;
+                    };
+                    let Some(default) = &method.default else {
+                        continue;
+                    };
+                    let method_name = method.sig.ident.to_string();
+                    let count = count_asserts_in_stmts(&default.stmts);
+                    if count == 0 {
+                        continue;
+                    }
+                    let item_name = scoped_test_name(source_path, modules, &method_name);
+                    let lifted = lift_source_assertion_contracts_in_stmts(
+                        &default.stmts,
+                        source_path,
+                        &item_name,
+                        reducer,
+                        factory_audits,
+                        out,
+                    );
+                    let count = count.saturating_sub(lifted);
+                    if count == 0 {
+                        continue;
+                    }
+                    let reason = (Effect::ImplMethod {
+                        boundary: format!("trait method `{method_name}`"),
+                    })
+                    .reason();
+                    for _ in 0..count {
+                        out.assertions_refused += 1;
+                        out.skip_reasons.push(reason.clone());
+                    }
+                    out.warnings.push(LiftWarning {
+                        source_path: source_path.to_string(),
+                        item_name,
+                        reason: format!(
+                            "rust test assertions: unsupported assertion surface; released to layer 0: {reason}"
+                        ),
+                    });
                 }
             }
             // Item-level const/static initializers can hold compile-time asserts
@@ -1312,6 +1378,8 @@ fn visit_non_test_fn(
     source_path: &str,
     modules: &[String],
     reduced_helpers: &HashSet<String>,
+    reducer: &ReductionCtx<'_>,
+    factory_audits: Option<&FactoryAuditLog>,
     out: &mut AdapterOutput,
 ) {
     let fn_name = f.sig.ident.to_string();
@@ -1333,6 +1401,18 @@ fn visit_non_test_fn(
     if count == 0 {
         return;
     }
+    let lifted = lift_source_assertion_contracts_in_stmts(
+        &f.block.stmts,
+        source_path,
+        &scoped_name,
+        reducer,
+        factory_audits,
+        out,
+    );
+    let count = count.saturating_sub(lifted);
+    if count == 0 {
+        return;
+    }
     let reason = callsite_inlining_reason(&fn_name, f);
     for _ in 0..count {
         out.assertions_refused += 1;
@@ -1345,6 +1425,92 @@ fn visit_non_test_fn(
             "rust test assertions: unsupported assertion surface; released to layer 0: {reason}"
         ),
     });
+}
+
+fn lift_source_assertion_contracts_in_stmts(
+    stmts: &[Stmt],
+    source_path: &str,
+    item_name: &str,
+    reducer: &ReductionCtx<'_>,
+    factory_audits: Option<&FactoryAuditLog>,
+    out: &mut AdapterOutput,
+) -> usize {
+    let plan = temporal_plan_for_stmts(stmts, &BTreeSet::new());
+    let scope = TemporalScope::new(item_name, plan)
+        .with_macro_registry(reducer.macro_registry_snapshot())
+        .with_const_registry(reducer.const_registry_snapshot());
+    let entries = source_assertion_entries_in_stmts(stmts, &scope, factory_audits);
+    let lifted = entries.len();
+    if lifted == 0 {
+        return 0;
+    }
+    out.assertions_lifted += lifted;
+    for group in group_assertions(entries, item_name) {
+        emit_assertion_fact_metadata(out, source_path, item_name, &group);
+        out.decls.push(ContractDecl {
+            name: group.name,
+            pre: None,
+            post: None,
+            inv: Some(and_(group.atoms)),
+            out_binding: "out".to_string(),
+            evidence: None,
+            panic_loci: Vec::new(),
+            concept_hint: None,
+        });
+    }
+    lifted
+}
+
+fn source_assertion_entries_in_stmts(
+    stmts: &[Stmt],
+    scope: &TemporalScope,
+    factory_audits: Option<&FactoryAuditLog>,
+) -> Vec<AssertionEntry> {
+    struct ConstBoundAssertionScan {
+        exprs: Vec<Expr>,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for ConstBoundAssertionScan {
+        fn visit_expr(&mut self, expr: &'ast Expr) {
+            if sugar::const_bound::is_const_bound_assertion(expr) {
+                self.exprs.push(expr.clone());
+                return;
+            }
+            syn::visit::visit_expr(self, expr);
+        }
+
+        fn visit_stmt_macro(&mut self, node: &'ast syn::StmtMacro) {
+            let expr = Expr::Macro(syn::ExprMacro {
+                attrs: node.attrs.clone(),
+                mac: node.mac.clone(),
+            });
+            if sugar::const_bound::is_const_bound_assertion(&expr) {
+                self.exprs.push(expr);
+                return;
+            }
+            syn::visit::visit_stmt_macro(self, node);
+        }
+
+        fn visit_item_fn(&mut self, _node: &'ast syn::ItemFn) {}
+    }
+
+    let mut scan = ConstBoundAssertionScan { exprs: Vec::new() };
+    for stmt in stmts {
+        syn::visit::Visit::visit_stmt(&mut scan, stmt);
+    }
+    if scan.exprs.is_empty() {
+        return Vec::new();
+    }
+
+    let mut entries = Vec::new();
+    for expr in &scan.exprs {
+        if let Some(entry) =
+            sugar::const_bound::lift_const_bound_assertion(expr, scope, factory_audits)
+        {
+            entries.push(entry);
+        }
+    }
+    entries
 }
 
 fn visit_test_fn(
@@ -11666,6 +11832,19 @@ pub fn emit_value_contract(name: &str, block: &syn::Block) -> Option<ContractDec
     block_inv(block, &scope).map(|inv| source_value_contract(name, inv))
 }
 
+fn emit_source_assertion_contract(name: &str, block: &syn::Block) -> Option<ContractDecl> {
+    let plan = temporal_plan_for_stmts(&block.stmts, &BTreeSet::new());
+    let scope = TemporalScope::new("rust-source", plan);
+    let entries = source_assertion_entries_in_stmts(&block.stmts, &scope, None);
+    if entries.is_empty() {
+        return None;
+    }
+    Some(source_value_contract(
+        name,
+        and_(entries.into_iter().map(|entry| entry.atom).collect()),
+    ))
+}
+
 /// The BROAD warrant: every value body warrants, down to bare functionality.
 /// Either we THINK it constrains (so warrant it -- dumbly, opaquely if need be)
 /// or it NEVER constrains (no output -> None, the caller refuses by vacuity).
@@ -11687,8 +11866,35 @@ pub fn broad_functional_warrant(
     sig: &syn::Signature,
     block: &syn::Block,
 ) -> Option<ContractDecl> {
-    if let Some(decl) = emit_value_contract(name, block) {
-        return Some(decl); // structural -- strongest teeth
+    let assertion_decl = emit_source_assertion_contract(name, block);
+    if let Some(mut value_decl) = emit_value_contract(name, block) {
+        if let Some(assertion_decl) = assertion_decl {
+            let mut atoms = Vec::new();
+            if let Some(inv) = value_decl.inv.take() {
+                atoms.push(inv);
+            }
+            if let Some(inv) = assertion_decl.inv {
+                atoms.push(inv);
+            }
+            value_decl.inv = Some(and_(atoms));
+        }
+        return Some(value_decl); // structural -- strongest teeth
+    }
+    if let Some(assertion_decl) = assertion_decl {
+        if sig_returns_unit(sig) {
+            return Some(assertion_decl);
+        }
+        let fallback = eq(
+            make_var("out"),
+            Rc::new(Term::Ctor {
+                name: format!("call:{name}"),
+                args: sig_param_vars(sig),
+            }),
+        );
+        let inv = assertion_decl
+            .inv
+            .unwrap_or_else(|| atomic_("true", Vec::new()));
+        return Some(source_value_contract(name, and_(vec![inv, fallback])));
     }
     if sig_returns_unit(sig) {
         return None; // no output to constrain -> the caller refuses by vacuity

@@ -318,6 +318,7 @@ fn lift(params: &Value) -> Value {
     }
 
     let ledger = source_ledger(&source_loci);
+    let call_edges = call_edges_for_report(&entries);
     let vendor_conjoins = vendor_conjoins_for_report(&workspace_root, &entries);
     info!(
         source_loci = ledger
@@ -333,6 +334,7 @@ fn lift(params: &Value) -> Value {
             .and_then(|value| value.as_u64())
             .unwrap_or(0),
         assertion_surfaces = assertion_surface_audits.len(),
+        call_edges = call_edges.len(),
         contracts = entries.len(),
         diagnostics = diagnostics.len(),
         "rust-test-assertions lift complete"
@@ -349,6 +351,7 @@ fn lift(params: &Value) -> Value {
             "loci": source_loci,
         })],
         "factoryAudits": factory_audits,
+        "callEdges": call_edges,
         // Content-addressed mementos (file + span + BLAKE3-512 of body/template,
         // never source text) -- one per enumerated function, recompute-verifiable.
         "sourceMementos": source_mementos,
@@ -1278,6 +1281,140 @@ fn string_array_field(value: &Value, key: &str) -> Option<Vec<String>> {
         .iter()
         .map(|item| item.as_str().map(str::to_string))
         .collect()
+}
+
+fn call_edges_for_report(entries: &[Value]) -> Vec<Value> {
+    let mut contract_cids_by_name: BTreeMap<String, String> = BTreeMap::new();
+    let mut targets_by_symbol: BTreeMap<String, (String, String)> = BTreeMap::new();
+    for entry in entries {
+        if !matches!(
+            entry.get("kind").and_then(Value::as_str),
+            Some("contract" | "function-contract")
+        ) {
+            continue;
+        }
+        let Some(name) = entry.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let cid = ir_entry_content_cid(entry);
+        contract_cids_by_name.insert(name.to_string(), cid.clone());
+        if entry.get("kind").and_then(Value::as_str) != Some("function-contract") {
+            continue;
+        }
+        let Some(symbol) = entry
+            .get("bridgeSourceSymbol")
+            .and_then(Value::as_str)
+            .filter(|symbol| !symbol.is_empty())
+        else {
+            continue;
+        };
+        targets_by_symbol
+            .entry(symbol.to_string())
+            .or_insert_with(|| (name.to_string(), cid));
+    }
+    if targets_by_symbol.is_empty() {
+        return Vec::new();
+    }
+
+    let mut rows = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for entry in entries {
+        let Some(source_contract) = entry.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(source_contract_cid) = contract_cids_by_name.get(source_contract) else {
+            continue;
+        };
+        let source_symbol = entry
+            .get("bridgeSourceSymbol")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        for slot in ["pre", "post", "inv"] {
+            let Some(formula) = entry.get(slot).filter(|value| value.is_object()) else {
+                continue;
+            };
+            let mut callsites = Vec::new();
+            collect_ctor_terms(formula, &mut callsites);
+            for callsite in callsites {
+                let Some(target_symbol) = callsite
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .filter(|symbol| targets_by_symbol.contains_key(*symbol))
+                else {
+                    continue;
+                };
+                if source_symbol.as_deref() == Some(target_symbol) {
+                    continue;
+                }
+                let (target_contract, target_contract_cid) = targets_by_symbol
+                    .get(target_symbol)
+                    .expect("symbol checked above");
+                let key = format!("{source_contract}\0{slot}\0{target_symbol}\0{callsite}");
+                if !seen.insert(key) {
+                    continue;
+                }
+                rows.push(json!({
+                    "schemaVersion": "1",
+                    "kind": "call-edge",
+                    "sourceContract": source_contract,
+                    "sourceContractCid": source_contract_cid,
+                    "targetContract": target_contract,
+                    "targetContractCid": target_contract_cid,
+                    "targetSymbol": target_symbol,
+                    "callSiteLocus": {
+                        "file": source_warrant_file(entry),
+                        "line": source_warrant_line(entry),
+                        "slot": slot,
+                    },
+                    "evidenceTerm": callsite,
+                }));
+            }
+        }
+    }
+    rows
+}
+
+fn ir_entry_content_cid(entry: &Value) -> String {
+    let mut body = serde_json::Map::new();
+    body.insert(
+        "name".to_string(),
+        entry.get("name").cloned().unwrap_or(Value::Null),
+    );
+    body.insert(
+        "outBinding".to_string(),
+        entry
+            .get("outBinding")
+            .or_else(|| entry.get("out_binding"))
+            .cloned()
+            .unwrap_or_else(|| json!("out")),
+    );
+    for slot in ["pre", "post", "inv"] {
+        if let Some(value) = entry.get(slot) {
+            body.insert(slot.to_string(), value.clone());
+        }
+    }
+    sugar_canonicalizer::jcs_cid_of_json(&Value::Object(body))
+}
+
+fn source_warrant_file(entry: &Value) -> Value {
+    entry
+        .get("sourceWarrants")
+        .and_then(Value::as_array)
+        .and_then(|warrants| warrants.first())
+        .and_then(|warrant| warrant.get("file"))
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
+fn source_warrant_line(entry: &Value) -> Value {
+    entry
+        .get("sourceWarrants")
+        .and_then(Value::as_array)
+        .and_then(|warrants| warrants.first())
+        .and_then(|warrant| warrant.get("span"))
+        .and_then(|span| span.get("start_line").or_else(|| span.get("line")))
+        .cloned()
+        .unwrap_or(Value::Null)
 }
 
 fn source_memento_for_contract(

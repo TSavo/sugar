@@ -223,6 +223,7 @@ struct LiftSourceReport {
     assertion_surface_audits: Vec<Value>,
     source_mementos: Vec<Value>,
     contracts: Vec<Value>,
+    call_edges: Vec<Value>,
     vendor_conjoins: Vec<VendorConjoinReport>,
 }
 
@@ -312,6 +313,7 @@ fn source_report_from_lift_response(
     let assertion_surface_audits =
         matching_report_assertion_surface_audits(response, contract_filter);
     let contracts = matching_report_contracts(response, contract_filter, &filtered_audits);
+    let call_edges = matching_report_call_edges(response, contract_filter, &filtered_audits);
     let source_mementos =
         matching_report_source_mementos(response, contract_filter, &filtered_audits)?;
     let vendor_conjoins = vendor_conjoins_from_lift_response(response, contract_filter)?;
@@ -323,6 +325,7 @@ fn source_report_from_lift_response(
         assertion_surface_audits,
         source_mementos,
         contracts,
+        call_edges,
         vendor_conjoins,
     })
 }
@@ -398,6 +401,65 @@ fn matching_report_contracts(
         })
         .cloned()
         .collect()
+}
+
+fn matching_report_call_edges(
+    response: &Value,
+    contract_filter: Option<&str>,
+    audits: &[Value],
+) -> Vec<Value> {
+    let Some(edges) = response
+        .get("callEdges")
+        .or_else(|| response.get("call_edges"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    if contract_filter.is_none() {
+        return edges.clone();
+    }
+
+    let audit_bases = audits
+        .iter()
+        .filter_map(contract_name)
+        .map(contract_group_key)
+        .collect::<Vec<_>>();
+    let filter = contract_filter.unwrap();
+    edges
+        .iter()
+        .filter(|edge| call_edge_matches_filter(edge, filter, &audit_bases))
+        .cloned()
+        .collect()
+}
+
+fn call_edge_matches_filter(edge: &Value, filter: &str, audit_bases: &[String]) -> bool {
+    [
+        edge.get("sourceContract").and_then(Value::as_str),
+        edge.get("source_contract").and_then(Value::as_str),
+        edge.get("targetContract").and_then(Value::as_str),
+        edge.get("target_contract").and_then(Value::as_str),
+        edge.get("targetSymbol").and_then(Value::as_str),
+        edge.get("target_symbol").and_then(Value::as_str),
+        edge.get("sourceContractCid").and_then(Value::as_str),
+        edge.get("source_contract_cid").and_then(Value::as_str),
+        edge.get("targetContractCid").and_then(Value::as_str),
+        edge.get("target_contract_cid").and_then(Value::as_str),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|value| value.contains(filter))
+        || [
+            edge.get("sourceContract").and_then(Value::as_str),
+            edge.get("source_contract").and_then(Value::as_str),
+            edge.get("targetContract").and_then(Value::as_str),
+            edge.get("target_contract").and_then(Value::as_str),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|name| {
+            let group = contract_group_key(name);
+            audit_bases.iter().any(|base| base == &group)
+        })
 }
 
 fn matching_report_factory_audits(response: &Value, contract_filter: Option<&str>) -> Vec<Value> {
@@ -572,6 +634,7 @@ fn source_report_json_value(report: &LiftSourceReport) -> Value {
         "assertionSurfaceAudits": report.assertion_surface_audits,
         "sourceMementos": report.source_mementos,
         "contracts": report.contracts,
+        "callEdges": report.call_edges,
         "vendorConjoins": vendor_conjoins_to_json(&report.vendor_conjoins),
         // Lift-side superposition: candidate universes detected per method.
         "superposition": {
@@ -623,6 +686,12 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
             if rows.len() > 8 {
                 out.push_str(&format!("      (+{} more universes)\n", rows.len() - 8));
             }
+        }
+    }
+    if !report.call_edges.is_empty() {
+        out.push_str("call edges observed:\n");
+        for edge in &report.call_edges {
+            out.push_str(&format!("  - {}\n", format_call_edge(edge)));
         }
     }
     if !report.vendor_conjoins.is_empty() {
@@ -911,6 +980,37 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
     }
 
     out
+}
+
+fn format_call_edge(edge: &Value) -> String {
+    let source = report_text_field(edge, &["sourceContract", "source_contract"])
+        .unwrap_or_else(|| "<unknown source contract>".to_string());
+    let target_symbol = report_text_field(edge, &["targetSymbol", "target_symbol"])
+        .unwrap_or_else(|| "<unknown target symbol>".to_string());
+    let target = report_text_field(edge, &["targetContract", "target_contract"])
+        .unwrap_or_else(|| "<unknown target contract>".to_string());
+    let target_cid = report_text_field(edge, &["targetContractCid", "target_contract_cid"])
+        .unwrap_or_else(|| "<unknown cid>".to_string());
+    let locus = edge
+        .get("callSiteLocus")
+        .or_else(|| edge.get("call_site_locus"))
+        .map(format_call_edge_locus)
+        .unwrap_or_else(|| "<unknown locus>".to_string());
+    format!("{source} -> {target_symbol} -> {target} cid={target_cid} @ {locus}")
+}
+
+fn format_call_edge_locus(locus: &Value) -> String {
+    let file = locus
+        .get("file")
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown file>");
+    let line = locus
+        .get("line")
+        .and_then(Value::as_i64)
+        .map(|line| line.to_string())
+        .unwrap_or_else(|| "?".to_string());
+    let slot = locus.get("slot").and_then(Value::as_str).unwrap_or("?");
+    format!("{file}:{line} {slot}")
 }
 
 fn render_report_human(
@@ -2808,6 +2908,7 @@ mod tests {
             assertion_surface_audits: vec![],
             source_mementos: vec![],
             contracts: vec![],
+            call_edges: vec![],
             vendor_conjoins: vec![],
         }
     }
@@ -2940,6 +3041,19 @@ mod tests {
                             "reason": "crc32.slicing-by-8 table relation"
                         }
                     ]
+                }
+            ],
+            "callEdges": [
+                {
+                    "schemaVersion": "1",
+                    "kind": "call-edge",
+                    "sourceContract": "commons-codec.PureJavaCrc32::knownVector",
+                    "sourceContractCid": "blake3-512:source",
+                    "targetContract": "commons-codec.PureJavaCrc32::update(byte[],int,int)",
+                    "targetContractCid": "blake3-512:target",
+                    "targetSymbol": "call:update",
+                    "callSiteLocus": {"file": "CommonsCodecCrc32Test.java", "line": 44, "slot": "inv"},
+                    "evidenceTerm": {"kind": "ctor", "name": "call:update", "args": []}
                 }
             ],
             "sourceMementos": [
@@ -3098,6 +3212,7 @@ mod tests {
         assert_eq!(report.ledger["unclassified_source"], 0);
         assert_eq!(report.audits.len(), 2);
         assert_eq!(report.source_mementos.len(), 3);
+        assert_eq!(report.call_edges.len(), 1);
         assert_eq!(
             report.audits[1]["contract"]["name"],
             "commons-codec.PureJavaCrc32::update(byte[],int,int)"
@@ -3112,6 +3227,7 @@ mod tests {
 
         assert_eq!(report.audits.len(), 1);
         assert_eq!(report.source_mementos.len(), 2);
+        assert_eq!(report.call_edges.len(), 1);
         assert_eq!(report.source_mementos[0]["role"], "java.crc-value-pin");
         assert_eq!(report.ledger["source_loci"], 29);
         assert_eq!(report.ledger["source_warranted"], 15);
@@ -3143,6 +3259,8 @@ mod tests {
         assert!(human.contains(
             "commons-codec.PureJavaCrc32::update(byte[],int,int)::assertion :: crc32.eq-walked"
         ));
+        assert!(human.contains("call edges observed:"));
+        assert!(human.contains("commons-codec.PureJavaCrc32::knownVector -> call:update -> commons-codec.PureJavaCrc32::update(byte[],int,int) cid=blake3-512:target @ CommonsCodecCrc32Test.java:44 inv"));
         assert!(human.contains("warranted digs:"));
         assert!(human.contains("606 warranted Assignment crc32.slicing-by-8 input fold"));
     }
@@ -4387,6 +4505,7 @@ mod tests {
             assertion_surface_audits: vec![],
             source_mementos: vec![],
             contracts: vec![],
+            call_edges: vec![],
             vendor_conjoins: vec![VendorConjoinReport {
                 call: "call:enc(\"def\")".to_string(),
                 local_contract: "src/lib.rs::tests::fresh_vendor_fol_good::enc#euf#c:callresult_enc_a1(s:\"def\")::assertion".to_string(),

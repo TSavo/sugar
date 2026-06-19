@@ -23,6 +23,7 @@ use sugar_lift_rust_tests::{
     FunctionSourceRegistry, LiftOptions, MacroRegistry, TargetCfg,
 };
 use syn::visit::{self, Visit};
+use tracing::{debug, info, warn};
 
 /// Dissolve a batch of gated stdlib-sugar asserts: count how many hold under the pinned
 /// toolchain. One batched harness; on a batch COMPILE error (one bad assert sinks the
@@ -229,12 +230,14 @@ struct Totals {
 }
 
 fn main() {
+    init_tracing();
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!("usage: coretests_sweep <corpus-dir> [--json <out.json>]");
         std::process::exit(2);
     }
     let corpus = &args[1];
+    info!(corpus = %corpus, "coretests sweep start");
     let json_out = args
         .iter()
         .position(|a| a == "--json")
@@ -290,13 +293,23 @@ fn main() {
     let mut fn_registry = FunctionSourceRegistry::new();
     let mut scan_dirs: Vec<&str> = vec![corpus.as_str()];
     scan_dirs.extend(dep_dirs.iter().map(|s| s.as_str()));
+    let mut scanned_rs_files = 0usize;
     for dir in &scan_dirs {
+        info!(dir = %dir, "coretests sweep scanning source tree");
         for entry in walkdir::WalkDir::new(dir)
             .into_iter()
             .filter_map(|e| e.ok())
         {
             let p = entry.path();
             if p.extension().and_then(|e| e.to_str()) == Some("rs") {
+                scanned_rs_files += 1;
+                if scanned_rs_files == 1 || scanned_rs_files % 250 == 0 {
+                    info!(
+                        scanned_rs_files,
+                        file = %rel_path_for_scan_root(p, dir),
+                        "coretests sweep source scan progress"
+                    );
+                }
                 if let Ok(src) = std::fs::read_to_string(p) {
                     registry.scan_source(&src);
                     const_registry.scan_source(&rel_path_for_scan_root(p, dir), &src);
@@ -309,6 +322,11 @@ fn main() {
         "macro registry: {} definitions from source ({} trees)",
         registry.len(),
         scan_dirs.len()
+    );
+    info!(
+        definitions = registry.len(),
+        trees = scan_dirs.len(),
+        "coretests sweep macro registry loaded"
     );
 
     // `--rustc-cfg`: resolve target cfgs (target_has_atomic, target_family,
@@ -344,10 +362,15 @@ fn main() {
                     "build config: rustc facts + {} declared feature(s)",
                     features.len()
                 );
+                info!(
+                    features = features.len(),
+                    "coretests sweep build config loaded from rustc cfg"
+                );
                 LiftOptions::for_target_cfg(cfg)
             }
             Err(e) => {
                 eprintln!("warning: cfg parse failed ({e}); using default");
+                warn!(error = %e, "coretests sweep cfg parse failed; using default");
                 LiftOptions::default()
             }
         }
@@ -381,11 +404,24 @@ fn main() {
             .unwrap_or(path)
             .to_string_lossy()
             .to_string();
+        if totals.files == 1 || totals.files % 100 == 0 {
+            info!(
+                files = totals.files,
+                parse_ok = totals.parse_ok,
+                discharged = totals.discharged,
+                refused = totals.refused,
+                unclassified = totals.unclassified,
+                file = %rel,
+                "coretests sweep progress"
+            );
+        }
+        debug!(file = %rel, "coretests sweep lifting file");
 
         let src = match std::fs::read_to_string(path) {
             Ok(s) => s,
             Err(_) => {
                 totals.parse_fail += 1;
+                warn!(file = %rel, "coretests sweep could not read file");
                 rows.push((rel, 0, 0, 0, 0, false));
                 continue;
             }
@@ -394,6 +430,7 @@ fn main() {
             Ok(f) => f,
             Err(_) => {
                 totals.parse_fail += 1;
+                warn!(file = %rel, "coretests sweep could not parse file");
                 rows.push((rel, 0, 0, 0, 0, false));
                 continue;
             }
@@ -505,6 +542,15 @@ fn main() {
         let raw_delta = counter.total as i64 - discharged as i64 - refused as i64;
         rows.push((rel, counter.total, discharged, refused, raw_delta, true));
     }
+    info!(
+        files = totals.files,
+        parse_ok = totals.parse_ok,
+        discharged = totals.discharged,
+        refused = totals.refused,
+        unclassified = totals.unclassified,
+        inactive = totals.inactive,
+        "coretests sweep lift complete"
+    );
 
     // Headline reconciliation at macro granularity. `refused + unclassified` is the
     // full named non-discharged set; only their sum reconciles against the textual
@@ -640,7 +686,47 @@ fn main() {
         } else {
             println!("\nwrote ledger json: {}", out_path);
             println!("ledger cid: {}", cid);
+            info!(path = %out_path, cid = %cid, "coretests sweep wrote ledger");
         }
+    }
+}
+
+fn init_tracing() {
+    let filter = if std::env::var_os("RUST_LOG").is_some() {
+        tracing_subscriber::EnvFilter::builder()
+            .with_default_directive(tracing_subscriber::filter::LevelFilter::WARN.into())
+            .from_env_lossy()
+    } else {
+        tracing_subscriber::EnvFilter::new("warn,coretests_sweep=info,sugar_lift_rust_tests=info")
+    };
+    if let Ok(path) = std::env::var("SUGAR_LOG_FILE") {
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            Ok(file) => {
+                tracing_subscriber::fmt()
+                    .with_writer(file)
+                    .with_ansi(false)
+                    .with_env_filter(filter)
+                    .init();
+            }
+            Err(error) => {
+                eprintln!(
+                    "warning: could not open SUGAR_LOG_FILE {path}: {error}; logging to stderr"
+                );
+                tracing_subscriber::fmt()
+                    .with_writer(std::io::stderr)
+                    .with_env_filter(filter)
+                    .init();
+            }
+        }
+    } else {
+        tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .with_env_filter(filter)
+            .init();
     }
 }
 
