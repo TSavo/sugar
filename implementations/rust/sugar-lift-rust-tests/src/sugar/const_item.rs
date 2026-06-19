@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// `ConstItemSugar`: a local `const`/`static` item with a single-expression
-// initializer and no assertion-family macro is inert compiler-axiom support. The
-// compiler already checked the initializer for compiling code; at statement
-// position it is not a scalar assertion surface to be lowered through
-// `ConstraintSugar`.
+// `ConstItemSugar`: a local `const`/`static` item with no assertion-family macro is
+// inert compiler-axiom support. The compiler already checked the initializer for
+// compiling code; at statement position it is not a scalar assertion surface to be
+// lowered through `ConstraintSugar`.
 
 use syn::{Expr, Item};
 use tracing::debug;
@@ -21,9 +20,6 @@ fn recognize(item: &Item, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if count_asserts_in_expr(initializer) != 0 {
         return None;
     }
-    if !is_single_expression_initializer(initializer) {
-        return None;
-    }
     Some(Box::new(ConstItemSugar {
         kind,
         name,
@@ -37,10 +33,6 @@ fn const_static_parts(item: &Item) -> Option<(&'static str, String, &Expr)> {
         Item::Static(item) => Some(("static", item.ident.to_string(), &item.expr)),
         _ => None,
     }
-}
-
-fn is_single_expression_initializer(expr: &Expr) -> bool {
-    !matches!(expr, Expr::Block(_) | Expr::Unsafe(_) | Expr::Const(_))
 }
 
 struct ConstItemSugar {

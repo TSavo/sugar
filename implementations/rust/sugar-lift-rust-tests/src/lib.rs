@@ -5514,25 +5514,21 @@ fn callsite_exprs_in_stmt(stmt: &Stmt, scope: &TemporalScope, options: &LiftOpti
         }
         Stmt::Expr(expr, _) => visitor.visit_expr(expr),
         Stmt::Macro(stmt_macro) => visitor.visit_macro_args(&stmt_macro.mac),
-        // Item bodies are not executed merely because they are declared. A single-expression
+        // Item bodies are not executed merely because they are declared. An assertion-free
         // const/static initializer is different: `ConstItemSugar` owns its inert
         // compiler-axiom accounting, so no recursive collector call will visit its direct
-        // callsites. Visit those here for not-panic support. Block/unsafe/const-block
+        // callsites. Visit those here for not-panic support. Assertion-bearing
         // initializers still recurse through the collector and run their own callsite walk
         // in the correct execution context.
-        Stmt::Item(syn::Item::Const(item)) if is_single_expr_const_initializer(&item.expr) => {
+        Stmt::Item(syn::Item::Const(item)) if count_asserts_in_expr(&item.expr) == 0 => {
             visitor.visit_expr(&item.expr);
         }
-        Stmt::Item(syn::Item::Static(item)) if is_single_expr_const_initializer(&item.expr) => {
+        Stmt::Item(syn::Item::Static(item)) if count_asserts_in_expr(&item.expr) == 0 => {
             visitor.visit_expr(&item.expr);
         }
         Stmt::Item(_) => {}
     }
     visitor.out
-}
-
-fn is_single_expr_const_initializer(expr: &Expr) -> bool {
-    !matches!(expr, Expr::Block(_) | Expr::Unsafe(_) | Expr::Const(_))
 }
 
 struct PanicFreedomCallsiteVisitor<'a> {
@@ -15722,6 +15718,34 @@ mod lifter_key_tests {
             "only the unconditional `assert!(X)` may lift, not the conditional \
              for-body assert: lifted={}, reasons={:?}",
             out.assertions_lifted,
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn assertion_free_const_block_tail_is_inert_not_constraint_work() {
+        let src = r#"
+            #[test]
+            fn const_block_tail() {
+                const TEST: [u32; 3] = {
+                    let mut arr = [1u32, 2, 3];
+                    arr
+                };
+
+                assert!(TEST[0] == 1);
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "the real assertion should still lift through the const item: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.skip_reasons
+                .iter()
+                .all(|r| !r.contains("constraint-shaped expression did not reach bedrock `arr`")),
+            "the const initializer's value tail is inert support, not scalar assertion work: {:?}",
             out.skip_reasons
         );
     }
