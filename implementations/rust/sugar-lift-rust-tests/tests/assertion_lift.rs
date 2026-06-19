@@ -168,6 +168,145 @@ fn use_super_glob_feeds_parent_consts_to_const_sugar() {
 }
 
 #[test]
+fn use_super_glob_preserves_sibling_module_const_namespace() {
+    let node = r#"
+        const B: usize = 6;
+        pub(super) const CAPACITY: usize = 2 * B - 1;
+    "#;
+    let map = r#"
+        use super::node::{self, marker};
+    "#;
+    let child = r#"
+        use super::*;
+
+        #[test]
+        fn height_0_keeping_one() {
+            for sacred in 0..node::CAPACITY {
+                assert!(sacred <= node::CAPACITY);
+            }
+        }
+    "#;
+    let node_path = "alloc/src/collections/btree/node.rs";
+    let map_path = "alloc/src/collections/btree/map.rs";
+    let child_path = "alloc/src/collections/btree/map/tests.rs";
+    let node_file = parse(node);
+    let map_file = parse(map);
+    let child_file = parse(child);
+    let mut const_sources = ConstSourceRegistry::new();
+    const_sources.scan_file(node_path, &node_file);
+    const_sources.scan_file(map_path, &map_file);
+    const_sources.scan_file(child_path, &child_file);
+
+    let out = lift_file_with_source_imports(
+        &child_file,
+        child_path,
+        &LiftOptions::default(),
+        &MacroRegistry::new(),
+        &const_sources,
+    );
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "node::CAPACITY-backed range should lift; skip reasons: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        !out.skip_reasons
+            .iter()
+            .any(|reason| reason.contains("RUNTIME endpoint")),
+        "node::CAPACITY is a compiler const, not a runtime endpoint: {:?}",
+        out.skip_reasons
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        !dump.contains("node::CAPACITY") && !dump.contains("Var { name: \"B\""),
+        "qualified const path must desugar through sibling module compiler consts: {dump}"
+    );
+}
+
+#[test]
+fn btree_extract_if_inline_literal_map_replays_keys_eq_range() {
+    let src = r#"
+        #[test]
+        fn height_0_keeping_one() {
+            for sacred in 0..3 {
+                let mut map = BTreeMap::from_iter((0..3).map(|i| (i, i)));
+                map.extract_if(.., |i, _| *i != sacred).for_each(drop);
+                assert!(map.keys().copied().eq(sacred..=sacred));
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "alloc/src/collections/btree/map/tests.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "inline extract_if over a literal-built BTreeMap should replay; skip reasons: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn btree_extract_if_literal_map_replays_keys_eq_range() {
+    let src = r#"
+        const CAPACITY: usize = 3;
+
+        #[test]
+        fn height_0_keeping_one() {
+            let pairs = (0..CAPACITY).map(|i| (i, i));
+            for sacred in 0..CAPACITY {
+                let mut map = BTreeMap::from_iter(pairs.clone());
+                map.extract_if(.., |i, _| *i != sacred).for_each(drop);
+                assert!(map.keys().copied().eq(sacred..=sacred));
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "alloc/src/collections/btree/map/tests.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "extract_if over a literal-built BTreeMap should replay; skip reasons: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        !out.skip_reasons
+            .iter()
+            .any(|reason| reason.contains("RUNTIME-VALUED accumulator")),
+        "literal-built BTreeMap extract_if is stdlib sugar, not a runtime accumulator: {:?}",
+        out.skip_reasons
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Int(1)") && !dump.contains("method:keys"),
+        "map keys equality should lower to scalar facts over replayed keys, not method EUF: {dump}"
+    );
+}
+
+#[test]
+fn btree_extract_if_literal_map_replays_len_after_removing_one() {
+    let src = r#"
+        const CAPACITY: usize = 3;
+
+        #[test]
+        fn height_0_removing_one() {
+            let pairs = (0..CAPACITY).map(|i| (i, i));
+            for doomed in 0..CAPACITY {
+                let mut map = BTreeMap::from_iter(pairs.clone());
+                map.extract_if(.., |i, _| *i == doomed).for_each(drop);
+                assert_eq!(map.len(), CAPACITY - 1);
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "alloc/src/collections/btree/map/tests.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "extract_if len assertion should replay; skip reasons: {:?}",
+        out.skip_reasons
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Int(2)") && !dump.contains("method:len"),
+        "map len should lower to scalar facts over replayed state, not method EUF: {dump}"
+    );
+}
+
+#[test]
 fn finite_helper_match_return_loop_replays_splitpoint_assertions() {
     let src = r#"
         const B: usize = 6;

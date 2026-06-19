@@ -59,6 +59,7 @@ pub mod sugar {
     pub mod ctor_term;
     pub mod dormant_mut_ref;
     pub mod enumerate;
+    pub mod extract_if;
     pub mod factory;
     pub mod field_term;
     pub mod filter;
@@ -1850,6 +1851,19 @@ impl ConstRegistry {
         }
     }
 
+    pub(crate) fn merge_prefixed(&mut self, prefix: &str, imported: &ConstRegistry) {
+        let mut bindings = ExprBindings::new();
+        for name in imported.consts.keys().filter(|name| !name.contains("::")) {
+            if let Ok(expr) = syn::parse_str::<Expr>(&format!("{prefix}::{name}")) {
+                bindings.insert(name.clone(), expr);
+            }
+        }
+        for (name, expr) in &imported.consts {
+            let rewritten = substitute_expr(expr, &bindings);
+            self.insert(&format!("{prefix}::{name}"), Rc::new(rewritten));
+        }
+    }
+
     pub(crate) fn lookup(&self, name: &str) -> Option<Rc<Expr>> {
         if self.ambiguous.contains(name) {
             return None;
@@ -1862,12 +1876,27 @@ fn expr_signature(expr: &Expr) -> String {
     expr.to_token_stream().to_string()
 }
 
+pub(crate) fn const_path_key(path: &syn::Path) -> Option<String> {
+    if path.segments.is_empty() {
+        return None;
+    }
+    let mut parts = Vec::new();
+    for segment in &path.segments {
+        if !matches!(segment.arguments, syn::PathArguments::None) {
+            return None;
+        }
+        parts.push(segment.ident.to_string());
+    }
+    Some(parts.join("::"))
+}
+
 /// Const item initializers indexed by source file. `UseSugar` reads this source graph
 /// to turn compiler-visible imports (`use super::*`) into the local visible
 /// `ConstRegistry`; `ConstSugar` then owns value lowering from that registry.
 #[derive(Default, Clone)]
 pub struct ConstSourceRegistry {
     by_source: BTreeMap<String, ConstRegistry>,
+    items_by_source: BTreeMap<String, Vec<Item>>,
 }
 
 impl std::fmt::Debug for ConstSourceRegistry {
@@ -1887,6 +1916,8 @@ impl ConstSourceRegistry {
         let mut registry = ConstRegistry::new();
         scan_const_items(&file.items, &mut registry);
         self.by_source.insert(source_path.to_string(), registry);
+        self.items_by_source
+            .insert(source_path.to_string(), file.items.clone());
     }
 
     pub fn scan_source(&mut self, source_path: &str, src: &str) {
@@ -1895,8 +1926,26 @@ impl ConstSourceRegistry {
         }
     }
 
-    pub(crate) fn registry_for_source(&self, source_path: &str) -> Option<&ConstRegistry> {
-        self.by_source.get(source_path)
+    pub(crate) fn effective_registry_for_source_seen(
+        &self,
+        source_path: &str,
+        seen: &mut BTreeSet<String>,
+    ) -> ConstRegistry {
+        let mut out = self
+            .by_source
+            .get(source_path)
+            .cloned()
+            .unwrap_or_else(ConstRegistry::new);
+        if !seen.insert(source_path.to_string()) {
+            return out;
+        }
+        if let Some(items) = self.items_by_source.get(source_path) {
+            let imports =
+                sugar::use_item::const_imports_for_items_seen(items, source_path, self, seen);
+            out.merge_imports(&imports);
+        }
+        seen.remove(source_path);
+        out
     }
 }
 
@@ -2648,7 +2697,7 @@ impl TemporalScope {
     }
 
     pub(crate) fn const_expr_for_path(&self, path: &syn::Path) -> Option<Rc<Expr>> {
-        let name = path.get_ident()?.to_string();
+        let name = const_path_key(path)?;
         self.const_registry.lookup(&name)
     }
 
@@ -2669,6 +2718,16 @@ impl TemporalScope {
             || self.ambiguous_contains(name)
             || self.plan.interior_mut.contains(name)
             || self.plan.iterators.contains(name)
+        {
+            return None;
+        }
+        self.let_binding(name)
+    }
+
+    pub(crate) fn replayable_let_binding_for_source(&self, name: &str) -> Option<&Expr> {
+        if self.is_mut_local(name)
+            || self.ambiguous_contains(name)
+            || self.plan.interior_mut.contains(name)
         {
             return None;
         }

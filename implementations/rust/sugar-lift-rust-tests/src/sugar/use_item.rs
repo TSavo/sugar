@@ -5,6 +5,8 @@
 // parent const items / value functions into the current registries so `ConstSugar`
 // and value-call sugar can recurse into their source.
 
+use std::collections::BTreeSet;
+
 use syn::{Item, UseTree};
 
 use crate::{ConstRegistry, ConstSourceRegistry, FnRegistry, FunctionSourceRegistry};
@@ -14,13 +16,24 @@ pub(crate) fn const_imports_for_items(
     source_path: &str,
     source_consts: &ConstSourceRegistry,
 ) -> ConstRegistry {
+    let mut seen = BTreeSet::new();
+    const_imports_for_items_seen(items, source_path, source_consts, &mut seen)
+}
+
+pub(crate) fn const_imports_for_items_seen(
+    items: &[Item],
+    source_path: &str,
+    source_consts: &ConstSourceRegistry,
+    seen: &mut BTreeSet<String>,
+) -> ConstRegistry {
     let mut out = ConstRegistry::new();
     for item in items {
         match item {
-            Item::Use(u) => collect_use_tree(&u.tree, source_path, source_consts, &mut out),
+            Item::Use(u) => collect_use_tree(&u.tree, source_path, source_consts, &mut out, seen),
             Item::Mod(m) => {
                 if let Some((_, items)) = &m.content {
-                    let nested = const_imports_for_items(items, source_path, source_consts);
+                    let nested =
+                        const_imports_for_items_seen(items, source_path, source_consts, seen);
                     out.merge_all(&nested);
                 }
             }
@@ -56,14 +69,15 @@ fn collect_use_tree(
     source_path: &str,
     source_consts: &ConstSourceRegistry,
     out: &mut ConstRegistry,
+    seen: &mut BTreeSet<String>,
 ) {
     match tree {
         UseTree::Path(path) if path.ident == "super" => {
-            collect_super_use_tree(&path.tree, source_path, source_consts, out)
+            collect_super_use_tree(&path.tree, source_path, source_consts, out, seen)
         }
         UseTree::Group(group) => {
             for item in &group.items {
-                collect_use_tree(item, source_path, source_consts, out);
+                collect_use_tree(item, source_path, source_consts, out, seen);
             }
         }
         _ => {}
@@ -94,26 +108,74 @@ fn collect_super_use_tree(
     source_path: &str,
     source_consts: &ConstSourceRegistry,
     out: &mut ConstRegistry,
+    seen: &mut BTreeSet<String>,
 ) {
-    let Some(parent_path) = parent_module_source_path(source_path) else {
-        return;
-    };
     match tree {
         UseTree::Glob(_) => {
-            if let Some(parent_consts) = source_consts.registry_for_source(&parent_path) {
-                out.merge_all(parent_consts);
-            }
+            let Some(parent_path) = parent_module_source_path(source_path) else {
+                return;
+            };
+            let parent_consts =
+                source_consts.effective_registry_for_source_seen(&parent_path, seen);
+            out.merge_all(&parent_consts);
         }
         UseTree::Name(name) => {
-            if let Some(parent_consts) = source_consts.registry_for_source(&parent_path) {
-                if let Some(expr) = parent_consts.lookup(&name.ident.to_string()) {
-                    out.insert(&name.ident.to_string(), expr);
-                }
+            let Some(parent_path) = parent_module_source_path(source_path) else {
+                return;
+            };
+            let parent_consts =
+                source_consts.effective_registry_for_source_seen(&parent_path, seen);
+            if let Some(expr) = parent_consts.lookup(&name.ident.to_string()) {
+                out.insert(&name.ident.to_string(), expr);
             }
+        }
+        UseTree::Path(path) => collect_super_module_use_tree(
+            &path.ident.to_string(),
+            &path.tree,
+            source_path,
+            source_consts,
+            out,
+            seen,
+        ),
+        UseTree::Group(group) => {
+            for item in &group.items {
+                collect_super_use_tree(item, source_path, source_consts, out, seen);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_super_module_use_tree(
+    module: &str,
+    tree: &UseTree,
+    source_path: &str,
+    source_consts: &ConstSourceRegistry,
+    out: &mut ConstRegistry,
+    seen: &mut BTreeSet<String>,
+) {
+    let Some(module_path) = sibling_module_source_path(source_path, module) else {
+        return;
+    };
+    let module_consts = source_consts.effective_registry_for_source_seen(&module_path, seen);
+    match tree {
+        UseTree::Name(name) if name.ident == "self" => {
+            out.merge_prefixed(module, &module_consts);
+        }
+        UseTree::Name(name) => {
+            if let Some(expr) = module_consts.lookup(&name.ident.to_string()) {
+                out.insert(&name.ident.to_string(), expr);
+            }
+        }
+        UseTree::Rename(rename) if rename.ident == "self" => {
+            out.merge_prefixed(&rename.rename.to_string(), &module_consts);
+        }
+        UseTree::Glob(_) => {
+            out.merge_all(&module_consts);
         }
         UseTree::Group(group) => {
             for item in &group.items {
-                collect_super_use_tree(item, source_path, source_consts, out);
+                collect_super_module_use_tree(module, item, source_path, source_consts, out, seen);
             }
         }
         _ => {}
@@ -157,4 +219,9 @@ fn parent_module_source_path(source_path: &str) -> Option<String> {
         return Some(format!("{base}.rs"));
     }
     None
+}
+
+fn sibling_module_source_path(source_path: &str, module: &str) -> Option<String> {
+    let (dir, _) = source_path.rsplit_once('/')?;
+    Some(format!("{dir}/{module}.rs"))
 }

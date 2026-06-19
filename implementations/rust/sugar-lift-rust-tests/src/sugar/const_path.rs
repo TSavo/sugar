@@ -6,7 +6,7 @@
 
 use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::{Outcome, Sugar, SugarCtx};
+use crate::{const_path_key, Outcome, Sugar, SugarCtx};
 use syn::{Expr, ExprPath};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -32,7 +32,7 @@ fn simple_const_path(expr: &Expr) -> Option<(String, &syn::Path)> {
     else {
         return None;
     };
-    let name = path.get_ident()?.to_string();
+    let name = const_path_key(path)?;
     Some((name, path))
 }
 
