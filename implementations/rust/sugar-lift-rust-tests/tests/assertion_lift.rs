@@ -7511,6 +7511,75 @@ fn t() {
 }
 
 #[test]
+fn dependency_macro_registry_learns_layered_value_assertion_shape() {
+    let dep = r#"
+macro_rules! ready_shape {
+    ($e:expr) => {{
+        use core::task::Poll;
+        match $e {
+            Poll::Ready(v) => v,
+            Poll::Pending => panic!("pending"),
+        }
+    }};
+}
+
+macro_rules! ok_shape {
+    ($e:expr) => {{
+        match $e {
+            Ok(v) => v,
+            Err(e) => panic!("not ok: {:?}", e),
+        }
+    }};
+}
+
+macro_rules! ready_ok_shape {
+    ($e:expr) => {{
+        use vendor_asserts::{ready_shape, ok_shape};
+        let val = ready_shape!($e);
+        ok_shape!(val)
+    }};
+}
+"#;
+    let mut macros = MacroRegistry::new();
+    macros.scan_source(dep);
+    let consts = ConstSourceRegistry::new();
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(ready_ok_shape!(Poll::Ready(Ok::<i32, i32>(3))), 3);
+}
+"#;
+    let out = lift_file_with_source_imports(
+        &parse(src),
+        "tests/vendor_layered_value_shape.rs",
+        &LiftOptions::default(),
+        &macros,
+        &consts,
+    );
+
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "dependency-provided layered value assertion shape should lift without naming the vendor: skipped={:?} facts={:?} decls={:?}",
+        out.skip_reasons,
+        out.assertion_facts,
+        out.decls
+    );
+    let decl = single_warranted_decl(&out);
+    let dump = format!("{:?}", decl.inv);
+    assert!(
+        dump.contains("3"),
+        "the value-producing macro chain should keep the literal payload visible: {dump}"
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .all(|r| !r.contains("unsupported assertion macro") && !r.contains("unsupported term")),
+        "the dependency macro must be learned by source shape, not macro name or opaque block fallback: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
 fn spawned_async_assert_stays_refused() {
     // A spawned future may never run: its asserts are NOT unconditional and
     // must stay refused, not lifted (false-pass guard).
