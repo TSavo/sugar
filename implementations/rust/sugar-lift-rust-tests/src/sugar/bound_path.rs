@@ -9,8 +9,9 @@
 use crate::sugar::bound::BoundSugar;
 use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
 use crate::sugar::factory::{build_constraint, build_term, SugarBuildCtx};
-use crate::Sugar;
+use crate::{token_key, Sugar};
 use syn::{Expr, ExprPath};
+use tracing::debug;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::secondary_term("bound_path", recognize);
@@ -27,6 +28,17 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if fcx.resolving_bound_path(&name) {
         return None;
     }
+    if let Some(current) = fcx.scope().temporal_rewrite_expr_for(&name) {
+        debug!(
+            target: "sugar_lift_rust_tests::temporal_rewrite",
+            binding = name.as_str(),
+            value = %token_key(&current),
+            role = "Term",
+            "temporal rewrite resolved path read"
+        );
+        let child_fcx = fcx.with_bound_path(&name);
+        return Some(BoundSugar::new(name, build_term(&current, &child_fcx)));
+    }
     let init = fcx.scope().stable_let_binding_for_term(&name)?;
     let child_fcx = fcx.with_bound_path(&name);
     Some(BoundSugar::new(name, build_term(init, &child_fcx)))
@@ -36,6 +48,20 @@ fn recognize_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     let name = simple_local_path(expr)?;
     if fcx.resolving_bound_path(&name) {
         return None;
+    }
+    if let Some(current) = fcx.scope().temporal_rewrite_expr_for(&name) {
+        debug!(
+            target: "sugar_lift_rust_tests::temporal_rewrite",
+            binding = name.as_str(),
+            value = %token_key(&current),
+            role = "Constraint",
+            "temporal rewrite resolved path read"
+        );
+        let child_fcx = fcx.with_bound_path(&name);
+        return Some(BoundSugar::new(
+            name,
+            build_constraint(&current, &child_fcx),
+        ));
     }
     let init = fcx.scope().stable_let_binding_for_term(&name)?;
     let child_fcx = fcx.with_bound_path(&name);

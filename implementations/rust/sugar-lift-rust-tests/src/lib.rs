@@ -30,6 +30,7 @@ mod try_fold_eval;
 pub mod sugar {
     pub mod array_repeat;
     pub mod array_term;
+    pub mod assign_op;
     pub mod await_term;
     pub mod backstop;
     pub mod binop;
@@ -1576,6 +1577,7 @@ fn source_assertion_entries_in_stmts(
                     temporal_scope.record_let_binding(&name, (*init.expr).clone());
                 }
             }
+            temporal_scope.record_temporal_rewrite_local(local);
         }
         advance_temporal_scope_for_stmt(stmt, &mut temporal_scope);
     }
@@ -2936,6 +2938,11 @@ pub(crate) struct TemporalScope {
     /// bounded literal replay. This is a request-local axiom cache; it never infers
     /// arbitrary unsafe aliasing, only the exact sugar in `sugar/dormant_mut_ref.rs`.
     dormant_mut_ref: sugar::dormant_mut_ref::DormantMutRefState,
+    /// Request-local temporal rewrites for compiler-axiom state transitions over
+    /// literal-backed values (`x += 1`, `*a += 10` where `a` aliases an element of a
+    /// literal vector). Updates are consumed by `AssignOpSugar`; later path reads
+    /// ask this ledger before falling to the ordinary temporal variable name.
+    temporal_rewrite: std::cell::RefCell<sugar::assign_op::TemporalRewriteState>,
 }
 
 impl TemporalScope {
@@ -2954,6 +2961,9 @@ impl TemporalScope {
             const_registry: ConstRegistry::new(),
             inlined_value_helpers: std::cell::RefCell::new(BTreeSet::new()),
             dormant_mut_ref: sugar::dormant_mut_ref::DormantMutRefState::default(),
+            temporal_rewrite: std::cell::RefCell::new(
+                sugar::assign_op::TemporalRewriteState::default(),
+            ),
         }
     }
 
@@ -3045,6 +3055,18 @@ impl TemporalScope {
         self.let_binding(name)
     }
 
+    pub(crate) fn temporal_rewrite_expr_for(&self, name: &str) -> Option<Expr> {
+        self.temporal_rewrite.borrow().expr_for(name)
+    }
+
+    pub(crate) fn temporal_rewrite_can_apply(&self, expr: &Expr) -> bool {
+        self.temporal_rewrite.borrow().can_apply(expr)
+    }
+
+    pub(crate) fn apply_temporal_rewrite(&self, expr: &Expr) -> bool {
+        self.temporal_rewrite.borrow_mut().apply(expr)
+    }
+
     pub(crate) fn replayable_let_binding_for_source(&self, name: &str) -> Option<&Expr> {
         if self.is_mut_local(name)
             || self.ambiguous_contains(name)
@@ -3065,6 +3087,10 @@ impl TemporalScope {
     fn record_let_binding(&mut self, name: &str, init: Expr) {
         let rewritten = substitute_expr(&init, &self.let_bindings);
         self.let_bindings.insert(name.to_string(), rewritten);
+    }
+
+    fn record_temporal_rewrite_local(&mut self, local: &syn::Local) {
+        self.temporal_rewrite.borrow_mut().record_local(local);
     }
 
     /// The closed scalar-literal elements of `name` if it is a `let`-bound literal
@@ -5256,6 +5282,7 @@ fn should_panic_temporal_callsite_records(
                     temporal_scope.record_let_binding(&name, (*init.expr).clone());
                 }
             }
+            temporal_scope.record_temporal_rewrite_local(local);
         }
         advance_temporal_scope_for_stmt(stmt, &mut temporal_scope);
     }
@@ -6490,6 +6517,7 @@ fn collect_assertion_entries<'a>(
                         temporal_scope.record_let_binding(&name, (*init.expr).clone());
                     }
                 }
+                temporal_scope.record_temporal_rewrite_local(local);
             }
             Stmt::Macro(m) => match cfg_resolve(&m.attrs, options) {
                 CfgDisposition::Present => {
@@ -15081,6 +15109,92 @@ mod lifter_key_tests {
             no_panic_supports, 4,
             "every visited chain callsite should route through NoPanicCallSugar: {:?}",
             out.factory_audits
+        );
+    }
+
+    #[test]
+    fn disjoint_mut_assign_ops_temporally_rewrite_literal_vector() {
+        let src = r#"
+            #[test]
+            fn disjoint_mut_rewrite() {
+                let mut v = vec![1, 2, 3];
+                let [a, b] = v.get_disjoint_mut([2, 0]).unwrap();
+                *a += 10;
+                *b += 100;
+                assert_eq!(v, vec![101, 2, 13]);
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_refused, 0,
+            "literal-backed temporal rewrites must not leave assignment residue: {:?}",
+            out.skip_reasons
+        );
+        let unresolved_updates: Vec<_> = out
+            .factory_audits
+            .iter()
+            .filter(|audit| {
+                audit.requested_role == "Constraint"
+                    && audit.disposition == FactoryDisposition::Unresolved
+                    && audit.site.contains("+=")
+            })
+            .collect();
+        assert!(
+            unresolved_updates.is_empty(),
+            "compound assignment statements should be owned by temporal rewrite sugar: {unresolved_updates:?}"
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("101") && dump.contains("13"),
+            "the final assertion should read the rewritten vector literal, not the pre-update binding: {dump}"
+        );
+        assert!(
+            !dump.contains("name: \"v@def") && !dump.contains("name: \"v\""),
+            "the final assertion should not freeze the mutable vector as an opaque temporal var: {dump}"
+        );
+    }
+
+    #[test]
+    fn disjoint_mut_slice_assign_ops_temporally_rewrite_literal_vector() {
+        let src = r#"
+            #[test]
+            fn disjoint_mut_slice_rewrite() {
+                let mut v = vec![1, 2, 3];
+                let [a, b] = v.get_disjoint_mut([0..=1, 2..=2]).unwrap();
+                a[0] += 10;
+                a[1] += 100;
+                b[0] += 1000;
+                assert_eq!(v, vec![11, 102, 1003]);
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("11") && dump.contains("102") && dump.contains("1003"),
+            "slice alias updates should rewrite the vector literal: {dump}"
+        );
+    }
+
+    #[test]
+    fn scalar_assign_ops_temporally_rewrite_literal_binding() {
+        let src = r#"
+            #[test]
+            fn scalar_assign_rewrite() {
+                let mut target = 0;
+                target |= 0xff << (0 * 8);
+                target += 1;
+                assert_eq!(target, 256);
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("256")
+                && !dump.contains("target@def")
+                && !dump.contains("name: \"target\""),
+            "scalar assignment updates should rewrite the current literal binding: {dump}"
         );
     }
 
