@@ -1,0 +1,174 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// `TryMapSugar`: std `array::try_map(path_fn)` over a literal array when the
+// source function returns an exact `Option` value. This owns the literal
+// stdlib surface; closure/ZST/non-Option forms stay unclaimed so the accounting
+// report keeps surfacing the next honest gap.
+
+use std::collections::BTreeMap;
+
+use syn::Expr;
+
+use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::monadic;
+use crate::{
+    const_eval, const_path_key, literal_aggregate_term_in_scope, resolve_value_call_inline,
+    strip_refs_groups, ConstVal, Desugared, Outcome, Sugar, SugarCtx,
+};
+
+pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::term("try_map", recognize);
+
+pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let Expr::MethodCall(call) = expr else {
+        return None;
+    };
+    if call.method != "try_map" || call.args.len() != 1 {
+        return None;
+    }
+    if !matches!(strip_refs_groups(&call.receiver), Expr::Array(_)) {
+        return None;
+    }
+    let func = strip_refs_groups(&call.args[0]);
+    let name = simple_fn_name(func)?;
+    if !fcx.scope().has_visible_fn(&name) {
+        return None;
+    }
+    Some(Box::new(TryMapSugar {
+        source: expr.clone(),
+        receiver: (*call.receiver).clone(),
+        func: func.clone(),
+    }))
+}
+
+struct TryMapSugar {
+    source: Expr,
+    receiver: Expr,
+    func: Expr,
+}
+
+impl Sugar for TryMapSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        Outcome::from_opt(reduce_try_map(
+            &self.source,
+            &self.receiver,
+            &self.func,
+            ctx,
+        ))
+    }
+}
+
+fn reduce_try_map(
+    source: &Expr,
+    receiver: &Expr,
+    func: &Expr,
+    ctx: &SugarCtx,
+) -> Option<Desugared> {
+    let Expr::Array(array) = strip_refs_groups(receiver) else {
+        return None;
+    };
+    let mut mapped = Vec::with_capacity(array.elems.len());
+    for elem in &array.elems {
+        let arg = const_value_expr(elem)?.to_expr()?;
+        match eval_option_function(func, arg, ctx)? {
+            Some(value) => mapped.push(value.to_expr()?),
+            None => {
+                tracing::debug!(
+                    target: "sugar_lift_rust_tests::sugar::try_map",
+                    func = %crate::token_key(func),
+                    elem = %crate::token_key(elem),
+                    "literal array try_map short-circuited to None"
+                );
+                return Some(Desugared::Term(monadic::none_term()));
+            }
+        }
+    }
+    let array_term =
+        literal_aggregate_term_in_scope("Array", mapped.iter(), source, ctx.scope).ok()?;
+    tracing::debug!(
+        target: "sugar_lift_rust_tests::sugar::try_map",
+        len = mapped.len(),
+        func = %crate::token_key(func),
+        "literal array try_map reduced to Some(array)"
+    );
+    Some(Desugared::Term(monadic::some_term(array_term)))
+}
+
+fn eval_option_function(func: &Expr, arg: Expr, ctx: &SugarCtx) -> Option<Option<ConstVal>> {
+    let resolved = resolve_value_call_inline(func, &[arg], ctx.scope, ctx.options)?;
+    eval_option_expr(&resolved, &BTreeMap::new())
+}
+
+fn eval_option_expr(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<Option<ConstVal>> {
+    match expr {
+        Expr::Paren(p) => eval_option_expr(&p.expr, env),
+        Expr::Group(g) => eval_option_expr(&g.expr, env),
+        Expr::Reference(r) => eval_option_expr(&r.expr, env),
+        Expr::Block(block) => match block.block.stmts.as_slice() {
+            [syn::Stmt::Expr(expr, None)] => eval_option_expr(expr, env),
+            _ => None,
+        },
+        Expr::Path(path) if path.path.segments.last()?.ident == "None" => Some(None),
+        Expr::Call(call) if call.args.len() == 1 => {
+            let Expr::Path(path) = &*call.func else {
+                return None;
+            };
+            if path.path.segments.last()?.ident != "Some" {
+                return None;
+            }
+            Some(Some(const_value_expr_with_env(&call.args[0], env)?))
+        }
+        Expr::MethodCall(call) if call.method == "checked_mul" && call.args.len() == 1 => {
+            checked_mul_usize(
+                const_value_expr_with_env(&call.receiver, env)?.as_int()?,
+                const_value_expr_with_env(&call.args[0], env)?.as_int()?,
+            )
+        }
+        _ => None,
+    }
+}
+
+fn checked_mul_usize(lhs: i128, rhs: i128) -> Option<Option<ConstVal>> {
+    let lhs = usize_domain(lhs)?;
+    let rhs = usize_domain(rhs)?;
+    let product = lhs.checked_mul(rhs)?;
+    if product > usize::MAX as u128 {
+        Some(None)
+    } else {
+        Some(Some(ConstVal::Int(product as i128)))
+    }
+}
+
+fn usize_domain(value: i128) -> Option<u128> {
+    if value < 0 || value > usize::MAX as i128 {
+        return None;
+    }
+    Some(value as u128)
+}
+
+fn const_value_expr(expr: &Expr) -> Option<ConstVal> {
+    const_value_expr_with_env(expr, &BTreeMap::new())
+}
+
+fn const_value_expr_with_env(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal> {
+    match expr {
+        Expr::Path(path) => match const_path_key(&path.path)?.as_str() {
+            "usize::MAX" => Some(ConstVal::Int(usize::MAX as i128)),
+            name => env.get(name).cloned(),
+        },
+        Expr::Paren(p) => const_value_expr_with_env(&p.expr, env),
+        Expr::Group(g) => const_value_expr_with_env(&g.expr, env),
+        Expr::Reference(r) => const_value_expr_with_env(&r.expr, env),
+        other => const_eval(other, env),
+    }
+}
+
+fn simple_fn_name(expr: &Expr) -> Option<String> {
+    let Expr::Path(path) = expr else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+    path.path.get_ident().map(ToString::to_string)
+}
