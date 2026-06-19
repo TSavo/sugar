@@ -9,6 +9,7 @@
 use crate::sugar::bound::BoundSugar;
 use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
 use crate::sugar::factory::{build_constraint, build_term, SugarBuildCtx};
+use crate::sugar::term_leaf::resolved_term;
 use crate::{token_key, Sugar};
 use syn::{Expr, ExprPath};
 use tracing::debug;
@@ -38,6 +39,15 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
         );
         let child_fcx = fcx.with_bound_path(&name);
         return Some(BoundSugar::new(name, build_term(&current, &child_fcx)));
+    }
+    if let Some(term) = fcx.scope().stable_term_binding_for_term(&name) {
+        debug!(
+            target: "sugar_lift_rust_tests::bound_path",
+            binding = name.as_str(),
+            role = "Term",
+            "resolved path read through term binding"
+        );
+        return Some(BoundSugar::new(name, resolved_term(term)));
     }
     let init = fcx.scope().stable_let_binding_for_term(&name)?;
     let child_fcx = fcx.with_bound_path(&name);

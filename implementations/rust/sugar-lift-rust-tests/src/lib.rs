@@ -89,6 +89,7 @@ pub mod sugar {
     pub mod intersperse_concat;
     pub mod iter_terminal;
     pub mod iterator;
+    pub mod let_stmt;
     pub mod literal;
     pub mod literal_slice;
     pub mod macro_term;
@@ -107,6 +108,7 @@ pub mod sugar {
     pub mod rev;
     pub mod skip;
     pub mod skip_while;
+    pub mod statement_async_future;
     pub mod statement_control_flow;
     pub mod statement_future_handoff;
     pub mod statement_loop_advance;
@@ -582,6 +584,12 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // proof before the async body can be treated as a point-wise fact. This is a boundary
         // verdict, not a vendor-name exception.
         || reason.contains("future handoff boundary")
+        // TERMINAL: a `let` initializer that constructs an assertion-bearing `async { .. }`
+        // future is INERT at the binding site. The assertion vocabulary inside the future
+        // is learned normally when a driver is learned, but the let itself does not execute
+        // it. This drains the false "let-initializer expression" work bucket without
+        // pretending the assertion was a scalar fact.
+        || reason.contains("dormant async future construction")
         // TERMINAL (FLOAT TAIL #1 -- flt2dec runtime output): an
         // `assert!((buf, k) == (..))` against the flt2dec algorithm's RUNTIME output. The
         // operand is NOT a closed f32/f64 literal term (no `ldexp`/`format!` over a closed
@@ -1426,9 +1434,6 @@ fn visit_non_test_fn(
     }
     let scoped_name = scoped_test_name(source_path, modules, &fn_name);
     let count = count_asserts_in_stmts(&f.block.stmts);
-    if count == 0 {
-        return;
-    }
     let lifted = lift_source_assertion_contracts_in_stmts(
         &f.block.stmts,
         source_path,
@@ -1539,6 +1544,17 @@ fn source_assertion_entries_in_stmts(
         match stmt {
             Stmt::Local(local) => {
                 update_float_width_scope_for_pat(&local.pat, &mut float_widths);
+                if let Some(init) = &local.init {
+                    if let Some(stmts) = sugar::let_stmt::initializer_fact_stmts(&init.expr) {
+                        entries.extend(source_assertion_entries_in_stmts(
+                            &stmts,
+                            &temporal_scope,
+                            options,
+                            reducer,
+                            factory_audits,
+                        ));
+                    }
+                }
             }
             Stmt::Macro(stmt_macro) => {
                 if matches!(
@@ -1627,35 +1643,57 @@ fn collect_source_assertion_contract_expr(
 
     let let_inits = BTreeMap::new();
     let fcx = sugar::factory::SugarBuildCtx::new(scope, options, &let_inits);
-    if !sugar::factory::has_constraint(expr, &fcx) {
-        return;
-    }
-    let ctx =
-        sugar_ctx_with_factory_audits(scope, options, reducer, float_widths, 0, factory_audits);
-    match sugar::factory::build_constraint(expr, &fcx).desugar(&ctx) {
-        Outcome::Dug(Desugared::Constraints {
-            atom,
-            warrant,
-            kind,
-            ..
-        }) => {
-            if !kind.is_warranted() {
+    if sugar::factory::has_constraint(expr, &fcx) {
+        let ctx =
+            sugar_ctx_with_factory_audits(scope, options, reducer, float_widths, 0, factory_audits);
+        match sugar::factory::build_constraint(expr, &fcx).desugar(&ctx) {
+            Outcome::Dug(Desugared::Constraints {
+                atom,
+                warrant,
+                kind,
+                ..
+            }) => {
+                if !kind.is_warranted() {
+                    return;
+                }
+                if source_precondition_contains_unresolved_call(atom.as_ref()) {
+                    return;
+                }
+                entries.push(SourceAssertionContractEntry {
+                    entry: AssertionEntry {
+                        name: warrant.name,
+                        atom,
+                        fact_span: Some(expr.span()),
+                        kind,
+                    },
+                    slot: SourceAssertionContractSlot::Pre,
+                });
                 return;
             }
-            if source_precondition_contains_unresolved_call(atom.as_ref()) {
-                return;
-            }
-            entries.push(SourceAssertionContractEntry {
-                entry: AssertionEntry {
-                    name: warrant.name,
-                    atom,
-                    fact_span: Some(expr.span()),
-                    kind,
-                },
-                slot: SourceAssertionContractSlot::Pre,
-            });
+            Outcome::Dug(_) | Outcome::Hit(_) => {}
         }
-        Outcome::Dug(_) | Outcome::Hit(_) => {}
+    }
+
+    if let Expr::Macro(expr_macro) = expr {
+        if let Some(Ok(expanded)) = try_macro_expansion_entries(
+            &expr_macro.mac.path,
+            &expr_macro.mac.tokens,
+            reducer,
+            scope.local_scope(),
+            options,
+            float_widths,
+            factory_audits,
+            0,
+        ) {
+            entries.extend(
+                expanded
+                    .into_iter()
+                    .map(|entry| SourceAssertionContractEntry {
+                        entry,
+                        slot: SourceAssertionContractSlot::Pre,
+                    }),
+            );
+        }
     }
 }
 
@@ -2918,6 +2956,13 @@ pub(crate) struct TemporalScope {
     /// / unresolvable binding makes the evaluator decline (the operand stays in its
     /// existing refusal -- a safe under-claim).
     let_bindings: BTreeMap<String, Expr>,
+    /// In-scope bindings that have already reduced to a ProofIR term. This is the
+    /// term-side twin of `let_bindings`: a value-position sugar such as
+    /// `match r { Ok(v) => v, Err(e) => panic!(..) }` can bind `v` to
+    /// `payload:Ok(r)` while reducing the surviving arm. `BoundPathSugar` consults this
+    /// before the source-expression binding map, so a pattern-bound value is a normal
+    /// recursive factory operand rather than a magic side table.
+    term_bindings: BTreeMap<String, Rc<Term>>,
     /// A snapshot of the `macro_rules!` definitions VISIBLE at this scope (in-file +
     /// dependency-source), so a TERM-POSITION macro invocation can be EXPANDED at
     /// desugar time. The desugar-time registry hangs off `ReductionCtx`, but the thin
@@ -2978,6 +3023,7 @@ impl TemporalScope {
             consuming_occurrence: std::cell::RefCell::new(BTreeMap::new()),
             literal_arrays: BTreeMap::new(),
             let_bindings: BTreeMap::new(),
+            term_bindings: BTreeMap::new(),
             macro_registry: MacroRegistry::new(),
             fn_registry: FnRegistry::new(),
             impl_value_registry: ImplValueRegistry::new(),
@@ -3082,6 +3128,17 @@ impl TemporalScope {
         self.let_binding(name)
     }
 
+    pub(crate) fn stable_term_binding_for_term(&self, name: &str) -> Option<Rc<Term>> {
+        if self.is_mut_local(name)
+            || self.ambiguous_contains(name)
+            || self.plan.interior_mut.contains(name)
+            || self.plan.iterators.contains(name)
+        {
+            return None;
+        }
+        self.term_bindings.get(name).cloned()
+    }
+
     pub(crate) fn temporal_rewrite_expr_for(&self, name: &str) -> Option<Expr> {
         self.temporal_rewrite.borrow().expr_for(name)
     }
@@ -3121,9 +3178,16 @@ impl TemporalScope {
                 "declined self-referential stable let binding"
             );
             self.let_bindings.remove(name);
+            self.term_bindings.remove(name);
             return;
         }
+        self.term_bindings.remove(name);
         self.let_bindings.insert(name.to_string(), rewritten);
+    }
+
+    pub(crate) fn record_let_term_binding(&mut self, name: &str, term: Rc<Term>) {
+        self.let_bindings.remove(name);
+        self.term_bindings.insert(name.to_string(), term);
     }
 
     fn record_temporal_rewrite_local(&mut self, local: &syn::Local) {
@@ -4543,6 +4607,11 @@ enum Effect {
     /// driver call is library/runtime semantics unless dynamically learned from visible
     /// source or proof. No callee spelling is trusted here.
     FutureHandoff { boundary: String },
+    /// DORMANT-FUTURE: an assertion-bearing `async { .. }` future is constructed as a
+    /// value, typically in a `let` initializer. Future construction is compiler-known and
+    /// inert; it does NOT execute the assertion vocabulary in the body. The body can become
+    /// a fact only when a learned driver consumes it. No driver spelling is trusted here.
+    DormantFuture { boundary: String },
     /// RUNTIME-MATCH-SCRUTINEE: an `assert!(match <runtime call> { .. })` whose scrutinee is a
     /// RUNTIME non-scalar method/function result. The asserted boolean is the arm taken by a
     /// runtime result, not a scalar equality over constructible values -- no single timeless
@@ -4674,6 +4743,11 @@ impl Effect {
                  a non-axiomatic driver; driver semantics must be learned dynamically from \
                  source/proof before the async body is a point-wise fact; refused"
             ),
+            Effect::DormantFuture { boundary } => format!(
+                "dormant async future construction `{boundary}`: assertion vocabulary inside \
+                 the future is inert at construction; driver semantics must be learned \
+                 dynamically from source/proof before the async body is a point-wise fact; refused"
+            ),
             Effect::RuntimeMatchScrutinee { boundary } => format!(
                 "only scalar equality is liftable; operand is a runtime non-scalar result \
                  `{boundary}` (a `match` over a runtime call result, not constructible from source \
@@ -4710,6 +4784,7 @@ impl Effect {
             | Effect::IfGuardRuntime { boundary }
             | Effect::RuntimeExprStmt { boundary }
             | Effect::FutureHandoff { boundary }
+            | Effect::DormantFuture { boundary }
             | Effect::RuntimeMatchScrutinee { boundary }
             | Effect::ArrayRepeat { boundary } => boundary.clone(),
             Effect::Unsupported { reason } => reason.clone(),
@@ -6520,14 +6595,14 @@ fn collect_assertion_entries<'a>(
             Stmt::Local(local) => {
                 update_float_width_scope_for_pat(&local.pat, float_widths);
                 if let Some(init) = &local.init {
-                    // If the initializer is an unconditional block (a plain block), recurse
-                    // and lift its asserts; the per-fn safety net accounts anything not
-                    // reached, so no silent drop. Otherwise the asserts (closures,
-                    // conditionals, future driver calls) are not top-level point-wise:
-                    // classify/refuse them.
-                    if let Some(stmts) = unconditional_block_stmts(&init.expr) {
+                    // `LetSugar`: a let initializer is still a fact-emission surface.
+                    // Feed initializer-level macro / if / match / block surfaces back to
+                    // the ordinary statement collector so the factory decides Dug vs Hit.
+                    // The `let` position itself must not hide a fact behind the generic
+                    // "not top-level" accounting bucket.
+                    if let Some(stmts) = sugar::let_stmt::initializer_fact_stmts(&init.expr) {
                         collect_assertion_entries(
-                            stmts,
+                            &stmts,
                             &child_block_scope(local_scope, stmt_idx),
                             options,
                             reducer,
@@ -12663,6 +12738,82 @@ fn emit_source_assertion_contract(name: &str, block: &syn::Block) -> Option<Cont
     ))
 }
 
+fn emit_callable_param_precondition_contract(
+    name: &str,
+    sig: &syn::Signature,
+    block: &syn::Block,
+) -> Option<ContractDecl> {
+    let param_names = sig_param_name_set(sig);
+    if param_names.is_empty() {
+        return None;
+    }
+    let plan = temporal_plan_for_stmts(&block.stmts, &BTreeSet::new());
+    let scope = TemporalScope::new("rust-source", plan);
+    let mut visitor = CallableParamPreconditionVisitor {
+        param_names: &param_names,
+        scope: &scope,
+        atoms: Vec::new(),
+    };
+    syn::visit::Visit::visit_block(&mut visitor, block);
+    if visitor.atoms.is_empty() {
+        return None;
+    }
+    let mut decl = source_value_contract(name, atomic_("true", Vec::new()));
+    decl.inv = None;
+    decl.pre = Some(and_(visitor.atoms));
+    Some(decl)
+}
+
+struct CallableParamPreconditionVisitor<'a> {
+    param_names: &'a BTreeSet<String>,
+    scope: &'a TemporalScope,
+    atoms: Vec<Rc<Formula>>,
+}
+
+impl CallableParamPreconditionVisitor<'_> {
+    fn callable_param_name(&self, expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Path(path) if path.qself.is_none() => path
+                .path
+                .segments
+                .last()
+                .map(|segment| segment.ident.to_string())
+                .filter(|name| self.param_names.contains(name)),
+            Expr::Paren(paren) => self.callable_param_name(&paren.expr),
+            Expr::Group(group) => self.callable_param_name(&group.expr),
+            _ => None,
+        }
+    }
+
+    fn callsite_precondition(&self, call: &syn::ExprCall) -> Option<Rc<Formula>> {
+        let name = self.callable_param_name(&call.func)?;
+        let mut args = Vec::with_capacity(call.args.len());
+        for arg in &call.args {
+            args.push(translate_term_in_scope(arg, self.scope).ok()?);
+        }
+        let subject = Rc::new(Term::Ctor {
+            name: format!("call:{name}"),
+            args,
+        });
+        Some(not_(atomic_("panic", vec![subject])))
+    }
+}
+
+impl<'ast> syn::visit::Visit<'ast> for CallableParamPreconditionVisitor<'_> {
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if let Some(atom) = self.callsite_precondition(call) {
+            self.atoms.push(atom);
+        }
+        syn::visit::visit_expr_call(self, call);
+    }
+
+    fn visit_expr_closure(&mut self, _closure: &'ast syn::ExprClosure) {}
+
+    fn visit_expr_async(&mut self, _async_block: &'ast syn::ExprAsync) {}
+
+    fn visit_item_fn(&mut self, _function: &'ast syn::ItemFn) {}
+}
+
 /// The BROAD warrant: every value body warrants, down to bare functionality.
 /// Either we THINK it constrains (so warrant it -- dumbly, opaquely if need be)
 /// or it NEVER constrains (no output -> None, the caller refuses by vacuity).
@@ -12685,6 +12836,7 @@ pub fn broad_functional_warrant(
     block: &syn::Block,
 ) -> Option<ContractDecl> {
     let assertion_decl = emit_source_assertion_contract(name, block);
+    let callable_pre_decl = emit_callable_param_precondition_contract(name, sig, block);
     if let Some(mut value_decl) = emit_value_contract(name, block) {
         if let Some(assertion_decl) = assertion_decl {
             let mut atoms = Vec::new();
@@ -12696,11 +12848,18 @@ pub fn broad_functional_warrant(
             }
             value_decl.inv = Some(and_(atoms));
         }
+        if let Some(callable_pre_decl) = callable_pre_decl {
+            value_decl.pre = callable_pre_decl.pre;
+        }
         return Some(value_decl); // structural -- strongest teeth
     }
     if let Some(assertion_decl) = assertion_decl {
         if sig_returns_unit(sig) {
-            return Some(assertion_decl);
+            let mut decl = assertion_decl;
+            if let Some(callable_pre_decl) = callable_pre_decl {
+                decl.pre = callable_pre_decl.pre;
+            }
+            return Some(decl);
         }
         let fallback = eq(
             make_var("out"),
@@ -12712,9 +12871,16 @@ pub fn broad_functional_warrant(
         let inv = assertion_decl
             .inv
             .unwrap_or_else(|| atomic_("true", Vec::new()));
-        return Some(source_value_contract(name, and_(vec![inv, fallback])));
+        let mut decl = source_value_contract(name, and_(vec![inv, fallback]));
+        if let Some(callable_pre_decl) = callable_pre_decl {
+            decl.pre = callable_pre_decl.pre;
+        }
+        return Some(decl);
     }
     if sig_returns_unit(sig) {
+        if callable_pre_decl.is_some() {
+            return callable_pre_decl;
+        }
         return None; // no output to constrain -> the caller refuses by vacuity
     }
     // Bare functionality: out = call:NAME(params). The fn name keys it to the
@@ -12723,7 +12889,11 @@ pub fn broad_functional_warrant(
         name: format!("call:{name}"),
         args: sig_param_vars(sig),
     });
-    Some(source_value_contract(name, eq(make_var("out"), term)))
+    let mut decl = source_value_contract(name, eq(make_var("out"), term));
+    if let Some(callable_pre_decl) = callable_pre_decl {
+        decl.pre = callable_pre_decl.pre;
+    }
+    Some(decl)
 }
 
 /// True iff the signature returns `()` (explicit or default) -- no output to
@@ -12745,6 +12915,19 @@ fn sig_param_vars(sig: &syn::Signature) -> Vec<Rc<Term>> {
             syn::FnArg::Receiver(_) => Some(make_var("self")),
             syn::FnArg::Typed(pt) => match &*pt.pat {
                 syn::Pat::Ident(id) => Some(make_var(id.ident.to_string())),
+                _ => None,
+            },
+        })
+        .collect()
+}
+
+fn sig_param_name_set(sig: &syn::Signature) -> BTreeSet<String> {
+    sig.inputs
+        .iter()
+        .filter_map(|arg| match arg {
+            syn::FnArg::Receiver(_) => Some("self".to_string()),
+            syn::FnArg::Typed(pt) => match &*pt.pat {
+                syn::Pat::Ident(id) => Some(id.ident.to_string()),
                 _ => None,
             },
         })
@@ -15379,8 +15562,9 @@ mod lifter_key_tests {
         "#;
         let out = lift_src(src);
         assert!(
-            out.assertions_lifted == 1 || !out.skip_reasons.is_empty(),
-            "shadowed macro binding should lift or be accounted for without recursion: {:?}",
+            out.assertions_lifted >= 2 && out.skip_reasons.is_empty(),
+            "shadowed macro binding should lift the initializer fact and the rewritten \
+             bound-value assertion without recursion: {:?}",
             out
         );
     }

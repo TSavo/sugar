@@ -12,20 +12,25 @@ use std::collections::{BTreeMap, HashSet};
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{and_, eq, implies, not_, or_, str_const, Formula, Term};
-use syn::{Arm, Expr, Lit, Pat, Path, Stmt};
+use syn::{Expr, Pat, Stmt};
 
 use crate::sugar::backstop::boxed;
 use crate::sugar::configuration::{CfgDisposition, ConfigurationSugar};
-use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::constraint_runtime_boundary::panic_payload_match_value_reason;
+use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::monadic;
 use crate::{
     bool_const, closure_body_is_side_effecting, collect_assertion_entries, count_asserts_in_stmts,
-    loop_body_mutates, path_to_variant_string, strict_variant_path, translate_lit,
-    translate_term_in_scope, wrapped_variant, AssertionFactKind, Desugared, LiftOptions, Outcome,
-    Sugar, SugarCtx, TemporalScope, Warrant,
+    expr_diverges, loop_body_mutates, path_to_variant_string, strict_variant_path, translate_lit,
+    translate_term_in_scope, wrapped_variant, AssertionFactKind, Desugared, Effect, LiftOptions,
+    Outcome, Sugar, SugarCtx, TemporalScope, Warrant,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("match_node", recognize_composite);
+
+pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::term("match_value_term", recognize_term);
 
 /// COMPOSITE recognizer for `Expr::Match`: the conjunction composite ([`MatchSugar`]
 /// via [`decompose_match`]). Byte-identical to the
@@ -36,6 +41,20 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
         Expr::Match(m) => Some(boxed(decompose_match(m, fcx.scope(), fcx.options()))),
         _ => None,
     }
+}
+
+/// TERM recognizer for a value-producing match whose losing arms diverge:
+///
+///     match r { Ok(v) => v, Err(e) => panic!(...) }
+///
+/// This is the value half of the same source shape `panic_locus_match_entry` uses for
+/// facts. The fact side says the surviving pattern held; the term side says the match
+/// expression evaluates to the surviving arm's value under that pattern binding.
+fn recognize_term(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let Expr::Match(m) = expr else {
+        return None;
+    };
+    Some(Box::new(MatchValueTermSugar { m: m.clone() }))
 }
 
 /// A match arm reduced to its discriminant guard + body statements. The guard is
@@ -164,6 +183,168 @@ struct ArmPresent;
 impl Sugar for ArmPresent {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         Outcome::Dug(Desugared::Seq(Vec::new()))
+    }
+}
+
+struct MatchValueTermSugar {
+    m: syn::ExprMatch,
+}
+
+impl Sugar for MatchValueTermSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        if let Some(reason) = panic_payload_match_value_reason(&self.m, ctx) {
+            return Outcome::Hit(Effect::Unsupported { reason });
+        }
+        let Some((pat, body)) = single_surviving_value_arm(&self.m) else {
+            return Outcome::from_opt(None);
+        };
+        let empty = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &empty);
+        let scrutinee = match build_term(&self.m.expr, &fcx).desugar(ctx) {
+            Outcome::Dug(d) => match d.into_term() {
+                Some(term) => term,
+                None => return Outcome::from_opt(None),
+            },
+            Outcome::Hit(effect) => return Outcome::Hit(effect),
+        };
+        let Some(bindings) = value_arm_term_bindings(pat, &scrutinee) else {
+            return Outcome::from_opt(None);
+        };
+        let mut arm_scope = ctx.scope.clone();
+        for (name, term) in bindings {
+            arm_scope.record_let_term_binding(&name, term);
+        }
+        let arm_fcx = SugarBuildCtx::new(&arm_scope, ctx.options, &empty);
+        let mut fw = ctx.float_widths.borrow_mut();
+        let arm_ctx = crate::sugar_ctx_with_factory_audits(
+            &arm_scope,
+            ctx.options,
+            ctx.reducer,
+            *fw,
+            ctx.macro_depth,
+            ctx.factory_audits,
+        );
+        match build_term(body, &arm_fcx).desugar(&arm_ctx) {
+            Outcome::Dug(d) => match d.into_term() {
+                Some(term) => Outcome::Dug(Desugared::Term(term)),
+                None => Outcome::from_opt(None),
+            },
+            Outcome::Hit(effect) => Outcome::Hit(effect),
+        }
+    }
+}
+
+fn single_surviving_value_arm(m: &syn::ExprMatch) -> Option<(&Pat, &Expr)> {
+    let mut surviving = Vec::new();
+    let mut diverging = 0usize;
+    for arm in &m.arms {
+        if arm.guard.is_some() {
+            return None;
+        }
+        if expr_diverges(&arm.body) {
+            diverging += 1;
+        } else {
+            surviving.push(arm);
+        }
+    }
+    if diverging == 0 || surviving.len() != 1 {
+        return None;
+    }
+    let arm = surviving[0];
+    Some((&arm.pat, &arm.body))
+}
+
+fn value_arm_term_bindings(pat: &Pat, scrutinee: &Rc<Term>) -> Option<Vec<(String, Rc<Term>)>> {
+    match pat {
+        Pat::Wild(_) | Pat::Path(_) => Some(Vec::new()),
+        Pat::Ident(id) if id.subpat.is_none() && id.mutability.is_none() && id.by_ref.is_none() => {
+            Some(vec![(id.ident.to_string(), scrutinee.clone())])
+        }
+        Pat::TupleStruct(ts) => {
+            let tag = path_to_variant_string(&ts.path);
+            let n = ts.elems.len();
+            let mut out = Vec::new();
+            for (i, elem) in ts.elems.iter().enumerate() {
+                match elem {
+                    Pat::Wild(_) | Pat::Rest(_) => {}
+                    Pat::Ident(id)
+                        if id.subpat.is_none()
+                            && id.mutability.is_none()
+                            && id.by_ref.is_none() =>
+                    {
+                        out.push((
+                            id.ident.to_string(),
+                            payload_term(&tag, (n > 1).then_some(i), scrutinee),
+                        ));
+                    }
+                    _ => return None,
+                }
+            }
+            Some(out)
+        }
+        Pat::Struct(s) => {
+            let tag = path_to_variant_string(&s.path);
+            let mut out = Vec::new();
+            for field in &s.fields {
+                let field_name = match &field.member {
+                    syn::Member::Named(id) => id.to_string(),
+                    syn::Member::Unnamed(idx) => idx.index.to_string(),
+                };
+                match &*field.pat {
+                    Pat::Wild(_) => {}
+                    Pat::Ident(id)
+                        if id.subpat.is_none()
+                            && id.mutability.is_none()
+                            && id.by_ref.is_none() =>
+                    {
+                        out.push((
+                            id.ident.to_string(),
+                            Rc::new(Term::Ctor {
+                                name: format!("payload:{tag}.{field_name}"),
+                                args: vec![scrutinee.clone()],
+                            }),
+                        ));
+                    }
+                    _ => return None,
+                }
+            }
+            Some(out)
+        }
+        Pat::Reference(r) => value_arm_term_bindings(&r.pat, scrutinee),
+        Pat::Paren(p) => value_arm_term_bindings(&p.pat, scrutinee),
+        _ => None,
+    }
+}
+
+fn payload_term(tag: &str, index: Option<usize>, scrutinee: &Rc<Term>) -> Rc<Term> {
+    if index.is_none() {
+        if let Some(inner) = monadic_payload_term(tag, scrutinee) {
+            return inner;
+        }
+    }
+    let accessor = match index {
+        Some(i) => format!("payload:{tag}.{i}"),
+        None => format!("payload:{tag}"),
+    };
+    Rc::new(Term::Ctor {
+        name: accessor,
+        args: vec![scrutinee.clone()],
+    })
+}
+
+fn monadic_payload_term(tag: &str, scrutinee: &Rc<Term>) -> Option<Rc<Term>> {
+    let leaf = tag.rsplit("::").next().unwrap_or(tag);
+    let Term::Ctor { name, args } = scrutinee.as_ref() else {
+        return None;
+    };
+    let [inner] = args.as_slice() else {
+        return None;
+    };
+    match (leaf, name.as_str()) {
+        ("Some", monadic::OPT_SOME) | ("Ok", monadic::RES_OK) | ("Err", monadic::RES_ERR) => {
+            Some(inner.clone())
+        }
+        _ => None,
     }
 }
 

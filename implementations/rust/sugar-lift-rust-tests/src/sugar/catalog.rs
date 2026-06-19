@@ -17,9 +17,10 @@ use crate::sugar::{
     impl_method, index, intersperse_collect_string, intersperse_concat, iter_terminal, iterator,
     literal, literal_slice, macro_term, map, match_node, match_scrutinee, method, monadic, path,
     range_term, raw_addr_term, reference_term, repeat_term, rev, skip, skip_while,
-    statement_control_flow, statement_future_handoff, statement_loop_advance, statement_reflection,
-    statement_runtime_expr, string_add, struct_term, take, take_while, term_literal, to_string,
-    transparent_term, try_from_fn, try_map, tuple_term, unary, unsafe_memory, vec_macro,
+    statement_async_future, statement_control_flow, statement_future_handoff,
+    statement_loop_advance, statement_reflection, statement_runtime_expr, string_add, struct_term,
+    take, take_while, term_literal, to_string, transparent_term, try_from_fn, try_map, tuple_term,
+    unary, unsafe_memory, vec_macro,
 };
 use crate::{FactoryCandidateAudit, Sugar};
 
@@ -61,6 +62,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &function_map::TERM_EXPR_SUGAR,
     &map::TERM_EXPR_SUGAR,
     &method::EXPR_SUGAR,
+    &match_node::TERM_EXPR_SUGAR,
     &await_term::EXPR_SUGAR,
     &reference_term::EXPR_SUGAR,
     &raw_addr_term::EXPR_SUGAR,
@@ -106,6 +108,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &closure_iter_advance_body::EXPR_SUGAR,
     &closure_mutating_body::EXPR_SUGAR,
     &closure_runtime_receiver::EXPR_SUGAR,
+    &statement_async_future::EXPR_SUGAR,
     &statement_control_flow::EXPR_SUGAR,
     &statement_future_handoff::EXPR_SUGAR,
     &statement_reflection::EXPR_SUGAR,
@@ -793,9 +796,10 @@ mod tests {
         let expr: Expr = syn::parse_str("async { assert_eq!(1, 1); }").unwrap();
         let names = candidate_names_for_role(&expr, SugarRole::StatementEffect);
 
-        assert!(
-            names.is_empty(),
-            "bare async construction is inert: {names:?}"
+        assert_eq!(
+            names,
+            vec!["statement_async_future"],
+            "bare async construction is inert/dormant, not a handoff driver"
         );
     }
 
