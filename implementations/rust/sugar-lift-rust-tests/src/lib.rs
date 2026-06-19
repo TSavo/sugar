@@ -3926,6 +3926,14 @@ fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal>
                         "i64" | "isize" => {
                             i64::try_from(n).ok().map(|v| ConstVal::Int(i128::from(v)))
                         }
+                        // Literal-array map rows commonly widen a known nonnegative
+                        // integer to an unsigned type (`v as u64`). That is a compiler
+                        // axiom only while it preserves the numeric value exactly.
+                        "u8" => u8::try_from(n).ok().map(|v| ConstVal::Int(i128::from(v))),
+                        "u16" => u16::try_from(n).ok().map(|v| ConstVal::Int(i128::from(v))),
+                        "u32" => u32::try_from(n).ok().map(|v| ConstVal::Int(i128::from(v))),
+                        "u64" => u64::try_from(n).ok().map(|v| ConstVal::Int(i128::from(v))),
+                        "usize" => usize::try_from(n).ok().map(|v| ConstVal::Int(v as i128)),
                         _ => None,
                     }
                 }
@@ -16353,6 +16361,38 @@ mod lifter_key_tests {
         assert!(
             dump.contains("literal:Array(i:10,i:12,i:2,i:4)") && !dump.contains("method:map"),
             "function map should materialize the mapped literal array: {dump}"
+        );
+    }
+
+    #[test]
+    fn closure_map_bound_literal_array_lifts_as_term() {
+        let src = r#"
+            #[test]
+            fn array_map() {
+                let a = [1, 2, 3];
+                let b = a.map(|v| v + 1);
+                assert_eq!(b, [2, 3, 4]);
+
+                let a = [1u8, 2, 3];
+                let b = a.map(|v| v as u64);
+                assert_eq!(b, [1, 2, 3]);
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 2,
+            "bound closure map over literal array should lift both assertions; reasons: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "literal closure map should not be refused: {:?}",
+            out.skip_reasons
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("literal:Array(i:2,i:3,i:4)") && !dump.contains("method:map"),
+            "closure map should materialize the mapped literal array: {dump}"
         );
     }
 
