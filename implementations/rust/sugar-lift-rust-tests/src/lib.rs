@@ -76,6 +76,7 @@ pub mod sugar {
     pub mod forall_loop;
     pub mod format;
     pub mod format_macro;
+    pub mod function_map;
     pub mod identity;
     pub mod identity_map;
     pub mod impl_method;
@@ -3013,6 +3014,10 @@ impl TemporalScope {
     /// nested helpers).
     fn fn_registry(&self) -> &FnRegistry {
         &self.fn_registry
+    }
+
+    pub(crate) fn has_visible_fn(&self, name: &str) -> bool {
+        self.fn_registry.lookup(name).is_some()
     }
 
     /// Record the in-source inherent impl value registry visible at this scope.
@@ -9625,7 +9630,7 @@ fn simple_call_name(call: &syn::ExprCall) -> Option<String> {
 /// longer a pure value chain and we bail). A nested call in the returned expr is
 /// re-resolved by the caller's recursion (build_term -> CallSugar -> here again),
 /// bounded by `depth`.
-fn resolve_value_call_inline(
+pub(crate) fn resolve_value_call_inline(
     func: &Expr,
     args: &[Expr],
     scope: &TemporalScope,
@@ -16312,6 +16317,35 @@ mod lifter_key_tests {
             closure_adaptor_refusal(&expr, &scope),
             None,
             "identity map has an owned Sugar and must not stay in the generic adaptor bucket"
+        );
+    }
+
+    #[test]
+    fn function_map_over_literal_array_lifts_const_fn_body() {
+        let src = r#"
+            #[test]
+            fn const_fn_map() {
+                const fn doubler(x: usize) -> usize {
+                    x * 2
+                }
+                assert_eq!(const { [5, 6, 1, 2].map(doubler) }, [10, 12, 2, 4]);
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "literal array map over visible const fn should lift; reasons: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "literal const-fn map should not be refused: {:?}",
+            out.skip_reasons
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("literal:Array(i:10,i:12,i:2,i:4)") && !dump.contains("method:map"),
+            "function map should materialize the mapped literal array: {dump}"
         );
     }
 

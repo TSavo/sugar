@@ -2962,7 +2962,7 @@ fn const_array_ops() {
     assert_eq!(
         names,
         vec![
-            "method:map#euf#c:callresult_method_map_a2(v:literal:Array(i:5,i:6,i:1,i:2),v:tests/array.rs::const_array_ops::doubler)::assertion",
+            "tests/array.rs::const_array_ops",
             "std::array::from_fn::<_,const:5,_>#euf#c:callresult_std__array__from_fn_____const_5____a1(v:tests/array.rs::const_array_ops::doubler)::assertion",
         ]
     );
@@ -2973,11 +2973,10 @@ fn const_array_ops() {
             assert_eq!(name, "=");
             assert_eq!(args.len(), 2);
             match args[0].as_ref() {
-                Term::Ctor { name, args } => {
-                    assert_eq!(name, "method:map");
-                    assert_eq!(args.len(), 2);
+                Term::Var { name } => {
+                    assert_eq!(name, "literal:Array(i:10,i:12,i:2,i:4)");
                 }
-                other => panic!("expected map method term, got {other:?}"),
+                other => panic!("expected mapped Array literal identity, got {other:?}"),
             }
             match args[1].as_ref() {
                 Term::Var { name } => {
