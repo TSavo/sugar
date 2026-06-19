@@ -17,10 +17,13 @@
 
 use std::collections::BTreeMap;
 
+use sugar_lift_rust_tests::cargo_cfg::{
+    cargo_cfg_options_from_lifter_args, lift_options_from_rust_build_cfg,
+};
 use sugar_lift_rust_tests::closed_eval::{self, HarnessResult};
 use sugar_lift_rust_tests::{
     lift_file_with_all_source_imports, refusal_disposition, ConstSourceRegistry, Disposition,
-    FunctionSourceRegistry, LiftOptions, MacroRegistry, TargetCfg,
+    FunctionSourceRegistry, MacroRegistry,
 };
 use syn::visit::{self, Visit};
 use tracing::{debug, info, warn};
@@ -329,53 +332,43 @@ fn main() {
         "coretests sweep macro registry loaded"
     );
 
-    // `--rustc-cfg`: resolve target cfgs (target_has_atomic, target_family,
-    // absence of loom/fuzzing, ...) from real `rustc --print cfg` facts -- a
-    // declared build configuration, from the compiler, not a guess.
-    // `--feature NAME` (repeatable): declare an enabled crate feature.
-    let use_rustc_cfg = args.iter().any(|a| a == "--rustc-cfg");
-    let features: Vec<String> = args
-        .iter()
-        .enumerate()
-        .filter(|(_, a)| a.as_str() == "--feature")
-        .filter_map(|(i, _)| args.get(i + 1).cloned())
-        .collect();
-    let options = if use_rustc_cfg || !features.is_empty() {
-        let mut cfg_text = String::new();
-        if use_rustc_cfg {
-            match std::process::Command::new("rustc")
-                .args(["--print", "cfg"])
-                .output()
-            {
-                Ok(o) if o.status.success() => {
-                    cfg_text.push_str(&String::from_utf8_lossy(&o.stdout));
-                }
-                _ => eprintln!("warning: `rustc --print cfg` failed; target cfgs stay ambiguous"),
-            }
+    // Cargo/rustc cfgs are a Rust-kit input surface. The sweep harness uses the
+    // same resolver as the RPC lifter so report numbers and real lift behavior
+    // do not drift. Rust-specific feature overrides are lifter args
+    // (`--features-override`, `--all-features`, ...), normally supplied by the
+    // kit manifest command, never interpreted by the language-agnostic CLI.
+    let cfg_options = match cargo_cfg_options_from_lifter_args(&args[2..]) {
+        Ok(options) => options,
+        Err(error) => {
+            eprintln!("warning: invalid cargo cfg args ({error}); using default cfg");
+            warn!(error = %error, "coretests sweep cargo cfg arg parse failed");
+            Default::default()
         }
-        for f in &features {
-            cfg_text.push_str(&format!("\nfeature=\"{f}\"\n"));
+    };
+    let options = match lift_options_from_rust_build_cfg(std::path::Path::new(corpus), &cfg_options)
+    {
+        Ok((options, report)) => {
+            eprintln!(
+                "build config: {} rustc facts + {} cargo feature cfg(s)",
+                report.rustc_fact_count, report.cargo_feature_count
+            );
+            info!(
+                rustc_facts = report.rustc_fact_count,
+                cargo_features = report.cargo_feature_count,
+                cargo_manifest = report
+                    .manifest_path
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "<none>".to_string()),
+                "coretests sweep build config loaded from rust kit cargo/rustc cfg"
+            );
+            options
         }
-        match TargetCfg::from_rustc_cfg_text(&cfg_text) {
-            Ok(cfg) => {
-                eprintln!(
-                    "build config: rustc facts + {} declared feature(s)",
-                    features.len()
-                );
-                info!(
-                    features = features.len(),
-                    "coretests sweep build config loaded from rustc cfg"
-                );
-                LiftOptions::for_target_cfg(cfg)
-            }
-            Err(e) => {
-                eprintln!("warning: cfg parse failed ({e}); using default");
-                warn!(error = %e, "coretests sweep cfg parse failed; using default");
-                LiftOptions::default()
-            }
+        Err(error) => {
+            eprintln!("warning: {error}; using default cfg");
+            warn!(error = %error, "coretests sweep build cfg failed; using default");
+            Default::default()
         }
-    } else {
-        LiftOptions::default()
     };
     let mut totals = Totals::default();
     let mut reasons: BTreeMap<String, usize> = BTreeMap::new();

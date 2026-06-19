@@ -7,6 +7,7 @@
 // ContractDecls. The verifier's existing consistency pass checks those closed
 // invariants with raw SAT: SAT => consistent/discharged; UNSAT => refused.
 
+pub mod cargo_cfg;
 pub mod source_oracle;
 
 use std::cell::RefCell;
