@@ -115,6 +115,7 @@ pub mod sugar {
     pub mod term_literal;
     pub mod to_string;
     pub mod transparent_term;
+    pub mod try_map;
     pub mod tuple_term;
     pub mod unary;
     pub mod use_item;
@@ -16352,6 +16353,35 @@ mod lifter_key_tests {
         assert!(
             dump.contains("literal:Array(i:10,i:12,i:2,i:4)") && !dump.contains("method:map"),
             "function map should materialize the mapped literal array: {dump}"
+        );
+    }
+
+    #[test]
+    fn try_map_over_literal_array_lifts_checked_mul_none() {
+        let src = r#"
+            #[test]
+            fn const_fn_try_map() {
+                const fn maybe_doubler(x: usize) -> Option<usize> {
+                    x.checked_mul(2)
+                }
+                assert_eq!(const { [1, usize::MAX, 2, 8].try_map(maybe_doubler) }, None);
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "literal array try_map over visible const fn should lift; reasons: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "literal const-fn try_map should not be refused: {:?}",
+            out.skip_reasons
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("opt:none") && !dump.contains("method:try_map"),
+            "try_map should materialize the checked_mul overflow as opt:none: {dump}"
         );
     }
 

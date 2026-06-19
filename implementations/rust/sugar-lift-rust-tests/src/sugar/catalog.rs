@@ -17,7 +17,7 @@ use crate::sugar::{
     iterator, literal, macro_term, map, match_node, match_scrutinee, method, monadic, path,
     range_term, raw_addr_term, reference_term, repeat_term, rev, skip, skip_while,
     statement_control_flow, statement_loop_advance, statement_reflection, statement_runtime_expr,
-    string_add, struct_term, take, take_while, term_literal, to_string, transparent_term,
+    string_add, struct_term, take, take_while, term_literal, to_string, transparent_term, try_map,
     tuple_term, unary, vec_macro,
 };
 use crate::{FactoryCandidateAudit, Sugar};
@@ -50,6 +50,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &collect::EXPR_SUGAR,
     &iter_terminal::EXPR_SUGAR,
     &to_string::EXPR_SUGAR,
+    &try_map::EXPR_SUGAR,
     &function_map::TERM_EXPR_SUGAR,
     &method::EXPR_SUGAR,
     &await_term::EXPR_SUGAR,
