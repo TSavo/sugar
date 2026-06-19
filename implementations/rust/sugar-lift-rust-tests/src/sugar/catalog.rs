@@ -9,10 +9,10 @@ use crate::sugar::claim::{ExprSugarClaim, ItemSugarClaim, SugarCandidate, SugarR
 use crate::sugar::factory::{AccountedSugar, FactoryAuditSeed, SugarBuildCtx};
 use crate::sugar::{
     array_repeat, array_term, assign_op, await_term, binop, block_term, bound_path, call,
-    cast_term, closure_iter_advance_body, closure_mutating_body, closure_opaque_accessor,
-    closure_runtime_receiver, closure_term, closure_tls_accessor, collect, concat_macro,
-    conditional, const_block, const_item, const_path, constraint, control_flow_term, cstr,
-    dormant_mut_ref, enumerate, field_term, filter, filter_map, fold, for_each, for_replay,
+    cast_term, char_range_filter_map, closure_iter_advance_body, closure_mutating_body,
+    closure_opaque_accessor, closure_runtime_receiver, closure_term, closure_tls_accessor, collect,
+    concat_macro, conditional, const_block, const_item, const_path, constraint, control_flow_term,
+    cstr, dormant_mut_ref, enumerate, field_term, filter, filter_map, fold, for_each, for_replay,
     forall_loop, format_macro, function_map, identity_map, impl_method, index, iter_terminal,
     iterator, literal, macro_term, map, match_node, match_scrutinee, method, monadic, path,
     range_term, raw_addr_term, reference_term, repeat_term, rev, skip, skip_while,
@@ -26,6 +26,7 @@ use crate::{FactoryCandidateAudit, Sugar};
 /// metadata owned by the Sugar module itself.
 const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &constraint::RELATION_MACRO_SUGAR,
+    &char_range_filter_map::EXPR_SUGAR,
     &constraint::ASSERT_MACRO_SUGAR,
     &constraint::IF_PANIC_SUGAR,
     &constraint::NO_PANIC_CALL_SUGAR,
@@ -627,6 +628,24 @@ mod tests {
         assert!(
             string_add < binop,
             "StringAddSugar should outrank generic BinopSugar: {names:?}"
+        );
+    }
+
+    #[test]
+    fn char_range_filter_map_axiom_outranks_generic_assert_macro() {
+        let expr: Expr = syn::parse_str(
+            "assert!((from..=to).rev().eq((from as u32..=to as u32).filter_map(char::from_u32).rev()))",
+        )
+        .unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Constraint);
+
+        assert_eq!(
+            names,
+            vec!["char_range_filter_map_eq", "constraint_assert_macro"]
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Constraint),
+            Some("char_range_filter_map_eq")
         );
     }
 

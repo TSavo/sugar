@@ -41,6 +41,7 @@ pub mod sugar {
     pub mod callsite;
     pub mod cast_term;
     pub mod catalog;
+    pub mod char_range_filter_map;
     pub mod claim;
     pub mod closure_adaptor;
     pub mod closure_iter_advance_body;
@@ -15793,6 +15794,32 @@ mod lifter_key_tests {
                 .any(|r| r.contains("panic payload downcast reads runtime exception state")),
             "panic payload deref should be a named runtime boundary, not an unclassified \
              structural bail: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn char_range_filter_map_eq_lifts_as_stdlib_axiom() {
+        let src = r#"
+            #[test]
+            fn char_range_axiom() {
+                let from = if cfg!(miri) { char::from_u32(0xD800 - 10).unwrap() } else { '\0' };
+                let to = if cfg!(miri) { char::from_u32(0xDFFF + 10).unwrap() } else { char::MAX };
+                assert!((from..=to).eq((from as u32..=to as u32).filter_map(char::from_u32)));
+                assert!((from..=to).rev().eq((from as u32..=to as u32).filter_map(char::from_u32).rev()));
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 2,
+            "char range/filter_map equivalence is stdlib/compiler sugar and should lift: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.skip_reasons
+                .iter()
+                .all(|r| !r.contains("structural bail")),
+            "char range/filter_map equivalence should not fall through as structural: {:?}",
             out.skip_reasons
         );
     }

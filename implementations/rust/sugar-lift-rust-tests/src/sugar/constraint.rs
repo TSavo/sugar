@@ -18,15 +18,15 @@ use crate::{
 use sugar_ir_symbolic::{and_, atomic_, not_, str_const};
 use syn::{Expr, ExprIf, ExprLit, ExprMacro, Lit, UnOp};
 
-pub(crate) const RELATION_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
-    "constraint_relation_macro",
-    SugarRole::Constraint,
-    SugarPriority::Primary,
-    recognize_relation_macro,
-);
+pub(crate) const RELATION_MACRO_SUGAR: ExprSugarClaim =
+    ExprSugarClaim::constraint("constraint_relation_macro", recognize_relation_macro);
 
-pub(crate) const ASSERT_MACRO_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::constraint("constraint_assert_macro", recognize_assert_macro);
+pub(crate) const ASSERT_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "constraint_assert_macro",
+    SugarRole::Constraint,
+    SugarPriority::Secondary,
+    recognize_assert_macro,
+);
 
 pub(crate) const BOOL_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_bool_expr",
