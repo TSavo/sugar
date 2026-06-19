@@ -991,6 +991,29 @@ fn walk_items<'a>(
     factory_audits: Option<&FactoryAuditLog>,
     out: &mut AdapterOutput,
 ) {
+    walk_items_inner(
+        items,
+        source_path,
+        modules,
+        options,
+        reducer,
+        factory_audits,
+        out,
+        0,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn walk_items_inner<'a>(
+    items: &[Item],
+    source_path: &str,
+    modules: &mut Vec<String>,
+    options: &LiftOptions,
+    reducer: &ReductionCtx<'a>,
+    factory_audits: Option<&FactoryAuditLog>,
+    out: &mut AdapterOutput,
+    macro_depth: usize,
+) {
     for item in items {
         match item {
             Item::Fn(f) => {
@@ -1036,7 +1059,7 @@ fn walk_items<'a>(
                         }
                     }
                     modules.push(m.ident.to_string());
-                    walk_items(
+                    walk_items_inner(
                         items,
                         source_path,
                         modules,
@@ -1044,8 +1067,25 @@ fn walk_items<'a>(
                         reducer,
                         factory_audits,
                         out,
+                        macro_depth,
                     );
                     modules.pop();
+                }
+            }
+            Item::Macro(m) => {
+                if let Some(Ok(expanded)) =
+                    try_item_macro_expansion_items(&m.mac.path, &m.mac.tokens, reducer, macro_depth)
+                {
+                    walk_items_inner(
+                        &expanded,
+                        source_path,
+                        modules,
+                        options,
+                        reducer,
+                        factory_audits,
+                        out,
+                        macro_depth + 1,
+                    );
                 }
             }
             _ => {}
@@ -1064,6 +1104,31 @@ fn walk_non_test_fns(
     options: &LiftOptions,
     factory_audits: Option<&FactoryAuditLog>,
     out: &mut AdapterOutput,
+) {
+    walk_non_test_fns_inner(
+        items,
+        source_path,
+        modules,
+        reduced_helpers,
+        reducer,
+        options,
+        factory_audits,
+        out,
+        0,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn walk_non_test_fns_inner(
+    items: &[Item],
+    source_path: &str,
+    modules: &mut Vec<String>,
+    reduced_helpers: &HashSet<String>,
+    reducer: &ReductionCtx<'_>,
+    options: &LiftOptions,
+    factory_audits: Option<&FactoryAuditLog>,
+    out: &mut AdapterOutput,
+    macro_depth: usize,
 ) {
     for item in items {
         match item {
@@ -1089,7 +1154,7 @@ fn walk_non_test_fns(
                         continue;
                     }
                     modules.push(m.ident.to_string());
-                    walk_non_test_fns(
+                    walk_non_test_fns_inner(
                         items,
                         source_path,
                         modules,
@@ -1098,6 +1163,7 @@ fn walk_non_test_fns(
                         options,
                         factory_audits,
                         out,
+                        macro_depth,
                     );
                     modules.pop();
                 }
@@ -1109,6 +1175,25 @@ fn walk_non_test_fns(
             Item::Macro(m) => {
                 if let Some(seg) = m.mac.path.segments.last() {
                     let mname = seg.ident.to_string();
+                    if let Some(Ok(expanded)) = try_item_macro_expansion_items(
+                        &m.mac.path,
+                        &m.mac.tokens,
+                        reducer,
+                        macro_depth,
+                    ) {
+                        walk_non_test_fns_inner(
+                            &expanded,
+                            source_path,
+                            modules,
+                            reduced_helpers,
+                            reducer,
+                            options,
+                            factory_audits,
+                            out,
+                            macro_depth + 1,
+                        );
+                        continue;
+                    }
                     if mname.starts_with("assert") || mname.starts_with("debug_assert") {
                         let reason = match try_macro_expansion_entries(
                             &m.mac.path,
@@ -3022,6 +3107,74 @@ fn temporal_scope_from_reducer(local_scope: &str, reducer: &ReductionCtx<'_>) ->
         .with_impl_value_registry(reducer.impl_value_registry_snapshot())
         .with_layout_type_registry(reducer.layout_type_registry_snapshot())
         .with_const_registry(reducer.const_registry_snapshot())
+}
+
+fn try_item_macro_expansion_items(
+    path: &syn::Path,
+    tokens: &proc_macro2::TokenStream,
+    reducer: &ReductionCtx<'_>,
+    macro_depth: usize,
+) -> Option<Result<Vec<Item>, String>> {
+    let name = path.segments.last()?.ident.to_string();
+    let rules = reducer.macro_rules(&name)?;
+    if macro_depth >= MAX_MACRO_EXPANSION_DEPTH {
+        tracing::debug!(
+            target: "sugar_lift_rust_tests::macro_match",
+            macro_name = %name,
+            macro_depth = macro_depth,
+            max_depth = MAX_MACRO_EXPANSION_DEPTH,
+            "item macro expansion refused by depth guard"
+        );
+        return Some(Err(format!(
+            "item macro `{name}`: expansion depth exceeded; released to layer 0"
+        )));
+    }
+    let expanded = match macro_expand::expand(&rules, tokens.clone()) {
+        Ok(expanded) => expanded,
+        Err(error) => {
+            tracing::debug!(
+                target: "sugar_lift_rust_tests::macro_match",
+                macro_name = %name,
+                macro_depth = macro_depth,
+                error = %error,
+                "item macro expansion failed"
+            );
+            return Some(Err(format!(
+                "item macro `{name}`: {error}; released to layer 0"
+            )));
+        }
+    };
+    tracing::trace!(
+        target: "sugar_lift_rust_tests::macro_match",
+        macro_name = %name,
+        macro_depth = macro_depth,
+        expanded_tokens = %expanded,
+        "item macro expanded before item walker recursion"
+    );
+    match syn::parse2::<syn::File>(expanded) {
+        Ok(file) => {
+            tracing::debug!(
+                target: "sugar_lift_rust_tests::macro_match",
+                macro_name = %name,
+                macro_depth = macro_depth,
+                expanded_items = file.items.len(),
+                "item macro expansion parsed as source items"
+            );
+            Some(Ok(file.items))
+        }
+        Err(error) => {
+            tracing::debug!(
+                target: "sugar_lift_rust_tests::macro_match",
+                macro_name = %name,
+                macro_depth = macro_depth,
+                error = %error,
+                "item macro expansion did not parse as source items"
+            );
+            Some(Err(format!(
+                "item macro `{name}`: expansion did not parse as items; released to layer 0"
+            )))
+        }
+    }
 }
 
 /// Walk into an in-source `macro_rules!` definition and reduce its expansion.
