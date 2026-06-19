@@ -25,14 +25,16 @@ use crate::{FactoryCandidateAudit, Sugar};
 /// metadata owned by the Sugar module itself.
 const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &constraint::RELATION_MACRO_SUGAR,
-    &constraint::BOOL_MACRO_SUGAR,
+    &constraint::ASSERT_MACRO_SUGAR,
     &constraint::IF_PANIC_SUGAR,
     &constraint::NO_PANIC_CALL_SUGAR,
+    &constraint::BOOL_EXPR_SUGAR,
     &monadic::EXPR_SUGAR,
     &term_literal::EXPR_SUGAR,
     &const_block::EXPR_SUGAR,
     &unary::EXPR_SUGAR,
     &dormant_mut_ref::EXPR_SUGAR,
+    &bound_path::CONSTRAINT_EXPR_SUGAR,
     &bound_path::EXPR_SUGAR,
     &const_path::EXPR_SUGAR,
     &path::EXPR_SUGAR,

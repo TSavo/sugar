@@ -251,7 +251,10 @@ impl FactoryAuditSeed {
                 AssertionFactKind::Support => (
                     FactoryDisposition::Support,
                     "constraints",
-                    Some("inert: support constraint; no scalar universe emitted".to_string()),
+                    Some(
+                        "support constraint: emitted as panic-path/auxiliary universe; does not increment scalar assertion count"
+                            .to_string(),
+                    ),
                 ),
             },
             Outcome::Dug(Desugared::Term(_)) => (FactoryDisposition::Warranted, "term", None),

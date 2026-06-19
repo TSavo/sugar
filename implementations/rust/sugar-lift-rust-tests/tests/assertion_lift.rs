@@ -1,18 +1,46 @@
 use sugar_ir_symbolic::{ConstValue, Formula, Term};
 use sugar_lift_rust_tests::{
-    lift_file, lift_file_with_options, lift_file_with_source_imports, ConstSourceRegistry,
-    LiftOptions, MacroRegistry, TargetCfg,
+    lift_file, lift_file_with_options, lift_file_with_source_imports, AssertionFactKind,
+    ConstSourceRegistry, LiftOptions, MacroRegistry, TargetCfg,
 };
 
 fn parse(src: &str) -> syn::File {
     syn::parse_file(src).expect("fixture parses")
 }
 
-fn inv_operands(decl: &sugar_ir_symbolic::ContractDecl) -> &[std::rc::Rc<Formula>] {
+fn inv_operands(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<std::rc::Rc<Formula>> {
     match decl.inv.as_deref() {
-        Some(Formula::Connective { kind, operands }) if kind == "and" => operands,
+        Some(Formula::Connective { kind, operands }) if kind == "and" => operands
+            .iter()
+            .filter(|operand| !formula_mentions_panic_path(operand))
+            .cloned()
+            .collect(),
         other => panic!("expected and inv, got {other:?}"),
     }
+}
+
+fn pre_operands(decl: &sugar_ir_symbolic::ContractDecl) -> &[std::rc::Rc<Formula>] {
+    match decl.pre.as_deref() {
+        Some(Formula::Connective { kind, operands }) if kind == "and" => operands,
+        other => panic!("expected and pre, got {other:?}"),
+    }
+}
+
+fn assert_supports_panic_path(out: &sugar_lift_rust_tests::AdapterOutput, item_suffix: &str) {
+    assert!(
+        out.assertion_facts.iter().any(|fact| {
+            fact.kind == AssertionFactKind::Support && fact.item_name.ends_with(item_suffix)
+        }),
+        "expected support fact for `{item_suffix}`: {:?}",
+        out.assertion_facts
+    );
+    assert!(
+        out.decls
+            .iter()
+            .any(|decl| decl.inv.as_deref().is_some_and(formula_mentions_panic_path)),
+        "expected emitted not(panic(...)) support universe: {:?}",
+        out.decls
+    );
 }
 
 fn assert_eq_atom(formula: &Formula, expected_rhs: i128) {
@@ -968,19 +996,26 @@ fn scalar_is_six() {
     let out = lift_file(&parse(src), "src/lib.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
+    assert_supports_panic_path(&out, "scalar_is_six");
 
-    let decl = &out.decls[0];
-    assert_eq!(
-        decl.name,
-        "src/lib.rs::scalar_is_six::make_value#euf#c:callresult_make_value_a0()::assertion"
+    let decl = decl_named(
+        &out,
+        "src/lib.rs::scalar_is_six::make_value#euf#c:callresult_make_value_a0()::assertion",
     );
     assert!(decl.pre.is_none());
     assert!(decl.post.is_none());
     assert!(decl.evidence.is_none());
     let operands = inv_operands(decl);
-    assert_eq!(operands.len(), 1);
-    assert_eq_atom(&operands[0], 6);
+    let scalar_operands = operands
+        .iter()
+        .filter(|operand| !formula_mentions_panic_path(operand))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        scalar_operands.len(),
+        1,
+        "expected one scalar assertion plus panic-path support: {operands:?}"
+    );
+    assert_eq_atom(scalar_operands[0], 6);
 }
 
 #[test]
@@ -1427,16 +1462,23 @@ fn decoded_len_est() {
     let out = lift_file(&parse(src), "src/decode.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
+    assert_supports_panic_path(&out, "decoded_len_est");
 
-    let decl = &out.decls[0];
-    assert_eq!(
-        decl.name,
-        "src/decode.rs::decoded_len_est::decoded_len_estimate#euf#c:callresult_decoded_len_estimate_a1(i:4)::assertion"
+    let decl = decl_named(
+        &out,
+        "src/decode.rs::decoded_len_est::decoded_len_estimate#euf#c:callresult_decoded_len_estimate_a1(i:4)::assertion",
     );
     let operands = inv_operands(decl);
-    assert_eq!(operands.len(), 1);
-    assert_int_call_eq_atom(&operands[0], 3, "call:decoded_len_estimate", 4);
+    let scalar_operands = operands
+        .iter()
+        .filter(|operand| !formula_mentions_panic_path(operand))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        scalar_operands.len(),
+        1,
+        "expected one scalar assertion plus panic-path support: {operands:?}"
+    );
+    assert_int_call_eq_atom(scalar_operands[0], 3, "call:decoded_len_estimate", 4);
 }
 
 #[test]
@@ -3350,6 +3392,67 @@ impl<T, const N: usize> Simd<T, N> {
 }
 
 #[test]
+fn non_test_assert_bound_condition_lifts_as_precondition() {
+    let src = r#"
+fn assert_capacity(capacity: usize) {
+    let enough = capacity > 0;
+    assert!(enough);
+}
+"#;
+    let out = lift_file(&parse(src), "alloc/src/collections/vec_deque/mod.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bound assertion payload should lift through ConstraintSugar/BoundSugar: {:?}",
+        out.skip_reasons
+    );
+    assert_eq!(
+        out.assertions_refused, 0,
+        "a lifted source precondition must not also be refused: {:?}",
+        out.skip_reasons
+    );
+    assert_eq!(out.decls.len(), 1);
+    let operands = pre_operands(&out.decls[0]);
+    assert_eq!(operands.len(), 1);
+    let dump = format!("{:?}", operands[0]);
+    assert!(
+        dump.contains("capacity") && !dump.contains("enough"),
+        "BoundSugar should resolve `enough` to its predicate initializer: {dump}"
+    );
+    assert!(
+        out.decls[0].inv.is_none(),
+        "runtime-parametric source assertions are preconditions, not fixed invariants"
+    );
+}
+
+#[test]
+fn non_test_debug_assert_bound_condition_lifts_as_precondition_when_active() {
+    let src = r#"
+fn assert_capacity(capacity: usize) {
+    let enough = capacity > 0;
+    debug_assert!(enough);
+}
+"#;
+    let opts = options_with_debug_assertions();
+    let out = lift_file_with_options(&parse(src), "alloc/src/collections/vec_deque/mod.rs", &opts);
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "debug_assert! should use the same AssertSugar payload path when cfg is active: {:?}",
+        out.skip_reasons
+    );
+    assert_eq!(
+        out.assertions_refused, 0,
+        "active debug_assert! source precondition must not also be refused: {:?}",
+        out.skip_reasons
+    );
+    let operands = pre_operands(&out.decls[0]);
+    let dump = format!("{:?}", operands[0]);
+    assert!(
+        dump.contains("capacity") && !dump.contains("enough"),
+        "debug AssertSugar should unwrap before BoundSugar resolves the payload: {dump}"
+    );
+}
+
+#[test]
 fn broad_functional_warrant_carries_const_bound_assertions() {
     let method: syn::ImplItemFn = syn::parse_str(
         r#"
@@ -4854,10 +4957,32 @@ fn single_inv_debug(src: &str) -> String {
     let out = lift_file(&parse(src), "tests/macros.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
-    let operands = inv_operands(&out.decls[0]);
+    let decl = single_non_panic_free_inv_decl(&out.decls);
+    let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
     format!("{:?}", operands[0])
+}
+
+fn single_non_panic_free_inv_decl(
+    decls: &[sugar_ir_symbolic::ContractDecl],
+) -> &sugar_ir_symbolic::ContractDecl {
+    let matches: Vec<_> = decls
+        .iter()
+        .filter(|decl| !decl.inv.as_deref().is_some_and(formula_mentions_panic_path))
+        .collect();
+    assert_eq!(matches.len(), 1, "decls: {:?}", decls);
+    matches[0]
+}
+
+fn formula_mentions_panic_path(formula: &Formula) -> bool {
+    match formula {
+        Formula::Atomic { name, .. } => name == "panic",
+        Formula::Connective { operands, .. } => operands
+            .iter()
+            .any(|operand| formula_mentions_panic_path(operand)),
+        Formula::Quantifier { body, .. } => formula_mentions_panic_path(body),
+        _ => false,
+    }
 }
 
 #[test]
@@ -4989,8 +5114,8 @@ fn single_inv_debug_with_da(src: &str) -> String {
         "expected 1 lifted row; warnings: {:?}",
         out.warnings
     );
-    assert_eq!(out.decls.len(), 1);
-    let operands = inv_operands(&out.decls[0]);
+    let decl = single_non_panic_free_inv_decl(&out.decls);
+    let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
     format!("{:?}", operands[0])
 }
@@ -6973,7 +7098,10 @@ fn t() {
     let out = lift_file(&parse(src), "src/x.rs");
     assert_eq!(out.assertions_lifted, 1, "warnings: {:?}", out.skip_reasons);
     let decl = format!("{:?}", out.decls[0]);
-    assert!(decl.contains("has_effect"), "must carry the place: {decl}");
+    assert!(
+        decl.contains("call:compute"),
+        "must carry the rewritten callsite subject: {decl}"
+    );
     assert!(decl.contains("Bool(true)"), "must equate to true: {decl}");
 }
 
@@ -6993,10 +7121,10 @@ fn t() {
     assert_eq!(out.assertions_lifted, 2, "warnings: {:?}", out.skip_reasons);
     let ops = inv_operands(&out.decls[0]);
     assert_eq!(ops.len(), 2);
-    // Both atoms are over the same `flag` place: one equates it to true, the
-    // negation to false, so the two cannot both hold (flag==true ∧ flag==false).
+    // Both atoms are over the same rewritten callsite subject: one equates it
+    // to true, the negation to false, so the two cannot both hold.
     let dump = format!("{:?}", out.decls[0]);
-    assert!(dump.contains("flag"), "{dump}");
+    assert!(dump.contains("call:compute"), "{dump}");
     assert!(
         dump.contains("Bool(true)"),
         "assert!(flag) -> flag==true: {dump}"
