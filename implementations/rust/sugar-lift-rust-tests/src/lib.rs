@@ -44,6 +44,7 @@ pub mod sugar {
     pub mod char_range_collect_string;
     pub mod char_range_filter_map;
     pub mod claim;
+    pub mod closure;
     pub mod closure_adaptor;
     pub mod closure_iter_advance_body;
     pub mod closure_mutating_body;
@@ -7360,6 +7361,64 @@ fn collect_assertion_entries<'a>(
                                 &local_fns,
                             );
                             true
+                        } else if let Some(closure) =
+                            sugar::closure::ClosureSugar::decompose_invocation(e)
+                        {
+                            collect_assertion_entries(
+                                closure.stmts(),
+                                &child_block_scope(local_scope, stmt_idx),
+                                options,
+                                reducer,
+                                float_widths,
+                                entries,
+                                skipped,
+                                macros_lifted,
+                                reduced_helpers,
+                                factory_audits,
+                                macro_depth,
+                                &temporal_scope.plan.interior_mut,
+                                &local_fns,
+                            );
+                            true
+                        } else if let Some(cs) = sugar::closure::ClosureDriverSugar::decompose(
+                            e,
+                            &local_fns,
+                            reducer,
+                            options,
+                            macro_depth,
+                        ) {
+                            match cs.desugar(
+                                local_scope,
+                                stmt_idx,
+                                options,
+                                reducer,
+                                float_widths,
+                                reduced_helpers,
+                                macro_depth,
+                                factory_audits,
+                            ) {
+                                sugar::callsite::CallsiteOutcome::Dug(commit) => {
+                                    let driver_name = commit.name.clone();
+                                    entries.extend(commit.entries);
+                                    skipped.extend(commit.skipped);
+                                    *macros_lifted += commit.macros_lifted;
+                                    *reduced_helpers = commit.reduced_helpers;
+                                    // ClosureDriverSugar follows a visible closure actual through
+                                    // a callable-param bridge; it does NOT consume the driver's own
+                                    // source contract. Keep nested helper reductions, but leave the
+                                    // driver warrantable so the report still shows the bridge.
+                                    reduced_helpers.remove(&driver_name);
+                                    true
+                                }
+                                sugar::callsite::CallsiteOutcome::Bail(cause) => {
+                                    tracing::debug!(
+                                        target: "sugar_lift_rust_tests::closure",
+                                        cause = ?cause,
+                                        "ClosureSugar driver trial bailed"
+                                    );
+                                    false
+                                }
+                            }
                         } else if let Some(cs) = sugar::callsite::CallsiteSugar::decompose(
                             e,
                             &local_fns,
@@ -9771,7 +9830,7 @@ fn cfg_eval_predicate(predicate: &CfgPredicate, target_cfg: Option<&TargetCfg>) 
     }
 }
 
-fn simple_call_name(call: &syn::ExprCall) -> Option<String> {
+pub(crate) fn simple_call_name(call: &syn::ExprCall) -> Option<String> {
     let Expr::Path(path) = call.func.as_ref() else {
         return None;
     };
@@ -10172,7 +10231,7 @@ fn init_is_runtime_collection(expr: &Expr) -> bool {
     walk(expr, 16)
 }
 
-fn helper_param_names(f: &syn::ItemFn) -> Result<Vec<String>, String> {
+pub(crate) fn helper_param_names(f: &syn::ItemFn) -> Result<Vec<String>, String> {
     let mut params = Vec::new();
     for input in &f.sig.inputs {
         let syn::FnArg::Typed(pat_type) = input else {
