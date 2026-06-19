@@ -12926,6 +12926,63 @@ fn caller() {
 }
 
 #[test]
+fn closure_driver_invocation_recurses_body_per_temporal_callsite() {
+    let src = r#"
+fn driver<F: Fn()>(f: F) {
+    f();
+    f();
+}
+
+#[test]
+fn caller() {
+    driver(|| {
+        assert_eq!(probe(), 1);
+    });
+}
+"#;
+    let out = lift_file(&parse(src), "tests/closure_driver.rs");
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "closure body should recurse once per f() callsite: {:?}",
+        out
+    );
+    let probe_decls: Vec<_> = warranted_decls(&out)
+        .into_iter()
+        .filter(|decl| decl.name.contains("probe"))
+        .collect();
+    assert_eq!(
+        probe_decls.len(),
+        2,
+        "each temporal closure invocation should own a probe fact: {:?}",
+        out.decls
+    );
+    assert_ne!(
+        probe_decls[0].name, probe_decls[1].name,
+        "temporal closure invocations must not collapse into one contract"
+    );
+}
+
+#[test]
+fn direct_closure_invocation_recurses_body() {
+    let src = r#"
+#[test]
+fn caller() {
+    (|| {
+        assert_eq!(probe(), 1);
+    })();
+}
+"#;
+    let out = lift_file(&parse(src), "tests/direct_closure.rs");
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "direct closure invocation should hand the body back to the collector: {:?}",
+        out
+    );
+}
+
+#[test]
 fn rpc_emits_consumed_impl_methods_as_bridgeable_contracts() {
     // `Maker::new` and `Maker::get` are consumed by the recursive method DFS that
     // grounds the regex pattern. They still own source semantics: the lifter must emit

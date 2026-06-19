@@ -283,7 +283,7 @@ impl MethodCallsiteSugar {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn desugar_substituted_stmts(
+pub(crate) fn desugar_substituted_stmts(
     name: &str,
     stmts: &[Stmt],
     closed_args: &ExprBindings,
