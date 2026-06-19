@@ -17679,6 +17679,70 @@ mod lifter_key_tests {
     }
 
     #[test]
+    fn for_replay_const_if_local_drains_simple_loop_shape() {
+        let src = r#"
+            #[test]
+            fn const_if_loop() {
+                for i in 96..99 {
+                    let upper =
+                        if 'a' as u32 <= i && i <= 'z' as u32 { i + 'A' as u32 - 'a' as u32 } else { i };
+                    assert_eq!(upper, upper);
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "the const-if local loop must replay to a finite conjunction: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.skip_reasons
+                .iter()
+                .all(|r| !r.contains("under for context")),
+            "the literal-range for-context bucket must drain for this shape: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn for_replay_const_if_local_drains_ascii_case_loop_shape() {
+        let src = r#"
+            use core::char::from_u32;
+
+            #[test]
+            fn ascii_case_loop() {
+                for i in 96..99 {
+                    let upper =
+                        if 'a' as u32 <= i && i <= 'z' as u32 { i + 'A' as u32 - 'a' as u32 } else { i };
+                    assert_eq!(
+                        (from_u32(i).unwrap()).to_string().to_ascii_uppercase(),
+                        (from_u32(upper).unwrap()).to_string()
+                    );
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "the const-if local loop must replay to a finite conjunction: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.skip_reasons
+                .iter()
+                .all(|r| !r.contains("under for context")),
+            "the literal-range for-context bucket must drain for this shape: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            contract_names(&out).iter().any(|n| n.contains("::loop::i")),
+            "the replayed loop is named `<test>::loop::<var>`: {:?}",
+            contract_names(&out)
+        );
+    }
+
+    #[test]
     fn forall_array_over_conditional_body_is_refutable_for_wrong_claim() {
         // ADVERSARIAL (the dangerous direction): a literal-array loop with a
         // guarded but DELIBERATELY WRONG claim must lift HONESTLY -- the finite
