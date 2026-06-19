@@ -14,6 +14,7 @@ use syn::{BinOp, Expr, Lit, Pat, Stmt};
 use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
 use crate::sugar::extract_if::{ExtractIfSugar, ReplayAction};
 use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::insert::InsertSugar;
 use crate::{
     const_fold_int_term, count_asserts_in_stmts, path_to_variant_string, simple_call_name,
     simple_pat_name, strip_refs_groups, substitute_expr, substitute_macro_tokens, term_as_int,
@@ -77,6 +78,7 @@ fn body_has_replay_shape(stmts: &[Stmt], scope: &crate::TemporalScope) -> bool {
         .any(|stmt| matches!(stmt, Stmt::Expr(Expr::Match(_), _)));
     (has_source_helper_destructure && has_match)
         || crate::sugar::extract_if::body_has_replay_shape(stmts)
+        || crate::sugar::insert::body_has_replay_shape(stmts)
 }
 
 fn strip_pat(pat: &Pat) -> &Pat {
@@ -136,6 +138,7 @@ struct Replay<'a, 'c, 's> {
     bindings: ExprBindings,
     atoms: Vec<Rc<Formula>>,
     extract_if: ExtractIfSugar,
+    insert: InsertSugar,
 }
 
 impl<'a, 'c, 's> Replay<'a, 'c, 's> {
@@ -145,6 +148,7 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
             bindings: ExprBindings::new(),
             atoms: Vec::new(),
             extract_if: ExtractIfSugar::new(),
+            insert: InsertSugar::new(),
         }
     }
 
@@ -158,12 +162,23 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
     fn replay_stmt(&mut self, stmt: &Stmt) -> Option<()> {
         match stmt {
             Stmt::Local(local) => {
+                let mut handled_temporal = false;
                 match self
                     .extract_if
                     .replay_local(local, self.ctx.scope, &self.bindings)?
                 {
-                    ReplayAction::Handled(()) => return Some(()),
+                    ReplayAction::Handled(()) => handled_temporal = true,
                     ReplayAction::NotMine => {}
+                }
+                match self
+                    .insert
+                    .replay_local(local, self.ctx.scope, &self.bindings)?
+                {
+                    ReplayAction::Handled(()) => handled_temporal = true,
+                    ReplayAction::NotMine => {}
+                }
+                if handled_temporal {
+                    return Some(());
                 }
                 let init = local.init.as_ref().filter(|init| init.diverge.is_none())?;
                 let value = self.eval_expr(&init.expr)?;
@@ -184,6 +199,13 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
             Stmt::Expr(expr, _) => {
                 match self
                     .extract_if
+                    .replay_expr(expr, self.ctx.scope, &self.bindings)?
+                {
+                    ReplayAction::Handled(()) => return Some(()),
+                    ReplayAction::NotMine => {}
+                }
+                match self
+                    .insert
                     .replay_expr(expr, self.ctx.scope, &self.bindings)?
                 {
                     ReplayAction::Handled(()) => return Some(()),
@@ -287,6 +309,18 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
             .extract_if
             .constraint_for_macro(mac, self.ctx.scope, &self.bindings)?
         {
+            ReplayAction::Handled(atom) => {
+                self.atoms.push(atom);
+                return Some(());
+            }
+            ReplayAction::NotMine => {}
+        }
+        match self.insert.constraint_for_macro(
+            mac,
+            self.ctx.scope,
+            self.ctx.scope.local_scope(),
+            &self.bindings,
+        )? {
             ReplayAction::Handled(atom) => {
                 self.atoms.push(atom);
                 return Some(());
@@ -405,6 +439,7 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
                         bindings: child_bindings,
                         atoms: Vec::new(),
                         extract_if: self.extract_if.clone(),
+                        insert: self.insert.clone(),
                     };
                     return match arm.body.as_ref() {
                         Expr::Block(block) => child.eval_value_body(&block.block),

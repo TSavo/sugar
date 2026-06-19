@@ -307,6 +307,72 @@ fn btree_extract_if_literal_map_replays_len_after_removing_one() {
 }
 
 #[test]
+fn btree_insert_absent_key_replays_is_none_assertion() {
+    let src = r#"
+        const CAPACITY: usize = 3;
+
+        #[test]
+        fn test_insert_into_full_height_0() {
+            let size = CAPACITY;
+            for pos in 0..=size {
+                let mut map = BTreeMap::from_iter((0..size).map(|i| (i * 2 + 1, ())));
+                assert!(map.insert(pos * 2, ()).is_none());
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "alloc/src/collections/btree/map/tests.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "insert over a literal-built BTreeMap should replay; skip reasons: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        !out.skip_reasons
+            .iter()
+            .any(|reason| reason.contains("RUNTIME-VALUED accumulator")),
+        "literal-built BTreeMap insert is stdlib sugar, not a runtime accumulator: {:?}",
+        out.skip_reasons
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("map_insert_0_1_is_none")
+            && dump.contains("Bool(true)")
+            && !dump.contains("method:insert"),
+        "insert().is_none() should lower to a pinned temporal rewrite, not method EUF: {dump}"
+    );
+}
+
+#[test]
+fn btree_insert_absent_key_bad_twin_is_unsat() {
+    let src = r#"
+        const CAPACITY: usize = 3;
+
+        #[test]
+        fn test_insert_into_full_height_0_bad() {
+            let size = CAPACITY;
+            for pos in 0..=size {
+                let mut map = BTreeMap::from_iter((0..size).map(|i| (i * 2 + 1, ())));
+                assert!(map.insert(pos * 2, ()).is_some());
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "alloc/src/collections/btree/map/tests.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "insert bad twin should still lift so the contradiction is checkable: {:?}",
+        out.skip_reasons
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("map_insert_0_1_is_some") && !dump.contains("method:insert"),
+        "insert bad twin should use the pinned temporal rewrite, not method EUF: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "btree_insert_absent_bad") {
+        assert!(!sat, "absent-key insert().is_some() should be UNSAT");
+    }
+}
+
+#[test]
 fn finite_helper_match_return_loop_replays_splitpoint_assertions() {
     let src = r#"
         const B: usize = 6;
@@ -3169,6 +3235,38 @@ fn cast_result() {
 }
 
 #[test]
+fn inferred_cast_target_is_transparent_compiler_axiom() {
+    let src = r#"
+#[test]
+fn inferred_cast_result() {
+    assert_eq!(source() as _, source());
+}
+"#;
+    let out = lift_file(&parse(src), "tests/cast.rs");
+    assert_eq!(out.seen, 1);
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        !dump.contains("cast:_") && !dump.contains("unsupported term"),
+        "an inferred cast target is compiler type inference and should be transparent: {dump}"
+    );
+    let has_transparent_eq = out.decls.iter().any(|decl| {
+        inv_operands(decl)
+            .iter()
+            .any(|operand| match operand.as_ref() {
+                Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
+                    format!("{:?}", args[0]) == format!("{:?}", args[1])
+                }
+                _ => false,
+            })
+    });
+    assert!(
+        has_transparent_eq,
+        "transparent inferred casts preserve the child term exactly: {dump}"
+    );
+}
+
+#[test]
 fn pointer_target_cast_stays_residual() {
     let src = r#"
 #[test]
@@ -3186,6 +3284,95 @@ fn pointer_cast_result() {
             .contains("unsupported term `source () as * const u8`")),
         "pointer-target casts must stay residual: {:?}",
         out.warnings
+    );
+}
+
+#[test]
+fn const_generic_bound_assertion_in_impl_method_lifts_as_compiler_axiom() {
+    let src = r#"
+struct Simd<T, const N: usize>(T);
+
+impl<T, const N: usize> Simd<T, N> {
+    fn extract<const START: usize, const LEN: usize>(self) -> Simd<T, LEN> {
+        assert!(START + LEN <= N, "index out of bounds");
+        todo!()
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "portable-simd/crates/core_simd/src/swizzle.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "const-generic bound assertion should lift out of the impl-method bucket: {:?}",
+        out.skip_reasons
+    );
+    assert_eq!(
+        out.assertions_refused, 0,
+        "const-only assertion should not be refused as receiver-runtime state: {:?}",
+        out.skip_reasons
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("START") && dump.contains("LEN") && dump.contains("N"),
+        "the const bound variables must survive as the contract teeth: {dump}"
+    );
+}
+
+#[test]
+fn const_generic_bound_bad_twin_is_refutable() {
+    let src = r#"
+struct Simd<T, const N: usize>(T);
+
+impl<T, const N: usize> Simd<T, N> {
+    fn impossible_extract<const START: usize, const LEN: usize>(self) -> Simd<T, LEN> {
+        assert!(START + LEN <= N);
+        assert!(START + LEN > N);
+        todo!()
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "portable-simd/crates/core_simd/src/swizzle.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "both const-generic bound assertions should lift so the contradiction is visible: {:?}",
+        out.skip_reasons
+    );
+    assert_eq!(
+        out.assertions_refused, 0,
+        "const-only assertions should not be refused as impl-method runtime assertions: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "const_bound_bad_twin") {
+        assert!(
+            !sat,
+            "START+LEN<=N and START+LEN>N must be UNSAT when conjoined"
+        );
+    }
+}
+
+#[test]
+fn broad_functional_warrant_carries_const_bound_assertions() {
+    let method: syn::ImplItemFn = syn::parse_str(
+        r#"
+        fn extract<const START: usize, const LEN: usize>(self) -> Simd<T, LEN> {
+            assert!(START + LEN <= N, "index out of bounds");
+            todo!()
+        }
+        "#,
+    )
+    .expect("method parses");
+    let decl = sugar_lift_rust_tests::broad_functional_warrant(
+        "Simd::extract",
+        &method.sig,
+        &method.block,
+    )
+    .expect("const-bound assertion should emit a source contract");
+    let dump = format!("{decl:?}");
+    assert!(
+        dump.contains("START")
+            && dump.contains("LEN")
+            && dump.contains("N")
+            && dump.contains("call:Simd::extract"),
+        "bridge/source warrant must carry the const-bound assertion and fallback call: {dump}"
     );
 }
 
@@ -12642,6 +12829,34 @@ fn ir_entry_named<'a>(doc: &'a serde_json::Value, name: &str) -> Option<&'a serd
     })
 }
 
+fn call_edge_named<'a>(
+    doc: &'a serde_json::Value,
+    source: &str,
+    target_symbol: &str,
+    target: &str,
+) -> Option<&'a serde_json::Value> {
+    doc["callEdges"].as_array()?.iter().find(|edge| {
+        edge["sourceContract"] == serde_json::json!(source)
+            && edge["targetSymbol"] == serde_json::json!(target_symbol)
+            && edge["targetContract"] == serde_json::json!(target)
+    })
+}
+
+fn assert_contract_edge(doc: &serde_json::Value, source: &str, symbol: &str, target: &str) {
+    let edge = call_edge_named(doc, source, symbol, target)
+        .unwrap_or_else(|| panic!("missing call edge {source} -> {symbol} -> {target}: {doc:#}"));
+    assert_eq!(edge["kind"], serde_json::json!("call-edge"));
+    for key in ["sourceContractCid", "targetContractCid"] {
+        let cid = edge[key]
+            .as_str()
+            .unwrap_or_else(|| panic!("{key} missing from edge: {edge:#}"));
+        assert!(
+            cid.starts_with("blake3-512:"),
+            "{key} must be a prefixed CID, got {cid}: {edge:#}"
+        );
+    }
+}
+
 #[test]
 fn rpc_demotes_fully_inlined_value_helper_to_support_no_standalone_contract() {
     // `fn h(n) { n + 1 }` + `assert_eq!(h(2), 3)`: h is fully peeled, so its lift-RPC
@@ -12810,6 +13025,18 @@ fn regex_from_method_chain() {
         z["post"].to_string().contains("field:pattern"),
         "z must bottom out at the field relation: {z:#}"
     );
+    assert_contract_edge(
+        &doc,
+        "rust-source::Maker::x",
+        "method:y",
+        "rust-source::Maker::y",
+    );
+    assert_contract_edge(
+        &doc,
+        "rust-source::Maker::y",
+        "method:z",
+        "rust-source::Maker::z",
+    );
 }
 
 #[test]
@@ -12885,6 +13112,18 @@ fn regex_from_matcher_method_chain() {
     assert!(
         z_post.contains("input") && !z_post.contains("method:"),
         "z must bottom out at the input relation, not another method edge: {z:#}"
+    );
+    assert_contract_edge(
+        &doc,
+        "rust-source::MatcherMethod::x",
+        "method:y",
+        "rust-source::MatcherMethod::y",
+    );
+    assert_contract_edge(
+        &doc,
+        "rust-source::MatcherMethod::y",
+        "method:z",
+        "rust-source::MatcherMethod::z",
     );
 }
 
