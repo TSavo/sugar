@@ -3315,7 +3315,7 @@ fn inferred_cast_result() {
 }
 
 #[test]
-fn pointer_target_cast_stays_residual() {
+fn pointer_target_cast_is_refused_as_raw_pointer_boundary() {
     let src = r#"
 #[test]
 fn pointer_cast_result() {
@@ -3329,12 +3329,24 @@ fn pointer_cast_result() {
         "pointer-target casts must not emit warranted facts: {:?}",
         out.assertion_facts
     );
-    assert!(
-        out.warnings.iter().any(|warning| warning
-            .reason
-            .contains("unsupported term `source () as * const u8`")),
-        "pointer-target casts must stay residual: {:?}",
-        out.warnings
+    let r = out
+        .skip_reasons
+        .iter()
+        .find(|r| {
+            r.contains("source () as * const u8")
+                && r.contains("effectful / raw-pointer / mutable-reference term")
+                && r.contains("raw pointer cast")
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "expected pointer-target cast terminal refusal, got {:?}",
+                out.skip_reasons
+            )
+        });
+    assert_eq!(
+        disp2(r),
+        sugar_lift_rust_tests::Disposition::Refused,
+        "raw-pointer casts must be terminal: {r}"
     );
 }
 
@@ -7788,7 +7800,7 @@ fn emit_value_contract_char_cast_warrants_and_composes() {
     }
 }
 
-// Discrimination: a cast to a NON-scalar/unhandled target (e.g. `as *const T`)
+// Discrimination: a cast to a raw pointer target (`as *const T` / `as *mut T`)
 // stays unemittable -> None (never a hollow warrant over an opaque pointer cast).
 #[test]
 fn emit_value_contract_unhandled_cast_refused() {
@@ -8757,9 +8769,10 @@ fn cast_f32_contradiction() {
 }
 
 // (A) DISCRIMINATION: a pointer-target cast still REFUSES (the float widening did not
-// loosen the residual rule). Guards against over-widening `scalar_cast_type_key`.
+// loosen raw-pointer boundary accounting). Guards against over-widening
+// `scalar_cast_type_key`.
 #[test]
-fn float_cast_does_not_loosen_pointer_target_residual() {
+fn float_cast_does_not_loosen_pointer_target_refusal() {
     let src = r#"
 #[test]
 fn ptr_cast() {
@@ -8773,11 +8786,12 @@ fn ptr_cast() {
         out.assertion_facts
     );
     assert!(
-        out.warnings
-            .iter()
-            .any(|w| w.reason.contains("unsupported term")),
-        "pointer-target cast must stay residual: {:?}",
-        out.warnings
+        out.skip_reasons.iter().any(|r| {
+            r.contains("effectful / raw-pointer / mutable-reference term")
+                && r.contains("raw pointer cast")
+        }),
+        "pointer-target cast must be refused as raw-pointer boundary: {:?}",
+        out.skip_reasons
     );
 }
 
