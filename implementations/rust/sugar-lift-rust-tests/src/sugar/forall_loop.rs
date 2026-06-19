@@ -10,7 +10,7 @@ use crate::sugar::forall;
 use crate::Sugar;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::composite("forall_loop", recognize);
+    crate::sugar::claim::ExprSugarClaim::secondary_composite("forall_loop", recognize);
 
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {

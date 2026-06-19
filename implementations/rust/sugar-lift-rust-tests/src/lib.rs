@@ -65,6 +65,7 @@ pub mod sugar {
     pub mod filter_map;
     pub mod fold;
     pub mod for_each;
+    pub mod for_replay;
     pub mod forall;
     pub mod forall_loop;
     pub mod format;
@@ -695,6 +696,25 @@ pub fn lift_file_with_source_imports(
     imported_macros: &MacroRegistry,
     imported_consts: &ConstSourceRegistry,
 ) -> AdapterOutput {
+    let empty_fns = FunctionSourceRegistry::new();
+    lift_file_with_all_source_imports(
+        file,
+        source_path,
+        options,
+        imported_macros,
+        imported_consts,
+        &empty_fns,
+    )
+}
+
+pub fn lift_file_with_all_source_imports(
+    file: &syn::File,
+    source_path: &str,
+    options: &LiftOptions,
+    imported_macros: &MacroRegistry,
+    imported_consts: &ConstSourceRegistry,
+    imported_fns: &FunctionSourceRegistry,
+) -> AdapterOutput {
     let mut out = AdapterOutput::default();
     let factory_audits = FactoryAuditLog::default();
     let mut modules = Vec::new();
@@ -703,6 +723,7 @@ pub fn lift_file_with_source_imports(
         source_path,
         imported_macros,
         imported_consts,
+        imported_fns,
     );
     // Pass 1: walk test fns (and modules). Populates assertions_lifted, reduced_helpers.
     walk_items(
@@ -1370,8 +1391,9 @@ fn visit_test_fn(
     }
     out.seen += 1;
 
+    let is_should_panic = has_should_panic_attr(&f.attrs);
     let scoped_options;
-    let options = if has_should_panic_attr(&f.attrs) {
+    let collection_options = if is_should_panic {
         scoped_options = options.clone().without_panic_freedom();
         &scoped_options
     } else {
@@ -1385,7 +1407,7 @@ fn visit_test_fn(
     collect_assertion_entries(
         &f.block.stmts,
         &test_name,
-        options,
+        collection_options,
         reducer,
         &mut float_widths,
         &mut entries,
@@ -1398,6 +1420,17 @@ fn visit_test_fn(
         // Top-level `#[test]` fn: no ENCLOSING block, so no inherited nested fns.
         &BTreeMap::new(),
     );
+    if is_should_panic {
+        emit_should_panic_temporal_callsites(
+            &f.block.stmts,
+            &test_name,
+            options,
+            reducer,
+            &mut entries,
+            factory_audits,
+            0,
+        );
+    }
     out.assertions_lifted += macros_lifted;
     out.assertions_refused += skipped.len();
     out.skip_reasons.extend(skipped.iter().cloned());
@@ -1533,6 +1566,7 @@ fn emit_assertion_fact_metadata(
 struct ReductionCtx<'a> {
     functions: BTreeMap<String, &'a syn::ItemFn>,
     ambiguous_functions: BTreeSet<String>,
+    imported_fns: FnRegistry,
     impl_values: ImplValueRegistry,
     consts: ConstRegistry,
     /// In-source `macro_rules!` definitions, by name, parsed into rules. These
@@ -1555,7 +1589,8 @@ impl<'a> ReductionCtx<'a> {
 
     fn from_items_with_imports(items: &'a [Item], imported: &MacroRegistry) -> Self {
         let empty_consts = ConstSourceRegistry::new();
-        Self::from_items_with_source_imports(items, "", imported, &empty_consts)
+        let empty_fns = FunctionSourceRegistry::new();
+        Self::from_items_with_source_imports(items, "", imported, &empty_consts, &empty_fns)
     }
 
     fn from_items_with_source_imports(
@@ -1563,10 +1598,12 @@ impl<'a> ReductionCtx<'a> {
         source_path: &str,
         imported: &MacroRegistry,
         imported_consts: &ConstSourceRegistry,
+        imported_fns: &FunctionSourceRegistry,
     ) -> Self {
         let mut ctx = Self {
             functions: BTreeMap::new(),
             ambiguous_functions: BTreeSet::new(),
+            imported_fns: FnRegistry::new(),
             impl_values: ImplValueRegistry::new(),
             consts: ConstRegistry::new(),
             macros: BTreeMap::new(),
@@ -1577,6 +1614,8 @@ impl<'a> ReductionCtx<'a> {
         let use_consts =
             sugar::use_item::const_imports_for_items(items, source_path, imported_consts);
         ctx.consts.merge_imports(&use_consts);
+        let use_fns = sugar::use_item::fn_imports_for_items(items, source_path, imported_fns);
+        ctx.imported_fns.merge_all(&use_fns);
         ctx
     }
 
@@ -1737,7 +1776,7 @@ impl<'a> ReductionCtx<'a> {
     /// lexically-scoped fns (the collector's `local_fns`: nested helpers an enclosing
     /// block defines) so a nested value helper resolves too.
     fn fn_registry_snapshot(&self, extra: &BTreeMap<String, &syn::ItemFn>) -> FnRegistry {
-        let mut reg = FnRegistry::new();
+        let mut reg = self.imported_fns.clone();
         for (name, f) in &self.functions {
             reg.insert(name, std::rc::Rc::new((*f).clone()));
         }
@@ -2050,6 +2089,12 @@ impl FnRegistry {
         self.fns.get(name).cloned()
     }
 
+    pub(crate) fn merge_all(&mut self, imported: &FnRegistry) {
+        for (name, item) in &imported.fns {
+            self.insert(name, item.clone());
+        }
+    }
+
     /// Number of distinct fn definitions held (for reporting).
     pub(crate) fn len(&self) -> usize {
         self.fns.len()
@@ -2066,6 +2111,59 @@ impl FnRegistry {
 fn fn_signature(f: &syn::ItemFn) -> String {
     use quote::ToTokens;
     f.to_token_stream().to_string()
+}
+
+/// In-source value-function definitions indexed by source file. `UseSugar` reads this
+/// source graph to materialize compiler-visible imports (`use super::*`) into the
+/// local value-function registry carried on `TemporalScope`; call/value sugar then
+/// recurses into those helpers instead of freezing them as opaque calls.
+#[derive(Default, Clone)]
+pub struct FunctionSourceRegistry {
+    by_source: BTreeMap<String, FnRegistry>,
+}
+
+impl std::fmt::Debug for FunctionSourceRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FunctionSourceRegistry")
+            .field("sources", &self.by_source.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
+
+impl FunctionSourceRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn scan_file(&mut self, source_path: &str, file: &syn::File) {
+        let mut registry = FnRegistry::new();
+        scan_function_items(&file.items, &mut registry);
+        self.by_source.insert(source_path.to_string(), registry);
+    }
+
+    pub fn scan_source(&mut self, source_path: &str, src: &str) {
+        if let Ok(file) = syn::parse_file(src) {
+            self.scan_file(source_path, &file);
+        }
+    }
+
+    pub(crate) fn registry_for_source(&self, source_path: &str) -> Option<&FnRegistry> {
+        self.by_source.get(source_path)
+    }
+}
+
+fn scan_function_items(items: &[Item], registry: &mut FnRegistry) {
+    for item in items {
+        match item {
+            Item::Fn(f) => registry.insert(&f.sig.ident.to_string(), Rc::new(f.clone())),
+            Item::Mod(m) => {
+                if let Some((_, items)) = &m.content {
+                    scan_function_items(items, registry);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// In-source inherent impl VALUE methods, owned so they can ride on `TemporalScope`
@@ -4621,6 +4719,230 @@ fn emit_panic_freedom_callsites_in_stmt(
                 .filter(|entry| matches!(entry.kind, AssertionFactKind::Support)),
         );
     }
+}
+
+#[derive(Clone)]
+struct TemporalCallsiteRecord {
+    expr: Expr,
+    scope: TemporalScope,
+    float_widths: FloatWidthScope,
+    ordinal: usize,
+    span: proc_macro2::Span,
+}
+
+fn emit_should_panic_temporal_callsites(
+    stmts: &[Stmt],
+    local_scope: &str,
+    options: &LiftOptions,
+    reducer: &ReductionCtx<'_>,
+    entries: &mut Vec<AssertionEntry>,
+    factory_audits: Option<&FactoryAuditLog>,
+    macro_depth: usize,
+) {
+    let records = should_panic_temporal_callsite_records(stmts, local_scope, reducer);
+    let Some((last, prefix)) = records.split_last() else {
+        return;
+    };
+    for record in prefix {
+        if let Some(entry) = temporal_panic_freedom_entry(
+            record,
+            local_scope,
+            options,
+            reducer,
+            factory_audits,
+            macro_depth,
+            AssertionFactKind::Support,
+            false,
+        ) {
+            entries.push(entry);
+        }
+    }
+    if let Some(entry) = temporal_panic_freedom_entry(
+        last,
+        local_scope,
+        options,
+        reducer,
+        factory_audits,
+        macro_depth,
+        AssertionFactKind::Warranted,
+        true,
+    ) {
+        entries.push(entry);
+    }
+}
+
+fn should_panic_temporal_callsite_records(
+    stmts: &[Stmt],
+    local_scope: &str,
+    reducer: &ReductionCtx<'_>,
+) -> Vec<TemporalCallsiteRecord> {
+    let mut local_fns: BTreeMap<String, &syn::ItemFn> = BTreeMap::new();
+    for stmt in stmts {
+        if let Stmt::Item(Item::Fn(f)) = stmt {
+            local_fns.insert(f.sig.ident.to_string(), f);
+        }
+    }
+    let temporal_plan = temporal_plan_for_stmts(stmts, &BTreeSet::new());
+    let mut temporal_scope = TemporalScope::new(local_scope, temporal_plan)
+        .with_literal_arrays(capture_scalar_literal_arrays(stmts))
+        .with_macro_registry(reducer.macro_registry_snapshot())
+        .with_fn_registry(reducer.fn_registry_snapshot(&local_fns))
+        .with_impl_value_registry(reducer.impl_value_registry_snapshot())
+        .with_const_registry(reducer.const_registry_snapshot());
+    let mut float_widths = FloatWidthScope::new();
+    let mut records = Vec::new();
+    for stmt in stmts {
+        let span = stmt.span();
+        for expr in temporal_callsite_exprs_in_stmt(stmt) {
+            let ordinal = records.len();
+            records.push(TemporalCallsiteRecord {
+                expr,
+                scope: temporal_scope.clone(),
+                float_widths: float_widths.clone(),
+                ordinal,
+                span,
+            });
+        }
+        if let Stmt::Local(local) = stmt {
+            update_float_width_scope_for_pat(&local.pat, &mut float_widths);
+            if let (Some(name), Some(init)) =
+                (let_simple_value_binding(&local.pat), local.init.as_ref())
+            {
+                if init.diverge.is_none() {
+                    temporal_scope.record_let_binding(&name, (*init.expr).clone());
+                }
+            }
+        }
+        advance_temporal_scope_for_stmt(stmt, &mut temporal_scope);
+    }
+    records
+}
+
+#[allow(clippy::too_many_arguments)]
+fn temporal_panic_freedom_entry(
+    record: &TemporalCallsiteRecord,
+    local_scope: &str,
+    options: &LiftOptions,
+    reducer: &ReductionCtx<'_>,
+    factory_audits: Option<&FactoryAuditLog>,
+    macro_depth: usize,
+    kind: AssertionFactKind,
+    negated: bool,
+) -> Option<AssertionEntry> {
+    let mut float_widths = record.float_widths.clone();
+    let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
+    let fcx = sugar::factory::SugarBuildCtx::new(&record.scope, options, &let_inits);
+    let ctx = sugar_ctx_with_factory_audits(
+        &record.scope,
+        options,
+        reducer,
+        &mut float_widths,
+        macro_depth,
+        factory_audits,
+    );
+    let term = match sugar::factory::build_term(&record.expr, &fcx).desugar(&ctx) {
+        Outcome::Dug(d) => d.into_term()?,
+        Outcome::Hit(_) => return None,
+    };
+    let temporal_subject = Rc::new(Term::Ctor {
+        name: "temporal-callsite".to_string(),
+        args: vec![
+            term.clone(),
+            str_const(format!("{local_scope}#callsite{}", record.ordinal)),
+        ],
+    });
+    let atom = atomic_("panic-free", vec![temporal_subject]);
+    let atom = if negated { not_(atom) } else { atom };
+    let base = callsite_assertion_name(term.as_ref(), local_scope)
+        .unwrap_or_else(|| format!("{local_scope}::callsite#{}", record.ordinal));
+    Some(AssertionEntry {
+        name: Some(format!("{base}::temporal#{}", record.ordinal)),
+        atom,
+        fact_span: Some(record.span),
+        kind,
+    })
+}
+
+fn temporal_callsite_exprs_in_stmt(stmt: &Stmt) -> Vec<Expr> {
+    let mut visitor = TemporalCallsiteVisitor { out: Vec::new() };
+    match stmt {
+        Stmt::Local(local) => {
+            if let Some(init) = &local.init {
+                visitor.visit_expr(&init.expr);
+                if let Some((_, diverge)) = &init.diverge {
+                    visitor.visit_expr(diverge);
+                }
+            }
+        }
+        Stmt::Expr(expr, _) => visitor.visit_expr(expr),
+        Stmt::Macro(stmt_macro) => visitor.visit_macro_args(&stmt_macro.mac),
+        Stmt::Item(_) => {}
+    }
+    visitor.out
+}
+
+struct TemporalCallsiteVisitor {
+    out: Vec<Expr>,
+}
+
+impl TemporalCallsiteVisitor {
+    fn visit_macro_args(&mut self, mac: &syn::Macro) {
+        if let Ok(args) = parse_macro_args(mac.tokens.clone()) {
+            for expr in args.exprs {
+                self.visit_expr(&expr);
+            }
+        }
+    }
+}
+
+impl<'ast> syn::visit::Visit<'ast> for TemporalCallsiteVisitor {
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        self.visit_expr(&call.func);
+        for arg in &call.args {
+            self.visit_expr(arg);
+        }
+        self.out.push(Expr::Call(call.clone()));
+    }
+
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        self.visit_expr(&call.receiver);
+        for arg in &call.args {
+            self.visit_expr(arg);
+        }
+        self.out.push(Expr::MethodCall(call.clone()));
+    }
+
+    fn visit_expr_macro(&mut self, mac: &'ast syn::ExprMacro) {
+        self.visit_macro_args(&mac.mac);
+    }
+
+    fn visit_expr_if(&mut self, expr: &'ast syn::ExprIf) {
+        self.visit_expr(&expr.cond);
+    }
+
+    fn visit_expr_match(&mut self, expr: &'ast syn::ExprMatch) {
+        self.visit_expr(&expr.expr);
+    }
+
+    fn visit_expr_for_loop(&mut self, expr: &'ast syn::ExprForLoop) {
+        self.visit_expr(&expr.expr);
+    }
+
+    fn visit_expr_while(&mut self, expr: &'ast syn::ExprWhile) {
+        self.visit_expr(&expr.cond);
+    }
+
+    fn visit_expr_block(&mut self, _expr: &'ast syn::ExprBlock) {}
+
+    fn visit_expr_unsafe(&mut self, _expr: &'ast syn::ExprUnsafe) {}
+
+    fn visit_expr_const(&mut self, _expr: &'ast syn::ExprConst) {}
+
+    fn visit_expr_loop(&mut self, _expr: &'ast syn::ExprLoop) {}
+
+    fn visit_expr_closure(&mut self, _expr: &'ast syn::ExprClosure) {}
+
+    fn visit_expr_async(&mut self, _expr: &'ast syn::ExprAsync) {}
 }
 
 fn expr_is_panic_freedom_callsite(expr: &Expr) -> bool {
@@ -13870,28 +14192,53 @@ mod lifter_key_tests {
     }
 
     #[test]
-    fn should_panic_test_does_not_emit_normal_return_callsite_fact() {
-        // #[should_panic] reverses the test-level guarantee. Calls inside it are not
-        // ordinary green-test no-panic facts unless a more precise panic vocabulary
-        // proves the pre-panic prefix separately.
+    fn should_panic_test_inverts_only_the_terminal_temporal_callsite() {
+        // #[should_panic] reverses the terminal callsite guarantee, not the whole
+        // prefix. The setup calls returned normally; only the final temporal
+        // callsite is warranted as `not(panic-free(...))`.
         let src = r#"
-            fn may_panic() {}
-
             #[test]
             #[should_panic]
             fn expected_panic() {
-                may_panic();
+                let mut m = Machine::new();
+                m.step(1);
+                m.step(2);
+                m.finish();
             }
         "#;
         let out = lift_src(src);
         assert_eq!(
             out.assertions_lifted, 0,
-            "#[should_panic] must suppress default no-panic callsite facts: {:?}",
+            "panic callsite facts do not increment scalar assertion count: {:?}",
             out.decls
         );
+        assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
         assert!(
-            !format!("{:?}", out.decls).contains("panic-free"),
-            "#[should_panic] must not emit normal-return panic-free facts"
+            out.assertion_facts
+                .iter()
+                .any(|fact| fact.kind == AssertionFactKind::Support),
+            "setup callsites should remain non-panic support: {:?}",
+            out.assertion_facts
+        );
+        assert!(
+            out.assertion_facts
+                .iter()
+                .any(|fact| fact.kind == AssertionFactKind::Warranted),
+            "terminal callsite should be a warranted panic fact: {:?}",
+            out.assertion_facts
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("panic-free")
+                && dump.contains("not")
+                && dump.contains("temporal-callsite")
+                && dump.contains("method:finish")
+                && dump.contains("m@def3"),
+            "terminal panic fact should name the rewritten temporal subject: {dump}"
+        );
+        assert!(
+            dump.contains("method:step") && dump.contains("m@def1") && dump.contains("m@def2"),
+            "prefix non-panic support should retain temporal receiver versions: {dump}"
         );
     }
 

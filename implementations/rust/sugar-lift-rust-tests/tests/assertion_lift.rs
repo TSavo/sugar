@@ -168,6 +168,134 @@ fn use_super_glob_feeds_parent_consts_to_const_sugar() {
 }
 
 #[test]
+fn finite_helper_match_return_loop_replays_splitpoint_assertions() {
+    let src = r#"
+        const B: usize = 6;
+        const CAPACITY: usize = 2 * B - 1;
+        const MIN_LEN_AFTER_SPLIT: usize = B - 1;
+        const KV_IDX_CENTER: usize = B - 1;
+        const EDGE_IDX_LEFT_OF_CENTER: usize = B - 1;
+        const EDGE_IDX_RIGHT_OF_CENTER: usize = B;
+
+        enum LeftOrRight<T> {
+            Left(T),
+            Right(T),
+        }
+
+        fn splitpoint(edge_idx: usize) -> (usize, LeftOrRight<usize>) {
+            debug_assert!(edge_idx <= CAPACITY);
+            match edge_idx {
+                0..EDGE_IDX_LEFT_OF_CENTER => (KV_IDX_CENTER - 1, LeftOrRight::Left(edge_idx)),
+                EDGE_IDX_LEFT_OF_CENTER => (KV_IDX_CENTER, LeftOrRight::Left(edge_idx)),
+                EDGE_IDX_RIGHT_OF_CENTER => (KV_IDX_CENTER, LeftOrRight::Right(0)),
+                _ => (KV_IDX_CENTER + 1, LeftOrRight::Right(edge_idx - (KV_IDX_CENTER + 1 + 1))),
+            }
+        }
+
+        #[test]
+        fn test_splitpoint() {
+            for idx in 0..=CAPACITY {
+                let (middle_kv_idx, insertion) = splitpoint(idx);
+
+                let mut left_len = middle_kv_idx;
+                let mut right_len = CAPACITY - middle_kv_idx - 1;
+                match insertion {
+                    LeftOrRight::Left(edge_idx) => {
+                        assert!(edge_idx <= left_len);
+                        left_len += 1;
+                    }
+                    LeftOrRight::Right(edge_idx) => {
+                        assert!(edge_idx <= right_len);
+                        right_len += 1;
+                    }
+                }
+                assert!(left_len >= MIN_LEN_AFTER_SPLIT);
+                assert!(right_len >= MIN_LEN_AFTER_SPLIT);
+                assert!(left_len + right_len == CAPACITY);
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "alloc/src/collections/btree/node/tests.rs");
+    assert_eq!(
+        out.assertions_lifted, 5,
+        "the finite helper/match-return loop should lift all source assertion sites: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        !out.skip_reasons.iter().any(|r| r.contains("for context")),
+        "the loop should not fall back to the generic for-context refusal: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.decls.iter().any(|decl| decl.name.contains("loop::idx")),
+        "the replayed loop should emit a loop warrant: {:?}",
+        out.decls.iter().map(|d| &d.name).collect::<Vec<_>>()
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "finite_splitpoint_good") {
+        assert!(sat, "the truthful splitpoint replay should be SAT");
+    }
+}
+
+#[test]
+fn finite_helper_match_return_loop_bad_twin_is_unsat() {
+    let src = r#"
+        const B: usize = 6;
+        const CAPACITY: usize = 2 * B - 1;
+        const MIN_LEN_AFTER_SPLIT: usize = B - 1;
+        const KV_IDX_CENTER: usize = B - 1;
+        const EDGE_IDX_LEFT_OF_CENTER: usize = B - 1;
+        const EDGE_IDX_RIGHT_OF_CENTER: usize = B;
+
+        enum LeftOrRight<T> {
+            Left(T),
+            Right(T),
+        }
+
+        fn splitpoint(edge_idx: usize) -> (usize, LeftOrRight<usize>) {
+            debug_assert!(edge_idx <= CAPACITY);
+            match edge_idx {
+                0..EDGE_IDX_LEFT_OF_CENTER => (KV_IDX_CENTER - 1, LeftOrRight::Left(edge_idx)),
+                EDGE_IDX_LEFT_OF_CENTER => (KV_IDX_CENTER, LeftOrRight::Left(edge_idx)),
+                EDGE_IDX_RIGHT_OF_CENTER => (KV_IDX_CENTER, LeftOrRight::Right(0)),
+                _ => (KV_IDX_CENTER + 1, LeftOrRight::Right(edge_idx - (KV_IDX_CENTER + 1 + 1))),
+            }
+        }
+
+        #[test]
+        fn test_splitpoint() {
+            for idx in 0..=CAPACITY {
+                let (middle_kv_idx, insertion) = splitpoint(idx);
+
+                let mut left_len = middle_kv_idx;
+                let mut right_len = CAPACITY - middle_kv_idx - 1;
+                match insertion {
+                    LeftOrRight::Left(edge_idx) => {
+                        assert!(edge_idx <= left_len);
+                        left_len += 1;
+                    }
+                    LeftOrRight::Right(edge_idx) => {
+                        assert!(edge_idx <= right_len);
+                        right_len += 1;
+                    }
+                }
+                assert!(left_len >= MIN_LEN_AFTER_SPLIT);
+                assert!(right_len >= MIN_LEN_AFTER_SPLIT);
+                assert!(left_len + right_len == CAPACITY + 1);
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "alloc/src/collections/btree/node/tests.rs");
+    assert_eq!(
+        out.assertions_lifted, 5,
+        "the bad twin must still lift so the contradiction is checkable: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "finite_splitpoint_bad") {
+        assert!(!sat, "the bad capacity equality should be UNSAT");
+    }
+}
+
+#[test]
 fn const_item_range_endpoint_refusal_uses_recursive_const_sugar() {
     let src = r#"
         const B: usize = 6;
