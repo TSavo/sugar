@@ -55,6 +55,7 @@ pub mod sugar {
     pub mod configuration;
     pub mod const_block;
     pub mod const_bound;
+    pub mod const_item;
     pub mod const_path;
     pub mod constraint;
     pub mod control_flow_term;
@@ -3312,7 +3313,7 @@ fn account_skipped_module(
     });
 }
 
-fn count_asserts_in_expr(expr: &Expr) -> usize {
+pub(crate) fn count_asserts_in_expr(expr: &Expr) -> usize {
     let mut counter = NestedAssertCounter::default();
     syn::visit::Visit::visit_expr(&mut counter, expr);
     counter.total
@@ -5454,12 +5455,25 @@ fn callsite_exprs_in_stmt(stmt: &Stmt, scope: &TemporalScope, options: &LiftOpti
         }
         Stmt::Expr(expr, _) => visitor.visit_expr(expr),
         Stmt::Macro(stmt_macro) => visitor.visit_macro_args(&stmt_macro.mac),
-        // Item bodies are not executed merely because they are declared. Const/static
-        // item initializers and unconditional blocks are handled by recursive collector
-        // calls, which run their own callsite walk in the correct execution context.
+        // Item bodies are not executed merely because they are declared. A single-expression
+        // const/static initializer is different: `ConstItemSugar` owns its inert
+        // compiler-axiom accounting, so no recursive collector call will visit its direct
+        // callsites. Visit those here for not-panic support. Block/unsafe/const-block
+        // initializers still recurse through the collector and run their own callsite walk
+        // in the correct execution context.
+        Stmt::Item(syn::Item::Const(item)) if is_single_expr_const_initializer(&item.expr) => {
+            visitor.visit_expr(&item.expr);
+        }
+        Stmt::Item(syn::Item::Static(item)) if is_single_expr_const_initializer(&item.expr) => {
+            visitor.visit_expr(&item.expr);
+        }
         Stmt::Item(_) => {}
     }
     visitor.out
+}
+
+fn is_single_expr_const_initializer(expr: &Expr) -> bool {
+    !matches!(expr, Expr::Block(_) | Expr::Unsafe(_) | Expr::Const(_))
 }
 
 struct PanicFreedomCallsiteVisitor<'a> {
@@ -6096,6 +6110,39 @@ fn impl_method_terminal_effect(
         // A bail-side node never reaches truth; `Dug` is unreachable here.
         Outcome::Dug(_) => None,
     }
+}
+
+/// Thin node-router: an assertion-free local `const`/`static` item is compiler-axiom
+/// support, not a scalar assertion expression. `ConstItemSugar` owns that inert verdict.
+/// If the item initializer contains an assertion macro, the Sugar declines and the caller
+/// keeps the existing const/static recursion path so those assertions lift normally.
+fn const_item_inert_support(
+    item: &syn::Item,
+    scope: &TemporalScope,
+    options: &LiftOptions,
+    reducer: &ReductionCtx,
+    float_widths: &mut FloatWidthScope,
+    macro_depth: usize,
+    factory_audits: Option<&FactoryAuditLog>,
+) -> bool {
+    let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
+    let fcx = sugar::factory::SugarBuildCtx::new(scope, options, &let_inits);
+    if !sugar::factory::has_item_role(item, &fcx, sugar::claim::SugarRole::StatementItem) {
+        return false;
+    }
+    let node = sugar::catalog::build_item_role(item, &fcx, sugar::claim::SugarRole::StatementItem);
+    let ctx = sugar_ctx_with_factory_audits(
+        scope,
+        options,
+        reducer,
+        float_widths,
+        macro_depth,
+        factory_audits,
+    );
+    matches!(
+        node.desugar(&ctx),
+        Outcome::Dug(Desugared::Seq(seq)) if seq.is_empty()
+    )
 }
 
 /// Strip a `const { .. }` wrapper (and parens/groups) off a match scrutinee to reveal
@@ -6999,34 +7046,52 @@ fn collect_assertion_entries<'a>(
             // genuinely conditional (an assert under a `for`/`if` in the body, a
             // stateful read), and the per-fn safety net accounts anything not
             // reached -- so no silent drop and no over-claim.
-            Stmt::Item(syn::Item::Const(syn::ItemConst { expr: init, .. }))
-            | Stmt::Item(syn::Item::Static(syn::ItemStatic { expr: init, .. })) => {
-                let init_stmts: Vec<Stmt> = match init.as_ref() {
-                    Expr::Block(b) => b.block.stmts.clone(),
-                    Expr::Unsafe(u) => u.block.stmts.clone(),
-                    Expr::Const(c) => c.block.stmts.clone(),
-                    Expr::Macro(m) => vec![Stmt::Macro(syn::StmtMacro {
-                        attrs: Vec::new(),
-                        mac: m.mac.clone(),
-                        semi_token: None,
-                    })],
-                    other => vec![Stmt::Expr(other.clone(), None)],
-                };
-                collect_assertion_entries(
-                    &init_stmts,
-                    &child_block_scope(local_scope, stmt_idx),
+            Stmt::Item(item) if matches!(item, syn::Item::Const(_) | syn::Item::Static(_)) => {
+                if const_item_inert_support(
+                    item,
+                    &temporal_scope,
                     options,
                     reducer,
                     float_widths,
-                    entries,
-                    skipped,
-                    macros_lifted,
-                    reduced_helpers,
-                    factory_audits,
                     macro_depth,
-                    &temporal_scope.plan.interior_mut,
-                    &local_fns,
-                );
+                    factory_audits,
+                ) {
+                    // Assertion-free const/static initializers are compiler axioms. Keep any
+                    // panic-free callsite support emitted for the initializer, but do not
+                    // reclassify the initializer expression itself as an assertion.
+                } else {
+                    let init = match item {
+                        syn::Item::Const(syn::ItemConst { expr, .. })
+                        | syn::Item::Static(syn::ItemStatic { expr, .. }) => expr,
+                        _ => unreachable!("guard restricts this arm to const/static items"),
+                    };
+                    let init_stmts: Vec<Stmt> = match init.as_ref() {
+                        Expr::Block(b) => b.block.stmts.clone(),
+                        Expr::Unsafe(u) => u.block.stmts.clone(),
+                        Expr::Const(c) => c.block.stmts.clone(),
+                        Expr::Macro(m) => vec![Stmt::Macro(syn::StmtMacro {
+                            attrs: Vec::new(),
+                            mac: m.mac.clone(),
+                            semi_token: None,
+                        })],
+                        other => vec![Stmt::Expr(other.clone(), None)],
+                    };
+                    collect_assertion_entries(
+                        &init_stmts,
+                        &child_block_scope(local_scope, stmt_idx),
+                        options,
+                        reducer,
+                        float_widths,
+                        entries,
+                        skipped,
+                        macros_lifted,
+                        reduced_helpers,
+                        factory_audits,
+                        macro_depth,
+                        &temporal_scope.plan.interior_mut,
+                        &local_fns,
+                    );
+                }
             }
             // Inner fn definitions inside a test fn: their asserts are only
             // reachable via a call inside the test body. DEFER the refusal: a later

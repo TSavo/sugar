@@ -5732,6 +5732,74 @@ fn t() {
 }
 
 #[test]
+fn local_const_scalar_initializer_is_inert_support_not_unclassified_constraint() {
+    let src = r#"
+#[test]
+fn t() {
+    const SIZE: usize = 1 << 47;
+    let _ = SIZE;
+}
+"#;
+    let out = lift_file(&parse(src), "coretests/tests/ptr.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "a closed const initializer is compiler-axiom support, not a scalar assertion: {:?}",
+        out.decls
+    );
+    assert_eq!(
+        out.assertions_refused, 0,
+        "a closed const initializer must not fall to scalar assertion refusal: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.factory_audits.iter().any(|audit| {
+            audit.requested_role == "StatementItem"
+                && audit.selected == Some("const_item")
+                && audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Support
+                && audit.site.contains("const SIZE")
+        }),
+        "factory should account the local const item as inert support: {:?}",
+        out.factory_audits
+    );
+    assert!(
+        out.factory_audits.iter().all(|audit| {
+            !(audit.requested_role == "Constraint"
+                && audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Unresolved
+                && audit.site.contains("1 << 47"))
+        }),
+        "const initializer expression should not be misclassified as unresolved assertion work: {:?}",
+        out.factory_audits
+    );
+}
+
+#[test]
+fn local_const_direct_call_initializer_keeps_panic_support() {
+    let src = r#"
+fn helper() -> usize { 1 }
+
+#[test]
+fn t() {
+    const VALUE: usize = helper();
+    let _ = VALUE;
+}
+"#;
+    let out = lift_file(&parse(src), "coretests/tests/time.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "const initializer callsites are support, not scalar assertions: {:?}",
+        out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.assertion_facts.iter().any(|fact| {
+            fact.kind == AssertionFactKind::Support && fact.contract_name.contains("helper")
+        }),
+        "direct call inside a const initializer should still emit not-panic support: {:?}",
+        out.assertion_facts
+    );
+}
+
+#[test]
 fn assert_in_if_branch_lifts_as_guarded_implication() {
     // Doctrine (ConditionalSugar): a conditional assert is the implication it
     // literally states -- `if c { assert_eq!(1, 2) }` lifts as `c => (1 == 2)`,
