@@ -969,14 +969,11 @@ mod tests {
     }
 
     #[test]
-    fn block_const_item_declines_inert_catalog_claim() {
+    fn assertion_free_block_const_item_is_inert_catalog_claim() {
         let item: Item = syn::parse_str("const VALUE: usize = { helper() };").unwrap();
         let names = item_candidate_names_for_role(&item, SugarRole::StatementItem);
 
-        assert!(
-            names.is_empty(),
-            "block const items must recurse into their visited statements: {names:?}"
-        );
+        assert_eq!(names, vec!["const_item"]);
     }
 
     #[test]
