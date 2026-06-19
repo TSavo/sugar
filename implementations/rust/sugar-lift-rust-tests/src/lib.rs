@@ -7933,10 +7933,84 @@ fn closure_adaptor_refusal(expr: &Expr, scope: &TemporalScope) -> Option<String>
              iteration, not constructed from source literals); refused"
         ));
     }
+    // TERMINAL (bin-2 RUNTIME CALL through literal-domain element): the domain may be a
+    // finite source construction, but the closure body invokes the iterated value as a
+    // callable (`|f| (*f)()`). The mapped value is produced by runtime dispatch, and in
+    // the stdlib Option/Result collect rows the third element intentionally panics if
+    // evaluation does not short-circuit. That is a temporal/runtime boundary, not a
+    // literal bedrock value. EARNED ONLY when the call callee itself references a closure
+    // parameter; constructor calls like `Some(x)` / `Ok(x)` and ordinary scalar bodies
+    // like `x + 1` do not match.
+    if call.args.iter().any(closure_body_calls_through_param) {
+        return Some(format!(
+            "iterator/option adaptor `.{method}(|..| ..)` over {domain} whose closure body \
+             performs a runtime call through closure body parameter (bin-2: dynamic \
+             callable element, not constructed from source literals); refused"
+        ));
+    }
     Some(format!(
         "iterator/option adaptor `.{method}(|..| ..)` over {domain}; not yet lifted; \
          released to layer 0"
     ))
+}
+
+fn closure_body_calls_through_param(expr: &Expr) -> bool {
+    let Expr::Closure(cl) = expr else {
+        return false;
+    };
+    let mut param_vec = Vec::new();
+    for pat in &cl.inputs {
+        collect_pat_idents(pat, &mut param_vec);
+    }
+    let params: BTreeSet<String> = param_vec.into_iter().collect();
+    if params.is_empty() {
+        return false;
+    }
+    struct Scan<'a> {
+        params: &'a BTreeSet<String>,
+        found: bool,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Scan<'_> {
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            if expr_refs_any_name(&call.func, self.params) {
+                self.found = true;
+                return;
+            }
+            syn::visit::visit_expr_call(self, call);
+        }
+    }
+    let mut scan = Scan {
+        params: &params,
+        found: false,
+    };
+    syn::visit::Visit::visit_expr(&mut scan, &cl.body);
+    scan.found
+}
+
+fn expr_refs_any_name(expr: &Expr, names: &BTreeSet<String>) -> bool {
+    struct Refs<'a> {
+        names: &'a BTreeSet<String>,
+        found: bool,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Refs<'_> {
+        fn visit_expr_path(&mut self, path: &'ast syn::ExprPath) {
+            if path
+                .path
+                .get_ident()
+                .is_some_and(|ident| self.names.contains(&ident.to_string()))
+            {
+                self.found = true;
+                return;
+            }
+            syn::visit::visit_expr_path(self, path);
+        }
+    }
+    let mut refs = Refs {
+        names,
+        found: false,
+    };
+    syn::visit::Visit::visit_expr(&mut refs, expr);
+    refs.found
 }
 
 /// True if `expr` is a closure whose BODY references a captured name that `scope`
@@ -16047,6 +16121,46 @@ mod lifter_key_tests {
         assert!(
             dump.contains("res:err"),
             "the collect result should be the constructed Err branch: {dump}"
+        );
+    }
+
+    #[test]
+    fn collect_over_literal_function_array_runtime_call_is_terminal_refused() {
+        let src = r#"
+            #[test]
+            fn collect_option_runtime_call() {
+                let mut functions: [Box<dyn Fn() -> Option<()>>; 3] =
+                    [Box::new(|| Some(())), Box::new(|| None), Box::new(|| panic!())];
+
+                let v: Option<Vec<()>> = functions.iter_mut().map(|f| (*f)()).collect();
+
+                assert!(v == None);
+            }
+        "#;
+        let out = lift_src(src);
+        let runtime_call_reasons = out
+            .skip_reasons
+            .iter()
+            .filter(|reason| reason.contains("runtime call through closure body"))
+            .collect::<Vec<_>>();
+        assert!(
+            !runtime_call_reasons.is_empty(),
+            "runtime closure calls in a literal-domain map must be named, not generic-unclassified: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            runtime_call_reasons
+                .iter()
+                .all(|reason| matches!(refusal_disposition(reason), Disposition::Refused)),
+            "runtime closure call reasons must be terminal refused: {:?}",
+            runtime_call_reasons
+        );
+        assert!(
+            out.skip_reasons
+                .iter()
+                .all(|reason| !reason.contains("not yet lifted")),
+            "runtime closure call must not remain in the generic adaptor work bucket: {:?}",
+            out.skip_reasons
         );
     }
 
