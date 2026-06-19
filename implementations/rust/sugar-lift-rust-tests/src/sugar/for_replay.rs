@@ -9,17 +9,18 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{and_, Formula, Term};
-use syn::{BinOp, Expr, Lit, Pat, Stmt};
+use syn::{BinOp, Expr, Lit, Pat, Stmt, UnOp};
+use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
 use crate::sugar::extract_if::{ExtractIfSugar, ReplayAction};
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::insert::InsertSugar;
 use crate::{
-    const_fold_int_term, count_asserts_in_stmts, path_to_variant_string, simple_call_name,
-    simple_pat_name, strip_refs_groups, substitute_expr, substitute_macro_tokens, term_as_int,
-    translate_term_in_scope, AssertionFactKind, Desugared, Effect, ExprBindings, Outcome, Sugar,
-    SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON, SUGAR_SEQ_CAP,
+    const_fold_int_term, count_asserts_in_stmts, is_assert_macro_path, path_to_variant_string,
+    simple_call_name, simple_pat_name, strip_refs_groups, substitute_expr, substitute_macro_tokens,
+    term_as_int, translate_term_in_scope, AssertionFactKind, Desugared, Effect, ExprBindings,
+    Outcome, Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON, SUGAR_SEQ_CAP,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
@@ -48,6 +49,12 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     if !body_has_replay_shape(&for_loop.body.stmts, fcx.scope()) {
         return None;
     }
+    debug!(
+        sugar = "for_replay",
+        loop_var = %var.ident,
+        domain = %crate::token_key(&for_loop.expr),
+        "recognized finite literal loop replay"
+    );
     Some(Box::new(ForReplaySugar {
         var: var.ident.to_string(),
         domain: (*for_loop.expr).clone(),
@@ -79,6 +86,42 @@ fn body_has_replay_shape(stmts: &[Stmt], scope: &crate::TemporalScope) -> bool {
     (has_source_helper_destructure && has_match)
         || crate::sugar::extract_if::body_has_replay_shape(stmts)
         || crate::sugar::insert::body_has_replay_shape(stmts)
+        || body_has_const_if_local_replay_shape(stmts)
+}
+
+fn body_has_const_if_local_replay_shape(stmts: &[Stmt]) -> bool {
+    let mut saw_if_local = false;
+    let mut saw_assert = false;
+    for stmt in stmts {
+        match stmt {
+            Stmt::Local(local) => {
+                let Pat::Ident(pat) = strip_pat(&local.pat) else {
+                    return false;
+                };
+                if pat.subpat.is_some() || pat.by_ref.is_some() || pat.mutability.is_some() {
+                    return false;
+                }
+                let Some(init) = local.init.as_ref().filter(|init| init.diverge.is_none()) else {
+                    return false;
+                };
+                if !matches!(strip_refs_groups(&init.expr), Expr::If(_)) {
+                    return false;
+                }
+                saw_if_local = true;
+            }
+            Stmt::Macro(stmt_macro) if is_assert_macro_path(&stmt_macro.mac.path) => {
+                saw_assert = true;
+            }
+            Stmt::Expr(Expr::Macro(expr_macro), _)
+                if is_assert_macro_path(&expr_macro.mac.path) =>
+            {
+                saw_assert = true;
+            }
+            Stmt::Item(_) => {}
+            _ => return false,
+        }
+    }
+    saw_if_local && saw_assert
 }
 
 fn strip_pat(pat: &Pat) -> &Pat {
@@ -361,10 +404,38 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
 
     fn eval_expr(&self, expr: &Expr) -> Option<Expr> {
         let substituted = substitute_expr(expr, &self.bindings);
+        if let Some(value) = expr_const_int(&substituted, self.ctx.scope) {
+            return int_expr(value);
+        }
         match strip_refs_groups(&substituted) {
             Expr::Call(call) => self.eval_call(call).or(Some(substituted)),
+            Expr::Block(block) => self.eval_single_expr_block(&block.block),
+            Expr::If(expr_if) => self.eval_if_value(expr_if),
             Expr::Match(expr_match) => self.eval_match_value(expr_match),
             _ => Some(substituted),
+        }
+    }
+
+    fn eval_if_value(&self, expr_if: &syn::ExprIf) -> Option<Expr> {
+        let cond = self.expr_const_bool(&expr_if.cond)?;
+        debug!(
+            sugar = "for_replay",
+            cond = %crate::token_key(&expr_if.cond),
+            selected = if cond { "then" } else { "else" },
+            "evaluated const-if local during loop replay"
+        );
+        if cond {
+            self.eval_single_expr_block(&expr_if.then_branch)
+        } else {
+            let (_, else_expr) = expr_if.else_branch.as_ref()?;
+            self.eval_expr(else_expr)
+        }
+    }
+
+    fn eval_single_expr_block(&self, block: &syn::Block) -> Option<Expr> {
+        match block.stmts.as_slice() {
+            [Stmt::Expr(expr, None)] => self.eval_expr(expr),
+            _ => None,
         }
     }
 
@@ -694,8 +765,63 @@ fn finite_range_values(expr: &Expr, scope: &crate::TemporalScope) -> Option<Vec<
 }
 
 fn expr_const_int(expr: &Expr, scope: &crate::TemporalScope) -> Option<i128> {
+    if let Some(value) = exact_int_expr(expr) {
+        return Some(value);
+    }
     let term = translate_term_in_scope(expr, scope).ok()?;
     term_as_int(&term).or_else(|| const_fold_int_term(&term))
+}
+
+fn exact_int_expr(expr: &Expr) -> Option<i128> {
+    match strip_refs_groups(expr) {
+        Expr::Lit(lit) => literal_int(&lit.lit),
+        Expr::Cast(cast) => exact_int_cast(&cast.expr, &cast.ty),
+        Expr::Unary(unary) if matches!(unary.op, UnOp::Neg(_)) => {
+            exact_int_expr(&unary.expr)?.checked_neg()
+        }
+        Expr::Binary(binary) => {
+            let lhs = exact_int_expr(&binary.left)?;
+            let rhs = exact_int_expr(&binary.right)?;
+            match binary.op {
+                BinOp::Add(_) => lhs.checked_add(rhs),
+                BinOp::Sub(_) => lhs.checked_sub(rhs),
+                BinOp::Mul(_) => lhs.checked_mul(rhs),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+fn exact_int_cast(expr: &Expr, ty: &syn::Type) -> Option<i128> {
+    let value = exact_int_expr(expr)?;
+    let syn::Type::Path(path) = ty else {
+        return None;
+    };
+    let name = path.path.segments.last()?.ident.to_string();
+    match name.as_str() {
+        "i8" => fits_signed(value, i8::MIN as i128, i8::MAX as i128),
+        "i16" => fits_signed(value, i16::MIN as i128, i16::MAX as i128),
+        "i32" => fits_signed(value, i32::MIN as i128, i32::MAX as i128),
+        "i64" => fits_signed(value, i64::MIN as i128, i64::MAX as i128),
+        "i128" => Some(value),
+        "isize" => fits_signed(value, isize::MIN as i128, isize::MAX as i128),
+        "u8" => fits_unsigned(value, u8::MAX as i128),
+        "u16" => fits_unsigned(value, u16::MAX as i128),
+        "u32" => fits_unsigned(value, u32::MAX as i128),
+        "u64" => fits_unsigned(value, u64::MAX as i128),
+        "u128" => (value >= 0).then_some(value),
+        "usize" => fits_unsigned(value, usize::MAX as i128),
+        _ => None,
+    }
+}
+
+fn fits_signed(value: i128, min: i128, max: i128) -> Option<i128> {
+    (min..=max).contains(&value).then_some(value)
+}
+
+fn fits_unsigned(value: i128, max: i128) -> Option<i128> {
+    (0..=max).contains(&value).then_some(value)
 }
 
 fn int_expr(value: i128) -> Option<Expr> {
