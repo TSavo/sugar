@@ -49,6 +49,7 @@ pub mod sugar {
     pub mod closure_runtime_receiver;
     pub mod closure_term;
     pub mod closure_tls_accessor;
+    pub mod collect;
     pub mod compare;
     pub mod concat_macro;
     pub mod conditional;
@@ -115,6 +116,7 @@ pub mod sugar {
     pub mod tuple_term;
     pub mod unary;
     pub mod use_item;
+    pub mod vec_macro;
 }
 
 use crate::sugar::configuration::{
@@ -15925,6 +15927,126 @@ mod lifter_key_tests {
                 .any(|n| n.contains("::for_each::x")),
             "the lifted sequence sugar must be named as a for_each memento: {:?}",
             contract_names(&out)
+        );
+    }
+
+    #[test]
+    fn collect_option_over_literal_map_lifts_through_stable_binding() {
+        // POSITIVE: `collect::<Option<Vec<_>>>()` over a literal sequence is stdlib
+        // sugar with short-circuit semantics. A stable local bound to that collect
+        // should be transparent through BoundPathSugar, so the later assertion gets
+        // the constructed Option/Vec value instead of the old `.map(|..| ..)` adaptor
+        // unclassified bucket.
+        let src = r#"
+            #[test]
+            fn collect_option() {
+                let v: Option<Vec<isize>> = (0..3).map(|x| Some(x)).collect();
+                assert!(v == Some(vec![0, 1, 2]));
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "collect over a literal Option sequence should lift one assertion; reasons: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "literal collect should not be refused: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            !out.skip_reasons
+                .iter()
+                .any(|reason| reason.contains("iterator/option adaptor")),
+            "literal collect must not leave the closure-adaptor bucket: {:?}",
+            out.skip_reasons
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("opt:some") && dump.contains("literal:Vec"),
+            "the collect result should be a constructed Option over a literal Vec: {dump}"
+        );
+    }
+
+    #[test]
+    fn collect_result_over_literal_map_lifts_through_stable_binding() {
+        let src = r#"
+            #[test]
+            fn collect_result() {
+                let v: Result<Vec<isize>, ()> = (0..3).map(|x| Ok::<isize, ()>(x)).collect();
+                assert!(v == Ok(vec![0, 1, 2]));
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "Result collect over a literal sequence should lift one assertion; reasons: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "literal Result collect should not be refused: {:?}",
+            out.skip_reasons
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("res:ok") && dump.contains("literal:Vec"),
+            "the collect result should be a constructed Result over a literal Vec: {dump}"
+        );
+    }
+
+    #[test]
+    fn collect_option_over_literal_map_short_circuits_to_none() {
+        let src = r#"
+            #[test]
+            fn collect_option_none() {
+                let v: Option<Vec<isize>> = (0..3).map(|x| if x > 1 { None } else { Some(x) }).collect();
+                assert!(v == None);
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "Option collect short-circuit over a literal sequence should lift one assertion; reasons: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "literal Option short-circuit should not be refused: {:?}",
+            out.skip_reasons
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("opt:none"),
+            "the collect result should be the constructed None branch: {dump}"
+        );
+    }
+
+    #[test]
+    fn collect_result_over_literal_map_short_circuits_to_err() {
+        let src = r#"
+            #[test]
+            fn collect_result_err() {
+                let v: Result<Vec<isize>, isize> = (0..3).map(|x| if x > 1 { Err(x) } else { Ok(x) }).collect();
+                assert!(v == Err(2));
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "Result collect short-circuit over a literal sequence should lift one assertion; reasons: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "literal Result short-circuit should not be refused: {:?}",
+            out.skip_reasons
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("res:err"),
+            "the collect result should be the constructed Err branch: {dump}"
         );
     }
 

@@ -10,14 +10,14 @@ use crate::sugar::factory::{AccountedSugar, FactoryAuditSeed, SugarBuildCtx};
 use crate::sugar::{
     array_repeat, array_term, assign_op, await_term, binop, block_term, bound_path, call,
     cast_term, closure_iter_advance_body, closure_mutating_body, closure_opaque_accessor,
-    closure_runtime_receiver, closure_term, closure_tls_accessor, concat_macro, conditional,
-    const_block, const_item, const_path, constraint, control_flow_term, cstr, dormant_mut_ref,
-    enumerate, field_term, filter, filter_map, fold, for_each, for_replay, forall_loop,
-    format_macro, impl_method, index, iter_terminal, iterator, literal, macro_term, map,
-    match_node, match_scrutinee, method, monadic, path, range_term, raw_addr_term, reference_term,
-    repeat_term, rev, skip, skip_while, statement_control_flow, statement_loop_advance,
-    statement_reflection, statement_runtime_expr, string_add, struct_term, take, take_while,
-    term_literal, to_string, transparent_term, tuple_term, unary,
+    closure_runtime_receiver, closure_term, closure_tls_accessor, collect, concat_macro,
+    conditional, const_block, const_item, const_path, constraint, control_flow_term, cstr,
+    dormant_mut_ref, enumerate, field_term, filter, filter_map, fold, for_each, for_replay,
+    forall_loop, format_macro, impl_method, index, iter_terminal, iterator, literal, macro_term,
+    map, match_node, match_scrutinee, method, monadic, path, range_term, raw_addr_term,
+    reference_term, repeat_term, rev, skip, skip_while, statement_control_flow,
+    statement_loop_advance, statement_reflection, statement_runtime_expr, string_add, struct_term,
+    take, take_while, term_literal, to_string, transparent_term, tuple_term, unary, vec_macro,
 };
 use crate::{FactoryCandidateAudit, Sugar};
 
@@ -46,6 +46,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &tuple_term::EXPR_SUGAR,
     &repeat_term::EXPR_SUGAR,
     &struct_term::EXPR_SUGAR,
+    &collect::EXPR_SUGAR,
     &iter_terminal::EXPR_SUGAR,
     &to_string::EXPR_SUGAR,
     &method::EXPR_SUGAR,
@@ -61,6 +62,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &transparent_term::TERM_EXPR_SUGAR,
     &format_macro::EXPR_SUGAR,
     &concat_macro::EXPR_SUGAR,
+    &vec_macro::EXPR_SUGAR,
     &macro_term::EXPR_SUGAR,
     &closure_term::EXPR_SUGAR,
     &block_term::EXPR_SUGAR,
