@@ -7813,6 +7813,38 @@ fn t() {
 }
 
 #[test]
+fn item_macro_generated_test_function_is_factory_input() {
+    // Corpus shape: num/mod.rs uses item-level macros to generate many #[test]
+    // functions whose bodies contain assertions. The macro name is not assertion
+    // vocabulary; the generated items are source and must be walked by the same
+    // item/test-fn pipeline as handwritten tests.
+    let src = r#"
+macro_rules! make_case {
+    ($name:ident, $value:expr) => {
+        #[test]
+        fn $name() {
+            assert_eq!($value + 1, 3);
+        }
+    };
+}
+
+make_case! { generated_addition, 2 }
+"#;
+    let out = lift_file(&parse(src), "tests/item_macro_generated.rs");
+    assert_eq!(
+        out.seen, 1,
+        "the generated #[test] function should be seen: {:?}",
+        out.warnings
+    );
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "the generated test body assertion should lift; skips={:?} facts={:?} decls={:?}",
+        out.skip_reasons, out.assertion_facts, out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+}
+
+#[test]
 fn macro_generated_module_run_calls_recurse_with_module_consts() {
     let src = r#"
 #[test]
