@@ -12,6 +12,7 @@ use sugar_ir_symbolic::{and_, Formula, Term};
 use syn::{BinOp, Expr, Lit, Pat, Stmt};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::extract_if::{ExtractIfSugar, ReplayAction};
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{
     const_fold_int_term, count_asserts_in_stmts, path_to_variant_string, simple_call_name,
@@ -40,7 +41,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     if count_asserts_in_stmts(&for_loop.body.stmts) == 0 {
         return None;
     }
-    if !finite_range_values(&for_loop.expr, fcx.scope()).is_some_and(|values| !values.is_empty()) {
+    if !range_domain_shape(&for_loop.expr) {
         return None;
     }
     if !body_has_replay_shape(&for_loop.body.stmts, fcx.scope()) {
@@ -74,7 +75,8 @@ fn body_has_replay_shape(stmts: &[Stmt], scope: &crate::TemporalScope) -> bool {
     let has_match = stmts
         .iter()
         .any(|stmt| matches!(stmt, Stmt::Expr(Expr::Match(_), _)));
-    has_source_helper_destructure && has_match
+    (has_source_helper_destructure && has_match)
+        || crate::sugar::extract_if::body_has_replay_shape(stmts)
 }
 
 fn strip_pat(pat: &Pat) -> &Pat {
@@ -83,6 +85,10 @@ fn strip_pat(pat: &Pat) -> &Pat {
         Pat::Paren(p) => strip_pat(&p.pat),
         _ => pat,
     }
+}
+
+fn range_domain_shape(expr: &Expr) -> bool {
+    matches!(strip_refs_groups(expr), Expr::Range(range) if range.end.is_some())
 }
 
 pub(crate) struct ForReplaySugar {
@@ -129,6 +135,7 @@ struct Replay<'a, 'c, 's> {
     ctx: &'s SugarCtx<'a, 'c>,
     bindings: ExprBindings,
     atoms: Vec<Rc<Formula>>,
+    extract_if: ExtractIfSugar,
 }
 
 impl<'a, 'c, 's> Replay<'a, 'c, 's> {
@@ -137,6 +144,7 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
             ctx,
             bindings: ExprBindings::new(),
             atoms: Vec::new(),
+            extract_if: ExtractIfSugar::new(),
         }
     }
 
@@ -150,6 +158,13 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
     fn replay_stmt(&mut self, stmt: &Stmt) -> Option<()> {
         match stmt {
             Stmt::Local(local) => {
+                match self
+                    .extract_if
+                    .replay_local(local, self.ctx.scope, &self.bindings)?
+                {
+                    ReplayAction::Handled(()) => return Some(()),
+                    ReplayAction::NotMine => {}
+                }
                 let init = local.init.as_ref().filter(|init| init.diverge.is_none())?;
                 let value = self.eval_expr(&init.expr)?;
                 self.bind_pat_value(&local.pat, &value)
@@ -167,6 +182,13 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
             }
             Stmt::Expr(Expr::Assign(assign), _) => self.replay_assign(assign),
             Stmt::Expr(expr, _) => {
+                match self
+                    .extract_if
+                    .replay_expr(expr, self.ctx.scope, &self.bindings)?
+                {
+                    ReplayAction::Handled(()) => return Some(()),
+                    ReplayAction::NotMine => {}
+                }
                 if count_asserts_in_expr_local(expr) == 0 {
                     Some(())
                 } else {
@@ -261,6 +283,16 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
     }
 
     fn emit_macro(&mut self, mac: &syn::Macro) -> Option<()> {
+        match self
+            .extract_if
+            .constraint_for_macro(mac, self.ctx.scope, &self.bindings)?
+        {
+            ReplayAction::Handled(atom) => {
+                self.atoms.push(atom);
+                return Some(());
+            }
+            ReplayAction::NotMine => {}
+        }
         let mut expr = Expr::Macro(syn::ExprMacro {
             attrs: Vec::new(),
             mac: mac.clone(),
@@ -372,6 +404,7 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
                         ctx: self.ctx,
                         bindings: child_bindings,
                         atoms: Vec::new(),
+                        extract_if: self.extract_if.clone(),
                     };
                     return match arm.body.as_ref() {
                         Expr::Block(block) => child.eval_value_body(&block.block),

@@ -647,6 +647,21 @@ mod tests {
     }
 
     #[test]
+    fn btree_extract_if_loop_is_owned_by_for_replay_before_forall_loop() {
+        let expr: Expr = syn::parse_str(
+            "for sacred in 0..3 {
+                let mut map = BTreeMap::from_iter(pairs.clone());
+                map.extract_if(.., |i, _| *i != sacred).for_each(drop);
+                assert!(map.keys().copied().eq(sacred..=sacred));
+            }",
+        )
+        .unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Composite);
+
+        assert_eq!(names, vec!["for_replay", "forall_loop"]);
+    }
+
+    #[test]
     fn none_path_prioritizes_monadic_before_generic_path_sugar() {
         let expr: Expr = syn::parse_str("None").unwrap();
         let names = candidate_names(&expr);
