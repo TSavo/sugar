@@ -8,8 +8,8 @@ use crate::sugar::backstop::unsupported;
 use crate::sugar::claim::{ExprSugarClaim, ItemSugarClaim, SugarCandidate, SugarRole};
 use crate::sugar::factory::{AccountedSugar, FactoryAuditSeed, SugarBuildCtx};
 use crate::sugar::{
-    array_repeat, array_term, await_term, binop, block_term, bound_path, call, cast_term,
-    closure_iter_advance_body, closure_mutating_body, closure_opaque_accessor,
+    array_repeat, array_term, assign_op, await_term, binop, block_term, bound_path, call,
+    cast_term, closure_iter_advance_body, closure_mutating_body, closure_opaque_accessor,
     closure_runtime_receiver, closure_term, closure_tls_accessor, concat_macro, conditional,
     const_block, const_path, constraint, control_flow_term, dormant_mut_ref, enumerate, field_term,
     filter, filter_map, fold, for_each, for_replay, forall_loop, format_macro, impl_method, index,
@@ -28,6 +28,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &constraint::ASSERT_MACRO_SUGAR,
     &constraint::IF_PANIC_SUGAR,
     &constraint::NO_PANIC_CALL_SUGAR,
+    &assign_op::EXPR_SUGAR,
     &constraint::BOOL_EXPR_SUGAR,
     &monadic::EXPR_SUGAR,
     &term_literal::EXPR_SUGAR,

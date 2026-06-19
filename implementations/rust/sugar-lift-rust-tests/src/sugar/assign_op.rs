@@ -1,0 +1,651 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// `AssignOpSugar`: temporal rewrite sugar for literal-backed state transitions.
+//
+// This owns statement shapes such as `x += 1`, `v[0] += 10`, and `*a += 100`
+// when the receiver is already pinned to a literal value by the current
+// `TemporalScope`. The statement itself is inert support; its meaning is that
+// later path reads resolve through the rewritten source value.
+
+use std::collections::BTreeMap;
+use std::rc::Rc;
+
+use sugar_ir_symbolic::{eq, ConstValue, Sort, Term};
+use syn::{BinOp, Expr, Lit, Pat, RangeLimits, UnOp};
+use tracing::{debug, trace};
+
+use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::factory::SugarBuildCtx;
+use crate::{
+    parse_int_lit, parse_macro_args, simple_path_name, strip_refs_groups, token_key,
+    AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant,
+};
+
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "temporal_assign_op",
+    SugarRole::Constraint,
+    SugarPriority::Primary,
+    recognize,
+);
+
+pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    fcx.scope()
+        .temporal_rewrite_can_apply(expr)
+        .then(|| Box::new(AssignOpSugar { expr: expr.clone() }) as Box<dyn Sugar>)
+}
+
+struct AssignOpSugar {
+    expr: Expr,
+}
+
+impl Sugar for AssignOpSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        if !ctx.scope.apply_temporal_rewrite(&self.expr) {
+            return Outcome::from_opt(None);
+        }
+        Outcome::Dug(Desugared::Constraints {
+            atom: eq(bool_term(true), bool_term(true)),
+            n: 0,
+            kind: AssertionFactKind::Support,
+            warrant: Warrant {
+                name: Some(format!(
+                    "{}::temporal-rewrite::{}",
+                    ctx.scope.local_scope(),
+                    token_key(&self.expr)
+                )),
+            },
+        })
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct TemporalRewriteState {
+    values: BTreeMap<String, Expr>,
+    aliases: BTreeMap<String, RewritePlace>,
+}
+
+#[derive(Clone, Debug)]
+enum RewritePlace {
+    Scalar(String),
+    Element {
+        base: String,
+        index: usize,
+    },
+    Slice {
+        base: String,
+        start: usize,
+        len: usize,
+    },
+}
+
+#[derive(Clone, Debug)]
+enum Target {
+    Scalar(String),
+    Element { base: String, index: usize },
+}
+
+#[derive(Clone, Copy, Debug)]
+enum AggregateKind {
+    Array,
+    VecMacro,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum IndexSpec {
+    Element(usize),
+    Slice { start: usize, len: usize },
+}
+
+impl TemporalRewriteState {
+    pub(crate) fn expr_for(&self, name: &str) -> Option<Expr> {
+        if let Some(expr) = self.values.get(name) {
+            return Some(expr.clone());
+        }
+        match self.aliases.get(name)? {
+            RewritePlace::Scalar(base) => self.values.get(base).cloned(),
+            RewritePlace::Element { base, index } => self.aggregate_element(base, *index),
+            RewritePlace::Slice { .. } => None,
+        }
+    }
+
+    pub(crate) fn can_apply(&self, expr: &Expr) -> bool {
+        let mut scratch = self.clone();
+        scratch.apply_with_trace(expr, false)
+    }
+
+    pub(crate) fn apply(&mut self, expr: &Expr) -> bool {
+        self.apply_with_trace(expr, true)
+    }
+
+    fn apply_with_trace(&mut self, expr: &Expr, emit_trace: bool) -> bool {
+        match strip_refs_groups(expr) {
+            Expr::Assign(assign) => self.apply_assign(&assign.left, &assign.right, emit_trace),
+            Expr::Binary(binary) if assignment_op(&binary.op).is_some() => {
+                self.apply_compound_assign(binary, emit_trace)
+            }
+            _ => false,
+        }
+    }
+
+    pub(crate) fn record_local(&mut self, local: &syn::Local) {
+        let Some(init) = local.init.as_ref().filter(|init| init.diverge.is_none()) else {
+            return;
+        };
+
+        if self.record_get_disjoint_mut_aliases(&local.pat, &init.expr) {
+            return;
+        }
+
+        let Some(name) = simple_pat_binding(&local.pat) else {
+            return;
+        };
+
+        if let Some(base) =
+            mut_reference_target(&init.expr).filter(|base| self.values.contains_key(base))
+        {
+            self.values.remove(&name);
+            debug!(
+                target: "sugar_lift_rust_tests::temporal_rewrite",
+                binding = name.as_str(),
+                init = %token_key(&init.expr),
+                "temporal rewrite captured mutable reference alias"
+            );
+            self.aliases.insert(name, RewritePlace::Scalar(base));
+            return;
+        }
+
+        self.aliases.remove(&name);
+        if let Some(value) = self.trackable_value(&init.expr) {
+            debug!(
+                target: "sugar_lift_rust_tests::temporal_rewrite",
+                binding = name.as_str(),
+                value = %token_key(&value),
+                "temporal rewrite captured literal-backed local"
+            );
+            self.values.insert(name, value);
+        } else {
+            trace!(
+                target: "sugar_lift_rust_tests::temporal_rewrite",
+                binding = name.as_str(),
+                init = %token_key(&init.expr),
+                "temporal rewrite declined local"
+            );
+            self.values.remove(&name);
+        }
+    }
+
+    fn record_get_disjoint_mut_aliases(&mut self, pat: &Pat, init: &Expr) -> bool {
+        let Some(bindings) = slice_pat_bindings(pat) else {
+            return false;
+        };
+        let Some((base, specs)) = get_disjoint_mut_specs(init) else {
+            return false;
+        };
+        if !self.values.contains_key(&base) || bindings.len() != specs.len() {
+            return false;
+        }
+        for (binding, spec) in bindings.into_iter().zip(specs.into_iter()) {
+            let place = match spec {
+                IndexSpec::Element(index) => RewritePlace::Element {
+                    base: base.clone(),
+                    index,
+                },
+                IndexSpec::Slice { start, len } => RewritePlace::Slice {
+                    base: base.clone(),
+                    start,
+                    len,
+                },
+            };
+            self.values.remove(&binding);
+            debug!(
+                target: "sugar_lift_rust_tests::temporal_rewrite",
+                binding = binding.as_str(),
+                base = base.as_str(),
+                place = ?place,
+                "temporal rewrite captured disjoint mutable alias"
+            );
+            self.aliases.insert(binding, place);
+        }
+        true
+    }
+
+    fn apply_assign(&mut self, lhs: &Expr, rhs: &Expr, emit_trace: bool) -> bool {
+        let Some(target) = self.target_for_lhs(lhs) else {
+            return false;
+        };
+        let Some(value) = self.trackable_value(rhs) else {
+            return false;
+        };
+        let target_label = target_label(&target);
+        let value_label = token_key(&value);
+        let applied = self.set_target(target, value);
+        if applied && emit_trace {
+            debug!(
+                target: "sugar_lift_rust_tests::temporal_rewrite",
+                lhs = %token_key(lhs),
+                rhs = %token_key(rhs),
+                target = target_label.as_str(),
+                value = value_label.as_str(),
+                "temporal rewrite applied assignment"
+            );
+        }
+        applied
+    }
+
+    fn apply_compound_assign(&mut self, binary: &syn::ExprBinary, emit_trace: bool) -> bool {
+        let Some(op) = assignment_op(&binary.op) else {
+            return false;
+        };
+        let Some(target) = self.target_for_lhs(&binary.left) else {
+            return false;
+        };
+        let Some(old) = self.target_expr(&target) else {
+            return false;
+        };
+        let Some(old_value) = self.int_value(&old) else {
+            return false;
+        };
+        let Some(rhs_value) = self.int_value(&binary.right) else {
+            return false;
+        };
+        let Some(updated) = apply_int_op(op, old_value, rhs_value).and_then(int_expr) else {
+            return false;
+        };
+        let target_label = target_label(&target);
+        let updated_label = token_key(&updated);
+        let applied = self.set_target(target, updated);
+        if applied && emit_trace {
+            debug!(
+                target: "sugar_lift_rust_tests::temporal_rewrite",
+                lhs = %token_key(&binary.left),
+                rhs = %token_key(&binary.right),
+                op = ?op,
+                target = target_label.as_str(),
+                old = old_value,
+                rhs_value,
+                updated = updated_label.as_str(),
+                "temporal rewrite applied compound assignment"
+            );
+        }
+        applied
+    }
+
+    fn target_for_lhs(&self, lhs: &Expr) -> Option<Target> {
+        match strip_refs_groups(lhs) {
+            Expr::Path(_) => {
+                let name = simple_path_name(lhs)?;
+                if self.values.contains_key(&name) {
+                    return Some(Target::Scalar(name));
+                }
+                match self.aliases.get(&name)? {
+                    RewritePlace::Scalar(base) => Some(Target::Scalar(base.clone())),
+                    RewritePlace::Element { base, index } => Some(Target::Element {
+                        base: base.clone(),
+                        index: *index,
+                    }),
+                    RewritePlace::Slice { .. } => None,
+                }
+            }
+            Expr::Unary(unary) if matches!(unary.op, UnOp::Deref(_)) => {
+                self.target_for_deref(&unary.expr)
+            }
+            Expr::Index(index) => self.target_for_index(index),
+            _ => None,
+        }
+    }
+
+    fn target_for_deref(&self, expr: &Expr) -> Option<Target> {
+        let name = simple_path_name(expr)?;
+        match self.aliases.get(&name)? {
+            RewritePlace::Scalar(base) => Some(Target::Scalar(base.clone())),
+            RewritePlace::Element { base, index } => Some(Target::Element {
+                base: base.clone(),
+                index: *index,
+            }),
+            RewritePlace::Slice { .. } => None,
+        }
+    }
+
+    fn target_for_index(&self, index: &syn::ExprIndex) -> Option<Target> {
+        let idx = self.index_value(&index.index)?;
+        let base_name = simple_path_name(&index.expr)?;
+        if self.values.contains_key(&base_name) {
+            return Some(Target::Element {
+                base: base_name,
+                index: idx,
+            });
+        }
+        match self.aliases.get(&base_name)? {
+            RewritePlace::Slice { base, start, len } if idx < *len => Some(Target::Element {
+                base: base.clone(),
+                index: start.checked_add(idx)?,
+            }),
+            RewritePlace::Element { .. } | RewritePlace::Scalar(_) | RewritePlace::Slice { .. } => {
+                None
+            }
+        }
+    }
+
+    fn set_target(&mut self, target: Target, value: Expr) -> bool {
+        match target {
+            Target::Scalar(name) => {
+                if self.trackable_value(&value).is_some() {
+                    self.values.insert(name, value);
+                    true
+                } else {
+                    false
+                }
+            }
+            Target::Element { base, index } => self.set_aggregate_element(&base, index, value),
+        }
+    }
+
+    fn target_expr(&self, target: &Target) -> Option<Expr> {
+        match target {
+            Target::Scalar(name) => self.values.get(name).cloned(),
+            Target::Element { base, index } => self.aggregate_element(base, *index),
+        }
+    }
+
+    fn aggregate_element(&self, base: &str, index: usize) -> Option<Expr> {
+        let expr = self.values.get(base)?;
+        let (_, elems) = aggregate_elems(expr)?;
+        elems.get(index).cloned()
+    }
+
+    fn set_aggregate_element(&mut self, base: &str, index: usize, value: Expr) -> bool {
+        if self.int_value(&value).is_none() {
+            return false;
+        }
+        let Some(current) = self.values.get(base).cloned() else {
+            return false;
+        };
+        let Some((kind, mut elems)) = aggregate_elems(&current) else {
+            return false;
+        };
+        if index >= elems.len() {
+            return false;
+        }
+        elems[index] = value;
+        self.values
+            .insert(base.to_string(), rebuild_aggregate(kind, elems));
+        true
+    }
+
+    fn trackable_value(&self, expr: &Expr) -> Option<Expr> {
+        if let Some(name) = simple_path_name(expr) {
+            if let Some(value) = self.expr_for(&name) {
+                return Some(value);
+            }
+        }
+        if self.int_value(expr).is_some() {
+            return Some(expr.clone());
+        }
+        let (kind, elems) = aggregate_elems(expr)?;
+        if elems.iter().all(|elem| self.int_value(elem).is_some()) {
+            Some(rebuild_aggregate(kind, elems))
+        } else {
+            None
+        }
+    }
+
+    fn int_value(&self, expr: &Expr) -> Option<i128> {
+        match strip_refs_groups(expr) {
+            Expr::Lit(lit) => match &lit.lit {
+                Lit::Int(i) => parse_int_lit(i).ok(),
+                Lit::Byte(b) => Some(i128::from(b.value())),
+                _ => None,
+            },
+            Expr::Unary(unary) => match unary.op {
+                UnOp::Neg(_) => self.int_value(&unary.expr)?.checked_neg(),
+                UnOp::Not(_) => Some(!self.int_value(&unary.expr)?),
+                _ => None,
+            },
+            Expr::Path(_) => {
+                let name = simple_path_name(expr)?;
+                let value = self.expr_for(&name)?;
+                self.int_value(&value)
+            }
+            Expr::Binary(binary) => {
+                let left = self.int_value(&binary.left)?;
+                let right = self.int_value(&binary.right)?;
+                apply_value_binop(&binary.op, left, right)
+            }
+            Expr::Cast(cast) => self.int_value(&cast.expr),
+            Expr::MethodCall(call) if call.method == "unwrap" && call.args.is_empty() => {
+                self.int_value(&call.receiver)
+            }
+            Expr::Call(call) if is_nonzero_new_call(&call.func) && call.args.len() == 1 => {
+                self.int_value(call.args.first()?)
+            }
+            _ => None,
+        }
+    }
+
+    fn index_value(&self, expr: &Expr) -> Option<usize> {
+        usize::try_from(self.int_value(expr)?).ok()
+    }
+}
+
+fn assignment_op(op: &BinOp) -> Option<BinOpKind> {
+    match op {
+        BinOp::AddAssign(_) => Some(BinOpKind::Add),
+        BinOp::SubAssign(_) => Some(BinOpKind::Sub),
+        BinOp::MulAssign(_) => Some(BinOpKind::Mul),
+        BinOp::DivAssign(_) => Some(BinOpKind::Div),
+        BinOp::RemAssign(_) => Some(BinOpKind::Rem),
+        BinOp::BitAndAssign(_) => Some(BinOpKind::BitAnd),
+        BinOp::BitOrAssign(_) => Some(BinOpKind::BitOr),
+        BinOp::BitXorAssign(_) => Some(BinOpKind::BitXor),
+        BinOp::ShlAssign(_) => Some(BinOpKind::Shl),
+        BinOp::ShrAssign(_) => Some(BinOpKind::Shr),
+        _ => None,
+    }
+}
+
+fn target_label(target: &Target) -> String {
+    match target {
+        Target::Scalar(name) => name.clone(),
+        Target::Element { base, index } => format!("{base}[{index}]"),
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum BinOpKind {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
+}
+
+fn apply_value_binop(op: &BinOp, left: i128, right: i128) -> Option<i128> {
+    let kind = match op {
+        BinOp::Add(_) => BinOpKind::Add,
+        BinOp::Sub(_) => BinOpKind::Sub,
+        BinOp::Mul(_) => BinOpKind::Mul,
+        BinOp::Div(_) => BinOpKind::Div,
+        BinOp::Rem(_) => BinOpKind::Rem,
+        BinOp::BitAnd(_) => BinOpKind::BitAnd,
+        BinOp::BitOr(_) => BinOpKind::BitOr,
+        BinOp::BitXor(_) => BinOpKind::BitXor,
+        BinOp::Shl(_) => BinOpKind::Shl,
+        BinOp::Shr(_) => BinOpKind::Shr,
+        _ => return None,
+    };
+    apply_int_op(kind, left, right)
+}
+
+fn apply_int_op(kind: BinOpKind, left: i128, right: i128) -> Option<i128> {
+    match kind {
+        BinOpKind::Add => left.checked_add(right),
+        BinOpKind::Sub => left.checked_sub(right),
+        BinOpKind::Mul => left.checked_mul(right),
+        BinOpKind::Div if right != 0 => left.checked_div(right),
+        BinOpKind::Rem if right != 0 => left.checked_rem(right),
+        BinOpKind::BitAnd => Some(left & right),
+        BinOpKind::BitOr => Some(left | right),
+        BinOpKind::BitXor => Some(left ^ right),
+        BinOpKind::Shl => u32::try_from(right)
+            .ok()
+            .and_then(|rhs| left.checked_shl(rhs)),
+        BinOpKind::Shr => u32::try_from(right)
+            .ok()
+            .and_then(|rhs| left.checked_shr(rhs)),
+        BinOpKind::Div | BinOpKind::Rem => None,
+    }
+}
+
+fn aggregate_elems(expr: &Expr) -> Option<(AggregateKind, Vec<Expr>)> {
+    match strip_refs_groups(expr) {
+        Expr::Array(array) => Some((AggregateKind::Array, array.elems.iter().cloned().collect())),
+        Expr::Macro(expr_macro) if macro_name_is(&expr_macro.mac, "vec") => {
+            let args = parse_macro_args(expr_macro.mac.tokens.clone()).ok()?;
+            Some((AggregateKind::VecMacro, args.exprs))
+        }
+        _ => None,
+    }
+}
+
+fn rebuild_aggregate(kind: AggregateKind, elems: Vec<Expr>) -> Expr {
+    match kind {
+        AggregateKind::Array => syn::parse_quote!([#(#elems),*]),
+        AggregateKind::VecMacro => syn::parse_quote!(vec![#(#elems),*]),
+    }
+}
+
+fn get_disjoint_mut_specs(expr: &Expr) -> Option<(String, Vec<IndexSpec>)> {
+    let expr = unwrap_receiver(expr);
+    let Expr::MethodCall(call) = strip_refs_groups(expr) else {
+        return None;
+    };
+    if call.method != "get_disjoint_mut" || call.args.len() != 1 {
+        return None;
+    }
+    let base = simple_path_name(&call.receiver)?;
+    let Expr::Array(indices) = strip_refs_groups(call.args.first()?) else {
+        return None;
+    };
+    let specs = indices
+        .elems
+        .iter()
+        .map(index_spec)
+        .collect::<Option<Vec<_>>>()?;
+    Some((base, specs))
+}
+
+fn unwrap_receiver(expr: &Expr) -> &Expr {
+    match strip_refs_groups(expr) {
+        Expr::MethodCall(call) if call.method == "unwrap" && call.args.is_empty() => {
+            unwrap_receiver(&call.receiver)
+        }
+        other => other,
+    }
+}
+
+fn index_spec(expr: &Expr) -> Option<IndexSpec> {
+    if let Some(index) = literal_index(expr) {
+        return Some(IndexSpec::Element(index));
+    }
+    let Expr::Range(range) = strip_refs_groups(expr) else {
+        return None;
+    };
+    let start = match &range.start {
+        Some(start) => literal_index(start)?,
+        None => 0,
+    };
+    let end = literal_index(range.end.as_ref()?)?;
+    if end < start {
+        return None;
+    }
+    let len = match range.limits {
+        RangeLimits::HalfOpen(_) => end.checked_sub(start)?,
+        RangeLimits::Closed(_) => end.checked_sub(start)?.checked_add(1)?,
+    };
+    Some(IndexSpec::Slice { start, len })
+}
+
+fn literal_index(expr: &Expr) -> Option<usize> {
+    let Expr::Lit(lit) = strip_refs_groups(expr) else {
+        return None;
+    };
+    let Lit::Int(i) = &lit.lit else {
+        return None;
+    };
+    usize::try_from(parse_int_lit(i).ok()?).ok()
+}
+
+fn mut_reference_target(expr: &Expr) -> Option<String> {
+    match strip_refs_groups(expr) {
+        Expr::Reference(reference) if reference.mutability.is_some() => {
+            simple_path_name(&reference.expr)
+        }
+        _ => None,
+    }
+}
+
+fn simple_pat_binding(pat: &Pat) -> Option<String> {
+    match pat {
+        Pat::Ident(ident) if ident.by_ref.is_none() && ident.subpat.is_none() => {
+            Some(ident.ident.to_string())
+        }
+        Pat::Type(typed) => simple_pat_binding(&typed.pat),
+        Pat::Paren(paren) => simple_pat_binding(&paren.pat),
+        _ => None,
+    }
+}
+
+fn slice_pat_bindings(pat: &Pat) -> Option<Vec<String>> {
+    let Pat::Slice(slice) = strip_pat(pat) else {
+        return None;
+    };
+    slice.elems.iter().map(simple_pat_binding).collect()
+}
+
+fn strip_pat(pat: &Pat) -> &Pat {
+    match pat {
+        Pat::Type(typed) => strip_pat(&typed.pat),
+        Pat::Paren(paren) => strip_pat(&paren.pat),
+        _ => pat,
+    }
+}
+
+fn is_nonzero_new_call(func: &Expr) -> bool {
+    let Expr::Path(path) = strip_refs_groups(func) else {
+        return false;
+    };
+    if path.qself.is_some() || path.path.segments.len() < 2 {
+        return false;
+    }
+    let mut segments = path.path.segments.iter().rev();
+    let Some(method) = segments.next() else {
+        return false;
+    };
+    let Some(ty) = segments.next() else {
+        return false;
+    };
+    method.ident == "new" && ty.ident.to_string().starts_with("NonZero")
+}
+
+fn macro_name_is(mac: &syn::Macro, expected: &str) -> bool {
+    mac.path
+        .segments
+        .last()
+        .is_some_and(|segment| segment.ident == expected)
+}
+
+fn int_expr(value: i128) -> Option<Expr> {
+    syn::parse_str::<Expr>(&value.to_string()).ok()
+}
+
+fn bool_term(value: bool) -> Rc<Term> {
+    Rc::new(Term::Const {
+        value: ConstValue::Bool(value),
+        sort: Sort::bool(),
+    })
+}
