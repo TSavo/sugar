@@ -163,6 +163,24 @@ pub(crate) fn none_term() -> Rc<Term> {
     })
 }
 
+/// Build the grounded `res:ok(inner)` TERM directly, matching the constructive
+/// `Ok(inner)` recognizer byte-for-byte.
+pub(crate) fn ok_term(inner: Rc<Term>) -> Rc<Term> {
+    Rc::new(Term::Ctor {
+        name: RES_OK.to_string(),
+        args: vec![inner],
+    })
+}
+
+/// Build the grounded `res:err(inner)` TERM directly, matching the constructive
+/// `Err(inner)` recognizer byte-for-byte.
+pub(crate) fn err_term(inner: Rc<Term>) -> Rc<Term> {
+    Rc::new(Term::Ctor {
+        name: RES_ERR.to_string(),
+        args: vec![inner],
+    })
+}
+
 /// The constructive `Option`/`Result` constructor node. Digs its inner child to
 /// a `Term` (for the unary ctors) and emits `Term::Ctor { name, args }` keyed by
 /// the reserved monadic name. A child `Hit` propagates verbatim; a child that
