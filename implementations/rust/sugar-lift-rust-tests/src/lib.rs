@@ -59,6 +59,7 @@ pub mod sugar {
     pub mod const_item;
     pub mod const_path;
     pub mod constraint;
+    pub mod constraint_runtime_boundary;
     pub mod control_flow_term;
     pub mod cstr;
     pub mod ctor_term;
@@ -15746,6 +15747,52 @@ mod lifter_key_tests {
                 .iter()
                 .all(|r| !r.contains("constraint-shaped expression did not reach bedrock `arr`")),
             "the const initializer's value tail is inert support, not scalar assertion work: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn atomic_load_relation_is_refused_as_runtime_boundary_not_structural_bail() {
+        let src = r#"
+            use std::sync::atomic::{AtomicUsize, Ordering};
+
+            #[test]
+            fn atomic_load_boundary() {
+                let witness = [8, 9, 10, 11].map(|i| (i, AtomicUsize::new(0)));
+                assert_eq!(witness[3].1.load(Ordering::Relaxed), 0);
+            }
+        "#;
+        let out = lift_src(src);
+        assert!(
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("atomic load reads interior-mutable runtime state")),
+            "atomic `.load(Ordering::*)` should be a named runtime boundary, not an \
+             unclassified structural bail: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn panic_payload_relation_is_refused_as_runtime_boundary_not_structural_bail() {
+        let src = r#"
+            #[test]
+            fn panic_payload_boundary() {
+                let res = std::panic::catch_unwind(|| panic!("boom"));
+                let panic_msg = match res {
+                    Ok(_) => unreachable!(),
+                    Err(p) => p.downcast::<&'static str>().unwrap(),
+                };
+                assert_eq!(*panic_msg, "boom");
+            }
+        "#;
+        let out = lift_src(src);
+        assert!(
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("panic payload downcast reads runtime exception state")),
+            "panic payload deref should be a named runtime boundary, not an unclassified \
+             structural bail: {:?}",
             out.skip_reasons
         );
     }
