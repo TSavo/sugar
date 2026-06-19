@@ -105,6 +105,10 @@ pub(crate) fn is_format_macro_shape(expr: &Expr) -> bool {
     matches!(strip_refs_groups(expr), Expr::Macro(m) if macro_is(m, "format"))
 }
 
+pub(crate) fn is_format_args_macro_shape(expr: &Expr) -> bool {
+    matches!(strip_refs_groups(expr), Expr::Macro(m) if macro_is(m, "format_args"))
+}
+
 pub(crate) fn is_concat_macro_shape(expr: &Expr) -> bool {
     matches!(strip_refs_groups(expr), Expr::Macro(m) if macro_is(m, "concat"))
 }
@@ -312,6 +316,70 @@ fn resolve_concat_fragment(
             None => Ok(None),
         },
         _ => Ok(None),
+    }
+}
+
+pub(crate) fn try_estimate_format_args_capacity(
+    expr: &Expr,
+    binds: &BTreeMap<String, Expr>,
+) -> Result<Option<usize>, String> {
+    let Expr::Macro(m) = strip_refs_groups(expr) else {
+        return Ok(None);
+    };
+    if !macro_is(m, "format_args") {
+        return Ok(None);
+    }
+    let args = match parse_args(&m.mac.tokens) {
+        Some(a) => a,
+        None => return Ok(None),
+    };
+    let Some((fmt_expr, _rest)) = args.split_first() else {
+        return Ok(None);
+    };
+    let Some(fmt) = resolve_str_literal_only(fmt_expr, binds)? else {
+        return Ok(None);
+    };
+    Ok(estimate_format_args_capacity(&fmt))
+}
+
+fn estimate_format_args_capacity(fmt: &str) -> Option<usize> {
+    let mut literal_len = 0usize;
+    let mut starts_with_placeholder = false;
+    let mut saw_placeholder = false;
+    let mut i = 0usize;
+    while i < fmt.len() {
+        let c = fmt[i..].chars().next()?;
+        if c == '{' {
+            if i + 1 < fmt.len() && fmt.as_bytes()[i + 1] == b'{' {
+                literal_len = literal_len.wrapping_add(1);
+                i += 2;
+                continue;
+            }
+            let close = fmt[i + 1..].find('}').map(|j| i + 1 + j)?;
+            saw_placeholder = true;
+            if literal_len == 0 {
+                starts_with_placeholder = true;
+            }
+            i = close + 1;
+        } else if c == '}' {
+            if i + 1 < fmt.len() && fmt.as_bytes()[i + 1] == b'}' {
+                literal_len = literal_len.wrapping_add(1);
+                i += 2;
+                continue;
+            }
+            return None;
+        } else {
+            literal_len = literal_len.wrapping_add(c.len_utf8());
+            i += c.len_utf8();
+        }
+    }
+    if !saw_placeholder {
+        return Some(literal_len);
+    }
+    if starts_with_placeholder && literal_len < 16 {
+        Some(0)
+    } else {
+        Some(literal_len.wrapping_mul(2))
     }
 }
 

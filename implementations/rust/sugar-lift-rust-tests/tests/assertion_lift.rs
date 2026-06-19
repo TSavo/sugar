@@ -12942,6 +12942,31 @@ fn format_runtime_arg_does_not_overfire() {
 }
 
 #[test]
+fn format_args_estimated_capacity_lowers_to_scalar_facts() {
+    let src = r#"
+#[test]
+fn test_estimated_capacity() {
+    assert_eq!(format_args!("").estimated_capacity(), 0);
+    assert_eq!(format_args!("{}", { "" }).estimated_capacity(), 0);
+    assert_eq!(format_args!("Hello").estimated_capacity(), 5);
+    assert_eq!(format_args!("Hello, {}!", { "" }).estimated_capacity(), 16);
+    assert_eq!(format_args!("{}, hello!", { "World" }).estimated_capacity(), 0);
+    assert_eq!(format_args!("{}. 16-bytes piece", { "World" }).estimated_capacity(), 32);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/fmt_args_capacity.rs");
+    assert_eq!(out.assertions_lifted, 6, "{:?}", out.assertion_facts);
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(out.skip_reasons.is_empty(), "{:?}", out.skip_reasons);
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        !doc.contains("macro:format_args") && !doc.contains("method:estimated_capacity"),
+        "format_args!(...).estimated_capacity() must lower to scalar facts, not opaque call terms: {doc}"
+    );
+}
+
+#[test]
 fn statement_macro_rules_body_is_factory_input_for_assertion_shape() {
     let src = r#"
 macro_rules! compile_guard {

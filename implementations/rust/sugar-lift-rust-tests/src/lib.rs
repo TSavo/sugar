@@ -82,6 +82,7 @@ pub mod sugar {
     pub mod forall;
     pub mod forall_loop;
     pub mod format;
+    pub mod format_args;
     pub mod format_macro;
     pub mod function_map;
     pub mod identity;
