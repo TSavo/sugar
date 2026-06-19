@@ -17,9 +17,9 @@ use crate::sugar::{
     impl_method, index, intersperse_collect_string, intersperse_concat, iter_terminal, iterator,
     literal, literal_slice, macro_term, map, match_node, match_scrutinee, method, monadic, path,
     range_term, raw_addr_term, reference_term, repeat_term, rev, skip, skip_while,
-    statement_control_flow, statement_loop_advance, statement_reflection, statement_runtime_expr,
-    string_add, struct_term, take, take_while, term_literal, to_string, transparent_term,
-    try_from_fn, try_map, tuple_term, unary, unsafe_memory, vec_macro,
+    statement_control_flow, statement_future_handoff, statement_loop_advance, statement_reflection,
+    statement_runtime_expr, string_add, struct_term, take, take_while, term_literal, to_string,
+    transparent_term, try_from_fn, try_map, tuple_term, unary, unsafe_memory, vec_macro,
 };
 use crate::{FactoryCandidateAudit, Sugar};
 
@@ -107,6 +107,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &closure_mutating_body::EXPR_SUGAR,
     &closure_runtime_receiver::EXPR_SUGAR,
     &statement_control_flow::EXPR_SUGAR,
+    &statement_future_handoff::EXPR_SUGAR,
     &statement_reflection::EXPR_SUGAR,
     &statement_loop_advance::EXPR_SUGAR,
     &statement_runtime_expr::EXPR_SUGAR,
@@ -777,6 +778,33 @@ mod tests {
         let names = candidate_names_for_role(&expr, SugarRole::StatementEffect);
 
         assert_eq!(names, vec!["statement_control_flow"]);
+    }
+
+    #[test]
+    fn nested_async_assertion_statement_effect_is_future_handoff() {
+        let expr: Expr = syn::parse_str("spawn(async { assert_eq!(1, 1); })").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::StatementEffect);
+
+        assert_eq!(names, vec!["statement_future_handoff"]);
+    }
+
+    #[test]
+    fn bare_async_assertion_is_not_a_future_handoff_driver() {
+        let expr: Expr = syn::parse_str("async { assert_eq!(1, 1); }").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::StatementEffect);
+
+        assert!(
+            names.is_empty(),
+            "bare async construction is inert: {names:?}"
+        );
+    }
+
+    #[test]
+    fn named_block_on_is_not_a_compiler_axiom() {
+        let expr: Expr = syn::parse_str("block_on(async { assert_eq!(1, 1); })").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::StatementEffect);
+
+        assert_eq!(names, vec!["statement_future_handoff"]);
     }
 
     #[test]

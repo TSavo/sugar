@@ -7237,12 +7237,13 @@ fn t() {
     );
 }
 
-// --- unconditional-block recursion (block_on / value-block) tranche ---
+// --- unconditional-block recursion (future handoff / value-block) tranche ---
 
 #[test]
-fn block_on_async_asserts_are_lifted() {
-    // rt.block_on(async { .. }) runs the future to completion once; its
-    // top-level asserts are unconditional and lift.
+fn block_on_async_asserts_are_future_handoff_boundary() {
+    // `async` is compiler syntax, but `rt.block_on` is library/runtime semantics.
+    // Until the driver contract is learned from visible source/proof, assertions
+    // inside the future are a refused handoff boundary, not point-wise facts.
     let src = r#"
 #[test]
 fn t() {
@@ -7252,7 +7253,26 @@ fn t() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/rt.rs");
-    assert_eq!(out.assertions_lifted, 1, "warnings: {:?}", out.skip_reasons);
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "future handoff body must not fake-lift: {:?}",
+        out.skip_reasons
+    );
+    let reason = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains("future handoff boundary"))
+        .unwrap_or_else(|| {
+            panic!(
+                "expected future handoff refusal for block_on(async), got {:?}",
+                out.skip_reasons
+            )
+        });
+    assert_eq!(
+        sugar_lift_rust_tests::refusal_disposition(reason),
+        sugar_lift_rust_tests::Disposition::Refused,
+        "future handoff boundary must classify TERMINAL refused"
+    );
 }
 
 #[test]
@@ -8925,8 +8945,9 @@ fn join_try() {
 // ── Statement-position qualified continue paths (value NOT in scope) ─────────
 //
 // The statement-position assert buckets split TWO ways. The value-NOT-in-scope half
-// (the asserted value flows through a runtime continuation: a future `.await` /
-// free-fn `block_on(async{..})`, or opaque compile-time reflection) is a SOUND
+// (the asserted value flows through a runtime continuation: a future `.await`, an
+// assertion-bearing async future handed to a non-axiomatic driver, or opaque
+// compile-time reflection) is a SOUND
 // TERMINAL refusal naming that qualified continue path -- the SAME class as the
 // existing `bin-2` "runtime data, not constructed from source literals" terminals.
 // The discrimination guardrail (BOTH directions) is what keeps it from being a
@@ -8935,10 +8956,10 @@ fn join_try() {
 // terminalized -- it DIGS.
 
 /// (refuse) An `assert_eq!(x, ..)` where `x = join!(..).await` inside a free-fn
-/// `block_on(async {..})` flows the asserted value through a FUTURE CONTINUATION
-/// (resolved by a runtime executor) -- value NOT in scope. It must classify TERMINAL
-/// refused over that named continuation, NOT discharge (recursing would FAKE-DIG
-/// `x == 0` as a literal, ignoring the runtime await).
+/// `block_on(async {..})` is inside an async future handed to a non-axiomatic
+/// driver. It must classify TERMINAL refused at the handoff boundary, NOT
+/// discharge (recursing would FAKE-DIG `x == 0` as a literal, ignoring the runtime
+/// await and the driver contract).
 #[test]
 fn await_in_block_on_is_terminal_refusal() {
     let src = r#"
@@ -8961,17 +8982,17 @@ fn test_join() {
     let reason = out
         .skip_reasons
         .iter()
-        .find(|r| r.contains("effectful control-flow block"))
+        .find(|r| r.contains("future handoff boundary"))
         .unwrap_or_else(|| {
             panic!(
-                "expected a future-continuation refusal, got {:?}",
+                "expected a future-handoff refusal, got {:?}",
                 out.skip_reasons
             )
         });
     assert_eq!(
         sugar_lift_rust_tests::refusal_disposition(reason),
         sugar_lift_rust_tests::Disposition::Refused,
-        "free-fn block_on(async) future continuation must classify TERMINAL refused"
+        "free-fn block_on(async) future handoff must classify TERMINAL refused"
     );
 }
 
