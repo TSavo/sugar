@@ -6,18 +6,37 @@
 use syn::{BinOp, Expr};
 
 use crate::{
-    closure_body_advances_iterator, count_asserts_in_expr, expr_contains_await,
-    is_free_fn_block_on_async, reflection_scrutinee, strip_const_block,
+    closure_body_advances_iterator, count_asserts_in_expr, count_asserts_in_stmts,
+    expr_contains_await, reflection_scrutinee, strip_const_block, token_key,
 };
 
 pub(crate) fn carries_assert(expr: &Expr) -> bool {
     count_asserts_in_expr(expr) > 0
 }
 
-/// CONTINUATION detector: an `.await` anywhere, or a free-fn `block_on(async{..})`,
-/// drives a future to completion via a runtime executor.
+/// CONTINUATION detector: an `.await` in the expression being evaluated here.
+/// Await inside a nested async future body is deliberately ignored by
+/// `expr_contains_await`; that dormant future is owned by the future-handoff leaf.
 pub(crate) fn has_control_flow(expr: &Expr) -> bool {
-    carries_assert(expr) && (expr_contains_await(expr) || is_free_fn_block_on_async(expr))
+    carries_assert(expr) && expr_contains_await(expr)
+}
+
+/// FUTURE-HANDOFF detector: a call/method expression receives an assertion-bearing
+/// async future. The callee spelling is irrelevant; the driver semantics must be
+/// learned dynamically from visible source/proof before the async body can be lifted
+/// as a point-wise fact.
+pub(crate) fn future_handoff_boundary(expr: &Expr) -> Option<String> {
+    let expr = strip_transparent(expr);
+    let carries_asserting_future = match expr {
+        Expr::Call(call) => call.args.iter().any(expr_contains_asserting_async),
+        Expr::MethodCall(call) => {
+            expr_contains_asserting_async(&call.receiver)
+                || call.args.iter().any(expr_contains_asserting_async)
+        }
+        _ => false,
+    };
+
+    carries_asserting_future.then(|| token_key(expr))
 }
 
 /// REFLECTION detector: a `match <reflection> { .. }` whose scrutinee is `Type::of` /
@@ -30,6 +49,32 @@ pub(crate) fn reflection_boundary(expr: &Expr) -> Option<String> {
         return None;
     };
     reflection_scrutinee(strip_const_block(&m.expr))
+}
+
+fn strip_transparent(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(paren) => strip_transparent(&paren.expr),
+        Expr::Group(group) => strip_transparent(&group.expr),
+        _ => expr,
+    }
+}
+
+fn expr_contains_asserting_async(expr: &Expr) -> bool {
+    struct Scan {
+        found: bool,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for Scan {
+        fn visit_expr_async(&mut self, async_expr: &'ast syn::ExprAsync) {
+            if count_asserts_in_stmts(&async_expr.block.stmts) > 0 {
+                self.found = true;
+            }
+        }
+    }
+
+    let mut scan = Scan { found: false };
+    syn::visit::Visit::visit_expr(&mut scan, expr);
+    scan.found
 }
 
 /// LOOP detector: a `loop { .. }` whose body advances a runtime iterator.

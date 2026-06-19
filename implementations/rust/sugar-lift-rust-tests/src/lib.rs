@@ -108,6 +108,7 @@ pub mod sugar {
     pub mod skip;
     pub mod skip_while;
     pub mod statement_control_flow;
+    pub mod statement_future_handoff;
     pub mod statement_loop_advance;
     pub mod statement_position;
     pub mod statement_reflection;
@@ -575,6 +576,12 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // no `&mut`/mutation signal and STAYS the unclassified "unlifted expression
         // statement" reason (the fake-refuse guardrail). Typed `RuntimeExprStmtEffect`.
         || reason.contains("runtime expression-statement")
+        // TERMINAL: an assertion-bearing `async { .. }` future has been handed to an
+        // arbitrary call/method driver. The `async` block is compiler syntax, but the driver
+        // call is NOT a compiler axiom; it must be learned dynamically from visible source /
+        // proof before the async body can be treated as a point-wise fact. This is a boundary
+        // verdict, not a vendor-name exception.
+        || reason.contains("future handoff boundary")
         // TERMINAL (FLOAT TAIL #1 -- flt2dec runtime output): an
         // `assert!((buf, k) == (..))` against the flt2dec algorithm's RUNTIME output. The
         // operand is NOT a closed f32/f64 literal term (no `ldexp`/`format!` over a closed
@@ -3379,9 +3386,6 @@ fn debug_assertions_present(options: &LiftOptions) -> bool {
 /// net still accounts anything not reached, so this never reintroduces a silent
 /// drop). Sound contexts:
 ///   - a plain value block `{ .. }` and `unsafe { .. }` (evaluated once here)
-///   - `rt.block_on(async { .. })`: block_on drives the future to completion
-///     synchronously, so its top-level statements run exactly once. The async /
-///     await is the ordering we drop; the assertions inside still hold.
 /// A bare `async { .. }`, a closure, or a spawned future is NOT unconditional
 /// (it may never run, or runs per-iteration) and is not returned here.
 /// If `expr` is a call to the std intrinsic `const_eval_select((), ct, rt)`,
@@ -4534,6 +4538,11 @@ enum Effect {
     /// the `StatementPositionSugar` aliased-read leaf; a statement over a CONSTRUCTED literal
     /// value stays unclassified.
     RuntimeExprStmt { boundary: String },
+    /// FUTURE-HANDOFF: an assertion-bearing `async { .. }` future is handed to a
+    /// call/method driver. `async` syntax itself is compiler-known and inert, but the
+    /// driver call is library/runtime semantics unless dynamically learned from visible
+    /// source or proof. No callee spelling is trusted here.
+    FutureHandoff { boundary: String },
     /// RUNTIME-MATCH-SCRUTINEE: an `assert!(match <runtime call> { .. })` whose scrutinee is a
     /// RUNTIME non-scalar method/function result. The asserted boolean is the arm taken by a
     /// runtime result, not a scalar equality over constructible values -- no single timeless
@@ -4660,6 +4669,11 @@ impl Effect {
                 "assertion in a runtime expression-statement `{boundary}` (value read through a \
                  `&mut` borrow / mutation, not constructible from source literals); refused"
             ),
+            Effect::FutureHandoff { boundary } => format!(
+                "future handoff boundary `{boundary}`: assertion inside an async future handed to \
+                 a non-axiomatic driver; driver semantics must be learned dynamically from \
+                 source/proof before the async body is a point-wise fact; refused"
+            ),
             Effect::RuntimeMatchScrutinee { boundary } => format!(
                 "only scalar equality is liftable; operand is a runtime non-scalar result \
                  `{boundary}` (a `match` over a runtime call result, not constructible from source \
@@ -4695,6 +4709,7 @@ impl Effect {
             | Effect::ImplMethod { boundary }
             | Effect::IfGuardRuntime { boundary }
             | Effect::RuntimeExprStmt { boundary }
+            | Effect::FutureHandoff { boundary }
             | Effect::RuntimeMatchScrutinee { boundary }
             | Effect::ArrayRepeat { boundary } => boundary.clone(),
             Effect::Unsupported { reason } => reason.clone(),
@@ -5874,36 +5889,16 @@ fn expr_contains_await(expr: &Expr) -> bool {
         fn visit_expr_await(&mut self, _: &'ast syn::ExprAwait) {
             self.found = true;
         }
+
+        fn visit_expr_async(&mut self, _: &'ast syn::ExprAsync) {
+            // Constructing an async future is compiler-known and inert. Await inside a
+            // dormant future body does not make the enclosing expression a continuation;
+            // the driver call, if any, is handled by StatementFutureHandoffSugar.
+        }
     }
     let mut s = Scan { found: false };
     syn::visit::Visit::visit_expr(&mut s, expr);
     s.found
-}
-
-/// True if `expr` is a FREE-FN `block_on(async { .. })` / `block_on(async move { .. })`
-/// call -- a future driven to completion by a runtime executor. The
-/// `unconditional_block_stmts` recursion handles `rt.block_on(async{..})` as a METHOD
-/// call (it drives a concrete future synchronously), but a free-fn `block_on(async{..})`
-/// whose async body binds its asserted values from `.await` results is a runtime
-/// continuation -- value NOT in scope. (Recursing it would FAKE-DIG: `assert_eq!(x, 0)`
-/// where `x = join!(async{0}).await` would discharge `x == 0` as a literal, ignoring the
-/// runtime await. Proven empirically.)
-fn is_free_fn_block_on_async(expr: &Expr) -> bool {
-    let Expr::Call(call) = expr else {
-        return false;
-    };
-    let Expr::Path(p) = &*call.func else {
-        return false;
-    };
-    let is_block_on = p
-        .path
-        .segments
-        .last()
-        .is_some_and(|s| s.ident == "block_on");
-    if !is_block_on || call.args.len() != 1 {
-        return false;
-    }
-    matches!(&call.args[0], Expr::Async(_))
 }
 
 /// True if a `match` scrutinee is OPAQUE COMPILE-TIME REFLECTION over runtime type
@@ -6079,16 +6074,18 @@ fn impl_block_method_name(imp: &syn::ItemImpl) -> Option<String> {
 /// Thin node-router: a bare statement-position expression whose asserted value flows through
 /// a RUNTIME continuation NOT IN SCOPE is classified by the `StatementPositionSugar` node. It
 /// names every value-NOT-in-scope verdict in its own `desugar` -- a future continuation
-/// (`.await` / free-fn `block_on(async{..})`) `ControlFlow`, an opaque `match Type::of::<T>()
-/// .kind`/`.info()` `Reflection`, a `loop { .. }` over a runtime-advanced iterator `LoopAdvance`,
-/// or a `&mut`-aliased / mutated `RuntimeExprStmt` read. The caller renders `effect.reason()`
-/// into `skip_reasons`, which `refusal_disposition` classifies terminal. This is the
-/// value-NOT-in-scope half of the statement-position split (the value-IN-scope half DIGS via
-/// the defolder / unconditional-block recursion).
+/// (`.await`) `ControlFlow`, an assertion-bearing async future handed to a non-axiomatic
+/// driver `FutureHandoff`, an opaque `match Type::of::<T>().kind`/`.info()` `Reflection`, a
+/// `loop { .. }` over a runtime-advanced iterator `LoopAdvance`, or a `&mut`-aliased /
+/// mutated `RuntimeExprStmt` read. The caller renders `effect.reason()` into `skip_reasons`,
+/// which `refusal_disposition` classifies terminal. This is the value-NOT-in-scope half of
+/// the statement-position split (the value-IN-scope half DIGS via the defolder /
+/// unconditional-block recursion).
 ///
 /// SOUNDNESS (the discrimination guardrail): each leaf fires ONLY on a DETECTED runtime
-/// signal (an `.await`, a free-fn `block_on(async)`, a `Type::of`/`.info()` reflection
-/// scrutinee, a loop body that advances an iterator, a `&mut` borrow / assignment). A
+/// signal (an `.await`, an assertion-bearing async handoff to a driver call, a
+/// `Type::of`/`.info()` reflection scrutinee, a loop body that advances an iterator, a
+/// `&mut` borrow / assignment). A
 /// statement carrying a CONSTRUCTED literal value matches NONE of these -> the node returns
 /// its STRUCTURAL backstop, which this router maps to `None` (the old fall-through), leaving
 /// it to DIG or stay unclassified -- never terminalized by position.
@@ -6254,10 +6251,6 @@ fn unconditional_block_stmts(expr: &Expr) -> Option<&[Stmt]> {
         Expr::Unsafe(u) => Some(&u.block.stmts),
         Expr::Paren(p) => unconditional_block_stmts(&p.expr),
         Expr::Group(g) => unconditional_block_stmts(&g.expr),
-        Expr::MethodCall(c) if c.method == "block_on" && c.args.len() == 1 => match &c.args[0] {
-            Expr::Async(a) => Some(&a.block.stmts),
-            other => unconditional_block_stmts(other),
-        },
         _ => None,
     }
 }
@@ -6527,11 +6520,11 @@ fn collect_assertion_entries<'a>(
             Stmt::Local(local) => {
                 update_float_width_scope_for_pat(&local.pat, float_widths);
                 if let Some(init) = &local.init {
-                    // If the initializer is an unconditional block (a plain block
-                    // or a block_on(async {..})), recurse and lift its asserts;
-                    // the per-fn safety net accounts anything not reached, so no
-                    // silent drop. Otherwise the asserts (closures, conditionals)
-                    // are not top-level point-wise: refuse them.
+                    // If the initializer is an unconditional block (a plain block), recurse
+                    // and lift its asserts; the per-fn safety net accounts anything not
+                    // reached, so no silent drop. Otherwise the asserts (closures,
+                    // conditionals, future driver calls) are not top-level point-wise:
+                    // classify/refuse them.
                     if let Some(stmts) = unconditional_block_stmts(&init.expr) {
                         collect_assertion_entries(
                             stmts,
@@ -6623,6 +6616,17 @@ fn collect_assertion_entries<'a>(
                             &let_inits,
                             factory_audits,
                         )
+                        .or_else(|| {
+                            statement_position_terminal_effect(
+                                &init.expr,
+                                &temporal_scope,
+                                options,
+                                reducer,
+                                float_widths,
+                                macro_depth,
+                                factory_audits,
+                            )
+                        })
                         .map(|e| e.reason())
                         .unwrap_or_else(|| {
                             "assertion inside a let-initializer expression: not a top-level point-wise assertion; released to layer 0".to_string()
@@ -7203,9 +7207,8 @@ fn collect_assertion_entries<'a>(
             // runs here for statements no specific arm matched, so there is no
             // double counting.
             other => {
-                // A bare expression statement that is an unconditional block
-                // (e.g. `rt.block_on(async { .. })`) runs once: recurse and lift
-                // its asserts. The per-fn safety net accounts anything not
+                // A bare expression statement that is an unconditional block runs once:
+                // recurse and lift its asserts. The per-fn safety net accounts anything not
                 // reached, so no silent drop. Otherwise refuse.
                 let recursed = if let Stmt::Expr(e, _) = other {
                     // `<lit>.iter().for_each(|v| assert!(..))` (or `.into_iter()` /
@@ -7382,8 +7385,8 @@ fn collect_assertion_entries<'a>(
                             // First the closure-method bucket (fold/for_each over an opaque
                             // accessor / side-effecting body). Then the statement-position
                             // qualified continue paths (value NOT in scope): a future
-                            // continuation (`.await` / free-fn `block_on(async{..})`), opaque
-                            // reflection (`match Type::of::<T>().kind`), or a runtime loop.
+                            // continuation (`.await`), a non-axiomatic future handoff driver,
+                            // opaque reflection (`match Type::of::<T>().kind`), or a runtime loop.
                             // Finally a RUNTIME EXPRESSION-STATEMENT (a tuple/expr whose
                             // asserted value is read through a `&mut` borrow or a mutation --
                             // e.g. `(assert_matches!(*MutRefWithDrop(&mut val).0, 0),
@@ -15784,10 +15787,21 @@ mod lifter_key_tests {
             }
         "#;
         let out = lift_src(src);
-        assert_eq!(
-            out.assertions_lifted, 2,
-            "visible method body should be re-dug by shape, not by method name: {:?}",
-            out.skip_reasons
+        assert!(
+            out.assertion_facts.iter().any(|fact| fact.kind == AssertionFactKind::Support
+                && fact
+                    .contract_name
+                    .starts_with("method:totally_not_a_magic_name#")),
+            "visible if-panic method body should be re-dug as support by shape, not by method name: {:?}",
+            out.assertion_facts
+        );
+        assert!(
+            out.assertion_facts.iter().any(|fact| fact.kind == AssertionFactKind::Support
+                && fact
+                    .contract_name
+                    .starts_with("method:still_not_vocabulary#")),
+            "visible assert macro method body should be re-dug as support by shape, not by method name: {:?}",
+            out.assertion_facts
         );
         assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
     }
@@ -17135,6 +17149,61 @@ mod lifter_key_tests {
                 .filter(|r| r.contains("opaque/effectful accessor"))
                 .all(|r| matches!(refusal_disposition(r), Disposition::Refused)),
             "opaque-accessor reason must be a terminal disposition"
+        );
+    }
+
+    #[test]
+    fn let_initializer_nested_async_assertion_is_terminal_future_handoff() {
+        let src = r#"
+            #[test]
+            fn async_init() {
+                let _task = spawn(async {
+                    assert_eq!(1, 1);
+                });
+            }
+        "#;
+        let out = lift_src(src);
+
+        assert!(
+            out.skip_reasons
+                .iter()
+                .any(|r| r.contains("future handoff")
+                    && matches!(refusal_disposition(r), Disposition::Refused)),
+            "a nested async assertion in a let initializer must report the non-axiomatic future driver boundary: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.skip_reasons
+                .iter()
+                .all(|r| !r.contains("let-initializer expression")),
+            "the async let-init shape must not stay in the generic unclassified let-initializer bucket: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
+    fn method_block_on_async_assertion_is_not_implicit_axiom() {
+        let src = r#"
+            #[test]
+            fn async_driver() {
+                rt.block_on(async {
+                    assert_eq!(1, 1);
+                });
+            }
+        "#;
+        let out = lift_src(src);
+
+        assert!(
+            out.skip_reasons.iter().any(|r| r.contains("future handoff")
+                && matches!(refusal_disposition(r), Disposition::Refused)),
+            "a method named block_on must report a dynamic future-driver boundary: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.decls.is_empty() && out.assertion_facts.is_empty(),
+            "block_on spelling alone must not discharge the async-body assertion: decls={:?} facts={:?}",
+            out.decls,
+            out.assertion_facts
         );
     }
 
@@ -18621,10 +18690,11 @@ mod lifter_key_tests {
     // that STAYS UNCLASSIFIED -- the inverse-sin guardrail against fake-refuse).
 
     #[test]
-    fn assertion_in_impl_method_is_refused_runtime_reachability() {
-        // REFUSE: an assert in a top-level `impl` method body reads receiver state that
-        // only exists when the method runs (corpus: iter/adapters/mod.rs `next`,
-        // map_windows.rs `check`). A source property -- reachable only at runtime.
+    fn assertion_in_impl_method_emits_source_contract_without_residual_refusal() {
+        // A top-level `impl` method assertion is not a concrete unit-test fact, but
+        // visible source still mints a method contract. Call sites can conjoin that
+        // contract later; the impl-method refusal is only for residual assertions
+        // the source-contract pass could not lift.
         let src = r#"
             struct W { done: bool }
             impl Iterator for W {
@@ -18637,14 +18707,26 @@ mod lifter_key_tests {
         "#;
         let out = lift_src(src);
         assert_eq!(
-            out.assertions_lifted, 0,
-            "an impl-method assert must not lift"
+            out.assertions_lifted, 1,
+            "a visible impl-method assert should mint a method contract"
         );
         assert!(
-            out.skip_reasons.iter().any(|r| r
-                .contains("reachable only at runtime when the method is invoked")
-                && refusal_disposition(r) == Disposition::Refused),
-            "the impl-method assert must be REFUSED with its named runtime cause: {:?}",
+            contract_names(&out).contains(&"tests/test_src.rs::next"),
+            "the method contract should be named for the impl method: {:?}",
+            contract_names(&out)
+        );
+        assert!(
+            out.assertion_facts
+                .iter()
+                .any(|fact| fact.kind == AssertionFactKind::Warranted
+                    && fact.item_name == "tests/test_src.rs::next"),
+            "the impl-method assertion should be emitted as a warranted source contract: {:?}",
+            out.assertion_facts
+        );
+        assert!(
+            out.skip_reasons.iter().all(|r| !r
+                .contains("reachable only at runtime when the method is invoked")),
+            "a lifted impl-method source contract must not also carry the residual runtime refusal: {:?}",
             out.skip_reasons
         );
     }
@@ -18842,8 +18924,15 @@ mod lifter_key_tests {
                 out.skip_reasons
             );
             assert_eq!(
-                out.assertions_lifted, 2,
-                "both branch asserts dig: {:?}",
+                out.assertions_lifted, 1,
+                "only the compiler-selected branch is in the active universe: {:?}",
+                out.skip_reasons
+            );
+            assert!(
+                out.skip_reasons.iter().any(|r| r
+                    == "inactive const if branch on assertion; skipped"
+                    && refusal_disposition(r) == Disposition::Inactive),
+                "the inactive branch should be accounted as inactive, not lifted or runtime-refused: {:?}",
                 out.skip_reasons
             );
         }

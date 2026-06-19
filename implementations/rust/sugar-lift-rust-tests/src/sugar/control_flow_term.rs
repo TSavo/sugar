@@ -10,9 +10,9 @@
 // lifter could read a single `t`. A SOURCE property, not a missing lift. Typed as
 // `Effect::ControlFlow`.
 //
-// (This is the TERM-position producer of `Effect::ControlFlow`. The STATEMENT-position producer
-// -- an `.await` / `block_on(async{..})` continuation -- is the continuation leaf of the landed
-// `StatementPositionSugar` node; the two recognize disjoint shapes and never overlap.)
+// (This is the TERM-position producer of `Effect::ControlFlow`. The STATEMENT-position
+// producer is the `.await` continuation leaf of the landed `StatementPositionSugar` node; an
+// assertion-bearing async future handed to a driver call is a separate FutureHandoff sugar.)
 //
 // THE TARGET SHAPE (`walk -> new -> compose -> desugar() collapses to one Outcome`):
 // `decompose_control_flow_term` (the `build` arm) recognizes the construct (an `Expr::TryBlock`
