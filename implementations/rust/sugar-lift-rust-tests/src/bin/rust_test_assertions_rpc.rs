@@ -9,6 +9,9 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 use sugar_canonicalizer::{blake3_512_of, encode_jcs};
 use sugar_ir_symbolic::serialize::{formula_to_value, marshal_declarations};
+use sugar_lift_rust_tests::cargo_cfg::{
+    cargo_cfg_options_from_lifter_args, lift_options_from_rust_build_cfg,
+};
 use sugar_lift_rust_tests::source_oracle;
 use sugar_lift_rust_tests::{
     lift_file_with_all_source_imports, AssertionFactEmission, AssertionFactKind,
@@ -121,7 +124,7 @@ fn lift(params: &Value) -> Value {
     let mut source_mementos: Vec<Value> = Vec::new();
     let mut factory_audits: Vec<Value> = Vec::new();
     let mut assertion_surface_audits: Vec<Value> = Vec::new();
-    let options = match lift_options_from_config(&workspace_root, params) {
+    let options = match lift_options_from_rust_build_context(&workspace_root, params) {
         Ok(options) => options,
         Err(reason) => {
             diagnostics.push(json!({
@@ -130,7 +133,7 @@ fn lift(params: &Value) -> Value {
                     .get("config_path")
                     .and_then(Value::as_str)
                     .unwrap_or(".sugar/config.toml"),
-                "item": "rust-test-assertions.target_cfg",
+                "item": "rust-test-assertions.build_cfg",
                 "reason": reason,
             }));
             LiftOptions::default()
@@ -1020,7 +1023,10 @@ fn source_ledger(loci: &[Value]) -> Value {
     })
 }
 
-fn lift_options_from_config(workspace_root: &Path, params: &Value) -> Result<LiftOptions, String> {
+fn lift_options_from_rust_build_context(
+    workspace_root: &Path,
+    params: &Value,
+) -> Result<LiftOptions, String> {
     let config_rel = params
         .get("config_path")
         .and_then(Value::as_str)
@@ -1029,10 +1035,43 @@ fn lift_options_from_config(workspace_root: &Path, params: &Value) -> Result<Lif
     match std::fs::read_to_string(&config_path) {
         Ok(text) => target_cfg_from_config_text(&text).map(|cfg| match cfg {
             Some(cfg) => LiftOptions::for_target_cfg(cfg),
-            None => LiftOptions::default(),
+            None => lift_options_from_lifter_args(workspace_root),
         }),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(LiftOptions::default()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Ok(lift_options_from_lifter_args(workspace_root))
+        }
         Err(e) => Err(format!("cannot read {}: {e}", config_path.display())),
+    }
+}
+
+fn lift_options_from_lifter_args(workspace_root: &Path) -> LiftOptions {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match cargo_cfg_options_from_lifter_args(&args)
+        .and_then(|options| lift_options_from_rust_build_cfg(workspace_root, &options))
+    {
+        Ok((options, report)) => {
+            info!(
+                target: "sugar_lift_rust_tests::cargo_cfg",
+                workspace_root = %workspace_root.display(),
+                rustc_facts = report.rustc_fact_count,
+                cargo_features = report.cargo_feature_count,
+                cargo_manifest = report
+                    .manifest_path
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "<none>".to_string()),
+                "rust kit build cfg loaded"
+            );
+            options
+        }
+        Err(error) => {
+            warn!(
+                target: "sugar_lift_rust_tests::cargo_cfg",
+                error = %error,
+                "rust kit build cfg unavailable; cfg predicates remain ambiguous"
+            );
+            LiftOptions::default()
+        }
     }
 }
 
@@ -1854,6 +1893,70 @@ facts = [
         .expect("config parses");
 
         assert!(cfg.is_some());
+    }
+
+    #[test]
+    fn lift_reads_cargo_feature_cfg_from_workspace_manifest_without_config() {
+        let root =
+            unique_temp_dir("lift_reads_cargo_feature_cfg_from_workspace_manifest_without_config");
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        std::fs::write(
+            root.join("Cargo.toml"),
+            r#"
+[package]
+name = "fixture"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["enabled"]
+enabled = []
+"#,
+        )
+        .expect("write Cargo.toml");
+        std::fs::write(
+            root.join("src/lib.rs"),
+            r#"
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "enabled")]
+    #[test]
+    fn default_feature_lifts() {
+        assert_eq!(1 + 1, 2);
+    }
+}
+"#,
+        )
+        .expect("write rust source");
+
+        let response = lift(&json!({
+            "workspace_root": root,
+            "source_paths": ["src/lib.rs"]
+        }));
+
+        let diagnostics = response["diagnostics"]
+            .as_array()
+            .expect("diagnostics is an array");
+        assert!(
+            diagnostics.iter().all(|diagnostic| {
+                !diagnostic["reason"]
+                    .as_str()
+                    .is_some_and(|reason| reason.contains("ambiguous cfg"))
+            }),
+            "workspace Cargo facts should resolve feature cfgs without a manual config: {response}"
+        );
+
+        let audits = response["assertionSurfaceAudits"]
+            .as_array()
+            .expect("assertionSurfaceAudits is an array");
+        let emitted = audits
+            .iter()
+            .find(|row| row["assertionSource"] == "src/lib.rs::tests::default_feature_lifts")
+            .expect("feature-gated assertion source is accounted");
+        assert_eq!(emitted["status"], "facts-emitted", "{emitted}");
+        assert_eq!(emitted["facts"].as_array().unwrap().len(), 1, "{emitted}");
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
