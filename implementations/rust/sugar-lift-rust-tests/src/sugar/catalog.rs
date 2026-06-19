@@ -11,13 +11,13 @@ use crate::sugar::{
     array_repeat, array_term, assign_op, await_term, binop, block_term, bound_path, call,
     cast_term, closure_iter_advance_body, closure_mutating_body, closure_opaque_accessor,
     closure_runtime_receiver, closure_term, closure_tls_accessor, concat_macro, conditional,
-    const_block, const_path, constraint, control_flow_term, dormant_mut_ref, enumerate, field_term,
-    filter, filter_map, fold, for_each, for_replay, forall_loop, format_macro, impl_method, index,
-    iter_terminal, iterator, literal, macro_term, map, match_node, match_scrutinee, method,
-    monadic, path, range_term, raw_addr_term, reference_term, repeat_term, rev, skip, skip_while,
-    statement_control_flow, statement_loop_advance, statement_reflection, statement_runtime_expr,
-    string_add, struct_term, take, take_while, term_literal, to_string, transparent_term,
-    tuple_term, unary,
+    const_block, const_path, constraint, control_flow_term, cstr, dormant_mut_ref, enumerate,
+    field_term, filter, filter_map, fold, for_each, for_replay, forall_loop, format_macro,
+    impl_method, index, iter_terminal, iterator, literal, macro_term, map, match_node,
+    match_scrutinee, method, monadic, path, range_term, raw_addr_term, reference_term, repeat_term,
+    rev, skip, skip_while, statement_control_flow, statement_loop_advance, statement_reflection,
+    statement_runtime_expr, string_add, struct_term, take, take_while, term_literal, to_string,
+    transparent_term, tuple_term, unary,
 };
 use crate::{FactoryCandidateAudit, Sugar};
 
@@ -31,6 +31,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &assign_op::EXPR_SUGAR,
     &constraint::BOOL_EXPR_SUGAR,
     &monadic::EXPR_SUGAR,
+    &cstr::EXPR_SUGAR,
     &term_literal::EXPR_SUGAR,
     &const_block::EXPR_SUGAR,
     &unary::EXPR_SUGAR,

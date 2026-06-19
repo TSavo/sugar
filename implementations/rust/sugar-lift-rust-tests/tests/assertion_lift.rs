@@ -5503,6 +5503,48 @@ fn contradictory_encode() {
     );
 }
 
+#[test]
+fn cstr_literal_methods_lift_from_compiler_axiom_bytes() {
+    let src = r#"
+use core::ffi::CStr;
+
+#[test]
+fn cstr_literals() {
+    let a: &CStr = c"hello";
+    let b = c"world";
+    assert_eq!(a.count_bytes(), 5);
+    assert_eq!(a.to_bytes(), b"hello");
+    assert_eq!(a.to_bytes_with_nul(), b"hello\0");
+    assert_ne!(a, b);
+}
+"#;
+    let out = lift_file(&parse(src), "src/cstr.rs");
+    assert_eq!(out.seen, 1);
+    assert_eq!(
+        out.assertions_lifted, 4,
+        "all literal-backed CStr assertions must lift; warnings: {:?}",
+        out.warnings
+    );
+    assert!(
+        out.warnings.is_empty(),
+        "CStr literals are compiler axioms, not refusals: {:?}",
+        out.warnings
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("literal:cstr("),
+        "CStr identity should be content keyed: {dump}"
+    );
+    assert!(
+        dump.contains("literal:bytes(68656c6c6f)") && dump.contains("literal:bytes(68656c6c6f00)"),
+        "to_bytes and to_bytes_with_nul should ground to byte literals: {dump}"
+    );
+    assert!(
+        dump.contains("Int(5)") && !dump.contains("method:count_bytes"),
+        "count_bytes on a CStr literal should ground to its literal length: {dump}"
+    );
+}
+
 // --- macro-invocation-as-EUF-term tranche (T-FORMAT) ---
 
 fn eq_lhs_name(formula: &Formula) -> String {
