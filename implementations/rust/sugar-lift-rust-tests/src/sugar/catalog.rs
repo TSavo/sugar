@@ -18,7 +18,7 @@ use crate::sugar::{
     range_term, raw_addr_term, reference_term, repeat_term, rev, skip, skip_while,
     statement_control_flow, statement_loop_advance, statement_reflection, statement_runtime_expr,
     string_add, struct_term, take, take_while, term_literal, to_string, transparent_term,
-    try_from_fn, try_map, tuple_term, unary, vec_macro,
+    try_from_fn, try_map, tuple_term, unary, unsafe_memory, vec_macro,
 };
 use crate::{FactoryCandidateAudit, Sugar};
 
@@ -52,6 +52,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &to_string::EXPR_SUGAR,
     &try_map::EXPR_SUGAR,
     &try_from_fn::EXPR_SUGAR,
+    &unsafe_memory::EXPR_SUGAR,
     &function_map::TERM_EXPR_SUGAR,
     &map::TERM_EXPR_SUGAR,
     &method::EXPR_SUGAR,

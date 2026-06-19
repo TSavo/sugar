@@ -7,6 +7,7 @@
 
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::term_leaf::reasoned_hit;
+use crate::sugar::unsafe_memory;
 use crate::{token_key, Sugar};
 use syn::{Expr, Stmt};
 
@@ -18,6 +19,9 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     match expr {
         Expr::Unsafe(block) => Some(match block.block.stmts.as_slice() {
             [Stmt::Expr(tail, None)] => build_term(tail, fcx),
+            stmts if unsafe_memory::unsafe_memory_boundary_stmts(stmts) => {
+                reasoned_hit(unsafe_memory::runtime_memory_reason(&token_key(expr)))
+            }
             _ => reasoned_hit(format!("unsupported term `{}`", token_key(expr))),
         }),
         Expr::Block(block) => Some(match block.block.stmts.as_slice() {
