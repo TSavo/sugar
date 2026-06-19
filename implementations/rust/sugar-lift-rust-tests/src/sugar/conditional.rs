@@ -154,6 +154,7 @@ impl ConditionalSugar {
             ctx.macro_depth,
             &ctx.scope.plan.interior_mut,
             &BTreeMap::new(),
+            &ctx.scope.layout_type_registry,
         );
         let warranted = body_entries
             .iter()
