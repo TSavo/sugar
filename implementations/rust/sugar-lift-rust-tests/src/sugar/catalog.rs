@@ -52,6 +52,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &to_string::EXPR_SUGAR,
     &try_map::EXPR_SUGAR,
     &function_map::TERM_EXPR_SUGAR,
+    &map::TERM_EXPR_SUGAR,
     &method::EXPR_SUGAR,
     &await_term::EXPR_SUGAR,
     &reference_term::EXPR_SUGAR,
