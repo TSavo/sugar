@@ -11608,6 +11608,55 @@ fn t() {
 }
 
 #[test]
+fn test_clamp_style_macro_emits_literal_slice_index_facts() {
+    // The `coretests/tests/index.rs` shape. The macro body is assertion-shaped, but
+    // the operands are stdlib `SliceIndex` method calls over written literal slices,
+    // with the LHS wrapped in `Clamp(range)`. Those are compiler/std axioms: once the
+    // slice and index range are literal-backed, the result should ground to the same
+    // literal value/Option term instead of falling into support-only accounting.
+    let src = r#"
+macro_rules! test_clamp {
+    ($range:expr, $(($slice:expr, $other:expr)),+) => {
+        $(
+            assert_eq!(Clamp($range.clone()).get(&$slice as &[_]), $other.get(&$slice as &[_]));
+            assert_eq!(Clamp($range.clone()).get_mut(&mut $slice as &mut [_]), $other.get_mut(&mut $slice as &mut [_]));
+            unsafe {
+                assert_eq!(&*Clamp($range.clone()).get_unchecked(&$slice as &[_]), &*$other.get_unchecked(&$slice as &[_]));
+                assert_eq!(&*Clamp($range.clone()).get_unchecked_mut(&mut $slice as &mut [_]), &*$other.get_unchecked_mut(&mut $slice as &mut [_]));
+            }
+            assert_eq!(Clamp($range.clone()).index(&$slice as &[_]), $other.index(&$slice as &[_]));
+            assert_eq!(Clamp($range.clone()).index_mut(&mut $slice as &mut [_]), $other.index_mut(&mut $slice as &mut [_]));
+        )+
+    };
+}
+
+#[test]
+fn t() {
+    test_clamp!(2, ([0, 1], 1), ([0, 1, 2], 2));
+    test_clamp!(range::Range::from(1..4), ([0, 1], 1..2), ([0, 1, 2, 3, 4], 1..4), ([0], 1..1));
+    test_clamp!(.., ([0, 1], ..), ([0, 1, 2], ..), ([0], ..));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/clamp.rs");
+    assert!(
+        out.assertions_lifted > 0,
+        "literal-backed Clamp/SliceIndex assertions must discharge: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        !warranted_decls(&out).is_empty(),
+        "literal-backed Clamp/SliceIndex assertions must mint warranted facts"
+    );
+    assert!(
+        !out.skip_reasons
+            .iter()
+            .any(|r| r.contains("assertion without fact emitted")),
+        "Clamp/SliceIndex must not remain support-only accounting: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
 fn search_asserts_style_macro_with_runtime_searcher_bails() {
     // The `pattern.rs` shape: a `$(($func:ident),*)`-style repetition body that
     // builds an array from a runtime searcher (`$needle.into_searcher($hay)` then
