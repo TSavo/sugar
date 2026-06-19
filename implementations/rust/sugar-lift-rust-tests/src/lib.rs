@@ -2683,7 +2683,8 @@ impl TemporalScope {
     /// evaluator gates resolution on `!is_mut_local` (a mutable binding's later value
     /// is not its written init).
     fn record_let_binding(&mut self, name: &str, init: Expr) {
-        self.let_bindings.insert(name.to_string(), init);
+        let rewritten = substitute_expr(&init, &self.let_bindings);
+        self.let_bindings.insert(name.to_string(), rewritten);
     }
 
     /// The closed scalar-literal elements of `name` if it is a `let`-bound literal
@@ -9504,6 +9505,13 @@ fn substitute_expr(expr: &Expr, bindings: &ExprBindings) -> Expr {
             out.expr = Box::new(substitute_expr(&cast.expr, bindings));
             Expr::Cast(out)
         }
+        Expr::Macro(expr_macro) => {
+            let mut out = expr_macro.clone();
+            if let Some(tokens) = substitute_macro_tokens(&expr_macro.mac, bindings) {
+                out.mac.tokens = tokens;
+            }
+            Expr::Macro(out)
+        }
         Expr::Array(array) => {
             let mut out = array.clone();
             out.elems = array
@@ -14239,6 +14247,58 @@ mod lifter_key_tests {
         assert!(
             dump.contains("method:step") && dump.contains("m@def1") && dump.contains("m@def2"),
             "prefix non-panic support should retain temporal receiver versions: {dump}"
+        );
+    }
+
+    #[test]
+    fn shadowed_let_binding_is_snapshotted_before_temporal_overwrite() {
+        // Rust shadowing evaluates the initializer against the previous binding, then
+        // installs the new binding. Recording `size = size + ...` literally makes
+        // later `size` resolution self-recursive.
+        let src = r#"
+            #[test]
+            fn shadowed_size_loop() {
+                let size = 10000;
+                let size = size + (size % 2);
+                for i in 0..size {
+                    assert_eq!(i, i);
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        assert!(
+            out.assertions_lifted == 1 || !out.skip_reasons.is_empty(),
+            "shadowed loop should lift or be accounted for without recursion: {:?}",
+            out
+        );
+    }
+
+    #[test]
+    fn shadowed_macro_let_binding_is_temporally_rewritten() {
+        let src = r#"
+            macro_rules! check {
+                ($e:expr) => {
+                    match $e {
+                        Ok(t) => t,
+                        Err(_) => panic!("bad"),
+                    }
+                };
+            }
+
+            fn result_of(_: &str) -> Result<i32, ()> { Ok(1) }
+
+            #[test]
+            fn shadowed_macro_binding() {
+                let b = "path";
+                let b = check!(result_of(&b));
+                assert_eq!(b, b);
+            }
+        "#;
+        let out = lift_src(src);
+        assert!(
+            out.assertions_lifted == 1 || !out.skip_reasons.is_empty(),
+            "shadowed macro binding should lift or be accounted for without recursion: {:?}",
+            out
         );
     }
 
