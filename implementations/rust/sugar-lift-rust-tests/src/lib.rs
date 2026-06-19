@@ -116,6 +116,7 @@ pub mod sugar {
     pub mod sizeof;
     pub mod skip;
     pub mod skip_while;
+    pub mod slice_index;
     pub mod statement_async_future;
     pub mod statement_control_flow;
     pub mod statement_future_handoff;
@@ -668,6 +669,15 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // monomorphizes it. The sugar owns the stop instead of emitting a fake symbolic
         // layout term.
         || reason.contains("layout is unknown to this lift")
+        // TERMINAL: stdlib `SliceIndex::index` over a literal slice can be evaluated
+        // exactly. If that evaluation says the index is out of bounds, the source path
+        // panics; there is no scalar value to lift. The `get` twin still discharges to
+        // `None`, so this only closes the panic branch.
+        || reason.contains("is out of bounds for a literal slice")
+        // TERMINAL: unchecked slice indexing is an unsafe pointer-producing boundary.
+        // Even when its inputs are literal-backed, the unchecked operation's contract is
+        // not a timeless value equality surface for this lift.
+        || reason.contains("unchecked slice indexing")
         // TERMINAL: an `unsupported term` whose SHAPE is genuinely effectful / non-constructible
         // -- a `&mut` borrow, raw address, or raw-pointer cast (`&raw const`/`&raw mut`/
         // `as *const`/`as *mut`). None is a single timeless value constructible from source
@@ -11356,7 +11366,91 @@ impl Parse for MacroArgs {
 }
 
 fn parse_macro_args(tokens: proc_macro2::TokenStream) -> syn::Result<MacroArgs> {
-    syn::parse2(tokens)
+    if let Ok(args) = syn::parse2::<MacroArgs>(tokens.clone()) {
+        return Ok(args);
+    }
+    let args = split_top_level_macro_args(tokens);
+    if args.is_empty() {
+        return Ok(MacroArgs { exprs: Vec::new() });
+    }
+    let exprs = args
+        .into_iter()
+        .map(parse_macro_arg_expr)
+        .collect::<syn::Result<Vec<_>>>()?;
+    Ok(MacroArgs { exprs })
+}
+
+fn split_top_level_macro_args(tokens: proc_macro2::TokenStream) -> Vec<proc_macro2::TokenStream> {
+    let mut args = Vec::new();
+    let mut current = proc_macro2::TokenStream::new();
+    for token in tokens {
+        if matches!(&token, proc_macro2::TokenTree::Punct(punct) if punct.as_char() == ',') {
+            if !current.is_empty() {
+                args.push(current);
+                current = proc_macro2::TokenStream::new();
+            }
+            continue;
+        }
+        current.extend([token]);
+    }
+    if !current.is_empty() {
+        args.push(current);
+    }
+    args
+}
+
+fn parse_macro_arg_expr(tokens: proc_macro2::TokenStream) -> syn::Result<Expr> {
+    match syn::parse2::<Expr>(tokens.clone()) {
+        Ok(expr) => Ok(expr),
+        Err(original) => {
+            let normalized = parenthesize_range_full_method_receivers(tokens);
+            if normalized.is_empty() {
+                Err(original)
+            } else {
+                syn::parse2::<Expr>(normalized).map_err(|_| original)
+            }
+        }
+    }
+}
+
+fn parenthesize_range_full_method_receivers(
+    tokens: proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    let mut out = proc_macro2::TokenStream::new();
+    let tokens: Vec<_> = tokens.into_iter().collect();
+    let mut i = 0;
+    while i < tokens.len() {
+        if i + 2 < tokens.len()
+            && is_dot_token(&tokens[i])
+            && is_dot_token(&tokens[i + 1])
+            && is_dot_token(&tokens[i + 2])
+        {
+            let mut range = proc_macro2::TokenStream::new();
+            range.extend([tokens[i].clone(), tokens[i + 1].clone()]);
+            let mut group = proc_macro2::Group::new(proc_macro2::Delimiter::Parenthesis, range);
+            group.set_span(tokens[i].span());
+            out.extend([proc_macro2::TokenTree::Group(group)]);
+            i += 2;
+            continue;
+        }
+        match tokens[i].clone() {
+            proc_macro2::TokenTree::Group(group) => {
+                let mut normalized = proc_macro2::Group::new(
+                    group.delimiter(),
+                    parenthesize_range_full_method_receivers(group.stream()),
+                );
+                normalized.set_span(group.span());
+                out.extend([proc_macro2::TokenTree::Group(normalized)]);
+            }
+            other => out.extend([other]),
+        }
+        i += 1;
+    }
+    out
+}
+
+fn is_dot_token(token: &proc_macro2::TokenTree) -> bool {
+    matches!(token, proc_macro2::TokenTree::Punct(punct) if punct.as_char() == '.')
 }
 
 fn translate_bool_assertion(
