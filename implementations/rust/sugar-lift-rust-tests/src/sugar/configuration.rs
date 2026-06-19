@@ -23,7 +23,9 @@
 //! body scan. This node does not change WHAT cfg decides; it makes that decision COMPOSE
 //! as a `Sugar`, so a cfg-gated ANYTHING flows through build + desugar for free.
 
+use quote::ToTokens;
 use syn::Attribute;
+use tracing::{debug, warn};
 
 use crate::{
     cfg_eval_for_attrs, cfg_eval_predicate, CfgEval, CfgPredicate, Desugared, Effect, LiftOptions,
@@ -54,7 +56,9 @@ pub(crate) enum CfgDisposition {
 /// vocabulary. Every cfg-attribution point routes through here, so the formerly copy-pasted
 /// `match cfg_eval_for_attrs { Active/Inactive/Ambiguous }` dispatch lives in a single body.
 pub(crate) fn resolve(attrs: &[Attribute], options: &LiftOptions) -> CfgDisposition {
-    compose(cfg_eval_for_attrs(attrs, options))
+    let disposition = compose(cfg_eval_for_attrs(attrs, options));
+    trace_cfg_disposition("attrs", &render_cfg_attrs(attrs), &disposition);
+    disposition
 }
 
 /// Resolve a SINGLE cfg `predicate` (a `cfg!(..)` guard, a synthetic `debug_assertions`
@@ -64,7 +68,10 @@ pub(crate) fn resolve(attrs: &[Attribute], options: &LiftOptions) -> CfgDisposit
 /// [`CfgDisposition`] vocabulary, so the predicate sites speak the same three-way language
 /// as the attribute sites and the formerly copy-pasted dispatch lives in one body.
 pub(crate) fn resolve_predicate(predicate: &CfgPredicate, options: &LiftOptions) -> CfgDisposition {
-    compose(cfg_eval_predicate(predicate, options.target_cfg.as_ref()))
+    let rendered = predicate.to_string();
+    let disposition = compose(cfg_eval_predicate(predicate, options.target_cfg.as_ref()));
+    trace_cfg_disposition("predicate", &rendered, &disposition);
+    disposition
 }
 
 /// Compose a raw [`CfgEval`] predicate result into the engine's [`CfgDisposition`] -- the ONE
@@ -75,6 +82,80 @@ fn compose(eval: CfgEval) -> CfgDisposition {
         CfgEval::Active => CfgDisposition::Present,
         CfgEval::Inactive(reason) => CfgDisposition::Absent(reason),
         CfgEval::Ambiguous(reason) => CfgDisposition::Ambiguous(reason),
+    }
+}
+
+fn render_cfg_attrs(attrs: &[Attribute]) -> String {
+    let rendered = attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("cfg"))
+        .map(ToTokens::to_token_stream)
+        .map(|tokens| tokens.to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if rendered.is_empty() {
+        "<none>".to_string()
+    } else {
+        rendered
+    }
+}
+
+fn trace_cfg_disposition(source: &'static str, cfg: &str, disposition: &CfgDisposition) {
+    let fields = cfg_trace_fields(disposition);
+    match fields.level {
+        CfgTraceLevel::Debug => {
+            debug!(
+                target: "sugar_lift_rust_tests::sugar::configuration",
+                source = source,
+                cfg = cfg,
+                disposition = fields.disposition,
+                reason = fields.reason.unwrap_or(""),
+                "configuration sugar cfg resolved"
+            );
+        }
+        CfgTraceLevel::Warn => {
+            warn!(
+                target: "sugar_lift_rust_tests::sugar::configuration",
+                source = source,
+                cfg = cfg,
+                disposition = fields.disposition,
+                reason = fields.reason.unwrap_or(""),
+                "configuration sugar cfg boundary"
+            );
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CfgTraceLevel {
+    Debug,
+    Warn,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CfgTraceFields<'a> {
+    level: CfgTraceLevel,
+    disposition: &'static str,
+    reason: Option<&'a str>,
+}
+
+fn cfg_trace_fields(disposition: &CfgDisposition) -> CfgTraceFields<'_> {
+    match disposition {
+        CfgDisposition::Present => CfgTraceFields {
+            level: CfgTraceLevel::Debug,
+            disposition: "present",
+            reason: None,
+        },
+        CfgDisposition::Absent(reason) => CfgTraceFields {
+            level: CfgTraceLevel::Debug,
+            disposition: "absent",
+            reason: Some(reason.as_str()),
+        },
+        CfgDisposition::Ambiguous(reason) => CfgTraceFields {
+            level: CfgTraceLevel::Warn,
+            disposition: "ambiguous",
+            reason: Some(reason.as_str()),
+        },
     }
 }
 
@@ -155,6 +236,46 @@ mod tests {
     // A `#[cfg(..)]` attribute parsed from its predicate tokens.
     fn cfg_attr(pred: proc_macro2::TokenStream) -> Attribute {
         syn::parse_quote!(#[cfg(#pred)])
+    }
+
+    #[test]
+    fn cfg_resolution_trace_fields_name_disposition_and_level() {
+        assert_eq!(
+            cfg_trace_fields(&CfgDisposition::Present),
+            CfgTraceFields {
+                level: CfgTraceLevel::Debug,
+                disposition: "present",
+                reason: None
+            }
+        );
+        assert_eq!(
+            cfg_trace_fields(&CfgDisposition::Absent("off target".to_string())),
+            CfgTraceFields {
+                level: CfgTraceLevel::Debug,
+                disposition: "absent",
+                reason: Some("off target")
+            }
+        );
+        assert_eq!(
+            cfg_trace_fields(&CfgDisposition::Ambiguous("missing facts".to_string())),
+            CfgTraceFields {
+                level: CfgTraceLevel::Warn,
+                disposition: "ambiguous",
+                reason: Some("missing facts")
+            }
+        );
+    }
+
+    #[test]
+    fn cfg_resolution_renders_attr_and_predicate_diagnostics() {
+        let attr = cfg_attr(quote::quote!(all(unix, target_pointer_width = "64")));
+        assert_eq!(
+            render_cfg_attrs(&[attr]),
+            "# [cfg (all (unix , target_pointer_width = \"64\"))]"
+        );
+
+        let predicate = syn::parse_str::<CfgPredicate>("target_os = \"linux\"").unwrap();
+        assert_eq!(predicate.to_string(), "target_os = \"linux\"");
     }
 
     #[test]
