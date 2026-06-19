@@ -415,7 +415,7 @@ pub enum Disposition {
 ///                            `reachable only via call-site inlining`, which stays work.)
 pub fn refusal_disposition(reason: &str) -> Disposition {
     // INACTIVE: cfg-disabled for this target -- not in this build's universe.
-    if reason.contains("inactive cfg") {
+    if reason.contains("inactive cfg") || reason.contains("inactive const if branch") {
         return Disposition::Inactive;
     }
     // INACTIVE: a `#[cfg(..)]`-INACTIVE match arm (`match () { #[cfg(target_pointer_width
@@ -6294,12 +6294,21 @@ fn catch_unwind_closure_block_stmts(expr: &Expr) -> Option<&[Stmt]> {
 fn const_selected_if_branch_stmts<'a>(
     if_expr: &'a syn::ExprIf,
     options: &LiftOptions,
-) -> Option<&'a [Stmt]> {
+) -> Option<(&'a [Stmt], usize)> {
     match const_fold_bool_guard(&if_expr.cond, options)? {
-        true => Some(&if_expr.then_branch.stmts),
+        true => Some((
+            &if_expr.then_branch.stmts,
+            if_expr
+                .else_branch
+                .as_ref()
+                .map_or(0, |(_, e)| count_asserts_in_expr(e)),
+        )),
         false => match &if_expr.else_branch {
-            Some((_, else_expr)) => unconditional_block_stmts(else_expr),
-            None => Some(&[]),
+            Some((_, else_expr)) => Some((
+                unconditional_block_stmts(else_expr)?,
+                count_asserts_in_stmts(&if_expr.then_branch.stmts),
+            )),
+            None => Some((&[], count_asserts_in_stmts(&if_expr.then_branch.stmts))),
         },
     }
 }
@@ -6874,7 +6883,8 @@ fn collect_assertion_entries<'a>(
                 // Panic locus: `if let PAT = e { .. } else { panic!() }` asserts
                 // e matches PAT. Lift it; otherwise try the guarded-implication
                 // (`ConditionalSugar`); otherwise refuse the conditional.
-                if let Some(stmts) = const_selected_if_branch_stmts(i, options) {
+                if let Some((stmts, inactive_asserts)) = const_selected_if_branch_stmts(i, options)
+                {
                     collect_assertion_entries(
                         stmts,
                         &child_block_scope(local_scope, stmt_idx),
@@ -6890,6 +6900,9 @@ fn collect_assertion_entries<'a>(
                         &temporal_scope.plan.interior_mut,
                         &local_fns,
                     );
+                    for _ in 0..inactive_asserts {
+                        skipped.push("inactive const if branch on assertion; skipped".to_string());
+                    }
                 } else if let Some(entry) = panic_locus_if_entry(i, &temporal_scope) {
                     entries.push(entry);
                     *macros_lifted += 1;
@@ -17494,6 +17507,48 @@ mod lifter_key_tests {
     }
 
     #[test]
+    fn const_if_dead_branch_assertions_are_inactive_not_unenumerated() {
+        let src = r#"
+            #[test]
+            fn const_if() {
+                if !false {
+                    assert!(true);
+                } else {
+                    assert!(false);
+                }
+                if !true {
+                    assert!(false);
+                } else {
+                    assert!(true);
+                }
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 2,
+            "the two live const-if branch assertions must lift: {:?}",
+            out.skip_reasons
+        );
+        let inactive = out
+            .skip_reasons
+            .iter()
+            .filter(|r| r.contains("inactive const if branch"))
+            .count();
+        assert_eq!(
+            inactive, 2,
+            "the two dead branch assertions must be accounted as inactive: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.skip_reasons
+                .iter()
+                .all(|r| !r.contains("unenumerated statement position")),
+            "const-dead branch accounting must not fall to the safety net: {:?}",
+            out.skip_reasons
+        );
+    }
+
+    #[test]
     fn conditional_opaque_pure_guard_lifts_faithfully_under_euf() {
         // SOUNDNESS (EUF at callsites): an OPAQUE-but-PURE guard
         // (`thing.is_ready()`) and an opaque claim translate to uninterpreted EUF
@@ -18120,6 +18175,7 @@ mod lifter_key_tests {
         for r in [
             "inactive cfg on test fn",
             "inactive cfg on assertion; skipped: cfg(target_has_atomic)",
+            "inactive const if branch on assertion; skipped",
         ] {
             assert_eq!(
                 refusal_disposition(r),
