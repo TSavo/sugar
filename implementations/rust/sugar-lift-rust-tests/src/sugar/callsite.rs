@@ -296,7 +296,8 @@ fn desugar_substituted_stmts(
     macro_depth: usize,
     factory_audits: Option<&FactoryAuditLog>,
 ) -> CallsiteOutcome {
-    let subst = substitute_stmts(stmts, closed_args);
+    let mut subst = substitute_stmts(stmts, closed_args);
+    drop_assertion_free_tail_value(&mut subst);
     let mut te: Vec<AssertionEntry> = Vec::new();
     let mut ts: Vec<String> = Vec::new();
     let mut tl = 0usize;
@@ -361,6 +362,18 @@ fn desugar_substituted_stmts(
             added_unclassified: unclassified.len(),
             sample_reasons,
         })
+    }
+}
+
+fn drop_assertion_free_tail_value(stmts: &mut Vec<Stmt>) {
+    let Some(last) = stmts.last() else {
+        return;
+    };
+    if !matches!(last, Stmt::Expr(_, None)) {
+        return;
+    }
+    if count_asserts_in_stmts(std::slice::from_ref(last)) == 0 {
+        stmts.pop();
     }
 }
 

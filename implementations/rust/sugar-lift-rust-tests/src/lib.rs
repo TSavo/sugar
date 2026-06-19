@@ -7468,10 +7468,19 @@ fn collect_assertion_entries<'a>(
     // assert is N obligations (accounted in `unaccounted`, never a silent drop).
     let already_reduced_here = reduced_here(&reduced_in_block, reduced_helpers);
     for (fn_name, _count, reason) in &deferred_inner_fn_refusals {
+        tracing::debug!(
+            helper = %fn_name,
+            reason = %reason,
+            "callsite arg-position drain considering deferred helper"
+        );
         // Skip ONLY if THIS block's own processing already inlined this nested fn
         // (block-local, not the raw file-global set -- a same-named nested fn reduced
         // by a DIFFERENT test fn must not suppress this block's attempt).
         if already_reduced_here.contains(fn_name) {
+            tracing::debug!(
+                helper = %fn_name,
+                "callsite arg-position drain skipped: already reduced in this block"
+            );
             continue;
         }
         // SOUNDNESS GATE: only attempt to inline a helper whose deferred refusal is
@@ -7502,6 +7511,11 @@ fn collect_assertion_entries<'a>(
         };
         // Collect every distinct arg-position call site of this helper in the block.
         let sites = collect_arg_position_call_sites(stmts, fn_name, params.len());
+        tracing::debug!(
+            helper = %fn_name,
+            sites = sites.len(),
+            "callsite arg-position drain collected candidate sites"
+        );
         if sites.is_empty() {
             continue;
         }
@@ -7528,6 +7542,13 @@ fn collect_assertion_entries<'a>(
                 factory_audits,
             ) {
                 sugar::callsite::CallsiteOutcome::Dug(commit) => {
+                    tracing::debug!(
+                        helper = %fn_name,
+                        site_idx,
+                        entries = commit.entries.len(),
+                        skipped = commit.skipped.len(),
+                        "callsite arg-position drain committed site"
+                    );
                     if !commit.entries.is_empty() {
                         *macros_lifted += 1;
                     }
@@ -7537,7 +7558,14 @@ fn collect_assertion_entries<'a>(
                     *reduced_helpers = commit.reduced_helpers;
                     any_committed = true;
                 }
-                sugar::callsite::CallsiteOutcome::Bail(_) => {}
+                sugar::callsite::CallsiteOutcome::Bail(cause) => {
+                    tracing::debug!(
+                        helper = %fn_name,
+                        site_idx,
+                        cause = ?cause,
+                        "callsite arg-position drain bailed site"
+                    );
+                }
             }
         }
         if any_committed {
