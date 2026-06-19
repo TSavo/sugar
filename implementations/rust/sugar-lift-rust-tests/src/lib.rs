@@ -77,6 +77,7 @@ pub mod sugar {
     pub mod format;
     pub mod format_macro;
     pub mod identity;
+    pub mod identity_map;
     pub mod impl_method;
     pub mod index;
     pub mod insert;
@@ -3727,7 +3728,13 @@ fn peel_fold_adaptors<'a>(
                     ("map", 1) => match &m.args[0] {
                         Expr::Closure(c) => {
                             let f = c.clone();
-                            Box::new(move |inner| Box::new(sugar::map::MapSugar { inner, f }))
+                            if sugar::identity_map::is_identity_closure(&f) {
+                                Box::new(move |inner| {
+                                    Box::new(sugar::identity_map::IdentityMapSugar { inner })
+                                })
+                            } else {
+                                Box::new(move |inner| Box::new(sugar::map::MapSugar { inner, f }))
+                            }
                         }
                         _ => return None,
                     },
@@ -7877,6 +7884,14 @@ fn closure_adaptor_refusal(expr: &Expr, scope: &TemporalScope) -> Option<String>
     // At least one closure argument (the predicate / transform). A `.map(path_fn)`
     // with a function path (not a closure) is left to the ordinary term path.
     if !call.args.iter().any(|a| matches!(a, Expr::Closure(_))) {
+        return None;
+    }
+    if method == "map"
+        && call.args.iter().any(|arg| match arg {
+            Expr::Closure(closure) => sugar::identity_map::is_identity_closure(closure),
+            _ => false,
+        })
+    {
         return None;
     }
     let collection = iter_adaptor_base(&call.receiver);
@@ -16097,6 +16112,44 @@ mod lifter_key_tests {
         assert!(
             dump.contains("opt:some") && dump.contains("res:ok") && dump.contains("literal:Vec()"),
             "empty collect should construct Option/Result over literal:Vec(): {dump}"
+        );
+    }
+
+    #[test]
+    fn identity_map_over_string_literals_preserves_sequence_for_count_terminal() {
+        let src = r#"
+            #[test]
+            fn identity_string_map_count() {
+                assert_eq!(["a", "", "b"].iter().map(|x| *x).count(), 3);
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "identity map over string literals should lift the count assertion; reasons: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "identity map over string literals should not be refused: {:?}",
+            out.skip_reasons
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("value: Int(3)") && !dump.contains("method:count"),
+            "identity map should preserve the literal sequence so count grounds to 3: {dump}"
+        );
+    }
+
+    #[test]
+    fn identity_map_is_not_generic_closure_adaptor_work() {
+        let expr: Expr = syn::parse_str(r#"["a", "b"].iter().map(|x| *x)"#).unwrap();
+        let scope = TemporalScope::new("identity-map-classifier", TemporalPlan::default());
+
+        assert_eq!(
+            closure_adaptor_refusal(&expr, &scope),
+            None,
+            "identity map has an owned Sugar and must not stay in the generic adaptor bucket"
         );
     }
 

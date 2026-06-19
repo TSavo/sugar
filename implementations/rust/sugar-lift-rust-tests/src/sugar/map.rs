@@ -13,7 +13,7 @@ use crate::sugar::method_family;
 use crate::{const_eval_unary_closure, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::composite("map", recognize_composite);
+    crate::sugar::claim::ExprSugarClaim::secondary_composite("map", recognize_composite);
 
 pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::MethodCall(call) = expr else {

@@ -13,8 +13,8 @@ use crate::sugar::{
     closure_runtime_receiver, closure_term, closure_tls_accessor, collect, concat_macro,
     conditional, const_block, const_item, const_path, constraint, control_flow_term, cstr,
     dormant_mut_ref, enumerate, field_term, filter, filter_map, fold, for_each, for_replay,
-    forall_loop, format_macro, impl_method, index, iter_terminal, iterator, literal, macro_term,
-    map, match_node, match_scrutinee, method, monadic, path, range_term, raw_addr_term,
+    forall_loop, format_macro, identity_map, impl_method, index, iter_terminal, iterator, literal,
+    macro_term, map, match_node, match_scrutinee, method, monadic, path, range_term, raw_addr_term,
     reference_term, repeat_term, rev, skip, skip_while, statement_control_flow,
     statement_loop_advance, statement_reflection, statement_runtime_expr, string_add, struct_term,
     take, take_while, term_literal, to_string, transparent_term, tuple_term, unary, vec_macro,
@@ -79,6 +79,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &rev::EXPR_SUGAR,
     &enumerate::EXPR_SUGAR,
     &filter::EXPR_SUGAR,
+    &identity_map::EXPR_SUGAR,
     &map::EXPR_SUGAR,
     &filter_map::EXPR_SUGAR,
     &skip::EXPR_SUGAR,
@@ -474,6 +475,29 @@ mod tests {
         assert!(
             map < method,
             "MapSugar should outrank generic MethodSugar: {names:?}"
+        );
+    }
+
+    #[test]
+    fn identity_map_method_call_prioritizes_identity_map_before_map_sugar() {
+        let expr: Expr = syn::parse_str("[\"a\", \"b\"].iter().map(|x| *x)").unwrap();
+        let names = candidate_names(&expr);
+        let identity_map = names
+            .iter()
+            .position(|name| *name == "identity_map")
+            .expect("identity map adaptor should be claimed by IdentityMapSugar");
+        let map = names
+            .iter()
+            .position(|name| *name == "map")
+            .expect("identity map should also be claimed by general MapSugar");
+
+        assert!(
+            identity_map < map,
+            "IdentityMapSugar should outrank general MapSugar: {names:?}"
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Composite),
+            Some("identity_map")
         );
     }
 
