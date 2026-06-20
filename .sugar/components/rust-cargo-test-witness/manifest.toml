@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+
+name = "rust-cargo-test-witness"
+version = "0.1.0"
+protocol_version = "sugar-component/1"
+command = ["implementations/rust/target/debug/witness_rpc"]
+working_dir = "../../.."

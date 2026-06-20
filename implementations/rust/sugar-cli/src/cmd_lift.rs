@@ -32,18 +32,25 @@ pub fn run(args: LiftArgs) -> u8 {
 
     let project_cfg = read_project_config(&project_root);
     let user_cfg = read_user_config();
-    let surface = match configured_lift_surface(&project_cfg, &user_cfg) {
-        Some(surface) => surface,
-        None => {
-            eprintln!(
-                "{}: no lift surface configured. Set [[plugins]] or [authoring] surface in .sugar/config.toml.",
-                "error".red().bold()
-            );
+    let resolved_surface = match configured_or_planned_lift_surface(
+        &project_root,
+        &project_cfg,
+        &user_cfg,
+        args.report,
+    ) {
+        Ok(surface) => surface,
+        Err(error) => {
+            eprintln!("{}: {error}", "error".red().bold());
             return EXIT_USER_ERROR;
         }
     };
+    let surface = resolved_surface.surface;
 
-    let mut lift_options = lift_options_for_configured_surface(&project_cfg, &surface);
+    let mut lift_options = if let Some(plugin) = resolved_surface.plugin.as_ref() {
+        lift_options_for_plugin(plugin)
+    } else {
+        lift_options_for_configured_surface(&project_cfg, &surface)
+    };
     lift_options.identify_only = args.identify_only;
     lift_options.library_bindings = args.library_bindings;
     tracing::trace!(
@@ -172,12 +179,23 @@ pub fn run(args: LiftArgs) -> u8 {
     }
 }
 
-fn configured_lift_surface(
+#[derive(Debug, Clone)]
+struct ResolvedLiftSurface {
+    surface: String,
+    plugin: Option<PluginEntry>,
+}
+
+fn configured_or_planned_lift_surface(
+    project_root: &std::path::Path,
     project_cfg: &ProjectConfig,
     user_cfg: &ProjectConfig,
-) -> Option<String> {
+    _prefer_report: bool,
+) -> Result<ResolvedLiftSurface, String> {
     if let Some(surface) = project_cfg.surface_for("lift") {
-        return Some(surface);
+        return Ok(ResolvedLiftSurface {
+            surface,
+            plugin: None,
+        });
     }
 
     let lift_plugins = project_cfg
@@ -186,10 +204,76 @@ fn configured_lift_surface(
         .filter(|plugin| plugin.is_lift_plugin())
         .collect::<Vec<_>>();
     if lift_plugins.len() == 1 {
-        return Some(lift_plugins[0].surface.clone());
+        return Ok(ResolvedLiftSurface {
+            surface: lift_plugins[0].surface.clone(),
+            plugin: None,
+        });
     }
 
-    user_cfg.surface_for("lift")
+    if let Some(surface) = user_cfg.surface_for("lift") {
+        return Ok(ResolvedLiftSurface {
+            surface,
+            plugin: None,
+        });
+    }
+
+    let component_plan = crate::component_plan::plan_workspace(project_root);
+    let candidates = component_plan
+        .plugins
+        .iter()
+        .filter(|plugin| plugin.is_lift_plugin())
+        .cloned()
+        .collect::<Vec<_>>();
+    let report_candidates = candidates
+        .iter()
+        .filter(|plugin| plugin.emit.as_deref() == Some("ir-document"))
+        .cloned()
+        .collect::<Vec<_>>();
+    let selected = if report_candidates.len() == 1 {
+        Some(report_candidates[0].clone())
+    } else if candidates.len() == 1 {
+        Some(candidates[0].clone())
+    } else {
+        None
+    };
+    if let Some(plugin) = selected {
+        return Ok(ResolvedLiftSurface {
+            surface: plugin.surface.clone(),
+            plugin: Some(plugin),
+        });
+    }
+    if report_candidates.len() > 1 {
+        return Err(format!(
+            "multiple report-capable lift components discovered: {}. Add [authoring.lift] surface or [[plugins]] to select one.",
+            report_candidates
+                .iter()
+                .map(|plugin| plugin.display_name().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if candidates.len() > 1 {
+        return Err(format!(
+            "multiple lift components discovered: {}. Add [authoring.lift] surface or [[plugins]] to select one.",
+            candidates
+                .iter()
+                .map(|plugin| plugin.display_name().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if let Some(diagnostic) = component_plan.diagnostics.iter().find(|diagnostic| {
+        matches!(
+            diagnostic.level,
+            crate::component_plan::DiagnosticLevel::Error
+        )
+    }) {
+        return Err(diagnostic.message.clone());
+    }
+    Err(
+        "no lift surface configured. Set [[plugins]] or [authoring] surface in .sugar/config.toml, or install a Sugar kit component for this workspace."
+            .to_string(),
+    )
 }
 
 fn lift_options_for_configured_surface(
@@ -199,6 +283,12 @@ fn lift_options_for_configured_surface(
     let Some(plugin) = matching_lift_plugin(project_cfg, surface) else {
         return LiftPluginOptions::default();
     };
+    LiftPluginOptions {
+        ..lift_options_for_plugin(plugin)
+    }
+}
+
+fn lift_options_for_plugin(plugin: &PluginEntry) -> LiftPluginOptions {
     LiftPluginOptions {
         workspace_override: plugin.workspace_override.clone(),
         emit: plugin.emit.clone(),
@@ -718,8 +808,7 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
             // with a short CID tag, so they read as distinct rather than
             // redundant.
             for u in us.iter().take(8) {
-                let ambiguous_reading =
-                    us.iter().filter(|o| o.reading == u.reading).count() > 1;
+                let ambiguous_reading = us.iter().filter(|o| o.reading == u.reading).count() > 1;
                 let mut line = u.reading.clone();
                 if ambiguous_reading {
                     let tag: String = u.cid.chars().take(12).collect();

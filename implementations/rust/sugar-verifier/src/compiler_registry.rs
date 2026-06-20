@@ -13,9 +13,10 @@ use tracing::warn;
 /// Build a dialect-keyed registry from compiler manifests.
 ///
 /// Project manifests live at `.sugar/ir-compilers/<name>/manifest.toml`.
+/// Ancestor manifests live at any parent `.sugar/ir-compilers/<name>/manifest.toml`.
 /// User manifests live at `~/.config/sugar/ir-compilers/<name>/manifest.toml`.
-/// Project entries are registered last and override user entries for the same
-/// dialect.
+/// Project entries are registered last and override ancestor/user entries for
+/// the same dialect.
 pub fn build(project_root: &Path) -> Registry {
     let mut registry = Registry::new();
     let mut roots = Vec::new();
@@ -25,10 +26,7 @@ pub fn build(project_root: &Path) -> Registry {
             relative_base: RelativeBase::ManifestDir,
         });
     }
-    roots.push(DiscoveryRoot {
-        path: project_root.join(".sugar").join("ir-compilers"),
-        relative_base: RelativeBase::ProjectRoot(project_root.to_path_buf()),
-    });
+    roots.extend(ancestor_roots(project_root));
 
     for root in roots {
         for entry in manifest::discover(&root.path) {
@@ -66,6 +64,27 @@ pub fn build(project_root: &Path) -> Registry {
     }
 
     registry
+}
+
+fn ancestor_roots(project_root: &Path) -> Vec<DiscoveryRoot> {
+    let project_root = if project_root.is_absolute() {
+        project_root.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(project_root)
+    };
+    let mut roots = Vec::new();
+    let mut current = Some(project_root.as_path());
+    while let Some(path) = current {
+        roots.push(DiscoveryRoot {
+            path: path.join(".sugar").join("ir-compilers"),
+            relative_base: RelativeBase::ProjectRoot(path.to_path_buf()),
+        });
+        current = path.parent();
+    }
+    roots.reverse();
+    roots
 }
 
 struct DiscoveryRoot {
@@ -117,6 +136,35 @@ dialects = ["fake-dialect"]
         .unwrap();
 
         let registry = build(&root);
+        assert!(registry.get("fake-dialect").is_some());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn ancestor_manifest_registers_for_nested_project() {
+        let root = std::env::temp_dir().join(format!(
+            "sugar-ir-compiler-registry-ancestor-{}",
+            std::process::id()
+        ));
+        let project = root.join("examples").join("demo");
+        let manifest_dir = root.join(".sugar").join("ir-compilers").join("fake");
+        std::fs::create_dir_all(&manifest_dir).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            manifest_dir.join("manifest.toml"),
+            r#"
+name = "fake"
+version = "0.1.0"
+protocol_version = "sugar-ir-compiler/1"
+command = ["definitely-not-started-during-build"]
+working_dir = "implementations/rust"
+dialects = ["fake-dialect"]
+"#,
+        )
+        .unwrap();
+
+        let registry = build(&project);
         assert!(registry.get("fake-dialect").is_some());
 
         let _ = std::fs::remove_dir_all(&root);

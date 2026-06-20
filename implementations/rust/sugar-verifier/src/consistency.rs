@@ -561,17 +561,65 @@ fn json_str_list(data: &Json, key: &str) -> Vec<String> {
 
 fn find_witness_resolvers(project_root: &Path) -> Vec<WitnessResolver> {
     let lift_dir = project_root.join(".sugar").join("lift");
-    let mut found = Vec::new();
-    let Ok(entries) = std::fs::read_dir(&lift_dir) else {
-        return found;
-    };
-    for entry in entries.flatten() {
-        let manifest = entry.path().join("manifest.toml");
-        if let Some(resolver) = parse_witness_resolver(&manifest, project_root) {
-            found.push(resolver);
+    let mut found = witness_resolvers_from_env();
+    if let Ok(entries) = std::fs::read_dir(&lift_dir) {
+        for entry in entries.flatten() {
+            let manifest = entry.path().join("manifest.toml");
+            if let Some(resolver) = parse_witness_resolver(&manifest, project_root) {
+                found.push(resolver);
+            }
         }
     }
     found
+}
+
+fn witness_resolvers_from_env() -> Vec<WitnessResolver> {
+    let Ok(raw) = std::env::var("SUGAR_WITNESS_RESOLVERS") else {
+        return Vec::new();
+    };
+    let Ok(value): Result<Json, _> = serde_json::from_str(&raw) else {
+        warn!("SUGAR_WITNESS_RESOLVERS was not valid JSON; ignoring configured witness resolvers");
+        return Vec::new();
+    };
+    let Some(items) = value.as_array() else {
+        warn!("SUGAR_WITNESS_RESOLVERS was not an array; ignoring configured witness resolvers");
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            let argv = item
+                .get("argv")
+                .and_then(|v| v.as_array())
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(|value| value.as_str().map(str::to_string))
+                        .filter(|value| !value.is_empty())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if argv.is_empty() {
+                return None;
+            }
+            let working_dir = item
+                .get("working_dir")
+                .or_else(|| item.get("workingDir"))
+                .and_then(|v| v.as_str())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("."));
+            let method = item
+                .get("method")
+                .and_then(|v| v.as_str())
+                .unwrap_or("sugar.plugin.resolve_witness")
+                .to_string();
+            Some(WitnessResolver {
+                argv,
+                working_dir,
+                method,
+            })
+        })
+        .collect()
 }
 
 fn parse_witness_resolver(manifest: &Path, project_root: &Path) -> Option<WitnessResolver> {
@@ -1894,6 +1942,27 @@ mod tests {
         std::fs::write(manifest_dir.join("manifest.toml"), manifest).unwrap();
     }
 
+    #[test]
+    fn witness_resolvers_can_be_supplied_by_env_registry() {
+        let _env = witness_env_lock();
+        let cwd = std::env::current_dir().unwrap();
+        let encoded = json!([{
+            "argv": ["/bin/echo"],
+            "working_dir": cwd.display().to_string(),
+            "method": "sugar.plugin.resolve_witness",
+        }])
+        .to_string();
+        std::env::set_var("SUGAR_WITNESS_RESOLVERS", encoded);
+
+        let resolvers = witness_resolvers_from_env();
+        assert_eq!(resolvers.len(), 1);
+        assert_eq!(resolvers[0].argv, vec!["/bin/echo".to_string()]);
+        assert_eq!(resolvers[0].working_dir, cwd);
+        assert_eq!(resolvers[0].method, "sugar.plugin.resolve_witness");
+
+        std::env::remove_var("SUGAR_WITNESS_RESOLVERS");
+    }
+
     fn write_discharge_stdout(project: &std::path::Path, verdict: &str) -> std::path::PathBuf {
         let script = project.join("lie-discharge.sh");
         std::fs::write(
@@ -2430,8 +2499,7 @@ mod tests {
         // a #euf# obligation that MENTIONS the callsite g(2); the OLD code would
         // Path-B-match this and materialize the ground instance g(2)==1.
         let inv = json!({"kind":"and","operands":[eqf(callg(int(2)), int(2))]});
-        let out =
-            with_ambient_foralls(inv, "g#euf#c:callresult_g_a1(i:2)::assertion", &[forall]);
+        let out = with_ambient_foralls(inv, "g#euf#c:callresult_g_a1(i:2)::assertion", &[forall]);
         let operands = out
             .get("operands")
             .and_then(|v| v.as_array())

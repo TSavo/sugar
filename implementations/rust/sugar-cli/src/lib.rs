@@ -33,6 +33,7 @@ pub struct OutputFlags {
 
 pub mod cmd_release_gate;
 pub mod cmd_self_check;
+pub mod component_plan;
 #[allow(dead_code)]
 pub mod doctor;
 #[allow(dead_code)]

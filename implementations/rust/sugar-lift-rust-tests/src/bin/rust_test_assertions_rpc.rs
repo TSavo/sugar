@@ -24,6 +24,7 @@ use tracing::{debug, info, warn};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const SURFACE: &str = "rust-test-assertions";
 const KIT_DECLARATION_RPC_METHOD: &str = "sugar.plugin.kit_declaration";
+const COMPONENT_PLAN_RPC_METHOD: &str = "sugar.component.plan";
 const RESOLVE_PROOF_BY_CID_RPC_METHOD: &str = "sugar.plugin.resolve_proof_by_cid";
 const RESOLVE_SOURCE_MEMENTO_RPC_METHOD: &str = "sugar.plugin.resolve_source_memento";
 
@@ -51,6 +52,7 @@ fn kit_declaration_result() -> Value {
             "methods": [
                 {"name": "initialize", "required": true},
                 {"name": KIT_DECLARATION_RPC_METHOD, "required": true},
+                {"name": COMPONENT_PLAN_RPC_METHOD, "required": false},
                 {"name": "lift", "required": true},
                 {"name": RESOLVE_PROOF_BY_CID_RPC_METHOD, "required": false},
                 {"name": RESOLVE_SOURCE_MEMENTO_RPC_METHOD, "required": false},
@@ -63,6 +65,43 @@ fn kit_declaration_result() -> Value {
         "guardPredicates": [],
         "controlCarriers": [],
         "residueCategories": [],
+    })
+}
+
+fn component_plan_result(params: &Value) -> Value {
+    let workspace_root = params
+        .get("workspace_root")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    if !workspace_root.join("Cargo.toml").is_file() {
+        return json!({
+            "decision": "decline",
+            "reason": "Cargo.toml not present",
+        });
+    }
+    let command = std::env::current_exe()
+        .ok()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "rust_test_assertions_rpc".to_string());
+    json!({
+        "decision": "claim",
+        "plugins": [{
+            "name": "rust-test-assertions-lift",
+            "kind": "lift",
+            "surface": SURFACE,
+            "emit": "ir-document",
+        }],
+        "lift_manifests": [{
+            "surface": SURFACE,
+            "name": "rust-test-assertions-lift",
+            "version": VERSION,
+            "protocol_version": "pep/1.7.0",
+            "kind": "lift",
+            "command": [command],
+            "working_dir": ".",
+        }],
+        "diagnostics": [],
     })
 }
 
@@ -1723,6 +1762,9 @@ fn handle(id: &Value, method: &str, params: &Value) -> Value {
         "initialize" => json!({"jsonrpc": "2.0", "id": id, "result": initialize_result()}),
         KIT_DECLARATION_RPC_METHOD => {
             json!({"jsonrpc": "2.0", "id": id, "result": kit_declaration_result()})
+        }
+        COMPONENT_PLAN_RPC_METHOD => {
+            json!({"jsonrpc": "2.0", "id": id, "result": component_plan_result(params)})
         }
         "lift" => json!({"jsonrpc": "2.0", "id": id, "result": lift(params)}),
         RESOLVE_PROOF_BY_CID_RPC_METHOD => {

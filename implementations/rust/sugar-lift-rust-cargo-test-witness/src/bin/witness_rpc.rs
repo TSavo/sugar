@@ -20,6 +20,7 @@ const KIT_ID: &str = "rust-cargo-test-witness";
 const KIT_VERSION: &str = "0.1.0";
 const SURFACE: &str = "rust-cargo-test-witness";
 const KIT_DECLARATION_RPC_METHOD: &str = "sugar.plugin.kit_declaration";
+const COMPONENT_PLAN_RPC_METHOD: &str = "sugar.component.plan";
 const RESOLVE_WITNESS_RPC_METHOD: &str = "sugar.plugin.resolve_witness";
 
 fn send(obj: &Value) {
@@ -211,6 +212,7 @@ fn kit_declaration() -> Value {
         "rpc": {"methods": [
             {"name": "initialize", "required": true},
             {"name": KIT_DECLARATION_RPC_METHOD, "required": true},
+            {"name": COMPONENT_PLAN_RPC_METHOD, "required": false},
             {"name": "lift", "required": true},
             {"name": RESOLVE_WITNESS_RPC_METHOD, "required": false},
             {"name": "shutdown", "required": false},
@@ -221,6 +223,51 @@ fn kit_declaration() -> Value {
         "guardPredicates": [],
         "controlCarriers": [],
         "residueCategories": [],
+    })
+}
+
+fn component_plan(params: &Value) -> Value {
+    let workspace_root = params
+        .get("workspace_root")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    if !workspace_root.join("Cargo.toml").is_file() {
+        return json!({
+            "decision": "decline",
+            "reason": "Cargo.toml not present",
+        });
+    }
+    let command = std::env::current_exe()
+        .ok()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "witness_rpc".to_string());
+    let discharge = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(|dir| dir.join("discharge_cli")))
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "discharge_cli".to_string());
+    json!({
+        "decision": "claim",
+        "plugins": [{
+            "name": "rust-cargo-test-witness-lift",
+            "kind": "lift",
+            "surface": SURFACE,
+        }],
+        "lift_manifests": [{
+            "surface": SURFACE,
+            "name": "rust-cargo-test-witness-lift",
+            "version": KIT_VERSION,
+            "protocol_version": "pep/1.7.0",
+            "kind": "lift",
+            "command": [command.clone()],
+            "discharge_command": [discharge],
+            "witness_tool": "cargo-test",
+            "resolve_witness_command": [command],
+            "resolve_witness_method": RESOLVE_WITNESS_RPC_METHOD,
+            "working_dir": ".",
+        }],
+        "diagnostics": [],
     })
 }
 
@@ -255,6 +302,9 @@ fn main() {
             })),
             KIT_DECLARATION_RPC_METHOD => {
                 send(&json!({"jsonrpc": "2.0", "id": id, "result": kit_declaration()}))
+            }
+            COMPONENT_PLAN_RPC_METHOD => {
+                send(&json!({"jsonrpc": "2.0", "id": id, "result": component_plan(&params)}))
             }
             "lift" => send(&handle_lift(&id, &params)),
             RESOLVE_WITNESS_RPC_METHOD => send(&handle_resolve_witness(&id, &params)),
