@@ -1345,6 +1345,7 @@ fn mint_input_multi(
     let mut inputs = HashMapInputCatalog::default();
     let mut algebra: Vec<PathAlgebra> = Vec::with_capacity(plugins.len() + 1);
     let mut lift_step_names: Vec<String> = Vec::with_capacity(plugins.len());
+    let mut plan_path_steps: Vec<Value> = Vec::with_capacity(plugins.len() + 1);
 
     for (idx, plugin) in plugins.iter().enumerate() {
         let lift_input = Input::Spec(lift_plugin::build_lift_params(
@@ -1369,9 +1370,19 @@ fn mint_input_multi(
         } else {
             format!("lift_{idx}")
         };
+        let lift_kit = format!("lift-plugin:{}", plugin.surface);
+        plan_path_steps.push(json!({
+            "name": lift_step_name.clone(),
+            "role": "lift",
+            "kit": lift_kit.clone(),
+            "surface": plugin.surface.clone(),
+            "verb": "transform",
+            "inputCids": [lift_input_cid.to_string()],
+            "dependsOn": [],
+        }));
         algebra.push(PathAlgebra {
             name: lift_step_name.clone(),
-            kit: format!("lift-plugin:{}", plugin.surface),
+            kit: lift_kit,
             inputs: vec![lift_input_cid],
             depends_on: vec![],
             verb: Verb::Transform,
@@ -1383,7 +1394,15 @@ fn mint_input_multi(
         .first()
         .map(|p| p.surface.clone())
         .unwrap_or_default();
-    let toolchain_plan = toolchain_plan_seed(project_root, plugins);
+    let mint_dependencies = lift_step_names.clone();
+    plan_path_steps.push(json!({
+        "name": "mint",
+        "role": "mint",
+        "kit": "sugar-mint",
+        "verb": "transform",
+        "dependsOn": mint_dependencies,
+    }));
+    let toolchain_plan = toolchain_plan_seed(project_root, plugins, plan_path_steps);
     let mint_input = Input::Spec(json!({
         "projectRoot": project_root.display().to_string(),
         "surface": surface_for_mint,
@@ -1410,7 +1429,11 @@ fn mint_input_multi(
     }
 }
 
-fn toolchain_plan_seed(project_root: &Path, plugins: &[PluginEntry]) -> Value {
+fn toolchain_plan_seed(
+    project_root: &Path,
+    plugins: &[PluginEntry],
+    path_steps: Vec<Value>,
+) -> Value {
     let plugin_entries: Vec<Value> = plugins
         .iter()
         .map(|plugin| {
@@ -1432,6 +1455,7 @@ fn toolchain_plan_seed(project_root: &Path, plugins: &[PluginEntry]) -> Value {
             "source": "mint-path",
         },
         "plugins": plugin_entries,
+        "pathSteps": path_steps,
     })
 }
 
@@ -4759,6 +4783,16 @@ mod tests {
             Input::Path(path) => path,
             other => panic!("expected path input, got {other:?}"),
         };
+        let lift_step = path
+            .algebra
+            .iter()
+            .find(|step| step.name == "lift")
+            .expect("lift step");
+        let lift_input_cid = lift_step
+            .inputs
+            .first()
+            .map(ToString::to_string)
+            .expect("lift input cid");
         let mint_step = path
             .algebra
             .iter()
@@ -4778,6 +4812,35 @@ mod tests {
             spec.pointer("/toolchainPlan/plugins/0/surface")
                 .and_then(Value::as_str),
             Some("rust-test-assertions")
+        );
+        assert_eq!(
+            spec.pointer("/toolchainPlan/pathSteps/0/name")
+                .and_then(Value::as_str),
+            Some("lift")
+        );
+        assert_eq!(
+            spec.pointer("/toolchainPlan/pathSteps/0/kit")
+                .and_then(Value::as_str),
+            Some("lift-plugin:rust-test-assertions")
+        );
+        assert_eq!(
+            spec.pointer("/toolchainPlan/pathSteps/0/inputCids/0")
+                .and_then(Value::as_str),
+            Some(lift_input_cid.as_str())
+        );
+        assert_eq!(
+            spec.pointer("/toolchainPlan/pathSteps/1/name")
+                .and_then(Value::as_str),
+            Some("mint")
+        );
+        assert_eq!(
+            spec.pointer("/toolchainPlan/pathSteps/1/dependsOn/0")
+                .and_then(Value::as_str),
+            Some("lift")
+        );
+        assert!(
+            spec.pointer("/toolchainPlan/pathSteps/1/inputCids").is_none(),
+            "the mint step input carries the plan letter, so it cannot be pinned inside the same letter"
         );
         assert!(
             spec.pointer("/toolchainPlan/expectedOutputCids").is_none(),

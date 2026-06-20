@@ -36,6 +36,8 @@ pub(crate) struct JsonWitnessOptions {
     pub policy_cid: Option<String>,
     pub extra_input_cids: Vec<String>,
     pub proof_metadata: BTreeMap<String, String>,
+    pub plan_cid: Option<String>,
+    pub actual_output_cids: Vec<String>,
 }
 
 pub(crate) fn mint_report_witness(
@@ -107,15 +109,25 @@ pub(crate) fn mint_json_witness_with_options(
     out_dir: &Path,
     options: JsonWitnessOptions,
 ) -> Result<ReportWitnessProof, String> {
+    let JsonWitnessOptions {
+        produced_by,
+        produced_at,
+        verifier_cid,
+        policy_cid,
+        extra_input_cids,
+        proof_metadata,
+        plan_cid,
+        actual_output_cids,
+    } = options;
+    if !actual_output_cids.is_empty() && plan_cid.is_none() {
+        return Err("toolchain output witness carries actualOutputCids but no planCid".to_string());
+    }
+
     let claim_body_cid = jcs_cid(&claim_body);
     let evidence_root_cid = jcs_cid(evidence);
-    let verifier_cid = options
-        .verifier_cid
-        .unwrap_or_else(|| format!("builtin:{claim_kind}"));
-    let policy_cid = options
-        .policy_cid
-        .unwrap_or_else(|| format!("builtin:{claim_kind}-policy"));
-    let witness_body = json!({
+    let verifier_cid = verifier_cid.unwrap_or_else(|| format!("builtin:{claim_kind}"));
+    let policy_cid = policy_cid.unwrap_or_else(|| format!("builtin:{claim_kind}-policy"));
+    let mut witness_body = json!({
         "kind": "sugar-json-witness-body",
         "schemaVersion": "1",
         "claimKind": claim_kind,
@@ -126,28 +138,25 @@ pub(crate) fn mint_json_witness_with_options(
         "claimBody": claim_body,
         "evidence": evidence,
     });
+    add_toolchain_scope(&mut witness_body, plan_cid.as_deref(), &actual_output_cids);
     let witness_cid = jcs_cid(&witness_body);
     let mut input_cids = collect_cid_strings(&witness_body);
     input_cids.extend(
-        options
-            .extra_input_cids
+        extra_input_cids
             .into_iter()
             .filter(|cid| cid.starts_with("blake3-512:")),
     );
     input_cids.insert(claim_body_cid.clone());
     input_cids.insert(evidence_root_cid.clone());
     let input_cids: Vec<String> = input_cids.into_iter().collect();
-    let produced_by = options
-        .produced_by
-        .unwrap_or_else(|| format!("sugar-witness:{name}"));
-    let produced_at = options
-        .produced_at
+    let produced_by = produced_by.unwrap_or_else(|| format!("sugar-witness:{name}"));
+    let produced_at = produced_at
         .unwrap_or_else(|| chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
     let signer_seed = deterministic_signer_seed(&produced_by);
     let signer = ed25519_pubkey_string(&signer_seed);
     let signature = ed25519_sign_string(&signer_seed, witness_cid.as_bytes());
 
-    let witness_pointer = json!({
+    let mut witness_pointer = json!({
         "body": {
             "kind": "witness-memento",
             "schemaVersion": "1",
@@ -171,6 +180,17 @@ pub(crate) fn mint_json_witness_with_options(
         },
         "schemaVersion": "1",
     });
+    if let Some(body) = witness_pointer
+        .get_mut("body")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        if let Some(plan_cid) = &plan_cid {
+            body.insert("planCid".to_string(), json!(plan_cid));
+        }
+        if !actual_output_cids.is_empty() {
+            body.insert("actualOutputCids".to_string(), json!(actual_output_cids));
+        }
+    }
     let witness_pointer_bytes = encode_jcs(&json_to_cvalue(&witness_pointer));
     let witness_pointer_cid = blake3_512_of(witness_pointer_bytes.as_bytes());
     let mut members = BTreeMap::new();
@@ -183,7 +203,7 @@ pub(crate) fn mint_json_witness_with_options(
         evidence_root_cid.clone(),
     );
     metadata.insert("sugar.witness.witnessCid".into(), witness_cid.clone());
-    metadata.extend(options.proof_metadata);
+    metadata.extend(proof_metadata);
 
     let proof = build_proof_envelope(&ProofEnvelopeInput {
         name: format!("@sugar/witness/{name}"),
@@ -218,6 +238,18 @@ pub(crate) fn mint_json_witness_with_options(
         evidence_cid: evidence_root_cid,
         evidence_file,
     })
+}
+
+fn add_toolchain_scope(body: &mut Json, plan_cid: Option<&str>, actual_output_cids: &[String]) {
+    let Some(obj) = body.as_object_mut() else {
+        return;
+    };
+    if let Some(plan_cid) = plan_cid {
+        obj.insert("planCid".to_string(), json!(plan_cid));
+    }
+    if !actual_output_cids.is_empty() {
+        obj.insert("actualOutputCids".to_string(), json!(actual_output_cids));
+    }
 }
 
 fn collect_cid_strings(value: &Json) -> BTreeSet<String> {
@@ -400,6 +432,83 @@ mod tests {
                 && envelope.pointer("/body/evidence").is_none()
                 && envelope.pointer("/body/report").is_none(),
             "witness proof must carry only the structured pointer, not the witness body: {envelope:#}"
+        );
+    }
+
+    #[test]
+    fn toolchain_output_witness_requires_plan_cid() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let err = mint_json_witness_with_options(
+            "toolchain",
+            "toolchain-run",
+            &json!({"kind": "toolchain-run"}),
+            &json!({"kind": "toolchain-evidence"}),
+            temp.path(),
+            JsonWitnessOptions {
+                actual_output_cids: vec!["blake3-512:out".to_string()],
+                ..JsonWitnessOptions::default()
+            },
+        )
+        .expect_err("toolchain output witnesses must be scoped to a plan");
+
+        assert!(err.contains("planCid"), "{err}");
+    }
+
+    #[test]
+    fn toolchain_output_witness_carries_plan_scope_in_pointer_and_body() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let plan_cid = "blake3-512:plan-letter".to_string();
+        let output_cid = "blake3-512:out".to_string();
+        let minted = mint_json_witness_with_options(
+            "toolchain",
+            "toolchain-run",
+            &json!({"kind": "toolchain-run"}),
+            &json!({"kind": "toolchain-evidence"}),
+            temp.path(),
+            JsonWitnessOptions {
+                plan_cid: Some(plan_cid.clone()),
+                actual_output_cids: vec![output_cid.clone()],
+                ..JsonWitnessOptions::default()
+            },
+        )
+        .expect("toolchain witness minted");
+
+        let proof_bytes = std::fs::read(&minted.proof_file).expect("read witness proof");
+        let catalog = sugar_verifier::cbor_decode::decode(&proof_bytes).expect("decode proof");
+        let members = catalog
+            .as_map()
+            .and_then(|m| m.get("members"))
+            .and_then(|v| v.as_map())
+            .expect("proof members");
+        let member_bytes = members
+            .values()
+            .next()
+            .and_then(|member| member.as_bstr())
+            .expect("member bytes");
+        let envelope: Json = serde_json::from_slice(member_bytes).expect("member JSON");
+
+        assert_eq!(
+            envelope.pointer("/body/planCid").and_then(Json::as_str),
+            Some(plan_cid.as_str())
+        );
+        assert_eq!(
+            envelope
+                .pointer("/body/actualOutputCids/0")
+                .and_then(Json::as_str),
+            Some(output_cid.as_str())
+        );
+
+        let body: Json = serde_json::from_slice(
+            &std::fs::read(&minted.evidence_file).expect("read witness body"),
+        )
+        .expect("parse witness body");
+        assert_eq!(
+            body.pointer("/planCid").and_then(Json::as_str),
+            Some(plan_cid.as_str())
+        );
+        assert_eq!(
+            body.pointer("/actualOutputCids/0").and_then(Json::as_str),
+            Some(output_cid.as_str())
         );
     }
 }

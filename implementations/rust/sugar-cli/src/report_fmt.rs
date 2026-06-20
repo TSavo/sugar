@@ -226,6 +226,42 @@ pub fn format_report_pretty(r: &Report, quiet: bool) -> String {
                 let _ = writeln!(out, "  {}: {}", e.proof_path, e.reason);
             }
         }
+        if !r.toolchain_plans.is_empty() {
+            out.push('\n');
+            let _ = writeln!(out, "{}", "Toolchain plans:".bold());
+            for plan in &r.toolchain_plans {
+                let status_pretty = match plan.status.as_str() {
+                    "confirmed" => "confirmed".green().to_string(),
+                    "refuted" => "refuted".red().to_string(),
+                    "declared" => "declared".yellow().to_string(),
+                    other => other.to_string(),
+                };
+                let _ = writeln!(out, "  [{}] plan {}", status_pretty, plan.plan_cid);
+                let _ = writeln!(out, "      plan memento: {}", plan.plan_memento_cid);
+                if let Some(witness) = &plan.witness_memento_cid {
+                    let _ = writeln!(out, "      witness memento: {witness}");
+                }
+                let _ = writeln!(
+                    out,
+                    "      expected outputs: {}",
+                    plan.expected_output_cids.len()
+                );
+                for cid in &plan.expected_output_cids {
+                    let _ = writeln!(out, "        {cid}");
+                }
+                let _ = writeln!(
+                    out,
+                    "      actual outputs: {}",
+                    plan.actual_output_cids.len()
+                );
+                for cid in &plan.actual_output_cids {
+                    let _ = writeln!(out, "        {cid}");
+                }
+                if !plan.reason.is_empty() {
+                    let _ = writeln!(out, "      reason: {}", plan.reason);
+                }
+            }
+        }
         if !r.call_edges.is_empty() {
             out.push('\n');
             let _ = writeln!(out, "{}", "Call edges:".dimmed());
@@ -451,6 +487,41 @@ mod tests {
             j["toolchainPlans"][0]["expectedOutputCids"][0],
             "blake3-512:out"
         );
+    }
+
+    #[test]
+    fn pretty_report_includes_toolchain_plan_accounting() {
+        let mut r = Report::default();
+        r.toolchain_plans.push(ToolchainPlanReport {
+            plan_memento_cid: "blake3-512:plan-member".into(),
+            plan_cid: "blake3-512:plan-letter".into(),
+            status: "refuted".into(),
+            reason: "plan drifted".into(),
+            expected_output_cids: vec!["blake3-512:expected".into()],
+            witness_memento_cid: Some("blake3-512:witness-member".into()),
+            actual_output_cids: vec!["blake3-512:actual".into()],
+        });
+
+        let pretty = format_report_pretty(&r, false);
+
+        assert!(pretty.contains("Toolchain plans:"), "{pretty}");
+        assert!(pretty.contains("plan blake3-512:plan-letter"), "{pretty}");
+        assert!(
+            pretty.contains("plan memento: blake3-512:plan-member"),
+            "{pretty}"
+        );
+        assert!(
+            pretty.contains("witness memento: blake3-512:witness-member"),
+            "{pretty}"
+        );
+        assert!(
+            pretty.contains("expected outputs: 1")
+                && pretty.contains("blake3-512:expected")
+                && pretty.contains("actual outputs: 1")
+                && pretty.contains("blake3-512:actual"),
+            "{pretty}"
+        );
+        assert!(pretty.contains("reason: plan drifted"), "{pretty}");
     }
 
     #[test]
