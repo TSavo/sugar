@@ -213,50 +213,15 @@ pub fn toolchain_plan_reports(pool: &MementoPool) -> Vec<ToolchainPlanReport> {
             .iter()
             .filter(|witness| witness.plan_cid.is_none())
             .collect();
-        let candidate_witnesses = if !plan_specific.is_empty() {
-            plan_specific
-        } else {
-            legacy_unscoped
-        };
-        let matched = candidate_witnesses
-            .iter()
-            .copied()
-            .find(|witness| witness.actual.as_slice() == expected.as_slice());
-        let (status, reason, witness_memento_cid, actual_output_cids) = if let Some(witness) =
-            matched
-        {
-            (
-                "confirmed".to_string(),
-                "plan expected output CIDs match a witness-memento's actual output CIDs"
-                    .to_string(),
-                Some(witness.memento_cid.clone()),
-                witness.actual.clone(),
-            )
-        } else if let Some(witness) = candidate_witnesses.first() {
-            (
-                "refuted".to_string(),
-                "plan expected output CIDs do not match loaded witness-memento actual output CIDs"
-                    .to_string(),
-                Some(witness.memento_cid.clone()),
-                witness.actual.clone(),
-            )
-        } else {
-            (
-                "declared".to_string(),
-                "plan is pinned in the proof envelope; no matching witness-memento was loaded"
-                    .to_string(),
-                None,
-                Vec::new(),
-            )
-        };
+        let decision = toolchain_plan_decision(&expected, &plan_specific, &legacy_unscoped);
         rows.push(ToolchainPlanReport {
             plan_memento_cid: cid.clone(),
             plan_cid,
-            status,
-            reason,
+            status: decision.status,
+            reason: decision.reason,
             expected_output_cids: expected,
-            witness_memento_cid,
-            actual_output_cids,
+            witness_memento_cid: decision.witness_memento_cid,
+            actual_output_cids: decision.actual_output_cids,
         });
     }
     rows.sort_by(|a, b| a.plan_memento_cid.cmp(&b.plan_memento_cid));
@@ -267,6 +232,90 @@ struct WitnessOutputs {
     memento_cid: String,
     plan_cid: Option<String>,
     actual: Vec<String>,
+}
+
+struct ToolchainPlanDecision {
+    status: String,
+    reason: String,
+    witness_memento_cid: Option<String>,
+    actual_output_cids: Vec<String>,
+}
+
+fn toolchain_plan_decision(
+    expected: &[String],
+    plan_specific: &[&WitnessOutputs],
+    legacy_unscoped: &[&WitnessOutputs],
+) -> ToolchainPlanDecision {
+    if !plan_specific.is_empty() {
+        if let Some(witness) = matching_witness(expected, plan_specific) {
+            return confirmed(
+                witness,
+                "plan expected output CIDs match a plan-scoped witness-memento's actual output CIDs",
+            );
+        }
+        return refuted(
+            plan_specific[0],
+            "plan expected output CIDs do not match loaded plan-scoped witness-memento actual output CIDs",
+        );
+    }
+
+    if let Some(witness) = matching_witness(expected, legacy_unscoped) {
+        return confirmed(
+            witness,
+            "plan expected output CIDs match a legacy unscoped witness-memento; unscoped plan matching is deprecated",
+        );
+    }
+
+    if let Some(witness) = legacy_unscoped.first() {
+        return declared_with_witness(
+            witness,
+            "legacy unscoped witness-memento did not match this plan; unscoped plan refutation is deprecated and requires planCid",
+        );
+    }
+
+    ToolchainPlanDecision {
+        status: "declared".to_string(),
+        reason: "plan is pinned in the proof envelope; no matching witness-memento was loaded"
+            .to_string(),
+        witness_memento_cid: None,
+        actual_output_cids: Vec::new(),
+    }
+}
+
+fn matching_witness<'a>(
+    expected: &[String],
+    witnesses: &[&'a WitnessOutputs],
+) -> Option<&'a WitnessOutputs> {
+    witnesses
+        .iter()
+        .copied()
+        .find(|witness| witness.actual.as_slice() == expected)
+}
+
+fn confirmed(witness: &WitnessOutputs, reason: &str) -> ToolchainPlanDecision {
+    decision("confirmed", reason, Some(witness), witness.actual.clone())
+}
+
+fn refuted(witness: &WitnessOutputs, reason: &str) -> ToolchainPlanDecision {
+    decision("refuted", reason, Some(witness), witness.actual.clone())
+}
+
+fn declared_with_witness(witness: &WitnessOutputs, reason: &str) -> ToolchainPlanDecision {
+    decision("declared", reason, Some(witness), witness.actual.clone())
+}
+
+fn decision(
+    status: &str,
+    reason: &str,
+    witness: Option<&WitnessOutputs>,
+    actual_output_cids: Vec<String>,
+) -> ToolchainPlanDecision {
+    ToolchainPlanDecision {
+        status: status.to_string(),
+        reason: reason.to_string(),
+        witness_memento_cid: witness.map(|witness| witness.memento_cid.clone()),
+        actual_output_cids,
+    }
 }
 
 fn string_field(body: &Json, field: &str) -> Option<String> {
@@ -445,6 +494,7 @@ mod tests {
                 "body": {
                     "kind": "witness-memento",
                     "witness_cid": "blake3-512:witness-body",
+                    "planCid": "blake3-512:plan-letter",
                     "actualOutputCids": ["blake3-512:actual"],
                     "signer": "ed25519:test",
                     "signature": "ed25519:sig"
@@ -458,6 +508,60 @@ mod tests {
         assert_eq!(rows[0].status, "refuted");
         assert_eq!(rows[0].expected_output_cids, vec!["blake3-512:expected"]);
         assert_eq!(rows[0].actual_output_cids, vec!["blake3-512:actual"]);
+    }
+
+    #[test]
+    fn toolchain_plan_unscoped_mismatched_witness_is_declared_not_refuted() {
+        let mut pool = MementoPool::default();
+        pool.insert(
+            "blake3-512:plan-member".to_string(),
+            json!({
+                "schemaVersion": "1",
+                "header": {
+                    "kind": "plan-memento",
+                    "planCid": "blake3-512:plan-letter"
+                },
+                "body": {
+                    "kind": "component-plan",
+                    "expectedOutputCids": ["blake3-512:expected"]
+                }
+            }),
+        );
+        pool.insert(
+            "blake3-512:witness-member".to_string(),
+            json!({
+                "schemaVersion": "1",
+                "header": {
+                    "kind": "witness-memento",
+                    "witnessCid": "blake3-512:witness-body",
+                    "witnessKind": "toolchain-run"
+                },
+                "body": {
+                    "kind": "witness-memento",
+                    "witness_cid": "blake3-512:witness-body",
+                    "actualOutputCids": ["blake3-512:actual"],
+                    "signer": "ed25519:test",
+                    "signature": "ed25519:sig"
+                }
+            }),
+        );
+
+        let rows = toolchain_plan_reports(&pool);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].status, "declared",
+            "legacy unscoped witnesses may confirm exact output matches but must not refute a plan"
+        );
+        assert_eq!(
+            rows[0].witness_memento_cid.as_deref(),
+            Some("blake3-512:witness-member")
+        );
+        assert_eq!(rows[0].actual_output_cids, vec!["blake3-512:actual"]);
+        assert!(
+            rows[0].reason.contains("legacy unscoped"),
+            "report should make the migration/deprecation horizon visible"
+        );
     }
 
     #[test]
