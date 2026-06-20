@@ -8046,9 +8046,10 @@ fn t() {
 }
 
 #[test]
-fn for_loop_with_mutated_accumulator_body_stays_refused() {
-    // The body does not compute to a truth value of x (count is mutated across
-    // iterations): gutter the whole loop rather than emit a false universal.
+fn for_loop_with_scalar_accumulator_body_replays_exact_steps() {
+    // This is not a universal: the scalar accumulator is temporally replayed
+    // across the finite literal domain, so the false per-step assertions remain
+    // visible as exact point-wise facts: (1 == 0), (2 == 1), (3 == 2).
     let src = r#"
 #[test]
 fn t() {
@@ -8061,9 +8062,21 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/loop.rs");
     assert_eq!(
-        out.assertions_lifted, 0,
-        "mutated-accumulator loop must not lift as forall"
+        out.assertions_lifted, 1,
+        "scalar accumulator loop must replay; warnings: {:?}",
+        out.skip_reasons
     );
+    let loop_decl = out
+        .decls
+        .iter()
+        .find(|d| d.name.contains("loop"))
+        .expect("replayed loop decl exists");
+    assert!(
+        !contains_forall(&inv_formula(loop_decl)),
+        "scalar accumulator replay must not be emitted as forall: {:?}",
+        loop_decl.inv
+    );
+    assert_eq!(dug_eq_int_pairs(loop_decl), vec![(1, 0), (2, 1), (3, 2)]);
 }
 
 #[test]
@@ -11046,6 +11059,53 @@ fn t(io: X) {
     );
 }
 
+#[test]
+fn iter_advance_by_over_literal_sequence_digs_result_and_delta() {
+    let src = r#"
+use core::num::NonZero;
+
+#[test]
+fn t() {
+    let v: &[_] = &[0, 1, 2, 3, 4];
+    assert_eq!(v.iter().advance_by(v.len()), Ok(()));
+    assert_eq!(v.iter().advance_by(100), Err(NonZero::new(100 - v.len()).unwrap()));
+    assert_eq!(v.iter().advance_back_by(100), Err(NonZero::new(100 - v.len()).unwrap()));
+    assert_eq!(v.iter().rev().advance_back_by(100), Err(NonZero::new(100 - v.len()).unwrap()));
+    assert_eq!(v.iter().rev().advance_by(100), Err(NonZero::new(100 - v.len()).unwrap()));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/iter_advance_by.rs");
+    assert_eq!(
+        out.assertions_lifted, 5,
+        "all direct literal-domain advance_by assertions must lift: {:?}",
+        out.skip_reasons
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let main = out
+        .decls
+        .iter()
+        .find(|decl| decl.name == "tests/iter_advance_by.rs::t")
+        .expect("main warranted contract");
+    let dump = format!("{main:?}");
+    assert!(
+        dump.contains("res:ok") && dump.contains("literal:Tuple()"),
+        "advance_by(v.len()) must ground to Ok(()): {dump}"
+    );
+    assert_eq!(
+        dump.matches("res:err").count(),
+        8,
+        "four Err assertions should each contain a grounded lhs and rhs Result: {dump}"
+    );
+    assert!(
+        dump.matches("Int(95)").count() >= 8,
+        "over-advancing a length-5 sequence by 100 must ground the remaining delta 95: {dump}"
+    );
+    assert!(
+        !dump.contains("method:advance_by") && !dump.contains("method:advance_back_by"),
+        "direct literal-domain advance terminals must not stay opaque: {dump}"
+    );
+}
+
 // TODO (MonadicSugar): `.next()` over a literal domain must GROUND, not stay opaque — no
 // opaque sugar. `assert_eq!([1,2,3].iter().next(), Some(&1))` is sugar all the way to
 // literals: unwrap the `Some` (an Option ctor over a literal, structural `==`) + positional
@@ -11172,15 +11232,10 @@ fn t() {
 }
 
 #[test]
-fn forloop_index_read_over_runtime_length_range_is_not_unrolled() {
-    // BAIL (guardrail #3, runtime domain): `for i in 0..v.len()` has a RUNTIME endpoint
-    // (`v.len()` is not a literal int), so the domain is NOT a finite literal
-    // construction. `term_as_int(end)` is None -> the unroll declines and the loop falls
-    // to the guarded-FORALL path (where the body lifts as a sound uninterpreted EUF
-    // obligation -- the established floor for a literal-array `v` indexed at the
-    // quantified `i`). The cardinal point: the runtime range MUST NOT be UNROLLED into
-    // concrete per-position literal pairs (no fabricated finite count over `v.len()`).
-    // The lift is a `forall`, never a finite conjunction of resolved `(elem, elem)`.
+fn forloop_index_read_over_literal_len_range_unrolls_exact_elements() {
+    // `v.len()` over a literal array is a compiler axiom, so the range is a
+    // finite literal construction and can be replayed exactly. The lift is the
+    // concrete per-position conjunction, not a quantified fallback.
     let src = r#"
 #[test]
 fn t() {
@@ -11191,21 +11246,21 @@ fn t() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/forloop_runtime_len.rs");
-    if let Some(loop_decl) = out.decls.iter().find(|d| d.name.contains("loop")) {
-        // It must remain a quantified universal (NOT an unrolled finite conjunction of
-        // resolved literal pairs). A fake-dig would have unrolled `0..v.len()` to a
-        // hallucinated count and emitted concrete `(0,0),(1,1),..` pairs.
-        assert!(
-            contains_forall(&inv_formula(loop_decl)),
-            "a runtime-length range must lift as a forall, never be unrolled to literal pairs: {:?}",
-            format!("{:?}", loop_decl.inv)
-        );
-        let pairs = dug_eq_int_pairs(loop_decl);
-        assert!(
-            pairs.is_empty(),
-            "no concrete index-pair may be minted over a runtime-length range (no fake-dig): {pairs:?}"
-        );
-    }
+    assert_eq!(out.assertions_lifted, 1, "warnings: {:?}", out.skip_reasons);
+    let loop_decl = out
+        .decls
+        .iter()
+        .find(|d| d.name.contains("loop"))
+        .expect("unrolled loop decl exists");
+    assert!(
+        !contains_forall(&inv_formula(loop_decl)),
+        "literal-len range must be replayed, not emitted as forall: {:?}",
+        loop_decl.inv
+    );
+    assert_eq!(
+        dug_eq_int_pairs(loop_decl),
+        vec![(0, 0), (1, 1), (2, 2), (3, 3), (4, 4)]
+    );
 }
 
 #[test]
@@ -11262,17 +11317,16 @@ fn disp(reason: &str) -> sugar_lift_rust_tests::Disposition {
 
 #[test]
 fn forloop_runtime_endpoint_refuses_with_named_domain_effect() {
-    // CAUSE A: `for i in 0..v.len()` -- runtime endpoint. The body advances a runtime
+    // CAUSE A: `for i in 0..n` -- runtime endpoint. The body advances a runtime
     // iterator (`let mut iter; iter.advance_by(i)` -- the iter/traits/iterator.rs shape),
     // so the dig declines (loop_body_mutates) and the RUNTIME DOMAIN cause fires FIRST in
     // the precedence. Must REFUSE (terminal) with the specific "RUNTIME endpoint" reason,
-    // not a generic "not point-wise" unclassified. (The runtime endpoint is detected
-    // before the body cause -- `v.len()` is not a literal int.)
+    // not a generic "not point-wise" unclassified.
     let src = r#"
 #[test]
-fn t() {
+fn t(n: usize) {
     let v = [0, 1, 2, 3, 4];
-    for i in 0..v.len() {
+    for i in 0..n {
         let mut iter = v.iter();
         assert_eq!(iter.advance_by(i), Ok(()));
         assert_eq!(iter.next().unwrap(), &v[i]);

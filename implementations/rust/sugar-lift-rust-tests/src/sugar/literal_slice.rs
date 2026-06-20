@@ -56,6 +56,18 @@ pub(crate) fn is_literal_slice_base<'a>(
         .is_some()
 }
 
+pub(crate) fn literal_slice_len<'a>(
+    expr: &'a Expr,
+    let_inits: &BTreeMap<String, &'a Expr>,
+) -> Option<usize> {
+    let Expr::Index(index) = strip_refs_groups(expr) else {
+        return None;
+    };
+    let array = resolve_literal_array(&index.expr, let_inits, 0)?;
+    let (start, end) = slice_bounds(&index.index, array.elems.len())?;
+    Some(end - start)
+}
+
 struct LiteralSliceSugar {
     elems: Vec<Expr>,
 }

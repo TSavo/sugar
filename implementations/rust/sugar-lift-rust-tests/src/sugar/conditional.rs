@@ -192,8 +192,13 @@ impl ConditionalSugar {
 }
 
 fn const_fold_bool_guard(ctx: &SugarCtx, cond: &Expr) -> Option<bool> {
-    crate::const_fold_bool_guard(cond, ctx.options)
-        .or_else(|| const_fold_bool_guard_from_terms(ctx, cond))
+    crate::const_fold_bool_guard(cond, ctx.options).or_else(|| {
+        if guard_mentions_stable_local_path(ctx, cond) {
+            None
+        } else {
+            const_fold_bool_guard_from_terms(ctx, cond)
+        }
+    })
 }
 
 fn const_fold_bool_guard_from_terms(ctx: &SugarCtx, cond: &Expr) -> Option<bool> {
@@ -233,6 +238,25 @@ fn const_fold_bool_guard_from_terms(ctx: &SugarCtx, cond: &Expr) -> Option<bool>
             _ => None,
         },
         _ => None,
+    }
+}
+
+fn guard_mentions_stable_local_path(ctx: &SugarCtx, expr: &Expr) -> bool {
+    match expr {
+        Expr::Path(path) if path.qself.is_none() => path.path.get_ident().is_some_and(|ident| {
+            ctx.scope
+                .stable_let_binding_for_term(&ident.to_string())
+                .is_some()
+        }),
+        Expr::Path(_) => false,
+        Expr::Paren(p) => guard_mentions_stable_local_path(ctx, &p.expr),
+        Expr::Group(g) => guard_mentions_stable_local_path(ctx, &g.expr),
+        Expr::Unary(u) => guard_mentions_stable_local_path(ctx, &u.expr),
+        Expr::Binary(binary) => {
+            guard_mentions_stable_local_path(ctx, &binary.left)
+                || guard_mentions_stable_local_path(ctx, &binary.right)
+        }
+        _ => false,
     }
 }
 
