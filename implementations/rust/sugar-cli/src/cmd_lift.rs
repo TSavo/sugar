@@ -11,6 +11,8 @@ use std::path::PathBuf;
 use owo_colors::OwoColorize;
 use serde_json::{Map, Value};
 
+use sugar_claim_envelope::contract_cid_of_ir_decl;
+
 use crate::cmd_prove;
 use crate::lift_plugin::{self, LiftPluginError, LiftPluginOptions};
 use crate::project_config::{read_project_config, read_user_config, PluginEntry, ProjectConfig};
@@ -584,28 +586,44 @@ fn universe_symbol(name: &str) -> String {
     n.strip_suffix("::assertion").unwrap_or(n).to_string()
 }
 
-/// `method -> N universes detected` over the lifted assertion contracts. This is
-/// the lift-side superposition report: how many candidate readings exist per
-/// method, before `sugar prove` collapses them to strong/weak/undecidable.
-fn universes_per_method(contracts: &[Value]) -> BTreeMap<String, usize> {
-    let mut m: BTreeMap<String, usize> = BTreeMap::new();
-    for c in contracts {
-        if let Some(name) = contract_value_name(c) {
-            *m.entry(universe_symbol(name)).or_insert(0) += 1;
-        }
-    }
-    m
+/// One distinct universe within a method group: a single canonical contract
+/// identity (its `contract_cid`), the FOL reading of its claim, and how many
+/// lifted callsites collapsed onto it. Counting by CID is what tells "one
+/// universe emitted N times" (identical copy-pasted asserts mint byte-identical
+/// contracts) apart from "N genuinely distinct universes".
+struct MethodUniverse {
+    cid: String,
+    reading: String,
+    occurrences: usize,
 }
 
-/// `method -> [universe reading FOL]`: each lifted assertion is one universe; its
-/// reading is the instantiated FOL of its `inv`. Lets the report show the
-/// universes of a method in superposition, side by side.
-fn universe_readings_per_method(contracts: &[Value]) -> BTreeMap<String, Vec<String>> {
-    let mut m: BTreeMap<String, Vec<String>> = BTreeMap::new();
+/// `method -> [distinct universe]`. Two lifted contracts are the SAME universe
+/// iff they share a canonical `contract_cid` — the identity `mint` assigns and
+/// the verifier indexes by. The per-occurrence inflation of the raw contract
+/// list (one contract per callsite, byte-identical across copy-pasted tests)
+/// collapses here; universes that merely RENDER alike but differ in identity
+/// (e.g. the same shape at different integer widths, whose sort the FOL renderer
+/// elides) stay separate, because their CIDs differ. The recompute funnels
+/// through the canonical `contract_cid_of_ir_decl`, so this never invents a
+/// second identity scheme. A decl with no mintable contract identity (rare —
+/// report contracts ARE the decls `mint` consumes) falls back to its reading
+/// string so it is still accounted for, never silently dropped.
+fn distinct_universes_per_method(contracts: &[Value]) -> BTreeMap<String, Vec<MethodUniverse>> {
+    let mut m: BTreeMap<String, Vec<MethodUniverse>> = BTreeMap::new();
     for c in contracts {
-        if let Some(name) = contract_value_name(c) {
-            let reading = contract_universe_reading(c);
-            m.entry(universe_symbol(name)).or_default().push(reading);
+        let Some(name) = contract_value_name(c) else {
+            continue;
+        };
+        let reading = contract_universe_reading(c);
+        let cid = contract_cid_of_ir_decl(c).unwrap_or_else(|| format!("reading:{reading}"));
+        let universes = m.entry(universe_symbol(name)).or_default();
+        match universes.iter_mut().find(|u| u.cid == cid) {
+            Some(existing) => existing.occurrences += 1,
+            None => universes.push(MethodUniverse {
+                cid,
+                reading,
+                occurrences: 1,
+            }),
         }
     }
     m
@@ -621,10 +639,14 @@ fn contract_universe_reading(contract: &Value) -> String {
 }
 
 fn source_report_json_value(report: &LiftSourceReport) -> Value {
-    let universes = universes_per_method(&report.contracts);
+    let universes = distinct_universes_per_method(&report.contracts);
+    let distinct_universes: usize = universes.values().map(Vec::len).sum();
     let universe_rows: Vec<Value> = universes
         .iter()
-        .map(|(method, n)| serde_json::json!({ "method": method, "universes": n }))
+        .map(|(method, us)| {
+            let occurrences: usize = us.iter().map(|u| u.occurrences).sum();
+            serde_json::json!({ "method": method, "universes": us.len(), "occurrences": occurrences })
+        })
         .collect();
     serde_json::json!({
         "kind": "lift-source-report",
@@ -636,10 +658,17 @@ fn source_report_json_value(report: &LiftSourceReport) -> Value {
         "contracts": report.contracts,
         "callEdges": report.call_edges,
         "vendorConjoins": vendor_conjoins_to_json(&report.vendor_conjoins),
-        // Lift-side superposition: candidate universes detected per method.
+        // Lift-side superposition: distinct candidate universes per method.
+        // `universes` counts by canonical contract CID (content-addressed
+        // identity — the truth the verifier indexes by); `occurrences` is the
+        // raw per-callsite count the factory visited (total accounting,
+        // silent=0). Duplicates among the occurrences — byte-identical
+        // contracts minted from copy-pasted asserts — collapse into one
+        // universe; the gap between the two numbers IS that redundancy.
         "superposition": {
             "methods": universes.len(),
-            "universes": report.contracts.len(),
+            "universes": distinct_universes,
+            "occurrences": report.contracts.len(),
             "perMethod": universe_rows,
         },
     })
@@ -670,21 +699,39 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
         "source audit: {}\n",
         format_counts(&report.ledger)
     ));
-    let readings = universe_readings_per_method(&report.contracts);
-    if !readings.is_empty() {
+    let universes = distinct_universes_per_method(&report.contracts);
+    if !universes.is_empty() {
+        let distinct_universes: usize = universes.values().map(Vec::len).sum();
         out.push_str(&format!(
-            "superposition (universes detected): {} methods, {} universes\n",
-            readings.len(),
-            report.contracts.len()
+            "superposition (universes detected): {} methods, {} universes ({} callsite occurrences)\n",
+            universes.len(),
+            distinct_universes,
+            report.contracts.len(),
         ));
-        for (method, rows) in &readings {
-            out.push_str(&format!("  {method} — {} universe(s):\n", rows.len()));
-            // Show up to 8 readings side by side; beyond that, count the tail.
-            for r in rows.iter().take(8) {
-                out.push_str(&format!("      {r}\n"));
+        for (method, us) in &universes {
+            out.push_str(&format!("  {method} — {} universe(s):\n", us.len()));
+            // Show up to 8 distinct universes side by side; beyond that, count
+            // the tail. Annotate the per-callsite multiplicity (×N) so a
+            // collapsed duplicate reads as "one universe, N callsites", and
+            // disambiguate distinct universes that render to the same FOL (their
+            // CIDs differ — e.g. a differing integer width the renderer elides)
+            // with a short CID tag, so they read as distinct rather than
+            // redundant.
+            for u in us.iter().take(8) {
+                let ambiguous_reading =
+                    us.iter().filter(|o| o.reading == u.reading).count() > 1;
+                let mut line = u.reading.clone();
+                if ambiguous_reading {
+                    let tag: String = u.cid.chars().take(12).collect();
+                    line.push_str(&format!("  [cid {tag}]"));
+                }
+                if u.occurrences > 1 {
+                    line.push_str(&format!(" (×{})", u.occurrences));
+                }
+                out.push_str(&format!("      {line}\n"));
             }
-            if rows.len() > 8 {
-                out.push_str(&format!("      (+{} more universes)\n", rows.len() - 8));
+            if us.len() > 8 {
+                out.push_str(&format!("      (+{} more universes)\n", us.len() - 8));
             }
         }
     }
@@ -2627,6 +2674,14 @@ fn proofir_term_to_fol(term: &Value) -> String {
                 .cloned()
                 .unwrap_or_default();
             if args.is_empty() {
+                // A `call:`-prefixed ctor is a function/method invocation; an
+                // empty arg list is a zero-arg call (`answer()`, `B::new()`),
+                // so render the parens — they're what makes the universe read
+                // as a call rather than a bare symbol. Nullary data ctors
+                // (unit variants like `None`) keep their bare form.
+                if name.starts_with("call:") {
+                    return format!("{name}()");
+                }
                 return name.to_string();
             }
             if let Some(rendered) = format_symbolic_ctor(name, &args) {
@@ -3883,6 +3938,118 @@ mod tests {
         assert_eq!(parsed["sourceLedger"]["source_loci"], 29);
         assert_eq!(parsed["sourceAudits"].as_array().unwrap().len(), 1);
         assert_eq!(parsed["sourceMementos"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn superposition_groups_universes_by_cid_not_occurrence() {
+        // A method whose every callsite mints the BYTE-IDENTICAL contract (the
+        // copy-pasted-test case: same name, same post, same out binding) is ONE
+        // universe, regardless of how many callsites produced it.
+        let dup = serde_json::json!({
+            "kind": "contract",
+            "name": "Foo::dup",
+            "outBinding": "out",
+            "post": { "kind": "atomic", "name": "=", "args": [
+                {"kind": "var", "name": "out"}, {"kind": "const", "value": 0}
+            ]}
+        });
+        // Two contracts that RENDER to the same FOL but differ in IDENTITY
+        // (here a differing out binding stands in for any identity-bearing
+        // difference the FOL reading elides — e.g. integer width). They must
+        // stay TWO distinct universes, never collapse to one by their shared
+        // reading string.
+        let twin_a = serde_json::json!({
+            "kind": "contract", "name": "Foo::twin", "outBinding": "a",
+            "post": { "kind": "atomic", "name": "=", "args": [
+                {"kind": "var", "name": "out"}, {"kind": "const", "value": 7}
+            ]}
+        });
+        let twin_b = serde_json::json!({
+            "kind": "contract", "name": "Foo::twin", "outBinding": "b",
+            "post": { "kind": "atomic", "name": "=", "args": [
+                {"kind": "var", "name": "out"}, {"kind": "const", "value": 7}
+            ]}
+        });
+
+        let contracts = vec![dup.clone(), dup.clone(), dup, twin_a, twin_b];
+        let universes = distinct_universes_per_method(&contracts);
+
+        let dup_universes = universes.get("Foo::dup").expect("Foo::dup present");
+        assert_eq!(
+            dup_universes.len(),
+            1,
+            "three byte-identical copies are ONE universe, not three"
+        );
+        assert_eq!(dup_universes[0].occurrences, 3, "all 3 callsites counted");
+
+        let twin_universes = universes.get("Foo::twin").expect("Foo::twin present");
+        assert_eq!(
+            twin_universes.len(),
+            2,
+            "same-reading but distinct identity stays TWO universes"
+        );
+        assert_eq!(twin_universes[0].occurrences, 1);
+        assert_eq!(twin_universes[1].occurrences, 1);
+        assert_ne!(
+            twin_universes[0].cid, twin_universes[1].cid,
+            "distinct universes carry distinct CIDs"
+        );
+        assert_eq!(
+            twin_universes[0].reading, twin_universes[1].reading,
+            "the twins render identically — exactly what CID grouping must NOT merge"
+        );
+    }
+
+    #[test]
+    fn human_report_collapses_duplicate_universes_and_tags_ambiguous() {
+        let dup = serde_json::json!({
+            "kind": "contract",
+            "name": "Foo::dup",
+            "outBinding": "out",
+            "post": { "kind": "atomic", "name": "=", "args": [
+                {"kind": "var", "name": "out"}, {"kind": "const", "value": 0}
+            ]}
+        });
+        let twin_a = serde_json::json!({
+            "kind": "contract", "name": "Foo::twin", "outBinding": "a",
+            "post": { "kind": "atomic", "name": "=", "args": [
+                {"kind": "var", "name": "out"}, {"kind": "const", "value": 7}
+            ]}
+        });
+        let twin_b = serde_json::json!({
+            "kind": "contract", "name": "Foo::twin", "outBinding": "b",
+            "post": { "kind": "atomic", "name": "=", "args": [
+                {"kind": "var", "name": "out"}, {"kind": "const", "value": 7}
+            ]}
+        });
+        let response = serde_json::json!({
+            "kind": "ir-document",
+            "ir": [dup.clone(), dup.clone(), dup, twin_a, twin_b],
+            "sourceLedger": {
+                "source_loci": 0,
+                "source_warranted": 0,
+                "source_support": 0,
+                "source_refused": 0,
+                "source_inactive": 0,
+                "source_refuted": 0,
+                "unclassified_source": 0
+            },
+            "sourceAudits": [],
+            "sourceMementos": []
+        });
+        let report = source_report_from_lift_response(&response, None).expect("source report");
+        let human = render_source_report_human(&report);
+
+        // 2 methods, 3 distinct universes, 5 raw callsite occurrences.
+        assert!(
+            human.contains("2 methods, 3 universes (5 callsite occurrences)"),
+            "{human}"
+        );
+        // The byte-identical triple collapses to one universe tagged with its
+        // multiplicity, not three redundant lines.
+        assert!(human.contains("(×3)"), "{human}");
+        // The two same-rendering distinct universes are disambiguated by CID.
+        assert!(human.contains("[cid "), "{human}");
     }
 
     #[test]

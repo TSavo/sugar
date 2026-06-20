@@ -1261,28 +1261,82 @@ mod tests {
         );
     }
 
-    // --- git mode: build a throwaway repo from the real committed example
-    // proofs, commit two different proof sets, and diff across the two refs. ---
+    // --- git mode: build a throwaway repo, commit two disjoint proof sets,
+    // and diff across the two refs. The proofs are synthesized here rather than
+    // copied from `examples/`, because only run-receipts (no contract names)
+    // are committed under the example trees and those don't populate
+    // `name_to_cid` — the table the cross-ref diff actually compares. ---
 
-    fn cp_r(src: &Path, dst: &Path) {
-        assert!(Command::new("cp")
-            .arg("-r")
-            .arg(src)
-            .arg(dst)
-            .status()
-            .expect("cp -r")
-            .success());
+    /// Mint a real, signed, contract-bearing `.proof` catalog naming a single
+    /// contract and drop it in `dir`. The filename is the catalog CID with the
+    /// `blake3-512:` tag stripped — `<hex>.proof` — which is the Windows-safe
+    /// convention (a `:` in the stem is an illegal path character there, and
+    /// the loader recomputes the trust root from the bytes regardless).
+    fn write_contract_proof(dir: &Path, contract_name: &str) {
+        use sugar_canonicalizer::blake3_512_of;
+        use sugar_claim_envelope::{mint_contract, Authoring, MintContractArgs};
+        use sugar_ir_symbolic::serialize::formula_to_value;
+        use sugar_ir_symbolic::{forall, gt, must, num, reset_collector, Int};
+        use sugar_proof_envelope::{
+            build_proof_envelope, ed25519_pubkey_string, Ed25519Seed, ProofEnvelopeInput,
+        };
+
+        reset_collector();
+        must(contract_name, forall(Int(), |n| gt(n, num(0))));
+        let decls = sugar_ir_symbolic::finish();
+        let signer_seed: Ed25519Seed = [0x42u8; 32];
+        let declared_at = "2026-04-30T00:00:00.000Z";
+        let produced_by = "rust-test@1.0";
+        let mut members: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+        for d in &decls {
+            let args = MintContractArgs {
+                evidence_term: None,
+                formals: Vec::new(),
+                emit_empty_formals: false,
+                formal_sorts: Vec::new(),
+                library: None,
+                body_discharge_eligible: true,
+                body_discharge_refusal_reason: None,
+                panic_loci: Vec::new(),
+                class_shapes: Vec::new(),
+                source_warrants: Vec::new(),
+                contract_name: d.name.clone(),
+                pre: d.pre.as_deref().map(formula_to_value),
+                post: d.post.as_deref().map(formula_to_value),
+                inv: d.inv.as_deref().map(formula_to_value),
+                out_binding: d.out_binding.clone(),
+                produced_by: produced_by.into(),
+                produced_at: declared_at.into(),
+                input_cids: vec![],
+                authoring: Authoring::KitAuthor {
+                    author: produced_by.into(),
+                    note: None,
+                },
+                signer_seed,
+            };
+            let m = mint_contract(&args).expect("mint_contract");
+            members.insert(m.cid.clone(), m.canonical_bytes);
+        }
+        let signer_pubkey = ed25519_pubkey_string(&signer_seed);
+        let signer_cid = blake3_512_of(signer_pubkey.as_bytes());
+        let built = build_proof_envelope(&ProofEnvelopeInput {
+            name: "@test/diff-git".into(),
+            version: "1.0.0".into(),
+            binary_cid: None,
+            metadata: None,
+            members,
+            signer_cid,
+            signer_seed,
+            declared_at: declared_at.into(),
+        });
+        let hex = built.cid.strip_prefix("blake3-512:").unwrap_or(&built.cid);
+        assert!(!hex.contains(':'), "proof filename stem must be colon-free");
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join(format!("{hex}.proof")), &built.bytes).expect("write proof");
     }
 
     #[test]
     fn git_diff_across_two_commits_of_real_proofs() {
-        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .ancestors()
-            .find(|p| p.join("examples/numpy-showcase").is_dir())
-            .expect("repo root with examples/");
-        let set_a = repo_root.join("examples/numpy-showcase");
-        let set_b = repo_root.join("examples/numpy-consumer-demo");
-
         let tmp = std::env::temp_dir().join(format!("sugar-diff-git-it-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
@@ -1297,25 +1351,32 @@ mod tests {
         git(&["config", "user.email", "t@example.com"]);
         git(&["config", "user.name", "t"]);
 
-        // commit 1: proj = numpy-showcase's proofs
-        cp_r(&set_a, &tmp.join("proj"));
+        // commit 1: proj names contract `alpha`.
+        write_contract_proof(&tmp.join("proj"), "src/lib.rs::diff::alpha");
         git(&["add", "-Af"]);
         git(&["commit", "-qm", "c1"]);
 
-        // commit 2: proj = numpy-consumer-demo's proofs (a different contract set)
+        // commit 2: proj names contract `beta` — a disjoint contract set, so
+        // `alpha`'s CID is lost and `beta`'s CID is new across the two refs.
         std::fs::remove_dir_all(tmp.join("proj")).unwrap();
-        cp_r(&set_b, &tmp.join("proj"));
+        write_contract_proof(&tmp.join("proj"), "src/lib.rs::diff::beta");
         git(&["add", "-Af"]);
         git(&["commit", "-qm", "c2"]);
 
         let repo = tmp.to_string_lossy().to_string();
         let before = load_git(&repo, "HEAD~1", "proj", "test_before").expect("load before");
         let after = load_git(&repo, "HEAD", "proj", "test_after").expect("load after");
+        assert!(
+            before.load_errors.is_empty() && after.load_errors.is_empty(),
+            "before={:?} after={:?}",
+            before.load_errors,
+            after.load_errors
+        );
         let s = summarize(&before.name_to_cid, &after.name_to_cid);
         let _ = std::fs::remove_dir_all(&tmp);
 
-        // the two real proof sets denote different behaviors, so the cross-ref
-        // diff must show behaviors both appearing and disappearing.
+        // the two proof sets denote different behaviors, so the cross-ref diff
+        // must show behaviors both appearing and disappearing.
         assert!(
             s.new_behaviors > 0 && s.lost_behaviors > 0,
             "expected a real behavior delta across the two committed proof sets, got {s:?}"
