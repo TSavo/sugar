@@ -1029,6 +1029,17 @@ pub struct ResolvedCallEdge {
     pub file: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ToolchainPlanReport {
+    pub plan_memento_cid: String,
+    pub plan_cid: String,
+    pub status: String,
+    pub reason: String,
+    pub expected_output_cids: Vec<String>,
+    pub witness_memento_cid: Option<String>,
+    pub actual_output_cids: Vec<String>,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct Report {
     pub total_callsites: usize,
@@ -1041,6 +1052,7 @@ pub struct Report {
     pub rows: Vec<ReportRow>,
     pub load_errors: Vec<LoadError>,
     pub call_edges: Vec<ResolvedCallEdge>,
+    pub toolchain_plans: Vec<ToolchainPlanReport>,
 }
 
 #[cfg(test)]

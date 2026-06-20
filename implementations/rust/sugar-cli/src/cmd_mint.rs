@@ -261,6 +261,10 @@ struct MintedIrDocument {
 /// the canonical bytes (key-sorted, encoding-normalized) makes the key stable
 /// across surfaces that may serialize the same shape with different key order.
 fn canonical_dedup_key(item: &Value) -> String {
+    canonical_json_cid(item)
+}
+
+fn canonical_json_cid(item: &Value) -> String {
     let cvalue = json_to_cvalue(item);
     blake3_512_of(encode_jcs(cvalue.as_ref()).as_bytes())
 }
@@ -272,6 +276,7 @@ fn merge_ir_document_responses(per_plugin: Vec<PerPluginDispatch>) -> Result<Val
     let mut merged_authorities: Vec<Value> = Vec::new();
     let mut merged_witnesses: Vec<Value> = Vec::new();
     let mut merged_source_mementos: Vec<Value> = Vec::new();
+    let mut merged_plan_mementos: Vec<Value> = Vec::new();
     let mut oracle_observation = OracleObservation::default();
     // Content-shape dedup keys (NOT names). See `canonical_dedup_key`.
     let mut seen_content: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -360,6 +365,14 @@ fn merge_ir_document_responses(per_plugin: Vec<PerPluginDispatch>) -> Result<Val
         {
             merged_source_mementos.extend(arr.iter().cloned());
         }
+        if let Some(arr) = entry
+            .response
+            .get("planMementos")
+            .or_else(|| entry.response.get("plan_mementos"))
+            .and_then(|v| v.as_array())
+        {
+            merged_plan_mementos.extend(arr.iter().cloned());
+        }
     }
     let bridges_emitted = merged_ir
         .iter()
@@ -392,6 +405,9 @@ fn merge_ir_document_responses(per_plugin: Vec<PerPluginDispatch>) -> Result<Val
     }
     if !merged_source_mementos.is_empty() {
         merged["sourceMementos"] = Value::Array(merged_source_mementos);
+    }
+    if !merged_plan_mementos.is_empty() {
+        merged["planMementos"] = Value::Array(merged_plan_mementos);
     }
     Ok(merged)
 }
@@ -522,6 +538,7 @@ impl MintKit {
             .and_then(|options| options.get("quiet"))
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        let toolchain_plan = mint_request.get("toolchainPlan").cloned();
 
         // Prepare lift steps, then phase them. Producer surfaces emit
         // contracts/sugars; consumer surfaces, such as rust-implications,
@@ -770,7 +787,11 @@ impl MintKit {
             });
         }
 
-        let merged_lift_response = if per_plugin.len() == 1 {
+        let plan_memento = toolchain_plan
+            .map(|plan| finalize_toolchain_plan_memento(plan, &per_plugin))
+            .transpose()
+            .map_err(KitError::Transformation)?;
+        let mut merged_lift_response = if per_plugin.len() == 1 {
             // Single-plugin path: pass the response through unchanged so
             // proof-envelope and ir-document both work as before.
             per_plugin.into_iter().next().unwrap().response
@@ -781,6 +802,30 @@ impl MintKit {
             // failure is to reject the mix loudly.
             merge_ir_document_responses(per_plugin).map_err(KitError::Transformation)?
         };
+        if let Some(plan_memento) = plan_memento {
+            if merged_lift_response
+                .get("kind")
+                .and_then(|value| value.as_str())
+                == Some("ir-document")
+            {
+                let mut plan_mementos = merged_lift_response
+                    .get("planMementos")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                plan_mementos.push(plan_memento);
+                merged_lift_response["planMementos"] = Value::Array(plan_mementos);
+                debug!("mint: attached toolchain plan memento to ir-document");
+            } else {
+                warn!(
+                    kind = merged_lift_response
+                        .get("kind")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<missing>"),
+                    "mint: toolchain plan memento not attached to non-ir-document response"
+                );
+            }
+        }
         let result = mint_lift_response(
             &project_root_for_manifests,
             &out_dir,
@@ -851,6 +896,46 @@ fn lift_options_from_request(
             .map(|s| s.to_string()),
         contract_bindings,
     }
+}
+
+fn finalize_toolchain_plan_memento(
+    mut plan: Value,
+    outputs: &[PerPluginDispatch],
+) -> Result<Value, String> {
+    let obj = plan
+        .as_object_mut()
+        .ok_or_else(|| "`toolchainPlan` must be an object".to_string())?;
+    obj.entry("kind".to_string())
+        .or_insert_with(|| json!("component-plan"));
+    if obj.get("kind").and_then(Value::as_str) != Some("component-plan") {
+        return Err("`toolchainPlan.kind` must be `component-plan`".to_string());
+    }
+    obj.entry("schemaVersion".to_string())
+        .or_insert_with(|| json!("1"));
+    obj.remove("planCid");
+    obj.remove("cid");
+
+    let tool_outputs: Vec<Value> = outputs
+        .iter()
+        .map(|output| {
+            let output_cid = canonical_json_cid(&output.response);
+            json!({
+                "surface": output.surface,
+                "actualOutputCid": output_cid,
+            })
+        })
+        .collect();
+    let expected_output_cids: Vec<Value> = tool_outputs
+        .iter()
+        .filter_map(|output| output.get("actualOutputCid").and_then(Value::as_str))
+        .map(|cid| json!(cid))
+        .collect();
+    obj.insert("toolOutputs".to_string(), Value::Array(tool_outputs));
+    obj.insert(
+        "expectedOutputCids".to_string(),
+        Value::Array(expected_output_cids),
+    );
+    Ok(plan)
 }
 
 fn has_nontrivial_pre_json(pre: &Value) -> bool {
@@ -1298,10 +1383,12 @@ fn mint_input_multi(
         .first()
         .map(|p| p.surface.clone())
         .unwrap_or_default();
+    let toolchain_plan = toolchain_plan_seed(project_root, plugins);
     let mint_input = Input::Spec(json!({
         "projectRoot": project_root.display().to_string(),
         "surface": surface_for_mint,
         "outDir": out_dir.display().to_string(),
+        "toolchainPlan": toolchain_plan,
         "options": {
             "quiet": quiet
         }
@@ -1321,6 +1408,31 @@ fn mint_input_multi(
         input: Input::Path(Box::new(CorePath { algebra })),
         inputs,
     }
+}
+
+fn toolchain_plan_seed(project_root: &Path, plugins: &[PluginEntry]) -> Value {
+    let plugin_entries: Vec<Value> = plugins
+        .iter()
+        .map(|plugin| {
+            json!({
+                "name": plugin.name,
+                "kind": plugin.kind,
+                "surface": plugin.surface,
+                "workspaceOverride": plugin.workspace_override,
+                "emit": plugin.emit,
+                "layer": plugin.layer,
+            })
+        })
+        .collect();
+    json!({
+        "kind": "component-plan",
+        "schemaVersion": "1",
+        "workspaceRoot": project_root.display().to_string(),
+        "planning": {
+            "source": "mint-path",
+        },
+        "plugins": plugin_entries,
+    })
 }
 
 fn mint_lift_response(
@@ -1382,13 +1494,18 @@ fn mint_lift_response(
                 .get("sourceMementos")
                 .or_else(|| lift_resp.get("source_mementos"))
                 .and_then(|v| v.as_array());
+            let plan_mementos = lift_resp
+                .get("planMementos")
+                .or_else(|| lift_resp.get("plan_mementos"))
+                .and_then(|v| v.as_array());
             debug!(
                 ir_entries = ir.len(),
                 "mint: minting ir-document into .proof bundle"
             );
-            let minted = mint_ir_document_with_source_mementos(
+            let minted = mint_ir_document_with_source_and_plan_mementos(
                 ir,
                 source_mementos,
+                plan_mementos,
                 authorities,
                 implications,
                 witnesses,
@@ -1764,6 +1881,30 @@ fn mint_ir_document_with_source_mementos(
     out_dir: &Path,
     quiet: bool,
 ) -> Result<MintedIrDocument, String> {
+    mint_ir_document_with_source_and_plan_mementos(
+        ir,
+        source_mementos,
+        None,
+        authorities,
+        implications,
+        witnesses,
+        project_root,
+        out_dir,
+        quiet,
+    )
+}
+
+fn mint_ir_document_with_source_and_plan_mementos(
+    ir: &[Value],
+    source_mementos: Option<&Vec<Value>>,
+    plan_mementos: Option<&Vec<Value>>,
+    authorities: Option<&Vec<Value>>,
+    implications: Option<&Vec<Value>>,
+    witnesses: Option<&Vec<Value>>,
+    project_root: &Path,
+    out_dir: &Path,
+    quiet: bool,
+) -> Result<MintedIrDocument, String> {
     use std::collections::BTreeMap;
 
     #[derive(Clone)]
@@ -1831,6 +1972,13 @@ fn mint_ir_document_with_source_mementos(
     if let Some(source_mementos) = source_mementos {
         for source_memento in source_mementos {
             let (cid, bytes) = mint_source_memento(source_memento, None)?;
+            members.entry(cid).or_insert(bytes);
+        }
+    }
+
+    if let Some(plan_mementos) = plan_mementos {
+        for plan_memento in plan_mementos {
+            let (cid, bytes) = mint_plan_memento(plan_memento)?;
             members.entry(cid).or_insert(bytes);
         }
     }
@@ -2667,6 +2815,55 @@ fn mint_witness_memento(decl: &Value) -> Result<(String, Vec<u8>), String> {
             "signer": signer,
             "witnessCid": witness_cid,
             "witnessKind": witness_kind,
+        },
+        "schemaVersion": "1",
+    });
+    let canonical = encode_jcs(&json_to_cvalue(&envelope));
+    let cid = blake3_512_of(canonical.as_bytes());
+    Ok((cid, canonical.into_bytes()))
+}
+
+fn mint_plan_memento(decl: &Value) -> Result<(String, Vec<u8>), String> {
+    let mut body = decl
+        .get("plan_memento")
+        .or_else(|| decl.get("planMemento"))
+        .cloned()
+        .unwrap_or_else(|| decl.clone());
+    let body_obj = body
+        .as_object_mut()
+        .ok_or_else(|| "`plan-memento` must be an object".to_string())?;
+    body_obj
+        .entry("kind".to_string())
+        .or_insert_with(|| json!("component-plan"));
+    if body_obj.get("kind").and_then(Value::as_str) != Some("component-plan") {
+        return Err("`plan-memento.kind` must be `component-plan`".to_string());
+    }
+    body_obj
+        .entry("schemaVersion".to_string())
+        .or_insert_with(|| json!("1"));
+    let expected = body_obj
+        .get("expectedOutputCids")
+        .or_else(|| body_obj.get("expected_output_cids"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| "`plan-memento` missing `expectedOutputCids` array".to_string())?;
+    for cid in expected {
+        let cid = cid.as_str().ok_or_else(|| {
+            "`plan-memento.expectedOutputCids` entries must be strings".to_string()
+        })?;
+        if !cid.starts_with("blake3-512:") {
+            return Err(format!(
+                "`plan-memento.expectedOutputCids` entry must be a prefixed CID, got `{cid}`"
+            ));
+        }
+    }
+
+    let plan_canonical = encode_jcs(&json_to_cvalue(&body));
+    let plan_cid = blake3_512_of(plan_canonical.as_bytes());
+    let envelope = json!({
+        "body": body,
+        "header": {
+            "kind": "plan-memento",
+            "planCid": plan_cid,
         },
         "schemaVersion": "1",
     });
@@ -3662,6 +3859,22 @@ mod tests {
             .collect()
     }
 
+    fn plan_memento_members(catalog: &sugar_verifier::cbor_decode::CborValue) -> Vec<Value> {
+        let members = catalog
+            .as_map()
+            .and_then(|m| m.get("members"))
+            .and_then(|v| v.as_map())
+            .expect("proof members");
+        members
+            .values()
+            .filter_map(|member| member.as_bstr())
+            .filter_map(|bytes| serde_json::from_slice::<Value>(bytes).ok())
+            .filter(|envelope| {
+                envelope.pointer("/header/kind").and_then(|v| v.as_str()) == Some("plan-memento")
+            })
+            .collect()
+    }
+
     fn minted_panic_locus_contract_header(panic_loci: Option<Value>) -> Value {
         let (bytes, _, _) = mint_from_ir_document(
             &function_contract_with_panic_loci(panic_loci),
@@ -4376,6 +4589,199 @@ mod tests {
                 .pointer("/header/sourceCid")
                 .and_then(|v| v.as_str()),
             Some(format!("blake3-512:{}", "c".repeat(128)).as_str())
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mint_plan_memento_addresses_the_letter_and_the_envelope() {
+        let plan = json!({
+            "kind": "component-plan",
+            "schemaVersion": "1",
+            "workspaceRoot": "/workspace",
+            "expectedOutputCids": [
+                format!("blake3-512:{}", "a".repeat(128))
+            ],
+            "components": [{
+                "name": "rust-kit",
+                "responseCid": format!("blake3-512:{}", "b".repeat(128))
+            }]
+        });
+
+        let (member_cid, bytes) = mint_plan_memento(&plan).expect("mint plan memento");
+        let envelope: Value = serde_json::from_slice(&bytes).expect("canonical plan memento JSON");
+        let body_canonical = encode_jcs(json_to_cvalue(&plan).as_ref());
+        let body_cid = blake3_512_of(body_canonical.as_bytes());
+        let envelope_canonical = encode_jcs(json_to_cvalue(&envelope).as_ref());
+
+        assert_eq!(
+            envelope.pointer("/header/kind").and_then(Value::as_str),
+            Some("plan-memento")
+        );
+        assert_eq!(
+            envelope.pointer("/header/planCid").and_then(Value::as_str),
+            Some(body_cid.as_str()),
+            "the letter CID belongs in the envelope header"
+        );
+        assert_eq!(
+            envelope
+                .pointer("/body/expectedOutputCids/0")
+                .and_then(Value::as_str),
+            Some(format!("blake3-512:{}", "a".repeat(128)).as_str())
+        );
+        assert_eq!(
+            member_cid,
+            blake3_512_of(envelope_canonical.as_bytes()),
+            "the catalog member CID addresses the envelope bytes"
+        );
+    }
+
+    #[test]
+    fn mint_ir_document_mints_top_level_plan_mementos_as_envelope_members() {
+        let root = temp_workspace("mint_top_level_plan_mementos_envelope");
+        let out_dir = root.join("out");
+        std::fs::create_dir_all(&out_dir).expect("create out dir");
+        let plan_mementos = vec![json!({
+            "kind": "component-plan",
+            "schemaVersion": "1",
+            "workspaceRoot": root.display().to_string(),
+            "expectedOutputCids": [
+                format!("blake3-512:{}", "c".repeat(128))
+            ],
+            "toolOutputs": [{
+                "surface": "rust-test-assertions",
+                "actualOutputCid": format!("blake3-512:{}", "c".repeat(128))
+            }]
+        })];
+        let ir = vec![json!({
+            "kind": "contract",
+            "name": "plan.member.assertion",
+            "outBinding": "out",
+            "inv": {"kind": "atomic", "name": "=", "args": []}
+        })];
+
+        let minted = mint_ir_document_with_source_and_plan_mementos(
+            &ir,
+            None,
+            Some(&plan_mementos),
+            None,
+            None,
+            None,
+            &root,
+            &out_dir,
+            true,
+        )
+        .expect("mint ir-document");
+        let catalog = sugar_verifier::cbor_decode::decode(&minted.bytes).expect("decode proof");
+        let mementos = plan_memento_members(&catalog);
+        assert_eq!(mementos.len(), 1);
+        let memento = &mementos[0];
+        assert_eq!(
+            memento.pointer("/header/kind").and_then(Value::as_str),
+            Some("plan-memento")
+        );
+        assert_eq!(
+            memento
+                .pointer("/body/toolOutputs/0/surface")
+                .and_then(Value::as_str),
+            Some("rust-test-assertions")
+        );
+        assert_eq!(
+            memento
+                .pointer("/body/expectedOutputCids/0")
+                .and_then(Value::as_str),
+            Some(format!("blake3-512:{}", "c".repeat(128)).as_str())
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn finalize_toolchain_plan_adds_output_cids_to_the_letter_not_self_cids() {
+        let base = json!({
+            "kind": "component-plan",
+            "schemaVersion": "1",
+            "workspaceRoot": "/workspace",
+            "planning": {"source": "configured"},
+            "plugins": [{
+                "kind": "lift",
+                "surface": "rust-test-assertions"
+            }]
+        });
+        let outputs = vec![PerPluginDispatch {
+            surface: "rust-test-assertions".to_string(),
+            response: json!({
+                "kind": "ir-document",
+                "ir": [],
+                "diagnostics": []
+            }),
+        }];
+
+        let finalized =
+            finalize_toolchain_plan_memento(base, &outputs).expect("finalize toolchain plan");
+        let response_cid = canonical_json_cid(&outputs[0].response);
+
+        assert_eq!(
+            finalized
+                .pointer("/expectedOutputCids/0")
+                .and_then(Value::as_str),
+            Some(response_cid.as_str())
+        );
+        assert_eq!(
+            finalized
+                .pointer("/toolOutputs/0/actualOutputCid")
+                .and_then(Value::as_str),
+            Some(response_cid.as_str())
+        );
+        assert!(
+            finalized.get("planCid").is_none(),
+            "the letter must not contain its own CID; the envelope header carries it"
+        );
+    }
+
+    #[test]
+    fn mint_path_input_threads_toolchain_plan_seed() {
+        let root = temp_workspace("mint_path_toolchain_plan_seed");
+        let out_dir = root.join("out");
+        std::fs::create_dir_all(&out_dir).expect("create out dir");
+        let plugin = PluginEntry {
+            name: Some("rust-lift".to_string()),
+            kind: Some("lift".to_string()),
+            surface: "rust-test-assertions".to_string(),
+            workspace_override: None,
+            emit: Some("ir-document".to_string()),
+            layer: None,
+        };
+
+        let input = mint_input_multi(&root, &[plugin], &out_dir, true, false);
+        let path = match &input.input {
+            Input::Path(path) => path,
+            other => panic!("expected path input, got {other:?}"),
+        };
+        let mint_step = path
+            .algebra
+            .iter()
+            .find(|step| step.name == "mint")
+            .expect("mint step");
+        let mint_input_cid = mint_step.inputs.first().expect("mint input cid");
+        let spec = match input.inputs.get_input(mint_input_cid) {
+            Some(Input::Spec(value)) => value,
+            other => panic!("expected mint spec, got {other:?}"),
+        };
+
+        assert_eq!(
+            spec.pointer("/toolchainPlan/kind").and_then(Value::as_str),
+            Some("component-plan")
+        );
+        assert_eq!(
+            spec.pointer("/toolchainPlan/plugins/0/surface")
+                .and_then(Value::as_str),
+            Some("rust-test-assertions")
+        );
+        assert!(
+            spec.pointer("/toolchainPlan/expectedOutputCids").is_none(),
+            "expected output CIDs are added after lifter outputs exist"
         );
 
         let _ = std::fs::remove_dir_all(root);

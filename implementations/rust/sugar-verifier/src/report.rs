@@ -5,7 +5,10 @@
 
 use serde_json::Value as Json;
 
-use crate::types::{CallSite, LoadError, ObligationVerdict, Report, ReportRow};
+use crate::types::{
+    memento_body, memento_kind, CallSite, LoadError, MementoPool, ObligationVerdict, Report,
+    ReportRow, ToolchainPlanReport,
+};
 
 pub fn add_callsite(cs: &CallSite, verdict: ObligationVerdict, reason: &str, r: &mut Report) {
     add_callsite_with_discharge(cs, verdict, reason, None, None, r);
@@ -159,9 +162,131 @@ pub fn add_load_errors(errs: &[LoadError], r: &mut Report) {
     r.load_errors = errs.to_vec();
 }
 
+pub fn add_toolchain_plans(pool: &MementoPool, r: &mut Report) {
+    r.toolchain_plans.extend(toolchain_plan_reports(pool));
+}
+
+pub fn toolchain_plan_reports(pool: &MementoPool) -> Vec<ToolchainPlanReport> {
+    let mut witness_outputs = Vec::new();
+    for (cid, envelope) in &pool.mementos {
+        if memento_kind(envelope) != Some("witness-memento") {
+            continue;
+        }
+        let Some(body) = memento_body(envelope) else {
+            continue;
+        };
+        let actual = string_array(body, "actualOutputCids")
+            .or_else(|| string_array(body, "actual_output_cids"))
+            .unwrap_or_default();
+        if actual.is_empty() {
+            continue;
+        }
+        let plan_cid = string_field(body, "planCid").or_else(|| string_field(body, "plan_cid"));
+        witness_outputs.push(WitnessOutputs {
+            memento_cid: cid.clone(),
+            plan_cid,
+            actual,
+        });
+    }
+
+    let mut rows = Vec::new();
+    for (cid, envelope) in &pool.mementos {
+        if memento_kind(envelope) != Some("plan-memento") {
+            continue;
+        }
+        let plan_cid = envelope
+            .pointer("/header/planCid")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let expected = memento_body(envelope)
+            .and_then(|body| {
+                string_array(body, "expectedOutputCids")
+                    .or_else(|| string_array(body, "expected_output_cids"))
+            })
+            .unwrap_or_default();
+        let plan_specific: Vec<&WitnessOutputs> = witness_outputs
+            .iter()
+            .filter(|witness| witness.plan_cid.as_deref() == Some(plan_cid.as_str()))
+            .collect();
+        let legacy_unscoped: Vec<&WitnessOutputs> = witness_outputs
+            .iter()
+            .filter(|witness| witness.plan_cid.is_none())
+            .collect();
+        let candidate_witnesses = if !plan_specific.is_empty() {
+            plan_specific
+        } else {
+            legacy_unscoped
+        };
+        let matched = candidate_witnesses
+            .iter()
+            .copied()
+            .find(|witness| witness.actual.as_slice() == expected.as_slice());
+        let (status, reason, witness_memento_cid, actual_output_cids) = if let Some(witness) =
+            matched
+        {
+            (
+                "confirmed".to_string(),
+                "plan expected output CIDs match a witness-memento's actual output CIDs"
+                    .to_string(),
+                Some(witness.memento_cid.clone()),
+                witness.actual.clone(),
+            )
+        } else if let Some(witness) = candidate_witnesses.first() {
+            (
+                "refuted".to_string(),
+                "plan expected output CIDs do not match loaded witness-memento actual output CIDs"
+                    .to_string(),
+                Some(witness.memento_cid.clone()),
+                witness.actual.clone(),
+            )
+        } else {
+            (
+                "declared".to_string(),
+                "plan is pinned in the proof envelope; no matching witness-memento was loaded"
+                    .to_string(),
+                None,
+                Vec::new(),
+            )
+        };
+        rows.push(ToolchainPlanReport {
+            plan_memento_cid: cid.clone(),
+            plan_cid,
+            status,
+            reason,
+            expected_output_cids: expected,
+            witness_memento_cid,
+            actual_output_cids,
+        });
+    }
+    rows.sort_by(|a, b| a.plan_memento_cid.cmp(&b.plan_memento_cid));
+    rows
+}
+
+struct WitnessOutputs {
+    memento_cid: String,
+    plan_cid: Option<String>,
+    actual: Vec<String>,
+}
+
+fn string_field(body: &Json, field: &str) -> Option<String> {
+    body.get(field)?.as_str().map(str::to_string)
+}
+
+fn string_array(body: &Json, field: &str) -> Option<Vec<String>> {
+    Some(
+        body.get(field)?
+            .as_array()?
+            .iter()
+            .filter_map(|value| value.as_str().map(str::to_string))
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn self_post_does_not_count_as_a_callsite() {
@@ -214,5 +339,171 @@ mod tests {
             r.violations, 1,
             "a failing self-post must still fail the run"
         );
+    }
+
+    #[test]
+    fn toolchain_plan_without_witness_is_declared() {
+        let mut pool = MementoPool::default();
+        pool.insert(
+            "blake3-512:plan-member".to_string(),
+            json!({
+                "schemaVersion": "1",
+                "header": {
+                    "kind": "plan-memento",
+                    "planCid": "blake3-512:plan-letter"
+                },
+                "body": {
+                    "kind": "component-plan",
+                    "expectedOutputCids": ["blake3-512:out"]
+                }
+            }),
+        );
+
+        let rows = toolchain_plan_reports(&pool);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].status, "declared");
+        assert_eq!(rows[0].plan_memento_cid, "blake3-512:plan-member");
+        assert_eq!(rows[0].plan_cid, "blake3-512:plan-letter");
+        assert_eq!(rows[0].expected_output_cids, vec!["blake3-512:out"]);
+        assert!(rows[0].witness_memento_cid.is_none());
+    }
+
+    #[test]
+    fn toolchain_plan_matching_witness_pointer_is_confirmed() {
+        let mut pool = MementoPool::default();
+        pool.insert(
+            "blake3-512:plan-member".to_string(),
+            json!({
+                "schemaVersion": "1",
+                "header": {
+                    "kind": "plan-memento",
+                    "planCid": "blake3-512:plan-letter"
+                },
+                "body": {
+                    "kind": "component-plan",
+                    "expectedOutputCids": ["blake3-512:out"]
+                }
+            }),
+        );
+        pool.insert(
+            "blake3-512:witness-member".to_string(),
+            json!({
+                "schemaVersion": "1",
+                "header": {
+                    "kind": "witness-memento",
+                    "witnessCid": "blake3-512:witness-body",
+                    "witnessKind": "toolchain-run"
+                },
+                "body": {
+                    "kind": "witness-memento",
+                    "witness_cid": "blake3-512:witness-body",
+                    "actualOutputCids": ["blake3-512:out"],
+                    "signer": "ed25519:test",
+                    "signature": "ed25519:sig"
+                }
+            }),
+        );
+
+        let rows = toolchain_plan_reports(&pool);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].status, "confirmed");
+        assert_eq!(
+            rows[0].witness_memento_cid.as_deref(),
+            Some("blake3-512:witness-member")
+        );
+        assert_eq!(rows[0].actual_output_cids, vec!["blake3-512:out"]);
+    }
+
+    #[test]
+    fn toolchain_plan_mismatched_witness_pointer_is_refuted() {
+        let mut pool = MementoPool::default();
+        pool.insert(
+            "blake3-512:plan-member".to_string(),
+            json!({
+                "schemaVersion": "1",
+                "header": {
+                    "kind": "plan-memento",
+                    "planCid": "blake3-512:plan-letter"
+                },
+                "body": {
+                    "kind": "component-plan",
+                    "expectedOutputCids": ["blake3-512:expected"]
+                }
+            }),
+        );
+        pool.insert(
+            "blake3-512:witness-member".to_string(),
+            json!({
+                "schemaVersion": "1",
+                "header": {
+                    "kind": "witness-memento",
+                    "witnessCid": "blake3-512:witness-body",
+                    "witnessKind": "toolchain-run"
+                },
+                "body": {
+                    "kind": "witness-memento",
+                    "witness_cid": "blake3-512:witness-body",
+                    "actualOutputCids": ["blake3-512:actual"],
+                    "signer": "ed25519:test",
+                    "signature": "ed25519:sig"
+                }
+            }),
+        );
+
+        let rows = toolchain_plan_reports(&pool);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].status, "refuted");
+        assert_eq!(rows[0].expected_output_cids, vec!["blake3-512:expected"]);
+        assert_eq!(rows[0].actual_output_cids, vec!["blake3-512:actual"]);
+    }
+
+    #[test]
+    fn toolchain_plan_ignores_witness_scoped_to_other_plan() {
+        let mut pool = MementoPool::default();
+        pool.insert(
+            "blake3-512:plan-member".to_string(),
+            json!({
+                "schemaVersion": "1",
+                "header": {
+                    "kind": "plan-memento",
+                    "planCid": "blake3-512:plan-letter"
+                },
+                "body": {
+                    "kind": "component-plan",
+                    "expectedOutputCids": ["blake3-512:expected"]
+                }
+            }),
+        );
+        pool.insert(
+            "blake3-512:witness-member".to_string(),
+            json!({
+                "schemaVersion": "1",
+                "header": {
+                    "kind": "witness-memento",
+                    "witnessCid": "blake3-512:witness-body",
+                    "witnessKind": "toolchain-run"
+                },
+                "body": {
+                    "kind": "witness-memento",
+                    "witness_cid": "blake3-512:witness-body",
+                    "planCid": "blake3-512:other-plan-letter",
+                    "actualOutputCids": ["blake3-512:actual"],
+                    "signer": "ed25519:test",
+                    "signature": "ed25519:sig"
+                }
+            }),
+        );
+
+        let rows = toolchain_plan_reports(&pool);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].status, "declared",
+            "a witness scoped to another plan is not evidence for this plan"
+        );
+        assert!(rows[0].witness_memento_cid.is_none());
     }
 }
