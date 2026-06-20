@@ -18,6 +18,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
             f,
             fcx.scope(),
             fcx.let_inits(),
+            fcx,
         ))),
         _ => None,
     }

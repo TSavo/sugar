@@ -21,15 +21,16 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use sugar_ir_symbolic::Term;
+use sugar_ir_symbolic::{ConstValue, Term};
 use syn::Expr;
 
 use crate::sugar::compare::CompareSugar;
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
 use crate::{
-    bool_const, const_eval, relation_from_binop, term_binop_name, token_key, ConstVal, Desugared,
-    Outcome, Sugar, SugarCtx,
+    const_eval, const_fold_int_term, const_fold_u128_term, const_val_term, num,
+    relation_from_binop, term_binop_name, token_key, u128_term, Desugared, Outcome, Sugar,
+    SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -43,10 +44,11 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     let Expr::Binary(binary) = expr else {
         return None;
     };
+    if let Some(term) = const_eval(expr, &BTreeMap::new()).and_then(|value| const_val_term(&value))
+    {
+        return Some(resolved_term(term));
+    }
     if let Some(rel) = relation_from_binop(&binary.op) {
-        if let Some(ConstVal::Bool(b)) = const_eval(expr, &BTreeMap::new()) {
-            return Some(resolved_term(bool_const(b)));
-        }
         return Some(Box::new(CompareSugar {
             left: build_term(&binary.left, fcx),
             right: build_term(&binary.right, fcx),
@@ -93,10 +95,30 @@ impl Sugar for BinOpSugar {
             },
             Outcome::Hit(e) => return Outcome::Hit(e),
         };
-        Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
+        let term = Rc::new(Term::Ctor {
             name: self.op_name.to_string(),
             args: vec![lhs, rhs],
-        })))
+        });
+        if let Some(value) = const_fold_u128_term(&term) {
+            return Outcome::Dug(Desugared::Term(u128_term(value)));
+        }
+        if int_fold_is_sort_safe(&term) {
+            if let Some(value) = const_fold_int_term(&term) {
+                return Outcome::Dug(Desugared::Term(num(value)));
+            }
+        }
+        Outcome::Dug(Desugared::Term(term))
+    }
+}
+
+fn int_fold_is_sort_safe(term: &Term) -> bool {
+    match term {
+        Term::Const {
+            value: ConstValue::Int(_),
+            sort,
+        } => sort.name == "Int",
+        Term::Ctor { args, .. } => args.iter().all(|arg| int_fold_is_sort_safe(arg)),
+        _ => false,
     }
 }
 
@@ -104,7 +126,7 @@ impl Sugar for BinOpSugar {
 mod tests {
     use super::*;
     use crate::Effect;
-    use sugar_ir_symbolic::make_var;
+    use sugar_ir_symbolic::{make_var, ConstValue};
 
     // ── LOCAL stub children: a `StubTerm` digs to its held term (`Dug(Term)`); a
     // `StubHit` strikes a named effect (`Hit`). They IGNORE `ctx`, so the parent's
@@ -151,6 +173,19 @@ mod tests {
         }
     }
 
+    fn int_const(t: &Term) -> i128 {
+        match t {
+            Term::Const {
+                value: ConstValue::Int(value),
+                sort,
+            } => {
+                assert_eq!(sort.name, "Int");
+                *value
+            }
+            _ => panic!("expected an Int const term, got {t:?}"),
+        }
+    }
+
     #[test]
     fn binop_add_emits_plus_ctor_over_both_operand_terms() {
         let node = BinOpSugar {
@@ -184,6 +219,20 @@ mod tests {
         };
         let (name, _) = ctor(&term);
         assert_eq!(name, "int-div");
+    }
+
+    #[test]
+    fn binop_folds_ground_untyped_int_children_after_recursive_desugar() {
+        let node = BinOpSugar {
+            left: Box::new(StubTerm(num(6))),
+            right: Box::new(StubTerm(num(1))),
+            op_name: "+",
+        };
+        let term = match run(&node) {
+            Outcome::Dug(d) => d.into_term().expect("a Term"),
+            Outcome::Hit(_) => panic!("expected Dug, got Hit"),
+        };
+        assert_eq!(int_const(&term), 7);
     }
 
     #[test]

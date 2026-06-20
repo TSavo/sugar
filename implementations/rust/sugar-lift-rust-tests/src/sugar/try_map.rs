@@ -14,9 +14,9 @@ use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::monadic;
 use crate::sugar::unit_path::unit_path_literal_name;
 use crate::{
-    canonical_term_sig, const_eval, const_eval_option_closure, const_path_key,
-    repeat_count_literal, resolve_value_call_inline, strip_refs_groups, ConstVal, Desugared,
-    Outcome, Sugar, SugarCtx,
+    canonical_term_sig, const_eval, const_eval_option_closure, const_path_key, primitive_int_term,
+    repeat_count_literal, resolve_value_call_inline, strip_refs_groups, u128_term, ConstVal,
+    Desugared, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -157,6 +157,8 @@ fn literal_array_term_from_values(values: &[ConstVal]) -> Option<Rc<Term>> {
 fn const_val_term(value: &ConstVal) -> Option<Rc<Term>> {
     match value {
         ConstVal::Int(n) => Some(num(*n)),
+        ConstVal::PrimitiveInt { raw, kind } => primitive_int_term(*raw, *kind),
+        ConstVal::UInt128(n) => Some(u128_term(*n)),
         ConstVal::Bool(b) => Some(Rc::new(Term::Const {
             value: ConstValue::Bool(*b),
             sort: Sort::bool(),

@@ -7,26 +7,30 @@
 use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::term_leaf::resolved_term;
-use crate::{const_path_key, num, Outcome, Sugar, SugarCtx};
-use syn::{Expr, ExprPath};
+use std::rc::Rc;
+
+use sugar_ir_symbolic::Term;
+
+use crate::{const_path_key, num, str_const, u128_term, Outcome, Sugar, SugarCtx};
+use syn::{Expr, ExprPath, Type};
 use tracing::debug;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("const", SugarRole::Term, SugarPriority::Tertiary, recognize);
 
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    if let Some(value) = primitive_assoc_const_expr(expr) {
+        debug!(
+            target: "sugar_lift_rust_tests::sugar::const_path",
+            path = %crate::token_key(expr),
+            term = ?value,
+            "resolved primitive associated const compiler axiom"
+        );
+        return Some(resolved_term(value));
+    }
     let (name, path) = simple_const_path(expr)?;
     if fcx.resolving_const_path(&name) {
         return None;
-    }
-    if let Some(value) = primitive_assoc_const_value(path) {
-        debug!(
-            target: "sugar_lift_rust_tests::sugar::const_path",
-            path = name.as_str(),
-            value,
-            "resolved primitive associated const compiler axiom"
-        );
-        return Some(resolved_term(num(value)));
     }
     let init = fcx.scope().const_expr_for_path(path)?;
     let child_fcx = fcx.with_const_path(&name);
@@ -47,7 +51,19 @@ fn simple_const_path(expr: &Expr) -> Option<(String, &syn::Path)> {
     Some((name, path))
 }
 
-fn primitive_assoc_const_value(path: &syn::Path) -> Option<i128> {
+fn primitive_assoc_const_expr(expr: &Expr) -> Option<Rc<Term>> {
+    let Expr::Path(path) = expr else {
+        return None;
+    };
+    if let Some(qself) = &path.qself {
+        let ty = primitive_type_name(&qself.ty)?;
+        let konst = path.path.segments.last()?.ident.to_string();
+        return primitive_assoc_const_parts(&ty, &konst);
+    }
+    primitive_assoc_const_value(&path.path)
+}
+
+fn primitive_assoc_const_value(path: &syn::Path) -> Option<Rc<Term>> {
     if path.segments.len() != 2 {
         return None;
     }
@@ -60,31 +76,58 @@ fn primitive_assoc_const_value(path: &syn::Path) -> Option<i128> {
     }
     let ty = path.segments[0].ident.to_string();
     let konst = path.segments[1].ident.to_string();
-    match (ty.as_str(), konst.as_str()) {
-        ("i8", "MIN") => Some(i128::from(i8::MIN)),
-        ("i8", "MAX") => Some(i128::from(i8::MAX)),
-        ("i16", "MIN") => Some(i128::from(i16::MIN)),
-        ("i16", "MAX") => Some(i128::from(i16::MAX)),
-        ("i32", "MIN") => Some(i128::from(i32::MIN)),
-        ("i32", "MAX") => Some(i128::from(i32::MAX)),
-        ("i64", "MIN") => Some(i128::from(i64::MIN)),
-        ("i64", "MAX") => Some(i128::from(i64::MAX)),
-        ("i128", "MIN") => Some(i128::MIN),
-        ("i128", "MAX") => Some(i128::MAX),
-        ("isize", "MIN") => Some(isize::MIN as i128),
-        ("isize", "MAX") => Some(isize::MAX as i128),
-        ("u8", "MIN") => Some(i128::from(u8::MIN)),
-        ("u8", "MAX") => Some(i128::from(u8::MAX)),
-        ("u16", "MIN") => Some(i128::from(u16::MIN)),
-        ("u16", "MAX") => Some(i128::from(u16::MAX)),
-        ("u32", "MIN") => Some(i128::from(u32::MIN)),
-        ("u32", "MAX") => Some(i128::from(u32::MAX)),
-        ("u64", "MIN") => Some(i128::from(u64::MIN)),
-        ("u64", "MAX") => Some(i128::from(u64::MAX)),
-        ("usize", "MIN") => Some(usize::MIN as i128),
-        ("usize", "MAX") => Some(usize::MAX as i128),
-        _ => None,
-    }
+    primitive_assoc_const_parts(&ty, &konst)
+}
+
+fn primitive_assoc_const_parts(ty: &str, konst: &str) -> Option<Rc<Term>> {
+    let value = match (ty, konst) {
+        ("i8", "MIN") => num(i128::from(i8::MIN)),
+        ("i8", "MAX") => num(i128::from(i8::MAX)),
+        ("i8", "BITS") => num(i128::from(i8::BITS)),
+        ("i16", "MIN") => num(i128::from(i16::MIN)),
+        ("i16", "MAX") => num(i128::from(i16::MAX)),
+        ("i16", "BITS") => num(i128::from(i16::BITS)),
+        ("i32", "MIN") => num(i128::from(i32::MIN)),
+        ("i32", "MAX") => num(i128::from(i32::MAX)),
+        ("i32", "BITS") => num(i128::from(i32::BITS)),
+        ("i64", "MIN") => num(i128::from(i64::MIN)),
+        ("i64", "MAX") => num(i128::from(i64::MAX)),
+        ("i64", "BITS") => num(i128::from(i64::BITS)),
+        ("i128", "MIN") => num(i128::MIN),
+        ("i128", "MAX") => num(i128::MAX),
+        ("i128", "BITS") => num(i128::from(i128::BITS)),
+        ("isize", "MIN") => num(isize::MIN as i128),
+        ("isize", "MAX") => num(isize::MAX as i128),
+        ("isize", "BITS") => num(i128::from(isize::BITS)),
+        ("u8", "MIN") => num(i128::from(u8::MIN)),
+        ("u8", "MAX") => num(i128::from(u8::MAX)),
+        ("u8", "BITS") => num(i128::from(u8::BITS)),
+        ("u16", "MIN") => num(i128::from(u16::MIN)),
+        ("u16", "MAX") => num(i128::from(u16::MAX)),
+        ("u16", "BITS") => num(i128::from(u16::BITS)),
+        ("u32", "MIN") => num(i128::from(u32::MIN)),
+        ("u32", "MAX") => num(i128::from(u32::MAX)),
+        ("u32", "BITS") => num(i128::from(u32::BITS)),
+        ("u64", "MIN") => num(i128::from(u64::MIN)),
+        ("u64", "MAX") => num(i128::from(u64::MAX)),
+        ("u64", "BITS") => num(i128::from(u64::BITS)),
+        ("u128", "MIN") => u128_term(u128::MIN),
+        ("u128", "MAX") => u128_term(u128::MAX),
+        ("u128", "BITS") => num(i128::from(u128::BITS)),
+        ("usize", "MIN") => num(usize::MIN as i128),
+        ("usize", "MAX") => num(usize::MAX as i128),
+        ("usize", "BITS") => num(i128::from(usize::BITS)),
+        ("char", "MAX") => str_const(char::MAX.to_string()),
+        _ => return None,
+    };
+    Some(value)
+}
+
+fn primitive_type_name(ty: &Type) -> Option<String> {
+    let Type::Path(path) = ty else {
+        return None;
+    };
+    Some(path.path.segments.last()?.ident.to_string())
 }
 
 pub(crate) struct ConstSugar {
