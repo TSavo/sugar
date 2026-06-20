@@ -1,12 +1,12 @@
 {
-  "assertion_multiset_cid": "blake3-512:ee0c6d92a4aa44f2f43bb657b70d9b87ba202392a6ea5c2aee519197e02aa59f6a3a425b49f7aa00191688e57c48bb795b58f74b35a2518cb6d4465eeb000a50",
+  "assertion_multiset_cid": "blake3-512:9500ba7004fb889a21504445a3cc5958a91336f9ec03bbfccc4980611556def895e4382ce8f01beb477fb06b96354fe4b31d25300a84d262417b3e731b0295ad",
   "silent": 0,
-  "discharged": 6098,
-  "refused": 705,
+  "discharged": 10544,
+  "refused": 1125,
   "unclassified": 0,
-  "inactive": 62,
+  "inactive": 65,
   "prev_unclassified": 0,
-  "note": "FACTORY ACCOUNTING RE-PIN: ConstraintSugar no longer owns human predicate method names; arbitrary method calls are dug through MethodCallsiteSugar when visible source constrains the universe, while stdlib/specialized sugar still wins by priority. Assertion vocabulary is shape-owned (relation macros, bool macros, if-panic with panic/abort-only divergence), and the broad if-return path is not treated as a constraint. The assertion multiset CID is unchanged; canonical linux coretests still has SILENT 0 and unclassified 0. Counts move because successful method-callsite digs are no longer also counted as standalone impl-method assertions: callsite-expanded obligations drop from 505 to 488, with discharged 6106->6098 and refused 714->705. This is an accounting correction, not a corpus change: same CID, fewer duplicate impl-method rows, no hidden bucket introduced.",
+  "note": "RE-PIN 2026-06-19 (main 72f566294): the recursive Sugar factory grew ~10x in callsite expansion across the prior 89 commits -- MethodSugar now recurses through visible source methods, method-contract DFS bridged through vendor proofs, contract-edge emission, and #2284 'add remaining coretests sugar'. callsite-expanded obligations 488->4945; discharged 6098->10544, refused 705->1125, inactive 62->65. unclassified and SILENT stay 0 (total accounting holds; the identity 6789 raw surfaces + 4945 expanded - 0 missing = 11734 closes). The assertion_multiset_cid changed ee0c6d92->9500ba70 because the assertion surface grew (raw surfaces 6377->6789). Soundness re-verified before re-pin: the assertion_lift teeth suite is 404/404 green -- every dischargeable shape's bad-twin goes z3-UNSAT, so the discharge growth is constrained digging, not fake-dig. This is a deliberate re-pin to the grown engine, not a rust-version bump or a corpus change; no hidden bucket introduced (unclassified/silent/missing all 0).",
   "missing_assertions": 0,
-  "callsite_expansion": 488
+  "callsite_expansion": 4945
 }
