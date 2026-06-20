@@ -27,7 +27,7 @@ use libsugar::core::emit_obligation::{
 use owo_colors::OwoColorize;
 use serde_json::{json, Value};
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, Ed25519Seed, ProofEnvelopeInput,
+    build_proof_envelope, ed25519_pubkey_string, proof_filename, Ed25519Seed, ProofEnvelopeInput,
 };
 
 use crate::project_config::{read_project_config, read_user_config, PluginEntry, ProjectConfig};
@@ -440,7 +440,7 @@ fn emit_bridge_envelope(
         signer_seed: RECOGNIZE_BRIDGE_SIGNER_SEED,
         declared_at: RECOGNIZE_BRIDGE_DECLARED_AT.to_string(),
     });
-    let path = proof_dir.join(format!("{}.proof", proof.cid));
+    let path = proof_dir.join(proof_filename(&proof.cid));
     std::fs::write(&path, &proof.bytes).map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(Some(path))
 }

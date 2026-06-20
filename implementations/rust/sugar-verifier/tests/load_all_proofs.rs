@@ -176,6 +176,54 @@ fn loads_published_proof_successfully() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+// ---------------------------------------------------------------------------
+// Windows-safe filename: the colon-free `blake3-512_<hex>.proof` form loads.
+// (Regression for the `:`-in-filename Windows problem.) The on-disk name has
+// NO colon and retains the `blake3-512_` prefix; the loader recomputes the CID
+// from bytes and indexes the mementos exactly as for the bare/colon forms.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn loads_colon_free_underscore_filename() {
+    use sugar_proof_envelope::proof_filename;
+
+    let dir = make_unique_dir("colon-free-filename");
+    let cid = publish_parseint_proof(&dir);
+
+    // Find the just-published proof and rename it to the canonical on-disk
+    // (underscore) form produced by the shared helper.
+    let entries: Vec<_> = fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("proof"))
+        .collect();
+    assert_eq!(entries.len(), 1);
+    let original = entries[0].path();
+    let underscore_name = proof_filename(&cid);
+    assert!(
+        !underscore_name.contains(':'),
+        "on-disk filename must be colon-free for Windows: {underscore_name}"
+    );
+    assert!(
+        underscore_name.starts_with("blake3-512_"),
+        "on-disk filename must retain the blake3-512_ prefix: {underscore_name}"
+    );
+    let renamed = dir.join(&underscore_name);
+    fs::rename(&original, &renamed).unwrap();
+
+    let pool = load_all_proofs::run(&dir);
+    assert_eq!(
+        pool.load_errors.len(),
+        0,
+        "no load errors expected for the underscore filename; got {:?}",
+        pool.load_errors
+    );
+    // 1 contract + 1 bridge = 2 mementos, identical to the bare/colon forms.
+    assert_eq!(pool.mementos.len(), 2);
+    assert!(pool.bridges_by_symbol.contains_key("parseInt"));
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn member_cids_in_pool_match_envelope_identities() {
     let dir = make_unique_dir("member-cid-match");

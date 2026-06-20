@@ -4,9 +4,13 @@
 // CBOR-decode the catalog, JSON-parse each member envelope, recompute
 // every CID, reject mismatches, index by CID and by sourceSymbol.
 //
-// v1.1.0: filenames MUST be `blake3-512:<128 hex>.proof` and member
-// CIDs MUST start with `"blake3-512:"`. Producer signatures MUST start
-// with `"ed25519:"`. Anything else is rejected loud.
+// v1.1.0: the canonical on-disk filename is `blake3-512_<128 hex>.proof`
+// (the CID's `:` replaced by `_` for Windows; the `blake3-512` prefix is
+// retained for hash-algorithm agility). The legacy `blake3-512:<hex>` and
+// bare `<hex>` stems are also accepted (parsed via
+// `sugar_proof_envelope::cid_from_proof_stem`). Member CIDs MUST start
+// with `"blake3-512:"`. Producer signatures MUST start with `"ed25519:"`.
+// Anything else is rejected loud.
 //
 // v1.2 layered shape (per protocol/specs/2026-05-03-substrate-layers-
 // envelope-header-body.md): mementos are `{envelope, header, metadata}`
@@ -138,33 +142,37 @@ fn load_one(path: &Path, pool: &mut MementoPool) -> Result<(), Box<dyn std::erro
         .unwrap_or_default()
         .to_string();
     let stem = filename.trim_end_matches(".proof");
-    // We accept either `<hex>.proof` or `blake3-512:<hex>.proof` filename
-    // shapes; the trust root is recomputed either way.
+    // We accept three filename shapes, all parsed by the shared helper:
+    //   * `blake3-512_<hex>` - the colon-free on-disk form (Windows-safe)
+    //   * `blake3-512:<hex>` - the legacy colon form
+    //   * `<hex>`            - a bare 128-hex stem
+    // The trust root is recomputed from the bytes regardless; the
+    // filename is advisory. A non-hex stem still errors loud.
     let derived_full = blake3_512_of(&bytes);
-    let derived_hex = derived_full.trim_start_matches(HASH_TAG_PREFIX);
-    let filename_hex = stem.trim_start_matches(HASH_TAG_PREFIX);
-    let hex_only = filename_hex.chars().all(|c| c.is_ascii_hexdigit());
-    if hex_only && filename_hex.len() == 128 && filename_hex != derived_hex {
-        pool.load_errors.push(LoadError {
-            proof_path: source_label,
-            reason: format!(
-                "rule 1 (trust root): filename CID {filename_hex} != content hash {derived_hex}"
-            ),
-        });
-        return Ok(());
-    }
-    // Filenames whose stem isn't a 128-hex string are tolerated; the
-    // CID-from-bytes is what matters. (C++ rejects unknown tags loud;
-    // we keep that behavior via the prefix-trim: if there's a tag,
-    // it must be blake3-512.)
-    if !hex_only && !filename_hex.is_empty() {
-        pool.load_errors.push(LoadError {
-            proof_path: source_label,
-            reason: format!(
-                "rule 1: filename '{filename}' has non-hex stem; v1.1.0 requires `blake3-512:`"
-            ),
-        });
-        return Ok(());
+    match sugar_proof_envelope::cid_from_proof_stem(stem) {
+        Some(filename_cid) => {
+            if filename_cid != derived_full {
+                pool.load_errors.push(LoadError {
+                    proof_path: source_label,
+                    reason: format!(
+                        "rule 1 (trust root): filename CID {filename_cid} != content hash {derived_full}"
+                    ),
+                });
+                return Ok(());
+            }
+        }
+        None => {
+            // Stem isn't a recognizable CID (e.g. the negative fixture
+            // `invalid-filename-cid`). v1.1.0 requires a `blake3-512`
+            // stem; reject loud. (C++ rejects unknown tags the same way.)
+            pool.load_errors.push(LoadError {
+                proof_path: source_label,
+                reason: format!(
+                    "rule 1: filename '{filename}' has non-hex stem; v1.1.0 requires `blake3-512`"
+                ),
+            });
+            return Ok(());
+        }
     }
 
     load_catalog_bytes(path.display().to_string(), None, &bytes, pool)

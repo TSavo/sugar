@@ -55,7 +55,7 @@ use sugar_claim_envelope::{
 };
 use sugar_ir_types::Sort;
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, Ed25519Seed, ProofEnvelopeInput,
+    build_proof_envelope, ed25519_pubkey_string, proof_filename, Ed25519Seed, ProofEnvelopeInput,
 };
 
 use crate::lift_plugin::{self, LiftPluginError, LiftPluginOptions};
@@ -1467,7 +1467,7 @@ fn mint_lift_response(
 
             std::fs::create_dir_all(out_dir)
                 .map_err(|e| format!("mkdir {}: {e}", out_dir.display()))?;
-            let out_path = out_dir.join(format!("{filename_cid}.proof"));
+            let out_path = out_dir.join(proof_filename(&filename_cid));
             std::fs::write(&out_path, &bytes)
                 .map_err(|e| format!("write {}: {e}", out_path.display()))?;
 
@@ -1522,7 +1522,7 @@ fn mint_lift_response(
             );
             std::fs::create_dir_all(out_dir)
                 .map_err(|e| format!("mkdir {}: {e}", out_dir.display()))?;
-            let out_path = out_dir.join(format!("{}.proof", minted.filename_cid));
+            let out_path = out_dir.join(proof_filename(&minted.filename_cid));
             std::fs::write(&out_path, &minted.bytes)
                 .map_err(|e| format!("write {}: {e}", out_path.display()))?;
             debug!(out_path = %out_path.display(), "mint: .proof file written");
@@ -3312,7 +3312,7 @@ pub fn run(args: MintArgs) -> u8 {
                             "  .proof file:        {}",
                             session
                                 .out_dir
-                                .join(format!("{}.proof", result.filename_cid))
+                                .join(proof_filename(&result.filename_cid))
                                 .display()
                         );
                     }

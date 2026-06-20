@@ -50,7 +50,7 @@ use sugar_claim_envelope::{
 };
 use sugar_ir_symbolic::{serialize::formula_to_value, ContractDecl, Formula};
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, Ed25519Seed, ProofEnvelopeInput,
+    build_proof_envelope, ed25519_pubkey_string, proof_filename, Ed25519Seed, ProofEnvelopeInput,
 };
 
 pub mod call_edges;
@@ -642,7 +642,7 @@ pub fn lift_and_mint(
     }
     let minted = mint_proof(&report.decls, opts).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(out_dir).map_err(|e| format!("create_dir_all: {e}"))?;
-    let path = out_dir.join(format!("{}.proof", minted.cid));
+    let path = out_dir.join(proof_filename(&minted.cid));
     std::fs::write(&path, &minted.bytes).map_err(|e| format!("write: {e}"))?;
     Ok((report, minted, path))
 }

@@ -9514,7 +9514,8 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
     use sugar_ir_types::Sort;
     use sugar_proof_envelope::{
-        build_proof_envelope, ed25519_pubkey_string, Ed25519Seed, ProofEnvelopeInput,
+        build_proof_envelope, ed25519_pubkey_string, proof_filename, Ed25519Seed,
+        ProofEnvelopeInput,
     };
 
     // ---- Source Oracle + materialize (#1359) --------------------------------
@@ -11996,8 +11997,7 @@ reason = "scope discipline probe"
             declared_at: "2026-05-31T00:00:00.000Z".to_string(),
         });
         fs::create_dir_all(proof_dir).expect("create proof dir");
-        fs::write(proof_dir.join(format!("{}.proof", proof.cid)), &proof.bytes)
-            .expect("write proof");
+        fs::write(proof_dir.join(proof_filename(&proof.cid)), &proof.bytes).expect("write proof");
         proof.cid
     }
 
@@ -12064,8 +12064,7 @@ reason = "scope discipline probe"
             declared_at: "2026-06-18T00:00:00.000Z".to_string(),
         });
         fs::create_dir_all(proof_dir).expect("create proof dir");
-        fs::write(proof_dir.join(format!("{}.proof", proof.cid)), &proof.bytes)
-            .expect("write proof");
+        fs::write(proof_dir.join(proof_filename(&proof.cid)), &proof.bytes).expect("write proof");
         (proof.cid, contract_cid)
     }
 
