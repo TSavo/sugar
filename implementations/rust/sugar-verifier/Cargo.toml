@@ -21,6 +21,7 @@ serde_json = { workspace = true }
 base64 = { workspace = true }
 walkdir = { workspace = true }
 rayon = { workspace = true }
+num_cpus = { workspace = true }
 thiserror = { workspace = true }
 toml = "0.8"
 chrono = { version = "0.4", features = ["clock"] }

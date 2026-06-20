@@ -60,6 +60,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 walkdir = "2"
 toml = "0.8"
 rayon = "1.10"
+num_cpus = "1"
 # syn/quote/proc-macro2: AST parsing + token manipulation used by the lift
 # adapters (sugar-lift, sugar-lift-contracts, sugar-walk, etc.). NOT a
 # contract-authoring macro stack: the substrate ships no bespoke proc-macro.
