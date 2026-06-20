@@ -64,6 +64,7 @@ pub mod sugar {
     pub mod const_bound;
     pub mod const_item;
     pub mod const_path;
+    pub mod compute_float;
     pub mod constraint;
     pub mod constraint_runtime_boundary;
     pub mod control_flow_term;

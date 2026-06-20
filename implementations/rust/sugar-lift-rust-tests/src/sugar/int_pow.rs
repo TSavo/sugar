@@ -13,8 +13,8 @@ use tracing::debug;
 use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::{
-    const_fold_int_term, const_fold_u128_term, simple_path_name, strip_refs_groups, Desugared,
-    Outcome, Sugar, SugarCtx,
+    const_fold_int_term, const_fold_u128_term, simple_path_name, strip_refs_groups, u128_term,
+    Desugared, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
@@ -83,8 +83,18 @@ impl Sugar for IntPowSugar {
 }
 
 fn pow_term(receiver: Rc<Term>, exponent: i128) -> Option<Rc<Term>> {
+    if exponent < 0 {
+        return None;
+    }
+    if let Some(base) = const_fold_int_term(&receiver) {
+        let exponent = u32::try_from(exponent).ok()?;
+        return Some(num(base.checked_pow(exponent)?));
+    }
+    if let Some(base) = const_fold_u128_term(&receiver) {
+        let exponent = u32::try_from(exponent).ok()?;
+        return Some(u128_term(base.checked_pow(exponent)?));
+    }
     match exponent {
-        n if n < 0 => None,
         0 => Some(num(1)),
         1 => Some(receiver),
         2..=8 => {
