@@ -205,8 +205,15 @@ fn record_ground_equality(
     value: &Json,
     equalities: &mut std::collections::BTreeMap<String, (String, String, String)>,
 ) -> Option<String> {
-    let term_key = libsugar::canonical::json_jcs(term).ok()?;
-    let value_key = libsugar::canonical::json_jcs(value).ok()?;
+    // Federate platform-width primitive sorts BEFORE keying: width is a range
+    // REFINEMENT, not a sort distinction, so `0:i128` and `0:u128` are the SAME
+    // value. Without this they JCS-hash differently and a callsite asserted equal
+    // to both is FALSELY reported contradictory -- a fake refutation (the mirror
+    // of a fake discharge). The solver path already federates via
+    // sort_translate; this closes the same leak in the structural pre-check.
+    // Only the KEY federates; the display keeps the original width for audit.
+    let term_key = libsugar::canonical::json_jcs(&federate_primitive_sorts(term)).ok()?;
+    let value_key = libsugar::canonical::json_jcs(&federate_primitive_sorts(value)).ok()?;
     let term_display = compact_json(term);
     let value_display = compact_json(value);
     if let Some((existing_key, existing_display, _)) = equalities.get(&term_key) {
@@ -219,6 +226,49 @@ fn record_ground_equality(
     }
     equalities.insert(term_key, (value_key, value_display, term_display));
     None
+}
+
+/// Canonical IR sort for a Rust primitive width name, or `None` if the name is
+/// not a width-refined primitive. Mirrors `sugar-walk::sort_translate`'s
+/// `primitive_sort_name` (canonicalization-grammar.md §5): integer widths
+/// (`i8`..`i128`/`isize`, `u8`..`u128`/`usize`) federate to `Int`; float widths
+/// (`f32`/`f64`) to `Real`. Width is a range refinement sidecar to the contract,
+/// never a sort identity.
+fn canonical_primitive_sort(name: &str) -> Option<&'static str> {
+    match name {
+        "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64" | "i128"
+        | "isize" => Some("Int"),
+        "f32" | "f64" => Some("Real"),
+        _ => None,
+    }
+}
+
+/// Recursively rewrite any `{"kind":"primitive","name":<width>}` node to its
+/// canonical sort, so width-only differences (`0:i128` vs `0:u128`) collapse.
+/// Pure value-preserving normalization of the SORT only; the `value` field is
+/// untouched, so distinct values (`0` vs `1`) remain distinct -- this removes
+/// false contradictions without hiding real ones.
+fn federate_primitive_sorts(node: &Json) -> Json {
+    match node {
+        Json::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (k, v) in map {
+                out.insert(k.clone(), federate_primitive_sorts(v));
+            }
+            if out.get("kind").and_then(|k| k.as_str()) == Some("primitive") {
+                if let Some(canon) = out
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .and_then(canonical_primitive_sort)
+                {
+                    out.insert("name".to_string(), Json::String(canon.to_string()));
+                }
+            }
+            Json::Object(out)
+        }
+        Json::Array(arr) => Json::Array(arr.iter().map(federate_primitive_sorts).collect()),
+        other => other.clone(),
+    }
 }
 
 fn ground_term_const_equality(eq: &Json) -> Option<(&Json, &Json)> {
@@ -2120,6 +2170,68 @@ mod tests {
             res[0].verdict,
             ObligationVerdict::Unsatisfied,
             "await(f())==6 ∧ await(f())==7 over the SAME structural await term refuses: {res:?}"
+        );
+    }
+
+    /// REGRESSION (int-width fake refutation): a callsite asserted equal to the
+    /// SAME value under two integer WIDTHS (`f()==0:i128 ∧ f()==0:u128`) is NOT a
+    /// contradiction -- width is a range refinement, not a sort. Before the fix
+    /// the structural detector JCS-hashed the width-specific `sort.name`, so the
+    /// two values keyed differently and it falsely refused. Observed live on the
+    /// stdlib coretests corpus (30/32 structural unsatisfieds were this).
+    #[test]
+    fn integer_width_difference_is_not_a_contradiction() {
+        let (plan, reg) = z3_plan_and_registry();
+        let f = json!({"kind":"ctor","name":"call:f","args":[]});
+        let zero_i128 = json!({"kind":"const","value":0,"sort":{"kind":"primitive","name":"i128"}});
+        let zero_u128 = json!({"kind":"const","value":0,"sort":{"kind":"primitive","name":"u128"}});
+        let inv = json!({"kind":"and","operands":[
+            eqf(f.clone(), zero_i128),
+            eqf(f.clone(), zero_u128),
+        ]});
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:int-width-refine",
+            "width_refine#euf#c:callresult_x::assertion",
+            inv,
+        );
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        assert_eq!(res.len(), 1, "one conjoined obligation: {res:?}");
+        assert_ne!(
+            res[0].verdict,
+            ObligationVerdict::Unsatisfied,
+            "0:i128 and 0:u128 are the SAME value -- width is a refinement, not a \
+             contradiction: {res:?}"
+        );
+    }
+
+    /// DISCRIMINATION: same callsite, DIFFERENT values across widths
+    /// (`f()==0:i128 ∧ f()==1:u8`) IS a real contradiction -- federating the
+    /// SORT must never federate the VALUE.
+    #[test]
+    fn distinct_values_across_widths_still_refuses() {
+        let (plan, reg) = z3_plan_and_registry();
+        let f = json!({"kind":"ctor","name":"call:f","args":[]});
+        let zero_i128 = json!({"kind":"const","value":0,"sort":{"kind":"primitive","name":"i128"}});
+        let one_u8 = json!({"kind":"const","value":1,"sort":{"kind":"primitive","name":"u8"}});
+        let inv = json!({"kind":"and","operands":[
+            eqf(f.clone(), zero_i128),
+            eqf(f.clone(), one_u8),
+        ]});
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:int-width-value",
+            "width_value#euf#c:callresult_x::assertion",
+            inv,
+        );
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        assert_eq!(res.len(), 1, "one conjoined obligation: {res:?}");
+        assert_eq!(
+            res[0].verdict,
+            ObligationVerdict::Unsatisfied,
+            "0 and 1 differ in VALUE -- a real contradiction even across widths: {res:?}"
         );
     }
 
