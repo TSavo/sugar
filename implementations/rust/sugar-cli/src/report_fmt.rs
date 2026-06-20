@@ -257,7 +257,10 @@ fn format_verification_detail(out: &mut String, v: &Json) {
         .and_then(|x| x.as_str())
         .unwrap_or("verification");
     let _ = writeln!(out, "      verifier: {kind}");
-    if let Some(formula) = v.get("checkedFormula") {
+    if let Some(cid) = v.get("checkedFormulaCid").and_then(|x| x.as_str()) {
+        let _ = writeln!(out, "        checked formula (cid): {cid}");
+    } else if let Some(formula) = v.get("checkedFormula") {
+        // Legacy reports / fixtures that still carry the inline formula.
         let _ = writeln!(out, "        checked: {}", compact_json(formula));
     }
     if let Some(posts) = v.get("linkedPosts").and_then(|x| x.as_array()) {
