@@ -22,6 +22,21 @@ pub fn report_to_json(r: &Report) -> Json {
             })
         })
         .collect();
+    let toolchain_plans: Vec<Json> = r
+        .toolchain_plans
+        .iter()
+        .map(|plan| {
+            json!({
+                "planMementoCid": plan.plan_memento_cid,
+                "planCid": plan.plan_cid,
+                "status": plan.status,
+                "reason": plan.reason,
+                "expectedOutputCids": plan.expected_output_cids,
+                "witnessMementoCid": plan.witness_memento_cid,
+                "actualOutputCids": plan.actual_output_cids,
+            })
+        })
+        .collect();
     json!({
         "totalCallsites": r.total_callsites,
         "discharged": r.discharged,
@@ -31,6 +46,7 @@ pub fn report_to_json(r: &Report) -> Json {
         "rows": rows,
         "loadErrors": load_errors,
         "callEdges": call_edges,
+        "toolchainPlans": toolchain_plans,
         // Per-symbol superposition verdict: the N z3 compiles this run already
         // performed, folded by callee symbol. strength = surviving universe count.
         "superposition": superposition_to_json(r),
@@ -302,7 +318,11 @@ fn format_verification_detail(out: &mut String, v: &Json) {
 /// have checked at least one callsite or one contract-level obligation;
 /// completely empty reports are vacuous.
 pub fn report_exit_code(r: &Report) -> u8 {
-    if r.violations > 0 || !r.load_errors.is_empty() || r.rows.is_empty() {
+    let toolchain_refuted = r
+        .toolchain_plans
+        .iter()
+        .any(|plan| plan.status == "refuted");
+    if r.violations > 0 || !r.load_errors.is_empty() || toolchain_refuted || r.rows.is_empty() {
         crate::EXIT_VERIFY_FAIL
     } else {
         crate::EXIT_OK
@@ -312,7 +332,7 @@ pub fn report_exit_code(r: &Report) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sugar_verifier::{CallSite, Report, ReportRow};
+    use sugar_verifier::{CallSite, Report, ReportRow, ToolchainPlanReport};
 
     #[test]
     fn empty_report_is_not_a_successful_proof() {
@@ -402,6 +422,59 @@ mod tests {
             j["rows"][0]["verification"]["linkedPosts"][0]["sourceSymbol"],
             "call:enc"
         );
+    }
+
+    #[test]
+    fn report_json_includes_toolchain_plan_accounting() {
+        let mut r = Report::default();
+        r.toolchain_plans.push(ToolchainPlanReport {
+            plan_memento_cid: "blake3-512:plan-member".into(),
+            plan_cid: "blake3-512:plan-letter".into(),
+            status: "declared".into(),
+            reason: "plan is pinned".into(),
+            expected_output_cids: vec!["blake3-512:out".into()],
+            witness_memento_cid: None,
+            actual_output_cids: Vec::new(),
+        });
+
+        let j = report_to_json(&r);
+
+        assert_eq!(
+            j["toolchainPlans"][0]["planMementoCid"],
+            "blake3-512:plan-member"
+        );
+        assert_eq!(j["toolchainPlans"][0]["status"], "declared");
+        assert_eq!(
+            j["toolchainPlans"][0]["expectedOutputCids"][0],
+            "blake3-512:out"
+        );
+    }
+
+    #[test]
+    fn refuted_toolchain_plan_exits_fail() {
+        let mut r = Report {
+            discharged: 1,
+            ..Report::default()
+        };
+        r.rows.push(ReportRow {
+            callsite: CallSite::default(),
+            status: "discharged".into(),
+            reason: "ok".into(),
+            discharge_method: Some("hash-tier".into()),
+            body_discharge_tier: None,
+            verification: None,
+        });
+        r.toolchain_plans.push(ToolchainPlanReport {
+            plan_memento_cid: "blake3-512:plan-member".into(),
+            plan_cid: "blake3-512:plan-letter".into(),
+            status: "refuted".into(),
+            reason: "drift".into(),
+            expected_output_cids: vec!["blake3-512:expected".into()],
+            witness_memento_cid: Some("blake3-512:witness-member".into()),
+            actual_output_cids: vec!["blake3-512:actual".into()],
+        });
+
+        assert_eq!(report_exit_code(&r), crate::EXIT_VERIFY_FAIL);
     }
 
     #[test]
