@@ -13779,6 +13779,71 @@ fn t() {
 }
 
 #[test]
+fn u128_lots_of_isqrt_prefix_range_lifts_primitive_axioms() {
+    let src = r#"
+#[test]
+fn t() {
+    let n_max: u128 = (1024 * 1024).min(u128::MAX as u128) as u128;
+    for n in 0..=n_max {
+        let isqrt: u128 = n.isqrt();
+
+        assert!(isqrt.pow(2) <= n);
+        assert!(isqrt + 1 == (1 as u128) << (u128::BITS / 2) || (isqrt + 1).pow(2) > n);
+    }
+}
+"#;
+
+    let out = lift_file(&parse(src), "tests/u128-lots-of-isqrt-prefix.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "u128 prefix range should lift as a bounded primitive integer contract; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons,
+        out.factory_audits,
+        out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.skip_reasons
+            .iter()
+            .all(|reason| !reason.contains("under for context")),
+        "u128 prefix range must not remain in the for-context bucket: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn u128_lots_of_isqrt_tail_range_lifts_primitive_axioms() {
+    let src = r#"
+#[test]
+fn t() {
+    for n in (u128::MAX - 255)..=u128::MAX {
+        let isqrt: u128 = n.isqrt();
+
+        assert!(isqrt.pow(2) <= n);
+        assert!(isqrt + 1 == (1 as u128) << (u128::BITS / 2) || (isqrt + 1).pow(2) > n);
+    }
+}
+"#;
+
+    let out = lift_file(&parse(src), "tests/u128-lots-of-isqrt-tail.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "u128 tail range should lift primitive integer axioms without evaluating the overflowing short-circuit arm; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons,
+        out.factory_audits,
+        out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.skip_reasons
+            .iter()
+            .all(|reason| !reason.contains("under for context")),
+        "u128 tail range must not remain in the for-context bucket: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
 fn statement_macro_rules_body_is_factory_input_for_assertion_shape() {
     let src = r#"
 macro_rules! compile_guard {

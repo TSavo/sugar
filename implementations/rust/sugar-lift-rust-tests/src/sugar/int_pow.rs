@@ -86,13 +86,13 @@ fn pow_term(receiver: Rc<Term>, exponent: i128) -> Option<Rc<Term>> {
     if exponent < 0 {
         return None;
     }
-    if let Some(base) = const_fold_int_term(&receiver) {
-        let exponent = u32::try_from(exponent).ok()?;
-        return Some(num(base.checked_pow(exponent)?));
-    }
     if let Some(base) = const_fold_u128_term(&receiver) {
         let exponent = u32::try_from(exponent).ok()?;
         return Some(u128_term(base.checked_pow(exponent)?));
+    }
+    if let Some(base) = const_fold_int_term(&receiver) {
+        let exponent = u32::try_from(exponent).ok()?;
+        return Some(num(base.checked_pow(exponent)?));
     }
     match exponent {
         0 => Some(num(1)),

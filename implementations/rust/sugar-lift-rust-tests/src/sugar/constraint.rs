@@ -14,12 +14,14 @@ use std::rc::Rc;
 use crate::sugar::factory::{build_constraint, build_term, SugarBuildCtx};
 use crate::{
     ascii_byte_class_atom, ascii_char_class_atom, assertion_entry_from_relation, bool_const,
-    callsite_assertion_name, literal_char_predicate_atom, literal_string_value, parse_macro_args,
-    token_key, AssertionFactKind, CfgDisposition, CfgPredicate, Desugared, Effect, Outcome,
-    RelationOp, Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON,
+    callsite_assertion_name, const_fold_int_term, const_fold_u128_term,
+    literal_char_predicate_atom, literal_string_value, parse_macro_args, token_key,
+    AssertionFactKind, CfgDisposition, CfgPredicate, Desugared, Effect, Outcome, RelationOp, Sugar,
+    SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON,
 };
 use sugar_ir_symbolic::{and_, atomic_, eq, not_, num, str_const, ConstValue, Formula, Term};
 use syn::{BinOp, Expr, ExprIf, ExprLit, ExprMacro, Lit, UnOp};
+use tracing::debug;
 
 pub(crate) const RELATION_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_relation_macro",
@@ -342,6 +344,31 @@ impl Sugar for BoolExprSugar {
                     Ok(payload) => payload,
                     Err(outcome) => return outcome,
                 };
+                match (*is_and, const_formula_bool(left.atom.as_ref())) {
+                    (true, Some(false)) | (false, Some(true)) => {
+                        debug!(
+                            target: "sugar_lift_rust_tests::sugar::constraint",
+                            connective = if *is_and { "&&" } else { "||" },
+                            left_value = !*is_and,
+                            "short-circuited boolean constraint on left literal-backed side"
+                        );
+                        return constraints_from_payload(left);
+                    }
+                    (true, Some(true)) | (false, Some(false)) => {
+                        debug!(
+                            target: "sugar_lift_rust_tests::sugar::constraint",
+                            connective = if *is_and { "&&" } else { "||" },
+                            left_value = *is_and,
+                            "continued boolean constraint after non-deciding left literal-backed side"
+                        );
+                        let right = match constraint_payload(&**right, ctx) {
+                            Ok(payload) => payload,
+                            Err(outcome) => return outcome,
+                        };
+                        return constraints_from_payload(right);
+                    }
+                    _ => {}
+                }
                 let right = match constraint_payload(&**right, ctx) {
                     Ok(payload) => payload,
                     Err(outcome) => return outcome,
@@ -424,6 +451,15 @@ impl Sugar for BoolExprSugar {
     }
 }
 
+fn constraints_from_payload(payload: ConstraintPayload) -> Outcome {
+    Outcome::Dug(Desugared::Constraints {
+        atom: payload.atom,
+        n: 1,
+        kind: payload.kind,
+        warrant: Warrant { name: payload.name },
+    })
+}
+
 fn is_predicate_term_expr(expr: &Expr) -> bool {
     matches!(
         expr,
@@ -455,6 +491,113 @@ fn is_bool_const(term: &Term, expected: bool) -> bool {
             ..
         } if *value == expected
     )
+}
+
+fn const_formula_bool(formula: &Formula) -> Option<bool> {
+    match formula {
+        Formula::Atomic { name, args } if args.len() == 2 => {
+            const_atomic_bool(name, &args[0], &args[1])
+        }
+        Formula::Connective { kind, operands } if kind == "not" && operands.len() == 1 => {
+            const_formula_bool(operands[0].as_ref()).map(|value| !value)
+        }
+        Formula::Connective { kind, operands } if kind == "and" => {
+            let mut saw_any = false;
+            for operand in operands {
+                saw_any = true;
+                match const_formula_bool(operand.as_ref()) {
+                    Some(false) => return Some(false),
+                    Some(true) => {}
+                    None => return None,
+                }
+            }
+            saw_any.then_some(true)
+        }
+        Formula::Connective { kind, operands } if kind == "or" => {
+            let mut saw_any = false;
+            for operand in operands {
+                saw_any = true;
+                match const_formula_bool(operand.as_ref()) {
+                    Some(true) => return Some(true),
+                    Some(false) => {}
+                    None => return None,
+                }
+            }
+            saw_any.then_some(false)
+        }
+        _ => None,
+    }
+}
+
+fn const_atomic_bool(name: &str, lhs: &Rc<Term>, rhs: &Rc<Term>) -> Option<bool> {
+    if let Some((left, right)) = const_u128_pair(lhs, rhs) {
+        return compare_u128(name, left, right);
+    }
+    if let Some((left, right)) = const_int_pair(lhs, rhs) {
+        return compare_i128(name, left, right);
+    }
+    if let Some((left, right)) = const_bool_pair(lhs, rhs) {
+        return match name {
+            "=" => Some(left == right),
+            "\u{2260}" => Some(left != right),
+            _ => None,
+        };
+    }
+    None
+}
+
+fn const_u128_pair(lhs: &Rc<Term>, rhs: &Rc<Term>) -> Option<(u128, u128)> {
+    let left_u = const_fold_u128_term(lhs);
+    let right_u = const_fold_u128_term(rhs);
+    if left_u.is_none() && right_u.is_none() {
+        return None;
+    }
+    Some((
+        left_u.or_else(|| const_fold_int_term(lhs).and_then(|n| u128::try_from(n).ok()))?,
+        right_u.or_else(|| const_fold_int_term(rhs).and_then(|n| u128::try_from(n).ok()))?,
+    ))
+}
+
+fn const_int_pair(lhs: &Rc<Term>, rhs: &Rc<Term>) -> Option<(i128, i128)> {
+    Some((const_fold_int_term(lhs)?, const_fold_int_term(rhs)?))
+}
+
+fn const_bool_pair(lhs: &Rc<Term>, rhs: &Rc<Term>) -> Option<(bool, bool)> {
+    Some((term_bool(lhs.as_ref())?, term_bool(rhs.as_ref())?))
+}
+
+fn term_bool(term: &Term) -> Option<bool> {
+    match term {
+        Term::Const {
+            value: ConstValue::Bool(value),
+            ..
+        } => Some(*value),
+        _ => None,
+    }
+}
+
+fn compare_u128(name: &str, left: u128, right: u128) -> Option<bool> {
+    match name {
+        "=" => Some(left == right),
+        "\u{2260}" => Some(left != right),
+        "<" => Some(left < right),
+        "\u{2264}" => Some(left <= right),
+        ">" => Some(left > right),
+        "\u{2265}" => Some(left >= right),
+        _ => None,
+    }
+}
+
+fn compare_i128(name: &str, left: i128, right: i128) -> Option<bool> {
+    match name {
+        "=" => Some(left == right),
+        "\u{2260}" => Some(left != right),
+        "<" => Some(left < right),
+        "\u{2264}" => Some(left <= right),
+        ">" => Some(left > right),
+        "\u{2265}" => Some(left >= right),
+        _ => None,
+    }
 }
 
 struct IfPanicSugar {

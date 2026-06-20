@@ -972,11 +972,25 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
                 self.expr_const_bool(&unary.expr).map(|v| !v)
             }
             Expr::Binary(binary) => match binary.op {
-                BinOp::And(_) | BinOp::BitAnd(_) => Some(
-                    self.expr_const_bool(&binary.left)? && self.expr_const_bool(&binary.right)?,
+                BinOp::And(_) => {
+                    let left = self.expr_const_bool(&binary.left)?;
+                    if !left {
+                        return Some(false);
+                    }
+                    Some(self.expr_const_bool(&binary.right)?)
+                }
+                BinOp::Or(_) => {
+                    let left = self.expr_const_bool(&binary.left)?;
+                    if left {
+                        return Some(true);
+                    }
+                    Some(self.expr_const_bool(&binary.right)?)
+                }
+                BinOp::BitAnd(_) => Some(
+                    self.expr_const_bool(&binary.left)? & self.expr_const_bool(&binary.right)?,
                 ),
-                BinOp::Or(_) | BinOp::BitOr(_) => Some(
-                    self.expr_const_bool(&binary.left)? || self.expr_const_bool(&binary.right)?,
+                BinOp::BitOr(_) => Some(
+                    self.expr_const_bool(&binary.left)? | self.expr_const_bool(&binary.right)?,
                 ),
                 BinOp::Eq(_) => {
                     if let Some((lhs, rhs)) = self.expr_const_u128_pair(&binary.left, &binary.right)
