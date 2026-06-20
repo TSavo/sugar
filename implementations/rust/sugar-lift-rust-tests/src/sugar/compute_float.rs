@@ -41,8 +41,8 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if call.args.len() != 2 {
         return None;
     }
-    let width = direct_compute_float_width(call, fcx)
-        .or_else(|| wrapper_compute_float_width(call, fcx))?;
+    let width =
+        direct_compute_float_width(call, fcx).or_else(|| wrapper_compute_float_width(call, fcx))?;
     Some(Box::new(ComputeFloatSugar {
         width,
         q: build_term(call.args.first()?, fcx),
@@ -227,7 +227,12 @@ fn returns_biased_fp_tuple(expr: &Expr, fp_name: &str) -> bool {
 }
 
 fn field_of_path(expr: &Expr, base: &str, field: &str) -> bool {
-    let Expr::Field(ExprField { base: expr_base, member, .. }) = strip_refs_groups(expr) else {
+    let Expr::Field(ExprField {
+        base: expr_base,
+        member,
+        ..
+    }) = strip_refs_groups(expr)
+    else {
         return false;
     };
     matches!(member, Member::Named(ident) if ident == field)
@@ -302,7 +307,11 @@ struct BiasedFp {
 fn rustc_compute_float(width: ComputeFloatWidth, q: i64, w: u64) -> Option<BiasedFp> {
     let cache = COMPUTE_FLOAT_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
     let key = (width, q, w);
-    if let Some(cached) = cache.lock().expect("compute_float cache poisoned").get(&key) {
+    if let Some(cached) = cache
+        .lock()
+        .expect("compute_float cache poisoned")
+        .get(&key)
+    {
         return *cached;
     }
     let result = compile_and_run_compute_float_harness(width, q, w);
@@ -313,8 +322,9 @@ fn rustc_compute_float(width: ComputeFloatWidth, q: i64, w: u64) -> Option<Biase
     result
 }
 
-static COMPUTE_FLOAT_CACHE: OnceLock<Mutex<BTreeMap<(ComputeFloatWidth, i64, u64), Option<BiasedFp>>>> =
-    OnceLock::new();
+static COMPUTE_FLOAT_CACHE: OnceLock<
+    Mutex<BTreeMap<(ComputeFloatWidth, i64, u64), Option<BiasedFp>>>,
+> = OnceLock::new();
 static COMPUTE_FLOAT_HARNESS_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn compile_and_run_compute_float_harness(

@@ -631,6 +631,7 @@ fn assertion_fact_rows_for_kind(
             let mut row = json!({
                 "contract": fact.contract_name,
                 "kind": fact.kind.as_str(),
+                "claimCount": fact.claim_count,
                 "sourcePath": fact.source_path,
                 "sourceMementos": mementos,
             });
@@ -2273,33 +2274,33 @@ mod tests {
         );
         assert_eq!(
             fact_and_support["facts"].as_array().unwrap().len(),
-            1,
+            2,
             "{fact_and_support}"
         );
         assert_eq!(
             fact_and_support["supportFacts"].as_array().unwrap().len(),
-            1,
+            0,
             "{fact_and_support}"
         );
         assert_ne!(
             fact_and_support["facts"][0]["contract"],
-            fact_and_support["supportFacts"][0]["contract"],
+            fact_and_support["facts"][1]["contract"],
             "kit emits separate contracts; linker/conjoiner owns composing them: {fact_and_support}"
         );
 
         let support_only = audits
             .iter()
             .find(|row| row["assertionSource"] == "src/lib.rs::tests::support_only")
-            .expect("support-only assertion source is accounted");
-        assert_eq!(support_only["status"], "support-only", "{support_only}");
+            .expect("normal-return-only assertion source is accounted");
+        assert_eq!(support_only["status"], "facts-emitted", "{support_only}");
         assert_eq!(
             support_only["facts"].as_array().unwrap().len(),
-            0,
+            1,
             "{support_only}"
         );
         assert_eq!(
             support_only["supportFacts"].as_array().unwrap().len(),
-            1,
+            0,
             "{support_only}"
         );
 
@@ -2329,12 +2330,12 @@ mod tests {
         assert_eq!(contract["sourceWarrants"][0]["span"]["end_line"], 10);
         assert_eq!(contract["sourceWarrants"][0], *fact_memento);
 
-        let support_contract = fact_and_support["supportFacts"][0]["contract"]
+        let normal_return_contract = fact_and_support["facts"][1]["contract"]
             .as_str()
-            .expect("support contract name");
+            .expect("normal-return contract name");
         assert!(
-            ir.iter().any(|entry| entry["name"] == support_contract),
-            "support contract is still emitted to ir for linker/conjoiner composition: {response}"
+            ir.iter().any(|entry| entry["name"] == normal_return_contract),
+            "normal-return fact contract is still emitted to ir for linker/conjoiner composition: {response}"
         );
 
         let _ = std::fs::remove_dir_all(root);

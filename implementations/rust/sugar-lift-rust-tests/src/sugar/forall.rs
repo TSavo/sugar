@@ -94,16 +94,17 @@ fn lift_bounded_forall(
         scope.fn_registry(),
         &scope.layout_type_registry,
     );
-    let warranted = body_entries
+    let warranted_assertions: usize = body_entries
         .iter()
         .filter(|entry| matches!(entry.kind, AssertionFactKind::Warranted))
-        .count();
-    if !body_skipped.is_empty() || warranted != n_body {
+        .map(|entry| entry.claim_count)
+        .sum();
+    if !body_skipped.is_empty() || warranted_assertions != n_body {
         debug!(
             target: "sugar_lift_rust_tests::sugar::forall",
             var,
             n_body,
-            warranted,
+            warranted_assertions,
             skipped = ?body_skipped,
             "forall declined: body did not lift point-wise"
         );
@@ -421,10 +422,7 @@ pub(crate) fn decompose_for_loop(
     let_inits: &BTreeMap<String, &Expr>,
     fcx: &SugarBuildCtx,
 ) -> Option<ForAllSugar> {
-    let var = match &*f.pat {
-        Pat::Ident(p) if p.subpat.is_none() => p.ident.to_string(),
-        _ => return None,
-    };
+    let var = for_loop_pat_ident(&f.pat)?;
     let domain = if let Some(domain) = bounded_domain_from_expr(&f.expr, scope) {
         ForAllDomain::Bounded(domain)
     } else if has_composite(&f.expr, fcx) {
@@ -439,4 +437,14 @@ pub(crate) fn decompose_for_loop(
         kind: "loop",
         literal_arrays: capture_literal_arrays(let_inits),
     })
+}
+
+fn for_loop_pat_ident(pat: &Pat) -> Option<String> {
+    match pat {
+        Pat::Ident(p) if p.subpat.is_none() => Some(p.ident.to_string()),
+        Pat::Reference(r) if r.mutability.is_none() => for_loop_pat_ident(&r.pat),
+        Pat::Paren(paren) => for_loop_pat_ident(&paren.pat),
+        Pat::Type(ty) => for_loop_pat_ident(&ty.pat),
+        _ => None,
+    }
 }

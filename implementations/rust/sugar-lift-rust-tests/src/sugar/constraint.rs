@@ -554,7 +554,7 @@ impl Sugar for NoPanicCallSugar {
             }
         };
         let (atom, kind) = match self.kind {
-            NoPanicKind::ReturnsNormally => (normal_universe, AssertionFactKind::Support),
+            NoPanicKind::ReturnsNormally => (normal_universe, AssertionFactKind::Warranted),
             NoPanicKind::UnconditionalPanic => (
                 and_(vec![normal_universe.clone(), not_(normal_universe)]),
                 AssertionFactKind::Warranted,
