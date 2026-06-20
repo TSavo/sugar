@@ -1122,11 +1122,27 @@ fn instantiate_ambient_foralls_for_inv(
     if ambient.is_empty() {
         return Vec::new();
     }
-    // Discharge profiling (timestamped, real hotspot visibility -- no caps).
+    // CALLSITE-BOUNDED materialization (no ground-const flood). We specialize each
+    // universal ONLY at the concrete CALLSITES present in the obligation -- never
+    // against every ground const of the sort. The former ground-const path was an
+    // unbounded literal flood (profiled: 18K-57K ground terms -> 142-517s for ONE
+    // obligation, dominated by json_jcs dedup) and redundant: the universal is
+    // also conjoined as a `forall` QUANTIFIER, so z3 decides arbitrary points via
+    // MBQI/e-matching -- that is what lets the universe decide inputs no assertion
+    // ever named. The callsite instances we keep are NOT for z3's benefit; they
+    // give the SOLVER-INDEPENDENT ground-contradiction check its teeth: a point
+    // claim `g(2)==2` is refused even by a stubbed/lying/missing solver because the
+    // universal specialized at the callsite g(2) (-> g(2)==1) contradicts it
+    // structurally. Callsites are the pool's shared vocabulary (EUF: a pure g(2)
+    // has one value); arbitrary literals are not. Bounded by the obligation's own
+    // callsites, this stays cheap even for u128 isqrt loops and 540-element arrays.
     let t_all = std::time::Instant::now();
     AMBIENT_SUBST_US.with(|c| c.set(0));
     AMBIENT_JCS_US.with(|c| c.set(0));
-    let mut ground_terms_total = 0usize;
+
+    // Callsites depend only on the obligation, not the universal -- collect once.
+    let mut callsites = Vec::new();
+    collect_unquantified_ctor_terms(inv, &mut callsites);
     let mut callsite_pairs = 0usize;
 
     let mut instances = Vec::new();
@@ -1138,18 +1154,19 @@ fn instantiate_ambient_foralls_for_inv(
         let Some(body) = forall.get("body") else {
             continue;
         };
+        // (a) Specialize at the obligation's OWN subject argument(s), named in its
+        // `#euf#` property name (`...(i:N)...`). Bounded by the name (a callsite's
+        // arity), relevant (the point the obligation is about). This -- unlike the
+        // dropped inv-wide `collect_unquantified_ground_terms` -- never walks the
+        // inv's array literals / loop ranges (the 142s/517s flood source).
         if let Some(sort) = forall.get("sort") {
-            let mut ground_terms = Vec::new();
-            collect_unquantified_ground_terms(inv, sort, &mut ground_terms);
-            collect_property_name_ground_terms(property_name, sort, &mut ground_terms);
-            ground_terms_total += ground_terms.len();
-            for term in &ground_terms {
+            let mut name_terms = Vec::new();
+            collect_property_name_ground_terms(property_name, sort, &mut name_terms);
+            for term in &name_terms {
                 push_ambient_instance(body, var_name, term, &mut instances, &mut seen);
             }
         }
-
-        let mut callsites = Vec::new();
-        collect_unquantified_ctor_terms(inv, &mut callsites);
+        // (b) Specialize at the obligation's concrete callsites (pattern match).
         let mut patterns = Vec::new();
         collect_forall_call_patterns(body, var_name, &mut patterns);
         callsite_pairs += patterns.len().saturating_mul(callsites.len());
@@ -1167,25 +1184,27 @@ fn instantiate_ambient_foralls_for_inv(
     let total_us = t_all.elapsed().as_micros();
     let subst_us = AMBIENT_SUBST_US.with(|c| c.get());
     let jcs_us = AMBIENT_JCS_US.with(|c| c.get());
-    // Log only non-trivial calls (>=2ms) so the slow obligations stand out in the
-    // trace instead of drowning under microsecond ones. Each line is timestamped
-    // by the tracing subscriber; `property` ties it to the obligation.
+    // Surface only non-trivial calls (>=2ms); timestamped by the subscriber.
     if total_us >= 2000 {
         info!(
             property = property_name,
             ambient = ambient.len(),
-            ground_terms = ground_terms_total,
             callsite_pairs,
             instances = instances.len(),
             subst_us,
             jcs_us,
             total_us,
-            "verifier/timing: ambient instantiation hotspot"
+            "verifier/timing: ambient instantiation (callsite-bounded)"
         );
     }
     instances
 }
 
+// Extract the Int constants named in an obligation's `#euf#` property name
+// (`...(i:N)...`) -- the obligation's own subject argument(s). Bounded by the name
+// (a callsite's arity), so it never walks the inv's array literals / loop ranges
+// the way an inv-wide ground-term scan would. Used for callsite-relevant ambient
+// specialization in `instantiate_ambient_foralls_for_inv`.
 fn collect_property_name_ground_terms(property_name: &str, sort: &Json, out: &mut Vec<Json>) {
     if !sort_is_primitive(sort, "Int") {
         return;
@@ -1246,28 +1265,6 @@ fn push_ambient_instance(
     if seen.insert(key) {
         instances.push(instance);
     }
-}
-
-fn collect_unquantified_ground_terms(node: &Json, sort: &Json, out: &mut Vec<Json>) {
-    match node.get("kind").and_then(|k| k.as_str()) {
-        Some("forall") | Some("exists") => return,
-        Some("const") if term_matches_sort(node, sort) => out.push(node.clone()),
-        _ => {}
-    }
-    for key in ["operands", "args"] {
-        if let Some(arr) = node.get(key).and_then(|v| v.as_array()) {
-            for child in arr {
-                collect_unquantified_ground_terms(child, sort, out);
-            }
-        }
-    }
-    if let Some(body) = node.get("body") {
-        collect_unquantified_ground_terms(body, sort, out);
-    }
-}
-
-fn term_matches_sort(term: &Json, sort: &Json) -> bool {
-    term.get("sort").is_some_and(|term_sort| term_sort == sort)
 }
 
 fn collect_unquantified_ctor_terms(node: &Json, out: &mut Vec<Json>) {
@@ -1614,6 +1611,14 @@ fn with_local_forall_instances(inv: Json, property_name: &str) -> Json {
     if foralls.is_empty() {
         return inv;
     }
+    // CALLSITE-BOUNDED materialization. `instantiate_ambient_foralls_for_inv` now
+    // specializes each universal only at the obligation's concrete CALLSITES (no
+    // ground-const flood -- see its doc), so this stays bounded even for wide
+    // ranges (u128 isqrt loops). It is NOT redundant with the conjoined `forall`
+    // quantifier: the quantifier lets z3 decide un-named points via MBQI, while
+    // these callsite instances give the SOLVER-INDEPENDENT ground-contradiction
+    // check its teeth -- a point claim contradicting the universal at a named
+    // callsite is refused even by a stubbed/lying/missing solver.
     let instances = instantiate_ambient_foralls_for_inv(&inv, property_name, &foralls);
     if instances.is_empty() {
         return inv;
