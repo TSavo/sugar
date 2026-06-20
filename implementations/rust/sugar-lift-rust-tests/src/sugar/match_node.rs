@@ -507,6 +507,7 @@ impl MatchSugar {
             ctx.macro_depth,
             &ctx.scope.plan.interior_mut,
             &BTreeMap::new(),
+            ctx.scope.fn_registry(),
             &ctx.scope.layout_type_registry,
         );
         let warranted = body_entries

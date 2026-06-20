@@ -1026,6 +1026,7 @@ fn walk_items_inner<'a>(
     macro_depth: usize,
 ) {
     let scoped_fns = item_scope_fns(items);
+    let scoped_fn_registry = item_scope_fn_registry(items, reducer, macro_depth);
     for item in items {
         match item {
             Item::Fn(f) => {
@@ -1038,6 +1039,7 @@ fn walk_items_inner<'a>(
                         reducer,
                         factory_audits,
                         &scoped_fns,
+                        &scoped_fn_registry,
                         out,
                     );
                 }
@@ -1114,6 +1116,39 @@ fn item_scope_fns(items: &[Item]) -> BTreeMap<String, &syn::ItemFn> {
             _ => None,
         })
         .collect()
+}
+
+fn item_scope_fn_registry(
+    items: &[Item],
+    reducer: &ReductionCtx<'_>,
+    macro_depth: usize,
+) -> FnRegistry {
+    let mut registry = FnRegistry::new();
+    collect_item_scope_fn_registry(items, reducer, macro_depth, &mut registry);
+    registry
+}
+
+fn collect_item_scope_fn_registry(
+    items: &[Item],
+    reducer: &ReductionCtx<'_>,
+    macro_depth: usize,
+    registry: &mut FnRegistry,
+) {
+    for item in items {
+        match item {
+            Item::Fn(f) if !has_test_attr(&f.attrs) => {
+                registry.insert(&f.sig.ident.to_string(), Rc::new(f.clone()));
+            }
+            Item::Macro(m) => {
+                if let Some(Ok(expanded)) =
+                    try_item_macro_expansion_items(&m.mac.path, &m.mac.tokens, reducer, macro_depth)
+                {
+                    collect_item_scope_fn_registry(&expanded, reducer, macro_depth + 1, registry);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Walk items for Pass 2 (non-test fns). Emits named refusals for asserts in
@@ -1886,6 +1921,7 @@ fn visit_test_fn(
     reducer: &ReductionCtx<'_>,
     factory_audits: Option<&FactoryAuditLog>,
     scoped_fns: &BTreeMap<String, &syn::ItemFn>,
+    scoped_fn_registry: &FnRegistry,
     out: &mut AdapterOutput,
 ) {
     let test_name = scoped_test_name(source_path, modules, &f.sig.ident.to_string());
@@ -1967,6 +2003,7 @@ fn visit_test_fn(
         0,
         &BTreeSet::new(),
         scoped_fns,
+        scoped_fn_registry,
         &LayoutTypeRegistry::new(),
     );
     if is_should_panic {
@@ -3453,6 +3490,7 @@ fn try_macro_expansion_entries(
         macro_depth + 1,
         &BTreeSet::new(),
         &BTreeMap::new(),
+        &FnRegistry::new(),
         &LayoutTypeRegistry::new(),
     );
     tracing::debug!(
@@ -8629,6 +8667,7 @@ fn collect_assertion_entries<'a>(
     // refuse) a body whose cause is now SHOWN; it never fake-digs (a runtime body bails
     // / refuses) and never fake-refuses (a pure body discharges through the dig path).
     enclosing_fns: &BTreeMap<String, &'a syn::ItemFn>,
+    enclosing_fn_registry: &FnRegistry,
     enclosing_layout_types: &LayoutTypeRegistry,
 ) {
     // A NESTED BLOCK carries the `#b<idx>` marker (`child_block_scope`); a function
@@ -8683,7 +8722,9 @@ fn collect_assertion_entries<'a>(
     // INLINE is EXACT-OR-BAIL inside `CallSugar`: it commits the peel only when the
     // β-reduced body re-builds all the way to literals/arith, else leaves the opaque
     // `call:` ctor untouched -- so this never inflates a discharge into an unclassified.
-    temporal_scope = temporal_scope.with_fn_registry(reducer.fn_registry_snapshot(&local_fns));
+    let mut visible_fn_registry = reducer.fn_registry_snapshot(&local_fns);
+    visible_fn_registry.merge_all(enclosing_fn_registry);
+    temporal_scope = temporal_scope.with_fn_registry(visible_fn_registry.clone());
     temporal_scope =
         temporal_scope.with_impl_value_registry(reducer.impl_value_registry_snapshot());
     temporal_scope = temporal_scope.with_layout_type_registry(layout_types.clone());
@@ -8776,6 +8817,7 @@ fn collect_assertion_entries<'a>(
                             macro_depth,
                             &temporal_scope.plan.interior_mut,
                             &local_fns,
+                            &visible_fn_registry,
                             &layout_types,
                         );
                     } else if let Some(stmts) = catch_unwind_closure_block_stmts(&init.expr) {
@@ -8801,6 +8843,7 @@ fn collect_assertion_entries<'a>(
                             macro_depth,
                             &temporal_scope.plan.interior_mut,
                             &local_fns,
+                            &visible_fn_registry,
                             &layout_types,
                         );
                     } else if let Some(desugared) = {
@@ -8956,6 +8999,7 @@ fn collect_assertion_entries<'a>(
                     macro_depth,
                     &temporal_scope.plan.interior_mut,
                     &local_fns,
+                    &visible_fn_registry,
                     &layout_types,
                 );
             }
@@ -8975,6 +9019,7 @@ fn collect_assertion_entries<'a>(
                     macro_depth,
                     &temporal_scope.plan.interior_mut,
                     &local_fns,
+                    &visible_fn_registry,
                     &layout_types,
                 );
             }
@@ -9074,6 +9119,7 @@ fn collect_assertion_entries<'a>(
                         macro_depth,
                         &temporal_scope.plan.interior_mut,
                         &local_fns,
+                        &visible_fn_registry,
                         &layout_types,
                     );
                     for _ in 0..inactive_asserts {
@@ -9147,6 +9193,7 @@ fn collect_assertion_entries<'a>(
                             macro_depth,
                             &temporal_scope.plan.interior_mut,
                             &local_fns,
+                            &visible_fn_registry,
                             &layout_types,
                         );
                     }
@@ -9294,6 +9341,7 @@ fn collect_assertion_entries<'a>(
                     macro_depth,
                     &temporal_scope.plan.interior_mut,
                     &local_fns,
+                    &visible_fn_registry,
                     &layout_types,
                 );
             }
@@ -9356,6 +9404,7 @@ fn collect_assertion_entries<'a>(
                         macro_depth,
                         &temporal_scope.plan.interior_mut,
                         &local_fns,
+                        &visible_fn_registry,
                         &layout_types,
                     );
                 }
@@ -9445,6 +9494,7 @@ fn collect_assertion_entries<'a>(
                                 macro_depth,
                                 &BTreeSet::new(),
                                 &local_fns,
+                                &visible_fn_registry,
                                 &layout_types,
                             );
                             true
@@ -9463,6 +9513,7 @@ fn collect_assertion_entries<'a>(
                                 macro_depth,
                                 &temporal_scope.plan.interior_mut,
                                 &local_fns,
+                                &visible_fn_registry,
                                 &layout_types,
                             );
                             true
@@ -9483,6 +9534,7 @@ fn collect_assertion_entries<'a>(
                                 macro_depth,
                                 &temporal_scope.plan.interior_mut,
                                 &local_fns,
+                                &visible_fn_registry,
                                 &layout_types,
                             );
                             true
@@ -9527,6 +9579,37 @@ fn collect_assertion_entries<'a>(
                             }
                         } else if let Some((name, bindings, function)) =
                             resolve_module_scoped_fn_call(e, &module_fns, options)
+                        {
+                            match sugar::callsite::desugar_substituted_stmts(
+                                &name,
+                                &function.block.stmts,
+                                &bindings,
+                                local_scope,
+                                stmt_idx,
+                                options,
+                                reducer,
+                                float_widths,
+                                reduced_helpers,
+                                macro_depth,
+                                factory_audits,
+                            ) {
+                                sugar::callsite::CallsiteOutcome::Dug(commit) => {
+                                    entries.extend(commit.entries);
+                                    skipped.extend(commit.skipped);
+                                    *macros_lifted += commit.macros_lifted;
+                                    *reduced_helpers = commit.reduced_helpers;
+                                    reduced_helpers.insert(commit.name.clone());
+                                    reduced_in_block.insert(commit.name);
+                                    true
+                                }
+                                sugar::callsite::CallsiteOutcome::Bail(_) => false,
+                            }
+                        } else if let Some((name, bindings, function)) =
+                            resolve_fn_registry_asserting_call(
+                                e,
+                                temporal_scope.fn_registry(),
+                                options,
+                            )
                         {
                             match sugar::callsite::desugar_substituted_stmts(
                                 &name,
@@ -10182,6 +10265,7 @@ fn for_context_refusal_reason(
         macro_depth,
         &scope.plan.interior_mut,
         &BTreeMap::new(),
+        &FnRegistry::new(),
         &LayoutTypeRegistry::new(),
     );
     let body_over_opaque = bs.iter().any(|r| {
@@ -10737,6 +10821,7 @@ fn lift_item_assertions(
         0,
         &BTreeSet::new(),
         &BTreeMap::new(),
+        &FnRegistry::new(),
         &LayoutTypeRegistry::new(),
     );
     out.assertions_lifted += macros_lifted;
@@ -12085,6 +12170,36 @@ fn resolve_module_scoped_fn_call<'a>(
         bindings.insert(param, arg.clone());
     }
     Some((name, bindings, scoped.function))
+}
+
+fn resolve_fn_registry_asserting_call(
+    expr: &Expr,
+    registry: &FnRegistry,
+    options: &LiftOptions,
+) -> Option<(String, ExprBindings, Rc<syn::ItemFn>)> {
+    let inner = match expr {
+        Expr::Paren(p) => &*p.expr,
+        Expr::Group(g) => &*g.expr,
+        other => other,
+    };
+    let Expr::Call(call) = inner else { return None };
+    let name = simple_call_name(call)?;
+    let helper = registry.lookup(&name)?;
+    if count_asserts_in_stmts(&helper.block.stmts) == 0 {
+        return None;
+    }
+    if !matches!(cfg_resolve(&helper.attrs, options), CfgDisposition::Present) {
+        return None;
+    }
+    let params = helper_param_names(&helper).ok()?;
+    if params.len() != call.args.len() {
+        return None;
+    }
+    let mut bindings = ExprBindings::new();
+    for (param, arg) in params.into_iter().zip(call.args.iter()) {
+        bindings.insert(param, arg.clone());
+    }
+    Some((name, bindings, helper))
 }
 
 /// TERM-POSITION value-call inlining (capability #1). Resolve a free-function call

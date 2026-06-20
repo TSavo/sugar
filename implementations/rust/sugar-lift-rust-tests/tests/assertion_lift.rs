@@ -13369,6 +13369,65 @@ make_mod!(i8);
 }
 
 #[test]
+fn nested_item_macro_generated_signed_helper_call_is_reduced_at_callsite() {
+    let src = r#"
+macro_rules! tests {
+    ($helper_macro:ident : $($T:ident)+) => {
+        $(
+            mod $T {
+                $helper_macro!($T);
+
+                #[test]
+                fn t() {
+                    isqrt_consistency_check(<$T>::MIN);
+                }
+            }
+        )+
+    };
+}
+
+macro_rules! signed_check {
+    ($T:ident) => {
+        fn isqrt_consistency_check(n: $T) {
+            if n >= 0 {
+                assert_eq!(Some(n.isqrt()), n.checked_isqrt());
+            }
+
+            let negative_n = n.wrapping_neg();
+            if negative_n < 0 {
+                assert_eq!(negative_n.checked_isqrt(), None);
+            }
+        }
+    };
+}
+
+tests!(signed_check: i8);
+"#;
+    let out = lift_file(&parse(src), "tests/nested-item-macro-signed-helper.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "nested item-macro helper call should inline at the generated callsite; skips={:?}; facts={:?}; decls={:?}; reduced={:?}",
+        out.skip_reasons,
+        out.assertion_facts,
+        out.decls,
+        out.reduced_helpers
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.reduced_helpers.contains("isqrt_consistency_check"),
+        "generated helper should be credited as reduced at the callsite: {:?}",
+        out.reduced_helpers
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .all(|r| !r.contains("reachable only via call-site inlining")),
+        "no helper definition residue should remain after callsite reduction: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
 fn item_macro_module_accumulator_loop_replays_sibling_helper_callsite() {
     let src = r#"
 macro_rules! make_mod {
