@@ -19,11 +19,12 @@ use crate::sugar::extract_if::{ExtractIfSugar, ReplayAction};
 use crate::sugar::factory::{build_composite, build_term, has_composite, SugarBuildCtx};
 use crate::sugar::insert::InsertSugar;
 use crate::{
-    const_fold_int_term, const_fold_u128_term, count_asserts_in_stmts, helper_param_names,
-    macro_is_assertion_surface, path_to_variant_string, simple_call_name, simple_pat_name,
-    strip_refs_groups, substitute_expr, substitute_macro_tokens, term_as_int,
-    translate_term_in_scope, u128_expr, AssertionFactKind, ConstVal, Desugared, Effect,
-    ExprBindings, Outcome, Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON, SUGAR_SEQ_CAP,
+    bounded_domain_from_expr, const_fold_int_term, const_fold_u128_term, count_asserts_in_stmts,
+    helper_param_names, macro_is_assertion_surface, path_to_variant_string, simple_call_name,
+    simple_pat_name, strip_refs_groups, substitute_expr, substitute_macro_tokens, term_as_int,
+    translate_term_in_scope, u128_expr, AssertionFactKind, BoundedDomain, ConstVal, Desugared,
+    Effect, ExprBindings, Outcome, Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON,
+    SUGAR_SEQ_CAP,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
@@ -74,6 +75,16 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
             assert_count,
             adaptor_domain,
             "for_replay declined loop: domain shape"
+        );
+        return None;
+    }
+    if range_domain_exceeds_replay_cap(&for_loop.expr, fcx.scope()) {
+        debug!(
+            target: "sugar_lift_rust_tests::sugar::for_replay",
+            loop_var = %var.ident,
+            domain = %crate::token_key(&for_loop.expr),
+            cap = SUGAR_SEQ_CAP,
+            "for_replay declined loop: literal range exceeds replay cap"
         );
         return None;
     }
@@ -351,6 +362,42 @@ fn strip_pat(pat: &Pat) -> &Pat {
 
 fn range_domain_shape(expr: &Expr) -> bool {
     matches!(strip_refs_groups(expr), Expr::Range(range) if range.end.is_some())
+}
+
+fn range_domain_exceeds_replay_cap(expr: &Expr, scope: &crate::TemporalScope) -> bool {
+    let Ok(domain) = bounded_domain_from_expr(expr, scope).ok_or(()) else {
+        return false;
+    };
+    let BoundedDomain::Range {
+        start,
+        end,
+        inclusive,
+    } = domain
+    else {
+        return false;
+    };
+    if let (Some(start), Some(end)) = (const_fold_u128_term(&start), const_fold_u128_term(&end)) {
+        let Some(span) = end.checked_sub(start) else {
+            return false;
+        };
+        let Some(len) = span.checked_add(u128::from(inclusive)) else {
+            return true;
+        };
+        return len > SUGAR_SEQ_CAP as u128;
+    }
+    let (Some(start), Some(end)) = (
+        term_as_int(&start).or_else(|| const_fold_int_term(&start)),
+        term_as_int(&end).or_else(|| const_fold_int_term(&end)),
+    ) else {
+        return false;
+    };
+    let Some(span) = end.checked_sub(start) else {
+        return false;
+    };
+    let Some(len) = span.checked_add(i128::from(inclusive)) else {
+        return true;
+    };
+    len > i128::from(SUGAR_SEQ_CAP)
 }
 
 pub(crate) struct ForReplaySugar {

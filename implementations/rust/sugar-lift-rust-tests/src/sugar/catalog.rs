@@ -15,9 +15,9 @@ use crate::sugar::{
     conditional, const_block, const_item, const_path, constraint, control_flow_term, cstr,
     dormant_mut_ref, enumerate, field_term, filter, filter_map, float_refinement, fold, for_each,
     for_replay, forall_loop, format_args, format_macro, function_map, identity_map, impl_method,
-    index, infinity_eq, int_sqrt, intersperse_collect_string, intersperse_concat, iter_terminal,
-    iterator, len, literal, literal_iterator_quantifier, literal_slice, macro_term, map,
-    match_node, match_scrutinee, matches_macro, method, monadic, nonzero, offset_of,
+    index, infinity_eq, int_pow, int_sqrt, intersperse_collect_string, intersperse_concat,
+    iter_terminal, iterator, len, literal, literal_iterator_quantifier, literal_slice, macro_term,
+    map, match_node, match_scrutinee, matches_macro, method, monadic, nonzero, offset_of,
     option_adaptor, option_predicate, option_unwrap, path, primitive_int, range_term,
     raw_addr_term, reference_term, regex_match, repeat_term, rev, sizeof, skip, skip_while,
     slice_index, statement_async_future, statement_control_flow, statement_future_handoff,
@@ -83,6 +83,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &wrapping_neg::EXPR_SUGAR,
     &int_sqrt::EXPR_SUGAR,
     &primitive_int::EXPR_SUGAR,
+    &int_pow::EXPR_SUGAR,
     &option_adaptor::EXPR_SUGAR,
     &option_predicate::EXPR_SUGAR,
     &option_unwrap::EXPR_SUGAR,
@@ -564,6 +565,21 @@ mod tests {
         assert!(
             names.contains(&"method"),
             "unknown receiver map should still be claimed by generic MethodSugar: {names:?}"
+        );
+    }
+
+    #[test]
+    fn unrecognized_pow_method_call_falls_back_to_generic_method_sugar() {
+        let expr: Expr = syn::parse_str("xs.pow(2)").unwrap();
+        let names = candidate_names(&expr);
+
+        assert!(
+            !names.contains(&"int_pow"),
+            "unknown receiver pow should not be claimed by IntPowSugar: {names:?}"
+        );
+        assert!(
+            names.contains(&"method"),
+            "unknown receiver pow should still be claimed by generic MethodSugar: {names:?}"
         );
     }
 
