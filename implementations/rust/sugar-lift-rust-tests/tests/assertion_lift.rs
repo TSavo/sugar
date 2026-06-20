@@ -133,6 +133,20 @@ fn assert_eq_atom(formula: &Formula, expected_rhs: i128) {
     }
 }
 
+fn assert_equality_mentions_var(formula: &Formula, expected_var: &str) {
+    match formula {
+        Formula::Atomic { name, args } => {
+            assert_eq!(name, "=");
+            assert!(
+                args.iter()
+                    .any(|arg| matches!(arg.as_ref(), Term::Var { name } if name == expected_var)),
+                "expected equality to mention `{expected_var}`, got {args:?}"
+            );
+        }
+        other => panic!("expected equality atom, got {other:?}"),
+    }
+}
+
 fn const_int_term_value(term: &Term) -> Option<i128> {
     match term {
         Term::Const {
@@ -645,6 +659,84 @@ fn btree_insert_absent_key_bad_twin_is_unsat() {
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "btree_insert_absent_bad") {
         assert!(!sat, "absent-key insert().is_some() should be UNSAT");
     }
+}
+
+#[test]
+fn compute_float32_wrapper_lowers_scaled_literals_to_tuple_axioms() {
+    let src = r#"
+        fn compute_float32(q: i64, w: u64) -> (i32, u64) {
+            let fp = compute_float::<f32>(q, w);
+            (fp.p_biased, fp.m)
+        }
+
+        #[test]
+        fn scaled_f32_halfway_cases() {
+            let val = 1 << 24;
+            let scale = 10_u64.pow(10);
+            assert_eq!(compute_float32(-10, val * scale), (151, 0));
+            assert_eq!(compute_float32(-10, (val + 2) * scale), (151, 1));
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/num/dec2flt/lemire.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "compute_float32 wrapper should lift to literal tuple facts: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert!(
+        out.factory_audits
+            .iter()
+            .any(|audit| audit.selected.as_deref() == Some("compute_float")),
+        "compute_float sugar should own the wrapper call: {:?}",
+        out.factory_audits
+    );
+    assert!(
+        !format!("{:?}", out.decls).contains("call:compute_float"),
+        "compute_float calls should not leak as opaque call terms: {:?}",
+        out.decls
+    );
+    let operands = inv_operands(single_warranted_decl(&out));
+    assert_eq!(operands.len(), 2, "{operands:?}");
+    assert_equality_mentions_var(&operands[0], "literal:Tuple(i:151,i:0)");
+    assert_equality_mentions_var(&operands[1], "literal:Tuple(i:151,i:1)");
+}
+
+#[test]
+fn compute_float64_wrapper_lowers_scaled_literals_to_tuple_axioms() {
+    let src = r#"
+        fn compute_float64(q: i64, w: u64) -> (i32, u64) {
+            let fp = compute_float::<f64>(q, w);
+            (fp.p_biased, fp.m)
+        }
+
+        #[test]
+        fn scaled_f64_halfway_case() {
+            let val = 1 << 53;
+            let scale = 1000;
+            assert_eq!(compute_float64(-3, (val + 2) * scale), (1076, 1));
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/num/dec2flt/lemire.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "compute_float64 wrapper should lift to a literal tuple fact: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert!(
+        out.factory_audits
+            .iter()
+            .any(|audit| audit.selected.as_deref() == Some("compute_float")),
+        "compute_float sugar should own the wrapper call: {:?}",
+        out.factory_audits
+    );
+    assert!(
+        !format!("{:?}", out.decls).contains("call:compute_float"),
+        "compute_float calls should not leak as opaque call terms: {:?}",
+        out.decls
+    );
+    let operands = inv_operands(single_warranted_decl(&out));
+    assert_eq!(operands.len(), 1, "{operands:?}");
+    assert_equality_mentions_var(&operands[0], "literal:Tuple(i:1076,i:1)");
 }
 
 #[test]
