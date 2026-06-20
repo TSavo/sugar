@@ -124,6 +124,7 @@ pub mod sugar {
     pub mod reference_term;
     pub mod regex_match;
     pub mod repeat_term;
+    pub mod result_transpose_collect;
     pub mod rev;
     pub mod sizeof;
     pub mod skip;
@@ -19643,6 +19644,47 @@ mod lifter_key_tests {
         assert!(
             dump.contains("res:err"),
             "the collect result should be the constructed Err branch: {dump}"
+        );
+    }
+
+    #[test]
+    fn collect_result_transpose_filter_map_short_circuits_to_err() {
+        let src = r#"
+            #[test]
+            fn collect_result_filter_map_transpose_err() {
+                #[derive(Copy, Clone, Debug, PartialEq)]
+                struct BadNumErr;
+
+                fn try_num(x: i32) -> Result<i32, BadNumErr> {
+                    if x <= 5 { Ok(x + 1) } else { Err(BadNumErr) }
+                }
+
+                let res: Result<Vec<i32>, BadNumErr> = (0..10)
+                    .map(|x| {
+                        let y = try_num(x)?;
+                        Ok(if y % 2 == 0 { Some(y - 1) } else { None })
+                    })
+                    .filter_map(Result::transpose)
+                    .collect();
+
+                assert_eq!(res, Err(BadNumErr));
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "Result transpose/filter_map collect over a literal range should lift; reasons: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "Result transpose/filter_map collect should not be refused: {:?}",
+            out.skip_reasons
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("res:err") && dump.contains("literal:unitpath:BadNumErr"),
+            "the collect result should materialize the Err(BadNumErr) branch: {dump}"
         );
     }
 
