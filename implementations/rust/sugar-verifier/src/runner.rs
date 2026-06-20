@@ -174,11 +174,22 @@ impl Runner {
     }
 
     pub fn run(&self) -> Report {
-        let (report, _stats) = self.run_with_tiers();
+        let compute = || self.run_with_tiers();
+        let (report, _stats) = match build_solve_pool() {
+            Some(pool) => pool.install(compute),
+            None => compute(),
+        };
         report
     }
 
     pub fn run_with_proof_run(&self) -> Result<ProofRunArtifact, ProofRunArtifactError> {
+        match build_solve_pool() {
+            Some(pool) => pool.install(|| self.run_with_proof_run_inner()),
+            None => self.run_with_proof_run_inner(),
+        }
+    }
+
+    fn run_with_proof_run_inner(&self) -> Result<ProofRunArtifact, ProofRunArtifactError> {
         let input_artifact_cids = discover_input_artifact_cids(&self.cfg);
         let proof_envelope_cid = input_artifact_cids
             .iter()
@@ -1108,6 +1119,31 @@ fn json_to_canonical(
                 .collect::<Result<Vec<_>, ProofRunArtifactError>>()?,
         )),
     }
+}
+
+/// Build a scoped rayon pool sized for the per-obligation solve loop.
+///
+/// Each obligation does CPU-bound IR compilation (now one warm compiler child
+/// PER worker) and spawns a solver; rayon's default pool = LOGICAL cores, which
+/// oversubscribes the physical cores for this CPU+process-heavy work. Measured
+/// on the stdlib coretests corpus vs the old single-shared-compiler baseline:
+/// logical (16 here) -> 0.48x the speed (thrashing); PHYSICAL (8) -> 1.77x. So
+/// default solve concurrency to physical cores. `RAYON_NUM_THREADS` overrides
+/// (operator wins). SCOPED (not `build_global`) so it works regardless of rayon
+/// use earlier in the process (e.g. the lift->prove path) and never mutates the
+/// caller's global pool. `None` on build failure -> fall back to the ambient
+/// pool rather than abort.
+fn build_solve_pool() -> Option<rayon::ThreadPool> {
+    let threads = std::env::var("RAYON_NUM_THREADS")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or_else(|| num_cpus::get_physical().max(1));
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .thread_name(|i| format!("sugar-solve-{i}"))
+        .build()
+        .ok()
 }
 
 fn build_plan_and_registry(cfg: &RunnerConfig) -> (SolverPlan, HashMap<String, SolverHandle>) {
