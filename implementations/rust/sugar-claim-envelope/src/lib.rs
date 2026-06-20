@@ -818,18 +818,32 @@ fn canon_formula_value(v: &Arc<Value>) -> Arc<Value> {
     }
 }
 
-pub fn contract_cid(args: &MintContractArgs) -> String {
+/// Compute the canonical contract content CID from its identity-bearing parts.
+/// This is the ONE hash that defines contract identity; both [`contract_cid`]
+/// (from full mint args) and [`contract_cid_of_ir_decl`] (from a lifted IR
+/// decl) funnel through it, so anything that recomputes a contract's identity
+/// gets exactly the CID `mint` assigns — never a parallel identity scheme.
+fn contract_cid_from_parts(
+    contract_name: &str,
+    out_binding: &str,
+    pre: Option<&Arc<Value>>,
+    post: Option<&Arc<Value>>,
+    inv: Option<&Arc<Value>>,
+    formals: &[String],
+    formal_sorts: &[Arc<Value>],
+    emit_empty_formals: bool,
+) -> String {
     let mut kvs: Vec<(String, Arc<Value>)> = vec![
-        ("name".into(), Value::string(args.contract_name.clone())),
-        ("outBinding".into(), Value::string(args.out_binding.clone())),
+        ("name".into(), Value::string(contract_name.to_string())),
+        ("outBinding".into(), Value::string(out_binding.to_string())),
     ];
-    if let Some(pre) = &args.pre {
+    if let Some(pre) = pre {
         kvs.push(("pre".into(), canon_formula_value(pre)));
     }
-    if let Some(post) = &args.post {
+    if let Some(post) = post {
         kvs.push(("post".into(), canon_formula_value(post)));
     }
-    if let Some(inv) = &args.inv {
+    if let Some(inv) = inv {
         kvs.push(("inv".into(), canon_formula_value(inv)));
     }
     // Body-derived op-contracts carry their formals as part of contract
@@ -838,22 +852,101 @@ pub fn contract_cid(args: &MintContractArgs) -> String {
     // name). Omitted when empty unless `emit_empty_formals` marks the
     // zero-arg body-derived case, so non-function contracts keep their
     // existing content CIDs unchanged.
-    if !args.formals.is_empty() || args.emit_empty_formals {
-        let formals_arr: Vec<Arc<Value>> = args
-            .formals
-            .iter()
-            .map(|f| Value::string(f.clone()))
-            .collect();
+    if !formals.is_empty() || emit_empty_formals {
+        let formals_arr: Vec<Arc<Value>> =
+            formals.iter().map(|f| Value::string(f.clone())).collect();
         kvs.push(("formals".into(), Value::array(formals_arr)));
     }
-    if !args.formal_sorts.is_empty() || args.emit_empty_formals {
-        kvs.push((
-            "formalSorts".into(),
-            Value::array(args.formal_sorts.clone()),
-        ));
+    if !formal_sorts.is_empty() || emit_empty_formals {
+        kvs.push(("formalSorts".into(), Value::array(formal_sorts.to_vec())));
     }
     let v = Arc::new(Value::Object(kvs));
     blake3_512_of(encode_jcs(&v).as_bytes())
+}
+
+pub fn contract_cid(args: &MintContractArgs) -> String {
+    contract_cid_from_parts(
+        &args.contract_name,
+        &args.out_binding,
+        args.pre.as_ref(),
+        args.post.as_ref(),
+        args.inv.as_ref(),
+        &args.formals,
+        &args.formal_sorts,
+        args.emit_empty_formals,
+    )
+}
+
+/// Recompute the canonical content CID of a lifted IR contract decl exactly as
+/// `mint` would — extracting the same identity-bearing fields from the decl and
+/// funneling them through [`contract_cid_from_parts`]. Consumers (e.g. the lift
+/// `--report` superposition view) use this to group lifted assertions into
+/// universes BY THEIR IDENTITY (the CID), so per-callsite duplicates of one
+/// universe collapse while genuinely distinct universes that merely render
+/// alike (the same claim at different integer widths, whose sort the FOL
+/// renderer elides) stay separate. This is recompute-over-held-bytes: we hold
+/// the decl, so the CID we compute is authoritative — there is no transported
+/// CID to "trust but hash". Returns `None` for a decl `mint` would skip — a
+/// non-contract `kind`, or one bearing no `pre`/`post`/`inv`.
+pub fn contract_cid_of_ir_decl(decl: &JsonValue) -> Option<String> {
+    let kind = decl.get("kind").and_then(JsonValue::as_str).unwrap_or("");
+    if kind != "contract" && kind != "function-contract" {
+        return None;
+    }
+    let contract_name = decl
+        .get("name")
+        .or_else(|| decl.get("symbol"))
+        .or_else(|| decl.get("fn_name"))
+        .or_else(|| decl.get("fnName"))
+        .and_then(JsonValue::as_str)
+        .unwrap_or("unnamed");
+    let out_binding = decl
+        .get("outBinding")
+        .or_else(|| decl.get("out_binding"))
+        .and_then(JsonValue::as_str)
+        .unwrap_or("out");
+    let pre = decl
+        .get("pre")
+        .or_else(|| decl.get("precondition"))
+        .map(json_to_cvalue);
+    let post = decl
+        .get("post")
+        .or_else(|| decl.get("postcondition"))
+        .map(json_to_cvalue);
+    let inv = decl
+        .get("inv")
+        .or_else(|| decl.get("invariant"))
+        .map(json_to_cvalue);
+    if pre.is_none() && post.is_none() && inv.is_none() {
+        return None;
+    }
+    let formals_json = decl.get("formals").and_then(JsonValue::as_array);
+    let formals: Vec<String> = formals_json
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let formal_sorts: Vec<Arc<Value>> = decl
+        .get("formalSorts")
+        .or_else(|| decl.get("formal_sorts"))
+        .and_then(JsonValue::as_array)
+        .map(|arr| arr.iter().map(json_to_cvalue).collect())
+        .unwrap_or_default();
+    let emit_empty_formals =
+        kind == "function-contract" && formals_json.is_some() && formals.is_empty();
+
+    Some(contract_cid_from_parts(
+        contract_name,
+        out_binding,
+        pre.as_ref(),
+        post.as_ref(),
+        inv.as_ref(),
+        &formals,
+        &formal_sorts,
+        emit_empty_formals,
+    ))
 }
 
 // Keep the private alias for internal use within this module.
