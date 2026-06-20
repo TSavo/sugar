@@ -17,6 +17,8 @@
 //   * `.position(p)` -> `Some(index of first elem where p)` or `None`
 //   * `.any(p)`    -> `bool(∨ p(elem))`   (`[1,2,3].iter().any(|x| *x>2)` -> `bool(true)`)
 //   * `.all(p)`    -> `bool(∧ p(elem))`   (`[1,2,3].iter().all(|x| *x>0)` -> `bool(true)`)
+//   * `.advance_by(n)` / `.advance_back_by(n)` -> `Ok(())` if `n <= len`, else
+//     `Err(NonZero(n - len))` with the remaining count.
 //
 // THE EXTREMUM TERMINALS (`.min()`/`.max()`) fold to the min/max of the literal int
 // elements and wrap that extremum via `MonadicSugar`'s `opt:some` (the empty Seq, which
@@ -59,16 +61,17 @@
 
 use std::rc::Rc;
 
-use sugar_ir_symbolic::{num, ConstValue, Sort, Term};
+use sugar_ir_symbolic::{make_var, num, ConstValue, Sort, Term};
 use syn::Expr;
+use tracing::debug;
 
-use crate::sugar::factory::{build_composite, SugarBuildCtx};
+use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::method;
 use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::{
-    const_eval_unary_closure, parse_int_lit, strip_refs_groups, ConstVal, Desugared, Outcome,
-    Sugar, SugarCtx,
+    const_eval_unary_closure, const_fold_int_term, parse_int_lit, strip_refs_groups, ConstVal,
+    Desugared, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -86,7 +89,6 @@ fn bool_term(b: bool) -> Rc<Term> {
 }
 
 /// Which terminal this node performs -- captured at construction from the method name.
-#[derive(Clone)]
 enum Terminal {
     Sum,
     Product,
@@ -111,6 +113,10 @@ enum Terminal {
     /// `.position(pred)` -- the INDEX of the first element satisfying `pred`, wrapped in
     /// `Some` (or `None`).
     Position(syn::ExprClosure),
+    /// `.advance_by(n)` / `.advance_back_by(n)` -- a direct terminal over an immutable
+    /// literal-domain iterator. The returned `Result<(), NonZero<usize>>` is structural:
+    /// `Ok(())` when the iterator can advance fully, else `Err(remaining)`.
+    AdvanceBy(Box<dyn Sugar>),
 }
 
 /// TERM recognizer for the iterator scalar-reduction terminals. `Some` only when the
@@ -134,10 +140,8 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     let Expr::MethodCall(call) = expr else {
         return None;
     };
-    let terminal = recognize_terminal(call)?;
-    if !method_family::resolves_literal_sequence(&call.receiver, fcx.let_inits()) {
-        return None;
-    }
+    let terminal = recognize_terminal(call, fcx)?;
+    let inner = method_family::build_literal_sequence_composite(&call.receiver, fcx)?;
     // The opaque `method:` fallback -- the EXACT node `method::recognize`
     // builds for this same expr (built DIRECTLY, not via `build_term`, which would re-enter
     // this recognizer and loop). Emitted verbatim if the literal desugar does not cleanly
@@ -145,12 +149,12 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     let fallback = method::recognize(expr, fcx)?;
     Some(Box::new(IterTerminalSugar {
         terminal,
-        inner: build_composite(&call.receiver, fcx),
+        inner,
         fallback,
     }))
 }
 
-fn recognize_terminal(call: &syn::ExprMethodCall) -> Option<Terminal> {
+fn recognize_terminal(call: &syn::ExprMethodCall, fcx: &SugarBuildCtx) -> Option<Terminal> {
     Some(match call.method.to_string().as_str() {
         // Scalar reductions, extremum terminals, and the nullary positional terminals
         // take no args.
@@ -194,8 +198,24 @@ fn recognize_terminal(call: &syn::ExprMethodCall) -> Option<Terminal> {
                 _ => unreachable!("guarded by the outer match arm"),
             }
         }
+        // `advance_by`/`advance_back_by` are terminal Result-returning operations. Over a
+        // direct literal-domain iterator they do not expose iterator state downstream; they
+        // collapse to the std `Result` value for the requested count. The count itself still
+        // recurses through the factory, so `v.len()`, `100 - v.len()`, consts, casts, etc.
+        // compose normally.
+        "advance_by" | "advance_back_by" if call.args.len() == 1 => {
+            Terminal::AdvanceBy(crate::sugar::factory::build_term(&call.args[0], fcx))
+        }
         _ => return None,
     })
+}
+
+fn unit_term() -> Rc<Term> {
+    make_var("literal:Tuple()")
+}
+
+fn term_as_usize(term: &Rc<Term>) -> Option<usize> {
+    usize::try_from(const_fold_int_term(term)?).ok()
 }
 
 /// The iterator scalar-reduction terminal node. Holds the pre-built inner seq-`Sugar`
@@ -216,6 +236,23 @@ impl IterTerminalSugar {
     /// `Some` carries the EXACT reduction.
     fn reduce(&self, ctx: &SugarCtx) -> Option<Desugared> {
         let seq = self.inner.desugar(ctx).dug()?.into_seq()?;
+        if let Terminal::AdvanceBy(arg) = &self.terminal {
+            let n_term = arg.desugar(ctx).dug()?.into_term()?;
+            let n = term_as_usize(&n_term)?;
+            let len = seq.len();
+            debug!(
+                target: "sugar_lift_rust_tests::sugar::iter_terminal",
+                requested = n,
+                len,
+                "reducing literal-domain iterator advance terminal"
+            );
+            let term = if n <= len {
+                monadic::ok_term(unit_term())
+            } else {
+                monadic::err_term(num((n - len) as i128))
+            };
+            return Some(Desugared::Term(term));
+        }
         // `.count()` reduces structure (the LENGTH) -- it needs no per-element const, so a
         // non-const element array still grounds its length soundly.
         if matches!(self.terminal, Terminal::Count) {

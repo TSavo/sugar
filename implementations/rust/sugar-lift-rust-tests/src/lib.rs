@@ -97,6 +97,7 @@ pub mod sugar {
     pub mod intersperse_concat;
     pub mod iter_terminal;
     pub mod iterator;
+    pub mod len;
     pub mod let_stmt;
     pub mod literal;
     pub mod literal_iterator_quantifier;
@@ -5133,6 +5134,24 @@ fn peel_fold_adaptors<'a>(
     let_inits: &BTreeMap<String, &'a Expr>,
     depth: usize,
 ) -> Option<(&'a Expr, Vec<AdaptorWrap>)> {
+    peel_fold_adaptors_inner(expr, let_inits, None, depth)
+}
+
+pub(crate) fn peel_fold_adaptors_in_scope<'a>(
+    expr: &'a Expr,
+    let_inits: &BTreeMap<String, &'a Expr>,
+    scope: &'a TemporalScope,
+    depth: usize,
+) -> Option<(&'a Expr, Vec<AdaptorWrap>)> {
+    peel_fold_adaptors_inner(expr, let_inits, Some(scope), depth)
+}
+
+fn peel_fold_adaptors_inner<'a>(
+    expr: &'a Expr,
+    let_inits: &BTreeMap<String, &'a Expr>,
+    scope: Option<&'a TemporalScope>,
+    depth: usize,
+) -> Option<(&'a Expr, Vec<AdaptorWrap>)> {
     const MAX_DEPTH: usize = 8;
     if depth > MAX_DEPTH {
         return None;
@@ -5237,9 +5256,12 @@ fn peel_fold_adaptors<'a>(
             // PREPENDING the inner chain (it applies first, nearer the base).
             Expr::Path(p) => {
                 if let Some(id) = p.path.get_ident() {
-                    if let Some(init) = let_inits.get(&id.to_string()) {
+                    let name = id.to_string();
+                    if let Some(init) = let_inits.get(&name).copied().or_else(|| {
+                        scope.and_then(|scope| scope.stable_let_binding_for_term(&name))
+                    }) {
                         let (inner_base, mut inner_adaptors) =
-                            peel_fold_adaptors(init, let_inits, depth + 1)?;
+                            peel_fold_adaptors_inner(init, let_inits, scope, depth + 1)?;
                         // inner_adaptors are already base-first; our outer adaptors_rev are
                         // outermost-first, so reversed they are application-order and come
                         // AFTER the inner chain.
@@ -8666,19 +8688,17 @@ fn collect_assertion_entries<'a>(
         temporal_scope.with_impl_value_registry(reducer.impl_value_registry_snapshot());
     temporal_scope = temporal_scope.with_layout_type_registry(layout_types.clone());
     temporal_scope = temporal_scope.with_const_registry(reducer.const_registry_snapshot());
-    // Map of this block's simple `let <ident> = <init>;` bindings, so the DEFOLDER can
-    // resolve a fold receiver that is a binding (`it.fold(..)` where `it = xs.iter()`,
-    // `xs = [..]`) back through to its literal-array / range domain. A non-simple pat or
-    // a diverging init is omitted (resolution then fails -> the defolder declines, safe).
+    // Map of this block's simple `let <ident> = <init>;` / `let <ident>: T = <init>;`
+    // bindings, so sequence sugar can resolve a receiver binding (`it.fold(..)` where
+    // `it = xs.iter()`, `xs = [..]`) back through to its literal-array / range domain. A
+    // non-simple pat or a diverging init is omitted (resolution then fails -> the sugar
+    // declines, safe).
     let let_inits: BTreeMap<String, &Expr> = stmts
         .iter()
         .filter_map(|s| match s {
             Stmt::Local(local) => {
                 let init = local.init.as_ref().filter(|i| i.diverge.is_none())?;
-                match &local.pat {
-                    Pat::Ident(p) if p.subpat.is_none() => Some((p.ident.to_string(), &*init.expr)),
-                    _ => None,
-                }
+                let_simple_value_binding(&local.pat).map(|name| (name, &*init.expr))
             }
             _ => None,
         })
