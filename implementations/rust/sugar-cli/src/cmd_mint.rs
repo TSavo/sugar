@@ -1182,6 +1182,16 @@ fn dispatch_multi(
         .map_err(|error| error.to_string())
 }
 
+pub(crate) fn mint_lift_plugins_for_report(
+    project_root: &Path,
+    plugins: &[PluginEntry],
+    out_dir: &Path,
+    library_bindings: bool,
+) -> Result<Option<PathBuf>, String> {
+    let session = dispatch_multi(project_root, plugins, out_dir, true, library_bindings)?;
+    Ok(session.result.proof_file)
+}
+
 fn dispatch_path(project_root: &Path, path_file: &Path) -> Result<MintSession, String> {
     let path = path_under(project_root, path_file);
     let text = std::fs::read_to_string(&path)

@@ -6,17 +6,18 @@
 
 use std::collections::BTreeMap;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use owo_colors::OwoColorize;
 use serde_json::{Map, Value};
 
 use sugar_claim_envelope::contract_cid_of_ir_decl;
 
-use crate::cmd_prove;
 use crate::lift_plugin::{self, LiftPluginError, LiftPluginOptions};
 use crate::project_config::{read_project_config, read_user_config, PluginEntry, ProjectConfig};
 use crate::report_fmt;
+use crate::{cmd_mint, cmd_prove};
 use crate::{LiftArgs, EXIT_OK, EXIT_USER_ERROR, EXIT_VERIFY_FAIL};
 
 pub fn run(args: LiftArgs) -> u8 {
@@ -44,7 +45,7 @@ pub fn run(args: LiftArgs) -> u8 {
             return EXIT_USER_ERROR;
         }
     };
-    let surface = resolved_surface.surface;
+    let surface = resolved_surface.surface.clone();
 
     let mut lift_options = if let Some(plugin) = resolved_surface.plugin.as_ref() {
         lift_options_for_plugin(plugin)
@@ -93,8 +94,26 @@ pub fn run(args: LiftArgs) -> u8 {
                             return EXIT_USER_ERROR;
                         }
                     };
+                let prove_with = if args.prove {
+                    match prepare_lift_report_prove_inputs(
+                        &project_root,
+                        &project_cfg,
+                        &user_cfg,
+                        &resolved_surface,
+                        args.library_bindings,
+                        &args.with,
+                    ) {
+                        Ok(with) => with,
+                        Err(error) => {
+                            eprintln!("{}: prepare prove report: {error}", "error".red().bold());
+                            return EXIT_USER_ERROR;
+                        }
+                    }
+                } else {
+                    Vec::new()
+                };
                 let prove_report = if args.prove {
-                    match cmd_prove::build_prove_report(&project_root, &args.z3, &args.with) {
+                    match cmd_prove::build_prove_report(&project_root, &args.z3, &prove_with) {
                         Ok(prove_report) => Some(prove_report),
                         Err(error) => {
                             eprintln!("{}: prove report: {error}", "error".red().bold());
@@ -186,7 +205,7 @@ struct ResolvedLiftSurface {
 }
 
 fn configured_or_planned_lift_surface(
-    project_root: &std::path::Path,
+    project_root: &Path,
     project_cfg: &ProjectConfig,
     user_cfg: &ProjectConfig,
     _prefer_report: bool,
@@ -274,6 +293,142 @@ fn configured_or_planned_lift_surface(
         "no lift surface configured. Set [[plugins]] or [authoring] surface in .sugar/config.toml, or install a Sugar kit component for this workspace."
             .to_string(),
     )
+}
+
+fn prepare_lift_report_prove_inputs(
+    project_root: &Path,
+    project_cfg: &ProjectConfig,
+    user_cfg: &ProjectConfig,
+    resolved_surface: &ResolvedLiftSurface,
+    library_bindings: bool,
+    configured_with: &[String],
+) -> Result<Vec<String>, String> {
+    let mut with = configured_with.to_vec();
+    if !needs_lift_report_auto_mint(project_root, true) {
+        tracing::info!(
+            project = %project_root.display(),
+            "lift-report-prove: existing .proof input found; skipping auto-mint"
+        );
+        return Ok(with);
+    }
+
+    let plugins = lift_report_mint_plugins(project_root, project_cfg, user_cfg, resolved_surface)?;
+    if plugins.is_empty() {
+        return Err(
+            "no lift plugin available to mint a proof for `lift --report --prove`".to_string(),
+        );
+    }
+
+    let out_dir = lift_report_auto_mint_dir(project_root);
+    tracing::info!(
+        project = %project_root.display(),
+        out_dir = %out_dir.display(),
+        plugins = plugins.len(),
+        surfaces = ?plugins.iter().map(|plugin| plugin.surface.as_str()).collect::<Vec<_>>(),
+        "lift-report-prove: auto-minting run-scoped proof input"
+    );
+    let proof_file =
+        cmd_mint::mint_lift_plugins_for_report(project_root, &plugins, &out_dir, library_bindings)?;
+    tracing::info!(
+        project = %project_root.display(),
+        out_dir = %out_dir.display(),
+        proof_file = proof_file.as_ref().map(|path| path.display().to_string()).unwrap_or_else(|| "(none)".to_string()),
+        "lift-report-prove: auto-mint complete"
+    );
+    with.push(absolute_path(&out_dir).display().to_string());
+    Ok(with)
+}
+
+fn lift_report_mint_plugins(
+    project_root: &Path,
+    project_cfg: &ProjectConfig,
+    user_cfg: &ProjectConfig,
+    resolved_surface: &ResolvedLiftSurface,
+) -> Result<Vec<PluginEntry>, String> {
+    let project_plugins = project_cfg
+        .plugins
+        .iter()
+        .filter(|plugin| plugin.is_lift_plugin())
+        .cloned()
+        .collect::<Vec<_>>();
+    if !project_plugins.is_empty() {
+        return Ok(project_plugins);
+    }
+
+    if project_cfg
+        .surface_for("lift")
+        .or_else(|| user_cfg.surface_for("lift"))
+        .is_none()
+    {
+        let component_plan = crate::component_plan::plan_workspace(project_root);
+        let component_plugins = component_plan
+            .plugins
+            .iter()
+            .filter(|plugin| plugin.is_lift_plugin())
+            .cloned()
+            .collect::<Vec<_>>();
+        if !component_plugins.is_empty() {
+            return Ok(component_plugins);
+        }
+        if let Some(diagnostic) = component_plan.diagnostics.iter().find(|diagnostic| {
+            matches!(
+                diagnostic.level,
+                crate::component_plan::DiagnosticLevel::Error
+            )
+        }) {
+            return Err(diagnostic.message.clone());
+        }
+    }
+
+    if let Some(plugin) = &resolved_surface.plugin {
+        return Ok(vec![plugin.clone()]);
+    }
+
+    Ok(vec![PluginEntry {
+        kind: Some("lift".to_string()),
+        surface: resolved_surface.surface.clone(),
+        ..PluginEntry::default()
+    }])
+}
+
+fn needs_lift_report_auto_mint(project_root: &Path, prove: bool) -> bool {
+    prove && !project_has_proof_files(project_root)
+}
+
+fn project_has_proof_files(project_root: &Path) -> bool {
+    if !project_root.exists() {
+        return false;
+    }
+    std::fs::read_dir(project_root)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .any(|entry| {
+            entry.file_type().is_ok_and(|ty| ty.is_file())
+                && entry.path().extension().is_some_and(|ext| ext == "proof")
+        })
+}
+
+fn lift_report_auto_mint_dir(project_root: &Path) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    project_root
+        .join(".sugar")
+        .join("runs")
+        .join(format!("lift-report-prove-{}-{nanos}", std::process::id()))
+        .join("proofs")
+}
+
+fn absolute_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join(path)
 }
 
 fn lift_options_for_configured_surface(
@@ -3294,6 +3449,26 @@ mod tests {
     }
 
     #[test]
+    fn report_prove_auto_mint_is_needed_only_when_project_has_no_proofs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(needs_lift_report_auto_mint(dir.path(), true));
+        assert!(!needs_lift_report_auto_mint(dir.path(), false));
+
+        std::fs::write(dir.path().join("blake3-512:existing.proof"), b"proof").unwrap();
+        assert!(!needs_lift_report_auto_mint(dir.path(), true));
+    }
+
+    #[test]
+    fn report_prove_auto_mint_ignores_nested_proof_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let nested = dir.path().join(".sugar").join("runs");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("blake3-512:nested.proof"), b"proof").unwrap();
+
+        assert!(needs_lift_report_auto_mint(dir.path(), true));
+    }
+
+    #[test]
     fn lift_uses_single_project_plugin_surface_without_authoring_section() {
         let project_cfg = ProjectConfig {
             plugins: vec![PluginEntry {
@@ -3304,10 +3479,14 @@ mod tests {
             ..ProjectConfig::default()
         };
 
-        assert_eq!(
-            configured_lift_surface(&project_cfg, &ProjectConfig::default()).as_deref(),
-            Some("java-test-assertions")
-        );
+        let resolved = configured_or_planned_lift_surface(
+            Path::new("."),
+            &project_cfg,
+            &ProjectConfig::default(),
+            false,
+        )
+        .expect("surface");
+        assert_eq!(resolved.surface, "java-test-assertions");
     }
 
     #[test]
