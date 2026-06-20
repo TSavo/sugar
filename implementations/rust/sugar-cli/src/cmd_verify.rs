@@ -45,6 +45,7 @@
 // exist in `sugar-verifier` / `sugar-proof-envelope`. PR-9 wires
 // them into one verb; it reimplements none of them.
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use crate::project_config::read_project_config;
@@ -653,14 +654,7 @@ fn run_artifact_project_verify(project_root: &Path, args: &VerifyArgs) -> u8 {
     } else {
         report_fmt::print_report_pretty(&report, quiet);
         if !quiet && !witness_results.is_empty() {
-            for witness in &witness_results {
-                println!(
-                    "  [witness:{}] {}  checks={}",
-                    witness.verdict,
-                    witness.witness_cid,
-                    witness.checks.join(",")
-                );
-            }
+            print!("{}", format_witness_replay_report(&witness_results));
         }
     }
 
@@ -1509,6 +1503,35 @@ fn emit_human_receipt(
     }
 }
 
+fn format_witness_replay_report(witnesses: &[witness_verify::WitnessVerifyResult]) -> String {
+    let mut out = String::new();
+    if witnesses.is_empty() {
+        return out;
+    }
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        "{}",
+        "Witness body replay (rust recomputes; oracle untrusted)".bold()
+    );
+    for witness in witnesses {
+        let status = match witness.verdict.as_str() {
+            "verified" => "verified".green().to_string(),
+            "broken-oracle" => "broken-oracle".red().bold().to_string(),
+            "refused" => "refused".red().to_string(),
+            other => other.to_string(),
+        };
+        let _ = writeln!(out, "  [{status}] {}", witness.witness_cid);
+        if !witness.checks.is_empty() {
+            let _ = writeln!(out, "      checks: {}", witness.checks.join(", "));
+        }
+        if !witness.reason.is_empty() {
+            let _ = writeln!(out, "      reason: {}", witness.reason);
+        }
+    }
+    out
+}
+
 fn short_cid(cid: &str) -> String {
     let hex = cid.trim_start_matches("blake3-512:");
     let take: String = hex.chars().take(16).collect();
@@ -1561,6 +1584,30 @@ mod tests {
         assert_eq!(classify(&lia), FormulaTheory::LinearArithmetic);
         let plan = SolverPlan::Dispatch(verify_dispatch_table());
         assert_eq!(routed_seat(&plan, classify(&lia)), "z3");
+    }
+
+    #[test]
+    fn witness_replay_report_names_checks_and_recompute_reason() {
+        let out = format_witness_replay_report(&[witness_verify::WitnessVerifyResult {
+            witness_cid: "blake3-512:witness-body".into(),
+            verdict: "verified".into(),
+            checks: vec!["signature".into(), "content-address:rust-kit".into()],
+            reason: "oracle resolved via rust-kit; rust recomputed the CID and it matched".into(),
+        }]);
+
+        assert!(out.contains("Witness body replay"), "{out}");
+        assert!(out.contains("verified"), "{out}");
+        assert!(out.contains("blake3-512:witness-body"), "{out}");
+        assert!(
+            out.contains("checks: signature, content-address:rust-kit"),
+            "{out}"
+        );
+        assert!(
+            out.contains(
+                "reason: oracle resolved via rust-kit; rust recomputed the CID and it matched"
+            ),
+            "{out}"
+        );
     }
 
     #[test]

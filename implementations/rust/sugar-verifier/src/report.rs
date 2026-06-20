@@ -209,11 +209,11 @@ pub fn toolchain_plan_reports(pool: &MementoPool) -> Vec<ToolchainPlanReport> {
             .iter()
             .filter(|witness| witness.plan_cid.as_deref() == Some(plan_cid.as_str()))
             .collect();
-        let legacy_unscoped: Vec<&WitnessOutputs> = witness_outputs
+        let unscoped: Vec<&WitnessOutputs> = witness_outputs
             .iter()
             .filter(|witness| witness.plan_cid.is_none())
             .collect();
-        let decision = toolchain_plan_decision(&expected, &plan_specific, &legacy_unscoped);
+        let decision = toolchain_plan_decision(&expected, &plan_specific, &unscoped);
         rows.push(ToolchainPlanReport {
             plan_memento_cid: cid.clone(),
             plan_cid,
@@ -244,7 +244,7 @@ struct ToolchainPlanDecision {
 fn toolchain_plan_decision(
     expected: &[String],
     plan_specific: &[&WitnessOutputs],
-    legacy_unscoped: &[&WitnessOutputs],
+    unscoped: &[&WitnessOutputs],
 ) -> ToolchainPlanDecision {
     if !plan_specific.is_empty() {
         if let Some(witness) = matching_witness(expected, plan_specific) {
@@ -259,17 +259,10 @@ fn toolchain_plan_decision(
         );
     }
 
-    if let Some(witness) = matching_witness(expected, legacy_unscoped) {
-        return confirmed(
-            witness,
-            "plan expected output CIDs match a legacy unscoped witness-memento; unscoped plan matching is deprecated",
-        );
-    }
-
-    if let Some(witness) = legacy_unscoped.first() {
+    if let Some(witness) = unscoped.first() {
         return declared_with_witness(
             witness,
-            "legacy unscoped witness-memento did not match this plan; unscoped plan refutation is deprecated and requires planCid",
+            "toolchain output witness is missing planCid; ignored for plan settlement because toolchain witnesses must be scoped to a plan CID",
         );
     }
 
@@ -447,6 +440,7 @@ mod tests {
                 "body": {
                     "kind": "witness-memento",
                     "witness_cid": "blake3-512:witness-body",
+                    "planCid": "blake3-512:plan-letter",
                     "actualOutputCids": ["blake3-512:out"],
                     "signer": "ed25519:test",
                     "signature": "ed25519:sig"
@@ -511,6 +505,60 @@ mod tests {
     }
 
     #[test]
+    fn toolchain_plan_unscoped_matching_witness_is_declared_not_confirmed() {
+        let mut pool = MementoPool::default();
+        pool.insert(
+            "blake3-512:plan-member".to_string(),
+            json!({
+                "schemaVersion": "1",
+                "header": {
+                    "kind": "plan-memento",
+                    "planCid": "blake3-512:plan-letter"
+                },
+                "body": {
+                    "kind": "component-plan",
+                    "expectedOutputCids": ["blake3-512:out"]
+                }
+            }),
+        );
+        pool.insert(
+            "blake3-512:witness-member".to_string(),
+            json!({
+                "schemaVersion": "1",
+                "header": {
+                    "kind": "witness-memento",
+                    "witnessCid": "blake3-512:witness-body",
+                    "witnessKind": "toolchain-run"
+                },
+                "body": {
+                    "kind": "witness-memento",
+                    "witness_cid": "blake3-512:witness-body",
+                    "actualOutputCids": ["blake3-512:out"],
+                    "signer": "ed25519:test",
+                    "signature": "ed25519:sig"
+                }
+            }),
+        );
+
+        let rows = toolchain_plan_reports(&pool);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].status, "declared",
+            "a toolchain output witness without planCid must not confirm any plan"
+        );
+        assert_eq!(
+            rows[0].witness_memento_cid.as_deref(),
+            Some("blake3-512:witness-member")
+        );
+        assert_eq!(rows[0].actual_output_cids, vec!["blake3-512:out"]);
+        assert!(
+            rows[0].reason.contains("missing planCid"),
+            "report should say the toolchain witness was ignored because it is unscoped"
+        );
+    }
+
+    #[test]
     fn toolchain_plan_unscoped_mismatched_witness_is_declared_not_refuted() {
         let mut pool = MementoPool::default();
         pool.insert(
@@ -551,7 +599,7 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(
             rows[0].status, "declared",
-            "legacy unscoped witnesses may confirm exact output matches but must not refute a plan"
+            "unscoped witnesses must not refute a plan"
         );
         assert_eq!(
             rows[0].witness_memento_cid.as_deref(),
@@ -559,8 +607,8 @@ mod tests {
         );
         assert_eq!(rows[0].actual_output_cids, vec!["blake3-512:actual"]);
         assert!(
-            rows[0].reason.contains("legacy unscoped"),
-            "report should make the migration/deprecation horizon visible"
+            rows[0].reason.contains("missing planCid"),
+            "report should make the missing scope visible"
         );
     }
 

@@ -442,6 +442,8 @@ fn mint_witness_proof(
             policy_cid: Some(policy_cid),
             extra_input_cids: input_cids,
             proof_metadata: metadata,
+            plan_cid: None,
+            actual_output_cids: Vec::new(),
         },
     )
     .map_err(|e| format!("mint emit witness memento: {e}"))?;
