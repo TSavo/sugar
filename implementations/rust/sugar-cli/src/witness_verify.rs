@@ -212,17 +212,32 @@ pub fn has_witnesses(pool: &MementoPool) -> bool {
 fn find_resolvers(project_root: &Path) -> Vec<(Vec<String>, Option<PathBuf>, String)> {
     let lift_dir = project_root.join(".sugar").join("lift");
     let mut found = Vec::new();
-    let Ok(entries) = std::fs::read_dir(&lift_dir) else {
-        return found;
-    };
-    for entry in entries.flatten() {
-        let manifest = entry.path().join("manifest.toml");
-        if !manifest.exists() {
+    if let Ok(entries) = std::fs::read_dir(&lift_dir) {
+        for entry in entries.flatten() {
+            let manifest = entry.path().join("manifest.toml");
+            if !manifest.exists() {
+                continue;
+            }
+            if let Some(r) = parse_resolve_command(&manifest, project_root) {
+                found.push(r);
+            }
+        }
+    }
+    for manifest in crate::component_plan::planned_lift_manifests(project_root) {
+        if manifest.resolve_witness_command.is_empty() {
             continue;
         }
-        if let Some(r) = parse_resolve_command(&manifest, project_root) {
-            found.push(r);
-        }
+        found.push((
+            manifest.resolve_witness_command,
+            crate::component_plan::resolve_project_relative_working_dir(
+                project_root,
+                manifest.working_dir.as_ref(),
+            )
+            .or_else(|| Some(project_root.to_path_buf())),
+            manifest
+                .resolve_witness_method
+                .unwrap_or_else(|| "sugar.plugin.resolve_witness".to_string()),
+        ));
     }
     found
 }

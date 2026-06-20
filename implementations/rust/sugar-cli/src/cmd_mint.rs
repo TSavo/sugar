@@ -2984,6 +2984,56 @@ pub fn run(args: MintArgs) -> u8 {
             args.flags.quiet,
             args.library_bindings,
         )
+    } else if args.surface.is_none()
+        && derived_surface.is_none()
+        && project_cfg
+            .surface_for("lift")
+            .or_else(|| user_cfg.surface_for("lift"))
+            .is_none()
+    {
+        let component_plan = crate::component_plan::plan_workspace(&project_root);
+        let lift_plugins = component_plan
+            .plugins
+            .iter()
+            .filter(|plugin| plugin.is_lift_plugin())
+            .cloned()
+            .collect::<Vec<_>>();
+        if lift_plugins.is_empty() {
+            if let Some(diagnostic) = component_plan.diagnostics.iter().find(|diagnostic| {
+                matches!(
+                    diagnostic.level,
+                    crate::component_plan::DiagnosticLevel::Error
+                )
+            }) {
+                eprintln!("{}: {}", "error".red().bold(), diagnostic.message);
+            } else {
+                eprintln!(
+                    "{}: no lift surface configured. Set [[plugins]] or [authoring] surface in .sugar/config.toml, pass --surface/--kit, or install a Sugar kit component for this workspace.",
+                    "error".red().bold()
+                );
+            }
+            return EXIT_USER_ERROR;
+        }
+        if !args.flags.quiet {
+            println!(
+                "{}: {} component plugin(s) discovered: {}",
+                "discover".green().bold(),
+                lift_plugins.len(),
+                lift_plugins
+                    .iter()
+                    .map(|p| p.display_name().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+        let out_dir = args.out.clone().unwrap_or_else(|| project_root.clone());
+        dispatch_multi(
+            &project_root,
+            &lift_plugins,
+            &out_dir,
+            args.flags.quiet,
+            args.library_bindings,
+        )
     } else {
         // Resolve surface: --surface > --kit derived > project config > user config.
         let surface = if let Some(s) = args.surface.clone() {

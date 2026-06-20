@@ -44,6 +44,8 @@ struct PluginManifest {
     /// `pytest`). Keys the per-tool discharge registry so a proof carrying
     /// witnesses from multiple kits routes each to its own recompute.
     witness_tool: Option<String>,
+    resolve_witness_command: Vec<String>,
+    resolve_witness_method: Option<String>,
 }
 
 fn parse_manifest(path: &std::path::Path) -> Result<PluginManifest, String> {
@@ -82,7 +84,10 @@ fn parse_manifest(path: &std::path::Path) -> Result<PluginManifest, String> {
             "name" => m.name = val.trim_matches('"').to_string(),
             "working_dir" => m.working_dir = Some(PathBuf::from(val.trim_matches('"'))),
             "witness_tool" => m.witness_tool = Some(val.trim_matches('"').to_string()),
-            "command" | "discharge_command" => {
+            "resolve_witness_method" => {
+                m.resolve_witness_method = Some(val.trim_matches('"').to_string())
+            }
+            "command" | "discharge_command" | "resolve_witness_command" => {
                 let inner = val.trim_matches(|c| c == '[' || c == ']');
                 let parsed: Vec<String> = inner
                     .split(',')
@@ -91,8 +96,10 @@ fn parse_manifest(path: &std::path::Path) -> Result<PluginManifest, String> {
                     .collect();
                 if key == "command" {
                     m.command = parsed;
-                } else {
+                } else if key == "discharge_command" {
                     m.discharge_command = parsed;
+                } else {
+                    m.resolve_witness_command = parsed;
                 }
             }
             _ => {}
@@ -124,8 +131,19 @@ fn find_manifest(project_root: &std::path::Path, surface: &str) -> Result<Plugin
             return parse_manifest(&user_global);
         }
     }
+    if let Some(planned) = crate::component_plan::planned_lift_manifest(project_root, surface) {
+        return Ok(PluginManifest {
+            name: planned.name,
+            command: planned.command,
+            working_dir: planned.working_dir,
+            discharge_command: planned.discharge_command,
+            witness_tool: planned.witness_tool,
+            resolve_witness_command: planned.resolve_witness_command,
+            resolve_witness_method: planned.resolve_witness_method,
+        });
+    }
     Err(format!(
-        "no plugin manifest for surface `{surface}` (looked in .sugar/lift/{surface}/manifest.toml and ~/.config/sugar/lift/{surface}/manifest.toml)"
+        "no plugin manifest for surface `{surface}` (looked in .sugar/lift/{surface}/manifest.toml, ~/.config/sugar/lift/{surface}/manifest.toml, and discovered Sugar components)"
     ))
 }
 
@@ -626,11 +644,37 @@ pub(crate) fn configure_witness_discharge_env(
             .unwrap_or_else(|_| project_root.to_path_buf());
         std::env::set_var("SUGAR_WITNESS_PROJECT_DIR", &p);
     }
-    for plugin in cfg_doc.plugins.iter().filter(|p| p.is_lift_plugin()) {
+    let planned_plugins;
+    let plugins: Vec<&crate::project_config::PluginEntry> =
+        if cfg_doc.plugins.iter().any(|p| p.is_lift_plugin()) {
+            cfg_doc
+                .plugins
+                .iter()
+                .filter(|p| p.is_lift_plugin())
+                .collect()
+        } else {
+            planned_plugins = crate::component_plan::planned_lift_plugins(project_root);
+            planned_plugins
+                .iter()
+                .filter(|p| p.is_lift_plugin())
+                .collect()
+        };
+    let mut witness_resolvers: Vec<Value> = Vec::new();
+    for plugin in plugins {
         let manifest = match find_manifest(project_root, &plugin.surface) {
             Ok(m) => m,
             Err(_) => continue,
         };
+        if !manifest.resolve_witness_command.is_empty() {
+            let working_dir = manifest_working_dir(project_root, &manifest);
+            witness_resolvers.push(json!({
+                "argv": manifest.resolve_witness_command,
+                "working_dir": working_dir.display().to_string(),
+                "method": manifest
+                    .resolve_witness_method
+                    .unwrap_or_else(|| "sugar.plugin.resolve_witness".to_string()),
+            }));
+        }
         if manifest.discharge_command.is_empty() {
             continue;
         }
@@ -646,6 +690,25 @@ pub(crate) fn configure_witness_discharge_env(
             std::env::set_var(&key, manifest.discharge_command.join(" "));
         }
     }
+    if !witness_resolvers.is_empty() && std::env::var_os("SUGAR_WITNESS_RESOLVERS").is_none() {
+        if let Ok(encoded) = serde_json::to_string(&witness_resolvers) {
+            std::env::set_var("SUGAR_WITNESS_RESOLVERS", encoded);
+        }
+    }
+}
+
+fn manifest_working_dir(project_root: &Path, manifest: &PluginManifest) -> PathBuf {
+    manifest
+        .working_dir
+        .as_ref()
+        .map(|path| {
+            if path.is_absolute() {
+                path.clone()
+            } else {
+                project_root.join(path)
+            }
+        })
+        .unwrap_or_else(|| project_root.to_path_buf())
 }
 
 fn run_admission_gate(args: &ProveArgs) -> u8 {

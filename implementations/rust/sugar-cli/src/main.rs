@@ -39,6 +39,7 @@ mod cmd_release_gate;
 mod cmd_self_check;
 mod cmd_verify;
 mod cmd_version;
+mod component_plan;
 mod doctor;
 mod doctor_oracle;
 pub mod floor_runtime_check;

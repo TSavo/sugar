@@ -369,8 +369,18 @@ fn find_manifest(project_root: &Path, surface: &str) -> Result<LiftPluginManifes
             return parse_manifest(&user_global);
         }
     }
+    if let Some(planned) = crate::component_plan::planned_lift_manifest(project_root, surface) {
+        return Ok(LiftPluginManifest {
+            name: planned.name,
+            version: planned.version,
+            command: planned.command,
+            working_dir: planned.working_dir,
+            method: planned.method,
+            phase: planned.phase,
+        });
+    }
     Err(format!(
-        "no plugin manifest for surface `{surface}` (looked in .sugar/lift/{surface}/manifest.toml and ~/.config/sugar/lift/{surface}/manifest.toml)"
+        "no plugin manifest for surface `{surface}` (looked in .sugar/lift/{surface}/manifest.toml, ~/.config/sugar/lift/{surface}/manifest.toml, and discovered Sugar components)"
     ))
 }
 
