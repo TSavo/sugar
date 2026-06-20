@@ -52,12 +52,24 @@ fn decls_for_assertion_kind(
         .collect()
 }
 
-fn warranted_decls(out: &AdapterOutput) -> Vec<&sugar_ir_symbolic::ContractDecl> {
+fn all_warranted_decls(out: &AdapterOutput) -> Vec<&sugar_ir_symbolic::ContractDecl> {
     decls_for_assertion_kind(out, AssertionFactKind::Warranted)
 }
 
-fn support_decls(out: &AdapterOutput) -> Vec<&sugar_ir_symbolic::ContractDecl> {
-    decls_for_assertion_kind(out, AssertionFactKind::Support)
+fn warranted_decls(out: &AdapterOutput) -> Vec<&sugar_ir_symbolic::ContractDecl> {
+    let facts: Vec<_> = out
+        .assertion_facts
+        .iter()
+        .filter(|fact| fact.kind == AssertionFactKind::Warranted && fact.claim_count > 0)
+        .collect();
+    out.decls
+        .iter()
+        .filter(|decl| {
+            facts
+                .iter()
+                .any(|fact| fact.contract_name.as_str() == decl.name)
+        })
+        .collect()
 }
 
 fn assert_warranted_decl_count(out: &AdapterOutput, expected: usize) {
@@ -98,21 +110,21 @@ fn single_warranted_decl(out: &AdapterOutput) -> &sugar_ir_symbolic::ContractDec
     decls[0]
 }
 
-fn assert_supports_panic_path(out: &sugar_lift_rust_tests::AdapterOutput, item_suffix: &str) {
+fn assert_warrants_panic_path(out: &sugar_lift_rust_tests::AdapterOutput, item_suffix: &str) {
     assert!(
         out.assertion_facts.iter().any(|fact| {
-            fact.kind == AssertionFactKind::Support && fact.item_name.ends_with(item_suffix)
+            fact.kind == AssertionFactKind::Warranted && fact.item_name.ends_with(item_suffix)
         }),
-        "expected support fact for `{item_suffix}`: {:?}",
+        "expected warranted panic-path fact for `{item_suffix}`: {:?}",
         out.assertion_facts
     );
-    let support_decls = support_decls(out);
+    let warranted_decls = all_warranted_decls(out);
     assert!(
-        support_decls
+        warranted_decls
             .iter()
             .any(|decl| decl.inv.as_deref().is_some_and(formula_mentions_panic_path)),
-        "expected emitted not(panic(...)) support universe: {:?}",
-        support_decls
+        "expected emitted warranted not(panic(...)) universe: {:?}",
+        warranted_decls
     );
 }
 
@@ -740,6 +752,51 @@ fn compute_float64_wrapper_lowers_scaled_literals_to_tuple_axioms() {
 }
 
 #[test]
+fn vec_literal_builder_replays_reference_pattern_for_loop() {
+    let src = r#"
+        #[test]
+        fn test_lots_of_extract_deposit_builder() {
+            let xs = {
+                let mut xs = vec![];
+                let mut x: u8 = !0;
+                let mut w = u8::BITS;
+                while w > 0 {
+                    w >>= 1;
+                    xs.push(x);
+                    xs.push(!x);
+                    x ^= x << w;
+                }
+                xs
+            };
+
+            for &x in &xs {
+                assert_eq!(x & !x, 0);
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/num/u8.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "vec builder literal should become a replayable literal sequence: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert!(
+        out.factory_audits
+            .iter()
+            .any(|audit| audit.selected.as_deref() == Some("vec_literal")),
+        "vec literal sugar should own the builder block: {:?}",
+        out.factory_audits
+    );
+    assert!(
+        !out.skip_reasons.iter().any(
+            |reason| reason.contains("constraint-shaped expression did not reach bedrock `xs`")
+        ),
+        "xs should not remain an unclassified constraint-shaped expression: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
 fn finite_helper_match_return_loop_replays_splitpoint_assertions() {
     let src = r#"
         const B: usize = 6;
@@ -1260,7 +1317,7 @@ fn scalar_is_six() {
     let out = lift_file(&parse(src), "src/lib.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_supports_panic_path(&out, "scalar_is_six");
+    assert_warrants_panic_path(&out, "scalar_is_six");
 
     let decl = decl_named(
         &out,
@@ -1277,7 +1334,7 @@ fn scalar_is_six() {
     assert_eq!(
         scalar_operands.len(),
         1,
-        "expected one scalar assertion plus panic-path support: {operands:?}"
+        "expected one scalar assertion plus panic-path fact: {operands:?}"
     );
     assert_eq_atom(scalar_operands[0], 6);
 }
@@ -1725,7 +1782,7 @@ fn decoded_len_est() {
     let out = lift_file(&parse(src), "src/decode.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_supports_panic_path(&out, "decoded_len_est");
+    assert_warrants_panic_path(&out, "decoded_len_est");
 
     let decl = decl_named(
         &out,
@@ -1739,7 +1796,7 @@ fn decoded_len_est() {
     assert_eq!(
         scalar_operands.len(),
         1,
-        "expected one scalar assertion plus panic-path support: {operands:?}"
+        "expected one scalar assertion plus panic-path fact: {operands:?}"
     );
     assert_int_call_eq_atom(scalar_operands[0], 3, "call:decoded_len_estimate", 4);
 }
@@ -5072,21 +5129,10 @@ fn single_inv_debug(src: &str) -> String {
     let out = lift_file(&parse(src), "tests/macros.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    let decl = single_non_panic_free_inv_decl(&out.decls);
+    let decl = single_warranted_decl(&out);
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
     format!("{:?}", operands[0])
-}
-
-fn single_non_panic_free_inv_decl(
-    decls: &[sugar_ir_symbolic::ContractDecl],
-) -> &sugar_ir_symbolic::ContractDecl {
-    let matches: Vec<_> = decls
-        .iter()
-        .filter(|decl| !decl.inv.as_deref().is_some_and(formula_mentions_panic_path))
-        .collect();
-    assert_eq!(matches.len(), 1, "decls: {:?}", decls);
-    matches[0]
 }
 
 fn formula_mentions_panic_path(formula: &Formula) -> bool {
@@ -5229,7 +5275,7 @@ fn single_inv_debug_with_da(src: &str) -> String {
         "expected 1 lifted row; warnings: {:?}",
         out.warnings
     );
-    let decl = single_non_panic_free_inv_decl(&out.decls);
+    let decl = single_warranted_decl(&out);
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
     format!("{:?}", operands[0])
@@ -5857,7 +5903,7 @@ fn t() {
         out.warnings
     );
     let decl = single_warranted_decl(&out);
-    assert_supports_panic_path(&out, "::t");
+    assert_warrants_panic_path(&out, "::t");
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
     assert_eq_atom(&operands[0], 42);
@@ -5882,7 +5928,7 @@ fn t() {
         out.warnings
     );
     let decl = single_warranted_decl(&out);
-    assert_supports_panic_path(&out, "::t");
+    assert_warrants_panic_path(&out, "::t");
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
     assert_eq_atom(&operands[0], 7);
@@ -5914,7 +5960,7 @@ fn t() {
         out.warnings
     );
     let decl = single_warranted_decl(&out);
-    assert_supports_panic_path(&out, "::t");
+    assert_warrants_panic_path(&out, "::t");
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 2, "must produce a conjunction of two atoms");
     assert_eq_atom(&operands[0], 42);
@@ -6167,15 +6213,15 @@ fn t() {
     let out = lift_file(&parse(src), "coretests/tests/time.rs");
     assert_eq!(
         out.assertions_lifted, 0,
-        "const initializer callsites are support, not scalar assertions: {:?}",
+        "const initializer callsites emit panic-path facts, not scalar assertions: {:?}",
         out.decls
     );
     assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
     assert!(
         out.assertion_facts.iter().any(|fact| {
-            fact.kind == AssertionFactKind::Support && fact.contract_name.contains("helper")
+            fact.kind == AssertionFactKind::Warranted && fact.contract_name.contains("helper")
         }),
-        "direct call inside a const initializer should still emit not-panic support: {:?}",
+        "direct call inside a const initializer should still emit warranted not-panic fact: {:?}",
         out.assertion_facts
     );
 }
@@ -7958,17 +8004,31 @@ fn t() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/module_suite.rs");
-    let warranted = out
+    let scalar_claims: usize = out
         .assertion_facts
         .iter()
         .filter(|fact| fact.kind == AssertionFactKind::Warranted)
-        .count();
+        .map(|fact| fact.claim_count)
+        .sum();
     assert_eq!(
-        warranted, 4,
+        scalar_claims, 4,
         "macro-generated module::run callsites should recurse through module consts: skips={:?} facts={:?} decls={:?}",
         out.skip_reasons,
         out.assertion_facts,
         out.decls
+    );
+    assert_eq!(
+        out.assertion_facts
+            .iter()
+            .filter(|fact| {
+                fact.kind == AssertionFactKind::Warranted
+                    && fact.claim_count == 0
+                    && fact.contract_name.contains("::run")
+            })
+            .count(),
+        2,
+        "module::run callsites should also emit warranted panic-free universes: {:?}",
+        out.assertion_facts
     );
     assert!(
         out.skip_reasons
@@ -11027,6 +11087,10 @@ fn iter_sum_through_map_filter_and_closed_range_digs() {
             r#"#[test] fn t() { assert_eq!((1..=4).sum::<i32>(), 10); }"#,
             10,
         ),
+        (
+            r#"#[test] fn t() { use std::num::Saturating; assert_eq!((1u32..=3).map(|i| Saturating(i)).count(), 3); }"#,
+            3,
+        ),
     ];
     for (i, (src, total)) in cases.iter().enumerate() {
         let out = lift_file(&parse(src), "tests/iter_compose.rs");
@@ -13104,7 +13168,8 @@ fn test_estimated_capacity() {
     assert_warranted_decl_count(&out, 1);
     assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
     assert!(out.skip_reasons.is_empty(), "{:?}", out.skip_reasons);
-    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    let scalar_decls: Vec<_> = warranted_decls(&out).into_iter().cloned().collect();
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&scalar_decls);
     assert!(
         !doc.contains("macro:format_args") && !doc.contains("method:estimated_capacity"),
         "format_args!(...).estimated_capacity() must lower to scalar facts, not opaque call terms: {doc}"
@@ -13155,7 +13220,8 @@ fn int_sqrt_axioms() {
         "helper assertions should be accounted at literal call sites, not left at definition sites: {:?}",
         out.reduced_helpers
     );
-    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    let scalar_decls: Vec<_> = warranted_decls(&out).into_iter().cloned().collect();
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&scalar_decls);
     assert!(
         !doc.contains("method:isqrt")
             && !doc.contains("method:checked_isqrt")
@@ -13301,7 +13367,8 @@ fn int_sqrt_chain_axioms() {
         out.decls
     );
     assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
-    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    let scalar_decls: Vec<_> = warranted_decls(&out).into_iter().cloned().collect();
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&scalar_decls);
     assert!(
         !doc.contains("method:isqrt")
             && !doc.contains("method:get")

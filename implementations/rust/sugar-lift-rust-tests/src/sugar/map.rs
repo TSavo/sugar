@@ -6,14 +6,17 @@
 // mapped value it cannot materialize back to an `Expr`. Lifted verbatim from the
 // `Adaptor::Map(closure)` arm of the former `apply_one_adaptor` match.
 
-use syn::{Expr, Type};
+use std::collections::BTreeMap;
 
-use crate::sugar::factory::{build_composite, SugarBuildCtx};
+use quote::quote;
+use syn::{Expr, Pat, Type};
+
+use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::{
-    const_eval_unary_closure, const_eval_unary_closure_with_u128_shift,
-    literal_aggregate_term_in_scope, strip_refs_groups, Desugared, DesugaredElem, Outcome, Sugar,
-    SugarCtx,
+    closure_body_mutates_captured_runtime_state, const_eval_unary_closure,
+    const_eval_unary_closure_with_u128_shift, strip_refs_groups, substitute_expr, Desugared,
+    DesugaredElem, Effect, ExprBindings, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -35,7 +38,7 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
         return None;
     }
     Some(Box::new(MapSugar {
-        inner: build_map_receiver(&call.receiver, fcx)?,
+        inner: method_family::build_literal_sequence_composite(&call.receiver, fcx)?,
         f: f.clone(),
         u128_shift_hint: receiver_is_u128_count_ones_range(&call.receiver),
     }))
@@ -51,12 +54,11 @@ pub(crate) fn recognize_term(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn
     let Expr::Closure(f) = &call.args[0] else {
         return None;
     };
-    if !resolves_direct_literal_array_receiver(&call.receiver, fcx) {
+    if !method_family::resolves_literal_sequence(&call.receiver, fcx.let_inits()) {
         return None;
     }
     Some(Box::new(MapTermSugar {
-        source: expr.clone(),
-        inner: build_map_receiver(&call.receiver, fcx)?,
+        inner: method_family::build_literal_sequence_composite(&call.receiver, fcx)?,
         f: f.clone(),
         u128_shift_hint: receiver_is_u128_count_ones_range(&call.receiver),
     }))
@@ -71,6 +73,9 @@ pub(crate) struct MapSugar {
 
 impl Sugar for MapSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        if let Some(outcome) = captured_mutation_refusal(&self.f) {
+            return outcome;
+        }
         Outcome::from_opt(
             reduce_map(self.inner.as_ref(), &self.f, self.u128_shift_hint, ctx).map(Desugared::Seq),
         )
@@ -78,7 +83,6 @@ impl Sugar for MapSugar {
 }
 
 pub(crate) struct MapTermSugar {
-    pub(crate) source: Expr,
     pub(crate) inner: Box<dyn Sugar>,
     pub(crate) f: syn::ExprClosure,
     pub(crate) u128_shift_hint: bool,
@@ -86,15 +90,31 @@ pub(crate) struct MapTermSugar {
 
 impl Sugar for MapTermSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        if let Some(outcome) = captured_mutation_refusal(&self.f) {
+            return outcome;
+        }
         Outcome::from_opt((|| {
             let mapped = reduce_map(self.inner.as_ref(), &self.f, self.u128_shift_hint, ctx)?;
             let exprs: Vec<Expr> = mapped.into_iter().map(|elem| elem.expr).collect();
-            let term =
-                literal_aggregate_term_in_scope("Array", exprs.iter(), &self.source, ctx.scope)
-                    .ok()?;
+            let array = array_expr(exprs)?;
+            let let_inits = BTreeMap::new();
+            let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+            let term = build_term(&array, &fcx).desugar(ctx).dug()?.into_term()?;
             Some(Desugared::Term(term))
         })())
     }
+}
+
+fn captured_mutation_refusal(f: &syn::ExprClosure) -> Option<Outcome> {
+    if !closure_body_mutates_captured_runtime_state(&Expr::Closure(f.clone())) {
+        return None;
+    }
+    Some(Outcome::Hit(Effect::Unsupported {
+        reason: "iterator/option adaptor `.map(|..| ..)` over a LITERAL domain whose closure body \
+                 MUTATES captured runtime state (bin-2: runtime side effect during value \
+                 construction, not constructed from source literals); refused"
+            .to_string(),
+    }))
 }
 
 fn reduce_map(
@@ -106,15 +126,21 @@ fn reduce_map(
     let seq = inner.desugar(ctx).dug()?.into_seq()?;
     let mut out = Vec::with_capacity(seq.len());
     for elem in seq {
-        let v = elem.value.as_ref()?; // opaque element under a map -> bail
-        let mapped = const_eval_unary_closure(f, v).or_else(|| {
-            u128_shift_hint.then(|| const_eval_unary_closure_with_u128_shift(f, v))?
-        })?;
-        let mexpr = mapped.to_expr()?; // materialize for EUF translation
-        out.push(DesugaredElem {
-            expr: mexpr,
-            value: Some(mapped),
-        });
+        if let Some(mapped) = elem.value.as_ref().and_then(|v| {
+            const_eval_unary_closure(f, v).or_else(|| {
+                u128_shift_hint.then(|| const_eval_unary_closure_with_u128_shift(f, v))?
+            })
+        }) {
+            let mexpr = mapped.to_expr()?; // materialize for EUF translation
+            out.push(DesugaredElem {
+                expr: mexpr,
+                value: Some(mapped),
+            });
+            continue;
+        }
+        let expr = rewrite_map_elem(f, &elem.expr)?;
+        let value = crate::const_eval(&expr, &BTreeMap::new());
+        out.push(DesugaredElem { expr, value });
     }
     tracing::debug!(
         target: "sugar_lift_rust_tests::sugar::map",
@@ -122,6 +148,41 @@ fn reduce_map(
         "literal closure map reduced"
     );
     Some(out)
+}
+
+fn rewrite_map_elem(f: &syn::ExprClosure, elem: &Expr) -> Option<Expr> {
+    if f.inputs.len() != 1 {
+        return None;
+    }
+    let param = closure_param_ident(f.inputs.first()?)?;
+    let body = closure_value_body(f)?;
+    let mut bindings = ExprBindings::new();
+    bindings.insert(param, elem.clone());
+    Some(substitute_expr(body, &bindings))
+}
+
+fn closure_value_body(f: &syn::ExprClosure) -> Option<&Expr> {
+    match &*f.body {
+        Expr::Block(block) => match block.block.stmts.as_slice() {
+            [syn::Stmt::Expr(expr, None)] => Some(expr),
+            _ => None,
+        },
+        expr => Some(expr),
+    }
+}
+
+fn closure_param_ident(pat: &Pat) -> Option<String> {
+    match pat {
+        Pat::Ident(p) if p.subpat.is_none() => Some(p.ident.to_string()),
+        Pat::Reference(r) => closure_param_ident(&r.pat),
+        Pat::Paren(p) => closure_param_ident(&p.pat),
+        Pat::Type(t) => closure_param_ident(&t.pat),
+        _ => None,
+    }
+}
+
+fn array_expr(exprs: Vec<Expr>) -> Option<Expr> {
+    syn::parse2(quote!([#(#exprs),*])).ok()
 }
 
 fn receiver_is_u128_count_ones_range(expr: &Expr) -> bool {
@@ -159,39 +220,4 @@ fn type_is_u128(ty: &Type) -> bool {
         .segments
         .last()
         .is_some_and(|segment| segment.ident == "u128")
-}
-
-fn build_map_receiver(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    if let Expr::Path(path) = strip_refs_groups(expr) {
-        if path.qself.is_none() {
-            if let Some(name) = path.path.get_ident().map(ToString::to_string) {
-                if fcx.resolving_bound_path(&name) {
-                    return None;
-                }
-                if let Some(init) = fcx.let_inits().get(&name) {
-                    let child_fcx = fcx.with_bound_path(&name);
-                    return Some(build_composite(init, &child_fcx));
-                }
-            }
-        }
-    }
-    Some(build_composite(expr, fcx))
-}
-
-fn resolves_direct_literal_array_receiver(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
-    match strip_refs_groups(expr) {
-        Expr::Array(_) => true,
-        Expr::Path(path) if path.qself.is_none() => {
-            let Some(name) = path.path.get_ident().map(ToString::to_string) else {
-                return false;
-            };
-            if fcx.resolving_bound_path(&name) {
-                return false;
-            }
-            fcx.let_inits()
-                .get(&name)
-                .is_some_and(|init| resolves_direct_literal_array_receiver(init, fcx))
-        }
-        _ => false,
-    }
 }

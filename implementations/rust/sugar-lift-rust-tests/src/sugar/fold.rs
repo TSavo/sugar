@@ -162,10 +162,11 @@ impl Sugar for FoldSugar {
                 ctx.scope.fn_registry(),
                 &ctx.scope.layout_type_registry,
             );
-            let warranted = body_entries
+            let warranted: usize = body_entries
                 .iter()
                 .filter(|entry| matches!(entry.kind, AssertionFactKind::Warranted))
-                .count();
+                .map(|entry| entry.claim_count)
+                .sum();
             if !body_skipped.is_empty() || warranted != n_body {
                 return None;
             }

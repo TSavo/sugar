@@ -181,11 +181,7 @@ impl ConditionalSugar {
             ctx.scope.fn_registry(),
             &ctx.scope.layout_type_registry,
         );
-        let warranted = body_entries
-            .iter()
-            .filter(|entry| matches!(entry.kind, AssertionFactKind::Warranted))
-            .count();
-        if !body_skipped.is_empty() || warranted != expected {
+        if !body_skipped.is_empty() || body_lifted != expected {
             return None;
         }
         Some(and_(body_entries.iter().map(|e| e.atom.clone()).collect()))

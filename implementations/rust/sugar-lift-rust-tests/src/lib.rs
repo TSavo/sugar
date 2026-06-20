@@ -57,6 +57,7 @@ pub mod sugar {
     pub mod closure_tls_accessor;
     pub mod collect;
     pub mod compare;
+    pub mod compute_float;
     pub mod concat_macro;
     pub mod conditional;
     pub mod configuration;
@@ -64,7 +65,6 @@ pub mod sugar {
     pub mod const_bound;
     pub mod const_item;
     pub mod const_path;
-    pub mod compute_float;
     pub mod constraint;
     pub mod constraint_runtime_boundary;
     pub mod control_flow_term;
@@ -154,6 +154,7 @@ pub mod sugar {
     pub mod unsafe_memory;
     pub mod use_item;
     pub mod utf8_chunks;
+    pub mod vec_literal;
     pub mod vec_macro;
     pub mod wrapping_neg;
 }
@@ -185,6 +186,7 @@ pub struct AssertionFactEmission {
     pub item_name: String,
     pub contract_name: String,
     pub kind: AssertionFactKind,
+    pub claim_count: usize,
     pub fact_spans: Vec<proc_macro2::Span>,
 }
 
@@ -1835,7 +1837,7 @@ fn collect_source_assertion_contract_expr(
                 atom,
                 warrant,
                 kind,
-                ..
+                n,
             }) => {
                 if !kind.is_warranted() {
                     return;
@@ -1849,6 +1851,7 @@ fn collect_source_assertion_contract_expr(
                         atom,
                         fact_span: Some(expr.span()),
                         kind,
+                        claim_count: n,
                     },
                     slot: SourceAssertionContractSlot::Pre,
                 });
@@ -2125,6 +2128,7 @@ pub(crate) struct AssertionEntry {
     pub(crate) atom: Rc<Formula>,
     pub(crate) fact_span: Option<proc_macro2::Span>,
     pub(crate) kind: AssertionFactKind,
+    pub(crate) claim_count: usize,
 }
 
 struct AssertionGroup {
@@ -2132,6 +2136,8 @@ struct AssertionGroup {
     atoms: Vec<Rc<Formula>>,
     warranted_fact_spans: Vec<proc_macro2::Span>,
     support_fact_spans: Vec<proc_macro2::Span>,
+    warranted_claim_count: usize,
+    support_claim_count: usize,
     has_warranted: bool,
     has_support: bool,
 }
@@ -2148,6 +2154,7 @@ fn emit_assertion_fact_metadata(
             item_name: item_name.to_string(),
             contract_name: group.name.clone(),
             kind: AssertionFactKind::Warranted,
+            claim_count: group.warranted_claim_count,
             fact_spans: group.warranted_fact_spans.clone(),
         });
     }
@@ -2157,6 +2164,7 @@ fn emit_assertion_fact_metadata(
             item_name: item_name.to_string(),
             contract_name: group.name.clone(),
             kind: AssertionFactKind::Support,
+            claim_count: group.support_claim_count,
             fact_spans: group.support_fact_spans.clone(),
         });
     }
@@ -3501,11 +3509,19 @@ fn try_macro_expansion_entries(
         macro_depth = macro_depth,
         entries = temp_entries.len(),
         warranted_entries = temp_entries.iter().filter(|entry| entry.kind.is_warranted()).count(),
+        warranted_claims = temp_entries
+            .iter()
+            .filter(|entry| entry.kind.is_warranted())
+            .map(|entry| entry.claim_count)
+            .sum::<usize>(),
         skipped = temp_skipped.len(),
         lifted = temp_lifted,
         "source macro expansion factory recursion complete"
     );
-    if !temp_entries.iter().any(|entry| entry.kind.is_warranted()) {
+    if !temp_entries
+        .iter()
+        .any(|entry| entry.kind.is_warranted() && entry.claim_count > 0)
+    {
         if let Ok(expr) = syn::parse2::<Expr>(expanded.clone()) {
             let scope = temporal_scope_from_reducer(local_scope, reducer);
             if let Some(entry) = value_panic_locus_entry_from_expr(&expr, &scope) {
@@ -3523,7 +3539,11 @@ fn try_macro_expansion_entries(
             }
         }
     }
-    if assertion_surfaces > 0 && !temp_entries.iter().any(|entry| entry.kind.is_warranted()) {
+    if assertion_surfaces > 0
+        && !temp_entries
+            .iter()
+            .any(|entry| entry.kind.is_warranted() && entry.claim_count > 0)
+    {
         if let Some(reason) = temp_skipped
             .iter()
             .find(|reason| matches!(refusal_disposition(reason), Disposition::Refused))
@@ -3542,7 +3562,11 @@ fn try_macro_expansion_entries(
             return Some(Err(terminal_reason));
         }
     }
-    if assertion_surfaces == 0 && !temp_entries.iter().any(|entry| entry.kind.is_warranted()) {
+    if assertion_surfaces == 0
+        && !temp_entries
+            .iter()
+            .any(|entry| entry.kind.is_warranted() && entry.claim_count > 0)
+    {
         if let Some(reason) = temp_skipped
             .iter()
             .find(|reason| matches!(refusal_disposition(reason), Disposition::Refused))
@@ -4344,21 +4368,24 @@ fn group_assertions(entries: Vec<AssertionEntry>, fallback_name: &str) -> Vec<As
             atom,
             fact_span,
             kind,
+            claim_count,
         } = entry;
         let name = name.unwrap_or_else(|| fallback_name.to_string());
         if let Some(group) = groups.iter_mut().find(|group| group.name == name) {
             group.atoms.push(atom);
-            record_assertion_group_kind(group, kind, fact_span);
+            record_assertion_group_kind(group, kind, fact_span, claim_count);
         } else {
             let mut group = AssertionGroup {
                 name,
                 atoms: vec![atom],
                 warranted_fact_spans: Vec::new(),
                 support_fact_spans: Vec::new(),
+                warranted_claim_count: 0,
+                support_claim_count: 0,
                 has_warranted: false,
                 has_support: false,
             };
-            record_assertion_group_kind(&mut group, kind, fact_span);
+            record_assertion_group_kind(&mut group, kind, fact_span, claim_count);
             groups.push(group);
         }
     }
@@ -4369,16 +4396,19 @@ fn record_assertion_group_kind(
     group: &mut AssertionGroup,
     kind: AssertionFactKind,
     fact_span: Option<proc_macro2::Span>,
+    claim_count: usize,
 ) {
     match kind {
         AssertionFactKind::Warranted => {
             group.has_warranted = true;
+            group.warranted_claim_count += claim_count;
             if let Some(span) = fact_span {
                 group.warranted_fact_spans.push(span);
             }
         }
         AssertionFactKind::Support => {
             group.has_support = true;
+            group.support_claim_count += claim_count;
             if let Some(span) = fact_span {
                 group.support_fact_spans.push(span);
             }
@@ -7203,6 +7233,7 @@ fn emit_desugared(
                 atom,
                 fact_span: None,
                 kind,
+                claim_count: n,
             });
             if kind.is_warranted() {
                 *macros_lifted += n;
@@ -7258,6 +7289,7 @@ fn emit_assertion_surface_outcome(
                 atom,
                 fact_span: None,
                 kind,
+                claim_count: n,
             });
             if kind.is_warranted() {
                 *macros_lifted += n;
@@ -7355,7 +7387,7 @@ fn emit_panic_freedom_callsites_in_stmt(
             atom,
             warrant,
             kind,
-            ..
+            n,
         }) = outcome
         {
             entries.push(AssertionEntry {
@@ -7363,6 +7395,7 @@ fn emit_panic_freedom_callsites_in_stmt(
                 atom,
                 fact_span: Some(expr.span()),
                 kind,
+                claim_count: n,
             });
         }
     }
@@ -7398,7 +7431,7 @@ fn emit_should_panic_temporal_callsites(
             reducer,
             factory_audits,
             macro_depth,
-            AssertionFactKind::Support,
+            AssertionFactKind::Warranted,
             false,
         ) {
             entries.push(entry);
@@ -7517,6 +7550,7 @@ fn temporal_panic_freedom_entry(
         atom,
         fact_span: Some(record.span),
         kind,
+        claim_count: 0,
     })
 }
 
@@ -8584,7 +8618,12 @@ fn collect_statement_macro_entries<'a>(
     ) {
         Some(Ok(es)) => {
             skipped.truncate(before_s);
-            let has_warranted_fact = es.iter().any(|entry| entry.kind.is_warranted());
+            let warranted_claim_count: usize = es
+                .iter()
+                .filter(|entry| entry.kind.is_warranted())
+                .map(|entry| entry.claim_count)
+                .sum();
+            let has_warranted_fact = warranted_claim_count > 0;
             tracing::debug!(
                 target: "sugar_lift_rust_tests::macro_expansion",
                 macro_name = %macro_name,
@@ -8594,7 +8633,7 @@ fn collect_statement_macro_entries<'a>(
                 "held statement macro expanded before factory lowering"
             );
             if has_warranted_fact {
-                *macros_lifted += 1;
+                *macros_lifted += warranted_claim_count;
             } else if !es.is_empty() {
                 skipped.push(format!(
                     "macro `{macro_name}` expansion reached assertion surface but emitted only support facts; assertion without fact emitted; released to layer 0"
@@ -13270,6 +13309,7 @@ fn translate_bool_assertion_with_audits(
                     atom: not_(entry.atom),
                     fact_span: entry.fact_span,
                     kind: entry.kind,
+                    claim_count: entry.claim_count,
                 });
             }
             if let Some(entry) =
@@ -13280,6 +13320,7 @@ fn translate_bool_assertion_with_audits(
                     atom: not_(entry.atom),
                     fact_span: entry.fact_span,
                     kind: entry.kind,
+                    claim_count: entry.claim_count,
                 });
             }
             // `!matches!(x, Type::Variant)` — negate the discriminant atom. This
@@ -13292,6 +13333,7 @@ fn translate_bool_assertion_with_audits(
                     atom: not_(entry.atom),
                     fact_span: entry.fact_span,
                     kind: entry.kind,
+                    claim_count: entry.claim_count,
                 });
             }
             // `!(<lhs> <cmp> <rhs>)` is a NEGATED comparison. Route it to the
@@ -13315,6 +13357,7 @@ fn translate_bool_assertion_with_audits(
                         atom: not_(entry.atom),
                         fact_span: entry.fact_span,
                         kind: entry.kind,
+                        claim_count: entry.claim_count,
                     });
                 }
             }
@@ -13334,6 +13377,7 @@ fn translate_bool_assertion_with_audits(
                     atom: not_(entry.atom),
                     fact_span: entry.fact_span,
                     kind: entry.kind,
+                    claim_count: entry.claim_count,
                 })
             }
         }
@@ -13493,6 +13537,7 @@ fn translate_float_refinement_assertion(
                 atom: atomic_(format!("float.{width}.{method}"), vec![receiver]),
                 fact_span: None,
                 kind: AssertionFactKind::Warranted,
+                claim_count: 1,
             }))
         }
         Expr::Paren(paren) => {
@@ -13630,6 +13675,7 @@ fn translate_infinity_eq_assertion_with_audits(
         atom,
         fact_span: None,
         kind: AssertionFactKind::Warranted,
+        claim_count: 1,
     }))
 }
 
@@ -13879,6 +13925,7 @@ fn translate_binary_bool_assertion_with_audits(
                 } else {
                     AssertionFactKind::Support
                 },
+                claim_count: left.claim_count + right.claim_count,
             })
         }
         BinOp::Eq(_) | BinOp::Ne(_) | BinOp::Lt(_) | BinOp::Le(_) | BinOp::Gt(_) | BinOp::Ge(_) => {
@@ -14210,6 +14257,7 @@ fn wrapped_variant_entry(
         atom: and_(vec![outer.atom, inner_atom]),
         fact_span: outer.fact_span,
         kind: outer.kind,
+        claim_count: outer.claim_count,
     })
 }
 
@@ -14271,6 +14319,7 @@ fn tuple_pattern_entry(
         atom: and_(atoms),
         fact_span: None,
         kind: AssertionFactKind::Warranted,
+        claim_count: 1,
     })
 }
 
@@ -14287,6 +14336,7 @@ fn scalar_pattern_entry(
         atom,
         fact_span: None,
         kind: AssertionFactKind::Warranted,
+        claim_count: 1,
     })
 }
 
@@ -14586,6 +14636,7 @@ fn translate_string_predicate_assertion(
                         atom: atomic_("contains", vec![receiver, pattern]),
                         fact_span: None,
                         kind: AssertionFactKind::Warranted,
+                        claim_count: 1,
                     }))
                 }
                 "starts_with" | "ends_with" => {
@@ -14644,6 +14695,7 @@ fn translate_string_predicate_assertion(
                         atom: atomic_(atom_name, vec![pattern, receiver]),
                         fact_span: None,
                         kind: AssertionFactKind::Warranted,
+                        claim_count: 1,
                     }))
                 }
                 "is_ascii" => {
@@ -14661,6 +14713,7 @@ fn translate_string_predicate_assertion(
                             atom: atomic_("str.is_ascii", vec![receiver]),
                             fact_span: None,
                             kind: AssertionFactKind::Warranted,
+                            claim_count: 1,
                         }));
                     }
                     let Some(bytes) = literal_byte_string_value(&call.receiver) else {
@@ -14680,6 +14733,7 @@ fn translate_string_predicate_assertion(
                         atom,
                         fact_span: None,
                         kind: AssertionFactKind::Warranted,
+                        claim_count: 1,
                     }))
                 }
                 "is_ascii_alphabetic" => {
@@ -14701,6 +14755,7 @@ fn translate_string_predicate_assertion(
                         atom: atomic_("str.is_ascii_alphabetic", vec![receiver]),
                         fact_span: None,
                         kind: AssertionFactKind::Warranted,
+                        claim_count: 1,
                     }))
                 }
                 "is_ascii_digit" => {
@@ -14755,6 +14810,7 @@ fn translate_string_predicate_assertion(
                         atom: eq(bool_const(ch.is_alphabetic()), bool_const(true)),
                         fact_span: None,
                         kind: AssertionFactKind::Warranted,
+                        claim_count: 1,
                     }))
                 }
                 _ => Ok(None),
@@ -14862,6 +14918,7 @@ fn translate_regex_match_assertion(
         atom: atomic_("str.in-regex", vec![subject, pattern]),
         fact_span: None,
         kind: AssertionFactKind::Warranted,
+        claim_count: 1,
     }))
 }
 
@@ -14883,6 +14940,7 @@ fn ascii_char_class_assertion(
         atom: atomic_(atom_name, vec![receiver]),
         fact_span: None,
         kind: AssertionFactKind::Warranted,
+        claim_count: 1,
     }))
 }
 
@@ -14947,6 +15005,7 @@ fn translate_literal_iterator_assertion(
             atom,
             fact_span: None,
             kind: AssertionFactKind::Warranted,
+            claim_count: 1,
         }));
     }
 
@@ -14983,6 +15042,7 @@ fn translate_literal_iterator_assertion(
         atom,
         fact_span: None,
         kind: AssertionFactKind::Warranted,
+        claim_count: 1,
     }))
 }
 
@@ -16425,6 +16485,7 @@ pub(crate) fn assertion_entry_from_relation(
             atom: constructor_operator_atom(lhs, rhs, op, &tag),
             fact_span: None,
             kind: AssertionFactKind::Warranted,
+            claim_count: 1,
         };
     }
 
@@ -16448,6 +16509,7 @@ pub(crate) fn assertion_entry_from_relation(
         atom,
         fact_span: None,
         kind: AssertionFactKind::Warranted,
+        claim_count: 1,
     }
 }
 
@@ -17844,14 +17906,14 @@ mod lifter_key_tests {
         let out = lift_src(src);
         assert_eq!(
             out.assertions_lifted, 0,
-            "panic-path support facts do not increment the scalar assertion counter: {:?}",
+            "panic-path facts do not increment the scalar assertion counter: {:?}",
             out.decls
         );
         assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
         let dump = format!("{:?}", out.decls);
         assert!(
             dump.contains("panic") && dump.contains("not") && dump.contains("check_vendor_surface"),
-            "normal-return support should be not(panic(callsite)): {dump}"
+            "normal-return fact should be not(panic(callsite)): {dump}"
         );
     }
 
@@ -17901,7 +17963,7 @@ mod lifter_key_tests {
         let out = lift_src(src);
         assert_eq!(
             out.assertions_lifted, 0,
-            "support facts do not increment scalar assertion count: {:?}",
+            "panic-path facts do not increment scalar assertion count: {:?}",
             out.decls
         );
         assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
@@ -17912,7 +17974,7 @@ mod lifter_key_tests {
                 && dump.contains("method:check")
                 && dump.contains("call:Maker::new")
                 && dump.contains("Int(42)"),
-            "not(panic(...)) support should carry the rewritten method subject: {dump}"
+            "not(panic(...)) fact should carry the rewritten method subject: {dump}"
         );
         assert!(
             !dump.contains("bound_receiver_support_surface::m"),
@@ -17969,8 +18031,8 @@ mod lifter_key_tests {
         assert!(
             out.assertion_facts
                 .iter()
-                .any(|fact| fact.kind == AssertionFactKind::Support),
-            "setup callsites should remain non-panic support: {:?}",
+                .any(|fact| fact.kind == AssertionFactKind::Warranted),
+            "setup callsites should emit warranted non-panic facts: {:?}",
             out.assertion_facts
         );
         assert!(
@@ -17990,7 +18052,7 @@ mod lifter_key_tests {
         );
         assert!(
             dump.contains("method:step") && dump.contains("m@def1") && dump.contains("m@def2"),
-            "prefix non-panic support should retain temporal receiver versions: {dump}"
+            "prefix non-panic facts should retain temporal receiver versions: {dump}"
         );
     }
 
@@ -18108,7 +18170,7 @@ mod lifter_key_tests {
         let out = lift_src(src);
         assert_eq!(
             out.assertions_lifted, 1,
-            "scalar assertion plus nested callsite panic-path support should lift: {:?}",
+            "scalar assertion plus nested callsite panic-path fact should lift: {:?}",
             out.skip_reasons
         );
         let dump = format!("{:?}", out.decls);
@@ -18136,7 +18198,7 @@ mod lifter_key_tests {
         let out = lift_src(src);
         assert_eq!(
             out.assertions_lifted, 0,
-            "support-only callsite floors do not increment scalar assertion count"
+            "non-panic callsite facts do not increment scalar assertion count"
         );
         let dump = format!("{:?}", out.decls);
         assert!(
@@ -18181,7 +18243,7 @@ mod lifter_key_tests {
         let out = lift_src(src);
         assert_eq!(
             out.assertions_lifted, 0,
-            "support-only loop callsites do not increment scalar assertion count"
+            "non-panic loop callsite facts do not increment scalar assertion count"
         );
         let dump = format!("{:?}", out.decls);
         assert!(
@@ -18205,7 +18267,7 @@ mod lifter_key_tests {
         let out = lift_src(src);
         assert_eq!(
             out.assertions_lifted, 0,
-            "support-only for_each callsites do not increment scalar assertion count"
+            "non-panic for_each callsite facts do not increment scalar assertion count"
         );
         let dump = format!("{:?}", out.decls);
         assert!(
@@ -18215,7 +18277,7 @@ mod lifter_key_tests {
     }
 
     #[test]
-    fn visited_method_chain_emits_panic_support_for_each_callsite() {
+    fn visited_method_chain_emits_panic_facts_for_each_callsite() {
         let src = r#"
             #[test]
             fn visited_chain() {
@@ -18225,44 +18287,44 @@ mod lifter_key_tests {
         let out = lift_src(src);
         assert_eq!(
             out.assertions_lifted, 0,
-            "support-only method chains do not increment scalar assertion count"
+            "non-panic method chain facts do not increment scalar assertion count"
         );
-        let support_contracts: Vec<&str> = out
+        let panic_fact_contracts: Vec<&str> = out
             .assertion_facts
             .iter()
-            .filter(|fact| fact.kind == AssertionFactKind::Support)
+            .filter(|fact| fact.kind == AssertionFactKind::Warranted)
             .map(|fact| fact.contract_name.as_str())
             .collect();
         assert_eq!(
-            support_contracts.len(),
+            panic_fact_contracts.len(),
             4,
-            "iter + three next calls should each emit one support fact: {support_contracts:?}"
+            "iter + three next calls should each emit one warranted non-panic fact: {panic_fact_contracts:?}"
         );
         assert!(
-            support_contracts
+            panic_fact_contracts
                 .iter()
                 .any(|contract| contract.contains("method:iter")),
-            "the iterator construction callsite must be support-accounted: {support_contracts:?}"
+            "the iterator construction callsite must be warranted: {panic_fact_contracts:?}"
         );
         assert_eq!(
-            support_contracts
+            panic_fact_contracts
                 .iter()
                 .filter(|contract| contract.contains("method:next"))
                 .count(),
             3,
-            "each next boundary should get its own support fact: {support_contracts:?}"
+            "each next boundary should get its own warranted non-panic fact: {panic_fact_contracts:?}"
         );
-        let no_panic_supports = out
+        let no_panic_facts = out
             .factory_audits
             .iter()
             .filter(|audit| {
                 audit.requested_role == "SupportConstraint"
                     && audit.selected == Some("constraint_no_panic_call")
-                    && audit.disposition == FactoryDisposition::Support
+                    && audit.disposition == FactoryDisposition::Warranted
             })
             .count();
         assert_eq!(
-            no_panic_supports, 4,
+            no_panic_facts, 4,
             "every visited chain callsite should route through NoPanicCallSugar: {:?}",
             out.factory_audits
         );
@@ -18372,7 +18434,7 @@ mod lifter_key_tests {
         let out = lift_src(src);
         assert_eq!(
             out.assertions_lifted, 0,
-            "support-only match callsites do not increment scalar assertion count"
+            "non-panic match callsite facts do not increment scalar assertion count"
         );
         let dump = format!("{:?}", out.decls);
         assert!(
@@ -18450,19 +18512,19 @@ mod lifter_key_tests {
         "#;
         let out = lift_src(src);
         assert!(
-            out.assertion_facts.iter().any(|fact| fact.kind == AssertionFactKind::Support
+            out.assertion_facts.iter().any(|fact| fact.kind == AssertionFactKind::Warranted
                 && fact
                     .contract_name
                     .starts_with("method:totally_not_a_magic_name#")),
-            "visible if-panic method body should be re-dug as support by shape, not by method name: {:?}",
+            "visible if-panic method body should be re-dug as a warranted fact by shape, not by method name: {:?}",
             out.assertion_facts
         );
         assert!(
-            out.assertion_facts.iter().any(|fact| fact.kind == AssertionFactKind::Support
+            out.assertion_facts.iter().any(|fact| fact.kind == AssertionFactKind::Warranted
                 && fact
                     .contract_name
                     .starts_with("method:still_not_vocabulary#")),
-            "visible assert macro method body should be re-dug as support by shape, not by method name: {:?}",
+            "visible assert macro method body should be re-dug as a warranted fact by shape, not by method name: {:?}",
             out.assertion_facts
         );
         assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);

@@ -20,7 +20,7 @@ use syn::{Expr, Stmt};
 /// or falls through to future sugar work.
 pub(crate) fn initializer_fact_stmts(expr: &Expr) -> Option<Vec<Stmt>> {
     match expr {
-        Expr::Block(block) => Some(block.block.stmts.clone()),
+        Expr::Block(block) => block_fact_stmts(&block.block.stmts),
         Expr::Unsafe(unsafe_expr) => Some(unsafe_expr.block.stmts.clone()),
         Expr::Const(const_expr) => Some(const_expr.block.stmts.clone()),
         Expr::Macro(expr_macro) => Some(vec![Stmt::Expr(Expr::Macro(expr_macro.clone()), None)]),
@@ -33,6 +33,26 @@ pub(crate) fn initializer_fact_stmts(expr: &Expr) -> Option<Vec<Stmt>> {
             (!stmts.is_empty()).then_some(stmts)
         }
     }
+}
+
+fn block_fact_stmts(stmts: &[Stmt]) -> Option<Vec<Stmt>> {
+    let mut out = Vec::new();
+    for stmt in stmts {
+        match stmt {
+            Stmt::Local(local) => {
+                let Some(init) = local.init.as_ref().filter(|init| init.diverge.is_none()) else {
+                    continue;
+                };
+                collect_eager_fact_stmts(&init.expr, &mut out);
+            }
+            Stmt::Expr(expr, _) => collect_eager_fact_stmts(expr, &mut out),
+            Stmt::Macro(stmt_macro) if crate::macro_is_assertion_surface(&stmt_macro.mac) => {
+                out.push(Stmt::Macro(stmt_macro.clone()));
+            }
+            Stmt::Item(_) | Stmt::Macro(_) => {}
+        }
+    }
+    (!out.is_empty()).then_some(out)
 }
 
 fn collect_eager_fact_stmts(expr: &Expr, out: &mut Vec<Stmt>) {
@@ -164,6 +184,23 @@ mod tests {
     #[test]
     fn closure_body_assertion_macro_is_not_eager_fact_surface() {
         let expr: Expr = parse_quote!(thread::spawn(move || assert_ok!(listener.accept()).0));
+        assert!(initializer_fact_stmts(&expr).is_none());
+    }
+
+    #[test]
+    fn value_builder_block_without_assertions_is_not_eager_fact_surface() {
+        let expr: Expr = parse_quote!({
+            let mut xs = vec![];
+            let mut x: u8 = !0;
+            let mut w = u8::BITS;
+            while w > 0 {
+                w >>= 1;
+                xs.push(x);
+                xs.push(!x);
+                x ^= x << w;
+            }
+            xs
+        });
         assert!(initializer_fact_stmts(&expr).is_none());
     }
 }
