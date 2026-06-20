@@ -911,7 +911,9 @@ fn check_inv_consistency(
     registry: &HashMap<String, SolverHandle>,
     compilers: &CompilerRegistry,
 ) -> ConsistencyResult {
+    let t_local = std::time::Instant::now();
     let inv = with_local_forall_instances(canonicalize_formula_json(&inv), property_name);
+    let local_inst_us = t_local.elapsed().as_micros();
     if let Some(reason) = structural_contradiction_reason(&inv) {
         let verdict = ObligationVerdict::Unsatisfied;
         return ConsistencyResult {
@@ -932,7 +934,20 @@ fn check_inv_consistency(
         };
     }
     let raw_sat_goal = json!({ "kind": "not", "operands": [inv.clone()] });
+    let t_solve = std::time::Instant::now();
     let (raw, raw_reason, invs) = run_plan_with_compilers(plan, registry, compilers, &raw_sat_goal);
+    let solve_us = t_solve.elapsed().as_micros();
+    // Per-obligation phase split (timestamped): local-forall instantiation vs the
+    // compile+solve round. Pairs with the "ambient instantiation hotspot" line
+    // (same `property`) for a full instantiate-vs-solve breakdown. Non-trivial only.
+    if local_inst_us + solve_us >= 2000 {
+        info!(
+            property = property_name,
+            local_inst_us,
+            solve_us,
+            "verifier/timing: obligation phases (local-instantiate vs compile+solve)"
+        );
+    }
     let (verdict, label) = consistency_verdict(raw);
     let reason = format!("{label} `{property_name}` [{raw_reason}]");
     if verdict == ObligationVerdict::Undecidable {
@@ -1059,6 +1074,13 @@ fn instantiate_ambient_foralls_for_inv(
     if ambient.is_empty() {
         return Vec::new();
     }
+    // Discharge profiling (timestamped, real hotspot visibility -- no caps).
+    let t_all = std::time::Instant::now();
+    AMBIENT_SUBST_US.with(|c| c.set(0));
+    AMBIENT_JCS_US.with(|c| c.set(0));
+    let mut ground_terms_total = 0usize;
+    let mut callsite_pairs = 0usize;
+
     let mut instances = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
     for forall in ambient {
@@ -1072,6 +1094,7 @@ fn instantiate_ambient_foralls_for_inv(
             let mut ground_terms = Vec::new();
             collect_unquantified_ground_terms(inv, sort, &mut ground_terms);
             collect_property_name_ground_terms(property_name, sort, &mut ground_terms);
+            ground_terms_total += ground_terms.len();
             for term in &ground_terms {
                 push_ambient_instance(body, var_name, term, &mut instances, &mut seen);
             }
@@ -1081,6 +1104,7 @@ fn instantiate_ambient_foralls_for_inv(
         collect_unquantified_ctor_terms(inv, &mut callsites);
         let mut patterns = Vec::new();
         collect_forall_call_patterns(body, var_name, &mut patterns);
+        callsite_pairs += patterns.len().saturating_mul(callsites.len());
         for pattern in &patterns {
             for callsite in &callsites {
                 let Some(replacement) = match_forall_call_pattern(pattern, callsite, var_name)
@@ -1090,6 +1114,26 @@ fn instantiate_ambient_foralls_for_inv(
                 push_ambient_instance(body, var_name, &replacement, &mut instances, &mut seen);
             }
         }
+    }
+
+    let total_us = t_all.elapsed().as_micros();
+    let subst_us = AMBIENT_SUBST_US.with(|c| c.get());
+    let jcs_us = AMBIENT_JCS_US.with(|c| c.get());
+    // Log only non-trivial calls (>=2ms) so the slow obligations stand out in the
+    // trace instead of drowning under microsecond ones. Each line is timestamped
+    // by the tracing subscriber; `property` ties it to the obligation.
+    if total_us >= 2000 {
+        info!(
+            property = property_name,
+            ambient = ambient.len(),
+            ground_terms = ground_terms_total,
+            callsite_pairs,
+            instances = instances.len(),
+            subst_us,
+            jcs_us,
+            total_us,
+            "verifier/timing: ambient instantiation hotspot"
+        );
     }
     instances
 }
@@ -1126,6 +1170,14 @@ fn sort_is_primitive(sort: &Json, name: &str) -> bool {
         && sort.get("name").and_then(|v| v.as_str()) == Some(name)
 }
 
+// Discharge profiling (timestamped): per-`instantiate_ambient_foralls_for_inv`
+// accumulators, split so we can see whether instantiation cost is substitution
+// vs JCS canonicalization. Reset + read by that function; logged per obligation.
+thread_local! {
+    static AMBIENT_SUBST_US: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
+    static AMBIENT_JCS_US: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
+}
+
 fn push_ambient_instance(
     body: &Json,
     var_name: &str,
@@ -1133,12 +1185,16 @@ fn push_ambient_instance(
     instances: &mut Vec<Json>,
     seen: &mut std::collections::BTreeSet<String>,
 ) {
+    let t_subst = std::time::Instant::now();
     let instance = crate::instantiate::substitute_formula_pub(body, var_name, replacement);
+    AMBIENT_SUBST_US.with(|c| c.set(c.get() + t_subst.elapsed().as_micros()));
     if !formula_is_closed(&instance, &mut Vec::new()) {
         return;
     }
+    let t_jcs = std::time::Instant::now();
     let key = libsugar::canonical::json_jcs(&instance)
         .unwrap_or_else(|_| serde_json::to_string(&instance).unwrap_or_default());
+    AMBIENT_JCS_US.with(|c| c.set(c.get() + t_jcs.elapsed().as_micros()));
     if seen.insert(key) {
         instances.push(instance);
     }
@@ -1266,8 +1322,22 @@ fn with_ambient_foralls(inv: Json, property_name: &str, ambient: &[Json]) -> Jso
     if ambient.is_empty() {
         return inv;
     }
-    let instances = instantiate_ambient_foralls_for_inv(&inv, property_name, ambient);
-    let closed_templates: Vec<Json> = if property_name.contains("#euf#") {
+    // Callsite-keyed (`#euf#`) obligations: the closed universals travel as
+    // `forall` QUANTIFIERS (`closed_templates`); the compilers lower them to the
+    // backend's native quantifier (z3 `(forall)`, coq `forall`, lean `∀`) and the
+    // solver instantiates via MBQI/e-matching. We deliberately do NOT also
+    // materialize ground instances: profiling showed that path is combinatorial
+    // (up to 57K ground terms x 600K callsite-pair attempts -> 142s for ONE
+    // obligation, dominated by json_jcs dedup) to emit ~825 instances the
+    // quantifier already covers -- and covers MORE completely (all instantiations,
+    // not a finite materialized subset). Complete soundness, in milliseconds.
+    //
+    // Bare-name-keyed obligations must NOT copy in the raw forall (two unrelated
+    // tests can share a spelling -> cross-test name capture; see
+    // `collect_ambient_foralls`), so there -- and only there -- we still travel
+    // concrete CLOSED ground instances, which carry no free names.
+    let callsite_keyed = property_name.contains("#euf#");
+    let closed_templates: Vec<Json> = if callsite_keyed {
         ambient
             .iter()
             .filter(|forall| formula_is_closed(forall, &mut Vec::new()))
@@ -1275,6 +1345,11 @@ fn with_ambient_foralls(inv: Json, property_name: &str, ambient: &[Json]) -> Jso
             .collect()
     } else {
         Vec::new()
+    };
+    let instances: Vec<Json> = if callsite_keyed {
+        Vec::new()
+    } else {
+        instantiate_ambient_foralls_for_inv(&inv, property_name, ambient)
     };
     debug!(
         property = property_name,
@@ -2330,6 +2405,79 @@ mod tests {
             loop_row.verdict,
             ObligationVerdict::Discharged,
             "the loop universal alone is consistent: {res:?}"
+        );
+    }
+
+    // --- forall-rewrite regression: callsite-keyed obligations travel the
+    // universal AS A QUANTIFIER, never a materialized ground flood ---
+    // Profiling showed the old ground materialization was combinatorial (up to
+    // 57K ground terms x 600K callsite pairs -> 142s for ONE #euf# obligation,
+    // dominated by json_jcs) to emit instances the conjoined `forall` already
+    // covers. These tests pin the mechanism: #euf# -> quantifier (no instances),
+    // bare-name -> closed instances (raw forall would capture across tests). The
+    // end-to-end SOUNDNESS (z3 e-matches the quantifier to refute) is pinned by
+    // `ambient_forall_refutes_separate_point_claim_memento` above.
+
+    #[test]
+    fn euf_obligation_travels_forall_quantifier_not_materialized_instances() {
+        let callg = |arg: Json| json!({"kind":"ctor","name":"call:g","args":[arg]});
+        // ambient universal over a callsite: forall x. g(x) == 1
+        let forall = json!({
+            "kind":"forall","name":"x",
+            "sort":{"kind":"primitive","name":"Int"},
+            "body": eqf(callg(var("x")), int(1)),
+        });
+        // a #euf# obligation that MENTIONS the callsite g(2); the OLD code would
+        // Path-B-match this and materialize the ground instance g(2)==1.
+        let inv = json!({"kind":"and","operands":[eqf(callg(int(2)), int(2))]});
+        let out =
+            with_ambient_foralls(inv, "g#euf#c:callresult_g_a1(i:2)::assertion", &[forall]);
+        let operands = out
+            .get("operands")
+            .and_then(|v| v.as_array())
+            .expect("conjoined `and` node");
+        // The universal travels AS A QUANTIFIER.
+        assert!(
+            operands
+                .iter()
+                .any(|op| op.get("kind").and_then(|k| k.as_str()) == Some("forall")),
+            "ambient universal must be conjoined as a forall quantifier: {out}"
+        );
+        // ...and is NOT materialized. (RED on the pre-rewrite code, which emitted
+        // exactly this ground instance for #euf# obligations too.)
+        let materialized = eqf(callg(int(2)), int(1));
+        assert!(
+            !operands.iter().any(|op| *op == materialized),
+            "rewrite must NOT materialize ground instances for #euf# obligations: {out}"
+        );
+    }
+
+    #[test]
+    fn bare_name_obligation_still_materializes_closed_instance_not_raw_forall() {
+        let callg = |arg: Json| json!({"kind":"ctor","name":"call:g","args":[arg]});
+        let forall = json!({
+            "kind":"forall","name":"x",
+            "sort":{"kind":"primitive","name":"Int"},
+            "body": eqf(callg(var("x")), int(1)),
+        });
+        let inv = json!({"kind":"and","operands":[eqf(callg(int(2)), int(2))]});
+        // BARE name (no #euf#): two unrelated tests can share this spelling, so the
+        // raw forall must NOT be copied in (name capture). The closed ground
+        // instance g(2)==1 -- which carries no free names -- travels instead.
+        let out = with_ambient_foralls(inv, "src/lib.rs::tests::some_bare_test", &[forall]);
+        let operands = out
+            .get("operands")
+            .and_then(|v| v.as_array())
+            .expect("conjoined `and` node");
+        assert!(
+            operands.iter().any(|op| *op == eqf(callg(int(2)), int(1))),
+            "bare-name obligation must travel the closed ground instance: {out}"
+        );
+        assert!(
+            !operands
+                .iter()
+                .any(|op| op.get("kind").and_then(|k| k.as_str()) == Some("forall")),
+            "bare-name obligation must NOT copy in the raw forall (capture safety): {out}"
         );
     }
 
