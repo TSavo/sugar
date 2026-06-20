@@ -8,11 +8,15 @@
 // response per stdout line. stderr is the plugin's logging channel
 // and is intentionally not consumed here.
 
+use std::cell::RefCell;
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 use std::io::{Read, Write};
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -137,11 +141,31 @@ impl JsonRpcCompiler {
 /// from the manifest so registering the compiler does not start optional
 /// binaries; the child is spawned only when a solver actually needs that
 /// dialect.
+///
+/// PER-WORKER POOLING: the IR compile loop runs under rayon `par_iter`, so a
+/// SINGLE shared child (one `Mutex<ChildIo>`) serialized every worker behind one
+/// process -- on the stdlib corpus the lone compiler was busy ~94% of the wall
+/// clock (sum of compile latency ~= wall span) and the parallelism bought
+/// nothing. Because an IR->dialect compile is a STATELESS pure transform (no
+/// push/pop state across calls), N parallel children produce byte-identical
+/// output to one serial child -- so each worker thread gets its OWN warm child,
+/// keyed by this compiler instance's id. One spawn per worker per launch, full
+/// parallelism, zero contention. (Contrast the SOLVER, which is stateful under
+/// push/pop and would need an equivalence check before pooling.)
+static NEXT_LAZY_COMPILER_ID: AtomicU64 = AtomicU64::new(1);
+
+thread_local! {
+    /// Per-thread warm children, keyed by `LazyJsonRpcCompiler::id`. Each rayon
+    /// worker spawns its own child on first use and reuses it for the run.
+    static THREAD_LOCAL_COMPILERS: RefCell<HashMap<u64, JsonRpcCompiler>> =
+        RefCell::new(HashMap::new());
+}
+
 pub struct LazyJsonRpcCompiler {
+    id: u64,
     command: Vec<String>,
     working_dir: Option<PathBuf>,
     manifest_caps: Capabilities,
-    inner: Mutex<Option<JsonRpcCompiler>>,
 }
 
 impl LazyJsonRpcCompiler {
@@ -151,47 +175,48 @@ impl LazyJsonRpcCompiler {
         manifest_caps: Capabilities,
     ) -> Self {
         Self {
+            id: NEXT_LAZY_COMPILER_ID.fetch_add(1, Ordering::Relaxed),
             command,
             working_dir,
             manifest_caps,
-            inner: Mutex::new(None),
         }
     }
 }
 
 impl IrCompiler for LazyJsonRpcCompiler {
     fn compile(&self, ir: &Json, dialect: &str) -> Result<CompiledFormula, CompileError> {
-        let mut inner = self.inner.lock().unwrap();
-        if inner.is_none() {
-            debug!(
-                command = %render_command(&self.command),
-                working_dir = self
-                    .working_dir
-                    .as_ref()
-                    .map(|p| p.display().to_string())
-                    .as_deref()
-                    .unwrap_or("<inherit>"),
-                dialect,
-                "ir compiler rpc: lazy spawn"
-            );
-            *inner = Some(JsonRpcCompiler::spawn_command(
-                &self.command,
-                self.working_dir.as_deref(),
-            )?);
-        }
-        let result = inner
-            .as_ref()
-            .ok_or_else(|| CompileError::Transport("compiler spawn failed".into()))?
-            .compile(ir, dialect);
-        if matches!(result, Err(CompileError::Transport(_))) {
-            warn!(
-                command = %render_command(&self.command),
-                dialect,
-                "ir compiler rpc: dropping subprocess after transport failure"
-            );
-            *inner = None;
-        }
-        result
+        THREAD_LOCAL_COMPILERS.with(|cell| {
+            let mut map = cell.borrow_mut();
+            let compiler = match map.entry(self.id) {
+                Entry::Occupied(e) => e.into_mut(),
+                Entry::Vacant(e) => {
+                    debug!(
+                        command = %render_command(&self.command),
+                        working_dir = self
+                            .working_dir
+                            .as_ref()
+                            .map(|p| p.display().to_string())
+                            .as_deref()
+                            .unwrap_or("<inherit>"),
+                        dialect,
+                        "ir compiler rpc: lazy spawn (per-worker)"
+                    );
+                    let spawned =
+                        JsonRpcCompiler::spawn_command(&self.command, self.working_dir.as_deref())?;
+                    e.insert(spawned)
+                }
+            };
+            let result = compiler.compile(ir, dialect);
+            if matches!(result, Err(CompileError::Transport(_))) {
+                warn!(
+                    command = %render_command(&self.command),
+                    dialect,
+                    "ir compiler rpc: dropping per-worker subprocess after transport failure"
+                );
+                map.remove(&self.id);
+            }
+            result
+        })
     }
 
     fn capabilities(&self) -> Capabilities {
