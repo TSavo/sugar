@@ -5,23 +5,25 @@
 // (tuple destructuring, enum match, simple local updates), but every iteration is
 // pinned by a closed finite domain and every value helper is visible source.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::rc::Rc;
 
-use sugar_ir_symbolic::{and_, Formula, Term};
+use sugar_ir_symbolic::{and_, ConstValue, Formula, Term};
 use syn::{BinOp, Expr, Lit, Pat, Stmt, UnOp};
 use tracing::debug;
 
+use crate::sugar::callsite::{CallsiteOutcome, CallsiteSugar};
 use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::configuration::{resolve as cfg_resolve, CfgDisposition};
 use crate::sugar::extract_if::{ExtractIfSugar, ReplayAction};
-use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::factory::{build_composite, build_term, has_composite, SugarBuildCtx};
 use crate::sugar::insert::InsertSugar;
 use crate::{
-    const_fold_int_term, count_asserts_in_stmts, macro_is_assertion_surface,
-    path_to_variant_string, simple_call_name, simple_pat_name, strip_refs_groups, substitute_expr,
-    substitute_macro_tokens, term_as_int, translate_term_in_scope, AssertionFactKind, Desugared,
-    Effect, ExprBindings, Outcome, Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON,
-    SUGAR_SEQ_CAP,
+    const_fold_int_term, const_fold_u128_term, count_asserts_in_stmts, helper_param_names,
+    macro_is_assertion_surface, path_to_variant_string, simple_call_name, simple_pat_name,
+    strip_refs_groups, substitute_expr, substitute_macro_tokens, term_as_int,
+    translate_term_in_scope, u128_expr, AssertionFactKind, ConstVal, Desugared, Effect,
+    ExprBindings, Outcome, Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON, SUGAR_SEQ_CAP,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
@@ -36,34 +38,78 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         return None;
     };
     let Pat::Ident(var) = for_loop.pat.as_ref() else {
+        debug!(
+            target: "sugar_lift_rust_tests::sugar::for_replay",
+            domain = %crate::token_key(&for_loop.expr),
+            "for_replay declined loop: non-ident pattern"
+        );
         return None;
     };
     if var.subpat.is_some() {
+        debug!(
+            target: "sugar_lift_rust_tests::sugar::for_replay",
+            loop_var = %var.ident,
+            domain = %crate::token_key(&for_loop.expr),
+            "for_replay declined loop: ident has subpattern"
+        );
         return None;
     }
-    if count_asserts_in_stmts(&for_loop.body.stmts) == 0 {
+    let assert_count = replay_assert_count(&for_loop.body.stmts, fcx.scope());
+    if assert_count == 0 {
+        debug!(
+            target: "sugar_lift_rust_tests::sugar::for_replay",
+            loop_var = %var.ident,
+            domain = %crate::token_key(&for_loop.expr),
+            "for_replay declined loop: no replayable assertions"
+        );
         return None;
     }
-    if !range_domain_shape(&for_loop.expr) {
+    let adaptor_domain = sequence_adaptor_domain_shape(&for_loop.expr, fcx);
+    let finite_replay_domain = domain_has_replay_shape(&for_loop.expr, adaptor_domain);
+    if !finite_replay_domain {
+        debug!(
+            target: "sugar_lift_rust_tests::sugar::for_replay",
+            loop_var = %var.ident,
+            domain = %crate::token_key(&for_loop.expr),
+            assert_count,
+            adaptor_domain,
+            "for_replay declined loop: domain shape"
+        );
         return None;
     }
-    if !body_has_replay_shape(&for_loop.body.stmts, fcx.scope()) {
+    let seed_names = accumulator_seed_names(&for_loop.body.stmts, fcx.scope());
+    if !body_has_replay_shape(&for_loop.body.stmts, fcx.scope(), finite_replay_domain) {
+        debug!(
+            target: "sugar_lift_rust_tests::sugar::for_replay",
+            loop_var = %var.ident,
+            domain = %crate::token_key(&for_loop.expr),
+            assert_count,
+            adaptor_domain,
+            seed_count = seed_names.len(),
+            "for_replay declined loop: body shape"
+        );
         return None;
     }
     debug!(
         sugar = "for_replay",
         loop_var = %var.ident,
         domain = %crate::token_key(&for_loop.expr),
+        seed_count = seed_names.len(),
         "recognized finite literal loop replay"
     );
     Some(Box::new(ForReplaySugar {
         var: var.ident.to_string(),
         domain: (*for_loop.expr).clone(),
         body_stmts: for_loop.body.stmts.clone(),
+        seed_names,
     }))
 }
 
-fn body_has_replay_shape(stmts: &[Stmt], scope: &crate::TemporalScope) -> bool {
+fn body_has_replay_shape(
+    stmts: &[Stmt],
+    scope: &crate::TemporalScope,
+    finite_replay_domain: bool,
+) -> bool {
     let has_source_helper_destructure = stmts.iter().any(|stmt| {
         let Stmt::Local(local) = stmt else {
             return false;
@@ -88,6 +134,176 @@ fn body_has_replay_shape(stmts: &[Stmt], scope: &crate::TemporalScope) -> bool {
         || crate::sugar::extract_if::body_has_replay_shape(stmts)
         || crate::sugar::insert::body_has_replay_shape(stmts)
         || body_has_const_if_local_replay_shape(stmts)
+        || body_has_helper_call_replay_shape(stmts, scope)
+        || body_has_scalar_accumulator_replay_shape(stmts, scope)
+        || (finite_replay_domain && body_has_pointwise_assert_replay_shape(stmts))
+}
+
+fn domain_has_replay_shape(expr: &Expr, composite_domain: bool) -> bool {
+    range_domain_shape(expr) || composite_domain
+}
+
+fn sequence_adaptor_domain_shape(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
+    !range_domain_shape(expr) && has_composite(expr, fcx)
+}
+
+fn replay_assert_count(stmts: &[Stmt], scope: &crate::TemporalScope) -> usize {
+    count_asserts_in_stmts(stmts) + helper_call_assert_count(stmts, scope)
+}
+
+fn helper_call_assert_count(stmts: &[Stmt], scope: &crate::TemporalScope) -> usize {
+    stmts
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Stmt::Expr(expr, _) => helper_assert_count_expr(expr, scope),
+            _ => None,
+        })
+        .sum()
+}
+
+fn helper_assert_count_expr(expr: &Expr, scope: &crate::TemporalScope) -> Option<usize> {
+    let Expr::Call(call) = strip_refs_groups(expr) else {
+        return None;
+    };
+    let name = simple_call_name(call)?;
+    let helper = scope.fn_registry().lookup(&name)?;
+    let count = count_asserts_in_stmts(&helper.block.stmts);
+    (count > 0).then_some(count)
+}
+
+fn body_has_helper_call_replay_shape(stmts: &[Stmt], scope: &crate::TemporalScope) -> bool {
+    helper_call_assert_count(stmts, scope) > 0
+}
+
+fn body_has_scalar_accumulator_replay_shape(stmts: &[Stmt], scope: &crate::TemporalScope) -> bool {
+    if accumulator_seed_names(stmts, scope).is_empty() {
+        return false;
+    }
+    let mut saw_assert = false;
+    let mut saw_accumulator_update = false;
+    for stmt in stmts {
+        match stmt {
+            Stmt::Local(local) => {
+                let Pat::Ident(pat) = strip_pat(&local.pat) else {
+                    return false;
+                };
+                if pat.subpat.is_some() || pat.by_ref.is_some() || pat.mutability.is_some() {
+                    return false;
+                }
+                if local
+                    .init
+                    .as_ref()
+                    .is_none_or(|init| init.diverge.is_some())
+                {
+                    return false;
+                }
+            }
+            Stmt::Expr(Expr::Call(_), _) => {}
+            Stmt::Macro(stmt_macro) if macro_is_assertion_surface(&stmt_macro.mac) => {
+                saw_assert = true;
+            }
+            Stmt::Expr(Expr::Macro(expr_macro), _)
+                if macro_is_assertion_surface(&expr_macro.mac) =>
+            {
+                saw_assert = true;
+            }
+            Stmt::Expr(Expr::Binary(binary), _)
+                if matches!(
+                    binary.op,
+                    BinOp::AddAssign(_) | BinOp::SubAssign(_) | BinOp::MulAssign(_)
+                ) =>
+            {
+                if simple_path_name(&binary.left).is_none() {
+                    return false;
+                }
+                saw_accumulator_update = true;
+            }
+            Stmt::Expr(Expr::Assign(assign), _) => {
+                if simple_path_name(&assign.left).is_none() {
+                    return false;
+                }
+                saw_accumulator_update = true;
+            }
+            Stmt::Item(_) => {}
+            _ => return false,
+        }
+    }
+    saw_assert || (saw_accumulator_update && helper_call_assert_count(stmts, scope) > 0)
+}
+
+fn accumulator_seed_names(stmts: &[Stmt], scope: &crate::TemporalScope) -> Vec<String> {
+    let available: BTreeSet<String> = scope
+        .let_bindings_iter()
+        .map(|(name, _)| name.clone())
+        .collect();
+    if available.is_empty() {
+        return Vec::new();
+    }
+    let mut names = BTreeSet::new();
+    for stmt in stmts {
+        match stmt {
+            Stmt::Expr(Expr::Binary(binary), _)
+                if matches!(
+                    binary.op,
+                    BinOp::AddAssign(_) | BinOp::SubAssign(_) | BinOp::MulAssign(_)
+                ) =>
+            {
+                if let Some(name) = simple_path_name(&binary.left) {
+                    if available.contains(&name) {
+                        names.insert(name);
+                    }
+                }
+            }
+            Stmt::Expr(Expr::Assign(assign), _) => {
+                if let Some(name) = simple_path_name(&assign.left) {
+                    if available.contains(&name) {
+                        names.insert(name);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    names.into_iter().collect()
+}
+
+fn body_has_pointwise_assert_replay_shape(stmts: &[Stmt]) -> bool {
+    let mut saw_assert = false;
+    let mut saw_replay_binding = false;
+    for stmt in stmts {
+        match stmt {
+            Stmt::Local(local) => {
+                let Pat::Ident(pat) = strip_pat(&local.pat) else {
+                    return false;
+                };
+                if pat.subpat.is_some() || pat.by_ref.is_some() || pat.mutability.is_some() {
+                    return false;
+                }
+                if local
+                    .init
+                    .as_ref()
+                    .is_none_or(|init| init.diverge.is_some())
+                {
+                    return false;
+                }
+                saw_replay_binding = true;
+            }
+            Stmt::Expr(Expr::Call(_), _) => {
+                saw_replay_binding = true;
+            }
+            Stmt::Macro(stmt_macro) if macro_is_assertion_surface(&stmt_macro.mac) => {
+                saw_assert = true;
+            }
+            Stmt::Expr(Expr::Macro(expr_macro), _)
+                if macro_is_assertion_surface(&expr_macro.mac) =>
+            {
+                saw_assert = true;
+            }
+            Stmt::Item(_) => {}
+            _ => return false,
+        }
+    }
+    saw_assert && saw_replay_binding
 }
 
 fn body_has_const_if_local_replay_shape(stmts: &[Stmt]) -> bool {
@@ -141,25 +357,36 @@ pub(crate) struct ForReplaySugar {
     var: String,
     domain: Expr,
     body_stmts: Vec<Stmt>,
+    seed_names: Vec<String>,
 }
 
 impl Sugar for ForReplaySugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         Outcome::from_opt((|| {
-            let values = finite_range_values(&self.domain, ctx.scope)?;
+            let values = finite_domain_exprs(&self.domain, ctx)?;
             if values.is_empty() || values.len() as i64 > SUGAR_SEQ_CAP {
                 return None;
             }
-            let source_asserts = count_asserts_in_stmts(&self.body_stmts);
+            let source_asserts = replay_assert_count(&self.body_stmts, ctx.scope);
             if source_asserts == 0 {
                 return None;
             }
 
             let mut atoms = Vec::new();
-            for value in values {
+            if self.seed_names.is_empty() {
+                for value in values {
+                    let mut replay = Replay::new(ctx);
+                    replay.bindings.insert(self.var.clone(), value);
+                    replay.replay_stmts(&self.body_stmts)?;
+                    atoms.extend(replay.atoms);
+                }
+            } else {
                 let mut replay = Replay::new(ctx);
-                replay.bindings.insert(self.var.clone(), int_expr(value)?);
-                replay.replay_stmts(&self.body_stmts)?;
+                replay.seed_source_bindings(&self.seed_names)?;
+                for value in values {
+                    replay.bindings.insert(self.var.clone(), value);
+                    replay.replay_stmts(&self.body_stmts)?;
+                }
                 atoms.extend(replay.atoms);
             }
             if atoms.is_empty() {
@@ -203,6 +430,26 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
         Some(())
     }
 
+    fn seed_source_bindings(&mut self, names: &[String]) -> Option<()> {
+        for name in names {
+            let init = self
+                .ctx
+                .scope
+                .let_bindings_iter()
+                .find_map(|(bound, init)| (bound == name).then_some(init.clone()))?;
+            let value = self.eval_expr(&init)?;
+            debug!(
+                target: "sugar_lift_rust_tests::sugar::for_replay",
+                binding = name.as_str(),
+                init = %crate::token_key(&init),
+                value = %crate::token_key(&value),
+                "seeded scalar accumulator binding for finite loop replay"
+            );
+            self.bindings.insert(name.clone(), value);
+        }
+        Some(())
+    }
+
     fn replay_stmt(&mut self, stmt: &Stmt) -> Option<()> {
         match stmt {
             Stmt::Local(local) => {
@@ -230,6 +477,7 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
             }
             Stmt::Macro(stmt_macro) => self.emit_macro(&stmt_macro.mac),
             Stmt::Expr(Expr::Macro(expr_macro), _) => self.emit_macro(&expr_macro.mac),
+            Stmt::Expr(Expr::If(expr_if), _) => self.replay_if_stmt(expr_if),
             Stmt::Expr(Expr::Match(expr_match), _) => self.replay_match(expr_match),
             Stmt::Expr(Expr::Binary(binary), _)
                 if matches!(
@@ -255,6 +503,9 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
                     ReplayAction::Handled(()) => return Some(()),
                     ReplayAction::NotMine => {}
                 }
+                if self.replay_helper_call_expr(expr)? {
+                    return Some(());
+                }
                 if count_asserts_in_expr_local(expr) == 0 {
                     Some(())
                 } else {
@@ -263,6 +514,110 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
                 }
             }
             Stmt::Item(_) => Some(()),
+        }
+    }
+
+    fn replay_if_stmt(&mut self, expr_if: &syn::ExprIf) -> Option<()> {
+        let cond = self.expr_const_bool(&expr_if.cond)?;
+        debug!(
+            sugar = "for_replay",
+            cond = %crate::token_key(&expr_if.cond),
+            selected = if cond { "then" } else { "else" },
+            "replayed const-if statement under pinned loop value"
+        );
+        if cond {
+            self.replay_stmts(&expr_if.then_branch.stmts)
+        } else {
+            let Some((_, else_expr)) = expr_if.else_branch.as_ref() else {
+                return Some(());
+            };
+            match else_expr.as_ref() {
+                Expr::Block(block) => self.replay_stmts(&block.block.stmts),
+                Expr::If(next) => self.replay_if_stmt(next),
+                Expr::Unsafe(block) => self.replay_stmts(&block.block.stmts),
+                other => self.replay_stmt(&Stmt::Expr(other.clone(), None)),
+            }
+        }
+    }
+
+    fn replay_helper_call_expr(&mut self, expr: &Expr) -> Option<bool> {
+        let Expr::Call(call) = strip_refs_groups(expr) else {
+            return Some(false);
+        };
+        let Some(name) = simple_call_name(call) else {
+            return Some(false);
+        };
+        let Some(helper) = self.ctx.scope.fn_registry().lookup(&name) else {
+            return Some(false);
+        };
+        if helper.sig.asyncness.is_some() {
+            return None;
+        }
+        if !matches!(
+            cfg_resolve(&helper.attrs, self.ctx.options),
+            CfgDisposition::Present
+        ) {
+            return None;
+        }
+        let params = helper_param_names(&helper).ok()?;
+        if params.len() != call.args.len() {
+            return None;
+        }
+        let mut bindings = ExprBindings::new();
+        for (param, arg) in params.into_iter().zip(call.args.iter()) {
+            bindings.insert(param, self.eval_expr(arg)?);
+        }
+        debug!(
+            sugar = "for_replay",
+            helper = name.as_str(),
+            args = call.args.len(),
+            "replaying assertion helper call through CallsiteSugar under pinned loop value"
+        );
+        let cs = CallsiteSugar::from_bindings(helper.as_ref(), name.clone(), bindings);
+        let reduced = HashSet::new();
+        let mut fw = self.ctx.float_widths.borrow_mut();
+        match cs.desugar(
+            self.ctx.scope.local_scope(),
+            self.atoms.len(),
+            self.ctx.options,
+            self.ctx.reducer,
+            *fw,
+            &reduced,
+            self.ctx.macro_depth,
+            self.ctx.factory_audits,
+        ) {
+            CallsiteOutcome::Dug(commit) if commit.skipped.is_empty() => {
+                for helper in &commit.reduced_helpers {
+                    self.ctx.scope.record_inlined_value_helper(helper);
+                }
+                self.ctx.scope.record_inlined_value_helper(&commit.name);
+                self.atoms.extend(
+                    commit
+                        .entries
+                        .into_iter()
+                        .filter(|entry| matches!(entry.kind, AssertionFactKind::Warranted))
+                        .map(|entry| entry.atom),
+                );
+                Some(true)
+            }
+            CallsiteOutcome::Dug(commit) => {
+                debug!(
+                    sugar = "for_replay",
+                    helper = name.as_str(),
+                    skipped = commit.skipped.len(),
+                    "CallsiteSugar helper replay hit terminal refusals; replay declined"
+                );
+                None
+            }
+            CallsiteOutcome::Bail(cause) => {
+                debug!(
+                    sugar = "for_replay",
+                    helper = name.as_str(),
+                    cause = ?cause,
+                    "CallsiteSugar helper replay bailed"
+                );
+                None
+            }
         }
     }
 
@@ -283,6 +638,13 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
             BinOp::MulAssign(_) => syn::parse_quote!((#old) * (#rhs)),
             _ => return None,
         };
+        let updated = self.eval_expr(&updated)?;
+        debug!(
+            target: "sugar_lift_rust_tests::sugar::for_replay",
+            binding = name.as_str(),
+            value = %crate::token_key(&updated),
+            "folded scalar accumulator update during finite loop replay"
+        );
         self.bindings.insert(name, updated);
         Some(())
     }
@@ -405,8 +767,8 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
 
     fn eval_expr(&self, expr: &Expr) -> Option<Expr> {
         let substituted = substitute_expr(expr, &self.bindings);
-        if let Some(value) = expr_const_int(&substituted, self.ctx.scope) {
-            return int_expr(value);
+        if let Some(value) = self.ground_expr_from_factory(&substituted) {
+            return Some(value);
         }
         match strip_refs_groups(&substituted) {
             Expr::Call(call) => self.eval_call(call).or(Some(substituted)),
@@ -415,6 +777,24 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
             Expr::Match(expr_match) => self.eval_match_value(expr_match),
             _ => Some(substituted),
         }
+    }
+
+    fn ground_expr_from_factory(&self, expr: &Expr) -> Option<Expr> {
+        let term = self.term_from_factory(expr)?;
+        let value = term_ground_expr(&term)?;
+        debug!(
+            target: "sugar_lift_rust_tests::sugar::for_replay",
+            source = %crate::token_key(expr),
+            value = %crate::token_key(&value),
+            "replayed local value through term factory"
+        );
+        Some(value)
+    }
+
+    fn term_from_factory(&self, expr: &Expr) -> Option<Rc<Term>> {
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(self.ctx.scope, self.ctx.options, &let_inits);
+        build_term(expr, &fcx).desugar(self.ctx).dug()?.into_term()
     }
 
     fn eval_if_value(&self, expr_if: &syn::ExprIf) -> Option<Expr> {
@@ -552,27 +932,51 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
                     self.expr_const_bool(&binary.left)? || self.expr_const_bool(&binary.right)?,
                 ),
                 BinOp::Eq(_) => {
+                    if let Some((lhs, rhs)) = self.expr_const_u128_pair(&binary.left, &binary.right)
+                    {
+                        return Some(lhs == rhs);
+                    }
                     Some(self.expr_const_int(&binary.left)? == self.expr_const_int(&binary.right)?)
                 }
                 BinOp::Ne(_) => {
+                    if let Some((lhs, rhs)) = self.expr_const_u128_pair(&binary.left, &binary.right)
+                    {
+                        return Some(lhs != rhs);
+                    }
                     Some(self.expr_const_int(&binary.left)? != self.expr_const_int(&binary.right)?)
                 }
                 BinOp::Lt(_) => {
+                    if let Some((lhs, rhs)) = self.expr_const_u128_pair(&binary.left, &binary.right)
+                    {
+                        return Some(lhs < rhs);
+                    }
                     Some(self.expr_const_int(&binary.left)? < self.expr_const_int(&binary.right)?)
                 }
                 BinOp::Le(_) => {
+                    if let Some((lhs, rhs)) = self.expr_const_u128_pair(&binary.left, &binary.right)
+                    {
+                        return Some(lhs <= rhs);
+                    }
                     Some(self.expr_const_int(&binary.left)? <= self.expr_const_int(&binary.right)?)
                 }
                 BinOp::Gt(_) => {
+                    if let Some((lhs, rhs)) = self.expr_const_u128_pair(&binary.left, &binary.right)
+                    {
+                        return Some(lhs > rhs);
+                    }
                     Some(self.expr_const_int(&binary.left)? > self.expr_const_int(&binary.right)?)
                 }
                 BinOp::Ge(_) => {
+                    if let Some((lhs, rhs)) = self.expr_const_u128_pair(&binary.left, &binary.right)
+                    {
+                        return Some(lhs >= rhs);
+                    }
                     Some(self.expr_const_int(&binary.left)? >= self.expr_const_int(&binary.right)?)
                 }
                 _ => None,
             },
             _ => {
-                let term = translate_term_in_scope(&substituted, self.ctx.scope).ok()?;
+                let term = self.term_from_factory(&substituted)?;
                 match term.as_ref() {
                     Term::Const {
                         value: sugar_ir_symbolic::ConstValue::Bool(value),
@@ -585,7 +989,33 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
     }
 
     fn expr_const_int(&self, expr: &Expr) -> Option<i128> {
-        expr_const_int(&substitute_expr(expr, &self.bindings), self.ctx.scope)
+        let substituted = substitute_expr(expr, &self.bindings);
+        let term = self.term_from_factory(&substituted)?;
+        term_as_int(&term).or_else(|| const_fold_int_term(&term))
+    }
+
+    fn expr_const_u128(&self, expr: &Expr) -> Option<u128> {
+        let substituted = substitute_expr(expr, &self.bindings);
+        let term = self.term_from_factory(&substituted)?;
+        const_fold_u128_term(&term)
+    }
+
+    fn expr_const_u128_pair(&self, lhs: &Expr, rhs: &Expr) -> Option<(u128, u128)> {
+        let left = self.expr_const_u128(lhs);
+        let right = self.expr_const_u128(rhs);
+        if left.is_none() && right.is_none() {
+            return None;
+        }
+        Some((
+            left.or_else(|| {
+                self.expr_const_int(lhs)
+                    .and_then(|n| u128::try_from(n).ok())
+            })?,
+            right.or_else(|| {
+                self.expr_const_int(rhs)
+                    .and_then(|n| u128::try_from(n).ok())
+            })?,
+        ))
     }
 }
 
@@ -744,25 +1174,24 @@ fn is_const_pattern_ident(name: &str) -> bool {
             .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
 }
 
-fn finite_range_values(expr: &Expr, scope: &crate::TemporalScope) -> Option<Vec<i128>> {
-    let Expr::Range(range) = strip_refs_groups(expr) else {
-        return None;
-    };
-    let start = range
-        .start
-        .as_ref()
-        .map(|expr| expr_const_int(expr, scope))
-        .unwrap_or(Some(0))?;
-    let end = expr_const_int(range.end.as_ref()?, scope)?;
-    let high = if matches!(range.limits, syn::RangeLimits::Closed(_)) {
-        end.checked_add(1)?
-    } else {
-        end
-    };
-    if high <= start || high - start > i128::from(SUGAR_SEQ_CAP) {
+fn finite_domain_exprs(expr: &Expr, ctx: &SugarCtx) -> Option<Vec<Expr>> {
+    let let_inits = BTreeMap::new();
+    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+    let seq = build_composite(expr, &fcx).desugar(ctx).dug()?.into_seq()?;
+    if seq.is_empty() || seq.len() as i64 > SUGAR_SEQ_CAP {
         return None;
     }
-    Some((start..high).collect())
+    let mut values = Vec::with_capacity(seq.len());
+    for elem in seq {
+        let value = match elem.value.as_ref() {
+            Some(ConstVal::Int(value)) => int_expr(*value)?,
+            Some(ConstVal::PrimitiveInt { .. }) => elem.value.as_ref()?.to_expr()?,
+            Some(ConstVal::UInt128(value)) => u128_expr(*value)?,
+            _ => elem.expr,
+        };
+        values.push(value);
+    }
+    Some(values)
 }
 
 fn expr_const_int(expr: &Expr, scope: &crate::TemporalScope) -> Option<i128> {
@@ -771,6 +1200,41 @@ fn expr_const_int(expr: &Expr, scope: &crate::TemporalScope) -> Option<i128> {
     }
     let term = translate_term_in_scope(expr, scope).ok()?;
     term_as_int(&term).or_else(|| const_fold_int_term(&term))
+}
+
+fn term_ground_expr(term: &Rc<Term>) -> Option<Expr> {
+    if let Some(value) = const_fold_u128_term(term) {
+        return u128_expr(value);
+    }
+    match term.as_ref() {
+        Term::Const { value, sort } => match value {
+            ConstValue::Int(n) if sort.name == "Int" => int_expr(*n),
+            ConstValue::Int(n) if is_primitive_int_sort(&sort.name) => {
+                syn::parse_str::<Expr>(&format!("{n}{}", sort.name)).ok()
+            }
+            ConstValue::Bool(value) => syn::parse_str::<Expr>(&value.to_string()).ok(),
+            ConstValue::String(value) => syn::parse_str::<Expr>(&format!("{value:?}")).ok(),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn is_primitive_int_sort(name: &str) -> bool {
+    matches!(
+        name,
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+    )
 }
 
 fn exact_int_expr(expr: &Expr) -> Option<i128> {
@@ -787,6 +1251,29 @@ fn exact_int_expr(expr: &Expr) -> Option<i128> {
                 BinOp::Add(_) => lhs.checked_add(rhs),
                 BinOp::Sub(_) => lhs.checked_sub(rhs),
                 BinOp::Mul(_) => lhs.checked_mul(rhs),
+                BinOp::Div(_) => {
+                    if rhs == 0 {
+                        None
+                    } else {
+                        lhs.checked_div(rhs)
+                    }
+                }
+                BinOp::Rem(_) => {
+                    if rhs == 0 {
+                        None
+                    } else {
+                        lhs.checked_rem(rhs)
+                    }
+                }
+                BinOp::Shl(_) => u32::try_from(rhs)
+                    .ok()
+                    .and_then(|shift| lhs.checked_shl(shift)),
+                BinOp::Shr(_) => u32::try_from(rhs)
+                    .ok()
+                    .and_then(|shift| lhs.checked_shr(shift)),
+                BinOp::BitAnd(_) => Some(lhs & rhs),
+                BinOp::BitOr(_) => Some(lhs | rhs),
+                BinOp::BitXor(_) => Some(lhs ^ rhs),
                 _ => None,
             }
         }

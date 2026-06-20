@@ -43,6 +43,7 @@ pub mod sugar {
     pub mod callsite;
     pub mod cast_term;
     pub mod catalog;
+    pub mod chain;
     pub mod char_range_collect_string;
     pub mod char_range_filter_map;
     pub mod claim;
@@ -91,6 +92,7 @@ pub mod sugar {
     pub mod index;
     pub mod infinity_eq;
     pub mod insert;
+    pub mod int_sqrt;
     pub mod intersperse_collect_string;
     pub mod intersperse_concat;
     pub mod iter_terminal;
@@ -107,8 +109,13 @@ pub mod sugar {
     pub mod method;
     pub mod method_family;
     pub mod monadic;
+    pub mod nonzero;
     pub mod offset_of;
+    pub mod option_adaptor;
+    pub mod option_predicate;
+    pub mod option_unwrap;
     pub mod path;
+    pub mod primitive_int;
     pub mod range_term;
     pub mod raw_addr_term;
     pub mod reference_term;
@@ -145,6 +152,7 @@ pub mod sugar {
     pub mod use_item;
     pub mod utf8_chunks;
     pub mod vec_macro;
+    pub mod wrapping_neg;
 }
 
 use crate::sugar::configuration::{
@@ -1016,6 +1024,7 @@ fn walk_items_inner<'a>(
     out: &mut AdapterOutput,
     macro_depth: usize,
 ) {
+    let scoped_fns = item_scope_fns(items);
     for item in items {
         match item {
             Item::Fn(f) => {
@@ -1027,6 +1036,7 @@ fn walk_items_inner<'a>(
                         options,
                         reducer,
                         factory_audits,
+                        &scoped_fns,
                         out,
                     );
                 }
@@ -1093,6 +1103,16 @@ fn walk_items_inner<'a>(
             _ => {}
         }
     }
+}
+
+fn item_scope_fns(items: &[Item]) -> BTreeMap<String, &syn::ItemFn> {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Fn(f) if !has_test_attr(&f.attrs) => Some((f.sig.ident.to_string(), f)),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Walk items for Pass 2 (non-test fns). Emits named refusals for asserts in
@@ -1864,6 +1884,7 @@ fn visit_test_fn(
     options: &LiftOptions,
     reducer: &ReductionCtx<'_>,
     factory_audits: Option<&FactoryAuditLog>,
+    scoped_fns: &BTreeMap<String, &syn::ItemFn>,
     out: &mut AdapterOutput,
 ) {
     let test_name = scoped_test_name(source_path, modules, &f.sig.ident.to_string());
@@ -1944,8 +1965,7 @@ fn visit_test_fn(
         factory_audits,
         0,
         &BTreeSet::new(),
-        // Top-level `#[test]` fn: no ENCLOSING block, so no inherited nested fns.
-        &BTreeMap::new(),
+        scoped_fns,
         &LayoutTypeRegistry::new(),
     );
     if is_should_panic {
@@ -4855,9 +4875,135 @@ pub(crate) fn const_fold_int_term(term: &Rc<Term>) -> Option<i128> {
                 "+" => a.checked_add(b),
                 "-" => a.checked_sub(b),
                 "*" => a.checked_mul(b),
+                "int-div" => {
+                    if b == 0 {
+                        None
+                    } else {
+                        a.checked_div(b)
+                    }
+                }
+                "int-rem" => {
+                    if b == 0 {
+                        None
+                    } else {
+                        a.checked_rem(b)
+                    }
+                }
+                "shift-left" => u32::try_from(b).ok().and_then(|shift| a.checked_shl(shift)),
+                "shift-right" => u32::try_from(b).ok().and_then(|shift| a.checked_shr(shift)),
+                "bit-and" => Some(a & b),
+                "bit-or" => Some(a | b),
+                "bit-xor" => Some(a ^ b),
                 _ => None,
             }
         }
+        Term::Ctor { name, args } if args.len() == 1 && name.starts_with("cast:") => {
+            cast_const_fold_value(const_fold_int_term(&args[0])?, name.strip_prefix("cast:")?)
+        }
+        _ => None,
+    }
+}
+
+const RUST_U128_CTOR: &str = "rust:u128";
+
+pub(crate) fn u128_term(value: u128) -> Rc<Term> {
+    if let Ok(n) = i128::try_from(value) {
+        return Rc::new(Term::Const {
+            value: ConstValue::Int(n),
+            sort: sugar_ir_symbolic::Sort {
+                name: "u128".to_string(),
+            },
+        });
+    }
+    let hi = (value >> 64) as u64;
+    let lo = value as u64;
+    Rc::new(Term::Ctor {
+        name: RUST_U128_CTOR.to_string(),
+        args: vec![num(i128::from(hi)), num(i128::from(lo))],
+    })
+}
+
+pub(crate) fn u128_expr(value: u128) -> Option<Expr> {
+    syn::parse_str::<Expr>(&format!("{value}u128")).ok()
+}
+
+pub(crate) fn const_fold_u128_term(term: &Rc<Term>) -> Option<u128> {
+    if let Some(value) = term_as_u128(term) {
+        return Some(value);
+    }
+    match term.as_ref() {
+        Term::Ctor { name, args } if name == RUST_U128_CTOR && args.len() == 2 => {
+            let hi = u64::try_from(const_fold_int_term(&args[0])?).ok()?;
+            let lo = u64::try_from(const_fold_int_term(&args[1])?).ok()?;
+            Some((u128::from(hi) << 64) | u128::from(lo))
+        }
+        Term::Ctor { name, args } if args.len() == 1 && name.starts_with("cast:") => {
+            let ty = name.strip_prefix("cast:")?;
+            match ty {
+                "u128" => {
+                    if let Some(value) = const_fold_u128_term(&args[0]) {
+                        Some(value)
+                    } else {
+                        u128::try_from(const_fold_int_term(&args[0])?).ok()
+                    }
+                }
+                _ => None,
+            }
+        }
+        Term::Ctor { name, args } if args.len() == 2 => {
+            let left_u = const_fold_u128_term(&args[0]);
+            let right_u = const_fold_u128_term(&args[1]);
+            if left_u.is_none() && right_u.is_none() {
+                return None;
+            }
+            let a = left_u.or_else(|| const_fold_int_term(&args[0]).and_then(int_to_u128))?;
+            let b = right_u.or_else(|| const_fold_int_term(&args[1]).and_then(int_to_u128))?;
+            match name.as_str() {
+                "+" => a.checked_add(b),
+                "-" => a.checked_sub(b),
+                "*" => a.checked_mul(b),
+                "int-div" => (b != 0).then(|| a / b),
+                "int-rem" => (b != 0).then(|| a % b),
+                "shift-left" => u32::try_from(b).ok().and_then(|shift| a.checked_shl(shift)),
+                "shift-right" => u32::try_from(b).ok().and_then(|shift| a.checked_shr(shift)),
+                "bit-and" => Some(a & b),
+                "bit-or" => Some(a | b),
+                "bit-xor" => Some(a ^ b),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+fn term_as_u128(term: &Rc<Term>) -> Option<u128> {
+    match term.as_ref() {
+        Term::Const {
+            value: ConstValue::Int(n),
+            sort,
+        } if sort.name == "u128" => u128::try_from(*n).ok(),
+        _ => None,
+    }
+}
+
+fn int_to_u128(value: i128) -> Option<u128> {
+    u128::try_from(value).ok()
+}
+
+fn cast_const_fold_value(value: i128, ty: &str) -> Option<i128> {
+    match ty {
+        "i8" => Some(i128::from(value as i8)),
+        "i16" => Some(i128::from(value as i16)),
+        "i32" => Some(i128::from(value as i32)),
+        "i64" => Some(i128::from(value as i64)),
+        "i128" => Some(value),
+        "isize" => Some((value as isize) as i128),
+        "u8" => Some(i128::from(value as u8)),
+        "u16" => Some(i128::from(value as u16)),
+        "u32" => Some(i128::from(value as u32)),
+        "u64" => Some(i128::from(value as u64)),
+        "u128" => (value >= 0).then_some(value),
+        "usize" => Some((value as usize) as i128),
         _ => None,
     }
 }
@@ -5024,7 +5170,13 @@ fn peel_fold_adaptors<'a>(
                                     Box::new(sugar::identity_map::IdentityMapSugar { inner })
                                 })
                             } else {
-                                Box::new(move |inner| Box::new(sugar::map::MapSugar { inner, f }))
+                                Box::new(move |inner| {
+                                    Box::new(sugar::map::MapSugar {
+                                        inner,
+                                        f,
+                                        u128_shift_hint: false,
+                                    })
+                                })
                             }
                         }
                         func if matches!(strip_refs_groups(func), Expr::Path(_)) => {
@@ -5118,6 +5270,8 @@ enum ConstVal {
     // i128 carrier -- same widening as the lifted-term Int const: a wide
     // literal const-folds to its EXACT integer value, never a truncation.
     Int(i128),
+    PrimitiveInt { raw: u128, kind: PrimitiveIntKind },
+    UInt128(u128),
     Bool(bool),
     Char(char),
     UnitPath(String),
@@ -5130,6 +5284,8 @@ impl ConstVal {
     fn to_expr(&self) -> Option<Expr> {
         let s = match self {
             ConstVal::Int(n) => n.to_string(),
+            ConstVal::PrimitiveInt { raw, kind } => primitive_int_expr_text(*raw, *kind)?,
+            ConstVal::UInt128(n) => format!("{n}u128"),
             ConstVal::Bool(b) => b.to_string(),
             ConstVal::Char(c) => format!("{c:?}"), // debug form emits a valid char literal
             ConstVal::UnitPath(path) => path.clone(),
@@ -5143,6 +5299,15 @@ impl ConstVal {
     fn as_int(&self) -> Option<i128> {
         match self {
             ConstVal::Int(n) => Some(*n),
+            ConstVal::PrimitiveInt { raw, kind } => primitive_int_i128(*raw, *kind),
+            _ => None,
+        }
+    }
+    fn as_u128(&self) -> Option<u128> {
+        match self {
+            ConstVal::UInt128(n) => Some(*n),
+            ConstVal::PrimitiveInt { raw, kind } if !kind.signed => Some(mask_raw(*raw, kind.bits)),
+            ConstVal::Int(n) => u128::try_from(*n).ok(),
             _ => None,
         }
     }
@@ -5151,6 +5316,113 @@ impl ConstVal {
             ConstVal::Bool(b) => Some(*b),
             _ => None,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PrimitiveIntKind {
+    signed: bool,
+    bits: u32,
+    name: &'static str,
+}
+
+fn primitive_int_kind(name: &str) -> Option<PrimitiveIntKind> {
+    let (signed, bits, name) = match name {
+        "i8" => (true, 8, "i8"),
+        "i16" => (true, 16, "i16"),
+        "i32" => (true, 32, "i32"),
+        "i64" => (true, 64, "i64"),
+        "i128" => (true, 128, "i128"),
+        "isize" => (true, isize::BITS, "isize"),
+        "u8" => (false, 8, "u8"),
+        "u16" => (false, 16, "u16"),
+        "u32" => (false, 32, "u32"),
+        "u64" => (false, 64, "u64"),
+        "u128" => (false, 128, "u128"),
+        "usize" => (false, usize::BITS, "usize"),
+        _ => return None,
+    };
+    Some(PrimitiveIntKind { signed, bits, name })
+}
+
+fn primitive_int_literal_raw(value: u128, kind: PrimitiveIntKind) -> Option<u128> {
+    if kind.signed {
+        (value <= primitive_int_signed_max(kind)?).then(|| mask_raw(value, kind.bits))
+    } else {
+        (value <= primitive_int_max_raw(kind)).then(|| mask_raw(value, kind.bits))
+    }
+}
+
+fn primitive_int_max_raw(kind: PrimitiveIntKind) -> u128 {
+    if kind.bits == 128 {
+        u128::MAX
+    } else {
+        (1u128 << kind.bits) - 1
+    }
+}
+
+fn primitive_int_signed_max(kind: PrimitiveIntKind) -> Option<u128> {
+    kind.signed.then_some(if kind.bits == 128 {
+        i128::MAX as u128
+    } else {
+        (1u128 << (kind.bits - 1)) - 1
+    })
+}
+
+fn mask_raw(value: u128, bits: u32) -> u128 {
+    if bits == 128 {
+        value
+    } else {
+        value & ((1u128 << bits) - 1)
+    }
+}
+
+fn primitive_int_i128(raw: u128, kind: PrimitiveIntKind) -> Option<i128> {
+    let raw = mask_raw(raw, kind.bits);
+    if !kind.signed {
+        return i128::try_from(raw).ok();
+    }
+    if kind.bits == 128 {
+        return Some(raw as i128);
+    }
+    let sign = 1u128 << (kind.bits - 1);
+    if raw & sign == 0 {
+        i128::try_from(raw).ok()
+    } else {
+        let modulus = 1i128.checked_shl(kind.bits)?;
+        let magnitude = i128::try_from(raw).ok()?;
+        magnitude.checked_sub(modulus)
+    }
+}
+
+fn primitive_int_expr_text(raw: u128, kind: PrimitiveIntKind) -> Option<String> {
+    if kind.signed {
+        Some(format!("{}{}", primitive_int_i128(raw, kind)?, kind.name))
+    } else {
+        Some(format!("{}{}", mask_raw(raw, kind.bits), kind.name))
+    }
+}
+
+pub(crate) fn primitive_int_term(raw: u128, kind: PrimitiveIntKind) -> Option<Rc<Term>> {
+    if kind.name == "u128" {
+        return Some(u128_term(mask_raw(raw, kind.bits)));
+    }
+    Some(Rc::new(Term::Const {
+        value: ConstValue::Int(primitive_int_i128(raw, kind)?),
+        sort: sugar_ir_symbolic::Sort {
+            name: kind.name.to_string(),
+        },
+    }))
+}
+
+pub(crate) fn const_val_term(value: &ConstVal) -> Option<Rc<Term>> {
+    match value {
+        ConstVal::Int(n) => Some(num(*n)),
+        ConstVal::PrimitiveInt { raw, kind } => primitive_int_term(*raw, *kind),
+        ConstVal::UInt128(n) => Some(u128_term(*n)),
+        ConstVal::Bool(b) => Some(bool_const(*b)),
+        ConstVal::Char(c) => Some(str_const(c.to_string())),
+        _ => None,
     }
 }
 
@@ -5163,6 +5435,14 @@ impl ConstVal {
 fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal> {
     match expr {
         Expr::Lit(ExprLit { lit, .. }) => match lit {
+            Lit::Int(i) if i.suffix() == "u128" => parse_u128_lit(i).ok().map(ConstVal::UInt128),
+            Lit::Int(i) if !i.suffix().is_empty() => {
+                let kind = primitive_int_kind(i.suffix())?;
+                parse_u128_lit(i).ok().and_then(|raw| {
+                    primitive_int_literal_raw(raw, kind)
+                        .map(|raw| ConstVal::PrimitiveInt { raw, kind })
+                })
+            }
             Lit::Int(i) => parse_int_lit(i).ok().map(ConstVal::Int),
             Lit::Bool(b) => Some(ConstVal::Bool(b.value)),
             Lit::Char(c) => Some(ConstVal::Char(c.value())),
@@ -5197,41 +5477,16 @@ fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal>
                 None
             }
         }
-        // int->int `as` cast only (exact within i64); a float/usize-truncation cast is not
-        // replicated -> bail. (We keep one canonical i64 regime; a cast that would change
-        // value semantics, e.g. `-1i32 as u8`, is NOT modeled -> bail.)
-        Expr::Cast(c) => {
-            // To stay provably exact we ONLY accept an identity-preserving widening of an
-            // integer value to a signed type at least as wide as our i64 regime, and bail
-            // on every narrowing / sign-changing / float cast (those can change the value).
-            let n = const_eval(&c.expr, env)?.as_int()?;
-            match &*c.ty {
-                syn::Type::Path(tp) => {
-                    let name = tp.path.segments.last()?.ident.to_string();
-                    match name.as_str() {
-                        // `as i128` is identity for any value the carrier holds.
-                        "i128" => Some(ConstVal::Int(n)),
-                        // `as i64` / `as isize` is identity ONLY when the value fits the
-                        // target; a wide value would TRUNCATE (change value) -> bail
-                        // (EXACT-OR-BAIL; the cast comment's identity-preservation is now
-                        // enforced, not assumed).
-                        "i64" | "isize" => {
-                            i64::try_from(n).ok().map(|v| ConstVal::Int(i128::from(v)))
-                        }
-                        // Literal-array map rows commonly widen a known nonnegative
-                        // integer to an unsigned type (`v as u64`). That is a compiler
-                        // axiom only while it preserves the numeric value exactly.
-                        "u8" => u8::try_from(n).ok().map(|v| ConstVal::Int(i128::from(v))),
-                        "u16" => u16::try_from(n).ok().map(|v| ConstVal::Int(i128::from(v))),
-                        "u32" => u32::try_from(n).ok().map(|v| ConstVal::Int(i128::from(v))),
-                        "u64" => u64::try_from(n).ok().map(|v| ConstVal::Int(i128::from(v))),
-                        "usize" => usize::try_from(n).ok().map(|v| ConstVal::Int(v as i128)),
-                        _ => None,
-                    }
-                }
-                _ => None,
+        // Primitive integer `as` casts over grounded values. We are not type-checking;
+        // compiling Rust already did that. The kit only replays the concrete primitive
+        // value rule: compute in a wide lane, then narrow through the Rust target kind.
+        Expr::Cast(c) => match &*c.ty {
+            syn::Type::Path(tp) => {
+                let name = tp.path.segments.last()?.ident.to_string();
+                const_cast_value(const_eval(&c.expr, env)?, &name)
             }
-        }
+            _ => None,
+        },
         Expr::Unary(u) => {
             let v = const_eval(&u.expr, env)?;
             match u.op {
@@ -5252,43 +5507,20 @@ fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal>
         Expr::Binary(b) => {
             let l = const_eval(&b.left, env)?;
             let r = const_eval(&b.right, env)?;
-            // ARITHMETIC RUNS IN THE BOUNDED i64 REGIME. The i128 carrier exists to
-            // hold a wide LITERAL exactly (the wide-int DIG), NOT to relax rust's
-            // width-checked arithmetic: `i64::MAX * 1000` PANICS in rustc debug, so a
-            // const-fold that silently computed it in i128 would model a computation
-            // the vendor's test never performs -- a fake-dig. We do not track each
-            // operand's source width post-erasure, so the canonical regime is i64:
-            // an operand or result outside i64 bails (None). A wide literal entering
-            // defold arithmetic therefore declines -- a safe under-claim, never a
-            // wrong value. (Direct wide-literal assertions still lift via
-            // `translate_lit`; only the defolder's closure arithmetic is bounded.)
-            let as_i64 = |v: &ConstVal| -> Option<i64> { i64::try_from(v.as_int()?).ok() };
-            let int = |n: i64| ConstVal::Int(i128::from(n));
             match b.op {
-                // integer arithmetic with overflow / div-zero guards (bail on either),
-                // checked at i64 width to match rustc's debug-mode overflow panic.
-                BinOp::Add(_) => as_i64(&l)?.checked_add(as_i64(&r)?).map(int),
-                BinOp::Sub(_) => as_i64(&l)?.checked_sub(as_i64(&r)?).map(int),
-                BinOp::Mul(_) => as_i64(&l)?.checked_mul(as_i64(&r)?).map(int),
-                BinOp::Div(_) => {
-                    let (a, d) = (as_i64(&l)?, as_i64(&r)?);
-                    if d == 0 {
-                        None
-                    } else {
-                        a.checked_div(d).map(int)
-                    }
-                }
-                BinOp::Rem(_) => {
-                    let (a, d) = (as_i64(&l)?, as_i64(&r)?);
-                    if d == 0 {
-                        None
-                    } else {
-                        a.checked_rem(d).map(int)
-                    }
-                }
+                BinOp::Add(_) => const_numeric_add(&l, &r),
+                BinOp::Sub(_) => const_numeric_sub(&l, &r),
+                BinOp::Mul(_) => const_numeric_mul(&l, &r),
+                BinOp::Shl(_) => const_numeric_shl(&l, &r),
+                BinOp::Shr(_) => const_numeric_shr(&l, &r),
+                BinOp::BitAnd(_) => const_numeric_bitand(&l, &r),
+                BinOp::BitOr(_) => const_numeric_bitor(&l, &r),
+                BinOp::BitXor(_) => const_numeric_bitxor(&l, &r),
+                BinOp::Div(_) => const_numeric_div(&l, &r),
+                BinOp::Rem(_) => const_numeric_rem(&l, &r),
                 // comparisons -> Bool (ints or chars).
-                BinOp::Eq(_) => Some(ConstVal::Bool(l == r)),
-                BinOp::Ne(_) => Some(ConstVal::Bool(l != r)),
+                BinOp::Eq(_) => const_eq(&l, &r).map(ConstVal::Bool),
+                BinOp::Ne(_) => const_eq(&l, &r).map(|same| ConstVal::Bool(!same)),
                 BinOp::Lt(_) => {
                     const_cmp(&l, &r).map(|o| ConstVal::Bool(o == std::cmp::Ordering::Less))
                 }
@@ -5311,11 +5543,373 @@ fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal>
     }
 }
 
+fn const_cast_value(value: ConstVal, ty: &str) -> Option<ConstVal> {
+    if let Some(kind) = primitive_int_kind(ty) {
+        let raw = mask_raw(value.as_u128_cast()?, kind.bits);
+        if kind.name == "u128" {
+            return Some(ConstVal::UInt128(raw));
+        }
+        return Some(ConstVal::PrimitiveInt { raw, kind });
+    }
+    match ty {
+        _ => None,
+    }
+}
+
+impl ConstVal {
+    fn as_i8_cast(&self) -> Option<i8> {
+        Some(self.as_i128_cast()? as i8)
+    }
+    fn as_i16_cast(&self) -> Option<i16> {
+        Some(self.as_i128_cast()? as i16)
+    }
+    fn as_i32_cast(&self) -> Option<i32> {
+        Some(self.as_i128_cast()? as i32)
+    }
+    fn as_i64_cast(&self) -> Option<i64> {
+        Some(self.as_i128_cast()? as i64)
+    }
+    fn as_i128_cast(&self) -> Option<i128> {
+        match self {
+            ConstVal::Int(n) => Some(*n),
+            ConstVal::PrimitiveInt { raw, kind } => primitive_int_i128(*raw, *kind),
+            ConstVal::UInt128(n) => Some(*n as i128),
+            _ => None,
+        }
+    }
+    fn as_isize_cast(&self) -> Option<isize> {
+        Some(self.as_i128_cast()? as isize)
+    }
+    fn as_u8_cast(&self) -> Option<u8> {
+        Some(self.as_i128_cast()? as u8)
+    }
+    fn as_u16_cast(&self) -> Option<u16> {
+        Some(self.as_i128_cast()? as u16)
+    }
+    fn as_u32_cast(&self) -> Option<u32> {
+        Some(self.as_i128_cast()? as u32)
+    }
+    fn as_u64_cast(&self) -> Option<u64> {
+        Some(self.as_i128_cast()? as u64)
+    }
+    fn as_u128_cast(&self) -> Option<u128> {
+        match self {
+            ConstVal::Int(n) => Some(*n as u128),
+            ConstVal::PrimitiveInt { raw, kind } => Some(mask_raw(*raw, kind.bits)),
+            ConstVal::UInt128(n) => Some(*n),
+            _ => None,
+        }
+    }
+    fn as_usize_cast(&self) -> Option<usize> {
+        Some(self.as_u128_cast()? as usize)
+    }
+}
+
+fn const_numeric_add(l: &ConstVal, r: &ConstVal) -> Option<ConstVal> {
+    if let Some((lhs, rhs, kind)) = primitive_operands(l, r) {
+        return Some(ConstVal::PrimitiveInt {
+            raw: mask_raw(lhs.wrapping_add(rhs), kind.bits),
+            kind,
+        });
+    }
+    if matches!(l, ConstVal::UInt128(_)) || matches!(r, ConstVal::UInt128(_)) {
+        return l
+            .as_u128()?
+            .checked_add(r.as_u128()?)
+            .map(ConstVal::UInt128);
+    }
+    l.as_int()?.checked_add(r.as_int()?).map(ConstVal::Int)
+}
+
+fn const_numeric_sub(l: &ConstVal, r: &ConstVal) -> Option<ConstVal> {
+    if let Some((lhs, rhs, kind)) = primitive_operands(l, r) {
+        return Some(ConstVal::PrimitiveInt {
+            raw: mask_raw(lhs.wrapping_sub(rhs), kind.bits),
+            kind,
+        });
+    }
+    if matches!(l, ConstVal::UInt128(_)) || matches!(r, ConstVal::UInt128(_)) {
+        return l
+            .as_u128()?
+            .checked_sub(r.as_u128()?)
+            .map(ConstVal::UInt128);
+    }
+    l.as_int()?.checked_sub(r.as_int()?).map(ConstVal::Int)
+}
+
+fn const_numeric_mul(l: &ConstVal, r: &ConstVal) -> Option<ConstVal> {
+    if let Some((lhs, rhs, kind)) = primitive_operands(l, r) {
+        return Some(ConstVal::PrimitiveInt {
+            raw: mask_raw(lhs.wrapping_mul(rhs), kind.bits),
+            kind,
+        });
+    }
+    if matches!(l, ConstVal::UInt128(_)) || matches!(r, ConstVal::UInt128(_)) {
+        return l
+            .as_u128()?
+            .checked_mul(r.as_u128()?)
+            .map(ConstVal::UInt128);
+    }
+    l.as_int()?.checked_mul(r.as_int()?).map(ConstVal::Int)
+}
+
+fn const_numeric_div(l: &ConstVal, r: &ConstVal) -> Option<ConstVal> {
+    if let Some((lhs, rhs, kind)) = primitive_operands(l, r) {
+        if kind.signed {
+            let lhs = primitive_int_i128(lhs, kind)?;
+            let rhs = primitive_int_i128(rhs, kind)?;
+            let value = lhs.checked_div(rhs)?;
+            return Some(ConstVal::PrimitiveInt {
+                raw: mask_raw(value as u128, kind.bits),
+                kind,
+            });
+        }
+        if rhs == 0 {
+            return None;
+        }
+        return Some(ConstVal::PrimitiveInt {
+            raw: mask_raw(lhs / rhs, kind.bits),
+            kind,
+        });
+    }
+    if matches!(l, ConstVal::UInt128(_)) || matches!(r, ConstVal::UInt128(_)) {
+        let divisor = r.as_u128()?;
+        return (divisor != 0)
+            .then(|| l.as_u128()?.checked_div(divisor).map(ConstVal::UInt128))
+            .flatten();
+    }
+    let divisor = r.as_int()?;
+    (divisor != 0)
+        .then(|| l.as_int()?.checked_div(divisor).map(ConstVal::Int))
+        .flatten()
+}
+
+fn const_numeric_rem(l: &ConstVal, r: &ConstVal) -> Option<ConstVal> {
+    if let Some((lhs, rhs, kind)) = primitive_operands(l, r) {
+        if kind.signed {
+            let lhs = primitive_int_i128(lhs, kind)?;
+            let rhs = primitive_int_i128(rhs, kind)?;
+            let value = lhs.checked_rem(rhs)?;
+            return Some(ConstVal::PrimitiveInt {
+                raw: mask_raw(value as u128, kind.bits),
+                kind,
+            });
+        }
+        if rhs == 0 {
+            return None;
+        }
+        return Some(ConstVal::PrimitiveInt {
+            raw: mask_raw(lhs % rhs, kind.bits),
+            kind,
+        });
+    }
+    if matches!(l, ConstVal::UInt128(_)) || matches!(r, ConstVal::UInt128(_)) {
+        let divisor = r.as_u128()?;
+        return (divisor != 0)
+            .then(|| l.as_u128()?.checked_rem(divisor).map(ConstVal::UInt128))
+            .flatten();
+    }
+    let divisor = r.as_int()?;
+    (divisor != 0)
+        .then(|| l.as_int()?.checked_rem(divisor).map(ConstVal::Int))
+        .flatten()
+}
+
+fn const_numeric_shl(l: &ConstVal, r: &ConstVal) -> Option<ConstVal> {
+    let shift = u32::try_from(r.as_u128()?).ok()?;
+    if let Some((lhs, _, kind)) = primitive_operands(l, r) {
+        if shift >= kind.bits {
+            return None;
+        }
+        return Some(ConstVal::PrimitiveInt {
+            raw: mask_raw(lhs.wrapping_shl(shift), kind.bits),
+            kind,
+        });
+    }
+    if matches!(l, ConstVal::UInt128(_)) {
+        return l.as_u128()?.checked_shl(shift).map(ConstVal::UInt128);
+    }
+    l.as_int()?.checked_shl(shift).map(ConstVal::Int)
+}
+
+fn const_numeric_shr(l: &ConstVal, r: &ConstVal) -> Option<ConstVal> {
+    let shift = u32::try_from(r.as_u128()?).ok()?;
+    if let Some((lhs, _, kind)) = primitive_operands(l, r) {
+        if shift >= kind.bits {
+            return None;
+        }
+        let raw = if kind.signed {
+            let value = primitive_int_i128(lhs, kind)?;
+            (value >> shift) as u128
+        } else {
+            lhs >> shift
+        };
+        return Some(ConstVal::PrimitiveInt {
+            raw: mask_raw(raw, kind.bits),
+            kind,
+        });
+    }
+    if matches!(l, ConstVal::UInt128(_)) {
+        return l.as_u128()?.checked_shr(shift).map(ConstVal::UInt128);
+    }
+    l.as_int()?.checked_shr(shift).map(ConstVal::Int)
+}
+
+fn const_numeric_bitand(l: &ConstVal, r: &ConstVal) -> Option<ConstVal> {
+    if let Some((lhs, rhs, kind)) = primitive_operands(l, r) {
+        return Some(ConstVal::PrimitiveInt {
+            raw: mask_raw(lhs & rhs, kind.bits),
+            kind,
+        });
+    }
+    if matches!(l, ConstVal::UInt128(_)) || matches!(r, ConstVal::UInt128(_)) {
+        return Some(ConstVal::UInt128(l.as_u128()? & r.as_u128()?));
+    }
+    Some(ConstVal::Int(l.as_int()? & r.as_int()?))
+}
+
+fn const_numeric_bitor(l: &ConstVal, r: &ConstVal) -> Option<ConstVal> {
+    if let Some((lhs, rhs, kind)) = primitive_operands(l, r) {
+        return Some(ConstVal::PrimitiveInt {
+            raw: mask_raw(lhs | rhs, kind.bits),
+            kind,
+        });
+    }
+    if matches!(l, ConstVal::UInt128(_)) || matches!(r, ConstVal::UInt128(_)) {
+        return Some(ConstVal::UInt128(l.as_u128()? | r.as_u128()?));
+    }
+    Some(ConstVal::Int(l.as_int()? | r.as_int()?))
+}
+
+fn const_numeric_bitxor(l: &ConstVal, r: &ConstVal) -> Option<ConstVal> {
+    if let Some((lhs, rhs, kind)) = primitive_operands(l, r) {
+        return Some(ConstVal::PrimitiveInt {
+            raw: mask_raw(lhs ^ rhs, kind.bits),
+            kind,
+        });
+    }
+    if matches!(l, ConstVal::UInt128(_)) || matches!(r, ConstVal::UInt128(_)) {
+        return Some(ConstVal::UInt128(l.as_u128()? ^ r.as_u128()?));
+    }
+    Some(ConstVal::Int(l.as_int()? ^ r.as_int()?))
+}
+
+fn primitive_operands(l: &ConstVal, r: &ConstVal) -> Option<(u128, u128, PrimitiveIntKind)> {
+    let kind = match (primitive_kind_of(l), primitive_kind_of(r)) {
+        (Some(left), Some(right)) if left == right => left,
+        (Some(left), None) => left,
+        (None, Some(right)) => right,
+        _ => return None,
+    };
+    Some((
+        const_val_raw_for_kind(l, kind)?,
+        const_val_raw_for_kind(r, kind)?,
+        kind,
+    ))
+}
+
+fn primitive_kind_of(value: &ConstVal) -> Option<PrimitiveIntKind> {
+    match value {
+        ConstVal::PrimitiveInt { kind, .. } => Some(*kind),
+        _ => None,
+    }
+}
+
+fn const_val_raw_for_kind(value: &ConstVal, kind: PrimitiveIntKind) -> Option<u128> {
+    match value {
+        ConstVal::PrimitiveInt {
+            raw,
+            kind: value_kind,
+        } if *value_kind == kind => Some(mask_raw(*raw, kind.bits)),
+        ConstVal::Int(n) => {
+            if kind.signed {
+                let min = if kind.bits == 128 {
+                    i128::MIN
+                } else {
+                    -(1i128 << (kind.bits - 1))
+                };
+                let max = primitive_int_signed_max(kind).and_then(|v| i128::try_from(v).ok())?;
+                (*n >= min && *n <= max).then(|| mask_raw(*n as u128, kind.bits))
+            } else {
+                let value = u128::try_from(*n).ok()?;
+                (value <= primitive_int_max_raw(kind)).then(|| mask_raw(value, kind.bits))
+            }
+        }
+        ConstVal::UInt128(n) => {
+            (!kind.signed && *n <= primitive_int_max_raw(kind)).then(|| mask_raw(*n, kind.bits))
+        }
+        _ => None,
+    }
+}
+
+fn const_eq(l: &ConstVal, r: &ConstVal) -> Option<bool> {
+    match (l, r) {
+        (ConstVal::Int(a), ConstVal::Int(b)) => Some(a == b),
+        (
+            ConstVal::PrimitiveInt {
+                raw: a,
+                kind: kind_a,
+            },
+            ConstVal::PrimitiveInt {
+                raw: b,
+                kind: kind_b,
+            },
+        ) if kind_a == kind_b => Some(mask_raw(*a, kind_a.bits) == mask_raw(*b, kind_b.bits)),
+        (ConstVal::PrimitiveInt { raw, kind }, ConstVal::Int(n))
+        | (ConstVal::Int(n), ConstVal::PrimitiveInt { raw, kind }) => {
+            primitive_int_i128(*raw, *kind).map(|value| value == *n)
+        }
+        (ConstVal::PrimitiveInt { raw, kind }, ConstVal::UInt128(n))
+        | (ConstVal::UInt128(n), ConstVal::PrimitiveInt { raw, kind }) => {
+            (!kind.signed).then_some(mask_raw(*raw, kind.bits) == *n)
+        }
+        (ConstVal::UInt128(a), ConstVal::UInt128(b)) => Some(a == b),
+        (ConstVal::Int(a), ConstVal::UInt128(b)) => u128::try_from(*a).ok().map(|a| a == *b),
+        (ConstVal::UInt128(a), ConstVal::Int(b)) => u128::try_from(*b).ok().map(|b| *a == b),
+        (ConstVal::Bool(a), ConstVal::Bool(b)) => Some(a == b),
+        (ConstVal::Char(a), ConstVal::Char(b)) => Some(a == b),
+        (ConstVal::UnitPath(a), ConstVal::UnitPath(b)) => Some(a == b),
+        (ConstVal::Tuple(a), ConstVal::Tuple(b)) => Some(a == b),
+        _ => None,
+    }
+}
+
 /// Total order for `<`/`<=`/`>`/`>=` over the comparable const kinds (ints, chars). A
 /// cross-kind or non-comparable pair -> None (bail).
 fn const_cmp(l: &ConstVal, r: &ConstVal) -> Option<std::cmp::Ordering> {
     match (l, r) {
         (ConstVal::Int(a), ConstVal::Int(b)) => Some(a.cmp(b)),
+        (
+            ConstVal::PrimitiveInt {
+                raw: a,
+                kind: kind_a,
+            },
+            ConstVal::PrimitiveInt {
+                raw: b,
+                kind: kind_b,
+            },
+        ) if kind_a == kind_b && kind_a.signed => {
+            Some(primitive_int_i128(*a, *kind_a)?.cmp(&primitive_int_i128(*b, *kind_b)?))
+        }
+        (
+            ConstVal::PrimitiveInt {
+                raw: a,
+                kind: kind_a,
+            },
+            ConstVal::PrimitiveInt {
+                raw: b,
+                kind: kind_b,
+            },
+        ) if kind_a == kind_b => Some(mask_raw(*a, kind_a.bits).cmp(&mask_raw(*b, kind_b.bits))),
+        (ConstVal::PrimitiveInt { raw, kind }, ConstVal::Int(n)) => {
+            primitive_int_i128(*raw, *kind).map(|value| value.cmp(n))
+        }
+        (ConstVal::Int(n), ConstVal::PrimitiveInt { raw, kind }) => {
+            primitive_int_i128(*raw, *kind).map(|value| n.cmp(&value))
+        }
+        (ConstVal::UInt128(a), ConstVal::UInt128(b)) => Some(a.cmp(b)),
+        (ConstVal::Int(a), ConstVal::UInt128(b)) => u128::try_from(*a).ok().map(|a| a.cmp(b)),
+        (ConstVal::UInt128(a), ConstVal::Int(b)) => u128::try_from(*b).ok().map(|b| a.cmp(&b)),
         (ConstVal::Char(a), ConstVal::Char(b)) => Some(a.cmp(b)),
         _ => None,
     }
@@ -5339,6 +5933,104 @@ fn const_eval_unary_closure(closure: &syn::ExprClosure, arg: &ConstVal) -> Optio
         other => other,
     };
     const_eval(body, &env)
+}
+
+/// Evaluate a unary closure with the same exact floor as `const_eval_unary_closure`,
+/// except that an unsuffixed integer literal on the LHS of `<<` is read in the u128
+/// carrier. This is used only by MapSugar when the receiver shape itself supplies the
+/// unsigned primitive context (for example `0..<u128>::MAX.count_ones()` in a compiled
+/// chain), so the evaluator does not globally reinterpret signed shift expressions.
+pub(crate) fn const_eval_unary_closure_with_u128_shift(
+    closure: &syn::ExprClosure,
+    arg: &ConstVal,
+) -> Option<ConstVal> {
+    if closure.inputs.len() != 1 {
+        return None;
+    }
+    let mut env = BTreeMap::new();
+    bind_const_closure_arg(&closure.inputs[0], arg, &mut env)?;
+    let body: &Expr = match &*closure.body {
+        Expr::Block(b) => match b.block.stmts.as_slice() {
+            [Stmt::Expr(e, None)] => e,
+            _ => return None,
+        },
+        other => other,
+    };
+    const_eval_u128_shift(body, &env)
+}
+
+fn const_eval_u128_shift(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal> {
+    match expr {
+        Expr::Paren(pr) => const_eval_u128_shift(&pr.expr, env),
+        Expr::Group(g) => const_eval_u128_shift(&g.expr, env),
+        Expr::Reference(r) => const_eval_u128_shift(&r.expr, env),
+        Expr::Cast(c) => match &*c.ty {
+            syn::Type::Path(tp) => {
+                let name = tp.path.segments.last()?.ident.to_string();
+                const_cast_value(const_eval_u128_shift(&c.expr, env)?, &name)
+            }
+            _ => None,
+        },
+        Expr::Unary(u) => {
+            let v = const_eval_u128_shift(&u.expr, env)?;
+            match u.op {
+                UnOp::Neg(_) => v.as_int()?.checked_neg().map(ConstVal::Int),
+                UnOp::Not(_) => match v {
+                    ConstVal::Bool(b) => Some(ConstVal::Bool(!b)),
+                    _ => None,
+                },
+                UnOp::Deref(_) => Some(v),
+                _ => None,
+            }
+        }
+        Expr::Binary(b) => {
+            let l = if matches!(b.op, BinOp::Shl(_)) && unsuffixed_int_literal(&b.left).is_some() {
+                ConstVal::UInt128(u128::try_from(unsuffixed_int_literal(&b.left)?).ok()?)
+            } else {
+                const_eval_u128_shift(&b.left, env)?
+            };
+            let r = const_eval_u128_shift(&b.right, env)?;
+            match b.op {
+                BinOp::Add(_) => const_numeric_add(&l, &r),
+                BinOp::Sub(_) => const_numeric_sub(&l, &r),
+                BinOp::Mul(_) => const_numeric_mul(&l, &r),
+                BinOp::Shl(_) => const_numeric_shl(&l, &r),
+                BinOp::Shr(_) => const_numeric_shr(&l, &r),
+                BinOp::BitAnd(_) => const_numeric_bitand(&l, &r),
+                BinOp::BitOr(_) => const_numeric_bitor(&l, &r),
+                BinOp::BitXor(_) => const_numeric_bitxor(&l, &r),
+                BinOp::Div(_) => const_numeric_div(&l, &r),
+                BinOp::Rem(_) => const_numeric_rem(&l, &r),
+                BinOp::Eq(_) => const_eq(&l, &r).map(ConstVal::Bool),
+                BinOp::Ne(_) => const_eq(&l, &r).map(|same| ConstVal::Bool(!same)),
+                BinOp::Lt(_) => {
+                    const_cmp(&l, &r).map(|o| ConstVal::Bool(o == std::cmp::Ordering::Less))
+                }
+                BinOp::Le(_) => {
+                    const_cmp(&l, &r).map(|o| ConstVal::Bool(o != std::cmp::Ordering::Greater))
+                }
+                BinOp::Gt(_) => {
+                    const_cmp(&l, &r).map(|o| ConstVal::Bool(o == std::cmp::Ordering::Greater))
+                }
+                BinOp::Ge(_) => {
+                    const_cmp(&l, &r).map(|o| ConstVal::Bool(o != std::cmp::Ordering::Less))
+                }
+                BinOp::And(_) => Some(ConstVal::Bool(l.as_bool()? && r.as_bool()?)),
+                BinOp::Or(_) => Some(ConstVal::Bool(l.as_bool()? || r.as_bool()?)),
+                _ => None,
+            }
+        }
+        _ => const_eval(expr, env),
+    }
+}
+
+fn unsuffixed_int_literal(expr: &Expr) -> Option<i128> {
+    match strip_refs_groups(expr) {
+        Expr::Lit(ExprLit {
+            lit: Lit::Int(i), ..
+        }) if i.suffix().is_empty() => parse_int_lit(i).ok(),
+        _ => None,
+    }
 }
 
 /// Evaluate an `Option`-returning single-parameter closure `|p| <opt-body>` over a
@@ -9296,7 +9988,12 @@ fn range_endpoint_const_folds(expr: &Expr, scope: &TemporalScope) -> bool {
     }
     translate_term_in_scope(expr, scope)
         .ok()
-        .and_then(|term| term_as_int(&term).or_else(|| const_fold_int_term(&term)))
+        .and_then(|term| {
+            term_as_int(&term)
+                .or_else(|| const_fold_int_term(&term))
+                .map(|_| ())
+                .or_else(|| const_fold_u128_term(&term).map(|_| ()))
+        })
         .is_some()
 }
 
@@ -11841,10 +12538,10 @@ fn lower_assert_condition(
     translate_bool_assertion_with_audits(expr, scope, float_widths, factory_audits)
 }
 
-fn substitute_exprs(exprs: &[Expr], bindings: &ExprBindings) -> Vec<Expr> {
+fn substitute_exprs_with_closure_captures(exprs: &[Expr], bindings: &ExprBindings) -> Vec<Expr> {
     exprs
         .iter()
-        .map(|expr| substitute_expr(expr, bindings))
+        .map(|expr| substitute_expr_inner(expr, bindings, true))
         .collect()
 }
 
@@ -11864,12 +12561,24 @@ fn substitute_stmts(stmts: &[Stmt], bindings: &ExprBindings) -> Vec<Stmt> {
 }
 
 fn substitute_stmt(stmt: &Stmt, binds: &mut ExprBindings) -> Stmt {
+    substitute_stmt_inner(stmt, binds, false)
+}
+
+fn substitute_stmt_inner(
+    stmt: &Stmt,
+    binds: &mut ExprBindings,
+    substitute_closure_captures: bool,
+) -> Stmt {
     match stmt {
         Stmt::Local(local) => {
             let mut l = local.clone();
             if let Some(init) = &local.init {
                 let mut ni = init.clone();
-                ni.expr = Box::new(substitute_expr(&init.expr, binds));
+                ni.expr = Box::new(substitute_expr_inner(
+                    &init.expr,
+                    binds,
+                    substitute_closure_captures,
+                ));
                 l.init = Some(ni);
             }
             // The let binds names that shadow same-named params for the rest.
@@ -11878,7 +12587,10 @@ fn substitute_stmt(stmt: &Stmt, binds: &mut ExprBindings) -> Stmt {
             }
             Stmt::Local(l)
         }
-        Stmt::Expr(e, semi) => Stmt::Expr(substitute_expr(e, binds), *semi),
+        Stmt::Expr(e, semi) => Stmt::Expr(
+            substitute_expr_inner(e, binds, substitute_closure_captures),
+            *semi,
+        ),
         Stmt::Macro(m) => {
             let mut sm = m.clone();
             if let Some(tokens) = substitute_macro_tokens(&m.mac, binds) {
@@ -11898,7 +12610,7 @@ fn substitute_macro_tokens(
     binds: &ExprBindings,
 ) -> Option<proc_macro2::TokenStream> {
     let args = parse_macro_args(mac.tokens.clone()).ok()?;
-    let subst = substitute_exprs(&args.exprs, binds);
+    let subst = substitute_exprs_with_closure_captures(&args.exprs, binds);
     let mut ts = proc_macro2::TokenStream::new();
     for (i, e) in subst.iter().enumerate() {
         if i > 0 {
@@ -12000,18 +12712,30 @@ fn resolve_inlinable_method_call_scoped(
     Some((helper, format!("{self_ty}::{method}"), bindings))
 }
 
-fn substitute_block(block: &syn::Block, bindings: &ExprBindings) -> syn::Block {
+fn substitute_block_inner(
+    block: &syn::Block,
+    bindings: &ExprBindings,
+    substitute_closure_captures: bool,
+) -> syn::Block {
     let mut out = block.clone();
     let mut binds = bindings.clone();
     out.stmts = block
         .stmts
         .iter()
-        .map(|stmt| substitute_stmt(stmt, &mut binds))
+        .map(|stmt| substitute_stmt_inner(stmt, &mut binds, substitute_closure_captures))
         .collect();
     out
 }
 
 fn substitute_expr(expr: &Expr, bindings: &ExprBindings) -> Expr {
+    substitute_expr_inner(expr, bindings, false)
+}
+
+fn substitute_expr_inner(
+    expr: &Expr,
+    bindings: &ExprBindings,
+    substitute_closure_captures: bool,
+) -> Expr {
     match expr {
         Expr::Path(path) if path.qself.is_none() => {
             if let Some(ident) = path.path.get_ident() {
@@ -12023,40 +12747,73 @@ fn substitute_expr(expr: &Expr, bindings: &ExprBindings) -> Expr {
         }
         Expr::Paren(paren) => {
             let mut out = paren.clone();
-            out.expr = Box::new(substitute_expr(&paren.expr, bindings));
+            out.expr = Box::new(substitute_expr_inner(
+                &paren.expr,
+                bindings,
+                substitute_closure_captures,
+            ));
             Expr::Paren(out)
         }
         Expr::Group(group) => {
             let mut out = group.clone();
-            out.expr = Box::new(substitute_expr(&group.expr, bindings));
+            out.expr = Box::new(substitute_expr_inner(
+                &group.expr,
+                bindings,
+                substitute_closure_captures,
+            ));
             Expr::Group(out)
         }
         Expr::Binary(binary) => {
             let mut out = binary.clone();
-            out.left = Box::new(substitute_expr(&binary.left, bindings));
-            out.right = Box::new(substitute_expr(&binary.right, bindings));
+            out.left = Box::new(substitute_expr_inner(
+                &binary.left,
+                bindings,
+                substitute_closure_captures,
+            ));
+            out.right = Box::new(substitute_expr_inner(
+                &binary.right,
+                bindings,
+                substitute_closure_captures,
+            ));
             Expr::Binary(out)
         }
         Expr::Unary(unary) => {
             let mut out = unary.clone();
-            out.expr = Box::new(substitute_expr(&unary.expr, bindings));
+            out.expr = Box::new(substitute_expr_inner(
+                &unary.expr,
+                bindings,
+                substitute_closure_captures,
+            ));
             Expr::Unary(out)
         }
         Expr::If(if_expr) => {
             let mut out = if_expr.clone();
-            out.cond = Box::new(substitute_expr(&if_expr.cond, bindings));
-            out.then_branch = substitute_block(&if_expr.then_branch, bindings);
+            out.cond = Box::new(substitute_expr_inner(
+                &if_expr.cond,
+                bindings,
+                substitute_closure_captures,
+            ));
+            out.then_branch =
+                substitute_block_inner(&if_expr.then_branch, bindings, substitute_closure_captures);
             if let Some((else_token, else_expr)) = &if_expr.else_branch {
                 out.else_branch = Some((
                     else_token.clone(),
-                    Box::new(substitute_expr(else_expr, bindings)),
+                    Box::new(substitute_expr_inner(
+                        else_expr,
+                        bindings,
+                        substitute_closure_captures,
+                    )),
                 ));
             }
             Expr::If(out)
         }
         Expr::Match(match_expr) => {
             let mut out = match_expr.clone();
-            out.expr = Box::new(substitute_expr(&match_expr.expr, bindings));
+            out.expr = Box::new(substitute_expr_inner(
+                &match_expr.expr,
+                bindings,
+                substitute_closure_captures,
+            ));
             out.arms = match_expr
                 .arms
                 .iter()
@@ -12069,10 +12826,18 @@ fn substitute_expr(expr: &Expr, bindings: &ExprBindings) -> Expr {
                     if let Some((if_token, guard)) = &arm.guard {
                         arm_out.guard = Some((
                             if_token.clone(),
-                            Box::new(substitute_expr(guard, &arm_bindings)),
+                            Box::new(substitute_expr_inner(
+                                guard,
+                                &arm_bindings,
+                                substitute_closure_captures,
+                            )),
                         ));
                     }
-                    arm_out.body = Box::new(substitute_expr(&arm.body, &arm_bindings));
+                    arm_out.body = Box::new(substitute_expr_inner(
+                        &arm.body,
+                        &arm_bindings,
+                        substitute_closure_captures,
+                    ));
                     arm_out
                 })
                 .collect();
@@ -12080,57 +12845,101 @@ fn substitute_expr(expr: &Expr, bindings: &ExprBindings) -> Expr {
         }
         Expr::Block(block) => {
             let mut out = block.clone();
-            out.block = substitute_block(&block.block, bindings);
+            out.block = substitute_block_inner(&block.block, bindings, substitute_closure_captures);
             Expr::Block(out)
         }
         Expr::Unsafe(unsafe_expr) => {
             let mut out = unsafe_expr.clone();
-            out.block = substitute_block(&unsafe_expr.block, bindings);
+            out.block =
+                substitute_block_inner(&unsafe_expr.block, bindings, substitute_closure_captures);
             Expr::Unsafe(out)
         }
         Expr::Const(const_expr) => {
             let mut out = const_expr.clone();
-            out.block = substitute_block(&const_expr.block, bindings);
+            out.block =
+                substitute_block_inner(&const_expr.block, bindings, substitute_closure_captures);
             Expr::Const(out)
         }
         Expr::Call(call) => {
             let mut out = call.clone();
-            out.func = Box::new(substitute_expr(&call.func, bindings));
+            out.func = Box::new(substitute_expr_inner(
+                &call.func,
+                bindings,
+                substitute_closure_captures,
+            ));
             out.args = call
                 .args
                 .iter()
-                .map(|arg| substitute_expr(arg, bindings))
+                .map(|arg| substitute_expr_inner(arg, bindings, substitute_closure_captures))
                 .collect();
             Expr::Call(out)
         }
         Expr::MethodCall(call) => {
             let mut out = call.clone();
-            out.receiver = Box::new(substitute_expr(&call.receiver, bindings));
+            out.receiver = Box::new(substitute_expr_inner(
+                &call.receiver,
+                bindings,
+                substitute_closure_captures,
+            ));
             out.args = call
                 .args
                 .iter()
-                .map(|arg| substitute_expr(arg, bindings))
+                .map(|arg| substitute_expr_inner(arg, bindings, substitute_closure_captures))
                 .collect();
             Expr::MethodCall(out)
         }
+        Expr::Closure(closure) => {
+            if !substitute_closure_captures {
+                return expr.clone();
+            }
+            let mut out = closure.clone();
+            let mut capture_bindings = bindings.clone();
+            for input in &closure.inputs {
+                for name in pat_idents(input) {
+                    capture_bindings.remove(&name);
+                }
+            }
+            out.body = Box::new(substitute_expr_inner(
+                &closure.body,
+                &capture_bindings,
+                substitute_closure_captures,
+            ));
+            Expr::Closure(out)
+        }
         Expr::Await(await_expr) => {
             let mut out = await_expr.clone();
-            out.base = Box::new(substitute_expr(&await_expr.base, bindings));
+            out.base = Box::new(substitute_expr_inner(
+                &await_expr.base,
+                bindings,
+                substitute_closure_captures,
+            ));
             Expr::Await(out)
         }
         Expr::Reference(reference) => {
             let mut out = reference.clone();
-            out.expr = Box::new(substitute_expr(&reference.expr, bindings));
+            out.expr = Box::new(substitute_expr_inner(
+                &reference.expr,
+                bindings,
+                substitute_closure_captures,
+            ));
             Expr::Reference(out)
         }
         Expr::Field(field) => {
             let mut out = field.clone();
-            out.base = Box::new(substitute_expr(&field.base, bindings));
+            out.base = Box::new(substitute_expr_inner(
+                &field.base,
+                bindings,
+                substitute_closure_captures,
+            ));
             Expr::Field(out)
         }
         Expr::Cast(cast) => {
             let mut out = cast.clone();
-            out.expr = Box::new(substitute_expr(&cast.expr, bindings));
+            out.expr = Box::new(substitute_expr_inner(
+                &cast.expr,
+                bindings,
+                substitute_closure_captures,
+            ));
             Expr::Cast(out)
         }
         Expr::Macro(expr_macro) => {
@@ -12145,7 +12954,7 @@ fn substitute_expr(expr: &Expr, bindings: &ExprBindings) -> Expr {
             out.elems = array
                 .elems
                 .iter()
-                .map(|elem| substitute_expr(elem, bindings))
+                .map(|elem| substitute_expr_inner(elem, bindings, substitute_closure_captures))
                 .collect();
             Expr::Array(out)
         }
@@ -12154,7 +12963,7 @@ fn substitute_expr(expr: &Expr, bindings: &ExprBindings) -> Expr {
             out.elems = tuple
                 .elems
                 .iter()
-                .map(|elem| substitute_expr(elem, bindings))
+                .map(|elem| substitute_expr_inner(elem, bindings, substitute_closure_captures))
                 .collect();
             Expr::Tuple(out)
         }
@@ -12165,12 +12974,17 @@ fn substitute_expr(expr: &Expr, bindings: &ExprBindings) -> Expr {
                 .iter()
                 .map(|field| {
                     let mut field = field.clone();
-                    field.expr = substitute_expr(&field.expr, bindings);
+                    field.expr =
+                        substitute_expr_inner(&field.expr, bindings, substitute_closure_captures);
                     field
                 })
                 .collect();
             if let Some(rest) = &s.rest {
-                out.rest = Some(Box::new(substitute_expr(rest, bindings)));
+                out.rest = Some(Box::new(substitute_expr_inner(
+                    rest,
+                    bindings,
+                    substitute_closure_captures,
+                )));
             }
             Expr::Struct(out)
         }
@@ -15557,6 +16371,7 @@ fn is_ground_value_ctor(name: &str) -> bool {
             | "ref"
             | "range"
             | "range_incl"
+            | RUST_U128_CTOR
     )
 }
 
@@ -16244,8 +17059,11 @@ fn translate_lit(lit: &ExprLit) -> Result<Rc<Term>, String> {
             // The width rides in the canonical callsite KEY (canonical_term_sig
             // renders `i:{v}:{width}`), so `align_of_val(&1u8)=1` and `&1u64=8` get
             // DISTINCT obligations instead of collapsing onto `ref(i:1)`.
-            let value = parse_int_lit(i)?;
             let suffix = i.suffix();
+            if suffix == "u128" {
+                return Ok(u128_term(parse_u128_lit(i)?));
+            }
+            let value = parse_int_lit(i)?;
             if suffix.is_empty() {
                 Ok(num(value))
             } else {
@@ -16334,23 +17152,31 @@ fn parse_int_lit(lit: &syn::LitInt) -> Result<i128, String> {
     // hold. A literal beyond i128 range (e.g. u128::MAX) still fails here and
     // is refused upstream ("number too large") -- an honest, EXACT-OR-BAIL
     // refusal, never a silent truncation.
+    let (radix, digits) = int_lit_radix_digits(lit);
+    i128::from_str_radix(&digits, radix).map_err(|e| format!("int literal `{}`: {e}", lit))
+}
+
+fn parse_u128_lit(lit: &syn::LitInt) -> Result<u128, String> {
+    let (radix, digits) = int_lit_radix_digits(lit);
+    u128::from_str_radix(&digits, radix).map_err(|e| format!("int literal `{}`: {e}", lit))
+}
+
+fn int_lit_radix_digits(lit: &syn::LitInt) -> (u32, String) {
     let mut text = lit.to_string();
     let suffix = lit.suffix();
     if !suffix.is_empty() && text.ends_with(suffix) {
         text.truncate(text.len() - suffix.len());
     }
     let text = text.replace('_', "");
-    let (radix, digits) =
-        if let Some(rest) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
-            (16, rest)
-        } else if let Some(rest) = text.strip_prefix("0o").or_else(|| text.strip_prefix("0O")) {
-            (8, rest)
-        } else if let Some(rest) = text.strip_prefix("0b").or_else(|| text.strip_prefix("0B")) {
-            (2, rest)
-        } else {
-            (10, text.as_str())
-        };
-    i128::from_str_radix(digits, radix).map_err(|e| format!("int literal `{}`: {e}", lit))
+    if let Some(rest) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+        (16, rest.to_string())
+    } else if let Some(rest) = text.strip_prefix("0o").or_else(|| text.strip_prefix("0O")) {
+        (8, rest.to_string())
+    } else if let Some(rest) = text.strip_prefix("0b").or_else(|| text.strip_prefix("0B")) {
+        (2, rest.to_string())
+    } else {
+        (10, text)
+    }
 }
 
 fn string_or_char_literal_term(expr: &Expr) -> Option<Rc<Term>> {
@@ -19500,10 +20326,10 @@ mod lifter_key_tests {
     }
 
     #[test]
-    fn dig_overflow_in_closure_bails() {
-        // (e) BAIL: a `.map` closure that OVERFLOWS i64 (`x * huge`) must bail (checked_mul
-        // returns None) rather than silently wrap (which would not match rustc's debug
-        // semantics). Honest unclassified.
+    fn dig_overflow_in_closure_preserves_primitive_width_axiom() {
+        // Primitive arithmetic stays in the Rust-width lane: the map closure is
+        // evaluated as i64 arithmetic, not widened to unbounded mathematical Int.
+        // Overflow is preserved by the primitive axiom and can still feed the fold.
         let src = r#"
             #[test]
             fn ov() {
@@ -19514,8 +20340,15 @@ mod lifter_key_tests {
         let out = lift_src(src);
         assert_eq!(
             out.assertions_lifted,
-            0,
-            "an overflowing map closure must BAIL, not wrap (exact-or-none): {:?}",
+            1,
+            "an overflowing map closure should replay through primitive-width sugar, not widen: {:?}",
+            contract_names(&out)
+        );
+        assert!(
+            contract_names(&out)
+                .iter()
+                .any(|name| name.ends_with("::fold")),
+            "the lifted fact should still belong to the fold contract: {:?}",
             contract_names(&out)
         );
     }
@@ -21336,5 +22169,29 @@ mod lifter_key_tests {
             "immutable-capture body stays off the mut-capture path: {:?}",
             out.skip_reasons
         );
+    }
+
+    #[test]
+    fn primitive_width_arithmetic_preserves_source_axiom() {
+        let expr: Expr = syn::parse_str("255u8 + 255u8").unwrap();
+        let value = const_eval(&expr, &BTreeMap::new()).expect("primitive u8 arithmetic folds");
+        match value {
+            ConstVal::PrimitiveInt { raw, kind } => {
+                assert_eq!(kind.name, "u8");
+                assert_eq!(raw, 254);
+                let term = primitive_int_term(raw, kind).expect("primitive term");
+                match term.as_ref() {
+                    Term::Const {
+                        value: ConstValue::Int(n),
+                        sort,
+                    } => {
+                        assert_eq!(*n, 254);
+                        assert_eq!(sort.name, "u8");
+                    }
+                    other => panic!("expected u8-sorted int term, got {other:?}"),
+                }
+            }
+            other => panic!("expected typed primitive value, got {other:?}"),
+        }
     }
 }

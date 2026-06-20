@@ -12,8 +12,9 @@ use syn::Expr;
 
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{
-    bounded_domain_from_expr, const_eval, const_fold_int_term, strip_refs_groups, term_as_int,
-    BoundedDomain, ConstVal, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP,
+    bounded_domain_from_expr, const_eval, const_fold_int_term, const_fold_u128_term,
+    strip_refs_groups, term_as_int, u128_expr, BoundedDomain, ConstVal, Desugared, DesugaredElem,
+    Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -73,25 +74,53 @@ impl Sugar for LiteralSugar {
                     end,
                     inclusive,
                 } => {
+                    if let (Some(s), Some(e)) =
+                        (const_fold_u128_term(&start), const_fold_u128_term(&end))
+                    {
+                        if e < s {
+                            return None;
+                        }
+                        let len = e
+                            .checked_sub(s)?
+                            .checked_add(if inclusive { 1 } else { 0 })?;
+                        if len == 0 || len > SUGAR_SEQ_CAP as u128 {
+                            return None;
+                        }
+                        return Some(Desugared::Seq(
+                            (0..len)
+                                .map(|offset| {
+                                    let n = s.checked_add(offset)?;
+                                    Some(DesugaredElem {
+                                        expr: u128_expr(n)?,
+                                        value: Some(ConstVal::UInt128(n)),
+                                    })
+                                })
+                                .collect::<Option<Vec<_>>>()?,
+                        ));
+                    }
                     let (Some(s), Some(e)) = (
                         term_as_int(&start).or_else(|| const_fold_int_term(&start)),
                         term_as_int(&end).or_else(|| const_fold_int_term(&end)),
                     ) else {
                         return None;
                     };
-                    // `checked_add`: an inclusive end at i128::MAX would overflow.
-                    let Some(e) = (if inclusive { e.checked_add(1) } else { Some(e) }) else {
-                        return None;
-                    };
-                    if e < s || e - s > i128::from(SUGAR_SEQ_CAP) {
+                    if e < s {
                         return None;
                     }
-                    (s..e)
-                        .map(|n| DesugaredElem {
-                            expr: syn::parse_str::<Expr>(&n.to_string()).unwrap(),
-                            value: Some(ConstVal::Int(n)),
+                    let span = e.checked_sub(s)?;
+                    let len = span.checked_add(if inclusive { 1 } else { 0 })?;
+                    if len == 0 || len > i128::from(SUGAR_SEQ_CAP) {
+                        return None;
+                    }
+                    (0..len)
+                        .map(|offset| {
+                            let n = s.checked_add(offset)?;
+                            Some(DesugaredElem {
+                                expr: syn::parse_str::<Expr>(&n.to_string()).ok()?,
+                                value: Some(ConstVal::Int(n)),
+                            })
                         })
-                        .collect()
+                        .collect::<Option<Vec<_>>>()?
                 }
             };
             if seq.is_empty() {

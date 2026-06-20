@@ -150,6 +150,8 @@ fn literal_owned_string(expr: &Expr) -> Option<String> {
 fn const_value_to_string(value: &ConstVal) -> Option<String> {
     Some(match value {
         ConstVal::Int(n) => n.to_string(),
+        ConstVal::PrimitiveInt { .. } => value.as_int()?.to_string(),
+        ConstVal::UInt128(n) => n.to_string(),
         ConstVal::Bool(b) => b.to_string(),
         ConstVal::Char(c) => c.to_string(),
         ConstVal::UnitPath(path) => path.clone(),

@@ -133,6 +133,35 @@ fn assert_eq_atom(formula: &Formula, expected_rhs: i128) {
     }
 }
 
+fn const_int_term_value(term: &Term) -> Option<i128> {
+    match term {
+        Term::Const {
+            value: ConstValue::Int(value),
+            ..
+        } => Some(*value),
+        _ => None,
+    }
+}
+
+fn const_int_eq_pairs(formula: &Formula, pairs: &mut Vec<(i128, i128)>) {
+    match formula {
+        Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
+            if let (Some(lhs), Some(rhs)) = (
+                const_int_term_value(args[0].as_ref()),
+                const_int_term_value(args[1].as_ref()),
+            ) {
+                pairs.push((lhs, rhs));
+            }
+        }
+        Formula::Connective { operands, .. } => {
+            for operand in operands {
+                const_int_eq_pairs(operand, pairs);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn assert_int_call_eq_atom(
     formula: &Formula,
     expected_lhs: i128,
@@ -875,13 +904,7 @@ fn assert_int_call_cmp_atom(
     }
 }
 
-fn assert_method_call_eq_compound_rhs(
-    formula: &Formula,
-    expected_call: &str,
-    expected_rhs_ctor: &str,
-    expected_lhs: i128,
-    expected_rhs: i128,
-) {
+fn assert_method_call_eq_int_rhs(formula: &Formula, expected_call: &str, expected_rhs: i128) {
     match formula {
         Formula::Atomic { name, args } => {
             assert_eq!(name, "=");
@@ -890,27 +913,7 @@ fn assert_method_call_eq_compound_rhs(
                 Term::Ctor { name, .. } => assert_eq!(name, expected_call),
                 other => panic!("expected method call lhs, got {other:?}"),
             }
-            match args[1].as_ref() {
-                Term::Ctor { name, args } => {
-                    assert_eq!(name, expected_rhs_ctor);
-                    assert_eq!(args.len(), 2);
-                    match args[0].as_ref() {
-                        Term::Const {
-                            value: ConstValue::Int(value),
-                            ..
-                        } => assert_eq!(*value, expected_lhs),
-                        other => panic!("expected int compound lhs, got {other:?}"),
-                    }
-                    match args[1].as_ref() {
-                        Term::Const {
-                            value: ConstValue::Int(value),
-                            ..
-                        } => assert_eq!(*value, expected_rhs),
-                        other => panic!("expected int compound rhs, got {other:?}"),
-                    }
-                }
-                other => panic!("expected compound rhs, got {other:?}"),
-            }
+            assert_eq!(int_const_value(&args[1]), expected_rhs);
         }
         other => panic!("expected equality atom, got {other:?}"),
     }
@@ -1364,11 +1367,10 @@ fn wide_distinct() {
 }
 
 #[test]
-fn literal_beyond_i128_is_refused_not_truncated() {
-    // BAIL boundary: u128::MAX (340282366920938463463374607431768211455) exceeds
-    // i128::MAX (170141183460469231731687303715884105727), so it is NOT
-    // representable in the i128 carrier. EXACT-OR-BAIL: it must REFUSE with
-    // "number too large" -- never silently truncate to a wrong value.
+fn u128_max_literal_lifts_as_rust_primitive_value_not_truncated() {
+    // `u128::MAX` is not representable in the signed i128 ProofIR literal carrier,
+    // but it is still a concrete Rust primitive literal. The Rust kit keeps it as a
+    // Rust-owned u128 literal constructor instead of refusing or truncating it.
     let src = r#"
 fn k() -> u128 { 0 }
 
@@ -1378,17 +1380,13 @@ fn over() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/over.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    assert_warranted_decl_count(&out, 1);
+    let warranted: Vec<_> = warranted_decls(&out).into_iter().cloned().collect();
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&warranted);
     assert!(
-        warranted_decls(&out).is_empty(),
-        "a literal beyond i128 must not emit warranted facts: {:?}",
-        out.assertion_facts
-    );
-    assert!(
-        out.warnings
-            .iter()
-            .any(|w| w.reason.contains("number too large")),
-        "the over-i128 literal must refuse with a named 'number too large' reason, got: {:?}",
-        out.warnings
+        doc.contains("rust:u128") && !doc.contains("number too large"),
+        "u128::MAX should lift as a Rust primitive u128 literal constructor, not refuse or truncate: {doc}"
     );
 }
 
@@ -2566,7 +2564,7 @@ fn uint_and() {
     );
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
-    assert_method_call_eq_compound_rhs(&operands[0], "method:load", "bit-and", 0xf731, 0x137f);
+    assert_method_call_eq_int_rhs(&operands[0], "method:load", 0xf731 & 0x137f);
 }
 
 #[test]
@@ -12054,7 +12052,7 @@ macro_rules! outer_assert {
 }
 #[test]
 fn t() {
-    outer_assert!(0xDEAD_BEEF_FACE_FEED_0123_4567_89AB_CDEFu128, 0);
+    outer_assert!(&raw const garlic, &raw const garlic);
 }
 "#;
     let out = lift_file(&parse(src), "tests/nested_macro_terminal.rs");
@@ -12928,7 +12926,8 @@ fn format_runtime_arg_does_not_overfire() {
     );
     // The lift still produces a decl (opaque EUF var == str_const), but it must NOT
     // contain a str_const LHS equal to a reconstructed value -- the LHS stays a Var.
-    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    let warranted: Vec<_> = warranted_decls(&out).into_iter().cloned().collect();
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&warranted);
     assert!(
         doc.contains("macro:") || doc.contains("\"name\":\"="),
         "a runtime-arg format! stays opaque (not a forged literal): {doc}"
@@ -12963,6 +12962,472 @@ fn test_estimated_capacity() {
     assert!(
         !doc.contains("macro:format_args") && !doc.contains("method:estimated_capacity"),
         "format_args!(...).estimated_capacity() must lower to scalar facts, not opaque call terms: {doc}"
+    );
+}
+
+#[test]
+fn int_sqrt_helper_callsite_lowers_literal_axioms() {
+    let src = r#"
+fn check_signed(n: i32) {
+    if n >= 0 {
+        assert_eq!(Some(n.isqrt()), n.checked_isqrt());
+    }
+
+    let negative_n = n.wrapping_neg();
+    if negative_n < 0 {
+        assert_eq!(negative_n.checked_isqrt(), None);
+    }
+}
+
+fn check_unsigned(n: u32) {
+    if n > 0 {
+        assert_eq!(
+            n.isqrt(),
+            core::num::NonZero::<u32>::new(n).expect("nonzero").isqrt().get(),
+        );
+    }
+}
+
+#[test]
+fn int_sqrt_axioms() {
+    check_signed(16);
+    check_unsigned(16);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/int_sqrt_axioms.rs");
+    assert_eq!(
+        out.assertions_lifted, 3,
+        "literal int-sqrt helper assertions should inline and lift; skips={:?}; facts={:?}; decls={:?}",
+        out.skip_reasons,
+        out.assertion_facts,
+        out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.reduced_helpers.contains("check_signed")
+            && out.reduced_helpers.contains("check_unsigned"),
+        "helper assertions should be accounted at literal call sites, not left at definition sites: {:?}",
+        out.reduced_helpers
+    );
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        !doc.contains("method:isqrt")
+            && !doc.contains("method:checked_isqrt")
+            && !doc.contains("method:wrapping_neg")
+            && !doc.contains("call:core::num::NonZero::<u32>::new")
+            && !doc.contains("method:expect")
+            && !doc.contains("method:get"),
+        "integer sqrt stdlib axioms must lower to scalar/Option facts, not opaque terms: {doc}"
+    );
+}
+
+#[test]
+fn wrapping_neg_macro_casts_lift_as_primitive_axioms() {
+    let src = r#"
+#[test]
+fn wrapping_int_api() {
+    macro_rules! check_neg_no_wrap {
+        ($e:expr) => {
+            assert_eq!(($e).wrapping_neg(), -($e));
+        };
+    }
+    macro_rules! check_neg_wraps {
+        ($e:expr) => {
+            assert_eq!(($e).wrapping_neg(), ($e));
+        };
+    }
+
+    check_neg_no_wrap!(0xfe_u8 as i8);
+    check_neg_no_wrap!(0xfedc_u16 as i16);
+    check_neg_no_wrap!(0xfedc_ba98_u32 as i32);
+    check_neg_no_wrap!(0xfedc_ba98_7654_3217_u64 as i64);
+    check_neg_no_wrap!(0xfedc_ba98_7654_3217_u64 as u64 as isize);
+
+    check_neg_wraps!(0x80_u8 as i8);
+    check_neg_wraps!(0x8000_u16 as i16);
+    check_neg_wraps!(0x8000_0000_u32 as i32);
+    check_neg_wraps!(0x8000_0000_0000_0000_u64 as i64);
+    check_neg_wraps!(0x8000_0000_0000_0000_u64 as isize);
+}
+"#;
+    let out = lift_file(&parse(src), "coretests/tests/num/wrapping.rs");
+    assert_eq!(
+        out.assertions_lifted, 10,
+        "wrapping_neg macro cast rows should all lift; skips={:?}; facts={:?}",
+        out.skip_reasons, out.assertion_facts
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(out.skip_reasons.is_empty(), "{:?}", out.skip_reasons);
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        !doc.contains("method:wrapping_neg"),
+        "wrapping_neg must lower to primitive literal axioms, not opaque method calls: {doc}"
+    );
+}
+
+#[test]
+fn nonzero_char_new_lowers_option_predicates() {
+    let src = r#"
+use core::num::NonZero;
+
+#[test]
+fn t() {
+    assert_eq!(NonZero::<char>::new(0 as char), None);
+    assert!(NonZero::<char>::new(1 as char).is_some());
+    assert!(NonZero::<char>::new(char::MAX).is_some());
+}
+"#;
+    let out = lift_file(&parse(src), "tests/nonzero-char.rs");
+    assert_eq!(
+        out.assertions_lifted, 3,
+        "NonZero<char>::new over literal chars should lower to Option facts; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons,
+        out.factory_audits,
+        out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        !doc.contains("method:is_some") && !doc.contains("call:NonZero"),
+        "NonZero<char> and Option::is_some should lower to grounded Option/bool facts: {doc}"
+    );
+}
+
+#[test]
+fn nonzero_unwrap_zero_count_methods_lower_to_primitive_axioms() {
+    let src = r#"
+use core::num::NonZero;
+
+#[test]
+fn t() {
+    assert_eq!(NonZero::<u128>::new(u128::MAX).unwrap().leading_zeros(), 0);
+    assert_eq!(NonZero::<u128>::new(1 << 127).unwrap().trailing_zeros(), 127);
+    assert_eq!(NonZero::<usize>::new(1 << (usize::BITS - 1)).unwrap().trailing_zeros(), usize::BITS - 1);
+    assert_eq!(NonZero::<isize>::new(1 << (usize::BITS - 1)).unwrap().trailing_zeros(), usize::BITS - 1);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/nonzero-zero-counts.rs");
+    assert_eq!(
+        out.assertions_lifted, 4,
+        "NonZero::new(...).unwrap() should temporally rewrite into primitive integer zero-count axioms; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons,
+        out.factory_audits,
+        out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        !doc.contains("call:NonZero")
+            && !doc.contains("method:unwrap")
+            && !doc.contains("method:leading_zeros")
+            && !doc.contains("method:trailing_zeros"),
+        "NonZero unwrap and primitive zero-count methods should lower to grounded scalar facts: {doc}"
+    );
+}
+
+#[test]
+fn int_sqrt_chained_domain_replays_helper_callsite_axioms() {
+    let src = r#"
+fn check_unsigned(n: u32) {
+    if n > 0 {
+        assert_eq!(
+            n.isqrt(),
+            core::num::NonZero::<u32>::new(n).expect("nonzero").isqrt().get(),
+        );
+    }
+}
+
+#[test]
+fn int_sqrt_chain_axioms() {
+    for n in (1..=2)
+        .chain((0..<u8>::MAX.count_ones()).map(|exponent| 1 << exponent))
+    {
+        check_unsigned(n);
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/int_sqrt_chain_axioms.rs");
+    assert!(
+        out.assertions_lifted > 0,
+        "chained literal domain should replay helper assertions under pinned loop values; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons,
+        out.factory_audits,
+        out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        !doc.contains("method:isqrt")
+            && !doc.contains("method:get")
+            && !doc.contains("method:chain")
+            && !doc.contains("method:map")
+            && !doc.contains("method:count_ones"),
+        "chained sequence and integer stdlib axioms must lower to scalar facts, not opaque terms: {doc}"
+    );
+}
+
+#[test]
+fn i128_tail_range_replays_inclusive_max_endpoint() {
+    let src = r#"
+#[test]
+fn t() {
+    for n in (<i128>::MAX - 1..=<i128>::MAX).chain(0..=0) {
+        assert!(n <= <i128>::MAX);
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/i128-tail-range.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "inclusive signed tail range should replay both endpoint values without overflowing end+1; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons,
+        out.factory_audits,
+        out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.decls
+            .iter()
+            .any(|decl| decl.name == "tests/i128-tail-range.rs::t::loop::n"),
+        "inclusive signed tail range should emit the scalar loop contract, not only support contracts: {:?}",
+        out.decls
+    );
+}
+
+#[test]
+fn u128_power_map_chain_replays_unsigned_context() {
+    let src = r#"
+#[test]
+fn t() {
+    for n in (<u128>::MAX - 1..=<u128>::MAX)
+        .chain((0..<u128>::MAX.count_ones()).map(|exponent| (1 << exponent) - 1))
+        .chain((0..<u128>::MAX.count_ones()).map(|exponent| 1 << exponent))
+    {
+        assert!(n <= <u128>::MAX);
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/u128-power-map-chain.rs");
+    assert!(
+        out.assertions_lifted > 0,
+        "u128 chain should supply unsigned item context to mapped power domains; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons,
+        out.factory_audits,
+        out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.decls
+            .iter()
+            .any(|decl| decl.name == "tests/u128-power-map-chain.rs::t::loop::n"),
+        "chain/map domain sugar should emit the scalar loop contract, not only support contracts: {:?}",
+        out.decls
+    );
+}
+
+#[test]
+fn item_macro_module_sibling_helper_calls_recurse_through_callsite_sugar() {
+    let src = r#"
+macro_rules! make_mod {
+    ($T:ident) => {
+        mod $T {
+            fn check(n: $T) {
+                assert_eq!(Some(n.isqrt()), n.checked_isqrt());
+            }
+
+            #[test]
+            fn t() {
+                check(16);
+            }
+        }
+    };
+}
+
+make_mod!(i32);
+"#;
+    let out = lift_file(&parse(src), "tests/item-macro-module-helper.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "macro-expanded module sibling helper should be visible to CallsiteSugar; skips={:?}; facts={:?}; decls={:?}",
+        out.skip_reasons,
+        out.assertion_facts,
+        out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.reduced_helpers.contains("check"),
+        "helper body should be credited at the macro-expanded callsite: {:?}",
+        out.reduced_helpers
+    );
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        !doc.contains("method:isqrt") && !doc.contains("method:checked_isqrt"),
+        "sibling helper and int_sqrt stdlib axiom must lower through recursive sugar, not opaque methods: {doc}"
+    );
+}
+
+#[test]
+fn item_macro_module_signed_min_helper_call_reaches_negative_int_sqrt_axiom() {
+    let src = r#"
+macro_rules! make_mod {
+    ($T:ident) => {
+        mod $T {
+            fn check(n: $T) {
+                if n >= 0 {
+                    assert_eq!(Some(n.isqrt()), n.checked_isqrt());
+                }
+
+                let negative_n = n.wrapping_neg();
+                if negative_n < 0 {
+                    assert_eq!(negative_n.checked_isqrt(), None);
+                }
+            }
+
+            #[test]
+            fn t() {
+                check(<$T>::MIN);
+            }
+        }
+    };
+}
+
+make_mod!(i8);
+"#;
+    let out = lift_file(&parse(src), "tests/item-macro-signed-min-helper.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "signed MIN helper call should lift the inactive positive branch as a vacuous conditional and the active negative checked_isqrt branch; skips={:?}; facts={:?}; decls={:?}",
+        out.skip_reasons,
+        out.assertion_facts,
+        out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.reduced_helpers.contains("check"),
+        "helper body should be credited at the macro-expanded signed-min callsite: {:?}",
+        out.reduced_helpers
+    );
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        !doc.contains("method:wrapping_neg") && !doc.contains("method:checked_isqrt"),
+        "signed MIN helper path must lower through primitive stdlib sugar, not opaque methods: {doc}"
+    );
+}
+
+#[test]
+fn item_macro_module_accumulator_loop_replays_sibling_helper_callsite() {
+    let src = r#"
+macro_rules! make_mod {
+    ($T:ident) => {
+        mod $T {
+            fn check(n: $T, expected: $T) {
+                assert_eq!(n, expected);
+                assert_eq!(n.isqrt(), 2);
+            }
+
+            #[test]
+            fn t() {
+                let mut n: $T = 4;
+                for step in 0..2 as $T {
+                    check(n, 4 + step);
+                    assert_eq!(n, 4 + step);
+                    n += 1;
+                }
+            }
+        }
+    };
+}
+
+make_mod!(u32);
+"#;
+    let out = lift_file(&parse(src), "tests/item-macro-accumulator-loop.rs");
+    assert_eq!(
+        out.assertions_lifted, 3,
+        "finite accumulator loop should replay direct assertions and sibling helper callsites through sugar; skips={:?}; audits={:?}; facts={:?}; decls={:?}",
+        out.skip_reasons,
+        out.factory_audits,
+        out.assertion_facts,
+        out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.reduced_helpers.contains("check"),
+        "helper body should be credited at the loop callsite under pinned accumulator values: {:?}",
+        out.reduced_helpers
+    );
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        !doc.contains("method:isqrt"),
+        "loop replay must bottom out to integer sqrt facts, not opaque method calls: {doc}"
+    );
+    let mut pairs = Vec::new();
+    for decl in warranted_decls(&out) {
+        if let Some(inv) = decl.inv.as_deref() {
+            const_int_eq_pairs(inv, &mut pairs);
+        }
+    }
+    assert!(
+        pairs.contains(&(5, 5)),
+        "second iteration must see temporally rewritten accumulator n=5, not a fresh seed; pairs={pairs:?}; decls={:?}",
+        out.decls
+    );
+}
+
+#[test]
+fn option_map_closure_capture_replays_temporally_pinned_loop_value() {
+    let src = r#"
+#[test]
+fn t() {
+    for n in (4..=4).chain(5..=5) {
+        let root = 2;
+        assert!(root.checked_mul(root).map(|square| square <= n).unwrap_or(false));
+        assert!((root + 1).checked_mul(root + 1).map(|square| n < square).unwrap_or(true));
+    }
+}
+"#;
+
+    let out = lift_file(&parse(src), "tests/option-map-capture.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "captured loop values inside Option::map closures should be temporally pinned: {:?}",
+        out.skip_reasons
+    );
+    let dump = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        !dump.contains("option_adaptor"),
+        "Option adaptor should bedrock after replay substitution, not stay unresolved: {dump}"
+    );
+}
+
+#[test]
+fn u128_tail_range_int_sqrt_replays_primitive_axioms() {
+    let src = r#"
+#[test]
+fn t() {
+    for n in (<u128>::MAX - 1..=<u128>::MAX) {
+        let root = n.isqrt();
+        assert!(root.checked_mul(root).map(|square| square <= n).unwrap_or(false));
+        assert!((root + 1).checked_mul(root + 1).map(|square| n < square).unwrap_or(true));
+    }
+}
+"#;
+
+    let out = lift_file(&parse(src), "tests/u128-tail-isqrt.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "u128 tail range should replay int_sqrt/checked_mul/Option axioms under pinned values; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons,
+        out.factory_audits,
+        out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let dump = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        !dump.contains("method:isqrt")
+            && !dump.contains("method:checked_mul")
+            && !dump.contains("method:map")
+            && !dump.contains("method:unwrap_or"),
+        "u128 primitive stdlib axioms should lower to scalar facts, not opaque method terms: {dump}"
     );
 }
 
@@ -13068,7 +13533,8 @@ fn z3_sat_of_inv(decl: &sugar_ir_symbolic::ContractDecl, tag: &str) -> Option<bo
 #[test]
 fn term_position_macro_rules_expands_to_grounded_arith_with_teeth() {
     // The macro `add2!` is held (fn-local `macro_rules!`); its term-position invocation
-    // expands to its body `$a + $b` and digs to a GROUNDED `+(2, 3)` -- NOT opaque.
+    // expands to its body `$a + $b` and digs through primitive integer sugar to the
+    // grounded compiler axiom `5` -- NOT opaque.
     let good = r#"
 #[test]
 fn t() {
@@ -13080,40 +13546,13 @@ fn t() {
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
     assert_eq!(out.decls.len(), 1, "warnings: {:?}", out.warnings);
 
-    // GROUNDED dig: LHS is `+(2, 3)`, RHS is the int const 5. No `macro:` var anywhere.
+    // GROUNDED dig: LHS and RHS are the int const 5. No `macro:` var anywhere.
     let (lhs, rhs) = single_eq_atom(&out.decls[0]);
-    match lhs.as_ref() {
-        Term::Ctor { name, args } => {
-            assert_eq!(
-                name, "+",
-                "term-position macro must expand to a `+` ctor, got {lhs:?}"
-            );
-            assert_eq!(args.len(), 2);
-            assert!(
-                matches!(
-                    args[0].as_ref(),
-                    Term::Const {
-                        value: ConstValue::Int(2),
-                        ..
-                    }
-                ),
-                "first operand must be the literal 2, got {:?}",
-                args[0]
-            );
-            assert!(
-                matches!(
-                    args[1].as_ref(),
-                    Term::Const {
-                        value: ConstValue::Int(3),
-                        ..
-                    }
-                ),
-                "second operand must be the literal 3, got {:?}",
-                args[1]
-            );
-        }
-        other => panic!("expected grounded `+(2,3)` ctor LHS, got {other:?}"),
-    }
+    assert_eq!(
+        int_const_value(&lhs),
+        5,
+        "term-position macro must expand and fold to literal 5, got {lhs:?}"
+    );
     assert!(
         matches!(
             rhs.as_ref(),
@@ -13130,12 +13569,12 @@ fn t() {
         "an EXPANDABLE term-position macro must NOT go opaque (no `macro:` var): {doc}"
     );
 
-    // TEETH (good twin): `+(2,3) == 5` is z3-SAT (consistent).
+    // TEETH (good twin): `5 == 5` is z3-SAT (consistent).
     if let Some(sat) = z3_sat_of_inv(&out.decls[0], "good") {
-        assert!(sat, "grounded `+(2,3) == 5` must be z3-SAT (consistent)");
+        assert!(sat, "grounded `5 == 5` must be z3-SAT (consistent)");
     }
 
-    // TEETH (bad twin): `+(2,3) == 6` is z3-UNSAT -- the grounded form REFUTES it,
+    // TEETH (bad twin): `5 == 6` is z3-UNSAT -- the grounded form REFUTES it,
     // where the old opaque `macro:` var made it satisfiable (no teeth).
     let bad = r#"
 #[test]
@@ -13147,14 +13586,15 @@ fn t() {
     let bad_out = lift_file(&parse(bad), "tests/macro_term.rs");
     assert_eq!(bad_out.decls.len(), 1, "warnings: {:?}", bad_out.warnings);
     let (bad_lhs, _) = single_eq_atom(&bad_out.decls[0]);
-    assert!(
-        matches!(bad_lhs.as_ref(), Term::Ctor { name, .. } if name == "+"),
-        "bad twin LHS must also be the grounded `+` ctor, got {bad_lhs:?}"
+    assert_eq!(
+        int_const_value(&bad_lhs),
+        5,
+        "bad twin LHS must also be the grounded literal 5, got {bad_lhs:?}"
     );
     if let Some(sat) = z3_sat_of_inv(&bad_out.decls[0], "bad") {
         assert!(
             !sat,
-            "grounded `+(2,3) == 6` must be z3-UNSAT (teeth: the bad twin is refuted)"
+            "grounded `5 == 6` must be z3-UNSAT (teeth: the bad twin is refuted)"
         );
     }
 }
@@ -13450,19 +13890,11 @@ fn t() {
 // BAD-TWIN FLIP (a wrong anchor goes z3-UNSAT), not by trusting the green discharge.
 // ───────────────────────────────────────────────────────────────────────────
 
-/// The `+`/`-`/`*`/... arithmetic ctor name + its two CONST operand values of a fully
-/// grounded `=( <arith>(a, b), rhs )` atom's LHS. Panics if the LHS is not a binary
-/// arithmetic ctor over two int consts (i.e. it did NOT peel to grounded arith).
-fn grounded_arith_lhs(decl: &sugar_ir_symbolic::ContractDecl) -> (String, i128, i128) {
+/// The folded int value of a fully grounded equality atom's LHS. Panics if the LHS is
+/// not an int const, i.e. value-call peeling did not reach compiler-axiom bedrock.
+fn grounded_int_lhs(decl: &sugar_ir_symbolic::ContractDecl) -> i128 {
     let (lhs, _rhs) = single_eq_atom(decl);
-    match lhs.as_ref() {
-        Term::Ctor { name, args } if args.len() == 2 => {
-            let a = int_const_value(&args[0]);
-            let b = int_const_value(&args[1]);
-            (name.clone(), a, b)
-        }
-        other => panic!("expected a grounded binary arith LHS, got {other:?}"),
-    }
+    int_const_value(&lhs)
 }
 
 fn int_const_value(t: &Term) -> i128 {
@@ -13501,8 +13933,8 @@ fn inv_has_opaque_call_leaf(decl: &sugar_ir_symbolic::ContractDecl) -> bool {
 
 #[test]
 fn value_call_peels_to_grounded_arith_with_value_teeth() {
-    // `fn h(n) { n + 1 }`; `assert_eq!(h(2), 3)` grounds to `+(2,1) == 3` (SAT, a good
-    // dig) -- NOT the hollow opaque `call:h(2)`. The helper `h` is recorded as a
+    // `fn h(n) { n + 1 }`; `assert_eq!(h(2), 3)` grounds to `3 == 3` (SAT, a good
+    // dig) after primitive integer folding -- NOT the hollow opaque `call:h(2)`. The helper `h` is recorded as a
     // discharged support fn (a universe member), not its own contract.
     let src = r#"
 fn h(n: i32) -> i32 { n + 1 }
@@ -13516,9 +13948,11 @@ fn calls_h() {
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
-    let (op, a, b) = grounded_arith_lhs(decl);
-    assert_eq!(op, "+");
-    assert_eq!((a, b), (2, 1), "LHS must be the β-reduced body `+(2,1)`");
+    assert_eq!(
+        grounded_int_lhs(decl),
+        3,
+        "LHS must be the β-reduced and folded body `3`"
+    );
     assert!(
         !inv_has_opaque_call_leaf(decl),
         "the peel must eliminate the opaque `call:h` leaf, not relocate it"
@@ -13529,7 +13963,7 @@ fn calls_h() {
     );
     // Value teeth: the grounded contract is SAT (good dig).
     if let Some(sat) = z3_verdict(&inv_json(decl), "inline_h_good") {
-        assert!(sat, "grounded `+(2,1) == 3` must be SAT (a real dig)");
+        assert!(sat, "grounded `3 == 3` must be SAT (a real dig)");
     }
 }
 
@@ -13537,7 +13971,7 @@ fn calls_h() {
 fn value_call_bad_twin_anchor_is_z3_unsat() {
     // THE TEETH BITE: the SAME body `h(n) { n + 1 }`, the WRONG anchor `== 4`. Hollow
     // `call:h(2) == 4` would discharge identically to the good twin (no teeth); the
-    // grounded `+(2,1) == 4` is z3-UNSAT -- a wrong anchor is REFUTED.
+    // grounded `3 == 4` is z3-UNSAT -- a wrong anchor is REFUTED.
     let src = r#"
 fn h(n: i32) -> i32 { n + 1 }
 
@@ -13549,12 +13983,11 @@ fn calls_h_wrong() {
     let out = lift_file(&parse(src), "tests/inline.rs");
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
-    let (op, a, b) = grounded_arith_lhs(decl);
-    assert_eq!((op.as_str(), a, b), ("+", 2, 1));
+    assert_eq!(grounded_int_lhs(decl), 3);
     if let Some(sat) = z3_verdict(&inv_json(decl), "inline_h_bad") {
         assert!(
             !sat,
-            "grounded `+(2,1) == 4` must be z3-UNSAT (teeth bite the bad twin)"
+            "grounded `3 == 4` must be z3-UNSAT (teeth bite the bad twin)"
         );
     }
 }
@@ -13562,7 +13995,7 @@ fn calls_h_wrong() {
 #[test]
 fn nested_value_calls_peel_through_to_literals() {
     // `g(n) { n*2 }`, `h(n) { g(n)+1 }`; `assert_eq!(h(3), 7)` peels h -> g -> literals,
-    // grounding to `+(*(3,2), 1) == 7` (SAT). Both g and h dissolve into the universe.
+    // grounding to `7 == 7` (SAT). Both g and h dissolve into the universe.
     let src = r#"
 fn g(n: i32) -> i32 { n * 2 }
 fn h(n: i32) -> i32 { g(n) + 1 }
@@ -13575,34 +14008,20 @@ fn calls_h() {
     let out = lift_file(&parse(src), "tests/inline.rs");
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
-    let (lhs, _rhs) = single_eq_atom(decl);
-    // LHS = +( *(3,2), 1 )
-    match lhs.as_ref() {
-        Term::Ctor { name, args } if name == "+" && args.len() == 2 => {
-            match args[0].as_ref() {
-                Term::Ctor { name, args } if name == "*" && args.len() == 2 => {
-                    assert_eq!(int_const_value(&args[0]), 3);
-                    assert_eq!(int_const_value(&args[1]), 2);
-                }
-                other => panic!("expected `*(3,2)`, got {other:?}"),
-            }
-            assert_eq!(int_const_value(&args[1]), 1);
-        }
-        other => panic!("expected `+(*(3,2), 1)`, got {other:?}"),
-    }
+    assert_eq!(grounded_int_lhs(decl), 7);
     assert!(
         !inv_has_opaque_call_leaf(decl),
         "no opaque leaf after nested peel"
     );
     assert!(out.reduced_helpers.contains("g") && out.reduced_helpers.contains("h"));
     if let Some(sat) = z3_verdict(&inv_json(decl), "inline_nested_good") {
-        assert!(sat, "grounded `+(*(3,2),1) == 7` must be SAT");
+        assert!(sat, "grounded `7 == 7` must be SAT");
     }
 }
 
 #[test]
 fn nested_value_calls_bad_twin_is_z3_unsat() {
-    // Same nested body, wrong anchor `== 8`: `+(*(3,2),1) == 8` is z3-UNSAT.
+    // Same nested body, wrong anchor `== 8`: `7 == 8` is z3-UNSAT.
     let src = r#"
 fn g(n: i32) -> i32 { n * 2 }
 fn h(n: i32) -> i32 { g(n) + 1 }
@@ -13618,7 +14037,7 @@ fn calls_h_wrong() {
     if let Some(sat) = z3_verdict(&inv_json(decl), "inline_nested_bad") {
         assert!(
             !sat,
-            "grounded `+(*(3,2),1) == 8` must be z3-UNSAT (nested teeth bite)"
+            "grounded `7 == 8` must be z3-UNSAT (nested teeth bite)"
         );
     }
 }
@@ -13626,7 +14045,7 @@ fn calls_h_wrong() {
 #[test]
 fn ssa_rebind_let_chain_peels_through() {
     // `h(x) { let x = other(x); x }` is a REBIND (x@2 = other(x@1)), not a fixpoint
-    // `x == other(x)`. Peel h(5) -> other(5) -> its body `x + 10` -> `+(5, 10)`.
+    // `x == other(x)`. Peel h(5) -> other(5) -> its body `x + 10` -> `15`.
     let src = r#"
 fn other(x: i32) -> i32 { x + 10 }
 fn h(x: i32) -> i32 { let x = other(x); x }
@@ -13639,15 +14058,14 @@ fn calls_h() {
     let out = lift_file(&parse(src), "tests/inline.rs");
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
-    let (op, a, b) = grounded_arith_lhs(decl);
     assert_eq!(
-        (op.as_str(), a, b),
-        ("+", 5, 10),
+        grounded_int_lhs(decl),
+        15,
         "SSA rebind must substitute the VALUE"
     );
     assert!(out.reduced_helpers.contains("h") && out.reduced_helpers.contains("other"));
     if let Some(sat) = z3_verdict(&inv_json(decl), "inline_ssa_good") {
-        assert!(sat, "grounded `+(5,10) == 15` must be SAT");
+        assert!(sat, "grounded `15 == 15` must be SAT");
     }
 }
 

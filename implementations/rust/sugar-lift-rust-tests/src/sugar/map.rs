@@ -6,13 +6,14 @@
 // mapped value it cannot materialize back to an `Expr`. Lifted verbatim from the
 // `Adaptor::Map(closure)` arm of the former `apply_one_adaptor` match.
 
-use syn::Expr;
+use syn::{Expr, Type};
 
 use crate::sugar::factory::{build_composite, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::{
-    const_eval_unary_closure, literal_aggregate_term_in_scope, strip_refs_groups, Desugared,
-    DesugaredElem, Outcome, Sugar, SugarCtx,
+    const_eval_unary_closure, const_eval_unary_closure_with_u128_shift,
+    literal_aggregate_term_in_scope, strip_refs_groups, Desugared, DesugaredElem, Outcome, Sugar,
+    SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -36,6 +37,7 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     Some(Box::new(MapSugar {
         inner: build_map_receiver(&call.receiver, fcx)?,
         f: f.clone(),
+        u128_shift_hint: receiver_is_u128_count_ones_range(&call.receiver),
     }))
 }
 
@@ -56,6 +58,7 @@ pub(crate) fn recognize_term(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn
         source: expr.clone(),
         inner: build_map_receiver(&call.receiver, fcx)?,
         f: f.clone(),
+        u128_shift_hint: receiver_is_u128_count_ones_range(&call.receiver),
     }))
 }
 
@@ -63,11 +66,14 @@ pub(crate) fn recognize_term(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn
 pub(crate) struct MapSugar {
     pub(crate) inner: Box<dyn Sugar>,
     pub(crate) f: syn::ExprClosure,
+    pub(crate) u128_shift_hint: bool,
 }
 
 impl Sugar for MapSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt(reduce_map(self.inner.as_ref(), &self.f, ctx).map(Desugared::Seq))
+        Outcome::from_opt(
+            reduce_map(self.inner.as_ref(), &self.f, self.u128_shift_hint, ctx).map(Desugared::Seq),
+        )
     }
 }
 
@@ -75,12 +81,13 @@ pub(crate) struct MapTermSugar {
     pub(crate) source: Expr,
     pub(crate) inner: Box<dyn Sugar>,
     pub(crate) f: syn::ExprClosure,
+    pub(crate) u128_shift_hint: bool,
 }
 
 impl Sugar for MapTermSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         Outcome::from_opt((|| {
-            let mapped = reduce_map(self.inner.as_ref(), &self.f, ctx)?;
+            let mapped = reduce_map(self.inner.as_ref(), &self.f, self.u128_shift_hint, ctx)?;
             let exprs: Vec<Expr> = mapped.into_iter().map(|elem| elem.expr).collect();
             let term =
                 literal_aggregate_term_in_scope("Array", exprs.iter(), &self.source, ctx.scope)
@@ -93,13 +100,16 @@ impl Sugar for MapTermSugar {
 fn reduce_map(
     inner: &dyn Sugar,
     f: &syn::ExprClosure,
+    u128_shift_hint: bool,
     ctx: &SugarCtx,
 ) -> Option<Vec<DesugaredElem>> {
     let seq = inner.desugar(ctx).dug()?.into_seq()?;
     let mut out = Vec::with_capacity(seq.len());
     for elem in seq {
         let v = elem.value.as_ref()?; // opaque element under a map -> bail
-        let mapped = const_eval_unary_closure(f, v)?;
+        let mapped = const_eval_unary_closure(f, v).or_else(|| {
+            u128_shift_hint.then(|| const_eval_unary_closure_with_u128_shift(f, v))?
+        })?;
         let mexpr = mapped.to_expr()?; // materialize for EUF translation
         out.push(DesugaredElem {
             expr: mexpr,
@@ -112,6 +122,43 @@ fn reduce_map(
         "literal closure map reduced"
     );
     Some(out)
+}
+
+fn receiver_is_u128_count_ones_range(expr: &Expr) -> bool {
+    let Expr::Range(range) = strip_refs_groups(expr) else {
+        return false;
+    };
+    range.end.as_deref().is_some_and(expr_is_u128_count_ones)
+}
+
+fn expr_is_u128_count_ones(expr: &Expr) -> bool {
+    let Expr::MethodCall(call) = strip_refs_groups(expr) else {
+        return false;
+    };
+    call.method == "count_ones" && expr_is_u128_assoc_const(&call.receiver)
+}
+
+fn expr_is_u128_assoc_const(expr: &Expr) -> bool {
+    let Expr::Path(path) = strip_refs_groups(expr) else {
+        return false;
+    };
+    if let Some(qself) = &path.qself {
+        return type_is_u128(&qself.ty);
+    }
+    path.path
+        .segments
+        .first()
+        .is_some_and(|segment| segment.ident == "u128")
+}
+
+fn type_is_u128(ty: &Type) -> bool {
+    let Type::Path(path) = ty else {
+        return false;
+    };
+    path.path
+        .segments
+        .last()
+        .is_some_and(|segment| segment.ident == "u128")
 }
 
 fn build_map_receiver(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {

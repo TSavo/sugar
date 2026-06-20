@@ -9,15 +9,16 @@
 use std::collections::{BTreeMap, HashSet};
 use std::rc::Rc;
 
-use sugar_ir_symbolic::{and_, eq, implies, not_, Formula};
-use syn::{Expr, Stmt};
+use quote::format_ident;
+use sugar_ir_symbolic::{and_, eq, implies, not_, Formula, Term};
+use syn::{BinOp, Expr, Stmt};
 
 use crate::sugar::backstop::boxed;
-use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::{
-    bool_const, closure_body_is_side_effecting, collect_assertion_entries, const_fold_bool_guard,
-    count_asserts_in_stmts, loop_body_mutates, lower_assert_condition, AssertionFactKind,
-    Desugared, Outcome, Sugar, SugarCtx, Warrant,
+    bool_const, closure_body_is_side_effecting, collect_assertion_entries, const_fold_int_term,
+    const_fold_u128_term, count_asserts_in_stmts, loop_body_mutates, lower_assert_condition,
+    AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -70,6 +71,33 @@ impl Sugar for ConditionalSugar {
             if then_count + else_count == 0 {
                 return None;
             }
+            if let Some(guard_value) = const_fold_bool_guard(ctx, &self.cond) {
+                let (active_stmts, active_count, inactive_count) = if guard_value {
+                    (&self.then_stmts, then_count, else_count)
+                } else {
+                    (&self.else_stmts, else_count, then_count)
+                };
+                let mut conjuncts = Vec::new();
+                if active_count > 0 {
+                    conjuncts.push(self.lift_branch_conj(active_stmts, active_count, ctx)?);
+                }
+                if inactive_count > 0 {
+                    conjuncts.push(eq(bool_const(true), bool_const(true)));
+                }
+                if conjuncts.is_empty() {
+                    return None;
+                }
+                let atom = and_(conjuncts);
+                let warrant = Warrant {
+                    name: Some(format!("{}::if", ctx.scope.local_scope())),
+                };
+                return Some(Desugared::Constraints {
+                    atom,
+                    n: active_count + inactive_count,
+                    kind: AssertionFactKind::Warranted,
+                    warrant,
+                });
+            }
             // Neither branch may mutate captured state: a single guarded implication is
             // a point-wise claim only if the branch body is pure.
             if loop_body_mutates(&self.then_stmts) || loop_body_mutates(&self.else_stmts) {
@@ -86,19 +114,14 @@ impl Sugar for ConditionalSugar {
             // is not a translatable comparison). Otherwise fall back to lifting the guard
             // EXACTLY as `assert!(guard)` would; a guard outside the liftable predicate
             // set (an opaque method call, a float refinement we cannot width, ...) bails.
-            let guard = match const_fold_bool_guard(&self.cond, ctx.options) {
-                Some(value) => eq(bool_const(value), bool_const(true)),
-                None => {
-                    lower_assert_condition(
-                        &self.cond,
-                        ctx.scope,
-                        &ctx.float_widths.borrow(),
-                        ctx.factory_audits,
-                    )
-                    .ok()?
-                    .atom
-                }
-            };
+            let guard = lower_assert_condition(
+                &self.cond,
+                ctx.scope,
+                &ctx.float_widths.borrow(),
+                ctx.factory_audits,
+            )
+            .ok()?
+            .atom;
 
             let mut conjuncts: Vec<Rc<Formula>> = Vec::new();
             if then_count > 0 {
@@ -136,12 +159,13 @@ impl ConditionalSugar {
         expected: usize,
         ctx: &SugarCtx,
     ) -> Option<Rc<Formula>> {
+        let branch_stmts = branch_stmts_with_stable_bindings(branch_stmts, ctx);
         let mut body_entries = Vec::new();
         let mut body_skipped = Vec::new();
         let mut body_lifted = 0usize;
         let mut body_helpers = HashSet::new();
         collect_assertion_entries(
-            branch_stmts,
+            &branch_stmts,
             ctx.scope.local_scope(),
             ctx.options,
             ctx.reducer,
@@ -165,6 +189,97 @@ impl ConditionalSugar {
         }
         Some(and_(body_entries.iter().map(|e| e.atom.clone()).collect()))
     }
+}
+
+fn const_fold_bool_guard(ctx: &SugarCtx, cond: &Expr) -> Option<bool> {
+    crate::const_fold_bool_guard(cond, ctx.options)
+        .or_else(|| const_fold_bool_guard_from_terms(ctx, cond))
+}
+
+fn const_fold_bool_guard_from_terms(ctx: &SugarCtx, cond: &Expr) -> Option<bool> {
+    match cond {
+        Expr::Paren(p) => const_fold_bool_guard(ctx, &p.expr),
+        Expr::Group(g) => const_fold_bool_guard(ctx, &g.expr),
+        Expr::Unary(u) if matches!(u.op, syn::UnOp::Not(_)) => {
+            const_fold_bool_guard(ctx, &u.expr).map(|value| !value)
+        }
+        Expr::Binary(binary) => match binary.op {
+            BinOp::And(_) | BinOp::BitAnd(_) => Some(
+                const_fold_bool_guard(ctx, &binary.left)?
+                    && const_fold_bool_guard(ctx, &binary.right)?,
+            ),
+            BinOp::Or(_) | BinOp::BitOr(_) => Some(
+                const_fold_bool_guard(ctx, &binary.left)?
+                    || const_fold_bool_guard(ctx, &binary.right)?,
+            ),
+            BinOp::Eq(_) => compare_terms(ctx, &binary.left, &binary.right, |ord| {
+                ord == std::cmp::Ordering::Equal
+            }),
+            BinOp::Ne(_) => compare_terms(ctx, &binary.left, &binary.right, |ord| {
+                ord != std::cmp::Ordering::Equal
+            }),
+            BinOp::Lt(_) => compare_terms(ctx, &binary.left, &binary.right, |ord| {
+                ord == std::cmp::Ordering::Less
+            }),
+            BinOp::Le(_) => compare_terms(ctx, &binary.left, &binary.right, |ord| {
+                ord != std::cmp::Ordering::Greater
+            }),
+            BinOp::Gt(_) => compare_terms(ctx, &binary.left, &binary.right, |ord| {
+                ord == std::cmp::Ordering::Greater
+            }),
+            BinOp::Ge(_) => compare_terms(ctx, &binary.left, &binary.right, |ord| {
+                ord != std::cmp::Ordering::Less
+            }),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn compare_terms(
+    ctx: &SugarCtx,
+    lhs: &Expr,
+    rhs: &Expr,
+    pred: impl FnOnce(std::cmp::Ordering) -> bool,
+) -> Option<bool> {
+    let lhs = term_for_guard_operand(ctx, lhs)?;
+    let rhs = term_for_guard_operand(ctx, rhs)?;
+    let ordering = match (const_fold_u128_term(&lhs), const_fold_u128_term(&rhs)) {
+        (Some(left), Some(right)) => left.cmp(&right),
+        (Some(left), None) => {
+            let right = u128::try_from(const_fold_int_term(&rhs)?).ok()?;
+            left.cmp(&right)
+        }
+        (None, Some(right)) => {
+            let left = u128::try_from(const_fold_int_term(&lhs)?).ok()?;
+            left.cmp(&right)
+        }
+        (None, None) => const_fold_int_term(&lhs)?.cmp(&const_fold_int_term(&rhs)?),
+    };
+    Some(pred(ordering))
+}
+
+fn term_for_guard_operand(ctx: &SugarCtx, expr: &Expr) -> Option<Rc<Term>> {
+    let empty = BTreeMap::new();
+    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &empty);
+    match build_term(expr, &fcx).desugar(ctx) {
+        Outcome::Dug(desugared) => desugared.into_term(),
+        Outcome::Hit(_) => None,
+    }
+}
+
+fn branch_stmts_with_stable_bindings(branch_stmts: &[Stmt], ctx: &SugarCtx) -> Vec<Stmt> {
+    let mut stmts = Vec::new();
+    for (name, init) in &ctx.scope.let_bindings {
+        if ctx.scope.stable_let_binding_for_term(name).is_none() {
+            continue;
+        }
+        let ident = format_ident!("{name}");
+        let init = init.clone();
+        stmts.push(syn::parse_quote!(let #ident = #init;));
+    }
+    stmts.extend(branch_stmts.iter().cloned());
+    stmts
 }
 
 /// Build a `ConditionalSugar` from a `Stmt::Expr(Expr::If(..))`. The then-branch

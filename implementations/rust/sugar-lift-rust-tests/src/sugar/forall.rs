@@ -13,15 +13,16 @@ use std::rc::Rc;
 
 use sugar_ir_symbolic::{and_, forall, implies, lt, lte, num, Formula, Sort, Term};
 use syn::{Expr, Pat, Stmt};
+use tracing::debug;
 
-use crate::sugar::factory::{build_composite, SugarBuildCtx};
+use crate::sugar::factory::{build_composite, has_composite, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::{
     bounded_domain_from_expr, capture_literal_arrays, collect_assertion_entries,
-    const_fold_int_term, count_asserts_in_stmts, loop_body_mutates, resolve_index_in_formula,
-    subst_var_in_formula, term_as_int, translate_term_in_scope, AssertionFactKind, BoundedDomain,
-    Desugared, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx, TemporalScope,
-    Warrant, SUGAR_SEQ_CAP,
+    const_fold_int_term, const_val_term, count_asserts_in_stmts, loop_body_mutates,
+    resolve_index_in_formula, subst_var_in_formula, term_as_int, translate_term_in_scope,
+    AssertionFactKind, BoundedDomain, Desugared, FloatWidthScope, LiftOptions, Outcome,
+    ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant, SUGAR_SEQ_CAP,
 };
 
 /// and `try_lift_for_each_forall` (a `.for_each(|var| body)` adaptor): a `for`
@@ -51,6 +52,11 @@ fn lift_bounded_forall(
     // the whole loop.
     let n_body = count_asserts_in_stmts(body_stmts);
     if n_body == 0 {
+        debug!(
+            target: "sugar_lift_rust_tests::sugar::forall",
+            var,
+            "forall declined: body has no assertion macros"
+        );
         return None;
     }
     // Purity gate: the body must not mutate anything. An assignment, a `let mut`,
@@ -59,6 +65,12 @@ fn lift_bounded_forall(
     // universal over x would be a false claim. Gutter such loops -- the
     // single-iteration view can look stable when it is not.
     if loop_body_mutates(body_stmts) {
+        debug!(
+            target: "sugar_lift_rust_tests::sugar::forall",
+            var,
+            n_body,
+            "forall declined: body mutates state"
+        );
         return None;
     }
     let mut body_entries = Vec::new();
@@ -86,6 +98,14 @@ fn lift_bounded_forall(
         .filter(|entry| matches!(entry.kind, AssertionFactKind::Warranted))
         .count();
     if !body_skipped.is_empty() || warranted != n_body {
+        debug!(
+            target: "sugar_lift_rust_tests::sugar::forall",
+            var,
+            n_body,
+            warranted,
+            skipped = ?body_skipped,
+            "forall declined: body did not lift point-wise"
+        );
         return None;
     }
     let body_conj = and_(body_entries.iter().map(|e| e.atom.clone()).collect());
@@ -280,11 +300,38 @@ impl Sugar for ForAllSugar {
                 ForAllDomain::Sequence(receiver) => {
                     let seq = receiver.desugar(ctx).dug()?.into_seq()?;
                     if seq.is_empty() || seq.len() as i64 > SUGAR_SEQ_CAP {
+                        debug!(
+                            target: "sugar_lift_rust_tests::sugar::forall",
+                            var = self.var.as_str(),
+                            len = seq.len(),
+                            cap = SUGAR_SEQ_CAP,
+                            "forall sequence domain declined: empty or over cap"
+                        );
                         return None;
                     }
+                    debug!(
+                        target: "sugar_lift_rust_tests::sugar::forall",
+                        var = self.var.as_str(),
+                        len = seq.len(),
+                        "forall sequence domain materialized"
+                    );
                     let mut elems = Vec::with_capacity(seq.len());
                     for elem in seq {
-                        elems.push(translate_term_in_scope(&elem.expr, ctx.scope).ok()?);
+                        let Some(term) = elem
+                            .value
+                            .as_ref()
+                            .and_then(const_val_term)
+                            .or_else(|| translate_term_in_scope(&elem.expr, ctx.scope).ok())
+                        else {
+                            debug!(
+                                target: "sugar_lift_rust_tests::sugar::forall",
+                                var = self.var.as_str(),
+                                elem = %crate::token_key(&elem.expr),
+                                "forall sequence domain declined: element did not translate to term"
+                            );
+                            return None;
+                        };
+                        elems.push(term);
                     }
                     BoundedDomain::Array(elems)
                 }
@@ -371,15 +418,22 @@ pub(crate) fn decompose_for_loop(
     f: &syn::ExprForLoop,
     scope: &TemporalScope,
     let_inits: &BTreeMap<String, &Expr>,
+    fcx: &SugarBuildCtx,
 ) -> Option<ForAllSugar> {
     let var = match &*f.pat {
         Pat::Ident(p) if p.subpat.is_none() => p.ident.to_string(),
         _ => return None,
     };
-    let domain = bounded_domain_from_expr(&f.expr, scope)?;
+    let domain = if let Some(domain) = bounded_domain_from_expr(&f.expr, scope) {
+        ForAllDomain::Bounded(domain)
+    } else if has_composite(&f.expr, fcx) {
+        ForAllDomain::Sequence(build_composite(&f.expr, fcx))
+    } else {
+        return None;
+    };
     Some(ForAllSugar {
         var,
-        domain: ForAllDomain::Bounded(domain),
+        domain,
         body_stmts: f.body.stmts.clone(),
         kind: "loop",
         literal_arrays: capture_literal_arrays(let_inits),

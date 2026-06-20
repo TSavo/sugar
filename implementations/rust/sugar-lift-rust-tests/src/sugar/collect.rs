@@ -20,8 +20,8 @@ use crate::sugar::monadic;
 use crate::sugar::unit_path::unit_path_literal_name;
 use crate::{
     canonical_term_sig, closure_single_param_ident, const_eval, const_fold_int_term,
-    strip_refs_groups, term_as_int, BoundedDomain, ConstVal, Desugared, DesugaredElem, Outcome,
-    Sugar, SugarCtx,
+    primitive_int_term, strip_refs_groups, term_as_int, u128_term, BoundedDomain, ConstVal,
+    Desugared, DesugaredElem, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -286,6 +286,8 @@ fn closure_body_expr(closure: &ExprClosure) -> Option<&Expr> {
 fn const_val_term(value: &ConstVal) -> Option<Rc<Term>> {
     match value {
         ConstVal::Int(n) => Some(num(*n)),
+        ConstVal::PrimitiveInt { raw, kind } => primitive_int_term(*raw, *kind),
+        ConstVal::UInt128(n) => Some(u128_term(*n)),
         ConstVal::Bool(b) => Some(Rc::new(Term::Const {
             value: ConstValue::Bool(*b),
             sort: Sort::bool(),
