@@ -13534,13 +13534,88 @@ fn t() {
         out.decls
     );
     assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let warranted: Vec<_> = warranted_decls(&out).into_iter().cloned().collect();
+    let warranted_dump = sugar_ir_symbolic::serialize::marshal_declarations(&warranted);
+    assert!(
+        !warranted_dump.contains("method:isqrt")
+            && !warranted_dump.contains("method:checked_mul")
+            && !warranted_dump.contains("method:map")
+            && !warranted_dump.contains("method:unwrap_or"),
+        "u128 primitive stdlib axioms should lower warranted scalar facts, not opaque method terms: {warranted_dump}"
+    );
+}
+
+#[test]
+fn local_min_bound_isqrt_range_replays_primitive_axioms() {
+    let src = r#"
+#[test]
+fn t() {
+    let n_max: u8 = (4 * 4).min(<u8>::MAX as u128) as u8;
+    for n in 0..=n_max {
+        let root: u8 = n.isqrt();
+        assert!(root.pow(2) <= n);
+        assert!(root + 1 == (1 as u8) << (u8::BITS / 2) || (root + 1).pow(2) > n);
+    }
+}
+"#;
+
+    let out = lift_file(&parse(src), "tests/local-min-bound-isqrt-range.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "local min/cast range bound should replay int_sqrt and primitive integer axioms under pinned loop values; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons,
+        out.factory_audits,
+        out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let warranted: Vec<_> = warranted_decls(&out).into_iter().cloned().collect();
+    let warranted_dump = sugar_ir_symbolic::serialize::marshal_declarations(&warranted);
+    assert!(
+        !warranted_dump.contains("method:isqrt")
+            && !warranted_dump.contains("method:pow")
+            && !warranted_dump.contains("method:min"),
+        "local min/cast domain and primitive integer axioms should lower warranted scalar facts, not opaque method terms: {warranted_dump}"
+    );
+}
+
+#[test]
+fn over_cap_local_min_bound_isqrt_range_lifts_pointwise_contract() {
+    let src = r#"
+#[test]
+fn t() {
+    let n_max: u16 = (4096 + 1).min(<u16>::MAX as u128) as u16;
+    for n in 0..=n_max {
+        let root: u16 = n.isqrt();
+        assert!(root.pow(2) <= n);
+        assert!(root + 1 == (1 as u16) << (u16::BITS / 2) || (root + 1).pow(2) > n);
+    }
+}
+"#;
+
+    let out = lift_file(&parse(src), "tests/over-cap-local-min-bound-isqrt-range.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "over-cap local min/cast range should lift as a bounded point-wise contract, not stay in the for-context bucket; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons,
+        out.factory_audits,
+        out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.skip_reasons
+            .iter()
+            .all(|r| !r.contains("under for context")),
+        "over-cap computable literal range should not remain in the for-context bucket: {:?}",
+        out.skip_reasons
+    );
     let dump = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
     assert!(
-        !dump.contains("method:isqrt")
-            && !dump.contains("method:checked_mul")
-            && !dump.contains("method:map")
-            && !dump.contains("method:unwrap_or"),
-        "u128 primitive stdlib axioms should lower to scalar facts, not opaque method terms: {dump}"
+        dump.contains("forall"),
+        "over-cap literal range should be represented as a bounded forall, not a materialized conjunction: {dump}"
+    );
+    assert!(
+        !dump.contains("method:pow") && !dump.contains("method:min"),
+        "point-wise contract should lower primitive pow/min compiler axioms, not opaque methods: {dump}"
     );
 }
 

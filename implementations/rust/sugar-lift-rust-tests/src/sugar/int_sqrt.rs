@@ -68,13 +68,29 @@ impl Sugar for IntSqrtSugar {
             return self.desugar_u128(value);
         }
         let Some(value) = const_fold_int_term(&receiver) else {
-            return Outcome::from_opt(None);
+            return Outcome::Dug(Desugared::Term(self.symbolic_term(receiver)));
         };
         self.desugar_i128(value)
     }
 }
 
 impl IntSqrtSugar {
+    fn symbolic_term(&self, receiver: Rc<Term>) -> Rc<Term> {
+        let method = match self.kind {
+            Kind::Sqrt => "method:isqrt",
+            Kind::CheckedSqrt => "method:checked_isqrt",
+        };
+        debug!(
+            target: "sugar_lift_rust_tests::sugar::int_sqrt",
+            method,
+            "kept primitive integer sqrt call symbolic for point-wise contract"
+        );
+        Rc::new(Term::Ctor {
+            name: method.to_string(),
+            args: vec![receiver],
+        })
+    }
+
     fn desugar_i128(&self, value: i128) -> Outcome {
         match self.kind {
             Kind::Sqrt => {
