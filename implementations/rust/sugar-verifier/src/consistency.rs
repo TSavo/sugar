@@ -936,10 +936,21 @@ fn consistency_verification_detail(
     solver_reason: Option<&str>,
     invs: &[SolverInvocation],
 ) -> Json {
+    // The checked formula is the conjoined universe -- on a real stdlib run that
+    // is ~MB per obligation, and the report accumulates one verification detail
+    // per obligation (10k+), so holding it INLINE OOMs (~43GB observed). Pin it
+    // BY CID instead: content-addressed, recomputable from the pinned proof
+    // inputs -- the same externalize-by-CID move as witness bodies, one level
+    // down. The verdict NEVER reads this field (it is computed by solving
+    // `not(inv)`); it is audit-only. So addressing it by reference loses no
+    // soundness and no refutation power -- it is a correctness-neutral memory fix.
+    let checked_formula_cid = libsugar::canonical::json_jcs(checked_formula)
+        .map(|jcs| blake3_512_of(jcs.as_bytes()))
+        .unwrap_or_else(|_| "blake3-512:uncanonicalizable-checked-formula".to_string());
     json!({
         "kind": "consistency",
         "property": property_name,
-        "checkedFormula": checked_formula,
+        "checkedFormulaCid": checked_formula_cid,
         "linkedPosts": linked_posts_to_json(linked_posts),
         "rawSolverVerdict": raw_verdict.map(|v| v.as_str()),
         "finalVerdict": final_verdict.as_str(),
