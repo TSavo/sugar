@@ -13,6 +13,7 @@ use sugar_canonicalizer::blake3_512_of;
 use sugar_claim_envelope::{
     body_discharge_policy_from_object_with_default, BodyDischargePolicyWarning,
 };
+use sugar_proof_envelope::proof_filename;
 use sugar_verifier::load_all_proofs::{self, ProofBytes};
 use sugar_verifier::types::{EffectSiteAnnotation, LoadError, MementoPool};
 use tracing::{error, info, warn};
@@ -894,7 +895,7 @@ where
             Some(expected_cid) => expected_cid,
             None => derived_cid,
         };
-        let dest = imports.join(format!("{cid}.proof"));
+        let dest = imports.join(proof_filename(&cid));
         fs::write(&dest, &proof.bytes).map_err(|e| {
             format!(
                 "write RPC dependency proof {} to {}: {e}",
@@ -2017,12 +2018,16 @@ mod tests {
         .expect("stage rpc dependency proofs");
 
         assert_eq!(count, 1);
-        let staged = imports.join(format!("{cid}.proof"));
+        // Staged under the colon-free, prefix-retained on-disk name
+        // (Windows-safe); `blake3-512:<hex>` -> `blake3-512_<hex>.proof`.
+        let staged_name = proof_filename(&cid);
+        assert!(!staged_name.contains(':'), "staged name must be colon-free");
+        let staged = imports.join(&staged_name);
         assert_eq!(fs::read(&staged).expect("read staged proof"), bytes);
         let snapshot = snapshot_imports_proof_set(&imports).expect("snapshot");
         assert_eq!(
             snapshot.path_list(),
-            format!("{cid}.proof"),
+            staged_name,
             "self-check must stage proof bytes by CID, not by kit source path"
         );
     }

@@ -552,7 +552,9 @@ mod tests {
             temp.path(),
         )
         .expect("emit witness minted");
-        let proof_file = temp.path().join(format!("{}.proof", minted.filename_cid));
+        let proof_file = temp
+            .path()
+            .join(sugar_proof_envelope::proof_filename(&minted.filename_cid));
         let proof_bytes = std::fs::read(proof_file).expect("read witness proof");
         let catalog = sugar_verifier::cbor_decode::decode(&proof_bytes).expect("decode proof");
         let members = catalog

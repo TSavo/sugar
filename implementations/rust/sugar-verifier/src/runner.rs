@@ -969,8 +969,9 @@ fn write_proof_run_bundle(
     });
     let out_dir = project_root.join(".sugar").join("runs");
     std::fs::create_dir_all(&out_dir)?;
-    let hex = built.cid.trim_start_matches("blake3-512:");
-    let path = out_dir.join(format!("{hex}.proof"));
+    // Colon-free, prefix-retained on-disk name (Windows-safe); the loader
+    // recomputes the CID from bytes so the filename is advisory.
+    let path = out_dir.join(sugar_proof_envelope::proof_filename(&built.cid));
     std::fs::write(&path, built.bytes)?;
     Ok((built.cid, path))
 }
@@ -1975,7 +1976,9 @@ fn mint_and_cache(
     };
     let built = build_proof_envelope(&proof_input);
 
-    let fname = format!("{}-{}.proof", property_hash, safe_prover);
+    // Colon is illegal in Windows filenames; replace it with `_` while
+    // keeping the `blake3-512` algorithm prefix (multihash discipline).
+    let fname = format!("{}-{}.proof", property_hash.replace(':', "_"), safe_prover);
     let path = cache_dir.join(fname);
     std::fs::write(path, built.bytes)?;
 

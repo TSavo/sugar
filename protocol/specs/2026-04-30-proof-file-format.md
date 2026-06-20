@@ -86,14 +86,30 @@ operator-facing format is JSON-via-tool.
 ## 2. Filename convention and trust root
 
 ```
-<cid>.proof
+blake3-512_<128 hex>.proof
 ```
 
+The on-disk filename stem is the CID with its `:` separator replaced by
+`_`: `blake3-512:<hex>` becomes `blake3-512_<hex>`. The colon is illegal
+in Windows filenames (NTFS treats `name:stream` as an alternate data
+stream), so the canonical on-disk form uses an underscore. The
+algorithm prefix is **retained**, not stripped, so the filename stays
+self-describing about which hash produced it (multihash discipline /
+crypto-agility): the day a producer migrates to `blake3-1024` or a
+post-quantum hash, `blake3-512_…` and `blake3-1024_…` files coexist
+unambiguously and the loader dispatches on the prefix. A bare-hex stem
+would throw that away.
+
+For backward compatibility a consumer MUST also accept the legacy
+colon form `blake3-512:<hex>.proof` and a bare `<hex>.proof` stem; all
+three normalize to the same CID. Producers MUST emit the underscore
+form.
+
 **The filename IS the trust root.** It encodes the CID of the file's
-bytes. A verifier recomputes the hash, compares to the filename, and
-that single check is the entire identity statement. No external
-manifest is consulted to establish trust; package.json is irrelevant
-to integrity.
+bytes. A verifier recomputes the hash, compares to the filename (after
+normalizing `_`→`:` in the algorithm prefix), and that single check is
+the entire identity statement. No external manifest is consulted to
+establish trust; package.json is irrelevant to integrity.
 
 A package conventionally ships exactly one `.proof` file at its root
 (parallel to `package.json` in npm packages, `Cargo.toml` in Rust
@@ -296,11 +312,14 @@ MUST recompute and reject on mismatch.
 A producer conforms to this format iff it:
 
 1. Outputs a single file with extension `.proof`.
-2. Names the file `<cid>.proof` where `cid` is the self-identifying
-   hash of the file's bytes per the canonicalization grammar:
-   `<algorithm-tag>:<lowercase-hex-digest>`. v1.1.0 uses
-   `blake3-512:<128 hex chars>` — full 64-byte BLAKE3 digest, no
-   truncation. Filenames are ~150 chars; that is intentional.
+2. Names the file `<algorithm-tag>_<lowercase-hex-digest>.proof` where
+   the stem is the self-identifying CID of the file's bytes per the
+   canonicalization grammar with the CID's `:` separator replaced by
+   `_` for cross-platform (Windows) compatibility. v1.1.0 uses
+   `blake3-512_<128 hex chars>` — full 64-byte BLAKE3 digest, no
+   truncation. The `blake3-512` prefix is retained (not stripped) so
+   the name stays self-describing for hash-algorithm agility.
+   Filenames are ~150 chars; that is intentional.
 3. Encodes the envelope as deterministic CBOR (RFC 8949 §4.2.1).
 4. Embeds every member memento body referenced by the catalog as an
    opaque byte string (no dangling CIDs).

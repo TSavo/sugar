@@ -20,6 +20,7 @@
 
 pub mod cbor;
 pub mod cbor_decode;
+pub mod filename;
 pub mod proof;
 pub mod sign;
 
@@ -28,6 +29,7 @@ pub use cbor::{
     cbor_encode_uint, CborMajor,
 };
 pub use cbor_decode::{decode as cbor_decode, CborDecodeError, CborValue};
+pub use filename::{cid_from_proof_stem, proof_filename};
 pub use proof::{build_proof_envelope, ProofEnvelopeInput, ProofEnvelopeOutput};
 pub use sign::{
     ed25519_pubkey_string, ed25519_sign_string, ed25519_sign_with_seed, ed25519_verify_bytes,

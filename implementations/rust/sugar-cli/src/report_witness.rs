@@ -14,7 +14,7 @@ use std::sync::Arc;
 use serde_json::{json, Value as Json};
 use sugar_canonicalizer::{blake3_512_of, encode_jcs, Value as CValue};
 use sugar_proof_envelope::{
-    build_proof_envelope, ed25519_pubkey_string, ed25519_sign_string, Ed25519Seed,
+    build_proof_envelope, ed25519_pubkey_string, ed25519_sign_string, proof_filename, Ed25519Seed,
     ProofEnvelopeInput,
 };
 
@@ -197,7 +197,7 @@ pub(crate) fn mint_json_witness_with_options(
     });
 
     std::fs::create_dir_all(out_dir).map_err(|e| format!("mkdir {}: {e}", out_dir.display()))?;
-    let proof_file = out_dir.join(format!("{}.proof", proof.cid));
+    let proof_file = out_dir.join(proof_filename(&proof.cid));
     std::fs::write(&proof_file, &proof.bytes)
         .map_err(|e| format!("write {}: {e}", proof_file.display()))?;
     let evidence_file = out_dir.join(format!(

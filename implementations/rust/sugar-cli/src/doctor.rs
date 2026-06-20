@@ -32,6 +32,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use clap::ValueEnum;
 use serde_json::{json, Value};
 use sugar_canonicalizer::blake3_512_of;
+use sugar_proof_envelope::proof_filename;
 use sugar_verifier::load_all_proofs::ProofBytes;
 
 use crate::doctor_oracle::{
@@ -1332,7 +1333,7 @@ where
             }
         }
         fs::write(
-            dest.join(format!("{}.proof", fingerprint.derived_cid)),
+            dest.join(proof_filename(&fingerprint.derived_cid)),
             &proof.bytes,
         )
         .map_err(|e| {
