@@ -6280,8 +6280,123 @@ pub(crate) fn const_eval_flat_map_closure(
             }
             Some(out)
         }
+        // A closure mapping each element to a finite range-ADAPTER CHAIN: a range base
+        // (`a..b` / `a..=b` / `a..`) wrapped in any nesting of `.step_by(s)` (`s >= 1`)
+        // and `.take(n)` (`n >= 0`) adaptors -- e.g. `(x..).step_by(1).take(3)`. The
+        // `.take(n)` finitizes an otherwise-unbounded `a..` base; the chain const-folds
+        // to its EXACT element sub-sequence. EXACT-OR-REFUSE: an unbounded base with no
+        // `.take`, a non-const / non-integer bound / step / take, or `step_by(0)` (a Rust
+        // panic) bails (`None`), never a guessed sub-sequence.
+        method_call @ Expr::MethodCall(_) => const_eval_finite_int_iter(method_call, &env, None),
         _ => None,
     }
+}
+
+/// Evaluate a finite, const-determinable INTEGER iterator EXPR to its exact element
+/// sequence. The source is a range base (`a..b` / `a..=b` / `a..`) wrapped in any
+/// nesting of `.step_by(s)` (`s >= 1`) and `.take(n)` (`n >= 0`) adaptors, or a bare
+/// array literal. `limit` is the take-bound an OUTER `.take` imposes (None = no outer
+/// bound) -- it is what lets a `.take(n)` finitize an unbounded `a..` base. Used by
+/// `const_eval_flat_map_closure` for a closure whose body is a range-adapter chain.
+///
+/// EXACT-OR-NONE: an unbounded source reached with no `limit`, a non-const / non-integer
+/// bound / step / take count, a negative take/step, or `step_by(0)` returns `None`. A
+/// wrong sub-sequence would be a fake discharge, so we never guess or partially fill.
+fn const_eval_finite_int_iter(
+    expr: &Expr,
+    env: &BTreeMap<String, ConstVal>,
+    limit: Option<usize>,
+) -> Option<Vec<ConstVal>> {
+    match strip_refs_groups(expr) {
+        Expr::Array(array) => {
+            let mut out = Vec::with_capacity(array.elems.len());
+            for elem in &array.elems {
+                out.push(const_eval(elem, env)?);
+            }
+            if let Some(k) = limit {
+                out.truncate(k);
+            }
+            Some(out)
+        }
+        Expr::Range(range) => enumerate_int_range_prefix(range, env, limit),
+        Expr::MethodCall(call) => {
+            let recv = &call.receiver;
+            match call.method.to_string().as_str() {
+                "take" if call.args.len() == 1 => {
+                    let n = const_eval(&call.args[0], env)?.as_int()?;
+                    let n = usize::try_from(n).ok()?;
+                    let combined = match limit {
+                        Some(k) => k.min(n),
+                        None => n,
+                    };
+                    const_eval_finite_int_iter(recv, env, Some(combined))
+                }
+                "step_by" if call.args.len() == 1 => {
+                    let s = const_eval(&call.args[0], env)?.as_int()?;
+                    let s = usize::try_from(s).ok()?;
+                    if s == 0 {
+                        return None; // `step_by(0)` panics in Rust -- refuse, never guess.
+                    }
+                    // To yield `k` stepped elements we need the base's first
+                    // `(k - 1) * s + 1` elements (indices 0, s, 2s, ...). An unbounded
+                    // base with no outer limit cannot be finitized here -> None.
+                    let base_limit = match limit {
+                        Some(0) => Some(0),
+                        Some(k) => Some((k - 1).checked_mul(s)?.checked_add(1)?),
+                        None => None,
+                    };
+                    let base = const_eval_finite_int_iter(recv, env, base_limit)?;
+                    let mut out: Vec<ConstVal> = base.into_iter().step_by(s).collect();
+                    if let Some(k) = limit {
+                        out.truncate(k);
+                    }
+                    Some(out)
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Enumerate a const integer range to its element prefix. A bounded range (`a..b` /
+/// `a..=b`) yields every element (or the first `limit`); an unbounded `a..` yields the
+/// first `limit` elements and REFUSES (None) when no `limit` is supplied. `start >= end`
+/// (exclusive) is the empty sub-sequence -- a legitimate drop, not a refusal. Capped at
+/// `SUGAR_SEQ_CAP`; a non-const / non-integer bound bails.
+fn enumerate_int_range_prefix(
+    range: &syn::ExprRange,
+    env: &BTreeMap<String, ConstVal>,
+    limit: Option<usize>,
+) -> Option<Vec<ConstVal>> {
+    let start = const_eval(range.start.as_deref()?, env)?.as_int()?;
+    let inclusive = matches!(range.limits, syn::RangeLimits::Closed(_));
+    let count: usize = match &range.end {
+        Some(end_expr) => {
+            let end = const_eval(end_expr, env)?.as_int()?;
+            let last = if inclusive { end } else { end.checked_sub(1)? };
+            if last < start {
+                return Some(Vec::new());
+            }
+            let len = usize::try_from(last.checked_sub(start)?.checked_add(1)?).ok()?;
+            match limit {
+                Some(k) => k.min(len),
+                None => len,
+            }
+        }
+        // Unbounded `a..`: finite only when an outer `.take` supplies the bound.
+        None => limit?,
+    };
+    if count as i64 > SUGAR_SEQ_CAP {
+        return None;
+    }
+    let mut out = Vec::with_capacity(count);
+    let mut k = start;
+    for _ in 0..count {
+        out.push(ConstVal::Int(k));
+        k = k.checked_add(1)?;
+    }
+    Some(out)
 }
 
 /// Evaluate a unary closure with the same exact floor as `const_eval_unary_closure`,
