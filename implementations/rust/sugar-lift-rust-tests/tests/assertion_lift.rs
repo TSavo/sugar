@@ -867,6 +867,83 @@ fn for_inspect_over_literal_iter_lifts() {
     }
 }
 
+// MECHANISM-2 gap (b): `.step_by(n)` over a literal base keeps every n-th element
+// from index 0 (`[1,2,3,4,5].step_by(2)` -> `1,3,5`), then the counter loop discharges.
+// EXACT-OR-REFUSE: only a const `n >= 1`; `step_by(0)` (a Rust panic) refuses.
+#[test]
+fn for_step_by_over_literal_iter_lifts() {
+    let src = r#"
+        #[test]
+        fn t_step_by() {
+            let expected = [1, 3, 5];
+            let mut i = 0;
+            for &x in [1, 2, 3, 4, 5].iter().step_by(2) {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/step_by.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "`.step_by(2)` over a literal iter must unroll: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_step_by") {
+        assert!(sat, "[1,2,3,4,5].step_by(2) == [1,3,5] == expected -- consistent (SAT)");
+    }
+}
+
+// GAP (b) TEETH: a WRONG expected over the stepped domain must refute.
+#[test]
+fn for_step_by_wrong_expected_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_step_by_bad() {
+            let expected = [1, 3, 99];
+            let mut i = 0;
+            for &x in [1, 2, 3, 4, 5].iter().step_by(2) {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/step_by_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_step_by_bad") {
+        assert!(!sat, "x=5 != expected[2]=99 over the stepped domain -- must be UNSAT");
+    }
+}
+
+// GAP (b): `.step_by` composes after another adaptor (`.skip(1).step_by(2)`): from
+// [1,2,3,4,5,6] skip 1 -> [2,3,4,5,6], step_by 2 -> [2,4,6].
+#[test]
+fn for_skip_then_step_by_composes() {
+    let src = r#"
+        #[test]
+        fn t_skip_step() {
+            let expected = [2, 4, 6];
+            let mut i = 0;
+            for &x in [1, 2, 3, 4, 5, 6].iter().skip(1).step_by(2) {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/skip_step_by.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "`.skip(1).step_by(2)` must unroll: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_skip_step") {
+        assert!(sat, "skip(1).step_by(2) of [1..6] == [2,4,6] == expected -- consistent (SAT)");
+    }
+}
+
 // GAP (b) TEETH: inspect must NOT mask a real contradiction.
 #[test]
 fn for_inspect_wrong_expected_is_unsat() {

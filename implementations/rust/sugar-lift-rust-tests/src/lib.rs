@@ -140,6 +140,7 @@ pub mod sugar {
     pub mod statement_position;
     pub mod statement_reflection;
     pub mod statement_runtime_expr;
+    pub mod step_by;
     pub mod string_add;
     pub mod string_predicate;
     pub mod struct_term;
@@ -5321,6 +5322,15 @@ fn peel_fold_adaptors_inner<'a>(
                     ("take", 1) => {
                         let n: usize = const_int(&m.args[0])?.try_into().ok()?;
                         Box::new(move |inner| Box::new(sugar::take::TakeSugar { inner, n }))
+                    }
+                    // `.step_by(n)`: keep every n-th element from index 0. `n == 0`
+                    // panics at runtime -> bail (never guess).
+                    ("step_by", 1) => {
+                        let n: usize = const_int(&m.args[0])?.try_into().ok()?;
+                        if n == 0 {
+                            return None;
+                        }
+                        Box::new(move |inner| Box::new(sugar::step_by::StepBySugar { inner, n }))
                     }
                     // `.flatten()`: concatenate each element's own finite literal
                     // sub-sequence (exact-or-refuse inside `FlattenSugar::desugar`).
