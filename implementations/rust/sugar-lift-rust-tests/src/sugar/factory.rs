@@ -325,9 +325,50 @@ impl AccountedSugar {
     }
 }
 
+/// FIX(a): the factory-level over-refusal fix. A RECOGNIZED **Term** sugar (`selected`
+/// is Some) that struck ONLY the GENERIC structural backstop (`Outcome::is_structural_bail`
+/// -- a pure-but-untranslated term, NOT a NAMED order-loss effect) degrades to an
+/// opaque-EUF term `Var{name:"opaque:<site>"}` -- a warranted-UNDECIDED congruence leaf --
+/// instead of a refusal. A structural bail in term position is OUR untranslated-term gap,
+/// not a source property; refusing it manufactures a false dragon (over-refusal). The
+/// opaque var has NO teeth (SAT for any value) so it can NEVER false-discharge AND never
+/// false-refute: the only motion is refused->undecided, which is strictly safer. Keyed by
+/// the token-key so identical subterms stay congruent.
+///
+/// NOT converted (stay refused / unchanged): a NAMED effect (mutation / runtime / temporal
+/// / IO -- a real source property); a non-Term role (a Constraint that cannot lift IS a
+/// refusal); an UNRECOGNIZED shape (`selected` is None -> nothing claimed it); and the two
+/// exempt recognizers -- `match_value_term` (owns a value-CONTRACT emission path whose
+/// deliberate decline must stand) and `transparent_term` (paren/group pass-through; a
+/// paren's inner is converted at its own level, so the wrapper only bails when its inner
+/// is itself exempt, e.g. `(match ...)`).
+fn term_bail_to_opaque(
+    requested_role: &str,
+    selected: Option<&'static str>,
+    site: &str,
+    outcome: Outcome,
+) -> Outcome {
+    let eligible = requested_role == "Term"
+        && selected.is_some()
+        && !matches!(selected, Some("match_value_term") | Some("transparent_term"))
+        && outcome.is_structural_bail();
+    if eligible {
+        Outcome::Dug(Desugared::Term(std::rc::Rc::new(sugar_ir_symbolic::Term::Var {
+            name: format!("opaque:{site}"),
+        })))
+    } else {
+        outcome
+    }
+}
+
 impl Sugar for AccountedSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let outcome = self.inner.desugar(ctx);
+        let outcome = term_bail_to_opaque(
+            &self.seed.requested_role,
+            self.seed.selected,
+            &self.seed.site,
+            self.inner.desugar(ctx),
+        );
         let audit = self.seed.audit(&outcome);
         if matches!(
             audit.disposition,
@@ -398,6 +439,67 @@ mod tests {
                 .as_deref()
                 .is_some_and(|reason| reason.contains("auxiliary constraint")),
             "{audit:?}"
+        );
+    }
+
+    // FIX(a) discrimination: a recognized-TERM GENERIC structural bail degrades to an
+    // opaque-EUF term (warranted-UNDECIDED), never a refusal -- but a named/reasoned
+    // refusal, an unrecognized backstop, a non-Term role, the exempt recognizers, and a
+    // successful Dug are all left UNCHANGED. (opaque-EUF carries no teeth, so the only
+    // motion is refused->undecided: it can neither false-discharge nor false-refute.)
+    #[test]
+    fn fix_a_term_structural_bail_degrades_to_opaque_undecided_not_refused() {
+        use sugar_ir_symbolic::Term;
+        let is_opaque = |o: &Outcome| {
+            matches!(o, Outcome::Dug(Desugared::Term(t))
+                if matches!(t.as_ref(), Term::Var { name } if name.starts_with("opaque:")))
+        };
+        let is_refused = |o: &Outcome| matches!(o, Outcome::Hit(_));
+
+        // (1) THE FIX: a recognized-Term generic structural bail -> opaque-EUF (undecided).
+        let bailed = term_bail_to_opaque("Term", Some("binop"), "a + b", Outcome::from_opt(None));
+        assert!(
+            is_opaque(&bailed),
+            "a recognized-Term structural bail must become an opaque-EUF undecided term"
+        );
+
+        // (2) a NAMED / reasoned refusal (non-backstop reason) STAYS the loud refusal.
+        let named = Outcome::Hit(Effect::Unsupported {
+            reason: "unsupported term operator `@`".to_string(),
+        });
+        assert!(
+            is_refused(&term_bail_to_opaque("Term", Some("binop"), "x", named)),
+            "a named/reasoned refusal must stay refused"
+        );
+
+        // (3) an UNRECOGNIZED shape (no candidate selected -> backstop) stays refused.
+        assert!(
+            is_refused(&term_bail_to_opaque("Term", None, "x", Outcome::from_opt(None))),
+            "an unrecognized backstop bail must stay refused (nothing claimed it)"
+        );
+
+        // (4) a non-Term role stays refused (a Constraint that cannot lift IS a refusal).
+        assert!(
+            is_refused(&term_bail_to_opaque("Constraint", Some("c"), "x", Outcome::from_opt(None))),
+            "a non-Term role bail must stay refused"
+        );
+
+        // (5) the exempt recognizers keep their deliberate decline.
+        for exempt in ["match_value_term", "transparent_term"] {
+            assert!(
+                is_refused(&term_bail_to_opaque("Term", Some(exempt), "x", Outcome::from_opt(None))),
+                "exempt recognizer `{exempt}` must stay refused"
+            );
+        }
+
+        // (6) a successful Dug passes through unchanged (no spurious opaque substitution).
+        let dug = Outcome::Dug(Desugared::Term(std::rc::Rc::new(Term::Var {
+            name: "real".to_string(),
+        })));
+        assert!(
+            matches!(term_bail_to_opaque("Term", Some("binop"), "x", dug),
+                Outcome::Dug(Desugared::Term(t)) if matches!(t.as_ref(), Term::Var { name } if name == "real")),
+            "a successful Dug must pass through unchanged"
         );
     }
 }
