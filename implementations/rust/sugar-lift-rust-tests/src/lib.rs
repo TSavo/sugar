@@ -121,6 +121,7 @@ pub mod sugar {
     pub mod option_predicate;
     pub mod option_unwrap;
     pub mod path;
+    pub mod peekable;
     pub mod primitive_int;
     pub mod range_term;
     pub mod raw_addr_term;
@@ -5241,7 +5242,7 @@ fn peel_fold_adaptors_inner<'a>(
             Expr::MethodCall(m) => {
                 let name = m.method.to_string();
                 let ad: AdaptorWrap = match (name.as_str(), m.args.len()) {
-                    ("iter" | "into_iter" | "cloned" | "copied" | "fuse", 0) => {
+                    ("iter" | "into_iter" | "cloned" | "copied" | "fuse" | "peekable", 0) => {
                         Box::new(|inner| Box::new(sugar::identity::IdentitySugar { inner }))
                     }
                     ("rev", 0) => Box::new(wrap_rev),
@@ -8782,6 +8783,114 @@ fn collect_statement_macro_entries<'a>(
     );
 }
 
+/// Count IDENT-token occurrences of `name` in any `ToTokens` node (recursing into
+/// groups). Ident-precise, not substring -- the soundness guard for the `while let
+/// next_if` single-consumer check.
+fn count_ident_in_tokens<T: quote::ToTokens>(node: &T, name: &str) -> usize {
+    fn walk(ts: proc_macro2::TokenStream, name: &str, n: &mut usize) {
+        for tt in ts {
+            match tt {
+                proc_macro2::TokenTree::Ident(i) => {
+                    if i == name {
+                        *n += 1;
+                    }
+                }
+                proc_macro2::TokenTree::Group(g) => walk(g.stream(), name, n),
+                _ => {}
+            }
+        }
+    }
+    let mut n = 0;
+    walk(node.to_token_stream(), name, &mut n);
+    n
+}
+
+/// The inner pattern of a `Some(<inner>)` (or parenthesized) pattern.
+fn some_inner_pat(pat: &Pat) -> Option<&Pat> {
+    match pat {
+        Pat::TupleStruct(ts) => {
+            let last = ts.path.segments.last()?;
+            (last.ident == "Some" && ts.elems.len() == 1).then(|| ts.elems.first())?
+        }
+        Pat::Paren(p) => some_inner_pat(&p.pat),
+        _ => None,
+    }
+}
+
+/// `while let Some(<pat>) = <it>.next_if(<closure>) { <body> }` REWRITES to
+/// `for <pat> in (<domain>).take_while(<closure>) { <body> }`, where `<domain>` is the
+/// `let mut <it> = <domain>` binding init in `stmts`. `next_if` consumed in a `while let`
+/// is EXACTLY `take_while`'s maximal leading prefix where the predicate holds, so this is
+/// a pure map(rewrite) step and the existing `for_replay` + `take_while` reduce takes it
+/// to the floor. SOUND only when `<it>` is consumed SOLELY by this loop: `<it>` may
+/// appear in `stmts` ONLY in its binding pattern and the while condition's `next_if`
+/// receiver -- never in the binding's RHS, the loop body, or any sibling statement (which
+/// would be an un-modeled prior/extra consumption). Any deviation -> `None` (refuse),
+/// never a guessed partial consumption.
+fn rewrite_while_let_next_if_to_for(w: &syn::ExprWhile, stmts: &[Stmt]) -> Option<Expr> {
+    let Expr::Let(cond) = w.cond.as_ref() else {
+        return None;
+    };
+    let inner_pat = some_inner_pat(&cond.pat)?;
+    let Expr::MethodCall(call) = strip_refs_groups(&cond.expr) else {
+        return None;
+    };
+    if call.method != "next_if" || call.args.len() != 1 {
+        return None;
+    }
+    let Expr::Closure(pred) = &call.args[0] else {
+        return None;
+    };
+    let Expr::Path(recv) = strip_refs_groups(&call.receiver) else {
+        return None;
+    };
+    let it = recv.path.get_ident()?.to_string();
+
+    // Resolve `<it>`'s `let mut <it> = <domain>` binding + enforce SINGLE CONSUMER.
+    let mut domain: Option<&Expr> = None;
+    for stmt in stmts {
+        // The `let mut it = <domain>` binding: its `it` use (the pattern) is allowed; the
+        // RHS must NOT reference `it`.
+        if let Stmt::Local(local) = stmt {
+            if let Pat::Ident(pi) = strip_pat_ref_paren(&local.pat) {
+                if pi.ident == it {
+                    let init = local.init.as_ref().filter(|i| i.diverge.is_none())?;
+                    if count_ident_in_tokens(init.expr.as_ref(), &it) != 0 {
+                        return None;
+                    }
+                    if domain.is_some() {
+                        return None; // a second binding of `it` -> refuse
+                    }
+                    domain = Some(init.expr.as_ref());
+                    continue;
+                }
+            }
+        }
+        // The while loop itself: the condition's `next_if` receiver is the allowed use;
+        // the BODY must not consume `it`.
+        if let Stmt::Expr(Expr::While(sw), _) = stmt {
+            if std::ptr::eq(sw, w) {
+                if count_ident_in_tokens(&sw.body, &it) != 0 {
+                    return None;
+                }
+                continue;
+            }
+        }
+        // Every other statement must not touch `it`.
+        if count_ident_in_tokens(stmt, &it) != 0 {
+            return None;
+        }
+    }
+    let domain = domain?;
+    let body = &w.body;
+    // No parens around #domain: it is always a method chain (`<seq>.iter().peekable()`),
+    // so `.take_while(..)` chains directly. A `Paren` wrapper would not be a recognized
+    // composite for `build_composite`.
+    Some(syn::parse_quote! {
+        for #inner_pat in #domain.take_while(#pred) #body
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn collect_assertion_entries<'a>(
     stmts: &'a [Stmt],
@@ -9228,14 +9337,38 @@ fn collect_assertion_entries<'a>(
                 }
             }
             Stmt::Expr(Expr::While(w), _) => {
-                let body_count = count_asserts_in_stmts(&w.body.stmts);
-                let cond_count = count_asserts_in_expr(&w.cond);
-                let total = body_count + cond_count;
-                for _ in 0..total {
-                    skipped.push(
-                        "assertion under while context: not unconditional point-wise; released to layer 0"
-                            .to_string(),
+                // `while let Some(x) = it.next_if(pred) { .. }` over a peekable literal
+                // iterator REWRITES (map) to `for x in domain.take_while(pred) { .. }` and
+                // lifts through the SAME for-loop factory path (reduce). The rewrite is
+                // sound only when `it` is consumed solely by this loop (enforced in
+                // `rewrite_while_let_next_if_to_for`); otherwise we fall through to refuse.
+                let lifted = rewrite_while_let_next_if_to_for(w, stmts).and_then(|synth_for| {
+                    let ctx = sugar_ctx_with_factory_audits(
+                        &temporal_scope,
+                        options,
+                        reducer,
+                        float_widths,
+                        macro_depth,
+                        factory_audits,
                     );
+                    let fcx =
+                        sugar::factory::SugarBuildCtx::new(&temporal_scope, options, &let_inits);
+                    sugar::factory::build_composite(&synth_for, &fcx)
+                        .desugar(&ctx)
+                        .dug()
+                });
+                if let Some(desugared) = lifted {
+                    emit_desugared(desugared, entries, macros_lifted);
+                } else {
+                    let body_count = count_asserts_in_stmts(&w.body.stmts);
+                    let cond_count = count_asserts_in_expr(&w.cond);
+                    let total = body_count + cond_count;
+                    for _ in 0..total {
+                        skipped.push(
+                            "assertion under while context: not unconditional point-wise; released to layer 0"
+                                .to_string(),
+                        );
+                    }
                 }
             }
             Stmt::Expr(Expr::Loop(l), _) => {

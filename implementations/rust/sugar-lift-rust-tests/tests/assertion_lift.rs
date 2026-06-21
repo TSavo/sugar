@@ -1192,6 +1192,131 @@ fn for_flat_map_range_body_wrong_expected_is_unsat() {
     }
 }
 
+// MECHANISM-2 gap (b): `while let Some(x) = it.next_if(pred)` over a peekable literal
+// iterator. MAP: rewrite to `for x in domain.take_while(pred) { body }`. REDUCE: the
+// existing take_while prefix + for_replay body replay. next_if-in-a-while-let is exactly
+// take_while's maximal leading prefix.
+#[test]
+fn while_let_next_if_over_peekable_literal_lifts() {
+    let src = r#"
+        #[test]
+        fn t_peek() {
+            let mut it = [1, 2, 3, 4].iter().peekable();
+            let expected = [1, 2];
+            let mut i = 0;
+            while let Some(&x) = it.next_if(|&&v| v < 3) {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/peekable.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "`while let Some(x) = it.next_if(..)` must unroll as take_while prefix: \
+         lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    // The `peekable`/`next_if` calls emit `not(panic(..))` SUPPORT decls; the real
+    // consistency claim is the decl carrying the `=` atoms -- check THAT, not decls[0].
+    if let Some(sat) = z3_verdict(&peek_consistency_inv(&out), "t_peek") {
+        assert!(sat, "consumed prefix [1,2] == expected -- consistent (SAT)");
+    }
+}
+
+// TEETH: a WRONG expected over the consumed prefix must refute.
+#[test]
+fn while_let_next_if_wrong_expected_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_peek_bad() {
+            let mut it = [1, 2, 3, 4].iter().peekable();
+            let expected = [1, 99];
+            let mut i = 0;
+            while let Some(&x) = it.next_if(|&&v| v < 3) {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/peekable_bad.rs");
+    if let Some(sat) = z3_verdict(&peek_consistency_inv(&out), "t_peek_bad") {
+        assert!(!sat, "x=2 != expected[1]=99 over the consumed prefix -- must be UNSAT");
+    }
+}
+
+// DISCRIMINATION: next_if STOPS at the first false (take_while semantics), it does NOT
+// filter. `[1, 5, 2]` with `v < 3` consumes ONLY `[1]` (5 stops it), never `[1, 2]`.
+// `expected = [1, 999]`: take_while reaches just `1` (`1 == expected[0]` SAT; the 999 is
+// never checked). A WRONG filter impl would consume `[1, 2]` and refute on `2 == 999`
+// (UNSAT). So SAT here proves the stop-at-first-false (prefix) semantics, not filtering.
+#[test]
+fn while_let_next_if_stops_at_first_false_not_filter() {
+    let src = r#"
+        #[test]
+        fn t_peek_stop() {
+            let mut it = [1, 5, 2].iter().peekable();
+            let expected = [1, 999];
+            let mut i = 0;
+            while let Some(&x) = it.next_if(|&&v| v < 3) {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/peekable_stop.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "stop-at-first-false prefix must lift: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&peek_consistency_inv(&out), "t_peek_stop") {
+        assert!(
+            sat,
+            "prefix is [1] only (5 stops it); the never-reached expected[1]=999 means SAT. \
+             A filter reading [1,2] would refute (2 != 999) -- UNSAT"
+        );
+    }
+}
+
+// The consistency claim is the decl carrying the `=` atoms; `peekable`/`next_if` also
+// emit `not(panic(..))` auxiliary support decls that are trivially SAT.
+fn peek_consistency_inv(out: &AdapterOutput) -> serde_json::Value {
+    out.decls
+        .iter()
+        .map(inv_json)
+        .find(|v| v.to_string().contains("\"name\":\"=\""))
+        .expect("a consistency (=) atom decl")
+}
+
+// SOUNDNESS: a second consumer of `it` (a prior `next()`) means the loop is NOT over the
+// full domain -- the single-consumer guard must REFUSE rather than model a wrong prefix.
+#[test]
+fn while_let_next_if_extra_consumer_refuses() {
+    let src = r#"
+        #[test]
+        fn t_peek_extra() {
+            let mut it = [1, 2, 3, 4].iter().peekable();
+            let _first = it.next();
+            let expected = [2, 3];
+            let mut i = 0;
+            while let Some(&x) = it.next_if(|&&v| v < 4) {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/peekable_extra.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "an `it` with a prior consumer must NOT lift (the loop is not over the full domain): {:?}",
+        out.warnings
+    );
+}
 #[test]
 fn compute_float32_wrapper_lowers_scaled_literals_to_tuple_axioms() {
     let src = r#"
