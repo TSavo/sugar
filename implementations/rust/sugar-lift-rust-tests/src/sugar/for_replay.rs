@@ -38,7 +38,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     let Expr::ForLoop(for_loop) = expr else {
         return None;
     };
-    let Pat::Ident(var) = for_loop.pat.as_ref() else {
+    let Some(var) = loop_var_pat_ident(for_loop.pat.as_ref()) else {
         debug!(
             target: "sugar_lift_rust_tests::sugar::for_replay",
             domain = %crate::token_key(&for_loop.expr),
@@ -114,6 +114,22 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         body_stmts: for_loop.body.stmts.clone(),
         seed_names,
     }))
+}
+
+/// The binding ident for a `for <pat> in ..` loop var. Accepts `Pat::Ident` AND
+/// reference patterns (`for &x` / `for &&x`) and parenthesized patterns, peeling to
+/// the inner ident. `for &x` is idiomatic when the iterator yields `&T` (`[..].iter()`)
+/// and was previously declined ("non-ident pattern"), refusing the whole loop. The
+/// replay substitutes the loop var with the per-step element VALUE regardless of
+/// pattern (the body's own `x` vs `*x` carries the deref), so peeling the `&` is sound
+/// -- no new domain is admitted; the literal-domain gate downstream is unchanged.
+fn loop_var_pat_ident(pat: &Pat) -> Option<&syn::PatIdent> {
+    match pat {
+        Pat::Ident(id) => Some(id),
+        Pat::Reference(r) => loop_var_pat_ident(&r.pat),
+        Pat::Paren(p) => loop_var_pat_ident(&p.pat),
+        _ => None,
+    }
 }
 
 fn body_has_replay_shape(

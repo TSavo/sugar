@@ -673,6 +673,88 @@ fn btree_insert_absent_key_bad_twin_is_unsat() {
     }
 }
 
+// MECHANISM-2 (gap a): `for &x in [..].iter()` is idiomatic (`.iter()` yields `&T`),
+// but the reference pattern made for_replay decline ("non-ident pattern") and the loop
+// refused as opaque. A counter-free per-element body must UNROLL and discharge.
+#[test]
+fn for_reference_pattern_loop_over_literal_iter_lifts() {
+    let src = r#"
+        #[test]
+        fn t_ref_loop() {
+            for &x in [1, 2, 3].iter() {
+                assert!(x >= 0);
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/ref_loop.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "`for &x in [..].iter()` must unroll, not refuse: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_ref_loop") {
+        assert!(sat, "every element of [1,2,3] is >= 0 -- consistent (SAT)");
+    }
+}
+
+// MECHANISM-2 (gaps a+c1+c2): a counter loop with a literal-array index. Needs the
+// reference-pattern unroll (a), the `Expr::Index` substitution so `expected[i]` -> the
+// per-step `expected[k]` (c1), AND `IndexSugar` grounding `expected[k]` to the element
+// (c2). This program is consistent -- it must be SAT, not a frozen-counter false
+// contradiction.
+#[test]
+fn for_reference_pattern_counter_loop_is_consistent() {
+    let src = r#"
+        #[test]
+        fn t_ref_counter() {
+            let expected = [10, 20, 30];
+            let mut i = 0;
+            for &x in [10, 20, 30].iter() {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/ref_counter.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_ref_counter") {
+        assert!(
+            sat,
+            "x == expected[i] holds each step -- consistent (SAT). UNSAT = frozen counter; \
+             lifted={} refused={}",
+            out.assertions_lifted, out.assertions_refused
+        );
+    }
+}
+
+// MECHANISM-2 (the teeth / discrimination): a WRONG expected array must still refute.
+// If the literal index over-grounds (c2 missing) or the counter freezes (c1 missing),
+// the index becomes uninterpreted and z3 satisfies anything -- a FALSE PROOF. `x=30 !=
+// expected[2]=99` is a real contradiction and MUST be UNSAT.
+#[test]
+fn for_reference_pattern_counter_loop_with_wrong_expected_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_ref_counter_bad() {
+            let expected = [10, 20, 99];
+            let mut i = 0;
+            for &x in [10, 20, 30].iter() {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/ref_counter_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_ref_counter_bad") {
+        assert!(
+            !sat,
+            "x=30 != expected[2]=99 is a REAL contradiction -- must be UNSAT; SAT means the \
+             literal index over-grounded (uninterpreted index / frozen counter)"
+        );
+    }
+}
+
 #[test]
 fn compute_float32_wrapper_lowers_scaled_literals_to_tuple_axioms() {
     let src = r#"
@@ -3398,9 +3480,13 @@ fn array_from_ref() {
 }
 
 #[test]
-fn immutable_index_equality_lifts() {
-    // An immutable (non-mut) container's index equality lifts as
-    // index(xs, 0) == 1.
+fn immutable_index_equality_grounds_to_element() {
+    // An immutable (non-mut) literal container indexed by a const GROUNDS to the
+    // concrete element (T's `[[1,2]][0][1]` thesis): `xs[0]` with `xs=[1,2,3]`
+    // desugars straight to `1`, so the equality lifts as `1 == 1` -- NOT the
+    // symbolic `index(xs,0)` ctor. Grounding is the soundness fix: an
+    // uninterpreted `index(literal,const)` over-discharges (a bad-twin with the
+    // wrong expected value would be falsely SAT).
     let src = r#"
 #[test]
 fn indexed_value() {
@@ -3420,10 +3506,8 @@ fn indexed_value() {
     match ops[0].as_ref() {
         Formula::Atomic { name, args } => {
             assert_eq!(name, "=");
-            match args[0].as_ref() {
-                Term::Ctor { name, .. } => assert_eq!(name, "index"),
-                other => panic!("expected index ctor lhs, got {other:?}"),
-            }
+            assert_scalar_const(&args[0], ExpectedScalar::Int(1));
+            assert_scalar_const(&args[1], ExpectedScalar::Int(1));
         }
         other => panic!("expected equality, got {other:?}"),
     }
@@ -3834,9 +3918,13 @@ const fn test_write_bytes_in_const_contexts() {
 }
 
 #[test]
-fn immutable_local_index_lifts_as_index_term() {
-    // `let xs` (non-mut) is provably immutable by the compiler (free axiom), so
-    // xs[0] is a temporally-stable index term and lifts as index(xs, 0).
+fn immutable_local_index_grounds_to_element() {
+    // `let xs` (non-mut) is provably immutable by the compiler (free axiom), and
+    // its elements are source literals, so `xs[0]` GROUNDS to the concrete
+    // element `1` -- the equality lifts as `1 == 1`, not the symbolic
+    // index(xs, 0) ctor. (The mutable companion below stays residual; the
+    // immutable/mutable distinction is preserved -- immutable grounds, mutable
+    // refuses.)
     let src = r#"
 #[test]
 fn local_index() {
@@ -3854,10 +3942,10 @@ fn local_index() {
     let ops = inv_operands(&out.decls[0]);
     assert_eq!(ops.len(), 1);
     match ops[0].as_ref() {
-        Formula::Atomic { args, .. } => match args[0].as_ref() {
-            Term::Ctor { name, .. } => assert_eq!(name, "index"),
-            other => panic!("expected index ctor, got {other:?}"),
-        },
+        Formula::Atomic { args, .. } => {
+            assert_scalar_const(&args[0], ExpectedScalar::Int(1));
+            assert_scalar_const(&args[1], ExpectedScalar::Int(1));
+        }
         other => panic!("expected equality, got {other:?}"),
     }
 }
@@ -4636,11 +4724,13 @@ fn wrong_const_cmp() {
 }
 
 #[test]
-fn stable_comparison_in_term_position_lifts_as_cmp_ctor_over_index_terms() {
-    // POSITIVE (marquee shape): `assert!(lhs == (a[0] < b[0]))` over IMMUTABLE array
-    // locals. The outer `==` lifts to an equality atom; the RHS operand
-    // `(a[0] < b[0])` lifts to the bool-valued ctor `cmp:lt(index(a,0), index(b,0))`
-    // -- the comparison emitted AS the FOL atom it states, over stable index terms.
+fn stable_comparison_over_immutable_arrays_grounds_to_bool() {
+    // POSITIVE (marquee shape): `assert!(flag == (a[0] < b[0]))` over IMMUTABLE
+    // literal array locals. Each `a[0]`/`b[0]` GROUNDS to its element (`1`, `4`),
+    // then the const-folder collapses `1 < 4` to `Bool(true)`. So the RHS is a
+    // grounded bool, NOT a symbolic `cmp:lt(index(a,0), index(b,0))` ctor: the
+    // whole comparison reduces to the concrete truth it states. The outer `==`
+    // stays an equality atom over two bool consts.
     let src = r#"
 #[test]
 fn cmp_term() {
@@ -4654,29 +4744,21 @@ fn cmp_term() {
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
     let operands = inv_operands(&out.decls[0]);
     assert_eq!(operands.len(), 1);
-    // Find the `cmp:lt` ctor among the equality atom's args.
     match operands[0].as_ref() {
         Formula::Atomic { name, args } => {
             assert_eq!(name, "=");
             assert_eq!(args.len(), 2);
-            let cmp = args
-                .iter()
-                .find_map(|t| match t.as_ref() {
-                    Term::Ctor { name, args } if name == "cmp:lt" => Some(args.clone()),
-                    _ => None,
-                })
-                .expect("RHS `(a[0] < b[0])` lifts to a `cmp:lt` ctor");
-            assert_eq!(cmp.len(), 2, "cmp:lt over two operand terms");
-            // Each operand is `index(<container>, 0)` over an immutable local.
-            for (i, operand) in cmp.iter().enumerate() {
-                match operand.as_ref() {
-                    Term::Ctor { name, args } => {
-                        assert_eq!(name, "index", "operand {i} is an index term");
-                        assert_eq!(args.len(), 2);
-                    }
-                    other => panic!("expected index term, got {other:?}"),
-                }
-            }
+            // No symbolic comparison ctor survives -- both sides ground to bools.
+            assert!(
+                !args.iter().any(|t| matches!(
+                    t.as_ref(),
+                    Term::Ctor { name, .. } if name.starts_with("cmp:")
+                )),
+                "literal `a[0] < b[0]` must ground to a bool const, not a cmp ctor"
+            );
+            // flag == (1 < 4) == (true == true).
+            assert_scalar_const(&args[0], ExpectedScalar::Bool(true));
+            assert_scalar_const(&args[1], ExpectedScalar::Bool(true));
         }
         other => panic!("expected equality atom, got {other:?}"),
     }
