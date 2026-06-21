@@ -93,11 +93,16 @@ echo "NOTE: 'unresolved' is the honest dark (no sugar yet). 'support' is inert s
 # no-teeth bucket coverage hid -- distinct from 'unresolved' = not-lifted-at-all).
 echo
 echo "== teethed ledger (discharge gate -- proof, not just coverage) =="
+# Surfaces, alongside coverage: DISCHARGED (proven, teeth) / a panic-filtered
+# VALUE-claim teethedness / REFUTED (the corpus is all-true, so every refutation
+# is a FALSE refutation -- a fake dragon, soundness debt, target 0; classified
+# T3-stale-&mut vs fixable-now) / UNDECIDED (congruence-only, the Γ bucket).
 TEETH_JSON="$HERE/coretests-teethed.json"
+TEETH_REFUTED="$HERE/coretests-refuted.tsv"
 if [ -x "$BIN_DIR/discharge_sweep" ]; then
-  "$BIN_DIR/discharge_sweep" "$CORPUS" --json "$TEETH_JSON" || {
+  "$BIN_DIR/discharge_sweep" "$CORPUS" --json "$TEETH_JSON" --dump-refuted "$TEETH_REFUTED" || {
     echo "(discharge sweep did not complete; see above)"; }
-  echo "teethed ledger json: $TEETH_JSON"
+  echo "teethed ledger json: $TEETH_JSON   |   false-refutation dragon list: $TEETH_REFUTED"
 else
   echo "(discharge_sweep not built -- skipping the proof dial)"
 fi

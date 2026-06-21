@@ -22,8 +22,10 @@
 use std::path::PathBuf;
 
 // ── Pinned thresholds (current main; tighten in-PR when a number improves). ──
-const DISCHARGED_FLOOR: u64 = 138; // proven (teeth) — must not regress
+const DISCHARGED_FLOOR: u64 = 138; // proven (teeth, full inv) — must not regress
+const VALUE_DISCHARGED_FLOOR: u64 = 131; // proven VALUE-claim (panic-filtered) — must not regress
 const REFUTED_CEIL: u64 = 49; // false refutations (all-true corpus) — drive to 0
+const REFUTED_OTHER_CEIL: u64 = 37; // NON-T3 false refutations (fixable now) — drive to 0
 const UNDECIDED_CEIL: u64 = 4854; // congruence-only / no teeth — drive down
 
 fn rust_dir() -> PathBuf {
@@ -75,8 +77,11 @@ fn teethed_ledger_does_not_regress() {
         get("undecided"),
         get("warranted_obligations"),
     );
+    let value_discharged = get("value_discharged");
+    let refuted_other = get("refuted_other_class");
     eprintln!(
-        "teethed ledger: warranted={warranted} discharged={discharged} refuted={refuted} undecided={undecided}"
+        "teethed ledger: warranted={warranted} discharged={discharged} value_discharged={value_discharged} \
+         refuted={refuted} (other={refuted_other}) undecided={undecided}"
     );
 
     assert!(
@@ -85,9 +90,19 @@ fn teethed_ledger_does_not_regress() {
          If this is a legitimate accounting correction, lower the floor in THIS pr with a reason."
     );
     assert!(
+        value_discharged >= VALUE_DISCHARGED_FLOOR,
+        "RATCHET REGRESSION: value_discharged {value_discharged} < floor {VALUE_DISCHARGED_FLOOR} \
+         (panic-filtered VALUE-claim teeth dropped)."
+    );
+    assert!(
         refuted <= REFUTED_CEIL,
         "RATCHET REGRESSION: refuted {refuted} > ceil {REFUTED_CEIL} (NEW false refutation -- a fake dragon, \
          inverse cardinal sin). The corpus is all-true; every refutation is a stale/wrong lift."
+    );
+    assert!(
+        refuted_other <= REFUTED_OTHER_CEIL,
+        "RATCHET REGRESSION: non-T3 false refutations {refuted_other} > ceil {REFUTED_OTHER_CEIL} \
+         (the FIXABLE-NOW fake-dragon class grew -- a stale/wrong lift that should REFUSE not emit)."
     );
     assert!(
         undecided <= UNDECIDED_CEIL,
@@ -95,10 +110,16 @@ fn teethed_ledger_does_not_regress() {
     );
 
     // Tighten-in-PR reminder: when a number beats its threshold, move the const.
-    if discharged > DISCHARGED_FLOOR || refuted < REFUTED_CEIL || undecided < UNDECIDED_CEIL {
+    if discharged > DISCHARGED_FLOOR
+        || value_discharged > VALUE_DISCHARGED_FLOOR
+        || refuted < REFUTED_CEIL
+        || refuted_other < REFUTED_OTHER_CEIL
+        || undecided < UNDECIDED_CEIL
+    {
         eprintln!(
             "RATCHET IMPROVED -- tighten thresholds in this PR: \
-             DISCHARGED_FLOOR {DISCHARGED_FLOOR}->{discharged}, REFUTED_CEIL {REFUTED_CEIL}->{refuted}, \
+             DISCHARGED_FLOOR {DISCHARGED_FLOOR}->{discharged}, VALUE_DISCHARGED_FLOOR {VALUE_DISCHARGED_FLOOR}->{value_discharged}, \
+             REFUTED_CEIL {REFUTED_CEIL}->{refuted}, REFUTED_OTHER_CEIL {REFUTED_OTHER_CEIL}->{refuted_other}, \
              UNDECIDED_CEIL {UNDECIDED_CEIL}->{undecided}"
         );
     }
