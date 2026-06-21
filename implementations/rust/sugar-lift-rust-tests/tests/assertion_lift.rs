@@ -18107,3 +18107,143 @@ fn unrelated_alias_mutation_does_not_refuse_other_locals() {
         assert!(sat, "x == 6 holds; unrelated `*s += 1` must not gate `x` (SAT)");
     }
 }
+
+// ---------------------------------------------------------------------------
+// SLICE-COERCION CAST (`&array as &[_]`): a cast to a slice reference is an UNSIZING
+// coercion (`&[T; N] as &[T]`) -- value-preserving (the slice views the same elements),
+// so `cast_term` desugars it transparently to the inner reference's term (like `as _`).
+// Was the dominant cast_term dark shape: it backstopped, blocking the EUF-arg comparison
+// `Clamp(r).get(&slice as &[_]) == other.get(&slice as &[_])`. (`cast_term` slice arm.)
+
+#[test]
+fn slice_coercion_cast_warrants_array_value() {
+    let src = r#"
+        #[test]
+        fn t_slice_coerce() {
+            assert_eq!(&[1, 2, 3] as &[_], &[1, 2, 3]);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/cast/slice_coerce.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "`&[1,2,3] as &[_] == &[1,2,3]` must warrant (transparent unsizing coercion): \
+         lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "slice_coerce_good") {
+        assert!(sat, "&[1,2,3] as &[_] == &[1,2,3] -> the array equals itself (SAT)");
+    }
+}
+
+// HONEST teeth note: an array LITERAL lifts to a content-keyed VAR (`literal:Array(..)`),
+// not a structural sequence, so the slice-coercion warrant is REFLEXIVE-teethed (same
+// content -> same var -> equal; the index.rs `get(&s) == get(&s)` shape discharges
+// reflexively) but NOT structurally-teethed over DISTINCT arrays (two different content
+// vars are z3-free -> UNDECIDED, not refuted). That is SOUND (no false discharge -- a
+// distinct-array equality is undecided, never proven) but carries no distinct-array
+// teeth. This test pins what the arm DOES deliver: the cast is transparent (no backstop)
+// and the same-array equality is reflexively consistent.
+#[test]
+fn slice_coercion_cast_is_transparent_not_backstop() {
+    let src = r#"
+        #[test]
+        fn t_slice_transparent() {
+            assert_eq!(&[1, 2, 3] as &[_], &[1, 2, 3]);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/cast/slice_transparent.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "the slice coercion must be transparent (lifted, not refused): lifted={} \
+         refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    assert!(
+        !out.skip_reasons
+            .iter()
+            .any(|r| r.contains("unsupported term") && r.contains("as")),
+        "`&[..] as &[_]` must NOT backstop as an unsupported cast: {:?}",
+        out.skip_reasons
+    );
+}
+
+// KIT BAD-TWIN (cardinal-sin guard for the slice-coercion WARRANT, a628 #2316 revert).
+// The slice-coercion cast is transparent. The DANGER it must NOT reintroduce: a
+// content-LOSING slice abstraction that collapses DISTINCT arrays to one var, which
+// would reflexively DISCHARGE a FALSE equality (`&[10,20,30] == &[10,20,99]`). The arm
+// is sound ONLY IF distinct content -> distinct content-keyed vars -> z3-free ->
+// UNDECIDED (neither refuted nor discharged). This test BREAKS the warrant: asserts a
+// genuinely-FALSE distinct-array equality and demands UNDECIDED, never a discharge.
+#[test]
+fn kit_slice_coercion_distinct_arrays_undecided_not_discharged() {
+    let src = r#"
+        #[test]
+        fn t_slice_bad_twin() {
+            assert_eq!(&[10, 20, 30] as &[_], &[10, 20, 99]);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/cast/slice_bad_twin.rs");
+    // It must LIFT transparently (the cast is value-preserving; this is not a refuse).
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "bad-twin must lift transparently (not refuse): lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    let inv = inv_json(&out.decls[0]);
+    eprintln!("KIT-BADTWIN inv = {}", serde_json::to_string_pretty(&inv).unwrap());
+
+    // The inv is `and{operands:[ atomic{=,[lhs,rhs]} ]}`; unwrap to the equality atomic.
+    let eq_atomic = if inv.get("kind").and_then(|k| k.as_str()) == Some("and") {
+        inv.get("operands")
+            .and_then(|o| o.as_array())
+            .and_then(|o| o.first())
+            .cloned()
+            .expect("and-inv must have an operand")
+    } else {
+        inv.clone()
+    };
+
+    // (1) The two operands must be DISTINCT content-keyed vars. If they collapse to one
+    //     var name, the equality is reflexive -> false discharge (the a628 sin).
+    let args = eq_atomic
+        .get("args")
+        .and_then(|a| a.as_array())
+        .expect("equality inv must have two args");
+    assert_eq!(args.len(), 2, "expected a binary equality, got {inv}");
+    let lhs_name = args[0].get("name").and_then(|n| n.as_str());
+    let rhs_name = args[1].get("name").and_then(|n| n.as_str());
+    eprintln!("KIT-BADTWIN lhs_var={lhs_name:?} rhs_var={rhs_name:?}");
+    assert_ne!(
+        lhs_name, rhs_name,
+        "DISTINCT arrays must lift to DISTINCT content-keyed vars; collapse => false discharge"
+    );
+
+    // (2) Positive relation `lhs == rhs` must be SAT (the two free vars CAN be equal)
+    //     => NOT refuted. A false-refutation here would be the inverse sin.
+    if let Some(sat) = z3_verdict(&inv, "kit_slice_bad_twin_pos") {
+        assert!(sat, "distinct-array `==` must be SAT (not refuted): two free vars can coincide");
+    }
+
+    // (3) NEGATION `lhs != rhs` (distinct) must be SAT => the equality is NOT VALID =>
+    //     the discharge gate (DISCHARGED <=> negation UNSAT) does NOT fire. NOT discharged.
+    let negation = serde_json::json!({
+        "kind": "and",
+        "operands": [{
+            "kind": "atomic",
+            "name": "distinct",
+            "args": [args[0].clone(), args[1].clone()],
+        }],
+    });
+    if let Some(neg_sat) = z3_verdict(&negation, "kit_slice_bad_twin_neg") {
+        assert!(
+            neg_sat,
+            "distinct-array `!=` must be SAT => equality NOT valid => NOT discharged (no fake light)"
+        );
+    }
+}
