@@ -25,6 +25,9 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     if call.method != "chain" || call.args.len() != 1 {
         return None;
     }
+    // Both operands resolve through the FACTORY (`has_composite`/`build_composite`). A
+    // bare `&ys` RHS is now a first-class composite (`reference_sequence` recognizer), so
+    // no per-adaptor literal-sequence fallback is needed here.
     if !has_composite(&call.receiver, fcx) || !has_composite(&call.args[0], fcx) {
         return None;
     }
