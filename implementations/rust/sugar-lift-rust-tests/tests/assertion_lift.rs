@@ -1194,6 +1194,149 @@ fn try_from_non_integer_and_runtime_decline() {
     );
 }
 
+// ---- Lane 4: Range::size_hint decomposes to teethed component eqs ----
+
+// `(0..100).size_hint()` is `(100, Some(100))`. Via the shared tuple_decomp hook,
+// the tuple eq decomposes into per-component scalar eqs -- the count int and the
+// `Some(n)` Option ADT -- each with REAL z3 teeth (not a teethless literal:Tuple).
+#[test]
+fn size_hint_decomposes_and_warrants() {
+    let src = r#"
+        #[test]
+        fn t_size_hint() {
+            assert_eq!((0..100).size_hint(), (100, Some(100)));
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/range_size_hint.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "range size_hint must lift; skip: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.factory_audits
+            .iter()
+            .any(|a| a.selected.is_some_and(|s| s.contains("tuple_decomp"))),
+        "size_hint tuple eq must decompose via tuple_decomp: {:?}",
+        out.factory_audits
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Int(100)"),
+        "the count component (100) must be a ground int: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_size_hint") {
+        assert!(sat, "(0..100).size_hint() == (100, Some(100)) -- must be SAT");
+    }
+}
+
+// BAD TWINS / teeth: a wrong count, a wrong upper value, and a wrong upper
+// VARIANT each refute (z3 UNSAT) -- one per component / ADT property.
+#[test]
+fn size_hint_wrong_components_are_unsat() {
+    let count = r#"
+        #[test]
+        fn t_size_hint_count_bad() {
+            assert_eq!((0..100).size_hint(), (99, Some(100)));
+        }
+    "#;
+    let out = lift_file(&parse(count), "coretests/iter/sh_count_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_size_hint_count_bad") {
+        assert!(!sat, "count is 100 != 99 -- must be UNSAT");
+    }
+    let upper = r#"
+        #[test]
+        fn t_size_hint_upper_bad() {
+            assert_eq!((0..100).size_hint(), (100, Some(99)));
+        }
+    "#;
+    let out = lift_file(&parse(upper), "coretests/iter/sh_upper_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_size_hint_upper_bad") {
+        assert!(!sat, "upper is Some(100) != Some(99) -- must be UNSAT");
+    }
+    let variant = r#"
+        #[test]
+        fn t_size_hint_variant_bad() {
+            assert_eq!((0..100).size_hint(), (100, None));
+        }
+    "#;
+    let out = lift_file(&parse(variant), "coretests/iter/sh_variant_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_size_hint_variant_bad") {
+        assert!(!sat, "upper is Some(100) != None -- must be UNSAT");
+    }
+}
+
+// Semantics: negative endpoints and the empty/inclusive cases compute exactly.
+#[test]
+fn size_hint_negative_and_inclusive_semantics() {
+    // (-10..-1) -> count 9.
+    let neg = r#"
+        #[test]
+        fn t_sh_neg() {
+            assert_eq!((-10..-1).size_hint(), (9, Some(9)));
+        }
+    "#;
+    let out = lift_file(&parse(neg), "coretests/iter/sh_neg.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_sh_neg") {
+        assert!(sat, "(-10..-1) has 9 elements -- must be SAT");
+    }
+    // (-1..-10) is empty -> (0, Some(0)).
+    let empty = r#"
+        #[test]
+        fn t_sh_empty() {
+            assert_eq!((-1..-10).size_hint(), (0, Some(0)));
+        }
+    "#;
+    let out = lift_file(&parse(empty), "coretests/iter/sh_empty.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_sh_empty") {
+        assert!(sat, "(-1..-10) is empty -- must be SAT");
+    }
+    // Inclusive (0..=4) -> count 5.
+    let incl = r#"
+        #[test]
+        fn t_sh_incl() {
+            assert_eq!((0..=4).size_hint(), (5, Some(5)));
+        }
+    "#;
+    let out = lift_file(&parse(incl), "coretests/iter/sh_incl.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_sh_incl") {
+        assert!(sat, "(0..=4) has 5 elements -- must be SAT");
+    }
+    // Inclusive bad twin: (0..=4) is 5, not 6.
+    let incl_bad = r#"
+        #[test]
+        fn t_sh_incl_bad() {
+            assert_eq!((0..=4).size_hint(), (6, Some(6)));
+        }
+    "#;
+    let out = lift_file(&parse(incl_bad), "coretests/iter/sh_incl_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_sh_incl_bad") {
+        assert!(!sat, "(0..=4) has 5 != 6 elements -- must be UNSAT");
+    }
+}
+
+// EXACT-OR-NONE: a runtime-bounded range size_hint must NOT decompose (the count
+// is not text-determined) -- tuple_decomp declines, no guessed pair.
+#[test]
+fn runtime_size_hint_declines_to_decompose() {
+    let src = r#"
+        #[test]
+        fn t_sh_runtime() {
+            let n = std::env::args().count();
+            assert_eq!((0..n).size_hint(), (n, Some(n)));
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/sh_runtime.rs");
+    assert!(
+        !out.factory_audits
+            .iter()
+            .any(|a| a.selected.is_some_and(|s| s.contains("tuple_decomp"))),
+        "a runtime-bounded size_hint must NOT decompose: {:?}",
+        out.factory_audits
+    );
+}
+
 // ---- Lane 9: Duration integer accessors fold to a ground int (teeth) ----
 
 // `Duration::from_secs(5).as_secs()` is `5` -- a literal Duration is a closed

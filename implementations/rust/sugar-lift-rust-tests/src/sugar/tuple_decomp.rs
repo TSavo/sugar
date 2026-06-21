@@ -30,6 +30,7 @@ use std::rc::Rc;
 use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::integer_decode;
+use crate::sugar::size_hint;
 use crate::{
     callsite_assertion_name, parse_macro_args, AssertionFactKind, Desugared, Effect, Outcome,
     Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON,
@@ -111,7 +112,8 @@ fn match_producer_and_literal(lhs: &Expr, rhs: &Expr) -> Option<(Vec<Expr>, Vec<
 /// Add new tuple-valued producers (size_hint, enumerate idx/val, partition_point, ...) here.
 fn producer_components(expr: &Expr) -> Option<Vec<Expr>> {
     match strip_paren_group(expr) {
-        Expr::MethodCall(call) => integer_decode::decomposed_component_exprs(call),
+        Expr::MethodCall(call) => integer_decode::decomposed_component_exprs(call)
+            .or_else(|| size_hint::decomposed_component_exprs(call)),
         _ => None,
     }
 }
