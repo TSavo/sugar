@@ -6087,14 +6087,45 @@ pub(crate) fn const_eval_flat_map_closure(
         },
         other => other,
     };
-    let Expr::Array(array) = strip_refs_groups(body) else {
-        return None;
-    };
-    let mut out = Vec::with_capacity(array.elems.len());
-    for elem in &array.elems {
-        out.push(const_eval(elem, &env)?);
+    match strip_refs_groups(body) {
+        Expr::Array(array) => {
+            let mut out = Vec::with_capacity(array.elems.len());
+            for elem in &array.elems {
+                out.push(const_eval(elem, &env)?);
+            }
+            Some(out)
+        }
+        // A closure mapping each element to a finite literal RANGE (`|&n| 0..n` /
+        // `0..=n`): both bounds must const-fold (in the element's env) to integers, and
+        // the range must be BOUNDED on both ends. Expand to the integer sub-sequence;
+        // start >= end (exclusive) yields the empty sub-sequence -- a legitimate flat_map
+        // drop, not a refusal. EXACT-OR-REFUSE: a half-open/unbounded range or a
+        // non-const / non-integer bound bails (`None`), never a guessed sequence.
+        Expr::Range(range) => {
+            let (Some(start_expr), Some(end_expr)) = (&range.start, &range.end) else {
+                return None;
+            };
+            let start = const_eval(start_expr, &env)?.as_int()?;
+            let end = const_eval(end_expr, &env)?.as_int()?;
+            let inclusive = matches!(range.limits, syn::RangeLimits::Closed(_));
+            let last = if inclusive { end } else { end.checked_sub(1)? };
+            if last < start {
+                return Some(Vec::new());
+            }
+            let len = last.checked_sub(start)?.checked_add(1)?;
+            if len > SUGAR_SEQ_CAP as i128 {
+                return None;
+            }
+            let mut out = Vec::with_capacity(len as usize);
+            let mut k = start;
+            while k <= last {
+                out.push(ConstVal::Int(k));
+                k = k.checked_add(1)?;
+            }
+            Some(out)
+        }
+        _ => None,
     }
-    Some(out)
 }
 
 /// Evaluate a unary closure with the same exact floor as `const_eval_unary_closure`,

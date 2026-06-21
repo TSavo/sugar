@@ -1142,6 +1142,56 @@ fn for_flat_map_wrong_expected_is_unsat() {
     }
 }
 
+// MECHANISM-2 gap (b): `.flat_map(|&n| 0..n)` -- a closure body that's a bounded RANGE
+// literal (not just an array). Each const element `n` makes `0..n` a finite literal
+// sub-sequence; concatenate. `[1,2,3].flat_map(|&n| 0..n)` -> 0..1, 0..2, 0..3 ->
+// [0, 0,1, 0,1,2]. Exact-or-refuse: a non-const/unbounded bound bails.
+#[test]
+fn for_flat_map_range_body_lifts() {
+    let src = r#"
+        #[test]
+        fn t_flat_map_range() {
+            let expected = [0, 0, 1, 0, 1, 2];
+            let mut i = 0;
+            for &x in [1, 2, 3].iter().flat_map(|&n| 0..n) {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/flat_map_range.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "`.flat_map(|&n| 0..n)` must unroll: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flat_map_range") {
+        assert!(sat, "[1,2,3].flat_map(|&n| 0..n) == [0,0,1,0,1,2] == expected -- SAT");
+    }
+}
+
+// GAP (b) TEETH: a WRONG expected over the range-flat_mapped domain must refute.
+#[test]
+fn for_flat_map_range_body_wrong_expected_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_flat_map_range_bad() {
+            let expected = [0, 0, 1, 0, 1, 99];
+            let mut i = 0;
+            for &x in [1, 2, 3].iter().flat_map(|&n| 0..n) {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/flat_map_range_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flat_map_range_bad") {
+        assert!(!sat, "x=2 != expected[5]=99 over the range-flat_mapped domain -- must be UNSAT");
+    }
+}
+
 #[test]
 fn compute_float32_wrapper_lowers_scaled_literals_to_tuple_axioms() {
     let src = r#"
