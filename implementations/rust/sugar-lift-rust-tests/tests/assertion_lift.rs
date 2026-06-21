@@ -15125,6 +15125,91 @@ fn wrapping_int_api() {
     );
 }
 
+// `wrapping_{add,sub,mul}` over grounded literals at a KNOWN width. The opaque
+// `method:wrapping_*` EUF collapsed every width to ONE term (one `wrapping_sub(0,1)`
+// aliased across u8..usize -> asserted ==255 ∧ ==65535 ∧ … -> contradiction -> the
+// num/wrapping.rs false refutation). The width-aware fold lowers each row's EXACT
+// literal so each discharges on its own value.
+#[test]
+fn wrapping_add_sub_mul_over_literals_lift_as_primitive_axioms() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(u8::MIN.wrapping_sub(1), u8::MAX);
+    assert_eq!(u16::MIN.wrapping_sub(1), u16::MAX);
+    assert_eq!(u32::MIN.wrapping_sub(1), u32::MAX);
+    assert_eq!(u64::MIN.wrapping_sub(1), u64::MAX);
+    assert_eq!(usize::MIN.wrapping_sub(1), usize::MAX);
+    assert_eq!(i8::MAX.wrapping_add(1), i8::MIN);
+    assert_eq!(u8::MAX.wrapping_add(1), u8::MIN);
+    assert_eq!((0xfe_u8 as i8).wrapping_mul(16), (0xe0_u8 as i8));
+    assert_eq!((0xfe as u8).wrapping_mul(16), (0xe0 as u8));
+}
+"#;
+    let out = lift_file(&parse(src), "coretests/tests/num/wrapping.rs");
+    assert_eq!(
+        out.assertions_refused, 0,
+        "no wrapping row should refuse: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.assertions_lifted >= 9,
+        "all 9 wrapping rows should lift; lifted={} skips={:?}",
+        out.assertions_lifted,
+        out.skip_reasons
+    );
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        !doc.contains("method:wrapping_add")
+            && !doc.contains("method:wrapping_sub")
+            && !doc.contains("method:wrapping_mul"),
+        "wrapping_{{add,sub,mul}} must lower to primitive literal axioms, not opaque method EUFs: {doc}"
+    );
+}
+
+// TEETH: the width-aware wrapping fold must carry the right value AND distinguish widths.
+#[test]
+fn wrapping_int_arith_has_teeth() {
+    let Some(u8sub) = format_eq_verdict("u8::MIN.wrapping_sub(1)", "u8::MAX", "wrap_u8") else {
+        return; // z3 absent
+    };
+    assert!(u8sub, "u8::MIN.wrapping_sub(1) == u8::MAX (255) must be SAT");
+    let bad = format_eq_verdict("u8::MIN.wrapping_sub(1)", "254", "wrap_u8_bad").unwrap();
+    assert!(!bad, "the u8 wrap is 255, not 254 -> z3-UNSAT (teeth)");
+    let u16ok = format_eq_verdict("u16::MIN.wrapping_sub(1)", "u16::MAX", "wrap_u16").unwrap();
+    assert!(u16ok, "u16::MIN.wrapping_sub(1) == u16::MAX (65535) must be SAT");
+    let u16_not_u8 = format_eq_verdict("u16::MIN.wrapping_sub(1)", "255", "wrap_u16_not_u8").unwrap();
+    assert!(
+        !u16_not_u8,
+        "u16 wrap is 65535, NOT the aliased u8 value 255 -> z3-UNSAT (width has teeth)"
+    );
+    let i8add = format_eq_verdict("i8::MAX.wrapping_add(1)", "i8::MIN", "wrap_i8").unwrap();
+    assert!(i8add, "i8::MAX.wrapping_add(1) == i8::MIN (-128) must be SAT");
+    let i8bad = format_eq_verdict("i8::MAX.wrapping_add(1)", "128", "wrap_i8_bad").unwrap();
+    assert!(!i8bad, "wraps to -128, not 128 -> z3-UNSAT (teeth)");
+    let mul =
+        format_eq_verdict("(0xfe_u8 as i8).wrapping_mul(16)", "(0xe0_u8 as i8)", "wrap_mul").unwrap();
+    assert!(
+        mul,
+        "(0xfe_u8 as i8).wrapping_mul(16) == (0xe0_u8 as i8) (-32) must be SAT"
+    );
+}
+
+// EXACT-OR-NONE: an UNKNOWN-width receiver has no defined wrap point, so the fold
+// declines and the term stays opaque -- never a guessed default-width wrap.
+#[test]
+fn wrapping_unknown_width_does_not_guess() {
+    let Some(v) = format_eq_verdict("(5).wrapping_add(3)", "999", "wrap_unknown") else {
+        return; // z3 absent
+    };
+    assert!(
+        v,
+        "unknown-width wrapping stays opaque -> a wrong value is NOT refuted (no guessed wrap)"
+    );
+    let known = format_eq_verdict("5i32.wrapping_add(3)", "8", "wrap_known").unwrap();
+    assert!(known, "5i32.wrapping_add(3) == 8 (known width) must be SAT");
+}
+
 #[test]
 fn nonzero_char_new_lowers_option_predicates() {
     let src = r#"
