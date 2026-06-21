@@ -70,9 +70,10 @@ use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::method;
 use crate::sugar::method_family;
 use crate::sugar::monadic;
+use crate::sugar::term_leaf::reasoned_hit;
 use crate::{
     closure_single_param_ident, const_eval_unary_closure, const_fold_acc_update, const_fold_int_term,
-    parse_int_lit, strip_refs_groups, ConstVal, Desugared, Outcome, Sugar, SugarCtx,
+    parse_int_lit, simple_path_name, strip_refs_groups, ConstVal, Desugared, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -147,6 +148,19 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         return None;
     };
     let terminal = recognize_terminal(call, fcx)?;
+    // REFUSE `.count()` on a consumed-iterator local: the lifter's `.count()` resolves
+    // to the static sequence length (equivalent to `.len()`), which is the pre-consumption
+    // value -- stale if the iterator has been advanced. See `collect_consumed_iterator_locals`.
+    if matches!(terminal, Terminal::Count) {
+        if let Some(name) = simple_path_name(&call.receiver) {
+            if fcx.scope().is_consumed_iterator_local(&name) {
+                return Some(reasoned_hit(format!(
+                    "consumed-iterator local `{name}` -- \
+                     `.count()` returns stale pre-consumption length (temporal instability)"
+                )));
+            }
+        }
+    }
     // Try scan as inner receiver FIRST: `.scan(init, closure)` cannot go through
     // `peel_fold_adaptors` (scan is stateful and not in that chain), so we handle it
     // as a pre-pass that peels scan's OWN receiver via `build_literal_sequence_composite`

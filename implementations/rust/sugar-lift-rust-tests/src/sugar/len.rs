@@ -11,7 +11,8 @@ use tracing::debug;
 
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::method_family;
-use crate::{Desugared, Outcome, Sugar, SugarCtx};
+use crate::sugar::term_leaf::reasoned_hit;
+use crate::{simple_path_name, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("len", recognize);
@@ -22,6 +23,18 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     };
     if call.method != "len" || !call.args.is_empty() {
         return None;
+    }
+    // REFUSE: a mut-iterator local consumed by .next()/.by_ref()/etc. has a stale
+    // internal position -- the static length the lifter computes is the PRE-consumption
+    // value, which refutes true post-consumption assertions (e.g. `it.len() == 0` after
+    // exhausting a while-let loop). See `collect_consumed_iterator_locals`.
+    if let Some(name) = simple_path_name(&call.receiver) {
+        if fcx.scope().is_consumed_iterator_local(&name) {
+            return Some(reasoned_hit(format!(
+                "consumed-iterator local `{name}` -- \
+                 `.len()` returns stale pre-consumption length (temporal instability)"
+            )));
+        }
     }
     let len = method_family::literal_sequence_static_len_in_scope(
         &call.receiver,
