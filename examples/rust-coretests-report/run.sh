@@ -35,16 +35,32 @@ mfin="$CORPUS/.sugar/lift/rust-test-assertions/manifest.toml.in"
 mf="$CORPUS/.sugar/lift/rust-test-assertions/manifest.toml"
 sed "s#@BIN_DIR@#$BIN_DIR#g" "$mfin" > "$mf"
 
-OUT="$HERE/coretests-report.json"
+OUT="$HERE/coretests-report.out"
+ERR="$HERE/coretests-report.err"
 echo "== lift --report over $(fd -e rs . "$CORPUS/tests" 2>/dev/null | wc -l | tr -d ' ') coretests files =="
-( cd "$CORPUS" && "$SUGAR" lift --report --json ) > "$OUT" 2>"$HERE/coretests-report.err" || true
+# ONE lift (not two): stdout carries the human ledger, stderr carries the factory
+# disposition trace we tally below into the target list.
+( cd "$CORPUS" && "$SUGAR" lift --report ) > "$OUT" 2>"$ERR" || true
 
-echo "== honest source ledger =="
-# Print the headline accounting lines the human report emits.
-( cd "$CORPUS" && "$SUGAR" lift --report 2>/dev/null ) \
-  | grep -E "source audit:|assertion surface accounting:" || {
-    echo "(no headline accounting emitted; see $HERE/coretests-report.err)"; exit 1;
-  }
 echo
-echo "full JSON ledger: $OUT"
-echo "NOTE: 'unresolved' is the honest dark (no sugar yet). 'support' is inert source ONLY."
+echo "== honest source ledger =="
+grep -E "source audit:|assertion surface accounting:" "$OUT" || {
+  echo "(no headline accounting emitted — likely a lift error/panic; see $ERR)"; tail -3 "$ERR"; exit 1;
+}
+
+echo
+echo "== missing-sugar target list (unresolved, by the sugar that hit its backstop) =="
+echo "   'no sugar yet' for these shapes -- the honest dark to drive to zero. Top 20:"
+rg -o 'selected="[^"]+" disposition="unresolved"' "$ERR" 2>/dev/null \
+  | sed -E 's/selected="([^"]+)".*/\1/' | sort | uniq -c | sort -rn | head -20 \
+  | sed 's/^/     /' || echo "     (none)"
+
+echo
+echo "== deliberate refusals (NOT targets -- sound effects/vacuity/mut-ref guards) =="
+rg -o 'selected="[^"]+" disposition="refused"' "$ERR" 2>/dev/null \
+  | sed -E 's/selected="([^"]+)".*/\1/' | sort | uniq -c | sort -rn | head -10 \
+  | sed 's/^/     /' || echo "     (none)"
+
+echo
+echo "stdout ledger: $OUT   |   disposition trace: $ERR"
+echo "NOTE: 'unresolved' is the honest dark (no sugar yet). 'support' is inert source ONLY (kit-marked)."
