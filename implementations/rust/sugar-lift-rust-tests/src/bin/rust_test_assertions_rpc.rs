@@ -280,10 +280,10 @@ fn lift(params: &Value) -> Value {
             } else {
                 // NON-TEST body: ONE decision point (`classify_nontest_fn`) so the law
                 // "`refused` is impossible" is enforced and tested in one place. The walk
-                // never DECLINES: a body is `support` (inlined universe member),
-                // `warranted` (constrains -> decl flows into the IR), or falls through to
-                // the honest "we don't have a Sugar for that yet" -- never a `refused`
-                // verdict it didn't earn.
+                // never DECLINES: a body is `warranted` (contract emitted or auxiliary
+                // executable context inlined into a universe) or falls through to the
+                // honest "we don't have a Sugar for that yet" -- never a `refused`
+                // verdict it didn't earn, and never `support` unless it is inert.
                 let (s, r, entry) = classify_nontest_fn(
                     &name,
                     fr.sig,
@@ -808,9 +808,9 @@ fn fn_has_test_attr(attrs: &[syn::Attribute]) -> bool {
 
 /// Classify a NON-test fn body into its source-ledger status -- the SINGLE decision
 /// point, so the design law "`refused` is impossible" lives (and is tested) in ONE
-/// place. A body is `support` (the reducer inlined it as a universe member),
-/// `warranted` (it constrains -> the returned decl flows into the IR), or it falls
-/// through to the honest "we don't have a Sugar for that yet". Returns
+/// place. A body is `warranted` when it constrains, either as an emitted contract or
+/// as auxiliary executable context the reducer inlined into another universe, or it
+/// falls through to the honest "we don't have a Sugar for that yet". Returns
 /// `(status, reason, decl)`; the caller pushes `decl` into the IR document.
 fn classify_nontest_fn(
     name: &str,
@@ -824,11 +824,16 @@ fn classify_nontest_fn(
         // A non-test fn the reducer INLINED to discharge a test (a bare-statement R7
         // inline, an arg-position inline, OR -- capability #1 -- a TERM-POSITION
         // value-call peel that grounded `h(2)` to `+(2,1)`). It backs a warrant as a
-        // UNIVERSE member, so it is `support`. CHECKED BEFORE `broad_functional_warrant`
-        // (which returns Some for ANY value-returning body): a fully-inlined value
-        // helper must NOT also be minted as its OWN standalone `out=call:h` contract --
-        // that re-introduces the opaque `call:h` symbol the peel just killed.
-        return ("support", None, None);
+        // UNIVERSE member, so it is warranted auxiliary accounting. CHECKED BEFORE
+        // `broad_functional_warrant` (which returns Some for ANY value-returning
+        // body): a fully-inlined value helper must NOT also be minted as its OWN
+        // standalone `out=call:h` contract -- that re-introduces the opaque `call:h`
+        // symbol the peel just killed.
+        return (
+            "warranted",
+            Some("auxiliary executable helper inlined into a resolved universe".to_string()),
+            None,
+        );
     }
     if let Some(decl) = sugar_lift_rust_tests::broad_functional_warrant(name, sig, block) {
         // We THINK it constrains -> WARRANT it, broadly. The decl flows into the IR;
@@ -838,9 +843,14 @@ fn classify_nontest_fn(
     }
     if reduced {
         // A consumed method with no output has no contract to emit, but it was still
-        // part of the resolved universe. Keep that support-only. Value-returning
+        // part of the resolved universe. Keep that as auxiliary warranted source
+        // accounting. Value-returning
         // methods take the branch above and own their semantics as contracts.
-        return ("support", None, None);
+        return (
+            "warranted",
+            Some("auxiliary executable method consumed by a resolved universe".to_string()),
+            None,
+        );
     }
     // NO WARRANT, NO INLINE -- and we do NOT SCAN. Declining is the sin, and a
     // syntactic scan for effects is the same sin in disguise: it can't tell
@@ -1554,7 +1564,7 @@ fn factory_audits_json(file: &str, audits: &[FactoryAudit]) -> Vec<Value> {
     audits
         .iter()
         .map(|audit| {
-            json!({
+            let mut row = json!({
                 "file": file,
                 "ast_kind": audit.ast_kind,
                 "site": audit.site,
@@ -1572,7 +1582,11 @@ fn factory_audits_json(file: &str, audits: &[FactoryAudit]) -> Vec<Value> {
                 "status": audit.disposition.as_str(),
                 "output": audit.output,
                 "reason": audit.reason,
-            })
+            });
+            if audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Support {
+                row["supportKind"] = json!("inert");
+            }
+            row
         })
         .collect()
 }
@@ -2021,6 +2035,50 @@ mod tests {
             status, "unresolved",
             "an un-warrantable body falls through to 'no Sugar yet' (reason: {reason:?})"
         );
+    }
+
+    #[test]
+    fn reduced_helper_body_is_warranted_auxiliary_not_support() {
+        let f: syn::ItemFn = syn::parse_str("fn h(x: i32) -> i32 { x + 1 }").expect("fn parses");
+        let source_memento = json!({});
+        let (status, reason, decl) =
+            classify_nontest_fn("h", &f.sig, &f.block, true, &source_memento);
+
+        assert!(
+            decl.is_none(),
+            "an inlined helper mints no standalone contract"
+        );
+        assert_eq!(
+            status, "warranted",
+            "inlined executable helper context is warranted auxiliary accounting, not support"
+        );
+        assert!(
+            reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("auxiliary")),
+            "auxiliary reason should explain the non-contract warrant: {reason:?}"
+        );
+    }
+
+    #[test]
+    fn factory_support_audits_carry_inert_support_kind() {
+        let rows = factory_audits_json(
+            "src/lib.rs",
+            &[FactoryAudit {
+                ast_kind: "expr",
+                site: "{}".to_string(),
+                line: 1,
+                requested_role: "Composite".to_string(),
+                selected: Some("empty_sequence"),
+                candidates: Vec::new(),
+                disposition: sugar_lift_rust_tests::FactoryDisposition::Support,
+                output: "empty-sequence",
+                reason: Some("empty sequence is inert support".to_string()),
+            }],
+        );
+
+        assert_eq!(rows[0]["status"], "support");
+        assert_eq!(rows[0]["supportKind"], "inert", "{rows:?}");
     }
 
     #[test]
