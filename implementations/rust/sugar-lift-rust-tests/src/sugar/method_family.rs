@@ -21,7 +21,9 @@ pub(crate) fn is_literal_sequence_base(expr: &Expr) -> bool {
         // (`[x; SIZE]`) are not finite-by-construction HERE (ctx-free) -- the scope-aware
         // `is_literal_sequence_base_in_scope` resolves a const-bound count.
         Expr::Repeat(repeat) => crate::repeat_count_literal(&repeat.len).is_some(),
-        _ => false,
+        // Finite-collection constructors over written literals (`vec![a, b, c]`,
+        // `Vec::from([a, b, c])`) construct exactly an array literal -- classified the same.
+        other => crate::sugar::collection_literal::collection_literal_array(other).is_some(),
     }
 }
 
@@ -37,7 +39,9 @@ pub(crate) fn is_literal_sequence_base_in_scope(expr: &Expr, scope: &TemporalSco
     match strip_refs_groups(expr) {
         Expr::Array(_) | Expr::Range(_) => true,
         Expr::Repeat(repeat) => crate::repeat_count_in_scope(&repeat.len, scope).is_some(),
-        _ => false,
+        // Finite-collection constructors (`vec![..]`, `Vec::from([..])`) -- same as the
+        // ctx-free classifier; recognition is purely syntactic, no scope needed.
+        other => crate::sugar::collection_literal::collection_literal_array(other).is_some(),
     }
 }
 
@@ -119,7 +123,9 @@ fn literal_sequence_static_len_inner<'a>(
             literal_sequence_static_len_inner(init, let_inits, scope, depth + 1)
         }
         Expr::MethodCall(call) if call.args.is_empty() => match call.method.to_string().as_str() {
-            "iter" | "into_iter" | "cloned" | "copied" | "fuse" | "rev" | "enumerate" => {
+            // Value-identity adaptors over the element sequence: same length as the receiver.
+            "iter" | "into_iter" | "cloned" | "copied" | "fuse" | "rev" | "enumerate"
+            | "to_vec" | "as_slice" | "to_owned" | "into_vec" => {
                 literal_sequence_static_len_inner(&call.receiver, let_inits, scope, depth + 1)
             }
             _ => None,
@@ -134,7 +140,14 @@ fn literal_sequence_static_len_inner<'a>(
                 _ => None,
             }
         }
-        _ => None,
+        // `vec![..]` / `Vec::from([..])` construct an array literal -- its element count.
+        other => match crate::sugar::collection_literal::collection_literal_array(other) {
+            Some(array) => match strip_refs_groups(&array) {
+                Expr::Array(arr) => Some(arr.elems.len()),
+                _ => None,
+            },
+            None => None,
+        },
     }
 }
 

@@ -56,6 +56,7 @@ pub mod sugar {
     pub mod closure_term;
     pub mod closure_tls_accessor;
     pub mod collect;
+    pub mod collection_literal;
     pub mod compare;
     pub mod compute_float;
     pub mod concat_macro;
@@ -5248,9 +5249,17 @@ fn peel_fold_adaptors_inner<'a>(
             Expr::MethodCall(m) => {
                 let name = m.method.to_string();
                 let ad: AdaptorWrap = match (name.as_str(), m.args.len()) {
-                    ("iter" | "into_iter" | "cloned" | "copied" | "fuse" | "peekable", 0) => {
-                        Box::new(|inner| Box::new(sugar::identity::IdentitySugar { inner }))
-                    }
+                    // Value-identity adaptors over the element sequence: `.iter()`/`.cloned()`
+                    // and the finite-collection conversions `.to_vec()`/`.as_slice()`/
+                    // `.to_owned()`/`.into_vec()` yield the SAME elements in the SAME order, so
+                    // over a literal base they peel to the identity. (Soundness is gated by the
+                    // base check: a chain that does not bottom out at a literal sequence is
+                    // declined by the caller, so a non-sequence `.to_owned()` never grounds.)
+                    (
+                        "iter" | "into_iter" | "cloned" | "copied" | "fuse" | "peekable"
+                        | "to_vec" | "as_slice" | "to_owned" | "into_vec",
+                        0,
+                    ) => Box::new(|inner| Box::new(sugar::identity::IdentitySugar { inner })),
                     ("rev", 0) => Box::new(wrap_rev),
                     // `.inspect(f)` yields the SAME items in the SAME order -- the closure
                     // receives `&Item` and CANNOT alter the value stream (its side effect is
