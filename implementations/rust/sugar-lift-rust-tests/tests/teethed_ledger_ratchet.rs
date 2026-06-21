@@ -6,9 +6,11 @@
 //! dragons" from hand-tracking into a test that goes RED the moment a PR regresses.
 //!
 //! COVERAGE axis (`sugar lift --report` — the honest dark):
-//!   * `unresolved <= UNRESOLVED_CEIL`  — "no sugar yet"; drive to 0.
-//!   * `support    == SUPPORT_EXACT`    — inert support is never a hiding place.
-//!   * `no_facts   <= NO_FACTS_CEIL`    — assertion sources that lifted nothing.
+//!   * `unresolved          <= UNRESOLVED_CEIL`         — "no sugar yet"; drive to 0.
+//!   * `support             == SUPPORT_EXACT`           — inert support is never a hiding place.
+//!   * `no_facts            <= NO_FACTS_CEIL`           — assertion sources that lifted nothing.
+//!   * `assertions_lifted   >= ASSERTIONS_LIFTED_FLOOR` — pre-dedup fact counter; a drop means
+//!       silent non-creation (entries.is_empty()), not benign content-address dedup.
 //! DISCHARGE axis (`discharge_sweep` — the teeth):
 //!   * `discharged       >= DISCHARGED_FLOOR`        — proven obligations only grow.
 //!   * `value_discharged >= VALUE_DISCHARGED_FLOOR`  — panic-filtered value teeth.
@@ -34,17 +36,21 @@ use std::path::PathBuf;
 // facts — passing corpus/tests/ bypasses config.toml and produces wrong numbers (127,
 // not 161).  The test below already passes &corpus (= corpus/) — this comment documents
 // the invariant so it is never accidentally changed to corpus.join("tests").
-const DISCHARGED_FLOOR: u64 = 161; // proven (teeth, full inv) — must not regress
-const VALUE_DISCHARGED_FLOOR: u64 = 154; // proven VALUE-claim (panic-filtered) — must not regress
+const DISCHARGED_FLOOR: u64 = 168; // proven (teeth, full inv) — must not regress
+const VALUE_DISCHARGED_FLOOR: u64 = 161; // proven VALUE-claim (panic-filtered) — must not regress
 const REFUTED_CEIL: u64 = 20; // false refutations (all-true corpus) — drive to 0
 const REFUTED_OTHER_CEIL: u64 = 12; // NON-T3 false refutations (fixable now) — drive to 0
-const UNDECIDED_CEIL: u64 = 4747; // congruence-only / no teeth — drive down
+const UNDECIDED_CEIL: u64 = 3201; // congruence-only / no teeth — drive down
 // COVERAGE axis (from `sugar lift --report`): the R-vector — the honest dark.
 // unresolved=333: accounting-correction baseline (correct-path sweep; prior 331 was
 // measured against an older binary before #2353-#2370 warrants; target is still 0).
 const UNRESOLVED_CEIL: u64 = 333; // "no sugar yet" (the visible dark) — drive to 0
 const NO_FACTS_CEIL: u64 = 72; // assertion sources that lifted no fact at all — drive to 0
 const SUPPORT_EXACT: u64 = 0; // inert support is NOT a hiding place for dark — must stay 0
+// ASSERTIONS_LIFTED_FLOOR: pre-dedup `facts` counter from `sugar lift --report`.
+// Distinguishes benign content-address dedup (facts flat) from silent non-creation
+// (facts drops). Measured on main at d68288978 (post-#2371 arith fold merge).
+const ASSERTIONS_LIFTED_FLOOR: u64 = 10945; // pre-dedup assertion surface — must not drop
 
 fn rust_dir() -> PathBuf {
     // CARGO_MANIFEST_DIR = <repo>/implementations/rust/sugar-lift-rust-tests
@@ -85,9 +91,12 @@ fn field(line: &str, key: &str) -> Option<u64> {
 }
 
 /// Run `sugar lift --report` over the corpus and parse the COVERAGE R-vector:
-/// (unresolved, source-audit support, no_facts). Renders the manifest first
+/// (unresolved, source-audit support, no_facts, facts). Renders the manifest first
 /// (same as run.sh). None if the binary is missing or the headline didn't emit.
-fn coverage_rvector(rust: &std::path::Path, corpus: &std::path::Path) -> Option<(u64, u64, u64)> {
+/// `facts` is the pre-dedup assertion counter from the "assertion surface accounting:"
+/// line — the decisive metric distinguishing benign content-address dedup from silent
+/// assertion non-creation.
+fn coverage_rvector(rust: &std::path::Path, corpus: &std::path::Path) -> Option<(u64, u64, u64, u64)> {
     let sugar = rust.join("target/release/sugar");
     let rpc = rust.join("target/release/rust_test_assertions_rpc");
     if !sugar.exists() || !rpc.exists() {
@@ -117,7 +126,8 @@ fn coverage_rvector(rust: &std::path::Path, corpus: &std::path::Path) -> Option<
     let unresolved = field(audit, "unresolved")?;
     let support = field(audit, "support")?;
     let no_facts = surface.and_then(|l| field(l, "no_facts")).unwrap_or(0);
-    Some((unresolved, support, no_facts))
+    let facts = surface.and_then(|l| field(l, "facts")).unwrap_or(0);
+    Some((unresolved, support, no_facts, facts))
 }
 
 #[test]
@@ -194,14 +204,14 @@ fn teethed_ledger_does_not_regress() {
     );
 
     // COVERAGE axis: the R-vector from `sugar lift --report`. One complete gate.
-    let Some((cov_unresolved, cov_support, cov_no_facts)) = coverage_rvector(&rust, &corpus) else {
+    let Some((cov_unresolved, cov_support, cov_no_facts, cov_facts)) = coverage_rvector(&rust, &corpus) else {
         eprintln!(
             "coverage R-vector SKIPPED (sugar/rpc binary absent or no headline) -- discharge axis asserted above"
         );
         return;
     };
     eprintln!(
-        "coverage R-vector: unresolved={cov_unresolved} support={cov_support} no_facts={cov_no_facts}"
+        "coverage R-vector: unresolved={cov_unresolved} support={cov_support} no_facts={cov_no_facts} facts={cov_facts}"
     );
     assert!(
         cov_unresolved <= UNRESOLVED_CEIL,
@@ -218,10 +228,17 @@ fn teethed_ledger_does_not_regress() {
         "RATCHET REGRESSION: no_facts {cov_no_facts} > ceil {NO_FACTS_CEIL} (assertion sources that lifted \
          no fact at all grew -- a silent drop)."
     );
-    if cov_unresolved < UNRESOLVED_CEIL || cov_no_facts < NO_FACTS_CEIL {
+    assert!(
+        cov_facts >= ASSERTIONS_LIFTED_FLOOR,
+        "RATCHET REGRESSION: assertions_lifted (facts) {cov_facts} < floor {ASSERTIONS_LIFTED_FLOOR} \
+         (pre-dedup assertion surface dropped — silent non-creation, not benign dedup). \
+         If dedup is the cause, facts stays flat; a real drop means entries.is_empty() fired incorrectly."
+    );
+    if cov_unresolved < UNRESOLVED_CEIL || cov_no_facts < NO_FACTS_CEIL || cov_facts > ASSERTIONS_LIFTED_FLOOR {
         eprintln!(
             "RATCHET IMPROVED (coverage) -- tighten in this PR: \
-             UNRESOLVED_CEIL {UNRESOLVED_CEIL}->{cov_unresolved}, NO_FACTS_CEIL {NO_FACTS_CEIL}->{cov_no_facts}"
+             UNRESOLVED_CEIL {UNRESOLVED_CEIL}->{cov_unresolved}, NO_FACTS_CEIL {NO_FACTS_CEIL}->{cov_no_facts}, \
+             ASSERTIONS_LIFTED_FLOOR {ASSERTIONS_LIFTED_FLOOR}->{cov_facts}"
         );
     }
 
