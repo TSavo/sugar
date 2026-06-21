@@ -17597,6 +17597,29 @@ fn shared_borrow_deref_read_wrong_value_is_unsat() {
     }
 }
 
+// ─── NonZero::new(<literal>) — teeth probe ───────────────────────────────────
+
+/// THE TEETH (bad twin first): `NonZeroU32::new(5).unwrap().get() == 6`
+/// should reduce to `5 == 6` → z3-UNSAT.
+#[test]
+fn nonzero_new_literal_unwrap_get_bad_twin_is_z3_unsat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(NonZeroU32::new(5).unwrap().get(), 6u32);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/nonzero_new_bad.rs");
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    if let Some(sat) = z3_verdict(&inv_json(decl), "nonzero_new_get_bad") {
+        assert!(
+            !sat,
+            "NonZeroU32::new(5).unwrap().get() == 6 must be z3-UNSAT (teeth bite the bad twin)"
+        );
+    }
+}
+
 // `*&place` cancels: deref of a shared borrow of a literal index warrants the element.
 #[test]
 fn deref_of_shared_borrow_of_index_warrants_pointee() {
@@ -17657,4 +17680,92 @@ fn mut_borrow_deref_after_mutation_is_not_falsely_discharged() {
         "the mutation `*r += 1` must remain refused: {:?}",
         out.skip_reasons
     );
+}
+
+/// Good twin: `NonZeroU32::new(5).unwrap().get() == 5` → SAT.
+#[test]
+fn nonzero_new_literal_unwrap_get_good_twin_is_sat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(NonZeroU32::new(5).unwrap().get(), 5u32);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/nonzero_new_good.rs");
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    if let Some(sat) = z3_verdict(&inv_json(decl), "nonzero_new_get_good") {
+        assert!(
+            sat,
+            "NonZeroU32::new(5).unwrap().get() == 5 must be SAT (transparent literal)"
+        );
+    }
+}
+
+/// `NonZeroU32::new(0)` is `None` — bad twin: `.is_some()` must be UNSAT.
+#[test]
+fn nonzero_new_zero_is_none_bad_twin_is_z3_unsat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert!(NonZeroU32::new(0u32).is_some());
+}
+"#;
+    let out = lift_file(&parse(src), "tests/nonzero_new_zero_none_bad.rs");
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    if let Some(sat) = z3_verdict(&inv_json(decl), "nonzero_new_zero_is_some_bad") {
+        assert!(
+            !sat,
+            "NonZeroU32::new(0).is_some() must be z3-UNSAT (zero → None, not Some)"
+        );
+    }
+}
+
+/// `NonZeroU32::new(0).is_none()` → SAT (good twin).
+#[test]
+fn nonzero_new_zero_is_none_good_twin_is_sat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert!(NonZeroU32::new(0u32).is_none());
+}
+"#;
+    let out = lift_file(&parse(src), "tests/nonzero_new_zero_none_good.rs");
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    if let Some(sat) = z3_verdict(&inv_json(decl), "nonzero_new_zero_is_none_good") {
+        assert!(
+            sat,
+            "NonZeroU32::new(0).is_none() must be SAT (zero → None)"
+        );
+    }
+}
+
+/// FINITE-OR-REFUSE: `NonZeroU32::new(runtime_val)` must NOT get teeth.
+/// The arg `opaque_fn()` has no source body — it is an unresolvable call.
+/// The assertion must be refused (0 decls) or remain SAT for any wrong RHS.
+/// This mirrors the corpus pattern `NonZero::new(100 - (v.len() - 1 - i))`
+/// which is the actual shape behind the 16 dark corpus cases.
+#[test]
+fn nonzero_new_runtime_arg_stays_refused_no_teeth() {
+    let src = r#"
+#[test]
+fn t() {
+    // opaque_fn() has no body — genuinely unresolvable at lift time
+    assert_eq!(NonZeroU32::new(opaque_fn()).unwrap().get(), 99u32);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/nonzero_new_runtime.rs");
+    // Runtime arg must produce 0 warranted claims (refused/backstopped) OR
+    // all claims must be SAT (opaque EUF — no discrimination, no false teeth).
+    for decl in &out.decls {
+        if let Some(sat) = z3_verdict(&inv_json(decl), "nonzero_new_runtime_no_teeth") {
+            assert!(
+                sat,
+                "NonZeroU32::new(opaque).unwrap().get() == 99 must be SAT (no teeth): {:?}",
+                decl
+            );
+        }
+    }
 }
