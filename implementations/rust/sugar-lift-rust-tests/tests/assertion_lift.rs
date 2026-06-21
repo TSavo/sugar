@@ -14444,6 +14444,70 @@ fn format_concat_and_to_string_have_teeth() {
 }
 
 #[test]
+fn str_case_conversion_methods_have_teeth() {
+    // `<str literal>.to_ascii_uppercase()` / `.to_ascii_lowercase()` / ASCII-gated
+    // `.to_uppercase()`/`.to_lowercase()` dissolve to the real str_const (recompute-
+    // don't-trust), so the wrong-value twin is z3-UNSAT -- real string-theory teeth, not
+    // the tautology an opaque `method:` var would satisfy.
+    if let Some(good) =
+        format_eq_verdict(r#""abc".to_ascii_uppercase()"#, r#""ABC""#, "ascii_up_good")
+    {
+        assert!(good, "abc.to_ascii_uppercase() == ABC must be SAT");
+        let bad =
+            format_eq_verdict(r#""abc".to_ascii_uppercase()"#, r#""ABD""#, "ascii_up_bad").unwrap();
+        assert!(!bad, "wrong uppercase string must be z3-UNSAT (teeth)");
+        let lo = format_eq_verdict(r#""ABC".to_ascii_lowercase()"#, r#""abc""#, "ascii_lo_good")
+            .unwrap();
+        assert!(lo, "ABC.to_ascii_lowercase() == abc must be SAT");
+        let lobad =
+            format_eq_verdict(r#""ABC".to_ascii_lowercase()"#, r#""abd""#, "ascii_lo_bad").unwrap();
+        assert!(!lobad, "wrong lowercase string must be z3-UNSAT (teeth)");
+        // ASCII-gated Unicode case maps equal the byte-wise mapping (version-independent).
+        let up = format_eq_verdict(r#""abc".to_uppercase()"#, r#""ABC""#, "uni_up_good").unwrap();
+        assert!(up, "ASCII-receiver to_uppercase == ABC must be SAT");
+    }
+}
+
+#[test]
+fn str_replace_trim_methods_have_teeth() {
+    if let Some(good) =
+        format_eq_verdict(r#""a.b.c".replace('.', "/")"#, r#""a/b/c""#, "replace_good")
+    {
+        assert!(good, "replace dissolves -> SAT");
+        let bad =
+            format_eq_verdict(r#""a.b.c".replace('.', "/")"#, r#""a-b-c""#, "replace_bad").unwrap();
+        assert!(!bad, "wrong replace string must be z3-UNSAT (teeth)");
+        let tr = format_eq_verdict(r#""  hi  ".trim()"#, r#""hi""#, "trim_good").unwrap();
+        assert!(tr, "trim dissolves -> SAT");
+        let trbad = format_eq_verdict(r#""  hi  ".trim()"#, r#""hi ""#, "trim_bad").unwrap();
+        assert!(!trbad, "wrong trim string must be z3-UNSAT (teeth)");
+        let rp = format_eq_verdict(r#""ab".repeat(3)"#, r#""ababab""#, "repeat_good").unwrap();
+        assert!(rp, "repeat dissolves -> SAT");
+        let rpbad = format_eq_verdict(r#""ab".repeat(3)"#, r#""abab""#, "repeat_bad").unwrap();
+        assert!(!rpbad, "wrong repeat string must be z3-UNSAT (teeth)");
+    }
+}
+
+#[test]
+fn str_method_non_ascii_unicode_case_stays_opaque_no_false_warrant() {
+    // DISCRIMINATION (no false warrant): `.to_uppercase()` over a NON-ASCII receiver is
+    // not byte-wise text-determined here (a Unicode-table dependency we refuse to guess),
+    // so str_method DECLINES and the LHS stays an opaque `method:` term -- never a forged
+    // version-dependent value. (The byte-wise `to_ascii_*` recompute over the same
+    // non-ASCII input IS proven exact by the str_method resolver unit tests.)
+    let out = lift_file(
+        &parse("#[test]\nfn t() { assert_eq!(\"\u{00df}\u{00fc}rl\".to_uppercase(), \"x\"); }\n"),
+        "tests/str_teeth.rs",
+    );
+    let warranted: Vec<_> = warranted_decls(&out).into_iter().cloned().collect();
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&warranted);
+    assert!(
+        doc.contains("method:"),
+        "a non-ASCII to_uppercase stays opaque (not a forged literal): {doc}"
+    );
+}
+
+#[test]
 fn format_runtime_arg_does_not_overfire() {
     // DISCRIMINATION (fake-dig guard): a `format!` over a RUNTIME arg must NOT dissolve
     // to a str_const (it has no written-literal value). It falls through to the opaque
