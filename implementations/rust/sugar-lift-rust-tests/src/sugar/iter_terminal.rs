@@ -70,7 +70,6 @@ use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::method;
 use crate::sugar::method_family;
 use crate::sugar::monadic;
-use crate::sugar::term_leaf::reasoned_hit;
 use crate::{
     closure_single_param_ident, const_eval_unary_closure, const_fold_acc_update, const_fold_int_term,
     parse_int_lit, simple_path_name, strip_refs_groups, ConstVal, Desugared, Outcome, Sugar, SugarCtx,
@@ -162,11 +161,14 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     // product, any, all, find, position, advance_by, reduce …), not just `.count()`.
     if let Some(name) = simple_path_name(&call.receiver) {
         if fcx.scope().is_consumed_iterator_local(&name) {
-            return Some(reasoned_hit(format!(
-                "consumed-iterator local `{name}` -- \
-                 `.{}()` reads stale pre-consumption iterator position (temporal instability)",
-                call.method
-            )));
+            // Opaque-EUF disposition: UNDECIDED (honest dark), never refused.
+            // refuse ⟺ IO: a consumed-iterator position read is deterministic,
+            // not IO, so it must not be refused. Returning the opaque method term
+            // keeps the obligation warranted; reflexive pairs (same symbol on both
+            // sides, e.g. `assert_eq!(it.count(), it.count())`) discharge by z3
+            // EUF reflexivity, recovering the −11 from #2352. Wrong-literal pairs
+            // stay UNDECIDED (z3 cannot refute an opaque symbol). (#19 fix-forward)
+            return method::recognize(expr, fcx);
         }
     }
     // Try scan as inner receiver FIRST: `.scan(init, closure)` cannot go through

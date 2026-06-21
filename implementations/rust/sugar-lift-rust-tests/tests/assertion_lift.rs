@@ -18837,6 +18837,81 @@ fn consumed_iterator_len_before_consumption_still_warrants() {
     );
 }
 
+/// Discrimination twins for the iter_terminal.rs opaque-EUF gate fix (#19 fix-forward).
+///
+/// Pre-#2352-fix: the consumed-iterator gate called `reasoned_hit(...)` which places the
+/// assertion in `skip_reasons` (never reaches z3) → the obligation is SKIPPED, not lifted.
+/// Two consequenecs: (a) reflexive assertions `assert_eq!(it.count(), it.count())` both
+/// become distinct Hit nodes so z3 can never prove equality → discharged dropped −11;
+/// (b) wrong-literal assertions become skips rather than warranted UNDECIDED obligations.
+///
+/// Fix: `return method::recognize(expr, fcx)` — opaque EUF term `method:count(receiver)`.
+/// Same receiver + same method → same z3 symbol on both sides of reflexive pair → z3
+/// discharges by EUF reflexivity (confirmed by teethgap-scout sweep, not unit test).
+/// Wrong-literal pair: `opaque == 999` → UNDECIDED (z3 can't refute an opaque symbol).
+///
+/// refuse ⟺ IO: a consumed-iterator position read is deterministic, not IO → must not be
+/// refused; opaque-EUF (UNDECIDED) is the honest disposition.
+#[test]
+fn consumed_iterator_terminal_gate_opaque_euf_not_skip() {
+    // Twin A (wrong-literal): post-loop `.count()` with a wrong literal.
+    // Old: skip_reasons contains "consumed-iterator" (reasoned_hit skipped the assertion).
+    // New: opaque-EUF lifted → no skip_reason; UNDECIDED (z3 sees opaque, cannot refute).
+    let src_wrong = r#"
+        #[test]
+        fn t_count_after_while_let_wrong_literal() {
+            let xs = [1_i32, 2, 3, 4, 5];
+            let mut it = xs.iter();
+            while let Some(_) = it.next() {}
+            assert_eq!(it.count(), 999);  // wrong literal — must be UNDECIDED, not skipped
+        }
+    "#;
+    let out_wrong = lift_file(
+        &parse(src_wrong),
+        "coretests/iter/adapters/count_after_while_let_wrong_literal.rs",
+    );
+    assert!(
+        !out_wrong
+            .skip_reasons
+            .iter()
+            .any(|r| r.contains("consumed-iterator")),
+        "post-loop `.count()` must be opaque-EUF (UNDECIDED), NOT a 'consumed-iterator' skip: \
+         skips={:?} lifted={} refused={}",
+        out_wrong.skip_reasons,
+        out_wrong.assertions_lifted,
+        out_wrong.assertions_refused,
+    );
+    // Twin B (reflexive): post-loop `assert_eq!(it.count(), it.count())`.
+    // Old: both sides are distinct Hit nodes → z3 sees X≠Y → not discharged.
+    // New: both sides produce the same opaque symbol method:count(receiver) → z3 discharges
+    //      by EUF reflexivity (f(x) == f(x)) — confirmed by teethgap-scout sweep (−11 recovery).
+    let src_refl = r#"
+        #[test]
+        fn t_count_after_while_let_reflexive() {
+            let xs = [1_i32, 2, 3, 4, 5];
+            let mut it = xs.iter();
+            while let Some(_) = it.next() {}
+            assert_eq!(it.count(), it.count());  // reflexive — both sides same opaque symbol
+        }
+    "#;
+    let out_refl = lift_file(
+        &parse(src_refl),
+        "coretests/iter/adapters/count_after_while_let_reflexive.rs",
+    );
+    assert!(
+        !out_refl
+            .skip_reasons
+            .iter()
+            .any(|r| r.contains("consumed-iterator")),
+        "reflexive post-loop `.count()` must be opaque-EUF lifted, NOT a 'consumed-iterator' \
+         skip (z3 discharges reflexive by EUF; confirmed at sweep level): \
+         skips={:?} lifted={} refused={}",
+        out_refl.skip_reasons,
+        out_refl.assertions_lifted,
+        out_refl.assertions_refused,
+    );
+}
+
 /// `it.advance_by(n)` in a macro followed by `it.next()` in a later macro — the
 /// second call must be UNDECIDED (consumed-iterator temporal instability).
 #[test]
