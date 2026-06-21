@@ -3994,6 +3994,17 @@ struct TemporalPlan {
     /// stale literal (which would refute a true assertion -- the inverse cardinal sin).
     /// See `collect_alias_deref_mutated`. Conservative refuse-tightening, no new warrant.
     alias_deref_mutated: BTreeSet<String>,
+    /// Locals whose value is TEMPORALLY UNSTABLE because they are mutated in a loop the
+    /// tracker cannot unroll-resolve, then read AFTER the loop -- a frozen loop counter
+    /// (`let mut n = 0; for _ in xs { n += 1; } assert_eq!(n, len)`). The loop mutations
+    /// are not applied, so `n` stays at its initial literal and a post-loop read lifts
+    /// that STALE value (`0 == len`, UNSAT) -- which REFUTES a true assertion (the inverse
+    /// cardinal sin). Such a read must REFUSE (`ambiguous temporal identity`). The #2342
+    /// sibling for the loop-counter class. See `collect_loop_counter_stale_reads`.
+    /// Conservative refuse-tightening, no new warrant. GATED: an in-loop counter use (the
+    /// `#2300` `expected[i]` unroll substitutes it pre-`bound_path`) is NOT flagged -- only
+    /// a counter READ AFTER the loop qualifies.
+    temporally_unstable: BTreeSet<String>,
     /// Locals bound to an array of NON-literal element constructions (`let xs =
     /// [CountClone::new(), ..]`) that are subsequently consumed by a `.cloned()`
     /// adaptor in a side-effecting `for`-loop (`for _ in xs.iter().cloned().zip(..) {}`).
@@ -4361,6 +4372,14 @@ impl TemporalScope {
     /// it must REFUSE rather than lift the stale literal (the no-false-refutation gate).
     pub(crate) fn is_alias_deref_mutated(&self, name: &str) -> bool {
         self.plan.alias_deref_mutated.contains(name)
+    }
+
+    /// Whether `name` is a TEMPORALLY-UNSTABLE loop counter (mutated in a loop the tracker
+    /// cannot resolve, then read after it). A read of it must REFUSE rather than lift its
+    /// stale initial literal (which would refute a true assertion). See
+    /// `collect_loop_counter_stale_reads`. The #2342 sibling for the loop-counter class.
+    pub(crate) fn is_temporally_unstable_read(&self, name: &str) -> bool {
+        self.plan.temporally_unstable.contains(name)
     }
 
     fn is_sideeffecting_clone_local(&self, name: &str) -> bool {
@@ -11304,6 +11323,8 @@ fn temporal_plan_for_stmts(stmts: &[Stmt], inherited_stateful: &BTreeSet<String>
     let sideeffecting_clone_locals = collect_sideeffecting_clone_locals(stmts);
     let mut alias_deref_mutated = BTreeSet::<String>::new();
     collect_alias_deref_mutated(stmts, &mut_locals, &mut alias_deref_mutated);
+    let mut temporally_unstable = BTreeSet::<String>::new();
+    collect_loop_counter_stale_reads(stmts, &mut_locals, &mut temporally_unstable);
     TemporalPlan {
         versioned,
         mut_locals,
@@ -11311,6 +11332,7 @@ fn temporal_plan_for_stmts(stmts: &[Stmt], inherited_stateful: &BTreeSet<String>
         iterators,
         sideeffecting_clone_locals,
         alias_deref_mutated,
+        temporally_unstable,
     }
 }
 
@@ -11421,6 +11443,156 @@ fn collect_alias_deref_mutated(
     for stmt in stmts {
         syn::visit::Visit::visit_stmt(&mut v, stmt);
     }
+}
+
+/// THE NO-FALSE-REFUTATION GATE for the FROZEN LOOP COUNTER class (#2342 sibling). A
+/// `let mut n = <lit>` counter mutated INSIDE a loop body (`for`/`while`/`loop`) that the
+/// tracker cannot unroll-resolve, then READ in a statement AFTER the loop, lifts its STALE
+/// initial literal (the loop mutations are never applied) -- `assert_eq!(n, 3)` -> `0 == 3`
+/// (UNSAT), which REFUTES a true assertion (the inverse cardinal sin / a fake dragon). Such
+/// a post-loop read must REFUSE (`bound_path` Hits by name) rather than lift the stale
+/// value. Conservative refuse-tightening: zero new warrant -> zero cardinal-sin risk; it
+/// does NOT warrant the post-loop value (that is warrant-side SSA, out of scope) -- it only
+/// stops the stale read.
+///
+/// GATED to avoid over-refusal: a counter used only INSIDE the loop (the `#2300`
+/// reference-pattern unroll substitutes `expected[i]` per step BEFORE `bound_path` sees a
+/// bare `i`) is NOT flagged -- only a name READ in a statement that LEXICALLY FOLLOWS the
+/// loop in the same block qualifies. A straight-line `x += 1` (no loop) is unaffected and
+/// still warrants via the temporal rewrite.
+fn collect_loop_counter_stale_reads(
+    stmts: &[Stmt],
+    mut_locals: &BTreeSet<String>,
+    out: &mut BTreeSet<String>,
+) {
+    fn loop_body(stmt: &Stmt) -> Option<&syn::Block> {
+        match stmt {
+            Stmt::Expr(Expr::ForLoop(f), _) => Some(&f.body),
+            Stmt::Expr(Expr::While(w), _) => Some(&w.body),
+            Stmt::Expr(Expr::Loop(l), _) => Some(&l.body),
+            _ => None,
+        }
+    }
+    // mut-locals ASSIGNED / compound-assigned to a bare path within `block` (descends).
+    fn mutated_simple_locals(block: &syn::Block, mut_locals: &BTreeSet<String>) -> BTreeSet<String> {
+        struct V<'a> {
+            mut_locals: &'a BTreeSet<String>,
+            out: BTreeSet<String>,
+        }
+        impl<'a> V<'a> {
+            fn record(&mut self, lhs: &Expr) {
+                if let Some(name) = simple_path_name(lhs) {
+                    if self.mut_locals.contains(&name) {
+                        self.out.insert(name);
+                    }
+                }
+            }
+        }
+        impl<'ast> syn::visit::Visit<'ast> for V<'_> {
+            fn visit_expr_assign(&mut self, a: &'ast syn::ExprAssign) {
+                self.record(&a.left);
+                syn::visit::visit_expr_assign(self, a);
+            }
+            fn visit_expr_binary(&mut self, b: &'ast syn::ExprBinary) {
+                if matches!(
+                    b.op,
+                    BinOp::AddAssign(_)
+                        | BinOp::SubAssign(_)
+                        | BinOp::MulAssign(_)
+                        | BinOp::DivAssign(_)
+                        | BinOp::RemAssign(_)
+                        | BinOp::BitXorAssign(_)
+                        | BinOp::BitAndAssign(_)
+                        | BinOp::BitOrAssign(_)
+                        | BinOp::ShlAssign(_)
+                        | BinOp::ShrAssign(_)
+                ) {
+                    self.record(&b.left);
+                }
+                syn::visit::visit_expr_binary(self, b);
+            }
+        }
+        let mut v = V {
+            mut_locals,
+            out: BTreeSet::new(),
+        };
+        syn::visit::Visit::visit_block(&mut v, block);
+        v.out
+    }
+    // For each statement SEQUENCE (a block's stmts): a loop's mutated counter that is
+    // referenced in a LATER statement of the SAME sequence is a stale post-loop read.
+    fn scan_seq(stmts: &[Stmt], mut_locals: &BTreeSet<String>, out: &mut BTreeSet<String>) {
+        for (idx, stmt) in stmts.iter().enumerate() {
+            let Some(body) = loop_body(stmt) else {
+                continue;
+            };
+            for name in mutated_simple_locals(body, mut_locals) {
+                let read_after = stmts
+                    .iter()
+                    .skip(idx + 1)
+                    .any(|later| names_referenced_in_stmt(later).contains(&name));
+                if read_after {
+                    out.insert(name);
+                }
+            }
+        }
+    }
+    // Run the per-sequence scan over the top-level body AND every nested block.
+    struct Walk<'a> {
+        mut_locals: &'a BTreeSet<String>,
+        out: &'a mut BTreeSet<String>,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Walk<'_> {
+        fn visit_block(&mut self, block: &'ast syn::Block) {
+            scan_seq(&block.stmts, self.mut_locals, self.out);
+            syn::visit::visit_block(self, block);
+        }
+    }
+    scan_seq(stmts, mut_locals, out);
+    let mut walk = Walk { mut_locals, out };
+    for stmt in stmts {
+        syn::visit::Visit::visit_stmt(&mut walk, stmt);
+    }
+}
+
+/// Every path's last-segment identifier referenced in a STATEMENT (a superset of its free
+/// variables) -- the statement-level analog of `names_referenced_in_expr`. Descends into
+/// MACRO token streams (`assert_eq!(n, 3)` is a `Stmt::Macro`; syn's `Visit` does not parse
+/// macro tokens, so a bare `visit_path` misses the `n` inside an assert macro -- the exact
+/// post-loop read this gate must see).
+fn names_referenced_in_stmt(stmt: &Stmt) -> BTreeSet<String> {
+    fn collect_idents_in_tokens(tokens: proc_macro2::TokenStream, out: &mut BTreeSet<String>) {
+        for tt in tokens {
+            match tt {
+                proc_macro2::TokenTree::Ident(id) => {
+                    out.insert(id.to_string());
+                }
+                proc_macro2::TokenTree::Group(group) => {
+                    collect_idents_in_tokens(group.stream(), out);
+                }
+                _ => {}
+            }
+        }
+    }
+    #[derive(Default)]
+    struct V {
+        names: BTreeSet<String>,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for V {
+        fn visit_path(&mut self, p: &'ast syn::Path) {
+            if let Some(seg) = p.segments.last() {
+                self.names.insert(seg.ident.to_string());
+            }
+            syn::visit::visit_path(self, p);
+        }
+        fn visit_macro(&mut self, m: &'ast syn::Macro) {
+            collect_idents_in_tokens(m.tokens.clone(), &mut self.names);
+            syn::visit::visit_macro(self, m);
+        }
+    }
+    let mut v = V::default();
+    syn::visit::Visit::visit_stmt(&mut v, stmt);
+    v.names
 }
 
 /// Locals bound to an array of NON-literal element constructions that are then
