@@ -33,6 +33,8 @@ For isolated work, create repo-local worktrees under `.worktrees/` from `origin/
 
 ## Supersonic Workflow
 
-Default to forward motion. After a focused change has enough local evidence to be coherent, commit it, open the PR, and merge it without waiting for CI. Long builds, full sweeps, and corpus runs should continue in the background after merge, usually in `tmux`, `bcargo`, or on `battleaxe`. Treat CI red, logs, and delayed sweep failures as latent impact signals: inspect them quickly, identify the next concrete correction, and fix forward in a new PR.
+Default to forward motion, but make every shot observable. Every code change should add or improve instrumentation where the behavior could otherwise be guessed, and should add a focused unit or regression test for the claim it makes. Long-term goals should become ratchet tests: explicit counters, ledgers, or assertions that move toward zero and fail when the count goes the wrong way.
 
-Do not use waiting as a safety blanket. Launch independent work streams when they do not collide, report exact evidence and paths, and course-correct from measured failures. If a merge conflict or broken main blocks the shot, resolve that concrete blocker and continue; do not reframe it as a reason to stop.
+After a focused change has enough local evidence to be coherent, commit it, open the PR, and merge it without waiting for CI. Long builds, full sweeps, and corpus runs should continue in the background after merge, usually in `tmux`, `bcargo`, or on `battleaxe`. Treat CI red, logs, and delayed sweep failures as latent impact signals: inspect them quickly, identify the next concrete correction, and fix forward in a new PR.
+
+Do not use waiting as a safety blanket. Launch independent work streams when they do not collide, report exact evidence and paths, and course-correct from measured failures. Regressions are usually missed tests or missing instrumentation first; add the missing witness before broadening the fix. If a merge conflict or broken main blocks the shot, resolve that concrete blocker and continue; do not reframe it as a reason to stop.
