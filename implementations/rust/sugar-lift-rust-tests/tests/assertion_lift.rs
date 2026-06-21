@@ -659,6 +659,541 @@ fn const_match_runtime_scrutinee_declines() {
     );
 }
 
+// ---- Lane 2: in-range TryFrom / NonZero `.unwrap()` peels to the value (teeth) ----
+
+// `u8::try_from(255u16).unwrap()` peels the in-range `res:ok(255)` (via the
+// existing option_unwrap, now that its source gate recognizes try_from) to the
+// ground int 255 -- a real value with teeth, not an opaque `method:unwrap` var.
+#[test]
+fn try_from_in_range_unwrap_folds_with_teeth() {
+    let good = r#"
+        #[test]
+        fn t_tf_unwrap() {
+            assert!(u8::try_from(255u16).unwrap() == 255);
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/num/tf_unwrap.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "try_from().unwrap() must lift; skip: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert!(
+        out.factory_audits
+            .iter()
+            .any(|a| a.selected == Some("option_unwrap")),
+        "unwrap must be peeled by `option_unwrap`: {:?}",
+        out.factory_audits
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Int(255)"),
+        "in-range try_from().unwrap() folds to 255: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_tf_unwrap") {
+        assert!(sat, "try_from(255).unwrap() == 255 -- must be SAT");
+    }
+    let bad = r#"
+        #[test]
+        fn t_tf_unwrap_bad() {
+            assert!(u8::try_from(255u16).unwrap() == 254);
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/num/tf_unwrap_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_tf_unwrap_bad") {
+        assert!(!sat, "try_from(255).unwrap() is 255 != 254 -- must be UNSAT");
+    }
+}
+
+// NonZero::new(nonzero).unwrap()[.get()] peels Some(value) to the value (teeth).
+#[test]
+fn nonzero_new_unwrap_folds_with_teeth() {
+    let good = r#"
+        #[test]
+        fn t_nz_unwrap() {
+            assert!(NonZero::new(1u32).unwrap().get() == 1);
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/num/nz_unwrap.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Int(1)"),
+        "NonZero::new(1).unwrap().get() folds to 1: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_nz_unwrap") {
+        assert!(sat, "NonZero::new(1).unwrap().get() == 1 -- must be SAT");
+    }
+    let bad = r#"
+        #[test]
+        fn t_nz_unwrap_bad() {
+            assert!(NonZero::new(7u32).unwrap().get() == 8);
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/num/nz_unwrap_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_nz_unwrap_bad") {
+        assert!(!sat, "NonZero::new(7).unwrap().get() is 7 != 8 -- must be UNSAT");
+    }
+}
+
+// DISCRIMINATION: an OUT-OF-RANGE try_from unwrap and a NonZero::new(0) unwrap
+// both PANIC in Rust -- they must NOT fold to a value (the Err/None unwrap is a
+// refused effect, never a guessed value).
+#[test]
+fn panicking_unwrap_does_not_fold_to_a_value() {
+    let oor = r#"
+        #[test]
+        fn t_tf_unwrap_panic() {
+            assert!(u8::try_from(256u16).unwrap() == 0);
+        }
+    "#;
+    let out = lift_file(&parse(oor), "coretests/num/tf_unwrap_panic.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "out-of-range try_from().unwrap() panics -- must NOT lift to a value: audits: {:?}",
+        out.factory_audits
+    );
+    let zero = r#"
+        #[test]
+        fn t_nz_zero_unwrap_panic() {
+            assert!(NonZero::new(0u32).unwrap().get() == 0);
+        }
+    "#;
+    let out = lift_file(&parse(zero), "coretests/num/nz_zero_unwrap_panic.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "NonZero::new(0).unwrap() panics -- must NOT lift to a value: audits: {:?}",
+        out.factory_audits
+    );
+}
+
+// ---- Lane 13: partition_point over a literal slice folds to the index (teeth) ----
+
+// `[1,2,3,4,5].partition_point(|&x| x < 3)` is 2 (elements 1,2 satisfy x<3). The
+// predicate is evaluated per literal element in the host; the count of leading
+// satisfying elements lowers to a ground index -- not an opaque
+// `method:partition_point` EUF var -- via `partition_point`.
+#[test]
+fn partition_point_folds_and_warrants() {
+    let src = r#"
+        #[test]
+        fn t_partition_point() {
+            assert!([1, 2, 3, 4, 5].partition_point(|&x| x < 3) == 2);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/slice/partition_point.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "partition_point must lift; skip: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.factory_audits.iter().any(|a| {
+            a.selected == Some("partition_point")
+                && a.disposition == sugar_lift_rust_tests::FactoryDisposition::Warranted
+        }),
+        "partition_point must be warranted by `partition_point`: {:?}",
+        out.factory_audits
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Int(2)"),
+        "partition_point(|x| x<3) over [1..5] folds to 2: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_partition_point") {
+        assert!(sat, "partition_point == 2 holds -- must be SAT");
+    }
+}
+
+// BAD TWIN / teeth: the index is really 2, so `== 3` is a real contradiction
+// z3 refutes (UNSAT).
+#[test]
+fn partition_point_wrong_value_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_partition_point_bad() {
+            assert!([1, 2, 3, 4, 5].partition_point(|&x| x < 3) == 3);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/slice/partition_point_bad.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(dump.contains("Int(2)"), "partition_point folds to 2: {dump}");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_partition_point_bad") {
+        assert!(!sat, "partition_point is 2 != 3 -- must be UNSAT");
+    }
+}
+
+// Boundaries: all-satisfying -> len; none-satisfying -> 0.
+#[test]
+fn partition_point_all_and_none_boundaries() {
+    let all = r#"
+        #[test]
+        fn t_pp_all() {
+            assert!([1, 2, 3].partition_point(|&x| x < 100) == 3);
+        }
+    "#;
+    let out = lift_file(&parse(all), "coretests/slice/pp_all.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_pp_all") {
+        assert!(sat, "all satisfy -> partition_point == len(3) -- must be SAT");
+    }
+    let none = r#"
+        #[test]
+        fn t_pp_none() {
+            assert!([5, 6, 7].partition_point(|&x| x < 3) == 0);
+        }
+    "#;
+    let out = lift_file(&parse(none), "coretests/slice/pp_none.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_pp_none") {
+        assert!(sat, "none satisfy -> partition_point == 0 -- must be SAT");
+    }
+}
+
+// EXACT-OR-NONE: a NON-partitioned predicate (a satisfying element after a
+// non-satisfying one) and a runtime receiver must NOT fold -- the result would be
+// binary-search-defined / unknown, so the sugar declines.
+#[test]
+fn partition_point_unpartitioned_and_runtime_decline() {
+    let unpart = r#"
+        #[test]
+        fn t_pp_unpartitioned() {
+            assert!([1, 5, 2].partition_point(|&x| x < 3) == 1);
+        }
+    "#;
+    let out = lift_file(&parse(unpart), "coretests/slice/pp_unpartitioned.rs");
+    assert!(
+        !out.factory_audits
+            .iter()
+            .any(|a| a.selected == Some("partition_point")),
+        "a non-partitioned predicate must NOT be folded by partition_point: {:?}",
+        out.factory_audits
+    );
+    let runtime = r#"
+        #[test]
+        fn t_pp_runtime() {
+            let v: Vec<i32> = std::env::args().map(|s| s.len() as i32).collect();
+            assert!(v.partition_point(|&x| x < 3) == 0);
+        }
+    "#;
+    let out = lift_file(&parse(runtime), "coretests/slice/pp_runtime.rs");
+    assert!(
+        !out.factory_audits
+            .iter()
+            .any(|a| a.selected == Some("partition_point")),
+        "a runtime receiver must NOT be folded by partition_point: {:?}",
+        out.factory_audits
+    );
+}
+
+// ---- Lane 10: `is_sorted()` over a literal array iterator folds to bool (teeth) ----
+
+// `[1, 2, 2, 9].iter().is_sorted()` is true (non-strict consecutive order). The
+// sortedness is determined by the literal elements, so it lowers to a ground
+// `Bool(true)` -- not an opaque `method:is_sorted` EUF var -- via `is_sorted`.
+#[test]
+fn array_iter_is_sorted_folds_and_warrants() {
+    let src = r#"
+        #[test]
+        fn t_is_sorted() {
+            assert!([1, 2, 2, 9].iter().is_sorted());
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/is_sorted.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "literal-array is_sorted must lift; skip: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.factory_audits.iter().any(|a| {
+            a.selected == Some("is_sorted")
+                && a.disposition == sugar_lift_rust_tests::FactoryDisposition::Warranted
+        }),
+        "the is_sorted term must be warranted by `is_sorted`: {:?}",
+        out.factory_audits
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(true)"),
+        "[1,2,2,9].iter().is_sorted() must fold to true: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_is_sorted") {
+        assert!(sat, "[1,2,2,9] is sorted -- must be SAT");
+    }
+}
+
+// BAD TWIN / teeth: `[1, 3, 2]` is NOT sorted (3 > 2), so the claim folds to
+// `Bool(false)` -- a real contradiction z3 refutes (UNSAT).
+#[test]
+fn array_iter_unsorted_wrong_claim_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_is_sorted_bad() {
+            assert!([1, 3, 2].iter().is_sorted());
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/is_sorted_bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "unsorted is_sorted must still lift so the contradiction is checkable: {:?}",
+        out.skip_reasons
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(false)"),
+        "[1,3,2].iter().is_sorted() must fold to false: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_is_sorted_bad") {
+        assert!(
+            !sat,
+            "[1,3,2] is not sorted -- asserting is_sorted must be UNSAT"
+        );
+    }
+}
+
+// Singleton is trivially sorted, and the bare slice form (no `.iter()`) folds too.
+#[test]
+fn singleton_and_direct_slice_is_sorted() {
+    let single = r#"
+        #[test]
+        fn t_is_sorted_single() {
+            assert!([0].iter().is_sorted());
+        }
+    "#;
+    let out = lift_file(&parse(single), "coretests/iter/is_sorted_single.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(true)"),
+        "[0].iter().is_sorted() folds true: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_is_sorted_single") {
+        assert!(sat, "singleton is sorted -- must be SAT");
+    }
+    // Direct slice `is_sorted` (no `.iter()`), descending -> false -> refutes.
+    let slice_bad = r#"
+        #[test]
+        fn t_slice_is_sorted_bad() {
+            assert!([3, 2, 1].is_sorted());
+        }
+    "#;
+    let out = lift_file(&parse(slice_bad), "coretests/slice/is_sorted_bad.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(false)"),
+        "[3,2,1].is_sorted() folds false: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_slice_is_sorted_bad") {
+        assert!(!sat, "[3,2,1] is descending -- asserting is_sorted must be UNSAT");
+    }
+}
+
+// EXACT-OR-NONE: a non-literal element, and an order-CHANGING adaptor (`.rev()`),
+// must NOT fold. The `is_sorted` sugar declines, leaving the existing opaque
+// handling -- never a guessed bool over an order we did not compute.
+#[test]
+fn nonliteral_and_reversed_is_sorted_decline_to_fold() {
+    let runtime = r#"
+        #[test]
+        fn t_is_sorted_runtime() {
+            let n = std::env::args().count();
+            assert!([n, 1].iter().is_sorted());
+        }
+    "#;
+    let out = lift_file(&parse(runtime), "coretests/iter/is_sorted_runtime.rs");
+    assert!(
+        !out.factory_audits
+            .iter()
+            .any(|a| a.selected == Some("is_sorted")),
+        "a non-literal element must NOT be folded by is_sorted: {:?}",
+        out.factory_audits
+    );
+    // `.rev()` changes order -- not an order-preserving view, so we decline.
+    let reversed = r#"
+        #[test]
+        fn t_is_sorted_rev() {
+            assert!([1, 2, 3].iter().rev().is_sorted());
+        }
+    "#;
+    let out = lift_file(&parse(reversed), "coretests/iter/is_sorted_rev.rs");
+    assert!(
+        !out.factory_audits
+            .iter()
+            .any(|a| a.selected == Some("is_sorted")),
+        "a reversed iterator must NOT be folded by is_sorted: {:?}",
+        out.factory_audits
+    );
+}
+
+// ---- Lane 3: TryFrom range check -> Result, is_ok/is_err fold to bool (teeth) ----
+
+// `<u8 as TryFrom<u16>>::try_from(256u16).is_err()` is true: 256 doesn't fit u8,
+// so try_from grounds to `res:err` and `is_err` folds to `Bool(true)` -- not an
+// opaque `method:is_err` EUF var. Warranted by `try_from` + `result_predicate`.
+#[test]
+fn try_from_out_of_range_is_err_folds_and_warrants() {
+    let src = r#"
+        #[test]
+        fn t_try_from_err() {
+            assert!(<u8 as TryFrom<u16>>::try_from(256u16).is_err());
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/num/try_from_err.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "try_from().is_err() must lift; skip: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.factory_audits
+            .iter()
+            .any(|a| a.selected == Some("result_predicate")),
+        "is_err must be warranted by `result_predicate`: {:?}",
+        out.factory_audits
+    );
+    assert!(
+        out.factory_audits
+            .iter()
+            .any(|a| a.selected == Some("try_from")),
+        "the try_from receiver must be folded by `try_from`: {:?}",
+        out.factory_audits
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(true)"),
+        "out-of-range try_from().is_err() folds true: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_try_from_err") {
+        assert!(sat, "256 doesn't fit u8 -> is_err() == true -- must be SAT");
+    }
+}
+
+// In-range is Ok: `u8::try_from(255u16).is_ok()` (the `DST::try_from` spelling)
+// folds to `Bool(true)`.
+#[test]
+fn try_from_in_range_is_ok_folds() {
+    let src = r#"
+        #[test]
+        fn t_try_from_ok() {
+            assert!(u8::try_from(255u16).is_ok());
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/num/try_from_ok.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(true)"),
+        "in-range try_from().is_ok() folds true: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_try_from_ok") {
+        assert!(sat, "255 fits u8 -> is_ok() == true -- must be SAT");
+    }
+}
+
+// BAD TWINS / teeth: the discriminant is real. `is_ok()` on the out-of-range Err
+// folds false; `is_err()` on the in-range Ok folds false -- asserting either is
+// z3-UNSAT.
+#[test]
+fn try_from_predicate_wrong_discriminant_is_unsat() {
+    let ok_on_err = r#"
+        #[test]
+        fn t_try_from_ok_on_err_bad() {
+            assert!(<u8 as TryFrom<u16>>::try_from(256u16).is_ok());
+        }
+    "#;
+    let out = lift_file(&parse(ok_on_err), "coretests/num/try_from_ok_on_err_bad.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(dump.contains("Bool(false)"), "is_ok on Err folds false: {dump}");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_try_from_ok_on_err_bad") {
+        assert!(!sat, "256 doesn't fit u8 -> is_ok() is false -- must be UNSAT");
+    }
+    let err_on_ok = r#"
+        #[test]
+        fn t_try_from_err_on_ok_bad() {
+            assert!(u8::try_from(255u16).is_err());
+        }
+    "#;
+    let out = lift_file(&parse(err_on_ok), "coretests/num/try_from_err_on_ok_bad.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(dump.contains("Bool(false)"), "is_err on Ok folds false: {dump}");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_try_from_err_on_ok_bad") {
+        assert!(!sat, "255 fits u8 -> is_err() is false -- must be UNSAT");
+    }
+}
+
+// Signed/unsigned boundary teeth: `i8::try_from(200u16)` overflows (200 > 127) ->
+// Err; `u8::try_from(-1i32)` is negative -> Err; `i8::try_from(-1i32)` fits -> Ok.
+#[test]
+fn try_from_signed_unsigned_boundaries() {
+    let i8_overflow = r#"
+        #[test]
+        fn t_i8_overflow() {
+            assert!(i8::try_from(200u16).is_err());
+        }
+    "#;
+    let out = lift_file(&parse(i8_overflow), "coretests/num/i8_overflow.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_i8_overflow") {
+        assert!(sat, "200 > i8::MAX(127) -> is_err() == true -- must be SAT");
+    }
+    let u8_neg = r#"
+        #[test]
+        fn t_u8_neg() {
+            assert!(u8::try_from(-1i32).is_err());
+        }
+    "#;
+    let out = lift_file(&parse(u8_neg), "coretests/num/u8_neg.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_u8_neg") {
+        assert!(sat, "-1 < 0 -> u8::try_from is_err() == true -- must be SAT");
+    }
+    // -1 fits i8 -> Ok; claiming is_err refutes.
+    let i8_neg_ok = r#"
+        #[test]
+        fn t_i8_neg_ok_bad() {
+            assert!(i8::try_from(-1i32).is_err());
+        }
+    "#;
+    let out = lift_file(&parse(i8_neg_ok), "coretests/num/i8_neg_ok_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_i8_neg_ok_bad") {
+        assert!(!sat, "-1 fits i8 -> is_err() is false -- must be UNSAT");
+    }
+}
+
+// EXACT-OR-NONE: a non-integer destination and a runtime arg must NOT fold; the
+// sugars decline, leaving the existing opaque handling.
+#[test]
+fn try_from_non_integer_and_runtime_decline() {
+    // Non-integer destination: `char::try_from(..)` is not an integer try_from.
+    let ch = r#"
+        #[test]
+        fn t_try_from_char() {
+            assert!(char::try_from(65u32).is_ok());
+        }
+    "#;
+    let out = lift_file(&parse(ch), "coretests/char/try_from_char.rs");
+    assert!(
+        !out.factory_audits
+            .iter()
+            .any(|a| a.selected == Some("try_from")),
+        "a non-integer destination must NOT be folded by try_from: {:?}",
+        out.factory_audits
+    );
+    // Runtime argument: not a literal -> declines.
+    let rt = r#"
+        #[test]
+        fn t_try_from_runtime() {
+            let n = std::env::args().count() as u16;
+            assert!(u8::try_from(n).is_err());
+        }
+    "#;
+    let out = lift_file(&parse(rt), "coretests/num/try_from_runtime.rs");
+    assert!(
+        !out.factory_audits
+            .iter()
+            .any(|a| a.selected == Some("try_from")),
+        "a runtime argument must NOT be folded by try_from: {:?}",
+        out.factory_audits
+    );
+}
+
 // ---- Lane 9: Duration integer accessors fold to a ground int (teeth) ----
 
 // `Duration::from_secs(5).as_secs()` is `5` -- a literal Duration is a closed

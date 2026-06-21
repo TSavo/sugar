@@ -106,6 +106,7 @@ pub mod sugar {
     pub mod intersperse_collect_string;
     pub mod intersperse_concat;
     pub mod is_empty;
+    pub mod is_sorted;
     pub mod iter_terminal;
     pub mod iterator;
     pub mod len;
@@ -128,6 +129,7 @@ pub mod sugar {
     pub mod option_adaptor;
     pub mod option_predicate;
     pub mod option_unwrap;
+    pub mod partition_point;
     pub mod path;
     pub mod peekable;
     pub mod primitive_int;
@@ -137,6 +139,7 @@ pub mod sugar {
     pub mod reference_term;
     pub mod regex_match;
     pub mod repeat_term;
+    pub mod result_predicate;
     pub mod result_transpose_collect;
     pub mod rev;
     pub mod scan;
@@ -163,6 +166,7 @@ pub mod sugar {
     pub mod term_literal;
     pub mod to_string;
     pub mod transparent_term;
+    pub mod try_from;
     pub mod try_from_fn;
     pub mod try_map;
     pub mod tuple_decomp;
