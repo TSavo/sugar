@@ -1116,6 +1116,86 @@ fn for_enumerate_tuple_wrong_expected_is_unsat() {
     }
 }
 
+// MECHANISM-2 gap (b): `for [a, b]` SLICE/ARRAY pattern over a finite literal of arrays.
+// A clean extension of the tuple-pattern binding -- `loop_var_bindings` accepts
+// `Pat::Slice` exactly like `Pat::Tuple`, and `bind_loop_value` decomposes an array
+// element the same way it decomposes a tuple. `[[1, 2], [3, 4]]` yields `[1, 2]`,`[3, 4]`;
+// the pattern binds a=first, b=second per step.
+#[test]
+fn for_slice_pattern_over_literal_of_arrays_lifts() {
+    let src = r#"
+        #[test]
+        fn t_slice() {
+            let expected = [3, 7];
+            let mut i = 0;
+            for [a, b] in [[1, 2], [3, 4]] {
+                assert_eq!(a + b, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/slice_pat.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "`for [a, b] in [[..], [..]]` must unroll: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_slice") {
+        assert!(sat, "a+b at each step ([1,2]->3, [3,4]->7) == expected -- SAT");
+    }
+}
+
+// TEETH: a WRONG expected over the slice-pattern domain must refute.
+#[test]
+fn for_slice_pattern_wrong_expected_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_slice_bad() {
+            let expected = [3, 99];
+            let mut i = 0;
+            for [a, b] in [[1, 2], [3, 4]] {
+                assert_eq!(a + b, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/slice_pat_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_slice_bad") {
+        assert!(!sat, "a+b = 3+4 = 7 != expected[1] = 99 -- must be UNSAT");
+    }
+}
+
+// DISCRIMINATION: the pattern binds a=FIRST component, b=SECOND -- not swapped. `a`
+// tracks the first elements [1, 3]; a swapped/mis-decomposed binding would make a = [2, 4]
+// and refute. SAT here proves the component order.
+#[test]
+fn for_slice_pattern_binds_components_in_order() {
+    let src = r#"
+        #[test]
+        fn t_slice_order() {
+            let first = [1, 3];
+            let mut i = 0;
+            for [a, b] in [[1, 2], [3, 4]] {
+                assert_eq!(a, first[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/slice_pat_order.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "slice-pattern order test must lift: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_slice_order") {
+        assert!(sat, "a binds the FIRST component ([1, 3]); a swap would make a = [2, 4] and refute");
+    }
+}
+
 // MECHANISM-2 gap (b): `.flat_map(|n| [..])` over a literal base maps each element to a
 // finite literal sub-sequence and concatenates -- map + flatten in one step. The closure
 // is const-eval'd per element (`*n` derefs the bound value); exact-or-refuse.

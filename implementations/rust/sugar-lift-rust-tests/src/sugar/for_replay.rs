@@ -146,35 +146,55 @@ fn loop_var_bindings(pat: &Pat) -> Option<Vec<String>> {
         Some(id.ident.to_string())
     }
     match pat {
+        // `for (i, &x)` tuple pattern (enumerate/zip pairs).
         Pat::Tuple(tuple) => {
             if tuple.elems.is_empty() {
                 return None;
             }
             tuple.elems.iter().map(component_ident).collect()
         }
+        // `for [a, b]` / `for [a, b, c]` slice/array pattern over a finite literal of
+        // arrays (e.g. `[[1, 2], [3, 4]]`): each element pattern binds the corresponding
+        // component of the per-step array. Require >= 2 elements -- a 1-element slice is
+        // ambiguous against the single-ident bind-whole path, so refuse it
+        // (finite-or-refuse on a rare edge).
+        Pat::Slice(slice) => {
+            if slice.elems.len() < 2 {
+                return None;
+            }
+            slice.elems.iter().map(component_ident).collect()
+        }
         Pat::Paren(p) => loop_var_bindings(&p.pat),
+        // `for &(i, x)` / `for &[a, b]`: peel the reference and recurse to the inner
+        // destructure (the body's own `*` carries the deref, so binding the component
+        // value is sound regardless of the `&`).
+        Pat::Reference(r) => loop_var_bindings(&r.pat),
         _ => component_ident(pat).map(|name| vec![name]),
     }
 }
 
 /// Bind one per-step element `value` to the loop-var plan. A single-ident plan binds the
-/// whole value. A tuple plan (`for (i, &x)`) requires `value` to be a tuple expr of
-/// matching arity -- e.g. the `(i, e)` pairs `EnumerateSugar` yields -- and binds each
-/// component to its name. Returns `None` (bail -> refuse) if a tuple plan meets a
-/// non-tuple or wrong-arity value: a guessed decomposition is never bound.
+/// whole value. A multi-binding plan -- a tuple pattern (`for (i, &x)`) or a slice/array
+/// pattern (`for [a, b]`) -- requires `value` to be a tuple expr (the `(i, e)` pairs
+/// `EnumerateSugar` yields) OR an array expr (an element of a literal-of-arrays domain) of
+/// matching arity, and binds each component to its name. Returns `None` (bail -> refuse)
+/// if a multi-binding plan meets a non-tuple/non-array or wrong-arity value: a guessed
+/// decomposition is never bound.
 fn bind_loop_value(bindings: &mut ExprBindings, vars: &[String], value: Expr) -> Option<()> {
     if vars.len() == 1 {
         bindings.insert(vars[0].clone(), value);
         return Some(());
     }
-    let Expr::Tuple(tuple) = strip_refs_groups(&value) else {
-        return None;
+    let components: Vec<&Expr> = match strip_refs_groups(&value) {
+        Expr::Tuple(tuple) => tuple.elems.iter().collect(),
+        Expr::Array(array) => array.elems.iter().collect(),
+        _ => return None,
     };
-    if tuple.elems.len() != vars.len() {
+    if components.len() != vars.len() {
         return None;
     }
-    for (name, component) in vars.iter().zip(tuple.elems.iter()) {
-        bindings.insert(name.clone(), component.clone());
+    for (name, component) in vars.iter().zip(components.iter()) {
+        bindings.insert(name.clone(), (*component).clone());
     }
     Some(())
 }
