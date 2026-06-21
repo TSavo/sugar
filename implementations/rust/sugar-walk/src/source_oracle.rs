@@ -671,9 +671,24 @@ pub fn resolve_source_memento(
         source_fn.sig,
         source_fn.block,
     );
-    let fragment = if source_span_eq(&memento.span, &whole_fragment.span) {
+    // Identify a WHOLE-FUNCTION memento by START alignment (start_line + start_col
+    // against the located function's surface start), which is invariant under body
+    // drift: a function's start does not move when its body changes, only its END
+    // does. The previous full-span discriminator broke exactly there -- body drift
+    // shifted end_line, so a whole-function memento failed the equality, fell through
+    // to the statement path, found no statement at the function-surface span, and
+    // refused with a misleading "fragment not found" instead of recomputing the
+    // whole-function CID and reporting the honest "source CID misaligned".
+    let fragment = if memento.span.start_line == whole_fragment.span.start_line
+        && memento.span.start_col == whole_fragment.span.start_col
+    {
         whole_fragment
     } else {
+        // Not a whole-function memento: locate the pinned STATEMENT by its span. If
+        // the statement is gone (the body drifted under the pin), fall through to the
+        // whole-function fragment so the CID comparison below still reports drift as
+        // "source CID misaligned" -- a function we located by name whose pinned
+        // fragment span is now absent IS drift, never a bare "fragment not found".
         source_index
             .source_fragment_of_statement_src_span(
                 &memento.file,
@@ -684,14 +699,7 @@ pub fn resolve_source_memento(
                 source_fn.sig,
                 source_fn.block,
             )
-            .ok_or_else(|| SourceOracleRefusal {
-                reason: format!(
-                    "source fragment for `{}` not found in `{}` at line {}",
-                    memento.source_function_name().unwrap_or("<any>"),
-                    memento.file,
-                    memento.span.start_line
-                ),
-            })?
+            .unwrap_or(whole_fragment)
     };
     let recomputed = fragment.to_memento();
     let recomputed_source_cid = recomputed.source_cid;

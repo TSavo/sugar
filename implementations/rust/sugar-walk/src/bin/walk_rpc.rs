@@ -9999,7 +9999,15 @@ async fn fetch_status(url: String) -> i64 {
                 .starts_with("blake3-512:"),
             "bad source cid"
         );
-        assert_eq!(e["body_source"]["span"]["start_line"], 3);
+        // The body-source span is attribute-inclusive: it starts at the function's
+        // first attribute line, not the `fn`/`async fn` line. Here the leading `\n`
+        // is line 1, the attribute is line 2, the `async fn` is line 3 -- so the
+        // surface starts at line 2. Pinning the attribute in the source fragment is
+        // deliberate: a rust attribute edit that changes behavior (cfg/repr/derive/
+        // inline/...) also moves source_cid, so it is caught as source drift rather
+        // than left dark. source_oracle.rs's `source_memento_of_named_item_fn` test
+        // pins the same attribute-inclusive semantics.
+        assert_eq!(e["body_source"]["span"]["start_line"], 2);
         assert_eq!(e["loss_record_contribution"]["form"], "literal");
         assert_eq!(e["loss_record_contribution"]["value"]["entries"], json!([]));
         assert!(
