@@ -659,6 +659,172 @@ fn const_match_runtime_scrutinee_declines() {
     );
 }
 
+// ---- Lane 9: Duration integer accessors fold to a ground int (teeth) ----
+
+// `Duration::from_secs(5).as_secs()` is `5` -- a literal Duration is a closed
+// value, so the accessor lowers to a ground int (not an opaque `method:as_secs`
+// EUF var) and warrants via `duration_accessor`. All int widths are SMT `Int`,
+// so it meets both an untyped and a typed (`5u64`) RHS.
+#[test]
+fn duration_as_secs_folds_and_warrants() {
+    let src = r#"
+        #[test]
+        fn t_dur_as_secs() {
+            assert!(Duration::from_secs(5).as_secs() == 5);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/time/dur_as_secs.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "Duration::from_secs(5).as_secs() must lift; skip: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.factory_audits.iter().any(|a| {
+            a.selected == Some("duration_accessor")
+                && a.disposition == sugar_lift_rust_tests::FactoryDisposition::Warranted
+        }),
+        "the Duration accessor must be warranted by `duration_accessor`: {:?}",
+        out.factory_audits
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Int(5)"),
+        "as_secs() must fold to the ground int 5: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_dur_as_secs") {
+        assert!(sat, "from_secs(5).as_secs() == 5 holds -- must be SAT");
+    }
+}
+
+// BAD TWIN / teeth: from_secs(5).as_secs() is 5, so `== 6` is a real
+// contradiction z3 refutes (UNSAT).
+#[test]
+fn duration_accessor_wrong_value_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_dur_as_secs_bad() {
+            assert!(Duration::from_secs(5).as_secs() == 6);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/time/dur_as_secs_bad.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    let dump = format!("{:?}", out.decls);
+    assert!(dump.contains("Int(5)"), "as_secs() folds to 5: {dump}");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_dur_as_secs_bad") {
+        assert!(!sat, "as_secs()==6 contradicts the folded 5 -- must be UNSAT");
+    }
+}
+
+// Sub-second + millis carry: from_millis(1500) is 1s + 500ms. as_secs()==1,
+// subsec_millis()==500, as_millis()==1500. A wrong subsec claim refutes.
+#[test]
+fn duration_subsec_and_carry_fold() {
+    let secs = r#"
+        #[test]
+        fn t_dur_millis_secs() {
+            assert!(Duration::from_millis(1500).as_secs() == 1);
+        }
+    "#;
+    let out = lift_file(&parse(secs), "coretests/time/dur_millis_secs.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(dump.contains("Int(1)"), "from_millis(1500).as_secs() folds 1: {dump}");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_dur_millis_secs") {
+        assert!(sat, "from_millis(1500).as_secs() == 1 -- must be SAT");
+    }
+    let subsec = r#"
+        #[test]
+        fn t_dur_subsec_millis() {
+            assert!(Duration::from_millis(1500).subsec_millis() == 500);
+        }
+    "#;
+    let out = lift_file(&parse(subsec), "coretests/time/dur_subsec_millis.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(dump.contains("Int(500)"), "subsec_millis() folds 500: {dump}");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_dur_subsec_millis") {
+        assert!(sat, "from_millis(1500).subsec_millis() == 500 -- must be SAT");
+    }
+    let subsec_bad = r#"
+        #[test]
+        fn t_dur_subsec_millis_bad() {
+            assert!(Duration::from_millis(1500).subsec_millis() == 501);
+        }
+    "#;
+    let out = lift_file(&parse(subsec_bad), "coretests/time/dur_subsec_millis_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_dur_subsec_millis_bad") {
+        assert!(!sat, "subsec_millis is 500 != 501 -- must be UNSAT");
+    }
+}
+
+// `Duration::new(secs, nanos)` and `as_nanos()` over the total-nanos model, plus
+// a TYPED RHS (`== 5u64`) to confirm the int-width collapse to SMT `Int`.
+#[test]
+fn duration_new_nanos_and_typed_rhs_fold() {
+    let nanos = r#"
+        #[test]
+        fn t_dur_new_nanos() {
+            assert!(Duration::new(1, 500).as_nanos() == 1000000500);
+        }
+    "#;
+    let out = lift_file(&parse(nanos), "coretests/time/dur_new_nanos.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Int(1000000500)"),
+        "Duration::new(1,500).as_nanos() folds 1_000_000_500: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_dur_new_nanos") {
+        assert!(sat, "new(1,500).as_nanos() == 1000000500 -- must be SAT");
+    }
+    let typed = r#"
+        #[test]
+        fn t_dur_typed_rhs() {
+            assert!(Duration::from_secs(5).as_secs() == 5u64);
+        }
+    "#;
+    let out = lift_file(&parse(typed), "coretests/time/dur_typed_rhs.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_dur_typed_rhs") {
+        assert!(sat, "as_secs() == 5u64 (typed RHS) -- int widths are SMT Int, must be SAT");
+    }
+}
+
+// EXACT-OR-NONE: the FLOAT accessor surface and a let-bound / runtime Duration
+// must NOT fold -- the sugar declines, leaving the existing opaque handling.
+#[test]
+fn duration_float_and_indirect_decline_to_fold() {
+    // Float accessor: not in the integer accessor set -> declines.
+    let float_acc = r#"
+        #[test]
+        fn t_dur_float_acc() {
+            assert!(Duration::from_secs(5).as_secs_f64() == 5.0);
+        }
+    "#;
+    let out = lift_file(&parse(float_acc), "coretests/time/dur_float_acc.rs");
+    assert!(
+        !out.factory_audits
+            .iter()
+            .any(|a| a.selected == Some("duration_accessor")),
+        "a float accessor must NOT be folded by duration_accessor: {:?}",
+        out.factory_audits
+    );
+    // Let-bound Duration receiver (a path, not a constructor call) -> declines.
+    let bound = r#"
+        #[test]
+        fn t_dur_bound() {
+            let d = Duration::from_secs(5);
+            assert!(d.as_secs() == 5);
+        }
+    "#;
+    let out = lift_file(&parse(bound), "coretests/time/dur_bound.rs");
+    assert!(
+        !out.factory_audits
+            .iter()
+            .any(|a| a.selected == Some("duration_accessor")),
+        "a let-bound Duration receiver must NOT be folded by duration_accessor: {:?}",
+        out.factory_audits
+    );
+}
+
 // ---- Lane 12: range / array `is_empty()` folds to a ground bool (teeth) ----
 
 // `(5..5).is_empty()` is true (an empty half-open range). The LHS is determined
