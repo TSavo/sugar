@@ -20601,3 +20601,391 @@ fn t() {
         out.assertions_lifted
     );
 }
+
+// ---------------------------------------------------------------------------
+// Lever 23: arith-trait-method fold teeth + bound_path warrant
+//
+// These tests cover two orthogonal layers:
+//
+//  WARRANT LAYER (tests 1-4): `bound_path::recognize` already resolves
+//  let-bound path terms through macro nesting (4 levels deep).  ARM 1 of
+//  `impl_defined!` in num/ops.rs uses immutable `let lhs`/`let rhs` bindings —
+//  the path references in `Add::add(lhs, rhs)` resolve to their initializer
+//  literals.  The bad-twin confirms the warrant is structural, not reflexive.
+//
+//  TEETH LAYER (tests 5-7): `CallSugar.desugar` was previously emitting an
+//  opaque `call:Add::add(...)` EUF for arithmetic trait-method calls, which
+//  the SMT cannot evaluate.  The fix (arith-trait-method fold in CallSugar +
+//  ref-strip in const_fold_int_term) reduces `Add::add(x, y)` to a concrete
+//  integer — giving a reflexive `= N N` atom the SMT discharges immediately.
+// ---------------------------------------------------------------------------
+
+/// Walk a formula tree collecting all `Term::Var` names (for checking that
+/// no opaque variable escapes after let-bound resolution).
+fn lever23_collect_vars_in_formula(formula: &Formula, vars: &mut Vec<String>) {
+    use sugar_ir_symbolic::Term;
+    match formula {
+        Formula::Atomic { args, .. } => {
+            for arg in args {
+                lever23_collect_vars_in_term(arg, vars);
+            }
+        }
+        Formula::Connective { operands, .. } => {
+            for op in operands {
+                lever23_collect_vars_in_formula(op, vars);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn lever23_collect_vars_in_term(term: &sugar_ir_symbolic::Term, vars: &mut Vec<String>) {
+    use sugar_ir_symbolic::Term;
+    match term {
+        Term::Var { name } => vars.push(name.clone()),
+        Term::Ctor { args, .. } => {
+            for arg in args {
+                lever23_collect_vars_in_term(arg, vars);
+            }
+        }
+        Term::Const { .. } | Term::Lambda { .. } | Term::Let { .. } => {}
+    }
+}
+
+// --- WARRANT LAYER ---
+
+/// ARM 1 of `impl_defined!`: two-level macro nesting, immutable `let lhs`/`let rhs`.
+/// `bound_path::recognize` must resolve the path operands to their literal-cast
+/// initializers.  No opaque `lhs`/`rhs` vars should survive.
+#[test]
+fn lever_23_impl_defined_arm1_bound_path_resolves_lhs_rhs() {
+    let src = r#"
+use core::ops::Add;
+
+macro_rules! impl_defined {
+    ($op:ident, $method:ident($lhs:literal, $rhs:literal), $result:literal, $lt:ty, $rt:ty) => {
+        let lhs = $lhs as $lt;
+        let rhs = $rhs as $rt;
+        assert_eq!($result as $lt, $op::$method(lhs, rhs));
+    };
+}
+
+#[test]
+fn test_add_i8() {
+    impl_defined!(Add, add(0, 0), 0, i8, i8);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/num/ops.rs");
+    assert!(
+        out.assertions_lifted > 0,
+        "impl_defined! ARM 1 should lift: skip_reasons={:?}",
+        out.skip_reasons
+    );
+    let decls = all_warranted_decls(&out);
+    assert!(!decls.is_empty(), "should have at least one warranted decl");
+    let inv = decls[0].inv.as_ref().expect("has inv");
+    let mut vars = Vec::new();
+    lever23_collect_vars_in_formula(inv, &mut vars);
+    assert!(
+        !vars.iter().any(|v| v == "lhs" || v == "rhs"),
+        "lhs/rhs must resolve through 2-level macro nesting; \
+         found opaque vars={vars:?}; atom={inv:?}"
+    );
+}
+
+/// Three-level nesting: `impls_defined!` → `impl_defined!` → assertion.
+#[test]
+fn lever_23_impls_defined_three_level_nesting_resolves_lhs_rhs() {
+    let src = r#"
+use core::ops::Add;
+
+macro_rules! impl_defined {
+    ($op:ident, $method:ident($lhs:literal, $rhs:literal), $result:literal, $lt:ty, $rt:ty) => {
+        let lhs = $lhs as $lt;
+        let rhs = $rhs as $rt;
+        assert_eq!($result as $lt, $op::$method(lhs, rhs));
+    };
+}
+
+macro_rules! impls_defined {
+    ($op:ident, $method:ident($lhs:literal, $rhs:literal), $result:literal, $($t:ty),+) => {$(
+        impl_defined!($op, $method($lhs, $rhs), $result, $t, $t);
+    )+};
+}
+
+#[test]
+fn test_add_defined() {
+    impls_defined!(Add, add(0, 0), 0, i8, i16);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/num/ops.rs");
+    assert!(
+        out.assertions_lifted > 0,
+        "impls_defined! 3-level nesting should lift: skip_reasons={:?}",
+        out.skip_reasons
+    );
+    let decls = all_warranted_decls(&out);
+    assert!(!decls.is_empty(), "should have at least one warranted decl");
+    let inv = decls[0].inv.as_ref().expect("has inv");
+    let mut vars = Vec::new();
+    lever23_collect_vars_in_formula(inv, &mut vars);
+    assert!(
+        !vars.iter().any(|v| v == "lhs" || v == "rhs"),
+        "lhs/rhs should resolve through item+stmt macro 3-level nesting; \
+         found opaque vars={vars:?}; atom={inv:?}"
+    );
+}
+
+/// Four-level nesting: `test_arith_op!` → `impls_defined!` → `impl_defined!` → assertion.
+#[test]
+fn lever_23_test_arith_op_four_level_nesting_resolves_lhs_rhs() {
+    let src = r#"
+use core::ops::Add;
+
+macro_rules! impl_defined {
+    ($op:ident, $method:ident($lhs:literal, $rhs:literal), $result:literal, $lt:ty, $rt:ty) => {
+        let lhs = $lhs as $lt;
+        let rhs = $rhs as $rt;
+        assert_eq!($result as $lt, $op::$method(lhs, rhs));
+        assert_eq!($result as $lt, $op::$method(lhs, &rhs));
+        assert_eq!($result as $lt, $op::$method(&lhs, rhs));
+        assert_eq!($result as $lt, $op::$method(&lhs, &rhs));
+    };
+}
+
+macro_rules! impls_defined {
+    ($op:ident, $method:ident($lhs:literal, $rhs:literal), $result:literal, $($t:ty),+) => {$(
+        impl_defined!($op, $method($lhs, $rhs), $result, $t, $t);
+    )+};
+}
+
+macro_rules! test_arith_op {
+    ($fn_name:ident, $op:ident::$method:ident($lhs:literal, $rhs:literal)) => {
+        #[test]
+        fn $fn_name() {
+            impls_defined!($op, $method($lhs, $rhs), 0, i8, i16);
+        }
+    };
+}
+
+test_arith_op!(test_add_defined, Add::add(0, 0));
+"#;
+    let out = lift_file(&parse(src), "tests/num/ops.rs");
+    assert!(
+        out.assertions_lifted > 0,
+        "test_arith_op! 4-level nesting should lift: \
+         lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    let decls = all_warranted_decls(&out);
+    assert!(!decls.is_empty(), "should have at least one warranted decl");
+    let decl = decls[0];
+    let inv = decl.inv.as_ref().expect("has inv");
+    let mut vars = Vec::new();
+    lever23_collect_vars_in_formula(inv, &mut vars);
+    assert!(
+        !vars.iter().any(|v| v == "lhs" || v == "rhs"),
+        "lhs/rhs should resolve through item+stmt macro 4-level nesting; \
+         found opaque vars={vars:?}; atom={inv:?}"
+    );
+}
+
+/// Discrimination twin for the warrant layer: same pattern but wrong result literal.
+/// The formula must still warrant (sugar emits it) AND must not be reflexive —
+/// 0+1≠99, so the equality atom has distinct int operands.
+#[test]
+fn lever_23_impl_defined_arm1_bad_twin_stays_unresolved() {
+    let src = r#"
+use core::ops::Add;
+
+macro_rules! impl_defined_bad {
+    ($op:ident, $method:ident($lhs:literal, $rhs:literal), $result:literal, $lt:ty, $rt:ty) => {
+        let lhs = $lhs as $lt;
+        let rhs = $rhs as $rt;
+        assert_eq!($result as $lt, $op::$method(lhs, rhs));
+    };
+}
+
+#[test]
+fn test_add_i8_bad() {
+    // 0 + 1 != 99 — bad twin: the formula should be non-trivially checkable
+    impl_defined_bad!(Add, add(0, 1), 99, i8, i8);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/num/ops.rs");
+    // Should still warrant the assertion (the sugar emits it)
+    assert!(
+        out.assertions_lifted > 0,
+        "bad twin should still warrant (lift succeeds): skip_reasons={:?}",
+        out.skip_reasons
+    );
+    // The formula must NOT be trivially true — it should NOT be a reflexive pair
+    let decls = all_warranted_decls(&out);
+    assert!(!decls.is_empty(), "should have a warranted decl");
+    let decl = decls[0];
+    let inv = decl.inv.as_ref().expect("has inv");
+    let mut pairs = Vec::new();
+    const_int_eq_pairs(inv, &mut pairs);
+    assert!(
+        !pairs.iter().any(|(l, r)| l == r),
+        "bad twin formula must not be a reflexive pair (would be a false discharge): \
+         pairs={pairs:?}; atom={inv:?}"
+    );
+}
+
+// --- TEETH LAYER ---
+
+/// Direct form: `Add::add(lhs, rhs)` where lhs and rhs are let-bound literals.
+/// The CallSugar arith-trait-method fold must reduce to a concrete integer —
+/// no opaque `call:Add::add` EUF — and the result must be reflexive (1+1=2).
+#[test]
+fn lever_23_arith_trait_call_add_direct_folds_to_reflexive_pair() {
+    let src = r#"
+use core::ops::Add;
+
+macro_rules! add_direct {
+    ($lhs:literal, $rhs:literal, $result:literal, $t:ty) => {
+        let lhs = $lhs as $t;
+        let rhs = $rhs as $t;
+        assert_eq!($result as $t, Add::add(lhs, rhs));
+    };
+}
+
+#[test]
+fn test_add_direct() {
+    add_direct!(1, 1, 2, i8);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/num/ops.rs");
+    assert!(
+        out.assertions_lifted > 0,
+        "Add::add direct form should warrant: skip_reasons={:?}",
+        out.skip_reasons
+    );
+    let decls = all_warranted_decls(&out);
+    assert!(!decls.is_empty(), "should have at least one warranted decl");
+    let inv = decls[0].inv.as_ref().expect("has inv");
+
+    // No opaque vars after the fold.
+    let mut vars = Vec::new();
+    lever23_collect_vars_in_formula(inv, &mut vars);
+    assert!(
+        vars.is_empty(),
+        "arith fold should leave no opaque vars (no unresolved `call:Add::add` EUF): \
+         vars={vars:?}; atom={inv:?}"
+    );
+
+    // Both sides must be concrete ints — const_int_eq_pairs finds them.
+    let mut pairs = Vec::new();
+    const_int_eq_pairs(inv, &mut pairs);
+    assert!(
+        !pairs.is_empty(),
+        "arith fold should produce a concrete int equality pair: atom={inv:?}"
+    );
+    // Correct result: 1+1=2, reflexive pair — the SMT discharges it.
+    assert!(
+        pairs.iter().any(|(l, r)| l == r),
+        "correct arith result should yield a reflexive pair (both sides == folded value): \
+         pairs={pairs:?}; atom={inv:?}"
+    );
+}
+
+/// Ref-rhs form: `Add::add(lhs, &rhs)`.  The `&rhs` argument produces a
+/// `ref(num(N))` term; `const_fold_int_term` must strip the `ref` wrapper.
+/// Same outcome as the direct form: reflexive pair (3+4=7).
+#[test]
+fn lever_23_arith_trait_call_add_ref_rhs_folds_to_reflexive_pair() {
+    let src = r#"
+use core::ops::Add;
+
+macro_rules! add_ref_rhs {
+    ($lhs:literal, $rhs:literal, $result:literal, $t:ty) => {
+        let lhs = $lhs as $t;
+        let rhs = $rhs as $t;
+        assert_eq!($result as $t, Add::add(lhs, &rhs));
+    };
+}
+
+#[test]
+fn test_add_ref_rhs() {
+    add_ref_rhs!(3, 4, 7, i16);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/num/ops.rs");
+    assert!(
+        out.assertions_lifted > 0,
+        "Add::add ref-rhs form should warrant: skip_reasons={:?}",
+        out.skip_reasons
+    );
+    let decls = all_warranted_decls(&out);
+    assert!(!decls.is_empty(), "should have at least one warranted decl");
+    let inv = decls[0].inv.as_ref().expect("has inv");
+
+    let mut vars = Vec::new();
+    lever23_collect_vars_in_formula(inv, &mut vars);
+    assert!(
+        vars.is_empty(),
+        "ref-rhs arith fold should leave no opaque vars: vars={vars:?}; atom={inv:?}"
+    );
+
+    let mut pairs = Vec::new();
+    const_int_eq_pairs(inv, &mut pairs);
+    assert!(
+        !pairs.is_empty(),
+        "ref-rhs arith fold should produce a concrete int equality pair: atom={inv:?}"
+    );
+    assert!(
+        pairs.iter().any(|(l, r)| l == r),
+        "correct ref-rhs result should yield a reflexive pair (3+4=7): \
+         pairs={pairs:?}; atom={inv:?}"
+    );
+}
+
+/// Discrimination twin for the teeth layer: wrong result (99 instead of 1+1=2).
+/// The fold still fires (both operands resolve to ints), but the pair is
+/// non-reflexive — 99≠2 — so it would be refuted, not falsely discharged.
+#[test]
+fn lever_23_arith_trait_call_fold_discrimination_wrong_result_is_inequal() {
+    let src = r#"
+use core::ops::Add;
+
+macro_rules! add_wrong {
+    ($lhs:literal, $rhs:literal, $result:literal, $t:ty) => {
+        let lhs = $lhs as $t;
+        let rhs = $rhs as $t;
+        assert_eq!($result as $t, Add::add(lhs, rhs));
+    };
+}
+
+#[test]
+fn test_add_wrong() {
+    // 1 + 1 = 2, NOT 99 — discrimination twin for the arith fold
+    add_wrong!(1, 1, 99, i8);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/num/ops.rs");
+    assert!(
+        out.assertions_lifted > 0,
+        "discrimination twin should still warrant: skip_reasons={:?}",
+        out.skip_reasons
+    );
+    let decls = all_warranted_decls(&out);
+    assert!(!decls.is_empty(), "should have a warranted decl");
+    let inv = decls[0].inv.as_ref().expect("has inv");
+
+    // The fold still fires — both sides must be concrete ints.
+    let mut pairs = Vec::new();
+    const_int_eq_pairs(inv, &mut pairs);
+    assert!(
+        !pairs.is_empty(),
+        "discrimination twin: fold should still produce a concrete int pair: atom={inv:?}"
+    );
+    // But the pair must NOT be reflexive — 99 ≠ 2 (fold of 1+1).
+    assert!(
+        !pairs.iter().any(|(l, r)| l == r),
+        "discrimination twin must yield a non-reflexive pair (99 ≠ 2): \
+         pairs={pairs:?}; atom={inv:?}"
+    );
+}
