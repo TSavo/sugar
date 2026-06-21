@@ -257,10 +257,10 @@ impl FactoryAuditSeed {
                     (FactoryDisposition::Warranted, "constraints", None)
                 }
                 AssertionFactKind::Support => (
-                    FactoryDisposition::Support,
-                    "constraints",
+                    FactoryDisposition::Warranted,
+                    "auxiliary-constraints",
                     Some(
-                        "support constraint: emitted as panic-path/auxiliary universe; does not increment scalar assertion count"
+                        "auxiliary constraint: emitted as panic-path/temporal universe; does not increment scalar assertion count"
                             .to_string(),
                     ),
                 ),
@@ -360,5 +360,44 @@ impl Sugar for AccountedSugar {
         }
         ctx.record_factory_audit(audit);
         outcome
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{bool_const, AssertionFactKind, Desugared, Warrant};
+    use sugar_ir_symbolic::eq;
+
+    #[test]
+    fn auxiliary_constraint_audit_is_warranted_not_support() {
+        let seed = FactoryAuditSeed {
+            ast_kind: "expr",
+            site: "panic_free_call()".to_string(),
+            line: 1,
+            requested_role: "Constraint".to_string(),
+            selected: Some("panic_free"),
+            candidates: Vec::new(),
+        };
+        let outcome = Outcome::Dug(Desugared::Constraints {
+            atom: eq(bool_const(true), bool_const(true)),
+            n: 0,
+            kind: AssertionFactKind::Support,
+            warrant: Warrant {
+                name: Some("panic-free".to_string()),
+            },
+        });
+
+        let audit = seed.audit(&outcome);
+
+        assert_eq!(audit.disposition, FactoryDisposition::Warranted);
+        assert_eq!(audit.output, "auxiliary-constraints");
+        assert!(
+            audit
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("auxiliary constraint")),
+            "{audit:?}"
+        );
     }
 }
