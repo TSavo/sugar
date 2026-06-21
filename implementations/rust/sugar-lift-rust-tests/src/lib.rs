@@ -73,6 +73,7 @@ pub mod sugar {
     pub mod cstr;
     pub mod ctor_term;
     pub mod dormant_mut_ref;
+    pub mod duration_accessor;
     pub mod enumerate;
     pub mod extract_if;
     pub mod factory;
