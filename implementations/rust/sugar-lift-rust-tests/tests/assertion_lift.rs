@@ -1509,6 +1509,87 @@ fn for_array_repeat_non_literal_element_refuses() {
     );
 }
 
+// `get_unchecked` over a literal-backed slice with an in-domain index is text-determined
+// (== the checked `index`); the unsafe pointer boundary is an impl detail. Inherent form
+// `[10, 20, 30].get_unchecked(1)`.
+#[test]
+fn slice_get_unchecked_inherent_literal_lifts() {
+    let src = r#"
+        #[test]
+        fn t_gu() {
+            assert_eq!(unsafe { [10, 20, 30].get_unchecked(1) }, 20);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/slice/get_unchecked.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "in-domain get_unchecked must ground: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "gu_inherent") {
+        assert!(sat, "[10,20,30].get_unchecked(1) == 20 -- consistent (SAT)");
+    }
+}
+
+// TEETH: a WRONG expected over the grounded element must refute.
+#[test]
+fn slice_get_unchecked_wrong_expected_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_gu_bad() {
+            assert_eq!(unsafe { [10, 20, 30].get_unchecked(1) }, 99);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/slice/get_unchecked_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "gu_bad") {
+        assert!(!sat, "[10,20,30].get_unchecked(1)=20 != 99 -- must be UNSAT");
+    }
+}
+
+// DISCRIMINATION / finite-or-refuse: an index OUTSIDE the literal slice domain is
+// out-of-bounds UB with no determinate value -> must REFUSE, never fabricate a lift.
+#[test]
+fn slice_get_unchecked_out_of_domain_refuses() {
+    let src = r#"
+        #[test]
+        fn t_gu_oob() {
+            assert_eq!(unsafe { [10, 20, 30].get_unchecked(5) }, 0);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/slice/get_unchecked_oob.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "out-of-domain get_unchecked must not falsely lift: lifted={} refused={}",
+        out.assertions_lifted,
+        out.assertions_refused
+    );
+}
+
+// The `coretests/index.rs` SliceIndex-trait shape: `Clamp(idx).get_unchecked(&slice)` --
+// receiver is the index, arg is the literal slice. Clamp(2) into len-3 -> index 2 -> 30.
+#[test]
+fn slice_get_unchecked_trait_clamp_form_lifts() {
+    let src = r#"
+        #[test]
+        fn t_gu_trait() {
+            assert_eq!(unsafe { Clamp(2).get_unchecked(&[10, 20, 30] as &[_]) }, 30);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/index/get_unchecked_trait.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "trait-form Clamp get_unchecked must ground: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "gu_trait") {
+        assert!(sat, "Clamp(2).get_unchecked([10,20,30]) == 30 -- consistent (SAT)");
+    }
+}
+
 #[test]
 fn compute_float32_wrapper_lowers_scaled_literals_to_tuple_axioms() {
     let src = r#"
