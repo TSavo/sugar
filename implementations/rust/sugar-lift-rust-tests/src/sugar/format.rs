@@ -817,11 +817,19 @@ fn is_unsigned(suffix: IntKind) -> bool {
 }
 
 fn render_float_f64(x: f64, spec: &Spec) -> Option<String> {
+    // CRITICAL: Display (`{}`) and Debug (`{:?}`) DIFFER for floats -- Debug always shows
+    // a decimal point (`0.0`, `-3.0`) and switches to exponential outside [1e-4, 1e16)
+    // (`1e16`, `9e-5`), while Display does not. Each dispatches to its OWN real `format!`;
+    // collapsing them (rendering Debug via Display) is a fake string -> false refutation.
     let body = match (spec.kind, spec.precision, spec.plus) {
-        (Kind::Display | Kind::Debug, None, false) => format!("{x}"),
-        (Kind::Display | Kind::Debug, None, true) => format!("{x:+}"),
-        (Kind::Display | Kind::Debug, Some(p), false) => format!("{x:.p$}"),
-        (Kind::Display | Kind::Debug, Some(p), true) => format!("{x:+.p$}"),
+        (Kind::Display, None, false) => format!("{x}"),
+        (Kind::Display, None, true) => format!("{x:+}"),
+        (Kind::Display, Some(p), false) => format!("{x:.p$}"),
+        (Kind::Display, Some(p), true) => format!("{x:+.p$}"),
+        (Kind::Debug, None, false) => format!("{x:?}"),
+        (Kind::Debug, None, true) => format!("{x:+?}"),
+        (Kind::Debug, Some(p), false) => format!("{x:.p$?}"),
+        (Kind::Debug, Some(p), true) => format!("{x:+.p$?}"),
         (Kind::LowerExp, None, false) => format!("{x:e}"),
         (Kind::LowerExp, Some(p), false) => format!("{x:.p$e}"),
         (Kind::UpperExp, None, false) => format!("{x:E}"),
@@ -840,11 +848,17 @@ fn render_float_f64(x: f64, spec: &Spec) -> Option<String> {
 }
 
 fn render_float_f32(x: f32, spec: &Spec) -> Option<String> {
+    // See `render_float_f64`: Display and Debug differ for floats; render each through
+    // its own real `format!`, never collapse Debug onto Display.
     let body = match (spec.kind, spec.precision, spec.plus) {
-        (Kind::Display | Kind::Debug, None, false) => format!("{x}"),
-        (Kind::Display | Kind::Debug, None, true) => format!("{x:+}"),
-        (Kind::Display | Kind::Debug, Some(p), false) => format!("{x:.p$}"),
-        (Kind::Display | Kind::Debug, Some(p), true) => format!("{x:+.p$}"),
+        (Kind::Display, None, false) => format!("{x}"),
+        (Kind::Display, None, true) => format!("{x:+}"),
+        (Kind::Display, Some(p), false) => format!("{x:.p$}"),
+        (Kind::Display, Some(p), true) => format!("{x:+.p$}"),
+        (Kind::Debug, None, false) => format!("{x:?}"),
+        (Kind::Debug, None, true) => format!("{x:+?}"),
+        (Kind::Debug, Some(p), false) => format!("{x:.p$?}"),
+        (Kind::Debug, Some(p), true) => format!("{x:+.p$?}"),
         (Kind::LowerExp, None, false) => format!("{x:e}"),
         (Kind::LowerExp, Some(p), false) => format!("{x:.p$e}"),
         (Kind::UpperExp, None, false) => format!("{x:E}"),

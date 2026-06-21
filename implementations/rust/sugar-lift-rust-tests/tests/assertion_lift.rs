@@ -14809,6 +14809,67 @@ fn format_str_eq_has_teeth() {
     }
 }
 
+// Float Display (`{}`) and Debug (`{:?}`) DIFFER: Debug always shows a decimal point
+// (`0.0`, `-3.0`) and switches to exponential outside [1e-4, 1e16) (`1e16`, `9e-5`).
+// The lifter must render Debug through the REAL `{:?}` formatter, never collapse it onto
+// Display -- that collapse produced the fmt/float.rs false refutations (decl[0]/[3]).
+#[test]
+fn format_debug_float_eq_has_teeth() {
+    let Some(good) = format_eq_verdict(r#"format!("{:?}", 0.0f64)"#, r#""0.0""#, "dbgf_zero")
+    else {
+        return; // z3 absent
+    };
+    assert!(
+        good,
+        "format!(\"{{:?}}\", 0.0f64) == \"0.0\" must be SAT (Debug shows the decimal point)"
+    );
+    // BAD TWIN: the Display rendering ("0") is the WRONG Debug string -> must REFUTE.
+    let bad = format_eq_verdict(r#"format!("{:?}", 0.0f64)"#, r#""0""#, "dbgf_zero_bad").unwrap();
+    assert!(
+        !bad,
+        "Debug 0.0 is \"0.0\", not the Display \"0\" -> wrong string z3-UNSAT (teeth)"
+    );
+    // exponential high cutoff: Debug of 1e16 is "1e16".
+    let cut = format_eq_verdict(r#"format!("{:?}", 1e16f64)"#, r#""1e16""#, "dbgf_cut").unwrap();
+    assert!(cut, "format!(\"{{:?}}\", 1e16f64) == \"1e16\" must be SAT");
+    let cut_bad =
+        format_eq_verdict(r#"format!("{:?}", 1e16f64)"#, r#""10000000000000000""#, "dbgf_cut_bad")
+            .unwrap();
+    assert!(
+        !cut_bad,
+        "Debug 1e16 is exponential \"1e16\", not the Display decimal -> z3-UNSAT (teeth)"
+    );
+    // small-magnitude exponential: Debug of 0.00009 is "9e-5".
+    let small =
+        format_eq_verdict(r#"format!("{:?}", 0.00009f64)"#, r#""9e-5""#, "dbgf_small").unwrap();
+    assert!(small, "format!(\"{{:?}}\", 0.00009f64) == \"9e-5\" must be SAT");
+    // integer-valued negative: Debug of -3.0 is "-3.0".
+    let neg = format_eq_verdict(r#"format!("{:?}", -3f64)"#, r#""-3.0""#, "dbgf_neg").unwrap();
+    assert!(neg, "format!(\"{{:?}}\", -3f64) == \"-3.0\" must be SAT");
+    // f32 behaves identically.
+    let f32d = format_eq_verdict(r#"format!("{:?}", 0.0f32)"#, r#""0.0""#, "dbgf_f32").unwrap();
+    assert!(f32d, "format!(\"{{:?}}\", 0.0f32) == \"0.0\" must be SAT");
+}
+
+// Discrimination twin: Display (`{}`) of an integer-valued float is "0" / "-3" with NO
+// trailing `.0` -- distinct from Debug. Proves the two specs are not aliased to one arm.
+#[test]
+fn format_display_float_distinct_from_debug() {
+    let Some(good) = format_eq_verdict(r#"format!("{}", 0.0f64)"#, r#""0""#, "dispf_zero") else {
+        return; // z3 absent
+    };
+    assert!(
+        good,
+        "format!(\"{{}}\", 0.0f64) == \"0\" must be SAT (Display has no decimal point)"
+    );
+    // BAD TWIN: the Debug rendering ("0.0") is the WRONG Display string -> must REFUTE.
+    let bad = format_eq_verdict(r#"format!("{}", 0.0f64)"#, r#""0.0""#, "dispf_zero_bad").unwrap();
+    assert!(
+        !bad,
+        "Display 0.0 is \"0\", not the Debug \"0.0\" -> z3-UNSAT (teeth, specs are distinct)"
+    );
+}
+
 #[test]
 fn format_bool_eq_has_teeth() {
     if let Some(good) = format_eq_verdict(r#"format!("{}", true)"#, r#""true""#, "bool_good") {
