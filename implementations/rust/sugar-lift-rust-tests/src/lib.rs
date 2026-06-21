@@ -137,6 +137,7 @@ pub mod sugar {
     pub mod reference_term;
     pub mod regex_match;
     pub mod repeat_term;
+    pub mod result_predicate;
     pub mod result_transpose_collect;
     pub mod rev;
     pub mod scan;
@@ -163,6 +164,7 @@ pub mod sugar {
     pub mod term_literal;
     pub mod to_string;
     pub mod transparent_term;
+    pub mod try_from;
     pub mod try_from_fn;
     pub mod try_map;
     pub mod tuple_decomp;
