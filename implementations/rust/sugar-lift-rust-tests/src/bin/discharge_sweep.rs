@@ -127,6 +127,93 @@ fn discharge_inv(inv: &Value, z3_path: &str, label: &str) -> Teeth {
     }
 }
 
+/// True iff the formula subtree mentions a panic-path atom (`name == "panic"`).
+/// Mirrors the kit's `formula_mentions_panic_path` (assertion_lift.rs).
+fn mentions_panic(v: &Value) -> bool {
+    match v {
+        Value::Object(map) => {
+            if map.get("kind").and_then(Value::as_str) == Some("atomic")
+                && map.get("name").and_then(Value::as_str) == Some("panic")
+            {
+                return true;
+            }
+            map.values().any(mentions_panic)
+        }
+        Value::Array(a) => a.iter().any(mentions_panic),
+        _ => false,
+    }
+}
+
+/// The VALUE-claim invariant: drop the panic-freedom conjuncts so the discharge
+/// gate measures whether the asserted VALUE is proven, not whether panic-freedom
+/// is. An opaque panic conjunct otherwise drags a value-teethed claim into
+/// UNDECIDED -- the reason the full-inv DISCHARGED count is a lower bound on
+/// value-teethedness. Returns None when nothing but panic remains.
+fn value_only_inv(inv: &Value) -> Option<Value> {
+    if inv.get("kind").and_then(Value::as_str) == Some("and") {
+        if let Some(ops) = inv.get("operands").and_then(Value::as_array) {
+            let kept: Vec<Value> = ops.iter().filter(|o| !mentions_panic(o)).cloned().collect();
+            if kept.is_empty() {
+                return None;
+            }
+            return Some(json!({ "kind": "and", "operands": kept }));
+        }
+    }
+    if mentions_panic(inv) {
+        None
+    } else {
+        Some(inv.clone())
+    }
+}
+
+/// A coarse shape signature for a REFUTED inv, for classifying false refutations.
+/// e.g. `const==const` (a stale local mis-grounded to a literal), `ctor==const`, ...
+fn refuted_signature(inv: &Value) -> String {
+    // The first non-panic equality atom's argument kinds.
+    fn atoms(v: &Value, out: &mut Vec<Value>) {
+        if v.get("kind").and_then(Value::as_str) == Some("atomic") {
+            out.push(v.clone());
+        } else if let Some(ops) = v.get("operands").and_then(Value::as_array) {
+            for o in ops {
+                atoms(o, out);
+            }
+        }
+    }
+    let mut a = Vec::new();
+    atoms(inv, &mut a);
+    let kind_of = |v: &Value| {
+        v.get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or("?")
+            .to_string()
+    };
+    for atom in &a {
+        if mentions_panic(atom) {
+            continue;
+        }
+        let name = atom.get("name").and_then(Value::as_str).unwrap_or("?");
+        if let Some(args) = atom.get("args").and_then(Value::as_array) {
+            if args.len() == 2 {
+                return format!("{name}({},{})", kind_of(&args[0]), kind_of(&args[1]));
+            }
+        }
+        return name.to_string();
+    }
+    "?".to_string()
+}
+
+/// One refuted obligation, for the false-refutation breakdown. The corpus is all
+/// TRUE assertions, so every REFUTED here is a false refutation (a stale/wrong lift).
+#[derive(Clone)]
+struct RefutedRecord {
+    file: String,
+    signature: String,
+    /// The file carries a refused `&mut`/deref-mutation skip -- the borrow4 / T3
+    /// stale-deref class (deferred). False if no such skip -> a DIFFERENT class,
+    /// likely fixable now.
+    mut_skip_class: bool,
+}
+
 #[derive(Default)]
 struct Tally {
     warranted_obligations: usize,
@@ -286,7 +373,8 @@ fn main() {
     // (which ARE Sync), then fan the z3 work out below. Per-file progress goes
     // to stderr so a slow lift is visible, never a silent hang.
     let total_files = files.len();
-    let mut obligations: Vec<(String, Value)> = Vec::new();
+    // (label, rel, inv, file_has_mut_skip)
+    let mut obligations: Vec<(String, String, Value, bool)> = Vec::new();
     let mut no_inv_total = 0usize;
     for (fi, (rel, src)) in files.iter().enumerate() {
         let Ok(file) = syn::parse_file(src) else {
@@ -300,6 +388,13 @@ fn main() {
             &const_registry,
             &fn_registry,
         );
+        // Does this file carry a refused `&mut` / deref-mutation read? That is the
+        // borrow4 / T3 stale-deref class (deferred) -- used to classify any false
+        // refutation from this file.
+        let file_has_mut_skip = out.skip_reasons.iter().any(|r| {
+            let r = r.to_lowercase();
+            (r.contains("&mut") || r.contains("mutation") || r.contains("deref") || r.contains("borrow"))
+        });
         // Warranted obligations = decls backing a warranted assertion fact with
         // >=1 scalar claim (mirrors the kit's own `warranted_decls`).
         let warranted_names: std::collections::HashSet<&str> = out
@@ -322,7 +417,7 @@ fn main() {
             match inv {
                 Some(inv) if !inv.is_null() => {
                     let label = format!("{}_{idx}", rel.replace(['/', '.', '-'], "_"));
-                    obligations.push((label, inv));
+                    obligations.push((label, rel.clone(), inv, file_has_mut_skip));
                     file_obs += 1;
                 }
                 _ => no_inv_total += 1,
@@ -338,44 +433,94 @@ fn main() {
 
     // PHASE 2 (parallel discharge): one z3 verdict per obligation, fanned out
     // across cores. The per-query timeout bounds any pathological obligation.
+    // Two ledgers: FULL inv, and the panic-filtered VALUE-claim inv (the extra z3
+    // runs ONLY when the obligation actually carries a panic conjunct). REFUTED
+    // obligations are classified (the corpus is all-true -> every one is a false
+    // refutation).
     let checked = AtomicUsize::new(0);
     let total_ob = obligations.len();
-    let mut tally = obligations
+    let acc = obligations
         .par_iter()
-        .map(|(label, inv)| {
-            let t = discharge_inv(inv, &z3_path, label);
+        .map(|(label, rel, inv, mut_skip)| {
+            let full = discharge_inv(inv, &z3_path, label);
+            // Value-claim teeth: reuse FULL when no panic conjunct (no extra z3).
+            let value = match value_only_inv(inv) {
+                Some(vi) if &vi != inv => {
+                    Some(discharge_inv(&vi, &z3_path, &format!("{label}_v")))
+                }
+                Some(_) => Some(full.clone()),
+                None => None, // panic-only obligation -- no value claim to teeth
+            };
+            let refuted = matches!(full, Teeth::Refuted).then(|| RefutedRecord {
+                file: rel.clone(),
+                signature: refuted_signature(inv),
+                mut_skip_class: *mut_skip,
+            });
             let n = checked.fetch_add(1, Ordering::Relaxed) + 1;
-            if n % 200 == 0 {
+            if n % 500 == 0 {
                 eprintln!("  discharged {n}/{total_ob}");
             }
-            t
+            (full, value, refuted)
         })
-        .fold(Tally::default, |mut acc, t| {
-            acc.record(&t);
+        .fold(Acc::default, |mut acc, (full, value, refuted)| {
+            acc.full.record(&full);
+            if let Some(v) = &value {
+                acc.value.record(v);
+            }
+            if let Some(r) = refuted {
+                acc.refuted.push(r);
+            }
             acc
         })
-        .reduce(Tally::default, |mut a, b| {
+        .reduce(Acc::default, |mut a, b| {
             a.merge(b);
             a
         });
+    let mut acc = acc;
     for _ in 0..no_inv_total {
-        tally.record(&Teeth::Uncheckable("no-inv".into()));
+        acc.full.record(&Teeth::Uncheckable("no-inv".into()));
     }
 
-    print_headline(&tally, z3_available, &z3_path);
+    print_headline(&acc.full, &acc.value, z3_available, &z3_path);
+    print_refuted_breakdown(&acc.refuted);
+
+    if let Some(path) = arg_value(&args, "--dump-refuted") {
+        let mut lines = String::from("file\tsignature\tmut_skip_class\n");
+        let mut recs = acc.refuted.clone();
+        recs.sort_by(|a, b| a.file.cmp(&b.file).then(a.signature.cmp(&b.signature)));
+        for r in &recs {
+            lines.push_str(&format!("{}\t{}\t{}\n", r.file, r.signature, r.mut_skip_class));
+        }
+        if let Err(e) = std::fs::write(&path, lines) {
+            eprintln!("discharge_sweep: write --dump-refuted {path}: {e}");
+        }
+    }
 
     if let Some(path) = json_out {
+        let f = &acc.full;
+        let v = &acc.value;
+        let mut_class = acc.refuted.iter().filter(|r| r.mut_skip_class).count();
         let obj = json!({
             "teethed_ledger": {
-                "warranted_obligations": tally.warranted_obligations,
-                "discharged": tally.discharged(),
-                "discharged_substantive": tally.discharged_substantive,
-                "discharged_reflexive": tally.discharged_reflexive,
-                "refuted": tally.refuted,
-                "undecided": tally.undecided,
-                "uncheckable": tally.uncheckable,
-                "z3_absent": tally.z3_absent,
-                "uncheckable_reasons": tally.uncheckable_reasons,
+                "warranted_obligations": f.warranted_obligations,
+                "discharged": f.discharged(),
+                "discharged_substantive": f.discharged_substantive,
+                "discharged_reflexive": f.discharged_reflexive,
+                "refuted": f.refuted,
+                "undecided": f.undecided,
+                "uncheckable": f.uncheckable,
+                "z3_absent": f.z3_absent,
+                "uncheckable_reasons": f.uncheckable_reasons,
+                // Panic-filtered VALUE-claim teethedness (drops panic-freedom
+                // conjuncts): the honest "how much of the value is proven".
+                "value_obligations": v.warranted_obligations,
+                "value_discharged": v.discharged(),
+                "value_discharged_substantive": v.discharged_substantive,
+                "value_refuted": v.refuted,
+                "value_undecided": v.undecided,
+                // False-refutation breakdown (corpus is all-true).
+                "refuted_mut_skip_class": mut_class,
+                "refuted_other_class": f.refuted.saturating_sub(mut_class),
             }
         });
         if let Err(e) = std::fs::write(&path, serde_json::to_string_pretty(&obj).unwrap()) {
@@ -384,7 +529,65 @@ fn main() {
     }
 }
 
-fn print_headline(t: &Tally, z3_seen: bool, z3_path: &str) {
+/// Combined parallel accumulator: full-inv ledger, value-claim ledger, and the
+/// list of (false) refutations for classification.
+#[derive(Default)]
+struct Acc {
+    full: Tally,
+    value: Tally,
+    refuted: Vec<RefutedRecord>,
+}
+
+impl Acc {
+    fn merge(&mut self, other: Acc) {
+        self.full.merge(other.full);
+        self.value.merge(other.value);
+        self.refuted.extend(other.refuted);
+    }
+}
+
+fn print_refuted_breakdown(refuted: &[RefutedRecord]) {
+    if refuted.is_empty() {
+        println!("  REFUTED breakdown: 0 -- no false refutations (the floor holds).");
+        return;
+    }
+    let mut_class = refuted.iter().filter(|r| r.mut_skip_class).count();
+    let other = refuted.len() - mut_class;
+    println!(
+        "  FALSE REFUTATIONS = {} (all-true corpus -> every refutation is a stale/wrong lift; floor target 0):",
+        refuted.len()
+    );
+    println!(
+        "    {mut_class} stale-&mut/deref class (borrow4 / T3, deferred #6/#16); {other} OTHER class (NOT T3 -- candidates fixable now)"
+    );
+    let mut by_sig: BTreeMap<String, usize> = BTreeMap::new();
+    let mut by_file: BTreeMap<String, usize> = BTreeMap::new();
+    for r in refuted {
+        *by_sig.entry(r.signature.clone()).or_default() += 1;
+        *by_file.entry(r.file.clone()).or_default() += 1;
+    }
+    let mut sigs: Vec<_> = by_sig.into_iter().collect();
+    sigs.sort_by(|a, b| b.1.cmp(&a.1));
+    println!(
+        "    by inv shape: {}",
+        sigs.iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    let mut filz: Vec<_> = by_file.into_iter().collect();
+    filz.sort_by(|a, b| b.1.cmp(&a.1));
+    println!(
+        "    by file (top): {}",
+        filz.iter()
+            .take(8)
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+}
+
+fn print_headline(t: &Tally, v: &Tally, z3_seen: bool, z3_path: &str) {
     if !z3_seen {
         println!(
             "teethed ledger: z3 UNAVAILABLE at {z3_path} -- {} warranted obligations NOT checked \
@@ -407,6 +610,20 @@ fn print_headline(t: &Tally, z3_seen: bool, z3_path: &str) {
         t.undecided,
         pct(t.undecided),
         t.uncheckable,
+    );
+    // Panic-filtered VALUE-claim ledger: the honest "how much of the VALUE is
+    // proven" (full-inv discharged is a lower bound -- an opaque panic-freedom
+    // conjunct drags a value-teethed claim into UNDECIDED).
+    let vdenom = v.warranted_obligations.max(1) as f64;
+    println!(
+        "  value-claim (panic-filtered): obligations={} discharged={} ({:.1}%) [substantive={}] \
+         refuted={} undecided={}",
+        v.warranted_obligations,
+        v.discharged(),
+        (v.discharged() as f64) * 100.0 / vdenom,
+        v.discharged_substantive,
+        v.refuted,
+        v.undecided,
     );
     println!(
         "  DISCHARGED = z3 proves negation UNSAT (teeth, proven). UNDECIDED = lifted but \
