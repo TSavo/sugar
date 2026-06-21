@@ -33,8 +33,12 @@ For isolated work, create repo-local worktrees under `.worktrees/` from `origin/
 
 ## Supersonic Workflow
 
-Default to forward motion, but make every shot observable. Every code change should add or improve instrumentation where the behavior could otherwise be guessed, and should add a focused unit or regression test for the claim it makes. Long-term goals should become ratchet tests: explicit counters, ledgers, or assertions that move toward zero and fail when the count goes the wrong way.
+Default to forward motion, but every shot follows this flow:
 
-After a focused change has enough local evidence to be coherent, commit it, open the PR, and merge it without waiting for CI. Long builds, full sweeps, and corpus runs should continue in the background after merge, usually in `tmux`, `bcargo`, or on `battleaxe`. Treat CI red, logs, and delayed sweep failures as latent impact signals: inspect them quickly, identify the next concrete correction, and fix forward in a new PR.
-
-Do not use waiting as a safety blanket. Launch independent work streams when they do not collide, report exact evidence and paths, and course-correct from measured failures. Regressions are usually missed tests or missing instrumentation first; add the missing witness before broadening the fix. If a merge conflict or broken main blocks the shot, resolve that concrete blocker and continue; do not reframe it as a reason to stop.
+- New feature: write the focused unit test first. The test names the behavior, fails or would have failed before the change, and becomes the local proof that the feature exists. Add implementation and instrumentation after the test defines the target.
+- Regression: write the regression unit test first. Reproduce the failure in the smallest test that would have caught it. If the failure cannot be seen clearly, add instrumentation first, then add the regression test, then fix.
+- Long-term goal: write a ratchet unit test. The test pins the current checked-in number and asserts the next number is strictly better: for example `unresolved < 334`, `no_facts < 78`, or `support == 0`. When the number improves, update the pinned threshold downward in the same PR. Never loosen a ratchet upward except in an explicit accounting-correction PR.
+- Instrumentation: every change needs observability at the boundary where a future agent would otherwise have to guess. Use the repo's logging/tracing/report machinery, and include exact paths to logs, reports, receipts, or run outputs in the PR notes.
+- Ship: after the focused test and local evidence are coherent, commit, open the PR, and merge without waiting for CI. CI red, delayed logs, and long-run failures are latent signals for the next fix-forward PR, not a reason to hold completed work.
+- Background: long builds, full sweeps, corpus runs, and solver-heavy checks run after merge in `tmux`, `bcargo`, or on `battleaxe`. Report the command, host, log path, and next expected signal.
+- Parallel fire: launch independent work streams when they do not collide. If a merge conflict, broken main, or failed background run blocks the next shot, resolve that concrete blocker and keep moving.
