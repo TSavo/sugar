@@ -169,6 +169,15 @@ fn component_plan_result(params: &Value) -> Value {
     })
 }
 
+/// Per-file marshalled-decl byte bound. A file whose emitted assertion decls exceed
+/// this is refused (finite-or-refuse) rather than emitted -- the downstream cannot
+/// clone / content-address an unbounded response term without OOM. Generous: the
+/// largest legitimate coretests file observed marshals to ~117 KB.
+const FILE_DECL_EMIT_BYTE_BOUND: usize = 4_000_000;
+/// Per-function source-memento byte bound; an oversized memento is replaced by a
+/// refusal marker (the memento is refused, the rest of the file still lifts).
+const MEMENTO_EMIT_BYTE_BOUND: usize = 1_000_000;
+
 fn lift(params: &Value) -> Value {
     trace_lift_rpc_checkpoint("lift.start", &Value::Null);
     let workspace_root = params
@@ -318,8 +327,30 @@ fn lift(params: &Value) -> Value {
                 rss_delta_kib(marshal_rss_before, current_rss_kib()).unwrap_or_default(),
             "rust-test-assertions declarations marshalled"
         );
+        // FINITE-OR-REFUSE (shape-agnostic size bound): a file whose marshalled assertion
+        // decls serialize past the bound is an UNBOUNDED response-term expansion (a
+        // self-referential static, a signed-zero float refinement, or any future shape) the
+        // downstream cannot clone / content-address without OOM. REFUSE the file's decls
+        // (do NOT emit the huge term, never truncate to a partial), keep every other file,
+        // and the report COMPLETES. Generous: legitimate large coretests files (~117 KB
+        // observed) sit far under it.
+        let file_decls_refused = marshalled.len() > FILE_DECL_EMIT_BYTE_BOUND;
         let parse_rss_before = current_rss_kib();
-        let parsed: Value = serde_json::from_str(&marshalled).unwrap_or_else(|_| json!([]));
+        let parsed: Value = if file_decls_refused {
+            diagnostics.push(json!({
+                "kind": "lift-gap",
+                "path": rel,
+                "item": "<file emit>",
+                "reason": format!(
+                    "file assertion decls exceed emit bound ({} > {} bytes) -- unbounded response term, refused (finite-or-refuse)",
+                    marshalled.len(),
+                    FILE_DECL_EMIT_BYTE_BOUND
+                ),
+            }));
+            json!([])
+        } else {
+            serde_json::from_str(&marshalled).unwrap_or_else(|_| json!([]))
+        };
         info!(
             file = rel,
             file_index = file_index + 1,
@@ -362,7 +393,21 @@ fn lift(params: &Value) -> Value {
         let mut oracle_pending: Vec<(usize, Vec<(u32, u32)>)> = Vec::new();
         for fr in &fns {
             let memento = source_cache.function_memento(fr);
-            let memento_json = memento.to_json();
+            let mut memento_json = memento.to_json();
+            // FINITE-OR-REFUSE: an oversized source memento (referenced-source gather that
+            // ran away on an unbounded shape) is REFUSED -- replaced by a refusal marker,
+            // never the huge term. The memento is refused, not silently truncated.
+            let memento_bytes = serde_json::to_string(&memento_json).map(|s| s.len()).unwrap_or(0);
+            if memento_bytes > MEMENTO_EMIT_BYTE_BOUND {
+                memento_json = json!({
+                    "sugar-refused": "source-memento-exceeds-emit-bound",
+                    "reason": format!(
+                        "source memento exceeds emit bound ({} > {} bytes) -- unbounded source expansion, refused (finite-or-refuse)",
+                        memento_bytes,
+                        MEMENTO_EMIT_BYTE_BOUND
+                    ),
+                });
+            }
             let name = fr.name.clone();
             let is_test = fn_has_test_attr(fr.attrs);
             let warning = out
@@ -379,7 +424,16 @@ fn lift(params: &Value) -> Value {
             // work. (Laundering the dark into a verdict it never earned -- forcing the
             // catch-all so `unresolved=0` looks done -- is the FAKE ZERO; the honest
             // move is the opposite: let the dark be visible.)
-            let (status, reason): (&str, Option<String>) = if is_test {
+            let (status, reason): (&str, Option<String>) = if file_decls_refused && is_test {
+                // The whole file's decl emit was refused (size bound) -- its assertions
+                // have no usable pin, so each is honestly UNRESOLVED with the bound reason.
+                (
+                    "unresolved",
+                    Some(format!(
+                        "file assertion decls exceed emit bound {FILE_DECL_EMIT_BYTE_BOUND} bytes -- refused as unbounded (finite-or-refuse)"
+                    )),
+                )
+            } else if is_test {
                 match warning {
                     // NEW DOCTRINE: the lifter COULDN'T LIFT this vendor assertion
                     // (unsupported assert / no liftable scalar / ambiguous cfg) ->
