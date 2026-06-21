@@ -17769,3 +17769,111 @@ fn t() {
         }
     }
 }
+
+// ── NAMED LITERAL-SHAPE DRAGONS (honest reclassification: dark → named-refused) ──
+//
+// `LiteralSugar`'s warrant path runs FIRST and is unchanged, so a finite/nonempty/text-
+// determined literal STILL warrants; a decline that matches one of six unwarrantable SHAPES
+// is NAMED `Refused` (a source property) instead of the generic structural backstop
+// (`unresolved`, which reads as missing work). Each test pairs the unwarrantable shape
+// (Refused + specific reason) with its DISCRIMINATION TWIN (the finite counterpart still
+// Warranted) — proving the arm keys on the SHAPE property, never over-refusing a literal.
+
+/// The disposition (Debug name) and reason of the `selected="literal"` factory audit for
+/// `src`. Panics if no literal node was audited (the snippet must route a literal through the
+/// composite factory, e.g. as an iterator-terminal receiver or an index container).
+fn literal_audit(src: &str) -> (String, String) {
+    let out = lift_file(&parse(src), "coretests/literal/dragon.rs");
+    let audit = out
+        .factory_audits
+        .iter()
+        .find(|a| a.selected == Some("literal"))
+        .unwrap_or_else(|| panic!("no `literal` audit for `{src}`; audits: {:?}", out.factory_audits));
+    (
+        format!("{:?}", audit.disposition),
+        audit.reason.clone().unwrap_or_default(),
+    )
+}
+
+/// Assert the literal in `src` is Refused with a reason containing `needle`.
+fn assert_named_refused(src: &str, needle: &str) {
+    let (disp, reason) = literal_audit(src);
+    assert_eq!(disp, "Refused", "`{src}` should be Refused, got {disp} ({reason})");
+    assert!(
+        reason.contains(needle),
+        "`{src}` reason should contain {needle:?}, got {reason:?}"
+    );
+}
+
+/// Assert the literal in `src` still WARRANTS (the discrimination twin — no over-refusal).
+fn assert_still_warrants(src: &str) {
+    let (disp, _) = literal_audit(src);
+    assert_eq!(disp, "Warranted", "twin `{src}` must still warrant (no over-refusal)");
+}
+
+#[test]
+fn literal_empty_domain_named_refused_with_twin() {
+    assert_named_refused("#[test] fn t() { assert_eq!((5..5).sum::<i32>(), 0); }", "literal domain is empty");
+    assert_named_refused("#[test] fn t() { assert_eq!((100..10).sum::<i32>(), 0); }", "literal domain is empty");
+    assert_named_refused(
+        "#[test] fn t() { let a: [i32; 0] = []; assert_eq!(a.iter().count(), 0); }",
+        "literal domain is empty",
+    );
+    // TWIN: a finite NONEMPTY range / array still warrants.
+    assert_still_warrants("#[test] fn t() { assert_eq!((0..3).sum::<i32>(), 3); }");
+    assert_still_warrants("#[test] fn t() { assert_eq!([1, 2, 3].iter().count(), 3); }");
+}
+
+#[test]
+fn literal_unbounded_range_named_refused_with_twin() {
+    assert_named_refused(
+        "#[test] fn t() { assert_eq!((0..).take(2).sum::<i32>(), 1); }",
+        "literal range is unbounded",
+    );
+    // TWIN: the same base BOUNDED still warrants.
+    assert_still_warrants("#[test] fn t() { assert_eq!((0..3).sum::<i32>(), 3); }");
+}
+
+#[test]
+fn literal_oversize_domain_named_refused_with_twin() {
+    assert_named_refused(
+        "#[test] fn t() { assert_eq!((0..usize::MAX).count(), 9); }",
+        "exceeds SUGAR_SEQ_CAP",
+    );
+    assert_named_refused(
+        "#[test] fn t() { assert_eq!((i16::MIN..=i16::MAX).count(), 9); }",
+        "exceeds SUGAR_SEQ_CAP",
+    );
+    // TWIN: a small in-cap range still warrants.
+    assert_still_warrants("#[test] fn t() { assert_eq!((0..3).count(), 3); }");
+}
+
+#[test]
+fn literal_char_range_named_refused_with_twin() {
+    assert_named_refused("#[test] fn t() { assert_eq!(('a'..='z').count(), 26); }", "literal char range");
+    // TWIN: an INT range still warrants (only char/AsciiChar bounds are the dragon).
+    assert_still_warrants("#[test] fn t() { assert_eq!((0..3).count(), 3); }");
+}
+
+#[test]
+fn literal_runtime_bound_named_refused_with_twin() {
+    assert_named_refused("#[test] fn t(n: usize) { assert_eq!((0..n).count(), n); }", "bound is not text-determined");
+    // TWIN: a text-determined (literal) bound still warrants.
+    assert_still_warrants("#[test] fn t() { assert_eq!((0..3).count(), 3); }");
+}
+
+#[test]
+fn literal_runtime_element_named_refused_with_twin() {
+    // An array element the term floor cannot pin (an effectful `&mut`/raw-pointer value) is a
+    // runtime element -> Refused. (A translatable element warrants -- see the twin.)
+    assert_named_refused(
+        "#[test] fn t(z: &mut i32) { assert_eq!([&mut *z].iter().count(), 1); }",
+        "array element is not text-determined",
+    );
+    assert_named_refused(
+        "#[test] fn t(z: i32) { assert_eq!([&z as *const i32].iter().count(), 1); }",
+        "array element is not text-determined",
+    );
+    // TWIN: a literal-element array still warrants.
+    assert_still_warrants("#[test] fn t() { assert_eq!([1, 2, 3].iter().count(), 3); }");
+}

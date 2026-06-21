@@ -481,6 +481,25 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
     if reason.contains("cfg-inactive match arm") {
         return Disposition::Inactive;
     }
+    // TERMINAL (source property): the six unwarrantable literal SHAPES named by
+    // `crate::sugar::literal::classify_unwarrantable_literal`. Each is a property of what the
+    // SOURCE wrote -- an EMPTY domain (`[]`, `5..5`: zero iterations, no element to assert),
+    // an UNBOUNDED range (`0..`: infinite domain), an OVER-CAP domain (`0..usize::MAX`:
+    // finite but 2^width, infeasible to enumerate), a CHAR range (`'\u{D7FF}'..='\u{E000}'`:
+    // Unicode-surrogate-gap, version-dependent), or a RUNTIME bound/element (`0..len`, `[x]`:
+    // not text-determined, bin-2). No better lifter could enumerate any of these into
+    // element-wise teeth. This is PURE reclassification of an existing decline (the warrant
+    // path runs first), so the finite/nonempty/text-determined twin still warrants -- not a
+    // laundered TODO.
+    if reason.contains("literal domain is empty")
+        || reason.contains("literal range is unbounded")
+        || reason.contains("literal domain exceeds SUGAR_SEQ_CAP")
+        || reason.contains("literal char range")
+        || reason.contains("literal range bound is not text-determined")
+        || reason.contains("literal array element is not text-determined")
+    {
+        return Disposition::Refused;
+    }
     // TERMINAL (source property). `temporally unstable` joins `ambiguous temporal
     // identity`: a term reading a mutated local has no single `t`, so it cannot be
     // read timelessly -- a property of the source, not a missing lift.
