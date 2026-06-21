@@ -21,3 +21,4 @@ sugar-ir-types = { path = "../sugar-ir-types" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+tracing = "0.1"

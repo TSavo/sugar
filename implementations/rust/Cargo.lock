@@ -843,6 +843,7 @@ dependencies = [
  "sugar-ir-types",
  "sugar-proof-envelope",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]
