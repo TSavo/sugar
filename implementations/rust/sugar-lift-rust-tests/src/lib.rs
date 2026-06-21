@@ -106,6 +106,7 @@ pub mod sugar {
     pub mod intersperse_collect_string;
     pub mod intersperse_concat;
     pub mod is_empty;
+    pub mod is_sorted;
     pub mod iter_terminal;
     pub mod iterator;
     pub mod len;
