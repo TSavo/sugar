@@ -544,6 +544,121 @@ fn const_if_runtime_condition_declines() {
     );
 }
 
+// ---- const `match` term folding (match_value_term const-fold preamble) ----
+//
+// Sibling of the const `if/else` fold: a `match scrut { pat => body, .. }` over a
+// const scrutinee collapses to the FIRST matching arm's value, via the SAME
+// `const_eval`/`const_val_term` path. `const_val_matches_pat` decides literal /
+// wildcard / or-patterns exactly; a binding/range pattern, a guard, or a runtime
+// scrutinee leaves the match for the divergent-arm value node (finite-or-refuse).
+// NOTE: the coretests corpus asserts over 0 const value-matches today (its match
+// dark is runtime slice-destructure), so this is recognizer-completeness + teeth,
+// generalizing the if/else arm; it carries no current-corpus coverage delta.
+
+// `match 2 { 1 => 10, 2 => 20, _ => 0 }` folds to 20 (the 2-arm). Structural: it
+// warrants via `match_value_term`, and the emitted atom carries the folded 20.
+#[test]
+fn const_match_term_folds_and_warrants() {
+    let src = r#"
+        #[test]
+        fn t_const_match() {
+            assert!((match 2 { 1 => 10, 2 => 20, _ => 0 }) == 20);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/num/const_match.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "const `match` term must lift; skip: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.factory_audits.iter().any(|a| {
+            a.requested_role == "Term"
+                && a.selected == Some("match_value_term")
+                && a.disposition == sugar_lift_rust_tests::FactoryDisposition::Warranted
+        }),
+        "the const match-term must be warranted by `match_value_term`: {:?}",
+        out.factory_audits
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Int(20)"),
+        "folded match-arm value 20 must be emitted as a ground const: {dump}"
+    );
+}
+
+// Teeth: the match folds to 20; a claim of 21 is a real contradiction (UNSAT).
+#[test]
+fn const_match_wrong_value_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_const_match_bad() {
+            assert!((match 2 { 1 => 10, 2 => 20, _ => 0 }) == 21);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/num/const_match_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_match_bad") {
+        assert!(!sat, "const match folds to 20 != 21 -- must be UNSAT");
+    }
+}
+
+// GOOD twin: the correct folded value (20) is satisfiable.
+#[test]
+fn const_match_correct_value_is_sat() {
+    let src = r#"
+        #[test]
+        fn t_const_match_good() {
+            assert!((match 2 { 1 => 10, 2 => 20, _ => 0 }) == 20);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/num/const_match_good.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_match_good") {
+        assert!(sat, "const match folds to 20 == 20 -- must be SAT");
+    }
+}
+
+// WILDCARD fall-through teeth: scrutinee 9 matches no literal arm, so the match
+// folds through the `_` arm to 0. A claim of 5 is UNSAT -- exercising the
+// no-literal-arm-matches / wildcard path of the fold.
+#[test]
+fn const_match_wildcard_fallthrough_wrong_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_const_match_wild_bad() {
+            assert!((match 9 { 1 => 10, 2 => 20, _ => 0 }) == 5);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/num/const_match_wild_bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "wildcard-arm const match must lift; skip: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_match_wild_bad") {
+        assert!(!sat, "wildcard arm folds to 0 != 5 -- must be UNSAT");
+    }
+}
+
+// finite-or-refuse: a `match` over a NON-const (runtime) scrutinee is NOT folded --
+// it stays unresolved, never collapsed to a single arm.
+#[test]
+fn const_match_runtime_scrutinee_declines() {
+    let src = r#"
+        #[test]
+        fn t_const_match_runtime() {
+            let r = std::env::args().count();
+            assert!((match r { 0 => 1u32, _ => 2u32 }) == 2);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/num/const_match_runtime.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "a runtime-scrutinee `match` must NOT const-fold (finite-or-refuse): audits: {:?}",
+        out.factory_audits
+    );
+}
+
 #[test]
 fn size_of_concrete_std_type_uses_rustc_layout_axiom() {
     let src = r#"

@@ -54,6 +54,16 @@ fn recognize_term(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Match(m) = expr else {
         return None;
     };
+    // A fully-constant `match` over a const scrutinee collapses to the taken arm's
+    // ground value -- the SAME `const_eval` + `const_val_term` path `binop`/`const_if`
+    // ship, so the term is sort-identical to the literal the source would have written.
+    // A non-const scrutinee / undecidable arm falls through to the divergent-arm value
+    // node below (finite-or-refuse).
+    if let Some(term) =
+        crate::const_eval(expr, &BTreeMap::new()).and_then(|value| crate::const_val_term(&value))
+    {
+        return Some(crate::sugar::term_leaf::resolved_term(term));
+    }
     Some(Box::new(MatchValueTermSugar { m: m.clone() }))
 }
 
