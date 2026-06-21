@@ -1356,6 +1356,79 @@ fn while_let_next_if_extra_consumer_refuses() {
         out.warnings
     );
 }
+
+// MISSING-SUGAR (term/literal bucket): a LITERAL-count, LITERAL-element repeat `[7; 3]` is
+// a finite construction from the written literal -> expands to a Seq of 3 copies, so a
+// counter loop over it discharges. (Previously declined at Composite role -> unresolved.)
+#[test]
+fn for_literal_array_repeat_lifts() {
+    let src = r#"
+        #[test]
+        fn t_repeat() {
+            let expected = [7, 7, 7];
+            let mut i = 0;
+            for &x in [7; 3].iter() {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/repeat.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "[7; 3] literal repeat must unroll: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_repeat") {
+        assert!(sat, "[7;3] == [7,7,7] == expected -- consistent (SAT)");
+    }
+}
+
+// TEETH: a WRONG expected over the repeat domain must refute.
+#[test]
+fn for_literal_array_repeat_wrong_expected_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_repeat_bad() {
+            let expected = [7, 7, 99];
+            let mut i = 0;
+            for &x in [7; 3].iter() {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/repeat_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_repeat_bad") {
+        assert!(!sat, "x=7 != expected[2]=99 over [7;3] -- must be UNSAT");
+    }
+}
+
+// DISCRIMINATION / finite-or-refuse: a NON-literal element (`[opaque(); N]`,
+// `[MaybeUninit::uninit(); 64]`) is NOT a finite literal -> must REFUSE, not falsely lift.
+#[test]
+fn for_array_repeat_non_literal_element_refuses() {
+    let src = r#"
+        #[test]
+        fn t_repeat_opaque() {
+            let mut i = 0;
+            for &x in [opaque(); 3].iter() {
+                assert_eq!(x, 0);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/repeat_opaque.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "a non-literal-element repeat must not falsely lift: lifted={} refused={}",
+        out.assertions_lifted,
+        out.assertions_refused
+    );
+}
+
 #[test]
 fn compute_float32_wrapper_lowers_scaled_literals_to_tuple_axioms() {
     let src = r#"
