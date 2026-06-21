@@ -14619,6 +14619,57 @@ fn try_rfold_filter_map_row_bad_twin_refutes() {
     assert_ne!(a, b, "bad-twin refutes (z3-UNSAT)");
 }
 
+// ── skip / step_by / skip_while closed adaptor rows ─────────────────────────
+
+#[test]
+fn try_fold_skip_row_grounds_both_sides_equal() {
+    // skip.rs:154  (1..20).skip(9).try_fold(7, f) == (10..20).try_fold(7, f)
+    let out = lift_one(
+        r#"#[test] fn t() { let f = &|acc, x| i32::checked_add(2 * acc, x);
+        assert_eq!((1..20).skip(9).try_fold(7, f), (10..20).try_fold(7, f)); }"#,
+    );
+    assert_eq!(try_fold_some_pair(&out), (18411, 18411));
+}
+
+#[test]
+fn try_rfold_skip_row_grounds_both_sides_equal() {
+    let out = lift_one(
+        r#"#[test] fn t() { let f = &|acc, x| i32::checked_add(2 * acc, x);
+        assert_eq!((1..20).skip(9).try_rfold(7, f), (10..20).try_rfold(7, f)); }"#,
+    );
+    assert_eq!(try_fold_some_pair(&out), (25592, 25592));
+}
+
+#[test]
+fn try_fold_step_by_row_grounds_both_sides_equal() {
+    let out = lift_one(
+        r#"#[test] fn t() { let f = &|acc, x| i32::checked_add(2 * acc, x);
+        assert_eq!((0..30).step_by(3).try_fold(7, f), (0..10).map(|x| x * 3).try_fold(7, f)); }"#,
+    );
+    assert_eq!(try_fold_some_pair(&out), (10207, 10207));
+}
+
+#[test]
+fn try_fold_step_by_row_bad_twin_refutes() {
+    let out = lift_one(
+        r#"#[test] fn t() { let f = &|acc, x| i32::checked_add(2 * acc, x);
+        assert_eq!((0..30).step_by(3).try_fold(7, f), (0..10).map(|x| x * 3 + 1).try_fold(7, f)); }"#,
+    );
+    let (a, b) = try_fold_some_pair(&out);
+    assert_eq!(a, 10207);
+    assert_ne!(a, b, "bad-twin refutes (z3-UNSAT)");
+}
+
+#[test]
+fn try_fold_skip_while_row_grounds_both_sides_equal() {
+    let out = lift_one(
+        r#"#[test] fn t() { fn p(&x: &i32) -> bool { (x % 10) <= 5 }
+        let f = &|acc, x| i32::checked_add(2 * acc, x);
+        assert_eq!((1..20).skip_while(p).try_fold(7, f), (6..20).try_fold(7, f)); }"#,
+    );
+    assert_eq!(try_fold_some_pair(&out), (229355, 229355));
+}
+
 // ── STRUCTURAL: a RUNTIME (mutable-iterator) try_fold must NOT be grounded ─────
 
 #[test]

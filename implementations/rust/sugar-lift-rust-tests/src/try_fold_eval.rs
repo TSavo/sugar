@@ -273,9 +273,90 @@ fn eval_seq_chain(expr: &Expr, scope: &TemporalScope) -> Option<Vec<ConstVal>> {
                     }
                     Some(out)
                 }
+                ("skip", 1) => {
+                    let n = const_usize_arg(&m.args[0])?;
+                    let inner = eval_seq_chain(&m.receiver, scope)?;
+                    Some(inner.into_iter().skip(n).collect())
+                }
+                ("take", 1) => {
+                    let n = const_usize_arg(&m.args[0])?;
+                    let inner = eval_seq_chain(&m.receiver, scope)?;
+                    Some(inner.into_iter().take(n).collect())
+                }
+                ("step_by", 1) => {
+                    let n = const_usize_arg(&m.args[0])?;
+                    if n == 0 {
+                        return None;
+                    }
+                    let inner = eval_seq_chain(&m.receiver, scope)?;
+                    Some(inner.into_iter().step_by(n).collect())
+                }
+                ("skip_while", 1) => {
+                    let inner = eval_seq_chain(&m.receiver, scope)?;
+                    let mut out = Vec::new();
+                    let mut still_skipping = true;
+                    for v in inner {
+                        if still_skipping && eval_predicate_bool(&m.args[0], &v, scope)? {
+                            continue;
+                        }
+                        still_skipping = false;
+                        out.push(v);
+                    }
+                    Some(out)
+                }
+                ("take_while", 1) => {
+                    let inner = eval_seq_chain(&m.receiver, scope)?;
+                    let mut out = Vec::new();
+                    for v in inner {
+                        if !eval_predicate_bool(&m.args[0], &v, scope)? {
+                            break;
+                        }
+                        out.push(v);
+                    }
+                    Some(out)
+                }
                 _ => None,
             }
         }
+        _ => None,
+    }
+}
+
+fn const_usize_arg(expr: &Expr) -> Option<usize> {
+    let env = BTreeMap::new();
+    let n = const_eval(expr, &env)?.as_int()?;
+    usize::try_from(n).ok()
+}
+
+fn eval_predicate_bool(arg: &Expr, elem: &ConstVal, scope: &TemporalScope) -> Option<bool> {
+    if let Some(closure) = resolve_closure(arg, scope) {
+        return eval_unary_closure(&closure, elem)?.as_bool();
+    }
+    let Expr::Path(p) = strip_refs_groups(arg) else {
+        return None;
+    };
+    let name = p.path.get_ident()?.to_string();
+    let helper = scope.fn_registry().lookup(&name)?;
+    eval_unary_fn(&helper, elem)?.as_bool()
+}
+
+fn eval_unary_fn(function: &syn::ItemFn, arg: &ConstVal) -> Option<ConstVal> {
+    if function.sig.inputs.len() != 1 {
+        return None;
+    }
+    let syn::FnArg::Typed(param) = function.sig.inputs.first()? else {
+        return None;
+    };
+    let name = closure_single_param_ident(&param.pat)?;
+    let body = item_fn_body_expr(function)?;
+    let mut env = BTreeMap::new();
+    env.insert(name, arg.clone());
+    const_eval(body, &env)
+}
+
+fn item_fn_body_expr(function: &syn::ItemFn) -> Option<&Expr> {
+    match function.block.stmts.as_slice() {
+        [syn::Stmt::Expr(e, None)] => Some(e),
         _ => None,
     }
 }
@@ -589,6 +670,7 @@ fn closure_body_expr(closure: &ExprClosure) -> Option<&Expr> {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+    use std::rc::Rc;
     use syn::Stmt;
 
     /// Build a `TemporalScope` for `block_src` (a `{ .. }` body) and record its simple
@@ -600,7 +682,13 @@ mod tests {
         let block: syn::Block = syn::parse_str(block_src).expect("block parses");
         let stmts = block.stmts;
         let plan = crate::temporal_plan_for_stmts(&stmts, &BTreeSet::new());
-        let mut scope = crate::TemporalScope::new("test", plan);
+        let mut fn_registry = crate::FnRegistry::new();
+        for s in &stmts {
+            if let Stmt::Item(syn::Item::Fn(f)) = s {
+                fn_registry.insert(&f.sig.ident.to_string(), Rc::new(f.clone()));
+            }
+        }
+        let mut scope = crate::TemporalScope::new("test", plan).with_fn_registry(fn_registry);
         for s in &stmts {
             if let Stmt::Local(local) = s {
                 if let (Some(name), Some(init)) =
@@ -636,6 +724,7 @@ mod tests {
         "{ let f = &|acc, (i, x)| usize::checked_add(2 * acc, x / (i + 1) + i); }";
     const FM_LETS: &str = "{ let mp = &|x| if 0 <= x && x < 10 { Some(x * 2) } else { None }; \
                             let f = &|acc, x| i32::checked_add(2 * acc, x); }";
+    const ADAPTOR_LETS: &str = "{ let f = &|acc, x| i32::checked_add(2 * acc, x); }";
 
     #[test]
     fn evaluator_matches_hand_computed_map_row() {
@@ -703,6 +792,80 @@ mod tests {
         assert_eq!(
             ground(FM_LETS, "(0..10).map(|x| 2 * x).try_rfold(7, f)").as_deref(),
             Some("Some (23556)")
+        );
+    }
+
+    #[test]
+    fn evaluator_matches_hand_computed_skip_row() {
+        // skip.rs:154  (1..20).skip(9).try_fold(7, f)
+        //                == (10..20).try_fold(7, f) -> Some(18411)
+        assert_eq!(
+            ground(ADAPTOR_LETS, "(1..20).skip(9).try_fold(7, f)").as_deref(),
+            Some("Some (18411)")
+        );
+        assert_eq!(
+            ground(ADAPTOR_LETS, "(10..20).try_fold(7, f)").as_deref(),
+            Some("Some (18411)")
+        );
+        assert_eq!(
+            ground(ADAPTOR_LETS, "(1..20).skip(9).try_rfold(7, f)").as_deref(),
+            Some("Some (25592)")
+        );
+        assert_eq!(
+            ground(ADAPTOR_LETS, "(10..20).try_rfold(7, f)").as_deref(),
+            Some("Some (25592)")
+        );
+    }
+
+    #[test]
+    fn evaluator_matches_hand_computed_step_by_row() {
+        // A closed literal stride is just another finite construction:
+        // (0..30).step_by(3) -> [0,3,6,9,12,15,18,21,24,27].
+        assert_eq!(
+            ground(ADAPTOR_LETS, "(0..30).step_by(3).try_fold(7, f)").as_deref(),
+            Some("Some (10207)")
+        );
+        assert_eq!(
+            ground(ADAPTOR_LETS, "(0..10).map(|x| x * 3).try_fold(7, f)").as_deref(),
+            Some("Some (10207)")
+        );
+        assert_eq!(
+            ground(ADAPTOR_LETS, "(0..30).step_by(3).try_rfold(7, f)").as_deref(),
+            Some("Some (31750)")
+        );
+    }
+
+    #[test]
+    fn evaluator_matches_hand_computed_skip_while_row() {
+        // `.skip_while` drops only the initial true prefix. For 1..20 and x <= 5, the
+        // consumed sequence is 6..20 -> Some(229355).
+        assert_eq!(
+            ground(
+                ADAPTOR_LETS,
+                "(1..20).skip_while(|x| x <= 5).try_fold(7, f)"
+            )
+            .as_deref(),
+            Some("Some (229355)")
+        );
+        assert_eq!(
+            ground(ADAPTOR_LETS, "(6..20).try_fold(7, f)").as_deref(),
+            Some("Some (229355)")
+        );
+    }
+
+    #[test]
+    fn evaluator_matches_hand_computed_skip_while_fn_predicate_row() {
+        // skip_while.rs uses a local fn item predicate, not an inline closure. We learn
+        // it by shape through the visible fn registry and still exact-or-bail.
+        let lets = "{ fn p(&x: &i32) -> bool { (x % 10) <= 5 } \
+                     let f = &|acc, x| i32::checked_add(2 * acc, x); }";
+        assert_eq!(
+            ground(lets, "(1..20).skip_while(p).try_fold(7, f)").as_deref(),
+            Some("Some (229355)")
+        );
+        assert_eq!(
+            ground(lets, "(6..20).try_fold(7, f)").as_deref(),
+            Some("Some (229355)")
         );
     }
 
