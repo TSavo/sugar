@@ -21,7 +21,7 @@ use std::rc::Rc;
 
 use sugar_ir_symbolic::Term;
 
-use crate::{Desugared, Outcome, RelationOp, Sugar, SugarCtx};
+use crate::{bool_const, const_fold_int_term, Desugared, Outcome, RelationOp, Sugar, SugarCtx};
 
 /// The constructive comparison-term node. `left`/`right` are the pre-built operand
 /// children (the factory desugars each operand expr into a `Sugar`); `rel` is the
@@ -50,6 +50,26 @@ impl Sugar for CompareSugar {
             },
             Outcome::Hit(e) => return Outcome::Hit(e),
         };
+        // Collapse-inside-out: once BOTH operands ground to concrete integers
+        // (e.g. `a[0] < b[0]` over immutable literal arrays, where `IndexSugar`
+        // grounds each read to its element), the comparison is a KNOWN truth --
+        // fold to a Bool literal rather than emit an (uninterpreted) `cmp:*` ctor.
+        // This mirrors `BinOpSugar`'s desugar-time int fold and the
+        // `binop::recognize` preamble's build-time const-fold; it is the
+        // soundness completion of literal-index grounding (an uninterpreted
+        // `cmp:lt(1,4)` could be mis-satisfied by a bad twin). Symbolic
+        // (non-const) operands fall through to the `cmp:*` ctor unchanged.
+        if let (Some(a), Some(b)) = (const_fold_int_term(&lhs), const_fold_int_term(&rhs)) {
+            let value = match self.rel {
+                RelationOp::Eq => a == b,
+                RelationOp::Ne => a != b,
+                RelationOp::Lt => a < b,
+                RelationOp::Le => a <= b,
+                RelationOp::Gt => a > b,
+                RelationOp::Ge => a >= b,
+            };
+            return Outcome::Dug(Desugared::Term(bool_const(value)));
+        }
         Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
             name: format!("cmp:{}", self.rel.cmp_ctor_name()),
             args: vec![lhs, rhs],
@@ -61,7 +81,7 @@ impl Sugar for CompareSugar {
 mod tests {
     use super::*;
     use crate::Effect;
-    use sugar_ir_symbolic::make_var;
+    use sugar_ir_symbolic::{make_var, ConstValue};
 
     // ── LOCAL stub children: a `StubTerm` digs to its held term (`Dug(Term)`); a
     // `StubHit` strikes a named effect (`Hit`). They IGNORE `ctx`, so the parent's
@@ -124,6 +144,44 @@ mod tests {
         assert_eq!(args.len(), 2);
         assert_eq!(var_name(&args[0]), "x");
         assert_eq!(var_name(&args[1]), "y");
+    }
+
+    #[test]
+    fn compare_over_two_int_consts_folds_to_bool_not_cmp_ctor() {
+        // Collapse-inside-out: when both operands ground to concrete ints, the
+        // comparison folds to its real Bool value (no uninterpreted cmp ctor).
+        let true_node = CompareSugar {
+            left: Box::new(StubTerm(crate::num(1))),
+            right: Box::new(StubTerm(crate::num(4))),
+            rel: RelationOp::Lt,
+        };
+        match run(&true_node) {
+            Outcome::Dug(d) => match d.into_term().expect("a Term").as_ref() {
+                Term::Const {
+                    value: ConstValue::Bool(v),
+                    ..
+                } => assert!(*v, "1 < 4 is true"),
+                other => panic!("expected a Bool const, got {other:?}"),
+            },
+            Outcome::Hit(_) => panic!("expected Dug"),
+        }
+        // Discrimination: the SAME shape with the relation actually false folds to
+        // Bool(false) -- the fold carries the real value, it is not a fake-true.
+        let false_node = CompareSugar {
+            left: Box::new(StubTerm(crate::num(4))),
+            right: Box::new(StubTerm(crate::num(1))),
+            rel: RelationOp::Lt,
+        };
+        match run(&false_node) {
+            Outcome::Dug(d) => match d.into_term().expect("a Term").as_ref() {
+                Term::Const {
+                    value: ConstValue::Bool(v),
+                    ..
+                } => assert!(!*v, "4 < 1 is false"),
+                other => panic!("expected a Bool const, got {other:?}"),
+            },
+            Outcome::Hit(_) => panic!("expected Dug"),
+        }
     }
 
     #[test]

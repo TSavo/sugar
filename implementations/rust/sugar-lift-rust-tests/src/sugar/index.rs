@@ -46,9 +46,13 @@ use sugar_ir_symbolic::Term;
 use syn::Expr;
 
 use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::method_family;
 use crate::sugar::temporal_read::decompose_temporal_read;
 use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
-use crate::{const_index_term_in_scope, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::{
+    const_fold_int_term, const_index_term_in_scope, num, ConstVal, Desugared, Effect, Outcome,
+    Sugar, SugarCtx,
+};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("index", recognize);
@@ -75,6 +79,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     Some(Box::new(IndexSugar::new(
         build_term(&index.expr, fcx),
         build_term(&index.index, fcx),
+        method_family::build_literal_sequence_composite(&index.expr, fcx),
     )))
 }
 
@@ -88,13 +93,42 @@ pub(crate) struct IndexSugar {
     /// The index `i` child `Sugar` (`index.index`). `desugar` digs it SECOND -- its
     /// `Term` is the second ctor arg.
     idx: Box<dyn Sugar>,
+    /// The container ALSO built as a literal-sequence composite, when it resolves to one
+    /// (`build_literal_sequence_composite`: peels `.iter()`, strips `&`, resolves let-bound
+    /// names). Lets `desugar` GROUND `literal[const]` to the element instead of an
+    /// uninterpreted `index(..)` ctor a solver can satisfy with anything. `None` for a
+    /// non-literal container -> the symbolic ctor is kept.
+    container_seq: Option<Box<dyn Sugar>>,
 }
 
 impl IndexSugar {
     /// Build an `IndexSugar` from the pre-built container and index children. The
-    /// decomposer hands the factory-built `Sugar` for `index.expr` and `index.index`.
-    pub(crate) fn new(container: Box<dyn Sugar>, idx: Box<dyn Sugar>) -> Self {
-        IndexSugar { container, idx }
+    /// decomposer hands the factory-built `Sugar` for `index.expr` and `index.index`,
+    /// plus the optional literal-sequence form of the container for const-index grounding.
+    pub(crate) fn new(
+        container: Box<dyn Sugar>,
+        idx: Box<dyn Sugar>,
+        container_seq: Option<Box<dyn Sugar>>,
+    ) -> Self {
+        IndexSugar {
+            container,
+            idx,
+            container_seq,
+        }
+    }
+
+    /// Ground `literal_array[const_k]` to the element TERM, or `None` if it does not
+    /// cleanly ground (non-literal container, non-const / out-of-bounds index, non-int
+    /// element). The caller then emits the symbolic `index` ctor. SOUND: only an
+    /// in-bounds const index into a literal int Seq grounds; a non-literal read is never
+    /// given a guessed value, and an out-of-bounds index (a rust panic) stays symbolic.
+    fn ground_literal_index(&self, ctx: &SugarCtx) -> Option<Rc<Term>> {
+        let seq = self.container_seq.as_ref()?.desugar(ctx).dug()?.into_seq()?;
+        let idx = self.idx.desugar(ctx).dug()?.into_term()?;
+        let k = const_fold_int_term(&idx).and_then(|k| usize::try_from(k).ok())?;
+        let elem = seq.get(k)?;
+        let n = elem.value.as_ref().and_then(ConstVal::as_int)?;
+        Some(num(n))
     }
 }
 
@@ -107,6 +141,13 @@ impl Sugar for IndexSugar {
     /// `Desugared` (`into_term` -> `None`) bails the node via the structural backstop
     /// (`Outcome::from_opt(None)`, the old `?`-propagated generic refusal).
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        // c2: ground `literal_array[const_k]` to the element (`[10,20,99][2]` -> `99`) so
+        // the index reaches the floor, instead of an uninterpreted `index(..)` ctor a
+        // solver can satisfy with anything (which would over-discharge `a[k] == wrong`).
+        // Falls through to the symbolic ctor for a non-literal container.
+        if let Some(term) = self.ground_literal_index(ctx) {
+            return Outcome::Dug(Desugared::Term(term));
+        }
         let container = match self.container.desugar(ctx) {
             Outcome::Dug(d) => match d.into_term() {
                 Some(t) => t,
@@ -186,6 +227,7 @@ mod tests {
         let node = IndexSugar::new(
             Box::new(StubTerm { tag: "a" }),
             Box::new(StubTerm { tag: "i" }),
+            None,
         );
         let Outcome::Dug(Desugared::Term(term)) = run(&node) else {
             panic!("expected a Dug term");
@@ -217,6 +259,7 @@ mod tests {
                 boundary: "mut-container",
             }),
             Box::new(StubTerm { tag: "i" }),
+            None,
         );
         match run(&node) {
             Outcome::Hit(Effect::TemporalRead { boundary }) => {
@@ -238,6 +281,7 @@ mod tests {
             Box::new(StubHit {
                 boundary: "mut-index",
             }),
+            None,
         );
         match run(&node) {
             Outcome::Hit(Effect::TemporalRead { boundary }) => {

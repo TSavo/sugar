@@ -13165,6 +13165,26 @@ fn substitute_expr_inner(
             }
             Expr::Struct(out)
         }
+        Expr::Index(index) => {
+            // `a[i]` -- substitute BOTH the container and the INDEX operand. Without this
+            // arm, `Expr::Index` fell to the `_ => expr.clone()` catch-all, so a loop
+            // counter used as an index (`expected[i]`) was never substituted with its
+            // per-step value -- it froze at the binding's init (0). Paired with the
+            // literal-index grounding in `IndexSugar` (c2), `expected[k]` then reduces to
+            // the concrete element.
+            let mut out = index.clone();
+            out.expr = Box::new(substitute_expr_inner(
+                &index.expr,
+                bindings,
+                substitute_closure_captures,
+            ));
+            out.index = Box::new(substitute_expr_inner(
+                &index.index,
+                bindings,
+                substitute_closure_captures,
+            ));
+            Expr::Index(out)
+        }
         _ => expr.clone(),
     }
 }
