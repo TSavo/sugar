@@ -659,6 +659,176 @@ fn const_match_runtime_scrutinee_declines() {
     );
 }
 
+// ---- Lane 3: TryFrom range check -> Result, is_ok/is_err fold to bool (teeth) ----
+
+// `<u8 as TryFrom<u16>>::try_from(256u16).is_err()` is true: 256 doesn't fit u8,
+// so try_from grounds to `res:err` and `is_err` folds to `Bool(true)` -- not an
+// opaque `method:is_err` EUF var. Warranted by `try_from` + `result_predicate`.
+#[test]
+fn try_from_out_of_range_is_err_folds_and_warrants() {
+    let src = r#"
+        #[test]
+        fn t_try_from_err() {
+            assert!(<u8 as TryFrom<u16>>::try_from(256u16).is_err());
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/num/try_from_err.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "try_from().is_err() must lift; skip: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.factory_audits
+            .iter()
+            .any(|a| a.selected == Some("result_predicate")),
+        "is_err must be warranted by `result_predicate`: {:?}",
+        out.factory_audits
+    );
+    assert!(
+        out.factory_audits
+            .iter()
+            .any(|a| a.selected == Some("try_from")),
+        "the try_from receiver must be folded by `try_from`: {:?}",
+        out.factory_audits
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(true)"),
+        "out-of-range try_from().is_err() folds true: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_try_from_err") {
+        assert!(sat, "256 doesn't fit u8 -> is_err() == true -- must be SAT");
+    }
+}
+
+// In-range is Ok: `u8::try_from(255u16).is_ok()` (the `DST::try_from` spelling)
+// folds to `Bool(true)`.
+#[test]
+fn try_from_in_range_is_ok_folds() {
+    let src = r#"
+        #[test]
+        fn t_try_from_ok() {
+            assert!(u8::try_from(255u16).is_ok());
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/num/try_from_ok.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(true)"),
+        "in-range try_from().is_ok() folds true: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_try_from_ok") {
+        assert!(sat, "255 fits u8 -> is_ok() == true -- must be SAT");
+    }
+}
+
+// BAD TWINS / teeth: the discriminant is real. `is_ok()` on the out-of-range Err
+// folds false; `is_err()` on the in-range Ok folds false -- asserting either is
+// z3-UNSAT.
+#[test]
+fn try_from_predicate_wrong_discriminant_is_unsat() {
+    let ok_on_err = r#"
+        #[test]
+        fn t_try_from_ok_on_err_bad() {
+            assert!(<u8 as TryFrom<u16>>::try_from(256u16).is_ok());
+        }
+    "#;
+    let out = lift_file(&parse(ok_on_err), "coretests/num/try_from_ok_on_err_bad.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(dump.contains("Bool(false)"), "is_ok on Err folds false: {dump}");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_try_from_ok_on_err_bad") {
+        assert!(!sat, "256 doesn't fit u8 -> is_ok() is false -- must be UNSAT");
+    }
+    let err_on_ok = r#"
+        #[test]
+        fn t_try_from_err_on_ok_bad() {
+            assert!(u8::try_from(255u16).is_err());
+        }
+    "#;
+    let out = lift_file(&parse(err_on_ok), "coretests/num/try_from_err_on_ok_bad.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(dump.contains("Bool(false)"), "is_err on Ok folds false: {dump}");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_try_from_err_on_ok_bad") {
+        assert!(!sat, "255 fits u8 -> is_err() is false -- must be UNSAT");
+    }
+}
+
+// Signed/unsigned boundary teeth: `i8::try_from(200u16)` overflows (200 > 127) ->
+// Err; `u8::try_from(-1i32)` is negative -> Err; `i8::try_from(-1i32)` fits -> Ok.
+#[test]
+fn try_from_signed_unsigned_boundaries() {
+    let i8_overflow = r#"
+        #[test]
+        fn t_i8_overflow() {
+            assert!(i8::try_from(200u16).is_err());
+        }
+    "#;
+    let out = lift_file(&parse(i8_overflow), "coretests/num/i8_overflow.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_i8_overflow") {
+        assert!(sat, "200 > i8::MAX(127) -> is_err() == true -- must be SAT");
+    }
+    let u8_neg = r#"
+        #[test]
+        fn t_u8_neg() {
+            assert!(u8::try_from(-1i32).is_err());
+        }
+    "#;
+    let out = lift_file(&parse(u8_neg), "coretests/num/u8_neg.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_u8_neg") {
+        assert!(sat, "-1 < 0 -> u8::try_from is_err() == true -- must be SAT");
+    }
+    // -1 fits i8 -> Ok; claiming is_err refutes.
+    let i8_neg_ok = r#"
+        #[test]
+        fn t_i8_neg_ok_bad() {
+            assert!(i8::try_from(-1i32).is_err());
+        }
+    "#;
+    let out = lift_file(&parse(i8_neg_ok), "coretests/num/i8_neg_ok_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_i8_neg_ok_bad") {
+        assert!(!sat, "-1 fits i8 -> is_err() is false -- must be UNSAT");
+    }
+}
+
+// EXACT-OR-NONE: a non-integer destination and a runtime arg must NOT fold; the
+// sugars decline, leaving the existing opaque handling.
+#[test]
+fn try_from_non_integer_and_runtime_decline() {
+    // Non-integer destination: `char::try_from(..)` is not an integer try_from.
+    let ch = r#"
+        #[test]
+        fn t_try_from_char() {
+            assert!(char::try_from(65u32).is_ok());
+        }
+    "#;
+    let out = lift_file(&parse(ch), "coretests/char/try_from_char.rs");
+    assert!(
+        !out.factory_audits
+            .iter()
+            .any(|a| a.selected == Some("try_from")),
+        "a non-integer destination must NOT be folded by try_from: {:?}",
+        out.factory_audits
+    );
+    // Runtime argument: not a literal -> declines.
+    let rt = r#"
+        #[test]
+        fn t_try_from_runtime() {
+            let n = std::env::args().count() as u16;
+            assert!(u8::try_from(n).is_err());
+        }
+    "#;
+    let out = lift_file(&parse(rt), "coretests/num/try_from_runtime.rs");
+    assert!(
+        !out.factory_audits
+            .iter()
+            .any(|a| a.selected == Some("try_from")),
+        "a runtime argument must NOT be folded by try_from: {:?}",
+        out.factory_audits
+    );
+}
+
 // ---- Lane 9: Duration integer accessors fold to a ground int (teeth) ----
 
 // `Duration::from_secs(5).as_secs()` is `5` -- a literal Duration is a closed
