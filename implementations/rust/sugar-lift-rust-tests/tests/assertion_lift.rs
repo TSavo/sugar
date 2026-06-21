@@ -1706,6 +1706,128 @@ fn for_array_repeat_non_literal_element_refuses() {
     );
 }
 
+// LEVER H (const-length array-repeat teeth): a CONST-bound repeat length `[7; SIZE]`
+// (`const SIZE: usize = 3`) is finite-by-text exactly like a literal `[7; 3]`. The grounding
+// paths now resolve the const length through scope (`repeat_count_in_scope`), so the indexed
+// element GROUNDS to its value -- the same element-wise teeth a literal-count repeat already
+// has, extended to const-count. POSITIVE: `[7; SIZE][1] == 7` is consistent (SAT).
+#[test]
+fn const_len_array_repeat_index_grounds() {
+    let src = r#"
+        const SIZE: usize = 3;
+        #[test]
+        fn t_const_repeat() {
+            let a = [7; SIZE];
+            assert_eq!(a[1], 7);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/repeat/const_repeat.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "const-length repeat index must ground: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_repeat") {
+        assert!(sat, "[7; SIZE=3][1] == 7 -- consistent (SAT)");
+    }
+}
+
+// LEVER H TEETH (the gate): the WRONG expected over the const-length repeat element must
+// REFUTE. Before the scope-thread this was SAT -- the index stayed an uninterpreted
+// `index(..)` ctor a solver satisfies with anything (congruence-only, no teeth). It must now
+// be UNSAT: `[7; SIZE=3][1]` GROUNDS to `7`, and `7 != 99` is a real contradiction.
+#[test]
+fn const_len_array_repeat_index_wrong_expected_is_unsat() {
+    let src = r#"
+        const SIZE: usize = 3;
+        #[test]
+        fn t_const_repeat_bad() {
+            let a = [7; SIZE];
+            assert_eq!(a[1], 99);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/repeat/const_repeat_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_repeat_bad") {
+        assert!(
+            !sat,
+            "a[1] grounds to 7 != 99 over [7; SIZE=3] -- must be UNSAT (the teeth this lever adds)"
+        );
+    }
+}
+
+// LEVER H breadth: a const length built from const ARITHMETIC over other consts
+// (`const CAP: usize = 2 * B - 1`, the `BTreeMap` B-tree shape in the corpus) resolves the
+// same way. `[4; CAP] == [4; 3]`; the index grounds, and the wrong twin refutes.
+#[test]
+fn const_arithmetic_len_array_repeat_index_grounds_and_twin_refutes() {
+    let good = r#"
+        const B: usize = 2;
+        const CAP: usize = 2 * B - 1;
+        #[test]
+        fn t_const_arith() {
+            let a = [4; CAP];
+            assert_eq!(a[2], 4);
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/repeat/const_arith.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "const-arithmetic repeat length must ground: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_arith") {
+        assert!(sat, "[4; CAP=2*2-1=3][2] == 4 -- consistent (SAT)");
+    }
+    let bad = r#"
+        const B: usize = 2;
+        const CAP: usize = 2 * B - 1;
+        #[test]
+        fn t_const_arith_bad() {
+            let a = [4; CAP];
+            assert_eq!(a[2], 99);
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/repeat/const_arith_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_arith_bad") {
+        assert!(!sat, "a[2] grounds to 4 != 99 over [4; CAP=3] -- must be UNSAT");
+    }
+}
+
+// LEVER H finite-or-refuse (discrimination): a const-GENERIC length `[7; N]` is NOT a
+// concrete in-scope const (it has no registry initializer), so `repeat_count_in_scope`
+// declines and the index stays the symbolic `index(..)` ctor -- a wrong-expected read must
+// remain SATISFIABLE (NOT falsely refuted). This is the boundary: only a TEXT-DETERMINED
+// length grounds; an unresolved/symbolic length is never fabricated.
+#[test]
+fn const_generic_len_array_repeat_index_stays_symbolic() {
+    let src = r#"
+        #[test]
+        fn t_const_generic() {
+            run::<3>();
+        }
+        fn run<const N: usize>() {
+            let a = [7; N];
+            assert_eq!(a[1], 99);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/repeat/const_generic.rs");
+    // The `run` body's `a[1] == 99` must NOT be grounded (N is symbolic): if any decl is
+    // produced for it, the wrong value must stay SAT (no fabricated teeth).
+    for decl in &out.decls {
+        if let Some(sat) = z3_verdict(&inv_json(decl), &decl.name) {
+            assert!(
+                sat,
+                "a const-generic-length repeat must stay symbolic (SAT), never fabricate teeth: {}",
+                decl.name
+            );
+        }
+    }
+}
+
 // `get_unchecked` over a literal-backed slice with an in-domain index is text-determined
 // (== the checked `index`); the unsafe pointer boundary is an impl detail. Inherent form
 // `[10, 20, 30].get_unchecked(1)`.

@@ -18,8 +18,25 @@ pub(crate) fn is_literal_sequence_base(expr: &Expr) -> bool {
         Expr::Array(_) | Expr::Range(_) => true,
         // A LITERAL-count repeat `[elem; N]` is a finite literal sequence (N copies of
         // elem); the `array_repeat` composite recognizer expands it. Non-literal counts
-        // (`[x; SIZE]`) are not finite-by-construction and stay refused.
+        // (`[x; SIZE]`) are not finite-by-construction HERE (ctx-free) -- the scope-aware
+        // `is_literal_sequence_base_in_scope` resolves a const-bound count.
         Expr::Repeat(repeat) => crate::repeat_count_literal(&repeat.len).is_some(),
+        _ => false,
+    }
+}
+
+/// Scope-aware [`is_literal_sequence_base`]: additionally treats a CONST-length repeat
+/// (`const SIZE: usize = 3; [7; SIZE]`) as a finite literal sequence, resolving the count
+/// through the scope's const registry (`repeat_count_in_scope`). A strict superset of the
+/// ctx-free classifier -- it only ever ADMITS more (a const-evaluable length); a runtime /
+/// non-const length is still rejected, so the repeat stays the `Effect::ArrayRepeat` refuse.
+/// Used at the `build_literal_sequence_composite` chokepoint so a const-length repeat reaches
+/// the same constructive `LiteralRepeatSugar` floor (and element-wise grounding teeth) that a
+/// literal-length repeat already does.
+pub(crate) fn is_literal_sequence_base_in_scope(expr: &Expr, scope: &TemporalScope) -> bool {
+    match strip_refs_groups(expr) {
+        Expr::Array(_) | Expr::Range(_) => true,
+        Expr::Repeat(repeat) => crate::repeat_count_in_scope(&repeat.len, scope).is_some(),
         _ => false,
     }
 }
@@ -49,7 +66,9 @@ pub(crate) fn build_literal_sequence_composite(
     fcx: &SugarBuildCtx,
 ) -> Option<Box<dyn Sugar>> {
     let (base, adaptors) = peel_fold_adaptors_in_scope(expr, fcx.let_inits(), fcx.scope(), 0)?;
-    if !is_literal_sequence_base(base)
+    // Scope-aware base gate: a const-length repeat (`[7; SIZE]`) resolves to a finite literal
+    // sequence here so the constructive floor (and its element-wise teeth) is reached.
+    if !is_literal_sequence_base_in_scope(base, fcx.scope())
         && !literal_slice::is_literal_slice_base(base, fcx.let_inits())
     {
         return None;
