@@ -38,28 +38,20 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     let Expr::ForLoop(for_loop) = expr else {
         return None;
     };
-    let Some(var) = loop_var_pat_ident(for_loop.pat.as_ref()) else {
+    let Some(vars) = loop_var_bindings(for_loop.pat.as_ref()) else {
         debug!(
             target: "sugar_lift_rust_tests::sugar::for_replay",
             domain = %crate::token_key(&for_loop.expr),
-            "for_replay declined loop: non-ident pattern"
+            "for_replay declined loop: pattern is not an ident or a tuple of idents"
         );
         return None;
     };
-    if var.subpat.is_some() {
-        debug!(
-            target: "sugar_lift_rust_tests::sugar::for_replay",
-            loop_var = %var.ident,
-            domain = %crate::token_key(&for_loop.expr),
-            "for_replay declined loop: ident has subpattern"
-        );
-        return None;
-    }
+    let loop_vars = vars.join(", ");
     let assert_count = replay_assert_count(&for_loop.body.stmts, fcx.scope());
     if assert_count == 0 {
         debug!(
             target: "sugar_lift_rust_tests::sugar::for_replay",
-            loop_var = %var.ident,
+            loop_var = %loop_vars,
             domain = %crate::token_key(&for_loop.expr),
             "for_replay declined loop: no replayable assertions"
         );
@@ -70,7 +62,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     if !finite_replay_domain {
         debug!(
             target: "sugar_lift_rust_tests::sugar::for_replay",
-            loop_var = %var.ident,
+            loop_var = %loop_vars,
             domain = %crate::token_key(&for_loop.expr),
             assert_count,
             adaptor_domain,
@@ -81,7 +73,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     if range_domain_exceeds_replay_cap(&for_loop.expr, fcx.scope()) {
         debug!(
             target: "sugar_lift_rust_tests::sugar::for_replay",
-            loop_var = %var.ident,
+            loop_var = %loop_vars,
             domain = %crate::token_key(&for_loop.expr),
             cap = SUGAR_SEQ_CAP,
             "for_replay declined loop: literal range exceeds replay cap"
@@ -89,10 +81,16 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         return None;
     }
     let seed_names = accumulator_seed_names(&for_loop.body.stmts, fcx.scope());
-    if !body_has_replay_shape(&for_loop.body.stmts, fcx.scope(), finite_replay_domain) {
+    let tuple_loop = vars.len() > 1;
+    if !body_has_replay_shape(
+        &for_loop.body.stmts,
+        fcx.scope(),
+        finite_replay_domain,
+        tuple_loop,
+    ) {
         debug!(
             target: "sugar_lift_rust_tests::sugar::for_replay",
-            loop_var = %var.ident,
+            loop_var = %loop_vars,
             domain = %crate::token_key(&for_loop.expr),
             assert_count,
             adaptor_domain,
@@ -103,13 +101,13 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     }
     debug!(
         sugar = "for_replay",
-        loop_var = %var.ident,
+        loop_var = %loop_vars,
         domain = %crate::token_key(&for_loop.expr),
         seed_count = seed_names.len(),
         "recognized finite literal loop replay"
     );
     Some(Box::new(ForReplaySugar {
-        var: var.ident.to_string(),
+        vars,
         domain: (*for_loop.expr).clone(),
         body_stmts: for_loop.body.stmts.clone(),
         seed_names,
@@ -132,10 +130,60 @@ fn loop_var_pat_ident(pat: &Pat) -> Option<&syn::PatIdent> {
     }
 }
 
+/// The loop-var binding PLAN for a `for <pat> in ..` loop: the ordered ident names the
+/// per-step element is bound to. A single ident (`for x` / `for &x`) yields `[name]`; a
+/// tuple pattern (`for (i, &x)` over `.enumerate()`, etc.) yields one name per component,
+/// peeling `&`/paren on each. Each component must be a plain ident with no subpattern --
+/// any nested struct/tuple/wildcard declines (returns `None` -> the loop refuses). The
+/// per-component element VALUE is bound at desugar by decomposing the tuple element; the
+/// body's own `x` vs `*x` carries the deref, so peeling `&` is sound.
+fn loop_var_bindings(pat: &Pat) -> Option<Vec<String>> {
+    fn component_ident(pat: &Pat) -> Option<String> {
+        let id = loop_var_pat_ident(pat)?;
+        if id.subpat.is_some() {
+            return None;
+        }
+        Some(id.ident.to_string())
+    }
+    match pat {
+        Pat::Tuple(tuple) => {
+            if tuple.elems.is_empty() {
+                return None;
+            }
+            tuple.elems.iter().map(component_ident).collect()
+        }
+        Pat::Paren(p) => loop_var_bindings(&p.pat),
+        _ => component_ident(pat).map(|name| vec![name]),
+    }
+}
+
+/// Bind one per-step element `value` to the loop-var plan. A single-ident plan binds the
+/// whole value. A tuple plan (`for (i, &x)`) requires `value` to be a tuple expr of
+/// matching arity -- e.g. the `(i, e)` pairs `EnumerateSugar` yields -- and binds each
+/// component to its name. Returns `None` (bail -> refuse) if a tuple plan meets a
+/// non-tuple or wrong-arity value: a guessed decomposition is never bound.
+fn bind_loop_value(bindings: &mut ExprBindings, vars: &[String], value: Expr) -> Option<()> {
+    if vars.len() == 1 {
+        bindings.insert(vars[0].clone(), value);
+        return Some(());
+    }
+    let Expr::Tuple(tuple) = strip_refs_groups(&value) else {
+        return None;
+    };
+    if tuple.elems.len() != vars.len() {
+        return None;
+    }
+    for (name, component) in vars.iter().zip(tuple.elems.iter()) {
+        bindings.insert(name.clone(), component.clone());
+    }
+    Some(())
+}
+
 fn body_has_replay_shape(
     stmts: &[Stmt],
     scope: &crate::TemporalScope,
     finite_replay_domain: bool,
+    tuple_loop: bool,
 ) -> bool {
     let has_source_helper_destructure = stmts.iter().any(|stmt| {
         let Stmt::Local(local) = stmt else {
@@ -163,7 +211,13 @@ fn body_has_replay_shape(
         || body_has_const_if_local_replay_shape(stmts)
         || body_has_helper_call_replay_shape(stmts, scope)
         || body_has_scalar_accumulator_replay_shape(stmts, scope)
-        || (finite_replay_domain && body_has_pointwise_assert_replay_shape(stmts))
+        || (finite_replay_domain && body_has_pointwise_assert_replay_shape(stmts, true))
+        // A TUPLE loop var (`for (i, &x)` over `.enumerate()`/pairs) carries its per-step
+        // binding work in the pattern itself, so a body of pure point-wise asserts is
+        // replayable WITHOUT a separate body binding. Restricted to tuple loops so
+        // single-ident bare-assert foralls still route to `forall_loop` (a universal,
+        // not an unrolled conjunction).
+        || (finite_replay_domain && tuple_loop && body_has_pointwise_assert_replay_shape(stmts, false))
 }
 
 fn domain_has_replay_shape(expr: &Expr, composite_domain: bool) -> bool {
@@ -294,7 +348,7 @@ fn accumulator_seed_names(stmts: &[Stmt], scope: &crate::TemporalScope) -> Vec<S
     names.into_iter().collect()
 }
 
-fn body_has_pointwise_assert_replay_shape(stmts: &[Stmt]) -> bool {
+fn body_has_pointwise_assert_replay_shape(stmts: &[Stmt], require_binding: bool) -> bool {
     let mut saw_assert = false;
     let mut saw_replay_binding = false;
     for stmt in stmts {
@@ -330,7 +384,7 @@ fn body_has_pointwise_assert_replay_shape(stmts: &[Stmt]) -> bool {
             _ => return false,
         }
     }
-    saw_assert && saw_replay_binding
+    saw_assert && (!require_binding || saw_replay_binding)
 }
 
 fn body_has_const_if_local_replay_shape(stmts: &[Stmt]) -> bool {
@@ -417,7 +471,11 @@ fn range_domain_exceeds_replay_cap(expr: &Expr, scope: &crate::TemporalScope) ->
 }
 
 pub(crate) struct ForReplaySugar {
-    var: String,
+    /// The loop-var binding plan: one ident per pattern component (a single ident for
+    /// `for x`/`for &x`; one per tuple slot for `for (i, &x)`). Each per-step element is
+    /// bound to these names -- a single element value for a 1-ident plan, or the tuple
+    /// components for a multi-ident plan.
+    vars: Vec<String>,
     domain: Expr,
     body_stmts: Vec<Stmt>,
     seed_names: Vec<String>,
@@ -439,7 +497,7 @@ impl Sugar for ForReplaySugar {
             if self.seed_names.is_empty() {
                 for value in values {
                     let mut replay = Replay::new(ctx);
-                    replay.bindings.insert(self.var.clone(), value);
+                    bind_loop_value(&mut replay.bindings, &self.vars, value)?;
                     replay.replay_stmts(&self.body_stmts)?;
                     atoms.extend(replay.atoms);
                 }
@@ -447,7 +505,7 @@ impl Sugar for ForReplaySugar {
                 let mut replay = Replay::new(ctx);
                 replay.seed_source_bindings(&self.seed_names)?;
                 for value in values {
-                    replay.bindings.insert(self.var.clone(), value);
+                    bind_loop_value(&mut replay.bindings, &self.vars, value)?;
                     replay.replay_stmts(&self.body_stmts)?;
                 }
                 atoms.extend(replay.atoms);
@@ -460,7 +518,11 @@ impl Sugar for ForReplaySugar {
                 n: source_asserts,
                 kind: AssertionFactKind::Warranted,
                 warrant: Warrant {
-                    name: Some(format!("{}::loop::{}", ctx.scope.local_scope(), self.var)),
+                    name: Some(format!(
+                        "{}::loop::{}",
+                        ctx.scope.local_scope(),
+                        self.vars.join("_")
+                    )),
                 },
             })
         })())
