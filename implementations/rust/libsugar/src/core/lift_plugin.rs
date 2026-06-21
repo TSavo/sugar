@@ -16,6 +16,38 @@ use super::types::{
     memento_from_parts, Cid, Contract, Dialect, DomainClaim, DomainKind, Input, Term, Verdict,
 };
 
+/// Serialized-byte bound for a lift-plugin response term. A response that serializes past
+/// this is treated as unbounded and REFUSED before it is deep-cloned / content-addressed
+/// (finite-or-refuse). Generous: a normal full-corpus coretests response serializes to
+/// well under 100 MB; this only catches a runaway no kit-level bound caught first.
+const RESPONSE_TERM_SERIALIZED_BYTE_BOUND: usize = 256 * 1024 * 1024;
+
+/// `true` iff `value` serializes to more than `cap` bytes. Streams through a counting
+/// writer that errors past `cap`, so it is O(cap) time, O(1) memory, and never
+/// materializes the huge serialization (the OOM we are guarding against). Response depth
+/// is bounded by serde_json's parse recursion limit, so the recursive serializer cannot
+/// stack-overflow here.
+fn json_serialized_exceeds(value: &Value, cap: usize) -> bool {
+    struct CapWriter {
+        written: usize,
+        cap: usize,
+    }
+    impl Write for CapWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.written = self.written.saturating_add(buf.len());
+            if self.written > self.cap {
+                return Err(std::io::Error::new(std::io::ErrorKind::Other, "cap exceeded"));
+            }
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut writer = CapWriter { written: 0, cap };
+    serde_json::to_writer(&mut writer, value).is_err()
+}
+
 /// Core Kit adapter for a lift-plugin-protocol subprocess.
 ///
 /// This is the primitive-facing transport: `Kit::transform` sends an
@@ -105,6 +137,31 @@ impl LiftPluginKit {
         input: &Input,
         response_term: Term,
     ) -> Result<DomainClaim, LiftPluginKitError> {
+        // FINITE-OR-REFUSE backstop: a lift kit's response term must be bounded. An
+        // unbounded one (a self-referential static, a signed-zero float refinement, any
+        // runaway expansion) would be deep-cloned + content-addressed below and OOM. We do
+        // NOT deep-clone an unbounded term to discover it is unbounded: a streaming,
+        // early-exit byte count (O(1) memory; response depth is bounded by serde's parse
+        // recursion limit, so no stack risk) decides it, and on exceed we swap the response
+        // for a small refusal marker (the lift is refused, never truncated). The per-file
+        // emit bound in the rust-test-assertions kit catches this earlier and per-file; this
+        // is the kit-agnostic last-resort net so no kit can OOM the transport.
+        let response_term = match response_term {
+            Term::Const { value, sort }
+                if json_serialized_exceeds(&value, RESPONSE_TERM_SERIALIZED_BYTE_BOUND) =>
+            {
+                Term::Const {
+                    value: serde_json::json!({
+                        "sugar-refused": "response-term-exceeds-byte-bound",
+                        "reason": format!(
+                            "lift response term exceeds serialized byte bound ({RESPONSE_TERM_SERIALIZED_BYTE_BOUND}) -- unbounded, refused before clone/address (finite-or-refuse)"
+                        ),
+                    }),
+                    sort,
+                }
+            }
+            other => other,
+        };
         let response = match &response_term {
             Term::Const { value, .. } => value,
             _ => {
