@@ -16676,3 +16676,74 @@ fn shared_borrow_address_cast_stays_refused() {
         out.skip_reasons
     );
 }
+
+// ─── MaybeUninit::new(<literal>).assume_init() — literal passthrough teeth ────
+
+/// `MaybeUninit::new(7u32).assume_init() == 7u32` must reduce to `7 == 7`
+/// (a transparent passthrough, not an opaque EUF) and be SAT.
+#[test]
+fn maybe_uninit_new_literal_assume_init_good_twin_is_sat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(MaybeUninit::new(7u32).assume_init(), 7u32);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/maybe_uninit.rs");
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    if let Some(sat) = z3_verdict(&inv_json(decl), "maybe_uninit_new_good") {
+        assert!(
+            sat,
+            "MaybeUninit::new(7).assume_init() == 7 must be SAT (transparent literal)"
+        );
+    }
+}
+
+/// THE TEETH: `MaybeUninit::new(7u32).assume_init() == 8u32` reduces to
+/// `7 == 8` which is z3-UNSAT.  Before this recognizer the expression was an
+/// opaque EUF so z3 returned SAT (false-pass); after, it is UNSAT (refuted).
+#[test]
+fn maybe_uninit_new_literal_bad_twin_is_z3_unsat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(MaybeUninit::new(7u32).assume_init(), 8u32);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/maybe_uninit_bad.rs");
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    if let Some(sat) = z3_verdict(&inv_json(decl), "maybe_uninit_new_bad") {
+        assert!(
+            !sat,
+            "MaybeUninit::new(7).assume_init() == 8 must be z3-UNSAT (teeth bite the bad twin)"
+        );
+    }
+}
+
+/// `MaybeUninit::uninit().assume_init()` must NOT be dispatched by the new
+/// literal recognizer (receiver is `uninit`, not `new(<literal>)`).  Whatever
+/// the generic path emits for it, that claim must remain opaque — a wrong RHS
+/// must be SAT, never UNSAT.  This confirms no false teeth were added to the
+/// uninitialized-memory path.
+#[test]
+fn maybe_uninit_uninit_assume_init_stays_opaque_no_teeth() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(MaybeUninit::<u32>::uninit().assume_init(), 8u32);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/maybe_uninit_uninit.rs");
+    // If any claim was produced, it must be SAT — opaque EUF, no discrimination.
+    for decl in &out.decls {
+        if let Some(sat) = z3_verdict(&inv_json(decl), "maybe_uninit_uninit_no_teeth") {
+            assert!(
+                sat,
+                "uninit().assume_init() == 8 must be SAT (opaque/no teeth): {:?}",
+                decl
+            );
+        }
+    }
+}
