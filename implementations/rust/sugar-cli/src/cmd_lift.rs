@@ -847,8 +847,14 @@ fn normalize_source_audit_support(mut audit: Value) -> (Value, i64) {
 
     let has_full_loci = audit_object.get("loci").and_then(Value::as_array).is_some();
     let moved_loci = normalize_source_loci_array(audit_object.get_mut("loci"), true);
-    let moved_ast_counts =
-        normalize_source_ast_type_counts(audit_object.get_mut("ast_type_counts"));
+    let support_kind_counts = audit_object
+        .get("supportKindCounts")
+        .or_else(|| audit_object.get("support_kind_counts"))
+        .cloned();
+    let moved_ast_counts = normalize_source_ast_type_counts(
+        audit_object.get_mut("ast_type_counts"),
+        support_kind_counts.as_ref(),
+    );
     normalize_source_loci_array(audit_object.get_mut("sample_loci"), false);
 
     let moved_for_totals = if has_full_loci {
@@ -884,10 +890,15 @@ fn normalize_source_loci_array(value: Option<&mut Value>, count_toward_totals: b
 
 fn source_locus_support_is_not_inert(locus: &Value) -> bool {
     normalized_source_status(locus.get("status").and_then(Value::as_str)) == "support"
-        && !locus
-            .get("ast_kind")
-            .and_then(Value::as_str)
-            .is_some_and(is_inert_support_ast_kind)
+        && !source_support_kind_is_inert(locus)
+}
+
+fn source_support_kind_is_inert(locus: &Value) -> bool {
+    locus
+        .get("supportKind")
+        .or_else(|| locus.get("support_kind"))
+        .and_then(Value::as_str)
+        == Some("inert")
 }
 
 fn mark_source_locus_unresolved(locus: &mut Value) {
@@ -900,11 +911,14 @@ fn mark_source_locus_unresolved(locus: &mut Value) {
     );
     append_report_reason(
         object,
-        "support is reserved for inert declarations, comments, and compiler pragmas",
+        "support is reserved for kit-marked inert source loci",
     );
 }
 
-fn normalize_source_ast_type_counts(value: Option<&mut Value>) -> i64 {
+fn normalize_source_ast_type_counts(
+    value: Option<&mut Value>,
+    support_kind_counts: Option<&Value>,
+) -> i64 {
     let Some(Value::Object(by_status)) = value else {
         return 0;
     };
@@ -914,16 +928,24 @@ fn normalize_source_ast_type_counts(value: Option<&mut Value>) -> i64 {
     if let Some(Value::Object(support_counts)) = by_status.get_mut("support") {
         let keys = support_counts.keys().cloned().collect::<Vec<_>>();
         for kind in keys {
-            if is_inert_support_ast_kind(&kind) {
+            let count = support_counts
+                .get(&kind)
+                .and_then(Value::as_i64)
+                .unwrap_or(0)
+                .max(0);
+            let inert_count = inert_support_count_for_kind(support_kind_counts, &kind)
+                .max(0)
+                .min(count);
+            if inert_count > 0 {
+                support_counts.insert(kind.clone(), Value::Number(inert_count.into()));
+            } else {
+                support_counts.remove(&kind);
+            }
+            let moved_count = count - inert_count;
+            if moved_count <= 0 {
                 continue;
             }
-            let Some(count_value) = support_counts.remove(&kind) else {
-                continue;
-            };
-            let count = count_value.as_i64().unwrap_or(0);
-            if count > 0 {
-                moved_counts.push((kind, count));
-            }
+            moved_counts.push((kind, moved_count));
         }
         remove_support_status = support_counts.is_empty();
     }
@@ -955,6 +977,15 @@ fn normalize_source_ast_type_counts(value: Option<&mut Value>) -> i64 {
     }
 
     moved_total
+}
+
+fn inert_support_count_for_kind(support_kind_counts: Option<&Value>, kind: &str) -> i64 {
+    support_kind_counts
+        .and_then(|counts| counts.get("inert"))
+        .and_then(Value::as_object)
+        .and_then(|inert| inert.get(kind))
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
 }
 
 fn adjust_source_support_totals(value: &mut Value, moved_support_loci: i64) {
@@ -1879,7 +1910,7 @@ fn format_ast_rollup_summary(loci: &[&Value]) -> Vec<String> {
                 .entry(locus.ast_kind.clone())
                 .or_default() += 1;
         }
-        if is_inert_support_ast_kind(&locus.ast_kind) {
+        if locus.status == "support" {
             *support_roots_by_status
                 .entry(locus.status.clone())
                 .or_default()
@@ -1985,24 +2016,6 @@ fn is_constraint_ast_kind(ast_kind: &str) -> bool {
             | "UnaryOp"
             | "While"
             | "Yield"
-    )
-}
-
-fn is_inert_support_ast_kind(ast_kind: &str) -> bool {
-    matches!(
-        ast_kind,
-        "BlockComment"
-            | "ClassDecl"
-            | "ClassDeclaration"
-            | "ClassDef"
-            | "Comment"
-            | "CompilerPragma"
-            | "Directive"
-            | "DocComment"
-            | "LineComment"
-            | "Pass"
-            | "Pragma"
-            | "TypeIgnore"
     )
 }
 
@@ -3848,13 +3861,15 @@ mod tests {
                         {
                             "line": 1,
                             "status": "support",
-                            "ast_kind": "ClassDef",
+                            "supportKind": "inert",
+                            "ast_kind": "VendorClassDecl",
                             "ast_path": "$.module.body[0]"
                         },
                         {
                             "line": 2,
                             "status": "support",
-                            "ast_kind": "Comment",
+                            "support_kind": "inert",
+                            "ast_kind": "VendorComment",
                             "ast_path": "$.module.body[1]"
                         },
                         {
@@ -3878,7 +3893,59 @@ mod tests {
         assert!(human.contains(
             "totals: loci=3 warranted=1 inactive=0 support=2 refused=0 refuted=0 unresolved=0"
         ));
-        assert!(human.contains("support roots: ClassDef=1, Comment=1"));
+        assert!(human.contains("support roots: VendorClassDecl=1, VendorComment=1"));
+    }
+
+    #[test]
+    fn human_report_reclassifies_support_without_inert_support_kind() {
+        let response = serde_json::json!({
+            "kind": "ir-document",
+            "ir": [],
+            "sourceLedger": {
+                "source_loci": 1,
+                "source_warranted": 0,
+                "source_support": 1,
+                "source_refused": 0,
+                "source_inactive": 0,
+                "source_refuted": 0,
+                "unclassified_source": 0
+            },
+            "sourceAudits": [
+                {
+                    "kind": "source-audit",
+                    "role": "python.package-source",
+                    "contract": {"name": "vendpkg#source-accounting"},
+                    "totals": {
+                        "source_loci": 1,
+                        "source_warranted": 0,
+                        "source_support": 1,
+                        "source_refused": 0,
+                        "source_inactive": 0,
+                        "source_refuted": 0,
+                        "unclassified_source": 0
+                    },
+                    "loci": [
+                        {
+                            "line": 1,
+                            "status": "support",
+                            "ast_kind": "ClassDef",
+                            "ast_path": "$.module.body[0]"
+                        }
+                    ]
+                }
+            ],
+            "sourceMementos": []
+        });
+        let report =
+            source_report_from_lift_response(&response, None).expect("source support report");
+        let human = render_source_report_human(&report);
+
+        assert!(human.contains(
+            "source audit: loci=1 warranted=0 inactive=0 support=0 refused=0 refuted=0 unresolved=1"
+        ));
+        assert!(human.contains("unresolved roots: ClassDef=1"), "{human}");
+        assert!(!human.contains("support roots: ClassDef=1"), "{human}");
+        assert!(human.contains("support is reserved for kit-marked inert source loci"));
     }
 
     #[test]
@@ -4003,9 +4070,9 @@ mod tests {
             "kind": "ir-document",
             "ir": [],
             "sourceLedger": {
-                "source_loci": 4,
+                "source_loci": 5,
                 "source_warranted": 1,
-                "source_support": 1,
+                "source_support": 2,
                 "source_refused": 0,
                 "source_inactive": 0,
                 "source_refuted": 0,
@@ -4022,9 +4089,9 @@ mod tests {
                     "package_root": "/site-packages/pandas",
                     "contract": {"name": "pandas#source-accounting"},
                     "totals": {
-                        "source_loci": 4,
+                        "source_loci": 5,
                         "source_warranted": 1,
-                        "source_support": 1,
+                        "source_support": 2,
                         "source_refused": 0,
                         "source_inactive": 0,
                         "source_refuted": 0,
@@ -4032,8 +4099,11 @@ mod tests {
                     },
                     "ast_type_counts": {
                         "warranted": {"Return": 1},
-                        "support": {"FunctionDef": 1},
+                        "support": {"FunctionDef": 1, "VendorDecl": 1},
                         "unclassified": {"Assign": 1, "Call": 1}
+                    },
+                    "supportKindCounts": {
+                        "inert": {"VendorDecl": 1}
                     },
                     "sample_loci": [
                         {
@@ -4053,10 +4123,11 @@ mod tests {
 
         assert!(human.contains("loci: elided (structural package accounting)"));
         assert!(human.contains("warranted: Return=1"));
+        assert!(human.contains("support: VendorDecl=1"));
         assert!(!human.contains("support: FunctionDef=1"));
         assert!(human.contains("unresolved: Assign=1, Call=1, FunctionDef=1"));
         assert!(human.contains(
-            "source audit: loci=4 warranted=1 inactive=0 support=0 refused=0 refuted=0 unresolved=3"
+            "source audit: loci=5 warranted=1 inactive=0 support=1 refused=0 refuted=0 unresolved=3"
         ));
         assert!(human.contains("sample loci:"));
         assert!(human.contains("/site-packages/pandas/core/frame.py:10 unresolved Assign"));
