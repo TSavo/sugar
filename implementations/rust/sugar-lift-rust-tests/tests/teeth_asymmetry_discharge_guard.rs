@@ -172,3 +172,61 @@ fn false_assertions_are_never_discharged_teeth_asymmetry() {
         );
     }
 }
+
+// ── The SYMMETRIC floor: no false REFUTATION (no fake dragons) ────────────────
+//
+// `false_assertions_are_never_discharged_*` above pins one direction (no fake
+// LIGHTS). This pins the inverse cardinal sin: a TRUE literal-domain assertion
+// must NEVER be `refuted`. Marking correct code as a dragon is as unsound as
+// marking a false claim proven. Correct outcomes for a true claim: `discharged`
+// (if tracked), `undecided` (no teeth), or `refused` (out of text) -- NEVER
+// `refuted`. The two-sided floor is `false_discharges == 0 ∧ false_refutations == 0`.
+#[test]
+fn true_assertions_are_never_refuted() {
+    // Every assertion here is TRUE in real Rust. None may come back `Refuted`.
+    for (name, src) in [
+        ("literal_index_true", r#"#[test] fn t() { assert_eq!([7, 7, 7][1], 7); }"#),
+        ("literal_arith_true", r#"#[test] fn t() { assert_eq!(2 + 2, 4); }"#),
+        ("literal_repeat_true", r#"#[test] fn t() { assert_eq!([7; 3][1], 7); }"#),
+        ("same_arrays_true", r#"#[test] fn t() { assert_eq!([7, 7, 99], [7, 7, 99]); }"#),
+        // Opaque-but-true: an uninterpreted value the kit cannot ground. Correct
+        // outcome is UNDECIDED (no teeth), never a refutation.
+        (
+            "maybeuninit_true",
+            r#"#[test] fn t() { assert_eq!(unsafe { core::mem::MaybeUninit::new(7).assume_init() }, 7); }"#,
+        ),
+    ] {
+        let d = disp_of(name, src);
+        assert_ne!(
+            d,
+            Disp::Refuted,
+            "FALSE REFUTATION (fake dragon): true claim `{name}` was REFUTED (got {d:?})"
+        );
+    }
+}
+
+// borrow4's stale-`&mut` case, pinned specifically. This is a KNOWN-CURRENT hole,
+// empirically confirmed end-to-end (lift -> discharge): `*r += 1` is refused, so
+// `x` stays stale at its initializer 5, BUT `assert_eq!(x, 6)` is still emitted as
+// a WARRANTED obligation with inv `=(5, 6)` -> the discharge gate REFUTES a TRUE
+// assertion (x really is 6). A false refutation -- a fake dragon -- live today.
+//
+// The fix is the untrackable-deref-mutation refuse (T3, deferred #6/#16): once a
+// local mutated through a refused `*r OP= ..` no longer grounds to its stale
+// initializer, the read REFUSES (or stays opaque -> UNDECIDED) instead of lifting
+// `5 == 6`. This test is the durable regression net: it is `#[ignore]` ONLY because
+// the fix has not landed. UN-IGNORE IT IN THE PR THAT LANDS THE T3 FIX -- it must go
+// green (Disp != Refuted) and stay green forever after.
+#[test]
+#[ignore = "KNOWN HOLE: stale &mut read false-refutes 5==6 until T3 deref-mutation refuse lands (#6/#16); un-ignore with the fix"]
+fn borrow4_stale_mut_assignment_must_not_false_refute() {
+    let d = disp_of(
+        "borrow4_stale_mut",
+        r#"#[test] fn t() { let mut x = 5; let r = &mut x; *r += 1; assert_eq!(x, 6); }"#,
+    );
+    assert_ne!(
+        d,
+        Disp::Refuted,
+        "FALSE REFUTATION: stale-&mut `assert_eq!(x,6)` (x really is 6) was REFUTED as `5==6` (got {d:?})"
+    );
+}
