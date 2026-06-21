@@ -3,3 +3,6 @@ corpus/.sugar/lift/rust-test-assertions/manifest.toml
 coretests-report.out
 coretests-report.err
 coretests-report.json
+# ANSI-stripped parse copies (run.sh strips color before tallying the histogram)
+coretests-report.plain.out
+coretests-report.plain.err
