@@ -532,6 +532,7 @@ fn source_report_from_lift_response(
                 .to_string()
         })?;
 
+    let mut moved_support_loci = 0;
     let filtered_audits: Vec<Value> = audits
         .iter()
         .filter(|audit| {
@@ -541,7 +542,11 @@ fn source_report_from_lift_response(
                     .is_some_and(|name| name.contains(filter))
             })
         })
-        .cloned()
+        .map(|audit| {
+            let (audit, moved) = normalize_source_audit_support(audit.clone());
+            moved_support_loci += moved;
+            audit
+        })
         .collect();
 
     if contract_filter.is_some() && filtered_audits.is_empty() {
@@ -554,7 +559,7 @@ fn source_report_from_lift_response(
     let ledger = if contract_filter.is_some() {
         recompute_source_ledger(&filtered_audits)
     } else {
-        ledger.clone()
+        normalize_source_ledger_support(ledger.clone(), moved_support_loci)
     };
     let factory_audits = matching_report_factory_audits(response, contract_filter);
     let assertion_surface_audits =
@@ -740,8 +745,30 @@ fn matching_report_assertion_surface_audits(
         .filter(|row| {
             contract_filter.is_none_or(|filter| assertion_surface_audit_matches_filter(row, filter))
         })
-        .cloned()
+        .map(|row| normalize_assertion_surface_audit(row.clone()))
         .collect()
+}
+
+fn normalize_assertion_surface_audit(mut row: Value) -> Value {
+    let has_facts = assertion_surface_fact_count(&row) > 0;
+    let Some(object) = row.as_object_mut() else {
+        return row;
+    };
+
+    let support_facts = object
+        .remove("supportFacts")
+        .or_else(|| object.remove("support_facts"));
+    if let Some(support_facts) = support_facts {
+        object.insert("auxiliaryFacts".to_string(), support_facts);
+    }
+    if !has_facts {
+        object.insert(
+            "status".to_string(),
+            Value::String("no-facts-emitted".to_string()),
+        );
+    }
+
+    row
 }
 
 fn assertion_surface_audit_matches_filter(row: &Value, filter: &str) -> bool {
@@ -805,18 +832,186 @@ fn recompute_source_ledger(audits: &[Value]) -> Value {
     Value::Object(ledger)
 }
 
+fn normalize_source_ledger_support(mut ledger: Value, moved_support_loci: i64) -> Value {
+    if moved_support_loci <= 0 {
+        return ledger;
+    }
+    adjust_source_support_totals(&mut ledger, moved_support_loci);
+    ledger
+}
+
+fn normalize_source_audit_support(mut audit: Value) -> (Value, i64) {
+    let Some(audit_object) = audit.as_object_mut() else {
+        return (audit, 0);
+    };
+
+    let has_full_loci = audit_object.get("loci").and_then(Value::as_array).is_some();
+    let moved_loci = normalize_source_loci_array(audit_object.get_mut("loci"), true);
+    let moved_ast_counts =
+        normalize_source_ast_type_counts(audit_object.get_mut("ast_type_counts"));
+    normalize_source_loci_array(audit_object.get_mut("sample_loci"), false);
+
+    let moved_for_totals = if has_full_loci {
+        moved_loci
+    } else {
+        moved_ast_counts
+    };
+    if moved_for_totals > 0 {
+        if let Some(totals) = audit_object.get_mut("totals") {
+            adjust_source_support_totals(totals, moved_for_totals);
+        }
+    }
+
+    (audit, moved_for_totals)
+}
+
+fn normalize_source_loci_array(value: Option<&mut Value>, count_toward_totals: bool) -> i64 {
+    let Some(Value::Array(loci)) = value else {
+        return 0;
+    };
+
+    let mut moved = 0;
+    for locus in loci {
+        if source_locus_support_is_not_inert(locus) {
+            if count_toward_totals {
+                moved += 1;
+            }
+            mark_source_locus_unresolved(locus);
+        }
+    }
+    moved
+}
+
+fn source_locus_support_is_not_inert(locus: &Value) -> bool {
+    normalized_source_status(locus.get("status").and_then(Value::as_str)) == "support"
+        && !locus
+            .get("ast_kind")
+            .and_then(Value::as_str)
+            .is_some_and(is_inert_support_ast_kind)
+}
+
+fn mark_source_locus_unresolved(locus: &mut Value) {
+    let Some(object) = locus.as_object_mut() else {
+        return;
+    };
+    object.insert(
+        "status".to_string(),
+        Value::String("unclassified".to_string()),
+    );
+    append_report_reason(
+        object,
+        "support is reserved for inert declarations, comments, and compiler pragmas",
+    );
+}
+
+fn normalize_source_ast_type_counts(value: Option<&mut Value>) -> i64 {
+    let Some(Value::Object(by_status)) = value else {
+        return 0;
+    };
+
+    let mut moved_counts = Vec::new();
+    let mut remove_support_status = false;
+    if let Some(Value::Object(support_counts)) = by_status.get_mut("support") {
+        let keys = support_counts.keys().cloned().collect::<Vec<_>>();
+        for kind in keys {
+            if is_inert_support_ast_kind(&kind) {
+                continue;
+            }
+            let Some(count_value) = support_counts.remove(&kind) else {
+                continue;
+            };
+            let count = count_value.as_i64().unwrap_or(0);
+            if count > 0 {
+                moved_counts.push((kind, count));
+            }
+        }
+        remove_support_status = support_counts.is_empty();
+    }
+    if remove_support_status {
+        by_status.remove("support");
+    }
+
+    let moved_total = moved_counts.iter().map(|(_, count)| *count).sum::<i64>();
+    if moved_counts.is_empty() {
+        return 0;
+    }
+
+    let target = by_status
+        .entry("unclassified".to_string())
+        .or_insert_with(|| Value::Object(Map::new()));
+    if !target.is_object() {
+        *target = Value::Object(Map::new());
+    }
+    let Some(target_counts) = target.as_object_mut() else {
+        return moved_total;
+    };
+    for (kind, count) in moved_counts {
+        let next = target_counts
+            .get(&kind)
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+            + count;
+        target_counts.insert(kind, Value::Number(next.into()));
+    }
+
+    moved_total
+}
+
+fn adjust_source_support_totals(value: &mut Value, moved_support_loci: i64) {
+    if moved_support_loci <= 0 {
+        return;
+    }
+    let Some(object) = value.as_object_mut() else {
+        return;
+    };
+
+    let support = object
+        .get("source_support")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        .saturating_sub(moved_support_loci)
+        .max(0);
+    object.insert("source_support".to_string(), Value::Number(support.into()));
+
+    let unresolved = object
+        .get("source_unresolved")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        .max(
+            object
+                .get("unclassified_source")
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+        )
+        + moved_support_loci;
+    object.insert(
+        "source_unresolved".to_string(),
+        Value::Number(unresolved.into()),
+    );
+    object.insert(
+        "unclassified_source".to_string(),
+        Value::Number(unresolved.into()),
+    );
+}
+
+fn append_report_reason(object: &mut Map<String, Value>, reason: &str) {
+    let existing = object
+        .get("reason")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let reason = if existing.is_empty() {
+        reason.to_string()
+    } else if existing.contains(reason) {
+        existing.to_string()
+    } else {
+        format!("{existing}; {reason}")
+    };
+    object.insert("reason".to_string(), Value::String(reason));
+}
+
 fn source_total_for_field(totals: &Value, field: &str) -> i64 {
     match field {
-        "source_unresolved" => totals
-            .get("source_unresolved")
-            .or_else(|| totals.get("unclassified_source"))
-            .and_then(Value::as_i64)
-            .unwrap_or(0),
-        "unclassified_source" => totals
-            .get("unclassified_source")
-            .or_else(|| totals.get("source_unresolved"))
-            .and_then(Value::as_i64)
-            .unwrap_or(0),
+        "source_unresolved" | "unclassified_source" => source_unresolved_count(totals),
         _ => totals.get(field).and_then(Value::as_i64).unwrap_or(0),
     }
 }
@@ -1684,7 +1879,7 @@ fn format_ast_rollup_summary(loci: &[&Value]) -> Vec<String> {
                 .entry(locus.ast_kind.clone())
                 .or_default() += 1;
         }
-        if is_support_ast_kind(&locus.ast_kind) {
+        if is_inert_support_ast_kind(&locus.ast_kind) {
             *support_roots_by_status
                 .entry(locus.status.clone())
                 .or_default()
@@ -1793,10 +1988,21 @@ fn is_constraint_ast_kind(ast_kind: &str) -> bool {
     )
 }
 
-fn is_support_ast_kind(ast_kind: &str) -> bool {
+fn is_inert_support_ast_kind(ast_kind: &str) -> bool {
     matches!(
         ast_kind,
-        "Import" | "ImportFrom" | "FunctionDef" | "AsyncFunctionDef" | "ClassDef"
+        "BlockComment"
+            | "ClassDecl"
+            | "ClassDeclaration"
+            | "ClassDef"
+            | "Comment"
+            | "CompilerPragma"
+            | "Directive"
+            | "DocComment"
+            | "LineComment"
+            | "Pass"
+            | "Pragma"
+            | "TypeIgnore"
     )
 }
 
@@ -2013,13 +2219,13 @@ fn render_assertion_surface_accounting(report: &LiftSourceReport) -> String {
                     true,
                 );
             }
-            if let Some(support_facts) = row.get("supportFacts").and_then(Value::as_array) {
+            if let Some(auxiliary_facts) = assertion_surface_auxiliary_facts(row) {
                 render_assertion_surface_contract_refs(
                     &mut out,
-                    "support",
+                    "auxiliary",
                     report,
                     &facts_by_contract,
-                    support_facts,
+                    auxiliary_facts,
                     false,
                 );
             }
@@ -2036,13 +2242,13 @@ fn render_assertion_surface_accounting(report: &LiftSourceReport) -> String {
         out.push_str("assertion support emitted:\n");
         for row in support_only {
             out.push_str(&format_assertion_surface_row(row));
-            if let Some(support_facts) = row.get("supportFacts").and_then(Value::as_array) {
+            if let Some(auxiliary_facts) = assertion_surface_auxiliary_facts(row) {
                 render_assertion_surface_contract_refs(
                     &mut out,
-                    "support",
+                    "auxiliary",
                     report,
                     &facts_by_contract,
-                    support_facts,
+                    auxiliary_facts,
                     false,
                 );
             }
@@ -2064,6 +2270,16 @@ fn render_assertion_surface_accounting(report: &LiftSourceReport) -> String {
         out.push_str("assertion sources without facts:\n");
         for row in no_facts {
             out.push_str(&format_assertion_surface_row(row));
+            if let Some(auxiliary_facts) = assertion_surface_auxiliary_facts(row) {
+                render_assertion_surface_contract_refs(
+                    &mut out,
+                    "auxiliary",
+                    report,
+                    &facts_by_contract,
+                    auxiliary_facts,
+                    false,
+                );
+            }
             if let Some(reason) = row.get("reason").and_then(Value::as_str) {
                 if !reason.is_empty() {
                     out.push_str(&format!("    reason: {reason}\n"));
@@ -2136,6 +2352,13 @@ fn assertion_surface_support_fact_count(row: &Value) -> usize {
         .unwrap_or(0)
 }
 
+fn assertion_surface_auxiliary_facts(row: &Value) -> Option<&[Value]> {
+    row.get("auxiliaryFacts")
+        .or_else(|| row.get("auxiliary_facts"))
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+}
+
 fn assertion_surface_fact_contract(fact: &Value) -> Option<&str> {
     fact.get("contract")
         .or_else(|| fact.get("contractName"))
@@ -2185,9 +2408,14 @@ fn source_count(value: &Value, field: &str) -> i64 {
 fn source_unresolved_count(value: &Value) -> i64 {
     value
         .get("source_unresolved")
-        .or_else(|| value.get("unclassified_source"))
         .and_then(Value::as_i64)
         .unwrap_or(0)
+        .max(
+            value
+                .get("unclassified_source")
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+        )
 }
 
 fn render_factory_accounting(factory_audits: &[Value]) -> String {
@@ -3620,14 +3848,14 @@ mod tests {
                         {
                             "line": 1,
                             "status": "support",
-                            "ast_kind": "Import",
+                            "ast_kind": "ClassDef",
                             "ast_path": "$.module.body[0]"
                         },
                         {
-                            "line": 1,
+                            "line": 2,
                             "status": "support",
-                            "ast_kind": "alias",
-                            "ast_path": "$.module.body[0].names[0]"
+                            "ast_kind": "Comment",
+                            "ast_path": "$.module.body[1]"
                         },
                         {
                             "line": 4,
@@ -3650,8 +3878,7 @@ mod tests {
         assert!(human.contains(
             "totals: loci=3 warranted=1 inactive=0 support=2 refused=0 refuted=0 unresolved=0"
         ));
-        assert!(human.contains("support roots: Import=1"));
-        assert!(human.contains("support covered by parent: alias=1"));
+        assert!(human.contains("support roots: ClassDef=1, Comment=1"));
     }
 
     #[test]
@@ -3826,8 +4053,11 @@ mod tests {
 
         assert!(human.contains("loci: elided (structural package accounting)"));
         assert!(human.contains("warranted: Return=1"));
-        assert!(human.contains("support: FunctionDef=1"));
-        assert!(human.contains("unresolved: Assign=1, Call=1"));
+        assert!(!human.contains("support: FunctionDef=1"));
+        assert!(human.contains("unresolved: Assign=1, Call=1, FunctionDef=1"));
+        assert!(human.contains(
+            "source audit: loci=4 warranted=1 inactive=0 support=0 refused=0 refuted=0 unresolved=3"
+        ));
         assert!(human.contains("sample loci:"));
         assert!(human.contains("/site-packages/pandas/core/frame.py:10 unresolved Assign"));
     }
@@ -4010,7 +4240,7 @@ mod tests {
         assert!(human.contains("    unresolved roots: Assign=1, FunctionDef=1, If=1, ImportFrom=1"));
         assert!(human.contains("    unresolved constraint roots: Assign=1, If=1"));
         assert!(human.contains("    unresolved constraint children: Compare=1, Subscript=1"));
-        assert!(human.contains("    unresolved support roots: FunctionDef=1, ImportFrom=1"));
+        assert!(!human.contains("    unresolved support roots: FunctionDef=1"));
         assert!(human.contains(
             "    unresolved covered by parent: Compare=1, Name=2, Subscript=1, alias=1, arg=1"
         ));
@@ -4841,7 +5071,7 @@ mod tests {
         let parsed: Value = serde_json::from_str(&rendered_json).expect("valid json");
 
         assert!(
-            human.contains("assertion surface accounting: sources=3 facts=1 support=1 no_facts=1"),
+            human.contains("assertion surface accounting: sources=3 facts=1 support=0 no_facts=2"),
             "{human}"
         );
         assert!(human.contains("assertion facts emitted:"), "{human}");
@@ -4853,10 +5083,14 @@ mod tests {
             human.contains("src/lib.rs::tests::emits_fact :: 2 = 2"),
             "{human}"
         );
-        assert!(human.contains("assertion support emitted:"), "{human}");
+        assert!(!human.contains("assertion support emitted:"), "{human}");
+        assert!(
+            human.contains("assertion sources without facts:"),
+            "{human}"
+        );
         assert!(
             human.contains(
-                "src/lib.rs:30 src/lib.rs::tests::support_only support-only facts=0 support=1"
+                "src/lib.rs:30 src/lib.rs::tests::support_only no-facts-emitted facts=0 support=0"
             ),
             "{human}"
         );
@@ -4868,10 +5102,6 @@ mod tests {
         );
         assert!(
             human.contains("reason: support contracts emitted; no scalar universe emitted by kit"),
-            "{human}"
-        );
-        assert!(
-            human.contains("assertion sources without facts:"),
             "{human}"
         );
         assert!(
