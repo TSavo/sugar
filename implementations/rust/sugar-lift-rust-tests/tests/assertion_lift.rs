@@ -16533,3 +16533,146 @@ fn t() {
         out.skip_reasons
     );
 }
+
+// ---------------------------------------------------------------------------
+// SHARED-BORROW TRANSPARENCY (`&e` desugars to its pointee).
+//
+// A shared borrow READS the pointee's value, and Rust's `PartialEq for &T` compares
+// pointees (`&a == &b` <=> `a == b`). So `&place == value` must warrant the POINTEE,
+// not wrap it in an uninterpreted `ref(..)` ctor. The old `ref(20) == ref(99)` shape
+// was SATISFIABLE (an uninterpreted `ref` can collapse 20 and 99), so the bad twin was
+// NOT refuted -- a vacuous warrant. Transparency makes the good twin a true equality
+// and the bad twin a real contradiction. The ADDRESS/provenance family (`&x as *const`)
+// is a DIFFERENT path and stays refused. (`reference_term`, shared arm.)
+
+// BALLISTIC (1) GOOD: a shared borrow of a literal-array index warrants the pointee.
+#[test]
+fn shared_borrow_of_literal_index_warrants_pointee() {
+    let src = r#"
+        #[test]
+        fn t_shared_index() {
+            assert!(&[10, 20, 30][1] == &20);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/borrow/shared_index.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "`&[10,20,30][1] == &20` must warrant the pointee, not refuse: lifted={} refused={} \
+         skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "shared_index_good") {
+        assert!(sat, "&[10,20,30][1] == &20 -> 20 == 20 -- consistent (SAT)");
+    }
+}
+
+// BALLISTIC (1) TEETH: a WRONG pointee must REFUTE. If the borrow stayed an
+// uninterpreted `ref(..)` ctor, `ref(20) == ref(99)` would be SAT (z3 collapses the
+// uninterpreted application) -- a vacuous warrant. Transparency makes `20 == 99` a real
+// contradiction (UNSAT).
+#[test]
+fn shared_borrow_of_literal_index_wrong_pointee_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_shared_index_bad() {
+            assert!(&[10, 20, 30][1] == &99);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/borrow/shared_index_bad.rs");
+    assert!(
+        out.assertions_lifted >= 1,
+        "the bad twin must still LIFT so the contradiction is checkable: lifted={} skips={:?}",
+        out.assertions_lifted,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "shared_index_bad") {
+        assert!(
+            !sat,
+            "&[10,20,30][1] == &99 -> 20 == 99 is a REAL contradiction -- must be UNSAT; SAT \
+             means the borrow stayed an uninterpreted `ref` ctor (vacuous warrant)"
+        );
+    }
+}
+
+// HEADLINE: a shared borrow of a text-constructed LOCAL warrants the local's value.
+#[test]
+fn shared_borrow_of_local_warrants_value() {
+    let src = r#"
+        #[test]
+        fn t_borrow_local() {
+            let x = 5;
+            assert_eq!(&x, &5);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/borrow/local.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "a shared borrow of a local IS the local's value -- must warrant, not refuse: \
+         lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "borrow_local_good") {
+        assert!(sat, "&x == &5 with x = 5 -> 5 == 5 -- consistent (SAT)");
+    }
+}
+
+// HEADLINE TEETH: a WRONG value over the borrowed local must refute (UNSAT).
+#[test]
+fn shared_borrow_of_local_wrong_value_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_borrow_local_bad() {
+            let x = 5;
+            assert_eq!(&x, &6);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/borrow/local_bad.rs");
+    assert!(
+        out.assertions_lifted >= 1,
+        "the bad twin must still LIFT: lifted={} skips={:?}",
+        out.assertions_lifted,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "borrow_local_bad") {
+        assert!(
+            !sat,
+            "&x == &6 with x = 5 -> 5 == 6 is a REAL contradiction -- must be UNSAT"
+        );
+    }
+}
+
+// BALLISTIC (3): the ADDRESS/provenance family is NOT a value. `&x as *const _` is a
+// raw-pointer cast -- it must stay REFUSED (0 lifted), never warranted by the shared-
+// borrow transparency.
+#[test]
+fn shared_borrow_address_cast_stays_refused() {
+    let src = r#"
+        #[test]
+        fn t_addr() {
+            let x = 5;
+            assert!(&x as *const _ as usize == 0);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/borrow/addr.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "address/provenance (`&x as *const _`) is not a constructible value -- must stay \
+         refused (0 lifted): lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    assert!(
+        out.assertions_refused >= 1
+            && out
+                .skip_reasons
+                .iter()
+                .any(|r| r.contains("raw pointer cast")),
+        "the raw-pointer cast must be the refusal reason: {:?}",
+        out.skip_reasons
+    );
+}
