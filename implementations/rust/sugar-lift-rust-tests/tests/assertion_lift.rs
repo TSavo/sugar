@@ -659,6 +659,177 @@ fn const_match_runtime_scrutinee_declines() {
     );
 }
 
+// ---- Lane 12: range / array `is_empty()` folds to a ground bool (teeth) ----
+
+// `(5..5).is_empty()` is true (an empty half-open range). The LHS is determined
+// entirely by the text, so it lowers to a ground `Bool(true)` -- not an opaque
+// `method:is_empty` EUF var -- and warrants via the `is_empty` sugar.
+#[test]
+fn range_is_empty_folds_and_warrants() {
+    let src = r#"
+        #[test]
+        fn t_range_is_empty() {
+            assert!((5..5).is_empty());
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/range_is_empty.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "range is_empty must lift; skip: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.factory_audits.iter().any(|a| {
+            a.selected == Some("is_empty")
+                && a.disposition == sugar_lift_rust_tests::FactoryDisposition::Warranted
+        }),
+        "the range is_empty term must be warranted by `is_empty`: {:?}",
+        out.factory_audits
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(true)"),
+        "folded is_empty value (true) must be emitted as a ground const: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_range_is_empty") {
+        assert!(sat, "(5..5).is_empty() == true holds -- must be SAT");
+    }
+}
+
+// BAD TWIN / teeth: `(0..5)` is NOT empty, so `assert!((0..5).is_empty())` folds
+// to `Bool(false)` -- a real contradiction that z3 refutes (UNSAT). This is the
+// teeth the fold adds: a wrong emptiness claim is caught.
+#[test]
+fn range_not_empty_wrong_claim_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_range_not_empty_bad() {
+            assert!((0..5).is_empty());
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/range_not_empty_bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "non-empty range is_empty must still lift so the contradiction is checkable: {:?}",
+        out.skip_reasons
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(false)"),
+        "(0..5).is_empty() must fold to false: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_range_not_empty_bad") {
+        assert!(
+            !sat,
+            "(0..5).is_empty() folds to false -- asserting it must be UNSAT"
+        );
+    }
+}
+
+// Inclusive-range semantics have teeth: `(5..=5)` CONTAINS 5, so it is NOT empty;
+// only `start > end` (`6..=5`) is empty. The fold replays the EXACT `a > b`
+// inclusive rule, distinct from the half-open `a >= b` rule.
+#[test]
+fn range_inclusive_is_empty_semantics_hold() {
+    // EMPTY inclusive range: 6..=5 has start > end -> true (good, SAT).
+    let good = r#"
+        #[test]
+        fn t_range_incl_empty() {
+            assert!((6..=5).is_empty());
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/iter/range_incl_empty.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(true)"),
+        "(6..=5).is_empty() folds true: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_range_incl_empty") {
+        assert!(sat, "(6..=5).is_empty() == true -- must be SAT");
+    }
+    // NON-empty inclusive range: 5..=5 contains 5 -> claiming empty refutes.
+    let bad = r#"
+        #[test]
+        fn t_range_incl_not_empty_bad() {
+            assert!((5..=5).is_empty());
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/iter/range_incl_not_empty_bad.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(false)"),
+        "(5..=5).is_empty() folds false: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_range_incl_not_empty_bad") {
+        assert!(
+            !sat,
+            "(5..=5) contains 5 -- asserting is_empty must be UNSAT"
+        );
+    }
+}
+
+// Array / repeat literal `is_empty()`: `[x; 0]` is empty (true); a non-empty
+// literal claimed empty folds to false and refutes.
+#[test]
+fn array_literal_is_empty_folds_with_teeth() {
+    let good = r#"
+        #[test]
+        fn t_empty_arr() {
+            assert!([0u8; 0].is_empty());
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/slice/empty_arr.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(true)"),
+        "[0u8; 0].is_empty() folds true: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_empty_arr") {
+        assert!(sat, "empty array is_empty == true -- must be SAT");
+    }
+    let bad = r#"
+        #[test]
+        fn t_nonempty_arr_bad() {
+            assert!([1, 2, 3].is_empty());
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/slice/nonempty_arr_bad.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(false)"),
+        "[1, 2, 3].is_empty() folds false: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_nonempty_arr_bad") {
+        assert!(
+            !sat,
+            "[1, 2, 3] is non-empty -- asserting is_empty must be UNSAT"
+        );
+    }
+}
+
+// EXACT-OR-NONE: a runtime-bounded range must NOT fold. The `is_empty` sugar
+// declines (no const endpoint), leaving the existing opaque handling -- never a
+// guessed bool.
+#[test]
+fn runtime_range_is_empty_declines_to_fold() {
+    let src = r#"
+        #[test]
+        fn t_runtime_range() {
+            let n = std::env::args().count();
+            assert!((0..n).is_empty());
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/runtime_range.rs");
+    assert!(
+        !out.factory_audits
+            .iter()
+            .any(|a| a.selected == Some("is_empty")),
+        "a runtime-bounded range must NOT be folded by is_empty: {:?}",
+        out.factory_audits
+    );
+}
+
 #[test]
 fn size_of_concrete_std_type_uses_rustc_layout_axiom() {
     let src = r#"
