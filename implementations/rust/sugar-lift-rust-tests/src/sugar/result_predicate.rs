@@ -40,7 +40,7 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if !matches!(method.as_str(), "is_ok" | "is_err") || !call.args.is_empty() {
         return None;
     }
-    if !is_known_result_source(&call.receiver) {
+    if !is_known_result_source(&call.receiver, fcx) {
         return None;
     }
     Some(Box::new(ResultPredicateSugar {
@@ -96,9 +96,9 @@ fn result_presence(term: &Term) -> Option<bool> {
 /// desugar-BAIL -- and a bailed Primary is a REFUSAL, not an opaque-EUF fallback, so
 /// it would REGRESS coverage in corpus context. A shape we might bail on must be
 /// DECLINED here, not accepted-then-bailed.
-fn is_known_result_source(expr: &Expr) -> bool {
+fn is_known_result_source(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
     let Expr::Call(call) = strip_refs_groups(expr) else {
         return false;
     };
-    crate::sugar::try_from::folds_to_result(call)
+    crate::sugar::try_from::folds_to_result(call, Some(fcx))
 }

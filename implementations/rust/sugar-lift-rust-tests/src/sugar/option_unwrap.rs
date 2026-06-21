@@ -37,7 +37,9 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if method == "expect" && call.args.len() != 1 {
         return None;
     }
-    if !is_known_monadic_source(&call.receiver) {
+    if !is_known_monadic_source(&call.receiver)
+        && !try_from_receiver_folds_scoped(&call.receiver, fcx)
+    {
         return None;
     }
     Some(Box::new(OptionUnwrapSugar {
@@ -94,6 +96,18 @@ fn unwrap_monadic(term: &Rc<Term>) -> Option<Result<Rc<Term>, &'static str>> {
     }
 }
 
+/// Scope-aware extension of the `try_from` monadic check: a `try_from` receiver
+/// whose argument is a let-bound local / const path that RESOLVES to an integer
+/// (`let m = 255u16; try_from(m).unwrap()`, `try_from(<u8>::MAX).unwrap()`). The
+/// syntactic `is_known_monadic_source` only sees inline literals; this catches the
+/// resolved-arg shapes via the scope (sound: see `try_from::scalar_int_value`).
+fn try_from_receiver_folds_scoped(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
+    let Expr::Call(call) = strip_refs_groups(expr) else {
+        return false;
+    };
+    crate::sugar::try_from::folds_to_result(call, Some(fcx))
+}
+
 pub(crate) fn is_known_monadic_source(expr: &Expr) -> bool {
     match strip_refs_groups(expr) {
         Expr::Path(path) => path
@@ -107,7 +121,9 @@ pub(crate) fn is_known_monadic_source(expr: &Expr) -> bool {
             }
             // An integer `TryFrom::try_from(literal)` grounds to a `res:ok`/
             // `res:err` (see `try_from`), so `.unwrap()`/`.expect(..)` can peel it.
-            if crate::sugar::try_from::folds_to_result(call) {
+            // Inline-literal check here (this fn is the no-scope syntactic oracle);
+            // the let-bound / const-path arg is caught by `try_from_receiver_folds_scoped`.
+            if crate::sugar::try_from::folds_to_result(call, None) {
                 return true;
             }
             let Expr::Path(path) = strip_refs_groups(&call.func) else {

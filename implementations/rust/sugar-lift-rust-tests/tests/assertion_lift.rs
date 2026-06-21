@@ -705,6 +705,121 @@ fn try_from_in_range_unwrap_folds_with_teeth() {
     }
 }
 
+// RESOLVED-ARG TryFrom: a let-bound local (`let m = 255u16; try_from(m)`) or a
+// primitive const path (`try_from(<u8>::MAX)`) resolves to its integer value, so the
+// SAME try_from range-check + option_unwrap peel fires as on an inline literal. This
+// is the corpus's `<T as TryFrom<S>>::try_from(max).unwrap()` conversion shape.
+#[test]
+fn try_from_let_bound_arg_unwrap_folds_with_teeth() {
+    let good = r#"
+        #[test]
+        fn t_tf_letbound() {
+            let m = 255u16;
+            assert!(u8::try_from(m).unwrap() == 255);
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/num/tf_letbound.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "let-bound try_from().unwrap() must lift; skip: {:?}",
+        out.skip_reasons
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Int(255)"),
+        "let-bound try_from(m).unwrap() folds to 255: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_tf_letbound") {
+        assert!(sat, "let m=255; try_from(m).unwrap() == 255 -- must be SAT");
+    }
+    let bad = r#"
+        #[test]
+        fn t_tf_letbound_bad() {
+            let m = 255u16;
+            assert!(u8::try_from(m).unwrap() == 254);
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/num/tf_letbound_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_tf_letbound_bad") {
+        assert!(!sat, "let m=255; try_from(m).unwrap() is 255 != 254 -- must be UNSAT");
+    }
+}
+
+// CONST-PATH arg: `try_from(<u8>::MAX)` resolves the primitive MAX to 255 (no scope
+// needed -- a compile-time constant), folds to `res:ok(255)`.
+#[test]
+fn try_from_const_path_arg_folds() {
+    let good = r#"
+        #[test]
+        fn t_tf_constpath() {
+            assert!(u16::try_from(<u8>::MAX).unwrap() == 255);
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/num/tf_constpath.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Int(255)"),
+        "try_from(<u8>::MAX).unwrap() folds to 255: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_tf_constpath") {
+        assert!(sat, "try_from(<u8>::MAX).unwrap() == 255 -- must be SAT");
+    }
+}
+
+// SOUNDNESS GUARD (false-refutation): a `let mut` arg reassigned before the call has
+// NO single timeless value at the binding (`stable_let_binding` gates it), so try_from
+// must NOT resolve it to the STALE first binding. Resolving `m` to 255 here would lift
+// `try_from(255).unwrap() == 254` -> `255 == 254` -> UNSAT, REFUTING a TRUE assert (the
+// inverse cardinal sin). It must stay opaque (option_unwrap declines) -> UNDECIDED.
+#[test]
+fn try_from_mut_local_arg_does_not_false_refute() {
+    let src = r#"
+        #[test]
+        fn t_tf_mut() {
+            let mut m = 255u16;
+            m = 254u16;
+            assert!(u8::try_from(m).unwrap() == 254);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/num/tf_mut.rs");
+    assert!(
+        !out.factory_audits
+            .iter()
+            .any(|a| a.selected == Some("option_unwrap")),
+        "a reassigned `let mut` arg must NOT fold via option_unwrap (would risk a stale-value \
+         false-refutation); audits: {:?}",
+        out.factory_audits
+    );
+    // And it must NOT have folded to a refutable ground equality on the stale 255.
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_tf_mut") {
+        assert!(
+            sat,
+            "mut-local try_from must stay opaque/undecided, never refute a true assert (got UNSAT)"
+        );
+    }
+}
+
+// RESOLVED-ARG sibling: is_err over a let-bound out-of-range arg folds to true.
+#[test]
+fn try_from_let_bound_out_of_range_is_err_folds() {
+    let good = r#"
+        #[test]
+        fn t_tf_letbound_err() {
+            let m = 256u16;
+            assert!(<u8 as TryFrom<u16>>::try_from(m).is_err());
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/num/tf_letbound_err.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(true)"),
+        "let m=256; try_from(m).is_err() folds to Bool(true): {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_tf_letbound_err") {
+        assert!(sat, "let m=256; try_from(m).is_err() -- must be SAT (true)");
+    }
+}
+
 // NonZero::new(nonzero).unwrap()[.get()] peels Some(value) to the value (teeth).
 #[test]
 fn nonzero_new_unwrap_folds_with_teeth() {
