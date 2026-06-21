@@ -6817,6 +6817,89 @@ fn fmt_roundtrip() {
 }
 
 #[test]
+fn format_folds_closed_integer_arithmetic_to_str_const() {
+    // CLOSED integer arithmetic inside a `format!` arg is text-determined: the lifter
+    // CONSTANT-FOLDS `2 + 3` and dissolves the macro to the real `str_const("5")` (the
+    // string-theory floor), NOT an opaque `macro:` EUF var -- so the obligation is the
+    // checkable `eq("5", "5")`, with real teeth (the wrong-value twin below is UNSAT).
+    let src = r#"
+#[test]
+fn fmt_arith() {
+    assert_eq!(format!("{}", 2 + 3), "5");
+}
+"#;
+    let out = lift_file(&parse(src), "tests/fmt.rs");
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    let ops = inv_operands(&out.decls[0]);
+    assert_eq!(ops.len(), 1);
+    // LHS is the dissolved String const "5", NOT a `macro:` var (the teeth upgrade).
+    match ops[0].as_ref() {
+        Formula::Atomic { name, args } => {
+            assert_eq!(name, "=");
+            match args[0].as_ref() {
+                Term::Const {
+                    value: ConstValue::String(s),
+                    ..
+                } => {
+                    assert_eq!(
+                        s, "5",
+                        "closed `2 + 3` folds and dissolves to its decimal value"
+                    )
+                }
+                other => panic!("LHS must be the dissolved str_const, got {other:?}"),
+            }
+        }
+        other => panic!("expected equality atom, got {other:?}"),
+    }
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "fmt_arith") {
+        assert!(sat, r#"format!("{{}}", 2 + 3) == "5" -- consistent (SAT)"#);
+    }
+}
+
+#[test]
+fn format_folded_arithmetic_wrong_value_is_unsat() {
+    // TEETH (string theory): the SAME folded `format!("{}", 2 + 3)` claimed `== "6"` is
+    // UNSAT -- the LHS is the CONCRETE `str_const("5")`, so `eq("5", "6")` refutes. Were
+    // the arm leaving an opaque congruence-only string, this twin would be SAT (no teeth);
+    // its UNSAT verdict is exactly the string-theory discrimination the fold buys.
+    let src = r#"
+#[test]
+fn fmt_arith_bad() {
+    assert_eq!(format!("{}", 2 + 3), "6");
+}
+"#;
+    let out = lift_file(&parse(src), "tests/fmt.rs");
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "fmt_arith_bad") {
+        assert!(
+            !sat,
+            r#"format!("{{}}", 2 + 3) == "6" -- must be UNSAT (the arg folds to "5")"#
+        );
+    }
+}
+
+#[test]
+fn format_overflowing_arithmetic_stays_opaque_no_false_warrant() {
+    // The cardinal-sin guard: `200u8 + 100u8` OVERFLOWS u8 (real rust panics in debug,
+    // wraps in release), so it is NOT text-determined. The fold BAILS and the macro stays
+    // an opaque `macro:` term -- never a forged "300" or the release-wrap "44".
+    let src = r#"
+#[test]
+fn fmt_overflow() {
+    assert_eq!(format!("{}", 200u8 + 100u8), "x");
+}
+"#;
+    let out = lift_file(&parse(src), "tests/fmt.rs");
+    let ops = inv_operands(single_warranted_decl(&out));
+    assert_eq!(ops.len(), 1);
+    let lhs = eq_lhs_name(&ops[0]);
+    assert!(
+        lhs.starts_with("macro:"),
+        "overflowing-arithmetic format! stays opaque (no false warrant): {lhs}"
+    );
+}
+
+#[test]
 fn identical_runtime_format_calls_coalesce_congruence() {
     // Teeth (the opaque path STILL applies to a RUNTIME arg): two identical
     // `format!("{x:?}")` over a RUNTIME-bound `x` (`let x = runtime();`, NOT a

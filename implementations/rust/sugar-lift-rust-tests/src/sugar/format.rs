@@ -936,16 +936,52 @@ fn resolve_fmt_value(
                 _ => Ok(None),
             }
         }
-        // float division of two literals: `1.0 / 0.0` = inf, `0.0 / 0.0` = NaN, etc.
-        Expr::Binary(b) if matches!(b.op, syn::BinOp::Div(_)) => {
-            match (
-                resolve_fmt_value(&b.left, binds)?,
-                resolve_fmt_value(&b.right, binds)?,
-            ) {
-                (Some(FmtValue::F64(l)), Some(FmtValue::F64(r))) => Ok(Some(FmtValue::F64(l / r))),
-                (Some(FmtValue::F32(l)), Some(FmtValue::F32(r))) => Ok(Some(FmtValue::F32(l / r))),
-                _ => Ok(None),
+        // Closed arithmetic over literal operands. This composes through `let`/`const`
+        // indirections (each operand is resolved recursively), so it is the natural
+        // completion of the unary-negation / float-division folds above.
+        Expr::Binary(b) if is_fmt_arith_op(&b.op) => {
+            let l = resolve_fmt_value(&b.left, binds)?;
+            let r = resolve_fmt_value(&b.right, binds)?;
+            // Integer `+ - * / %` of two reconstructed integer literals CONSTANT-FOLDS
+            // (recompute-don't-trust) with CHECKED, width-aware semantics. A mixed-width
+            // pair / i128-carrier overflow / divide-by-zero / result outside the type's
+            // range BAILS (stays the conservative opaque term), never forging a wrapped
+            // value for an expression real rust would panic on.
+            if let (
+                Some(FmtValue::Int {
+                    value: lv,
+                    suffix: ls,
+                }),
+                Some(FmtValue::Int {
+                    value: rv,
+                    suffix: rs,
+                }),
+            ) = (&l, &r)
+            {
+                return Ok(fold_int_arith(&b.op, *lv, *ls, *rv, *rs)
+                    .map(|(value, suffix)| FmtValue::Int { value, suffix }));
             }
+            // float division of two literals: `1.0 / 0.0` = inf, `0.0 / 0.0` = NaN, etc.
+            if matches!(b.op, syn::BinOp::Div(_)) {
+                return Ok(match (l, r) {
+                    (Some(FmtValue::F64(lf)), Some(FmtValue::F64(rf))) => {
+                        Some(FmtValue::F64(lf / rf))
+                    }
+                    (Some(FmtValue::F32(lf)), Some(FmtValue::F32(rf))) => {
+                        Some(FmtValue::F32(lf / rf))
+                    }
+                    _ => None,
+                });
+            }
+            // A string `+` (`String + &str`) is NOT arithmetic; defer to the string
+            // concatenation resolver so `format!("{}", a + b)` over STRING operands keeps
+            // resolving exactly as before (no regression for the string-add-as-arg path).
+            if matches!(b.op, syn::BinOp::Add(_)) {
+                return Ok(
+                    resolve_format_string(strip_refs_groups(expr), binds)?.map(FmtValue::Str)
+                );
+            }
+            Ok(None)
         }
         // a `let`/`const`-bound name resolves to its written literal.
         Expr::Path(p) if p.qself.is_none() => match p.path.get_ident() {
@@ -969,6 +1005,99 @@ fn resolve_fmt_value(
         },
         _ => Ok(None),
     }
+}
+
+/// The integer/float arithmetic binary operators we constant-fold over literal
+/// operands (`+ - * / %`). A string `+` shares the `Add` token but is handled as
+/// concatenation, not arithmetic.
+fn is_fmt_arith_op(op: &syn::BinOp) -> bool {
+    matches!(
+        op,
+        syn::BinOp::Add(_)
+            | syn::BinOp::Sub(_)
+            | syn::BinOp::Mul(_)
+            | syn::BinOp::Div(_)
+            | syn::BinOp::Rem(_)
+    )
+}
+
+/// Constant-fold an integer `+ - * / %` over two reconstructed literal operands with
+/// CHECKED, width-aware semantics — the recompute-don't-trust floor for closed integer
+/// arithmetic. Returns `None` (bail → the operand stays the conservative opaque term,
+/// never a forged value) when the result is NOT text-determined to a single in-range
+/// value: a mixed concrete-width pair (not a valid rust expr), an i128-carrier overflow,
+/// a divide/remainder by zero, a `u128` operand (the i128 carrier cannot faithfully hold
+/// the full `u128` range), or a result outside the resolved type's value range (a real
+/// rust overflow that panics in debug / wraps in release — never a speakable value).
+fn fold_int_arith(
+    op: &syn::BinOp,
+    lv: i128,
+    ls: IntKind,
+    rv: i128,
+    rs: IntKind,
+) -> Option<(i128, IntKind)> {
+    let suffix = reconcile_int_suffix(ls, rs)?;
+    // `u128` near its top cannot be represented in the signed i128 carrier — bail rather
+    // than risk a wrapped reconstruction.
+    if matches!(suffix, IntKind::U128) {
+        return None;
+    }
+    let result = match op {
+        syn::BinOp::Add(_) => lv.checked_add(rv)?,
+        syn::BinOp::Sub(_) => lv.checked_sub(rv)?,
+        syn::BinOp::Mul(_) => lv.checked_mul(rv)?,
+        // integer `/` and `%` truncate toward zero (i128 matches); div/rem by zero and
+        // `MIN / -1` overflow both bail via the zero guard + `checked_*`.
+        syn::BinOp::Div(_) => {
+            if rv == 0 {
+                return None;
+            }
+            lv.checked_div(rv)?
+        }
+        syn::BinOp::Rem(_) => {
+            if rv == 0 {
+                return None;
+            }
+            lv.checked_rem(rv)?
+        }
+        _ => return None,
+    };
+    let (min, max) = int_value_range(suffix)?;
+    if result < min || result > max {
+        return None;
+    }
+    Some((result, suffix))
+}
+
+/// Reconcile the width suffix of two arithmetic operands. Equal kinds keep their kind;
+/// an `Unsuffixed` operand takes the other's kind (rust's literal-inference default);
+/// two DISTINCT concrete widths cannot be combined (not a valid rust expr) → `None`.
+fn reconcile_int_suffix(a: IntKind, b: IntKind) -> Option<IntKind> {
+    match (a, b) {
+        (x, y) if x == y => Some(x),
+        (IntKind::Unsuffixed, y) => Some(y),
+        (x, IntKind::Unsuffixed) => Some(x),
+        _ => None,
+    }
+}
+
+/// The inclusive `[min, max]` value range of an integer kind, as `i128`. `Unsuffixed`
+/// defaults to `i32` (rust's default). `Isize`/`Usize` are modeled at 64 bits, matching
+/// `bits_at_width` and the corpus's 64-bit target. `U128` is excluded by the caller.
+fn int_value_range(suffix: IntKind) -> Option<(i128, i128)> {
+    let range = match suffix {
+        IntKind::I8 => (i128::from(i8::MIN), i128::from(i8::MAX)),
+        IntKind::I16 => (i128::from(i16::MIN), i128::from(i16::MAX)),
+        IntKind::I32 | IntKind::Unsuffixed => (i128::from(i32::MIN), i128::from(i32::MAX)),
+        IntKind::I64 | IntKind::Isize => (i128::from(i64::MIN), i128::from(i64::MAX)),
+        IntKind::I128 => (i128::MIN, i128::MAX),
+        IntKind::U8 => (0, i128::from(u8::MAX)),
+        IntKind::U16 => (0, i128::from(u16::MAX)),
+        IntKind::U32 => (0, i128::from(u32::MAX)),
+        IntKind::U64 | IntKind::Usize => (0, i128::from(u64::MAX)),
+        IntKind::U128 => return None,
+    };
+    Some(range)
 }
 
 /// Reconstruct a single literal token into a `FmtValue`. `Err` for f16/f128 (named
@@ -1977,6 +2106,114 @@ mod tests {
     fn bails_on_alternate() {
         assert_eq!(resolve(r#"format!("{:#?}", 1)"#).unwrap(), None);
         assert_eq!(resolve(r#"format!("{:#x}", 255u32)"#).unwrap(), None);
+    }
+
+    // ── FOLD: closed integer arithmetic over literal operands ──
+    #[test]
+    fn folds_integer_arithmetic_over_literals() {
+        // `+ - * / %` of literal ints constant-fold to ONE text-determined value.
+        assert_eq!(
+            resolve(r#"format!("{}", 2 + 3)"#).unwrap().as_deref(),
+            Some("5")
+        );
+        assert_eq!(
+            resolve(r#"format!("{}", 10 - 4)"#).unwrap().as_deref(),
+            Some("6")
+        );
+        assert_eq!(
+            resolve(r#"format!("{}", 6 * 7)"#).unwrap().as_deref(),
+            Some("42")
+        );
+        // integer division truncates toward zero (rust semantics).
+        assert_eq!(
+            resolve(r#"format!("{}", 17 / 5)"#).unwrap().as_deref(),
+            Some("3")
+        );
+        assert_eq!(
+            resolve(r#"format!("{}", 17 % 5)"#).unwrap().as_deref(),
+            Some("2")
+        );
+        assert_eq!(
+            resolve(r#"format!("{}", -7 / 2)"#).unwrap().as_deref(),
+            Some("-3")
+        );
+        // composes with unary negation and width suffixes.
+        assert_eq!(
+            resolve(r#"format!("{}", -3i32 * 4)"#).unwrap().as_deref(),
+            Some("-12")
+        );
+        // nested arithmetic.
+        assert_eq!(
+            resolve(r#"format!("{}", (1 + 2) * (3 + 4))"#)
+                .unwrap()
+                .as_deref(),
+            Some("21")
+        );
+        // a radix spec over a folded value still renders at width.
+        assert_eq!(
+            resolve(r#"format!("{:x}", 200 + 55)"#).unwrap().as_deref(),
+            Some("ff")
+        );
+    }
+
+    #[test]
+    fn folds_integer_arithmetic_through_local_bindings() {
+        // a text-determined LOCAL operand resolves through the binding map, then folds.
+        let binds = bind("n", "2");
+        assert_eq!(
+            try_resolve_format(&parse(r#"format!("{}", n + 40)"#), &binds)
+                .unwrap()
+                .as_deref(),
+            Some("42")
+        );
+        // two locals + the `{}-{}` shape (the brief's canonical form), arithmetic per arg.
+        let mut two = bind("a", "6");
+        two.insert("b".to_string(), parse("7"));
+        assert_eq!(
+            try_resolve_format(&parse(r#"format!("{}-{}", a * b, b - a)"#), &two)
+                .unwrap()
+                .as_deref(),
+            Some("42-1")
+        );
+    }
+
+    #[test]
+    fn fold_bails_on_overflow_and_divzero_never_forging() {
+        // The inverse of teeth: an expression rust would PANIC on (overflow) or that is
+        // undefined (div-by-zero) must BAIL (stay opaque), never forge a wrapped value.
+        assert_eq!(resolve(r#"format!("{}", 200u8 + 100u8)"#).unwrap(), None); // 300 > u8::MAX
+        assert_eq!(
+            resolve(r#"format!("{}", 2000000000 + 2000000000)"#).unwrap(),
+            None
+        ); // > i32::MAX
+        assert_eq!(resolve(r#"format!("{}", 1 / 0)"#).unwrap(), None);
+        assert_eq!(resolve(r#"format!("{}", 1 % 0)"#).unwrap(), None);
+        // a runtime operand keeps the whole fold opaque.
+        assert_eq!(resolve(r#"format!("{}", runtime_var + 1)"#).unwrap(), None);
+    }
+
+    #[test]
+    fn wide_suffixed_arithmetic_folds_within_range() {
+        // u64 arithmetic that overflows i32/u32 but fits u64 is still text-determined.
+        assert_eq!(
+            resolve(r#"format!("{}", 3000000000u64 + 3000000000u64)"#)
+                .unwrap()
+                .as_deref(),
+            Some("6000000000")
+        );
+    }
+
+    #[test]
+    fn string_add_as_format_arg_still_resolves_no_regression() {
+        // The `Add` token is shared with string concatenation; a `String + &str` operand
+        // must keep resolving via the string path (folding must not intercept it).
+        let binds = bind("s", r#""foo".to_string() + "bar""#);
+        assert_eq!(
+            try_resolve_format(&parse(r#"format!("{}", s)"#), &binds)
+                .unwrap()
+                .as_deref(),
+            Some("foobar")
+        );
     }
 
     // ── TERMINAL: f16/f128 ──
