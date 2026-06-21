@@ -90,6 +90,7 @@ pub mod sugar {
     pub mod format;
     pub mod format_args;
     pub mod format_macro;
+    pub mod from_bool;
     pub mod function_map;
     pub mod identity;
     pub mod identity_map;
