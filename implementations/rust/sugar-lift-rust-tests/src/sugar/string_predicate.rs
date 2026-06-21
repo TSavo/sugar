@@ -27,8 +27,13 @@ enum StringPredicateKind {
     Prefix,
     Suffix,
     IsAscii,
+    /// Concrete-fold: run the actual ASCII predicate on the host char/byte literal.
+    /// `&'static str` is the SMT atom name (kept for warrant naming only).
     AsciiCharClass(&'static str),
     IsAlphabetic,
+    /// `s1.eq_ignore_ascii_case(s2)` — both sides are string/char literals;
+    /// evaluate on the host and lower to `eq(bool(result), bool(true))`.
+    AsciiEqIgnoreCase,
 }
 
 struct StringPredicateSugar {
@@ -79,70 +84,83 @@ fn recognize_method(call: &ExprMethodCall, fcx: &SugarBuildCtx) -> Option<Box<dy
             StringPredicateKind::IsAscii
         }
         "is_ascii_alphabetic" => {
-            if !call.args.is_empty() || char_literal_term(&call.receiver).is_none() {
+            if !call.args.is_empty() || byte_or_char_literal_value(&call.receiver).is_none() {
                 return None;
             }
             StringPredicateKind::AsciiCharClass("str.is_ascii_alphabetic")
         }
         "is_ascii_digit" => {
-            if !call.args.is_empty() || char_literal_term(&call.receiver).is_none() {
+            if !call.args.is_empty() || byte_or_char_literal_value(&call.receiver).is_none() {
                 return None;
             }
             StringPredicateKind::AsciiCharClass("str.is_ascii_digit")
         }
         "is_ascii_alphanumeric" => {
-            if !call.args.is_empty() || char_literal_term(&call.receiver).is_none() {
+            if !call.args.is_empty() || byte_or_char_literal_value(&call.receiver).is_none() {
                 return None;
             }
             StringPredicateKind::AsciiCharClass("str.is_ascii_alphanumeric")
         }
         "is_ascii_octdigit" => {
-            if !call.args.is_empty() || char_literal_term(&call.receiver).is_none() {
+            if !call.args.is_empty() || byte_or_char_literal_value(&call.receiver).is_none() {
                 return None;
             }
             StringPredicateKind::AsciiCharClass("str.is_ascii_octdigit")
         }
         "is_ascii_lowercase" => {
-            if !call.args.is_empty() || char_literal_term(&call.receiver).is_none() {
+            if !call.args.is_empty() || byte_or_char_literal_value(&call.receiver).is_none() {
                 return None;
             }
             StringPredicateKind::AsciiCharClass("str.is_ascii_lowercase")
         }
         "is_ascii_uppercase" => {
-            if !call.args.is_empty() || char_literal_term(&call.receiver).is_none() {
+            if !call.args.is_empty() || byte_or_char_literal_value(&call.receiver).is_none() {
                 return None;
             }
             StringPredicateKind::AsciiCharClass("str.is_ascii_uppercase")
         }
         "is_ascii_hexdigit" => {
-            if !call.args.is_empty() || char_literal_term(&call.receiver).is_none() {
+            if !call.args.is_empty() || byte_or_char_literal_value(&call.receiver).is_none() {
                 return None;
             }
             StringPredicateKind::AsciiCharClass("str.is_ascii_hexdigit")
         }
         "is_ascii_punctuation" => {
-            if !call.args.is_empty() || char_literal_term(&call.receiver).is_none() {
+            if !call.args.is_empty() || byte_or_char_literal_value(&call.receiver).is_none() {
                 return None;
             }
             StringPredicateKind::AsciiCharClass("str.is_ascii_punctuation")
         }
         "is_ascii_graphic" => {
-            if !call.args.is_empty() || char_literal_term(&call.receiver).is_none() {
+            if !call.args.is_empty() || byte_or_char_literal_value(&call.receiver).is_none() {
                 return None;
             }
             StringPredicateKind::AsciiCharClass("str.is_ascii_graphic")
         }
         "is_ascii_whitespace" => {
-            if !call.args.is_empty() || char_literal_term(&call.receiver).is_none() {
+            if !call.args.is_empty() || byte_or_char_literal_value(&call.receiver).is_none() {
                 return None;
             }
             StringPredicateKind::AsciiCharClass("str.is_ascii_whitespace")
         }
         "is_ascii_control" => {
-            if !call.args.is_empty() || char_literal_term(&call.receiver).is_none() {
+            if !call.args.is_empty() || byte_or_char_literal_value(&call.receiver).is_none() {
                 return None;
             }
             StringPredicateKind::AsciiCharClass("str.is_ascii_control")
+        }
+        "eq_ignore_ascii_case" => {
+            // Concrete-fold: both receiver and argument must be string/char literals.
+            if call.args.len() != 1 {
+                return None;
+            }
+            if string_literal_string_value(&call.receiver).is_none() {
+                return None;
+            }
+            if string_literal_string_value(&call.args[0]).is_none() {
+                return None;
+            }
+            StringPredicateKind::AsciiEqIgnoreCase
         }
         "is_alphabetic" => {
             if !call.args.is_empty() || char_literal_value(&call.receiver).is_none() {
@@ -172,6 +190,7 @@ impl Sugar for StringPredicateSugar {
             StringPredicateKind::AsciiCharClass(atom_name) => {
                 self.desugar_char_class(ctx, atom_name)
             }
+            StringPredicateKind::AsciiEqIgnoreCase => self.desugar_eq_ignore_ascii_case(ctx),
             StringPredicateKind::IsAlphabetic => self.desugar_is_alphabetic(ctx),
         }
     }
@@ -246,20 +265,55 @@ impl StringPredicateSugar {
     }
 
     fn desugar_char_class(&self, ctx: &SugarCtx, atom_name: &'static str) -> Outcome {
+        // CONCRETE FOLD (Lane 5 teeth): lift the literal → evaluate the actual
+        // std predicate on the host → lower the concrete bool.
+        // z3 then checks `eq(bool(result), bool(true))` — UNSAT for negation →
+        // DISCHARGED.  A bad-twin that asserts the wrong value emits
+        // `eq(bool(false), bool(true))` → invariant UNSAT → REFUTED.
         if !self.args.is_empty() {
             return unsupported(format!("{} predicate expects no arguments", self.method));
         }
-        let Some(receiver) = char_literal_term(&self.receiver_expr) else {
+        let Some(ch) = byte_or_char_literal_value(&self.receiver_expr) else {
             return Outcome::Hit(Effect::Unsupported {
                 reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
             });
         };
+        let result = eval_ascii_char_class(ch, atom_name);
+        let receiver = str_const(ch.to_string());
         let name = method_assertion_name(
             &self.method,
-            vec![receiver.clone()],
+            vec![receiver],
             ctx.scope.local_scope(),
         );
-        constraint(atomic_(atom_name, vec![receiver]), name)
+        constraint(eq(bool_const(result), bool_const(true)), name)
+    }
+
+    /// `s1.eq_ignore_ascii_case(s2)` — both sides are string/char literals.
+    /// Evaluate on the host and lower to `eq(bool(result), bool(true))`.
+    fn desugar_eq_ignore_ascii_case(&self, ctx: &SugarCtx) -> Outcome {
+        if self.args.len() != 1 {
+            return unsupported("eq_ignore_ascii_case expects one argument".to_string());
+        }
+        let Some(recv_str) = string_literal_string_value(&self.receiver_expr) else {
+            return Outcome::Hit(Effect::Unsupported {
+                reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
+            });
+        };
+        let Some(arg_str) = string_literal_string_value(&self.args[0]) else {
+            return Outcome::Hit(Effect::Unsupported {
+                reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
+            });
+        };
+        // Run the REAL predicate on the host — stdlib is its own axiom.
+        let result = recv_str.eq_ignore_ascii_case(&arg_str);
+        let recv_term = str_const(recv_str);
+        let arg_term = str_const(arg_str);
+        let name = method_assertion_name(
+            "eq_ignore_ascii_case",
+            vec![recv_term, arg_term],
+            ctx.scope.local_scope(),
+        );
+        constraint(eq(bool_const(result), bool_const(true)), name)
     }
 
     fn desugar_is_alphabetic(&self, ctx: &SugarCtx) -> Outcome {
@@ -323,17 +377,6 @@ fn string_or_char_literal_term(expr: &Expr) -> Option<Rc<Term>> {
     }
 }
 
-fn char_literal_term(expr: &Expr) -> Option<Rc<Term>> {
-    match expr {
-        Expr::Lit(ExprLit {
-            lit: Lit::Char(c), ..
-        }) => Some(str_const(c.value().to_string())),
-        Expr::Paren(paren) => char_literal_term(&paren.expr),
-        Expr::Group(group) => char_literal_term(&group.expr),
-        _ => None,
-    }
-}
-
 fn char_literal_value(expr: &Expr) -> Option<char> {
     match expr {
         Expr::Lit(ExprLit {
@@ -366,6 +409,49 @@ fn bool_const(value: bool) -> Rc<Term> {
         value: sugar_ir_symbolic::ConstValue::Bool(value),
         sort: sugar_ir_symbolic::Sort::bool(),
     })
+}
+
+/// Evaluate the named ASCII char-class predicate on a concrete char.
+/// The `atom_name` must be one of the `str.is_ascii_*` names used in
+/// [`StringPredicateKind::AsciiCharClass`].
+fn eval_ascii_char_class(ch: char, atom_name: &str) -> bool {
+    match atom_name {
+        "str.is_ascii_alphabetic" => ch.is_ascii_alphabetic(),
+        "str.is_ascii_digit" => ch.is_ascii_digit(),
+        "str.is_ascii_alphanumeric" => ch.is_ascii_alphanumeric(),
+        "str.is_ascii_octdigit" => matches!(ch, '0'..='7'),
+        "str.is_ascii_lowercase" => ch.is_ascii_lowercase(),
+        "str.is_ascii_uppercase" => ch.is_ascii_uppercase(),
+        "str.is_ascii_hexdigit" => ch.is_ascii_hexdigit(),
+        "str.is_ascii_punctuation" => ch.is_ascii_punctuation(),
+        "str.is_ascii_graphic" => ch.is_ascii_graphic(),
+        "str.is_ascii_whitespace" => ch.is_ascii_whitespace(),
+        "str.is_ascii_control" => ch.is_ascii_control(),
+        _ => panic!("eval_ascii_char_class: unknown atom name `{atom_name}`"),
+    }
+}
+
+/// Extract the concrete char from a char literal OR a byte literal (`b'A'`).
+/// Byte literals are valid for all ASCII predicate calls — `b'A'.is_ascii_uppercase()`.
+fn byte_or_char_literal_value(expr: &Expr) -> Option<char> {
+    match expr {
+        Expr::Lit(ExprLit { lit: Lit::Char(c), .. }) => Some(c.value()),
+        Expr::Lit(ExprLit { lit: Lit::Byte(b), .. }) => Some(char::from(b.value())),
+        Expr::Paren(paren) => byte_or_char_literal_value(&paren.expr),
+        Expr::Group(group) => byte_or_char_literal_value(&group.expr),
+        _ => None,
+    }
+}
+
+/// Extract the string value from a string literal or char literal (char → single-char string).
+fn string_literal_string_value(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Lit(ExprLit { lit: Lit::Str(s), .. }) => Some(s.value()),
+        Expr::Lit(ExprLit { lit: Lit::Char(c), .. }) => Some(c.value().to_string()),
+        Expr::Paren(paren) => string_literal_string_value(&paren.expr),
+        Expr::Group(group) => string_literal_string_value(&group.expr),
+        _ => None,
+    }
 }
 
 fn simple_path_name(expr: &Expr) -> Option<String> {

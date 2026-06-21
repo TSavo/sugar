@@ -230,3 +230,125 @@ fn borrow4_stale_mut_assignment_must_not_false_refute() {
         "FALSE REFUTATION: stale-&mut `assert_eq!(x,6)` (x really is 6) was REFUTED as `5==6` (got {d:?})"
     );
 }
+
+// ── Lane 5: ASCII char-predicate concrete-fold discrimination twins ────────────
+//
+// `desugar_char_class` now evaluates the predicate on the host char literal and
+// lowers to `eq(bool(result), bool(true))`.  A true claim must DISCHARGE; the
+// bad-twin (a false assertion) must REFUTE.  The two directions together pin the
+// invariant: no false light, no fake dragon.
+#[test]
+fn ascii_char_predicates_discharge_correct_and_refute_bad_twin() {
+    for (name, src, expect_discharged) in [
+        // ── is_ascii_digit ──
+        (
+            "digit_true_5",
+            r#"#[test] fn t() { assert!('5'.is_ascii_digit()); }"#,
+            true,
+        ),
+        (
+            // BAD-TWIN: 'a' is NOT an ASCII digit — invariant eq(false,true) → REFUTED
+            "digit_false_a_badtwin",
+            r#"#[test] fn t() { assert!('a'.is_ascii_digit()); }"#,
+            false,
+        ),
+        // ── is_ascii_alphabetic ──
+        (
+            "alpha_true_a",
+            r#"#[test] fn t() { assert!('a'.is_ascii_alphabetic()); }"#,
+            true,
+        ),
+        (
+            // BAD-TWIN: '5' is NOT alphabetic
+            "alpha_false_5_badtwin",
+            r#"#[test] fn t() { assert!('5'.is_ascii_alphabetic()); }"#,
+            false,
+        ),
+        // ── is_ascii_uppercase ──
+        (
+            "upper_true_A",
+            r#"#[test] fn t() { assert!('A'.is_ascii_uppercase()); }"#,
+            true,
+        ),
+        (
+            // BAD-TWIN: 'a' is lowercase, NOT uppercase
+            "upper_false_a_badtwin",
+            r#"#[test] fn t() { assert!('a'.is_ascii_uppercase()); }"#,
+            false,
+        ),
+        // ── is_ascii_lowercase ──
+        (
+            "lower_true_a",
+            r#"#[test] fn t() { assert!('a'.is_ascii_lowercase()); }"#,
+            true,
+        ),
+        (
+            // BAD-TWIN: 'A' is NOT lowercase
+            "lower_false_A_badtwin",
+            r#"#[test] fn t() { assert!('A'.is_ascii_lowercase()); }"#,
+            false,
+        ),
+        // ── is_ascii_alphanumeric ──
+        (
+            "alnum_true_9",
+            r#"#[test] fn t() { assert!('9'.is_ascii_alphanumeric()); }"#,
+            true,
+        ),
+        (
+            // BAD-TWIN: '!' is NOT alphanumeric
+            "alnum_false_bang_badtwin",
+            r#"#[test] fn t() { assert!('!'.is_ascii_alphanumeric()); }"#,
+            false,
+        ),
+        // ── is_ascii_hexdigit ──
+        (
+            "hex_true_f",
+            r#"#[test] fn t() { assert!('f'.is_ascii_hexdigit()); }"#,
+            true,
+        ),
+        (
+            // BAD-TWIN: 'g' is NOT a hex digit
+            "hex_false_g_badtwin",
+            r#"#[test] fn t() { assert!('g'.is_ascii_hexdigit()); }"#,
+            false,
+        ),
+        // ── is_ascii_whitespace ──
+        (
+            "ws_true_space",
+            r#"#[test] fn t() { assert!(' '.is_ascii_whitespace()); }"#,
+            true,
+        ),
+        (
+            // BAD-TWIN: 'x' is NOT ASCII whitespace
+            "ws_false_x_badtwin",
+            r#"#[test] fn t() { assert!('x'.is_ascii_whitespace()); }"#,
+            false,
+        ),
+        // ── eq_ignore_ascii_case ──
+        (
+            "eqcase_true",
+            r#"#[test] fn t() { assert!("abc".eq_ignore_ascii_case("ABC")); }"#,
+            true,
+        ),
+        (
+            // BAD-TWIN: "Ürl" vs "ürl" — non-ASCII → compared literally → NOT equal
+            "eqcase_false_nonascii_badtwin",
+            r#"#[test] fn t() { assert!("Ürl".eq_ignore_ascii_case("ürl")); }"#,
+            false,
+        ),
+    ] {
+        let d = disp_of(name, src);
+        if expect_discharged {
+            assert!(
+                d == Disp::Discharged || d == Disp::Z3Absent,
+                "Lane 5: `{name}` (correct assertion) should DISCHARGE or be Z3Absent, got {d:?}\nsrc: {src}"
+            );
+        } else {
+            // Bad-twin: a FALSE assertion — must be REFUTED (teeth), never discharged.
+            assert!(
+                d == Disp::Refuted || d == Disp::Z3Absent,
+                "Lane 5 BAD-TWIN: `{name}` (false assertion) must REFUTE, got {d:?}\nsrc: {src}"
+            );
+        }
+    }
+}

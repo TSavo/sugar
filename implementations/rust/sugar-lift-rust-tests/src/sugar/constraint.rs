@@ -685,6 +685,20 @@ impl Sugar for NoPanicCallSugar {
                 let Some(subject) = ctx.opaque_callsite_term(expr) else {
                     return Outcome::from_opt(None);
                 };
+                // Lane 5 concrete-fold: ASCII char-class predicates and
+                // `eq_ignore_ascii_case` on literal receivers can NEVER panic.
+                // Emit a concrete tautology so the no-panic support entry does
+                // not introduce an opaque panic atom into the group `inv` that
+                // would block z3 discharge.
+                if is_lane5_no_panic_literal_call(expr) {
+                    let name = callsite_assertion_name(subject.as_ref(), ctx.scope.local_scope());
+                    return Outcome::Dug(Desugared::Constraints {
+                        atom: eq(bool_const(true), bool_const(true)),
+                        n: 0,
+                        kind: AssertionFactKind::Warranted,
+                        warrant: Warrant { name },
+                    });
+                }
                 let normal_universe = ctx
                     .normal_return_universe_for_subject(expr, subject.clone())
                     .unwrap_or_else(|| not_(atomic_("panic", vec![subject.clone()])));
@@ -904,6 +918,74 @@ fn relation_from_binop(op: &BinOp) -> Option<RelationOp> {
         BinOp::Gt(_) => Some(RelationOp::Gt),
         BinOp::Ge(_) => Some(RelationOp::Ge),
         _ => None,
+    }
+}
+
+/// Returns `true` when `expr` is a method call that can NEVER panic and whose
+/// result is fully determined by the literal receiver / arguments.  These are
+/// the Lane 5 ASCII char-class predicates and `eq_ignore_ascii_case`.
+///
+/// For such calls the "no-panic support" entry emitted by [`NoPanicCallSugar`]
+/// should be a concrete tautology (`eq(true, true)`) rather than the opaque
+/// `not(panic(method:…(…)))` atom.  An opaque atom in the group `inv` makes
+/// both the positive and negative z3 queries SAT, keeping the discharge status
+/// at `Undecided` even after the primary `StringPredicateSugar` has lowered the
+/// predicate to `eq(bool(result), bool(true))`.
+fn is_lane5_no_panic_literal_call(expr: &Expr) -> bool {
+    let Expr::MethodCall(call) = expr else {
+        return false;
+    };
+    let method = call.method.to_string();
+    match method.as_str() {
+        // Zero-arg ASCII char-class predicates — receiver must be a char or byte literal.
+        "is_ascii_alphabetic"
+        | "is_ascii_alphanumeric"
+        | "is_ascii_control"
+        | "is_ascii_digit"
+        | "is_ascii_graphic"
+        | "is_ascii_hexdigit"
+        | "is_ascii_lowercase"
+        | "is_ascii_octdigit"
+        | "is_ascii_punctuation"
+        | "is_ascii_uppercase"
+        | "is_ascii_whitespace" => call.args.is_empty() && is_char_or_byte_lit(&call.receiver),
+        // Case-insensitive string comparison — one arg, both sides must be string/char literals.
+        "eq_ignore_ascii_case" => {
+            call.args.len() == 1
+                && is_str_or_char_lit(&call.receiver)
+                && is_str_or_char_lit(&call.args[0])
+        }
+        _ => false,
+    }
+}
+
+/// `true` iff `expr` is a char literal or byte literal (recursing through
+/// parentheses and groups).
+fn is_char_or_byte_lit(expr: &Expr) -> bool {
+    match expr {
+        Expr::Lit(ExprLit {
+            lit: Lit::Char(_), ..
+        }) => true,
+        Expr::Lit(ExprLit {
+            lit: Lit::Byte(_), ..
+        }) => true,
+        Expr::Paren(p) => is_char_or_byte_lit(&p.expr),
+        Expr::Group(g) => is_char_or_byte_lit(&g.expr),
+        _ => false,
+    }
+}
+
+/// `true` iff `expr` is a string literal or char literal (recursing through
+/// parentheses and groups).
+fn is_str_or_char_lit(expr: &Expr) -> bool {
+    match expr {
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(_) | Lit::Char(_),
+            ..
+        }) => true,
+        Expr::Paren(p) => is_str_or_char_lit(&p.expr),
+        Expr::Group(g) => is_str_or_char_lit(&g.expr),
+        _ => false,
     }
 }
 
