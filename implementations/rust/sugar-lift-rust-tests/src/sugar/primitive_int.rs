@@ -36,6 +36,7 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
         ("count_ones", 0) => Kind::CountOnes,
         ("leading_zeros", 0) => Kind::ZeroCount(ZeroCountOp::Leading),
         ("trailing_zeros", 0) => Kind::ZeroCount(ZeroCountOp::Trailing),
+        ("bit_width", 0) => Kind::BitWidth,
         ("min", 1) => Kind::Min(build_term(&call.args[0], fcx)),
         ("checked_add", 1) => Kind::Checked(CheckedOp::Add, build_term(&call.args[0], fcx)),
         ("checked_sub", 1) => Kind::Checked(CheckedOp::Sub, build_term(&call.args[0], fcx)),
@@ -78,6 +79,7 @@ fn receiver_can_ground(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
                 "count_ones"
                     | "leading_zeros"
                     | "trailing_zeros"
+                    | "bit_width"
                     | "min"
                     | "checked_add"
                     | "checked_sub"
@@ -100,6 +102,7 @@ fn receiver_can_ground(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
 enum Kind {
     CountOnes,
     ZeroCount(ZeroCountOp),
+    BitWidth,
     Min(Box<dyn Sugar>),
     Checked(CheckedOp, Box<dyn Sugar>),
 }
@@ -194,6 +197,20 @@ impl Sugar for PrimitiveIntSugar {
                     lhs_u128 = ?lhs_u128,
                     value,
                     "resolved primitive zero-count integer axiom"
+                );
+                Outcome::Dug(Desugared::Term(num(i128::from(value))))
+            }
+            Kind::BitWidth => {
+                let Some(value) = bit_width_value(lhs_i128, lhs_u128) else {
+                    return Outcome::from_opt(None);
+                };
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::primitive_int",
+                    method = self.method.as_str(),
+                    lhs_i128 = ?lhs_i128,
+                    lhs_u128 = ?lhs_u128,
+                    value,
+                    "resolved primitive bit_width integer axiom"
                 );
                 Outcome::Dug(Desugared::Term(num(i128::from(value))))
             }
@@ -386,6 +403,23 @@ fn zero_count_value(
         ZeroCountOp::Leading => None,
         ZeroCountOp::Trailing => (value != 0).then_some(value.trailing_zeros()),
     }
+}
+
+/// `uint_bit_width` (`bit_width`): the number of bits required to represent the
+/// value = highest-set-bit position + 1, with `0.bit_width() == 0`. This is
+/// VALUE-determined, independent of the integer type's width: for a `T`-typed
+/// unsigned value, `T::BITS - leading_zeros()` equals `128 - leading_zeros()` of
+/// the same magnitude widened to `u128` (the leading-zero count grows by exactly
+/// `128 - T::BITS`, which cancels). So we never need the receiver's type width.
+/// A negative receiver (not a real `bit_width` site — the method is unsigned-only)
+/// cannot be widened to `u128` and DECLINES rather than fabricate a value.
+fn bit_width_value(lhs_i128: Option<i128>, lhs_u128: Option<u128>) -> Option<u32> {
+    let value = lhs_u128.or_else(|| lhs_i128.and_then(|n| u128::try_from(n).ok()))?;
+    Some(if value == 0 {
+        0
+    } else {
+        u128::BITS - value.leading_zeros()
+    })
 }
 
 fn apply_zero_count(raw: u128, bits: u32, op: ZeroCountOp) -> u32 {
