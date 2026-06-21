@@ -14,8 +14,32 @@ use crate::sugar::factory::SugarBuildCtx;
 use crate::{
     bounded_domain_from_expr, const_eval, const_fold_int_term, const_fold_u128_term,
     strip_refs_groups, term_as_int, u128_expr, BoundedDomain, ConstVal, Desugared, DesugaredElem,
-    Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP,
+    Effect, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP,
 };
+
+// ── NAMED-DRAGON reasons for the six unwarrantable literal SHAPES ─────────────────────
+//
+// A `LiteralSugar` whose warrant attempt declines is, today, the GENERIC structural
+// backstop (`unresolved` -- reads like "missing lifter"). For the shapes below the decline
+// is NOT missing work -- it is a SOURCE property no better lifter could get past, so each is
+// NAMED with a precise reason here and whitelisted as `Disposition::Refused` in
+// `crate::refusal_disposition`. PURE RECLASSIFICATION: the warrant path (`build`) runs FIRST
+// and is byte-unchanged, so a finite/nonempty/text-determined domain STILL warrants -- the
+// naming below is only ever reached on a decline the old code already produced (no warrant
+// can become a refusal here). Reasons are matched by SUBSTRING in `refusal_disposition`;
+// keep them distinctive.
+pub(crate) const EMPTY_DOMAIN_REASON: &str =
+    "literal domain is empty -- vacuously true, no element to assert (no teeth)";
+pub(crate) const UNBOUNDED_RANGE_REASON: &str =
+    "literal range is unbounded -- domain not finitely enumerable";
+pub(crate) const OVERSIZE_DOMAIN_REASON: &str =
+    "literal domain exceeds SUGAR_SEQ_CAP -- finite but over-cap, infeasible to enumerate";
+pub(crate) const CHAR_RANGE_REASON: &str =
+    "literal char range -- surrogate-gap / AsciiChar enumeration is Unicode-version-dependent";
+pub(crate) const RUNTIME_BOUND_REASON: &str =
+    "literal range bound is not text-determined (runtime value)";
+pub(crate) const RUNTIME_ELEM_REASON: &str =
+    "literal array element is not text-determined (runtime value)";
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("literal", recognize_composite);
@@ -44,11 +68,32 @@ pub(crate) struct LiteralSugar {
 
 impl Sugar for LiteralSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        // TOTAL: the dig body computes the legacy `Option<Desugared>` (every inner `?`
-        // is a structural bail); `Outcome::from_opt` lifts it -- `Some` -> `Dug`, the
-        // structural bail -> `Hit(Effect::Unsupported)` (discarded by the fall-through
-        // consumer exactly as the old `None` was). No unclassified return path.
-        Outcome::from_opt((|| {
+        // WARRANT FIRST (byte-unchanged): a finite/nonempty/text-determined literal domain
+        // builds its element `Seq` and digs. This path is identical to the old code, so no
+        // warrantable literal can become a refusal below.
+        if let Some(seq) = self.build(ctx) {
+            return Outcome::Dug(seq);
+        }
+        // The warrant declined. If the SHAPE is one of the six unwarrantable literal dragons
+        // (empty / unbounded / over-cap / char / runtime-bound / runtime-element), NAME it as a
+        // `Refused` source property instead of leaving it the generic structural backstop
+        // (`unresolved`, which reads as missing work). A genuinely-unrecognized decline stays
+        // the generic backstop. PURE RECLASSIFICATION -- only declines are ever named.
+        if let Some(reason) = classify_unwarrantable_literal(&self.base) {
+            return Outcome::Hit(Effect::Unsupported {
+                reason: reason.to_string(),
+            });
+        }
+        Outcome::from_opt(None)
+    }
+}
+
+impl LiteralSugar {
+    /// The WARRANT path: build the element `Seq` for a finite literal domain, or `None` on a
+    /// decline (empty / over-cap / non-const / runtime). Byte-identical to the former
+    /// `desugar` dig body (pure extraction) so warrant behavior is unchanged.
+    fn build(&self, ctx: &SugarCtx) -> Option<Desugared> {
+        (|| {
             // Discriminate the domain EXACTLY as the defolder does (construction axiom:
             // a literal array unrolls over its element terms; a closed range enumerates
             // its integers). A runtime collection is not a `BoundedDomain` -> None.
@@ -127,6 +172,103 @@ impl Sugar for LiteralSugar {
                 return None;
             }
             Some(Desugared::Seq(seq))
-        })())
+        })()
+    }
+}
+
+/// Classify a DECLINED `LiteralSugar` base into one of the six unwarrantable-literal dragon
+/// reasons, or `None` for a shape outside the six (-> generic structural backstop). PURELY
+/// SYNTACTIC: it reads only the AST shape and is reached ONLY after the warrant path declined,
+/// so it can never turn a warrant into a refusal. Each arm's discrimination twin (the finite /
+/// nonempty / text-determined counterpart) still warrants because `build` returns first.
+fn classify_unwarrantable_literal(base: &Expr) -> Option<&'static str> {
+    match strip_refs_groups(base) {
+        Expr::Array(arr) => {
+            if arr.elems.is_empty() {
+                // `[]` -- zero iterations, vacuously true; no twin can refute (no teeth).
+                Some(EMPTY_DOMAIN_REASON)
+            } else if arr.elems.len() as i64 > SUGAR_SEQ_CAP {
+                Some(OVERSIZE_DOMAIN_REASON)
+            } else {
+                // A non-empty, in-cap array that DECLINED can only have an element the term
+                // floor could not pin to a text-determined value (a runtime/effect element).
+                Some(RUNTIME_ELEM_REASON)
+            }
+        }
+        Expr::Range(range) => {
+            // Open on either end (`0..`, `..42`) -> infinite/unbounded domain.
+            let (Some(start), Some(end)) = (range.start.as_deref(), range.end.as_deref()) else {
+                return Some(UNBOUNDED_RANGE_REASON);
+            };
+            // Char / AsciiChar bounds -> Unicode-version-dependent (surrogate-gap) enumeration.
+            if is_char_bound(start) || is_char_bound(end) {
+                return Some(CHAR_RANGE_REASON);
+            }
+            // A `T::MAX` / `T::MIN` extreme bound -> the int-domain spans up to 2^width, over cap.
+            if is_int_extreme_path(start) || is_int_extreme_path(end) {
+                return Some(OVERSIZE_DOMAIN_REASON);
+            }
+            // Both bounds are written integer literals: the domain is text-determined, so a
+            // decline here is EMPTY/reversed (`5..5`, `100..10`) or finite-but-over-cap.
+            if let (Some(s), Some(e)) = (literal_signed_int(start), literal_signed_int(end)) {
+                let inclusive = matches!(range.limits, syn::RangeLimits::Closed(_));
+                let len = (e - s) + if inclusive { 1 } else { 0 };
+                if len <= 0 {
+                    return Some(EMPTY_DOMAIN_REASON);
+                }
+                if len > i128::from(SUGAR_SEQ_CAP) {
+                    return Some(OVERSIZE_DOMAIN_REASON);
+                }
+                // Finite, nonempty, in-cap, yet declined -- should not happen (it would have
+                // warranted); leave to the generic backstop rather than mislabel.
+                return None;
+            }
+            // A remaining bound is a non-literal/non-const path or expression (`len`, `x`,
+            // `x + 3`): not text-determined -> a runtime bound.
+            Some(RUNTIME_BOUND_REASON)
+        }
+        _ => None,
+    }
+}
+
+/// A bound whose VALUE is a `char` (`'\u{D7FF}'`) or an `AsciiChar` enum const
+/// (`AsciiChar::CapitalA`) -- char-range enumeration is Unicode-version-dependent (the
+/// surrogate gap `D800..=DFFF` is not a valid `char`), so it is left to the Unicode dragon.
+fn is_char_bound(e: &Expr) -> bool {
+    match strip_refs_groups(e) {
+        Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Char(_),
+            ..
+        }) => true,
+        Expr::Path(p) => p.path.segments.iter().any(|s| s.ident == "AsciiChar"),
+        _ => false,
+    }
+}
+
+/// A `T::MAX` / `T::MIN` associated-const bound (`usize::MAX`, `i16::MIN`, bare `MAX`) -- the
+/// integer-domain extreme, whose span exceeds the sequence cap.
+fn is_int_extreme_path(e: &Expr) -> bool {
+    match strip_refs_groups(e) {
+        Expr::Path(p) => p
+            .path
+            .segments
+            .last()
+            .is_some_and(|s| s.ident == "MAX" || s.ident == "MIN"),
+        _ => false,
+    }
+}
+
+/// A written (possibly negated) integer literal bound's value, or `None` for a non-literal
+/// bound. `200`, `-5`, `42_usize` -> `Some`; `len`, `x + 3`, `usize::MAX` -> `None`.
+fn literal_signed_int(e: &Expr) -> Option<i128> {
+    match strip_refs_groups(e) {
+        Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Int(i),
+            ..
+        }) => i.base10_parse::<i128>().ok(),
+        Expr::Unary(u) if matches!(u.op, syn::UnOp::Neg(_)) => {
+            literal_signed_int(&u.expr).map(|n| -n)
+        }
+        _ => None,
     }
 }
