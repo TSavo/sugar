@@ -77,6 +77,7 @@ pub mod sugar {
     pub mod field_term;
     pub mod filter;
     pub mod filter_map;
+    pub mod flat_map;
     pub mod flatten;
     pub mod float_refinement;
     pub mod fold;
@@ -5337,9 +5338,21 @@ fn peel_fold_adaptors_inner<'a>(
                     ("flatten", 0) => {
                         Box::new(|inner| Box::new(sugar::flatten::FlattenSugar { inner }))
                     }
-                    // flat_map (sub-sequence const-eval over a closure) and every other
-                    // adaptor: not yet provably exact -> bail. (`filter_map` digs above
-                    // via the composable `FilterMapSugar` over the closed Option-eval.)
+                    // `.flat_map(|x| [..])`: map each element to a finite literal
+                    // sub-sequence and concatenate (exact-or-refuse inside
+                    // `FlatMapSugar::desugar` / `const_eval_flat_map_closure`).
+                    ("flat_map", 1) => match &m.args[0] {
+                        Expr::Closure(c) => {
+                            let f = c.clone();
+                            Box::new(move |inner| {
+                                Box::new(sugar::flat_map::FlatMapSugar { inner, f })
+                            })
+                        }
+                        _ => return None,
+                    },
+                    // Every other adaptor: not yet provably exact -> bail. (`filter_map`
+                    // digs above via the composable `FilterMapSugar` over the closed
+                    // Option-eval.)
                     _ => return None,
                 };
                 adaptors_rev.push(ad);
@@ -6051,6 +6064,37 @@ fn const_eval_unary_closure(closure: &syn::ExprClosure, arg: &ConstVal) -> Optio
         other => other,
     };
     const_eval(body, &env)
+}
+
+/// Evaluate a `.flat_map(|x| [..])` closure over ONE element value to its finite literal
+/// SUB-SEQUENCE. Binds the param (same as `const_eval_unary_closure`), requires the body
+/// to be an array literal, and `const_eval`s each array element with the SAME exact floor.
+/// Exact-or-None: a non-array body, or any sub-element outside the certain const set,
+/// returns `None` -- the whole flat_map then refuses, never a guessed sub-sequence.
+pub(crate) fn const_eval_flat_map_closure(
+    closure: &syn::ExprClosure,
+    arg: &ConstVal,
+) -> Option<Vec<ConstVal>> {
+    if closure.inputs.len() != 1 {
+        return None;
+    }
+    let mut env = BTreeMap::new();
+    bind_const_closure_arg(&closure.inputs[0], arg, &mut env)?;
+    let body: &Expr = match &*closure.body {
+        Expr::Block(b) => match b.block.stmts.as_slice() {
+            [Stmt::Expr(e, None)] => e,
+            _ => return None,
+        },
+        other => other,
+    };
+    let Expr::Array(array) = strip_refs_groups(body) else {
+        return None;
+    };
+    let mut out = Vec::with_capacity(array.elems.len());
+    for elem in &array.elems {
+        out.push(const_eval(elem, &env)?);
+    }
+    Some(out)
 }
 
 /// Evaluate a unary closure with the same exact floor as `const_eval_unary_closure`,
