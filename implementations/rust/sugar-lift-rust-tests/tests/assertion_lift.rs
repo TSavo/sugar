@@ -370,6 +370,56 @@ fn size_of_and_primitive_max_consts_are_compiler_axiom_sugar() {
     );
 }
 
+// MISSING-SUGAR (size_of layout): a `core::sync::atomic` type has a layout GUARANTEED by
+// std to equal its underlying integer -- a COMPILER PROMISE, read out loud. Previously the
+// rustc harness failed to resolve the atomic via its `use` import and the size_of refused;
+// now the seeded layout table answers `size_of::<AtomicU32>() == 4` directly.
+#[test]
+fn size_of_core_atomic_is_layout_axiom() {
+    let src = r#"
+        use core::sync::atomic::AtomicU32;
+
+        #[test]
+        fn t_atomic_size() {
+            assert!(core::mem::size_of::<AtomicU32>() == 4);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/sync/atomic_size.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "atomic size_of layout axiom should lift; skip reasons: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.factory_audits
+            .iter()
+            .any(|audit| { audit.requested_role == "Term" && audit.selected == Some("sizeof") }),
+        "factory should route size_of through SizeOfSugar: {:?}",
+        out.factory_audits
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_atomic_size") {
+        assert!(sat, "size_of::<AtomicU32>() == 4 -- consistent (SAT)");
+    }
+}
+
+// TEETH: a WRONG atomic size must refute.
+#[test]
+fn size_of_core_atomic_wrong_value_is_unsat() {
+    let src = r#"
+        use core::sync::atomic::AtomicU32;
+
+        #[test]
+        fn t_atomic_size_bad() {
+            assert!(core::mem::size_of::<AtomicU32>() == 5);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/sync/atomic_size_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_atomic_size_bad") {
+        assert!(!sat, "size_of::<AtomicU32>() == 4 != 5 -- must be UNSAT");
+    }
+}
+
 #[test]
 fn size_of_concrete_std_type_uses_rustc_layout_axiom() {
     let src = r#"
