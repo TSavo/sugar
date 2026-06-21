@@ -138,6 +138,8 @@ fn teethed_ledger_does_not_regress() {
     let corpus = rust
         .parent()
         .unwrap()
+        .parent() // implementations/ → repo root
+        .unwrap()
         .join("examples/rust-coretests-report/corpus");
     let z3 = "/usr/local/bin/z3";
     if !bin.exists() || !corpus.is_dir() || !std::path::Path::new(z3).exists() {
