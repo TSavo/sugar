@@ -16952,3 +16952,161 @@ fn t() {
         }
     }
 }
+
+// ─── MaybeUninit::zeroed() / mem::zeroed() — all-zeros teeth ─────────────────
+//
+// Finite-or-refuse: teeth are added ONLY for primitive integers and bool, where
+// all-zeros is a determinate valid value.  NonZero* types and anything else
+// fall through to opaque — never fabricate a zero for them.
+
+/// THE TEETH (written first, per supersonic workflow): `MaybeUninit::<u32>::zeroed()
+/// .assume_init() == 1` reduces to `0 == 1` which is z3-UNSAT.  Before this
+/// recognizer the expression was an opaque EUF so z3 returned SAT (false-pass);
+/// after it returns UNSAT (refuted).
+#[test]
+fn maybe_uninit_zeroed_u32_bad_twin_is_z3_unsat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(MaybeUninit::<u32>::zeroed().assume_init(), 1);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/maybe_uninit_zeroed_bad.rs");
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    if let Some(sat) = z3_verdict(&inv_json(decl), "maybe_uninit_zeroed_u32_bad") {
+        assert!(
+            !sat,
+            "MaybeUninit::<u32>::zeroed().assume_init() == 1 must be z3-UNSAT (teeth bite the bad twin)"
+        );
+    }
+}
+
+/// `MaybeUninit::<u32>::zeroed().assume_init() == 0` reduces to `0 == 0` (SAT).
+#[test]
+fn maybe_uninit_zeroed_u32_good_twin_is_sat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(MaybeUninit::<u32>::zeroed().assume_init(), 0);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/maybe_uninit_zeroed_good.rs");
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    if let Some(sat) = z3_verdict(&inv_json(decl), "maybe_uninit_zeroed_u32_good") {
+        assert!(
+            sat,
+            "MaybeUninit::<u32>::zeroed().assume_init() == 0 must be SAT (transparent zero)"
+        );
+    }
+}
+
+/// THE TEETH (bool): `MaybeUninit::<bool>::zeroed().assume_init() == true`
+/// reduces to `false == true` which is z3-UNSAT.  All-zeros bit-pattern for
+/// bool is `false`, not `true`.
+#[test]
+fn maybe_uninit_zeroed_bool_bad_twin_is_z3_unsat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(MaybeUninit::<bool>::zeroed().assume_init(), true);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/maybe_uninit_zeroed_bool_bad.rs");
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    if let Some(sat) = z3_verdict(&inv_json(decl), "maybe_uninit_zeroed_bool_bad") {
+        assert!(
+            !sat,
+            "MaybeUninit::<bool>::zeroed().assume_init() == true must be z3-UNSAT (all-zeros bool is false)"
+        );
+    }
+}
+
+/// `MaybeUninit::<bool>::zeroed().assume_init() == false` is `false == false` (SAT).
+#[test]
+fn maybe_uninit_zeroed_bool_good_twin_is_sat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(MaybeUninit::<bool>::zeroed().assume_init(), false);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/maybe_uninit_zeroed_bool_good.rs");
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    if let Some(sat) = z3_verdict(&inv_json(decl), "maybe_uninit_zeroed_bool_good") {
+        assert!(
+            sat,
+            "MaybeUninit::<bool>::zeroed().assume_init() == false must be SAT"
+        );
+    }
+}
+
+/// FINITE-OR-REFUSE: `MaybeUninit::<NonZeroU32>::zeroed().assume_init()` must NOT
+/// acquire teeth — all-zeros is UB for NonZero* types.  It stays opaque; a wrong
+/// RHS must remain SAT, never UNSAT.
+#[test]
+fn maybe_uninit_zeroed_nonzero_stays_opaque_no_teeth() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(MaybeUninit::<NonZeroU32>::zeroed().assume_init(), 99);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/maybe_uninit_zeroed_nonzero.rs");
+    // If any claim was produced it must be SAT — opaque EUF, no discrimination.
+    for decl in &out.decls {
+        if let Some(sat) = z3_verdict(&inv_json(decl), "maybe_uninit_zeroed_nonzero_no_teeth") {
+            assert!(
+                sat,
+                "NonZeroU32 zeroed().assume_init() == 99 must be SAT (opaque/no teeth): {:?}",
+                decl
+            );
+        }
+    }
+}
+
+// ── mem::zeroed::<T>() teeth ──────────────────────────────────────────────────
+
+/// THE TEETH (mem::zeroed, bad twin first): `core::mem::zeroed::<u32>() == 1`
+/// reduces to `0 == 1` which is z3-UNSAT.
+#[test]
+fn mem_zeroed_u32_bad_twin_is_z3_unsat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(core::mem::zeroed::<u32>(), 1);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/mem_zeroed_bad.rs");
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    if let Some(sat) = z3_verdict(&inv_json(decl), "mem_zeroed_u32_bad") {
+        assert!(
+            !sat,
+            "core::mem::zeroed::<u32>() == 1 must be z3-UNSAT (teeth bite the bad twin)"
+        );
+    }
+}
+
+/// `core::mem::zeroed::<u32>() == 0` is `0 == 0` (SAT).
+#[test]
+fn mem_zeroed_u32_good_twin_is_sat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(core::mem::zeroed::<u32>(), 0);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/mem_zeroed_good.rs");
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    if let Some(sat) = z3_verdict(&inv_json(decl), "mem_zeroed_u32_good") {
+        assert!(
+            sat,
+            "core::mem::zeroed::<u32>() == 0 must be SAT (transparent zero)"
+        );
+    }
+}
