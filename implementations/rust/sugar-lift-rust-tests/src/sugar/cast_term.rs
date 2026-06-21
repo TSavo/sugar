@@ -30,6 +30,17 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     if matches!(cast.ty.as_ref(), Type::Infer(_)) {
         return Some(build_term(&cast.expr, fcx));
     }
+    // `&array as &[_]` / `&vec as &[T]`: an UNSIZING coercion to a slice reference is
+    // VALUE-PRESERVING -- the slice views the SAME elements as its source, so the cast
+    // carries no value of its own (exactly like the `as _` inferred-target arm). Desugar
+    // transparently to the inner reference's term. This unblocks the dominant cast_term
+    // dark shape (`Clamp(r).get(&slice as &[_]) == other.get(&slice as &[_])`): with the
+    // cast transparent, both EUF call-arguments coalesce instead of backstopping. The
+    // inner reference's own soundness still applies (a `&mut <place>` source propagates
+    // its refusal); this arm only strips the unsizing coercion.
+    if is_slice_reference_cast(cast.ty.as_ref()) {
+        return Some(build_term(&cast.expr, fcx));
+    }
     if matches!(cast.ty.as_ref(), Type::Ptr(_)) {
         let effect =
             Effect::unsupported_term(&token_key(expr), UnsupportedTermCause::RawPointerCast);
@@ -51,6 +62,14 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         "unsupported term `{}`",
         token_key(expr)
     )))
+}
+
+/// `&[_]` / `&[T]` / `&mut [_]`: a reference to a SLICE. A cast to such a type is an
+/// unsizing coercion (`&[T; N] as &[T]`, `&Vec<T> as &[T]`) that preserves the elements,
+/// so `cast_term` treats it transparently. (The element type is irrelevant -- the value
+/// is the source's elements either way.)
+fn is_slice_reference_cast(ty: &Type) -> bool {
+    matches!(ty, Type::Reference(reference) if matches!(reference.elem.as_ref(), Type::Slice(_)))
 }
 
 struct CastSugar {
