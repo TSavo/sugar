@@ -1,0 +1,186 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// TERM recognizers for the all-zeros bit-pattern constructors.
+//
+// Covered patterns
+// ────────────────
+//   (A) `MaybeUninit::<T>::zeroed().assume_init()`
+//   (B) `core::mem::zeroed::<T>()` / `std::mem::zeroed::<T>()` /
+//       `mem::zeroed::<T>()`
+//
+// For types where all-zeros is a determinate valid value (primitive integers
+// and `bool`), the recognizer emits the zero constant directly — giving z3
+// TEETH: `MaybeUninit::<u32>::zeroed().assume_init() == 1` becomes UNSAT.
+//
+// Finite-or-refuse: for types where all-zeros is UB or indeterminate
+// (`NonZero*`, references, raw pointers, user-defined structs, …) the
+// recognizer returns `None` and falls through to the opaque generic sugar —
+// never fabricate a zero for those types.
+//
+// Ambiguity guard
+// ───────────────
+// Pattern (A) fires only on the two-call chain
+//   `assume_init()` over `MaybeUninit::<T>::zeroed()`.
+// No other Primary Term recognizer in the catalog fires on that exact shape.
+//
+// Pattern (B) fires only on `Expr::Call` whose func ends in `mem::zeroed`
+// with an explicit type argument.  `call::EXPR_SUGAR` is `fallback_term`
+// (Fallback priority), so a Primary recognizer always wins — no collision.
+
+use std::rc::Rc;
+
+use sugar_ir_symbolic::Term;
+use syn::{Expr, GenericArgument, PathArguments, Type};
+
+use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::term_leaf::resolved_term;
+use crate::{bool_const, num, strip_refs_groups, Sugar};
+
+// ── (A) MaybeUninit::<T>::zeroed().assume_init() ─────────────────────────────
+
+pub(crate) const ASSUME_INIT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "maybe_uninit_zeroed",
+    SugarRole::Term,
+    SugarPriority::Primary,
+    recognize_assume_init,
+);
+
+fn recognize_assume_init(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    // Outer must be `.assume_init()` with no extra arguments.
+    let Expr::MethodCall(outer) = expr else {
+        return None;
+    };
+    if outer.method != "assume_init" || !outer.args.is_empty() {
+        return None;
+    }
+    // Receiver must be `MaybeUninit::<T>::zeroed()` for a zero-safe type T.
+    let zero_term = maybe_uninit_zeroed_term(&outer.receiver)?;
+    Some(resolved_term(zero_term))
+}
+
+/// Return the zero-value `Term` for `MaybeUninit::<T>::zeroed()`, or `None`
+/// if the receiver is not that shape or T is not a zero-safe primitive.
+fn maybe_uninit_zeroed_term(expr: &Expr) -> Option<Rc<Term>> {
+    let Expr::Call(call) = strip_refs_groups(expr) else {
+        return None;
+    };
+    // `zeroed()` takes no arguments.
+    if !call.args.is_empty() {
+        return None;
+    }
+    // func must be a path ending in `MaybeUninit::<T>::zeroed`.
+    let Expr::Path(path_expr) = strip_refs_groups(&call.func) else {
+        return None;
+    };
+    if path_expr.qself.is_some() {
+        return None;
+    }
+    let segs = &path_expr.path.segments;
+    if segs.len() < 2 {
+        return None;
+    }
+    let last = segs.last().unwrap();
+    let second_last = &segs[segs.len() - 2];
+    if last.ident != "zeroed" || second_last.ident != "MaybeUninit" {
+        return None;
+    }
+    // Type T comes from the angle brackets on the `MaybeUninit` segment:
+    // `MaybeUninit::<T>`.
+    let ty = angle_bracket_type_arg(&second_last.arguments)?;
+    primitive_zero_term(&ty)
+}
+
+// ── (B) mem::zeroed::<T>() ───────────────────────────────────────────────────
+
+pub(crate) const MEM_ZEROED_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "mem_zeroed",
+    SugarRole::Term,
+    SugarPriority::Primary,
+    recognize_mem_zeroed,
+);
+
+fn recognize_mem_zeroed(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let Expr::Call(call) = expr else {
+        return None;
+    };
+    // `zeroed::<T>()` takes no arguments.
+    if !call.args.is_empty() {
+        return None;
+    }
+    let zero_term = mem_zeroed_term(&call.func)?;
+    Some(resolved_term(zero_term))
+}
+
+/// Return the zero-value `Term` for `mem::zeroed::<T>()` / `core::mem::zeroed::<T>()`,
+/// or `None` if the func is not that shape or T is not a zero-safe primitive.
+fn mem_zeroed_term(func: &Expr) -> Option<Rc<Term>> {
+    let Expr::Path(path_expr) = strip_refs_groups(func) else {
+        return None;
+    };
+    if path_expr.qself.is_some() {
+        return None;
+    }
+    let segs = &path_expr.path.segments;
+    if segs.is_empty() {
+        return None;
+    }
+    let last = segs.last().unwrap();
+    if last.ident != "zeroed" {
+        return None;
+    }
+    // Require at least two segments so a bare `zeroed::<T>()` (without a `mem`
+    // module prefix) is NOT accepted — too ambiguous without the module context.
+    if segs.len() < 2 {
+        return None;
+    }
+    let second_last = &segs[segs.len() - 2];
+    if second_last.ident != "mem" {
+        return None;
+    }
+    // Type T comes from the turbofish on the `zeroed` segment: `zeroed::<T>`.
+    let ty = angle_bracket_type_arg(&last.arguments)?;
+    primitive_zero_term(&ty)
+}
+
+// ── Shared helpers ────────────────────────────────────────────────────────────
+
+/// Extract the first `Type` argument from an `AngleBracketed` path segment
+/// (e.g. `<u32>` in `MaybeUninit::<u32>` or `zeroed::<u32>`).
+fn angle_bracket_type_arg(args: &PathArguments) -> Option<Type> {
+    let PathArguments::AngleBracketed(ab) = args else {
+        return None;
+    };
+    ab.args.iter().find_map(|a| {
+        if let GenericArgument::Type(ty) = a {
+            Some(ty.clone())
+        } else {
+            None
+        }
+    })
+}
+
+/// Map a primitive type name to its all-zeros value term.
+///
+/// * Primitive integers (`u8`…`u128`, `usize`, `i8`…`i128`, `isize`) →
+///   `num(0)` (the plain unsorted integer zero, same sort as unsuffixed `0`
+///   literals and `u32::MIN` / `i64::MIN` from `const_path`).
+/// * `bool` → `bool_const(false)` (all-zeros bit-pattern for bool is `false`).
+/// * Everything else (`NonZero*`, references, raw pointers, structs, …) →
+///   `None` (finite-or-refuse: never fabricate a zero for these types).
+fn primitive_zero_term(ty: &Type) -> Option<Rc<Term>> {
+    let Type::Path(tp) = ty else {
+        return None;
+    };
+    if tp.qself.is_some() {
+        return None;
+    }
+    match tp.path.get_ident()?.to_string().as_str() {
+        "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64"
+        | "i128" | "isize" => Some(num(0)),
+        "bool" => Some(bool_const(false)),
+        // All other types — NonZero*, &T, *T, structs, enums, … — fall through
+        // to the opaque generic sugar.  Never fabricate a zero for them.
+        _ => None,
+    }
+}
