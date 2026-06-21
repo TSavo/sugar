@@ -696,9 +696,11 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // panics; there is no scalar value to lift. The `get` twin still discharges to
         // `None`, so this only closes the panic branch.
         || reason.contains("is out of bounds for a literal slice")
-        // TERMINAL: unchecked slice indexing is an unsafe pointer-producing boundary.
-        // Even when its inputs are literal-backed, the unchecked operation's contract is
-        // not a timeless value equality surface for this lift.
+        // TERMINAL: an unchecked slice index OUTSIDE the literal slice domain. In-domain
+        // `get_unchecked` over a literal-backed slice now grounds to the exact element/
+        // sub-slice (read out loud like `index`); only an out-of-bounds unchecked index is
+        // genuine UB with no determinate value, so just that branch refuses (the reason is
+        // prefixed "out-of-bounds unchecked slice indexing").
         || reason.contains("unchecked slice indexing")
         // TERMINAL: an `unsupported term` whose SHAPE is genuinely effectful / non-constructible
         // -- a `&mut` borrow, raw address, or raw-pointer cast (`&raw const`/`&raw mut`/

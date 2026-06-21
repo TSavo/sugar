@@ -43,11 +43,25 @@ pub(crate) fn recognize(
                 token_key(expr)
             )));
         }
-        "get_unchecked" | "get_unchecked_mut" if call.args.len() == 1 => {
+        "get_unchecked_mut" if call.args.len() == 1 => {
+            // `&mut T` result: a mutable-reference term, not a constructible timeless
+            // value -- same boundary as `get_mut`/`index_mut`. Warranting a value
+            // through a `&mut` belongs to the borrow path, not here.
             return Some(reasoned_hit(format!(
-                "unchecked slice indexing `{}` crosses an unsafe pointer boundary; refused",
+                "unsupported term `{}`: effectful / raw-pointer / mutable-reference term (an unchecked `&mut` slice borrow) is not a constructible timeless value; refused",
                 token_key(expr)
             )));
+        }
+        "get_unchecked" if call.args.len() == 1 => {
+            // `get_unchecked` returns `&T`/`&[T]`; on a literal-backed slice with an
+            // in-domain index it is fully text-determined -- rustc/std give the exact
+            // element/sub-slice. The unsafe pointer boundary is an impl detail, not an
+            // unspeakable value: read the axiom out loud exactly like `index`. An index
+            // OUTSIDE the literal domain is out-of-bounds UB with no determinate value
+            // -> REFUSE (never fabricate). Handles both the SliceIndex-trait shape
+            // (`Clamp(r).get_unchecked(&slice)`) and the inherent shape
+            // (`[10, 20, 30].get_unchecked(1)`).
+            return recognize_get_unchecked(call, expr, fcx);
         }
         _ => {}
     }
@@ -83,6 +97,47 @@ pub(crate) fn recognize(
         "grounded literal-backed SliceIndex method"
     );
     Some(resolved_term(term))
+}
+
+/// Ground `get_unchecked` over a literal-backed slice. `get_unchecked` returns
+/// `&T`/`&[T]`; with an in-domain index it equals `index` (value semantics), so we
+/// reuse the same `evaluate_index`/`selection_term` grounding. The only refusal is an
+/// out-of-domain index -- genuine UB with no determinate value. A receiver that is
+/// neither a literal slice (inherent form) nor an index spec (trait form) -- e.g. a
+/// local-bound `&[_]` -- is left unresolved (honest dark), never refused: a borrow of a
+/// literal local is speakable on the borrow path, not a sound stop here.
+fn recognize_get_unchecked(
+    call: &syn::ExprMethodCall,
+    expr: &Expr,
+    fcx: &crate::sugar::factory::SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
+    // A literal-array receiver only matches the inherent arm and an index-shaped
+    // receiver only the trait arm, so the two layouts are disjoint.
+    let (clamp, index, slice) = if let Some(slice) = literal_slice_arg(&call.receiver) {
+        // Inherent: `<literal slice>.get_unchecked(<index>)`.
+        (false, index_spec(call.args.first()?)?, slice)
+    } else if let Some((clamp, index)) = receiver_index(&call.receiver) {
+        // SliceIndex-trait: `<index>.get_unchecked(<literal slice>)`.
+        (clamp, index, literal_slice_arg(call.args.first()?)?)
+    } else {
+        return None;
+    };
+    match evaluate_index(&index, slice.len(), clamp) {
+        Some(selection) => {
+            let term = selection_term(selection, &slice, expr, fcx.scope()).ok()?;
+            tracing::debug!(
+                target: "sugar_lift_rust_tests::slice_index",
+                clamp = clamp,
+                slice_len = slice.len(),
+                "grounded literal-backed get_unchecked"
+            );
+            Some(resolved_term(term))
+        }
+        None => Some(reasoned_hit(format!(
+            "out-of-bounds unchecked slice indexing `{}` is undefined behavior with no determinate value; refused",
+            token_key(expr)
+        ))),
+    }
 }
 
 #[derive(Clone, Copy)]
