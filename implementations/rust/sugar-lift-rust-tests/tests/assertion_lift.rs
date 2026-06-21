@@ -420,6 +420,130 @@ fn size_of_core_atomic_wrong_value_is_unsat() {
     }
 }
 
+// ---- const `if/else` term folding (ConstIfSugar) ----
+//
+// The largest "no Sugar candidate for role Term" census bucket is CONSTANT
+// `if cond { .. } else { .. }` expressions in term position -- ~1503 of them are
+// `core`'s ASCII case-conversion table, unrolled per byte:
+//   `if 'a' as u32 <= b && b <= 'z' as u32 { b + 'A' as u32 - 'a' as u32 } else { b }`
+// Every leaf is a literal or a `char as u32` cast, so the whole conditional const-
+// folds to a definite integer. `const_if` reuses `const_eval` (the EXACT-value rule
+// `binop` already uses) to collapse it to that ground value -- the untaken branch is
+// dead, so the fold is faithful. TEETH: the folded value is a ground const, so a
+// claim of the WRONG value is a refutable (UNSAT) equality.
+
+// 'b' (98) is lowercase ASCII, so to_ascii_uppercase folds to 'B' (66) via the
+// THEN branch. Structural: the conditional warrants, `const_if` is the selected
+// Term Sugar, and the emitted atom carries the folded value 66 (not 67).
+#[test]
+fn const_if_term_folds_and_const_if_selected() {
+    let src = r#"
+        #[test]
+        fn t_const_if_then() {
+            assert!((if 'a' as u32 <= 98 && 98 <= 'z' as u32 { 98 + 'A' as u32 - 'a' as u32 } else { 98 }) == 66);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/num/const_if_then.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "const `if/else` term must lift; skip: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.factory_audits.iter().any(|a| {
+            a.requested_role == "Term"
+                && a.selected == Some("const_if")
+                && a.disposition == sugar_lift_rust_tests::FactoryDisposition::Warranted
+        }),
+        "the const if-term must be warranted by `const_if`: {:?}",
+        out.factory_audits
+    );
+    // The folded value reached bedrock as a ground 66 (the ASCII uppercase of 'b').
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Int(66)"),
+        "folded ASCII-uppercase value 66 must be emitted as a ground const: {dump}"
+    );
+}
+
+// THEN-branch teeth: the if folds to 66; a claim of 67 is a real contradiction (UNSAT).
+#[test]
+fn const_if_then_branch_wrong_value_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_const_if_then_bad() {
+            assert!((if 'a' as u32 <= 98 && 98 <= 'z' as u32 { 98 + 'A' as u32 - 'a' as u32 } else { 98 }) == 67);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/num/const_if_then_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_if_then_bad") {
+        assert!(!sat, "const if folds to 66 != 67 -- must be UNSAT");
+    }
+}
+
+// GOOD twin: the correct folded value (66) is satisfiable (real teeth, not a
+// contradiction baked into every claim).
+#[test]
+fn const_if_then_branch_correct_value_is_sat() {
+    let src = r#"
+        #[test]
+        fn t_const_if_then_good() {
+            assert!((if 'a' as u32 <= 98 && 98 <= 'z' as u32 { 98 + 'A' as u32 - 'a' as u32 } else { 98 }) == 66);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/num/const_if_then_good.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_if_then_good") {
+        assert!(sat, "const if folds to 66 == 66 -- must be SAT");
+    }
+}
+
+// ELSE-branch teeth: 'B' (66) is NOT lowercase, so the condition is false and the
+// conditional folds through the ELSE arm to 66 (already uppercase). A claim of 99
+// is UNSAT -- exercising the false-condition / else-branch path of the fold.
+#[test]
+fn const_if_else_branch_wrong_value_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_const_if_else_bad() {
+            assert!((if 'a' as u32 <= 66 && 66 <= 'z' as u32 { 66 + 'A' as u32 - 'a' as u32 } else { 66 }) == 99);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/num/const_if_else_bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "else-branch const if must lift; skip: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_if_else_bad") {
+        assert!(!sat, "else-branch folds to 66 != 99 -- must be UNSAT");
+    }
+}
+
+// finite-or-refuse: an `if` whose condition is NOT text-determined (a runtime value)
+// is NOT folded -- `const_if` declines, so the conditional stays unresolved and is
+// never fake-folded to a single branch.
+#[test]
+fn const_if_runtime_condition_declines() {
+    let src = r#"
+        #[test]
+        fn t_const_if_runtime() {
+            let n = std::env::args().count();
+            assert!((if n > 3 { 1u32 } else { 2u32 }) == 1);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/num/const_if_runtime.rs");
+    assert!(
+        !out.factory_audits.iter().any(|a| {
+            a.requested_role == "Term"
+                && a.selected == Some("const_if")
+                && a.site.starts_with("if ")
+        }),
+        "a runtime-condition `if` must NOT be folded by const_if (finite-or-refuse): {:?}",
+        out.factory_audits
+    );
+}
+
 #[test]
 fn size_of_concrete_std_type_uses_rustc_layout_axiom() {
     let src = r#"

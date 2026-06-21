@@ -64,6 +64,7 @@ pub mod sugar {
     pub mod configuration;
     pub mod const_block;
     pub mod const_bound;
+    pub mod const_if;
     pub mod const_item;
     pub mod const_path;
     pub mod constraint;
@@ -5687,7 +5688,43 @@ fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal>
                 _ => None,
             }
         }
+        // A const `if cond { .. } else { .. }` collapses to the value of the TAKEN
+        // branch. SOUNDNESS: `cond` is the EXACT compile-time bool (const_eval is the
+        // exact-value rule), so the conditional equals precisely the branch Rust would
+        // evaluate; the untaken branch is dead and need not be const. DISCRIMINATION:
+        // an else-less `if` (unit-typed -- not a scalar term), a non-const condition, or
+        // a non-const taken-branch tail folds to None and stays unresolved -- never
+        // fake-folded.
+        Expr::If(if_expr) => {
+            let cond = const_eval(&if_expr.cond, env)?.as_bool()?;
+            let (_, else_expr) = if_expr.else_branch.as_ref()?;
+            if cond {
+                const_eval_block_tail(&if_expr.then_branch, env)
+            } else {
+                const_eval_else_branch(else_expr, env)
+            }
+        }
         _ => None,
+    }
+}
+
+/// Const-eval the SINGLE tail expression of a brace block (`{ <expr> }`). A block
+/// carrying statements, `let` bindings, or no trailing expression is not a closed
+/// scalar value here -> None (bail; the enclosing form stays unresolved).
+fn const_eval_block_tail(block: &syn::Block, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal> {
+    match block.stmts.as_slice() {
+        [Stmt::Expr(e, None)] => const_eval(e, env),
+        _ => None,
+    }
+}
+
+/// Const-eval an `if` else-branch: a `{ .. }` block (its tail expr) or a chained
+/// `else if ..` (routed back through `const_eval`'s `Expr::If` arm). syn only ever
+/// yields a `Block` or an `If` here; the catch-all keeps the match total.
+fn const_eval_else_branch(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal> {
+    match expr {
+        Expr::Block(b) => const_eval_block_tail(&b.block, env),
+        other => const_eval(other, env),
     }
 }
 
@@ -5745,6 +5782,12 @@ impl ConstVal {
             ConstVal::Int(n) => Some(*n as u128),
             ConstVal::PrimitiveInt { raw, kind } => Some(mask_raw(*raw, kind.bits)),
             ConstVal::UInt128(n) => Some(*n),
+            // A `char as <int>` cast replays the Unicode scalar value (the codepoint),
+            // then narrows through the target width (the caller's `mask_raw`). This is
+            // exactly Rust's `char as u32`/`as u8`/... rule -- e.g. `'A' as u32 == 65`,
+            // `'\u{1F600}' as u8 == 0x00`. Enables const-folding of char-literal casts
+            // (pervasive in ASCII case-conversion tables).
+            ConstVal::Char(c) => Some(u128::from(u32::from(*c))),
             _ => None,
         }
     }
@@ -20489,25 +20532,25 @@ mod lifter_key_tests {
     fn adversarial_c_pure_but_untranslated_term_stays_unclassified_not_refused() {
         // (c) THE CRITICAL LINE: a PURE-but-untranslated term must STAY UNCLASSIFIED
         // (honest future work for a Sugar/const_eval arm), NEVER reclassified as a
-        // SideEffect. A VALUE-POSITION `if`/`else` term (`if true { 1 } else { 2 }`) is
+        // SideEffect. A VALUE-POSITION `match` term (`match 7 { 7 => 1, _ => 2 }`) is
         // PURE -- no mutation, no iter-advance, no runtime value (all literals) -- we
-        // simply have not transcribed a term-position `Expr::If` yet (the assertion path
-        // lifts an if-CONDITION, but an if as a TERM operand falls through). (The EUF
-        // term path digs MOST untranslated calls as uninterpreted symbols -- e.g.
-        // `char::from_u32(i).unwrap().to_ascii_uppercase()` over `0..3` lifts soundly via
-        // EUF -- so a genuine term-GAP is rare; this if-term is one. Refusing it as an
-        // effect would be a FAKE-REFUSE: mislabeling our own work as a source property --
-        // the exact trap that put 8 bad terminals in an earlier floor.)
+        // simply have not transcribed a term-position const `Expr::Match` yet (the
+        // assertion path lifts a match SCRUTINEE, but a match as a TERM operand falls
+        // through). (The EUF term path digs MOST untranslated calls as uninterpreted
+        // symbols -- e.g. `char::from_u32(i).unwrap().to_ascii_uppercase()` over `0..3`
+        // lifts soundly via EUF -- so a genuine term-GAP is rare; this match-term is one.
+        // Refusing it as an effect would be a FAKE-REFUSE: mislabeling our own work as a
+        // source property -- the exact trap that put 8 bad terminals in an earlier floor.)
         //
-        // NOTE: this fixture WAS `(1i32 as f64)`, chosen as a then-untranslated cast.
-        // The TermBreadth float-cast arm now lifts `as f16/f32/f64/f128` to the opaque
-        // `cast:fN(..)` ctor, so that example is no longer a term-gap; the intent (pure
-        // term stays unclassified, never fake-refused) is preserved with a still-untranslated
-        // pure term.
+        // NOTE: this fixture WAS `(1i32 as f64)` (a then-untranslated cast, now lifted to
+        // the opaque `cast:fN(..)` ctor), then `if true { 1 } else { 2 }` (a then-
+        // untranslated term-position `Expr::If`, now const-folded by `const_if` via
+        // `const_eval`). Each got an arm; the intent (a pure term stays unclassified,
+        // never fake-refused) is preserved here with a still-untranslated pure term.
         let src = r#"
             #[test]
             fn pure_untranslated() {
-                assert_eq!(if true { 1 } else { 2 }, 1);
+                assert_eq!(match 7 { 7 => 1, _ => 2 }, 1);
             }
         "#;
         let out = lift_src(src);
