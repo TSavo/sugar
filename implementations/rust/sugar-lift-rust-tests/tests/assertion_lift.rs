@@ -15620,6 +15620,115 @@ fn t() {
     }
 }
 
+// `<IntT>::from(bool)` / `IntT::from(bool)` for a primitive integer target is the std
+// `From<bool>` conversion: true -> 1, false -> 0. It lowers to the grounded scalar, not
+// an opaque `call:from(..)`, so a wrong value (true mapped to 0, or false to 1) is
+// z3-UNSAT (the teeth).
+#[test]
+fn from_bool_qself_and_path_forms_lower_to_integer_one_zero() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(1u8, <u8>::from(true));
+    assert_eq!(0u8, <u8>::from(false));
+    assert_eq!(1i32, i32::from(true));
+    assert_eq!(0i32, i32::from(false));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/from_bool_forms.rs");
+    assert_eq!(
+        out.assertions_lifted, 4,
+        "From<bool> over a primitive integer target should lower to scalar 1/0; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons,
+        out.factory_audits,
+        out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        !doc.contains("call:from"),
+        "From<bool> should lower to a grounded scalar, not an opaque call: {doc}"
+    );
+}
+
+#[test]
+fn from_bool_good_twin_is_sat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(1u8, <u8>::from(true));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/from_bool_good.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "from_bool_good") {
+        assert!(sat, "<u8>::from(true)=1 == 1 must be z3-SAT (the warrant holds)");
+    }
+}
+
+// THE TEETH BITE: the SAME shape `<u8>::from(false)`, anchored against `1`. A hollow
+// `call:from(false) == 1` would discharge identically to the good twin (no teeth); the
+// grounded `0 == 1` is z3-UNSAT -- the wrong bool->int value is REFUTED.
+#[test]
+fn from_bool_wrong_value_is_unsat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(1u8, <u8>::from(false));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/from_bool_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "from_bool_bad") {
+        assert!(
+            !sat,
+            "<u8>::from(false)=0 != 1 must be z3-UNSAT (teeth bite the bad twin)"
+        );
+    }
+}
+
+// The real `num/mod.rs` corpus shape: a `test_impl_from!(_, bool, $target)` body binds
+// `one`/`zero` locals and asserts them against `<$target>::from(true/false)`. End-to-end
+// the From<bool> RHS must lower to scalar 1/0 (no opaque `call:from`).
+#[test]
+fn from_bool_corpus_macro_body_form_lifts() {
+    let src = r#"
+#[test]
+fn t() {
+    let one: u16 = 1;
+    let zero: u16 = 0;
+    assert_eq!(one, <u16>::from(true));
+    assert_eq!(zero, <u16>::from(false));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/from_bool_macro_body.rs");
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        !doc.contains("call:from"),
+        "From<bool> in the corpus macro body should lower to a grounded scalar, not an opaque call: {doc}"
+    );
+}
+
+// DISCRIMINATION: a NON-integer target has no std `From<bool>` with a fixed 1/0 value
+// (a user type could map `true` to anything). We must NOT fabricate a value -- it stays
+// the opaque `call:from(..)` fallback.
+#[test]
+fn from_bool_non_integer_target_stays_opaque() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(MyWrapper(1), MyWrapper::from(true));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/from_bool_user_type.rs");
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        doc.contains("call:MyWrapper::from") || out.assertions_lifted == 0,
+        "user-type From<bool> must stay the opaque call (not folded to a primitive 1/0): lifted={}; {doc}",
+        out.assertions_lifted
+    );
+}
+
 #[test]
 fn int_sqrt_chained_domain_replays_helper_callsite_axioms() {
     let src = r#"
