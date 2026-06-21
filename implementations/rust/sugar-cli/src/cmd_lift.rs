@@ -766,6 +766,21 @@ fn source_report_from_lift_response(
     response: &Value,
     contract_filter: Option<&str>,
 ) -> Result<LiftSourceReport, String> {
+    // INSTRUMENT-NEVER-DARK: a response REFUSED upstream (e.g. the transport's
+    // finite-or-refuse byte bound swapped the whole response for a `sugar-refused`
+    // marker) carries no sourceLedger. Surface THAT as a loud, named hard-error -- not
+    // the generic "missing sourceLedger" (which reads like a kit bug and hides the real
+    // cause), and never a silent empty headline. A blind aggregate ledger cannot catch a
+    // false discharge, so a clipped/over-bound response MUST fail visibly, naming the clip.
+    if let Some(refused) = response.get("sugar-refused").and_then(Value::as_str) {
+        let reason = response
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or("(no reason emitted)");
+        return Err(format!(
+            "lift response was REFUSED upstream (`{refused}`): {reason}. The source-audit ledger could not be measured -- this is a hard failure, not an empty ledger."
+        ));
+    }
     let ledger = response
         .get("sourceLedger")
         .filter(|value| value.is_object())
@@ -4188,6 +4203,38 @@ mod tests {
                 .expect_err("missing sourceLedger should fail");
 
         assert!(error.contains("sourceLedger"));
+    }
+
+    #[test]
+    fn source_report_names_upstream_refusal_loudly_not_blank_ledger() {
+        // INSTRUMENT-NEVER-DARK regression: when the transport's finite-or-refuse byte
+        // bound swaps the whole response for a `sugar-refused` marker, the source-audit
+        // gate must fail LOUDLY naming the clip -- never the generic "missing sourceLedger"
+        // (which hides the cause and reads like a kit bug) and never a silent empty
+        // headline. A blind aggregate ledger cannot catch a false discharge.
+        let refused = serde_json::json!({
+            "sugar-refused": "response-term-exceeds-byte-bound",
+            "reason": "lift response term exceeds serialized byte bound (268435456) -- unbounded, refused before clone/address (finite-or-refuse)",
+        });
+        let error = source_report_from_lift_response(&refused, None)
+            .expect_err("an upstream-refused response must not yield a silent/empty ledger");
+
+        assert!(
+            error.contains("REFUSED upstream"),
+            "error must name the upstream refusal, got: {error}"
+        );
+        assert!(
+            error.contains("response-term-exceeds-byte-bound"),
+            "error must carry the refusal kind, got: {error}"
+        );
+        assert!(
+            error.contains("byte bound"),
+            "error must surface the byte-bound reason, got: {error}"
+        );
+        assert!(
+            !error.contains("the kit must emit"),
+            "must not masquerade as the generic missing-sourceLedger kit bug, got: {error}"
+        );
     }
 
     #[test]

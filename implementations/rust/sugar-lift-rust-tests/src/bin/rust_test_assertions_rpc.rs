@@ -1758,31 +1758,59 @@ fn source_memento_payload(env: &Value) -> Option<&Value> {
 }
 
 fn factory_audits_json(file: &str, audits: &[FactoryAudit]) -> Vec<Value> {
-    audits
-        .iter()
-        .map(|audit| {
-            let mut row = json!({
-                "file": file,
-                "ast_kind": audit.ast_kind,
-                "site": audit.site,
-                "line": audit.line,
-                "requested_role": audit.requested_role,
-                "selected": audit.selected,
-                "candidates": audit.candidates.iter().map(|candidate| {
-                    json!({
-                        "name": candidate.name,
-                        "role": candidate.role,
-                        "priority": candidate.priority,
-                        "selected": candidate.selected,
-                    })
-                }).collect::<Vec<_>>(),
-                "status": audit.disposition.as_str(),
-                "output": audit.output,
-                "reason": audit.reason,
-            });
-            if audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Support {
-                row["supportKind"] = json!("inert");
-            }
+    // The recursive factory walk records the SAME terminal across sub-terms, requested
+    // roles, and re-walks, so a raw 1:1 mapping emits byte-identical rows hundreds of
+    // times per locus (observed: ~1.18M rows over ~1.5K loci on the coretests corpus).
+    // That bloats the lift response term past the transport's finite-or-refuse byte
+    // bound (RESPONSE_TERM_SERIALIZED_BYTE_BOUND), which then refuses the WHOLE response
+    // -- silently dropping the source-audit ledger so the measuring stick goes dark.
+    //
+    // Collapse byte-identical rows into ONE row carrying an `occurrences` count. This is
+    // FINITE ACCOUNTING (supra omnia rectum), NOT truncation: nothing is dropped, the
+    // total is preserved in the count, and only genuinely-identical observations merge
+    // (any variation in output/reason/candidates keeps rows distinct). The source ledger
+    // is derived independently from `source_loci` (see `source_ledger`), so collapsing
+    // these diagnostic rows cannot move a single headline number.
+    let mut order: Vec<String> = Vec::new();
+    let mut rows: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+    let mut occurrences: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for audit in audits {
+        let mut row = json!({
+            "file": file,
+            "ast_kind": audit.ast_kind,
+            "site": audit.site,
+            "line": audit.line,
+            "requested_role": audit.requested_role,
+            "selected": audit.selected,
+            "candidates": audit.candidates.iter().map(|candidate| {
+                json!({
+                    "name": candidate.name,
+                    "role": candidate.role,
+                    "priority": candidate.priority,
+                    "selected": candidate.selected,
+                })
+            }).collect::<Vec<_>>(),
+            "status": audit.disposition.as_str(),
+            "output": audit.output,
+            "reason": audit.reason,
+        });
+        if audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Support {
+            row["supportKind"] = json!("inert");
+        }
+        // Identity = the full row content, computed BEFORE the `occurrences` tag so the
+        // key is stable. serde_json serializes a Value deterministically, so identical
+        // rows produce identical keys.
+        let key = serde_json::to_string(&row).unwrap_or_default();
+        if rows.insert(key.clone(), row).is_none() {
+            order.push(key.clone());
+        }
+        *occurrences.entry(key).or_insert(0) += 1;
+    }
+    order
+        .into_iter()
+        .map(|key| {
+            let mut row = rows.remove(&key).expect("row keyed in `order` was inserted");
+            row["occurrences"] = json!(occurrences[&key]);
             row
         })
         .collect()
