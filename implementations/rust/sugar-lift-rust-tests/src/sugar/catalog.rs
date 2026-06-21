@@ -23,7 +23,8 @@ use crate::sugar::{
     reference_term, regex_match, repeat_term, result_transpose_collect, rev, sizeof, skip,
     skip_while, slice_index, statement_async_future, statement_control_flow,
     statement_future_handoff, statement_loop_advance, statement_reflection, statement_runtime_expr,
-    step_by, string_add, string_predicate, struct_term, take, take_while, term_literal, to_string,
+    step_by, str_method, string_add, string_predicate, struct_term, take, take_while, term_literal,
+    to_string,
     transparent_term, try_from_fn, try_map, tuple_term, unary, unsafe_memory, vec_literal,
     vec_macro, wrapping_neg, zip,
 };
@@ -77,6 +78,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &iter_terminal::EXPR_SUGAR,
     &len::EXPR_SUGAR,
     &to_string::EXPR_SUGAR,
+    &str_method::EXPR_SUGAR,
     &char_range_collect_string::EXPR_SUGAR,
     &intersperse_collect_string::EXPR_SUGAR,
     &intersperse_concat::EXPR_SUGAR,
