@@ -17254,3 +17254,163 @@ fn vec_macro_runtime_element_stays_symbolic() {
         );
     }
 }
+
+// ─── iterator `reduce` (MECHANISM-2) ────────────────────────────────────────
+//
+// `.reduce(|acc, x| expr)` is a fold that seeds the accumulator from the
+// FIRST element and does NOT wrap the result. The Sugar grounding:
+//   • empty source  → `opt:none`  (canonical, structural)
+//   • non-empty     → const-fold over elements[1..] with element[0] as seed,
+//                     then emit `opt:some(result)` with real z3 teeth.
+//
+// TEETH (the gate): the WRONG expected value must be z3-UNSAT — not merely
+// opaque. If the lift emits `method:reduce(..) == Some(7)` the bad twin
+// would be SAT (no teeth). Only a structural `opt:some(6) == opt:some(7)`
+// makes the z3 UNSAT via ADT injectivity.
+//
+// ----------------------------------------------------------------------------
+
+#[test]
+fn iter_reduce_over_literal_digs_with_teeth() {
+    // POSITIVE: `[1,2,3].iter().copied().reduce(|a,b| a+b)` = Some(1+2+3) = Some(6).
+    // The grounded `opt:some(6) == opt:some(6)` is a real fact → SAT.
+    let good = lift_eq_decl(
+        "[1i32, 2, 3].iter().copied().reduce(|a, b| a + b)",
+        "Some(6i32)",
+        "tests/iter_reduce_good.rs",
+    );
+    assert_eq!(
+        dug_eq_ctor_name_pairs(&good),
+        vec![("opt:some".to_string(), "opt:some".to_string())],
+        "`.reduce()` over [1,2,3] must ground to opt:some(6): {:?}",
+        good.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&good), "iter_reduce_good") {
+        assert!(sat, "opt:some(6)==opt:some(6) must be SAT");
+    }
+    // TEETH: a WRONG expected value (7) must be z3-UNSAT (ADT injectivity: 6 ≠ 7).
+    let bad = lift_eq_decl(
+        "[1i32, 2, 3].iter().copied().reduce(|a, b| a + b)",
+        "Some(7i32)",
+        "tests/iter_reduce_bad.rs",
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&bad), "iter_reduce_bad") {
+        assert!(
+            !sat,
+            "opt:some(6)==opt:some(7) -- real contradiction -- must be z3-UNSAT"
+        );
+    }
+}
+
+#[test]
+fn iter_reduce_empty_source_is_none() {
+    // CANONICAL: `.reduce()` on an EMPTY source is `None` -- structural `opt:none`,
+    // not an opaque bail. The empty case is always decidable and must warrant.
+    let good = lift_eq_decl(
+        "[0i32; 0].iter().copied().reduce(|a, b| a + b)",
+        "None::<i32>",
+        "tests/iter_reduce_empty.rs",
+    );
+    assert_eq!(
+        dug_eq_ctor_name_pairs(&good),
+        vec![("opt:none".to_string(), "opt:none".to_string())],
+        "`.reduce()` over empty source must ground to opt:none: {:?}",
+        good.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&good), "iter_reduce_empty") {
+        assert!(sat, "opt:none==opt:none must be SAT");
+    }
+    // TEETH: `opt:none == opt:some(0)` must be UNSAT (ADT distinctness).
+    let bad = lift_eq_decl(
+        "[0i32; 0].iter().copied().reduce(|a, b| a + b)",
+        "Some(0i32)",
+        "tests/iter_reduce_empty_bad.rs",
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&bad), "iter_reduce_empty_bad") {
+        assert!(
+            !sat,
+            "opt:none==opt:some(0) -- None vs Some is always UNSAT (ADT distinctness)"
+        );
+    }
+}
+
+// ─── iterator `scan` → terminal (MECHANISM-2) ───────────────────────────────
+//
+// `.scan(init, |s, x| { *s <op>= rhs; Some(*s) })` over a literal source is a
+// stateful-map adaptor that yields each intermediate accumulator state.
+// `ScanSugar` collapses the scan to a concrete integer `Seq` so downstream
+// terminals (`last`, `sum`, `count`, etc.) operate on grounded values with
+// full z3 teeth.
+//
+// Cumulative-sum demo: `[1,2,3].scan(0, |s,x| {*s+=x; Some(*s)})` → [1,3,6].
+//   `.last()`         → Some(6)  SAT / bad-twin Some(7) UNSAT
+//   `.sum::<i32>()`   → 10       SAT / bad-twin 11 UNSAT
+//
+// ----------------------------------------------------------------------------
+
+#[test]
+fn iter_scan_last_over_literal_digs_with_teeth() {
+    // POSITIVE: cumsum [1,3,6]; `.last()` = Some(6).
+    // `opt:some(6) == opt:some(6)` → SAT.
+    let good = lift_eq_decl(
+        "[1i32, 2, 3].iter().copied().scan(0i32, |s, x| { *s += x; Some(*s) }).last()",
+        "Some(6i32)",
+        "tests/iter_scan_last_good.rs",
+    );
+    assert_eq!(
+        dug_eq_ctor_name_pairs(&good),
+        vec![("opt:some".to_string(), "opt:some".to_string())],
+        "`.scan(..).last()` must ground to opt:some(6): {:?}",
+        good.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&good), "iter_scan_last_good") {
+        assert!(sat, "opt:some(6)==opt:some(6) must be SAT");
+    }
+    // TEETH: wrong expected (7) must be z3-UNSAT.
+    let bad = lift_eq_decl(
+        "[1i32, 2, 3].iter().copied().scan(0i32, |s, x| { *s += x; Some(*s) }).last()",
+        "Some(7i32)",
+        "tests/iter_scan_last_bad.rs",
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&bad), "iter_scan_last_bad") {
+        assert!(
+            !sat,
+            "opt:some(6)==opt:some(7) -- real contradiction -- must be z3-UNSAT"
+        );
+    }
+}
+
+#[test]
+fn iter_scan_sum_over_literal_digs_with_teeth() {
+    // POSITIVE: cumsum [1,3,6]; `.sum::<i32>()` = 1+3+6 = 10.
+    // Grounded `10 == 10` → SAT.
+    let good = lift_eq_decl(
+        "[1i32, 2, 3].iter().copied().scan(0i32, |s, x| { *s += x; Some(*s) }).sum::<i32>()",
+        "10i32",
+        "tests/iter_scan_sum_good.rs",
+    );
+    assert_eq!(
+        dug_eq_int_pairs(&good),
+        vec![(10, 10)],
+        "`.scan(..).sum()` must ground to the exact total 10: {:?}",
+        good.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&good), "iter_scan_sum_good") {
+        assert!(sat, "10==10 must be SAT");
+    }
+    // TEETH: wrong total (11) must be z3-UNSAT.
+    let bad = lift_eq_decl(
+        "[1i32, 2, 3].iter().copied().scan(0i32, |s, x| { *s += x; Some(*s) }).sum::<i32>()",
+        "11i32",
+        "tests/iter_scan_sum_bad.rs",
+    );
+    assert_eq!(
+        dug_eq_int_pairs(&bad),
+        vec![(10, 11)],
+        "the bad twin must carry the REAL total 10 against the wrong 11 (refutable): {:?}",
+        bad.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&bad), "iter_scan_sum_bad") {
+        assert!(!sat, "10==11 -- real contradiction -- must be z3-UNSAT");
+    }
+}
