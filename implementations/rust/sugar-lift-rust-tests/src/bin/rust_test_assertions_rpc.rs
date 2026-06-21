@@ -28,6 +28,70 @@ const COMPONENT_PLAN_RPC_METHOD: &str = "sugar.component.plan";
 const RESOLVE_PROOF_BY_CID_RPC_METHOD: &str = "sugar.plugin.resolve_proof_by_cid";
 const RESOLVE_SOURCE_MEMENTO_RPC_METHOD: &str = "sugar.plugin.resolve_source_memento";
 
+fn current_rss_kib() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let status = std::fs::read_to_string("/proc/self/status").ok()?;
+        status.lines().find_map(|line| {
+            let rest = line.strip_prefix("VmRSS:")?;
+            rest.split_whitespace().next()?.parse::<u64>().ok()
+        })
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+fn rss_delta_kib(before: Option<u64>, after: Option<u64>) -> Option<u64> {
+    Some(after?.saturating_sub(before?))
+}
+
+fn json_array_len(value: &Value, keys: &[&str]) -> usize {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_array).map(Vec::len))
+        .unwrap_or(0)
+}
+
+fn trace_lift_rpc_checkpoint(stage: &'static str, response: &Value) {
+    trace_lift_rpc_checkpoint_with_extra(stage, response, 0, None);
+}
+
+fn trace_lift_rpc_checkpoint_with_extra(
+    stage: &'static str,
+    response: &Value,
+    output_bytes: usize,
+    rss_delta_kib: Option<u64>,
+) {
+    let rss_kib = current_rss_kib();
+    info!(
+        stage = stage,
+        rss_kib = rss_kib.unwrap_or_default(),
+        rss_available = rss_kib.is_some(),
+        rss_delta_kib = rss_delta_kib.unwrap_or_default(),
+        output_bytes = output_bytes,
+        contracts = json_array_len(response, &["ir"]),
+        source_audits = json_array_len(response, &["sourceAudits", "source_audits"]),
+        factory_audits = json_array_len(response, &["factoryAudits", "factory_audits"]),
+        assertion_surface_audits = json_array_len(
+            response,
+            &["assertionSurfaceAudits", "assertion_surface_audits"]
+        ),
+        source_mementos = json_array_len(response, &["sourceMementos", "source_mementos"]),
+        call_edges = json_array_len(response, &["callEdges", "call_edges"]),
+        vendor_conjoins = json_array_len(
+            response,
+            &[
+                "vendorConjoins",
+                "vendor_conjoins",
+                "linkerConjoins",
+                "linker_conjoins"
+            ]
+        ),
+        "rust-test-assertions memory checkpoint"
+    );
+}
+
 fn initialize_result() -> Value {
     json!({
         "name": "sugar-lift-rust-tests-rpc",
@@ -106,6 +170,7 @@ fn component_plan_result(params: &Value) -> Value {
 }
 
 fn lift(params: &Value) -> Value {
+    trace_lift_rpc_checkpoint("lift.start", &Value::Null);
     let workspace_root = params
         .get("workspace_root")
         .and_then(Value::as_str)
@@ -147,6 +212,8 @@ fn lift(params: &Value) -> Value {
         workspace_root = %workspace_root.display(),
         requested_count = requested.len(),
         rust_files = rel_paths.len(),
+        rss_kib = current_rss_kib().unwrap_or_default(),
+        rss_available = current_rss_kib().is_some(),
         "rust-test-assertions source enumeration complete"
     );
 
@@ -179,17 +246,39 @@ fn lift(params: &Value) -> Value {
         }
     };
     let parsed_sources = read_parsed_sources(&workspace_root, &rel_paths, &mut diagnostics);
+    info!(
+        parsed_sources = parsed_sources.len(),
+        diagnostics = diagnostics.len(),
+        rss_kib = current_rss_kib().unwrap_or_default(),
+        rss_available = current_rss_kib().is_some(),
+        "rust-test-assertions parsed sources complete"
+    );
     let macro_imports = MacroRegistry::new();
     let const_imports = build_const_source_registry(&parsed_sources);
+    info!(
+        parsed_sources = parsed_sources.len(),
+        rss_kib = current_rss_kib().unwrap_or_default(),
+        rss_available = current_rss_kib().is_some(),
+        "rust-test-assertions const registry complete"
+    );
     let fn_imports = build_function_source_registry(&parsed_sources);
+    info!(
+        parsed_sources = parsed_sources.len(),
+        rss_kib = current_rss_kib().unwrap_or_default(),
+        rss_available = current_rss_kib().is_some(),
+        "rust-test-assertions function registry complete"
+    );
     for (file_index, source) in parsed_sources.iter().enumerate() {
         let rel = source.rel.as_str();
         info!(
             file = rel,
             file_index = file_index + 1,
             file_total = rel_paths.len(),
+            rss_kib = current_rss_kib().unwrap_or_default(),
+            rss_available = current_rss_kib().is_some(),
             "rust-test-assertions file lift start"
         );
+        let file_rss_before = current_rss_kib();
         let src = source.src.as_str();
         let file = &source.file;
         let out = lift_file_with_all_source_imports(
@@ -209,10 +298,38 @@ fn lift(params: &Value) -> Value {
             assertions_refused = out.assertions_refused,
             warnings = out.warnings.len(),
             assertion_facts = out.assertion_facts.len(),
+            decls = out.decls.len(),
+            factory_audits = out.factory_audits.len(),
+            rss_kib = current_rss_kib().unwrap_or_default(),
+            rss_available = current_rss_kib().is_some(),
+            rss_delta_kib = rss_delta_kib(file_rss_before, current_rss_kib()).unwrap_or_default(),
             "rust-test-assertions file lift complete"
         );
+        let marshal_rss_before = current_rss_kib();
         let marshalled = marshal_declarations(&out.decls);
+        info!(
+            file = rel,
+            file_index = file_index + 1,
+            file_total = rel_paths.len(),
+            marshalled_bytes = marshalled.len(),
+            rss_kib = current_rss_kib().unwrap_or_default(),
+            rss_available = current_rss_kib().is_some(),
+            rss_delta_kib =
+                rss_delta_kib(marshal_rss_before, current_rss_kib()).unwrap_or_default(),
+            "rust-test-assertions declarations marshalled"
+        );
+        let parse_rss_before = current_rss_kib();
         let parsed: Value = serde_json::from_str(&marshalled).unwrap_or_else(|_| json!([]));
+        info!(
+            file = rel,
+            file_index = file_index + 1,
+            file_total = rel_paths.len(),
+            assertion_entries = parsed.as_array().map(Vec::len).unwrap_or(0),
+            rss_kib = current_rss_kib().unwrap_or_default(),
+            rss_available = current_rss_kib().is_some(),
+            rss_delta_kib = rss_delta_kib(parse_rss_before, current_rss_kib()).unwrap_or_default(),
+            "rust-test-assertions declarations parsed"
+        );
         let mut assertion_entries = Vec::new();
         if let Some(arr) = parsed.as_array() {
             assertion_entries.extend(arr.iter().cloned());
@@ -357,11 +474,29 @@ fn lift(params: &Value) -> Value {
         // unresolved (the conservative refuse-floor); the oracle never warrants
         // here (RefClean does not rule out IO/panic the signature can't show).
         oracle_reclassify_mutating(&workspace_root, rel, &oracle_pending, &mut source_loci);
+        info!(
+            file = rel,
+            file_index = file_index + 1,
+            file_total = rel_paths.len(),
+            entries = entries.len(),
+            diagnostics = diagnostics.len(),
+            source_loci = source_loci.len(),
+            source_mementos = source_mementos.len(),
+            factory_audits = factory_audits.len(),
+            assertion_surface_audits = assertion_surface_audits.len(),
+            rss_kib = current_rss_kib().unwrap_or_default(),
+            rss_available = current_rss_kib().is_some(),
+            "rust-test-assertions file aggregation complete"
+        );
     }
 
+    trace_lift_rpc_checkpoint("lift.before_ledger", &Value::Null);
     let ledger = source_ledger(&source_loci);
+    trace_lift_rpc_checkpoint("lift.after_ledger", &Value::Null);
     let call_edges = call_edges_for_report(&entries);
+    trace_lift_rpc_checkpoint("lift.after_call_edges", &Value::Null);
     let vendor_conjoins = vendor_conjoins_for_report(&workspace_root, &entries);
+    trace_lift_rpc_checkpoint("lift.after_vendor_conjoins", &Value::Null);
     info!(
         source_loci = ledger
             .get("source_loci")
@@ -381,7 +516,8 @@ fn lift(params: &Value) -> Value {
         diagnostics = diagnostics.len(),
         "rust-test-assertions lift complete"
     );
-    json!({
+    let before = current_rss_kib();
+    let response = json!({
         "kind": "ir-document",
         "ir": entries,
         "diagnostics": diagnostics,
@@ -399,7 +535,14 @@ fn lift(params: &Value) -> Value {
         "sourceMementos": source_mementos,
         "vendorConjoins": vendor_conjoins,
         "assertionSurfaceAudits": assertion_surface_audits,
-    })
+    });
+    trace_lift_rpc_checkpoint_with_extra(
+        "lift.after_response_json_assembly",
+        &response,
+        0,
+        rss_delta_kib(before, current_rss_kib()),
+    );
+    response
 }
 
 struct ParsedSource {
@@ -1761,9 +1904,19 @@ fn format_source_memento_for_report(memento: &Value) -> String {
 }
 
 fn send(obj: &Value) {
+    let before = current_rss_kib();
+    let rendered = serde_json::to_string(obj).unwrap_or_default();
+    let result = obj.get("result").unwrap_or(&Value::Null);
+    trace_lift_rpc_checkpoint_with_extra(
+        "rpc.send.after_serialize",
+        result,
+        rendered.len(),
+        rss_delta_kib(before, current_rss_kib()),
+    );
     let mut out = std::io::stdout().lock();
-    let _ = writeln!(out, "{}", serde_json::to_string(obj).unwrap_or_default());
+    let _ = writeln!(out, "{rendered}");
     let _ = out.flush();
+    trace_lift_rpc_checkpoint_with_extra("rpc.send.after_flush", result, rendered.len(), None);
 }
 
 fn err_reply(id: &Value, msg: String) -> Value {
@@ -1772,7 +1925,8 @@ fn err_reply(id: &Value, msg: String) -> Value {
 
 fn handle(id: &Value, method: &str, params: &Value) -> Value {
     debug!(method, "rust-test-assertions rpc request");
-    match method {
+    let before = current_rss_kib();
+    let response = match method {
         "initialize" => json!({"jsonrpc": "2.0", "id": id, "result": initialize_result()}),
         KIT_DECLARATION_RPC_METHOD => {
             json!({"jsonrpc": "2.0", "id": id, "result": kit_declaration_result()})
@@ -1799,7 +1953,14 @@ fn handle(id: &Value, method: &str, params: &Value) -> Value {
         }
         "shutdown" => json!({"jsonrpc": "2.0", "id": id, "result": Value::Null}),
         other => err_reply(id, format!("unknown method: {other}")),
-    }
+    };
+    trace_lift_rpc_checkpoint_with_extra(
+        "rpc.handle.after_response",
+        response.get("result").unwrap_or(&Value::Null),
+        0,
+        rss_delta_kib(before, current_rss_kib()),
+    );
+    response
 }
 
 fn main() {
@@ -2134,6 +2295,26 @@ mod tests {
             broad_functional_warrant("log", &u.sig, &u.block).is_none(),
             "a unit body states no output constraint -> None -> refuse by vacuity"
         );
+    }
+
+    #[test]
+    fn json_array_len_counts_camel_and_snake_case_fields() {
+        let response = json!({
+            "sourceAudits": [1, 2],
+            "factory_audits": [3, 4, 5],
+            "scalar": 9,
+        });
+
+        assert_eq!(
+            json_array_len(&response, &["sourceAudits", "source_audits"]),
+            2
+        );
+        assert_eq!(
+            json_array_len(&response, &["factoryAudits", "factory_audits"]),
+            3
+        );
+        assert_eq!(json_array_len(&response, &["scalar"]), 0);
+        assert_eq!(json_array_len(&response, &["missing"]), 0);
     }
 
     #[test]

@@ -93,9 +93,9 @@ pub mod sugar {
     pub mod identity_map;
     pub mod impl_method;
     pub mod index;
-    pub mod inspect;
     pub mod infinity_eq;
     pub mod insert;
+    pub mod inspect;
     pub mod int_pow;
     pub mod int_sqrt;
     pub mod intersperse_collect_string;

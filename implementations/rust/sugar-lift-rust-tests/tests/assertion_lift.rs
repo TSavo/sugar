@@ -925,7 +925,10 @@ fn for_step_by_over_literal_iter_lifts() {
         out.skip_reasons
     );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_step_by") {
-        assert!(sat, "[1,2,3,4,5].step_by(2) == [1,3,5] == expected -- consistent (SAT)");
+        assert!(
+            sat,
+            "[1,2,3,4,5].step_by(2) == [1,3,5] == expected -- consistent (SAT)"
+        );
     }
 }
 
@@ -945,7 +948,10 @@ fn for_step_by_wrong_expected_is_unsat() {
     "#;
     let out = lift_file(&parse(src), "coretests/iter/step_by_bad.rs");
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_step_by_bad") {
-        assert!(!sat, "x=5 != expected[2]=99 over the stepped domain -- must be UNSAT");
+        assert!(
+            !sat,
+            "x=5 != expected[2]=99 over the stepped domain -- must be UNSAT"
+        );
     }
 }
 
@@ -973,7 +979,10 @@ fn for_skip_then_step_by_composes() {
         out.skip_reasons
     );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_skip_step") {
-        assert!(sat, "skip(1).step_by(2) of [1..6] == [2,4,6] == expected -- consistent (SAT)");
+        assert!(
+            sat,
+            "skip(1).step_by(2) of [1..6] == [2,4,6] == expected -- consistent (SAT)"
+        );
     }
 }
 
@@ -993,7 +1002,10 @@ fn for_inspect_wrong_expected_is_unsat() {
     "#;
     let out = lift_file(&parse(src), "coretests/iter/inspect_bad.rs");
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_inspect_bad") {
-        assert!(!sat, "x=3 != expected[2]=99 over the inspect domain -- must be UNSAT");
+        assert!(
+            !sat,
+            "x=3 != expected[2]=99 over the inspect domain -- must be UNSAT"
+        );
     }
 }
 
@@ -1022,7 +1034,10 @@ fn for_flatten_over_nested_literals_lifts() {
         out.skip_reasons
     );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flatten") {
-        assert!(sat, "[[1,2],[3,4]] flattened == expected -- consistent (SAT)");
+        assert!(
+            sat,
+            "[[1,2],[3,4]] flattened == expected -- consistent (SAT)"
+        );
     }
 }
 
@@ -1042,7 +1057,10 @@ fn for_flatten_wrong_expected_is_unsat() {
     "#;
     let out = lift_file(&parse(src), "coretests/iter/flatten_bad.rs");
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flatten_bad") {
-        assert!(!sat, "x=4 != expected[3]=99 over the flattened domain -- must be UNSAT");
+        assert!(
+            !sat,
+            "x=4 != expected[3]=99 over the flattened domain -- must be UNSAT"
+        );
     }
 }
 
@@ -1069,7 +1087,10 @@ fn for_enumerate_tuple_pattern_lifts() {
         out.skip_reasons
     );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_enum") {
-        assert!(sat, "x == expected[i] at each enumerate index -- consistent (SAT)");
+        assert!(
+            sat,
+            "x == expected[i] at each enumerate index -- consistent (SAT)"
+        );
     }
 }
 
@@ -1088,7 +1109,10 @@ fn for_enumerate_tuple_wrong_expected_is_unsat() {
     "#;
     let out = lift_file(&parse(src), "coretests/iter/enumerate_bad.rs");
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_enum_bad") {
-        assert!(!sat, "x=30 != expected[2]=99 at enumerate index 2 -- must be UNSAT");
+        assert!(
+            !sat,
+            "x=30 != expected[2]=99 at enumerate index 2 -- must be UNSAT"
+        );
     }
 }
 
@@ -1117,7 +1141,10 @@ fn for_flat_map_over_literal_base_lifts() {
         out.skip_reasons
     );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flat_map") {
-        assert!(sat, "[1,2].flat_map(|n| [n, n+10]) == [1,11,2,12] == expected -- SAT");
+        assert!(
+            sat,
+            "[1,2].flat_map(|n| [n, n+10]) == [1,11,2,12] == expected -- SAT"
+        );
     }
 }
 
@@ -1138,7 +1165,10 @@ fn for_flat_map_wrong_expected_is_unsat() {
     "#;
     let out = lift_file(&parse(src), "coretests/iter/flat_map_bad.rs");
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flat_map_bad") {
-        assert!(!sat, "x=12 != expected[3]=99 over the flat_mapped domain -- must be UNSAT");
+        assert!(
+            !sat,
+            "x=12 != expected[3]=99 over the flat_mapped domain -- must be UNSAT"
+        );
     }
 }
 
@@ -1168,7 +1198,10 @@ fn for_flat_map_range_body_lifts() {
         out.skip_reasons
     );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flat_map_range") {
-        assert!(sat, "[1,2,3].flat_map(|&n| 0..n) == [0,0,1,0,1,2] == expected -- SAT");
+        assert!(
+            sat,
+            "[1,2,3].flat_map(|&n| 0..n) == [0,0,1,0,1,2] == expected -- SAT"
+        );
     }
 }
 
@@ -1188,7 +1221,10 @@ fn for_flat_map_range_body_wrong_expected_is_unsat() {
     "#;
     let out = lift_file(&parse(src), "coretests/iter/flat_map_range_bad.rs");
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flat_map_range_bad") {
-        assert!(!sat, "x=2 != expected[5]=99 over the range-flat_mapped domain -- must be UNSAT");
+        assert!(
+            !sat,
+            "x=2 != expected[5]=99 over the range-flat_mapped domain -- must be UNSAT"
+        );
     }
 }
 
@@ -1243,7 +1279,10 @@ fn while_let_next_if_wrong_expected_is_unsat() {
     "#;
     let out = lift_file(&parse(src), "coretests/iter/peekable_bad.rs");
     if let Some(sat) = z3_verdict(&peek_consistency_inv(&out), "t_peek_bad") {
-        assert!(!sat, "x=2 != expected[1]=99 over the consumed prefix -- must be UNSAT");
+        assert!(
+            !sat,
+            "x=2 != expected[1]=99 over the consumed prefix -- must be UNSAT"
+        );
     }
 }
 

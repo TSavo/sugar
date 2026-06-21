@@ -1919,7 +1919,7 @@ fn domain_claim_to_value(claim: &DomainClaim) -> Arc<CValue> {
         None => CValue::null(),
     };
 
-    let mut fields = vec![
+    let fields = vec![
         ("artifacts", CValue::array(artifact_values)),
         ("contract", contract_to_cvalue(&claim.contract)),
         (
@@ -1935,12 +1935,9 @@ fn domain_claim_to_value(claim: &DomainClaim) -> Arc<CValue> {
         ),
         ("witness", witness_value),
     ];
-    if let Some(payload) = &claim.payload {
-        fields.push((
-            "payload",
-            json_to_cvalue(serde_json::to_value(payload).expect("payload term serializes")),
-        ));
-    }
+    // `payload` is a materialized artifact cache. Claim identity is pinned by
+    // `to` and `artifacts`; including the payload here duplicates addressed
+    // bytes and makes large lift responses part of the claim envelope.
     CValue::object(fields)
 }
 
@@ -2074,6 +2071,45 @@ mod tests {
         Term::Var {
             name: name.to_string(),
         }
+    }
+
+    fn claim_with_payload(payload: Option<Term>) -> DomainClaim {
+        let output_cid = cid('a');
+        DomainClaim {
+            domain: DomainKind::Other("test".to_string()),
+            contract: memento_from_parts(
+                "test::payload-cache".to_string(),
+                vec!["x".to_string()],
+                vec![any_sort()],
+                any_sort(),
+                formula_true(),
+                formula_true(),
+                Some(output_cid.as_str().to_string()),
+            ),
+            artifacts: vec![output_cid.clone()],
+            from: vec![cid('b')],
+            premises: vec![],
+            to: output_cid,
+            witness: None,
+            payload,
+            verdict: Verdict::Unresolved,
+            attestation: None,
+        }
+    }
+
+    #[test]
+    fn domain_claim_identity_ignores_materialized_payload_cache() {
+        let with_payload = claim_with_payload(Some(Term::Const {
+            value: serde_json::json!({"large": "response"}),
+            sort: any_sort(),
+        }));
+        let without_payload = claim_with_payload(None);
+
+        assert_eq!(
+            with_payload.canonical_bytes(),
+            without_payload.canonical_bytes()
+        );
+        assert_eq!(with_payload.cid(), without_payload.cid());
     }
 
     #[test]

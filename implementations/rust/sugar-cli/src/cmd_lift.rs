@@ -67,6 +67,9 @@ pub fn run(args: LiftArgs) -> u8 {
     match lift_plugin::dispatch_lift_path(&project_root, &surface, lift_options, true) {
         Ok(session) => {
             let response = session.response();
+            if args.report {
+                trace_lift_report_response("after_lift_plugin_response", response);
+            }
             if args.identify_only
                 && response
                     .get("kind")
@@ -86,6 +89,7 @@ pub fn run(args: LiftArgs) -> u8 {
                 return EXIT_VERIFY_FAIL;
             }
             if args.report {
+                trace_lift_report_checkpoint("before_source_report_from_lift_response");
                 let report =
                     match source_report_from_lift_response(response, args.contract.as_deref()) {
                         Ok(report) => report,
@@ -94,7 +98,9 @@ pub fn run(args: LiftArgs) -> u8 {
                             return EXIT_USER_ERROR;
                         }
                     };
+                trace_lift_source_report("after_source_report_from_lift_response", &report);
                 let prove_with = if args.prove {
+                    trace_lift_report_checkpoint("before_prepare_lift_report_prove_inputs");
                     match prepare_lift_report_prove_inputs(
                         &project_root,
                         &project_cfg,
@@ -112,9 +118,22 @@ pub fn run(args: LiftArgs) -> u8 {
                 } else {
                     Vec::new()
                 };
+                if args.prove {
+                    tracing::info!(
+                        stage = "after_prepare_lift_report_prove_inputs",
+                        rss_kib = current_rss_kib().unwrap_or_default(),
+                        rss_available = current_rss_kib().is_some(),
+                        prove_inputs = prove_with.len(),
+                        "lift-report memory checkpoint"
+                    );
+                }
                 let prove_report = if args.prove {
+                    trace_lift_report_checkpoint("before_build_prove_report");
                     match cmd_prove::build_prove_report(&project_root, &args.z3, &prove_with) {
-                        Ok(prove_report) => Some(prove_report),
+                        Ok(prove_report) => {
+                            trace_lift_report_checkpoint("after_build_prove_report");
+                            Some(prove_report)
+                        }
                         Err(error) => {
                             eprintln!("{}: prove report: {error}", "error".red().bold());
                             return EXIT_USER_ERROR;
@@ -127,6 +146,7 @@ pub fn run(args: LiftArgs) -> u8 {
                 if let Some(prove_report) = &prove_report {
                     hard_failure |= report_fmt::report_exit_code(prove_report) != EXIT_OK;
                 }
+                trace_lift_source_report("before_render_report", &report);
                 let rendered = if args.out.json {
                     match render_report_json(&report, prove_report.as_ref()) {
                         Ok(rendered) => rendered,
@@ -138,10 +158,12 @@ pub fn run(args: LiftArgs) -> u8 {
                 } else {
                     render_report_human(&report, prove_report.as_ref())
                 };
+                trace_lift_render_checkpoint("after_render_report", rendered.len());
                 if let Err(error) = write_output(None, rendered.as_bytes()) {
                     eprintln!("{}: {error}", "error".red().bold());
                     return EXIT_USER_ERROR;
                 }
+                trace_lift_render_checkpoint("after_write_report", rendered.len());
                 if hard_failure {
                     return EXIT_VERIFY_FAIL;
                 }
@@ -506,6 +528,240 @@ const SOURCE_LEDGER_FIELDS: [&str; 8] = [
     "unclassified_source",
 ];
 
+const LIFT_REPORT_TRACE_EVERY: usize = 500;
+const LIFT_REPORT_RSS_JUMP_KIB: u64 = 64 * 1024;
+
+fn lift_report_array_len(value: &Value, keys: &[&str]) -> usize {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_array).map(Vec::len))
+        .unwrap_or(0)
+}
+
+fn current_rss_kib() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let status = std::fs::read_to_string("/proc/self/status").ok()?;
+        status.lines().find_map(|line| {
+            let rest = line.strip_prefix("VmRSS:")?;
+            rest.split_whitespace().next()?.parse::<u64>().ok()
+        })
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+fn lift_report_ledger_count(ledger: &Value, keys: &[&str]) -> u64 {
+    keys.iter()
+        .find_map(|key| ledger.get(*key).and_then(Value::as_u64))
+        .unwrap_or(0)
+}
+
+fn trace_lift_report_checkpoint(stage: &'static str) {
+    let rss_kib = current_rss_kib();
+    tracing::info!(
+        stage = stage,
+        rss_kib = rss_kib.unwrap_or_default(),
+        rss_available = rss_kib.is_some(),
+        "lift-report memory checkpoint"
+    );
+}
+
+fn trace_lift_collection_checkpoint(stage: &'static str, rows: usize) {
+    let rss_kib = current_rss_kib();
+    tracing::info!(
+        stage = stage,
+        rss_kib = rss_kib.unwrap_or_default(),
+        rss_available = rss_kib.is_some(),
+        rows = rows,
+        "lift-report memory checkpoint"
+    );
+}
+
+fn trace_lift_report_response(stage: &'static str, response: &Value) {
+    let ledger = response.get("sourceLedger").unwrap_or(&Value::Null);
+    let rss_kib = current_rss_kib();
+    tracing::info!(
+        stage = stage,
+        rss_kib = rss_kib.unwrap_or_default(),
+        rss_available = rss_kib.is_some(),
+        source_loci = lift_report_ledger_count(ledger, &["source_loci"]),
+        source_warranted = lift_report_ledger_count(ledger, &["source_warranted"]),
+        source_unresolved =
+            lift_report_ledger_count(ledger, &["source_unresolved", "unclassified_source"]),
+        source_audits = lift_report_array_len(response, &["sourceAudits", "source_audits"]),
+        factory_audits = lift_report_array_len(response, &["factoryAudits", "factory_audits"]),
+        assertion_surface_audits = lift_report_array_len(
+            response,
+            &["assertionSurfaceAudits", "assertion_surface_audits"]
+        ),
+        source_mementos = lift_report_array_len(response, &["sourceMementos", "source_mementos"]),
+        contracts = lift_report_array_len(response, &["ir"]),
+        call_edges = lift_report_array_len(response, &["callEdges", "call_edges"]),
+        vendor_conjoins = lift_report_array_len(
+            response,
+            &[
+                "vendorConjoins",
+                "vendor_conjoins",
+                "linkerConjoins",
+                "linker_conjoins"
+            ]
+        ),
+        "lift-report memory checkpoint"
+    );
+}
+
+fn trace_lift_source_report(stage: &'static str, report: &LiftSourceReport) {
+    let rss_kib = current_rss_kib();
+    tracing::info!(
+        stage = stage,
+        rss_kib = rss_kib.unwrap_or_default(),
+        rss_available = rss_kib.is_some(),
+        source_loci = lift_report_ledger_count(&report.ledger, &["source_loci"]),
+        source_warranted = lift_report_ledger_count(&report.ledger, &["source_warranted"]),
+        source_unresolved = lift_report_ledger_count(
+            &report.ledger,
+            &["source_unresolved", "unclassified_source"]
+        ),
+        source_audits = report.audits.len(),
+        factory_audits = report.factory_audits.len(),
+        assertion_surface_audits = report.assertion_surface_audits.len(),
+        source_mementos = report.source_mementos.len(),
+        contracts = report.contracts.len(),
+        call_edges = report.call_edges.len(),
+        vendor_conjoins = report.vendor_conjoins.len(),
+        "lift-report memory checkpoint"
+    );
+}
+
+fn trace_lift_render_checkpoint(stage: &'static str, rendered_bytes: usize) {
+    let rss_kib = current_rss_kib();
+    tracing::info!(
+        stage = stage,
+        rss_kib = rss_kib.unwrap_or_default(),
+        rss_available = rss_kib.is_some(),
+        rendered_bytes = rendered_bytes,
+        "lift-report memory checkpoint"
+    );
+}
+
+fn clone_matching_report_values(
+    stage: &'static str,
+    rows: &[Value],
+    mut matches: impl FnMut(&Value) -> bool,
+    mut map: impl FnMut(Value) -> Value,
+) -> Vec<Value> {
+    let mut selected = Vec::new();
+    for (input_index, row) in rows.iter().enumerate() {
+        if !matches(row) {
+            continue;
+        }
+        let selected_index = selected.len();
+        if selected_index % LIFT_REPORT_TRACE_EVERY == 0 {
+            trace_lift_report_value_progress(
+                stage,
+                "before_clone",
+                input_index,
+                selected_index,
+                rows.len(),
+                row,
+                None,
+            );
+        }
+        let before = current_rss_kib();
+        let cloned = map(row.clone());
+        let after = current_rss_kib();
+        if selected_index % LIFT_REPORT_TRACE_EVERY == 0 {
+            trace_lift_report_value_progress(
+                stage,
+                "after_clone",
+                input_index,
+                selected_index,
+                rows.len(),
+                row,
+                rss_delta_kib(before, after),
+            );
+        }
+        if rss_delta_kib(before, after).unwrap_or(0) >= LIFT_REPORT_RSS_JUMP_KIB {
+            trace_lift_report_value_progress(
+                stage,
+                "rss_jump_after_clone",
+                input_index,
+                selected_index,
+                rows.len(),
+                row,
+                rss_delta_kib(before, after),
+            );
+        }
+        selected.push(cloned);
+    }
+    selected
+}
+
+fn rss_delta_kib(before: Option<u64>, after: Option<u64>) -> Option<u64> {
+    Some(after?.saturating_sub(before?))
+}
+
+fn trace_lift_report_value_progress(
+    stage: &'static str,
+    event: &'static str,
+    input_index: usize,
+    selected_index: usize,
+    total_rows: usize,
+    value: &Value,
+    rss_delta_kib: Option<u64>,
+) {
+    let rss_kib = current_rss_kib();
+    let (source_file, source_line) = report_value_source_hint(value);
+    tracing::info!(
+        stage = stage,
+        event = event,
+        rss_kib = rss_kib.unwrap_or_default(),
+        rss_available = rss_kib.is_some(),
+        rss_delta_kib = rss_delta_kib.unwrap_or_default(),
+        input_index = input_index,
+        selected_index = selected_index,
+        total_rows = total_rows,
+        value_name = report_value_name(value),
+        source_file = source_file,
+        source_line = source_line,
+        "lift-report memory checkpoint"
+    );
+}
+
+fn report_value_name(value: &Value) -> &str {
+    contract_value_name(value)
+        .or_else(|| contract_name(value))
+        .or_else(|| source_function_name(value))
+        .or_else(|| value.get("role").and_then(Value::as_str))
+        .unwrap_or("<unknown>")
+}
+
+fn report_value_source_hint(value: &Value) -> (&str, i64) {
+    contract_source_warrant(value)
+        .map(source_file_line_hint)
+        .unwrap_or_else(|| source_file_line_hint(value))
+}
+
+fn source_file_line_hint(source: &Value) -> (&str, i64) {
+    let file = source
+        .get("file")
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown file>");
+    let line = source
+        .get("line")
+        .and_then(Value::as_i64)
+        .or_else(|| {
+            source
+                .get("span")
+                .and_then(|span| span.get("start_line"))
+                .and_then(Value::as_i64)
+        })
+        .unwrap_or(-1);
+    (file, line)
+}
+
 fn source_report_from_lift_response(
     response: &Value,
     contract_filter: Option<&str>,
@@ -548,6 +804,15 @@ fn source_report_from_lift_response(
             audit
         })
         .collect();
+    tracing::info!(
+        stage = "source_report.filtered_audits",
+        rss_kib = current_rss_kib().unwrap_or_default(),
+        rss_available = current_rss_kib().is_some(),
+        audits = filtered_audits.len(),
+        moved_support_loci = moved_support_loci,
+        contract_filter = contract_filter.unwrap_or("<none>"),
+        "lift-report memory checkpoint"
+    );
 
     if contract_filter.is_some() && filtered_audits.is_empty() {
         return Err(format!(
@@ -561,14 +826,27 @@ fn source_report_from_lift_response(
     } else {
         normalize_source_ledger_support(ledger.clone(), moved_support_loci)
     };
+    trace_lift_collection_checkpoint(
+        "source_report.ledger",
+        ledger.as_object().map_or(0, Map::len),
+    );
     let factory_audits = matching_report_factory_audits(response, contract_filter);
+    trace_lift_collection_checkpoint("source_report.factory_audits", factory_audits.len());
     let assertion_surface_audits =
         matching_report_assertion_surface_audits(response, contract_filter);
+    trace_lift_collection_checkpoint(
+        "source_report.assertion_surface_audits",
+        assertion_surface_audits.len(),
+    );
     let contracts = matching_report_contracts(response, contract_filter, &filtered_audits);
+    trace_lift_collection_checkpoint("source_report.contracts", contracts.len());
     let call_edges = matching_report_call_edges(response, contract_filter, &filtered_audits);
+    trace_lift_collection_checkpoint("source_report.call_edges", call_edges.len());
     let source_mementos =
         matching_report_source_mementos(response, contract_filter, &filtered_audits)?;
+    trace_lift_collection_checkpoint("source_report.source_mementos", source_mementos.len());
     let vendor_conjoins = vendor_conjoins_from_lift_response(response, contract_filter)?;
+    trace_lift_collection_checkpoint("source_report.vendor_conjoins", vendor_conjoins.len());
 
     Ok(LiftSourceReport {
         ledger,
@@ -596,7 +874,12 @@ fn matching_report_source_mementos(
                 .to_string()
         })?;
     if contract_filter.is_none() {
-        return Ok(mementos.clone());
+        return Ok(clone_matching_report_values(
+            "matching_report_source_mementos",
+            mementos,
+            |_| true,
+            |row| row,
+        ));
     }
 
     let audit_bases = audits
@@ -605,9 +888,10 @@ fn matching_report_source_mementos(
         .map(contract_group_key)
         .collect::<Vec<_>>();
     let filter = contract_filter.unwrap();
-    Ok(mementos
-        .iter()
-        .filter(|memento| {
+    Ok(clone_matching_report_values(
+        "matching_report_source_mementos",
+        mementos,
+        |memento| {
             let names = [
                 memento.get("claimName").and_then(Value::as_str),
                 memento.get("contractName").and_then(Value::as_str),
@@ -623,9 +907,9 @@ fn matching_report_source_mementos(
                     let group = contract_group_key(name);
                     audit_bases.iter().any(|base| base == &group)
                 })
-        })
-        .cloned()
-        .collect())
+        },
+        |row| row,
+    ))
 }
 
 fn matching_report_contracts(
@@ -641,18 +925,19 @@ fn matching_report_contracts(
         .filter_map(contract_name)
         .map(contract_group_key)
         .collect::<Vec<_>>();
-    contracts
-        .iter()
-        .filter(|contract| {
+    clone_matching_report_values(
+        "matching_report_contracts",
+        contracts,
+        |contract| {
             let Some(name) = contract_value_name(contract) else {
                 return false;
             };
             let group = contract_group_key(name);
             contract_filter.is_none_or(|filter| name.contains(filter))
                 || audit_bases.iter().any(|base| base == &group)
-        })
-        .cloned()
-        .collect()
+        },
+        |row| row,
+    )
 }
 
 fn matching_report_call_edges(
@@ -668,7 +953,12 @@ fn matching_report_call_edges(
         return Vec::new();
     };
     if contract_filter.is_none() {
-        return edges.clone();
+        return clone_matching_report_values(
+            "matching_report_call_edges",
+            edges,
+            |_| true,
+            |row| row,
+        );
     }
 
     let audit_bases = audits
@@ -677,11 +967,12 @@ fn matching_report_call_edges(
         .map(contract_group_key)
         .collect::<Vec<_>>();
     let filter = contract_filter.unwrap();
-    edges
-        .iter()
-        .filter(|edge| call_edge_matches_filter(edge, filter, &audit_bases))
-        .cloned()
-        .collect()
+    clone_matching_report_values(
+        "matching_report_call_edges",
+        edges,
+        |edge| call_edge_matches_filter(edge, filter, &audit_bases),
+        |row| row,
+    )
 }
 
 fn call_edge_matches_filter(edge: &Value, filter: &str, audit_bases: &[String]) -> bool {
@@ -722,12 +1013,12 @@ fn matching_report_factory_audits(response: &Value, contract_filter: Option<&str
     else {
         return Vec::new();
     };
-    rows.iter()
-        .filter(|row| {
-            contract_filter.is_none_or(|filter| factory_audit_matches_filter(row, filter))
-        })
-        .cloned()
-        .collect()
+    clone_matching_report_values(
+        "matching_report_factory_audits",
+        rows,
+        |row| contract_filter.is_none_or(|filter| factory_audit_matches_filter(row, filter)),
+        |row| row,
+    )
 }
 
 fn matching_report_assertion_surface_audits(
@@ -741,12 +1032,14 @@ fn matching_report_assertion_surface_audits(
     else {
         return Vec::new();
     };
-    rows.iter()
-        .filter(|row| {
+    clone_matching_report_values(
+        "matching_report_assertion_surface_audits",
+        rows,
+        |row| {
             contract_filter.is_none_or(|filter| assertion_surface_audit_matches_filter(row, filter))
-        })
-        .map(|row| normalize_assertion_surface_audit(row.clone()))
-        .collect()
+        },
+        normalize_assertion_surface_audit,
+    )
 }
 
 fn normalize_assertion_surface_audit(mut row: Value) -> Value {
@@ -1165,12 +1458,23 @@ fn render_report_json(
 }
 
 fn render_source_report_human(report: &LiftSourceReport) -> String {
+    trace_lift_source_report("render_source_report_human.start", report);
     let mut out = String::new();
     out.push_str(&format!(
         "source audit: {}\n",
         format_counts(&report.ledger)
     ));
     let universes = distinct_universes_per_method(&report.contracts);
+    tracing::info!(
+        stage = "render_source_report_human.after_superposition_scan",
+        rss_kib = current_rss_kib().unwrap_or_default(),
+        rss_available = current_rss_kib().is_some(),
+        methods = universes.len(),
+        universes = universes.values().map(Vec::len).sum::<usize>(),
+        contracts = report.contracts.len(),
+        rendered_bytes = out.len(),
+        "lift-report memory checkpoint"
+    );
     if !universes.is_empty() {
         let distinct_universes: usize = universes.values().map(Vec::len).sum();
         out.push_str(&format!(
@@ -1243,10 +1547,23 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
             ));
         }
     }
+    trace_lift_render_checkpoint(
+        "render_source_report_human.after_call_vendor_sections",
+        out.len(),
+    );
     out.push_str(&render_assertion_surface_accounting(report));
+    trace_lift_render_checkpoint(
+        "render_source_report_human.after_assertion_surface_accounting",
+        out.len(),
+    );
     out.push_str(&render_factory_accounting(&report.factory_audits));
+    trace_lift_render_checkpoint(
+        "render_source_report_human.after_factory_accounting",
+        out.len(),
+    );
     if report.audits.is_empty() {
         out.push_str("no source audits emitted\n");
+        trace_lift_render_checkpoint("render_source_report_human.end", out.len());
         return out;
     }
 
@@ -1274,8 +1591,28 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
             group_keys.push(key);
         }
     }
+    tracing::info!(
+        stage = "render_source_report_human.after_group_key_collection",
+        rss_kib = current_rss_kib().unwrap_or_default(),
+        rss_available = current_rss_kib().is_some(),
+        group_keys = group_keys.len(),
+        rendered_bytes = out.len(),
+        "lift-report memory checkpoint"
+    );
 
-    for group_key in group_keys {
+    let group_count = group_keys.len();
+    for (group_index, group_key) in group_keys.into_iter().enumerate() {
+        if group_index % 250 == 0 {
+            tracing::info!(
+                stage = "render_source_report_human.group_progress",
+                rss_kib = current_rss_kib().unwrap_or_default(),
+                rss_available = current_rss_kib().is_some(),
+                group_index = group_index,
+                group_count = group_count,
+                rendered_bytes = out.len(),
+                "lift-report memory checkpoint"
+            );
+        }
         let group_audits = report
             .audits
             .iter()
@@ -1496,6 +1833,7 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
         }
     }
 
+    trace_lift_render_checkpoint("render_source_report_human.end", out.len());
     out
 }
 
@@ -2170,6 +2508,7 @@ fn render_assertion_surface_accounting(report: &LiftSourceReport) -> String {
     if report.assertion_surface_audits.is_empty() {
         return String::new();
     }
+    trace_lift_source_report("render_assertion_surface_accounting.start", report);
 
     let facts_by_contract = report
         .contracts
@@ -2199,6 +2538,10 @@ fn render_assertion_surface_accounting(report: &LiftSourceReport) -> String {
         total_support,
         no_fact_count
     );
+    trace_lift_render_checkpoint(
+        "render_assertion_surface_accounting.after_header",
+        out.len(),
+    );
 
     let mut rows = report.assertion_surface_audits.iter().collect::<Vec<_>>();
     rows.sort_by_key(|row| {
@@ -2212,6 +2555,15 @@ fn render_assertion_surface_accounting(report: &LiftSourceReport) -> String {
             assertion_surface_name(row).to_string(),
         )
     });
+    tracing::info!(
+        stage = "render_assertion_surface_accounting.after_sort",
+        rss_kib = current_rss_kib().unwrap_or_default(),
+        rss_available = current_rss_kib().is_some(),
+        rows = rows.len(),
+        contracts = report.contracts.len(),
+        rendered_bytes = out.len(),
+        "lift-report memory checkpoint"
+    );
 
     let emitted = rows
         .iter()
@@ -2244,6 +2596,10 @@ fn render_assertion_surface_accounting(report: &LiftSourceReport) -> String {
             }
         }
     }
+    trace_lift_render_checkpoint(
+        "render_assertion_surface_accounting.after_emitted",
+        out.len(),
+    );
 
     let support_only = rows
         .iter()
@@ -2272,6 +2628,10 @@ fn render_assertion_surface_accounting(report: &LiftSourceReport) -> String {
             }
         }
     }
+    trace_lift_render_checkpoint(
+        "render_assertion_surface_accounting.after_support_only",
+        out.len(),
+    );
 
     let no_facts = rows
         .iter()
@@ -2301,6 +2661,7 @@ fn render_assertion_surface_accounting(report: &LiftSourceReport) -> String {
         }
     }
 
+    trace_lift_render_checkpoint("render_assertion_surface_accounting.end", out.len());
     out
 }
 
@@ -3670,6 +4031,26 @@ mod tests {
                 ["solverInvocationCid"],
             "blake3-512:invoke"
         );
+    }
+
+    #[test]
+    fn lift_report_array_len_counts_camel_and_snake_case_fields() {
+        let response = serde_json::json!({
+            "sourceAudits": [1, 2],
+            "factory_audits": [3, 4, 5],
+            "scalar": 9
+        });
+
+        assert_eq!(
+            lift_report_array_len(&response, &["sourceAudits", "source_audits"]),
+            2
+        );
+        assert_eq!(
+            lift_report_array_len(&response, &["factoryAudits", "factory_audits"]),
+            3
+        );
+        assert_eq!(lift_report_array_len(&response, &["scalar"]), 0);
+        assert_eq!(lift_report_array_len(&response, &["missing"]), 0);
     }
 
     #[test]

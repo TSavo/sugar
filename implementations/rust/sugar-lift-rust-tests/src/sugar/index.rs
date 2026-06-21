@@ -123,7 +123,12 @@ impl IndexSugar {
     /// in-bounds const index into a literal int Seq grounds; a non-literal read is never
     /// given a guessed value, and an out-of-bounds index (a rust panic) stays symbolic.
     fn ground_literal_index(&self, ctx: &SugarCtx) -> Option<Rc<Term>> {
-        let seq = self.container_seq.as_ref()?.desugar(ctx).dug()?.into_seq()?;
+        let seq = self
+            .container_seq
+            .as_ref()?
+            .desugar(ctx)
+            .dug()?
+            .into_seq()?;
         let idx = self.idx.desugar(ctx).dug()?.into_term()?;
         let k = const_fold_int_term(&idx).and_then(|k| usize::try_from(k).ok())?;
         let elem = seq.get(k)?;

@@ -230,16 +230,27 @@ pub(crate) fn dispatch_lift_path(
 
     trace_log(format!("lift path execute surface={surface}"));
     let chain = execute_path(&path_input, &registry, &inputs).map_err(lift_error_from_path)?;
-    let claim = chain.terminal_claim().clone();
+    let terminal_claim = chain.terminal_claim();
+    trace_lift_plugin_claim_checkpoint("dispatch_lift_path.after_execute_path", terminal_claim);
+    let before = current_rss_kib();
+    let mut claim = chain.into_terminal_claim();
+    trace_lift_plugin_claim_checkpoint_with_delta(
+        "dispatch_lift_path.after_terminal_claim_move",
+        &claim,
+        rss_delta_kib(before, current_rss_kib()),
+    );
     trace_log(format!(
         "lift path executed surface={surface} elapsed={:?}",
         started.elapsed()
     ));
+    trace_lift_plugin_claim_checkpoint("dispatch_lift_path.before_payload_response_clone", &claim);
     let legacy_response = claim
         .payload
         .as_ref()
         .ok_or_else(|| LiftPluginError::Failed("lift claim missing term payload".to_string()))
         .and_then(response_from_payload_term)?;
+    claim.payload = None;
+    trace_lift_plugin_claim_checkpoint("dispatch_lift_path.after_payload_drop", &claim);
 
     Ok(LiftPluginSession {
         legacy_response,
@@ -249,7 +260,16 @@ pub(crate) fn dispatch_lift_path(
 
 fn response_from_payload_term(term: &Term) -> Result<Value, LiftPluginError> {
     match term {
-        Term::Const { value, .. } => Ok(value.clone()),
+        Term::Const { value, .. } => {
+            let before = current_rss_kib();
+            let cloned = value.clone();
+            trace_lift_plugin_value_checkpoint_with_delta(
+                "response_from_payload_term.after_value_clone",
+                &cloned,
+                rss_delta_kib(before, current_rss_kib()),
+            );
+            Ok(cloned)
+        }
         _ => Err(LiftPluginError::Failed(
             "lift claim payload was not a lift response term".to_string(),
         )),
@@ -454,6 +474,84 @@ fn trace_log(message: impl std::fmt::Display) {
     tracing::trace!("{}", message);
 }
 
+fn current_rss_kib() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let status = std::fs::read_to_string("/proc/self/status").ok()?;
+        status.lines().find_map(|line| {
+            let rest = line.strip_prefix("VmRSS:")?;
+            rest.split_whitespace().next()?.parse::<u64>().ok()
+        })
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+fn rss_delta_kib(before: Option<u64>, after: Option<u64>) -> Option<u64> {
+    Some(after?.saturating_sub(before?))
+}
+
+fn lift_response_array_len(value: &Value, keys: &[&str]) -> usize {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_array).map(Vec::len))
+        .unwrap_or(0)
+}
+
+fn trace_lift_plugin_claim_checkpoint(stage: &'static str, claim: &DomainClaim) {
+    trace_lift_plugin_claim_checkpoint_with_delta(stage, claim, None);
+}
+
+fn trace_lift_plugin_claim_checkpoint_with_delta(
+    stage: &'static str,
+    claim: &DomainClaim,
+    rss_delta_kib: Option<u64>,
+) {
+    let response = claim_response_value(claim).unwrap_or(&Value::Null);
+    trace_lift_plugin_value_checkpoint_with_delta(stage, response, rss_delta_kib);
+}
+
+fn trace_lift_plugin_value_checkpoint_with_delta(
+    stage: &'static str,
+    response: &Value,
+    rss_delta_kib: Option<u64>,
+) {
+    let rss_kib = current_rss_kib();
+    tracing::info!(
+        stage = stage,
+        rss_kib = rss_kib.unwrap_or_default(),
+        rss_available = rss_kib.is_some(),
+        rss_delta_kib = rss_delta_kib.unwrap_or_default(),
+        contracts = lift_response_array_len(response, &["ir"]),
+        source_audits = lift_response_array_len(response, &["sourceAudits", "source_audits"]),
+        factory_audits = lift_response_array_len(response, &["factoryAudits", "factory_audits"]),
+        assertion_surface_audits = lift_response_array_len(
+            response,
+            &["assertionSurfaceAudits", "assertion_surface_audits"]
+        ),
+        source_mementos = lift_response_array_len(response, &["sourceMementos", "source_mementos"]),
+        call_edges = lift_response_array_len(response, &["callEdges", "call_edges"]),
+        vendor_conjoins = lift_response_array_len(
+            response,
+            &[
+                "vendorConjoins",
+                "vendor_conjoins",
+                "linkerConjoins",
+                "linker_conjoins"
+            ]
+        ),
+        "lift-plugin cli adapter memory checkpoint"
+    );
+}
+
+fn claim_response_value(claim: &DomainClaim) -> Option<&Value> {
+    match claim.payload.as_ref()? {
+        Term::Const { value, .. } => Some(value),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -477,6 +575,26 @@ mod tests {
             Some("library-bindings")
         );
         assert_eq!(request["options"]["identifyOnly"].as_bool(), Some(false));
+    }
+
+    #[test]
+    fn lift_response_array_len_counts_camel_and_snake_case_fields() {
+        let response = json!({
+            "sourceAudits": [1, 2],
+            "factory_audits": [3, 4, 5],
+            "scalar": 9,
+        });
+
+        assert_eq!(
+            lift_response_array_len(&response, &["sourceAudits", "source_audits"]),
+            2
+        );
+        assert_eq!(
+            lift_response_array_len(&response, &["factoryAudits", "factory_audits"]),
+            3
+        );
+        assert_eq!(lift_response_array_len(&response, &["scalar"]), 0);
+        assert_eq!(lift_response_array_len(&response, &["missing"]), 0);
     }
 
     #[test]

@@ -7,6 +7,7 @@ use std::process::{Command, Stdio};
 use serde_json::{json, Value};
 use sugar_ir_types::{IrFormula, IrTerm, Sort};
 use thiserror::Error;
+use tracing::info;
 
 use super::bind::strip_realize_sidecar_from_lift_term;
 use super::primitives::address;
@@ -69,9 +70,28 @@ impl LiftPluginKit {
     /// Run the plugin transport and retain protocol metadata.
     pub fn parse_session(&self, input: &Input) -> Result<LiftPluginKitSession, LiftPluginKitError> {
         let request = lift_request_from_input(input)?;
+        trace_lift_transport_checkpoint("parse_session.before_dispatch", &Value::Null, 0);
         let (initialize_response, response) = self.dispatch(request)?;
+        trace_lift_transport_checkpoint("parse_session.after_dispatch", &response, 0);
+        let before = current_rss_kib();
         let response_term = response_term(response.clone());
+        trace_lift_transport_checkpoint_with_delta(
+            "parse_session.after_response_clone_to_term",
+            &response,
+            0,
+            rss_delta_kib(before, current_rss_kib()),
+        );
+        trace_lift_transport_checkpoint(
+            "parse_session.before_claim_from_response_term",
+            &response,
+            0,
+        );
         let claim = self.claim_from_response_term(input, response_term)?;
+        trace_lift_transport_checkpoint(
+            "parse_session.after_claim_from_response_term",
+            &response,
+            0,
+        );
         Ok(LiftPluginKitSession {
             initialize_response,
             legacy_response: response,
@@ -100,9 +120,31 @@ impl LiftPluginKit {
         // the canonical content address strips the sidecar before hashing.
         // The `payload` field still carries the raw response (with sidecar)
         // for downstream consumers that need realize-time metadata.
+        trace_lift_transport_checkpoint("claim_from_response_term.start", response, 0);
+        let before = current_rss_kib();
         let canonical_term = strip_realize_sidecar_from_lift_term(response_term.clone());
+        trace_lift_transport_checkpoint_with_delta(
+            "claim_from_response_term.after_strip_sidecar_clone",
+            response,
+            0,
+            rss_delta_kib(before, current_rss_kib()),
+        );
+        let before = current_rss_kib();
         let response_cid = address(&canonical_term);
+        trace_lift_transport_checkpoint_with_delta(
+            "claim_from_response_term.after_address_canonical_term",
+            response,
+            0,
+            rss_delta_kib(before, current_rss_kib()),
+        );
+        let before = current_rss_kib();
         let contract = lift_response_contract(&self.surface, response, &response_cid);
+        trace_lift_transport_checkpoint_with_delta(
+            "claim_from_response_term.after_lift_response_contract",
+            response,
+            0,
+            rss_delta_kib(before, current_rss_kib()),
+        );
 
         Ok(DomainClaim {
             domain: DomainKind::Other("lift-plugin".to_string()),
@@ -380,14 +422,14 @@ fn lift_response_contract(surface: &str, response: &Value, response_cid: &Cid) -
         args: vec![],
     };
     let post = IrFormula::Atomic {
-        name: "=".to_string(),
+        name: "lift_result_cid".to_string(),
         args: vec![
             IrTerm::Var {
                 name: "result".to_string(),
             },
             IrTerm::Const {
-                value: response.clone(),
-                sort: primitive_sort("LiftPluginResponse"),
+                value: json!(response_cid.as_str()),
+                sort: primitive_sort("Cid"),
             },
         ],
     };
@@ -418,19 +460,28 @@ fn legacy_response_from_term(term: &Term) -> Result<&Value, LiftPluginKitError> 
 
 fn read_response(reader: &mut impl BufRead, id: i64) -> Result<Value, LiftPluginKitError> {
     let mut line = String::new();
+    trace_lift_transport_checkpoint("read_response.before_read_line", &Value::Null, 0);
     let n = reader
         .read_line(&mut line)
         .map_err(|error| LiftPluginKitError::Failed(format!("read lift response: {error}")))?;
+    trace_lift_transport_checkpoint("read_response.after_read_line", &Value::Null, n);
     if n == 0 {
         return Err(LiftPluginKitError::Failed(
             "lift plugin closed stdout before responding".to_string(),
         ));
     }
+    let before = current_rss_kib();
     let value: Value = serde_json::from_str(line.trim()).map_err(|error| {
         LiftPluginKitError::Failed(format!(
             "parse lift JSON-RPC response: {error}\n  raw: {line}"
         ))
     })?;
+    trace_lift_transport_checkpoint_with_delta(
+        "read_response.after_parse_json_rpc",
+        value.get("result").unwrap_or(&Value::Null),
+        line.len(),
+        rss_delta_kib(before, current_rss_kib()),
+    );
     if value.get("id").and_then(Value::as_i64) != Some(id) {
         return Err(LiftPluginKitError::Failed(format!(
             "lift response id mismatch: expected {id}, got {value:?}"
@@ -441,8 +492,105 @@ fn read_response(reader: &mut impl BufRead, id: i64) -> Result<Value, LiftPlugin
             "lift plugin returned error: {error}"
         )));
     }
-    value
+    let result = value
         .get("result")
-        .cloned()
-        .ok_or_else(|| LiftPluginKitError::Failed("lift response missing `result`".into()))
+        .ok_or_else(|| LiftPluginKitError::Failed("lift response missing `result`".into()))?;
+    let before = current_rss_kib();
+    let result = result.clone();
+    trace_lift_transport_checkpoint_with_delta(
+        "read_response.after_result_clone",
+        &result,
+        line.len(),
+        rss_delta_kib(before, current_rss_kib()),
+    );
+    Ok(result)
+}
+
+fn current_rss_kib() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let status = std::fs::read_to_string("/proc/self/status").ok()?;
+        status.lines().find_map(|line| {
+            let rest = line.strip_prefix("VmRSS:")?;
+            rest.split_whitespace().next()?.parse::<u64>().ok()
+        })
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+fn rss_delta_kib(before: Option<u64>, after: Option<u64>) -> Option<u64> {
+    Some(after?.saturating_sub(before?))
+}
+
+fn lift_response_array_len(value: &Value, keys: &[&str]) -> usize {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_array).map(Vec::len))
+        .unwrap_or(0)
+}
+
+fn trace_lift_transport_checkpoint(stage: &'static str, response: &Value, line_bytes: usize) {
+    trace_lift_transport_checkpoint_with_delta(stage, response, line_bytes, None);
+}
+
+fn trace_lift_transport_checkpoint_with_delta(
+    stage: &'static str,
+    response: &Value,
+    line_bytes: usize,
+    rss_delta_kib: Option<u64>,
+) {
+    let rss_kib = current_rss_kib();
+    info!(
+        stage = stage,
+        rss_kib = rss_kib.unwrap_or_default(),
+        rss_available = rss_kib.is_some(),
+        rss_delta_kib = rss_delta_kib.unwrap_or_default(),
+        line_bytes = line_bytes,
+        contracts = lift_response_array_len(response, &["ir"]),
+        source_audits = lift_response_array_len(response, &["sourceAudits", "source_audits"]),
+        factory_audits = lift_response_array_len(response, &["factoryAudits", "factory_audits"]),
+        assertion_surface_audits = lift_response_array_len(
+            response,
+            &["assertionSurfaceAudits", "assertion_surface_audits"]
+        ),
+        source_mementos = lift_response_array_len(response, &["sourceMementos", "source_mementos"]),
+        call_edges = lift_response_array_len(response, &["callEdges", "call_edges"]),
+        vendor_conjoins = lift_response_array_len(
+            response,
+            &[
+                "vendorConjoins",
+                "vendor_conjoins",
+                "linkerConjoins",
+                "linker_conjoins"
+            ]
+        ),
+        "lift-plugin transport memory checkpoint"
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lift_response_array_len_accepts_camel_and_snake_case() {
+        let response = json!({
+            "sourceAudits": [1, 2],
+            "factory_audits": [3, 4, 5],
+            "scalar": 9,
+        });
+
+        assert_eq!(
+            lift_response_array_len(&response, &["sourceAudits", "source_audits"]),
+            2
+        );
+        assert_eq!(
+            lift_response_array_len(&response, &["factoryAudits", "factory_audits"]),
+            3
+        );
+        assert_eq!(lift_response_array_len(&response, &["scalar"]), 0);
+        assert_eq!(lift_response_array_len(&response, &["missing"]), 0);
+    }
 }

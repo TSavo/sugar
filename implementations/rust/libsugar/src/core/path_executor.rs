@@ -96,6 +96,7 @@ impl KitRegistry {
 /// Executed path output with terminal and per-step inspection accessors.
 #[derive(Debug, Clone)]
 pub struct PathExecutionChain {
+    terminal_step: String,
     terminal_claim: DomainClaim,
     claims_by_step: HashMap<String, DomainClaim>,
     sources_by_step: HashMap<String, Cid>,
@@ -108,8 +109,16 @@ impl PathExecutionChain {
         &self.terminal_claim
     }
 
+    /// Consume the execution chain and return the terminal claim.
+    pub fn into_terminal_claim(self) -> DomainClaim {
+        self.terminal_claim
+    }
+
     /// Borrow the claim produced by a named step.
     pub fn claim_at_step(&self, name: &str) -> Option<&DomainClaim> {
+        if name == self.terminal_step {
+            return Some(&self.terminal_claim);
+        }
         self.claims_by_step.get(name)
     }
 
@@ -136,12 +145,21 @@ pub fn execute_path(
         ));
     };
     let ordered = path.ordered_steps().map_err(PathExecutionError::Path)?;
+    let terminals = path.terminal_steps();
+    let [terminal] = terminals.as_slice() else {
+        return Err(PathExecutionError::UnsupportedInput(format!(
+            "execute_path expects exactly one terminal step, got {}",
+            terminals.len()
+        )));
+    };
+    let terminal_step = terminal.name.clone();
     let mut claims_by_step: HashMap<String, DomainClaim> = HashMap::new();
     let mut sources_by_step: HashMap<String, Cid> = HashMap::new();
     let mut terms_by_step: HashMap<String, Term> = HashMap::new();
     let mut materialized_inputs: HashMap<Cid, Input> = HashMap::new();
 
     for step in ordered {
+        let is_terminal = step.name == terminal_step;
         let registered = registry
             .kits
             .get(&step.kit)
@@ -171,28 +189,25 @@ pub fn execute_path(
             &claim,
             &mut sources_by_step,
             &mut terms_by_step,
+            !is_terminal,
         );
-        if let Some(term) = claim.payload.clone() {
-            materialized_inputs.insert(claim.to.clone(), Input::Term(term));
+        if !is_terminal {
+            if let Some(term) = claim.payload.clone() {
+                materialized_inputs.insert(claim.to.clone(), Input::Term(term));
+            }
+            materialized_inputs.insert(
+                address(&Input::Claim(claim.clone())),
+                Input::Claim(claim.clone()),
+            );
         }
-        materialized_inputs.insert(
-            address(&Input::Claim(claim.clone())),
-            Input::Claim(claim.clone()),
-        );
         claims_by_step.insert(step.name.clone(), claim);
     }
 
-    let terminals = path.terminal_steps();
-    let [terminal] = terminals.as_slice() else {
-        return Err(PathExecutionError::UnsupportedInput(format!(
-            "execute_path expects exactly one terminal step, got {}",
-            terminals.len()
-        )));
-    };
-    let terminal_claim = claims_by_step.get(&terminal.name).cloned().ok_or_else(|| {
+    let terminal_claim = claims_by_step.remove(&terminal_step).ok_or_else(|| {
         PathExecutionError::UnsupportedInput("terminal step did not execute".into())
     })?;
     Ok(PathExecutionChain {
+        terminal_step,
         terminal_claim,
         claims_by_step,
         sources_by_step,
@@ -250,6 +265,7 @@ fn record_step_outputs(
     claim: &DomainClaim,
     sources_by_step: &mut HashMap<String, Cid>,
     terms_by_step: &mut HashMap<String, Term>,
+    retain_term_output: bool,
 ) {
     if step.verb != Verb::Transform {
         return;
@@ -264,7 +280,7 @@ fn record_step_outputs(
     if is_carrier {
         sources_by_step.insert(step.name.clone(), claim.to.clone());
     }
-    if !is_carrier {
+    if !is_carrier && retain_term_output {
         if let Some(term) = claim.payload.clone() {
             terms_by_step.insert(step.name.clone(), term);
         }
