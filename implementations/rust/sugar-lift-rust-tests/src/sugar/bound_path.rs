@@ -115,20 +115,22 @@ fn alias_deref_mutated_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dy
     })
 }
 
-/// THE NO-FALSE-REFUTATION GATE for the FROZEN LOOP COUNTER class (#2342 sibling). A
-/// counter mutated inside a loop the tracker cannot unroll-resolve, then read AFTER the
-/// loop, has a STALE tracked value (its initial literal -- the loop mutations were never
-/// applied). Reading it lifts that stale value (`assert_eq!(n, 3)` -> `0 == 3`, UNSAT),
-/// which REFUTES a true assertion (the inverse cardinal sin). So the post-loop read
-/// REFUSES by name. Conservative refuse-tightening (zero new warrant -> zero cardinal-sin
-/// risk); it does NOT warrant the post-loop value (warrant-side SSA, out of scope).
+/// THE NO-FALSE-REFUTATION GATE for the TEMPORAL-INSTABILITY class (#2342 sibling). A local
+/// mutated (a counter via `+=`/`=`) inside a loop OR closure body the tracker cannot unroll-
+/// resolve, then read afterward, has a STALE tracked value (its initial literal -- the
+/// mutations were never applied). Reading it
+/// lifts that stale value (`assert_eq!(n, 3)` -> `0 == 3`, UNSAT), which REFUTES a true
+/// assertion (the inverse cardinal sin). So the read REFUSES by name. Conservative refuse-
+/// tightening (zero new warrant -> zero cardinal-sin risk); it does NOT warrant the value
+/// (warrant-side SSA, out of scope). Fed by `collect_loop_counter_stale_reads` (read-after-
+/// gated counters) + `collect_loop_body_mutated` (broader loop/closure/consumed-iterator).
 fn temporally_unstable_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     fcx.scope().is_temporally_unstable_read(name).then(|| {
-        // Same terminal `ambiguous temporal identity` bucket as the aliased-mutation case.
+        // Terminal refusal; substring `temporally unstable post-loop read` is pinned by tests.
         reasoned_hit(format!(
-            "ambiguous temporal identity for `{name}`: a loop counter mutated inside a loop \
-             the lifter cannot unroll, then read after it, so there is no single timeless \
-             value to read at the assertion; refused"
+            "temporally unstable post-loop read of `{name}`: mutated inside a loop or closure \
+             body the lifter cannot unroll, so there is no single timeless value to read at \
+             the assertion; refused as temporally unstable"
         ))
     })
 }
