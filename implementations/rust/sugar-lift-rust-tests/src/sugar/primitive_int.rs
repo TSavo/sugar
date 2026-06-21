@@ -42,6 +42,16 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
         ("checked_sub", 1) => Kind::Checked(CheckedOp::Sub, build_term(&call.args[0], fcx)),
         ("checked_mul", 1) => Kind::Checked(CheckedOp::Mul, build_term(&call.args[0], fcx)),
         ("checked_div", 1) => Kind::Checked(CheckedOp::Div, build_term(&call.args[0], fcx)),
+        // Wrapping ops claim FREELY (the receiver already grounds via `receiver_can_ground`).
+        // `wrapping_int_op` folds only at a KNOWN width with groundable operands; otherwise
+        // it returns None and `desugar` bails -- and FIX(a)'s factory fallback degrades that
+        // bail to an opaque-EUF UNDECIDED term, never a refusal. So an unknown-width / non-
+        // groundable wrapping is honest dark (undecided), NOT a false dragon: no recognize-
+        // time width gate is needed (it would only force the bail down to `None` -> method
+        // fallback, which FIX(a) makes unnecessary).
+        ("wrapping_add", 1) => Kind::Wrapping(WrappingOp::Add, build_term(&call.args[0], fcx)),
+        ("wrapping_sub", 1) => Kind::Wrapping(WrappingOp::Sub, build_term(&call.args[0], fcx)),
+        ("wrapping_mul", 1) => Kind::Wrapping(WrappingOp::Mul, build_term(&call.args[0], fcx)),
         _ => return None,
     };
     Some(Box::new(PrimitiveIntSugar {
@@ -85,6 +95,9 @@ fn receiver_can_ground(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
                     | "checked_sub"
                     | "checked_mul"
                     | "checked_div"
+                    | "wrapping_add"
+                    | "wrapping_sub"
+                    | "wrapping_mul"
             ) =>
         {
             receiver_can_ground(&call.receiver, fcx)
@@ -105,6 +118,14 @@ enum Kind {
     BitWidth,
     Min(Box<dyn Sugar>),
     Checked(CheckedOp, Box<dyn Sugar>),
+    Wrapping(WrappingOp, Box<dyn Sugar>),
+}
+
+#[derive(Clone, Copy)]
+enum WrappingOp {
+    Add,
+    Sub,
+    Mul,
 }
 
 #[derive(Clone, Copy)]
@@ -316,7 +337,79 @@ impl Sugar for PrimitiveIntSugar {
                 };
                 Outcome::Dug(Desugared::Term(term))
             }
+            Kind::Wrapping(op, rhs) => {
+                // `wrapping_{add,sub,mul}` over grounded literals: the compiler owns the
+                // two's-complement wrap at the receiver's WIDTH. Recompute-don't-trust at
+                // that width and lower the EXACT result as a literal -- never the opaque
+                // `method:wrapping_*` EUF (which collapses every width to one term -> the
+                // num/wrapping.rs false refutation). EXACT-OR-NONE: an unknown width or a
+                // >=128-bit type bails -> the conservative opaque term, never a guess.
+                let rhs = match rhs.desugar(ctx) {
+                    Outcome::Dug(d) => match d.into_term() {
+                        Some(term) => term,
+                        None => return Outcome::from_opt(None),
+                    },
+                    Outcome::Hit(e) => return Outcome::Hit(e),
+                };
+                let lhs = match lhs_i128.or_else(|| lhs_u128.and_then(|n| i128::try_from(n).ok())) {
+                    Some(v) => v,
+                    None => return Outcome::from_opt(None),
+                };
+                let rhs = match const_fold_int_term(&rhs)
+                    .or_else(|| const_fold_u128_term(&rhs).and_then(|n| i128::try_from(n).ok()))
+                {
+                    Some(v) => v,
+                    None => return Outcome::from_opt(None),
+                };
+                let Some(value) =
+                    wrapping_int_op(lhs, rhs, *op, integer_kind_hint(&self.receiver_expr))
+                else {
+                    return Outcome::from_opt(None);
+                };
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::primitive_int",
+                    method = self.method.as_str(),
+                    lhs,
+                    rhs,
+                    value,
+                    "resolved primitive wrapping integer axiom"
+                );
+                Outcome::Dug(Desugared::Term(num(value)))
+            }
         }
+    }
+}
+
+/// Two's-complement `wrapping_{add,sub,mul}` at a KNOWN integer width. EXACT-OR-NONE: an
+/// unknown width or a >=128-bit type bails (`None`) -- the i128 carrier cannot hold a
+/// 128-bit product, and an unknown width has no defined wrap point. Returns the wrapped
+/// result as a signed-canonical i128 (the same `num(..)` carrier the receiver / `MAX` /
+/// `MIN` consts lower to, so equal values are equal terms).
+fn wrapping_int_op(lhs: i128, rhs: i128, op: WrappingOp, kind: Option<IntegerKind>) -> Option<i128> {
+    let kind = kind?;
+    if kind.bits == 0 || kind.bits >= 128 {
+        return None;
+    }
+    if !fits_kind(lhs, kind) || !fits_kind(rhs, kind) {
+        return None;
+    }
+    let mask: u128 = (1u128.checked_shl(kind.bits)?).checked_sub(1)?;
+    let lraw = (lhs as u128) & mask;
+    let rraw = (rhs as u128) & mask;
+    let raw = match op {
+        WrappingOp::Add => lraw.wrapping_add(rraw) & mask,
+        WrappingOp::Sub => lraw.wrapping_sub(rraw) & mask,
+        WrappingOp::Mul => lraw.wrapping_mul(rraw) & mask,
+    };
+    if kind.signed {
+        let sign_bit = 1u128.checked_shl(kind.bits - 1)?;
+        if raw >= sign_bit {
+            Some((raw as i128) - ((mask as i128) + 1))
+        } else {
+            Some(raw as i128)
+        }
+    } else {
+        Some(raw as i128)
     }
 }
 
