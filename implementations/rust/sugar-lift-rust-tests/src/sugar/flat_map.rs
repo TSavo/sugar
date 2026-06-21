@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// `flat_map`: the `.flat_map(|x| [..])` adaptor over a finite literal base whose closure
-// maps each element to a finite literal SUB-SEQUENCE (an array literal). It applies the
-// closure to each element (const-eval, the SAME exact floor as `.map`) and concatenates
-// the resulting sub-sequences in source order -- `map` + `flatten` in one step. This is
-// the outermost-call recognizer; `peel_fold_adaptors` carries the same `FlatMapSugar`
-// when `.flat_map(..)` sits inside a longer adaptor chain.
+// `flat_map`: the `.flat_map(|x| [..])` / `.flat_map(|&n| 0..n)` adaptor over a finite
+// literal base whose closure maps each element to a finite literal SUB-SEQUENCE -- an
+// array literal OR a bounded range literal (`a..b` / `a..=b`). It applies the closure to
+// each element (const-eval, the SAME exact floor as `.map`) and concatenates the
+// resulting sub-sequences in source order -- `map` + `flatten` in one step. This is the
+// outermost-call recognizer; `peel_fold_adaptors` carries the same `FlatMapSugar` when
+// `.flat_map(..)` sits inside a longer adaptor chain.
 //
-// EXACT-OR-REFUSE: an opaque element (no const value), a closure body that is not an
-// array literal, or any sub-element outside the certain const set bails (`None` ->
-// refuse, NEVER a guessed sub-sequence) -- the same discipline as `map`/`flatten`.
+// EXACT-OR-REFUSE: an opaque element (no const value), a closure body that is neither an
+// array literal nor a both-ends-bounded range, or any sub-element outside the certain
+// const set bails (`None` -> refuse, NEVER a guessed sub-sequence) -- the same discipline
+// as `map`/`flatten`. (A range whose start >= end yields the empty sub-sequence, a
+// legitimate flat_map drop.)
 
 use crate::sugar::factory::{build_composite, SugarBuildCtx};
 use crate::sugar::method_family;
