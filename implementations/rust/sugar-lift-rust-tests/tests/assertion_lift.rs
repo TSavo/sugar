@@ -17877,3 +17877,118 @@ fn literal_runtime_element_named_refused_with_twin() {
     // TWIN: a literal-element array still warrants.
     assert_still_warrants("#[test] fn t() { assert_eq!([1, 2, 3].iter().count(), 3); }");
 }
+
+// ---------------------------------------------------------------------------
+// NO-FALSE-REFUTATION GATE: a local MUTATED through a `&mut` alias the tracker cannot
+// resolve (`let r = &mut x; *r += 1;`) has a STALE tracked value (the alias-deref
+// mutation is refused, so the rewrite never applies it). A read of that local must
+// REFUSE -- lifting the pre-mutation literal would refute a TRUE assertion
+// (`assert_eq!(x, 6)` -> `5 == 6` UNSAT), the inverse cardinal sin / a fake dragon over
+// correct code. Conservative refuse-tightening (no new warrant). (`collect_alias_deref_
+// mutated` pre-scan + `bound_path` gate.)
+
+#[test]
+fn alias_deref_mutated_read_refuses_not_false_refutation() {
+    let src = r#"
+        #[test]
+        fn t_alias_mut() {
+            let mut x = 5;
+            let r = &mut x;
+            *r += 1;
+            assert_eq!(x, 6);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/borrow/alias_mut_read.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        !dump.contains("Int(5)") || !dump.contains("Int(6)"),
+        "the read of `x` must NOT lift the stale `5 == 6` (false refutation): {dump}"
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("mutated through a `&mut` alias")),
+        "the read of a `&mut`-alias-mutated local must REFUSE by name: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.skip_reasons.iter().any(|r| {
+            r.contains("mutated through a `&mut` alias")
+                && matches!(
+                    sugar_lift_rust_tests::refusal_disposition(r),
+                    sugar_lift_rust_tests::Disposition::Refused
+                )
+        }),
+        "the alias-deref-mutated refusal must classify as a terminal Refused dragon: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn inline_deref_mut_borrow_then_read_refuses() {
+    let src = r#"
+        #[test]
+        fn t_inline_mut() {
+            let mut x = 5;
+            *(&mut x) += 1;
+            assert_eq!(x, 6);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/borrow/inline_mut_read.rs");
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("mutated through a `&mut` alias")),
+        "`*(&mut x) += 1` then read of `x` must REFUSE by name: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn direct_mut_local_still_warrants_post_value() {
+    let src = r#"
+        #[test]
+        fn t_direct() {
+            let mut x = 5;
+            x += 1;
+            assert_eq!(x, 6);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/borrow/direct_mut.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "a direct `x += 1` must still warrant `x == 6`: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "direct_mut_post") {
+        assert!(sat, "x += 1 then x == 6 -> 6 == 6 (SAT)");
+    }
+}
+
+#[test]
+fn unrelated_alias_mutation_does_not_refuse_other_locals() {
+    let src = r#"
+        #[test]
+        fn t_unrelated() {
+            let mut x = 5;
+            x += 1;
+            let mut y = 10;
+            let s = &mut y;
+            *s += 1;
+            assert_eq!(x, 6);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/borrow/unrelated.rs");
+    assert!(
+        out.assertions_lifted >= 1,
+        "the read of `x` (not alias-mutated) must still warrant -- only `y` is gated: \
+         lifted={} skips={:?}",
+        out.assertions_lifted,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "unrelated_x") {
+        assert!(sat, "x == 6 holds; unrelated `*s += 1` must not gate `x` (SAT)");
+    }
+}

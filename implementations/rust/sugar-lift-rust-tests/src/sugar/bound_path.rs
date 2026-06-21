@@ -9,7 +9,7 @@
 use crate::sugar::bound::BoundSugar;
 use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
 use crate::sugar::factory::{build_constraint, build_term, SugarBuildCtx};
-use crate::sugar::term_leaf::resolved_term;
+use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
 use crate::{token_key, Sugar};
 use syn::{Expr, ExprPath};
 use tracing::debug;
@@ -28,6 +28,9 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let name = simple_local_path(expr)?;
     if fcx.resolving_bound_path(&name) {
         return None;
+    }
+    if let Some(hit) = alias_deref_mutated_refusal(&name, fcx) {
+        return Some(hit);
     }
     if let Some(current) = fcx.scope().temporal_rewrite_expr_for(&name) {
         debug!(
@@ -59,6 +62,9 @@ fn recognize_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     if fcx.resolving_bound_path(&name) {
         return None;
     }
+    if let Some(hit) = alias_deref_mutated_refusal(&name, fcx) {
+        return Some(hit);
+    }
     if let Some(current) = fcx.scope().temporal_rewrite_expr_for(&name) {
         debug!(
             target: "sugar_lift_rust_tests::temporal_rewrite",
@@ -76,6 +82,31 @@ fn recognize_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     let init = fcx.scope().stable_let_binding_for_term(&name)?;
     let child_fcx = fcx.with_bound_path(&name);
     Some(BoundSugar::new(name, build_constraint(init, &child_fcx)))
+}
+
+/// THE NO-FALSE-REFUTATION GATE. A local MUTATED through a `&mut` alias the tracker
+/// cannot resolve (`let r = &mut x; *r += 1;`) has a STALE tracked value -- the
+/// alias-deref mutation is refused, so the rewrite never applies it. Reading that local
+/// would lift the pre-mutation literal (`assert_eq!(x, 6)` -> `5 == 6`, UNSAT), which
+/// REFUTES a true assertion: the inverse cardinal sin (a fake dragon over correct code).
+/// So such a read REFUSES by name instead of resolving. This is conservative refuse-
+/// tightening (it never adds a warrant, so it cannot false-DISCHARGE) and it makes the
+/// no-false-refutation an EXPLICIT, intentional refuse rather than a coincidental
+/// co-refusal masking. It does NOT warrant the post-mutation value -- that is the
+/// attended SSA arm's job; this only stops the stale read.
+fn alias_deref_mutated_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    fcx.scope().is_alias_deref_mutated(name).then(|| {
+        // Classified as `ambiguous temporal identity` (the terminal-today Refused bucket
+        // for an aliased-mutated value with no single `t`) -- the SAME family as a
+        // conditionally/aliased-mutated receiver. Per the boundary-call note on that
+        // reason, it flips to a warrant once the attended SSA arm teaches alias-mutation
+        // resolution; until then it is a NAMED dragon, not a stale fake-light.
+        reasoned_hit(format!(
+            "ambiguous temporal identity for `{name}`: mutated through a `&mut` alias \
+             between borrow and read, so there is no single timeless value to read at the \
+             assertion; refused"
+        ))
+    })
 }
 
 fn simple_local_path(expr: &Expr) -> Option<String> {
