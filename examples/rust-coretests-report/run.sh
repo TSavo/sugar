@@ -24,7 +24,8 @@ CORPUS="$HERE/corpus"
 echo "== build the CLI + the Rust assertion lifter (release) =="
 cargo build --release --manifest-path "$RUST/Cargo.toml" \
   -p sugar-cli --bin sugar \
-  -p sugar-lift-rust-tests --bin rust_test_assertions_rpc >/dev/null
+  -p sugar-lift-rust-tests --bin rust_test_assertions_rpc \
+  -p sugar-lift-rust-tests --bin discharge_sweep >/dev/null
 
 [ -x "$SUGAR" ] || { echo "FAIL: sugar binary not built at $SUGAR"; exit 1; }
 [ -x "$BIN_DIR/rust_test_assertions_rpc" ] || { echo "FAIL: rust_test_assertions_rpc not built"; exit 1; }
@@ -81,3 +82,22 @@ rg -o 'selected="[^"]+" disposition="refused"' "$ERRP" 2>/dev/null \
 echo
 echo "stdout ledger: $OUT   |   disposition trace: $ERR   (ANSI-stripped: $OUTP / $ERRP)"
 echo "NOTE: 'unresolved' is the honest dark (no sugar yet). 'support' is inert source ONLY (kit-marked)."
+
+# ── TEETHED LEDGER (the proof dial, not just coverage) ───────────────────────
+# The ledger above measures COVERAGE: how many loci `warranted` = lifted to a
+# checkable FOL fact (NO solver runs at lift). That cannot tell a teethed
+# obligation (a wrong value would refute it) from a congruence-only / opaque one
+# (SAT for any value -- no teeth). This SECOND, additive pass runs the verifier's
+# DISCHARGE GATE (negation-UNSAT) over every warranted obligation and reports the
+# real proof split: DISCHARGED (proven), REFUTED (proven false), UNDECIDED (the
+# no-teeth bucket coverage hid -- distinct from 'unresolved' = not-lifted-at-all).
+echo
+echo "== teethed ledger (discharge gate -- proof, not just coverage) =="
+TEETH_JSON="$HERE/coretests-teethed.json"
+if [ -x "$BIN_DIR/discharge_sweep" ]; then
+  "$BIN_DIR/discharge_sweep" "$CORPUS" --json "$TEETH_JSON" || {
+    echo "(discharge sweep did not complete; see above)"; }
+  echo "teethed ledger json: $TEETH_JSON"
+else
+  echo "(discharge_sweep not built -- skipping the proof dial)"
+fi
