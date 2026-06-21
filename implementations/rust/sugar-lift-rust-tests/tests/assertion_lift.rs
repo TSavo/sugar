@@ -20071,6 +20071,109 @@ fn consumed_iterator_advance_by_then_next_declines() {
     // first consuming `.advance_by()` call) → opaque method → UNDECIDED.
 }
 
+/// `it.next()` advances a mutable iterator local. A later `.fold(..)` over that same
+/// local must not replay the original literal sequence and lift stale closure-body
+/// assertions. It should instead lift an opaque consumed-fold body obligation: accounted,
+/// undecided, and never falsely refuted.
+#[test]
+fn consumed_iterator_fold_after_next_declines_stale_body_assertion() {
+    let src = r#"
+        #[test]
+        fn t_fold_after_next() {
+            let xs = [0_i32, 1, 2, 3];
+            let mut it = xs.iter().enumerate();
+            let _ = it.next();
+            let _done = it.fold(1, |i, (j, &_x)| {
+                assert_eq!(i, j);
+                i + 1
+            });
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/adapters/enumerate_fold_after_next.rs");
+    assert!(
+        out.assertions_lifted >= 1,
+        "consumed-local fold body must stay accounted opaquely: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    assert_eq!(
+        out.assertions_refused, 0,
+        "consumed-local fold is temporal uncertainty, not an effect refusal: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "consumed_fold_body") {
+        assert!(sat, "consumed fold body obligation must be SAT, not falsely refuted");
+    }
+}
+
+/// Same temporal boundary from the back: after `next_back()`, `.rfold(..)` over the
+/// consumed local must not replay the pre-consumption sequence.
+#[test]
+fn consumed_iterator_rfold_after_next_back_declines_stale_body_assertion() {
+    let src = r#"
+        #[test]
+        fn t_rfold_after_next_back() {
+            let xs = [0_i32, 1, 2, 3];
+            let mut it = xs.iter().enumerate();
+            let _ = it.next_back();
+            let _done = it.rfold(2, |i, (j, &_x)| {
+                assert_eq!(i, j);
+                i - 1
+            });
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/adapters/enumerate_rfold_after_next_back.rs",
+    );
+    assert!(
+        out.assertions_lifted >= 1,
+        "consumed-local rfold body must stay accounted opaquely: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    assert_eq!(
+        out.assertions_refused, 0,
+        "consumed-local rfold is temporal uncertainty, not an effect refusal: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "consumed_rfold_body") {
+        assert!(
+            sat,
+            "consumed rfold body obligation must be SAT, not falsely refuted"
+        );
+    }
+}
+
+/// Discrimination twin: a fresh literal iterator fold still grounds closure-body
+/// assertions with teeth.
+#[test]
+fn non_consumed_iterator_fold_still_warrants_body_assertion() {
+    let src = r#"
+        #[test]
+        fn t_fresh_fold() {
+            let xs = [0_i32, 1, 2, 3];
+            let _done = xs.iter().enumerate().fold(0, |i, (j, &_x)| {
+                assert_eq!(i, j);
+                i + 1
+            });
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/adapters/enumerate_fresh_fold.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "fresh literal fold must still warrant: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "fresh_fold_body") {
+        assert!(sat, "fresh literal fold body assertions hold under z3");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // General tuple-equality decomposition (task #26) — integer_decode is the first
 // consumer. `assert_eq!(f.integer_decode(), (m, e, s))` decomposes COMPONENT-WISE into

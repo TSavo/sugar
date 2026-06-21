@@ -12,19 +12,20 @@
 use std::collections::{BTreeMap, HashSet};
 use std::rc::Rc;
 
-use sugar_ir_symbolic::{and_, num, Term};
+use sugar_ir_symbolic::{and_, atomic_, num, Term};
 use syn::{Expr, Pat, Stmt};
 
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::literal::LiteralSugar;
-use crate::sugar::method_family;
+use crate::sugar::{method, method_family};
 use crate::{
     closure_body_is_side_effecting, closure_single_param_ident, collect_assertion_entries,
-    const_fold_acc_update, const_int_acc_init, count_asserts_in_stmts, peel_fold_adaptors,
-    resolve_index_in_formula, strip_refs_groups, subst_var_in_formula, translate_term_in_scope,
-    tuple_components, wrap_rev, AssertionFactKind, ConstVal, Desugared, Outcome, Sugar, SugarCtx,
-    Warrant, SUGAR_SEQ_CAP,
+    const_fold_acc_update, const_int_acc_init, count_asserts_in_expr, count_asserts_in_stmts,
+    peel_fold_adaptors, resolve_index_in_formula, simple_path_name, strip_refs_groups,
+    subst_var_in_formula, token_key, translate_term_in_scope, tuple_components, wrap_rev,
+    AssertionFactKind, ConstVal, Desugared, Outcome, Sugar, SugarCtx, Warrant, SUGAR_SEQ_CAP,
 };
+use tracing::debug;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("fold", recognize_composite);
@@ -35,11 +36,70 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// old `build_method_call_composite` chain — BEFORE `for_each`.
 pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {
-        Expr::MethodCall(_) => {
+        Expr::MethodCall(call) => {
+            let method = call.method.to_string();
+            if matches!(method.as_str(), "fold" | "rfold") {
+                if let Some(name) = simple_path_name(&call.receiver) {
+                    let version = fcx.scope().version_of(&name);
+                    let advanced = version.is_some_and(|version| version > 1);
+                    if fcx.scope().is_consumed_iterator_local(&name) || advanced {
+                        debug!(
+                            target: "sugar::fold",
+                            method = %method,
+                            receiver = %name,
+                            ?version,
+                            "routing consumed iterator fold body through opaque warranted obligation"
+                        );
+                        return method::recognize(expr, fcx).map(|fallback| {
+                            Box::new(ConsumedFoldSugar {
+                                fallback,
+                                claim_count: count_consumed_fold_assertions(call),
+                                name: format!("consumed-iterator-fold::{}", token_key(expr)),
+                            }) as Box<dyn Sugar>
+                        });
+                    }
+                }
+            }
             decompose_fold(expr, fcx.let_inits()).map(|node| Box::new(node) as Box<dyn Sugar>)
         }
         _ => None,
     }
+}
+
+struct ConsumedFoldSugar {
+    fallback: Box<dyn Sugar>,
+    claim_count: usize,
+    name: String,
+}
+
+impl Sugar for ConsumedFoldSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        let term = match self.fallback.desugar(ctx) {
+            Outcome::Dug(d) => match d.into_term() {
+                Some(term) => term,
+                None => return Outcome::from_opt(None),
+            },
+            Outcome::Hit(effect) => return Outcome::Hit(effect),
+        };
+        Outcome::Dug(Desugared::Constraints {
+            atom: atomic_("iter.consumed_fold_body", vec![term]),
+            n: self.claim_count,
+            kind: AssertionFactKind::Warranted,
+            warrant: Warrant {
+                name: Some(self.name.clone()),
+            },
+        })
+    }
+}
+
+fn count_consumed_fold_assertions(call: &syn::ExprMethodCall) -> usize {
+    call.args
+        .iter()
+        .find_map(|arg| match arg {
+            Expr::Closure(closure) => Some(count_asserts_in_expr(&closure.body)),
+            _ => None,
+        })
+        .unwrap_or(0)
 }
 
 /// Build the sequence-`Sugar` tree for a fold/for_each RECEIVER: a base literal
