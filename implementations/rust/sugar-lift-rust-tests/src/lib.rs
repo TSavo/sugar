@@ -16727,12 +16727,40 @@ fn method_call_assertion_name(
     callsite_assertion_name(&term, local_scope)
 }
 
+/// Strip redundant outer shared-`ref` ctors from a RELATIONAL operand. A shared borrow
+/// is value-equal to its pointee -- Rust's `PartialEq for &T` compares pointees, so
+/// `&a == &b` <=> `a == b` (and `&&a == &&b` <=> `a == b`). The `reference_term`
+/// recognizer keeps `&e` as a structural `ref(e)` ctor so that EUF call-result arg keys
+/// (`r.contains(&i)` -> `..c:ref(i)`) and `ptr::eq` pointer-identity terms stay sound;
+/// those uses nest the `ref` INSIDE a call ctor, so they are never a relational operand
+/// and are untouched here. As a direct comparison operand, though, an uninterpreted
+/// `ref(20)` made the bad twin `&[10,20,30][1] == 99` (`ref(20) == ref(99)`) satisfiable
+/// -- a vacuous warrant. Stripping the wrapper warrants the pointee: the good twin folds
+/// to a true equality, the bad twin to a real contradiction. Only the shared `ref` is
+/// stripped; `ref_mut` (the `&mut <immutable value>` term) and every other ctor are left
+/// intact, and a non-`ref` term is returned unchanged.
+fn strip_shared_ref(mut term: Rc<Term>) -> Rc<Term> {
+    while let Term::Ctor { name, args } = term.as_ref() {
+        if name == "ref" && args.len() == 1 {
+            let inner = Rc::clone(&args[0]);
+            term = inner;
+        } else {
+            break;
+        }
+    }
+    term
+}
+
 pub(crate) fn assertion_entry_from_relation(
     lhs: Rc<Term>,
     rhs: Rc<Term>,
     op: RelationOp,
     scope: &TemporalScope,
 ) -> AssertionEntry {
+    // A shared borrow is value-equal to its pointee; strip a redundant outer `ref` from
+    // each operand so `&place == value` warrants the pointee. See `strip_shared_ref`.
+    let lhs = strip_shared_ref(lhs);
+    let rhs = strip_shared_ref(rhs);
     if let Some(tag) =
         constructor_operator_tag(lhs.as_ref()).or_else(|| constructor_operator_tag(rhs.as_ref()))
     {
