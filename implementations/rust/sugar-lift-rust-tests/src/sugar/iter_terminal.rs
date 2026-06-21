@@ -148,17 +148,25 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         return None;
     };
     let terminal = recognize_terminal(call, fcx)?;
-    // REFUSE `.count()` on a consumed-iterator local: the lifter's `.count()` resolves
-    // to the static sequence length (equivalent to `.len()`), which is the pre-consumption
-    // value -- stale if the iterator has been advanced. See `collect_consumed_iterator_locals`.
-    if matches!(terminal, Terminal::Count) {
-        if let Some(name) = simple_path_name(&call.receiver) {
-            if fcx.scope().is_consumed_iterator_local(&name) {
-                return Some(reasoned_hit(format!(
-                    "consumed-iterator local `{name}` -- \
-                     `.count()` returns stale pre-consumption length (temporal instability)"
-                )));
-            }
+    // Consumed-iterator gate: ANY terminal applied to a mut-local whose iterator
+    // position was advanced by a prior consuming call declines to lift. The
+    // static-literal resolver computes from the PRE-consumption position, producing a
+    // stale value that generates a false refutation on a true assertion (fake dragon).
+    //
+    // The pre-scan `collect_consumed_iterator_locals` (PASS 2) populates the consumed
+    // set only when a second (or later) consuming call — or any method read after a
+    // consuming call — is detected on the same local in statement order. The FIRST
+    // consuming call is not in the set and warrants normally.
+    //
+    // Applies to ALL recognized terminals (count, next, nth, last, min, max, sum,
+    // product, any, all, find, position, advance_by, reduce …), not just `.count()`.
+    if let Some(name) = simple_path_name(&call.receiver) {
+        if fcx.scope().is_consumed_iterator_local(&name) {
+            return Some(reasoned_hit(format!(
+                "consumed-iterator local `{name}` -- \
+                 `.{}()` reads stale pre-consumption iterator position (temporal instability)",
+                call.method
+            )));
         }
     }
     // Try scan as inner receiver FIRST: `.scan(init, closure)` cannot go through
