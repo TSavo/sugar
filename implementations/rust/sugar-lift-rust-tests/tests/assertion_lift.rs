@@ -659,6 +659,113 @@ fn const_match_runtime_scrutinee_declines() {
     );
 }
 
+// ---- Lane 2: in-range TryFrom / NonZero `.unwrap()` peels to the value (teeth) ----
+
+// `u8::try_from(255u16).unwrap()` peels the in-range `res:ok(255)` (via the
+// existing option_unwrap, now that its source gate recognizes try_from) to the
+// ground int 255 -- a real value with teeth, not an opaque `method:unwrap` var.
+#[test]
+fn try_from_in_range_unwrap_folds_with_teeth() {
+    let good = r#"
+        #[test]
+        fn t_tf_unwrap() {
+            assert!(u8::try_from(255u16).unwrap() == 255);
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/num/tf_unwrap.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "try_from().unwrap() must lift; skip: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert!(
+        out.factory_audits
+            .iter()
+            .any(|a| a.selected == Some("option_unwrap")),
+        "unwrap must be peeled by `option_unwrap`: {:?}",
+        out.factory_audits
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Int(255)"),
+        "in-range try_from().unwrap() folds to 255: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_tf_unwrap") {
+        assert!(sat, "try_from(255).unwrap() == 255 -- must be SAT");
+    }
+    let bad = r#"
+        #[test]
+        fn t_tf_unwrap_bad() {
+            assert!(u8::try_from(255u16).unwrap() == 254);
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/num/tf_unwrap_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_tf_unwrap_bad") {
+        assert!(!sat, "try_from(255).unwrap() is 255 != 254 -- must be UNSAT");
+    }
+}
+
+// NonZero::new(nonzero).unwrap()[.get()] peels Some(value) to the value (teeth).
+#[test]
+fn nonzero_new_unwrap_folds_with_teeth() {
+    let good = r#"
+        #[test]
+        fn t_nz_unwrap() {
+            assert!(NonZero::new(1u32).unwrap().get() == 1);
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/num/nz_unwrap.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Int(1)"),
+        "NonZero::new(1).unwrap().get() folds to 1: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_nz_unwrap") {
+        assert!(sat, "NonZero::new(1).unwrap().get() == 1 -- must be SAT");
+    }
+    let bad = r#"
+        #[test]
+        fn t_nz_unwrap_bad() {
+            assert!(NonZero::new(7u32).unwrap().get() == 8);
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/num/nz_unwrap_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_nz_unwrap_bad") {
+        assert!(!sat, "NonZero::new(7).unwrap().get() is 7 != 8 -- must be UNSAT");
+    }
+}
+
+// DISCRIMINATION: an OUT-OF-RANGE try_from unwrap and a NonZero::new(0) unwrap
+// both PANIC in Rust -- they must NOT fold to a value (the Err/None unwrap is a
+// refused effect, never a guessed value).
+#[test]
+fn panicking_unwrap_does_not_fold_to_a_value() {
+    let oor = r#"
+        #[test]
+        fn t_tf_unwrap_panic() {
+            assert!(u8::try_from(256u16).unwrap() == 0);
+        }
+    "#;
+    let out = lift_file(&parse(oor), "coretests/num/tf_unwrap_panic.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "out-of-range try_from().unwrap() panics -- must NOT lift to a value: audits: {:?}",
+        out.factory_audits
+    );
+    let zero = r#"
+        #[test]
+        fn t_nz_zero_unwrap_panic() {
+            assert!(NonZero::new(0u32).unwrap().get() == 0);
+        }
+    "#;
+    let out = lift_file(&parse(zero), "coretests/num/nz_zero_unwrap_panic.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "NonZero::new(0).unwrap() panics -- must NOT lift to a value: audits: {:?}",
+        out.factory_audits
+    );
+}
+
 // ---- Lane 3: TryFrom range check -> Result, is_ok/is_err fold to bool (teeth) ----
 
 // `<u8 as TryFrom<u16>>::try_from(256u16).is_err()` is true: 256 doesn't fit u8,

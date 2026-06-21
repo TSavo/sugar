@@ -105,6 +105,11 @@ pub(crate) fn is_known_monadic_source(expr: &Expr) -> bool {
             if is_nonzero_new_call(expr) {
                 return true;
             }
+            // An integer `TryFrom::try_from(literal)` grounds to a `res:ok`/
+            // `res:err` (see `try_from`), so `.unwrap()`/`.expect(..)` can peel it.
+            if crate::sugar::try_from::folds_to_result(call) {
+                return true;
+            }
             let Expr::Path(path) = strip_refs_groups(&call.func) else {
                 return false;
             };
