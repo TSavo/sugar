@@ -133,6 +133,7 @@ pub mod sugar {
     pub mod path;
     pub mod peekable;
     pub mod primitive_int;
+    pub mod range_contains;
     pub mod range_term;
     pub mod raw_addr_term;
     pub mod reference_sequence;
