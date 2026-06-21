@@ -936,6 +936,52 @@ fn for_flatten_wrong_expected_is_unsat() {
     }
 }
 
+// MECHANISM-2 gap (b): `.enumerate()` with a TUPLE loop pattern `for (i, &x)`.
+// `EnumerateSugar` already yields the `(i, e)` pairs (unroll semantics); the gap was
+// purely `for_replay` binding -- the loop var is now a tuple PLAN, decomposed per step.
+#[test]
+fn for_enumerate_tuple_pattern_lifts() {
+    let src = r#"
+        #[test]
+        fn t_enum() {
+            let expected = [10, 20, 30];
+            for (i, &x) in [10, 20, 30].iter().enumerate() {
+                assert_eq!(x, expected[i]);
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/enumerate.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "`for (i, &x) in ..enumerate()` must unroll: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_enum") {
+        assert!(sat, "x == expected[i] at each enumerate index -- consistent (SAT)");
+    }
+}
+
+// GAP (b) TEETH: a WRONG expected over the enumerate index must refute -- proving the
+// tuple decomposition binds the real index `i` and element `x`, not a guessed shape.
+#[test]
+fn for_enumerate_tuple_wrong_expected_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_enum_bad() {
+            let expected = [10, 20, 99];
+            for (i, &x) in [10, 20, 30].iter().enumerate() {
+                assert_eq!(x, expected[i]);
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/enumerate_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_enum_bad") {
+        assert!(!sat, "x=30 != expected[2]=99 at enumerate index 2 -- must be UNSAT");
+    }
+}
+
 #[test]
 fn compute_float32_wrapper_lowers_scaled_literals_to_tuple_axioms() {
     let src = r#"
