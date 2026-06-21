@@ -15738,7 +15738,7 @@ fn translate_string_predicate_assertion(
                     }))
                 }
                 "is_ascii_alphabetic" => {
-                    let Some(receiver) = char_literal_term(&call.receiver) else {
+                    let Some(ch) = char_or_byte_literal_value(&call.receiver) else {
                         return Ok(None);
                     };
                     if !call.args.is_empty() {
@@ -15746,14 +15746,15 @@ fn translate_string_predicate_assertion(
                             "is_ascii_alphabetic predicate expects no arguments".to_string()
                         );
                     }
+                    let receiver = str_const(ch.to_string());
                     let name = method_call_assertion_name(
                         "is_ascii_alphabetic",
-                        vec![receiver.clone()],
+                        vec![receiver],
                         scope.local_scope(),
                     );
                     Ok(Some(AssertionEntry {
                         name,
-                        atom: atomic_("str.is_ascii_alphabetic", vec![receiver]),
+                        atom: eq(bool_const(ch.is_ascii_alphabetic()), bool_const(true)),
                         fact_span: None,
                         kind: AssertionFactKind::Warranted,
                         claim_count: 1,
@@ -15809,6 +15810,32 @@ fn translate_string_predicate_assertion(
                     Ok(Some(AssertionEntry {
                         name,
                         atom: eq(bool_const(ch.is_alphabetic()), bool_const(true)),
+                        fact_span: None,
+                        kind: AssertionFactKind::Warranted,
+                        claim_count: 1,
+                    }))
+                }
+                "eq_ignore_ascii_case" => {
+                    if call.args.len() != 1 {
+                        return Ok(None);
+                    }
+                    let Some(recv_str) = string_literal_string_value_in_lib(&call.receiver) else {
+                        return Ok(None);
+                    };
+                    let Some(arg_str) = string_literal_string_value_in_lib(&call.args[0]) else {
+                        return Ok(None);
+                    };
+                    let result = recv_str.eq_ignore_ascii_case(&arg_str);
+                    let recv_term = str_const(recv_str);
+                    let arg_term = str_const(arg_str);
+                    let name = method_call_assertion_name(
+                        "eq_ignore_ascii_case",
+                        vec![recv_term, arg_term],
+                        scope.local_scope(),
+                    );
+                    Ok(Some(AssertionEntry {
+                        name,
+                        atom: eq(bool_const(result), bool_const(true)),
                         fact_span: None,
                         kind: AssertionFactKind::Warranted,
                         claim_count: 1,
@@ -15928,17 +15955,19 @@ fn ascii_char_class_assertion(
     local_scope: &str,
     atom_name: &str,
 ) -> Result<Option<AssertionEntry>, String> {
-    let Some(receiver) = char_literal_term(&call.receiver) else {
+    let Some(ch) = char_or_byte_literal_value(&call.receiver) else {
         return Ok(None);
     };
     if !call.args.is_empty() {
         return Err(format!("{} predicate expects no arguments", call.method));
     }
     let method = call.method.to_string();
-    let name = method_call_assertion_name(method.as_str(), vec![receiver.clone()], local_scope);
+    let receiver = str_const(ch.to_string());
+    let name = method_call_assertion_name(method.as_str(), vec![receiver], local_scope);
+    let result = eval_ascii_char_class_in_lib(ch, atom_name);
     Ok(Some(AssertionEntry {
         name,
-        atom: atomic_(atom_name, vec![receiver]),
+        atom: eq(bool_const(result), bool_const(true)),
         fact_span: None,
         kind: AssertionFactKind::Warranted,
         claim_count: 1,
@@ -18500,6 +18529,59 @@ fn char_literal_value(expr: &Expr) -> Option<char> {
         }) => Some(c.value()),
         Expr::Paren(paren) => char_literal_value(&paren.expr),
         Expr::Group(group) => char_literal_value(&group.expr),
+        _ => None,
+    }
+}
+
+/// Extract a concrete `char` from a char literal `'x'` OR a byte literal `b'x'`.
+/// Used by ASCII char-class predicates to get the exact char so we can evaluate
+/// the predicate on the host and lower the result to a bool constant.
+fn char_or_byte_literal_value(expr: &Expr) -> Option<char> {
+    match expr {
+        Expr::Lit(ExprLit {
+            lit: Lit::Char(c), ..
+        }) => Some(c.value()),
+        Expr::Lit(ExprLit {
+            lit: Lit::Byte(b), ..
+        }) => Some(char::from(b.value())),
+        Expr::Paren(paren) => char_or_byte_literal_value(&paren.expr),
+        Expr::Group(group) => char_or_byte_literal_value(&group.expr),
+        _ => None,
+    }
+}
+
+/// Evaluate the named ASCII char-class predicate on a concrete char.
+/// Covers all `str.is_ascii_*` atom names used in `translate_string_predicate_assertion`.
+fn eval_ascii_char_class_in_lib(ch: char, atom_name: &str) -> bool {
+    match atom_name {
+        "str.is_ascii_alphabetic" => ch.is_ascii_alphabetic(),
+        "str.is_ascii_digit" => ch.is_ascii_digit(),
+        "str.is_ascii_alphanumeric" => ch.is_ascii_alphanumeric(),
+        // `is_ascii_octdigit` is unstable; `matches!(ch, '0'..='7')` is the stable equivalent.
+        "str.is_ascii_octdigit" => matches!(ch, '0'..='7'),
+        "str.is_ascii_lowercase" => ch.is_ascii_lowercase(),
+        "str.is_ascii_uppercase" => ch.is_ascii_uppercase(),
+        "str.is_ascii_hexdigit" => ch.is_ascii_hexdigit(),
+        "str.is_ascii_punctuation" => ch.is_ascii_punctuation(),
+        "str.is_ascii_graphic" => ch.is_ascii_graphic(),
+        "str.is_ascii_whitespace" => ch.is_ascii_whitespace(),
+        "str.is_ascii_control" => ch.is_ascii_control(),
+        _ => panic!("eval_ascii_char_class_in_lib: unknown atom name `{atom_name}`"),
+    }
+}
+
+/// Extract the string value from a string literal (`"..."`) or char literal (`'x'`).
+/// Used by `eq_ignore_ascii_case` so we can evaluate the predicate on the host.
+fn string_literal_string_value_in_lib(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(s), ..
+        }) => Some(s.value()),
+        Expr::Lit(ExprLit {
+            lit: Lit::Char(c), ..
+        }) => Some(c.value().to_string()),
+        Expr::Paren(paren) => string_literal_string_value_in_lib(&paren.expr),
+        Expr::Group(group) => string_literal_string_value_in_lib(&group.expr),
         _ => None,
     }
 }
