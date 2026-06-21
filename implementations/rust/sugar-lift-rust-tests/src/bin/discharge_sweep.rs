@@ -214,6 +214,103 @@ struct RefutedRecord {
     mut_skip_class: bool,
 }
 
+/// One UNDECIDED obligation: lifted but congruence-only / no teeth.
+/// Captures the coarse shape signature (same as refuted) and the dominant
+/// blocking operation (the head symbol of the lifted term that z3 can't ground).
+#[derive(Clone)]
+struct UndecidedRecord {
+    file: String,
+    /// Same shape as `refuted_signature`: first non-panic atom arg kinds, e.g.
+    /// `=(ctor,const)`, `=(var,const)`, `=(ctor,ctor)`.
+    signature: String,
+    /// The "head symbol" of the lifted term blocking discharge, e.g.
+    /// `ctor:to_string`, `ctor:flat_map`, `ctor:collect`, `var:<name>`.
+    dom_op: String,
+}
+
+/// Extract the dominant blocking operation from an UNDECIDED inv: the first
+/// "interesting" (non-const) sub-term kind in the first non-panic atom's args.
+/// Returns strings like `ctor:<name>`, `var:<name>`, `let`, `lambda`, `?`.
+fn undecided_dom_op(inv: &Value) -> String {
+    fn atoms(v: &Value, out: &mut Vec<Value>) {
+        if v.get("kind").and_then(Value::as_str) == Some("atomic") {
+            out.push(v.clone());
+        } else if let Some(ops) = v.get("operands").and_then(Value::as_array) {
+            for o in ops {
+                atoms(o, out);
+            }
+        }
+    }
+    /// Walk a term; return the first interesting operation label.
+    fn interesting(v: &Value) -> Option<String> {
+        let kind = v.get("kind").and_then(Value::as_str).unwrap_or("");
+        match kind {
+            "ctor" => {
+                let name = v.get("name").and_then(Value::as_str).unwrap_or("?");
+                Some(format!("ctor:{name}"))
+            }
+            "call" => {
+                // {kind:"call", callee:"..."} or {kind:"call", name:"..."}
+                let name = v
+                    .get("callee")
+                    .or_else(|| v.get("name"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("?");
+                Some(format!("call:{name}"))
+            }
+            "var" => {
+                let name = v.get("name").and_then(Value::as_str).unwrap_or("?");
+                Some(format!("var:{name}"))
+            }
+            "let" => {
+                // let-bound computation: look at the body for the real op.
+                if let Some(body) = v.get("body") {
+                    if let Some(r) = interesting(body) {
+                        return Some(r);
+                    }
+                }
+                Some("let".to_string())
+            }
+            "lambda" => Some("lambda".to_string()),
+            "const" | "" => None, // concrete literal -- not the blocker
+            other => {
+                // Unknown / future kind: recurse into args/operands first.
+                if let Some(args) = v.get("args").and_then(Value::as_array) {
+                    for a in args {
+                        if let Some(r) = interesting(a) {
+                            return Some(r);
+                        }
+                    }
+                }
+                if let Some(ops) = v.get("operands").and_then(Value::as_array) {
+                    for o in ops {
+                        if let Some(r) = interesting(o) {
+                            return Some(r);
+                        }
+                    }
+                }
+                Some(other.to_string())
+            }
+        }
+    }
+
+    let mut a = Vec::new();
+    atoms(inv, &mut a);
+    for atom in &a {
+        if mentions_panic(atom) {
+            continue;
+        }
+        if let Some(args) = atom.get("args").and_then(Value::as_array) {
+            for arg in args {
+                if let Some(op) = interesting(arg) {
+                    return op;
+                }
+            }
+        }
+    }
+    "?".to_string()
+}
+
 #[derive(Default)]
 struct Tally {
     warranted_obligations: usize,
@@ -325,7 +422,10 @@ fn collect_rs_files(root: &Path) -> Vec<(String, String)> {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        eprintln!("usage: discharge_sweep <corpus-dir> [--json <out.json>] [--z3 <path>]");
+        eprintln!(
+            "usage: discharge_sweep <corpus-dir> [--json <out.json>] [--z3 <path>] \
+             [--dump-refuted <path>] [--dump-undecided <path>]"
+        );
         std::process::exit(2);
     }
     let corpus = Path::new(&args[1]);
@@ -456,19 +556,27 @@ fn main() {
                 signature: refuted_signature(inv),
                 mut_skip_class: *mut_skip,
             });
+            let undecided = matches!(full, Teeth::Undecided).then(|| UndecidedRecord {
+                file: rel.clone(),
+                signature: refuted_signature(inv),
+                dom_op: undecided_dom_op(inv),
+            });
             let n = checked.fetch_add(1, Ordering::Relaxed) + 1;
             if n % 500 == 0 {
                 eprintln!("  discharged {n}/{total_ob}");
             }
-            (full, value, refuted)
+            (full, value, refuted, undecided)
         })
-        .fold(Acc::default, |mut acc, (full, value, refuted)| {
+        .fold(Acc::default, |mut acc, (full, value, refuted, undecided)| {
             acc.full.record(&full);
             if let Some(v) = &value {
                 acc.value.record(v);
             }
             if let Some(r) = refuted {
                 acc.refuted.push(r);
+            }
+            if let Some(u) = undecided {
+                acc.undecided.push(u);
             }
             acc
         })
@@ -493,6 +601,23 @@ fn main() {
         }
         if let Err(e) = std::fs::write(&path, lines) {
             eprintln!("discharge_sweep: write --dump-refuted {path}: {e}");
+        }
+    }
+
+    if let Some(path) = arg_value(&args, "--dump-undecided") {
+        let mut lines = String::from("file\tsignature\tdom_op\n");
+        let mut recs = acc.undecided.clone();
+        recs.sort_by(|a, b| {
+            a.dom_op
+                .cmp(&b.dom_op)
+                .then(a.signature.cmp(&b.signature))
+                .then(a.file.cmp(&b.file))
+        });
+        for r in &recs {
+            lines.push_str(&format!("{}\t{}\t{}\n", r.file, r.signature, r.dom_op));
+        }
+        if let Err(e) = std::fs::write(&path, lines) {
+            eprintln!("discharge_sweep: write --dump-undecided {path}: {e}");
         }
     }
 
@@ -530,12 +655,13 @@ fn main() {
 }
 
 /// Combined parallel accumulator: full-inv ledger, value-claim ledger, and the
-/// list of (false) refutations for classification.
+/// list of (false) refutations + undecided records for classification.
 #[derive(Default)]
 struct Acc {
     full: Tally,
     value: Tally,
     refuted: Vec<RefutedRecord>,
+    undecided: Vec<UndecidedRecord>,
 }
 
 impl Acc {
@@ -543,6 +669,7 @@ impl Acc {
         self.full.merge(other.full);
         self.value.merge(other.value);
         self.refuted.extend(other.refuted);
+        self.undecided.extend(other.undecided);
     }
 }
 
