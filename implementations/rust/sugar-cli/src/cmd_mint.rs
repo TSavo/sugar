@@ -62,9 +62,6 @@ use crate::lift_plugin::{self, LiftPluginError, LiftPluginOptions};
 use crate::project_config::{
     read_project_config, read_user_config, KitAliasEntry, PluginEntry, ProjectConfig,
 };
-use crate::report_witness::{
-    mint_json_witness_with_options, JsonWitnessOptions, ReportWitnessProof,
-};
 use crate::OutputFlags;
 use crate::{EXIT_OK, EXIT_USER_ERROR, EXIT_VERIFY_FAIL};
 
@@ -794,7 +791,6 @@ impl MintKit {
             .map(|plan| finalize_toolchain_plan_memento(plan, &per_plugin))
             .transpose()
             .map_err(KitError::Transformation)?;
-        let plan_memento_for_witness = plan_memento.clone();
         let mut merged_lift_response = if per_plugin.len() == 1 {
             // Single-plugin path: pass the response through unchanged so
             // proof-envelope and ir-document both work as before.
@@ -806,7 +802,7 @@ impl MintKit {
             // failure is to reject the mix loudly.
             merge_ir_document_responses(per_plugin).map_err(KitError::Transformation)?
         };
-        if let Some(plan_memento) = plan_memento.as_ref() {
+        if let Some(plan_memento) = plan_memento {
             if merged_lift_response
                 .get("kind")
                 .and_then(|value| value.as_str())
@@ -817,7 +813,7 @@ impl MintKit {
                     .and_then(Value::as_array)
                     .cloned()
                     .unwrap_or_default();
-                plan_mementos.push(plan_memento.clone());
+                plan_mementos.push(plan_memento);
                 merged_lift_response["planMementos"] = Value::Array(plan_mementos);
                 debug!("mint: attached toolchain plan memento to ir-document");
             } else {
@@ -837,31 +833,6 @@ impl MintKit {
             merged_lift_response,
         )
         .map_err(KitError::Transformation)?;
-        if let Some(plan_memento) = plan_memento_for_witness.as_ref() {
-            let witness = mint_toolchain_run_witness(
-                &project_root_for_manifests,
-                surface_for_session.as_deref().unwrap_or("toolchain"),
-                plan_memento,
-                &result,
-                &out_dir,
-            )
-            .map_err(KitError::Transformation)?;
-            info!(
-                proof_cid = %witness.proof_cid,
-                witness_cid = %witness.witness_cid,
-                evidence_cid = %witness.evidence_cid,
-                proof_file = %witness.proof_file.display(),
-                "mint: toolchain-run witness minted"
-            );
-            if !quiet {
-                println!(
-                    "{}: toolchain-run witness {} -> {}",
-                    "witness".green().bold(),
-                    witness.witness_cid,
-                    witness.proof_file.display()
-                );
-            }
-        }
         let claim = mint_result_claim(input, combined_lift_claim.as_ref(), &result)?;
         Ok(MintSession {
             claim,
@@ -965,108 +936,6 @@ fn finalize_toolchain_plan_memento(
         Value::Array(expected_output_cids),
     );
     Ok(plan)
-}
-
-fn expected_output_cids_from_plan(plan: &Value) -> Result<Vec<String>, String> {
-    let body = normalize_plan_memento_body(plan)?;
-    expected_output_cids_from_normalized_plan(&body)
-}
-
-fn expected_output_cids_from_normalized_plan(body: &Value) -> Result<Vec<String>, String> {
-    let expected = body
-        .get("expectedOutputCids")
-        .or_else(|| body.get("expected_output_cids"))
-        .and_then(Value::as_array)
-        .ok_or_else(|| "`plan-memento` missing `expectedOutputCids` array".to_string())?;
-    let mut cids = Vec::with_capacity(expected.len());
-    for cid in expected {
-        let cid = cid.as_str().ok_or_else(|| {
-            "`plan-memento.expectedOutputCids` entries must be strings".to_string()
-        })?;
-        if !cid.starts_with("blake3-512:") {
-            return Err(format!(
-                "`plan-memento.expectedOutputCids` entry must be a prefixed CID, got `{cid}`"
-            ));
-        }
-        cids.push(cid.to_string());
-    }
-    Ok(cids)
-}
-
-fn toolchain_plan_cid(plan: &Value) -> Result<String, String> {
-    let body = normalize_plan_memento_body(plan)?;
-    Ok(canonical_json_cid(&body))
-}
-
-fn mint_toolchain_run_witness(
-    project_root: &Path,
-    surface: &str,
-    finalized_plan: &Value,
-    result: &DispatchResult,
-    out_dir: &Path,
-) -> Result<ReportWitnessProof, String> {
-    let plan_body = normalize_plan_memento_body(finalized_plan)?;
-    let plan_cid = toolchain_plan_cid(&plan_body)?;
-    let actual_output_cids = expected_output_cids_from_plan(&plan_body)?;
-    let lift_result_cid = canonical_json_cid(&result.lift_result);
-    let proof_file = result
-        .proof_file
-        .as_ref()
-        .map(|path| path.display().to_string());
-    let claim_body = json!({
-        "kind": "toolchain-run",
-        "schemaVersion": "1",
-        "projectRoot": project_root.display().to_string(),
-        "surface": surface,
-        "planCid": plan_cid,
-        "actualOutputCids": actual_output_cids,
-        "mintedProofCid": result.filename_cid,
-        "contractSetCid": result.contract_set_cid,
-        "bytesWritten": result.bytes_written,
-        "proofFile": proof_file,
-    });
-    let evidence = json!({
-        "kind": "sugar-toolchain-run-evidence",
-        "schemaVersion": "1",
-        "projectRoot": project_root.display().to_string(),
-        "surface": surface,
-        "planCid": plan_cid,
-        "plan": plan_body,
-        "liftResultCid": lift_result_cid,
-        "mintResult": {
-            "filenameCid": result.filename_cid,
-            "contractSetCid": result.contract_set_cid,
-            "bytesWritten": result.bytes_written,
-            "proofFile": result
-                .proof_file
-                .as_ref()
-                .map(|path| path.display().to_string()),
-        }
-    });
-    let mut extra_input_cids = actual_output_cids.clone();
-    extra_input_cids.push(plan_cid.clone());
-    extra_input_cids.push(lift_result_cid);
-    extra_input_cids.push(result.filename_cid.clone());
-    extra_input_cids.push(result.contract_set_cid.clone());
-    let mut proof_metadata = BTreeMap::new();
-    proof_metadata.insert("sugar.toolchain.planCid".to_string(), plan_cid.clone());
-    proof_metadata.insert("sugar.toolchain.surface".to_string(), surface.to_string());
-
-    mint_json_witness_with_options(
-        &format!("toolchain-run-{surface}"),
-        "toolchain-run",
-        &claim_body,
-        &evidence,
-        out_dir,
-        JsonWitnessOptions {
-            produced_by: Some("sugar-mint:toolchain-run".to_string()),
-            plan_cid: Some(plan_cid),
-            actual_output_cids,
-            extra_input_cids,
-            proof_metadata,
-            ..JsonWitnessOptions::default()
-        },
-    )
 }
 
 fn has_nontrivial_pre_json(pre: &Value) -> bool {
@@ -2978,7 +2847,7 @@ fn mint_witness_memento(decl: &Value) -> Result<(String, Vec<u8>), String> {
     Ok((cid, canonical.into_bytes()))
 }
 
-fn normalize_plan_memento_body(decl: &Value) -> Result<Value, String> {
+fn mint_plan_memento(decl: &Value) -> Result<(String, Vec<u8>), String> {
     let mut body = decl
         .get("plan_memento")
         .or_else(|| decl.get("planMemento"))
@@ -2996,13 +2865,24 @@ fn normalize_plan_memento_body(decl: &Value) -> Result<Value, String> {
     body_obj
         .entry("schemaVersion".to_string())
         .or_insert_with(|| json!("1"));
-    expected_output_cids_from_normalized_plan(&body)?;
-    Ok(body)
-}
+    let expected = body_obj
+        .get("expectedOutputCids")
+        .or_else(|| body_obj.get("expected_output_cids"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| "`plan-memento` missing `expectedOutputCids` array".to_string())?;
+    for cid in expected {
+        let cid = cid.as_str().ok_or_else(|| {
+            "`plan-memento.expectedOutputCids` entries must be strings".to_string()
+        })?;
+        if !cid.starts_with("blake3-512:") {
+            return Err(format!(
+                "`plan-memento.expectedOutputCids` entry must be a prefixed CID, got `{cid}`"
+            ));
+        }
+    }
 
-fn mint_plan_memento(decl: &Value) -> Result<(String, Vec<u8>), String> {
-    let body = normalize_plan_memento_body(decl)?;
-    let plan_cid = canonical_json_cid(&body);
+    let plan_canonical = encode_jcs(&json_to_cvalue(&body));
+    let plan_cid = blake3_512_of(plan_canonical.as_bytes());
     let envelope = json!({
         "body": body,
         "header": {
@@ -4019,26 +3899,6 @@ mod tests {
             .collect()
     }
 
-    fn witness_memento_members(
-        catalog: &sugar_verifier::cbor_decode::CborValue,
-    ) -> Vec<(String, Value)> {
-        let members = catalog
-            .as_map()
-            .and_then(|m| m.get("members"))
-            .and_then(|v| v.as_map())
-            .expect("proof members");
-        members
-            .iter()
-            .filter_map(|(cid, member)| {
-                let bytes = member.as_bstr()?;
-                let envelope = serde_json::from_slice::<Value>(bytes).ok()?;
-                (envelope.pointer("/header/kind").and_then(|v| v.as_str())
-                    == Some("witness-memento"))
-                .then(|| (cid.clone(), envelope))
-            })
-            .collect()
-    }
-
     fn minted_panic_locus_contract_header(panic_loci: Option<Value>) -> Value {
         let (bytes, _, _) = mint_from_ir_document(
             &function_contract_with_panic_loci(panic_loci),
@@ -4902,104 +4762,6 @@ mod tests {
             finalized.get("planCid").is_none(),
             "the letter must not contain its own CID; the envelope header carries it"
         );
-    }
-
-    #[test]
-    fn toolchain_run_witness_confirms_minted_plan_outputs() {
-        let root = temp_workspace("toolchain_run_witness_confirms_plan");
-        let out_dir = root.join("out");
-        std::fs::create_dir_all(&out_dir).expect("create out dir");
-        let base = json!({
-            "kind": "component-plan",
-            "schemaVersion": "1",
-            "workspaceRoot": root.display().to_string(),
-            "planning": {"source": "configured"},
-            "plugins": [{
-                "kind": "lift",
-                "surface": "rust-test-assertions"
-            }]
-        });
-        let outputs = vec![PerPluginDispatch {
-            surface: "rust-test-assertions".to_string(),
-            response: json!({
-                "kind": "ir-document",
-                "ir": [{
-                    "kind": "contract",
-                    "name": "toolchain.run.fact",
-                    "outBinding": "out",
-                    "inv": {"kind": "atomic", "name": "=", "args": []}
-                }],
-                "diagnostics": []
-            }),
-        }];
-        let finalized =
-            finalize_toolchain_plan_memento(base, &outputs).expect("finalize toolchain plan");
-        let plan_cid = toolchain_plan_cid(&finalized).expect("toolchain plan cid");
-        let expected_output_cids =
-            expected_output_cids_from_plan(&finalized).expect("expected output cids");
-        let (plan_member_cid, plan_bytes) =
-            mint_plan_memento(&finalized).expect("mint plan memento");
-        let dispatch_result = DispatchResult {
-            filename_cid: format!("blake3-512:{}", "a".repeat(128)),
-            contract_set_cid: format!("blake3-512:{}", "b".repeat(128)),
-            bytes_written: 128,
-            proof_file: Some(out_dir.join("minted.proof")),
-            lift_result: outputs[0].response.clone(),
-        };
-
-        let minted = mint_toolchain_run_witness(
-            &root,
-            "rust-test-assertions",
-            &finalized,
-            &dispatch_result,
-            &out_dir,
-        )
-        .expect("mint toolchain run witness");
-
-        let witness_proof = std::fs::read(&minted.proof_file).expect("read witness proof");
-        let catalog = sugar_verifier::cbor_decode::decode(&witness_proof).expect("decode proof");
-        let witness_members = witness_memento_members(&catalog);
-        assert_eq!(witness_members.len(), 1);
-        let (witness_member_cid, witness_envelope) = &witness_members[0];
-        assert_eq!(
-            witness_envelope
-                .pointer("/body/witness_kind")
-                .and_then(Value::as_str),
-            Some("toolchain-run")
-        );
-        assert_eq!(
-            witness_envelope
-                .pointer("/body/planCid")
-                .and_then(Value::as_str),
-            Some(plan_cid.as_str())
-        );
-        assert_eq!(
-            witness_envelope
-                .pointer("/body/actualOutputCids")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default(),
-            expected_output_cids
-                .iter()
-                .map(|cid| json!(cid))
-                .collect::<Vec<_>>()
-        );
-
-        let mut pool = sugar_verifier::types::MementoPool::default();
-        pool.insert(
-            plan_member_cid,
-            serde_json::from_slice(&plan_bytes).expect("plan envelope"),
-        );
-        pool.insert(witness_member_cid.clone(), witness_envelope.clone());
-        let rows = sugar_verifier::report::toolchain_plan_reports(&pool);
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].status, "confirmed");
-        assert_eq!(
-            rows[0].actual_output_cids, expected_output_cids,
-            "the real witness settles the real finalized plan outputs"
-        );
-
-        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
