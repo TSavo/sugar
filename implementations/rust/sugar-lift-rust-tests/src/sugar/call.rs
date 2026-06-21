@@ -44,7 +44,10 @@ use syn::Expr;
 
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
-use crate::{expr_head_key, type_id_of_call_term, Desugared, Outcome, Sugar, SugarCtx};
+use crate::{
+    const_fold_int_term, const_fold_u128_term, expr_head_key, num, type_id_of_call_term,
+    u128_term, Desugared, Outcome, Sugar, SugarCtx,
+};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::fallback_term("call", recognize);
@@ -164,10 +167,53 @@ impl Sugar for CallSugar {
             };
             args.push(term);
         }
+        // ARITHMETIC TRAIT-METHOD FOLD: `Add::add(x, y)` → `x + y`, const-evaluated.
+        // Maps std-ops trait method calls (Add::add, Sub::sub, Mul::mul, Div::div,
+        // Rem::rem, Shl::shl, Shr::shr, BitAnd::bitand, BitOr::bitor, BitXor::bitxor)
+        // to their equivalent arithmetic ctor names, then applies the same
+        // `const_fold_int_term` / `const_fold_u128_term` that `BinOpSugar` uses. This
+        // discharges `assert_eq!(result, Op::method(lhs, rhs))` assertions where `lhs`
+        // and `rhs` are let-bound literal values (including `&rhs` ref forms, which
+        // `const_fold_int_term` now transparently strips). Without this fold the call
+        // emits an opaque `call:Add::add(...)` EUF that the SMT cannot evaluate.
+        if args.len() == 2 {
+            if let Some(arith_op) = arith_trait_method_op(&self.head_key) {
+                let folded = Rc::new(Term::Ctor {
+                    name: arith_op.to_string(),
+                    args: args.clone(),
+                });
+                if let Some(value) = const_fold_u128_term(&folded) {
+                    return Outcome::Dug(Desugared::Term(u128_term(value)));
+                }
+                if let Some(value) = const_fold_int_term(&folded) {
+                    return Outcome::Dug(Desugared::Term(num(value)));
+                }
+            }
+        }
         Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
             name: format!("call:{}", self.head_key),
             args,
         })))
+    }
+}
+
+/// Maps arithmetic trait method `head_key`s (as produced by `expr_head_key`) to
+/// the canonical arithmetic ctor names used by `const_fold_int_term` /
+/// `const_fold_u128_term`.  Returns `None` for anything that is NOT a two-argument
+/// arithmetic trait method, so the fold is only attempted when warranted.
+fn arith_trait_method_op(head_key: &str) -> Option<&'static str> {
+    match head_key {
+        "Add::add" => Some("+"),
+        "Sub::sub" => Some("-"),
+        "Mul::mul" => Some("*"),
+        "Div::div" => Some("int-div"),
+        "Rem::rem" => Some("int-rem"),
+        "Shl::shl" => Some("shift-left"),
+        "Shr::shr" => Some("shift-right"),
+        "BitAnd::bitand" => Some("bit-and"),
+        "BitOr::bitor" => Some("bit-or"),
+        "BitXor::bitxor" => Some("bit-xor"),
+        _ => None,
     }
 }
 

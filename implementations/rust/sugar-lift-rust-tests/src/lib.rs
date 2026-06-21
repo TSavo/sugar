@@ -5065,6 +5065,13 @@ pub(crate) fn const_fold_int_term(term: &Rc<Term>) -> Option<i128> {
         Term::Ctor { name, args } if args.len() == 1 && name.starts_with("cast:") => {
             cast_const_fold_value(const_fold_int_term(&args[0])?, name.strip_prefix("cast:")?)
         }
+        // A shared reference `&x` transparently deref-folds to the same integer value as
+        // `x`: `*(&v) == v` for immutable values. This lets arithmetic trait-method calls
+        // like `Add::add(lhs, &rhs)` fold through the `ref(...)` wrapper that
+        // `reference_term::recognize` emits for the borrowed argument.
+        Term::Ctor { name, args } if name == "ref" && args.len() == 1 => {
+            const_fold_int_term(&args[0])
+        }
         _ => None,
     }
 }
