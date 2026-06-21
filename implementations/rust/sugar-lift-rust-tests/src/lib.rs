@@ -3988,6 +3988,12 @@ struct TemporalPlan {
     /// the `@adv` occurrence tag. Iterators ARE in `versioned` (so reads are tagged
     /// and `@adv` applies) but are NOT in `interior_mut` (no per-statement tick).
     iterators: BTreeSet<String>,
+    /// Locals MUTATED through a `&mut` alias the tracker cannot resolve (`let r = &mut x;
+    /// *r += 1;`). The alias-deref mutation is refused, so the rewrite never applies it
+    /// and `x`'s tracked value goes stale; a read of `x` must REFUSE rather than lift the
+    /// stale literal (which would refute a true assertion -- the inverse cardinal sin).
+    /// See `collect_alias_deref_mutated`. Conservative refuse-tightening, no new warrant.
+    alias_deref_mutated: BTreeSet<String>,
     /// Locals bound to an array of NON-literal element constructions (`let xs =
     /// [CountClone::new(), ..]`) that are subsequently consumed by a `.cloned()`
     /// adaptor in a side-effecting `for`-loop (`for _ in xs.iter().cloned().zip(..) {}`).
@@ -4348,6 +4354,13 @@ impl TemporalScope {
     /// unstable). A non-mut local is provably immutable and stable.
     pub(crate) fn is_mut_local(&self, name: &str) -> bool {
         self.plan.mut_locals.contains(name)
+    }
+
+    /// Whether `name` is MUTATED through a `&mut` alias the tracker cannot resolve
+    /// (`let r = &mut x; *r += 1;`). Such a local's tracked value is stale, so a read of
+    /// it must REFUSE rather than lift the stale literal (the no-false-refutation gate).
+    pub(crate) fn is_alias_deref_mutated(&self, name: &str) -> bool {
+        self.plan.alias_deref_mutated.contains(name)
     }
 
     fn is_sideeffecting_clone_local(&self, name: &str) -> bool {
@@ -11260,12 +11273,124 @@ fn temporal_plan_for_stmts(stmts: &[Stmt], inherited_stateful: &BTreeSet<String>
     }
     iterators.retain(|name| !interior_mut.contains(name));
     let sideeffecting_clone_locals = collect_sideeffecting_clone_locals(stmts);
+    let mut alias_deref_mutated = BTreeSet::<String>::new();
+    collect_alias_deref_mutated(stmts, &mut_locals, &mut alias_deref_mutated);
     TemporalPlan {
         versioned,
         mut_locals,
         interior_mut,
         iterators,
         sideeffecting_clone_locals,
+        alias_deref_mutated,
+    }
+}
+
+/// Locals whose value is MUTATED THROUGH A `&mut` ALIAS the syntactic tracker cannot
+/// resolve to a literal -- `let r = &mut x; *r += 1;` (or inline `*(&mut x) += 1;`). The
+/// alias-deref mutation is refused as a runtime expression-statement, so the temporal
+/// rewrite never applies it and `x`'s tracked value goes STALE. A later read of `x` that
+/// resolved to that stale literal would lift a value the program never holds -- e.g.
+/// `assert_eq!(x, 6)` lifting `5 == 6` (UNSAT), which REFUTES a true assertion (the
+/// inverse cardinal sin / a fake dragon). This is the SOUNDNESS GATE: a read of such a
+/// local REFUSES instead of resolving to the stale value (`bound_path` Hits by name) --
+/// conservative refuse-tightening, zero new warrant, so zero cardinal-sin risk. It does
+/// NOT warrant the post-mutation value (that is the attended SSA arm's job); it only
+/// stops the stale read. A `&mut` borrow that is never deref-mutated does not qualify.
+fn collect_alias_deref_mutated(
+    stmts: &[Stmt],
+    mut_locals: &BTreeSet<String>,
+    out: &mut BTreeSet<String>,
+) {
+    fn mut_ref_local_target(expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Reference(r) if r.mutability.is_some() => simple_path_name(&r.expr),
+            Expr::Paren(p) => mut_ref_local_target(&p.expr),
+            Expr::Group(g) => mut_ref_local_target(&g.expr),
+            _ => None,
+        }
+    }
+    // Pass 1: `let r = &mut x` (x a mut local) -> alias r -> x. Descends nested blocks.
+    let mut aliases: BTreeMap<String, String> = BTreeMap::new();
+    struct AliasV<'a> {
+        mut_locals: &'a BTreeSet<String>,
+        aliases: &'a mut BTreeMap<String, String>,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for AliasV<'_> {
+        fn visit_local(&mut self, local: &'ast syn::Local) {
+            if let Some(init) = local.init.as_ref().filter(|init| init.diverge.is_none()) {
+                if let Some(base) = mut_ref_local_target(&init.expr) {
+                    if self.mut_locals.contains(&base) {
+                        for name in pat_idents(&local.pat) {
+                            self.aliases.insert(name, base.clone());
+                        }
+                    }
+                }
+            }
+            syn::visit::visit_local(self, local);
+        }
+    }
+    {
+        let mut v = AliasV {
+            mut_locals,
+            aliases: &mut aliases,
+        };
+        for stmt in stmts {
+            syn::visit::Visit::visit_stmt(&mut v, stmt);
+        }
+    }
+    // Pass 2: `*r <assign/compound-assign>` (r an alias) or `*(&mut x) <assign>` (inline)
+    // -> the base local is mutated through a `&mut` deref. Descends nested blocks.
+    struct MutV<'a> {
+        aliases: &'a BTreeMap<String, String>,
+        out: &'a mut BTreeSet<String>,
+    }
+    impl MutV<'_> {
+        fn record_deref_lhs(&mut self, lhs: &Expr) {
+            let Expr::Unary(unary) = strip_refs_groups(lhs) else {
+                return;
+            };
+            if !matches!(unary.op, syn::UnOp::Deref(_)) {
+                return;
+            }
+            if let Some(name) = simple_path_name(&unary.expr) {
+                if let Some(base) = self.aliases.get(&name) {
+                    self.out.insert(base.clone());
+                }
+            } else if let Some(base) = mut_ref_local_target(&unary.expr) {
+                self.out.insert(base);
+            }
+        }
+    }
+    impl<'ast> syn::visit::Visit<'ast> for MutV<'_> {
+        fn visit_expr_assign(&mut self, assign: &'ast syn::ExprAssign) {
+            self.record_deref_lhs(&assign.left);
+            syn::visit::visit_expr_assign(self, assign);
+        }
+        fn visit_expr_binary(&mut self, binary: &'ast syn::ExprBinary) {
+            if matches!(
+                binary.op,
+                BinOp::AddAssign(_)
+                    | BinOp::SubAssign(_)
+                    | BinOp::MulAssign(_)
+                    | BinOp::DivAssign(_)
+                    | BinOp::RemAssign(_)
+                    | BinOp::BitXorAssign(_)
+                    | BinOp::BitAndAssign(_)
+                    | BinOp::BitOrAssign(_)
+                    | BinOp::ShlAssign(_)
+                    | BinOp::ShrAssign(_)
+            ) {
+                self.record_deref_lhs(&binary.left);
+            }
+            syn::visit::visit_expr_binary(self, binary);
+        }
+    }
+    let mut v = MutV {
+        aliases: &aliases,
+        out,
+    };
+    for stmt in stmts {
+        syn::visit::Visit::visit_stmt(&mut v, stmt);
     }
 }
 

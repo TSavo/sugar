@@ -211,14 +211,14 @@ fn true_assertions_are_never_refuted() {
 // a WARRANTED obligation with inv `=(5, 6)` -> the discharge gate REFUTES a TRUE
 // assertion (x really is 6). A false refutation -- a fake dragon -- live today.
 //
-// The fix is the untrackable-deref-mutation refuse (T3, deferred #6/#16): once a
-// local mutated through a refused `*r OP= ..` no longer grounds to its stale
-// initializer, the read REFUSES (or stays opaque -> UNDECIDED) instead of lifting
-// `5 == 6`. This test is the durable regression net: it is `#[ignore]` ONLY because
-// the fix has not landed. UN-IGNORE IT IN THE PR THAT LANDS THE T3 FIX -- it must go
-// green (Disp != Refuted) and stay green forever after.
+// The fix is the untrackable-deref-mutation refuse (the no-false-refutation accuracy-
+// gate, #16): a local mutated through a refused `*r OP= ..` no longer grounds to its
+// stale initializer -- the read REFUSES by name (`ambiguous temporal identity`) instead
+// of lifting `5 == 6`. LANDED here: with the gate, no decl is emitted, so `disp_of`
+// returns `Refused` (not `Refuted`). This is the durable regression net -- it must stay
+// green (Disp != Refuted) forever after. (The post-mutation WARRANT -- x == 6 SAT -- is
+// the separate attended SSA arm, T3 #6; this gate only stops the false refutation.)
 #[test]
-#[ignore = "KNOWN HOLE: stale &mut read false-refutes 5==6 until T3 deref-mutation refuse lands (#6/#16); un-ignore with the fix"]
 fn borrow4_stale_mut_assignment_must_not_false_refute() {
     let d = disp_of(
         "borrow4_stale_mut",
