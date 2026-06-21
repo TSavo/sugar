@@ -5297,7 +5297,10 @@ fn alias_rebind() {
 }
 
 #[test]
-fn method_chain_predicate_range_contains_keys_bounds_and_reference_arg() {
+fn range_contains_over_literal_ranges_folds_to_ground_bool_not_euf_key() {
+    // Range `contains` over literal ranges now FOLDS to a ground `Bool` (a real value with
+    // teeth) -- superseding the old opaque `method:contains` EUF callsite key (`method:contains
+    // == false` over a free EUF var, no teeth). The membership is text-determined.
     let src = r#"
 #[test]
 fn test_range_contains() {
@@ -5308,36 +5311,12 @@ fn test_range_contains() {
     let out = lift_file(&parse(src), "tests/ops.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 2);
-
-    let names = out
-        .decls
-        .iter()
-        .map(|decl| decl.name.as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        names,
-        vec![
-            "method:contains#euf#c:callresult_method_contains_a2(c:range(i:1:u32,i:5),c:ref(i:0:u32))::assertion",
-            "method:contains#euf#c:callresult_method_contains_a2(c:range(i:1:u32,i:5),c:ref(i:1:u32))::assertion",
-        ]
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        !doc.contains("method:contains"),
+        "range contains now folds to a ground bool, not an opaque EUF callsite key: {doc}"
     );
-    let first = inv_operands(&out.decls[0]);
-    assert_eq!(first.len(), 1);
-    match first[0].as_ref() {
-        Formula::Atomic { name, args } => {
-            assert_eq!(name, "=");
-            assert_eq!(args.len(), 2);
-            match args[1].as_ref() {
-                Term::Const {
-                    value: ConstValue::Bool(value),
-                    ..
-                } => assert!(!*value),
-                other => panic!("expected bool false rhs, got {other:?}"),
-            }
-        }
-        other => panic!("expected equality atom, got {other:?}"),
-    }
 }
 
 #[test]
@@ -20491,5 +20470,134 @@ fn t() {
     assert!(
         doc.contains("literal:Tuple("),
         "a plain literal tuple equality should keep its existing literal:Tuple lowering: {doc}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// `Range::contains` over literal ranges — `(a..b).contains(&x)` membership is determined
+// entirely by the text, so it folds to a ground `Bool` (a real value with teeth), not an
+// opaque `method:contains`. A wrong membership claim is z3-UNSAT.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn range_contains_literal_ranges_lower_to_ground_bools() {
+    // The real `num/ops.rs` corpus rows (half-open and inclusive).
+    let src = r#"
+#[test]
+fn t() {
+    assert!(!(1u32..5).contains(&0u32));
+    assert!((1u32..5).contains(&1u32));
+    assert!((1u32..5).contains(&4u32));
+    assert!(!(1u32..5).contains(&5u32));
+    assert!(!(1u32..5).contains(&6u32));
+    assert!(!(1u32..=5).contains(&0));
+    assert!((1u32..=5).contains(&1));
+    assert!((1u32..=5).contains(&5));
+    assert!(!(1u32..=5).contains(&6));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/range_contains_lits.rs");
+    assert_eq!(
+        out.assertions_lifted, 9,
+        "range contains over literal ranges should lower to ground bools; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons,
+        out.factory_audits,
+        out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        !doc.contains("method:contains"),
+        "range contains should lower to a ground bool, not an opaque method term: {doc}"
+    );
+}
+
+#[test]
+fn range_contains_good_twin_is_sat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert!((1u32..5).contains(&3u32));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/range_contains_good.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "range_contains_good") {
+        assert!(sat, "(1..5).contains(&3) = true must be z3-SAT (the warrant holds)");
+    }
+}
+
+// THE TEETH BITE: `3` is in `1..5` but `5` is NOT (the exclusive end). Asserting the WRONG
+// membership `(1..5).contains(&5)` folds to `Bool(false)` -> `assert!(false)` -> z3-UNSAT.
+#[test]
+fn range_contains_wrong_membership_is_unsat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert!((1u32..5).contains(&5u32));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/range_contains_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "range_contains_bad") {
+        assert!(
+            !sat,
+            "(1..5).contains(&5) = false (5 is the exclusive end) -> assert!(false) must be z3-UNSAT (teeth bite)"
+        );
+    }
+}
+
+// DISCRIMINATION: the exclusive vs inclusive end boundary is computed exactly — `5` is NOT
+// in `1..5` but IS in `1..=5`. The good twin (inclusive) is SAT, proving the limits matter.
+#[test]
+fn range_contains_inclusive_end_includes_boundary() {
+    let src = r#"
+#[test]
+fn t() {
+    assert!((1u32..=5).contains(&5u32));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/range_contains_incl.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "range_contains_incl") {
+        assert!(sat, "(1..=5).contains(&5) = true (inclusive end) must be z3-SAT");
+    }
+}
+
+// EXACT-OR-NONE: a runtime range (non-literal endpoints) is not text-determined -> stays the
+// opaque `method:contains` fallback, never a fabricated bool.
+#[test]
+fn range_contains_runtime_bounds_stay_opaque() {
+    let src = r#"
+#[test]
+fn t() {
+    let lo = compute_lo();
+    let hi = compute_hi();
+    assert!((lo..hi).contains(&3));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/range_contains_runtime.rs");
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        doc.contains("method:contains"),
+        "a runtime-bound range contains must stay opaque, not fold to a fabricated bool: {doc}"
+    );
+}
+
+// DISCRIMINATION: a CHAR range is left to the char lane (not the integer arm) -> not folded
+// by range_contains (stays opaque here).
+#[test]
+fn range_contains_char_range_is_not_folded_by_int_arm() {
+    let src = r#"
+#[test]
+fn t() {
+    assert!(('a'..'z').contains(&'c'));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/range_contains_char.rs");
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        doc.contains("method:contains") || out.assertions_lifted == 0,
+        "a char range must not be folded by the integer range_contains arm: lifted={}; {doc}",
+        out.assertions_lifted
     );
 }
