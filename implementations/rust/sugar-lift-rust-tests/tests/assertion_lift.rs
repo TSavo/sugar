@@ -17174,3 +17174,83 @@ fn t() {
         );
     }
 }
+
+// ── FINITE-COLLECTION CONSTRUCTORS over written literals (Δ-lane) ──
+//
+// `vec![a, b, c]`, `[a, b, c].to_vec()`, `Vec::from([a, b, c])`, `[a, b, c].as_slice()`,
+// `[a, b, c].to_owned()` all CONSTRUCT exactly the array `[a, b, c]`, so they ground to the
+// same literal `Seq` floor (and element-wise teeth) the array literal already does -- via
+// `collection_literal_array` normalization + the `to_vec`/`as_slice`/`to_owned` identity
+// adaptors. Each `_grounds_with_teeth` test pins index/len/sum to a value (SAT) AND its
+// wrong-expected twin to UNSAT (the teeth). The `_stays_symbolic` test pins the
+// finite-or-refuse boundary: a runtime element is never fabricated.
+
+/// Assert `src` lifts and its single decl is SAT (`want_sat=true`) or UNSAT (`false`).
+fn assert_decl_verdict(src: &str, want_sat: bool, label: &str) {
+    let full = format!("#[test] fn t() {{ {src} }}");
+    let out = lift_file(&parse(&full), "coretests/collection/ctor.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "{label}: must lift ({src}): lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), label) {
+        assert_eq!(sat, want_sat, "{label}: expected sat={want_sat} for `{src}`");
+    }
+}
+
+#[test]
+fn vec_macro_over_literals_grounds_with_teeth() {
+    assert_decl_verdict("assert_eq!(vec![1, 2, 3][1], 2);", true, "vec_index_good");
+    assert_decl_verdict("assert_eq!(vec![1, 2, 3][1], 99);", false, "vec_index_bad");
+    assert_decl_verdict("assert_eq!(vec![10, 20, 30].len(), 3);", true, "vec_len_good");
+    assert_decl_verdict("assert_eq!(vec![10, 20, 30].len(), 4);", false, "vec_len_bad");
+    assert_decl_verdict("assert_eq!(vec![1, 2, 3].iter().sum::<i32>(), 6);", true, "vec_sum_good");
+    assert_decl_verdict("assert_eq!(vec![1, 2, 3].iter().sum::<i32>(), 99);", false, "vec_sum_bad");
+}
+
+#[test]
+fn to_vec_over_literal_array_grounds_with_teeth() {
+    assert_decl_verdict("assert_eq!([1, 2, 3].to_vec()[1], 2);", true, "to_vec_index_good");
+    assert_decl_verdict("assert_eq!([1, 2, 3].to_vec()[1], 99);", false, "to_vec_index_bad");
+    assert_decl_verdict("assert_eq!([1, 2, 3].to_vec().len(), 3);", true, "to_vec_len_good");
+    assert_decl_verdict("assert_eq!([1, 2, 3].to_vec().len(), 4);", false, "to_vec_len_bad");
+    assert_decl_verdict("assert_eq!([1, 2, 3].to_vec().iter().sum::<i32>(), 6);", true, "to_vec_sum_good");
+    assert_decl_verdict("assert_eq!([1, 2, 3].to_vec().iter().sum::<i32>(), 99);", false, "to_vec_sum_bad");
+}
+
+#[test]
+fn vec_from_array_grounds_with_teeth() {
+    assert_decl_verdict("assert_eq!(Vec::from([1, 2, 3])[1], 2);", true, "vec_from_index_good");
+    assert_decl_verdict("assert_eq!(Vec::from([1, 2, 3])[1], 99);", false, "vec_from_index_bad");
+    assert_decl_verdict("assert_eq!(Vec::from([1, 2, 3]).len(), 3);", true, "vec_from_len_good");
+    assert_decl_verdict("assert_eq!(Vec::from([1, 2, 3]).len(), 4);", false, "vec_from_len_bad");
+}
+
+#[test]
+fn as_slice_and_to_owned_over_literal_array_ground_with_teeth() {
+    assert_decl_verdict("assert_eq!([1, 2, 3].as_slice()[1], 2);", true, "as_slice_index_good");
+    assert_decl_verdict("assert_eq!([1, 2, 3].as_slice()[1], 99);", false, "as_slice_index_bad");
+    assert_decl_verdict("assert_eq!([1, 2, 3].to_owned()[1], 2);", true, "to_owned_index_good");
+    assert_decl_verdict("assert_eq!([1, 2, 3].to_owned()[1], 99);", false, "to_owned_index_bad");
+}
+
+// finite-or-refuse: a RUNTIME element (`compute()`) has no const value, so the constructor
+// is NOT fabricated -- the indexed read of that element stays the symbolic congruence-only
+// ctor, satisfiable for ANY right-hand side. The wrong-expected twin must stay SAT (never
+// falsely refuted), exactly as `[compute(), 2, 3][0] == 99` would as a written array.
+#[test]
+fn vec_macro_runtime_element_stays_symbolic() {
+    let out = lift_file(
+        &parse("#[test] fn t() { assert_eq!(vec![compute(), 2, 3][0], 99); }"),
+        "coretests/collection/runtime_elem.rs",
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "vec_runtime_elem") {
+        assert!(
+            sat,
+            "a runtime element must stay symbolic (SAT), never fabricated into teeth"
+        );
+    }
+}
