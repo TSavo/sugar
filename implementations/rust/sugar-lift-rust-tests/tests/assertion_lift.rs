@@ -18275,13 +18275,13 @@ fn frozen_loop_counter_read_refuses_not_false_refutation() {
     );
     assert!(
         out.skip_reasons.iter().any(|r| {
-            r.contains("loop counter")
+            r.contains("temporally unstable post-loop read")
                 && matches!(
                     sugar_lift_rust_tests::refusal_disposition(r),
                     sugar_lift_rust_tests::Disposition::Refused
                 )
         }),
-        "the frozen-counter read must REFUSE as a terminal `ambiguous temporal identity` \
+        "the frozen-counter read must REFUSE as a terminal `temporally unstable` \
          dragon: {:?}",
         out.skip_reasons
     );
@@ -18299,10 +18299,66 @@ fn while_loop_counter_read_refuses() {
     "#;
     let out = lift_file(&parse(src), "coretests/loop/while_counter.rs");
     assert!(
-        out.skip_reasons.iter().any(|r| r.contains("loop counter")),
+        out.skip_reasons.iter().any(|r| r.contains("temporally unstable post-loop read")),
         "a while-loop counter read after the loop must REFUSE: {:?}",
         out.skip_reasons
     );
+}
+
+// CLOSURE-CAPTURE temporal instability (#19 residual, #2346): a `let mut n` captured and
+// mutated inside a closure body (`xs.iter().inspect(|_| n += 1).collect()`) is stale after
+// the call -- a post-call read lifts the initial literal, refuting a true assertion. The
+// read must REFUSE (temporally unstable). Refuse-only.
+#[test]
+fn closure_capture_mut_local_post_closure_read_refuses_not_false_refutation() {
+    let src = r#"
+        #[test]
+        fn t_closure_capture() {
+            let mut n = 0;
+            let _: Vec<_> = [1, 2, 3].iter().inspect(|_| n += 1).collect();
+            assert_eq!(n, 3);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/loop/closure_capture.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        !(dump.contains("Int(0)") && dump.contains("Int(3)")),
+        "the post-closure read of `n` must NOT lift the stale `0 == 3` (false refutation): {dump}"
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("temporally unstable post-loop read")),
+        "a closure-captured mutated local read after the call must REFUSE: {:?}",
+        out.skip_reasons
+    );
+}
+
+// DISCRIMINATION: a closure that only READS an outer local (no mutation) does NOT make it
+// temporally unstable -- it must still warrant. Guards against over-refusal of read-only
+// captures.
+#[test]
+fn closure_read_only_capture_does_not_over_refuse() {
+    let src = r#"
+        #[test]
+        fn t_closure_readonly() {
+            let x = 5;
+            let _: Vec<_> = [1, 2, 3].iter().map(|y| y + x).collect();
+            assert_eq!(x, 5);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/loop/closure_readonly.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "a read-only closure capture must NOT be over-refused -- `x == 5` still warrants: \
+         lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "closure_readonly") {
+        assert!(sat, "x == 5 holds; a read-only closure capture must not gate `x` (SAT)");
+    }
 }
 
 // GATE: a straight-line (non-loop) mutation is tracked by the temporal rewrite -- it must
