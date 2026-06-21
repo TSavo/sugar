@@ -32,6 +32,9 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if let Some(hit) = alias_deref_mutated_refusal(&name, fcx) {
         return Some(hit);
     }
+    if let Some(hit) = temporally_unstable_refusal(&name, fcx) {
+        return Some(hit);
+    }
     if let Some(current) = fcx.scope().temporal_rewrite_expr_for(&name) {
         debug!(
             target: "sugar_lift_rust_tests::temporal_rewrite",
@@ -63,6 +66,9 @@ fn recognize_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         return None;
     }
     if let Some(hit) = alias_deref_mutated_refusal(&name, fcx) {
+        return Some(hit);
+    }
+    if let Some(hit) = temporally_unstable_refusal(&name, fcx) {
         return Some(hit);
     }
     if let Some(current) = fcx.scope().temporal_rewrite_expr_for(&name) {
@@ -105,6 +111,24 @@ fn alias_deref_mutated_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dy
             "ambiguous temporal identity for `{name}`: mutated through a `&mut` alias \
              between borrow and read, so there is no single timeless value to read at the \
              assertion; refused"
+        ))
+    })
+}
+
+/// THE NO-FALSE-REFUTATION GATE for the FROZEN LOOP COUNTER class (#2342 sibling). A
+/// counter mutated inside a loop the tracker cannot unroll-resolve, then read AFTER the
+/// loop, has a STALE tracked value (its initial literal -- the loop mutations were never
+/// applied). Reading it lifts that stale value (`assert_eq!(n, 3)` -> `0 == 3`, UNSAT),
+/// which REFUTES a true assertion (the inverse cardinal sin). So the post-loop read
+/// REFUSES by name. Conservative refuse-tightening (zero new warrant -> zero cardinal-sin
+/// risk); it does NOT warrant the post-loop value (warrant-side SSA, out of scope).
+fn temporally_unstable_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    fcx.scope().is_temporally_unstable_read(name).then(|| {
+        // Same terminal `ambiguous temporal identity` bucket as the aliased-mutation case.
+        reasoned_hit(format!(
+            "ambiguous temporal identity for `{name}`: a loop counter mutated inside a loop \
+             the lifter cannot unroll, then read after it, so there is no single timeless \
+             value to read at the assertion; refused"
         ))
     })
 }

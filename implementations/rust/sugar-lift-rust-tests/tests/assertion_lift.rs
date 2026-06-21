@@ -18247,3 +18247,112 @@ fn kit_slice_coercion_distinct_arrays_undecided_not_discharged() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// FROZEN LOOP COUNTER GATE (#2342 sibling). A `let mut n` counter mutated inside a loop
+// the lifter cannot unroll-resolve, then read AFTER the loop, has a STALE value (its
+// initial literal -- the loop mutations were never applied). The post-loop read lifts
+// that stale value (`assert_eq!(n, 3)` -> `0 == 3`, UNSAT) -- which REFUTES a true
+// assertion (the inverse cardinal sin). The read must REFUSE. Conservative refuse-only,
+// no new warrant. GATED: straight-line mutation still warrants (rewrite tracks it); an
+// in-loop counter (read only inside, unroll-substituted) is NOT over-refused.
+
+#[test]
+fn frozen_loop_counter_read_refuses_not_false_refutation() {
+    let src = r#"
+        #[test]
+        fn t_frozen() {
+            let mut n = 0;
+            for _ in [1, 2, 3].iter() { n += 1; }
+            assert_eq!(n, 3);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/loop/frozen_counter.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        !(dump.contains("Int(0)") && dump.contains("Int(3)")),
+        "the post-loop read of `n` must NOT lift the stale `0 == 3` (false refutation): {dump}"
+    );
+    assert!(
+        out.skip_reasons.iter().any(|r| {
+            r.contains("loop counter")
+                && matches!(
+                    sugar_lift_rust_tests::refusal_disposition(r),
+                    sugar_lift_rust_tests::Disposition::Refused
+                )
+        }),
+        "the frozen-counter read must REFUSE as a terminal `ambiguous temporal identity` \
+         dragon: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn while_loop_counter_read_refuses() {
+    let src = r#"
+        #[test]
+        fn t_while() {
+            let mut n = 0;
+            while n < 3 { n += 1; }
+            assert_eq!(n, 3);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/loop/while_counter.rs");
+    assert!(
+        out.skip_reasons.iter().any(|r| r.contains("loop counter")),
+        "a while-loop counter read after the loop must REFUSE: {:?}",
+        out.skip_reasons
+    );
+}
+
+// GATE: a straight-line (non-loop) mutation is tracked by the temporal rewrite -- it must
+// STILL warrant the post-value. The gate fires ONLY on loop-mutated counters.
+#[test]
+fn straight_line_mutation_still_warrants_after_counter_gate() {
+    let src = r#"
+        #[test]
+        fn t_sl() {
+            let mut x = 5;
+            x += 1;
+            assert_eq!(x, 6);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/loop/straightline.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "a straight-line `x += 1` must still warrant `x == 6`: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "sl_counter_gate") {
+        assert!(sat, "x += 1 then x == 6 -> 6 == 6 (SAT)");
+    }
+}
+
+// GATE: a counter used ONLY inside the loop (the `#2300` reference-pattern unroll
+// substitutes `expected[i]` per step) must NOT be over-refused -- `i` is never read after
+// the loop, so it is not flagged and the loop unrolls and discharges.
+#[test]
+fn in_loop_counter_not_over_refused() {
+    let src = r#"
+        #[test]
+        fn t_inloop() {
+            let expected = [10, 20, 30];
+            let mut i = 0;
+            for &x in [10, 20, 30].iter() {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/loop/in_loop_counter.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "an in-loop counter (read only inside the loop) must NOT be over-refused: \
+         lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+}
