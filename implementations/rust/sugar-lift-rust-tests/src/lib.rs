@@ -112,6 +112,7 @@ pub mod sugar {
     pub mod match_node;
     pub mod match_scrutinee;
     pub mod matches_macro;
+    pub mod maybe_uninit_new;
     pub mod method;
     pub mod method_family;
     pub mod monadic;
