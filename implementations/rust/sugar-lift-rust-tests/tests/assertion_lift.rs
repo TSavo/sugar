@@ -15185,6 +15185,104 @@ fn t() {
     );
 }
 
+// `uint_bit_width` (`bit_width`): highest-set-bit + 1, value-determined. Over a
+// grounded unsigned literal it lowers to the scalar bit count -- not an opaque
+// `method:bit_width` -- so a WRONG expected count is z3-UNSAT (the teeth).
+#[test]
+fn bit_width_over_literals_lower_to_primitive_axioms() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(0b010_1100u32.bit_width(), 6);
+    assert_eq!(0b111_1001u32.bit_width(), 7);
+    assert_eq!(0u32.bit_width(), 0);
+    assert_eq!(1u32.bit_width(), 1);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/bit_width_literals.rs");
+    assert_eq!(
+        out.assertions_lifted, 4,
+        "bit_width over grounded literals should lower to primitive integer axioms; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons,
+        out.factory_audits,
+        out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        !doc.contains("method:bit_width"),
+        "bit_width should lower to a grounded scalar fact, not an opaque method term: {doc}"
+    );
+}
+
+#[test]
+fn bit_width_good_twin_is_sat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(0b010_1100u32.bit_width(), 6);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/bit_width_good.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "bit_width_good") {
+        assert!(sat, "0b010_1100u32.bit_width()=6 == 6 must be z3-SAT (the warrant holds)");
+    }
+}
+
+// THE TEETH BITE: the SAME receiver `0b010_1100u32` (= 44, bit_width 6), the WRONG
+// anchor `== 7`. A hollow `method:bit_width(44) == 7` would discharge identically to
+// the good twin (no teeth); the grounded `6 == 7` is z3-UNSAT -- a wrong count is REFUTED.
+#[test]
+fn bit_width_wrong_expected_is_unsat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(0b010_1100u32.bit_width(), 7);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/bit_width_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "bit_width_bad") {
+        assert!(
+            !sat,
+            "0b010_1100u32.bit_width()=6 != 7 must be z3-UNSAT (teeth bite the bad twin)"
+        );
+    }
+}
+
+// The `nonzero.rs` shape: `NonZero::<T>::new(lit).unwrap().bit_width()`. The receiver
+// grounds through the existing NonZero-unwrap path to the inner value (44), bit_width
+// folds to 6, and the `NonZero::new(6).unwrap()` RHS grounds to 6 -- a real scalar
+// equality, no opaque `call:NonZero` / `method:bit_width` left behind.
+#[test]
+fn bit_width_over_nonzero_unwrap_lowers_to_primitive_axiom() {
+    let src = r#"
+use core::num::NonZero;
+
+#[test]
+fn t() {
+    assert_eq!(NonZero::<u32>::new(0b010_1100).unwrap().bit_width(), NonZero::new(6).unwrap());
+}
+"#;
+    let out = lift_file(&parse(src), "tests/bit_width_nonzero.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "NonZero unwrap bit_width should lower to a primitive integer axiom; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons,
+        out.factory_audits,
+        out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        !doc.contains("method:bit_width") && !doc.contains("call:NonZero"),
+        "NonZero bit_width must lower to a grounded scalar fact: {doc}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "bit_width_nz") {
+        assert!(sat, "NonZero(44).bit_width()=6 == NonZero(6)=6 must be z3-SAT");
+    }
+}
+
 #[test]
 fn int_sqrt_chained_domain_replays_helper_callsite_axioms() {
     let src = r#"
