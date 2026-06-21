@@ -5736,7 +5736,36 @@ fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal>
                 const_eval_else_branch(else_expr, env)
             }
         }
+        // A const `match scrut { pat => body, .. }` collapses to the body of the FIRST
+        // arm whose pattern matches the const scrutinee. SOUNDNESS: `match` is first-fit,
+        // and `const_val_matches_pat` decides each literal/wildcard/or-pattern EXACTLY; the
+        // losing arms are dead. DISCRIMINATION: a non-const scrutinee, a guarded or
+        // `cfg`-attributed arm, or an arm pattern this evaluator cannot decide (a binding,
+        // a range) folds to None and stays unresolved -- never a fake-fold past an arm
+        // whose match status is unknown.
+        Expr::Match(m) => {
+            let scrut = const_eval(&m.expr, env)?;
+            for arm in &m.arms {
+                if !arm.attrs.is_empty() || arm.guard.is_some() {
+                    return None;
+                }
+                if const_val_matches_pat(&scrut, &arm.pat)? {
+                    return const_eval_match_arm_body(&arm.body, env);
+                }
+            }
+            None
+        }
         _ => None,
+    }
+}
+
+/// Const-eval a match arm body: a `{ .. }` block (its single tail expr) or a bare
+/// expression arm (`1 => 10`). Statements / `let` bindings in a block body are not a
+/// closed scalar value here -> None.
+fn const_eval_match_arm_body(body: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal> {
+    match body {
+        Expr::Block(b) => const_eval_block_tail(&b.block, env),
+        other => const_eval(other, env),
     }
 }
 
@@ -20676,25 +20705,25 @@ mod lifter_key_tests {
     fn adversarial_c_pure_but_untranslated_term_stays_unclassified_not_refused() {
         // (c) THE CRITICAL LINE: a PURE-but-untranslated term must STAY UNCLASSIFIED
         // (honest future work for a Sugar/const_eval arm), NEVER reclassified as a
-        // SideEffect. A VALUE-POSITION `match` term (`match 7 { 7 => 1, _ => 2 }`) is
-        // PURE -- no mutation, no iter-advance, no runtime value (all literals) -- we
-        // simply have not transcribed a term-position const `Expr::Match` yet (the
-        // assertion path lifts a match SCRUTINEE, but a match as a TERM operand falls
-        // through). (The EUF term path digs MOST untranslated calls as uninterpreted
-        // symbols -- e.g. `char::from_u32(i).unwrap().to_ascii_uppercase()` over `0..3`
-        // lifts soundly via EUF -- so a genuine term-GAP is rare; this match-term is one.
+        // SideEffect. A VALUE-POSITION `loop`/`break` term (`loop { break 5; }`) is
+        // PURE -- no mutation, no iter-advance, no runtime value (it breaks with a
+        // literal) -- we simply have not transcribed a value-producing `loop { break v }`
+        // yet. (The EUF term path digs MOST untranslated calls as uninterpreted symbols
+        // -- e.g. `char::from_u32(i).unwrap().to_ascii_uppercase()` over `0..3` lifts
+        // soundly via EUF -- so a genuine term-GAP is rare; this loop-break term is one.
         // Refusing it as an effect would be a FAKE-REFUSE: mislabeling our own work as a
         // source property -- the exact trap that put 8 bad terminals in an earlier floor.)
         //
-        // NOTE: this fixture WAS `(1i32 as f64)` (a then-untranslated cast, now lifted to
-        // the opaque `cast:fN(..)` ctor), then `if true { 1 } else { 2 }` (a then-
-        // untranslated term-position `Expr::If`, now const-folded by `const_if` via
-        // `const_eval`). Each got an arm; the intent (a pure term stays unclassified,
-        // never fake-refused) is preserved here with a still-untranslated pure term.
+        // NOTE: this fixture has migrated as each shape got an arm -- `(1i32 as f64)` (a
+        // then-untranslated cast, now the opaque `cast:fN(..)` ctor), then
+        // `if true { 1 } else { 2 }` (now const-folded by `const_if`), then
+        // `match 7 { 7 => 1, _ => 2 }` (now const-folded by `match_value_term`). The intent
+        // (a pure term stays unclassified, never fake-refused) is preserved here with the
+        // still-untranslated `loop`/`break` value term.
         let src = r#"
             #[test]
             fn pure_untranslated() {
-                assert_eq!(match 7 { 7 => 1, _ => 2 }, 1);
+                assert_eq!(loop { break 5; }, 1);
             }
         "#;
         let out = lift_src(src);
