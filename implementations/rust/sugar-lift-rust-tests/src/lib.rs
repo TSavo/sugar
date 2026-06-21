@@ -4005,6 +4005,14 @@ struct TemporalPlan {
     /// `#2300` `expected[i]` unroll substitutes it pre-`bound_path`) is NOT flagged -- only
     /// a counter READ AFTER the loop qualifies.
     temporally_unstable: BTreeSet<String>,
+    /// Mut-iterator locals consumed in a loop-consuming context (a `while let` condition or
+    /// `for` iterable) via `.next()`/`.next_back()`/`.nth()`, or unconditionally via
+    /// `.by_ref()`/`.advance_by()`/`.advance_back_by()`. A subsequent SIZE-ACCESSOR call
+    /// (`.len()`/`.count()`/`.size_hint()`) on such a local returns the STALE pre-consumption
+    /// value, which would REFUTE a true post-consumption assertion (`it.len() == 0` after
+    /// the loop) -- the inverse cardinal sin. Such calls REFUSE (at the len/iter_terminal
+    /// recognizers). REFUSE-ONLY, zero new warrant. See `collect_consumed_iterator_locals`.
+    consumed_iterator_locals: BTreeSet<String>,
     /// Locals bound to an array of NON-literal element constructions (`let xs =
     /// [CountClone::new(), ..]`) that are subsequently consumed by a `.cloned()`
     /// adaptor in a side-effecting `for`-loop (`for _ in xs.iter().cloned().zip(..) {}`).
@@ -4380,6 +4388,14 @@ impl TemporalScope {
     /// `collect_loop_counter_stale_reads`. The #2342 sibling for the loop-counter class.
     pub(crate) fn is_temporally_unstable_read(&self, name: &str) -> bool {
         self.plan.temporally_unstable.contains(name)
+    }
+
+    /// Whether `name` is a CONSUMED iterator local (advanced in a loop-consuming context or
+    /// via an unconditionally-consuming call). A `.len()`/`.count()`/`.size_hint()` call on
+    /// it must REFUSE rather than return the stale pre-consumption length. See
+    /// `collect_consumed_iterator_locals`.
+    pub(crate) fn is_consumed_iterator_local(&self, name: &str) -> bool {
+        self.plan.consumed_iterator_locals.contains(name)
     }
 
     fn is_sideeffecting_clone_local(&self, name: &str) -> bool {
@@ -11331,6 +11347,11 @@ fn temporal_plan_for_stmts(stmts: &[Stmt], inherited_stateful: &BTreeSet<String>
     // the closure-capture + broader loop-body-mutated false-refutation classes. Refuse-only,
     // no new warrant.
     collect_loop_body_mutated(stmts, &mut_locals, &mut temporally_unstable);
+    // Consumed-iterator scan (#2348): mut-iterators advanced in a loop-consuming context →
+    // their `.len()`/`.count()` size-accessors refuse the stale pre-consumption length.
+    // Independent of `temporally_unstable`; refusal fires at the len/iter_terminal recognizers.
+    let mut consumed_iterator_locals = BTreeSet::<String>::new();
+    collect_consumed_iterator_locals(stmts, &mut_locals, &mut consumed_iterator_locals);
     TemporalPlan {
         versioned,
         mut_locals,
@@ -11339,6 +11360,7 @@ fn temporal_plan_for_stmts(stmts: &[Stmt], inherited_stateful: &BTreeSet<String>
         sideeffecting_clone_locals,
         alias_deref_mutated,
         temporally_unstable,
+        consumed_iterator_locals,
     }
 }
 
@@ -11673,6 +11695,90 @@ fn collect_loop_body_mutated(
     };
     for stmt in stmts {
         syn::visit::Visit::visit_stmt(&mut v, stmt);
+    }
+}
+
+fn collect_consumed_iterator_locals(
+    stmts: &[Stmt],
+    mut_locals: &BTreeSet<String>,
+    out: &mut BTreeSet<String>,
+) {
+    /// `by_ref` / `advance_by` / `advance_back_by` are unconditionally consuming: they
+    /// explicitly hand the iterator off or skip a known count, and the existing versioning
+    /// mechanism does NOT create a fresh symbolic for the receiver after such a call.
+    ///
+    /// `next` / `next_back` / `nth` in a PLAIN STATEMENT are handled by the versioning
+    /// mechanism (a `let _ = it.next()` gives `it` a new version key, so a subsequent
+    /// `it.len()` gets a fresh symbolic rather than the stale literal length). Those cases
+    /// must NOT be refused here — only when they appear in a `while let` condition (or a
+    /// for-loop iterable) does the versioning mechanism fail to produce a correct post-loop
+    /// symbolic, causing a false refutation on post-loop size-accessor assertions.
+    fn is_unconditionally_consuming(m: &str) -> bool {
+        matches!(m, "by_ref" | "advance_by" | "advance_back_by")
+    }
+    fn is_loop_consuming(m: &str) -> bool {
+        matches!(m, "next" | "next_back" | "nth")
+    }
+
+    // Walk all expressions in the function body, collecting consuming-call receivers.
+    // Does NOT descend into closures (they have their own execution scope).
+    struct Walk<'a> {
+        mut_locals: &'a BTreeSet<String>,
+        out: &'a mut BTreeSet<String>,
+        /// True while visiting a `while let … = <expr>` condition or `for … in <expr>` iterable.
+        in_loop_consuming_context: bool,
+    }
+    impl Walk<'_> {
+        fn record_if_mut_local(&mut self, receiver: &syn::Expr) {
+            if let Some(name) = simple_path_name(receiver) {
+                if self.mut_locals.contains(&name) {
+                    self.out.insert(name);
+                }
+            }
+        }
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Walk<'_> {
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            let m = call.method.to_string();
+            if is_unconditionally_consuming(&m)
+                || (self.in_loop_consuming_context && is_loop_consuming(&m))
+            {
+                self.record_if_mut_local(&call.receiver);
+            }
+            syn::visit::visit_expr_method_call(self, call);
+        }
+
+        fn visit_expr_while(&mut self, expr: &'ast syn::ExprWhile) {
+            // For `while let PAT = <init> { … }` the condition is `Expr::Let`.
+            // Visit only the initializer (the RHS of the `let`) in loop-consuming context;
+            // the while body is visited normally.
+            if let syn::Expr::Let(let_expr) = &*expr.cond {
+                let saved = self.in_loop_consuming_context;
+                self.in_loop_consuming_context = true;
+                syn::visit::Visit::visit_expr(self, &let_expr.expr);
+                self.in_loop_consuming_context = saved;
+                syn::visit::Visit::visit_block(self, &expr.body);
+            } else {
+                syn::visit::visit_expr_while(self, expr);
+            }
+        }
+
+        fn visit_expr_for_loop(&mut self, expr: &'ast syn::ExprForLoop) {
+            // The iterable (`expr.expr`) is the expression passed to `IntoIterator::into_iter`
+            // (or `.by_ref()` etc.) — visit it in loop-consuming context.
+            let saved = self.in_loop_consuming_context;
+            self.in_loop_consuming_context = true;
+            syn::visit::Visit::visit_expr(self, &expr.expr);
+            self.in_loop_consuming_context = saved;
+            syn::visit::Visit::visit_block(self, &expr.body);
+        }
+
+        fn visit_expr_closure(&mut self, _: &'ast syn::ExprClosure) {}
+    }
+
+    let mut walk = Walk { mut_locals, out, in_loop_consuming_context: false };
+    for stmt in stmts {
+        syn::visit::Visit::visit_stmt(&mut walk, stmt);
     }
 }
 

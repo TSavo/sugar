@@ -18412,3 +18412,84 @@ fn in_loop_counter_not_over_refused() {
         out.skip_reasons
     );
 }
+
+// ── consumed-iterator size-accessor refusal (temporal instability gate) ──────────────
+//
+// A mut-iterator local advanced via `.next()` / `while let Some(_) = it.next()` has a
+// stale internal position in the syntactic tracker. A subsequent `.len()` / `.count()`
+// call returns the PRE-consumption static length -- stale, refuting true post-consumption
+// assertions (the inverse cardinal sin). The refusal gate must:
+//   (a) REFUSE `it.len()` after `it` is consumed (no false-refutation).
+//   (b) NOT refuse `it.next()` itself -- the consuming call must still warrant.
+//   (c) NOT refuse `it.len()` when `it` is NOT consumed (non-consumed `.len()` OK).
+
+/// (a) `it.len()` called after `while let Some(_) = it.next()` must be REFUSED --
+/// the static length is pre-consumption and would produce a false refutation.
+#[test]
+fn consumed_iterator_len_post_while_next_refuses() {
+    let src = r#"
+        #[test]
+        fn t_consumed_len() {
+            let xs = [1, 2, 3];
+            let mut it = xs.iter().take(3);
+            while let Some(_x) = it.next() {}
+            assert_eq!(it.len(), 0);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/consumed_len_post_loop.rs");
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("consumed-iterator")),
+        "`.len()` on a consumed-iterator local must REFUSE with 'consumed-iterator' reason; \
+         got skip_reasons={:?} lifted={} refused={}",
+        out.skip_reasons,
+        out.assertions_lifted,
+        out.assertions_refused,
+    );
+}
+
+/// (b) `it.next()` itself (the consuming call) must NOT be refused -- refusal only
+/// applies to size-accessor calls (`.len()` / `.count()`), never to `.next()`.
+#[test]
+fn consumed_iterator_next_call_itself_not_refused() {
+    let src = r#"
+        #[test]
+        fn t_next_not_refused() {
+            let mut it = [10, 20, 30].iter();
+            assert_eq!(it.next(), Some(&10));
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/next_not_refused.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "`.next()` on a literal-source iterator must NOT be refused (it IS the consuming call): \
+         lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons,
+    );
+}
+
+/// (c) A mut-iterator local that is NOT consumed by `.next()` / `.by_ref()` etc. must
+/// still have its `.len()` correctly warranted -- no over-refusal.
+#[test]
+fn non_consumed_mut_iterator_len_still_warrants() {
+    let src = r#"
+        #[test]
+        fn t_non_consumed_len() {
+            let xs = [1, 2, 3];
+            let mut it = xs.iter().take(3);
+            assert_eq!(it.len(), 3);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/non_consumed_len.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "`.len()` on a NON-consumed mut-iterator must NOT be over-refused: \
+         lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons,
+    );
+}
