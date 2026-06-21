@@ -18865,3 +18865,92 @@ fn consumed_iterator_advance_by_then_next_declines() {
     // The second assertion sees an opaque version-2 `it` (versioning bumped after the
     // first consuming `.advance_by()` call) → opaque method → UNDECIDED.
 }
+
+// `<Op>::method(const, const)` trait-dispatch arithmetic (num/ops.rs) is rewritten to the
+// operator expression and const-folded at the operands' width+signedness -- the literal
+// result discharges instead of an opaque `call:` EUF (the teeth-gap teeth).
+#[test]
+fn arith_trait_dispatch_const_fold_has_teeth() {
+    let Some(add) = format_eq_verdict("Add::add(2i32, 3i32)", "5", "disp_add") else {
+        return; // z3 absent
+    };
+    assert!(add, "Add::add(2i32, 3i32) == 5 must be SAT (discharges)");
+    let add_bad = format_eq_verdict("Add::add(2i32, 3i32)", "6", "disp_add_bad").unwrap();
+    assert!(!add_bad, "Add::add(2,3) is 5, not 6 -> z3-UNSAT (teeth)");
+    // bitand folds, with a bad-twin proving it (not opaque-SAT).
+    let band = format_eq_verdict("BitAnd::bitand(6i32, 3i32)", "2", "disp_band").unwrap();
+    assert!(band, "BitAnd::bitand(6,3) == 2 must be SAT");
+    let band_bad = format_eq_verdict("BitAnd::bitand(6i32, 3i32)", "7", "disp_band_bad").unwrap();
+    assert!(!band_bad, "6 & 3 is 2, not 7 -> z3-UNSAT (teeth)");
+    // WIDTH has teeth: 1u8 << 7 == 128 (fits u8) discharges; == 0 refutes (proves the
+    // shift really folded, not opaque-SAT).
+    let shl = format_eq_verdict("Shl::shl(1u8, 7u8)", "128", "disp_shl").unwrap();
+    assert!(shl, "Shl::shl(1u8, 7u8) == 128 must be SAT (discharges)");
+    let shl_bad = format_eq_verdict("Shl::shl(1u8, 7u8)", "0", "disp_shl_bad").unwrap();
+    assert!(!shl_bad, "1u8 << 7 is 128, not 0 -> z3-UNSAT (width fold has teeth)");
+    // unary Neg dispatch, with a bad-twin.
+    let neg = format_eq_verdict("Neg::neg(5i32)", "-5", "disp_neg").unwrap();
+    assert!(neg, "Neg::neg(5i32) == -5 must be SAT");
+    let neg_bad = format_eq_verdict("Neg::neg(5i32)", "5", "disp_neg_bad").unwrap();
+    assert!(!neg_bad, "-(5) is -5, not 5 -> z3-UNSAT (teeth)");
+    // EXACT-OR-NONE: a UB shift (amount >= width) does NOT fold -- it stays the opaque
+    // arith term, so a wrong value is NOT refuted (no fabricated UB result).
+    let ub = format_eq_verdict("Shl::shl(1u8, 9u8)", "123", "disp_shl_ub").unwrap();
+    assert!(ub, "1u8 << 9 is UB -> no fold, stays opaque -> not refuted (exact-or-none)");
+}
+
+// The num/ops.rs corpus shape: `<Op>::method(lhs, rhs)` over `let`-bound `lit as T`
+// operands, in all four ref forms. Must lift (warrant), never the opaque `call:` EUF, and
+// must NOT refuse.
+#[test]
+fn arith_trait_dispatch_corpus_shape_lifts() {
+    let src = r#"
+        use core::ops::*;
+        #[test]
+        fn t() {
+            let lhs = 3 as i32;
+            let rhs = 4 as i32;
+            assert_eq!(7 as i32, Add::add(lhs, rhs));
+            assert_eq!(7 as i32, Add::add(lhs, &rhs));
+            assert_eq!(7 as i32, Add::add(&lhs, rhs));
+            assert_eq!(7 as i32, Add::add(&lhs, &rhs));
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/num/ops_dispatch.rs");
+    assert_eq!(
+        out.assertions_refused, 0,
+        "no Op::method row should refuse: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.assertions_lifted >= 4,
+        "all 4 ref-form Add::add rows should lift; lifted={} skips={:?}",
+        out.assertions_lifted,
+        out.skip_reasons
+    );
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        !doc.contains("call:Add") && !doc.contains("call:add"),
+        "Op::method must lower via arithmetic fold, not the opaque call: EUF: {doc}"
+    );
+}
+
+// EXACT-OR-NONE: a non-const operand leaves the dispatch as the ordinary arithmetic term
+// (warranted, congruence-only) -- it must NOT refuse and must NOT fake a fold. We assert a
+// wrong value does NOT refute (it would if a bogus const were fabricated).
+#[test]
+fn arith_trait_dispatch_runtime_operand_does_not_guess() {
+    let src = r#"
+        use core::ops::*;
+        #[test]
+        fn t(x: i32) {
+            assert_eq!(999, Add::add(x, 1i32));
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/num/ops_runtime.rs");
+    assert_eq!(
+        out.assertions_refused, 0,
+        "a runtime-operand Op::method must NOT refuse (stays warranted arith term): {:?}",
+        out.skip_reasons
+    );
+}

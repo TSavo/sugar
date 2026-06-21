@@ -56,6 +56,17 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     let Expr::Call(call) = expr else {
         return None;
     };
+    // Trait-dispatch arithmetic over const operands -- `Add::add(a, b)` / `Shl::shl(a, b)`
+    // / `Neg::neg(a)` (the num/ops.rs `<Op>::method(const, const)` matrix). Rewrite to the
+    // equivalent operator expression and lift through the existing binop / unary term
+    // machinery: when both operands ground it const-folds at their width+signedness (the
+    // literal result discharges), and otherwise it emits the SAME arithmetic ctor it would
+    // for `a + b` -- never a refusal, so an opaque operand stays warranted (no regression).
+    // NOT the `*Assign` mutating forms (they mutate `&mut` and are statements, not value
+    // terms) nor UFCS `<T as Op>::method` qself paths -- both left to the `call:` fallback.
+    if let Some(rewritten) = arith_dispatch_rewrite(call) {
+        return Some(build_term(&rewritten, fcx));
+    }
     match type_id_of_call_term(&call.func, call.args.len()) {
         Ok(Some(term)) => return Some(resolved_term(term)),
         Ok(None) => {}
@@ -312,4 +323,76 @@ mod tests {
             Outcome::Dug(_) => panic!("expected the child's Hit to propagate, got a Dug"),
         }
     }
+}
+
+/// Rewrite a trait-dispatch arithmetic call `<Op>::<method>(a[, b])` into the equivalent
+/// `Expr::Binary` / `Expr::Unary`, so the existing binop / unary term machinery const-folds
+/// it at the operands' width+signedness. Returns `None` for any non-arith call -- including
+/// the `*Assign` mutating methods and the UFCS `<T as Op>::method` qself form -- which then
+/// fall through to the opaque `call:` ctor unchanged. Operand references (`&a`) are kept;
+/// `const_eval` / binop strip them.
+fn arith_dispatch_rewrite(call: &syn::ExprCall) -> Option<Expr> {
+    let Expr::Path(p) = &*call.func else {
+        return None;
+    };
+    if p.qself.is_some() {
+        return None;
+    }
+    let segs = &p.path.segments;
+    if segs.len() != 2 || segs.iter().any(|s| !matches!(s.arguments, syn::PathArguments::None)) {
+        return None;
+    }
+    let trait_name = segs[0].ident.to_string();
+    let method = segs[1].ident.to_string();
+    if let Some(op) = arith_binop_for(&trait_name, &method) {
+        if call.args.len() != 2 {
+            return None;
+        }
+        return Some(Expr::Binary(syn::ExprBinary {
+            attrs: Vec::new(),
+            left: Box::new(call.args[0].clone()),
+            op,
+            right: Box::new(call.args[1].clone()),
+        }));
+    }
+    if let Some(op) = arith_unop_for(&trait_name, &method) {
+        if call.args.len() != 1 {
+            return None;
+        }
+        return Some(Expr::Unary(syn::ExprUnary {
+            attrs: Vec::new(),
+            op,
+            expr: Box::new(call.args[0].clone()),
+        }));
+    }
+    None
+}
+
+/// The `core::ops` binary trait/method pairs and their operator. Matched on BOTH the
+/// trait and method ident so an unrelated `Foo::add` is not claimed.
+fn arith_binop_for(trait_name: &str, method: &str) -> Option<syn::BinOp> {
+    use syn::BinOp;
+    Some(match (trait_name, method) {
+        ("Add", "add") => BinOp::Add(Default::default()),
+        ("Sub", "sub") => BinOp::Sub(Default::default()),
+        ("Mul", "mul") => BinOp::Mul(Default::default()),
+        ("Div", "div") => BinOp::Div(Default::default()),
+        ("Rem", "rem") => BinOp::Rem(Default::default()),
+        ("Shl", "shl") => BinOp::Shl(Default::default()),
+        ("Shr", "shr") => BinOp::Shr(Default::default()),
+        ("BitAnd", "bitand") => BinOp::BitAnd(Default::default()),
+        ("BitOr", "bitor") => BinOp::BitOr(Default::default()),
+        ("BitXor", "bitxor") => BinOp::BitXor(Default::default()),
+        _ => return None,
+    })
+}
+
+/// The `core::ops` unary trait/method pairs and their operator.
+fn arith_unop_for(trait_name: &str, method: &str) -> Option<syn::UnOp> {
+    use syn::UnOp;
+    Some(match (trait_name, method) {
+        ("Neg", "neg") => UnOp::Neg(Default::default()),
+        ("Not", "not") => UnOp::Not(Default::default()),
+        _ => return None,
+    })
 }
