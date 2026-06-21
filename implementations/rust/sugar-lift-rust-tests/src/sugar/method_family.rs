@@ -14,7 +14,14 @@ use crate::{
 };
 
 pub(crate) fn is_literal_sequence_base(expr: &Expr) -> bool {
-    matches!(strip_refs_groups(expr), Expr::Array(_) | Expr::Range(_))
+    match strip_refs_groups(expr) {
+        Expr::Array(_) | Expr::Range(_) => true,
+        // A LITERAL-count repeat `[elem; N]` is a finite literal sequence (N copies of
+        // elem); the `array_repeat` composite recognizer expands it. Non-literal counts
+        // (`[x; SIZE]`) are not finite-by-construction and stay refused.
+        Expr::Repeat(repeat) => crate::repeat_count_literal(&repeat.len).is_some(),
+        _ => false,
+    }
 }
 
 pub(crate) fn resolves_literal_sequence<'a>(

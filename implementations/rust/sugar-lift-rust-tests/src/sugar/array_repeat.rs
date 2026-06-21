@@ -24,12 +24,15 @@
 // (`Effect::Unsupported` with `STRUCTURAL_BACKSTOP_REASON`) is the total-but-unreachable tail
 // kept to mirror the node shape -- never reached for a built node, never a fake-refuse.
 
+use std::collections::BTreeMap;
+
 use syn::Expr;
 
 use crate::sugar::backstop::boxed;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{
-    repeat_count_literal, token_key, Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON,
+    const_eval, repeat_count_literal, token_key, Desugared, DesugaredElem, Effect, Outcome, Sugar,
+    SugarCtx, SUGAR_SEQ_CAP, STRUCTURAL_BACKSTOP_REASON,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -41,9 +44,58 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// `build_composite`. DISTINCT from the TERM-position `Expr::Repeat` (which expands a
 /// literal-count aggregate); the two roles genuinely differ.
 pub(crate) fn recognize_composite(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    match expr {
-        Expr::Repeat(_) => Some(boxed(decompose_array_repeat(expr))),
-        _ => None,
+    let Expr::Repeat(repeat) = expr else {
+        return None;
+    };
+    // CONSTRUCTIVE side: a LITERAL count `[elem; N]` is a finite construction from the
+    // written literal -- expand it to a Seq of N copies of `elem` (bounded by the seq cap;
+    // the element must itself const-eval to a literal value). This is the Composite-role
+    // analogue of the TERM-role N-fold aggregate expansion -- previously a literal-count
+    // repeat fell through to the refuse backstop here (unresolved) even though it is finite.
+    // The REFUSE side (non-literal count: `[x; SIZE]`, `[MaybeUninit::uninit(); 64]`) is
+    // below.
+    if let Some(count) = repeat_count_literal(&repeat.len) {
+        return Some(Box::new(LiteralRepeatSugar {
+            elem: (*repeat.expr).clone(),
+            count,
+            boundary: token_key(expr),
+        }));
+    }
+    Some(boxed(decompose_array_repeat(expr)))
+}
+
+/// CONSTRUCTIVE `[elem; N]` with a LITERAL count: desugars to a Seq of `N` copies of the
+/// element. `elem` must const-eval to a literal value (a `[0; 64]` grounds; a
+/// `[MaybeUninit::uninit(); 64]` does NOT -- its element is opaque, so it falls through to
+/// the array-repeat refuse, finite-or-refuse). `N` must fit the sequence cap.
+pub(crate) struct LiteralRepeatSugar {
+    elem: Expr,
+    count: usize,
+    boundary: String,
+}
+
+impl Sugar for LiteralRepeatSugar {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        // An enormous repeat is not a usefully-finite construction -> refuse (finite-or-refuse).
+        if self.count as i64 > SUGAR_SEQ_CAP {
+            return Outcome::Hit(Effect::ArrayRepeat {
+                boundary: self.boundary.clone(),
+            });
+        }
+        // The element must be a literal VALUE; an opaque/effectful element
+        // (`MaybeUninit::uninit()`, a runtime call) is not a finite literal -> refuse.
+        let Some(value) = const_eval(&self.elem, &BTreeMap::new()) else {
+            return Outcome::Hit(Effect::ArrayRepeat {
+                boundary: self.boundary.clone(),
+            });
+        };
+        let seq: Vec<DesugaredElem> = (0..self.count)
+            .map(|_| DesugaredElem {
+                expr: self.elem.clone(),
+                value: Some(value.clone()),
+            })
+            .collect();
+        Outcome::Dug(Desugared::Seq(seq))
     }
 }
 
