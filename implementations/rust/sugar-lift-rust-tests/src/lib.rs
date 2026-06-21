@@ -164,6 +164,7 @@ pub mod sugar {
     pub mod vec_literal;
     pub mod vec_macro;
     pub mod wrapping_neg;
+    pub mod zip;
 }
 
 use crate::sugar::configuration::{

@@ -1166,6 +1166,153 @@ fn for_enumerate_tuple_wrong_expected_is_unsat() {
     }
 }
 
+// MECHANISM-2 gap (b): `.zip(rhs)` over two inline literal iterators. `ZipSugar` pairs the
+// two finite domains element-wise (`(a_i, b_i)`) and the TUPLE loop pattern `for (&a, &b)`
+// decomposes each pair per step -- exactly like `enumerate`'s `(i, e)`. The body asserts
+// over BOTH components (`a + b`), so the SAT verdict proves the pairing, not just one side.
+#[test]
+fn for_zip_inline_literal_iters_lifts() {
+    let src = r#"
+        #[test]
+        fn t_zip() {
+            let sums = [11, 22, 33];
+            let mut i = 0;
+            for (&a, &b) in [1, 2, 3].iter().zip([10, 20, 30].iter()) {
+                assert_eq!(a + b, sums[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/zip_inline.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "`zip` of two inline literal iters must unroll the pairs: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_zip") {
+        assert!(
+            sat,
+            "a+b at each zipped step (1+10,2+20,3+30) == sums -- consistent (SAT)"
+        );
+    }
+}
+
+// GAP (b) TEETH: a WRONG expected over the zipped domain must refute. If `zip` mispairs
+// the operands or the counter freezes, this would falsely discharge. `3+30 = 33 != 99`.
+#[test]
+fn for_zip_wrong_expected_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_zip_bad() {
+            let sums = [11, 22, 99];
+            let mut i = 0;
+            for (&a, &b) in [1, 2, 3].iter().zip([10, 20, 30].iter()) {
+                assert_eq!(a + b, sums[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/zip_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_zip_bad") {
+        assert!(
+            !sat,
+            "a+b = 3+30 = 33 != sums[2] = 99 over the zipped domain -- must be UNSAT"
+        );
+    }
+}
+
+// GAP (b): `zip` TRUNCATES to the shorter side -- `[1,2,3,4].zip([10,20,30])` yields just
+// THREE pairs. The counter loop discharges over the truncated domain; `sums` has exactly 3
+// entries, so a non-truncating `zip` (4 steps, indexing `sums[3]` out of bounds) would NOT
+// reproduce this clean SAT.
+#[test]
+fn for_zip_truncates_to_shorter_lifts() {
+    let src = r#"
+        #[test]
+        fn t_zip_trunc() {
+            let sums = [11, 22, 33];
+            let mut i = 0;
+            for (&a, &b) in [1, 2, 3, 4].iter().zip([10, 20, 30].iter()) {
+                assert_eq!(a + b, sums[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/zip_trunc.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "`zip` truncated to the shorter side must unroll: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_zip_trunc") {
+        assert!(
+            sat,
+            "truncated zip [1,2,3,4]x[10,20,30] -> 3 pairs, a+b == sums -- consistent (SAT)"
+        );
+    }
+}
+
+// GAP (b) TEETH: wrong expected over the TRUNCATED zipped domain must refute -- the in-range
+// pairing `2+20 = 22 != 99` is a real contradiction even after truncation.
+#[test]
+fn for_zip_truncated_wrong_expected_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_zip_trunc_bad() {
+            let sums = [11, 99, 33];
+            let mut i = 0;
+            for (&a, &b) in [1, 2, 3, 4].iter().zip([10, 20, 30].iter()) {
+                assert_eq!(a + b, sums[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/zip_trunc_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_zip_trunc_bad") {
+        assert!(
+            !sat,
+            "a+b = 2+20 = 22 != sums[1] = 99 over the truncated zipped domain -- must be UNSAT"
+        );
+    }
+}
+
+// GAP (b): `zip` over two closed RANGES -- the other literal-domain base alongside the
+// array. `(0..3).zip(10..13)` pairs (0,10),(1,11),(2,12); the `for (a, b)` value pattern
+// binds each component per step. Same `ZipSugar` arm as the array case (teeth proven by the
+// array twins above), exercised over the range base.
+#[test]
+fn for_zip_over_ranges_lifts() {
+    let src = r#"
+        #[test]
+        fn t_zip_range() {
+            let sums = [10, 12, 14];
+            let mut i = 0;
+            for (a, b) in (0..3).zip(10..13) {
+                assert_eq!(a + b, sums[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/zip_range.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "`zip` over two closed ranges must unroll the pairs: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_zip_range") {
+        assert!(
+            sat,
+            "a+b at each zipped range step (0+10,1+11,2+12) == sums -- consistent (SAT)"
+        );
+    }
+}
+
 // MECHANISM-2 gap (b): `for [a, b]` SLICE/ARRAY pattern over a finite literal of arrays.
 // A clean extension of the tuple-pattern binding -- `loop_var_bindings` accepts
 // `Pat::Slice` exactly like `Pat::Tuple`, and `bind_loop_value` decomposes an array
