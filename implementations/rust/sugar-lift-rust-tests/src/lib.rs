@@ -17303,6 +17303,67 @@ pub(crate) fn repeat_count_literal(len: &Expr) -> Option<usize> {
     }
 }
 
+/// The element-count of an array-repeat `[elem; N]` as a `usize` when `N` is a finite,
+/// TEXT-DETERMINED length: a plain literal (`[7; 3]`), a `const`-bound path
+/// (`const SIZE: usize = 3; [7; SIZE]`), or `+`/`-`/`*`/`/`/`%` const arithmetic over those
+/// (`const CAPACITY: usize = 2 * B - 1`). Const paths resolve through the scope's const
+/// registry (`const_expr_for_path`) and the initializer is re-scanned, so a const-length
+/// repeat is classified as the SAME finite literal sequence a literal-length repeat already
+/// is -- and gets the SAME element-wise grounding teeth (the index/sum/... floor pins the
+/// element value, so a wrong-expected twin refutes instead of staying vacuously SAT).
+///
+/// finite-or-refuse: `None` for a runtime / non-const-evaluable length. The repeat then
+/// stays the `Effect::ArrayRepeat` refuse exactly as before -- the symbolic universe size is
+/// never fabricated. (An over-cap const length still resolves here but is refused downstream
+/// by `LiteralRepeatSugar::desugar`'s `SUGAR_SEQ_CAP` gate, same as a literal over-cap count.)
+pub(crate) fn repeat_count_in_scope(len: &Expr, scope: &TemporalScope) -> Option<usize> {
+    usize::try_from(const_len_value_in_scope(len, scope, 0)?).ok()
+}
+
+/// The signed value of a const-evaluable length expr (see [`repeat_count_in_scope`]).
+/// Internally `i128` so intermediate arithmetic (`2 * B - 1`) cannot wrap; a negative or
+/// over-`usize` final value is rejected by the `try_from` in the caller (never a fake length).
+fn const_len_value_in_scope(expr: &Expr, scope: &TemporalScope, depth: usize) -> Option<i128> {
+    const MAX_DEPTH: usize = 16;
+    if depth > MAX_DEPTH {
+        return None;
+    }
+    match expr {
+        Expr::Lit(ExprLit {
+            lit: Lit::Int(i), ..
+        }) => parse_int_lit(i).ok(),
+        Expr::Paren(p) => const_len_value_in_scope(&p.expr, scope, depth + 1),
+        Expr::Group(g) => const_len_value_in_scope(&g.expr, scope, depth + 1),
+        // A `const`-bound path is a finite, text-determined length: resolve it through the
+        // const registry and re-scan its initializer (which may itself be a literal, another
+        // const, or const arithmetic).
+        Expr::Path(path) if path.qself.is_none() => {
+            let init = scope.const_expr_for_path(&path.path)?;
+            const_len_value_in_scope(&init, scope, depth + 1)
+        }
+        Expr::Unary(unary) => {
+            let v = const_len_value_in_scope(&unary.expr, scope, depth + 1)?;
+            match unary.op {
+                UnOp::Neg(_) => v.checked_neg(),
+                _ => None,
+            }
+        }
+        Expr::Binary(binary) => {
+            let l = const_len_value_in_scope(&binary.left, scope, depth + 1)?;
+            let r = const_len_value_in_scope(&binary.right, scope, depth + 1)?;
+            match binary.op {
+                BinOp::Add(_) => l.checked_add(r),
+                BinOp::Sub(_) => l.checked_sub(r),
+                BinOp::Mul(_) => l.checked_mul(r),
+                BinOp::Div(_) if r != 0 => Some(l / r),
+                BinOp::Rem(_) if r != 0 => Some(l % r),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 fn literal_aggregate_term_in_scope<'a>(
     kind: &str,
     elems: impl Iterator<Item = &'a Expr>,

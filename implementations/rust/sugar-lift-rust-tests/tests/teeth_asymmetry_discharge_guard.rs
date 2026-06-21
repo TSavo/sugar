@@ -93,6 +93,14 @@ fn disp_of(name: &str, src: &str) -> Disp {
 fn false_assertions_are_never_discharged_teeth_asymmetry() {
     // TEETHED shapes: lift grounds to a concrete value, so a WRONG right-hand
     // side makes the invariant UNSAT -> the false claim is actively REFUTED.
+    //
+    // This now INCLUDES a CONST-length array-repeat (lever H): a const-NAME or
+    // const-ARITHMETIC length (`const SIZE: usize = 3`, `const CAP: usize = 2*B-1`)
+    // resolves through scope (`repeat_count_in_scope`) and grounds to the same
+    // `[7, 7, 7]` a literal `[7; 3]` does, so `[7; SIZE][1] == 99` REFUTES exactly
+    // like the literal repeat. PREVIOUSLY the const-length repeat refused the whole
+    // index (the false claim was dark / unwarranted) -- grounding it is strictly
+    // stronger: a dark false claim becomes an actively-refuted one, never discharged.
     for (name, src) in [
         (
             "literal_index_false",
@@ -101,6 +109,14 @@ fn false_assertions_are_never_discharged_teeth_asymmetry() {
         (
             "literal_repeat_false",
             r#"#[test] fn t() { assert_eq!([7; 3][1], 99); }"#,
+        ),
+        (
+            "const_name_repeat_false",
+            r#"const SIZE: usize = 3; #[test] fn t() { assert_eq!([7; SIZE][1], 99); }"#,
+        ),
+        (
+            "const_arith_repeat_false",
+            r#"const B: usize = 2; const CAP: usize = 2 * B - 1; #[test] fn t() { assert_eq!([7; CAP][1], 99); }"#,
         ),
     ] {
         let d = disp_of(name, src);
@@ -115,6 +131,21 @@ fn false_assertions_are_never_discharged_teeth_asymmetry() {
     // coverage, NOT discharged. (If a future recognizer grounds the value it
     // becomes Refuted instead; both satisfy the cardinal-sin guard.) The ONLY
     // forbidden outcome is Discharged.
+    //
+    // TWO array-repeat shapes belong here -- the finite-or-refuse boundary of lever H,
+    // which grounds a CONCRETE const LENGTH but never fabricates a value the text does
+    // not determine:
+    //   * non-literal ELEMENT (`[compute(); 3]`): the length is a literal `3`, but the
+    //     element is an opaque call that cannot const-eval, so the indexed read stays an
+    //     uninterpreted aggregate -- congruence-only, never discharged.
+    //   * const-GENERIC LENGTH (`[7; N]`, no concrete registry initializer): the length
+    //     is symbolic, so `repeat_count_in_scope` declines and the index stays the
+    //     uninterpreted `index(..)` ctor -- congruence-only, never discharged. This is
+    //     the key discrimination: lever H grounds `const SIZE = 3` but NOT a symbolic `N`.
+    // (The `Disp::Refused` no-decl disposition for a non-finite repeat is exercised in a
+    // SEQUENCE context by `for_array_repeat_non_literal_element_refuses` in
+    // `assertion_lift.rs`; in an INDEX operand position the read always leaves at least a
+    // symbolic congruence-only decl, i.e. UNDECIDED.)
     for (name, src) in [
         (
             "arrays_differ_false",
@@ -124,6 +155,14 @@ fn false_assertions_are_never_discharged_teeth_asymmetry() {
             "maybeuninit_false",
             r#"#[test] fn t() { assert_eq!(unsafe { core::mem::MaybeUninit::new(7).assume_init() }, 8); }"#,
         ),
+        (
+            "opaque_element_repeat_false",
+            r#"#[test] fn t() { assert_eq!([compute(); 3][1], 99); }"#,
+        ),
+        (
+            "const_generic_repeat_false",
+            r#"fn sized<const N: usize>() { assert_eq!([7; N][1], 99); } #[test] fn t() { sized::<3>(); }"#,
+        ),
     ] {
         let d = disp_of(name, src);
         assert_ne!(
@@ -132,16 +171,4 @@ fn false_assertions_are_never_discharged_teeth_asymmetry() {
             "CARDINAL SIN: false claim `{name}` was DISCHARGED (got {d:?})"
         );
     }
-
-    // REFUSED shape: a const-NAME array-repeat length is not a finite literal
-    // construction, so it is refused outright -- never hollow-lifted into
-    // warranted coverage.
-    assert_eq!(
-        disp_of(
-            "const_name_repeat",
-            r#"const SIZE: usize = 3; #[test] fn t() { assert_eq!([7; SIZE][1], 99); }"#,
-        ),
-        Disp::Refused,
-        "const-name array-repeat must be refused, not hollow-lifted"
-    );
 }

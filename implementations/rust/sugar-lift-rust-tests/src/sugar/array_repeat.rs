@@ -31,8 +31,8 @@ use syn::Expr;
 use crate::sugar::backstop::boxed;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{
-    const_eval, repeat_count_literal, token_key, Desugared, DesugaredElem, Effect, Outcome, Sugar,
-    SugarCtx, SUGAR_SEQ_CAP, STRUCTURAL_BACKSTOP_REASON,
+    const_eval, repeat_count_in_scope, repeat_count_literal, token_key, Desugared, DesugaredElem,
+    Effect, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP, STRUCTURAL_BACKSTOP_REASON,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -43,18 +43,21 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// `Expr::Repeat(_) => boxed(decompose_array_repeat(expr))` arm of the old fat
 /// `build_composite`. DISTINCT from the TERM-position `Expr::Repeat` (which expands a
 /// literal-count aggregate); the two roles genuinely differ.
-pub(crate) fn recognize_composite(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Repeat(repeat) = expr else {
         return None;
     };
-    // CONSTRUCTIVE side: a LITERAL count `[elem; N]` is a finite construction from the
-    // written literal -- expand it to a Seq of N copies of `elem` (bounded by the seq cap;
-    // the element must itself const-eval to a literal value). This is the Composite-role
-    // analogue of the TERM-role N-fold aggregate expansion -- previously a literal-count
-    // repeat fell through to the refuse backstop here (unresolved) even though it is finite.
-    // The REFUSE side (non-literal count: `[x; SIZE]`, `[MaybeUninit::uninit(); 64]`) is
-    // below.
-    if let Some(count) = repeat_count_literal(&repeat.len) {
+    // CONSTRUCTIVE side: a finite, TEXT-DETERMINED count `[elem; N]` is a finite construction
+    // from the written literal -- expand it to a Seq of N copies of `elem` (bounded by the seq
+    // cap; the element must itself const-eval to a literal value). `N` is finite-by-text when
+    // it is a literal (`[7; 3]`) OR a const-bound length resolvable through scope
+    // (`const SIZE: usize = 3; [7; SIZE]`) -- `repeat_count_in_scope` unifies both, so a
+    // const-length repeat reaches the SAME constructive floor (and element-wise teeth) a
+    // literal-length one does. This is the Composite-role analogue of the TERM-role N-fold
+    // aggregate expansion. The REFUSE side (a NON-const count: `[x; runtime_len]`, or an
+    // opaque element `[MaybeUninit::uninit(); 64]`) stays the `Effect::ArrayRepeat` refuse,
+    // below -- finite-or-refuse, never a fabricated universe size.
+    if let Some(count) = repeat_count_in_scope(&repeat.len, fcx.scope()) {
         return Some(Box::new(LiteralRepeatSugar {
             elem: (*repeat.expr).clone(),
             count,
