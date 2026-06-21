@@ -102,6 +102,7 @@ pub mod sugar {
     pub mod inspect;
     pub mod int_pow;
     pub mod int_sqrt;
+    pub mod integer_decode;
     pub mod intersperse_collect_string;
     pub mod intersperse_concat;
     pub mod is_empty;
@@ -164,6 +165,7 @@ pub mod sugar {
     pub mod transparent_term;
     pub mod try_from_fn;
     pub mod try_map;
+    pub mod tuple_decomp;
     pub mod tuple_term;
     pub mod unary;
     pub mod unit_path;

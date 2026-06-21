@@ -19484,3 +19484,180 @@ fn consumed_iterator_advance_by_then_next_declines() {
     // The second assertion sees an opaque version-2 `it` (versioning bumped after the
     // first consuming `.advance_by()` call) → opaque method → UNDECIDED.
 }
+
+// ---------------------------------------------------------------------------
+// General tuple-equality decomposition (task #26) — integer_decode is the first
+// consumer. `assert_eq!(f.integer_decode(), (m, e, s))` decomposes COMPONENT-WISE into
+// `(and (= comp0 m)(= comp1 e)(= comp2 s))`, each a grounded scalar with REAL z3 teeth
+// (the integer total order), NOT a single uninterpreted `literal:Tuple` constant
+// (congruence-only = no teeth). Values are the real `num/dec2flt/float.rs` corpus
+// expectations; computed by RUNNING the host op (str::parse + to_bits + IEEE fields).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tuple_decomp_integer_decode_f32_lowers_componentwise() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(3.14159265359f32.integer_decode(), (13176795, -22, 1));
+    assert_eq!((-8573.5918555f32).integer_decode(), (8779358, -10, -1));
+    assert_eq!(0f32.integer_decode(), (0, -150, 1));
+    assert_eq!((-0f32).integer_decode(), (0, -150, -1));
+    assert_eq!(f32::INFINITY.integer_decode(), (8388608, 105, 1));
+    assert_eq!(f32::NEG_INFINITY.integer_decode(), (8388608, 105, -1));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/tuple_decomp_id_f32.rs");
+    assert_eq!(
+        out.assertions_lifted, 6,
+        "f32 integer_decode tuple equalities should decompose to component scalar axioms; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons,
+        out.factory_audits,
+        out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    // The teethed equality must NOT collapse to a congruence-only `literal:Tuple` key; it
+    // decomposes to grounded scalar components. (The bare `method:integer_decode` may still
+    // appear in the separate no-panic universe — the equality is what carries the teeth.)
+    assert!(
+        !doc.contains("literal:Tuple"),
+        "integer_decode tuple equality must not collapse to a congruence-only literal:Tuple key: {doc}"
+    );
+    assert!(
+        doc.contains("13176795") && doc.contains("8388608"),
+        "decomposed scalar mantissa components should be present as grounded constants: {doc}"
+    );
+}
+
+#[test]
+fn tuple_decomp_integer_decode_f64_lowers_componentwise() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(3.14159265359f64.integer_decode(), (7074237752028906, -51, 1));
+    assert_eq!((-8573.5918555f64).integer_decode(), (4713381968463931, -39, -1));
+    assert_eq!(0f64.integer_decode(), (0, -1075, 1));
+    assert_eq!((-0f64).integer_decode(), (0, -1075, -1));
+    assert_eq!(f64::INFINITY.integer_decode(), (4503599627370496, 972, 1));
+    assert_eq!(f64::NEG_INFINITY.integer_decode(), (4503599627370496, 972, -1));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/tuple_decomp_id_f64.rs");
+    assert_eq!(
+        out.assertions_lifted, 6,
+        "f64 integer_decode tuple equalities should decompose to component scalar axioms; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons,
+        out.factory_audits,
+        out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        !doc.contains("literal:Tuple"),
+        "integer_decode tuple equality must not collapse to a congruence-only literal:Tuple key: {doc}"
+    );
+    assert!(
+        doc.contains("7074237752028906") && doc.contains("4503599627370496"),
+        "decomposed scalar mantissa components should be present as grounded constants: {doc}"
+    );
+}
+
+#[test]
+fn tuple_decomp_integer_decode_good_twin_is_sat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(3.14159265359f32.integer_decode(), (13176795, -22, 1));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/tuple_decomp_id_good.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "tuple_decomp_id_good") {
+        assert!(
+            sat,
+            "the exact componentwise decode (= 13176795 ..)(= -22 ..)(= 1 ..) must be z3-SAT"
+        );
+    }
+}
+
+// THE TEETH BITE: the SAME receiver, the WRONG mantissa component (13176796 vs 13176795).
+// Because the tuple is DECOMPOSED into grounded scalar components, the bad component is
+// `(= 13176795 13176796)` over two CONCRETE int constants -> z3-UNSAT. (A whole-tuple
+// `literal:Tuple` comparison would be z3-SAT here = no teeth; decomposition is what bites.)
+#[test]
+fn tuple_decomp_integer_decode_wrong_component_is_unsat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(3.14159265359f32.integer_decode(), (13176796, -22, 1));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/tuple_decomp_id_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "tuple_decomp_id_bad") {
+        assert!(
+            !sat,
+            "a wrong mantissa component 13176796 != 13176795 must be z3-UNSAT (the decomposed teeth bite)"
+        );
+    }
+}
+
+// Also bite a wrong SIGN component (last position), proving every component is teethed.
+#[test]
+fn tuple_decomp_integer_decode_wrong_sign_is_unsat() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(3.14159265359f32.integer_decode(), (13176795, -22, -1));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/tuple_decomp_id_sign.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "tuple_decomp_id_sign") {
+        assert!(
+            !sat,
+            "a wrong sign component -1 != 1 must be z3-UNSAT (every component is teethed)"
+        );
+    }
+}
+
+// EXACT-OR-NONE: a runtime `ldexp_f32(..)` receiver, an unstable f16 literal, and NAN
+// (mantissa not pinned by std) are NOT bit-determinate -> NOT decomposed; they stay the
+// opaque `method:integer_decode` fallback, never a fabricated component tuple.
+#[test]
+fn tuple_decomp_integer_decode_undeterminable_receivers_stay_opaque() {
+    let src = r#"
+fn ldexp_f32(x: f32, exp: i32) -> f32 { x }
+#[test]
+fn t() {
+    assert_eq!(ldexp_f32(1.0, 100).integer_decode(), (8388608, 77, 1));
+    assert_eq!(3.14159265359f16.integer_decode(), (1608, -9, 1));
+    assert_eq!(f32::NAN.integer_decode(), (12582912, 105, 1));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/tuple_decomp_id_decline.rs");
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        doc.contains("method:integer_decode"),
+        "undeterminable integer_decode receivers must stay opaque, not decompose to a fabricated tuple: {doc}"
+    );
+}
+
+// NO REGRESSION: a plain literal-tuple == literal-tuple is NOT a producer-vs-literal pair,
+// so it is left to its existing `literal:Tuple` lowering (the decomposition arm only fires
+// when a tuple-valued PRODUCER is involved).
+#[test]
+fn tuple_decomp_plain_literal_tuple_equality_unaffected() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!((1, 2), (1, 2));
+}
+"#;
+    let out = lift_file(&parse(src), "tests/tuple_decomp_plain.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        doc.contains("literal:Tuple("),
+        "a plain literal tuple equality should keep its existing literal:Tuple lowering: {doc}"
+    );
+}
