@@ -188,8 +188,13 @@ fn path_int_value(p: &ExprPath, fcx: Option<&SugarBuildCtx>) -> Option<i128> {
         } else {
             p.path.segments.iter().rev().nth(1)?.ident.to_string()
         };
-        let (min, max) = int_dst_bounds(&ty)?;
-        return Some(if last == "MAX" { max } else { min });
+        // EXACT value, DECLINE on i128-lane overflow — NOT `int_dst_bounds` (which
+        // CLAMPS 128-bit destination ranges to the i128 lane). Clamping is correct for
+        // a destination range check, but for the const VALUE it is a WRONG number:
+        // `<u128>::MAX` clamped to `i128::MAX` would lift
+        // `try_from(u128::MAX).unwrap() == u128::MAX` to `i128::MAX == u128::MAX` →
+        // UNSAT → REFUTING a true assert (the inverse cardinal sin). Decline instead.
+        return primitive_const_value(&ty, last == "MAX");
     }
     // A let-bound local: resolve to its initializer (gated immutable, cycle-guarded).
     // Only when a scope is available (the inline-literal `None` path declines).
@@ -203,6 +208,49 @@ fn path_int_value(p: &ExprPath, fcx: Option<&SugarBuildCtx>) -> Option<i128> {
         return scalar_int_value(init, Some(&fcx.with_bound_path(&name)));
     }
     None
+}
+
+/// The EXACT `MIN`/`MAX` value of a primitive integer type as an `i128`, or `None`
+/// when it cannot be represented EXACTLY in the i128 lane (`u128::MAX` = 2^128-1 >
+/// i128::MAX). Declining there — rather than clamping, as the destination-range
+/// `int_dst_bounds` deliberately does — is the SOUND choice: a value we cannot
+/// represent exactly must NEVER fold to a different constant (that would refute a
+/// true assert). `usize`/`isize` use the host pointer width, matching the existing
+/// `int_dst_bounds` behaviour and the pinned 64-bit corpus target.
+fn primitive_const_value(ty: &str, is_max: bool) -> Option<i128> {
+    let (signed, bits): (bool, u32) = match ty {
+        "i8" => (true, 8),
+        "i16" => (true, 16),
+        "i32" => (true, 32),
+        "i64" => (true, 64),
+        "i128" => (true, 128),
+        "isize" => (true, isize::BITS),
+        "u8" => (false, 8),
+        "u16" => (false, 16),
+        "u32" => (false, 32),
+        "u64" => (false, 64),
+        "u128" => (false, 128),
+        "usize" => (false, usize::BITS),
+        _ => return None,
+    };
+    if signed {
+        if bits >= 128 {
+            Some(if is_max { i128::MAX } else { i128::MIN })
+        } else if is_max {
+            Some((1i128 << (bits - 1)) - 1)
+        } else {
+            Some(-(1i128 << (bits - 1)))
+        }
+    } else if is_max {
+        // unsigned MAX = 2^bits - 1; DECLINE when it exceeds the i128 lane (`u128`).
+        if bits >= 128 {
+            None
+        } else {
+            Some((1i128 << bits) - 1)
+        }
+    } else {
+        Some(0) // unsigned MIN
+    }
 }
 
 struct TryFromSugar {

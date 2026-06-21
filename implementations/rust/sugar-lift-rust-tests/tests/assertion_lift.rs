@@ -820,6 +820,36 @@ fn try_from_let_bound_out_of_range_is_err_folds() {
     }
 }
 
+// SOUNDNESS GUARD (i128-lane overflow): `<u128>::MAX` = 2^128-1 does NOT fit the i128
+// resolution lane. CLAMPING it (as the destination-range table does) would give
+// `i128::MAX` -- a WRONG value -- so `try_from(u128::MAX).unwrap() == u128::MAX` would
+// lift `i128::MAX == u128::MAX` -> UNSAT -> REFUTING a true assert (inverse cardinal
+// sin). The const resolver DECLINES on overflow -> opaque -> UNDECIDED, never refutes.
+#[test]
+fn try_from_u128_max_const_overflow_does_not_false_refute() {
+    let src = r#"
+        #[test]
+        fn t_tf_u128max() {
+            assert!(<u128 as TryFrom<u128>>::try_from(<u128>::MAX).unwrap() == <u128>::MAX);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/num/tf_u128max.rs");
+    assert!(
+        !out.factory_audits
+            .iter()
+            .any(|a| a.selected == Some("option_unwrap")),
+        "u128::MAX overflows the i128 lane -- the const resolver must DECLINE (not clamp \
+         to i128::MAX, which would false-refute); audits: {:?}",
+        out.factory_audits
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_tf_u128max") {
+        assert!(
+            sat,
+            "u128::MAX try_from must stay opaque/undecided, never refute a true assert (got UNSAT)"
+        );
+    }
+}
+
 // NonZero::new(nonzero).unwrap()[.get()] peels Some(value) to the value (teeth).
 #[test]
 fn nonzero_new_unwrap_folds_with_teeth() {
