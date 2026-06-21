@@ -766,6 +766,124 @@ fn panicking_unwrap_does_not_fold_to_a_value() {
     );
 }
 
+// ---- Lane 13: partition_point over a literal slice folds to the index (teeth) ----
+
+// `[1,2,3,4,5].partition_point(|&x| x < 3)` is 2 (elements 1,2 satisfy x<3). The
+// predicate is evaluated per literal element in the host; the count of leading
+// satisfying elements lowers to a ground index -- not an opaque
+// `method:partition_point` EUF var -- via `partition_point`.
+#[test]
+fn partition_point_folds_and_warrants() {
+    let src = r#"
+        #[test]
+        fn t_partition_point() {
+            assert!([1, 2, 3, 4, 5].partition_point(|&x| x < 3) == 2);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/slice/partition_point.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "partition_point must lift; skip: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.factory_audits.iter().any(|a| {
+            a.selected == Some("partition_point")
+                && a.disposition == sugar_lift_rust_tests::FactoryDisposition::Warranted
+        }),
+        "partition_point must be warranted by `partition_point`: {:?}",
+        out.factory_audits
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Int(2)"),
+        "partition_point(|x| x<3) over [1..5] folds to 2: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_partition_point") {
+        assert!(sat, "partition_point == 2 holds -- must be SAT");
+    }
+}
+
+// BAD TWIN / teeth: the index is really 2, so `== 3` is a real contradiction
+// z3 refutes (UNSAT).
+#[test]
+fn partition_point_wrong_value_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_partition_point_bad() {
+            assert!([1, 2, 3, 4, 5].partition_point(|&x| x < 3) == 3);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/slice/partition_point_bad.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(dump.contains("Int(2)"), "partition_point folds to 2: {dump}");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_partition_point_bad") {
+        assert!(!sat, "partition_point is 2 != 3 -- must be UNSAT");
+    }
+}
+
+// Boundaries: all-satisfying -> len; none-satisfying -> 0.
+#[test]
+fn partition_point_all_and_none_boundaries() {
+    let all = r#"
+        #[test]
+        fn t_pp_all() {
+            assert!([1, 2, 3].partition_point(|&x| x < 100) == 3);
+        }
+    "#;
+    let out = lift_file(&parse(all), "coretests/slice/pp_all.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_pp_all") {
+        assert!(sat, "all satisfy -> partition_point == len(3) -- must be SAT");
+    }
+    let none = r#"
+        #[test]
+        fn t_pp_none() {
+            assert!([5, 6, 7].partition_point(|&x| x < 3) == 0);
+        }
+    "#;
+    let out = lift_file(&parse(none), "coretests/slice/pp_none.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_pp_none") {
+        assert!(sat, "none satisfy -> partition_point == 0 -- must be SAT");
+    }
+}
+
+// EXACT-OR-NONE: a NON-partitioned predicate (a satisfying element after a
+// non-satisfying one) and a runtime receiver must NOT fold -- the result would be
+// binary-search-defined / unknown, so the sugar declines.
+#[test]
+fn partition_point_unpartitioned_and_runtime_decline() {
+    let unpart = r#"
+        #[test]
+        fn t_pp_unpartitioned() {
+            assert!([1, 5, 2].partition_point(|&x| x < 3) == 1);
+        }
+    "#;
+    let out = lift_file(&parse(unpart), "coretests/slice/pp_unpartitioned.rs");
+    assert!(
+        !out.factory_audits
+            .iter()
+            .any(|a| a.selected == Some("partition_point")),
+        "a non-partitioned predicate must NOT be folded by partition_point: {:?}",
+        out.factory_audits
+    );
+    let runtime = r#"
+        #[test]
+        fn t_pp_runtime() {
+            let v: Vec<i32> = std::env::args().map(|s| s.len() as i32).collect();
+            assert!(v.partition_point(|&x| x < 3) == 0);
+        }
+    "#;
+    let out = lift_file(&parse(runtime), "coretests/slice/pp_runtime.rs");
+    assert!(
+        !out.factory_audits
+            .iter()
+            .any(|a| a.selected == Some("partition_point")),
+        "a runtime receiver must NOT be folded by partition_point: {:?}",
+        out.factory_audits
+    );
+}
+
 // ---- Lane 10: `is_sorted()` over a literal array iterator folds to bool (teeth) ----
 
 // `[1, 2, 2, 9].iter().is_sorted()` is true (non-strict consecutive order). The

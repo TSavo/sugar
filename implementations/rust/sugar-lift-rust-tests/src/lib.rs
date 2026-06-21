@@ -129,6 +129,7 @@ pub mod sugar {
     pub mod option_adaptor;
     pub mod option_predicate;
     pub mod option_unwrap;
+    pub mod partition_point;
     pub mod path;
     pub mod peekable;
     pub mod primitive_int;
