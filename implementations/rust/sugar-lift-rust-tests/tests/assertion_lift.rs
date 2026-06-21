@@ -766,6 +766,146 @@ fn panicking_unwrap_does_not_fold_to_a_value() {
     );
 }
 
+// ---- Lane 10: `is_sorted()` over a literal array iterator folds to bool (teeth) ----
+
+// `[1, 2, 2, 9].iter().is_sorted()` is true (non-strict consecutive order). The
+// sortedness is determined by the literal elements, so it lowers to a ground
+// `Bool(true)` -- not an opaque `method:is_sorted` EUF var -- via `is_sorted`.
+#[test]
+fn array_iter_is_sorted_folds_and_warrants() {
+    let src = r#"
+        #[test]
+        fn t_is_sorted() {
+            assert!([1, 2, 2, 9].iter().is_sorted());
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/is_sorted.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "literal-array is_sorted must lift; skip: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.factory_audits.iter().any(|a| {
+            a.selected == Some("is_sorted")
+                && a.disposition == sugar_lift_rust_tests::FactoryDisposition::Warranted
+        }),
+        "the is_sorted term must be warranted by `is_sorted`: {:?}",
+        out.factory_audits
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(true)"),
+        "[1,2,2,9].iter().is_sorted() must fold to true: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_is_sorted") {
+        assert!(sat, "[1,2,2,9] is sorted -- must be SAT");
+    }
+}
+
+// BAD TWIN / teeth: `[1, 3, 2]` is NOT sorted (3 > 2), so the claim folds to
+// `Bool(false)` -- a real contradiction z3 refutes (UNSAT).
+#[test]
+fn array_iter_unsorted_wrong_claim_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_is_sorted_bad() {
+            assert!([1, 3, 2].iter().is_sorted());
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/is_sorted_bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "unsorted is_sorted must still lift so the contradiction is checkable: {:?}",
+        out.skip_reasons
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(false)"),
+        "[1,3,2].iter().is_sorted() must fold to false: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_is_sorted_bad") {
+        assert!(
+            !sat,
+            "[1,3,2] is not sorted -- asserting is_sorted must be UNSAT"
+        );
+    }
+}
+
+// Singleton is trivially sorted, and the bare slice form (no `.iter()`) folds too.
+#[test]
+fn singleton_and_direct_slice_is_sorted() {
+    let single = r#"
+        #[test]
+        fn t_is_sorted_single() {
+            assert!([0].iter().is_sorted());
+        }
+    "#;
+    let out = lift_file(&parse(single), "coretests/iter/is_sorted_single.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(true)"),
+        "[0].iter().is_sorted() folds true: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_is_sorted_single") {
+        assert!(sat, "singleton is sorted -- must be SAT");
+    }
+    // Direct slice `is_sorted` (no `.iter()`), descending -> false -> refutes.
+    let slice_bad = r#"
+        #[test]
+        fn t_slice_is_sorted_bad() {
+            assert!([3, 2, 1].is_sorted());
+        }
+    "#;
+    let out = lift_file(&parse(slice_bad), "coretests/slice/is_sorted_bad.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(false)"),
+        "[3,2,1].is_sorted() folds false: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_slice_is_sorted_bad") {
+        assert!(!sat, "[3,2,1] is descending -- asserting is_sorted must be UNSAT");
+    }
+}
+
+// EXACT-OR-NONE: a non-literal element, and an order-CHANGING adaptor (`.rev()`),
+// must NOT fold. The `is_sorted` sugar declines, leaving the existing opaque
+// handling -- never a guessed bool over an order we did not compute.
+#[test]
+fn nonliteral_and_reversed_is_sorted_decline_to_fold() {
+    let runtime = r#"
+        #[test]
+        fn t_is_sorted_runtime() {
+            let n = std::env::args().count();
+            assert!([n, 1].iter().is_sorted());
+        }
+    "#;
+    let out = lift_file(&parse(runtime), "coretests/iter/is_sorted_runtime.rs");
+    assert!(
+        !out.factory_audits
+            .iter()
+            .any(|a| a.selected == Some("is_sorted")),
+        "a non-literal element must NOT be folded by is_sorted: {:?}",
+        out.factory_audits
+    );
+    // `.rev()` changes order -- not an order-preserving view, so we decline.
+    let reversed = r#"
+        #[test]
+        fn t_is_sorted_rev() {
+            assert!([1, 2, 3].iter().rev().is_sorted());
+        }
+    "#;
+    let out = lift_file(&parse(reversed), "coretests/iter/is_sorted_rev.rs");
+    assert!(
+        !out.factory_audits
+            .iter()
+            .any(|a| a.selected == Some("is_sorted")),
+        "a reversed iterator must NOT be folded by is_sorted: {:?}",
+        out.factory_audits
+    );
+}
+
 // ---- Lane 3: TryFrom range check -> Result, is_ok/is_err fold to bool (teeth) ----
 
 // `<u8 as TryFrom<u16>>::try_from(256u16).is_err()` is true: 256 doesn't fit u8,
