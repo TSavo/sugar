@@ -183,10 +183,31 @@ impl Sugar for UnarySugar {
                 Err(hit) => hit,
             },
             UnOp::Deref(_) => match child_term_or_hit(self.inner.desugar(ctx)) {
-                Ok(child) => Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
-                    name: "deref".to_string(),
-                    args: vec![child],
-                }))),
+                // `*&e == e`: dereferencing a SHARED borrow yields its pointee. A shared
+                // borrow freezes its pointee for the borrow's lifetime (the borrow
+                // checker forbids mutating the pointee while a `&` is live, and a shared
+                // ref cannot mutate through itself), so the pointee read at `*r` IS the
+                // text-determined value the inlined `ref(v)` carries. Cancel
+                // `deref(ref(v))` to `v` so `*r` over a shared borrow of a local warrants
+                // the value instead of an uninterpreted `deref(ref(..))` a bad twin could
+                // mis-satisfy (the deref-read analog of the shared-`&` relation-surface
+                // strip, #2321). ONLY the shared `ref` cancels: `ref_mut` is left intact
+                // because a `&mut` deref can observe a value MUTATED through the alias
+                // after the borrow, so canceling its binding-time snapshot would
+                // false-discharge (`let mut x=5; let r=&mut x; *r+=1; assert_eq!(*r,5)`
+                // -> `5==5` SAT). That `&mut`+mutation case stays refused (its own SSA
+                // arm). A non-`ref` child (raw pointer `*p`, opaque deref) is unchanged.
+                Ok(child) => {
+                    if let Term::Ctor { name, args } = child.as_ref() {
+                        if name == "ref" && args.len() == 1 {
+                            return Outcome::Dug(Desugared::Term(Rc::clone(&args[0])));
+                        }
+                    }
+                    Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
+                        name: "deref".to_string(),
+                        args: vec![child],
+                    })))
+                }
                 Err(hit) => hit,
             },
             // `syn::UnOp` is `#[non_exhaustive]`; an unknown future operator has no

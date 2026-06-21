@@ -17414,3 +17414,123 @@ fn iter_scan_sum_over_literal_digs_with_teeth() {
         assert!(!sat, "10==11 -- real contradiction -- must be z3-UNSAT");
     }
 }
+
+// ---------------------------------------------------------------------------
+// SHARED-BORROW DEREF-READ TRANSPARENCY (`*r` over a shared `&` borrow -> pointee).
+//
+// Dereferencing a SHARED borrow yields its pointee, and a shared borrow freezes its
+// pointee for the borrow's lifetime (the borrow checker forbids mutating the pointee
+// while a `&` is live; a shared ref cannot mutate through itself). So `*r` over `let r =
+// &x` IS x's text-determined value at the read. `unary` cancels `deref(ref(v)) -> v`.
+// ONLY the shared `ref` cancels -- `ref_mut` is left intact, so a `&mut` deref whose
+// pointee was mutated through the alias is NEVER falsely discharged (that case stays
+// refused; resolving it is the SSA arm's job). The deref-read analog of #2321.
+
+// GOOD: a shared-borrow deref-read warrants the local's value.
+#[test]
+fn shared_borrow_deref_read_warrants_value() {
+    let src = r#"
+        #[test]
+        fn t_shared_deref() {
+            let mut x = 5;
+            let r = &x;
+            assert_eq!(*r, 5);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/borrow/shared_deref.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "`*r` over `let r = &x` must warrant x's value: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "shared_deref_good") {
+        assert!(sat, "*r == 5 with x = 5 -> 5 == 5 -- consistent (SAT)");
+    }
+}
+
+// TEETH: a wrong value over a shared-borrow deref-read must REFUTE (was a vacuous
+// `deref(ref(5)) == 6` an uninterpreted `deref`/`ref` could mis-satisfy).
+#[test]
+fn shared_borrow_deref_read_wrong_value_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_shared_deref_bad() {
+            let mut x = 5;
+            let r = &x;
+            assert_eq!(*r, 6);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/borrow/shared_deref_bad.rs");
+    assert!(out.assertions_lifted >= 1, "bad twin must lift: {:?}", out.skip_reasons);
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "shared_deref_bad") {
+        assert!(
+            !sat,
+            "*r == 6 with x = 5 -> 5 == 6 is a REAL contradiction -- must be UNSAT; SAT means \
+             the deref stayed an uninterpreted `deref(ref(..))` (vacuous warrant)"
+        );
+    }
+}
+
+// `*&place` cancels: deref of a shared borrow of a literal index warrants the element.
+#[test]
+fn deref_of_shared_borrow_of_index_warrants_pointee() {
+    let good = r#"
+        #[test]
+        fn t_star_amp() { assert!(*&[10, 20, 30][1] == 20); }
+    "#;
+    let out = lift_file(&parse(good), "coretests/borrow/star_amp.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "`*&[10,20,30][1] == 20` must warrant the element: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "star_amp_good") {
+        assert!(sat, "*&[10,20,30][1] == 20 -> 20 == 20 (SAT)");
+    }
+    let bad = r#"
+        #[test]
+        fn t_star_amp_bad() { assert!(*&[10, 20, 30][1] == 99); }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/borrow/star_amp_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "star_amp_bad") {
+        assert!(!sat, "*&[10,20,30][1] == 99 -> 20 == 99 must be UNSAT");
+    }
+}
+
+// SOUNDNESS GATE: a `&mut` deref whose pointee was MUTATED through the alias must NOT be
+// cancelled. `let mut x=5; let r=&mut x; *r+=1; assert_eq!(*r,5)` is a FALSE assertion
+// (*r is 6 post-mutation). Cancelling its binding-time `ref_mut(5)` to `5` would make
+// `5 == 5` SAT -- a cardinal-sin false discharge of a false claim. The shared-only
+// cancellation must leave `ref_mut` intact (so the read stays uninterpreted / the
+// mutation stays refused), never collapsing it to a bare equality.
+#[test]
+fn mut_borrow_deref_after_mutation_is_not_falsely_discharged() {
+    let src = r#"
+        #[test]
+        fn t_mut_deref_mutated() {
+            let mut x = 5;
+            let r = &mut x;
+            *r += 1;
+            assert_eq!(*r, 5);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/borrow/mut_deref_mutated.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("ref_mut"),
+        "a `&mut` deref over a mutated alias must NOT be cancelled (ref_mut must survive, \
+         read stays uninterpreted) -- collapsing to a bare `5 == 5` would false-discharge a \
+         false claim: {dump}"
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("runtime expression-statement") || r.contains("&mut")),
+        "the mutation `*r += 1` must remain refused: {:?}",
+        out.skip_reasons
+    );
+}
