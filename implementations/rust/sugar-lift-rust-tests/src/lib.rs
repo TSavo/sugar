@@ -77,6 +77,7 @@ pub mod sugar {
     pub mod field_term;
     pub mod filter;
     pub mod filter_map;
+    pub mod flatten;
     pub mod float_refinement;
     pub mod fold;
     pub mod for_each;
@@ -91,6 +92,7 @@ pub mod sugar {
     pub mod identity_map;
     pub mod impl_method;
     pub mod index;
+    pub mod inspect;
     pub mod infinity_eq;
     pub mod insert;
     pub mod int_pow;
@@ -121,6 +123,7 @@ pub mod sugar {
     pub mod primitive_int;
     pub mod range_term;
     pub mod raw_addr_term;
+    pub mod reference_sequence;
     pub mod reference_term;
     pub mod regex_match;
     pub mod repeat_term;
@@ -5240,6 +5243,13 @@ fn peel_fold_adaptors_inner<'a>(
                         Box::new(|inner| Box::new(sugar::identity::IdentitySugar { inner }))
                     }
                     ("rev", 0) => Box::new(wrap_rev),
+                    // `.inspect(f)` yields the SAME items in the SAME order -- the closure
+                    // receives `&Item` and CANNOT alter the value stream (its side effect is
+                    // irrelevant to the asserted values). So it is the identity adaptor over
+                    // the value sequence, regardless of the argument form.
+                    ("inspect", 1) => {
+                        Box::new(|inner| Box::new(sugar::identity::IdentitySugar { inner }))
+                    }
                     ("enumerate", 0) => {
                         Box::new(|inner| Box::new(sugar::enumerate::EnumerateSugar { inner }))
                     }
@@ -5312,7 +5322,12 @@ fn peel_fold_adaptors_inner<'a>(
                         let n: usize = const_int(&m.args[0])?.try_into().ok()?;
                         Box::new(move |inner| Box::new(sugar::take::TakeSugar { inner, n }))
                     }
-                    // flat_map / flatten (sub-sequence const-eval) and every other
+                    // `.flatten()`: concatenate each element's own finite literal
+                    // sub-sequence (exact-or-refuse inside `FlattenSugar::desugar`).
+                    ("flatten", 0) => {
+                        Box::new(|inner| Box::new(sugar::flatten::FlattenSugar { inner }))
+                    }
+                    // flat_map (sub-sequence const-eval over a closure) and every other
                     // adaptor: not yet provably exact -> bail. (`filter_map` digs above
                     // via the composable `FilterMapSugar` over the closed Option-eval.)
                     _ => return None,

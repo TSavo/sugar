@@ -755,6 +755,187 @@ fn for_reference_pattern_counter_loop_with_wrong_expected_is_unsat() {
     }
 }
 
+// MECHANISM-2 gap (b): composed adapters over literal bases. `.chain(rhs)` of two
+// inline literal iterators must concatenate to one literal Seq and the counter loop
+// discharges. (a)+(c1)+(c2) already landed; this exercises ChainSugar recognition.
+#[test]
+fn for_chain_inline_literal_iters_lifts() {
+    let src = r#"
+        #[test]
+        fn t_chain_inline() {
+            let expected = [0, 1, 2, 30, 40];
+            let mut i = 0;
+            for &x in [0, 1, 2].iter().chain([30, 40].iter()) {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/chain_inline.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "chain of two inline literal iters must unroll: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_chain_inline") {
+        assert!(sat, "[0,1,2]++[30,40] == expected -- consistent (SAT)");
+    }
+}
+
+// MECHANISM-2 gap (b): the memory repro -- a let-bound `&ys` RHS. `has_composite`
+// has no Composite recognizer for a bare `&<array>`, so this is the additive case.
+#[test]
+fn for_chain_let_bound_ref_rhs_lifts() {
+    let src = r#"
+        #[test]
+        fn t_chain_ref() {
+            let ys = [30, 40];
+            let expected = [0, 1, 2, 30, 40];
+            let mut i = 0;
+            for &x in [0, 1, 2].iter().chain(&ys) {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/chain_ref.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "chain over a let-bound `&ys` must unroll: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_chain_ref") {
+        assert!(sat, "[0,1,2]++ys == expected -- consistent (SAT)");
+    }
+}
+
+// MECHANISM-2 gap (b) TEETH: a WRONG expected array over a chained domain must still
+// refute. If chain over-grounds or the counter freezes, this would falsely discharge.
+#[test]
+fn for_chain_wrong_expected_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_chain_bad() {
+            let expected = [0, 1, 2, 30, 99];
+            let mut i = 0;
+            for &x in [0, 1, 2].iter().chain([30, 40].iter()) {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/chain_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_chain_bad") {
+        assert!(
+            !sat,
+            "x=40 != expected[4]=99 is a REAL contradiction over the chained domain -- must be UNSAT"
+        );
+    }
+}
+
+// MECHANISM-2 gap (b): `.inspect(f)` is identity over the VALUE stream (the closure
+// gets `&Item`, cannot alter it), so a loop over `[..].iter().inspect(..)` must unroll
+// exactly like the bare iterator. SOUND: the side-effecting closure is irrelevant to
+// the asserted values.
+#[test]
+fn for_inspect_over_literal_iter_lifts() {
+    let src = r#"
+        #[test]
+        fn t_inspect() {
+            let expected = [1, 2, 3];
+            let mut i = 0;
+            for &x in [1, 2, 3].iter().inspect(|v| { let _ = v; }) {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/inspect.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "`.inspect(..)` over a literal iter must unroll: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_inspect") {
+        assert!(sat, "inspect is identity over values -- consistent (SAT)");
+    }
+}
+
+// GAP (b) TEETH: inspect must NOT mask a real contradiction.
+#[test]
+fn for_inspect_wrong_expected_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_inspect_bad() {
+            let expected = [1, 2, 99];
+            let mut i = 0;
+            for &x in [1, 2, 3].iter().inspect(|v| { let _ = v; }) {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/inspect_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_inspect_bad") {
+        assert!(!sat, "x=3 != expected[2]=99 over the inspect domain -- must be UNSAT");
+    }
+}
+
+// MECHANISM-2 gap (b): `.flatten()` over a literal of literal sub-sequences must
+// concatenate them into one literal Seq. Each outer element re-desugars as a
+// composite; a non-sub-sequence element bails (refuse, never guess).
+#[test]
+fn for_flatten_over_nested_literals_lifts() {
+    let src = r#"
+        #[test]
+        fn t_flatten() {
+            let expected = [1, 2, 3, 4];
+            let mut i = 0;
+            for &x in [[1, 2], [3, 4]].iter().flatten() {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/flatten.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "`.flatten()` over nested literals must unroll: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flatten") {
+        assert!(sat, "[[1,2],[3,4]] flattened == expected -- consistent (SAT)");
+    }
+}
+
+// GAP (b) TEETH: a WRONG expected over the flattened domain must refute.
+#[test]
+fn for_flatten_wrong_expected_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_flatten_bad() {
+            let expected = [1, 2, 3, 99];
+            let mut i = 0;
+            for &x in [[1, 2], [3, 4]].iter().flatten() {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/flatten_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flatten_bad") {
+        assert!(!sat, "x=4 != expected[3]=99 over the flattened domain -- must be UNSAT");
+    }
+}
+
 #[test]
 fn compute_float32_wrapper_lowers_scaled_literals_to_tuple_axioms() {
     let src = r#"
