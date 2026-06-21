@@ -134,6 +134,7 @@ pub mod sugar {
     pub mod repeat_term;
     pub mod result_transpose_collect;
     pub mod rev;
+    pub mod scan;
     pub mod sizeof;
     pub mod skip;
     pub mod skip_while;

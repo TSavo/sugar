@@ -59,10 +59,11 @@
 // fake-digs: every grounded value carries the real reduction, so a wrong-expected twin is
 // z3-UNSAT (the teeth), not a vacuously-satisfiable opaque accessor.
 
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{make_var, num, ConstValue, Sort, Term};
-use syn::Expr;
+use syn::{Expr, Stmt};
 use tracing::debug;
 
 use crate::sugar::factory::SugarBuildCtx;
@@ -70,8 +71,8 @@ use crate::sugar::method;
 use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::{
-    const_eval_unary_closure, const_fold_int_term, parse_int_lit, strip_refs_groups, ConstVal,
-    Desugared, Outcome, Sugar, SugarCtx,
+    closure_single_param_ident, const_eval_unary_closure, const_fold_acc_update, const_fold_int_term,
+    parse_int_lit, strip_refs_groups, ConstVal, Desugared, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -117,6 +118,11 @@ enum Terminal {
     /// literal-domain iterator. The returned `Result<(), NonZero<usize>>` is structural:
     /// `Ok(())` when the iterator can advance fully, else `Err(remaining)`.
     AdvanceBy(Box<dyn Sugar>),
+    /// `.reduce(|acc, x| expr)` -- fold with element[0] as the initial accumulator,
+    /// returning `Option<T>`: `Some(result)` for a non-empty source, `None` for empty.
+    /// The closure has the SAME type for both parameters (unlike `.fold(init, |acc, x|
+    /// ...)`); the body is const-evaluated with `acc` and `x` bound at each step.
+    Reduce(syn::ExprClosure),
 }
 
 /// TERM recognizer for the iterator scalar-reduction terminals. `Some` only when the
@@ -141,7 +147,13 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         return None;
     };
     let terminal = recognize_terminal(call, fcx)?;
-    let inner = method_family::build_literal_sequence_composite(&call.receiver, fcx)?;
+    // Try scan as inner receiver FIRST: `.scan(init, closure)` cannot go through
+    // `peel_fold_adaptors` (scan is stateful and not in that chain), so we handle it
+    // as a pre-pass that peels scan's OWN receiver via `build_literal_sequence_composite`
+    // and threads the state inline. Falls through to the standard peel path if the
+    // receiver is not a recognized scan call.
+    let inner = crate::sugar::scan::try_build_scan_inner(&call.receiver, fcx)
+        .or_else(|| method_family::build_literal_sequence_composite(&call.receiver, fcx))?;
     // The opaque `method:` fallback -- the EXACT node `method::recognize`
     // builds for this same expr (built DIRECTLY, not via `build_term`, which would re-enter
     // this recognizer and loop). Emitted verbatim if the literal desugar does not cleanly
@@ -205,6 +217,15 @@ fn recognize_terminal(call: &syn::ExprMethodCall, fcx: &SugarBuildCtx) -> Option
         // compose normally.
         "advance_by" | "advance_back_by" if call.args.len() == 1 => {
             Terminal::AdvanceBy(crate::sugar::factory::build_term(&call.args[0], fcx))
+        }
+        // `.reduce(|acc, x| expr)` -- fold from element[0], returns `Option<T>`.
+        // Requires a single closure arg; a non-closure (fn path, partially-applied)
+        // falls through to the opaque ctor.
+        "reduce" if call.args.len() == 1 => {
+            let Expr::Closure(closure) = strip_refs_groups(&call.args[0]) else {
+                return None;
+            };
+            Terminal::Reduce(closure.clone())
         }
         _ => return None,
     })
@@ -338,6 +359,48 @@ impl IterTerminalSugar {
             }
             return Some(Desugared::Term(bool_term(acc)));
         }
+        // `.reduce(|acc, x| expr)` -- fold with element[0] as the initial accumulator.
+        // Empty source → `opt:none`. Non-empty → const-fold the closure over elements[1..]
+        // seeded from element[0], then wrap the final value in `opt:some`.
+        // EXACT-OR-BAIL: a non-int element, a closure that cannot const-fold, or an
+        // overflowing intermediate -> `None` (the opaque fallback), never a fake-value.
+        if let Terminal::Reduce(closure) = &self.terminal {
+            if seq.is_empty() {
+                // reduce() on an empty iterator IS None -- this is the canonical value,
+                // not an opaque bail. Emit the structural opt:none so z3 can verify it.
+                return Some(Desugared::Term(monadic::none_term()));
+            }
+            if closure.inputs.len() != 2 {
+                return None;
+            }
+            let acc_var = closure_single_param_ident(&closure.inputs[0])?;
+            let item_var = closure_single_param_ident(&closure.inputs[1])?;
+            // Extract the tail: the expression that produces the NEW accumulator value.
+            // Supports both direct expression bodies (`|a, b| a + b`) and block bodies
+            // with a trailing expression (`|a, b| { let x = a; x + b }`).
+            let tail: &Expr = reduce_closure_tail(&closure.body)?;
+            // Seed from element[0] -- EXACT-OR-BAIL on non-int / wide element.
+            let first = seq[0]
+                .value
+                .as_ref()
+                .and_then(ConstVal::as_int)
+                .and_then(|n| i64::try_from(n).ok())?;
+            let mut acc = first;
+            // Thread the accumulator over elements[1..].
+            for elem in &seq[1..] {
+                let item_val = elem
+                    .value
+                    .as_ref()
+                    .and_then(ConstVal::as_int)
+                    .and_then(|n| i64::try_from(n).ok())?;
+                let mut env: BTreeMap<String, i64> = BTreeMap::new();
+                env.insert(acc_var.clone(), acc);
+                env.insert(item_var.clone(), item_val);
+                acc = const_fold_acc_update(tail, &env)?;
+            }
+            // Wrap in `Some(...)` -- `.reduce()` always returns `Option<T>`.
+            return Some(Desugared::Term(monadic::some_term(num(i128::from(acc)))));
+        }
         // `.sum()` / `.product()`: fold over the elements' EXACT integer const values.
         // EXACT-OR-BAIL: a non-integer / opaque element (a float / string / unresolved
         // element) -> `None` (emit the opaque fallback), never a guessed value.
@@ -371,5 +434,23 @@ impl Sugar for IterTerminalSugar {
             Some(d) => Outcome::Dug(d),
             None => self.fallback.desugar(ctx),
         }
+    }
+}
+
+/// Extract the tail expression (the new accumulator value) from a reduce closure body.
+/// Supports both direct expression bodies (`|a, b| a + b`) and block bodies with a
+/// trailing expression (`|a, b| { ..stmts..; a + b }`). Returns `None` for block bodies
+/// with no trailing expression (e.g. a block ending in a semicolon).
+fn reduce_closure_tail(body: &Expr) -> Option<&Expr> {
+    match body {
+        Expr::Block(b) => {
+            // Block body: the tail is the final expression-without-semicolon.
+            let (tail, _) = b.block.stmts.split_last()?;
+            match tail {
+                Stmt::Expr(e, None) => Some(e),
+                _ => None, // ends in a semicolon -> no tail expression -> bail
+            }
+        }
+        other => Some(other), // direct expression body (`|a, b| a + b`)
     }
 }
