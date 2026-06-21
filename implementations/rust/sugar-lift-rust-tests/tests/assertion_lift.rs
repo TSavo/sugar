@@ -813,6 +813,39 @@ fn for_chain_let_bound_ref_rhs_lifts() {
     }
 }
 
+// REGRESSION (catalog ambiguity): a `&[..]` slice-literal reference in IntoIterator
+// position is claimed by BOTH `literal_slice` (Primary, specific) and
+// `reference_sequence` (the general reference catch). When both were Primary, the
+// catalog's ambiguity guard PANICKED on the first `&[..]` in the real corpus -- a panic
+// the curated suite never hit. `reference_sequence` is now Fallback, so `literal_slice`
+// cleanly wins and the lift must succeed (no panic), unroll, and discharge.
+#[test]
+fn for_chain_slice_literal_ref_rhs_lifts_no_ambiguity() {
+    let src = r#"
+        #[test]
+        fn t_chain_slice_ref() {
+            let expected = [1, 2, 3, 4];
+            let mut i = 0;
+            for &x in [1, 2].iter().chain(&[3, 4]) {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/chain_slice_ref.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "chain over a `&[..]` slice literal must unroll (literal_slice wins, no panic): \
+         lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_chain_slice_ref") {
+        assert!(sat, "[1,2]++[3,4] == expected -- consistent (SAT)");
+    }
+}
+
 // MECHANISM-2 gap (b) TEETH: a WRONG expected array over a chained domain must still
 // refute. If chain over-grounds or the counter freezes, this would falsely discharge.
 #[test]

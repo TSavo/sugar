@@ -1,0 +1,44 @@
+# Lift-surface registration + pinned rust target facts for the honest coretests
+# ledger. `lift --report` only lifts + classifies (no solver invoked), so no
+# [solvers] block is required here. The corpus has no Cargo.toml, so the rust
+# target cfg the kit would otherwise read from `cargo`/`rustc` is pinned below.
+[[plugins]]
+name = "rust-test-assertions-lift"
+kind = "lift"
+surface = "rust-test-assertions"
+emit = "ir-document"
+
+[platform_profile]
+language = "rust"
+library = "rust-std-coretests-full"
+version = "rustc 1.96.0 (ac68faa20 2026-05-25)"
+
+[rust-test-assertions.target_cfg]
+target = "x86_64-apple-darwin"
+facts = [
+  "debug_assertions",
+  "panic=\"unwind\"",
+  "target_abi=\"\"",
+  "target_arch=\"x86_64\"",
+  "target_endian=\"little\"",
+  "target_env=\"\"",
+  "target_family=\"unix\"",
+  "target_feature=\"cmpxchg16b\"",
+  "target_feature=\"fxsr\"",
+  "target_feature=\"sse\"",
+  "target_feature=\"sse2\"",
+  "target_feature=\"sse3\"",
+  "target_feature=\"sse4.1\"",
+  "target_feature=\"ssse3\"",
+  "target_has_atomic=\"128\"",
+  "target_has_atomic=\"16\"",
+  "target_has_atomic=\"32\"",
+  "target_has_atomic=\"64\"",
+  "target_has_atomic=\"8\"",
+  "target_has_atomic=\"ptr\"",
+  "target_os=\"macos\"",
+  "target_pointer_width=\"64\"",
+  "target_vendor=\"apple\"",
+  "test",
+  "unix",
+]
