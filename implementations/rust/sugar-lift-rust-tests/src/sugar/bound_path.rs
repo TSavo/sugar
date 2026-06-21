@@ -32,6 +32,9 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if let Some(hit) = alias_deref_mutated_refusal(&name, fcx) {
         return Some(hit);
     }
+    if let Some(hit) = loop_body_mutated_refusal(&name, fcx) {
+        return Some(hit);
+    }
     if let Some(current) = fcx.scope().temporal_rewrite_expr_for(&name) {
         debug!(
             target: "sugar_lift_rust_tests::temporal_rewrite",
@@ -63,6 +66,9 @@ fn recognize_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         return None;
     }
     if let Some(hit) = alias_deref_mutated_refusal(&name, fcx) {
+        return Some(hit);
+    }
+    if let Some(hit) = loop_body_mutated_refusal(&name, fcx) {
         return Some(hit);
     }
     if let Some(current) = fcx.scope().temporal_rewrite_expr_for(&name) {
@@ -105,6 +111,25 @@ fn alias_deref_mutated_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dy
             "ambiguous temporal identity for `{name}`: mutated through a `&mut` alias \
              between borrow and read, so there is no single timeless value to read at the \
              assertion; refused"
+        ))
+    })
+}
+
+/// THE LOOP-BODY TEMPORAL-INSTABILITY GATE. A mut-local mutated INSIDE a loop body
+/// (`for`/`while`/`loop`) has a STALE tracked value after the loop -- the syntactic
+/// tracker cannot propagate the loop's net effect, so the pre-loop literal persists.
+/// A post-loop read resolves to that stale value, lifting e.g. `0 == 3` (UNSAT) which
+/// REFUTES a true assertion: the inverse cardinal sin (a fake dragon over correct code).
+/// Also covers mut-iterators consumed via `.next()`/`.by_ref()` inside a loop whose
+/// post-loop `.len()` EUF-collapses to the initial (pre-consumption) value.
+///
+/// Reads of such locals REFUSE by name (→ UNDECIDED, not REFUTED). Conservative
+/// refuse-tightening: zero new warrant, zero false-discharge risk.
+fn loop_body_mutated_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    fcx.scope().is_loop_body_mutated(name).then(|| {
+        reasoned_hit(format!(
+            "temporally unstable post-loop read of `{name}`: mutated inside a loop body \
+             so the post-loop value is not tracked; refused as temporally unstable"
         ))
     })
 }

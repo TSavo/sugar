@@ -31,9 +31,9 @@ use std::path::PathBuf;
 // DISCHARGE axis (from discharge_sweep):
 const DISCHARGED_FLOOR: u64 = 138; // proven (teeth, full inv) — must not regress
 const VALUE_DISCHARGED_FLOOR: u64 = 131; // proven VALUE-claim (panic-filtered) — must not regress
-const REFUTED_CEIL: u64 = 49; // false refutations (all-true corpus) — drive to 0
-const REFUTED_OTHER_CEIL: u64 = 37; // NON-T3 false refutations (fixable now) — drive to 0
-const UNDECIDED_CEIL: u64 = 4854; // congruence-only / no teeth — drive down
+const REFUTED_CEIL: u64 = 28; // false refutations (all-true corpus) — drive to 0
+const REFUTED_OTHER_CEIL: u64 = 20; // NON-T3 false refutations (fixable now) — drive to 0
+const UNDECIDED_CEIL: u64 = 4850; // congruence-only / no teeth — drive down
 // COVERAGE axis (from `sugar lift --report`): the R-vector — the honest dark.
 const UNRESOLVED_CEIL: u64 = 331; // "no sugar yet" (the visible dark) — drive to 0
 const NO_FACTS_CEIL: u64 = 75; // assertion sources that lifted no fact at all — drive to 0

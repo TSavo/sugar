@@ -3994,6 +3994,17 @@ struct TemporalPlan {
     /// stale literal (which would refute a true assertion -- the inverse cardinal sin).
     /// See `collect_alias_deref_mutated`. Conservative refuse-tightening, no new warrant.
     alias_deref_mutated: BTreeSet<String>,
+    /// Locals MUTATED DIRECTLY INSIDE A LOOP BODY (`for`/`while`/`loop`) -- e.g.
+    /// `let mut n = 0; for _ in [..] { n += 1; }`. After the loop the tracker's
+    /// value for `n` is STALE (the lifter accumulates per-statement but cannot
+    /// propagate the net loop effect). A read of `n` AFTER the loop resolves to the
+    /// pre-loop literal, lifting e.g. `0 == 3` (UNSAT) and REFUTING a true assertion
+    /// (the inverse cardinal sin / fake dragon). Also covers mut-iterator locals
+    /// consumed inside a loop via `.next()` / `.by_ref()` whose post-loop `.len()` or
+    /// state is stale. Gate: reads of such a local REFUSE (`bound_path` Hits by name)
+    /// → UNDECIDED, not REFUTED. Refuse-only, zero new warrant, zero cardinal-sin risk.
+    /// See `collect_loop_body_mutated`.
+    loop_body_mutated: BTreeSet<String>,
     /// Locals bound to an array of NON-literal element constructions (`let xs =
     /// [CountClone::new(), ..]`) that are subsequently consumed by a `.cloned()`
     /// adaptor in a side-effecting `for`-loop (`for _ in xs.iter().cloned().zip(..) {}`).
@@ -4361,6 +4372,13 @@ impl TemporalScope {
     /// it must REFUSE rather than lift the stale literal (the no-false-refutation gate).
     pub(crate) fn is_alias_deref_mutated(&self, name: &str) -> bool {
         self.plan.alias_deref_mutated.contains(name)
+    }
+
+    /// Whether `name` is MUTATED INSIDE A LOOP BODY (`for`/`while`/`loop`), making its
+    /// post-loop tracked value STALE. A bare read of it must REFUSE rather than lift
+    /// the stale pre-loop literal (the loop-body temporal-instability no-false-refutation gate).
+    pub(crate) fn is_loop_body_mutated(&self, name: &str) -> bool {
+        self.plan.loop_body_mutated.contains(name)
     }
 
     fn is_sideeffecting_clone_local(&self, name: &str) -> bool {
@@ -11304,6 +11322,8 @@ fn temporal_plan_for_stmts(stmts: &[Stmt], inherited_stateful: &BTreeSet<String>
     let sideeffecting_clone_locals = collect_sideeffecting_clone_locals(stmts);
     let mut alias_deref_mutated = BTreeSet::<String>::new();
     collect_alias_deref_mutated(stmts, &mut_locals, &mut alias_deref_mutated);
+    let mut loop_body_mutated = BTreeSet::<String>::new();
+    collect_loop_body_mutated(stmts, &mut_locals, &mut loop_body_mutated);
     TemporalPlan {
         versioned,
         mut_locals,
@@ -11311,6 +11331,7 @@ fn temporal_plan_for_stmts(stmts: &[Stmt], inherited_stateful: &BTreeSet<String>
         iterators,
         sideeffecting_clone_locals,
         alias_deref_mutated,
+        loop_body_mutated,
     }
 }
 
@@ -11417,6 +11438,135 @@ fn collect_alias_deref_mutated(
     let mut v = MutV {
         aliases: &aliases,
         out,
+    };
+    for stmt in stmts {
+        syn::visit::Visit::visit_stmt(&mut v, stmt);
+    }
+}
+
+/// Locals whose value is MUTATED DIRECTLY INSIDE A LOOP BODY (`for`/`while`/`loop`).
+/// After the loop the syntactic tracker's value is STALE -- the tracker accumulates
+/// mutations per-statement in straight-line order but cannot propagate the NET EFFECT
+/// of a loop iteration count it does not know. A read of such a local after the loop
+/// resolves to the PRE-LOOP literal, producing a false REFUTATION of a true assertion
+/// (e.g. `let mut n=0; for _ in [1,2,3]{n+=1;} assert_eq!(n,3)` lifts `0==3`, UNSAT).
+///
+/// Also catches mut-iterator locals consumed via `.next()` / `.by_ref()` inside a loop:
+/// after the loop their `.len()` EUF-collapses to the initial value, not the consumed
+/// residual -- same stale-read hazard.
+///
+/// Gate (`bound_path` Hits by name): reads of loop-body-mutated locals REFUSE instead
+/// of resolving to the stale pre-loop value. Conservative refuse-tightening -- zero new
+/// warrant, zero cardinal-sin risk. See `TemporalPlan::loop_body_mutated`.
+///
+/// Critical invariant (t_ref_counter must NOT over-refuse): a mut counter `i` used as
+/// an INDEX INSIDE the loop body (`assert_eq!(x, expected[i])`) is already substituted
+/// to a concrete literal by the unroll (`expected[k]`) BEFORE `bound_path` sees a bare
+/// `i`. So our blanket refusal fires only on POST-LOOP bare reads that the unroll does
+/// NOT substitute -- exactly the stale reads we want to stop.
+fn collect_loop_body_mutated(
+    stmts: &[Stmt],
+    mut_locals: &BTreeSet<String>,
+    out: &mut BTreeSet<String>,
+) {
+    struct LoopBodyV<'a> {
+        mut_locals: &'a BTreeSet<String>,
+        out: &'a mut BTreeSet<String>,
+        depth: usize, // loop nesting depth; 0 = outside any loop
+    }
+    impl LoopBodyV<'_> {
+        fn record_if_mut(&mut self, name: &str) {
+            if self.depth > 0 && self.mut_locals.contains(name) {
+                self.out.insert(name.to_string());
+            }
+        }
+    }
+    impl<'ast> syn::visit::Visit<'ast> for LoopBodyV<'_> {
+        // `for <pat> in <expr> <body>` -- only visit the body with loop depth bumped.
+        fn visit_expr_for_loop(&mut self, f: &'ast syn::ExprForLoop) {
+            // iterable expression is evaluated BEFORE the loop, not inside it
+            syn::visit::Visit::visit_expr(self, &f.expr);
+            self.depth += 1;
+            for stmt in &f.body.stmts {
+                syn::visit::Visit::visit_stmt(self, stmt);
+            }
+            self.depth -= 1;
+        }
+        fn visit_expr_while(&mut self, w: &'ast syn::ExprWhile) {
+            self.depth += 1;
+            syn::visit::visit_expr_while(self, w);
+            self.depth -= 1;
+        }
+        fn visit_expr_loop(&mut self, l: &'ast syn::ExprLoop) {
+            self.depth += 1;
+            syn::visit::visit_expr_loop(self, l);
+            self.depth -= 1;
+        }
+        // Direct assignment: `x = expr`
+        fn visit_expr_assign(&mut self, assign: &'ast syn::ExprAssign) {
+            if self.depth > 0 {
+                if let Some(name) = simple_path_name(&assign.left) {
+                    self.record_if_mut(&name);
+                }
+            }
+            syn::visit::visit_expr_assign(self, assign);
+        }
+        // Compound assignment: `x += 1`, `x -= 1`, `x *= 2`, etc.
+        fn visit_expr_binary(&mut self, binary: &'ast syn::ExprBinary) {
+            if self.depth > 0
+                && matches!(
+                    binary.op,
+                    BinOp::AddAssign(_)
+                        | BinOp::SubAssign(_)
+                        | BinOp::MulAssign(_)
+                        | BinOp::DivAssign(_)
+                        | BinOp::RemAssign(_)
+                        | BinOp::BitXorAssign(_)
+                        | BinOp::BitAndAssign(_)
+                        | BinOp::BitOrAssign(_)
+                        | BinOp::ShlAssign(_)
+                        | BinOp::ShrAssign(_)
+                )
+            {
+                if let Some(name) = simple_path_name(&binary.left) {
+                    self.record_if_mut(&name);
+                }
+            }
+            syn::visit::visit_expr_binary(self, binary);
+        }
+        // Consuming iterator calls inside a loop: `iter.next()`, `iter.by_ref()`.
+        // These advance the iterator's internal position; after the loop, `iter.len()`
+        // or any state read is stale relative to the EUF the tracker captured.
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            if self.depth > 0 {
+                let method = call.method.to_string();
+                if matches!(method.as_str(), "next" | "by_ref" | "nth" | "last") {
+                    if let Some(name) = simple_path_name(&call.receiver) {
+                        self.record_if_mut(&name);
+                    }
+                }
+            }
+            syn::visit::visit_expr_method_call(self, call);
+        }
+        // Closure body: captures of outer mut-locals mutated inside the closure.
+        // `xs.iter().inspect(|_| n += 1).collect()` mutates outer `let mut n` on each
+        // element visit; after `.collect()` the tracker's value for `n` is stale
+        // (still 0). Treating the closure body as a "mutation context" marks `n` as
+        // temporally unstable and refuses post-collect reads of `n`. Conservative:
+        // UNDECIDED rather than a false REFUTED. Rare edge case: a closure PARAMETER
+        // that shadows an outer mut-local (e.g. `|mut n| { n += 1; }`) would be
+        // over-flagged; that is acceptable refuse-tightening (UNDECIDED, not
+        // false-discharge) since such shadowing is pathological in practice.
+        fn visit_expr_closure(&mut self, closure: &'ast syn::ExprClosure) {
+            self.depth += 1;
+            syn::visit::visit_expr_closure(self, closure);
+            self.depth -= 1;
+        }
+    }
+    let mut v = LoopBodyV {
+        mut_locals,
+        out,
+        depth: 0,
     };
     for stmt in stmts {
         syn::visit::Visit::visit_stmt(&mut v, stmt);

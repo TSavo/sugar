@@ -4077,9 +4077,15 @@ fn loop_rebind() {
     );
     assert!(
         out.warnings.iter().any(|warning| {
+            // After the loop-body-mutated gate landed (#19), the `.next()` call inside the
+            // loop marks `r` as loop-body-mutated; the post-loop `r.contains(...)` read is
+            // refused by the new temporal-instability gate BEFORE the older
+            // `ambiguous temporal identity for receiver` path fires. Both reasons are
+            // correct refusals for this shape; accept either.
             warning
                 .reason
                 .contains("ambiguous temporal identity for receiver `r`; skipped assertion")
+                || warning.reason.contains("temporally unstable post-loop read")
         }),
         "warnings: {:?}",
         out.warnings
@@ -18106,4 +18112,205 @@ fn unrelated_alias_mutation_does_not_refuse_other_locals() {
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "unrelated_x") {
         assert!(sat, "x == 6 holds; unrelated `*s += 1` must not gate `x` (SAT)");
     }
+}
+
+// ---------------------------------------------------------------------------
+// NO-FALSE-REFUTATION GATE (#19): LOOP-BODY TEMPORAL-INSTABILITY
+// A mut-local mutated INSIDE a loop body has a STALE tracked value after the loop.
+// The pre-loop literal would produce a false refutation of a true assertion (the
+// frozen-counter dragon). Conservative refuse-tightening: reads REFUSE → UNDECIDED.
+// (`collect_loop_body_mutated` pre-scan + `bound_path` gate, parallel to #2342.)
+// ---------------------------------------------------------------------------
+
+// (a) POSITIVE-REFUSE: post-loop read of a frozen counter → UNDECIDED, not REFUTED.
+// Canonical case: `let mut n=0; for _ in [1,2,3]{n+=1;} assert_eq!(n,3)` — the
+// tracker still holds n=0 after the loop; lifting `0==3` (UNSAT) was a fake dragon.
+// After this fix the assertion REFUSES (→ UNDECIDED) instead of being lifted as UNSAT.
+#[test]
+fn loop_body_mutated_post_loop_read_refuses_not_false_refutation() {
+    let src = r#"
+        #[test]
+        fn t_frozen_counter() {
+            let mut n = 0;
+            for _ in [1, 2, 3] {
+                n += 1;
+            }
+            assert_eq!(n, 3);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/frozen_counter.rs");
+    assert_eq!(
+        out.assertions_lifted,
+        0,
+        "post-loop read of loop-mutated `n` must NOT warrant (stale `0==3` is a fake dragon): \
+         lifted={} decls={:?}",
+        out.assertions_lifted,
+        out.decls
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("temporally unstable post-loop read")),
+        "the post-loop read of a loop-body-mutated local must REFUSE by name with the \
+         temporal-instability reason: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.skip_reasons.iter().any(|r| {
+            r.contains("temporally unstable post-loop read")
+                && matches!(
+                    sugar_lift_rust_tests::refusal_disposition(r),
+                    sugar_lift_rust_tests::Disposition::Refused
+                )
+        }),
+        "the loop-body-mutated refusal must classify as a terminal Refused dragon: {:?}",
+        out.skip_reasons
+    );
+}
+
+// (b) DISCRIMINATION: straight-line mutation (no loop) still warrants.
+// `let mut x=0; x+=1; assert_eq!(x,1)` — x is NOT loop-mutated, so the temporal
+// rewrite applies normally and the assertion warrants (x tracks to 1).
+#[test]
+fn straight_line_mut_local_still_warrants_no_loop() {
+    let src = r#"
+        #[test]
+        fn t_straight_line() {
+            let mut x = 0;
+            x += 1;
+            assert_eq!(x, 1);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/straight_line_mut.rs");
+    assert!(
+        out.assertions_lifted >= 1,
+        "straight-line `x += 1` is NOT loop-mutated; assertion must still warrant: \
+         lifted={} skips={:?}",
+        out.assertions_lifted,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "straight_line_mut") {
+        assert!(sat, "x=0+1=1 == 1 holds (SAT); no loop means no temporal instability");
+    }
+}
+
+// (c) DISCRIMINATION: in-loop counter used as index still warrants (unroll intact).
+// `t_ref_counter` shape: `let mut i=0; for &x in [10,20,30].iter() { assert_eq!(x,
+// expected[i]); i+=1; }` — the loop unroll substitutes `expected[i]` → `expected[k]`
+// for each concrete step k BEFORE bound_path sees a bare `i`. So the blanket refusal
+// of `i` must NOT fire on the unrolled in-loop assertions (they never read bare `i`).
+#[test]
+fn loop_counter_used_as_index_inside_loop_still_warrants_via_unroll() {
+    let src = r#"
+        #[test]
+        fn t_ref_counter_twin() {
+            let expected = [10, 20, 30];
+            let mut i = 0;
+            for &x in [10, 20, 30].iter() {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/ref_counter_twin.rs");
+    assert!(
+        out.assertions_lifted >= 1,
+        "in-loop `assert_eq!(x, expected[i])` must still warrant via unroll substitution \
+         (expected[i]→expected[k] before bound_path sees bare i): \
+         lifted={} skips={:?}",
+        out.assertions_lifted,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "ref_counter_twin") {
+        assert!(
+            sat,
+            "x == expected[k] holds each step (SAT); unroll must not be blocked by loop-body refusal"
+        );
+    }
+}
+
+// ── Closure-capture temporal-instability (POSITIVE-REFUSE discrimination) ─────
+//
+// A mut-local mutated inside a CLOSURE (captured by `&mut`) that is passed to
+// `.inspect()` / `.for_each()` / `.map()` has a STALE tracked value after the
+// adaptor runs. The `collect_loop_body_mutated` scanner detects mutations inside
+// any closure body (`visit_expr_closure` bumps depth) and refuses post-closure
+// reads of such locals → UNDECIDED, not REFUTED (the false-dragon fix for the
+// `inspect(|_| n += 1)` / `for_each(|_| n += 1)` corpus patterns).
+//
+// Gate: every refused assertion must mention "temporally unstable post-loop read".
+// Discrimination: a NON-capturing closure (read-only or no-capture) must not
+// over-refuse; the `for_inspect_over_literal_iter_lifts` test (warrant suite)
+// covers the `inspect(|v| { let _ = v; })` shape and must still warrant there.
+
+#[test]
+fn closure_capture_mut_local_post_closure_read_refuses_not_false_refutation() {
+    // `n` is mutated inside a closure `|_| n += 1` passed to `.inspect()`.
+    // After `.collect()`, the tracker's value for `n` is stale (still 0).
+    // `assert_eq!(n, 3)` would lift `0 == 3` (UNSAT) — a false refutation.
+    // The gate must REFUSE instead → UNDECIDED.
+    let src = r#"
+        #[test]
+        fn inspect_closure_capture_count() {
+            let xs = [1usize, 2, 3];
+            let mut n = 0usize;
+            let _ys: Vec<usize> = xs.iter().cloned().inspect(|_| n += 1).collect();
+            assert_eq!(n, 3);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/inspect_closure_capture.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "closure-captured mut-local `n` read AFTER closure must REFUSE (→ UNDECIDED), \
+         not warrant a stale pre-closure value; \
+         lifted={} skips={:?}",
+        out.assertions_lifted,
+        out.skip_reasons
+    );
+    assert_eq!(
+        out.assertions_refused, 1,
+        "exactly 1 refusal expected for the post-closure stale `n` read; \
+         refused={} skips={:?}",
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("temporally unstable post-loop read")),
+        "refusal reason must cite temporal instability; got: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn closure_read_only_capture_does_not_over_refuse() {
+    // A closure that READS an outer local (no mutation) must not mark it as
+    // temporally unstable. The discriminating shape: `let x = 5; inspect(|_| { let _ = x; })`.
+    // After the collect, `assert_eq!(x, 5)` should still resolve (the tracker's
+    // value for `x` is exact and never invalidated by the closure).
+    let src = r#"
+        #[test]
+        fn inspect_read_only_closure() {
+            let x: usize = 5;
+            let xs = [1usize, 2, 3];
+            let _ys: Vec<usize> = xs.iter().cloned().inspect(|_| { let _ = x; }).collect();
+            assert_eq!(x, 5);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/inspect_read_only.rs");
+    assert_eq!(
+        out.assertions_refused, 0,
+        "read-only capture of an IMMUTABLE local must not trigger temporal-instability refusal; \
+         refused={} skips={:?}",
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    assert!(
+        out.assertions_lifted >= 1,
+        "post-closure read of an immutable `x` (never mutated) must still warrant; \
+         lifted={} skips={:?}",
+        out.assertions_lifted,
+        out.skip_reasons
+    );
 }
