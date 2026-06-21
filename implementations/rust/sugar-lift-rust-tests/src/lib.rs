@@ -32,6 +32,7 @@ pub mod sugar {
     pub mod array_repeat;
     pub mod array_term;
     pub mod assign_op;
+    pub mod atomic_op;
     pub mod await_term;
     pub mod backstop;
     pub mod binop;
@@ -521,6 +522,11 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
     // nonempty_assert_helper_is_not_terminal_refused_the_twin.)
     let terminal = reason.contains("bin-2")
         || reason.contains("number too large")
+        // TERMINAL (source property): an atomic read/modify (`load` / `fetch_*`) reads
+        // CONCURRENT MEMORY STATE produced by the runtime memory model -- genuine IO,
+        // outside the text. No better lifter can read concurrent state from source
+        // literals (kin to `bin-2` runtime-data). A NAMED dragon, not a hollow undecided.
+        || reason.contains("atomic read/modify")
         || reason.contains("ambiguous temporal identity")
         || reason.contains("temporally unstable")
         || reason.contains("type-level obligation")
@@ -19944,9 +19950,13 @@ mod lifter_key_tests {
     }
 
     #[test]
-    fn static_atomic_loads_do_not_coalesce() {
-        // A `static X: AtomicUsize` is interior-mutable global state; its `.load()`
-        // reads must get distinct keys.
+    fn static_atomic_loads_refuse_as_outside_the_text_io() {
+        // A `static X: AtomicUsize` is interior-mutable global state; its `.load()` reads
+        // CONCURRENT STATE -- genuine IO, outside the text. Per the atomic-op refuse arm
+        // (#24) these REFUSE as a named dragon rather than lift as distinct opaque
+        // `method:load` keys. That SUBSUMES the old "must not coalesce" concern: a refused
+        // read carries no value, so two atomic loads cannot false-coalesce at all (strictly
+        // safer than relying on distinct keys).
         let src = r#"
             #[test]
             fn atomic_traj() {
@@ -19960,12 +19970,9 @@ mod lifter_key_tests {
             .into_iter()
             .filter(|n| n.contains("method:load"))
             .collect();
-        assert!(loads.len() >= 2, "expected two load obligations: {loads:?}");
-        let distinct: std::collections::HashSet<&str> = loads.iter().cloned().collect();
-        assert_eq!(
-            distinct.len(),
-            loads.len(),
-            "static atomic loads must have distinct keys: {loads:?}"
+        assert!(
+            loads.is_empty(),
+            "atomic loads must REFUSE (outside-the-text IO), not lift as opaque method:load keys: {loads:?}"
         );
     }
 

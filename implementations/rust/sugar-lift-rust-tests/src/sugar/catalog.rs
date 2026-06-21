@@ -8,7 +8,8 @@ use crate::sugar::backstop::unsupported;
 use crate::sugar::claim::{ExprSugarClaim, ItemSugarClaim, SugarCandidate, SugarRole};
 use crate::sugar::factory::{AccountedSugar, FactoryAuditSeed, SugarBuildCtx};
 use crate::sugar::{
-    array_repeat, array_term, assign_op, await_term, binop, block_term, bool_bitwise, bound_path,
+    array_repeat, array_term, assign_op, atomic_op, await_term, binop, block_term, bool_bitwise,
+    bound_path,
     call, cast_term, chain, char_range_collect_string, char_range_filter_map,
     closure_iter_advance_body, closure_mutating_body, closure_opaque_accessor,
     closure_runtime_receiver, closure_term, closure_tls_accessor, collect, collection_literal,
@@ -114,6 +115,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &await_term::EXPR_SUGAR,
     &reference_term::EXPR_SUGAR,
     &raw_addr_term::EXPR_SUGAR,
+    &atomic_op::EXPR_SUGAR,
     &cast_term::EXPR_SUGAR,
     &range_term::EXPR_SUGAR,
     &field_term::EXPR_SUGAR,

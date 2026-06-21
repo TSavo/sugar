@@ -4664,21 +4664,24 @@ fn test_range_contains() {
 
 #[test]
 fn method_call_result_with_bitwise_rhs_uses_euf_callsite_key() {
+    // A generic method-call-result fixture (NOT an atomic op — `read_value` is not in the
+    // atomic read/modify set, so the atomic refuse arm leaves it alone). Exercises the EUF
+    // callsite-key machinery for a method result with a bitwise-folded RHS.
     let src = r#"
-struct AtomicLike;
-struct SeqCst;
+struct Holder;
+struct Tag;
 
-impl AtomicLike {
-    fn load(&self, _ordering: SeqCst) -> usize { 0 }
+impl Holder {
+    fn read_value(&self, _tag: Tag) -> usize { 0 }
 }
 
 #[test]
 fn uint_and() {
-    let x = AtomicLike;
-    assert_eq!(x.load(SeqCst), 0xf731 & 0x137f);
+    let x = Holder;
+    assert_eq!(x.read_value(Tag), 0xf731 & 0x137f);
 }
 "#;
-    let out = lift_file(&parse(src), "tests/atomic.rs");
+    let out = lift_file(&parse(src), "tests/holder.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
     assert_warranted_decl_count(&out, 1);
@@ -4686,11 +4689,11 @@ fn uint_and() {
     let decl = single_warranted_decl(&out);
     assert_eq!(
         decl.name,
-        "method:load#euf#c:callresult_method_load_a2(v:tests/atomic.rs::uint_and::AtomicLike,v:tests/atomic.rs::uint_and::SeqCst)::assertion"
+        "method:read_value#euf#c:callresult_method_read_value_a2(v:tests/holder.rs::uint_and::Holder,v:tests/holder.rs::uint_and::Tag)::assertion"
     );
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
-    assert_method_call_eq_int_rhs(&operands[0], "method:load", 0xf731 & 0x137f);
+    assert_method_call_eq_int_rhs(&operands[0], "method:read_value", 0xf731 & 0x137f);
 }
 
 #[test]
@@ -19659,5 +19662,132 @@ fn t() {
     assert!(
         doc.contains("literal:Tuple("),
         "a plain literal tuple equality should keep its existing literal:Tuple lowering: {doc}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Atomic-op refuse arm (task #24) — an atomic read/modify (`load` / `fetch_*`) reads
+// CONCURRENT MEMORY STATE: genuine IO, outside the text. It is REFUSED as a NAMED dragon
+// ("atomic read/modify — outside-the-text concurrent state"), classified terminal-Refused
+// by `refusal_disposition`, NOT left as a hollow opaque `method:load` UNDECIDED.
+// Refuse-side-safe: a refusal never false-discharges.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn atomic_load_and_fetch_ops_refuse_as_named_dragon() {
+    let src = r#"
+use core::sync::atomic::{AtomicUsize, AtomicBool, Ordering, Ordering::Relaxed, Ordering::SeqCst};
+static C: AtomicUsize = AtomicUsize::new(0);
+static B: AtomicBool = AtomicBool::new(false);
+#[test]
+fn t() {
+    assert_eq!(C.load(Relaxed), 3);
+    assert_eq!(C.fetch_add(1, SeqCst), 0);
+    assert_eq!(C.fetch_sub(1, Relaxed), 1);
+    assert_eq!(C.fetch_and(0, SeqCst), 5);
+    assert_eq!(C.fetch_or(1, SeqCst), 4);
+    assert_eq!(C.fetch_xor(1, Ordering::SeqCst), 2);
+    assert_eq!(C.fetch_max(9, SeqCst), 3);
+    assert_eq!(C.fetch_min(1, SeqCst), 9);
+    assert_eq!(B.fetch_nand(false, SeqCst), true);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/atomic_ops.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "atomic reads are genuine IO and must NOT lift; skips={:?}",
+        out.skip_reasons
+    );
+    assert_eq!(
+        out.assertions_refused, 9,
+        "all 9 atomic read/modify asserts must REFUSE (named dragon); skips={:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .all(|r| r.contains("atomic read/modify")),
+        "every refusal must name the atomic dragon: {:?}",
+        out.skip_reasons
+    );
+    // Terminal Refusal (a SOURCE property — concurrent state), NOT Unclassified work.
+    for reason in &out.skip_reasons {
+        assert_eq!(
+            sugar_lift_rust_tests::refusal_disposition(reason),
+            sugar_lift_rust_tests::Disposition::Refused,
+            "atomic refusal must classify as terminal Refused: {reason}"
+        );
+    }
+}
+
+// The real `clone.rs` corpus shape: an atomic counter load compared to a literal.
+#[test]
+fn atomic_counter_load_corpus_shape_refuses() {
+    let src = r#"
+use core::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+static COUNTER: AtomicUsize = AtomicUsize::new(0);
+#[test]
+fn t() {
+    assert_eq!(COUNTER.load(Relaxed), 3);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/atomic_counter.rs");
+    assert_eq!(out.assertions_lifted, 0, "{:?}", out.skip_reasons);
+    assert_eq!(out.assertions_refused, 1, "{:?}", out.skip_reasons);
+    assert!(
+        out.skip_reasons[0].contains("atomic read/modify"),
+        "{:?}",
+        out.skip_reasons
+    );
+}
+
+// DISCRIMINATION: a non-atomic assertion is unaffected — it still warrants. The atomic arm
+// is specific (it does not refuse ordinary method calls).
+#[test]
+fn non_atomic_assertion_is_unaffected_by_atomic_refuse() {
+    let src = r#"
+#[test]
+fn t() {
+    assert_eq!(5u32.count_ones(), 2);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/non_atomic.rs");
+    assert_eq!(
+        out.assertions_refused, 0,
+        "a non-atomic assertion must not be atomic-refused: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .all(|r| !r.contains("atomic read/modify")),
+        "{:?}",
+        out.skip_reasons
+    );
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "the sound non-atomic assertion still warrants; skips={:?}",
+        out.skip_reasons
+    );
+}
+
+// GATE PRECISION: a `load` with a NON-ordering argument is not the atomic shape, so the
+// ordering-arg gate keeps the atomic arm from over-refusing it.
+#[test]
+fn load_without_ordering_arg_is_not_atomic_refused() {
+    let src = r#"
+#[test]
+fn t() {
+    let table = make_table();
+    assert_eq!(table.load(0), 1);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/load_no_ordering.rs");
+    assert!(
+        out.skip_reasons
+            .iter()
+            .all(|r| !r.contains("atomic read/modify")),
+        "a non-ordering `load(<int>)` must NOT hit the atomic refuse: {:?}",
+        out.skip_reasons
     );
 }
