@@ -1059,6 +1059,56 @@ fn for_enumerate_tuple_wrong_expected_is_unsat() {
     }
 }
 
+// MECHANISM-2 gap (b): `.flat_map(|n| [..])` over a literal base maps each element to a
+// finite literal sub-sequence and concatenates -- map + flatten in one step. The closure
+// is const-eval'd per element (`*n` derefs the bound value); exact-or-refuse.
+#[test]
+fn for_flat_map_over_literal_base_lifts() {
+    let src = r#"
+        #[test]
+        fn t_flat_map() {
+            let expected = [1, 11, 2, 12];
+            let mut i = 0;
+            for &x in [1, 2].iter().flat_map(|n| [*n, *n + 10]) {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/flat_map.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "`.flat_map(|n| [*n, *n + 10])` must unroll: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flat_map") {
+        assert!(sat, "[1,2].flat_map(|n| [n, n+10]) == [1,11,2,12] == expected -- SAT");
+    }
+}
+
+// GAP (b) TEETH: a WRONG expected over the flat_mapped domain must refute. If the closure
+// over-grounds (e.g. ignores the per-element value), this would falsely discharge.
+#[test]
+fn for_flat_map_wrong_expected_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_flat_map_bad() {
+            let expected = [1, 11, 2, 99];
+            let mut i = 0;
+            for &x in [1, 2].iter().flat_map(|n| [*n, *n + 10]) {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/flat_map_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flat_map_bad") {
+        assert!(!sat, "x=12 != expected[3]=99 over the flat_mapped domain -- must be UNSAT");
+    }
+}
+
 #[test]
 fn compute_float32_wrapper_lowers_scaled_literals_to_tuple_axioms() {
     let src = r#"
