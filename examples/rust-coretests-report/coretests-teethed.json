@@ -1,0 +1,25 @@
+{
+  "teethed_ledger": {
+    "warranted_obligations": 5016,
+    "discharged": 161,
+    "discharged_substantive": 53,
+    "discharged_reflexive": 108,
+    "refuted": 20,
+    "undecided": 4747,
+    "uncheckable": 88,
+    "z3_absent": 0,
+    "uncheckable_reasons": {
+      "ill-sorted": 63,
+      "no-inv": 21,
+      "z3": 1,
+      "z3-timeout": 3
+    },
+    "value_obligations": 4943,
+    "value_discharged": 154,
+    "value_discharged_substantive": 46,
+    "value_refuted": 20,
+    "value_undecided": 4715,
+    "refuted_mut_skip_class": 8,
+    "refuted_other_class": 12
+  }
+}
