@@ -18719,3 +18719,149 @@ fn non_consumed_mut_iterator_len_still_warrants() {
         out.skip_reasons,
     );
 }
+
+// ── macro-context sequential consuming-call temporal instability (#2350) ─────────────
+//
+// `assert_eq!(it.nth(0), Some(0))` is a Stmt::Macro; syn::Visit does NOT parse
+// its token stream, so `it.nth(0)` inside the macro is INVISIBLE to the existing
+// while-let scanner (PASS 1). Repeated calls in successive macros resolve `it` from
+// its original position every time → wrong concrete value → false refutation.
+//
+// PASS 2 (ordered macro scan) tracks consuming calls in source order:
+//   - FIRST call: warrants normally (correct position).
+//   - SECOND+ call / any method read on a consumed local: UNDECIDED (honest dark).
+//
+// Discrimination: a single-call form (first nth on fresh iterator) must still warrant.
+
+/// Sequential `it.nth(0)` calls in macros — second and later calls must be UNDECIDED
+/// (not REFUTED) because the iterator is consumed by the first call.
+#[test]
+fn consumed_iterator_sequential_nth_in_macros_declines() {
+    let src = r#"
+        #[test]
+        fn t_step_by_nth_twice() {
+            let mut it = (0..16_i32).step_by(5);
+            assert_eq!(it.nth(0), Some(0));   // consuming call #1 -- warrants
+            assert_eq!(it.nth(0), Some(5));   // consuming call #2 -- iterator consumed
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/adapters/step_by_nth_twice.rs");
+    // The second `it.nth(0)` is on a consumed local -- must be UNDECIDED (no refutation).
+    assert!(
+        out.assertions_refused == 0,
+        "no assertion should be REFUSED (this is not IO): \
+         lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons,
+    );
+    // The second `it.nth(0)` sees an opaque version-2 symbolic for `it` (the versioning
+    // mechanism bumped `it` after the first consuming call) → opaque method → SAT →
+    // UNDECIDED.  No skip_reason is emitted for the UNDECIDED path; the only guarantee
+    // is no false refutation and no IO-refuse.
+}
+
+/// DISCRIMINATION TWIN: a SINGLE `it.nth(0)` call (no prior consumption) must still
+/// warrant its value — no over-refusal from the consumed-iterator gate.
+#[test]
+fn consumed_iterator_first_nth_still_warrants() {
+    let src = r#"
+        #[test]
+        fn t_step_by_nth_first() {
+            let mut it = (0..16_i32).step_by(5);
+            assert_eq!(it.nth(0), Some(0));   // only call -- must warrant
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/adapters/step_by_nth_first.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "single `.nth(0)` (no prior consumption) must warrant, not be refused: \
+         lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons,
+    );
+}
+
+/// `it.next()` in a macro followed by `it.len()` in a later macro — the `len` must
+/// be UNDECIDED (temporal instability), not REFUTED with the stale pre-consumption length.
+#[test]
+fn consumed_iterator_next_in_macro_then_len_declines() {
+    let src = r#"
+        #[test]
+        fn t_next_then_len() {
+            let xs = [1_i32, 2, 3, 4, 5];
+            let mut it = xs.iter().cloned().peekable();
+            assert_eq!(it.next().unwrap(), 1);   // consuming call in macro
+            assert_eq!(it.len(), 4);              // stale: must decline, not refute
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/adapters/peekable_next_then_len.rs",
+    );
+    assert!(
+        out.assertions_refused == 0,
+        "no assertion should be REFUSED: \
+         lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons,
+    );
+    // The `it.len()` sees an opaque version-2 `it` (versioning bumped after the preceding
+    // `.next()` consuming call) → len recognizer can't resolve → opaque method → UNDECIDED.
+}
+
+/// DISCRIMINATION TWIN: `it.len()` BEFORE any `.next()` call must still warrant.
+#[test]
+fn consumed_iterator_len_before_consumption_still_warrants() {
+    let src = r#"
+        #[test]
+        fn t_len_before_next() {
+            let xs = [1_i32, 2, 3, 4, 5];
+            let mut it = xs.iter().cloned().peekable();
+            assert_eq!(it.len(), 5);   // no prior consumption -- must warrant
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/adapters/peekable_len_before_next.rs",
+    );
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "`.len()` before any consumption must warrant, not be refused: \
+         lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons,
+    );
+}
+
+/// `it.advance_by(n)` in a macro followed by `it.next()` in a later macro — the
+/// second call must be UNDECIDED (consumed-iterator temporal instability).
+#[test]
+fn consumed_iterator_advance_by_then_next_declines() {
+    let src = r#"
+        #[test]
+        fn t_advance_by_then_next() {
+            let xs = [0_i32, 1, 2, 3, 4, 5];
+            let mut it = xs.iter().copied().enumerate();
+            assert_eq!(it.advance_by(1), Ok(()));     // consuming call #1
+            assert_eq!(it.next(), Some((1, 1)));       // post-consumption -- must decline
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/adapters/enumerate_advance_then_next.rs",
+    );
+    assert!(
+        out.assertions_refused == 0,
+        "no assertion should be REFUSED: \
+         lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons,
+    );
+    // The second assertion sees an opaque version-2 `it` (versioning bumped after the
+    // first consuming `.advance_by()` call) → opaque method → UNDECIDED.
+}
