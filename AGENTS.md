@@ -30,3 +30,9 @@ Commit messages are short imperative summaries, often followed by PR numbers aft
 ## Agent-Specific Instructions
 
 For isolated work, create repo-local worktrees under `.worktrees/` from `origin/main`. Before editing, check `git status --short --branch`. If a narrower `AGENTS.md` exists in a subdirectory, follow that file for work inside its scope.
+
+## Supersonic Workflow
+
+Default to forward motion. After a focused change has enough local evidence to be coherent, commit it, open the PR, and merge it without waiting for CI. Long builds, full sweeps, and corpus runs should continue in the background after merge, usually in `tmux`, `bcargo`, or on `battleaxe`. Treat CI red, logs, and delayed sweep failures as latent impact signals: inspect them quickly, identify the next concrete correction, and fix forward in a new PR.
+
+Do not use waiting as a safety blanket. Launch independent work streams when they do not collide, report exact evidence and paths, and course-correct from measured failures. If a merge conflict or broken main blocks the shot, resolve that concrete blocker and continue; do not reframe it as a reason to stop.
