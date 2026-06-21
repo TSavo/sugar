@@ -6859,6 +6859,17 @@ impl Outcome {
             Outcome::Hit(_) => None,
         }
     }
+
+    /// True iff this struck ONLY the GENERIC structural backstop -- `Hit(Effect::
+    /// Unsupported)` carrying the `STRUCTURAL_BACKSTOP_REASON` (a pure-but-untranslated
+    /// term, "the dig did not reach truth here"), NOT a NAMED order-loss effect
+    /// (mutation / iter-advance / runtime / TLS / IO / temporal). FIX(a) uses this at the
+    /// factory: in TERM position a recognized sugar's generic structural bail degrades to
+    /// an opaque-EUF term (warranted-UNDECIDED, congruence-only, can't false-discharge),
+    /// never a refusal -- a named effect, by contrast, stays the loud terminal refusal.
+    pub(crate) fn is_structural_bail(&self) -> bool {
+        matches!(self, Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON)
+    }
 }
 
 /// The STRUCTURAL backstop reason: the bare structural bail of a `Sugar::desugar`
