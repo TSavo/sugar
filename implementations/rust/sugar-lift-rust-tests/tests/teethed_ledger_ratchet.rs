@@ -50,7 +50,7 @@ const SUPPORT_EXACT: u64 = 0; // inert support is NOT a hiding place for dark �
 // ASSERTIONS_LIFTED_FLOOR: pre-dedup `facts` counter from `sugar lift --report`.
 // Distinguishes benign content-address dedup (facts flat) from silent non-creation
 // (facts drops). Measured on main at d68288978 (post-#2371 arith fold merge).
-const ASSERTIONS_LIFTED_FLOOR: u64 = 10945; // pre-dedup assertion surface — must not drop
+const ASSERTIONS_LIFTED_FLOOR: u64 = 10949; // pre-dedup assertion surface — must not drop
 
 fn rust_dir() -> PathBuf {
     // CARGO_MANIFEST_DIR = <repo>/implementations/rust/sugar-lift-rust-tests
