@@ -1744,6 +1744,171 @@ fn for_flat_map_range_body_wrong_expected_is_unsat() {
     }
 }
 
+// MECHANISM-2 gap (b) EXTENDED: a `.flat_map` closure body that is a finite range-ADAPTER
+// CHAIN, not just a bare range -- a range base (`a..b` / `a..=b` / `a..`) wrapped in
+// `.step_by(s)` / `.take(n)` adaptors, e.g. `(x..).step_by(1).take(3)`. The `.take(n)`
+// finitizes the unbounded `x..` base; the chain const-folds to the EXACT element
+// sub-sequence. `[0,3,6].flat_map(|&x| (x..).step_by(1).take(3))` -> [0,1,2],[3,4,5],
+// [6,7,8] -> [0..9]. (This is the `core::tests` `test_iterator_flat_map` closure shape.)
+#[test]
+fn for_flat_map_range_adapter_chain_lifts() {
+    let src = r#"
+        #[test]
+        fn t_flat_map_chain() {
+            let expected = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+            let mut i = 0;
+            for &x in [0, 3, 6].iter().flat_map(|&x| (x..).step_by(1).take(3)) {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/flat_map_chain.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "`.flat_map(|&x| (x..).step_by(1).take(3))` must unroll: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flat_map_chain") {
+        assert!(
+            sat,
+            "[0,3,6].flat_map(|&x| (x..).step_by(1).take(3)) == [0..9] == expected -- SAT"
+        );
+    }
+}
+
+// GAP (b) EXTENDED TEETH: a WRONG expected over the chain-flat_mapped domain must refute.
+// If the `.take`/`.step_by` chain over-grounded (e.g. produced a guessed sub-sequence),
+// this would falsely discharge.
+#[test]
+fn for_flat_map_range_adapter_chain_wrong_expected_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_flat_map_chain_bad() {
+            let expected = [0, 1, 2, 3, 4, 5, 6, 7, 99];
+            let mut i = 0;
+            for &x in [0, 3, 6].iter().flat_map(|&x| (x..).step_by(1).take(3)) {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/flat_map_chain_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flat_map_chain_bad") {
+        assert!(
+            !sat,
+            "x=8 != expected[8]=99 over the chain-flat_mapped domain -- must be UNSAT"
+        );
+    }
+}
+
+// GAP (b) EXTENDED TEETH: the `.step_by(s)` stride must be GENUINELY applied, not hollow.
+// `(x..).step_by(2).take(3)` over [0,3,6] -> [0,2,4],[3,5,7],[6,8,10]. A rewrite that
+// ignored the step would yield the contiguous [0,1,2,...] sequence, so a `step-ignored`
+// expected MUST refute -- proof the stride has teeth.
+#[test]
+fn for_flat_map_step_by_two_chain_lifts_and_step_is_applied() {
+    let good = r#"
+        #[test]
+        fn t_flat_map_step2() {
+            let expected = [0, 2, 4, 3, 5, 7, 6, 8, 10];
+            let mut i = 0;
+            for &x in [0, 3, 6].iter().flat_map(|&x| (x..).step_by(2).take(3)) {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/iter/flat_map_step2.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "`.flat_map(|&x| (x..).step_by(2).take(3))` must unroll: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flat_map_step2") {
+        assert!(
+            sat,
+            "step_by(2).take(3) chain == [0,2,4,3,5,7,6,8,10] -- SAT"
+        );
+    }
+    // BAD TWIN: the step-IGNORED contiguous sequence must refute (the stride has teeth).
+    let bad = r#"
+        #[test]
+        fn t_flat_map_step2_bad() {
+            let expected = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+            let mut i = 0;
+            for &x in [0, 3, 6].iter().flat_map(|&x| (x..).step_by(2).take(3)) {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/iter/flat_map_step2_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_flat_map_step2_bad") {
+        assert!(
+            !sat,
+            "x=2 (step strided) != step-ignored expected[1]=1 -- the stride must have teeth (UNSAT)"
+        );
+    }
+}
+
+// GAP (b) EXTENDED EXACT-OR-REFUSE: an UNBOUNDED range-adapter chain with no `.take`
+// (`(x..).step_by(1)`) is infinite -- not const-determinable -- so the flat_map must
+// REFUSE (opaque collection), never guess a finite prefix.
+#[test]
+fn for_flat_map_unbounded_chain_no_take_refuses() {
+    let src = r#"
+        #[test]
+        fn t_flat_map_unbounded() {
+            let expected = [0, 1, 2];
+            let mut i = 0;
+            for &x in [0, 3, 6].iter().flat_map(|&x| (x..).step_by(1)) {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/flat_map_unbounded.rs");
+    assert!(
+        out.assertions_lifted == 0,
+        "an unbounded `(x..).step_by(1)` flat_map body must NOT warrant a finite sequence: \
+         lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+}
+
+// GAP (b) EXTENDED EXACT-OR-REFUSE: a `.take(n)` whose count `n` is a RUNTIME value (not a
+// source-const) is not const-determinable, so the chain bails and the flat_map REFUSES.
+#[test]
+fn for_flat_map_runtime_take_count_refuses() {
+    let src = r#"
+        #[test]
+        fn t_flat_map_runtime_take(n: usize) {
+            let expected = [0, 1, 2];
+            let mut i = 0;
+            for &x in [0, 3, 6].iter().flat_map(|&x| (x..).step_by(1).take(n)) {
+                assert_eq!(x, expected[i]);
+                i += 1;
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/flat_map_runtime_take.rs");
+    assert!(
+        out.assertions_lifted == 0,
+        "a runtime `.take(n)` count must NOT warrant a finite sequence: \
+         lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+}
+
 // MECHANISM-2 gap (b): `while let Some(x) = it.next_if(pred)` over a peekable literal
 // iterator. MAP: rewrite to `for x in domain.take_while(pred) { body }`. REDUCE: the
 // existing take_while prefix + for_replay body replay. next_if-in-a-while-let is exactly
