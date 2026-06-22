@@ -3683,6 +3683,76 @@ fn inactive_const_if_literal_twin() {
     }
 
     #[test]
+    fn source_locus_singleton_iter_adaptors_warrant_with_bad_twins() {
+        let (root, response) = lift_fixture(
+            "source_locus_singleton_iter_adaptors_warrant_with_bad_twins",
+            r#"
+#[test]
+fn test_double_ended_filter() {
+    let xs = [1, 2, 3, 4, 5, 6];
+    let mut it = xs.iter().filter(|&x| *x & 1 == 0);
+    assert_eq!(it.next_back().unwrap(), &6);
+    assert_eq!(it.next_back().unwrap(), &4);
+    assert_eq!(it.next().unwrap(), &2);
+    assert_eq!(it.next_back(), None);
+}
+
+#[test]
+fn test_double_ended_filter_bad_twin() {
+    let xs = [1, 2, 3, 4, 5, 6];
+    let mut it = xs.iter().filter(|&x| *x & 1 == 0);
+    assert_eq!(it.next_back().unwrap(), &5);
+}
+
+#[test]
+fn test_double_ended_filter_map() {
+    let xs = [1, 2, 3, 4, 5, 6];
+    let mut it = xs.iter().filter_map(|&x| if x & 1 == 0 { Some(x * 2) } else { None });
+    assert_eq!(it.next_back().unwrap(), 12);
+    assert_eq!(it.next_back().unwrap(), 8);
+    assert_eq!(it.next().unwrap(), 4);
+    assert_eq!(it.next_back(), None);
+}
+
+#[test]
+fn test_double_ended_filter_map_bad_twin() {
+    let xs = [1, 2, 3, 4, 5, 6];
+    let mut it = xs.iter().filter_map(|&x| if x & 1 == 0 { Some(x * 2) } else { None });
+    assert_eq!(it.next_back().unwrap(), 10);
+}
+
+#[test]
+fn test_iterator_flatten_fold() {
+    let xs = [0, 3, 6];
+    let ys = [1, 2, 3, 4, 5, 6, 7];
+    let mut it = xs.iter().map(|&x| x..x + 3).flatten();
+    assert_eq!(it.next(), Some(0));
+    assert_eq!(it.next_back(), Some(8));
+    let i = it.fold(0, |i, x| {
+        assert_eq!(x, ys[i]);
+        i + 1
+    });
+    assert_eq!(i, ys.len());
+}
+
+#[test]
+fn test_iterator_flatten_fold_bad_twin() {
+    let xs = [0, 3, 6];
+    let mut it = xs.iter().map(|&x| x..x + 3).flatten();
+    assert_eq!(it.next_back(), Some(7));
+}
+"#,
+        );
+        assert_source_locus_warranted(&response, "test_double_ended_filter");
+        assert_source_locus_warranted(&response, "test_double_ended_filter_bad_twin");
+        assert_source_locus_warranted(&response, "test_double_ended_filter_map");
+        assert_source_locus_warranted(&response, "test_double_ended_filter_map_bad_twin");
+        assert_source_locus_warranted(&response, "test_iterator_flatten_fold");
+        assert_source_locus_warranted(&response, "test_iterator_flatten_fold_bad_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn source_totality_panic_covers_unclassified_status() {
         let panic = std::panic::catch_unwind(|| {
             panic_on_dark_source_status(
