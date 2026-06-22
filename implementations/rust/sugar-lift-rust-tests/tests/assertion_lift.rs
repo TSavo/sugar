@@ -2062,6 +2062,174 @@ fn kmerge_size_hint_wrong_component_is_unsat() {
     }
 }
 
+#[test]
+fn range_from_take_size_hint_decomposes_to_static_components() {
+    let src = r#"
+        #[test]
+        fn range_from_take_size_hint_exact_row() {
+            assert_eq!((0..).take(3).size_hint(), (3, Some(3)));
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/range_from_take_size_hint.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "take over an unbounded range has an exact finite size_hint; skip: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.factory_audits
+            .iter()
+            .any(|a| a.selected.is_some_and(|s| s.contains("tuple_decomp"))),
+        "range_from take size_hint tuple equality must flow through tuple_decomp: {:?}",
+        out.factory_audits
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "range_from_take_size_hint_exact_row",
+    ) {
+        assert!(
+            sat,
+            "take(3) over an unbounded range has size_hint (3, Some(3))"
+        );
+    }
+}
+
+#[test]
+fn range_from_take_size_hint_wrong_component_is_unsat() {
+    let src = r#"
+        #[test]
+        fn range_from_take_size_hint_wrong_row() {
+            assert_eq!((0..).take(3).size_hint(), (4, Some(4)));
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/range_from_take_size_hint_bad.rs",
+    );
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bad twin must still lift so z3 can refute it; skip: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "range_from_take_size_hint_wrong_row",
+    ) {
+        assert!(
+            !sat,
+            "take(3) over an unbounded range is (3, Some(3)), not (4, Some(4))"
+        );
+    }
+}
+
+#[test]
+fn step_by_empty_range_size_hint_decomposes_to_static_components() {
+    let src = r#"
+        #[test]
+        fn step_by_empty_range_size_hint_exact_row() {
+            assert_eq!((20..-5).step_by(1).size_hint(), (0, Some(0)));
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/range_step_by_size_hint.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "step_by over an empty literal range has an exact zero size_hint; skip: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "step_by_empty_range_size_hint_exact_row",
+    ) {
+        assert!(
+            sat,
+            "empty range through step_by has size_hint (0, Some(0))"
+        );
+    }
+}
+
+#[test]
+fn step_by_empty_range_size_hint_wrong_component_is_unsat() {
+    let src = r#"
+        #[test]
+        fn step_by_empty_range_size_hint_wrong_row() {
+            assert_eq!((20..-5).step_by(1).size_hint(), (1, Some(1)));
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/range_step_by_size_hint_bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bad twin must still lift so z3 can refute it; skip: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "step_by_empty_range_size_hint_wrong_row",
+    ) {
+        assert!(
+            !sat,
+            "empty range through step_by is (0, Some(0)), not (1, Some(1))"
+        );
+    }
+}
+
+#[test]
+fn extreme_int_range_size_hint_decomposes_without_enumerating() {
+    let src = r#"
+        #[test]
+        fn extreme_int_range_size_hint_exact_row() {
+            assert_eq!((0..usize::MAX).size_hint(), (usize::MAX, Some(usize::MAX)));
+            assert_eq!((isize::MIN..isize::MAX).step_by(1).size_hint(), (usize::MAX, Some(usize::MAX)));
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/extreme_range_size_hint.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "extreme integer range size_hint is exact without enumerating; skip: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "extreme_int_range_size_hint_exact_row",
+    ) {
+        assert!(
+            sat,
+            "extreme integer range size_hint components must be SAT"
+        );
+    }
+}
+
+#[test]
+fn extreme_int_range_size_hint_wrong_component_is_unsat() {
+    let src = r#"
+        #[test]
+        fn extreme_usize_range_size_hint_wrong_row() {
+            assert_eq!((0..usize::MAX).size_hint(), (0, Some(0)));
+        }
+
+        #[test]
+        fn extreme_isize_step_size_hint_wrong_row() {
+            assert_eq!((isize::MIN..isize::MAX).step_by(1).size_hint(), (0, Some(0)));
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/extreme_range_size_hint_bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "bad twins must still lift so z3 can refute them; skip: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_warranted_decl_count(&out, 2);
+    for (idx, decl) in warranted_decls(&out).into_iter().enumerate() {
+        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("extreme_range_bad_{idx}")) {
+            assert!(!sat, "extreme integer range size_hint is not (0, Some(0))");
+        }
+    }
+}
+
 // ---- Lane 9: Duration integer accessors fold to a ground int (teeth) ----
 
 // `Duration::from_secs(5).as_secs()` is `5` -- a literal Duration is a closed
