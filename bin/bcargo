@@ -188,6 +188,7 @@ remove_remote_dir() {
 sync_file Cargo.toml
 sync_file Cargo.lock
 sync_file Makefile
+sync_file bin/bcargo
 sync_file package.json
 sync_file pnpm-lock.yaml
 sync_file rust-toolchain
@@ -199,6 +200,7 @@ sync_file rust-toolchain.toml
 sync_file .sugar/config.toml
 sync_dir .sugar/lift
 sync_dir .sugar/realize
+sync_dir .sugar/ir-compilers
 
 sync_dir implementations/rust
 sync_dir implementations/python
