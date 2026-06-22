@@ -10673,8 +10673,7 @@ fn t() {
                 && audit.site.contains("+=")
                 && matches!(
                     audit.disposition,
-                    sugar_lift_rust_tests::FactoryDisposition::WarrantPending
-                        | sugar_lift_rust_tests::FactoryDisposition::Unresolved
+                    sugar_lift_rust_tests::FactoryDisposition::Unresolved
                 ))
         }),
         "factory should not leave the method-call assignment unresolved: {:?}",
@@ -10717,8 +10716,7 @@ fn t() {
             !(audit.requested_role == "Constraint"
                 && matches!(
                     audit.disposition,
-                    sugar_lift_rust_tests::FactoryDisposition::WarrantPending
-                        | sugar_lift_rust_tests::FactoryDisposition::Unresolved
+                    sugar_lift_rust_tests::FactoryDisposition::Unresolved
                 )
                 && audit.site.contains("1 << 47"))
         }),
@@ -20437,10 +20435,8 @@ fn t() {
         .factory_audits
         .iter()
         .filter(|audit| {
-            matches!(
-                audit.disposition.as_str(),
-                "unresolved" | "warrant_pending"
-            ) && (audit.site.contains("compile_guard") || audit.site.contains("imm_bits_guard"))
+            audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Unresolved
+                && (audit.site.contains("compile_guard") || audit.site.contains("imm_bits_guard"))
         })
         .collect();
     assert!(

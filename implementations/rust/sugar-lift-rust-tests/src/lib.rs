@@ -274,18 +274,8 @@ pub enum FactoryDisposition {
     Warranted,
     Refused,
     Support,
-    /// Text-determined value proposition present but no Sugar recognizer reduces it yet.
-    /// This is WORK — the recognizer worklist. Every locus here represents a real scalar
-    /// assertion the source makes whose value is fixed by the source text; we just have not
-    /// written the Sugar to lift it. Target: drive to zero by adding recognizers.
-    WarrantPending,
-    /// Source makes NO value-proposition at all at this locus (cfg-gated FALSE on this
-    /// target, empty literal domain, type-level-only body, etc.). Contributes ⊤ to the
-    /// proof conjunction — there is nothing to prove here, correctly. NOT work.
-    Vacuous,
-    /// Genuinely ambiguous: the classifier cannot determine whether a value-proposition
-    /// exists or whether the value is text-determined. Should shrink toward zero as the
-    /// classifier improves; never force a verdict you cannot prove.
+    /// Top-level value-proposition present but no Sugar recognizer has reduced it yet
+    /// (recognizer gap — the residual dark). Drive to zero by adding recognizers.
     Unresolved,
 }
 
@@ -295,8 +285,6 @@ impl FactoryDisposition {
             FactoryDisposition::Warranted => "warranted",
             FactoryDisposition::Refused => "refused",
             FactoryDisposition::Support => "support",
-            FactoryDisposition::WarrantPending => "warrant_pending",
-            FactoryDisposition::Vacuous => "vacuous",
             FactoryDisposition::Unresolved => "unresolved",
         }
     }
@@ -20188,8 +20176,7 @@ mod lifter_key_tests {
             .iter()
             .filter(|audit| {
                 audit.requested_role == "Constraint"
-                    && (audit.disposition == FactoryDisposition::WarrantPending
-                        || audit.disposition == FactoryDisposition::Unresolved)
+                    && audit.disposition == FactoryDisposition::Unresolved
                     && audit.site.contains("+=")
             })
             .collect();

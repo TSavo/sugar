@@ -1391,7 +1391,7 @@ mod tests {
             "role-filtered unresolved sites should not leak candidates from other roles: {audit:?}"
         );
         assert_eq!(audit.line, 1);
-        assert_eq!(audit.disposition, FactoryDisposition::WarrantPending);
+        assert_eq!(audit.disposition, FactoryDisposition::Unresolved);
         assert!(
             audit
                 .reason

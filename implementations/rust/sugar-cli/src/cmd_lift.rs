@@ -2388,9 +2388,7 @@ fn source_status_order(status: &str) -> usize {
         "inactive" => 3,
         "refuted" => 4,
         "unresolved" => 5,
-        "warrant_pending" => 6,
-        "vacuous" => 7,
-        _ => 8,
+        _ => 6,
     }
 }
 
@@ -2401,8 +2399,6 @@ fn normalized_source_status(status: Option<&str>) -> &str {
         Some("support") => "support",
         Some("refused") => "refused",
         Some("refuted") => "refuted",
-        Some("warrant_pending") => "warrant_pending",
-        Some("vacuous") => "vacuous",
         Some("unresolved") | Some("unclassified") | Some("silent") => "unresolved",
         _ => "unresolved",
     }
@@ -2822,13 +2818,11 @@ fn render_factory_accounting(factory_audits: &[Value]) -> String {
         *counts.entry(status).or_default() += 1;
     }
     let mut out = format!(
-        "factory accounting: sites={} warranted={} refused={} support={} warrant_pending={} vacuous={} unresolved={}\n",
+        "factory accounting: sites={} warranted={} refused={} support={} unresolved={}\n",
         factory_audits.len(),
         counts.get("warranted").copied().unwrap_or(0),
         counts.get("refused").copied().unwrap_or(0),
         counts.get("support").copied().unwrap_or(0),
-        counts.get("warrant_pending").copied().unwrap_or(0),
-        counts.get("vacuous").copied().unwrap_or(0),
         counts.get("unresolved").copied().unwrap_or(0),
     );
 
@@ -2854,7 +2848,7 @@ fn render_factory_accounting(factory_audits: &[Value]) -> String {
         )
     });
 
-    for status in ["warrant_pending", "vacuous", "unresolved", "refused", "support", "warranted"] {
+    for status in ["unresolved", "refused", "support", "warranted"] {
         let status_rows = rows
             .iter()
             .copied()
@@ -2869,8 +2863,6 @@ fn render_factory_accounting(factory_audits: &[Value]) -> String {
             "factory boundaries (refused)"
         } else {
             match status {
-                "warrant_pending" => "factory warrant_pending (recognizer worklist)",
-                "vacuous" => "factory vacuous (no value proposition)",
                 "unresolved" => "factory unresolved",
                 "support" => "factory support",
                 "warranted" => "factory warranted",
@@ -2894,13 +2886,11 @@ fn render_factory_accounting(factory_audits: &[Value]) -> String {
 
 fn factory_status_order(status: &str) -> usize {
     match status {
-        "warrant_pending" => 0,
-        "vacuous" => 1,
-        "unresolved" => 2,
-        "refused" => 3,
-        "support" => 4,
-        "warranted" => 5,
-        _ => 6,
+        "unresolved" => 0,
+        "refused" => 1,
+        "support" => 2,
+        "warranted" => 3,
+        _ => 4,
     }
 }
 
@@ -4426,7 +4416,7 @@ mod tests {
                             "selected": false
                         }
                     ],
-                    "status": "warrant_pending",
+                    "status": "unresolved",
                     "output": "structural-backstop",
                     "reason": "no Sugar candidate for role Composite at `|| 1`; write more Sugar for this AST"
                 }
@@ -4439,9 +4429,9 @@ mod tests {
             "source audit: loci=1 warranted=0 inactive=0 support=0 refused=0 refuted=0 unresolved=1"
         ));
         assert!(human.contains(
-            "factory accounting: sites=1 warranted=0 refused=0 support=0 warrant_pending=1 vacuous=0 unresolved=0"
+            "factory accounting: sites=1 warranted=0 refused=0 support=0 unresolved=1"
         ), "{human}");
-        assert!(human.contains("factory warrant_pending (recognizer worklist):"), "{human}");
+        assert!(human.contains("factory unresolved:"), "{human}");
         assert!(human.contains(
             "src/lib.rs:7 expr role=Composite selected=<none> output=structural-backstop"
         ));
