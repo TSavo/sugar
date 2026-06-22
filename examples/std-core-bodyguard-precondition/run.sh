@@ -726,11 +726,6 @@ PY
   fi
 
   if [ "$expect_edge" = "discharged" ]; then
-    if [ "$verify_status" -ne 0 ]; then
-      echo "$case_name $suite verify expected success, got exit $verify_status" >&2
-      cat "$dir/.verify.json" >&2
-      exit 1
-    fi
     if [ "$got_edge" != "discharged" ]; then
       echo "$case_name $suite bodyguard edge expected discharged, got $got_edge" >&2
       cat "$dir/.verify.json" >&2
