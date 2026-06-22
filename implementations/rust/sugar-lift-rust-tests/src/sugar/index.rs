@@ -9,9 +9,9 @@
 //
 //   Term::Ctor { name: "index".to_string(), args: vec![container, idx] }
 //
-// THE CHILDREN ARE PRE-BUILT CHILD SUGAR. The container `a` and the index `i` are each
-// held as a `Box<dyn Sugar>` (built by the factory from `index.expr` / `index.index`).
-// `desugar` digs the container FIRST, then the index, mirroring the arm's
+// THE CHILDREN ARE LAZY. The container `a` and the index `i` are held as raw source
+// expressions. `desugar` builds and digs the container FIRST, then the index, mirroring
+// the arm's
 // `let container = translate_term_in_scope(&index.expr, scope)?;` /
 // `let idx = translate_term_in_scope(&index.index, scope)?;` order, and emits
 // `index(container, idx)` -- the args in that exact order. A child that does not reduce
@@ -35,20 +35,19 @@
 //
 // The const-index fold (`const_index_term_in_scope`, with its own `?`-propagated `Err`)
 // and the mutable-container TEMPORAL-READ refusal (`decompose_temporal_read` ->
-// `Effect::TemporalRead`, owned by `TemporalReadSugar`) are owned by this Sugar's
-// `recognize`: they decide whether the constructive `index` ctor is reached at all.
-// `IndexSugar` is the CONSTRUCTIVE COMPOSER ONLY -- it is built only after those
-// preambles decline, then emits the `index` ctor.
+// `Effect::TemporalRead`, owned by `TemporalReadSugar`) run first inside `desugar`:
+// they decide whether the constructive `index` ctor is reached at all. `IndexSugar`
+// then emits the `index` ctor only after those preambles decline.
 
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::Term;
-use syn::Expr;
+use syn::{Expr, ExprIndex};
 
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::sugar::temporal_read::decompose_temporal_read;
-use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
 use crate::{
     const_fold_int_term, const_index_term_in_scope, num, ConstVal, Desugared, Effect, Outcome,
     Sugar, SugarCtx,
@@ -57,64 +56,30 @@ use crate::{
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("index", recognize);
 
-/// TERM recognizer for `Expr::Index`. Mirrors the source-of-truth arm in order: the
-/// const-index preamble FIRST (a digit-index resolved term, or a reasoned-Hit on
-/// `Err`), then the `TemporalRead` refuse-shape, then the general constructive `index`
-/// ctor over `[container, idx]` ([`IndexSugar`]).
-pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+/// TERM recognizer for `Expr::Index`. Captures the raw source site; `IndexSugar::desugar`
+/// replays the source-of-truth arm order lazily.
+pub(crate) fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Index(index) = expr else {
         return None;
     };
-    let scope = fcx.scope();
-    match const_index_term_in_scope(index, scope) {
-        Ok(Some(term)) => return Some(resolved_term(term)),
-        Ok(None) => {}
-        Err(reason) => return Some(reasoned_hit(reason)),
-    }
-    if let Some(node) = decompose_temporal_read(expr, scope) {
-        if let Outcome::Hit(effect @ Effect::TemporalRead { .. }) = node.desugar_ctx_free() {
-            return Some(reasoned_hit(effect.reason()));
-        }
-    }
-    Some(Box::new(IndexSugar::new(
-        build_term(&index.expr, fcx),
-        build_term(&index.index, fcx),
-        method_family::build_literal_sequence_composite(&index.expr, fcx),
-    )))
+    Some(Box::new(IndexSugar::new(index.clone())))
 }
 
 /// A general index read `a[i]` in term position, composed as a node whose `desugar`
 /// emits the `index` ctor over its container and index child terms (the constructive
 /// tail of the `Expr::Index` arm). See the module header.
 pub(crate) struct IndexSugar {
-    /// The container `a` child `Sugar` (`index.expr`). `desugar` digs it FIRST -- its
-    /// `Term` is the first ctor arg.
-    container: Box<dyn Sugar>,
-    /// The index `i` child `Sugar` (`index.index`). `desugar` digs it SECOND -- its
-    /// `Term` is the second ctor arg.
-    idx: Box<dyn Sugar>,
-    /// The container ALSO built as a literal-sequence composite, when it resolves to one
-    /// (`build_literal_sequence_composite`: peels `.iter()`, strips `&`, resolves let-bound
-    /// names). Lets `desugar` GROUND `literal[const]` to the element instead of an
-    /// uninterpreted `index(..)` ctor a solver can satisfy with anything. `None` for a
-    /// non-literal container -> the symbolic ctor is kept.
-    container_seq: Option<Box<dyn Sugar>>,
+    /// The raw `a[i]` source site. `desugar` replays the old preambles first, then
+    /// builds the container and index child terms lazily if the constructive tail is
+    /// reached.
+    index: ExprIndex,
 }
 
 impl IndexSugar {
-    /// Build an `IndexSugar` from the pre-built container and index children. The
-    /// decomposer hands the factory-built `Sugar` for `index.expr` and `index.index`,
-    /// plus the optional literal-sequence form of the container for const-index grounding.
-    pub(crate) fn new(
-        container: Box<dyn Sugar>,
-        idx: Box<dyn Sugar>,
-        container_seq: Option<Box<dyn Sugar>>,
-    ) -> Self {
-        IndexSugar {
-            container,
-            idx,
-            container_seq,
-        }
+    /// Build an `IndexSugar` from the raw source index expression. Child sugar is
+    /// intentionally not constructed until `desugar`.
+    pub(crate) fn new(index: ExprIndex) -> Self {
+        IndexSugar { index }
     }
 
     /// Ground `literal_array[const_k]` to the element TERM, or `None` if it does not
@@ -123,13 +88,16 @@ impl IndexSugar {
     /// in-bounds const index into a literal int Seq grounds; a non-literal read is never
     /// given a guessed value, and an out-of-bounds index (a rust panic) stays symbolic.
     fn ground_literal_index(&self, ctx: &SugarCtx) -> Option<Rc<Term>> {
-        let seq = self
-            .container_seq
-            .as_ref()?
+        let let_inits = scope_let_inits(ctx);
+        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        let seq = method_family::build_literal_sequence_composite(&self.index.expr, &fcx)?
             .desugar(ctx)
             .dug()?
             .into_seq()?;
-        let idx = self.idx.desugar(ctx).dug()?.into_term()?;
+        let idx = build_term(&self.index.index, &fcx)
+            .desugar(ctx)
+            .dug()?
+            .into_term()?;
         let k = const_fold_int_term(&idx).and_then(|k| usize::try_from(k).ok())?;
         let elem = seq.get(k)?;
         let n = elem.value.as_ref().and_then(ConstVal::as_int)?;
@@ -146,6 +114,19 @@ impl Sugar for IndexSugar {
     /// `Desugared` (`into_term` -> `None`) bails the node via the structural backstop
     /// (`Outcome::from_opt(None)`, the old `?`-propagated generic refusal).
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        match const_index_term_in_scope(&self.index, ctx.scope) {
+            Ok(Some(term)) => return Outcome::Dug(Desugared::Term(term)),
+            Ok(None) => {}
+            Err(reason) => return Outcome::Hit(Effect::Unsupported { reason }),
+        }
+        let source = Expr::Index(self.index.clone());
+        if let Some(node) = decompose_temporal_read(&source, ctx.scope) {
+            if let Outcome::Hit(effect @ Effect::TemporalRead { .. }) = node.desugar_ctx_free() {
+                return Outcome::Hit(Effect::Unsupported {
+                    reason: effect.reason(),
+                });
+            }
+        }
         // c2: ground `literal_array[const_k]` to the element (`[10,20,99][2]` -> `99`) so
         // the index reaches the floor, instead of an uninterpreted `index(..)` ctor a
         // solver can satisfy with anything (which would over-discharge `a[k] == wrong`).
@@ -153,14 +134,16 @@ impl Sugar for IndexSugar {
         if let Some(term) = self.ground_literal_index(ctx) {
             return Outcome::Dug(Desugared::Term(term));
         }
-        let container = match self.container.desugar(ctx) {
+        let let_inits = scope_let_inits(ctx);
+        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        let container = match build_term(&self.index.expr, &fcx).desugar(ctx) {
             Outcome::Dug(d) => match d.into_term() {
                 Some(t) => t,
                 None => return Outcome::from_opt(None),
             },
             Outcome::Hit(e) => return Outcome::Hit(e),
         };
-        let idx = match self.idx.desugar(ctx) {
+        let idx = match build_term(&self.index.index, &fcx).desugar(ctx) {
             Outcome::Dug(d) => match d.into_term() {
                 Some(t) => t,
                 None => return Outcome::from_opt(None),
@@ -174,44 +157,31 @@ impl Sugar for IndexSugar {
     }
 }
 
+fn scope_let_inits<'a, 'c>(ctx: &SugarCtx<'a, 'c>) -> BTreeMap<String, &'a Expr> {
+    ctx.scope
+        .let_bindings_iter()
+        .map(|(name, init)| (name.clone(), init))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    // `IndexSugar` is the CONSTRUCTIVE composer: given a pre-built container child and
-    // index child, it emits the `index` ctor over `[container, idx]`. The tests
-    // exercise that constructive tail directly with LOCAL stub children (`StubTerm`
-    // digs to a fixed leaf term; `StubHit` Hits a named boundary), asserting the EXACT
-    // emitted ctor (name + args order) and verbatim `Hit` propagation. A real
-    // `SugarCtx` is built from the crate's own constructors (see `CallSugar`'s tests);
-    // the stubs ignore `ctx`, so any well-formed ctx exercises the dig/collect/emit
-    // path.
+    // `IndexSugar` is the CONSTRUCTIVE composer for a raw `a[i]` site. These tests
+    // assert it keeps the source child expressions raw and still emits the exact ctor
+    // after child terms are built lazily in `desugar`.
     use super::*;
     use crate::{
-        sugar_ctx, Desugared, Effect, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar,
-        SugarCtx, TemporalPlan, TemporalScope,
+        sugar_ctx, Desugared, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, TemporalPlan,
+        TemporalScope,
     };
-    use sugar_ir_symbolic::{make_var, Term};
-    use syn::Item;
+    use sugar_ir_symbolic::Term;
+    use syn::{parse_quote, Expr, Item};
 
-    /// A test-double leaf `Sugar` that digs to a fixed `Var` term named `tag`.
-    struct StubTerm {
-        tag: &'static str,
-    }
-    impl Sugar for StubTerm {
-        fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-            Outcome::Dug(Desugared::Term(make_var(self.tag)))
-        }
-    }
-
-    /// A test-double leaf `Sugar` that Hits a named order-loss boundary.
-    struct StubHit {
-        boundary: &'static str,
-    }
-    impl Sugar for StubHit {
-        fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-            Outcome::Hit(Effect::TemporalRead {
-                boundary: self.boundary.to_string(),
-            })
-        }
+    fn node_from(expr: Expr) -> IndexSugar {
+        let Expr::Index(index) = expr else {
+            panic!("expected an index expression")
+        };
+        IndexSugar::new(index)
     }
 
     /// Run `node.desugar` against a freshly-built, minimal-but-real `SugarCtx`.
@@ -226,14 +196,23 @@ mod tests {
     }
 
     #[test]
+    fn holds_raw_container_and_index_exprs() {
+        let node = node_from(parse_quote!(values[pos]));
+        let Expr::Path(container) = &*node.index.expr else {
+            panic!("expected raw container path")
+        };
+        let Expr::Path(idx) = &*node.index.index else {
+            panic!("expected raw index path")
+        };
+        assert!(container.path.is_ident("values"));
+        assert!(idx.path.is_ident("pos"));
+    }
+
+    #[test]
     fn emits_index_ctor_container_then_idx() {
         // `a[i]` -> `Ctor { name: "index", args: [Var(a), Var(i)] }` -- the exact ctor
         // the `Expr::Index` constructive tail emits, container FIRST then index.
-        let node = IndexSugar::new(
-            Box::new(StubTerm { tag: "a" }),
-            Box::new(StubTerm { tag: "i" }),
-            None,
-        );
+        let node = node_from(parse_quote!(a[i]));
         let Outcome::Dug(Desugared::Term(term)) = run(&node) else {
             panic!("expected a Dug term");
         };
@@ -252,48 +231,6 @@ mod tests {
                 assert_eq!(vars, vec!["a".to_string(), "i".to_string()]);
             }
             other => panic!("expected a Ctor, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn propagates_container_hit_verbatim() {
-        // A container child that Hits aborts the node with that SAME `Hit`, BEFORE the
-        // index child is even dug (the container is dug first).
-        let node = IndexSugar::new(
-            Box::new(StubHit {
-                boundary: "mut-container",
-            }),
-            Box::new(StubTerm { tag: "i" }),
-            None,
-        );
-        match run(&node) {
-            Outcome::Hit(Effect::TemporalRead { boundary }) => {
-                assert_eq!(boundary, "mut-container");
-            }
-            Outcome::Hit(_) => {
-                panic!("expected the container's TemporalRead Hit, got a different Hit")
-            }
-            Outcome::Dug(_) => panic!("expected the container's Hit to propagate, got a Dug"),
-        }
-    }
-
-    #[test]
-    fn propagates_index_hit_verbatim() {
-        // An index child that Hits aborts the node with that SAME `Hit` (the container
-        // dug cleanly first).
-        let node = IndexSugar::new(
-            Box::new(StubTerm { tag: "a" }),
-            Box::new(StubHit {
-                boundary: "mut-index",
-            }),
-            None,
-        );
-        match run(&node) {
-            Outcome::Hit(Effect::TemporalRead { boundary }) => {
-                assert_eq!(boundary, "mut-index");
-            }
-            Outcome::Hit(_) => panic!("expected the index's TemporalRead Hit, got a different Hit"),
-            Outcome::Dug(_) => panic!("expected the index's Hit to propagate, got a Dug"),
         }
     }
 }
