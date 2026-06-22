@@ -72,6 +72,25 @@ fn warranted_decls(out: &AdapterOutput) -> Vec<&sugar_ir_symbolic::ContractDecl>
         .collect()
 }
 
+fn warranted_dump(out: &AdapterOutput) -> String {
+    format!("{:?}", warranted_decls(out))
+}
+
+fn warranted_doc(out: &AdapterOutput) -> String {
+    let decls: Vec<_> = warranted_decls(out).into_iter().cloned().collect();
+    sugar_ir_symbolic::serialize::marshal_declarations(&decls)
+}
+
+fn warranted_decl_with_name<'a>(
+    out: &'a AdapterOutput,
+    needle: &str,
+) -> &'a sugar_ir_symbolic::ContractDecl {
+    warranted_decls(out)
+        .into_iter()
+        .find(|decl| decl.name.contains(needle))
+        .expect("expected a claim-bearing warranted decl")
+}
+
 fn assert_warranted_decl_count(out: &AdapterOutput, expected: usize) {
     let decls = warranted_decls(out);
     assert_eq!(
@@ -358,7 +377,9 @@ fn size_of_and_primitive_max_consts_are_compiler_axiom_sugar() {
         "factory should route size_of calls through SizeOfSugar: {:?}",
         out.factory_audits
     );
-    let dump = format!("{:?}", out.decls);
+    // #2397 emits support-only opaque panic callsite rows; value checks inspect
+    // claim-bearing declarations.
+    let dump = warranted_dump(&out);
     assert!(
         !dump.contains("call:mem::size_of")
             && !dump.contains("u32::MAX")
@@ -2052,7 +2073,9 @@ fn bitwise_bool_operator_assertion_recurses_into_size_of_terms() {
         "bitwise bool operator should recurse into SizeOfSugar: {:?}",
         out.factory_audits
     );
-    let dump = format!("{:?}", out.decls);
+    // #2397 emits support-only opaque panic callsite rows; value checks inspect
+    // claim-bearing declarations.
+    let dump = warranted_dump(&out);
     assert!(
         !dump.contains("call:std::mem::size_of") && !dump.contains("sizeof:u32"),
         "size_of under bool bitwise operator should reduce before ProofIR emission: {dump}"
@@ -3705,7 +3728,7 @@ fn compute_float32_wrapper_lowers_scaled_literals_to_tuple_axioms() {
         out.factory_audits
     );
     assert!(
-        !format!("{:?}", out.decls).contains("call:compute_float"),
+        !warranted_dump(&out).contains("call:compute_float"),
         "compute_float calls should not leak as opaque call terms: {:?}",
         out.decls
     );
@@ -3744,7 +3767,7 @@ fn compute_float64_wrapper_lowers_scaled_literals_to_tuple_axioms() {
         out.factory_audits
     );
     assert!(
-        !format!("{:?}", out.decls).contains("call:compute_float"),
+        !warranted_dump(&out).contains("call:compute_float"),
         "compute_float calls should not leak as opaque call terms: {:?}",
         out.decls
     );
@@ -4673,17 +4696,17 @@ fn full_slice_of_var() {
     let out = lift_file(&parse(src), "src/lib.rs");
     assert_eq!(out.seen, 1);
     assert!(
-        !format!("{:?}", out.decls).contains("ref_mut"),
+        !warranted_dump(&out).contains("ref_mut"),
         "mutable slice residual must not be coalesced to a stable ref_mut value: {:?}",
         out.decls
     );
     assert!(
         out.assertion_facts.iter().any(|fact| {
             fact.kind == AssertionFactKind::Warranted
-                && fact.contract_name.contains("panic-path")
+                && fact.contract_name.contains("method:len")
                 && fact.claim_count == 0
         }),
-        "mutable slice callsites may still emit panic-free support facts: {:?}",
+        "mutable slice callsites may still emit opaque len panic-free support facts: {:?}",
         out.assertion_facts
     );
 }
@@ -5750,7 +5773,7 @@ fn test_range_contains() {
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
     assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
-    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    let doc = warranted_doc(&out);
     assert!(
         !doc.contains("method:contains"),
         "range contains now folds to a ground bool, not an opaque EUF callsite key: {doc}"
@@ -8221,6 +8244,40 @@ fn formula_mentions_panic_path(formula: &Formula) -> bool {
     }
 }
 
+fn formula_mentions_term_outside_panic(formula: &Formula, needle: &str) -> bool {
+    match formula {
+        Formula::Atomic { name, .. } if name == "panic" => false,
+        Formula::Atomic { args, .. } => args
+            .iter()
+            .any(|arg| term_mentions_name(arg.as_ref(), needle)),
+        Formula::Connective { operands, .. } => operands
+            .iter()
+            .any(|operand| formula_mentions_term_outside_panic(operand, needle)),
+        Formula::Quantifier { body, .. } => formula_mentions_term_outside_panic(body, needle),
+        _ => false,
+    }
+}
+
+fn term_mentions_name(term: &Term, needle: &str) -> bool {
+    match term {
+        Term::Var { name } => name.contains(needle),
+        Term::Ctor { name, args } => {
+            name.contains(needle)
+                || args
+                    .iter()
+                    .any(|arg| term_mentions_name(arg.as_ref(), needle))
+        }
+        Term::Lambda { body, .. } => term_mentions_name(body.as_ref(), needle),
+        Term::Let { bindings, body } => {
+            bindings
+                .iter()
+                .any(|binding| term_mentions_name(binding.bound_term.as_ref(), needle))
+                || term_mentions_name(body.as_ref(), needle)
+        }
+        Term::Const { .. } => false,
+    }
+}
+
 #[test]
 fn assert_ne_primitive_lifts_identically_to_not_equal_operator() {
     // assert_ne!(a(), 1) must equal assert!(a() != 1): both -> ne(call:a(), 1).
@@ -8710,7 +8767,7 @@ fn cstr_literals() {
         "CStr literals are compiler axioms, not refusals: {:?}",
         out.warnings
     );
-    let dump = format!("{:?}", out.decls);
+    let dump = warranted_dump(&out);
     assert!(
         dump.contains("literal:cstr("),
         "CStr identity should be content keyed: {dump}"
@@ -13839,11 +13896,7 @@ fn t() {
         "the cursor rfold over literal arrays must dig, not stay a let-init refusal: {:?}",
         out.skip_reasons
     );
-    let rfold_decl = out
-        .decls
-        .iter()
-        .find(|d| d.name.contains("rfold"))
-        .expect("an rfold decl must be emitted");
+    let rfold_decl = warranted_decl_with_name(&out, "rfold");
     let pairs = dug_eq_int_pairs(rfold_decl);
     assert_eq!(
         pairs,
@@ -13869,11 +13922,7 @@ fn t() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/cursor_rfold_twin.rs");
-    let rfold_decl = out
-        .decls
-        .iter()
-        .find(|d| d.name.contains("rfold"))
-        .expect("an rfold decl must be emitted");
+    let rfold_decl = warranted_decl_with_name(&out, "rfold");
     let pairs = dug_eq_int_pairs(rfold_decl);
     assert_eq!(
         pairs,
@@ -13910,11 +13959,7 @@ fn t() {
         "the skip_while(*x) cursor fold must dig: {:?}",
         out.skip_reasons
     );
-    let fold_decl = out
-        .decls
-        .iter()
-        .find(|d| d.name.contains("fold"))
-        .expect("a fold decl must be emitted");
+    let fold_decl = warranted_decl_with_name(&out, "fold");
     let pairs = dug_eq_int_pairs(fold_decl);
     assert_eq!(
         pairs,
@@ -13991,11 +14036,7 @@ fn t() {
         "the filter_map cursor fold must dig, not stay a let-init refusal: {:?}",
         out.skip_reasons
     );
-    let fold_decl = out
-        .decls
-        .iter()
-        .find(|d| d.name.contains("fold"))
-        .expect("a fold decl must be emitted");
+    let fold_decl = warranted_decl_with_name(&out, "fold");
     let pairs = dug_eq_int_pairs(fold_decl);
     assert_eq!(
         pairs,
@@ -14034,11 +14075,7 @@ fn t() {
         "the filter_map cursor rfold must dig: {:?}",
         out.skip_reasons
     );
-    let rfold_decl = out
-        .decls
-        .iter()
-        .find(|d| d.name.contains("rfold"))
-        .expect("an rfold decl must be emitted");
+    let rfold_decl = warranted_decl_with_name(&out, "rfold");
     let pairs = dug_eq_int_pairs(rfold_decl);
     assert_eq!(
         pairs,
@@ -14064,11 +14101,7 @@ fn t() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/filter_map_fold_twin.rs");
-    let fold_decl = out
-        .decls
-        .iter()
-        .find(|d| d.name.contains("fold"))
-        .expect("a fold decl must be emitted");
+    let fold_decl = warranted_decl_with_name(&out, "fold");
     let pairs = dug_eq_int_pairs(fold_decl);
     assert_eq!(
         pairs,
@@ -16619,7 +16652,7 @@ fn wrapping_int_api() {
     );
     assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
     assert!(out.skip_reasons.is_empty(), "{:?}", out.skip_reasons);
-    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    let doc = warranted_doc(&out);
     assert!(
         !doc.contains("method:wrapping_neg"),
         "wrapping_neg must lower to primitive literal axioms, not opaque method calls: {doc}"
@@ -16647,7 +16680,7 @@ fn t() {
         out.decls
     );
     assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
-    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    let doc = warranted_doc(&out);
     assert!(
         !doc.contains("method:is_some") && !doc.contains("call:NonZero"),
         "NonZero<char> and Option::is_some should lower to grounded Option/bool facts: {doc}"
@@ -16676,7 +16709,7 @@ fn t() {
         out.decls
     );
     assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
-    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    let doc = warranted_doc(&out);
     assert!(
         !doc.contains("call:NonZero")
             && !doc.contains("method:unwrap")
@@ -16709,7 +16742,7 @@ fn t() {
         out.decls
     );
     assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
-    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    let doc = warranted_doc(&out);
     assert!(
         !doc.contains("method:bit_width"),
         "bit_width should lower to a grounded scalar fact, not an opaque method term: {doc}"
@@ -16777,7 +16810,7 @@ fn t() {
         out.decls
     );
     assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
-    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    let doc = warranted_doc(&out);
     assert!(
         !doc.contains("method:bit_width") && !doc.contains("call:NonZero"),
         "NonZero bit_width must lower to a grounded scalar fact: {doc}"
@@ -16814,7 +16847,7 @@ fn t() {
         out.decls
     );
     assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
-    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    let doc = warranted_doc(&out);
     assert!(
         !doc.contains("call:from"),
         "From<bool> should lower to a grounded scalar, not an opaque call: {doc}"
@@ -16875,7 +16908,7 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/from_bool_macro_body.rs");
     assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
-    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    let doc = warranted_doc(&out);
     assert!(
         !doc.contains("call:from"),
         "From<bool> in the corpus macro body should lower to a grounded scalar, not an opaque call: {doc}"
@@ -17332,13 +17365,16 @@ fn t() {
         "over-cap computable literal range should not remain in the for-context bucket: {:?}",
         out.skip_reasons
     );
-    let dump = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    let dump = warranted_doc(&out);
     assert!(
         dump.contains("forall"),
         "over-cap literal range should be represented as a bounded forall, not a materialized conjunction: {dump}"
     );
+    let decl = single_warranted_decl(&out);
+    let inv = decl.inv.as_deref().expect("warranted decl has an inv");
     assert!(
-        !dump.contains("method:pow") && !dump.contains("method:min"),
+        !formula_mentions_term_outside_panic(inv, "method:pow")
+            && !formula_mentions_term_outside_panic(inv, "method:min"),
         "point-wise contract should lower primitive pow/min compiler axioms, not opaque methods: {dump}"
     );
 }
@@ -21411,7 +21447,7 @@ fn t() {
         out.decls
     );
     assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
-    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    let doc = warranted_doc(&out);
     assert!(
         !doc.contains("method:contains"),
         "range contains should lower to a ground bool, not an opaque method term: {doc}"
