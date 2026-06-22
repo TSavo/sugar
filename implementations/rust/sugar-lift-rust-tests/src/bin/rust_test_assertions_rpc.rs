@@ -1070,8 +1070,11 @@ fn clean_named_refusal_category(reason: &str) -> Option<&'static str> {
         return Some("mutable reference/pointer effect");
     }
     if reason.contains("side-effecting closure body")
+        || reason.contains("closure body MUTATES captured runtime state")
+        || reason.contains("runtime side effect during value construction")
         || reason.contains("runtime expression-statement")
         || reason.contains("mutation through &mut")
+        || reason.contains("MUTABLE-local receiver")
         || reason.contains("mutable-local state machine driven by fmt-write")
     {
         return Some("mutation/side effect");
