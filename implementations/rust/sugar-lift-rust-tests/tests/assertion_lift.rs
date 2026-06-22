@@ -21688,6 +21688,91 @@ fn assert_rpc_source_warranted(doc: &serde_json::Value, fn_name: &str) {
 }
 
 #[test]
+fn ip_addr_literal_property_predicates_have_teeth() {
+    let good = r#"
+        use core::net::IpAddr;
+        use core::str::FromStr;
+
+        #[test]
+        fn ip_literal_good() {
+            assert!(IpAddr::from_str("127.0.0.1").unwrap().is_loopback());
+        }
+    "#;
+    let good_out = lift_file(&parse(good), "tests/net/ip_literal_good.rs");
+    assert_eq!(
+        good_out.assertions_lifted, 1,
+        "literal IpAddr property should warrant; skips={:?}; audits={:?}",
+        good_out.skip_reasons, good_out.factory_audits
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&good_out)),
+        "ip_literal_good",
+    ) {
+        assert!(sat, "127.0.0.1 is loopback");
+    }
+
+    let bad = r#"
+        use core::net::IpAddr;
+        use core::str::FromStr;
+
+        #[test]
+        fn ip_literal_bad() {
+            assert!(IpAddr::from_str("127.0.0.1").unwrap().is_global());
+        }
+    "#;
+    let bad_out = lift_file(&parse(bad), "tests/net/ip_literal_bad.rs");
+    assert_eq!(
+        bad_out.assertions_lifted, 1,
+        "bad twin must still lift so z3 can bite; skips={:?}; audits={:?}",
+        bad_out.skip_reasons, bad_out.factory_audits
+    );
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&bad_out)), "ip_literal_bad") {
+        assert!(!sat, "127.0.0.1 is not global");
+    }
+}
+
+#[test]
+fn rpc_source_warrants_macro_wrapped_literal_ip_properties() {
+    let doc = run_rpc_lift(
+        "tests/net/ip_addr.rs",
+        r#"
+use core::net::IpAddr;
+use core::str::FromStr;
+
+#[test]
+fn ip_properties() {
+    macro_rules! ip {
+        ($s:expr) => {
+            IpAddr::from_str($s).unwrap()
+        };
+    }
+
+    macro_rules! check {
+        ($s:expr, $mask:expr) => {{
+            let loopback: u8 = 1 << 1;
+            if ($mask & loopback) == loopback {
+                assert!(ip!($s).is_loopback());
+            } else {
+                assert!(!ip!($s).is_loopback());
+            }
+        }};
+    }
+
+    check!("127.0.0.1", 1 << 1);
+}
+
+#[test]
+fn literal_ip_twin() {
+    assert!(IpAddr::from_str("127.0.0.1").unwrap().is_loopback());
+}
+"#,
+    );
+
+    assert_rpc_source_warranted(&doc, "ip_properties");
+    assert_rpc_source_warranted(&doc, "literal_ip_twin");
+}
+
+#[test]
 fn rpc_source_lifts_cfg_select_active_assertions_with_literal_twin() {
     let doc = run_rpc_lift_with_config(
         "tests/macros.rs",
