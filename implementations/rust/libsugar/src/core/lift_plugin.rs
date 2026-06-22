@@ -36,7 +36,10 @@ fn json_serialized_exceeds(value: &Value, cap: usize) -> bool {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
             self.written = self.written.saturating_add(buf.len());
             if self.written > self.cap {
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, "cap exceeded"));
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "cap exceeded",
+                ));
             }
             Ok(buf.len())
         }

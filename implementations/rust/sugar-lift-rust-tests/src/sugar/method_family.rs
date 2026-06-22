@@ -72,13 +72,13 @@ pub(crate) fn build_literal_sequence_composite(
     let (base, adaptors) = peel_fold_adaptors_in_scope(expr, fcx.let_inits(), fcx.scope(), 0)?;
     // Scope-aware base gate: a const-length repeat (`[7; SIZE]`) resolves to a finite literal
     // sequence here so the constructive floor (and its element-wise teeth) is reached.
-    if !is_literal_sequence_base_in_scope(base, fcx.scope())
-        && !literal_slice::is_literal_slice_base(base, fcx.let_inits())
-        && !has_composite(base, fcx)
+    if !is_literal_sequence_base_in_scope(&base, fcx.scope())
+        && !literal_slice::is_literal_slice_base(&base, fcx.let_inits())
+        && !has_composite(&base, fcx)
     {
         return None;
     }
-    let mut node = build_composite(base, fcx);
+    let mut node = build_composite(&base, fcx);
     for wrap in adaptors {
         node = wrap(node);
     }

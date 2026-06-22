@@ -5295,6 +5295,20 @@ fn bounded_domain_from_expr(expr: &Expr, scope: &TemporalScope) -> Option<Bounde
 /// produces a `FilterMapSugar` wrapper.)
 type AdaptorWrap = Box<dyn FnOnce(Box<dyn Sugar>) -> Box<dyn Sugar>>;
 
+enum PeeledExpr<'a> {
+    Borrowed(&'a Expr),
+    Owned(Expr),
+}
+
+impl<'a> PeeledExpr<'a> {
+    fn into_owned(self) -> Expr {
+        match self {
+            PeeledExpr::Borrowed(expr) => expr.clone(),
+            PeeledExpr::Owned(expr) => expr,
+        }
+    }
+}
+
 /// Wrap `inner` in `RevSugar` (the `.rev()` adaptor, also the synthetic final `Rev`
 /// appended for `.rfold`).
 fn wrap_rev(inner: Box<dyn Sugar>) -> Box<dyn Sugar> {
@@ -5312,7 +5326,11 @@ fn peel_fold_adaptors<'a>(
     let_inits: &BTreeMap<String, &'a Expr>,
     depth: usize,
 ) -> Option<(&'a Expr, Vec<AdaptorWrap>)> {
-    peel_fold_adaptors_inner(expr, let_inits, None, depth)
+    let (base, adaptors) = peel_fold_adaptors_inner(expr, let_inits, None, depth)?;
+    match base {
+        PeeledExpr::Borrowed(expr) => Some((expr, adaptors)),
+        PeeledExpr::Owned(_) => None,
+    }
 }
 
 pub(crate) fn peel_fold_adaptors_in_scope<'a>(
@@ -5320,8 +5338,9 @@ pub(crate) fn peel_fold_adaptors_in_scope<'a>(
     let_inits: &BTreeMap<String, &'a Expr>,
     scope: &'a TemporalScope,
     depth: usize,
-) -> Option<(&'a Expr, Vec<AdaptorWrap>)> {
-    peel_fold_adaptors_inner(expr, let_inits, Some(scope), depth)
+) -> Option<(Expr, Vec<AdaptorWrap>)> {
+    let (base, adaptors) = peel_fold_adaptors_inner(expr, let_inits, Some(scope), depth)?;
+    Some((base.into_owned(), adaptors))
 }
 
 fn peel_fold_adaptors_inner<'a>(
@@ -5329,7 +5348,7 @@ fn peel_fold_adaptors_inner<'a>(
     let_inits: &BTreeMap<String, &'a Expr>,
     scope: Option<&'a TemporalScope>,
     depth: usize,
-) -> Option<(&'a Expr, Vec<AdaptorWrap>)> {
+) -> Option<(PeeledExpr<'a>, Vec<AdaptorWrap>)> {
     const MAX_DEPTH: usize = 8;
     if depth > MAX_DEPTH {
         return None;
@@ -5476,6 +5495,25 @@ fn peel_fold_adaptors_inner<'a>(
             Expr::Path(p) => {
                 if let Some(id) = p.path.get_ident() {
                     let name = id.to_string();
+                    if let Some(current) =
+                        scope.and_then(|scope| scope.temporal_rewrite_expr_for(&name))
+                    {
+                        tracing::debug!(
+                            target: "sugar_lift_rust_tests::temporal_rewrite",
+                            binding = name.as_str(),
+                            value = %token_key(&current),
+                            "peel resolved iterator receiver through temporal rewrite"
+                        );
+                        let (inner_base, mut inner_adaptors) =
+                            peel_fold_adaptors_inner(&current, let_inits, scope, depth + 1)?;
+                        let inner_base = PeeledExpr::Owned(inner_base.into_owned());
+                        // inner_adaptors are already base-first; our outer adaptors_rev are
+                        // outermost-first, so reversed they are application-order and come
+                        // AFTER the inner chain.
+                        adaptors_rev.reverse();
+                        inner_adaptors.extend(adaptors_rev);
+                        return Some((inner_base, inner_adaptors));
+                    }
                     if let Some(init) = let_inits.get(&name).copied().or_else(|| {
                         scope.and_then(|scope| scope.stable_let_binding_for_term(&name))
                     }) {
@@ -5495,7 +5533,7 @@ fn peel_fold_adaptors_inner<'a>(
         }
     }
     adaptors_rev.reverse();
-    Some((cur, adaptors_rev))
+    Some((PeeledExpr::Borrowed(cur), adaptors_rev))
 }
 
 /// An EXACT const value the defolder is willing to compute for a transforming-adaptor

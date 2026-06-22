@@ -5390,12 +5390,13 @@ fn post_rebind_same_version() {
     let out = lift_file(&parse(src), "tests/ops.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
     assert_eq!(
-        out.decls[0].name,
+        decl.name,
         "method:contains#euf#c:callresult_method_contains_a2(c:range(i:10:u32,i:20),c:ref(i:11))::assertion"
     );
-    let operands = inv_operands(&out.decls[0]);
+    let operands = inv_operands(decl);
     assert_eq!(operands.len(), 2);
 }
 
