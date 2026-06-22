@@ -1103,6 +1103,12 @@ fn clean_named_refusal_category(reason: &str) -> Option<&'static str> {
     if reason.contains("runtime searcher state machine before assertion surface") {
         return Some("runtime state-machine boundary");
     }
+    if reason.contains("type-inferred runtime parser result")
+        || (reason.contains("parse result type is supplied by assertion context")
+            && reason.contains("no single constructible timeless value"))
+    {
+        return Some("type-inferred runtime parser boundary");
+    }
     if reason.contains("operand is a runtime non-scalar result") {
         return Some("runtime non-scalar call-result boundary");
     }
