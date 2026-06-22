@@ -61,6 +61,7 @@ exclude = [
   # dev / test / fixture / demo tooling (not shipped)
   "compute_fixture_cid",
   "coretests_sweep",
+  "discharge_sweep",
   "discharge_cli",
   "emit_c_fixtures",
   "hover_probe",

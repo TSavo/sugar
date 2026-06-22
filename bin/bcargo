@@ -188,6 +188,7 @@ remove_remote_dir() {
 sync_file Cargo.toml
 sync_file Cargo.lock
 sync_file Makefile
+sync_file sugar-release.toml
 sync_file bin/bcargo
 sync_file package.json
 sync_file pnpm-lock.yaml
