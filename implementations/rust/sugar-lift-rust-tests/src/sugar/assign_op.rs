@@ -7,7 +7,7 @@
 // `TemporalScope`. The statement itself is inert support; its meaning is that
 // later path reads resolve through the rewritten source value.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{eq, ConstValue, Sort, Term};
@@ -59,6 +59,7 @@ pub(crate) struct TemporalRewriteState {
     values: BTreeMap<String, Expr>,
     aliases: BTreeMap<String, RewritePlace>,
     unknown_consumed_iterators: BTreeMap<String, String>,
+    unknown_mutations: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug)]
@@ -95,18 +96,24 @@ enum IndexSpec {
 
 impl TemporalRewriteState {
     pub(crate) fn expr_for(&self, name: &str) -> Option<Expr> {
-        if self.unknown_consumed_iterators.contains_key(name) {
+        if self.unknown_consumed_iterators.contains_key(name)
+            || self.unknown_mutations.contains_key(name)
+        {
             return None;
         }
         if let Some(expr) = self.values.get(name) {
             return Some(expr.clone());
         }
         match self.aliases.get(name)? {
-            RewritePlace::Scalar(base) if !self.unknown_consumed_iterators.contains_key(base) => {
+            RewritePlace::Scalar(base)
+                if !self.unknown_consumed_iterators.contains_key(base)
+                    && !self.unknown_mutations.contains_key(base) =>
+            {
                 self.values.get(base).cloned()
             }
             RewritePlace::Element { base, index }
-                if !self.unknown_consumed_iterators.contains_key(base) =>
+                if !self.unknown_consumed_iterators.contains_key(base)
+                    && !self.unknown_mutations.contains_key(base) =>
             {
                 self.aggregate_element(base, *index)
             }
@@ -125,6 +132,10 @@ impl TemporalRewriteState {
         ))
     }
 
+    pub(crate) fn unknown_mutation_reason(&self, name: &str) -> Option<String> {
+        self.unknown_mutations.get(name).cloned()
+    }
+
     pub(crate) fn can_apply(&self, expr: &Expr) -> bool {
         let mut scratch = self.clone();
         scratch.apply_with_trace(expr, false)
@@ -138,7 +149,10 @@ impl TemporalRewriteState {
         let mut out: BTreeMap<String, Expr> = self
             .values
             .iter()
-            .filter(|(name, _)| !self.unknown_consumed_iterators.contains_key(*name))
+            .filter(|(name, _)| {
+                !self.unknown_consumed_iterators.contains_key(*name)
+                    && !self.unknown_mutations.contains_key(*name)
+            })
             .map(|(name, expr)| (name.clone(), expr.clone()))
             .collect();
         for name in self.aliases.keys() {
@@ -190,6 +204,17 @@ impl TemporalRewriteState {
                 for arg in &call.args {
                     applied |= self.apply_consumption_expr(arg);
                 }
+                if mutable_view_method(&call.method.to_string()) {
+                    if let Some(name) = simple_path_name(&call.receiver) {
+                        applied |= self.invalidate_mutable_view(&name, &call.method.to_string());
+                    }
+                }
+                if mutating_receiver_method(&call.method.to_string()) {
+                    if let Some(name) = simple_path_name(&call.receiver) {
+                        applied |=
+                            self.invalidate_mutating_receiver(&name, &call.method.to_string());
+                    }
+                }
                 if let Some((direction, count)) = iterator_consumption(call) {
                     if let Some(name) = simple_path_name(&call.receiver) {
                         applied |= self.advance_iterator_binding(&name, direction, count);
@@ -212,6 +237,10 @@ impl TemporalRewriteState {
                 let mut applied = false;
                 for arg in &call.args {
                     applied |= self.apply_consumption_expr(arg);
+                    let site = token_key(&call.func);
+                    for name in mut_reference_targets(arg) {
+                        applied |= self.invalidate_opaque_mut_borrow_call(&name, &site);
+                    }
                 }
                 applied
             }
@@ -242,8 +271,42 @@ impl TemporalRewriteState {
                 self.apply_consumption_expr(&assign.left)
                     | self.apply_consumption_expr(&assign.right)
             }
+            Expr::Block(block) => self.apply_consumption_stmts(&block.block.stmts),
+            Expr::Unsafe(block) => self.apply_consumption_stmts(&block.block.stmts),
+            Expr::ForLoop(for_loop) => {
+                self.apply_consumption_expr(&for_loop.expr)
+                    | self.apply_consumption_stmts(&for_loop.body.stmts)
+            }
+            Expr::While(while_expr) => {
+                self.apply_consumption_expr(&while_expr.cond)
+                    | self.apply_consumption_stmts(&while_expr.body.stmts)
+            }
+            Expr::Loop(loop_expr) => self.apply_consumption_stmts(&loop_expr.body.stmts),
+            Expr::If(if_expr) => {
+                let mut applied = self.apply_consumption_expr(&if_expr.cond)
+                    | self.apply_consumption_stmts(&if_expr.then_branch.stmts);
+                if let Some((_, else_branch)) = &if_expr.else_branch {
+                    applied |= self.apply_consumption_expr(else_branch);
+                }
+                applied
+            }
+            Expr::Match(match_expr) => {
+                let mut applied = self.apply_consumption_expr(&match_expr.expr);
+                for arm in &match_expr.arms {
+                    applied |= self.apply_consumption_expr(&arm.body);
+                }
+                applied
+            }
             _ => false,
         }
+    }
+
+    fn apply_consumption_stmts(&mut self, stmts: &[Stmt]) -> bool {
+        let mut applied = false;
+        for stmt in stmts {
+            applied |= self.apply_statement(stmt);
+        }
+        applied
     }
 
     fn advance_iterator_binding(
@@ -290,6 +353,70 @@ impl TemporalRewriteState {
         true
     }
 
+    fn invalidate_opaque_mut_borrow_call(&mut self, name: &str, site: &str) -> bool {
+        self.values.remove(name);
+        self.aliases.remove(name);
+        self.unknown_consumed_iterators.remove(name);
+        self.unknown_mutations.insert(
+            name.to_string(),
+            format!(
+                "ambiguous temporal identity for `{name}` after opaque mutable borrow call \
+                 `{site}`: the call may write through `&mut`, so there is no single \
+                 timeless value to read at the assertion; refused"
+            ),
+        );
+        debug!(
+            target: "sugar_lift_rust_tests::temporal_rewrite",
+            binding = name,
+            site,
+            "temporal rewrite invalidated local after opaque mutable borrow call"
+        );
+        true
+    }
+
+    fn invalidate_mutable_view(&mut self, name: &str, method: &str) -> bool {
+        self.values.remove(name);
+        self.aliases.remove(name);
+        self.unknown_consumed_iterators.remove(name);
+        self.unknown_mutations.insert(
+            name.to_string(),
+            format!(
+                "temporally unstable mutable view read of `{name}` after `.{method}()`: \
+                 the method exposes mutable state whose writes are not replayed by the \
+                 literal temporal rewrite, so there is no single timeless value to read \
+                 at the assertion; refused"
+            ),
+        );
+        debug!(
+            target: "sugar_lift_rust_tests::temporal_rewrite",
+            binding = name,
+            method,
+            "temporal rewrite invalidated local after mutable view method"
+        );
+        true
+    }
+
+    fn invalidate_mutating_receiver(&mut self, name: &str, method: &str) -> bool {
+        self.values.remove(name);
+        self.aliases.remove(name);
+        self.unknown_consumed_iterators.remove(name);
+        self.unknown_mutations.insert(
+            name.to_string(),
+            format!(
+                "temporally unstable mutating method read of `{name}` after `.{method}()`: \
+                 the method may write receiver state outside the literal temporal rewrite, \
+                 so there is no single timeless value to read at the assertion; refused"
+            ),
+        );
+        debug!(
+            target: "sugar_lift_rust_tests::temporal_rewrite",
+            binding = name,
+            method,
+            "temporal rewrite invalidated local after mutating receiver method"
+        );
+        true
+    }
+
     pub(crate) fn record_local(&mut self, local: &syn::Local) {
         let Some(init) = local.init.as_ref().filter(|init| init.diverge.is_none()) else {
             return;
@@ -304,6 +431,7 @@ impl TemporalRewriteState {
         };
 
         self.unknown_consumed_iterators.remove(&name);
+        self.unknown_mutations.remove(&name);
         if let Some(base) = borrowed_iterator_source_name(&init.expr)
             .filter(|base| base != &name && self.values.contains_key(base))
         {
@@ -650,6 +778,136 @@ fn unknown_iterator_consumption(call: &syn::ExprMethodCall) -> bool {
             | "all"
             | "any"
     )
+}
+
+fn mutable_view_method(method: &str) -> bool {
+    matches!(
+        method,
+        "iter_mut"
+            | "values_mut"
+            | "as_mut"
+            | "as_mut_ptr"
+            | "as_mut_slice"
+            | "borrow_mut"
+            | "get_mut"
+            | "get_unchecked_mut"
+            | "get_disjoint_mut"
+            | "split_at_mut"
+            | "chunks_mut"
+            | "rchunks_mut"
+            | "windows_mut"
+            | "array_chunks_mut"
+            | "array_windows_mut"
+    )
+}
+
+fn mutating_receiver_method(method: &str) -> bool {
+    matches!(
+        method,
+        "set"
+            | "replace"
+            | "swap"
+            | "take"
+            | "push"
+            | "push_back"
+            | "push_front"
+            | "pop"
+            | "pop_back"
+            | "pop_front"
+            | "insert"
+            | "remove"
+            | "clear"
+            | "retain"
+            | "resize"
+            | "reserve"
+            | "truncate"
+            | "extend"
+            | "append"
+            | "drain"
+            | "store"
+            | "fetch_add"
+            | "fetch_sub"
+            | "fetch_and"
+            | "fetch_or"
+            | "fetch_xor"
+            | "fetch_nand"
+            | "fetch_max"
+            | "fetch_min"
+            | "fetch_update"
+            | "compare_exchange"
+            | "compare_exchange_weak"
+            | "compare_and_swap"
+            | "write"
+            | "write_all"
+            | "write_str"
+            | "write_fmt"
+            | "send"
+    )
+}
+
+fn mut_reference_targets(expr: &Expr) -> BTreeSet<String> {
+    fn collect(expr: &Expr, out: &mut BTreeSet<String>) {
+        match expr {
+            Expr::Reference(reference) if reference.mutability.is_some() => {
+                if let Some(name) = simple_path_name(&reference.expr) {
+                    out.insert(name);
+                } else {
+                    collect(&reference.expr, out);
+                }
+            }
+            Expr::Reference(reference) => collect(&reference.expr, out),
+            Expr::Cast(cast) => collect(&cast.expr, out),
+            Expr::Paren(paren) => collect(&paren.expr, out),
+            Expr::Group(group) => collect(&group.expr, out),
+            Expr::Unary(unary) => collect(&unary.expr, out),
+            Expr::Field(field) => collect(&field.base, out),
+            Expr::Index(index) => {
+                collect(&index.expr, out);
+                collect(&index.index, out);
+            }
+            Expr::MethodCall(call) => {
+                collect(&call.receiver, out);
+                for arg in &call.args {
+                    collect(arg, out);
+                }
+            }
+            Expr::Call(call) => {
+                collect(&call.func, out);
+                for arg in &call.args {
+                    collect(arg, out);
+                }
+            }
+            Expr::Binary(binary) => {
+                collect(&binary.left, out);
+                collect(&binary.right, out);
+            }
+            Expr::Assign(assign) => {
+                collect(&assign.left, out);
+                collect(&assign.right, out);
+            }
+            Expr::Array(array) => {
+                for elem in &array.elems {
+                    collect(elem, out);
+                }
+            }
+            Expr::Tuple(tuple) => {
+                for elem in &tuple.elems {
+                    collect(elem, out);
+                }
+            }
+            Expr::Macro(expr_macro) if macro_name_is(&expr_macro.mac, "addr_of_mut") => {
+                if let Ok(path) = syn::parse2::<syn::Path>(expr_macro.mac.tokens.clone()) {
+                    if let Some(name) = path.get_ident() {
+                        out.insert(name.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = BTreeSet::new();
+    collect(expr, &mut out);
+    out
 }
 
 fn borrowed_iterator_terminal(call: &syn::ExprMethodCall) -> bool {

@@ -4315,6 +4315,10 @@ impl TemporalScope {
             .unknown_iterator_consumption_reason(name)
     }
 
+    pub(crate) fn unknown_mutation_reason(&self, name: &str) -> Option<String> {
+        self.temporal_rewrite.borrow().unknown_mutation_reason(name)
+    }
+
     pub(crate) fn temporal_rewrite_can_apply(&self, expr: &Expr) -> bool {
         self.temporal_rewrite.borrow().can_apply(expr)
     }
