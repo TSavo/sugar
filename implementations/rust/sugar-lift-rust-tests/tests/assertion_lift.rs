@@ -6285,7 +6285,7 @@ fn cfg_statements() {
 }
 
 #[test]
-fn any_is_positive_and_negative_share_the_same_call_result_key() {
+fn any_is_positive_and_negative_reduce_to_bool_floor() {
     let src = r#"
 use core::any::*;
 
@@ -6305,24 +6305,160 @@ fn any_referenced() {
         out.warnings
     );
     assert_warranted_decl_count(&out, 1);
-
-    let decl = single_warranted_decl(&out);
+    let doc = warranted_doc(&out);
     assert!(
-        decl.name.starts_with("method:is::<i32>#euf#"),
-        "Any::is should be keyed as a method call result, got {}",
-        decl.name
+        doc.contains("\"name\":\"Bool\"") && !doc.contains("method:is"),
+        "Any::is over a static coercion should reduce to Bool constants, got {doc}"
     );
-    assert!(
-        decl.name.contains("c:cast:&dyn Any(c:ref(i:5))"),
-        "Any::is receiver should use canonical grounded identity in key, got {}",
-        decl.name
-    );
-    let operands = inv_operands(decl);
-    assert_eq!(operands.len(), 2);
+    let operands = inv_operands(single_warranted_decl(&out));
     let rendered = format!("{operands:?}");
     assert!(
         rendered.contains("Bool(true)") && rendered.contains("Bool(false)"),
-        "expected positive and negated Any::is atoms in one row, got {rendered}"
+        "expected positive and negated Any::is bool atoms in one row, got {rendered}"
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "dyn_any_same_type_contradiction",
+    ) {
+        assert!(
+            !sat,
+            "assert!(a.is::<i32>()) and assert!(!a.is::<i32>()) must be z3-UNSAT"
+        );
+    }
+}
+
+#[test]
+fn dyn_any_type_identity_fixed_array_has_teeth() {
+    let good = r#"
+use core::any::*;
+
+#[test]
+fn any_fixed_vec() {
+    let test = [0_usize; 8];
+    let test = &test as &dyn Any;
+    assert!(test.is::<[usize; 8]>());
+    assert!(!test.is::<[usize; 10]>());
+}
+"#;
+    let out = lift_file(&parse(good), "coretests/tests/any.rs");
+    assert_eq!(out.seen, 1);
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    assert_eq!(
+        out.assertions_refused, 0,
+        "static dyn Any identity must warrant, not refuse: {:?}",
+        out.skip_reasons
+    );
+    assert_warranted_decl_count(&out, 1);
+    let doc = warranted_doc(&out);
+    assert!(
+        doc.contains("\"name\":\"Bool\"")
+            && !doc.contains("method:is")
+            && !doc.contains("cast:&dyn Any"),
+        "dyn Any type identity should compose to bool literals, got {doc}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "dyn_any_fixed_good") {
+        assert!(sat, "correct dyn Any array identity claims must be z3-SAT");
+    }
+
+    let bad = r#"
+use core::any::*;
+
+#[test]
+fn any_fixed_vec_bad() {
+    let test = [0_usize; 8];
+    let test = &test as &dyn Any;
+    assert!(test.is::<[usize; 10]>());
+}
+"#;
+    let out = lift_file(&parse(bad), "coretests/tests/any_bad.rs");
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "dyn_any_fixed_bad") {
+        assert!(!sat, "wrong dyn Any array identity twin must be z3-UNSAT");
+    }
+}
+
+#[test]
+fn dyn_any_downcast_presence_predicates_have_teeth() {
+    for (label, assertion, want_sat) in [
+        (
+            "downcast_ref_some_good",
+            "let a = &5_usize as &dyn Any; assert!(a.downcast_ref::<usize>().is_some());",
+            true,
+        ),
+        (
+            "downcast_ref_some_bad",
+            "let a = &5_usize as &dyn Any; assert!(a.downcast_ref::<Test>().is_some());",
+            false,
+        ),
+        (
+            "downcast_box_ok_good",
+            "let a = Box::new(5_usize) as Box<dyn Any>; assert!(a.downcast::<usize>().is_ok());",
+            true,
+        ),
+        (
+            "downcast_box_ok_bad",
+            "let a = Box::new(5_usize) as Box<dyn Any>; assert!(a.downcast::<Test>().is_ok());",
+            false,
+        ),
+    ] {
+        let src = format!(
+            r#"
+use core::any::*;
+struct Test;
+
+#[test]
+fn t() {{
+    {assertion}
+}}
+"#
+        );
+        let out = lift_file(&parse(&src), "coretests/tests/any_downcast_predicates.rs");
+        assert_warranted_decl_count(&out, 1);
+        assert_eq!(
+            out.assertions_refused, 0,
+            "{label}: static dyn Any downcast predicate should warrant: {:?}",
+            out.skip_reasons
+        );
+        let doc = warranted_doc(&out);
+        assert!(
+            doc.contains("\"name\":\"Bool\"")
+                && !doc.contains("method:downcast")
+                && !doc.contains("method:is_some")
+                && !doc.contains("method:is_ok"),
+            "{label}: downcast predicate must compose to bool floor, got {doc}"
+        );
+        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+            assert_eq!(sat, want_sat, "{label}: z3 verdict mismatch");
+        }
+    }
+}
+
+#[test]
+fn dyn_any_runtime_identity_is_named_refusal_not_literal_false() {
+    let src = r#"
+use core::any::*;
+
+fn opaque_any() -> &'static dyn Any {
+    &5_usize as &dyn Any
+}
+
+#[test]
+fn t() {
+    let x = opaque_any();
+    assert!(x.is::<usize>());
+}
+"#;
+    let out = lift_file(&parse(src), "coretests/tests/any_runtime.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "runtime dyn Any identity must not fabricate a warrant"
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|reason| reason.contains("dyn Any concrete type not statically determined")),
+        "runtime dyn Any identity must be refused by name: {:?}",
+        out.skip_reasons
     );
 }
 
