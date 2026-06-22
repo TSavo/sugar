@@ -40,6 +40,9 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if let Some(hit) = temporally_unstable_refusal(&name, fcx) {
         return Some(hit);
     }
+    if let Some(hit) = ambiguous_identity_refusal(&name, fcx) {
+        return Some(hit);
+    }
     if let Some(current) = fcx.scope().temporal_rewrite_expr_for(&name) {
         debug!(
             target: "sugar_lift_rust_tests::temporal_rewrite",
@@ -76,6 +79,9 @@ fn recognize_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     if let Some(hit) = temporally_unstable_refusal(&name, fcx) {
         return Some(hit);
     }
+    if let Some(hit) = ambiguous_identity_refusal(&name, fcx) {
+        return Some(hit);
+    }
     if let Some(current) = fcx.scope().temporal_rewrite_expr_for(&name) {
         debug!(
             target: "sugar_lift_rust_tests::temporal_rewrite",
@@ -99,6 +105,15 @@ fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
     let name = simple_local_path(expr)?;
     if fcx.resolving_bound_path(&name) {
         return None;
+    }
+    if let Some(hit) = alias_deref_mutated_refusal(&name, fcx) {
+        return Some(hit);
+    }
+    if let Some(hit) = temporally_unstable_refusal(&name, fcx) {
+        return Some(hit);
+    }
+    if let Some(hit) = ambiguous_identity_refusal(&name, fcx) {
+        return Some(hit);
     }
     if let Some(current) = fcx.scope().temporal_rewrite_expr_for(&name) {
         debug!(
@@ -157,6 +172,14 @@ fn temporally_unstable_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dy
             "temporally unstable post-loop read of `{name}`: mutated inside a loop or closure \
              body the lifter cannot unroll, so there is no single timeless value to read at \
              the assertion; refused as temporally unstable"
+        ))
+    })
+}
+
+fn ambiguous_identity_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    fcx.scope().ambiguous_contains(name).then(|| {
+        reasoned_hit(format!(
+            "ambiguous temporal identity for receiver `{name}`; skipped assertion"
         ))
     })
 }

@@ -23,18 +23,20 @@ use sugar_ir_symbolic::{and_, atomic_, eq, not_, num, str_const, ConstValue, For
 use syn::{BinOp, Expr, ExprIf, ExprLit, ExprMacro, Lit, UnOp};
 use tracing::debug;
 
-pub(crate) const RELATION_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::constraint_before(
+pub(crate) const RELATION_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::fallback_with_ordering(
     "constraint_relation_macro",
+    SugarRole::Constraint,
     &["constraint_bool_expr"],
     recognize_relation_macro,
 );
 
-pub(crate) const RELATION_MACRO_ASSERTION_SURFACE: ExprSugarClaim = ExprSugarClaim::with_ordering(
-    "assertion_surface_relation_macro",
-    SugarRole::AssertionSurface,
-    &["assertion_surface_assert_macro"],
-    recognize_relation_macro,
-);
+pub(crate) const RELATION_MACRO_ASSERTION_SURFACE: ExprSugarClaim =
+    ExprSugarClaim::fallback_with_ordering(
+        "assertion_surface_relation_macro",
+        SugarRole::AssertionSurface,
+        &["assertion_surface_assert_macro"],
+        recognize_relation_macro,
+    );
 
 pub(crate) const BOUNDED_LITERAL_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::constraint_before(
     "constraint_bounded_literal_macro",
@@ -63,17 +65,14 @@ pub(crate) const ASSERT_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::constraint
     recognize_assert_macro,
 );
 
-pub(crate) const ASSERT_MACRO_ASSERTION_SURFACE: ExprSugarClaim = ExprSugarClaim::new(
-    "assertion_surface_assert_macro",
-    SugarRole::AssertionSurface,
-    recognize_assert_macro,
-);
+pub(crate) const ASSERT_MACRO_ASSERTION_SURFACE: ExprSugarClaim =
+    ExprSugarClaim::fallback_assertion_surface(
+        "assertion_surface_assert_macro",
+        recognize_assert_macro,
+    );
 
-pub(crate) const BOOL_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
-    "constraint_bool_expr",
-    SugarRole::Constraint,
-    recognize_bool_expr,
-);
+pub(crate) const BOOL_EXPR_SUGAR: ExprSugarClaim =
+    ExprSugarClaim::fallback_constraint("constraint_bool_expr", recognize_bool_expr);
 
 pub(crate) const IF_PANIC_SUGAR: ExprSugarClaim = ExprSugarClaim::constraint_before(
     "constraint_if_panic",

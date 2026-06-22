@@ -33,6 +33,7 @@ pub(crate) struct ExprSugarClaim {
     name: &'static str,
     role: SugarRole,
     comes_before: &'static [&'static str],
+    fallback_well: bool,
     recognize: ExprRecognizer,
 }
 
@@ -55,6 +56,22 @@ impl ExprSugarClaim {
             name,
             role,
             comes_before,
+            fallback_well: false,
+            recognize,
+        }
+    }
+
+    pub(crate) const fn fallback_with_ordering(
+        name: &'static str,
+        role: SugarRole,
+        comes_before: &'static [&'static str],
+        recognize: ExprRecognizer,
+    ) -> Self {
+        Self {
+            name,
+            role,
+            comes_before,
+            fallback_well: true,
             recognize,
         }
     }
@@ -135,7 +152,18 @@ impl ExprSugarClaim {
     }
 
     pub(crate) const fn fallback_term(name: &'static str, recognize: ExprRecognizer) -> Self {
-        Self::new(name, SugarRole::Term, recognize)
+        Self::fallback_with_ordering(name, SugarRole::Term, &[], recognize)
+    }
+
+    pub(crate) const fn fallback_constraint(name: &'static str, recognize: ExprRecognizer) -> Self {
+        Self::fallback_with_ordering(name, SugarRole::Constraint, &[], recognize)
+    }
+
+    pub(crate) const fn fallback_assertion_surface(
+        name: &'static str,
+        recognize: ExprRecognizer,
+    ) -> Self {
+        Self::fallback_with_ordering(name, SugarRole::AssertionSurface, &[], recognize)
     }
 
     pub(crate) fn role(&self) -> SugarRole {
@@ -154,6 +182,7 @@ pub(crate) struct ItemSugarClaim {
     name: &'static str,
     role: SugarRole,
     comes_before: &'static [&'static str],
+    fallback_well: bool,
     recognize: ItemRecognizer,
 }
 
@@ -176,6 +205,7 @@ impl ItemSugarClaim {
             name,
             role,
             comes_before,
+            fallback_well: false,
             recognize,
         }
     }
@@ -197,6 +227,7 @@ impl ItemSugarClaim {
             name: self.name,
             role: self.role,
             comes_before: self.comes_before,
+            fallback_well: self.fallback_well,
             node,
         })
     }
@@ -207,6 +238,7 @@ pub(crate) struct SugarCandidate {
     name: &'static str,
     role: SugarRole,
     comes_before: &'static [&'static str],
+    fallback_well: bool,
     node: Box<dyn Sugar>,
 }
 
@@ -224,6 +256,10 @@ impl SugarCandidate {
         self.comes_before
     }
 
+    pub(crate) fn is_fallback_well(&self) -> bool {
+        self.fallback_well
+    }
+
     pub(crate) fn into_node(self) -> Box<dyn Sugar> {
         self.node
     }
@@ -239,6 +275,7 @@ impl ExprSugarClaim {
             name: self.name,
             role: self.role,
             comes_before: self.comes_before,
+            fallback_well: self.fallback_well,
             node,
         })
     }

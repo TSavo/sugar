@@ -16,7 +16,7 @@
 // inside a call ctor is NOT a relational operand) while letting `&place == value` warrant
 // the pointee instead of an uninterpreted `ref(..)` a bad twin could mis-satisfy.
 
-use crate::sugar::claim::{ExprSugarClaim, SugarRole};
+use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::ctor_term::CtorSugar;
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::term_leaf::reasoned_hit;
@@ -24,7 +24,7 @@ use crate::{is_immutable_value_expr, token_key, Effect, Sugar, UnsupportedTermCa
 use syn::Expr;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::new("reference_term", SugarRole::Term, recognize);
+    ExprSugarClaim::fallback_term("reference_term", recognize);
 
 /// TERM recognizer for `Expr::Reference`.
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
