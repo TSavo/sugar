@@ -19733,6 +19733,51 @@ fn type_inferred_parse_literal_twin() {
 }
 
 #[test]
+fn rpc_source_refuses_literal_range_enumeration_boundary_with_literal_twin() {
+    let doc = run_rpc_lift(
+        "src/source_literal_range_boundary.rs",
+        r#"
+#[test]
+fn literal_unbounded_range_refused() {
+    assert_eq!((0..).size_hint(), (usize::MAX, None));
+}
+
+#[test]
+fn literal_runtime_range_bound_refused(n: usize) {
+    assert_eq!((0..n).size_hint(), (n, Some(n)));
+}
+
+#[test]
+fn literal_char_range_refused() {
+    assert_eq!(('\u{D7FF}'..='\u{E000}').size_hint(), (2, Some(2)));
+}
+
+#[test]
+fn literal_range_literal_twin() {
+    assert_eq!((0..3).size_hint(), (3, Some(3)));
+}
+"#,
+    );
+
+    assert_rpc_source_refused(
+        &doc,
+        "literal_unbounded_range_refused",
+        "literal range enumeration boundary",
+    );
+    assert_rpc_source_refused(
+        &doc,
+        "literal_runtime_range_bound_refused",
+        "literal range enumeration boundary",
+    );
+    assert_rpc_source_refused(
+        &doc,
+        "literal_char_range_refused",
+        "literal range enumeration boundary",
+    );
+    assert_rpc_source_warranted(&doc, "literal_range_literal_twin");
+}
+
+#[test]
 fn rpc_source_refuses_mutating_closure_value_construction_with_literal_twin() {
     let doc = run_rpc_lift(
         "src/source_mutating_closure_value.rs",
