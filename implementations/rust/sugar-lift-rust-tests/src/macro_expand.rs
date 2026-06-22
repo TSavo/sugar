@@ -329,11 +329,22 @@ fn match_repetition(
         // Inside a round, a trailing greedy fragment must stop at the separator
         // (if any) or at the repetition's follow token.
         let round_terminator = sep.as_ref().or_else(|| follow.first());
+        // `$($N:expr)+` has no separator and no follow token; the Rust matcher
+        // still splits `0 1 2` into one expression fragment per round. Our
+        // ordinary expr capture is intentionally greedy, so add the narrow,
+        // unambiguous case here: one metavariable expression whose next token-tree
+        // alone parses as an Expr. Anything composite/ambiguous declines.
+        let matched = if sep.is_none() && round_terminator.is_none() {
+            match_unseparated_single_expr_round(inner, &input[ii..], &mut round)
+                .or_else(|| match_prefix(inner, &input[ii..], &mut round, round_terminator))
+        } else {
+            match_prefix(inner, &input[ii..], &mut round, round_terminator)
+        };
         // A round that does not match (no input, or the inner matcher declines)
         // must NOT abort the whole repetition: backtrack any just-consumed
         // separator and stop cleanly. `?` short-circuits the `?`-operator
         // propagation that previously failed the match on a trailing separator.
-        match match_prefix(inner, &input[ii..], &mut round, round_terminator) {
+        match matched {
             Some(consumed) if consumed > 0 => {
                 ii += consumed;
                 rounds.push(round);
@@ -362,6 +373,48 @@ fn match_repetition(
         bindings.insert(name, Binding::Repeated(collected));
     }
     Some(ii)
+}
+
+fn match_unseparated_single_expr_round(
+    inner: &[TokenTree],
+    input: &[TokenTree],
+    bindings: &mut Bindings,
+) -> Option<usize> {
+    if inner.len() != 4 {
+        return None;
+    }
+    let TokenTree::Punct(dollar) = &inner[0] else {
+        return None;
+    };
+    if dollar.as_char() != '$' {
+        return None;
+    }
+    let TokenTree::Ident(name) = &inner[1] else {
+        return None;
+    };
+    let TokenTree::Punct(colon) = &inner[2] else {
+        return None;
+    };
+    if colon.as_char() != ':' {
+        return None;
+    }
+    let TokenTree::Ident(frag) = &inner[3] else {
+        return None;
+    };
+    if frag != "expr" {
+        return None;
+    }
+    let token = input.first()?.clone();
+    let tokens: TokenStream = std::iter::once(token).collect();
+    syn::parse2::<syn::Expr>(tokens.clone()).ok()?;
+    bindings.insert(
+        name.to_string(),
+        Binding::Single {
+            tokens,
+            frag: "expr".to_string(),
+        },
+    );
+    Some(1)
 }
 
 /// Does the follow-sequence match at the start of `input`? Used to terminate a
@@ -688,6 +741,27 @@ mod tests {
             out.to_string(),
             quote! { assert_eq!(a, 0); assert_eq!(b, 0); assert_eq!(c, 0); }.to_string()
         );
+    }
+
+    #[test]
+    fn expands_plus_repetition_without_separator_into_block_repetition() {
+        let def = quote! {
+            ($($N:expr)+) => {
+                $({
+                    type Array = [u8; $N];
+                    let mut array: Array = [0; $N];
+                    let slice: &[u8] = &array[..];
+                    let result = <&Array>::try_from(slice);
+                    assert_eq!(&array, result.unwrap());
+                })+
+            };
+        };
+        let out = expand(&rules_of(def), quote! { 0 1 2 })
+            .unwrap_or_else(|e| panic!("expand err: {e}"));
+        let expanded = out.to_string();
+        assert!(expanded.contains("assert_eq"), "{expanded}");
+        assert!(expanded.contains("[u8 ; 0]"), "{expanded}");
+        assert!(expanded.contains("[u8 ; 2]"), "{expanded}");
     }
 
     #[test]
