@@ -512,6 +512,7 @@ impl TemporalRewriteState {
             Expr::Array(_) | Expr::Range(_) | Expr::Repeat(_) => Some(expr.clone()),
             Expr::Macro(expr_macro) if macro_name_is(&expr_macro.mac, "vec") => Some(expr.clone()),
             Expr::Call(call) if collection_constructor_sequence(call) => Some(expr.clone()),
+            Expr::Call(call) => self.trackable_ufcs_into_iter(call),
             Expr::MethodCall(call) if trackable_sequence_method(&call.method.to_string()) => {
                 if !trackable_sequence_args(call) {
                     return None;
@@ -526,6 +527,16 @@ impl TemporalRewriteState {
             Expr::Group(group) => self.trackable_sequence_expr(&group.expr),
             _ => None,
         }
+    }
+
+    fn trackable_ufcs_into_iter(&self, call: &syn::ExprCall) -> Option<Expr> {
+        if !ufcs_into_iter_call(call) || call.args.len() != 1 {
+            return None;
+        }
+        let receiver = self.trackable_sequence_expr(call.args.first()?)?;
+        // Keep this local to temporal rewrites: the global UFCS callsite key stays stable,
+        // while a tracked SSA-current iterator can reuse the existing method-adaptor path.
+        Some(syn::parse_quote!((#receiver).into_iter()))
     }
 
     fn int_value(&self, expr: &Expr) -> Option<i128> {
@@ -654,6 +665,19 @@ fn collection_constructor_sequence(call: &syn::ExprCall) -> bool {
         segments.as_slice(),
         [head, method] if (head == "Vec" && method == "from") || (head == "Box" && method == "new")
     )
+}
+
+fn ufcs_into_iter_call(call: &syn::ExprCall) -> bool {
+    let Expr::Path(path) = strip_refs_groups(&call.func) else {
+        return false;
+    };
+    let segments = path
+        .path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>();
+    matches!(segments.as_slice(), [head, method] if head == "IntoIterator" && method == "into_iter")
 }
 
 fn assignment_op(op: &BinOp) -> Option<BinOpKind> {

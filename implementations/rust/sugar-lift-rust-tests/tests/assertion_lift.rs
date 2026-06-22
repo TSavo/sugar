@@ -21105,6 +21105,30 @@ fn bounded_next_binding_snapshots_return_and_advances_receiver_state() {
             "it.len() must read the post-consumption iterator state"
         );
     }
+
+    let src = r#"
+        #[test]
+        fn t_bound_ufcs_into_iter_count() {
+            let v = [0, 1, 2, 3, 4];
+            let mut iter2 = IntoIterator::into_iter(v);
+            iter2.next();
+            iter2.next();
+            assert_eq!(iter2.count(), 3);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/array/ufcs_into_iter_count.rs");
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        dug_eq_int_pairs(single_warranted_decl(&out)),
+        vec![(3, 3)],
+        "UFCS IntoIterator local must resolve to the post-next assigner"
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "ufcs_into_iter_count_good",
+    ) {
+        assert!(sat, "post-consumption UFCS iterator count should be 3");
+    }
 }
 
 #[test]
@@ -21125,6 +21149,33 @@ fn bounded_next_binding_bad_remaining_len_refutes() {
         assert!(
             !sat,
             "wrong post-consumption remaining length must be z3-UNSAT"
+        );
+    }
+
+    let src = r#"
+        #[test]
+        fn t_bound_ufcs_into_iter_count_bad() {
+            let v = [0, 1, 2, 3, 4];
+            let mut iter2 = IntoIterator::into_iter(v);
+            iter2.next();
+            iter2.next();
+            assert_eq!(iter2.count(), 4);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/array/ufcs_into_iter_count_bad.rs");
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        dug_eq_int_pairs(single_warranted_decl(&out)),
+        vec![(3, 4)],
+        "UFCS IntoIterator bad twin must carry the real remaining count"
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "ufcs_into_iter_count_bad",
+    ) {
+        assert!(
+            !sat,
+            "wrong post-consumption UFCS iterator count must be z3-UNSAT"
         );
     }
 }
