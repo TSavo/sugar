@@ -66,13 +66,13 @@ use sugar_ir_symbolic::{make_var, num, ConstValue, Sort, Term};
 use syn::{Expr, Stmt};
 use tracing::debug;
 
-use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::factory::{build_composite, has_composite, SugarBuildCtx};
 use crate::sugar::method;
-use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::{
-    closure_single_param_ident, const_eval_unary_closure, const_fold_acc_update, const_fold_int_term,
-    parse_int_lit, simple_path_name, strip_refs_groups, ConstVal, Desugared, Outcome, Sugar, SugarCtx,
+    closure_single_param_ident, const_eval_unary_closure, const_fold_acc_update,
+    const_fold_int_term, parse_int_lit, simple_path_name, strip_refs_groups, ConstVal, Desugared,
+    Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -176,8 +176,9 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     // as a pre-pass that peels scan's OWN receiver via `build_literal_sequence_composite`
     // and threads the state inline. Falls through to the standard peel path if the
     // receiver is not a recognized scan call.
-    let inner = crate::sugar::scan::try_build_scan_inner(&call.receiver, fcx)
-        .or_else(|| method_family::build_literal_sequence_composite(&call.receiver, fcx))?;
+    let inner = crate::sugar::scan::try_build_scan_inner(&call.receiver, fcx).or_else(|| {
+        has_composite(&call.receiver, fcx).then(|| build_composite(&call.receiver, fcx))
+    })?;
     // The opaque `method:` fallback -- the EXACT node `method::recognize`
     // builds for this same expr (built DIRECTLY, not via `build_term`, which would re-enter
     // this recognizer and loop). Emitted verbatim if the literal desugar does not cleanly
