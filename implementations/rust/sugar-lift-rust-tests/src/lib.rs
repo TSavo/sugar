@@ -40,7 +40,6 @@ pub mod sugar {
     pub mod bound;
     pub mod bound_path;
     pub mod call;
-    pub mod call_sequence;
     pub mod callsite;
     pub mod cast_term;
     pub mod catalog;
@@ -7430,39 +7429,26 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
         }
     }
 
-    /// Instantiate the normal-return universe for a callsite subject. When visible
-    /// source lets us dig the call's value, normal return is both no panic on that
-    /// callsite and the dug value universe for that same callsite.
+    /// Instantiate the normal-return universe for a callsite subject.
+    ///
+    /// This is deliberately callsite-local: a visible callee body owns its own source
+    /// contract (`post`), and the linker composes that contract with this callsite
+    /// obligation. Do not paste the callee's returned literal into the caller formula
+    /// here; that is the old inline-body model.
     pub(crate) fn normal_return_universe_for_subject(
         &self,
         expr: &Expr,
         subject: Rc<Term>,
     ) -> Option<Rc<Formula>> {
-        self.inline_callsite_value(expr).map(|value| {
-            let no_panic = not_(atomic_("panic", vec![subject.clone()]));
-            and_(vec![no_panic, eq(subject, value)])
-        })
+        let _ = expr;
+        Some(not_(atomic_("panic", vec![subject])))
     }
 
-    fn inline_callsite_value(&self, expr: &Expr) -> Option<Rc<Term>> {
-        match strip_refs_groups(expr) {
-            Expr::Call(call) => {
-                let args: Vec<Expr> = call.args.iter().cloned().collect();
-                self.try_inline_value_call(&call.func, &args)
-            }
-            Expr::MethodCall(call) => {
-                let args: Vec<Expr> = call.args.iter().cloned().collect();
-                self.try_inline_value_method(&call.method.to_string(), &call.receiver, &args)
-            }
-            _ => None,
-        }
-    }
-
-    /// TERM-POSITION value-call inlining (capability #1), EXACT-OR-BAIL. Try to PEEL a
-    /// free-function call `func(args...)` to a fully-grounded term by resolving the
-    /// callee to its in-source body (`scope.fn_registry()`), β-reducing it
-    /// (`resolve_value_call_inline`), re-building the substituted RETURN EXPR through the
-    /// term factory, and desugaring that subtree with the inline depth bumped.
+    /// Closed callback evaluation for specific Sugar semantics. This is not ordinary
+    /// callsite lifting: `CallSugar` must keep `call:f(args)` in the caller formula so
+    /// the linker can compose the callee source contract. A stdlib Sugar such as a
+    /// literal-domain function map may use this only when the language operation itself
+    /// demands applying a visible pure callback to a literal element.
     ///
     /// Returns `Some(term)` ONLY when the rebuilt term is FULLY GROUNDED -- it re-built
     /// all the way to literals/arith with NO new opaque `call:`/`method:` leaf and NO
@@ -7470,9 +7456,7 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
     /// arithmetic/literal body converts hollow-`call:h` into a grounded `+(2,1)` with
     /// REAL value teeth (a wrong anchor goes z3-UNSAT). A body that still bottoms out in
     /// an opaque leaf (a further no-source call, a runtime method, a `&mut` adaptor)
-    /// returns `None`, so `CallSugar` keeps the honest opaque `call:` ctor UNCHANGED --
-    /// the bail. This can only ever convert hollow-B -> grounded-A; it NEVER inflates a
-    /// discharge into an unclassified.
+    /// returns `None`.
     pub(crate) fn try_inline_value_call(&self, func: &Expr, args: &[Expr]) -> Option<Rc<Term>> {
         if self.macro_depth >= MAX_VALUE_CALL_INLINE_DEPTH {
             return None; // recursion guard -> bail to opaque
@@ -7498,90 +7482,8 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
         };
         // EXACT-OR-BAIL: commit the peel only if it grounded all the way out.
         if is_fully_grounded_term(&term) {
-            // Record this helper (and any it transitively peeled) as a UNIVERSE member,
-            // so the classifier demotes it to "support" rather than re-minting a
-            // standalone `out=call:NAME` contract -- the hollow-B symbol we just killed.
             if let Some(name) = value_call_support_key(func) {
                 self.scope.record_inlined_value_helper(&name);
-            }
-            Some(term)
-        } else {
-            None
-        }
-    }
-
-    /// COMPOSITE-POSITION value-call inlining, the sequence-floor sibling of
-    /// `try_inline_value_call`. Resolve a visible pure helper, rebuild its substituted
-    /// return expression through the composite factory, and commit only if that recursive
-    /// walk bottoms out as a finite sequence. Otherwise the owning Sugar converts the
-    /// decline into the normal structural/effect `Hit`.
-    pub(crate) fn try_inline_sequence_call(&self, func: &Expr, args: &[Expr]) -> Outcome {
-        if self.macro_depth >= MAX_VALUE_CALL_INLINE_DEPTH {
-            return Outcome::from_opt(None);
-        }
-        let Some(inlined) = resolve_value_call_inline(func, args, self.scope, self.options) else {
-            return Outcome::from_opt(None);
-        };
-        let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
-        let fcx = sugar::factory::SugarBuildCtx::new(self.scope, self.options, &let_inits);
-        let node = sugar::factory::build_composite(&inlined, &fcx);
-        let mut fw = self.float_widths.borrow_mut();
-        let child = sugar_ctx(
-            self.scope,
-            self.options,
-            self.reducer,
-            &mut *fw,
-            self.macro_depth + 1,
-        );
-        let seq = match node.desugar(&child) {
-            Outcome::Dug(d) => match d.into_seq() {
-                Some(seq) => seq,
-                None => return Outcome::from_opt(None),
-            },
-            Outcome::Hit(effect) => return Outcome::Hit(effect),
-        };
-        if let Some(name) = value_call_support_key(func) {
-            self.scope.record_inlined_value_helper(&name);
-        }
-        Outcome::Dug(Desugared::Seq(seq))
-    }
-
-    /// TERM-POSITION method inlining, the method-call sibling of
-    /// `try_inline_value_call`. Resolve an inherent impl method from visible source,
-    /// substitute `self := receiver` and params := args, then rebuild the returned expr
-    /// through the recursive factory. The peel commits only when the rebuilt result fully
-    /// grounds; otherwise `MethodSugar` keeps the opaque `method:` ctor unchanged.
-    pub(crate) fn try_inline_value_method(
-        &self,
-        method: &str,
-        receiver: &Expr,
-        args: &[Expr],
-    ) -> Option<Rc<Term>> {
-        if self.macro_depth >= MAX_VALUE_CALL_INLINE_DEPTH {
-            return None;
-        }
-        let (support_key, inlined) =
-            resolve_value_method_inline(method, receiver, args, self.scope, self.options)?;
-        let inlined = resolve_known_value_projection(&inlined, self.scope, self.options);
-        let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
-        let fcx = sugar::factory::SugarBuildCtx::new(self.scope, self.options, &let_inits);
-        let node = sugar::factory::build_term(&inlined, &fcx);
-        let mut fw = self.float_widths.borrow_mut();
-        let child = sugar_ctx(
-            self.scope,
-            self.options,
-            self.reducer,
-            &mut *fw,
-            self.macro_depth + 1,
-        );
-        let term = match node.desugar(&child) {
-            Outcome::Dug(d) => d.into_term()?,
-            Outcome::Hit(_) => return None,
-        };
-        if is_fully_grounded_term(&term) {
-            self.scope.record_inlined_value_helper(&support_key);
-            for key in receiver_source_support_keys(receiver, self.scope, self.options) {
-                self.scope.record_inlined_value_helper(&key);
             }
             Some(term)
         } else {
@@ -13406,39 +13308,6 @@ fn resolve_assoc_value_inline(
     value_body_tail_substituted(&helper.block, &mut binds)
 }
 
-fn resolve_value_method_inline(
-    method: &str,
-    receiver: &Expr,
-    args: &[Expr],
-    scope: &TemporalScope,
-    options: &LiftOptions,
-) -> Option<(String, Expr)> {
-    let self_ty = receiver_source_type_key(receiver, scope, options, 0)?;
-    let helper = scope
-        .impl_value_registry()
-        .lookup_method(&self_ty, method)?;
-    if !matches!(cfg_resolve(&helper.attrs, options), CfgDisposition::Present) {
-        return None;
-    }
-    if helper.sig.asyncness.is_some() {
-        return None;
-    }
-    if count_asserts_in_stmts(&helper.block.stmts) != 0 {
-        return None;
-    }
-    let params = impl_value_param_names(&helper, true)?;
-    if params.len() != args.len() {
-        return None;
-    }
-    let mut binds = ExprBindings::new();
-    binds.insert("self".to_string(), receiver.clone());
-    for (param, arg) in params.into_iter().zip(args.iter()) {
-        binds.insert(param, arg.clone());
-    }
-    let body = value_body_tail_substituted(&helper.block, &mut binds)?;
-    Some((format!("{self_ty}::{method}"), body))
-}
-
 fn receiver_source_type_key(
     receiver: &Expr,
     scope: &TemporalScope,
@@ -13480,53 +13349,6 @@ fn receiver_source_type_key(
             receiver_source_type_key(&resolved, scope, options, depth + 1)
         }
         _ => None,
-    }
-}
-
-fn receiver_source_support_keys(
-    receiver: &Expr,
-    scope: &TemporalScope,
-    options: &LiftOptions,
-) -> BTreeSet<String> {
-    let mut keys = BTreeSet::new();
-    collect_source_expr_support_keys(receiver, scope, options, 0, &mut keys);
-    keys
-}
-
-fn collect_source_expr_support_keys(
-    expr: &Expr,
-    scope: &TemporalScope,
-    options: &LiftOptions,
-    depth: usize,
-    out: &mut BTreeSet<String>,
-) {
-    if depth >= MAX_VALUE_CALL_INLINE_DEPTH {
-        return;
-    }
-    match strip_refs_groups(expr) {
-        Expr::Path(path) if path.qself.is_none() => {
-            let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) else {
-                return;
-            };
-            if let Some(init) = scope.let_binding(&name) {
-                collect_source_expr_support_keys(init, scope, options, depth + 1, out);
-            }
-        }
-        Expr::Call(call) => {
-            let args: Vec<Expr> = call.args.iter().cloned().collect();
-            if let Some(resolved) = resolve_value_call_inline(&call.func, &args, scope, options) {
-                if let Some(key) = value_call_support_key(&call.func) {
-                    out.insert(key);
-                }
-                collect_source_expr_support_keys(&resolved, scope, options, depth + 1, out);
-            }
-        }
-        Expr::Field(field) => {
-            if let Some(resolved) = resolve_field_projection(field, scope, options, depth + 1) {
-                collect_source_expr_support_keys(&resolved, scope, options, depth + 1, out);
-            }
-        }
-        _ => {}
     }
 }
 
