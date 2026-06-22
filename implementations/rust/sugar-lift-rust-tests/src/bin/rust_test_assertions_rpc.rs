@@ -30,6 +30,8 @@ const KIT_DECLARATION_RPC_METHOD: &str = "sugar.plugin.kit_declaration";
 const COMPONENT_PLAN_RPC_METHOD: &str = "sugar.component.plan";
 const RESOLVE_PROOF_BY_CID_RPC_METHOD: &str = "sugar.plugin.resolve_proof_by_cid";
 const RESOLVE_SOURCE_MEMENTO_RPC_METHOD: &str = "sugar.plugin.resolve_source_memento";
+const SHOULD_PANIC_OPAQUE_TERMINAL_REASON: &str =
+    "should_panic terminal panic not text-determined (opaque body)";
 
 fn current_rss_kib() -> Option<u64> {
     #[cfg(target_os = "linux")]
@@ -1237,6 +1239,11 @@ fn clean_source_warning_classification(
     if reason.contains("inactive const if branch") {
         return Some(SourceWarningClassification::Inactive(
             "inactive const if branch",
+        ));
+    }
+    if reason.contains(SHOULD_PANIC_OPAQUE_TERMINAL_REASON) {
+        return Some(SourceWarningClassification::Refused(
+            SHOULD_PANIC_OPAQUE_TERMINAL_REASON,
         ));
     }
     if reason.contains("literal domain is empty") {
@@ -3003,6 +3010,34 @@ mod tests {
             locus["status"], "warranted",
             "{ast_path} is the literal twin and must still warrant: {locus}"
         );
+    }
+
+    #[test]
+    fn source_locus_should_panic_opaque_body_refuses_with_callsite_twin() {
+        let (_root, response) = lift_fixture(
+            "source_locus_should_panic_opaque_body_refuses_with_callsite_twin",
+            r#"
+                #[test]
+                #[should_panic]
+                fn opaque_should_panic() {
+                    let _ = format!("{}", 42);
+                }
+
+                #[test]
+                #[should_panic]
+                fn callsite_should_panic() {
+                    let mut m = Machine::new();
+                    m.finish();
+                }
+            "#,
+        );
+
+        assert_source_locus_refused(
+            &response,
+            "opaque_should_panic",
+            "should_panic terminal panic not text-determined (opaque body)",
+        );
+        assert_source_locus_warranted(&response, "callsite_should_panic");
     }
 
     fn coretests_corpus_source(relative: &str) -> String {
