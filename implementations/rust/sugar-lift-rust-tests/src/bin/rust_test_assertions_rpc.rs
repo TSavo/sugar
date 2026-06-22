@@ -417,12 +417,12 @@ fn lift(params: &Value) -> Value {
                 .warnings
                 .iter()
                 .find(|w| w.item_name == name || w.item_name.ends_with(&format!("::{name}")));
-            // TOTAL classifier. Every function exits into exactly one status. Warranting
-            // remains evidence-based; the only terminal refusals here are named
-            // values-not-in-text boundaries or finite-or-refuse caps. Everything else
-            // falls through to `unresolved` -- the HONEST dark, "we don't have a Sugar
-            // for that yet", the residual the campaign drives to 0 by real classification
-            // work.
+            // TOTAL classifier. Every function exits into exactly one of:
+            //   warranted (dug to a value) | refused (named boundary) | support (inert/vacuous)
+            // `unresolved` is UNCLASSIFIED — not a tolerated dark bucket, not an
+            // honest residual, not a counter to lower someday. It is a totality failure
+            // that fires a panic (below) naming the locus and requesting a classifier.
+            // The path to green is adding a Sugar recognizer — not silencing the alarm.
             let (status, reason): (&str, Option<String>) = if file_decls_refused && is_test {
                 // The whole file's decl emit was refused (size bound) -- its assertions
                 // have no usable pin, so each is honestly UNRESOLVED with the bound reason.
@@ -468,6 +468,26 @@ fn lift(params: &Value) -> Value {
                 }
                 (s, r)
             };
+            // TOTALITY PANIC — order_candidates_or_panic style.
+            // Every locus MUST exit as warranted | refused | support.
+            // `unresolved` is UNCLASSIFIED: a Sugar coverage failure, not a tolerated
+            // dark state. A locus that lands here panics immediately, naming the site
+            // and requesting a classifier. There is no allowlist, no exception,
+            // no "honest dark." Add a recognizer: dig → warranted, hit → refused,
+            // mark inert → support. The panic IS the instrument.
+            if status == "unresolved" {
+                let kind = if is_test { "test-fn" } else { "fn" };
+                let detail = reason.as_deref().unwrap_or("(none)");
+                panic!(
+                    "UNCLASSIFIED LOCUS: {rel}::{name} [{kind}]\n\
+                     unresolved reason: {detail}\n\
+                     Classify this locus — one of:\n\
+                       dig to a literal value     → warranted\n\
+                       name a values-not-in-text boundary → refused\n\
+                       confirm this locus is inert (no value proposition) → support\n\
+                     There is no tolerance for unclassified loci. Add a recognizer."
+                );
+            }
             let mut locus = json!({
                 "file": rel,
                 "role": "rust-test-assertions",
