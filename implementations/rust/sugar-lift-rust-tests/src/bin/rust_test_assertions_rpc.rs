@@ -2632,7 +2632,7 @@ mod tests {
         );
         assert_eq!(
             fact_and_support["facts"].as_array().unwrap().len(),
-            2,
+            1,
             "{fact_and_support}"
         );
         assert_eq!(
@@ -2640,11 +2640,9 @@ mod tests {
             0,
             "{fact_and_support}"
         );
-        assert_ne!(
-            fact_and_support["facts"][0]["contract"],
-            fact_and_support["facts"][1]["contract"],
-            "kit emits separate contracts; linker/conjoiner owns composing them: {fact_and_support}"
-        );
+        let fact_and_support_contract = fact_and_support["facts"][0]["contract"]
+            .as_str()
+            .expect("fact+support contract name");
 
         let support_only = audits
             .iter()
@@ -2688,12 +2686,21 @@ mod tests {
         assert_eq!(contract["sourceWarrants"][0]["span"]["end_line"], 10);
         assert_eq!(contract["sourceWarrants"][0], *fact_memento);
 
-        let normal_return_contract = fact_and_support["facts"][1]["contract"]
-            .as_str()
-            .expect("normal-return contract name");
+        let answer_contract = ir
+            .iter()
+            .find(|entry| {
+                entry["kind"] == json!("function-contract")
+                    && entry["bridgeSourceSymbol"] == json!("call:answer")
+            })
+            .expect("answer source contract is emitted for linker/conjoiner composition");
+        assert_eq!(answer_contract["name"], json!("rust-source::answer"));
         assert!(
-            ir.iter().any(|entry| entry["name"] == normal_return_contract),
-            "normal-return fact contract is still emitted to ir for linker/conjoiner composition: {response}"
+            response["callEdges"].as_array().is_some_and(|edges| edges.iter().any(|edge| {
+                edge["sourceContract"] == json!(fact_and_support_contract)
+                    && edge["targetSymbol"] == json!("call:answer")
+                    && edge["targetContract"] == json!("rust-source::answer")
+            })),
+            "assertion fact must bridge to answer source contract: {response}"
         );
 
         let _ = std::fs::remove_dir_all(root);
