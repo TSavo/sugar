@@ -56,7 +56,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
 }
 
 /// The `method:<m>` ctor key: `method.turbofish` appends the angle-args key.
-fn method_key(call: &syn::ExprMethodCall) -> String {
+pub(crate) fn method_key(call: &syn::ExprMethodCall) -> String {
     match &call.turbofish {
         Some(args) => format!("{}{}", call.method, angle_args_key(args)),
         None => call.method.to_string(),
