@@ -337,7 +337,12 @@ impl Tally {
                     self.z3_absent += 1;
                 }
                 // Bucket the reason by its leading token (compile/ill-sorted/...).
-                let key = reason.split(':').next().unwrap_or("other").trim().to_string();
+                let key = reason
+                    .split(':')
+                    .next()
+                    .unwrap_or("other")
+                    .trim()
+                    .to_string();
                 *self.uncheckable_reasons.entry(key).or_default() += 1;
             }
         }
@@ -493,7 +498,10 @@ fn main() {
         // refutation from this file.
         let file_has_mut_skip = out.skip_reasons.iter().any(|r| {
             let r = r.to_lowercase();
-            (r.contains("&mut") || r.contains("mutation") || r.contains("deref") || r.contains("borrow"))
+            r.contains("&mut")
+                || r.contains("mutation")
+                || r.contains("deref")
+                || r.contains("borrow")
         });
         // Warranted obligations = decls backing a warranted assertion fact with
         // >=1 scalar claim (mirrors the kit's own `warranted_decls`).
@@ -523,7 +531,10 @@ fn main() {
                 _ => no_inv_total += 1,
             }
         }
-        eprintln!("  lift {}/{total_files}: {rel} -> {file_obs} obligations", fi + 1);
+        eprintln!(
+            "  lift {}/{total_files}: {rel} -> {file_obs} obligations",
+            fi + 1
+        );
     }
     eprintln!(
         "discharge_sweep: {} warranted obligations to check (+{} no-inv)",
@@ -545,9 +556,7 @@ fn main() {
             let full = discharge_inv(inv, &z3_path, label);
             // Value-claim teeth: reuse FULL when no panic conjunct (no extra z3).
             let value = match value_only_inv(inv) {
-                Some(vi) if &vi != inv => {
-                    Some(discharge_inv(&vi, &z3_path, &format!("{label}_v")))
-                }
+                Some(vi) if &vi != inv => Some(discharge_inv(&vi, &z3_path, &format!("{label}_v"))),
                 Some(_) => Some(full.clone()),
                 None => None, // panic-only obligation -- no value claim to teeth
             };
@@ -567,19 +576,22 @@ fn main() {
             }
             (full, value, refuted, undecided)
         })
-        .fold(Acc::default, |mut acc, (full, value, refuted, undecided)| {
-            acc.full.record(&full);
-            if let Some(v) = &value {
-                acc.value.record(v);
-            }
-            if let Some(r) = refuted {
-                acc.refuted.push(r);
-            }
-            if let Some(u) = undecided {
-                acc.undecided.push(u);
-            }
-            acc
-        })
+        .fold(
+            Acc::default,
+            |mut acc, (full, value, refuted, undecided)| {
+                acc.full.record(&full);
+                if let Some(v) = &value {
+                    acc.value.record(v);
+                }
+                if let Some(r) = refuted {
+                    acc.refuted.push(r);
+                }
+                if let Some(u) = undecided {
+                    acc.undecided.push(u);
+                }
+                acc
+            },
+        )
         .reduce(Acc::default, |mut a, b| {
             a.merge(b);
             a
@@ -597,7 +609,10 @@ fn main() {
         let mut recs = acc.refuted.clone();
         recs.sort_by(|a, b| a.file.cmp(&b.file).then(a.signature.cmp(&b.signature)));
         for r in &recs {
-            lines.push_str(&format!("{}\t{}\t{}\n", r.file, r.signature, r.mut_skip_class));
+            lines.push_str(&format!(
+                "{}\t{}\t{}\n",
+                r.file, r.signature, r.mut_skip_class
+            ));
         }
         if let Err(e) = std::fs::write(&path, lines) {
             eprintln!("discharge_sweep: write --dump-refuted {path}: {e}");
@@ -801,11 +816,19 @@ mod tests {
         let Some(z3) = z3() else { return };
         // Teethed: literal index. True -> discharged; false -> refuted.
         assert!(matches!(
-            discharge_inv(&inv_of("#[test] fn t() { assert_eq!([7,7,7][1], 7); }"), &z3, "t1"),
+            discharge_inv(
+                &inv_of("#[test] fn t() { assert_eq!([7,7,7][1], 7); }"),
+                &z3,
+                "t1"
+            ),
             Teeth::Discharged { .. }
         ));
         assert_eq!(
-            discharge_inv(&inv_of("#[test] fn t() { assert_eq!([7,7,7][1], 99); }"), &z3, "t2"),
+            discharge_inv(
+                &inv_of("#[test] fn t() { assert_eq!([7,7,7][1], 99); }"),
+                &z3,
+                "t2"
+            ),
             Teeth::Refuted
         );
         // Congruence-only / opaque shape. The CARDINAL-SIN invariant: a FALSE

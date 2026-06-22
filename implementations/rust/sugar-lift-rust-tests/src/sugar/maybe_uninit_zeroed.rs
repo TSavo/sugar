@@ -176,8 +176,8 @@ fn primitive_zero_term(ty: &Type) -> Option<Rc<Term>> {
         return None;
     }
     match tp.path.get_ident()?.to_string().as_str() {
-        "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64"
-        | "i128" | "isize" => Some(num(0)),
+        "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64" | "i128"
+        | "isize" => Some(num(0)),
         "bool" => Some(bool_const(false)),
         // All other types — NonZero*, &T, *T, structs, enums, … — fall through
         // to the opaque generic sugar.  Never fabricate a zero for them.

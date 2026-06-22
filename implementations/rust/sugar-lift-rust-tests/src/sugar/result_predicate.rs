@@ -66,7 +66,11 @@ impl Sugar for ResultPredicateSugar {
         let Some(is_ok) = result_presence(&receiver) else {
             return Outcome::from_opt(None);
         };
-        let value = if self.method == "is_ok" { is_ok } else { !is_ok };
+        let value = if self.method == "is_ok" {
+            is_ok
+        } else {
+            !is_ok
+        };
         debug!(
             target: "sugar_lift_rust_tests::sugar::result_predicate",
             method = self.method.as_str(),

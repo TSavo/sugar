@@ -89,11 +89,19 @@ fn decode_assoc_const(path: &ExprPath, negate: bool) -> Option<(u64, i16, i8)> {
     let negative = negate ^ neg_const;
     match ty.as_str() {
         "f32" => {
-            let v = if negative { f32::NEG_INFINITY } else { f32::INFINITY };
+            let v = if negative {
+                f32::NEG_INFINITY
+            } else {
+                f32::INFINITY
+            };
             Some(integer_decode_f32(v))
         }
         "f64" => {
-            let v = if negative { f64::NEG_INFINITY } else { f64::INFINITY };
+            let v = if negative {
+                f64::NEG_INFINITY
+            } else {
+                f64::INFINITY
+            };
             Some(integer_decode_f64(v))
         }
         _ => None,

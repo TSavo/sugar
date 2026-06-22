@@ -280,11 +280,7 @@ impl StringPredicateSugar {
         };
         let result = eval_ascii_char_class(ch, atom_name);
         let receiver = str_const(ch.to_string());
-        let name = method_assertion_name(
-            &self.method,
-            vec![receiver],
-            ctx.scope.local_scope(),
-        );
+        let name = method_assertion_name(&self.method, vec![receiver], ctx.scope.local_scope());
         constraint(eq(bool_const(result), bool_const(true)), name)
     }
 
@@ -435,8 +431,12 @@ fn eval_ascii_char_class(ch: char, atom_name: &str) -> bool {
 /// Byte literals are valid for all ASCII predicate calls — `b'A'.is_ascii_uppercase()`.
 fn byte_or_char_literal_value(expr: &Expr) -> Option<char> {
     match expr {
-        Expr::Lit(ExprLit { lit: Lit::Char(c), .. }) => Some(c.value()),
-        Expr::Lit(ExprLit { lit: Lit::Byte(b), .. }) => Some(char::from(b.value())),
+        Expr::Lit(ExprLit {
+            lit: Lit::Char(c), ..
+        }) => Some(c.value()),
+        Expr::Lit(ExprLit {
+            lit: Lit::Byte(b), ..
+        }) => Some(char::from(b.value())),
         Expr::Paren(paren) => byte_or_char_literal_value(&paren.expr),
         Expr::Group(group) => byte_or_char_literal_value(&group.expr),
         _ => None,
@@ -446,8 +446,12 @@ fn byte_or_char_literal_value(expr: &Expr) -> Option<char> {
 /// Extract the string value from a string literal or char literal (char → single-char string).
 fn string_literal_string_value(expr: &Expr) -> Option<String> {
     match expr {
-        Expr::Lit(ExprLit { lit: Lit::Str(s), .. }) => Some(s.value()),
-        Expr::Lit(ExprLit { lit: Lit::Char(c), .. }) => Some(c.value().to_string()),
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(s), ..
+        }) => Some(s.value()),
+        Expr::Lit(ExprLit {
+            lit: Lit::Char(c), ..
+        }) => Some(c.value().to_string()),
         Expr::Paren(paren) => string_literal_string_value(&paren.expr),
         Expr::Group(group) => string_literal_string_value(&group.expr),
         _ => None,

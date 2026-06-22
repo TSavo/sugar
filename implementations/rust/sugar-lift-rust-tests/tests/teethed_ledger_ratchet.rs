@@ -41,15 +41,15 @@ const VALUE_DISCHARGED_FLOOR: u64 = 161; // proven VALUE-claim (panic-filtered) 
 const REFUTED_CEIL: u64 = 20; // false refutations (all-true corpus) — drive to 0
 const REFUTED_OTHER_CEIL: u64 = 12; // NON-T3 false refutations (fixable now) — drive to 0
 const UNDECIDED_CEIL: u64 = 3201; // congruence-only / no teeth — drive down
-// COVERAGE axis (from `sugar lift --report`): the R-vector — the honest dark.
-// unresolved=333: accounting-correction baseline (correct-path sweep; prior 331 was
-// measured against an older binary before #2353-#2370 warrants; target is still 0).
+                                  // COVERAGE axis (from `sugar lift --report`): the R-vector — the honest dark.
+                                  // unresolved=333: accounting-correction baseline (correct-path sweep; prior 331 was
+                                  // measured against an older binary before #2353-#2370 warrants; target is still 0).
 const UNRESOLVED_CEIL: u64 = 333; // "no sugar yet" (the visible dark) — drive to 0
 const NO_FACTS_CEIL: u64 = 72; // assertion sources that lifted no fact at all — drive to 0
 const SUPPORT_EXACT: u64 = 0; // inert support is NOT a hiding place for dark — must stay 0
-// ASSERTIONS_LIFTED_FLOOR: pre-dedup `facts` counter from `sugar lift --report`.
-// Distinguishes benign content-address dedup (facts flat) from silent non-creation
-// (facts drops). Measured on main at d68288978 (post-#2371 arith fold merge).
+                              // ASSERTIONS_LIFTED_FLOOR: pre-dedup `facts` counter from `sugar lift --report`.
+                              // Distinguishes benign content-address dedup (facts flat) from silent non-creation
+                              // (facts drops). Measured on main at d68288978 (post-#2371 arith fold merge).
 const ASSERTIONS_LIFTED_FLOOR: u64 = 10949; // pre-dedup assertion surface — must not drop
 
 fn rust_dir() -> PathBuf {
@@ -86,7 +86,9 @@ fn field(line: &str, key: &str) -> Option<u64> {
     let pat = format!("{key}=");
     let idx = line.find(&pat)? + pat.len();
     let rest = &line[idx..];
-    let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
     rest[..end].parse().ok()
 }
 
@@ -96,7 +98,10 @@ fn field(line: &str, key: &str) -> Option<u64> {
 /// `facts` is the pre-dedup assertion counter from the "assertion surface accounting:"
 /// line — the decisive metric distinguishing benign content-address dedup from silent
 /// assertion non-creation.
-fn coverage_rvector(rust: &std::path::Path, corpus: &std::path::Path) -> Option<(u64, u64, u64, u64)> {
+fn coverage_rvector(
+    rust: &std::path::Path,
+    corpus: &std::path::Path,
+) -> Option<(u64, u64, u64, u64)> {
     let sugar = rust.join("target/release/sugar");
     let rpc = rust.join("target/release/rust_test_assertions_rpc");
     if !sugar.exists() || !rpc.exists() {
@@ -206,7 +211,9 @@ fn teethed_ledger_does_not_regress() {
     );
 
     // COVERAGE axis: the R-vector from `sugar lift --report`. One complete gate.
-    let Some((cov_unresolved, cov_support, cov_no_facts, cov_facts)) = coverage_rvector(&rust, &corpus) else {
+    let Some((cov_unresolved, cov_support, cov_no_facts, cov_facts)) =
+        coverage_rvector(&rust, &corpus)
+    else {
         eprintln!(
             "coverage R-vector SKIPPED (sugar/rpc binary absent or no headline) -- discharge axis asserted above"
         );
@@ -236,7 +243,10 @@ fn teethed_ledger_does_not_regress() {
          (pre-dedup assertion surface dropped — silent non-creation, not benign dedup). \
          If dedup is the cause, facts stays flat; a real drop means entries.is_empty() fired incorrectly."
     );
-    if cov_unresolved < UNRESOLVED_CEIL || cov_no_facts < NO_FACTS_CEIL || cov_facts > ASSERTIONS_LIFTED_FLOOR {
+    if cov_unresolved < UNRESOLVED_CEIL
+        || cov_no_facts < NO_FACTS_CEIL
+        || cov_facts > ASSERTIONS_LIFTED_FLOOR
+    {
         eprintln!(
             "RATCHET IMPROVED (coverage) -- tighten in this PR: \
              UNRESOLVED_CEIL {UNRESOLVED_CEIL}->{cov_unresolved}, NO_FACTS_CEIL {NO_FACTS_CEIL}->{cov_no_facts}, \
