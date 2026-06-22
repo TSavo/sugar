@@ -25,25 +25,32 @@
 // TEETH. `u8::try_from(255u16)` -> `Ok(255)` (`.unwrap()` -> 255, discharged);
 // `u8::try_from(256u16)` -> `Err(_)` (`.is_err()` -> true; `.unwrap()` panics).
 
+use std::collections::BTreeMap;
+use std::rc::Rc;
+
 use syn::{Expr, ExprCall, ExprLit, ExprPath, Lit, UnOp};
 use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::monadic::{err_term, ok_term};
-use crate::{strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
-use sugar_ir_symbolic::num;
+use crate::{expr_head_key, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
+use sugar_ir_symbolic::{num, Term};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("try_from", SugarRole::Term, recognize);
 
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let _ = fcx;
     let Expr::Call(call) = expr else {
         return None;
     };
-    let (bounds, value) = try_from_fold_inputs(call, Some(fcx))?;
-    let in_range = value >= bounds.0 && value <= bounds.1;
-    Some(Box::new(TryFromSugar { value, in_range }))
+    if call.args.len() != 1 {
+        return None;
+    }
+    let dst = try_from_destination(&call.func)?;
+    int_dst_bounds(&dst)?;
+    Some(Box::new(TryFromSugar { call: call.clone() }))
 }
 
 /// Does this call fold to a `Result` (an integer-destination `try_from` over a
@@ -250,25 +257,51 @@ fn primitive_const_value(ty: &str, is_max: bool) -> Option<i128> {
 }
 
 struct TryFromSugar {
-    value: i128,
-    in_range: bool,
+    call: ExprCall,
 }
 
 impl Sugar for TryFromSugar {
-    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        debug!(
-            target: "sugar_lift_rust_tests::sugar::try_from",
-            value = self.value as i64,
-            in_range = self.in_range,
-            "resolved TryFrom range check stdlib axiom to Ok/Err"
-        );
-        let term = if self.in_range {
-            ok_term(num(self.value))
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        if let Some((bounds, value)) = try_from_fold_inputs(&self.call, Some(&fcx)) {
+            let in_range = value >= bounds.0 && value <= bounds.1;
+            debug!(
+                target: "sugar_lift_rust_tests::sugar::try_from",
+                value = %value,
+                in_range = in_range,
+                "resolved TryFrom range check stdlib axiom to Ok/Err"
+            );
+            let term = if in_range {
+                ok_term(num(value))
+            } else {
+                // `TryFromIntError` carries no observable value; the Err discriminant
+                // is what `is_err`/`unwrap` read. A placeholder inner keeps it well-sorted.
+                err_term(num(0))
+            };
+            Outcome::Dug(Desugared::Term(term))
         } else {
-            // `TryFromIntError` carries no observable value; the Err discriminant
-            // is what `is_err`/`unwrap` read. A placeholder inner keeps it well-sorted.
-            err_term(num(0))
-        };
-        Outcome::Dug(Desugared::Term(term))
+            self.fallback_call(ctx, &fcx)
+        }
+    }
+}
+
+impl TryFromSugar {
+    fn fallback_call(&self, ctx: &SugarCtx, fcx: &SugarBuildCtx) -> Outcome {
+        let mut args: Vec<Rc<Term>> = Vec::new();
+        for arg in &self.call.args {
+            let term = match build_term(arg, fcx).desugar(ctx) {
+                Outcome::Dug(d) => match d.into_term() {
+                    Some(term) => term,
+                    None => return Outcome::from_opt(None),
+                },
+                Outcome::Hit(effect) => return Outcome::Hit(effect),
+            };
+            args.push(term);
+        }
+        Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
+            name: format!("call:{}", expr_head_key(&self.call.func)),
+            args,
+        })))
     }
 }

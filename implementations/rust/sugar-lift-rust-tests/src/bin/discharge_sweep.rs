@@ -228,6 +228,20 @@ struct UndecidedRecord {
     dom_op: String,
 }
 
+/// One UNCHECKABLE obligation: lifted far enough to enter the teeth lane, but
+/// the solver boundary could not produce a verdict. This is diagnostic output
+/// only; the tally remains the source of truth for the silent floor.
+#[derive(Clone)]
+struct UncheckableRecord {
+    label: String,
+    contract: String,
+    file: String,
+    signature: String,
+    dom_op: String,
+    reason: String,
+    offending_smt_term: String,
+}
+
 /// Extract the dominant blocking operation from an UNDECIDED inv: the first
 /// "interesting" (non-const) sub-term kind in the first non-panic atom's args.
 /// Returns strings like `ctor:<name>`, `var:<name>`, `let`, `lambda`, `?`.
@@ -309,6 +323,24 @@ fn undecided_dom_op(inv: &Value) -> String {
         }
     }
     "?".to_string()
+}
+
+fn offending_smt_term(reason: &str) -> String {
+    let Some((_, rest)) = reason.split_once("unknown constant") else {
+        return String::new();
+    };
+    rest.trim()
+        .trim_start_matches(':')
+        .trim()
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_matches(|c| c == '(' || c == ')' || c == '"' || c == '\'')
+        .to_string()
+}
+
+fn tsv_field(s: &str) -> String {
+    s.replace('\t', " ").replace('\n', " ").replace('\r', " ")
 }
 
 #[derive(Default)]
@@ -429,7 +461,8 @@ fn main() {
     if args.len() < 2 {
         eprintln!(
             "usage: discharge_sweep <corpus-dir> [--json <out.json>] [--z3 <path>] \
-             [--dump-refuted <path>] [--dump-undecided <path>]"
+             [--dump-refuted <path>] [--dump-undecided <path>] \
+             [--dump-uncheckable <path>]"
         );
         std::process::exit(2);
     }
@@ -478,8 +511,9 @@ fn main() {
     // (which ARE Sync), then fan the z3 work out below. Per-file progress goes
     // to stderr so a slow lift is visible, never a silent hang.
     let total_files = files.len();
-    // (label, rel, inv, file_has_mut_skip)
-    let mut obligations: Vec<(String, String, Value, bool)> = Vec::new();
+    // (label, rel, contract, inv, file_has_mut_skip)
+    let mut obligations: Vec<(String, String, String, Value, bool)> = Vec::new();
+    let mut preflight_uncheckable = Vec::new();
     let mut no_inv_total = 0usize;
     for (fi, (rel, src)) in files.iter().enumerate() {
         let Ok(file) = syn::parse_file(src) else {
@@ -525,10 +559,28 @@ fn main() {
             match inv {
                 Some(inv) if !inv.is_null() => {
                     let label = format!("{}_{idx}", rel.replace(['/', '.', '-'], "_"));
-                    obligations.push((label, rel.clone(), inv, file_has_mut_skip));
+                    obligations.push((
+                        label,
+                        rel.clone(),
+                        decl.name.clone(),
+                        inv,
+                        file_has_mut_skip,
+                    ));
                     file_obs += 1;
                 }
-                _ => no_inv_total += 1,
+                _ => {
+                    let label = format!("{}_{idx}", rel.replace(['/', '.', '-'], "_"));
+                    no_inv_total += 1;
+                    preflight_uncheckable.push(UncheckableRecord {
+                        label,
+                        contract: decl.name.clone(),
+                        file: rel.clone(),
+                        signature: String::new(),
+                        dom_op: String::new(),
+                        reason: "no-inv".to_string(),
+                        offending_smt_term: String::new(),
+                    });
+                }
             }
         }
         eprintln!(
@@ -552,7 +604,7 @@ fn main() {
     let total_ob = obligations.len();
     let acc = obligations
         .par_iter()
-        .map(|(label, rel, inv, mut_skip)| {
+        .map(|(label, rel, contract, inv, mut_skip)| {
             let full = discharge_inv(inv, &z3_path, label);
             // Value-claim teeth: reuse FULL when no panic conjunct (no extra z3).
             let value = match value_only_inv(inv) {
@@ -570,15 +622,27 @@ fn main() {
                 signature: refuted_signature(inv),
                 dom_op: undecided_dom_op(inv),
             });
+            let uncheckable = match &full {
+                Teeth::Uncheckable(reason) => Some(UncheckableRecord {
+                    label: label.clone(),
+                    contract: contract.clone(),
+                    file: rel.clone(),
+                    signature: refuted_signature(inv),
+                    dom_op: undecided_dom_op(inv),
+                    reason: reason.clone(),
+                    offending_smt_term: offending_smt_term(reason),
+                }),
+                _ => None,
+            };
             let n = checked.fetch_add(1, Ordering::Relaxed) + 1;
             if n % 500 == 0 {
                 eprintln!("  discharged {n}/{total_ob}");
             }
-            (full, value, refuted, undecided)
+            (full, value, refuted, undecided, uncheckable)
         })
         .fold(
             Acc::default,
-            |mut acc, (full, value, refuted, undecided)| {
+            |mut acc, (full, value, refuted, undecided, uncheckable)| {
                 acc.full.record(&full);
                 if let Some(v) = &value {
                     acc.value.record(v);
@@ -588,6 +652,9 @@ fn main() {
                 }
                 if let Some(u) = undecided {
                     acc.undecided.push(u);
+                }
+                if let Some(u) = uncheckable {
+                    acc.uncheckable.push(u);
                 }
                 acc
             },
@@ -600,6 +667,7 @@ fn main() {
     for _ in 0..no_inv_total {
         acc.full.record(&Teeth::Uncheckable("no-inv".into()));
     }
+    acc.uncheckable.extend(preflight_uncheckable);
 
     print_headline(&acc.full, &acc.value, z3_available, &z3_path);
     print_refuted_breakdown(&acc.refuted);
@@ -633,6 +701,35 @@ fn main() {
         }
         if let Err(e) = std::fs::write(&path, lines) {
             eprintln!("discharge_sweep: write --dump-undecided {path}: {e}");
+        }
+    }
+
+    if let Some(path) = arg_value(&args, "--dump-uncheckable") {
+        let mut lines =
+            String::from("file\tlabel\tcontract\tsignature\tdom_op\treason\toffending_smt_term\n");
+        let mut recs = acc.uncheckable.clone();
+        recs.sort_by(|a, b| {
+            a.reason
+                .cmp(&b.reason)
+                .then(a.dom_op.cmp(&b.dom_op))
+                .then(a.signature.cmp(&b.signature))
+                .then(a.file.cmp(&b.file))
+                .then(a.label.cmp(&b.label))
+        });
+        for r in &recs {
+            lines.push_str(&format!(
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                tsv_field(&r.file),
+                tsv_field(&r.label),
+                tsv_field(&r.contract),
+                tsv_field(&r.signature),
+                tsv_field(&r.dom_op),
+                tsv_field(&r.reason),
+                tsv_field(&r.offending_smt_term),
+            ));
+        }
+        if let Err(e) = std::fs::write(&path, lines) {
+            eprintln!("discharge_sweep: write --dump-uncheckable {path}: {e}");
         }
     }
 
@@ -677,6 +774,7 @@ struct Acc {
     value: Tally,
     refuted: Vec<RefutedRecord>,
     undecided: Vec<UndecidedRecord>,
+    uncheckable: Vec<UncheckableRecord>,
 }
 
 impl Acc {
@@ -685,6 +783,7 @@ impl Acc {
         self.value.merge(other.value);
         self.refuted.extend(other.refuted);
         self.undecided.extend(other.undecided);
+        self.uncheckable.extend(other.uncheckable);
     }
 }
 

@@ -7466,13 +7466,20 @@ impl SugarCtx<'_, '_> {
 const MAX_VALUE_CALL_INLINE_DEPTH: usize = 16;
 
 impl<'a, 'c> SugarCtx<'a, 'c> {
-    /// Build the opaque callsite subject for a call/method expression with value-call
-    /// inlining disabled. Panic-path accounting needs this stable subject even when the
-    /// normal-return universe is later dug from visible source.
+    /// Build the panic-path subject for a call/method expression as an opaque
+    /// callsite identity, not as the call's returned value. Panic-freedom talks
+    /// about control reaching normal return at this source site; the value sugar
+    /// may separately deconstruct that return to `res:ok`, `opt:some`, a range
+    /// ctor, etc. Feeding those returned values to the monomorphic `panic(Int)`
+    /// predicate was the sort-desync root: `panic(SugarResult)` is not a
+    /// well-formed normal-return fact.
+    ///
+    /// The root call/method is therefore forced to the generic `call:`/`method:`
+    /// ctor here, while its receiver/arguments are still dug lazily through the
+    /// factory so stable bindings and literal children remain canonical.
     pub(crate) fn opaque_callsite_term(&self, expr: &Expr) -> Option<Rc<Term>> {
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = sugar::factory::SugarBuildCtx::new(self.scope, self.options, &let_inits);
-        let node = sugar::factory::build_term(expr, &fcx);
         let mut fw = self.float_widths.borrow_mut();
         let child = SugarCtx {
             scope: self.scope,
@@ -7482,9 +7489,45 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
             factory_audits: self.factory_audits,
             macro_depth: MAX_VALUE_CALL_INLINE_DEPTH,
         };
-        match node.desugar(&child) {
-            Outcome::Dug(d) => d.into_term(),
-            Outcome::Hit(_) => None,
+        let dig_child = |expr: &Expr| -> Option<Rc<Term>> {
+            match sugar::factory::build_term(expr, &fcx).desugar(&child) {
+                Outcome::Dug(d) => d.into_term(),
+                Outcome::Hit(_) => None,
+            }
+        };
+        match expr {
+            Expr::Call(call) => {
+                let mut args = Vec::new();
+                for arg in &call.args {
+                    args.push(dig_child(arg)?);
+                }
+                Some(Rc::new(Term::Ctor {
+                    name: format!("call:{}", expr_head_key(&call.func)),
+                    args,
+                }))
+            }
+            Expr::MethodCall(call) => {
+                let mut receiver = dig_child(&call.receiver)?;
+                if is_consuming_iterator_method(&call.method.to_string()) {
+                    if let Term::Var { name } = receiver.as_ref() {
+                        if receiver_is_versioned_iterator(name, self.scope) {
+                            let occ = self.scope.bump_consuming_occurrence(name);
+                            if occ > 0 {
+                                receiver = make_var(format!("{name}@adv{occ}"));
+                            }
+                        }
+                    }
+                }
+                let mut args = vec![receiver];
+                for arg in &call.args {
+                    args.push(dig_child(arg)?);
+                }
+                Some(Rc::new(Term::Ctor {
+                    name: format!("method:{}", sugar::method::method_key(call)),
+                    args,
+                }))
+            }
+            _ => None,
         }
     }
 

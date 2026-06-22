@@ -1333,8 +1333,9 @@ fn try_from_signed_unsigned_boundaries() {
     }
 }
 
-// EXACT-OR-NONE: a non-integer destination and a runtime arg must NOT fold; the
-// sugars decline, leaving the existing opaque handling.
+// EXACT-OR-OPAQUE: a non-integer destination must not be owned by integer
+// `try_from`; a runtime arg may be recognized as the `try_from` surface, but
+// desugar must fall back to the opaque call rather than guessing Ok/Err.
 #[test]
 fn try_from_non_integer_and_runtime_decline() {
     // Non-integer destination: `char::try_from(..)` is not an integer try_from.
@@ -1352,7 +1353,7 @@ fn try_from_non_integer_and_runtime_decline() {
         "a non-integer destination must NOT be folded by try_from: {:?}",
         out.factory_audits
     );
-    // Runtime argument: not a literal -> declines.
+    // Runtime argument: not a literal -> lazy desugar falls back to the opaque call.
     let rt = r#"
         #[test]
         fn t_try_from_runtime() {
@@ -1362,12 +1363,73 @@ fn try_from_non_integer_and_runtime_decline() {
     "#;
     let out = lift_file(&parse(rt), "coretests/num/try_from_runtime.rs");
     assert!(
-        !out.factory_audits
+        out.factory_audits
             .iter()
             .any(|a| a.selected == Some("try_from")),
-        "a runtime argument must NOT be folded by try_from: {:?}",
+        "the primitive try_from site should be owned lazily by try_from: {:?}",
         out.factory_audits
     );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("call:u8::try_from") && !dump.contains("res:ok") && !dump.contains("res:err"),
+        "runtime try_from must remain the opaque call fallback, not a fabricated Result: {dump}"
+    );
+}
+
+#[test]
+fn try_from_normal_return_support_is_well_sorted_and_bad_twin_refutes() {
+    let good = r#"
+        #[test]
+        fn t_try_from_full_inv() {
+            assert!(u8::try_from(255u16).unwrap() == 255);
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/num/tf_full_inv.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "try_from unwrap assertion must lift: {:?}",
+        out.skip_reasons
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("panic") && dump.contains("call:u8::try_from"),
+        "normal-return support must use an opaque callsite subject, not the returned Result value: {dump}"
+    );
+    assert!(
+        !dump.contains("panic\", args: [Ctor { name: \"res:ok\"")
+            && !dump.contains("panic\", args: [Ctor { name: \"res:err\""),
+        "panic predicate must never receive a Result ADT term: {dump}"
+    );
+    for (i, decl) in all_warranted_decls(&out).iter().enumerate() {
+        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("try_from_full_inv_good_{i}")) {
+            assert!(
+                sat,
+                "every full warranted TryFrom invariant must be SAT and well-sorted"
+            );
+        }
+    }
+
+    let bad = r#"
+        #[test]
+        fn t_try_from_full_inv_bad() {
+            assert!(u8::try_from(255u16).unwrap() == 254);
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/num/tf_full_inv_bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bad twin must still lift so the contradiction is checkable: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "try_from_full_inv_bad",
+    ) {
+        assert!(
+            !sat,
+            "bad twin try_from(255).unwrap() == 254 must be z3-UNSAT"
+        );
+    }
 }
 
 // ---- Lane 4: Range::size_hint decomposes to teethed component eqs ----
