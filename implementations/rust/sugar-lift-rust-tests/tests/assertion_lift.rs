@@ -3043,8 +3043,8 @@ fn array_literal_is_empty_folds_with_teeth() {
 }
 
 // EXACT-OR-NONE: a runtime-bounded range must NOT fold. The `is_empty` sugar
-// declines (no const endpoint), leaving the existing opaque handling -- never a
-// guessed bool.
+// recognizes the method shape, then desugar composes the receiver and propagates the
+// runtime-bound range `Hit` -- never a guessed bool.
 #[test]
 fn runtime_range_is_empty_declines_to_fold() {
     let src = r#"
@@ -3056,10 +3056,14 @@ fn runtime_range_is_empty_declines_to_fold() {
     "#;
     let out = lift_file(&parse(src), "coretests/iter/runtime_range.rs");
     assert!(
-        !out.factory_audits
-            .iter()
-            .any(|a| a.selected == Some("is_empty")),
-        "a runtime-bounded range must NOT be folded by is_empty: {:?}",
+        out.factory_audits.iter().any(|a| {
+            a.selected == Some("is_empty")
+                && a.disposition == sugar_lift_rust_tests::FactoryDisposition::Refused
+                && a.reason.as_deref().is_some_and(|reason| {
+                    reason.contains("literal range bound is not text-determined")
+                })
+        }),
+        "a runtime-bounded range must be recognized but not folded by is_empty: {:?}",
         out.factory_audits
     );
 }
@@ -16148,6 +16152,242 @@ fn iter_count_over_literal_array_digs_length_and_bad_twin_refutes() {
     assert_eq!(dug_eq_int_pairs(&out.decls[0]), vec![(3, 4)]);
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "iter_count_bad") {
         assert!(!sat, "the bad-twin `3 == 4` must be z3-UNSAT (refutes)");
+    }
+}
+
+#[test]
+fn literal_collection_alias_reductions_compose_to_floor_with_teeth() {
+    let cases: &[(&str, i128, &str)] = &[
+        (
+            r#"
+#[test]
+fn t() {
+    let xs = [1_i32, 2, 3, 4];
+    assert_eq!(xs.iter().count(), 4);
+}
+"#,
+            4,
+            "bound_array_count_good",
+        ),
+        (
+            r#"
+#[test]
+fn t() {
+    let xs = [1_i32, 2, 3, 4];
+    assert_eq!(xs.len(), 4);
+}
+"#,
+            4,
+            "bound_array_len_good",
+        ),
+        (
+            r#"
+#[test]
+fn t() {
+    let xs = [1_i32, 2, 3, 4];
+    let view = &xs;
+    assert_eq!(view.iter().sum::<i32>(), 10);
+}
+"#,
+            10,
+            "bound_ref_sum_good",
+        ),
+        (
+            r#"
+#[test]
+fn t() {
+    let xs = vec![1_i32, 2, 3, 4];
+    assert_eq!(xs.iter().sum::<i32>(), 10);
+}
+"#,
+            10,
+            "bound_vec_sum_good",
+        ),
+        (
+            r#"
+#[test]
+fn t() {
+    let xs = [0_i32, 1, 2, 3, 4];
+    assert_eq!(IntoIterator::into_iter(xs.clone()).count(), 5);
+}
+"#,
+            5,
+            "ufcs_clone_array_count_good",
+        ),
+        (
+            r#"
+#[test]
+fn t() {
+    let xs: &[i32] = &[0, 1, 2, 3, 4];
+    let chunks = xs.chunks(2);
+    assert_eq!(chunks.count(), 3);
+}
+"#,
+            3,
+            "bound_slice_chunks_count_good",
+        ),
+        (
+            r#"
+#[test]
+fn t() {
+    let xs = [0_i32, 1, 2, 3, 4];
+    assert_eq!(xs.windows(3).count(), 3);
+}
+"#,
+            3,
+            "literal_array_windows_count_good",
+        ),
+    ];
+    for (src, expected, label) in cases {
+        let out = lift_file(&parse(src), "tests/literal_collection_alias.rs");
+        assert_warranted_decl_count(&out, 1);
+        assert_eq!(
+            dug_eq_int_pairs(single_warranted_decl(&out)),
+            vec![(*expected, *expected)],
+            "{label}: SSA-clean literal collection alias must reduce to the literal floor"
+        );
+        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+            assert!(sat, "{label}: `{expected} == {expected}` must be SAT");
+        }
+    }
+
+    let bad_cases: &[(&str, i128, i128, &str)] = &[
+        (
+            r#"
+#[test]
+fn t() {
+    let xs = [1_i32, 2, 3, 4];
+    assert_eq!(xs.iter().count(), 5);
+}
+"#,
+            4,
+            5,
+            "bound_array_count_bad",
+        ),
+        (
+            r#"
+#[test]
+fn t() {
+    let xs = [1_i32, 2, 3, 4];
+    assert_eq!(xs.len(), 5);
+}
+"#,
+            4,
+            5,
+            "bound_array_len_bad",
+        ),
+        (
+            r#"
+#[test]
+fn t() {
+    let xs = [1_i32, 2, 3, 4];
+    let view = &xs;
+    assert_eq!(view.iter().sum::<i32>(), 11);
+}
+"#,
+            10,
+            11,
+            "bound_ref_sum_bad",
+        ),
+        (
+            r#"
+#[test]
+fn t() {
+    let xs = vec![1_i32, 2, 3, 4];
+    assert_eq!(xs.iter().sum::<i32>(), 11);
+}
+"#,
+            10,
+            11,
+            "bound_vec_sum_bad",
+        ),
+        (
+            r#"
+#[test]
+fn t() {
+    let xs = [0_i32, 1, 2, 3, 4];
+    assert_eq!(IntoIterator::into_iter(xs.clone()).count(), 6);
+}
+"#,
+            5,
+            6,
+            "ufcs_clone_array_count_bad",
+        ),
+        (
+            r#"
+#[test]
+fn t() {
+    let xs: &[i32] = &[0, 1, 2, 3, 4];
+    let chunks = xs.chunks(2);
+    assert_eq!(chunks.count(), 2);
+}
+"#,
+            3,
+            2,
+            "bound_slice_chunks_count_bad",
+        ),
+        (
+            r#"
+#[test]
+fn t() {
+    let xs = [0_i32, 1, 2, 3, 4];
+    assert_eq!(xs.windows(3).count(), 4);
+}
+"#,
+            3,
+            4,
+            "literal_array_windows_count_bad",
+        ),
+    ];
+    for (src, real, wrong, label) in bad_cases {
+        let out = lift_file(&parse(src), "tests/literal_collection_alias_bad.rs");
+        assert_warranted_decl_count(&out, 1);
+        assert_eq!(
+            dug_eq_int_pairs(single_warranted_decl(&out)),
+            vec![(*real, *wrong)],
+            "{label}: bad twin must carry the real literal-floor value"
+        );
+        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+            assert!(!sat, "{label}: `{real} == {wrong}` must be z3-UNSAT");
+        }
+    }
+}
+
+#[test]
+fn literal_collection_alias_is_empty_folds_with_teeth() {
+    let good = r#"
+#[test]
+fn t() {
+    let xs: [i32; 0] = [];
+    assert!(xs.is_empty());
+}
+"#;
+    let out = lift_file(&parse(good), "tests/literal_collection_alias_empty.rs");
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "bound_array_is_empty_good",
+    ) {
+        assert!(sat, "bound empty array is_empty must be SAT");
+    }
+
+    let bad = r#"
+#[test]
+fn t() {
+    let xs = vec![1_i32, 2, 3];
+    assert!(xs.is_empty());
+}
+"#;
+    let out = lift_file(&parse(bad), "tests/literal_collection_alias_empty_bad.rs");
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "bound_vec_is_empty_bad",
+    ) {
+        assert!(
+            !sat,
+            "bound non-empty Vec literal is_empty bad twin must be UNSAT"
+        );
     }
 }
 
