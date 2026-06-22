@@ -436,12 +436,26 @@ fn lift(params: &Value) -> Value {
                 match warning {
                     // Unsupported vendor pins remain unresolved unless the failure reason
                     // is one of the clean values-not-in-text boundaries this lane owns.
-                    Some(w) => match clean_named_refusal_category(rel, &name, &w.reason) {
-                        Some(category) => (
+                    Some(w) => match clean_source_warning_classification(rel, &name, &w.reason) {
+                        Some(SourceWarningClassification::Refused(category)) => (
                             "refused",
                             Some(named_source_refusal_reason(
                                 category,
                                 &format!("vendor pin not liftable: {}", w.reason),
+                            )),
+                        ),
+                        Some(SourceWarningClassification::Support(category)) => (
+                            "support",
+                            Some(named_source_support_reason(
+                                category,
+                                &format!("source locus is inert/vacuous: {}", w.reason),
+                            )),
+                        ),
+                        Some(SourceWarningClassification::Inactive(category)) => (
+                            "inactive",
+                            Some(named_source_inactive_reason(
+                                category,
+                                &format!("source locus is inactive in this target: {}", w.reason),
                             )),
                         ),
                         None => (
@@ -1079,6 +1093,43 @@ fn named_source_refusal_reason(category: &'static str, detail: &str) -> String {
     format!("named refusal ({category}): {detail}")
 }
 
+fn named_source_support_reason(category: &'static str, detail: &str) -> String {
+    format!("named support ({category}): {detail}")
+}
+
+fn named_source_inactive_reason(category: &'static str, detail: &str) -> String {
+    format!("named inactive ({category}): {detail}")
+}
+
+#[derive(Clone, Copy, Debug)]
+enum SourceWarningClassification {
+    Refused(&'static str),
+    Support(&'static str),
+    Inactive(&'static str),
+}
+
+fn clean_source_warning_classification(
+    source_path: &str,
+    source_name: &str,
+    reason: &str,
+) -> Option<SourceWarningClassification> {
+    if reason.contains("inactive cfg") {
+        return Some(SourceWarningClassification::Inactive("inactive cfg"));
+    }
+    if reason.contains("inactive const if branch") {
+        return Some(SourceWarningClassification::Inactive(
+            "inactive const if branch",
+        ));
+    }
+    if reason.contains("literal domain is empty") {
+        return Some(SourceWarningClassification::Support(
+            "empty/vacuous literal domain",
+        ));
+    }
+    clean_named_refusal_category(source_path, source_name, reason)
+        .map(SourceWarningClassification::Refused)
+}
+
 fn clean_named_refusal_category(
     source_path: &str,
     source_name: &str,
@@ -1103,6 +1154,21 @@ fn clean_named_refusal_category(
     }
     if iterator_size_hint_runtime_bound_reason(reason) {
         return Some("iterator size_hint runtime bound");
+    }
+    if reason.contains("temporally unstable post-loop read") {
+        return Some("temporally unstable post-loop read");
+    }
+    if reason.contains("temporally unstable mutating method read") {
+        return Some("temporally unstable mutating method read");
+    }
+    if reason.contains("ambiguous temporal identity") {
+        return Some("ambiguous temporal identity");
+    }
+    if reason.contains("consumed-iterator local") {
+        return Some("consumed-iterator local");
+    }
+    if reason.contains("assertion under while context") {
+        return Some("assertion under while context");
     }
     if reason.contains("effectful / raw-pointer / mutable-reference term") {
         return Some("mutable reference/pointer effect");
@@ -2626,6 +2692,19 @@ mod tests {
         (root, response)
     }
 
+    fn lift_fixture_with_config(name: &str, src: &str, config: &str) -> (PathBuf, Value) {
+        let root = unique_temp_dir(name);
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        std::fs::create_dir_all(root.join(".sugar")).expect("mkdir .sugar");
+        std::fs::write(root.join("src/lib.rs"), src).expect("write rust source");
+        std::fs::write(root.join(".sugar/config.toml"), config).expect("write config");
+        let response = lift(&json!({
+            "workspace_root": root,
+            "source_paths": ["src/lib.rs"]
+        }));
+        (root, response)
+    }
+
     fn source_locus<'a>(response: &'a Value, ast_path: &str) -> &'a Value {
         response["sourceAudits"][0]["loci"]
             .as_array()
@@ -2635,20 +2714,28 @@ mod tests {
             .unwrap_or_else(|| panic!("missing source locus {ast_path}: {response}"))
     }
 
-    fn assert_source_locus_refused(response: &Value, ast_path: &str, category: &str) {
+    fn assert_source_locus_status(response: &Value, ast_path: &str, status: &str, category: &str) {
         let locus = source_locus(response, ast_path);
         assert_eq!(
-            locus["status"], "refused",
-            "{ast_path} must be named-refused: {locus}"
+            locus["status"], status,
+            "{ast_path} must have source status {status}: {locus}"
         );
         assert!(
             locus["reason"]
                 .as_str()
                 .is_some_and(|reason| reason.contains(category)),
-            "{ast_path} refusal must carry category {category:?}: {locus}"
+            "{ast_path} source reason must carry category {category:?}: {locus}"
         );
         assert_ne!(locus["status"], "unresolved", "{locus}");
         assert_ne!(locus["status"], "refuted", "{locus}");
+    }
+
+    fn assert_source_locus_refused(response: &Value, ast_path: &str, category: &str) {
+        assert_source_locus_status(response, ast_path, "refused", category);
+    }
+
+    fn assert_source_locus_inactive(response: &Value, ast_path: &str, category: &str) {
+        assert_source_locus_status(response, ast_path, "inactive", category);
     }
 
     fn assert_source_locus_warranted(response: &Value, ast_path: &str) {
@@ -3052,6 +3139,225 @@ fn runtime_impl_method_literal_twin() -> i32 {
             "runtime impl-method boundary",
         );
         assert_source_locus_warranted(&response, "runtime_impl_method_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_inactive_cfg_is_inactive_with_literal_twin() {
+        let config = r#"
+[rust-test-assertions.target_cfg]
+target = "x86_64-unknown-linux-gnu"
+facts = [
+  "unix",
+  "target_arch=\"x86_64\"",
+  "target_pointer_width=\"64\"",
+]
+"#;
+        let (root, response) = lift_fixture_with_config(
+            "source_locus_inactive_cfg_is_inactive_with_literal_twin",
+            r#"
+#[test]
+#[cfg(target_pointer_width = "32")]
+fn inactive_cfg_refused() {
+    assert_eq!(1usize, 4usize);
+}
+
+#[test]
+fn inactive_cfg_literal_twin() {
+    assert_eq!(1usize + 1, 2usize);
+}
+"#,
+            config,
+        );
+        assert_source_locus_inactive(&response, "inactive_cfg_refused", "inactive cfg");
+        assert_source_locus_warranted(&response, "inactive_cfg_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_inactive_const_if_branch_is_inactive_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_inactive_const_if_branch_is_inactive_with_literal_twin",
+            r#"
+#[test]
+fn inactive_const_if_refused() {
+    if false {
+        assert_eq!(1usize, 2usize);
+    }
+}
+
+#[test]
+fn inactive_const_if_literal_twin() {
+    assert_eq!(2usize, 2usize);
+}
+"#,
+        );
+        assert_source_locus_inactive(
+            &response,
+            "inactive_const_if_refused",
+            "inactive const if branch",
+        );
+        assert_source_locus_warranted(&response, "inactive_const_if_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_warning_empty_literal_domain_is_support() {
+        let reason = "rust test assertions: unsupported assertion surface; released to layer 0: \
+            literal domain is empty -- vacuously true, no element to assert (no teeth)";
+        match clean_source_warning_classification("tests/iter/range.rs", "test_range", reason) {
+            Some(SourceWarningClassification::Support(category)) => {
+                assert_eq!(category, "empty/vacuous literal domain");
+            }
+            other => panic!("empty literal domain must be source support, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn source_locus_post_loop_read_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_post_loop_read_refuses_with_literal_twin",
+            r#"
+#[test]
+fn post_loop_read_refused() {
+    let limit = std::env::args().len();
+    let mut n = 0usize;
+    while n < limit {
+        n += 1;
+    }
+    assert_eq!(n, limit);
+}
+
+#[test]
+fn post_loop_read_literal_twin() {
+    let n = 3;
+    assert_eq!(n, 3);
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "post_loop_read_refused",
+            "temporally unstable post-loop read",
+        );
+        assert_source_locus_warranted(&response, "post_loop_read_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_mutating_method_read_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_mutating_method_read_refuses_with_literal_twin",
+            r#"
+#[test]
+fn mutating_method_read_refused() {
+    let mut x = [1usize, 2, 3, 4];
+    x.swap(1, 3);
+    assert_eq!(x, [1usize, 4, 3, 2]);
+}
+
+#[test]
+fn mutating_method_read_literal_twin() {
+    assert_eq!([1usize, 4, 3, 2], [1usize, 4, 3, 2]);
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "mutating_method_read_refused",
+            "temporally unstable mutating method read",
+        );
+        assert_source_locus_warranted(&response, "mutating_method_read_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_ambiguous_temporal_identity_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_ambiguous_temporal_identity_refuses_with_literal_twin",
+            r#"
+fn coin() -> bool { true }
+
+#[test]
+fn ambiguous_temporal_identity_refused() {
+    let mut r = 1u32..5;
+    if coin() {
+        r = 10u32..20;
+    }
+    assert!(r.contains(&1));
+}
+
+#[test]
+fn ambiguous_temporal_identity_literal_twin() {
+    assert!((1u32..5).contains(&1));
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "ambiguous_temporal_identity_refused",
+            "ambiguous temporal identity",
+        );
+        assert_source_locus_warranted(&response, "ambiguous_temporal_identity_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_consumed_iterator_local_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_consumed_iterator_local_refuses_with_literal_twin",
+            r#"
+#[test]
+fn consumed_iterator_local_refused() {
+    let xs = [1, 2, 3];
+    let mut it = xs.iter().take(3);
+    while let Some(_x) = it.next() {}
+    assert_eq!(it.len(), 0);
+}
+
+#[test]
+fn consumed_iterator_local_literal_twin() {
+    let xs = [1, 2, 3];
+    let mut it = xs.iter().take(3);
+    assert_eq!(it.len(), 3);
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "consumed_iterator_local_refused",
+            "consumed-iterator local",
+        );
+        assert_source_locus_warranted(&response, "consumed_iterator_local_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_assertion_under_while_context_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_assertion_under_while_context_refuses_with_literal_twin",
+            r#"
+#[test]
+fn assertion_under_while_context_refused() {
+    let mut i = 0;
+    while i < 1 {
+        assert_eq!(i, 0);
+        i += 1;
+    }
+}
+
+#[test]
+fn assertion_under_while_context_literal_twin() {
+    assert_eq!(0, 0);
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "assertion_under_while_context_refused",
+            "assertion under while context",
+        );
+        assert_source_locus_warranted(&response, "assertion_under_while_context_literal_twin");
         let _ = std::fs::remove_dir_all(root);
     }
 
