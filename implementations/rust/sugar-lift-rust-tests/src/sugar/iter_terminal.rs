@@ -160,7 +160,9 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     // Applies to ALL recognized terminals (count, next, nth, last, min, max, sum,
     // product, any, all, find, position, advance_by, reduce …), not just `.count()`.
     if let Some(name) = simple_path_name(&call.receiver) {
-        if fcx.scope().is_consumed_iterator_local(&name) {
+        if fcx.scope().is_consumed_iterator_local(&name)
+            && fcx.scope().temporal_rewrite_expr_for(&name).is_none()
+        {
             // Opaque-EUF disposition: UNDECIDED (honest dark), never refused.
             // refuse ⟺ IO: a consumed-iterator position read is deterministic,
             // not IO, so it must not be refused. Returning the opaque method term

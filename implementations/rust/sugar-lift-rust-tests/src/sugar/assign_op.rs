@@ -11,13 +11,13 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{eq, ConstValue, Sort, Term};
-use syn::{BinOp, Expr, Lit, Pat, RangeLimits, UnOp};
+use syn::{BinOp, Expr, Lit, Pat, RangeLimits, Stmt, UnOp};
 use tracing::{debug, trace};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{
-    parse_int_lit, parse_macro_args, simple_path_name, strip_refs_groups, token_key,
+    const_int, parse_int_lit, parse_macro_args, simple_path_name, strip_refs_groups, token_key,
     AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant,
 };
 
@@ -117,6 +117,29 @@ impl TemporalRewriteState {
         self.apply_with_trace(expr, true)
     }
 
+    pub(crate) fn expr_bindings(&self) -> BTreeMap<String, Expr> {
+        let mut out = self.values.clone();
+        for name in self.aliases.keys() {
+            if let Some(expr) = self.expr_for(name) {
+                out.insert(name.clone(), expr);
+            }
+        }
+        out
+    }
+
+    pub(crate) fn apply_statement(&mut self, stmt: &Stmt) -> bool {
+        match stmt {
+            Stmt::Local(local) => local
+                .init
+                .as_ref()
+                .filter(|init| init.diverge.is_none())
+                .is_some_and(|init| self.apply_consumption_expr(&init.expr)),
+            Stmt::Expr(expr, _) => self.apply_consumption_expr(expr),
+            Stmt::Macro(stmt_macro) => self.apply_consumption_macro(&stmt_macro.mac),
+            _ => false,
+        }
+    }
+
     fn apply_with_trace(&mut self, expr: &Expr, emit_trace: bool) -> bool {
         match strip_refs_groups(expr) {
             Expr::Assign(assign) => self.apply_assign(&assign.left, &assign.right, emit_trace),
@@ -125,6 +148,98 @@ impl TemporalRewriteState {
             }
             _ => false,
         }
+    }
+
+    fn apply_consumption_macro(&mut self, mac: &syn::Macro) -> bool {
+        let Ok(args) = parse_macro_args(mac.tokens.clone()) else {
+            return false;
+        };
+        let mut applied = false;
+        for expr in &args.exprs {
+            applied |= self.apply_consumption_expr(expr);
+        }
+        applied
+    }
+
+    fn apply_consumption_expr(&mut self, expr: &Expr) -> bool {
+        match strip_refs_groups(expr) {
+            Expr::MethodCall(call) => {
+                let mut applied = self.apply_consumption_expr(&call.receiver);
+                for arg in &call.args {
+                    applied |= self.apply_consumption_expr(arg);
+                }
+                if let Some((direction, count)) = iterator_consumption(call) {
+                    if let Some(name) = simple_path_name(&call.receiver) {
+                        applied |= self.advance_iterator_binding(&name, direction, count);
+                    }
+                }
+                applied
+            }
+            Expr::Call(call) => {
+                let mut applied = false;
+                for arg in &call.args {
+                    applied |= self.apply_consumption_expr(arg);
+                }
+                applied
+            }
+            Expr::Macro(expr_macro) => self.apply_consumption_macro(&expr_macro.mac),
+            Expr::Reference(reference) => self.apply_consumption_expr(&reference.expr),
+            Expr::Paren(paren) => self.apply_consumption_expr(&paren.expr),
+            Expr::Group(group) => self.apply_consumption_expr(&group.expr),
+            Expr::Try(try_expr) => self.apply_consumption_expr(&try_expr.expr),
+            Expr::Array(array) => {
+                let mut applied = false;
+                for elem in &array.elems {
+                    applied |= self.apply_consumption_expr(elem);
+                }
+                applied
+            }
+            Expr::Tuple(tuple) => {
+                let mut applied = false;
+                for elem in &tuple.elems {
+                    applied |= self.apply_consumption_expr(elem);
+                }
+                applied
+            }
+            Expr::Binary(binary) => {
+                self.apply_consumption_expr(&binary.left)
+                    | self.apply_consumption_expr(&binary.right)
+            }
+            Expr::Assign(assign) => {
+                self.apply_consumption_expr(&assign.left)
+                    | self.apply_consumption_expr(&assign.right)
+            }
+            _ => false,
+        }
+    }
+
+    fn advance_iterator_binding(
+        &mut self,
+        name: &str,
+        direction: IteratorConsumptionDirection,
+        count: usize,
+    ) -> bool {
+        let Some(current) = self.values.get(name).cloned() else {
+            return false;
+        };
+        let n = syn::LitInt::new(&count.to_string(), proc_macro2::Span::call_site());
+        let updated: Expr = match direction {
+            IteratorConsumptionDirection::Front => syn::parse_quote!((#current).skip(#n)),
+            IteratorConsumptionDirection::Back => {
+                syn::parse_quote!((#current).rev().skip(#n).rev())
+            }
+        };
+        debug!(
+            target: "sugar_lift_rust_tests::temporal_rewrite",
+            binding = name,
+            current = %token_key(&current),
+            updated = %token_key(&updated),
+            count,
+            from_back = matches!(direction, IteratorConsumptionDirection::Back),
+            "temporal rewrite advanced iterator receiver"
+        );
+        self.values.insert(name.to_string(), updated);
+        true
     }
 
     pub(crate) fn record_local(&mut self, local: &syn::Local) {
@@ -381,11 +496,39 @@ impl TemporalRewriteState {
         if self.int_value(expr).is_some() {
             return Some(expr.clone());
         }
+        if let Some(expr) = self.trackable_sequence_expr(expr) {
+            return Some(expr);
+        }
         let (kind, elems) = aggregate_elems(expr)?;
         if elems.iter().all(|elem| self.int_value(elem).is_some()) {
             Some(rebuild_aggregate(kind, elems))
         } else {
             None
+        }
+    }
+
+    fn trackable_sequence_expr(&self, expr: &Expr) -> Option<Expr> {
+        match strip_refs_groups(expr) {
+            Expr::Path(_) => {
+                let name = simple_path_name(expr)?;
+                self.expr_for(&name)
+            }
+            Expr::Array(_) | Expr::Range(_) | Expr::Repeat(_) => Some(expr.clone()),
+            Expr::Macro(expr_macro) if macro_name_is(&expr_macro.mac, "vec") => Some(expr.clone()),
+            Expr::Call(call) if collection_constructor_sequence(call) => Some(expr.clone()),
+            Expr::MethodCall(call) if trackable_sequence_method(&call.method.to_string()) => {
+                if !trackable_sequence_args(call) {
+                    return None;
+                }
+                let receiver = self.trackable_sequence_expr(&call.receiver)?;
+                let mut out = call.clone();
+                out.receiver = Box::new(receiver);
+                Some(Expr::MethodCall(out))
+            }
+            Expr::Reference(reference) => self.trackable_sequence_expr(&reference.expr),
+            Expr::Paren(paren) => self.trackable_sequence_expr(&paren.expr),
+            Expr::Group(group) => self.trackable_sequence_expr(&group.expr),
+            _ => None,
         }
     }
 
@@ -425,6 +568,96 @@ impl TemporalRewriteState {
     fn index_value(&self, expr: &Expr) -> Option<usize> {
         usize::try_from(self.int_value(expr)?).ok()
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum IteratorConsumptionDirection {
+    Front,
+    Back,
+}
+
+fn iterator_consumption(
+    call: &syn::ExprMethodCall,
+) -> Option<(IteratorConsumptionDirection, usize)> {
+    match (call.method.to_string().as_str(), call.args.len()) {
+        ("next", 0) => Some((IteratorConsumptionDirection::Front, 1)),
+        ("next_back", 0) => Some((IteratorConsumptionDirection::Back, 1)),
+        ("nth", 1) => {
+            let n = usize::try_from(const_int(&call.args[0])?).ok()?;
+            Some((IteratorConsumptionDirection::Front, n.checked_add(1)?))
+        }
+        ("nth_back", 1) => {
+            let n = usize::try_from(const_int(&call.args[0])?).ok()?;
+            Some((IteratorConsumptionDirection::Back, n.checked_add(1)?))
+        }
+        ("advance_by", 1) => {
+            let n = usize::try_from(const_int(&call.args[0])?).ok()?;
+            Some((IteratorConsumptionDirection::Front, n))
+        }
+        ("advance_back_by", 1) => {
+            let n = usize::try_from(const_int(&call.args[0])?).ok()?;
+            Some((IteratorConsumptionDirection::Back, n))
+        }
+        _ => None,
+    }
+}
+
+fn trackable_sequence_method(method: &str) -> bool {
+    matches!(
+        method,
+        "iter"
+            | "into_iter"
+            | "cloned"
+            | "copied"
+            | "fuse"
+            | "peekable"
+            | "enumerate"
+            | "rev"
+            | "skip"
+            | "take"
+            | "step_by"
+            | "map"
+            | "filter"
+            | "filter_map"
+            | "skip_while"
+            | "take_while"
+            | "inspect"
+            | "chain"
+            | "zip"
+            | "flatten"
+            | "flat_map"
+    )
+}
+
+fn trackable_sequence_args(call: &syn::ExprMethodCall) -> bool {
+    match call.method.to_string().as_str() {
+        "iter" | "into_iter" | "cloned" | "copied" | "fuse" | "peekable" | "enumerate" | "rev"
+        | "flatten" => call.args.is_empty(),
+        "skip" | "take" | "step_by" => {
+            call.args.len() == 1 && call.args.first().and_then(const_int).is_some()
+        }
+        "map" | "filter" | "filter_map" | "skip_while" | "take_while" | "inspect" | "flat_map" => {
+            call.args.len() == 1 && matches!(call.args.first(), Some(Expr::Closure(_)))
+        }
+        "chain" | "zip" => call.args.len() == 1,
+        _ => false,
+    }
+}
+
+fn collection_constructor_sequence(call: &syn::ExprCall) -> bool {
+    let Expr::Path(path) = strip_refs_groups(&call.func) else {
+        return false;
+    };
+    let segments = path
+        .path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>();
+    matches!(
+        segments.as_slice(),
+        [head, method] if (head == "Vec" && method == "from") || (head == "Box" && method == "new")
+    )
 }
 
 fn assignment_op(op: &BinOp) -> Option<BinOpKind> {

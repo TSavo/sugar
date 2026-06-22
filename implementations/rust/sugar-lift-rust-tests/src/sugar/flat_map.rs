@@ -14,7 +14,7 @@
 // as `map`/`flatten`. (A range whose start >= end yields the empty sub-sequence, a
 // legitimate flat_map drop.)
 
-use crate::sugar::factory::{build_composite, SugarBuildCtx};
+use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::method_family;
 use crate::{
     const_eval_flat_map_closure, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP,
@@ -34,11 +34,8 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     let Expr::Closure(f) = &call.args[0] else {
         return None;
     };
-    if !method_family::resolves_literal_sequence(&call.receiver, fcx.let_inits()) {
-        return None;
-    }
     Some(Box::new(FlatMapSugar {
-        inner: build_composite(&call.receiver, fcx),
+        inner: method_family::build_literal_sequence_composite(&call.receiver, fcx)?,
         f: f.clone(),
     }))
 }

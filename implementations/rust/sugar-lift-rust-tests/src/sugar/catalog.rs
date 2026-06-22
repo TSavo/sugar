@@ -133,6 +133,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &block_term::EXPR_SUGAR,
     &control_flow_term::TERM_EXPR_SUGAR,
     &transparent_term::COMPOSITE_EXPR_SUGAR,
+    &bound_path::COMPOSITE_EXPR_SUGAR,
     &conditional::EXPR_SUGAR,
     &match_node::EXPR_SUGAR,
     &for_replay::EXPR_SUGAR,

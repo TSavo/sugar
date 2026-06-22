@@ -8,7 +8,7 @@
 
 use crate::sugar::bound::BoundSugar;
 use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
-use crate::sugar::factory::{build_constraint, build_term, SugarBuildCtx};
+use crate::sugar::factory::{build_composite, build_constraint, build_term, SugarBuildCtx};
 use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
 use crate::{token_key, Sugar};
 use syn::{Expr, ExprPath};
@@ -23,6 +23,9 @@ pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     SugarPriority::Primary,
     recognize_constraint,
 );
+
+pub(crate) const COMPOSITE_EXPR_SUGAR: ExprSugarClaim =
+    ExprSugarClaim::secondary_composite("bound_path_composite", recognize_composite);
 
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let name = simple_local_path(expr)?;
@@ -88,6 +91,27 @@ fn recognize_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     let init = fcx.scope().stable_let_binding_for_term(&name)?;
     let child_fcx = fcx.with_bound_path(&name);
     Some(BoundSugar::new(name, build_constraint(init, &child_fcx)))
+}
+
+fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let name = simple_local_path(expr)?;
+    if fcx.resolving_bound_path(&name) {
+        return None;
+    }
+    if let Some(current) = fcx.scope().temporal_rewrite_expr_for(&name) {
+        debug!(
+            target: "sugar_lift_rust_tests::temporal_rewrite",
+            binding = name.as_str(),
+            value = %token_key(&current),
+            role = "Composite",
+            "temporal rewrite resolved sequence path read"
+        );
+        let child_fcx = fcx.with_bound_path(&name);
+        return Some(BoundSugar::new(name, build_composite(&current, &child_fcx)));
+    }
+    let init = fcx.scope().stable_let_binding_for_term(&name)?;
+    let child_fcx = fcx.with_bound_path(&name);
+    Some(BoundSugar::new(name, build_composite(init, &child_fcx)))
 }
 
 /// THE NO-FALSE-REFUTATION GATE. A local MUTATED through a `&mut` alias the tracker

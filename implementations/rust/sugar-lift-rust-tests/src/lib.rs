@@ -4306,6 +4306,8 @@ impl TemporalScope {
     /// is not its written init).
     fn record_let_binding(&mut self, name: &str, init: Expr) {
         let rewritten = substitute_expr(&init, &self.let_bindings);
+        let temporal_bindings = self.temporal_rewrite.borrow().expr_bindings();
+        let rewritten = substitute_expr(&rewritten, &temporal_bindings);
         if names_referenced_in_expr(&rewritten).contains(name) {
             tracing::debug!(
                 target: "sugar_lift_rust_tests::temporal_scope",
@@ -4328,6 +4330,10 @@ impl TemporalScope {
 
     fn record_temporal_rewrite_local(&mut self, local: &syn::Local) {
         self.temporal_rewrite.borrow_mut().record_local(local);
+    }
+
+    fn apply_temporal_rewrite_statement(&mut self, stmt: &Stmt) {
+        self.temporal_rewrite.borrow_mut().apply_statement(stmt);
     }
 
     /// The closed scalar-literal elements of `name` if it is a `let`-bound literal
@@ -12494,6 +12500,7 @@ fn collect_mut_pat_idents(pat: &Pat, out: &mut BTreeSet<String>) {
 
 fn advance_temporal_scope_for_stmt(stmt: &Stmt, scope: &mut TemporalScope) {
     scope.dormant_mut_ref.advance_stmt(stmt);
+    scope.apply_temporal_rewrite_statement(stmt);
     for name in deterministic_definition_names(stmt) {
         scope.define_local(&name);
     }

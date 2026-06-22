@@ -8,7 +8,7 @@
 use syn::{Expr, ExprClosure};
 use tracing::debug;
 
-use crate::sugar::factory::{build_composite, SugarBuildCtx};
+use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::method_family;
 use crate::{closure_single_param_ident, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 
@@ -25,7 +25,7 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     let Expr::Closure(f) = &call.args[0] else {
         return None;
     };
-    if !is_identity_closure(f) || !method_family::resolves_literal_sequence(expr, fcx.let_inits()) {
+    if !is_identity_closure(f) {
         return None;
     }
     debug!(
@@ -34,7 +34,7 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
         "recognized literal identity map"
     );
     Some(Box::new(IdentityMapSugar {
-        inner: build_composite(&call.receiver, fcx),
+        inner: method_family::build_literal_sequence_composite(&call.receiver, fcx)?,
     }))
 }
 
