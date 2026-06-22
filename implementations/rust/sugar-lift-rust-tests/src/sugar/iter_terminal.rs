@@ -70,6 +70,7 @@ use crate::sugar::factory::{build_composite, build_term, has_composite, SugarBui
 use crate::sugar::method;
 use crate::sugar::method_family;
 use crate::sugar::monadic;
+use crate::sugar::term_leaf::reasoned_hit;
 use crate::{
     closure_single_param_ident, const_eval_unary_closure, const_fold_acc_update,
     const_fold_int_term, const_int_acc_init, parse_int_lit, simple_path_name, strip_refs_groups,
@@ -161,6 +162,9 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     // Applies to ALL recognized terminals (count, next, nth, last, min, max, sum,
     // product, any, all, find, position, advance_by, reduce …), not just `.count()`.
     if let Some(name) = simple_path_name(&call.receiver) {
+        if let Some(reason) = fcx.scope().unknown_iterator_consumption_reason(&name) {
+            return Some(reasoned_hit(reason));
+        }
         if fcx.scope().is_consumed_iterator_local(&name)
             && fcx.scope().temporal_rewrite_expr_for(&name).is_none()
         {

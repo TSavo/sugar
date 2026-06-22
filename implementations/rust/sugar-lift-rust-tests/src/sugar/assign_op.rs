@@ -169,7 +169,16 @@ impl TemporalRewriteState {
                 .init
                 .as_ref()
                 .filter(|init| init.diverge.is_none())
-                .is_some_and(|init| self.apply_consumption_expr(&init.expr)),
+                .is_some_and(|init| {
+                    let mut applied = self.apply_consumption_expr(&init.expr);
+                    if let Some(base) = borrowed_iterator_source_name(&init.expr).filter(|base| {
+                        simple_pat_binding(&local.pat).as_ref() != Some(base)
+                            && self.values.contains_key(base)
+                    }) {
+                        applied |= self.invalidate_iterator_binding(&base, "by_ref");
+                    }
+                    applied
+                }),
             Stmt::Expr(expr, _) => self.apply_consumption_expr(expr),
             Stmt::Macro(stmt_macro) => self.apply_consumption_macro(&stmt_macro.mac),
             _ => false,
