@@ -109,6 +109,7 @@ pub mod sugar {
     pub mod integer_decode;
     pub mod intersperse_collect_string;
     pub mod intersperse_concat;
+    pub mod ip_addr;
     pub mod is_empty;
     pub mod is_sorted;
     pub mod iter_next;
