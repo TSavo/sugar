@@ -45,8 +45,8 @@ use syn::Expr;
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
 use crate::{
-    const_fold_int_term, const_fold_u128_term, expr_head_key, num, type_id_of_call_term,
-    u128_term, Desugared, Outcome, Sugar, SugarCtx,
+    const_fold_int_term, const_fold_u128_term, expr_head_key, num, type_id_of_call_term, u128_term,
+    Desugared, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =

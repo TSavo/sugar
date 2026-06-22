@@ -701,7 +701,10 @@ fn try_from_in_range_unwrap_folds_with_teeth() {
     "#;
     let out = lift_file(&parse(bad), "coretests/num/tf_unwrap_bad.rs");
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_tf_unwrap_bad") {
-        assert!(!sat, "try_from(255).unwrap() is 255 != 254 -- must be UNSAT");
+        assert!(
+            !sat,
+            "try_from(255).unwrap() is 255 != 254 -- must be UNSAT"
+        );
     }
 }
 
@@ -741,7 +744,10 @@ fn try_from_let_bound_arg_unwrap_folds_with_teeth() {
     "#;
     let out = lift_file(&parse(bad), "coretests/num/tf_letbound_bad.rs");
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_tf_letbound_bad") {
-        assert!(!sat, "let m=255; try_from(m).unwrap() is 255 != 254 -- must be UNSAT");
+        assert!(
+            !sat,
+            "let m=255; try_from(m).unwrap() is 255 != 254 -- must be UNSAT"
+        );
     }
 }
 
@@ -876,7 +882,10 @@ fn nonzero_new_unwrap_folds_with_teeth() {
     "#;
     let out = lift_file(&parse(bad), "coretests/num/nz_unwrap_bad.rs");
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_nz_unwrap_bad") {
-        assert!(!sat, "NonZero::new(7).unwrap().get() is 7 != 8 -- must be UNSAT");
+        assert!(
+            !sat,
+            "NonZero::new(7).unwrap().get() is 7 != 8 -- must be UNSAT"
+        );
     }
 }
 
@@ -962,7 +971,10 @@ fn partition_point_wrong_value_is_unsat() {
     "#;
     let out = lift_file(&parse(src), "coretests/slice/partition_point_bad.rs");
     let dump = format!("{:?}", out.decls);
-    assert!(dump.contains("Int(2)"), "partition_point folds to 2: {dump}");
+    assert!(
+        dump.contains("Int(2)"),
+        "partition_point folds to 2: {dump}"
+    );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_partition_point_bad") {
         assert!(!sat, "partition_point is 2 != 3 -- must be UNSAT");
     }
@@ -979,7 +991,10 @@ fn partition_point_all_and_none_boundaries() {
     "#;
     let out = lift_file(&parse(all), "coretests/slice/pp_all.rs");
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_pp_all") {
-        assert!(sat, "all satisfy -> partition_point == len(3) -- must be SAT");
+        assert!(
+            sat,
+            "all satisfy -> partition_point == len(3) -- must be SAT"
+        );
     }
     let none = r#"
         #[test]
@@ -1128,7 +1143,10 @@ fn singleton_and_direct_slice_is_sorted() {
         "[3,2,1].is_sorted() folds false: {dump}"
     );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_slice_is_sorted_bad") {
-        assert!(!sat, "[3,2,1] is descending -- asserting is_sorted must be UNSAT");
+        assert!(
+            !sat,
+            "[3,2,1] is descending -- asserting is_sorted must be UNSAT"
+        );
     }
 }
 
@@ -1247,9 +1265,15 @@ fn try_from_predicate_wrong_discriminant_is_unsat() {
     "#;
     let out = lift_file(&parse(ok_on_err), "coretests/num/try_from_ok_on_err_bad.rs");
     let dump = format!("{:?}", out.decls);
-    assert!(dump.contains("Bool(false)"), "is_ok on Err folds false: {dump}");
+    assert!(
+        dump.contains("Bool(false)"),
+        "is_ok on Err folds false: {dump}"
+    );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_try_from_ok_on_err_bad") {
-        assert!(!sat, "256 doesn't fit u8 -> is_ok() is false -- must be UNSAT");
+        assert!(
+            !sat,
+            "256 doesn't fit u8 -> is_ok() is false -- must be UNSAT"
+        );
     }
     let err_on_ok = r#"
         #[test]
@@ -1259,7 +1283,10 @@ fn try_from_predicate_wrong_discriminant_is_unsat() {
     "#;
     let out = lift_file(&parse(err_on_ok), "coretests/num/try_from_err_on_ok_bad.rs");
     let dump = format!("{:?}", out.decls);
-    assert!(dump.contains("Bool(false)"), "is_err on Ok folds false: {dump}");
+    assert!(
+        dump.contains("Bool(false)"),
+        "is_err on Ok folds false: {dump}"
+    );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_try_from_err_on_ok_bad") {
         assert!(!sat, "255 fits u8 -> is_err() is false -- must be UNSAT");
     }
@@ -1287,7 +1314,10 @@ fn try_from_signed_unsigned_boundaries() {
     "#;
     let out = lift_file(&parse(u8_neg), "coretests/num/u8_neg.rs");
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_u8_neg") {
-        assert!(sat, "-1 < 0 -> u8::try_from is_err() == true -- must be SAT");
+        assert!(
+            sat,
+            "-1 < 0 -> u8::try_from is_err() == true -- must be SAT"
+        );
     }
     // -1 fits i8 -> Ok; claiming is_err refutes.
     let i8_neg_ok = r#"
@@ -1372,7 +1402,10 @@ fn size_hint_decomposes_and_warrants() {
         "the count component (100) must be a ground int: {dump}"
     );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_size_hint") {
-        assert!(sat, "(0..100).size_hint() == (100, Some(100)) -- must be SAT");
+        assert!(
+            sat,
+            "(0..100).size_hint() == (100, Some(100)) -- must be SAT"
+        );
     }
 }
 
@@ -1536,7 +1569,10 @@ fn duration_accessor_wrong_value_is_unsat() {
     let dump = format!("{:?}", out.decls);
     assert!(dump.contains("Int(5)"), "as_secs() folds to 5: {dump}");
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_dur_as_secs_bad") {
-        assert!(!sat, "as_secs()==6 contradicts the folded 5 -- must be UNSAT");
+        assert!(
+            !sat,
+            "as_secs()==6 contradicts the folded 5 -- must be UNSAT"
+        );
     }
 }
 
@@ -1552,7 +1588,10 @@ fn duration_subsec_and_carry_fold() {
     "#;
     let out = lift_file(&parse(secs), "coretests/time/dur_millis_secs.rs");
     let dump = format!("{:?}", out.decls);
-    assert!(dump.contains("Int(1)"), "from_millis(1500).as_secs() folds 1: {dump}");
+    assert!(
+        dump.contains("Int(1)"),
+        "from_millis(1500).as_secs() folds 1: {dump}"
+    );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_dur_millis_secs") {
         assert!(sat, "from_millis(1500).as_secs() == 1 -- must be SAT");
     }
@@ -1564,9 +1603,15 @@ fn duration_subsec_and_carry_fold() {
     "#;
     let out = lift_file(&parse(subsec), "coretests/time/dur_subsec_millis.rs");
     let dump = format!("{:?}", out.decls);
-    assert!(dump.contains("Int(500)"), "subsec_millis() folds 500: {dump}");
+    assert!(
+        dump.contains("Int(500)"),
+        "subsec_millis() folds 500: {dump}"
+    );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_dur_subsec_millis") {
-        assert!(sat, "from_millis(1500).subsec_millis() == 500 -- must be SAT");
+        assert!(
+            sat,
+            "from_millis(1500).subsec_millis() == 500 -- must be SAT"
+        );
     }
     let subsec_bad = r#"
         #[test]
@@ -1574,7 +1619,10 @@ fn duration_subsec_and_carry_fold() {
             assert!(Duration::from_millis(1500).subsec_millis() == 501);
         }
     "#;
-    let out = lift_file(&parse(subsec_bad), "coretests/time/dur_subsec_millis_bad.rs");
+    let out = lift_file(
+        &parse(subsec_bad),
+        "coretests/time/dur_subsec_millis_bad.rs",
+    );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_dur_subsec_millis_bad") {
         assert!(!sat, "subsec_millis is 500 != 501 -- must be UNSAT");
     }
@@ -1607,7 +1655,10 @@ fn duration_new_nanos_and_typed_rhs_fold() {
     "#;
     let out = lift_file(&parse(typed), "coretests/time/dur_typed_rhs.rs");
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_dur_typed_rhs") {
-        assert!(sat, "as_secs() == 5u64 (typed RHS) -- int widths are SMT Int, must be SAT");
+        assert!(
+            sat,
+            "as_secs() == 5u64 (typed RHS) -- int widths are SMT Int, must be SAT"
+        );
     }
 }
 
@@ -2739,7 +2790,10 @@ fn for_slice_pattern_over_literal_of_arrays_lifts() {
         out.skip_reasons
     );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_slice") {
-        assert!(sat, "a+b at each step ([1,2]->3, [3,4]->7) == expected -- SAT");
+        assert!(
+            sat,
+            "a+b at each step ([1,2]->3, [3,4]->7) == expected -- SAT"
+        );
     }
 }
 
@@ -2788,7 +2842,10 @@ fn for_slice_pattern_binds_components_in_order() {
         out.skip_reasons
     );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_slice_order") {
-        assert!(sat, "a binds the FIRST component ([1, 3]); a swap would make a = [2, 4] and refute");
+        assert!(
+            sat,
+            "a binds the FIRST component ([1, 3]); a swap would make a = [2, 4] and refute"
+        );
     }
 }
 
@@ -3265,8 +3322,7 @@ fn for_array_repeat_non_literal_element_refuses() {
     assert_eq!(
         out.assertions_lifted, 0,
         "a non-literal-element repeat must not falsely lift: lifted={} refused={}",
-        out.assertions_lifted,
-        out.assertions_refused
+        out.assertions_lifted, out.assertions_refused
     );
 }
 
@@ -3357,7 +3413,10 @@ fn const_arithmetic_len_array_repeat_index_grounds_and_twin_refutes() {
     "#;
     let out = lift_file(&parse(bad), "coretests/repeat/const_arith_bad.rs");
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_arith_bad") {
-        assert!(!sat, "a[2] grounds to 4 != 99 over [4; CAP=3] -- must be UNSAT");
+        assert!(
+            !sat,
+            "a[2] grounds to 4 != 99 over [4; CAP=3] -- must be UNSAT"
+        );
     }
 }
 
@@ -3427,7 +3486,10 @@ fn slice_get_unchecked_wrong_expected_is_unsat() {
     "#;
     let out = lift_file(&parse(src), "coretests/slice/get_unchecked_bad.rs");
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "gu_bad") {
-        assert!(!sat, "[10,20,30].get_unchecked(1)=20 != 99 -- must be UNSAT");
+        assert!(
+            !sat,
+            "[10,20,30].get_unchecked(1)=20 != 99 -- must be UNSAT"
+        );
     }
 }
 
@@ -3445,8 +3507,7 @@ fn slice_get_unchecked_out_of_domain_refuses() {
     assert_eq!(
         out.assertions_lifted, 0,
         "out-of-domain get_unchecked must not falsely lift: lifted={} refused={}",
-        out.assertions_lifted,
-        out.assertions_refused
+        out.assertions_lifted, out.assertions_refused
     );
 }
 
@@ -3469,7 +3530,10 @@ fn slice_get_unchecked_trait_clamp_form_lifts() {
         out.skip_reasons
     );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "gu_trait") {
-        assert!(sat, "Clamp(2).get_unchecked([10,20,30]) == 30 -- consistent (SAT)");
+        assert!(
+            sat,
+            "Clamp(2).get_unchecked([10,20,30]) == 30 -- consistent (SAT)"
+        );
     }
 }
 
@@ -16022,9 +16086,12 @@ fn format_debug_float_eq_has_teeth() {
     // exponential high cutoff: Debug of 1e16 is "1e16".
     let cut = format_eq_verdict(r#"format!("{:?}", 1e16f64)"#, r#""1e16""#, "dbgf_cut").unwrap();
     assert!(cut, "format!(\"{{:?}}\", 1e16f64) == \"1e16\" must be SAT");
-    let cut_bad =
-        format_eq_verdict(r#"format!("{:?}", 1e16f64)"#, r#""10000000000000000""#, "dbgf_cut_bad")
-            .unwrap();
+    let cut_bad = format_eq_verdict(
+        r#"format!("{:?}", 1e16f64)"#,
+        r#""10000000000000000""#,
+        "dbgf_cut_bad",
+    )
+    .unwrap();
     assert!(
         !cut_bad,
         "Debug 1e16 is exponential \"1e16\", not the Display decimal -> z3-UNSAT (teeth)"
@@ -16032,7 +16099,10 @@ fn format_debug_float_eq_has_teeth() {
     // small-magnitude exponential: Debug of 0.00009 is "9e-5".
     let small =
         format_eq_verdict(r#"format!("{:?}", 0.00009f64)"#, r#""9e-5""#, "dbgf_small").unwrap();
-    assert!(small, "format!(\"{{:?}}\", 0.00009f64) == \"9e-5\" must be SAT");
+    assert!(
+        small,
+        "format!(\"{{:?}}\", 0.00009f64) == \"9e-5\" must be SAT"
+    );
     // integer-valued negative: Debug of -3.0 is "-3.0".
     let neg = format_eq_verdict(r#"format!("{:?}", -3f64)"#, r#""-3.0""#, "dbgf_neg").unwrap();
     assert!(neg, "format!(\"{{:?}}\", -3f64) == \"-3.0\" must be SAT");
@@ -16416,7 +16486,10 @@ fn t() {
     let out = lift_file(&parse(src), "tests/bit_width_good.rs");
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "bit_width_good") {
-        assert!(sat, "0b010_1100u32.bit_width()=6 == 6 must be z3-SAT (the warrant holds)");
+        assert!(
+            sat,
+            "0b010_1100u32.bit_width()=6 == 6 must be z3-SAT (the warrant holds)"
+        );
     }
 }
 
@@ -16469,7 +16542,10 @@ fn t() {
         "NonZero bit_width must lower to a grounded scalar fact: {doc}"
     );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "bit_width_nz") {
-        assert!(sat, "NonZero(44).bit_width()=6 == NonZero(6)=6 must be z3-SAT");
+        assert!(
+            sat,
+            "NonZero(44).bit_width()=6 == NonZero(6)=6 must be z3-SAT"
+        );
     }
 }
 
@@ -16515,7 +16591,10 @@ fn t() {
     let out = lift_file(&parse(src), "tests/from_bool_good.rs");
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "from_bool_good") {
-        assert!(sat, "<u8>::from(true)=1 == 1 must be z3-SAT (the warrant holds)");
+        assert!(
+            sat,
+            "<u8>::from(true)=1 == 1 must be z3-SAT (the warrant holds)"
+        );
     }
 }
 
@@ -17616,7 +17695,7 @@ fn calls_h() {
     );
     assert!(
         out.reduced_helpers.contains("h"),
-        "a fully-peeled value helper must be recorded as a universe/support member"
+        "a fully-peeled value helper must be recorded as callsite-accounted"
     );
     // Value teeth: the grounded contract is SAT (good dig).
     if let Some(sat) = z3_verdict(&inv_json(decl), "inline_h_good") {
@@ -17861,11 +17940,10 @@ fn contradiction() {
 
 // ───────────────────────────────────────────────────────────────────────────
 // IR-DOCUMENT CONTRACT (capability #1, part C): the peel must surface correctly
-// through the `lift` RPC, not just the term-lift. A fully-inlined value helper is a
-// UNIVERSE member -- the classifier must mark its locus status == "support" AND emit NO
-// standalone `out=call:h` warrant decl into `ir`. Otherwise hollow-B is merely relocated
-// from the assertion to a top-level contract (re-introducing the exact opaque `call:h`
-// symbol the peel killed), not eliminated. A BAILED helper keeps its own broad contract.
+// through the `lift` RPC, not just the term-lift. A visible value helper owns a source
+// contract even when a local value peel can compute the caller-side scalar fact. The
+// caller keeps the callsite obligation (`call:h(2) == 3`); the helper owns its post; the
+// linker/implication lifter composes them. A BAILED helper keeps its own broad contract too.
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Run the RPC binary against a temp workspace holding one fixture file, returning the
@@ -17984,6 +18062,57 @@ fn assert_contract_edge(doc: &serde_json::Value, source: &str, symbol: &str, tar
             "{key} must be a prefixed CID, got {cid}: {edge:#}"
         );
     }
+}
+
+#[test]
+fn rpc_reduced_value_helper_keeps_contract_and_callsite_edge() {
+    let doc = run_rpc_lift(
+        "src/value_helper_edge.rs",
+        r#"
+fn h(n: i32) -> i32 { n + 1 }
+
+#[test]
+fn calls_h() {
+    assert_eq!(h(2), 3);
+}
+"#,
+    );
+
+    assert_eq!(
+        locus_status(&doc, "h"),
+        Some("warranted"),
+        "a visible helper owns a source contract even when the caller fact can be reduced: {doc:#}"
+    );
+    let helper = ir_entry_named(&doc, "rust-source::h")
+        .unwrap_or_else(|| panic!("missing source contract for h: {doc:#}"));
+    assert_eq!(helper["kind"], serde_json::json!("function-contract"));
+    assert_eq!(helper["bridgeSourceSymbol"], serde_json::json!("call:h"));
+    assert!(
+        helper.get("post").is_some(),
+        "helper must own its postcondition, not donate its body to the caller: {helper:#}"
+    );
+
+    let callsite_fact = doc["ir"]
+        .as_array()
+        .and_then(|entries| {
+            entries.iter().find(|entry| {
+                entry["kind"] == serde_json::json!("contract")
+                    && entry["name"]
+                        .as_str()
+                        .is_some_and(|name| name.contains("::h#euf#"))
+                    && entry["inv"].to_string().contains("call:h")
+            })
+        })
+        .unwrap_or_else(|| panic!("missing caller-owned callsite fact for h(2): {doc:#}"));
+    let source_contract = callsite_fact["name"]
+        .as_str()
+        .expect("callsite fact has a name");
+    assert!(
+        callsite_fact["inv"].to_string().contains("panic")
+            && callsite_fact["inv"].to_string().contains("call:h"),
+        "caller fact must retain the callsite term so implication composition has an edge: {callsite_fact:#}"
+    );
+    assert_contract_edge(&doc, source_contract, "call:h", "rust-source::h");
 }
 
 #[test]
@@ -18793,9 +18922,7 @@ fn shared_borrow_address_cast_stays_refused() {
         out.assertions_lifted, 0,
         "address/provenance (`&x as *const _`) is not a constructible value -- must stay \
          refused (0 lifted): lifted={} refused={} skips={:?}",
-        out.assertions_lifted,
-        out.assertions_refused,
-        out.skip_reasons
+        out.assertions_lifted, out.assertions_refused, out.skip_reasons
     );
     assert!(
         out.assertions_refused >= 1
@@ -19059,7 +19186,10 @@ fn assert_decl_verdict(src: &str, want_sat: bool, label: &str) {
         out.skip_reasons
     );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), label) {
-        assert_eq!(sat, want_sat, "{label}: expected sat={want_sat} for `{src}`");
+        assert_eq!(
+            sat, want_sat,
+            "{label}: expected sat={want_sat} for `{src}`"
+        );
     }
 }
 
@@ -19067,36 +19197,108 @@ fn assert_decl_verdict(src: &str, want_sat: bool, label: &str) {
 fn vec_macro_over_literals_grounds_with_teeth() {
     assert_decl_verdict("assert_eq!(vec![1, 2, 3][1], 2);", true, "vec_index_good");
     assert_decl_verdict("assert_eq!(vec![1, 2, 3][1], 99);", false, "vec_index_bad");
-    assert_decl_verdict("assert_eq!(vec![10, 20, 30].len(), 3);", true, "vec_len_good");
-    assert_decl_verdict("assert_eq!(vec![10, 20, 30].len(), 4);", false, "vec_len_bad");
-    assert_decl_verdict("assert_eq!(vec![1, 2, 3].iter().sum::<i32>(), 6);", true, "vec_sum_good");
-    assert_decl_verdict("assert_eq!(vec![1, 2, 3].iter().sum::<i32>(), 99);", false, "vec_sum_bad");
+    assert_decl_verdict(
+        "assert_eq!(vec![10, 20, 30].len(), 3);",
+        true,
+        "vec_len_good",
+    );
+    assert_decl_verdict(
+        "assert_eq!(vec![10, 20, 30].len(), 4);",
+        false,
+        "vec_len_bad",
+    );
+    assert_decl_verdict(
+        "assert_eq!(vec![1, 2, 3].iter().sum::<i32>(), 6);",
+        true,
+        "vec_sum_good",
+    );
+    assert_decl_verdict(
+        "assert_eq!(vec![1, 2, 3].iter().sum::<i32>(), 99);",
+        false,
+        "vec_sum_bad",
+    );
 }
 
 #[test]
 fn to_vec_over_literal_array_grounds_with_teeth() {
-    assert_decl_verdict("assert_eq!([1, 2, 3].to_vec()[1], 2);", true, "to_vec_index_good");
-    assert_decl_verdict("assert_eq!([1, 2, 3].to_vec()[1], 99);", false, "to_vec_index_bad");
-    assert_decl_verdict("assert_eq!([1, 2, 3].to_vec().len(), 3);", true, "to_vec_len_good");
-    assert_decl_verdict("assert_eq!([1, 2, 3].to_vec().len(), 4);", false, "to_vec_len_bad");
-    assert_decl_verdict("assert_eq!([1, 2, 3].to_vec().iter().sum::<i32>(), 6);", true, "to_vec_sum_good");
-    assert_decl_verdict("assert_eq!([1, 2, 3].to_vec().iter().sum::<i32>(), 99);", false, "to_vec_sum_bad");
+    assert_decl_verdict(
+        "assert_eq!([1, 2, 3].to_vec()[1], 2);",
+        true,
+        "to_vec_index_good",
+    );
+    assert_decl_verdict(
+        "assert_eq!([1, 2, 3].to_vec()[1], 99);",
+        false,
+        "to_vec_index_bad",
+    );
+    assert_decl_verdict(
+        "assert_eq!([1, 2, 3].to_vec().len(), 3);",
+        true,
+        "to_vec_len_good",
+    );
+    assert_decl_verdict(
+        "assert_eq!([1, 2, 3].to_vec().len(), 4);",
+        false,
+        "to_vec_len_bad",
+    );
+    assert_decl_verdict(
+        "assert_eq!([1, 2, 3].to_vec().iter().sum::<i32>(), 6);",
+        true,
+        "to_vec_sum_good",
+    );
+    assert_decl_verdict(
+        "assert_eq!([1, 2, 3].to_vec().iter().sum::<i32>(), 99);",
+        false,
+        "to_vec_sum_bad",
+    );
 }
 
 #[test]
 fn vec_from_array_grounds_with_teeth() {
-    assert_decl_verdict("assert_eq!(Vec::from([1, 2, 3])[1], 2);", true, "vec_from_index_good");
-    assert_decl_verdict("assert_eq!(Vec::from([1, 2, 3])[1], 99);", false, "vec_from_index_bad");
-    assert_decl_verdict("assert_eq!(Vec::from([1, 2, 3]).len(), 3);", true, "vec_from_len_good");
-    assert_decl_verdict("assert_eq!(Vec::from([1, 2, 3]).len(), 4);", false, "vec_from_len_bad");
+    assert_decl_verdict(
+        "assert_eq!(Vec::from([1, 2, 3])[1], 2);",
+        true,
+        "vec_from_index_good",
+    );
+    assert_decl_verdict(
+        "assert_eq!(Vec::from([1, 2, 3])[1], 99);",
+        false,
+        "vec_from_index_bad",
+    );
+    assert_decl_verdict(
+        "assert_eq!(Vec::from([1, 2, 3]).len(), 3);",
+        true,
+        "vec_from_len_good",
+    );
+    assert_decl_verdict(
+        "assert_eq!(Vec::from([1, 2, 3]).len(), 4);",
+        false,
+        "vec_from_len_bad",
+    );
 }
 
 #[test]
 fn as_slice_and_to_owned_over_literal_array_ground_with_teeth() {
-    assert_decl_verdict("assert_eq!([1, 2, 3].as_slice()[1], 2);", true, "as_slice_index_good");
-    assert_decl_verdict("assert_eq!([1, 2, 3].as_slice()[1], 99);", false, "as_slice_index_bad");
-    assert_decl_verdict("assert_eq!([1, 2, 3].to_owned()[1], 2);", true, "to_owned_index_good");
-    assert_decl_verdict("assert_eq!([1, 2, 3].to_owned()[1], 99);", false, "to_owned_index_bad");
+    assert_decl_verdict(
+        "assert_eq!([1, 2, 3].as_slice()[1], 2);",
+        true,
+        "as_slice_index_good",
+    );
+    assert_decl_verdict(
+        "assert_eq!([1, 2, 3].as_slice()[1], 99);",
+        false,
+        "as_slice_index_bad",
+    );
+    assert_decl_verdict(
+        "assert_eq!([1, 2, 3].to_owned()[1], 2);",
+        true,
+        "to_owned_index_good",
+    );
+    assert_decl_verdict(
+        "assert_eq!([1, 2, 3].to_owned()[1], 99);",
+        false,
+        "to_owned_index_bad",
+    );
 }
 
 // finite-or-refuse: a RUNTIME element (`compute()`) has no const value, so the constructor
@@ -19325,7 +19527,11 @@ fn shared_borrow_deref_read_wrong_value_is_unsat() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/borrow/shared_deref_bad.rs");
-    assert!(out.assertions_lifted >= 1, "bad twin must lift: {:?}", out.skip_reasons);
+    assert!(
+        out.assertions_lifted >= 1,
+        "bad twin must lift: {:?}",
+        out.skip_reasons
+    );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "shared_deref_bad") {
         assert!(
             !sat,
@@ -19526,7 +19732,12 @@ fn literal_audit(src: &str) -> (String, String) {
         .factory_audits
         .iter()
         .find(|a| a.selected == Some("literal"))
-        .unwrap_or_else(|| panic!("no `literal` audit for `{src}`; audits: {:?}", out.factory_audits));
+        .unwrap_or_else(|| {
+            panic!(
+                "no `literal` audit for `{src}`; audits: {:?}",
+                out.factory_audits
+            )
+        });
     (
         format!("{:?}", audit.disposition),
         audit.reason.clone().unwrap_or_default(),
@@ -19536,7 +19747,10 @@ fn literal_audit(src: &str) -> (String, String) {
 /// Assert the literal in `src` is Refused with a reason containing `needle`.
 fn assert_named_refused(src: &str, needle: &str) {
     let (disp, reason) = literal_audit(src);
-    assert_eq!(disp, "Refused", "`{src}` should be Refused, got {disp} ({reason})");
+    assert_eq!(
+        disp, "Refused",
+        "`{src}` should be Refused, got {disp} ({reason})"
+    );
     assert!(
         reason.contains(needle),
         "`{src}` reason should contain {needle:?}, got {reason:?}"
@@ -19546,13 +19760,22 @@ fn assert_named_refused(src: &str, needle: &str) {
 /// Assert the literal in `src` still WARRANTS (the discrimination twin — no over-refusal).
 fn assert_still_warrants(src: &str) {
     let (disp, _) = literal_audit(src);
-    assert_eq!(disp, "Warranted", "twin `{src}` must still warrant (no over-refusal)");
+    assert_eq!(
+        disp, "Warranted",
+        "twin `{src}` must still warrant (no over-refusal)"
+    );
 }
 
 #[test]
 fn literal_empty_domain_named_refused_with_twin() {
-    assert_named_refused("#[test] fn t() { assert_eq!((5..5).sum::<i32>(), 0); }", "literal domain is empty");
-    assert_named_refused("#[test] fn t() { assert_eq!((100..10).sum::<i32>(), 0); }", "literal domain is empty");
+    assert_named_refused(
+        "#[test] fn t() { assert_eq!((5..5).sum::<i32>(), 0); }",
+        "literal domain is empty",
+    );
+    assert_named_refused(
+        "#[test] fn t() { assert_eq!((100..10).sum::<i32>(), 0); }",
+        "literal domain is empty",
+    );
     assert_named_refused(
         "#[test] fn t() { let a: [i32; 0] = []; assert_eq!(a.iter().count(), 0); }",
         "literal domain is empty",
@@ -19588,14 +19811,20 @@ fn literal_oversize_domain_named_refused_with_twin() {
 
 #[test]
 fn literal_char_range_named_refused_with_twin() {
-    assert_named_refused("#[test] fn t() { assert_eq!(('a'..='z').count(), 26); }", "literal char range");
+    assert_named_refused(
+        "#[test] fn t() { assert_eq!(('a'..='z').count(), 26); }",
+        "literal char range",
+    );
     // TWIN: an INT range still warrants (only char/AsciiChar bounds are the dragon).
     assert_still_warrants("#[test] fn t() { assert_eq!((0..3).count(), 3); }");
 }
 
 #[test]
 fn literal_runtime_bound_named_refused_with_twin() {
-    assert_named_refused("#[test] fn t(n: usize) { assert_eq!((0..n).count(), n); }", "bound is not text-determined");
+    assert_named_refused(
+        "#[test] fn t(n: usize) { assert_eq!((0..n).count(), n); }",
+        "bound is not text-determined",
+    );
     // TWIN: a text-determined (literal) bound still warrants.
     assert_still_warrants("#[test] fn t() { assert_eq!((0..3).count(), 3); }");
 }
@@ -19727,7 +19956,10 @@ fn unrelated_alias_mutation_does_not_refuse_other_locals() {
         out.skip_reasons
     );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "unrelated_x") {
-        assert!(sat, "x == 6 holds; unrelated `*s += 1` must not gate `x` (SAT)");
+        assert!(
+            sat,
+            "x == 6 holds; unrelated `*s += 1` must not gate `x` (SAT)"
+        );
     }
 }
 
@@ -19756,7 +19988,10 @@ fn slice_coercion_cast_warrants_array_value() {
         out.skip_reasons
     );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "slice_coerce_good") {
-        assert!(sat, "&[1,2,3] as &[_] == &[1,2,3] -> the array equals itself (SAT)");
+        assert!(
+            sat,
+            "&[1,2,3] as &[_] == &[1,2,3] -> the array equals itself (SAT)"
+        );
     }
 }
 
@@ -19819,7 +20054,10 @@ fn kit_slice_coercion_distinct_arrays_undecided_not_discharged() {
         out.skip_reasons
     );
     let inv = inv_json(&out.decls[0]);
-    eprintln!("KIT-BADTWIN inv = {}", serde_json::to_string_pretty(&inv).unwrap());
+    eprintln!(
+        "KIT-BADTWIN inv = {}",
+        serde_json::to_string_pretty(&inv).unwrap()
+    );
 
     // The inv is `and{operands:[ atomic{=,[lhs,rhs]} ]}`; unwrap to the equality atomic.
     let eq_atomic = if inv.get("kind").and_then(|k| k.as_str()) == Some("and") {
@@ -19850,7 +20088,10 @@ fn kit_slice_coercion_distinct_arrays_undecided_not_discharged() {
     // (2) Positive relation `lhs == rhs` must be SAT (the two free vars CAN be equal)
     //     => NOT refuted. A false-refutation here would be the inverse sin.
     if let Some(sat) = z3_verdict(&inv, "kit_slice_bad_twin_pos") {
-        assert!(sat, "distinct-array `==` must be SAT (not refuted): two free vars can coincide");
+        assert!(
+            sat,
+            "distinct-array `==` must be SAT (not refuted): two free vars can coincide"
+        );
     }
 
     // (3) NEGATION `lhs != rhs` (distinct) must be SAT => the equality is NOT VALID =>
@@ -19922,7 +20163,9 @@ fn while_loop_counter_read_refuses() {
     "#;
     let out = lift_file(&parse(src), "coretests/loop/while_counter.rs");
     assert!(
-        out.skip_reasons.iter().any(|r| r.contains("temporally unstable post-loop read")),
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("temporally unstable post-loop read")),
         "a while-loop counter read after the loop must REFUSE: {:?}",
         out.skip_reasons
     );
@@ -19980,7 +20223,10 @@ fn closure_read_only_capture_does_not_over_refuse() {
         out.skip_reasons
     );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "closure_readonly") {
-        assert!(sat, "x == 5 holds; a read-only closure capture must not gate `x` (SAT)");
+        assert!(
+            sat,
+            "x == 5 holds; a read-only closure capture must not gate `x` (SAT)"
+        );
     }
 }
 
@@ -20259,7 +20505,11 @@ fn chained_next_next_len_over_literal_iterator_grounds_remaining_len() {
         out.skip_reasons
     );
     let operands = inv_operands(single_warranted_decl(&out));
-    assert_eq!(operands.len(), 1, "expected one grounded equality: {operands:?}");
+    assert_eq!(
+        operands.len(),
+        1,
+        "expected one grounded equality: {operands:?}"
+    );
     match operands[0].as_ref() {
         Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
             for arg in args {
@@ -20268,16 +20518,19 @@ fn chained_next_next_len_over_literal_iterator_grounds_remaining_len() {
                         value: ConstValue::Int(0),
                         ..
                     } => {}
-                    other => panic!(
-                        "expected chained next().next().len() to ground to 0, got {other:?}"
-                    ),
+                    other => {
+                        panic!("expected chained next().next().len() to ground to 0, got {other:?}")
+                    }
                 }
             }
         }
         other => panic!("expected grounded equality, got {other:?}"),
     }
     if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "next_next_len") {
-        assert!(sat, "after two next() calls over [1, 2], remaining len is 0");
+        assert!(
+            sat,
+            "after two next() calls over [1, 2], remaining len is 0"
+        );
     }
 }
 
@@ -20307,13 +20560,14 @@ fn chained_next_count_over_literal_iterator_uses_remaining_state() {
             assert_eq!([1_i32, 2, 3].iter().next().count(), 2);
         }
     "#;
-    let out = lift_file(
-        &parse(src),
-        "coretests/iter/adapters/chained_next_count.rs",
-    );
+    let out = lift_file(&parse(src), "coretests/iter/adapters/chained_next_count.rs");
     assert_warranted_decl_count(&out, 1);
     let operands = inv_operands(single_warranted_decl(&out));
-    assert_eq!(operands.len(), 1, "expected one grounded equality: {operands:?}");
+    assert_eq!(
+        operands.len(),
+        1,
+        "expected one grounded equality: {operands:?}"
+    );
     assert_eq_atom(&operands[0], 2);
 }
 
@@ -20332,7 +20586,11 @@ fn chained_next_len_over_visible_sequence_helper_grounds_returned_literal() {
     );
     assert_warranted_decl_count(&out, 1);
     let operands = inv_operands(single_warranted_decl(&out));
-    assert_eq!(operands.len(), 1, "expected one grounded equality: {operands:?}");
+    assert_eq!(
+        operands.len(),
+        1,
+        "expected one grounded equality: {operands:?}"
+    );
     match operands[0].as_ref() {
         Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
             for arg in args {
@@ -20349,9 +20607,14 @@ fn chained_next_len_over_visible_sequence_helper_grounds_returned_literal() {
         }
         other => panic!("expected equality, got {other:?}"),
     }
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "visible_helper_next_len")
-    {
-        assert!(sat, "after one next() call over helper-returned [1, 2], remaining len is 1");
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "visible_helper_next_len",
+    ) {
+        assert!(
+            sat,
+            "after one next() call over helper-returned [1, 2], remaining len is 1"
+        );
     }
 }
 
@@ -20369,9 +20632,14 @@ fn chained_next_len_over_visible_sequence_helper_bad_twin_refutes() {
         "coretests/iter/adapters/visible_helper_next_len_bad.rs",
     );
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "visible_helper_next_len_bad")
-    {
-        assert!(!sat, "wrong remaining len for helper-returned literal sequence must be z3-UNSAT");
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "visible_helper_next_len_bad",
+    ) {
+        assert!(
+            !sat,
+            "wrong remaining len for helper-returned literal sequence must be z3-UNSAT"
+        );
     }
 }
 
@@ -20525,7 +20793,10 @@ fn consumed_iterator_fold_after_next_declines_stale_body_assertion() {
             });
         }
     "#;
-    let out = lift_file(&parse(src), "coretests/iter/adapters/enumerate_fold_after_next.rs");
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/adapters/enumerate_fold_after_next.rs",
+    );
     assert!(
         out.assertions_lifted >= 1,
         "consumed-local fold body must stay accounted opaquely: lifted={} refused={} skips={:?}",
@@ -20539,7 +20810,10 @@ fn consumed_iterator_fold_after_next_declines_stale_body_assertion() {
         out.skip_reasons
     );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "consumed_fold_body") {
-        assert!(sat, "consumed fold body obligation must be SAT, not falsely refuted");
+        assert!(
+            sat,
+            "consumed fold body obligation must be SAT, not falsely refuted"
+        );
     }
 }
 
@@ -20597,7 +20871,10 @@ fn non_consumed_iterator_fold_still_warrants_body_assertion() {
             });
         }
     "#;
-    let out = lift_file(&parse(src), "coretests/iter/adapters/enumerate_fresh_fold.rs");
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/adapters/enumerate_fresh_fold.rs",
+    );
     assert!(
         out.assertions_lifted >= 1 && out.assertions_refused == 0,
         "fresh literal fold must still warrant: lifted={} refused={} skips={:?}",
@@ -20837,7 +21114,10 @@ fn t() {
     let out = lift_file(&parse(src), "tests/range_contains_good.rs");
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "range_contains_good") {
-        assert!(sat, "(1..5).contains(&3) = true must be z3-SAT (the warrant holds)");
+        assert!(
+            sat,
+            "(1..5).contains(&3) = true must be z3-SAT (the warrant holds)"
+        );
     }
 }
 
@@ -20873,7 +21153,10 @@ fn t() {
     let out = lift_file(&parse(src), "tests/range_contains_incl.rs");
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "range_contains_incl") {
-        assert!(sat, "(1..=5).contains(&5) = true (inclusive end) must be z3-SAT");
+        assert!(
+            sat,
+            "(1..=5).contains(&5) = true (inclusive end) must be z3-SAT"
+        );
     }
 }
 
@@ -20937,7 +21220,6 @@ fn t() {
 /// Walk a formula tree collecting all `Term::Var` names (for checking that
 /// no opaque variable escapes after let-bound resolution).
 fn lever23_collect_vars_in_formula(formula: &Formula, vars: &mut Vec<String>) {
-    use sugar_ir_symbolic::Term;
     match formula {
         Formula::Atomic { args, .. } => {
             for arg in args {

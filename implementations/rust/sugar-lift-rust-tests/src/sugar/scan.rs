@@ -49,10 +49,7 @@ struct ScanBody {
 /// is not a finite literal-sequence composite, or if the closure body does not
 /// match the supported `{ *acc <op>= rhs; Some(*acc) }` pattern. Called from
 /// `iter_terminal::recognize` as a pre-pass before the standard peel path.
-pub(crate) fn try_build_scan_inner(
-    expr: &Expr,
-    fcx: &SugarBuildCtx,
-) -> Option<Box<dyn Sugar>> {
+pub(crate) fn try_build_scan_inner(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::MethodCall(call) = strip_refs_groups(expr) else {
         return None;
     };

@@ -397,7 +397,9 @@ fn lift(params: &Value) -> Value {
             // FINITE-OR-REFUSE: an oversized source memento (referenced-source gather that
             // ran away on an unbounded shape) is REFUSED -- replaced by a refusal marker,
             // never the huge term. The memento is refused, not silently truncated.
-            let memento_bytes = serde_json::to_string(&memento_json).map(|s| s.len()).unwrap_or(0);
+            let memento_bytes = serde_json::to_string(&memento_json)
+                .map(|s| s.len())
+                .unwrap_or(0);
             if memento_bytes > MEMENTO_EMIT_BYTE_BOUND {
                 memento_json = json!({
                     "sugar-refused": "source-memento-exceeds-emit-bound",
@@ -1018,18 +1020,10 @@ fn classify_nontest_fn(
 ) -> (&'static str, Option<String>, Option<Value>) {
     let is_method_contract = name.contains("::");
     if reduced && !is_method_contract {
-        // A non-test fn the reducer INLINED to discharge a test (a bare-statement R7
-        // inline, an arg-position inline, OR -- capability #1 -- a TERM-POSITION
-        // value-call peel that grounded `h(2)` to `+(2,1)`). It backs a warrant as a
-        // UNIVERSE member, so it is warranted auxiliary accounting. CHECKED BEFORE
-        // `broad_functional_warrant` (which returns Some for ANY value-returning
-        // body): a fully-inlined value helper must NOT also be minted as its OWN
-        // standalone `out=call:h` contract -- that re-introduces the opaque `call:h`
-        // symbol the peel just killed.
-        return (
-            "warranted",
-            Some("auxiliary executable helper inlined into a resolved universe".to_string()),
-            None,
+        tracing::debug!(
+            function = %name,
+            "classify_nontest_fn: reduced helper still owns a source contract; caller owns \
+             only the callsite fact/bridge"
         );
     }
     if let Some(decl) = sugar_lift_rust_tests::broad_functional_warrant(name, sig, block) {
@@ -1809,7 +1803,9 @@ fn factory_audits_json(file: &str, audits: &[FactoryAudit]) -> Vec<Value> {
     order
         .into_iter()
         .map(|key| {
-            let mut row = rows.remove(&key).expect("row keyed in `order` was inserted");
+            let mut row = rows
+                .remove(&key)
+                .expect("row keyed in `order` was inserted");
             row["occurrences"] = json!(occurrences[&key]);
             row
         })
@@ -2281,26 +2277,25 @@ mod tests {
     }
 
     #[test]
-    fn reduced_helper_body_is_warranted_auxiliary_not_support() {
+    fn reduced_helper_body_still_mints_source_contract() {
         let f: syn::ItemFn = syn::parse_str("fn h(x: i32) -> i32 { x + 1 }").expect("fn parses");
         let source_memento = json!({});
         let (status, reason, decl) =
             classify_nontest_fn("h", &f.sig, &f.block, true, &source_memento);
 
-        assert!(
-            decl.is_none(),
-            "an inlined helper mints no standalone contract"
-        );
         assert_eq!(
             status, "warranted",
-            "inlined executable helper context is warranted auxiliary accounting, not support"
+            "a reduced helper is warranted by its own source contract"
         );
         assert!(
-            reason
-                .as_deref()
-                .is_some_and(|reason| reason.contains("auxiliary")),
-            "auxiliary reason should explain the non-contract warrant: {reason:?}"
+            reason.is_none(),
+            "contract emission needs no auxiliary excuse: {reason:?}"
         );
+        let entry = decl.expect("a reduced helper still mints its own contract");
+        assert_eq!(entry["kind"], "function-contract");
+        assert_eq!(entry["name"], "rust-source::h");
+        assert_eq!(entry["bridgeSourceSymbol"], "call:h");
+        assert!(entry.get("post").is_some(), "{entry}");
     }
 
     #[test]

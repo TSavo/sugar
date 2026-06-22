@@ -4115,14 +4115,14 @@ pub(crate) struct TemporalScope {
     /// asks the factory to desugar the initializer term.
     const_registry: ConstRegistry,
     /// Names of value helpers PEELED to ground literals by a term-position inline during
-    /// this scope's desugar (capability #1). Resolution flows IN (the `fn_registry`); the
-    /// support-record must flow OUT, so the classifier DEMOTES a fully-inlined helper to
-    /// the universe (status "support", no standalone `out=call:NAME` contract) instead of
-    /// re-minting the exact opaque `call:` symbol the peel just killed. Interior-mutable
-    /// because the inline records while term-translation holds `&self`; drained by the
-    /// collector into `out.reduced_helpers` after the block is lifted. ONLY a FULLY-
-    /// GROUNDED peel records here -- a BAILED helper (still its own opaque contract) does
-    /// not (it was not inlined).
+    /// this scope's desugar (capability #1). Resolution flows IN (the `fn_registry`);
+    /// the reduction marker flows OUT so the collector does not also count the helper's
+    /// internal asserts as unreachable residue in this caller surface. The RPC source
+    /// ledger still lets the helper own its source contract; the caller owns only the
+    /// callsite fact/bridge. Interior-mutable because the inline records while
+    /// term-translation holds `&self`; drained by the collector into `out.reduced_helpers`
+    /// after the block is lifted. ONLY a FULLY-GROUNDED peel records here -- a BAILED
+    /// helper (still its own opaque contract) does not (it was not inlined).
     inlined_value_helpers: std::cell::RefCell<BTreeSet<String>>,
     /// Stdlib-internal `DormantMutRef` trajectories that have been reduced from a
     /// bounded literal replay. This is a request-local axiom cache; it never infers
@@ -5345,8 +5345,8 @@ fn peel_fold_adaptors_inner<'a>(
                     // base check: a chain that does not bottom out at a literal sequence is
                     // declined by the caller, so a non-sequence `.to_owned()` never grounds.)
                     (
-                        "iter" | "into_iter" | "cloned" | "copied" | "fuse" | "peekable"
-                        | "to_vec" | "as_slice" | "to_owned" | "into_vec",
+                        "iter" | "into_iter" | "cloned" | "copied" | "fuse" | "peekable" | "to_vec"
+                        | "as_slice" | "to_owned" | "into_vec",
                         0,
                     ) => Box::new(|inner| Box::new(sugar::identity::IdentitySugar { inner })),
                     ("rev", 0) => Box::new(wrap_rev),
@@ -7515,11 +7515,7 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
     /// return expression through the composite factory, and commit only if that recursive
     /// walk bottoms out as a finite sequence. Otherwise the owning Sugar converts the
     /// decline into the normal structural/effect `Hit`.
-    pub(crate) fn try_inline_sequence_call(
-        &self,
-        func: &Expr,
-        args: &[Expr],
-    ) -> Outcome {
+    pub(crate) fn try_inline_sequence_call(&self, func: &Expr, args: &[Expr]) -> Outcome {
         if self.macro_depth >= MAX_VALUE_CALL_INLINE_DEPTH {
             return Outcome::from_opt(None);
         }
@@ -10414,14 +10410,14 @@ fn collect_assertion_entries<'a>(
         mark_new_entries_with_fact_span(entries, entries_before_stmt, stmt);
         advance_temporal_scope_for_stmt(stmt, &mut temporal_scope);
     }
-    // TERM-POSITION INLINE SUPPORT-RECORD (capability #1, the flow-OUT). A value helper
+    // TERM-POSITION INLINE REDUCTION RECORD (capability #1, the flow-OUT). A value helper
     // PEELED to ground literals by a term-position inline during this block's desugar
-    // (`assert_eq!(h(2), 3)` digging `h`'s body `n+1` to `+(2,1)`) is now a UNIVERSE
-    // member, NOT its own fixedpoint contract. Fold its name into `reduced_helpers` so the
-    // RPC classifier demotes it to "support" -- emitting NO standalone `out=call:h`
-    // contract, which would re-introduce the exact opaque `call:h` symbol the peel killed.
-    // Resolution flowed IN via `fn_registry`; the support-record flows OUT here. Only
-    // FULLY-GROUNDED peels are recorded (a bailed helper stays its own broad contract).
+    // (`assert_eq!(h(2), 3)` digging `h`'s body `n+1` to `+(2,1)`) is accounted at the
+    // caller surface, so its internal asserts must not also be drained as unreachable
+    // residue. Its source body still owns a contract in the RPC ledger; the caller keeps
+    // the callsite fact/bridge. Resolution flowed IN via `fn_registry`; the reduction
+    // record flows OUT here. Only FULLY-GROUNDED peels are recorded (a bailed helper stays
+    // its own broad contract).
     for name in temporal_scope.take_inlined_value_helpers() {
         reduced_helpers.insert(name);
     }
@@ -11688,7 +11684,10 @@ fn collect_loop_counter_stale_reads(
         }
     }
     // mut-locals ASSIGNED / compound-assigned to a bare path within `block` (descends).
-    fn mutated_simple_locals(block: &syn::Block, mut_locals: &BTreeSet<String>) -> BTreeSet<String> {
+    fn mutated_simple_locals(
+        block: &syn::Block,
+        mut_locals: &BTreeSet<String>,
+    ) -> BTreeSet<String> {
         struct V<'a> {
             mut_locals: &'a BTreeSet<String>,
             out: BTreeSet<String>,
@@ -11962,7 +11961,11 @@ fn collect_consumed_iterator_locals(
         fn visit_expr_closure(&mut self, _: &'ast syn::ExprClosure) {}
     }
 
-    let mut walk = Walk { mut_locals, out, in_loop_consuming_context: false };
+    let mut walk = Walk {
+        mut_locals,
+        out,
+        in_loop_consuming_context: false,
+    };
     for stmt in stmts {
         syn::visit::Visit::visit_stmt(&mut walk, stmt);
     }

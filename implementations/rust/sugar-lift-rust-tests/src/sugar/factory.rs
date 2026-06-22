@@ -350,12 +350,17 @@ fn term_bail_to_opaque(
 ) -> Outcome {
     let eligible = requested_role == "Term"
         && selected.is_some()
-        && !matches!(selected, Some("match_value_term") | Some("transparent_term"))
+        && !matches!(
+            selected,
+            Some("match_value_term") | Some("transparent_term")
+        )
         && outcome.is_structural_bail();
     if eligible {
-        Outcome::Dug(Desugared::Term(std::rc::Rc::new(sugar_ir_symbolic::Term::Var {
-            name: format!("opaque:{site}"),
-        })))
+        Outcome::Dug(Desugared::Term(std::rc::Rc::new(
+            sugar_ir_symbolic::Term::Var {
+                name: format!("opaque:{site}"),
+            },
+        )))
     } else {
         outcome
     }
@@ -474,20 +479,35 @@ mod tests {
 
         // (3) an UNRECOGNIZED shape (no candidate selected -> backstop) stays refused.
         assert!(
-            is_refused(&term_bail_to_opaque("Term", None, "x", Outcome::from_opt(None))),
+            is_refused(&term_bail_to_opaque(
+                "Term",
+                None,
+                "x",
+                Outcome::from_opt(None)
+            )),
             "an unrecognized backstop bail must stay refused (nothing claimed it)"
         );
 
         // (4) a non-Term role stays refused (a Constraint that cannot lift IS a refusal).
         assert!(
-            is_refused(&term_bail_to_opaque("Constraint", Some("c"), "x", Outcome::from_opt(None))),
+            is_refused(&term_bail_to_opaque(
+                "Constraint",
+                Some("c"),
+                "x",
+                Outcome::from_opt(None)
+            )),
             "a non-Term role bail must stay refused"
         );
 
         // (5) the exempt recognizers keep their deliberate decline.
         for exempt in ["match_value_term", "transparent_term"] {
             assert!(
-                is_refused(&term_bail_to_opaque("Term", Some(exempt), "x", Outcome::from_opt(None))),
+                is_refused(&term_bail_to_opaque(
+                    "Term",
+                    Some(exempt),
+                    "x",
+                    Outcome::from_opt(None)
+                )),
                 "exempt recognizer `{exempt}` must stay refused"
             );
         }

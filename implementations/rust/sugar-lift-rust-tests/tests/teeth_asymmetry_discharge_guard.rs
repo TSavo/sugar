@@ -185,10 +185,22 @@ fn false_assertions_are_never_discharged_teeth_asymmetry() {
 fn true_assertions_are_never_refuted() {
     // Every assertion here is TRUE in real Rust. None may come back `Refuted`.
     for (name, src) in [
-        ("literal_index_true", r#"#[test] fn t() { assert_eq!([7, 7, 7][1], 7); }"#),
-        ("literal_arith_true", r#"#[test] fn t() { assert_eq!(2 + 2, 4); }"#),
-        ("literal_repeat_true", r#"#[test] fn t() { assert_eq!([7; 3][1], 7); }"#),
-        ("same_arrays_true", r#"#[test] fn t() { assert_eq!([7, 7, 99], [7, 7, 99]); }"#),
+        (
+            "literal_index_true",
+            r#"#[test] fn t() { assert_eq!([7, 7, 7][1], 7); }"#,
+        ),
+        (
+            "literal_arith_true",
+            r#"#[test] fn t() { assert_eq!(2 + 2, 4); }"#,
+        ),
+        (
+            "literal_repeat_true",
+            r#"#[test] fn t() { assert_eq!([7; 3][1], 7); }"#,
+        ),
+        (
+            "same_arrays_true",
+            r#"#[test] fn t() { assert_eq!([7, 7, 99], [7, 7, 99]); }"#,
+        ),
         // Opaque-but-true: an uninterpreted value the kit cannot ground. Correct
         // outcome is UNDECIDED (no teeth), never a refutation.
         (

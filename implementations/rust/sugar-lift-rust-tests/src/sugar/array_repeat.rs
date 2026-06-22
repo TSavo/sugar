@@ -32,7 +32,7 @@ use crate::sugar::backstop::boxed;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{
     const_eval, repeat_count_in_scope, repeat_count_literal, token_key, Desugared, DesugaredElem,
-    Effect, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP, STRUCTURAL_BACKSTOP_REASON,
+    Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON, SUGAR_SEQ_CAP,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =

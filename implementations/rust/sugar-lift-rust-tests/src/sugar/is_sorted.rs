@@ -28,7 +28,9 @@ use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{bool_const, scalar_literal_array_elems, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
+use crate::{
+    bool_const, scalar_literal_array_elems, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx,
+};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "is_sorted",
