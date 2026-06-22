@@ -18747,6 +18747,22 @@ fn try_fold_skip_while_row_grounds_both_sides_equal() {
     assert_eq!(try_fold_some_pair(&out), (229355, 229355));
 }
 
+#[test]
+fn try_fold_cloned_array_literal_row_grounds_both_sides_equal() {
+    // cloned.rs:43  a.iter().cloned().try_fold(7, f) == a.iter().try_fold(7, f_ref)
+    // is a FRESH iterator over a literal array source. It must dig to a concrete
+    // Option value, not inherit the consumed-iterator refusal used by the later
+    // mutable `iter.try_fold(..); iter.next()` rows in the same corpus test.
+    let out = lift_one(
+        r#"#[test] fn t() {
+        let a = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+        let f = &|acc, x| i32::checked_add(2 * acc, x);
+        let f_ref = &|acc, &x| i32::checked_add(2 * acc, x);
+        assert_eq!(a.iter().cloned().try_fold(7, f), a.iter().try_fold(7, f_ref)); }"#,
+    );
+    assert_eq!(try_fold_some_pair(&out), (4597, 4597));
+}
+
 // ── STRUCTURAL: a RUNTIME (mutable-iterator) try_fold must NOT be grounded ─────
 
 #[test]
@@ -21916,6 +21932,32 @@ fn successors_literal_twin() {
         assert_rpc_source_refused(&doc, target, category);
         assert_rpc_source_warranted(&doc, literal_twin);
     }
+}
+
+#[test]
+fn rpc_source_splits_fresh_literal_try_fold_from_consumed_iterator_refusal() {
+    let doc = run_rpc_lift(
+        "tests/iter/adapters/cloned.rs",
+        r#"
+#[test]
+fn test_cloned_try_folds() {
+    let a = [10, 20, 30, 40, 100, 60, 70, 80, 90];
+    let mut iter = a.iter().cloned();
+    assert_eq!(iter.try_fold(0_i8, |acc, x| acc.checked_add(x)), None);
+    assert_eq!(iter.next(), Some(60));
+}
+
+#[test]
+fn cloned_literal_try_fold_twin() {
+    let a = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+    let f = &|acc, x| i32::checked_add(2 * acc, x);
+    let f_ref = &|acc, &x| i32::checked_add(2 * acc, x);
+    assert_eq!(a.iter().cloned().try_fold(7, f), a.iter().try_fold(7, f_ref));
+}
+"#,
+    );
+    assert_rpc_source_refused(&doc, "test_cloned_try_folds", "consumed iterator state");
+    assert_rpc_source_warranted(&doc, "cloned_literal_try_fold_twin");
 }
 
 #[test]

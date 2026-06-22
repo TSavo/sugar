@@ -209,8 +209,13 @@ fn resolve_closure(arg: &Expr, scope: &TemporalScope) -> Option<ExprClosure> {
 /// `let`-bound receiver is resolved (immutable only). `None` (bail) for anything else.
 fn eval_seq_chain(expr: &Expr, scope: &TemporalScope) -> Option<Vec<ConstVal>> {
     match strip_refs_groups(expr) {
+        // Base case: a closed literal array/slice. `.iter()` over this source yields
+        // references at runtime, but the evaluator binds closure patterns (`x` or `&x`)
+        // to the same scalar value, so the value thread is exact for scalar literals.
+        Expr::Array(arr) => eval_array(arr),
         // Base case: a closed integer range `a..b` / `a..=b`.
         Expr::Range(r) => eval_range(r),
+        Expr::Reference(r) => eval_seq_chain(&r.expr, scope),
         // A `let`-bound receiver (`let it = (0..10).map(..); it.try_fold(..)`).
         Expr::Path(p) => {
             let id = p.path.get_ident()?.to_string();
@@ -320,6 +325,18 @@ fn eval_seq_chain(expr: &Expr, scope: &TemporalScope) -> Option<Vec<ConstVal>> {
         }
         _ => None,
     }
+}
+
+fn eval_array(array: &syn::ExprArray) -> Option<Vec<ConstVal>> {
+    if array.elems.len() > TRY_FOLD_SEQ_CAP {
+        return None;
+    }
+    let env = BTreeMap::new();
+    let mut out = Vec::with_capacity(array.elems.len());
+    for elem in &array.elems {
+        out.push(const_eval(elem, &env)?);
+    }
+    Some(out)
 }
 
 fn const_usize_arg(expr: &Expr) -> Option<usize> {
