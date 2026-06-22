@@ -18925,6 +18925,149 @@ fn t() {
     }
 }
 
+fn assert_numeric_method_decl_verdict(src: &str, want_sat: bool, label: &str) {
+    let full = format!("#[test] fn t() {{ {src} }}");
+    let out = lift_file(&parse(&full), "tests/num/literal_methods.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "{label}: numeric literal method assertion must lift: \
+         lifted={} refused={} skips={:?} audits={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons,
+        out.factory_audits
+    );
+    let doc = warranted_doc(&out);
+    assert!(
+        !doc.contains("method:count_zeros")
+            && !doc.contains("method:max")
+            && !doc.contains("method:wrapping_add")
+            && !doc.contains("method:abs")
+            && !doc.contains("method:signum")
+            && !doc.contains("method:pow"),
+        "{label}: numeric literal method should lower to concrete scalar terms: {doc}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+        assert_eq!(
+            sat, want_sat,
+            "{label}: expected sat={want_sat} for `{src}`"
+        );
+    }
+}
+
+#[test]
+fn numeric_literal_methods_ground_with_teeth() {
+    assert_numeric_method_decl_verdict(
+        "assert_eq!(0b1010u8.count_zeros(), 6);",
+        true,
+        "numeric_count_zeros_good",
+    );
+    assert_numeric_method_decl_verdict(
+        "assert_eq!(0b1010u8.count_zeros(), 5);",
+        false,
+        "numeric_count_zeros_bad",
+    );
+    assert_numeric_method_decl_verdict("assert_eq!(4i16.max(9i16), 9);", true, "numeric_max_good");
+    assert_numeric_method_decl_verdict("assert_eq!(4i16.max(9i16), 4);", false, "numeric_max_bad");
+    assert_numeric_method_decl_verdict(
+        "let x = 250u8; assert_eq!(x.wrapping_add(10u8), 4u8);",
+        true,
+        "numeric_wrapping_add_ssa_good",
+    );
+    assert_numeric_method_decl_verdict(
+        "let x = 250u8; assert_eq!(x.wrapping_add(10u8), 5u8);",
+        false,
+        "numeric_wrapping_add_ssa_bad",
+    );
+    assert_numeric_method_decl_verdict(
+        "let x: i32 = -7; assert_eq!(x.abs(), 7);",
+        true,
+        "numeric_abs_ssa_good",
+    );
+    assert_numeric_method_decl_verdict(
+        "let x: i32 = -7; assert_eq!(x.abs(), 8);",
+        false,
+        "numeric_abs_ssa_bad",
+    );
+    assert_numeric_method_decl_verdict(
+        "let x: i32 = -7; assert_eq!(x.signum(), -1);",
+        true,
+        "numeric_signum_ssa_good",
+    );
+    assert_numeric_method_decl_verdict(
+        "let x: i32 = -7; assert_eq!(x.signum(), 1);",
+        false,
+        "numeric_signum_ssa_bad",
+    );
+    assert_numeric_method_decl_verdict(
+        "let base = 3i32; let exp = 4u32; assert_eq!(base.pow(exp), 81);",
+        true,
+        "numeric_pow_ssa_good",
+    );
+    assert_numeric_method_decl_verdict(
+        "let base = 3i32; let exp = 4u32; assert_eq!(base.pow(exp), 82);",
+        false,
+        "numeric_pow_ssa_bad",
+    );
+    assert_numeric_method_decl_verdict(
+        "let x = 3.5f64; assert_eq!(x.abs(), 3.5);",
+        true,
+        "numeric_float_abs_ssa_good",
+    );
+    assert_numeric_method_decl_verdict(
+        "let x = 3.5f64; assert_eq!(x.abs(), 4.5);",
+        false,
+        "numeric_float_abs_ssa_bad",
+    );
+    assert_numeric_method_decl_verdict(
+        "let x = -3.5f64; assert_eq!(x.signum(), -1.0);",
+        true,
+        "numeric_float_signum_ssa_good",
+    );
+    assert_numeric_method_decl_verdict(
+        "let x = -3.5f64; assert_eq!(x.signum(), 1.0);",
+        false,
+        "numeric_float_signum_ssa_bad",
+    );
+}
+
+#[test]
+fn numeric_runtime_receiver_stays_symbolic() {
+    let out = lift_file(
+        &parse(
+            r#"
+fn runtime_u8() -> u8 { 250 }
+
+#[test]
+fn t() {
+    let x = runtime_u8();
+    assert_eq!(x.wrapping_add(10u8), 5u8);
+}
+"#,
+        ),
+        "tests/num/literal_methods_runtime.rs",
+    );
+    assert!(
+        out.assertions_lifted >= 1,
+        "runtime numeric method surface should still warrant opaquely: skips={:?}",
+        out.skip_reasons
+    );
+    let doc = warranted_doc(&out);
+    assert!(
+        doc.contains("method:wrapping_add"),
+        "runtime receiver must stay opaque, never fabricated into a literal: {doc}"
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "numeric_runtime_receiver_symbolic",
+    ) {
+        assert!(
+            sat,
+            "runtime receiver wrong expected must remain SAT/undecided, not refuted"
+        );
+    }
+}
+
 // `<IntT>::from(bool)` / `IntT::from(bool)` for a primitive integer target is the std
 // `From<bool>` conversion: true -> 1, false -> 0. It lowers to the grounded scalar, not
 // an opaque `call:from(..)`, so a wrong value (true mapped to 0, or false to 1) is
