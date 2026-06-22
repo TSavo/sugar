@@ -12249,6 +12249,18 @@ fn z3_verdict(inv: &serde_json::Value, label: &str) -> Option<bool> {
     Some(stdout.contains("sat") && !stdout.contains("unsat"))
 }
 
+fn assert_warranted_decls_not_refuted(out: &AdapterOutput, label: &str) {
+    for (idx, decl) in warranted_decls(out).into_iter().enumerate() {
+        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("{label}_{idx}")) {
+            assert!(
+                sat,
+                "{label} warranted decl must not be z3-UNSAT: {}",
+                decl.name
+            );
+        }
+    }
+}
+
 fn inv_json(decl: &sugar_ir_symbolic::ContractDecl) -> serde_json::Value {
     let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(decl));
     let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
@@ -16268,6 +16280,52 @@ fn test_map_try_folds() {
     assert!(
         saw_opaque_runtime,
         "the runtime rows must STAY opaque method:try_fold (not fabricated)"
+    );
+    assert_warranted_decls_not_refuted(&out, "runtime_try_fold_followup_read");
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("unknown iterator consumption")),
+        "post-try_fold/try_rfold iterator reads must be named-refused, not checked \
+         against stale literal state: {:?}",
+        out.skip_reasons
+    );
+
+    let out = lift_one(
+        r#"#[test]
+fn test_try_find() {
+    let xs: &[isize] = &[];
+    assert_eq!(xs.iter().try_find(testfn), Ok(None));
+    let xs: &[isize] = &[1, 2, 3, 4];
+    assert_eq!(xs.iter().try_find(testfn), Ok(Some(&2)));
+    let xs: &[isize] = &[1, 3, 4];
+    assert_eq!(xs.iter().try_find(testfn), Err(()));
+
+    let xs: &[isize] = &[1, 2, 3, 4, 5, 6, 7];
+    let mut iter = xs.iter();
+    assert_eq!(iter.try_find(testfn), Ok(Some(&2)));
+    assert_eq!(iter.try_find(testfn), Err(()));
+    assert_eq!(iter.next(), Some(&5));
+
+    fn testfn(x: &&isize) -> Result<bool, ()> {
+        if **x == 2 {
+            return Ok(true);
+        }
+        if **x == 4 {
+            return Err(());
+        }
+        Ok(false)
+    }
+}"#,
+    );
+    assert_warranted_decls_not_refuted(&out, "runtime_try_find_followup_read");
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("unknown iterator consumption")),
+        "post-try_find iterator reads must be named-refused, not checked against stale \
+         literal state: {:?}",
+        out.skip_reasons
     );
 }
 

@@ -4284,6 +4284,12 @@ impl TemporalScope {
         self.temporal_rewrite.borrow().expr_for(name)
     }
 
+    pub(crate) fn unknown_iterator_consumption_reason(&self, name: &str) -> Option<String> {
+        self.temporal_rewrite
+            .borrow()
+            .unknown_iterator_consumption_reason(name)
+    }
+
     pub(crate) fn temporal_rewrite_can_apply(&self, expr: &Expr) -> bool {
         self.temporal_rewrite.borrow().can_apply(expr)
     }
@@ -12393,7 +12399,9 @@ fn is_consuming_iterator_method(method: &str) -> bool {
             // (e.g. `len`) would be unsound (it would split reads that must coalesce);
             // every name below genuinely consumes.
             | "try_fold"
+            | "try_rfold"
             | "try_for_each"
+            | "try_find"
             | "find"
             | "find_map"
             | "position"

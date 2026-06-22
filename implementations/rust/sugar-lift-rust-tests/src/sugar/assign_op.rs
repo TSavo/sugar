@@ -58,6 +58,7 @@ impl Sugar for AssignOpSugar {
 pub(crate) struct TemporalRewriteState {
     values: BTreeMap<String, Expr>,
     aliases: BTreeMap<String, RewritePlace>,
+    unknown_consumed_iterators: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug)]
@@ -94,14 +95,34 @@ enum IndexSpec {
 
 impl TemporalRewriteState {
     pub(crate) fn expr_for(&self, name: &str) -> Option<Expr> {
+        if self.unknown_consumed_iterators.contains_key(name) {
+            return None;
+        }
         if let Some(expr) = self.values.get(name) {
             return Some(expr.clone());
         }
         match self.aliases.get(name)? {
-            RewritePlace::Scalar(base) => self.values.get(base).cloned(),
-            RewritePlace::Element { base, index } => self.aggregate_element(base, *index),
+            RewritePlace::Scalar(base) if !self.unknown_consumed_iterators.contains_key(base) => {
+                self.values.get(base).cloned()
+            }
+            RewritePlace::Element { base, index }
+                if !self.unknown_consumed_iterators.contains_key(base) =>
+            {
+                self.aggregate_element(base, *index)
+            }
+            RewritePlace::Scalar(_) | RewritePlace::Element { .. } => None,
             RewritePlace::Slice { .. } => None,
         }
+    }
+
+    pub(crate) fn unknown_iterator_consumption_reason(&self, name: &str) -> Option<String> {
+        let method = self.unknown_consumed_iterators.get(name)?;
+        Some(format!(
+            "unknown iterator consumption for `{name}` via `{method}`: a prior \
+             short-circuit iterator terminal advanced this mutable iterator by a \
+             data-dependent count, so there is no single timeless source value to read \
+             at the assertion; refused"
+        ))
     }
 
     pub(crate) fn can_apply(&self, expr: &Expr) -> bool {
@@ -114,7 +135,12 @@ impl TemporalRewriteState {
     }
 
     pub(crate) fn expr_bindings(&self) -> BTreeMap<String, Expr> {
-        let mut out = self.values.clone();
+        let mut out: BTreeMap<String, Expr> = self
+            .values
+            .iter()
+            .filter(|(name, _)| !self.unknown_consumed_iterators.contains_key(*name))
+            .map(|(name, expr)| (name.clone(), expr.clone()))
+            .collect();
         for name in self.aliases.keys() {
             if let Some(expr) = self.expr_for(name) {
                 out.insert(name.clone(), expr);
@@ -167,6 +193,11 @@ impl TemporalRewriteState {
                 if let Some((direction, count)) = iterator_consumption(call) {
                     if let Some(name) = simple_path_name(&call.receiver) {
                         applied |= self.advance_iterator_binding(&name, direction, count);
+                    }
+                } else if unknown_iterator_consumption(call) {
+                    if let Some(name) = simple_path_name(&call.receiver) {
+                        applied |=
+                            self.invalidate_iterator_binding(&name, &call.method.to_string());
                     }
                 }
                 applied
@@ -235,6 +266,21 @@ impl TemporalRewriteState {
             "temporal rewrite advanced iterator receiver"
         );
         self.values.insert(name.to_string(), updated);
+        self.unknown_consumed_iterators.remove(name);
+        true
+    }
+
+    fn invalidate_iterator_binding(&mut self, name: &str, method: &str) -> bool {
+        self.values.remove(name);
+        self.aliases.remove(name);
+        self.unknown_consumed_iterators
+            .insert(name.to_string(), method.to_string());
+        debug!(
+            target: "sugar_lift_rust_tests::temporal_rewrite",
+            binding = name,
+            method,
+            "temporal rewrite invalidated iterator after unknown-count consumption"
+        );
         true
     }
 
@@ -251,6 +297,7 @@ impl TemporalRewriteState {
             return;
         };
 
+        self.unknown_consumed_iterators.remove(&name);
         if let Some(base) =
             mut_reference_target(&init.expr).filter(|base| self.values.contains_key(base))
         {
@@ -575,6 +622,22 @@ impl TemporalRewriteState {
     fn index_value(&self, expr: &Expr) -> Option<usize> {
         usize::try_from(self.int_value(expr)?).ok()
     }
+}
+
+fn unknown_iterator_consumption(call: &syn::ExprMethodCall) -> bool {
+    matches!(
+        call.method.to_string().as_str(),
+        "try_fold"
+            | "try_rfold"
+            | "try_for_each"
+            | "try_find"
+            | "find"
+            | "find_map"
+            | "position"
+            | "rposition"
+            | "all"
+            | "any"
+    )
 }
 
 #[derive(Clone, Copy, Debug)]

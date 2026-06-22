@@ -53,6 +53,9 @@ fn recognize_role(expr: &Expr, fcx: &SugarBuildCtx, role: BoundPathRole) -> Opti
     if let Some(hit) = temporally_unstable_refusal(&name, fcx) {
         return Some(hit);
     }
+    if let Some(hit) = unknown_iterator_consumption_refusal(&name, fcx) {
+        return Some(hit);
+    }
     if let Some(hit) = ambiguous_identity_refusal(&name, fcx) {
         return Some(hit);
     }
@@ -221,6 +224,16 @@ fn temporally_unstable_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dy
              the assertion; refused as temporally unstable"
         ))
     })
+}
+
+/// A mutable iterator driven by a short-circuit terminal (`try_fold`, `try_find`, `any`, ...)
+/// advances by a data-dependent count. The temporal rewrite ledger intentionally forgets
+/// the pre-consumption literal sequence at that boundary; a later read must NAME-REFUSE
+/// rather than replay stale source text and refute a true assertion.
+fn unknown_iterator_consumption_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    fcx.scope()
+        .unknown_iterator_consumption_reason(name)
+        .map(reasoned_hit)
 }
 
 fn ambiguous_identity_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
