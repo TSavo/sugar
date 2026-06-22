@@ -2479,6 +2479,75 @@ fn runtime_size_hint_declines_to_decompose() {
 }
 
 #[test]
+fn empty_literal_range_count_len_size_hint_warrant() {
+    let src = r#"
+        #[test]
+        fn empty_literal_range_terminals() {
+            assert_eq!((200..200).count(), 0);
+            assert_eq!((200..200).len(), 0);
+            assert_eq!((200..200).size_hint(), (0, Some(0)));
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/empty_range_terminals.rs");
+    assert_eq!(
+        out.assertions_lifted, 3,
+        "empty literal range count/len/size_hint are text-determined warrants; skips={:?}; audits={:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    for (idx, decl) in out.decls.iter().enumerate() {
+        if let Some(sat) = z3_verdict(
+            &inv_json(decl),
+            &format!("empty_literal_range_terminal_good_{idx}"),
+        ) {
+            assert!(sat, "empty literal range terminal {idx} must be SAT");
+        }
+    }
+}
+
+#[test]
+fn empty_literal_range_count_bad_twin_is_unsat() {
+    let src = r#"
+        #[test]
+        fn empty_literal_range_count_bad() {
+            assert_eq!((200..200).count(), 1);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/empty_range_count_bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bad twin must still lift so z3 can refute the wrong empty-range count; skips={:?}; audits={:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "empty_literal_range_count_bad",
+    ) {
+        assert!(!sat, "empty range count is 0, not 1");
+    }
+}
+
+#[test]
+fn runtime_bound_range_count_refuses_not_warrants() {
+    let src = r#"
+        #[test]
+        fn runtime_bound_range_count() {
+            let n = std::env::args().count();
+            assert_eq!((0..n).count(), n);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/runtime_range_count.rs");
+    assert_eq!(out.assertions_lifted, 0, "{:?}", out.decls);
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|reason| reason.contains("literal range bound is not text-determined")),
+        "runtime-bounded count must refuse with the runtime-bound reason: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
 fn kmerge_size_hint_decomposes_after_delayed_tuple_producer_desugar() {
     let src = r#"
         #[test]

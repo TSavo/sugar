@@ -422,11 +422,10 @@ fn lift(params: &Value) -> Value {
                 .iter()
                 .find(|w| w.item_name == name || w.item_name.ends_with(&format!("::{name}")));
             // TOTAL classifier. Every function exits into exactly one of:
-            //   warranted (dug to a value) | refused (named boundary) | support (inert/vacuous)
-            // `unresolved` is UNCLASSIFIED — not a tolerated dark bucket, not an
-            // honest residual, not a counter to lower someday. It is a totality failure
-            // that fires a panic (below) naming the locus and requesting a classifier.
-            // The path to green is adding a Sugar recognizer — not silencing the alarm.
+            //   warranted (dug to a value) | refused (named boundary) | support (inert)
+            //   | inactive (not part of this target).
+            // Any other status is dark: it fires a panic naming the locus and requesting
+            // a classifier. The path to green is adding Sugar, not silencing the alarm.
             let (status, reason): (&str, Option<String>) = if file_decls_refused && is_test {
                 // The whole file's decl emit was refused (size bound) -- its assertions
                 // have no usable pin, so each is honestly UNRESOLVED with the bound reason.
@@ -446,13 +445,6 @@ fn lift(params: &Value) -> Value {
                             Some(named_source_refusal_reason(
                                 category,
                                 &format!("vendor pin not liftable: {}", w.reason),
-                            )),
-                        ),
-                        Some(SourceWarningClassification::Support(category)) => (
-                            "support",
-                            Some(named_source_support_reason(
-                                category,
-                                &format!("source locus is inert/vacuous: {}", w.reason),
                             )),
                         ),
                         Some(SourceWarningClassification::Inactive(category)) => (
@@ -486,26 +478,7 @@ fn lift(params: &Value) -> Value {
                 }
                 (s, r)
             };
-            // TOTALITY PANIC — order_candidates_or_panic style.
-            // Every locus MUST exit as warranted | refused | support.
-            // `unresolved` is UNCLASSIFIED: a Sugar coverage failure, not a tolerated
-            // dark state. A locus that lands here panics immediately, naming the site
-            // and requesting a classifier. There is no allowlist, no exception,
-            // no "honest dark." Add a recognizer: dig → warranted, hit → refused,
-            // mark inert → support. The panic IS the instrument.
-            if status == "unresolved" {
-                let kind = if is_test { "test-fn" } else { "fn" };
-                let detail = reason.as_deref().unwrap_or("(none)");
-                panic!(
-                    "UNCLASSIFIED LOCUS: {rel}::{name} [{kind}]\n\
-                     unresolved reason: {detail}\n\
-                     Classify this locus — one of:\n\
-                       dig to a literal value     → warranted\n\
-                       name a values-not-in-text boundary → refused\n\
-                       confirm this locus is inert (no value proposition) → support\n\
-                     There is no tolerance for unclassified loci. Add a recognizer."
-                );
-            }
+            panic_on_dark_source_status(rel, &name, is_test, status, reason.as_deref());
             let mut locus = json!({
                 "file": rel,
                 "role": "rust-test-assertions",
@@ -534,7 +507,7 @@ fn lift(params: &Value) -> Value {
                     },
                 );
             }
-            if status == "unresolved" {
+            if source_status_is_dark(status) {
                 let positions = method_call_positions(fr.block);
                 if !positions.is_empty() {
                     oracle_pending.push((source_loci.len(), positions));
@@ -1042,6 +1015,34 @@ fn fn_has_test_attr(attrs: &[syn::Attribute]) -> bool {
     })
 }
 
+fn source_status_is_dark(status: &str) -> bool {
+    !matches!(status, "warranted" | "refused" | "support" | "inactive")
+}
+
+fn panic_on_dark_source_status(
+    rel: &str,
+    name: &str,
+    is_test: bool,
+    status: &str,
+    reason: Option<&str>,
+) {
+    if !source_status_is_dark(status) {
+        return;
+    }
+    let kind = if is_test { "test-fn" } else { "fn" };
+    let detail = reason.unwrap_or("(none)");
+    panic!(
+        "UNCLASSIFIED LOCUS: {rel}::{name} [{kind}]\n\
+         dark status: {status}\n\
+         unresolved reason: {detail}\n\
+         Classify this locus — one of:\n\
+           dig to a literal value     → warranted\n\
+           name a values-not-in-text boundary → refused\n\
+           confirm this locus is inactive in this target → inactive\n\
+         There is no tolerance for unclassified loci. Add a recognizer."
+    );
+}
+
 /// Classify a NON-test fn body into its source-ledger status. A body is `warranted`
 /// when it constrains, either as an emitted contract or as auxiliary executable
 /// context the reducer inlined into another universe. Only clean values-not-in-text
@@ -1213,10 +1214,6 @@ fn named_source_refusal_reason(category: &'static str, detail: &str) -> String {
     format!("named refusal ({category}): {detail}")
 }
 
-fn named_source_support_reason(category: &'static str, detail: &str) -> String {
-    format!("named support ({category}): {detail}")
-}
-
 fn named_source_inactive_reason(category: &'static str, detail: &str) -> String {
     format!("named inactive ({category}): {detail}")
 }
@@ -1224,7 +1221,6 @@ fn named_source_inactive_reason(category: &'static str, detail: &str) -> String 
 #[derive(Clone, Copy, Debug)]
 enum SourceWarningClassification {
     Refused(&'static str),
-    Support(&'static str),
     Inactive(&'static str),
 }
 
@@ -1244,11 +1240,6 @@ fn clean_source_warning_classification(
     if reason.contains(SHOULD_PANIC_OPAQUE_TERMINAL_REASON) {
         return Some(SourceWarningClassification::Refused(
             SHOULD_PANIC_OPAQUE_TERMINAL_REASON,
-        ));
-    }
-    if reason.contains("literal domain is empty") {
-        return Some(SourceWarningClassification::Support(
-            "empty/vacuous literal domain",
         ));
     }
     if compile_only_assertion_surface_reason(source_path, source_name, reason) {
@@ -2087,7 +2078,6 @@ fn source_ledger(loci: &[Value]) -> Value {
         "source_refused": count("refused"),
         "source_unresolved": unresolved,
         "source_inactive": count("inactive"),
-        "source_refuted": count("refuted"),
         // Compatibility alias for current CLI source-ledger plumbing.
         "unclassified_source": unresolved,
     })
@@ -3008,7 +2998,6 @@ mod tests {
             "{ast_path} source reason must carry category {category:?}: {locus}"
         );
         assert_ne!(locus["status"], "unresolved", "{locus}");
-        assert_ne!(locus["status"], "refuted", "{locus}");
     }
 
     fn assert_source_locus_refused(response: &Value, ast_path: &str, category: &str) {
@@ -3694,15 +3683,20 @@ fn inactive_const_if_literal_twin() {
     }
 
     #[test]
-    fn source_warning_empty_literal_domain_is_support() {
-        let reason = "rust test assertions: unsupported assertion surface; released to layer 0: \
-            literal domain is empty -- vacuously true, no element to assert (no teeth)";
-        match clean_source_warning_classification("tests/iter/range.rs", "test_range", reason) {
-            Some(SourceWarningClassification::Support(category)) => {
-                assert_eq!(category, "empty/vacuous literal domain");
-            }
-            other => panic!("empty literal domain must be source support, got {other:?}"),
-        }
+    fn source_totality_panic_covers_unclassified_status() {
+        let panic = std::panic::catch_unwind(|| {
+            panic_on_dark_source_status(
+                "tests/iter/range.rs",
+                "test_range",
+                true,
+                "unclassified",
+                Some("synthetic dark source status"),
+            );
+        });
+        assert!(
+            panic.is_err(),
+            "`unclassified` must be in the same dark panic set as `unresolved`"
+        );
     }
 
     #[test]

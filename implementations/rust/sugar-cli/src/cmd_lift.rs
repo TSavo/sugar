@@ -517,13 +517,12 @@ enum VendorSourceResolution {
     Drifted(String),
 }
 
-const SOURCE_LEDGER_FIELDS: [&str; 8] = [
+const SOURCE_LEDGER_FIELDS: [&str; 7] = [
     "source_loci",
     "source_warranted",
     "source_support",
     "source_refused",
     "source_inactive",
-    "source_refuted",
     "source_unresolved",
     "unclassified_source",
 ];
@@ -1141,6 +1140,7 @@ fn recompute_source_ledger(audits: &[Value]) -> Value {
 }
 
 fn normalize_source_ledger_support(mut ledger: Value, moved_support_loci: i64) -> Value {
+    strip_source_refuted_field(&mut ledger);
     if moved_support_loci <= 0 {
         return ledger;
     }
@@ -1148,10 +1148,19 @@ fn normalize_source_ledger_support(mut ledger: Value, moved_support_loci: i64) -
     ledger
 }
 
+fn strip_source_refuted_field(value: &mut Value) {
+    if let Some(object) = value.as_object_mut() {
+        object.remove("source_refuted");
+    }
+}
+
 fn normalize_source_audit_support(mut audit: Value) -> (Value, i64) {
     let Some(audit_object) = audit.as_object_mut() else {
         return (audit, 0);
     };
+    if let Some(totals) = audit_object.get_mut("totals") {
+        strip_source_refuted_field(totals);
+    }
 
     let has_full_loci = audit_object.get("loci").and_then(Value::as_array).is_some();
     let moved_loci = normalize_source_loci_array(audit_object.get_mut("loci"), true);
@@ -2386,9 +2395,8 @@ fn source_status_order(status: &str) -> usize {
         "refused" => 1,
         "support" => 2,
         "inactive" => 3,
-        "refuted" => 4,
-        "unresolved" => 5,
-        _ => 6,
+        "unresolved" => 4,
+        _ => 5,
     }
 }
 
@@ -2398,7 +2406,6 @@ fn normalized_source_status(status: Option<&str>) -> &str {
         Some("inactive") => "inactive",
         Some("support") => "support",
         Some("refused") => "refused",
-        Some("refuted") => "refuted",
         Some("unresolved") | Some("unclassified") | Some("silent") => "unresolved",
         _ => "unresolved",
     }
@@ -2779,13 +2786,12 @@ fn format_assertion_surface_row(row: &Value) -> String {
 
 fn format_counts(value: &Value) -> String {
     format!(
-        "loci={} warranted={} inactive={} support={} refused={} refuted={} unresolved={}",
+        "loci={} warranted={} inactive={} support={} refused={} unresolved={}",
         source_count(value, "source_loci"),
         source_count(value, "source_warranted"),
         source_count(value, "source_inactive"),
         source_count(value, "source_support"),
         source_count(value, "source_refused"),
-        source_count(value, "source_refuted"),
         source_unresolved_count(value),
     )
 }
@@ -3820,7 +3826,6 @@ mod tests {
                 "source_support": 0,
                 "source_refused": 0,
                 "source_inactive": 0,
-                "source_refuted": 0,
                 "source_unresolved": 0
             }),
             audits: vec![serde_json::json!({
@@ -3908,7 +3913,6 @@ mod tests {
                 "source_warranted": 26,
                 "source_refused": 22,
                 "source_inactive": 32,
-                "source_refuted": 0,
                 "unclassified_source": 0
             },
             "sourceAudits": [
@@ -3921,7 +3925,6 @@ mod tests {
                         "source_warranted": 11,
                         "source_refused": 21,
                         "source_inactive": 19,
-                        "source_refuted": 0,
                         "unclassified_source": 0
                     },
                     "loci": [
@@ -3942,7 +3945,6 @@ mod tests {
                         "source_warranted": 15,
                         "source_refused": 1,
                         "source_inactive": 13,
-                        "source_refuted": 0,
                         "unclassified_source": 0
                     },
                     "loci": [
@@ -4252,7 +4254,7 @@ mod tests {
                 .expect("filtered source report");
         let human = render_source_report_human(&report);
 
-        assert!(human.contains("source audit: loci=29 warranted=15 inactive=13 support=0 refused=1 refuted=0 unresolved=0"));
+        assert!(human.contains("source audit: loci=29 warranted=15 inactive=13 support=0 refused=1 unresolved=0"));
         assert!(human.contains("commons-codec.PureJavaCrc32::update(byte[],int,int)"));
         assert!(human.contains("facts observed:"));
         assert!(human.contains("CommonsCodecCrc32Test.java:44 testKnownVector() [java.test-fact]"));
@@ -4276,7 +4278,6 @@ mod tests {
                 "source_support": 2,
                 "source_refused": 0,
                 "source_inactive": 0,
-                "source_refuted": 0,
                 "unclassified_source": 0
             },
             "sourceAudits": [
@@ -4290,7 +4291,6 @@ mod tests {
                         "source_support": 2,
                         "source_refused": 0,
                         "source_inactive": 0,
-                        "source_refuted": 0,
                         "unclassified_source": 0
                     },
                     "loci": [
@@ -4324,10 +4324,10 @@ mod tests {
         let human = render_source_report_human(&report);
 
         assert!(human.contains(
-            "source audit: loci=3 warranted=1 inactive=0 support=2 refused=0 refuted=0 unresolved=0"
+            "source audit: loci=3 warranted=1 inactive=0 support=2 refused=0 unresolved=0"
         ));
         assert!(human.contains(
-            "totals: loci=3 warranted=1 inactive=0 support=2 refused=0 refuted=0 unresolved=0"
+            "totals: loci=3 warranted=1 inactive=0 support=2 refused=0 unresolved=0"
         ));
         assert!(human.contains("support roots: VendorClassDecl=1, VendorComment=1"));
     }
@@ -4343,7 +4343,6 @@ mod tests {
                 "source_support": 1,
                 "source_refused": 0,
                 "source_inactive": 0,
-                "source_refuted": 0,
                 "unclassified_source": 0
             },
             "sourceAudits": [
@@ -4357,7 +4356,6 @@ mod tests {
                         "source_support": 1,
                         "source_refused": 0,
                         "source_inactive": 0,
-                        "source_refuted": 0,
                         "unclassified_source": 0
                     },
                     "loci": [
@@ -4377,7 +4375,7 @@ mod tests {
         let human = render_source_report_human(&report);
 
         assert!(human.contains(
-            "source audit: loci=1 warranted=0 inactive=0 support=0 refused=0 refuted=0 unresolved=1"
+            "source audit: loci=1 warranted=0 inactive=0 support=0 refused=0 unresolved=1"
         ));
         assert!(human.contains("unresolved roots: ClassDef=1"), "{human}");
         assert!(!human.contains("support roots: ClassDef=1"), "{human}");
@@ -4395,7 +4393,6 @@ mod tests {
                 "source_support": 0,
                 "source_refused": 0,
                 "source_inactive": 0,
-                "source_refuted": 0,
                 "source_unresolved": 1
             },
             "sourceAudits": [],
@@ -4426,11 +4423,14 @@ mod tests {
         let human = render_source_report_human(&report);
 
         assert!(human.contains(
-            "source audit: loci=1 warranted=0 inactive=0 support=0 refused=0 refuted=0 unresolved=1"
+            "source audit: loci=1 warranted=0 inactive=0 support=0 refused=0 unresolved=1"
         ));
-        assert!(human.contains(
-            "factory accounting: sites=1 warranted=0 refused=0 support=0 unresolved=1"
-        ), "{human}");
+        assert!(
+            human.contains(
+                "factory accounting: sites=1 warranted=0 refused=0 support=0 unresolved=1"
+            ),
+            "{human}"
+        );
         assert!(human.contains("factory unresolved:"), "{human}");
         assert!(human.contains(
             "src/lib.rs:7 expr role=Composite selected=<none> output=structural-backstop"
@@ -4456,7 +4456,6 @@ mod tests {
                 "source_warranted": 0,
                 "source_refused": 0,
                 "source_inactive": 0,
-                "source_refuted": 0,
                 "unclassified_source": 1
             },
             "sourceAudits": [
@@ -4472,7 +4471,6 @@ mod tests {
                         "source_warranted": 0,
                         "source_refused": 0,
                         "source_inactive": 0,
-                        "source_refuted": 0,
                         "unclassified_source": 1
                     },
                     "loci": [
@@ -4512,7 +4510,6 @@ mod tests {
                 "source_support": 2,
                 "source_refused": 0,
                 "source_inactive": 0,
-                "source_refuted": 0,
                 "unclassified_source": 2
             },
             "sourceAudits": [
@@ -4531,7 +4528,6 @@ mod tests {
                         "source_support": 2,
                         "source_refused": 0,
                         "source_inactive": 0,
-                        "source_refuted": 0,
                         "unclassified_source": 2
                     },
                     "ast_type_counts": {
@@ -4564,7 +4560,7 @@ mod tests {
         assert!(!human.contains("support: FunctionDef=1"));
         assert!(human.contains("unresolved: Assign=1, Call=1, FunctionDef=1"));
         assert!(human.contains(
-            "source audit: loci=5 warranted=1 inactive=0 support=1 refused=0 refuted=0 unresolved=3"
+            "source audit: loci=5 warranted=1 inactive=0 support=1 refused=0 unresolved=3"
         ));
         assert!(human.contains("sample loci:"));
         assert!(human.contains("/site-packages/pandas/core/frame.py:10 unresolved Assign"));
@@ -4580,7 +4576,6 @@ mod tests {
                 "source_warranted": 0,
                 "source_refused": 0,
                 "source_inactive": 0,
-                "source_refuted": 0,
                 "unclassified_source": 4
             },
             "sourceAudits": [
@@ -4596,7 +4591,6 @@ mod tests {
                         "source_warranted": 0,
                         "source_refused": 0,
                         "source_inactive": 0,
-                        "source_refuted": 0,
                         "unclassified_source": 4
                     },
                     "loci": [
@@ -4646,7 +4640,6 @@ mod tests {
                 "source_warranted": 0,
                 "source_refused": 0,
                 "source_inactive": 0,
-                "source_refuted": 0,
                 "unclassified_source": 10
             },
             "sourceAudits": [
@@ -4662,7 +4655,6 @@ mod tests {
                         "source_warranted": 0,
                         "source_refused": 0,
                         "source_inactive": 0,
-                        "source_refuted": 0,
                         "unclassified_source": 10
                     },
                     "loci": [
@@ -4880,7 +4872,6 @@ mod tests {
                 "source_warranted": 1,
                 "source_refused": 0,
                 "source_inactive": 0,
-                "source_refuted": 0,
                 "unclassified_source": 0
             },
             "sourceAudits": [
@@ -4902,7 +4893,6 @@ mod tests {
                         "source_warranted": 1,
                         "source_refused": 0,
                         "source_inactive": 0,
-                        "source_refuted": 0,
                         "unclassified_source": 0
                     },
                     "loci": []
@@ -5037,7 +5027,6 @@ mod tests {
                 "source_support": 0,
                 "source_refused": 0,
                 "source_inactive": 0,
-                "source_refuted": 0,
                 "unclassified_source": 0
             },
             "sourceAudits": [],
@@ -5087,7 +5076,6 @@ mod tests {
                 "source_support": 0,
                 "source_refused": 0,
                 "source_inactive": 0,
-                "source_refuted": 0,
                 "unclassified_source": 0
             },
             "sourceAudits": [
@@ -5139,7 +5127,6 @@ mod tests {
                 "source_support": 0,
                 "source_refused": 0,
                 "source_inactive": 0,
-                "source_refuted": 0,
                 "unclassified_source": 0
             },
             "sourceAudits": [
@@ -5152,7 +5139,6 @@ mod tests {
                         "source_support": 0,
                         "source_refused": 0,
                         "source_inactive": 0,
-                        "source_refuted": 0,
                         "unclassified_source": 0
                     },
                     "loci": [
@@ -5218,7 +5204,6 @@ mod tests {
                 "source_support": 0,
                 "source_refused": 0,
                 "source_inactive": 0,
-                "source_refuted": 0,
                 "unclassified_source": 0
             },
             "sourceAudits": [
@@ -5291,7 +5276,6 @@ mod tests {
                 "source_support": 0,
                 "source_refused": 0,
                 "source_inactive": 0,
-                "source_refuted": 0,
                 "unclassified_source": 0
             },
             "sourceAudits": [
@@ -5372,7 +5356,6 @@ mod tests {
                 "source_support": 0,
                 "source_refused": 0,
                 "source_inactive": 0,
-                "source_refuted": 0,
                 "unclassified_source": 0
             },
             "sourceAudits": [
@@ -5435,7 +5418,6 @@ mod tests {
                 "source_support": 0,
                 "source_refused": 0,
                 "source_inactive": 0,
-                "source_refuted": 0,
                 "unclassified_source": 0
             },
             "sourceAudits": [
@@ -5513,7 +5495,6 @@ mod tests {
                 "source_support": 1,
                 "source_refused": 0,
                 "source_inactive": 0,
-                "source_refuted": 0,
                 "source_unresolved": 1
             },
             "sourceAudits": [
@@ -5666,7 +5647,6 @@ mod tests {
                 "source_support": 0,
                 "source_refused": 0,
                 "source_inactive": 0,
-                "source_refuted": 0,
                 "unclassified_source": 0
             }),
             audits: vec![serde_json::json!({
@@ -5805,7 +5785,6 @@ mod tests {
                 "source_support": 0,
                 "source_refused": 0,
                 "source_inactive": 0,
-                "source_refuted": 0,
                 "unclassified_source": 0
             },
             "sourceAudits": [
