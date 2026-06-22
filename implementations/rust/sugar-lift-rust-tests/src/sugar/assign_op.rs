@@ -60,6 +60,7 @@ pub(crate) struct TemporalRewriteState {
     aliases: BTreeMap<String, RewritePlace>,
     unknown_consumed_iterators: BTreeMap<String, String>,
     unknown_mutations: BTreeMap<String, String>,
+    rewritten_bases: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -79,7 +80,11 @@ enum RewritePlace {
 #[derive(Clone, Debug)]
 enum Target {
     Scalar(String),
-    Element { base: String, index: usize },
+    Element {
+        base: String,
+        index: usize,
+        replayable_alias: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -119,6 +124,37 @@ impl TemporalRewriteState {
             }
             RewritePlace::Scalar(_) | RewritePlace::Element { .. } => None,
             RewritePlace::Slice { .. } => None,
+        }
+    }
+
+    pub(crate) fn expr_for_index(&self, name: &str, index: usize) -> Option<Expr> {
+        if self.unknown_consumed_iterators.contains_key(name)
+            || self.unknown_mutations.contains_key(name)
+        {
+            return None;
+        }
+        if self.values.contains_key(name) && self.rewritten_bases.contains(name) {
+            return self.aggregate_element(name, index);
+        }
+        match self.aliases.get(name)? {
+            RewritePlace::Scalar(base)
+                if self.rewritten_bases.contains(base)
+                    && !self.unknown_consumed_iterators.contains_key(base)
+                    && !self.unknown_mutations.contains_key(base) =>
+            {
+                self.aggregate_element(base, index)
+            }
+            RewritePlace::Slice { base, start, len }
+                if index < *len
+                    && self.rewritten_bases.contains(base)
+                    && !self.unknown_consumed_iterators.contains_key(base)
+                    && !self.unknown_mutations.contains_key(base) =>
+            {
+                self.aggregate_element(base, start.checked_add(index)?)
+            }
+            RewritePlace::Element { .. } | RewritePlace::Scalar(_) | RewritePlace::Slice { .. } => {
+                None
+            }
         }
     }
 
@@ -170,7 +206,15 @@ impl TemporalRewriteState {
                 .as_ref()
                 .filter(|init| init.diverge.is_none())
                 .is_some_and(|init| {
-                    let mut applied = self.apply_consumption_expr(&init.expr);
+                    // Exact literal `get_disjoint_mut` aliases are the replay ledger,
+                    // not an opaque mutable-view escape: the writes through those
+                    // aliases are applied back to the tracked base below.
+                    let captured_disjoint_aliases =
+                        self.record_get_disjoint_mut_aliases(&local.pat, &init.expr);
+                    let mut applied = captured_disjoint_aliases;
+                    if !captured_disjoint_aliases {
+                        applied |= self.apply_consumption_expr(&init.expr);
+                    }
                     if let Some(base) = borrowed_iterator_source_name(&init.expr).filter(|base| {
                         simple_pat_binding(&local.pat).as_ref() != Some(base)
                             && self.values.contains_key(base)
@@ -351,6 +395,7 @@ impl TemporalRewriteState {
     fn invalidate_iterator_binding(&mut self, name: &str, method: &str) -> bool {
         self.values.remove(name);
         self.aliases.remove(name);
+        self.rewritten_bases.remove(name);
         self.unknown_consumed_iterators
             .insert(name.to_string(), method.to_string());
         debug!(
@@ -366,6 +411,7 @@ impl TemporalRewriteState {
         self.values.remove(name);
         self.aliases.remove(name);
         self.unknown_consumed_iterators.remove(name);
+        self.rewritten_bases.remove(name);
         self.unknown_mutations.insert(
             name.to_string(),
             format!(
@@ -387,6 +433,7 @@ impl TemporalRewriteState {
         self.values.remove(name);
         self.aliases.remove(name);
         self.unknown_consumed_iterators.remove(name);
+        self.rewritten_bases.remove(name);
         self.unknown_mutations.insert(
             name.to_string(),
             format!(
@@ -409,6 +456,7 @@ impl TemporalRewriteState {
         self.values.remove(name);
         self.aliases.remove(name);
         self.unknown_consumed_iterators.remove(name);
+        self.rewritten_bases.remove(name);
         self.unknown_mutations.insert(
             name.to_string(),
             format!(
@@ -441,6 +489,7 @@ impl TemporalRewriteState {
 
         self.unknown_consumed_iterators.remove(&name);
         self.unknown_mutations.remove(&name);
+        self.rewritten_bases.remove(&name);
         if let Some(base) = borrowed_iterator_source_name(&init.expr)
             .filter(|base| base != &name && self.values.contains_key(base))
         {
@@ -588,6 +637,7 @@ impl TemporalRewriteState {
                     RewritePlace::Element { base, index } => Some(Target::Element {
                         base: base.clone(),
                         index: *index,
+                        replayable_alias: true,
                     }),
                     RewritePlace::Slice { .. } => None,
                 }
@@ -607,6 +657,7 @@ impl TemporalRewriteState {
             RewritePlace::Element { base, index } => Some(Target::Element {
                 base: base.clone(),
                 index: *index,
+                replayable_alias: true,
             }),
             RewritePlace::Slice { .. } => None,
         }
@@ -619,12 +670,14 @@ impl TemporalRewriteState {
             return Some(Target::Element {
                 base: base_name,
                 index: idx,
+                replayable_alias: false,
             });
         }
         match self.aliases.get(&base_name)? {
             RewritePlace::Slice { base, start, len } if idx < *len => Some(Target::Element {
                 base: base.clone(),
                 index: start.checked_add(idx)?,
+                replayable_alias: true,
             }),
             RewritePlace::Element { .. } | RewritePlace::Scalar(_) | RewritePlace::Slice { .. } => {
                 None
@@ -642,14 +695,18 @@ impl TemporalRewriteState {
                     false
                 }
             }
-            Target::Element { base, index } => self.set_aggregate_element(&base, index, value),
+            Target::Element {
+                base,
+                index,
+                replayable_alias,
+            } => self.set_aggregate_element(&base, index, value, replayable_alias),
         }
     }
 
     fn target_expr(&self, target: &Target) -> Option<Expr> {
         match target {
             Target::Scalar(name) => self.values.get(name).cloned(),
-            Target::Element { base, index } => self.aggregate_element(base, *index),
+            Target::Element { base, index, .. } => self.aggregate_element(base, *index),
         }
     }
 
@@ -659,7 +716,13 @@ impl TemporalRewriteState {
         elems.get(index).cloned()
     }
 
-    fn set_aggregate_element(&mut self, base: &str, index: usize, value: Expr) -> bool {
+    fn set_aggregate_element(
+        &mut self,
+        base: &str,
+        index: usize,
+        value: Expr,
+        replayable_alias: bool,
+    ) -> bool {
         if self.int_value(&value).is_none() {
             return false;
         }
@@ -675,6 +738,9 @@ impl TemporalRewriteState {
         elems[index] = value;
         self.values
             .insert(base.to_string(), rebuild_aggregate(kind, elems));
+        if replayable_alias {
+            self.rewritten_bases.insert(base.to_string());
+        }
         true
     }
 
@@ -1134,7 +1200,7 @@ fn assignment_op(op: &BinOp) -> Option<BinOpKind> {
 fn target_label(target: &Target) -> String {
     match target {
         Target::Scalar(name) => name.clone(),
-        Target::Element { base, index } => format!("{base}[{index}]"),
+        Target::Element { base, index, .. } => format!("{base}[{index}]"),
     }
 }
 

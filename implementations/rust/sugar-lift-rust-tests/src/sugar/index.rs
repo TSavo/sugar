@@ -49,8 +49,8 @@ use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::sugar::temporal_read::decompose_temporal_read;
 use crate::{
-    const_fold_int_term, const_index_term_in_scope, num, ConstVal, Desugared, Effect, Outcome,
-    Sugar, SugarCtx,
+    const_fold_int_term, const_index_term_in_scope, num, simple_path_name, ConstVal, Desugared,
+    Effect, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -103,6 +103,19 @@ impl IndexSugar {
         let n = elem.value.as_ref().and_then(ConstVal::as_int)?;
         Some(num(n))
     }
+
+    fn ground_temporal_rewrite_index(&self, ctx: &SugarCtx) -> Option<Outcome> {
+        let base = simple_path_name(&self.index.expr)?;
+        let let_inits = scope_let_inits(ctx);
+        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        let idx = build_term(&self.index.index, &fcx)
+            .desugar(ctx)
+            .dug()?
+            .into_term()?;
+        let k = const_fold_int_term(&idx).and_then(|k| usize::try_from(k).ok())?;
+        let elem = ctx.scope.temporal_rewrite_index_expr_for(&base, k)?;
+        Some(build_term(&elem, &fcx).desugar(ctx))
+    }
 }
 
 impl Sugar for IndexSugar {
@@ -118,6 +131,9 @@ impl Sugar for IndexSugar {
             Ok(Some(term)) => return Outcome::Dug(Desugared::Term(term)),
             Ok(None) => {}
             Err(reason) => return Outcome::Hit(Effect::Unsupported { reason }),
+        }
+        if let Some(outcome) = self.ground_temporal_rewrite_index(ctx) {
+            return outcome;
         }
         let source = Expr::Index(self.index.clone());
         if let Some(node) = decompose_temporal_read(&source, ctx.scope) {

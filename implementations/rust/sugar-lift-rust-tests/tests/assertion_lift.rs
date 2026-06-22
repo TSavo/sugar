@@ -8101,8 +8101,17 @@ fn mutable_pointer_identity() {
 "#;
     let out = lift_file(&parse(src), "tests/ptr.rs");
     assert_eq!(out.seen, 1);
-    assert_eq!(out.lifted, 0);
-    assert!(out.decls.is_empty());
+    assert_eq!(out.assertions_lifted, 0);
+    assert!(
+        warranted_decls(&out).is_empty(),
+        "mutable pointer identity must not emit a warranted value claim: {:?}",
+        out.assertion_facts
+    );
+    assert!(
+        out.assertion_facts.iter().all(|fact| fact.claim_count == 0),
+        "only claim-free panic-freedom support may survive for the mutable ptr::eq callsite: {:?}",
+        out.assertion_facts
+    );
     assert!(
         out.warnings
             .iter()
@@ -23021,6 +23030,122 @@ fn direct_mut_local_still_warrants_post_value() {
     );
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "direct_mut_post") {
         assert!(sat, "x += 1 then x == 6 -> 6 == 6 (SAT)");
+    }
+}
+
+#[test]
+fn disjoint_mut_alias_assign_ops_warrant_replayed_vector() {
+    let src = r#"
+        #[test]
+        fn t_disjoint_mut_replay() {
+            let mut v = vec![1, 2, 3];
+            let [a, b] = v.get_disjoint_mut([2, 0]).unwrap();
+            *a += 10;
+            *b += 100;
+            assert_eq!(v, vec![101, 2, 13]);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/borrow/disjoint_mut_replay.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "literal get_disjoint_mut aliases should replay into the base vector: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "disjoint_mut_good") {
+        assert!(
+            sat,
+            "[1,2,3] with disjoint alias writes should prove [101,2,13]"
+        );
+    }
+}
+
+#[test]
+fn disjoint_mut_alias_assign_ops_bad_twin_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_disjoint_mut_replay_bad() {
+            let mut v = vec![1, 2, 3];
+            let [a, b] = v.get_disjoint_mut([2, 0]).unwrap();
+            *a += 10;
+            *b += 100;
+            assert_eq!(v[2], 14);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/borrow/disjoint_mut_replay_bad.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "bad twin must still lift so z3 can reject the wrong replayed vector: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "disjoint_mut_bad") {
+        assert!(!sat, "wrong element 14 versus replayed 13 must be z3-UNSAT");
+    }
+}
+
+#[test]
+fn disjoint_mut_slice_alias_assign_ops_warrant_replayed_vector() {
+    let src = r#"
+        #[test]
+        fn t_disjoint_mut_slice_replay() {
+            let mut v = vec![1, 2, 3];
+            let [a, b] = v.get_disjoint_mut([0..=1, 2..=2]).unwrap();
+            a[0] += 10;
+            a[1] += 100;
+            b[0] += 1000;
+            assert_eq!(v, vec![11, 102, 1003]);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/borrow/disjoint_mut_slice_replay.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "literal get_disjoint_mut slice aliases should replay into the base vector: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "disjoint_mut_slice_good",
+    ) {
+        assert!(
+            sat,
+            "[1,2,3] with disjoint slice writes should prove [11,102,1003]"
+        );
+    }
+}
+
+#[test]
+fn disjoint_mut_slice_alias_assign_ops_bad_twin_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_disjoint_mut_slice_replay_bad() {
+            let mut v = vec![1, 2, 3];
+            let [a, b] = v.get_disjoint_mut([0..=1, 2..=2]).unwrap();
+            a[0] += 10;
+            a[1] += 100;
+            b[0] += 1000;
+            assert_eq!(v[2], 1004);
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/borrow/disjoint_mut_slice_replay_bad.rs",
+    );
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "bad slice twin must still lift so z3 can reject the wrong replayed vector: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "disjoint_mut_slice_bad",
+    ) {
+        assert!(
+            !sat,
+            "wrong element 1004 versus replayed 1003 must be z3-UNSAT"
+        );
     }
 }
 

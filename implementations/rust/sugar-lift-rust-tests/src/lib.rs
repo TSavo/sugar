@@ -4311,6 +4311,10 @@ impl TemporalScope {
         self.temporal_rewrite.borrow().expr_for(name)
     }
 
+    pub(crate) fn temporal_rewrite_index_expr_for(&self, name: &str, index: usize) -> Option<Expr> {
+        self.temporal_rewrite.borrow().expr_for_index(name, index)
+    }
+
     pub(crate) fn unknown_iterator_consumption_reason(&self, name: &str) -> Option<String> {
         self.temporal_rewrite
             .borrow()
@@ -7533,7 +7537,7 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
         let dig_child = |expr: &Expr| -> Option<Rc<Term>> {
             match sugar::factory::build_term(expr, &fcx).desugar(&child) {
                 Outcome::Dug(d) => d.into_term(),
-                Outcome::Hit(_) => None,
+                Outcome::Hit(_) => callsite_child_fallback_term(expr, self.scope),
             }
         };
         match expr {
@@ -17616,6 +17620,19 @@ fn matches_param_receiver(expr: &Expr, param_name: &str) -> bool {
     }
 }
 
+fn callsite_child_fallback_term(expr: &Expr, scope: &TemporalScope) -> Option<Rc<Term>> {
+    // Panic-freedom talks about the callsite identity, not the returned value. A
+    // mutated receiver may be refused as a value read while still being a sound
+    // opaque receiver identity for `method:<m>#panic_callsite(...)` support.
+    let Expr::Path(path) = strip_refs_groups(expr) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+    scope.path_name(&path.path).ok().map(make_var)
+}
+
 fn method_call_assertion_name(
     method: &str,
     args: Vec<Rc<Term>>,
@@ -19097,6 +19114,20 @@ mod lifter_key_tests {
         out.decls.iter().map(|d| d.name.as_str()).collect()
     }
 
+    fn value_claim_contract_names(out: &AdapterOutput) -> Vec<&str> {
+        let value_claims: std::collections::BTreeSet<&str> = out
+            .assertion_facts
+            .iter()
+            .filter(|fact| fact.kind == AssertionFactKind::Warranted && fact.claim_count > 0)
+            .map(|fact| fact.contract_name.as_str())
+            .collect();
+        out.decls
+            .iter()
+            .filter(|decl| value_claims.contains(decl.name.as_str()))
+            .map(|decl| decl.name.as_str())
+            .collect()
+    }
+
     fn value_claim_decl_dump(out: &AdapterOutput) -> String {
         let value_claims: std::collections::BTreeSet<&str> = out
             .assertion_facts
@@ -19355,8 +19386,8 @@ mod lifter_key_tests {
     #[test]
     fn should_panic_test_inverts_only_the_terminal_temporal_callsite() {
         // #[should_panic] reverses the terminal callsite guarantee, not the whole
-        // prefix. The setup calls returned normally; only the final temporal
-        // callsite is warranted as `panic(...)`.
+        // prefix. The setup calls returned normally; only the final rewritten
+        // opaque panic-callsite subject is warranted as `panic(...)`.
         let src = r#"
             #[test]
             #[should_panic]
@@ -19391,10 +19422,9 @@ mod lifter_key_tests {
         let dump = format!("{:?}", out.decls);
         assert!(
             dump.contains("panic")
-                && dump.contains("temporal-callsite")
-                && dump.contains("method:finish")
+                && dump.contains("method:finish#panic_callsite")
                 && dump.contains("m@def3"),
-            "terminal panic fact should name the rewritten temporal subject: {dump}"
+            "terminal panic fact should name the rewritten opaque callsite subject: {dump}"
         );
         assert!(
             dump.contains("method:step") && dump.contains("m@def1") && dump.contains("m@def2"),
@@ -20134,7 +20164,9 @@ mod lifter_key_tests {
             }
         "#;
         let out = lift_src(src);
-        let calls: Vec<&str> = contract_names(&out)
+        // Panic-free support has its own opaque `#panic_callsite` identity; the
+        // coalescing invariant is about the claim-bearing value helper key.
+        let calls: Vec<&str> = value_claim_contract_names(&out)
             .into_iter()
             .filter(|n| n.contains("plain_helper"))
             .collect();
@@ -23313,7 +23345,9 @@ mod lifter_key_tests {
             }
         "#;
         let out = lift_src(src);
-        let calls: Vec<&str> = contract_names(&out)
+        // Panic-free support has its own opaque `#panic_callsite` identity; the
+        // coalescing invariant is about the claim-bearing value helper key.
+        let calls: Vec<&str> = value_claim_contract_names(&out)
             .into_iter()
             .filter(|n| n.contains("stable_helper"))
             .collect();
