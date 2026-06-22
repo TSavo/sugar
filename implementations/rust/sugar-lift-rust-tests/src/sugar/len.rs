@@ -9,7 +9,7 @@ use sugar_ir_symbolic::num;
 use syn::Expr;
 use tracing::debug;
 
-use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::factory::{build_composite, has_composite, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::sugar::term_leaf::reasoned_hit;
 use crate::{simple_path_name, Desugared, Outcome, Sugar, SugarCtx};
@@ -36,25 +36,41 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
             )));
         }
     }
+    if has_composite(&call.receiver, fcx) {
+        return Some(Box::new(LenSugar {
+            inner: Some(build_composite(&call.receiver, fcx)),
+            len: None,
+        }));
+    }
     let len = method_family::literal_sequence_static_len_in_scope(
         &call.receiver,
         fcx.let_inits(),
         fcx.scope(),
     )?;
-    Some(Box::new(LenSugar { len }))
+    Some(Box::new(LenSugar {
+        inner: None,
+        len: Some(len),
+    }))
 }
 
 struct LenSugar {
-    len: usize,
+    inner: Option<Box<dyn Sugar>>,
+    len: Option<usize>,
 }
 
 impl Sugar for LenSugar {
-    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        debug!(
-            target: "sugar_lift_rust_tests::sugar::len",
-            len = self.len,
-            "reducing literal sequence len"
-        );
-        Outcome::Dug(Desugared::Term(num(self.len as i128)))
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        Outcome::from_opt((|| {
+            let len = match &self.inner {
+                Some(inner) => inner.desugar(ctx).dug()?.into_seq()?.len(),
+                None => self.len?,
+            };
+            debug!(
+                target: "sugar_lift_rust_tests::sugar::len",
+                len,
+                "reducing literal sequence len"
+            );
+            Some(Desugared::Term(num(len as i128)))
+        })())
     }
 }

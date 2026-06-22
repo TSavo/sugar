@@ -20234,6 +20234,117 @@ fn consumed_iterator_len_before_consumption_still_warrants() {
     );
 }
 
+/// A chained consuming iterator receiver should stay in the sugar pipeline:
+/// literal array -> iterator -> next -> next -> len. In composite position, each
+/// `.next()` advances the iterator state; the final `.len()` reads the remaining
+/// sequence length. This is intentionally source-shape driven, not type-checker
+/// driven: the Rust compiler owns type validity, while the sugar factory owns
+/// deconstruction semantics for the syntax it recognizes.
+#[test]
+fn chained_next_next_len_over_literal_iterator_grounds_remaining_len() {
+    let src = r#"
+        #[test]
+        fn t_next_next_len() {
+            assert_eq!([1_i32, 2].iter().next().next().len(), 0);
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/adapters/chained_next_next_len.rs",
+    );
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        out.assertions_refused, 0,
+        "literal-owned chained iterator state is not an effect: {:?}",
+        out.skip_reasons
+    );
+    let operands = inv_operands(single_warranted_decl(&out));
+    assert_eq!(operands.len(), 1, "expected one grounded equality: {operands:?}");
+    match operands[0].as_ref() {
+        Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
+            for arg in args {
+                match arg.as_ref() {
+                    Term::Const {
+                        value: ConstValue::Int(0),
+                        ..
+                    } => {}
+                    other => panic!(
+                        "expected chained next().next().len() to ground to 0, got {other:?}"
+                    ),
+                }
+            }
+        }
+        other => panic!("expected grounded equality, got {other:?}"),
+    }
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "next_next_len") {
+        assert!(sat, "after two next() calls over [1, 2], remaining len is 0");
+    }
+}
+
+#[test]
+fn chained_next_next_len_bad_twin_refutes() {
+    let src = r#"
+        #[test]
+        fn t_next_next_len_bad() {
+            assert_eq!([1_i32, 2].iter().next().next().len(), 1);
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/adapters/chained_next_next_len_bad.rs",
+    );
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "next_next_len_bad") {
+        assert!(!sat, "wrong remaining len must be z3-UNSAT");
+    }
+}
+
+#[test]
+fn chained_next_count_over_literal_iterator_uses_remaining_state() {
+    let src = r#"
+        #[test]
+        fn t_next_count() {
+            assert_eq!([1_i32, 2, 3].iter().next().count(), 2);
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/adapters/chained_next_count.rs",
+    );
+    assert_warranted_decl_count(&out, 1);
+    let operands = inv_operands(single_warranted_decl(&out));
+    assert_eq!(operands.len(), 1, "expected one grounded equality: {operands:?}");
+    assert_eq_atom(&operands[0], 2);
+}
+
+#[test]
+fn chained_next_len_over_runtime_receiver_stays_opaque() {
+    let src = r#"
+        #[test]
+        fn t_runtime_next_len() {
+            fn make_vec() -> Vec<i32> { vec![1, 2] }
+            assert_eq!(make_vec().iter().next().len(), 0);
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/adapters/runtime_next_len.rs",
+    );
+    assert_warranted_decl_count(&out, 1);
+    let operands = inv_operands(single_warranted_decl(&out));
+    assert_eq!(operands.len(), 1, "expected one equality: {operands:?}");
+    match operands[0].as_ref() {
+        Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
+            assert!(
+                matches!(args[0].as_ref(), Term::Ctor { name, .. } if name == "method:len"),
+                "runtime receiver must not be grounded as literal iterator state: {:?}",
+                args[0]
+            );
+        }
+        other => panic!("expected equality, got {other:?}"),
+    }
+}
+
 /// Discrimination twins for the iter_terminal.rs opaque-EUF gate fix (#19 fix-forward).
 ///
 /// Pre-#2352-fix: the consumed-iterator gate called `reasoned_hit(...)` which places the
