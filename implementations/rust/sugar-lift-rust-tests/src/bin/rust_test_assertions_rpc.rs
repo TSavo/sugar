@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
+use quote::ToTokens;
 use serde_json::{json, Value};
 use sugar_canonicalizer::{blake3_512_of, encode_jcs};
 use sugar_ir_symbolic::serialize::{formula_to_value, marshal_declarations};
@@ -416,16 +417,12 @@ fn lift(params: &Value) -> Value {
                 .warnings
                 .iter()
                 .find(|w| w.item_name == name || w.item_name.ends_with(&format!("::{name}")));
-            // TOTAL classifier. Every function exits into exactly one status by
-            // RESOLVING (build Sugar + desugar), NEVER by scanning. `refused` is
-            // IMPOSSIBLE here by design: the walk never DECLINES (that is the sin), and
-            // the only "no" is an UNSAT certificate (`refuted`) minted at the body<->pin
-            // seam where the analysis lives. A body that does not resolve to a value
+            // TOTAL classifier. Every function exits into exactly one status. Warranting
+            // remains evidence-based; the only terminal refusals here are named
+            // values-not-in-text boundaries or finite-or-refuse caps. Everything else
             // falls through to `unresolved` -- the HONEST dark, "we don't have a Sugar
             // for that yet", the residual the campaign drives to 0 by real classification
-            // work. (Laundering the dark into a verdict it never earned -- forcing the
-            // catch-all so `unresolved=0` looks done -- is the FAKE ZERO; the honest
-            // move is the opposite: let the dark be visible.)
+            // work.
             let (status, reason): (&str, Option<String>) = if file_decls_refused && is_test {
                 // The whole file's decl emit was refused (size bound) -- its assertions
                 // have no usable pin, so each is honestly UNRESOLVED with the bound reason.
@@ -437,26 +434,28 @@ fn lift(params: &Value) -> Value {
                 )
             } else if is_test {
                 match warning {
-                    // NEW DOCTRINE: the lifter COULDN'T LIFT this vendor assertion
-                    // (unsupported assert / no liftable scalar / ambiguous cfg) ->
-                    // there is no usable pin to check, so it is UNRESOLVED, not refused.
-                    // `refused` is reserved for an UNSAT certificate -- a vendor
-                    // assertion we DID lift that contradicts (itself or the body).
-                    // A can't-lift is a coverage gap (named in the reason), never a
-                    // contradiction verdict.
-                    Some(w) => (
-                        "unresolved",
-                        Some(format!("vendor pin not liftable: {}", w.reason)),
-                    ),
+                    // Unsupported vendor pins remain unresolved unless the failure reason
+                    // is one of the clean values-not-in-text boundaries this lane owns.
+                    Some(w) => match clean_named_refusal_category(&w.reason) {
+                        Some(category) => (
+                            "refused",
+                            Some(named_source_refusal_reason(
+                                category,
+                                &format!("vendor pin not liftable: {}", w.reason),
+                            )),
+                        ),
+                        None => (
+                            "unresolved",
+                            Some(format!("vendor pin not liftable: {}", w.reason)),
+                        ),
+                    },
                     None => ("warranted", None),
                 }
             } else {
-                // NON-TEST body: ONE decision point (`classify_nontest_fn`) so the law
-                // "`refused` is impossible" is enforced and tested in one place. The walk
-                // never DECLINES: a body is `warranted` (contract emitted or auxiliary
-                // executable context inlined into a universe) or falls through to the
-                // honest "we don't have a Sugar for that yet" -- never a `refused`
-                // verdict it didn't earn, and never `support` unless it is inert.
+                // NON-TEST body: ONE decision point (`classify_nontest_fn`). Warranting
+                // still wins first; only then may a body terminate as a named refusal for
+                // clean values-not-in-text boundaries. Plain missing sugar/no assertion
+                // surface stays the honest unresolved dark.
                 let (s, r, entry) = classify_nontest_fn(
                     &name,
                     fr.sig,
@@ -525,10 +524,10 @@ fn lift(params: &Value) -> Value {
         // Oracle slice: ask the resident RA daemon (sugar-linkerd) to resolve the
         // receiver/param mutability of each queued method-call position. A method
         // call that is `&mut self` / takes a `&mut` param is the provable
-        // "mutation through &mut" effect -> SHARPEN the unresolved locus's reason. An
+        // "mutation through &mut" effect -> a named mutation/side-effect refusal. An
         // unreachable/cold daemon yields no resolutions -> every body stays
-        // unresolved (the conservative refuse-floor); the oracle never warrants
-        // here (RefClean does not rule out IO/panic the signature can't show).
+        // unresolved; the oracle never warrants here (RefClean does not rule out
+        // IO/panic the signature can't show).
         oracle_reclassify_mutating(&workspace_root, rel, &oracle_pending, &mut source_loci);
         info!(
             file = rel,
@@ -1005,12 +1004,12 @@ fn fn_has_test_attr(attrs: &[syn::Attribute]) -> bool {
     })
 }
 
-/// Classify a NON-test fn body into its source-ledger status -- the SINGLE decision
-/// point, so the design law "`refused` is impossible" lives (and is tested) in ONE
-/// place. A body is `warranted` when it constrains, either as an emitted contract or
-/// as auxiliary executable context the reducer inlined into another universe, or it
-/// falls through to the honest "we don't have a Sugar for that yet". Returns
-/// `(status, reason, decl)`; the caller pushes `decl` into the IR document.
+/// Classify a NON-test fn body into its source-ledger status. A body is `warranted`
+/// when it constrains, either as an emitted contract or as auxiliary executable
+/// context the reducer inlined into another universe. Only clean values-not-in-text
+/// boundaries terminate as `refused`; the rest falls through to the honest "we don't
+/// have a Sugar for that yet". Returns `(status, reason, decl)`; the caller pushes
+/// `decl` into the IR document.
 fn classify_nontest_fn(
     name: &str,
     sig: &syn::Signature,
@@ -1043,20 +1042,282 @@ fn classify_nontest_fn(
             None,
         );
     }
-    // NO WARRANT, NO INLINE -- and we do NOT SCAN. Declining is the sin, and a
-    // syntactic scan for effects is the same sin in disguise: it can't tell
-    // `[1..5].iter().next()` -> `1` from a real side effect (only RESOLVING the term
-    // can). A side effect surfaces ONLY at term resolution, as a `Hit`, when the body
-    // is actually reduced -- never from a pre-scan here. So: we have no Sugar that
-    // resolves this body's value to a literal yet, and it falls through to UNRESOLVED
-    // -- "we don't have a Sugar for that yet" = honest, visible work the campaign
-    // drives to 0. `refused` is reserved for named source/effect boundaries and UNSAT
-    // certificates, never for a static decline.
+    if let Some(reason) = source_body_named_refusal_reason(name, sig, block) {
+        return ("refused", Some(reason), None);
+    }
+    // NO WARRANT, NO INLINE, NO CLEAN NAMED BOUNDARY. We have no Sugar that resolves
+    // this body's value to a literal yet, so it falls through to UNRESOLVED -- honest,
+    // visible work the campaign drives to 0.
     (
         "unresolved",
         Some("no Sugar resolves this body's value to a literal yet (no value pin)".to_string()),
         None,
     )
+}
+
+fn named_source_refusal_reason(category: &'static str, detail: &str) -> String {
+    format!("named refusal ({category}): {detail}")
+}
+
+fn clean_named_refusal_category(reason: &str) -> Option<&'static str> {
+    if reason.contains("effectful / raw-pointer / mutable-reference term") {
+        return Some("mutable reference/pointer effect");
+    }
+    if reason.contains("side-effecting closure body")
+        || reason.contains("runtime expression-statement")
+        || reason.contains("mutation through &mut")
+        || reason.contains("mutable-local state machine driven by fmt-write")
+    {
+        return Some("mutation/side effect");
+    }
+    if reason.contains("layout is unknown to this lift") {
+        return Some("compiler layout fact not in text");
+    }
+    if reason.contains("signed zero float literal remains an IEEE refinement") {
+        return Some("IEEE signed-zero refinement boundary");
+    }
+    if reason.contains("opaque runtime receiver")
+        || reason.contains("opaque/effectful accessor")
+        || reason.contains("runtime iterator/collection construct (bin-2")
+    {
+        return Some("opaque runtime receiver");
+    }
+    if reason.contains("reachable only at runtime when the method is invoked") {
+        return Some("runtime impl-method boundary");
+    }
+    None
+}
+
+fn source_body_named_refusal_reason(
+    name: &str,
+    sig: &syn::Signature,
+    block: &syn::Block,
+) -> Option<String> {
+    let mut scan = SourceBodyNamedRefusalScan::default();
+    syn::visit::Visit::visit_block(&mut scan, block);
+    if let Some(site) = scan.mutable_reference_pointer {
+        return Some(named_source_refusal_reason(
+            "mutable reference/pointer effect",
+            &format!(
+                "source body `{name}` contains mutable-reference/raw-pointer effect `{site}`; no timeless value pin"
+            ),
+        ));
+    }
+    if let Some(site) = scan.mutation_side_effect {
+        return Some(named_source_refusal_reason(
+            "mutation/side effect",
+            &format!(
+                "source body `{name}` performs mutation or side effect `{site}`; no point-wise value pin"
+            ),
+        ));
+    }
+    if let Some(site) = scan.compiler_layout {
+        return Some(named_source_refusal_reason(
+            "compiler layout fact not in text",
+            &format!(
+                "source body `{name}` reads compiler layout fact `{site}`; scalar value is not written in source text"
+            ),
+        ));
+    }
+    if let Some(site) = scan.signed_zero {
+        return Some(named_source_refusal_reason(
+            "IEEE signed-zero refinement boundary",
+            &format!(
+                "source body `{name}` contains signed-zero IEEE refinement `{site}`; Real zero would collapse the sign bit"
+            ),
+        ));
+    }
+    if let Some(site) = scan.opaque_runtime_receiver {
+        return Some(named_source_refusal_reason(
+            "opaque runtime receiver",
+            &format!(
+                "source body `{name}` reads opaque runtime receiver `{site}`; value is not constructed from source literals"
+            ),
+        ));
+    }
+    if name.contains("::") && sig_has_receiver(sig) && !block.stmts.is_empty() {
+        return Some(named_source_refusal_reason(
+            "runtime impl-method boundary",
+            &format!(
+                "source body `{name}` is reachable only through a runtime receiver; no definition-time value pin"
+            ),
+        ));
+    }
+    None
+}
+
+#[derive(Default)]
+struct SourceBodyNamedRefusalScan {
+    mutable_reference_pointer: Option<String>,
+    mutation_side_effect: Option<String>,
+    compiler_layout: Option<String>,
+    signed_zero: Option<String>,
+    opaque_runtime_receiver: Option<String>,
+}
+
+impl SourceBodyNamedRefusalScan {
+    fn record(slot: &mut Option<String>, site: String) {
+        if slot.is_none() {
+            *slot = Some(site);
+        }
+    }
+
+    fn record_mutable_pointer<T: ToTokens>(&mut self, node: T) {
+        Self::record(&mut self.mutable_reference_pointer, token_key(node));
+    }
+
+    fn record_side_effect<T: ToTokens>(&mut self, node: T) {
+        Self::record(&mut self.mutation_side_effect, token_key(node));
+    }
+
+    fn record_layout<T: ToTokens>(&mut self, node: T) {
+        Self::record(&mut self.compiler_layout, token_key(node));
+    }
+
+    fn record_signed_zero<T: ToTokens>(&mut self, node: T) {
+        Self::record(&mut self.signed_zero, token_key(node));
+    }
+
+    fn record_runtime_receiver<T: ToTokens>(&mut self, node: T) {
+        Self::record(&mut self.opaque_runtime_receiver, token_key(node));
+    }
+}
+
+impl<'ast> syn::visit::Visit<'ast> for SourceBodyNamedRefusalScan {
+    fn visit_expr_reference(&mut self, reference: &'ast syn::ExprReference) {
+        if reference.mutability.is_some() {
+            self.record_mutable_pointer(reference);
+        }
+        syn::visit::visit_expr_reference(self, reference);
+    }
+
+    fn visit_expr_raw_addr(&mut self, raw: &'ast syn::ExprRawAddr) {
+        self.record_mutable_pointer(raw);
+        syn::visit::visit_expr_raw_addr(self, raw);
+    }
+
+    fn visit_expr_cast(&mut self, cast: &'ast syn::ExprCast) {
+        if matches!(&*cast.ty, syn::Type::Ptr(_)) {
+            self.record_mutable_pointer(cast);
+        }
+        syn::visit::visit_expr_cast(self, cast);
+    }
+
+    fn visit_expr_assign(&mut self, assign: &'ast syn::ExprAssign) {
+        self.record_side_effect(assign);
+        syn::visit::visit_expr_assign(self, assign);
+    }
+
+    fn visit_expr_binary(&mut self, binary: &'ast syn::ExprBinary) {
+        if matches!(
+            binary.op,
+            syn::BinOp::AddAssign(_)
+                | syn::BinOp::SubAssign(_)
+                | syn::BinOp::MulAssign(_)
+                | syn::BinOp::DivAssign(_)
+                | syn::BinOp::RemAssign(_)
+                | syn::BinOp::BitXorAssign(_)
+                | syn::BinOp::BitAndAssign(_)
+                | syn::BinOp::BitOrAssign(_)
+                | syn::BinOp::ShlAssign(_)
+                | syn::BinOp::ShrAssign(_)
+        ) {
+            self.record_side_effect(binary);
+        }
+        syn::visit::visit_expr_binary(self, binary);
+    }
+
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        let site = token_key(&call.func);
+        if site.ends_with("size_of")
+            || site.contains(":: size_of")
+            || site.ends_with("align_of")
+            || site.contains(":: align_of")
+        {
+            self.record_layout(call);
+        }
+        if site == "std :: env :: args" || site == "env :: args" || site.ends_with(":: args") {
+            self.record_runtime_receiver(call);
+        }
+        syn::visit::visit_expr_call(self, call);
+    }
+
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        const SIDE_EFFECT_METHODS: &[&str] = &[
+            "push",
+            "pop",
+            "insert",
+            "remove",
+            "clear",
+            "retain",
+            "resize",
+            "reserve",
+            "truncate",
+            "extend",
+            "write",
+            "write_all",
+            "write_str",
+            "write_fmt",
+            "read",
+            "read_to_string",
+            "next",
+            "next_back",
+            "nth",
+            "nth_back",
+            "advance_by",
+            "clone_to_uninit",
+        ];
+        if SIDE_EFFECT_METHODS.contains(&call.method.to_string().as_str()) {
+            self.record_side_effect(call);
+        }
+        syn::visit::visit_expr_method_call(self, call);
+    }
+
+    fn visit_expr_unary(&mut self, unary: &'ast syn::ExprUnary) {
+        if matches!(unary.op, syn::UnOp::Neg(_)) && unary_expr_is_float_zero(&unary.expr) {
+            self.record_signed_zero(unary);
+        }
+        syn::visit::visit_expr_unary(self, unary);
+    }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        let Some(name) = mac.path.segments.last().map(|seg| seg.ident.to_string()) else {
+            return;
+        };
+        match name.as_str() {
+            "println" | "eprintln" | "print" | "eprint" | "dbg" | "write" | "writeln" => {
+                self.record_side_effect(mac);
+            }
+            "offset_of" => self.record_layout(mac),
+            _ => {}
+        }
+        syn::visit::visit_macro(self, mac);
+    }
+}
+
+fn unary_expr_is_float_zero(expr: &syn::Expr) -> bool {
+    let syn::Expr::Lit(syn::ExprLit {
+        lit: syn::Lit::Float(lit),
+        ..
+    }) = expr
+    else {
+        return false;
+    };
+    lit.base10_parse::<f64>().is_ok_and(|value| value == 0.0)
+}
+
+fn sig_has_receiver(sig: &syn::Signature) -> bool {
+    sig.inputs
+        .iter()
+        .any(|arg| matches!(arg, syn::FnArg::Receiver(_)))
+}
+
+fn token_key<T: ToTokens>(node: T) -> String {
+    node.to_token_stream()
+        .to_string()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn function_contract_entry_from_decl(
@@ -1185,10 +1446,10 @@ fn method_call_positions(block: &syn::Block) -> Vec<(u32, u32)> {
 
 /// Oracle slice: resolve the queued unresolved method-call bodies against the
 /// resident RA daemon and reclassify any body with a `&mut self` / `&mut`-param
-/// (Mutating) method call -> SHARPEN the `unresolved` locus reason "mutation through &mut". Sound + safe: an
-/// unreachable/cold daemon returns no resolutions -> a conservative no-op (every
-/// body stays unresolved). Never WARRANTS here -- `RefClean` does not prove the
-/// body free of IO/panic the signature can't reveal.
+/// (Mutating) method call -> named REFUSED reason "mutation through &mut". Sound + safe:
+/// an unreachable/cold daemon returns no resolutions -> a conservative no-op (every
+/// body stays unresolved). Never WARRANTS here -- `RefClean` does not prove the body
+/// free of IO/panic the signature can't reveal.
 fn oracle_reclassify_mutating(
     workspace_root: &Path,
     rel: &str,
@@ -1230,12 +1491,14 @@ fn oracle_reclassify_mutating(
         });
         if mutating {
             if let Some(locus) = source_loci.get_mut(*idx) {
-                // A PROVEN `&mut` mutation is a real effect signal, but this side
-                // door does not own a Sugar proof. The locus stays `unresolved`;
-                // the oracle only SHARPENS its reason to name the observed boundary.
-                locus["status"] = json!("unresolved");
-                locus["reason"] =
-                    json!("mutation through &mut (oracle): proven effect, no value pin");
+                // A PROVEN `&mut` mutation is a real effect signal. The oracle still
+                // does not warrant, but it does own this named values-not-in-text
+                // boundary, so the locus terminates as refused rather than unresolved.
+                locus["status"] = json!("refused");
+                locus["reason"] = json!(named_source_refusal_reason(
+                    "mutation/side effect",
+                    "mutation through &mut (oracle): proven effect, no value pin"
+                ));
             }
         }
     }
@@ -2121,6 +2384,50 @@ mod tests {
         out
     }
 
+    fn lift_fixture(name: &str, src: &str) -> (PathBuf, Value) {
+        let root = unique_temp_dir(name);
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        std::fs::write(root.join("src/lib.rs"), src).expect("write rust source");
+        let response = lift(&json!({
+            "workspace_root": root,
+            "source_paths": ["src/lib.rs"]
+        }));
+        (root, response)
+    }
+
+    fn source_locus<'a>(response: &'a Value, ast_path: &str) -> &'a Value {
+        response["sourceAudits"][0]["loci"]
+            .as_array()
+            .expect("source audit loci")
+            .iter()
+            .find(|locus| locus["ast_path"] == ast_path)
+            .unwrap_or_else(|| panic!("missing source locus {ast_path}: {response}"))
+    }
+
+    fn assert_source_locus_refused(response: &Value, ast_path: &str, category: &str) {
+        let locus = source_locus(response, ast_path);
+        assert_eq!(
+            locus["status"], "refused",
+            "{ast_path} must be named-refused: {locus}"
+        );
+        assert!(
+            locus["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains(category)),
+            "{ast_path} refusal must carry category {category:?}: {locus}"
+        );
+        assert_ne!(locus["status"], "unresolved", "{locus}");
+        assert_ne!(locus["status"], "refuted", "{locus}");
+    }
+
+    fn assert_source_locus_warranted(response: &Value, ast_path: &str) {
+        let locus = source_locus(response, ast_path);
+        assert_eq!(
+            locus["status"], "warranted",
+            "{ast_path} is the literal twin and must still warrant: {locus}"
+        );
+    }
+
     #[test]
     fn collect_fns_enumerates_impl_and_trait_default_methods() {
         // free fn + inherent impl method + trait default method must all appear:
@@ -2261,10 +2568,10 @@ mod tests {
         // "considered and declined" -- it falls through to "we don't have a Sugar
         // for that yet" (`unresolved`), the honest, VISIBLE work.
         let f: syn::ItemFn =
-            syn::parse_str("fn log(x: i32) { println!(\"{x}\"); }").expect("fn parses");
+            syn::parse_str("fn inert(x: i32) { let _ = x + 1; }").expect("fn parses");
         let source_memento = json!({});
         let (status, reason, decl) =
-            classify_nontest_fn("log", &f.sig, &f.block, false, &source_memento);
+            classify_nontest_fn("inert", &f.sig, &f.block, false, &source_memento);
         assert!(decl.is_none(), "an un-warrantable body mints no contract");
         assert_ne!(
             status, "refused",
@@ -2274,6 +2581,161 @@ mod tests {
             status, "unresolved",
             "an un-warrantable body falls through to 'no Sugar yet' (reason: {reason:?})"
         );
+    }
+
+    #[test]
+    fn source_locus_mutable_reference_pointer_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_mutable_reference_pointer_refuses_with_literal_twin",
+            r#"
+#[test]
+fn mut_ref_pointer_refused() {
+    let mut x = 1;
+    assert_eq!(&mut x, &mut x);
+}
+
+#[test]
+fn mut_ref_pointer_literal_twin() {
+    assert_eq!(*&1, 1);
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "mut_ref_pointer_refused",
+            "mutable reference/pointer effect",
+        );
+        assert_source_locus_warranted(&response, "mut_ref_pointer_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_mutation_side_effect_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_mutation_side_effect_refuses_with_literal_twin",
+            r#"
+#[test]
+fn mutation_side_effect_refused() {
+    let mut total = 0i32;
+    [1i32, 2, 3].iter().for_each(|x| {
+        total += *x;
+        assert!(total > 0);
+    });
+}
+
+#[test]
+fn mutation_side_effect_literal_twin() {
+    [1i32, 2, 3].iter().for_each(|x| assert!(*x > 0));
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "mutation_side_effect_refused",
+            "mutation/side effect",
+        );
+        assert_source_locus_warranted(&response, "mutation_side_effect_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_compiler_layout_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_compiler_layout_refuses_with_literal_twin",
+            r#"
+fn layout_fact_refused<T>() {
+    let _ = std::mem::size_of::<T>();
+}
+
+fn layout_fact_literal_twin() -> usize {
+    4
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "layout_fact_refused",
+            "compiler layout fact not in text",
+        );
+        assert_source_locus_warranted(&response, "layout_fact_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_signed_zero_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_signed_zero_refuses_with_literal_twin",
+            r#"
+#[test]
+fn signed_zero_refused() {
+    assert_eq!(-0.0f32, 0.0f32);
+}
+
+#[test]
+fn signed_zero_literal_twin() {
+    assert_eq!(-1.5f64, -1.5f64);
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "signed_zero_refused",
+            "IEEE signed-zero refinement boundary",
+        );
+        assert_source_locus_warranted(&response, "signed_zero_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_opaque_runtime_receiver_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_opaque_runtime_receiver_refuses_with_literal_twin",
+            r#"
+#[test]
+fn opaque_runtime_receiver_refused() {
+    std::env::args().for_each(|x| assert!(!x.is_empty()));
+}
+
+#[test]
+fn opaque_runtime_receiver_literal_twin() {
+    [1i32, 2, 3].iter().for_each(|x| assert!(*x > 0));
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "opaque_runtime_receiver_refused",
+            "opaque runtime receiver",
+        );
+        assert_source_locus_warranted(&response, "opaque_runtime_receiver_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_runtime_impl_method_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_runtime_impl_method_refuses_with_literal_twin",
+            r#"
+struct Counter { n: i32 }
+
+impl Counter {
+    fn observe(&self) {
+        let _ = self.n;
+    }
+}
+
+fn runtime_impl_method_literal_twin() -> i32 {
+    7
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "Counter::observe",
+            "runtime impl-method boundary",
+        );
+        assert_source_locus_warranted(&response, "runtime_impl_method_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
