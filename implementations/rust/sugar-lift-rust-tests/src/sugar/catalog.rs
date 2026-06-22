@@ -1181,6 +1181,28 @@ mod tests {
     }
 
     #[test]
+    fn mutating_non_with_closure_adaptor_owns_opaque_accessor_overlap() {
+        let expr: Expr = syn::parse_str(
+            "cursor.with_unfilled_buf(|buf| { buf.unfilled().append(&[1, 2, 3]); assert_eq!(buf.filled(), &[1, 2, 3]); })",
+        )
+        .unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::ClosureAdaptorVerdict);
+
+        assert!(
+            names.contains(&"closure_opaque_accessor"),
+            "non-`.with` closure adaptor must still expose the opaque accessor candidate: {names:?}"
+        );
+        assert!(
+            names.contains(&"closure_mutating_body"),
+            "side-effecting closure body must expose the mutating-body candidate: {names:?}"
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::ClosureAdaptorVerdict),
+            Some("closure_mutating_body")
+        );
+    }
+
+    #[test]
     fn closure_iter_advance_body_verdict_is_a_catalog_claim() {
         let expr: Expr =
             syn::parse_str("iter.clone().for_each(|x| assert_eq!(Some(x), iter.next()))").unwrap();
