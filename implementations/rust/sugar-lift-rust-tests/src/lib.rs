@@ -150,6 +150,7 @@ pub mod sugar {
     pub mod result_transpose_collect;
     pub mod rev;
     pub mod scan;
+    pub mod should_panic;
     pub mod size_hint;
     pub mod sizeof;
     pub mod skip;
@@ -2064,9 +2065,8 @@ fn visit_test_fn(
     }
     out.seen += 1;
 
-    let is_should_panic = has_should_panic_attr(&f.attrs);
     let scoped_options;
-    let collection_options = if is_should_panic {
+    let collection_options = if sugar::should_panic::has_attr(&f.attrs) {
         scoped_options = options.clone().without_panic_freedom();
         &scoped_options
     } else {
@@ -2094,17 +2094,16 @@ fn visit_test_fn(
         scoped_fn_registry,
         &LayoutTypeRegistry::new(),
     );
-    if is_should_panic {
-        emit_should_panic_temporal_callsites(
-            &f.block.stmts,
-            &test_name,
-            options,
-            reducer,
-            &mut entries,
-            factory_audits,
-            0,
-        );
-    }
+    sugar::should_panic::lift_entries_if_applicable(
+        &f.attrs,
+        &f.block.stmts,
+        &test_name,
+        options,
+        reducer,
+        &mut entries,
+        factory_audits,
+        0,
+    );
     out.assertions_lifted += macros_lifted;
     out.assertions_refused += skipped.len();
     out.skip_reasons.extend(skipped.iter().cloned());
@@ -2189,12 +2188,6 @@ fn has_test_attr(attrs: &[syn::Attribute]) -> bool {
             .last()
             .is_some_and(|segment| segment.ident == "test")
     })
-}
-
-fn has_should_panic_attr(attrs: &[syn::Attribute]) -> bool {
-    attrs
-        .iter()
-        .any(|attr| attr.path().is_ident("should_panic"))
 }
 
 pub(crate) fn scoped_test_name(source_path: &str, modules: &[String], fn_name: &str) -> String {
@@ -7939,7 +7932,7 @@ fn emit_panic_freedom_callsites_in_stmt(
 }
 
 #[derive(Clone)]
-struct TemporalCallsiteRecord {
+pub(crate) struct TemporalCallsiteRecord {
     expr: Expr,
     scope: TemporalScope,
     float_widths: FloatWidthScope,
@@ -7947,48 +7940,7 @@ struct TemporalCallsiteRecord {
     span: proc_macro2::Span,
 }
 
-fn emit_should_panic_temporal_callsites(
-    stmts: &[Stmt],
-    local_scope: &str,
-    options: &LiftOptions,
-    reducer: &ReductionCtx<'_>,
-    entries: &mut Vec<AssertionEntry>,
-    factory_audits: Option<&FactoryAuditLog>,
-    macro_depth: usize,
-) {
-    let records = should_panic_temporal_callsite_records(stmts, local_scope, reducer);
-    let Some((last, prefix)) = records.split_last() else {
-        return;
-    };
-    for record in prefix {
-        if let Some(entry) = temporal_panic_freedom_entry(
-            record,
-            local_scope,
-            options,
-            reducer,
-            factory_audits,
-            macro_depth,
-            AssertionFactKind::Warranted,
-            false,
-        ) {
-            entries.push(entry);
-        }
-    }
-    if let Some(entry) = temporal_panic_freedom_entry(
-        last,
-        local_scope,
-        options,
-        reducer,
-        factory_audits,
-        macro_depth,
-        AssertionFactKind::Warranted,
-        true,
-    ) {
-        entries.push(entry);
-    }
-}
-
-fn should_panic_temporal_callsite_records(
+pub(crate) fn should_panic_temporal_callsite_records(
     stmts: &[Stmt],
     local_scope: &str,
     reducer: &ReductionCtx<'_>,
@@ -8040,7 +7992,7 @@ fn should_panic_temporal_callsite_records(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn temporal_panic_freedom_entry(
+pub(crate) fn temporal_panic_freedom_entry(
     record: &TemporalCallsiteRecord,
     local_scope: &str,
     options: &LiftOptions,
@@ -19887,6 +19839,105 @@ mod lifter_key_tests {
         assert!(
             dump.contains("method:step") && dump.contains("m@def1") && dump.contains("m@def2"),
             "prefix non-panic facts should retain temporal receiver versions: {dump}"
+        );
+    }
+
+    #[test]
+    fn should_panic_with_macro_only_body_warrants_via_opaque_fallback() {
+        // A `#[should_panic]` test whose body contains ONLY macro calls (no function
+        // or method call sites) produces no temporal callsite records. The opaque
+        // fallback in `should_panic::lift_entries_if_applicable` emits a synthetic
+        // `panic(test_name#should_panic_opaque)` fact so the locus classifies as
+        // warranted rather than dark/unresolved.
+        let src = r#"
+            #[test]
+            #[should_panic]
+            fn panics_with_format_only() {
+                let _ = format!("{}", 42);
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "opaque warrant does not increment scalar assertion count: {:?}",
+            out.decls
+        );
+        assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+        assert!(
+            out.assertion_facts
+                .iter()
+                .any(|f| f.kind == AssertionFactKind::Warranted),
+            "macro-only should_panic body should emit opaque warrant: {:?}",
+            out.assertion_facts
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("panic") && dump.contains("should_panic_opaque"),
+            "opaque warrant fact should contain 'panic' and 'should_panic_opaque': {dump}"
+        );
+    }
+
+    #[test]
+    fn should_panic_terminal_inversion_is_attribute_scoped_literal_twin() {
+        // Literal-twin for the should_panic inversion: only `#[should_panic]` causes
+        // the terminal callsite fact to be INVERTED. Without the attribute, the same
+        // body produces NORMAL (non-inverted) facts — the terminal does not get a
+        // `panic(...)` assertion.
+        //
+        // Good twin: the attribute is present → terminal is inverted → a `panic(...)` fact
+        // exists (the inverted assertion holds because the test attribute warrants it).
+        let good_src = r#"
+            #[test]
+            #[should_panic]
+            fn expected_panic() {
+                let mut m = Machine::new();
+                m.finish();
+            }
+        "#;
+        let good_out = lift_src(good_src);
+        let good_dump = format!("{:?}", good_out.decls);
+        assert!(
+            good_dump.contains("panic") && good_dump.contains("finish"),
+            "good twin: terminal should have inverted panic fact: {good_dump}"
+        );
+
+        // Bad twin: same body, NO `#[should_panic]` → terminal does NOT get an inverted
+        // `panic(...)` assertion. Normal panic-freedom applies instead. The locus is
+        // supported (normal test without assertions); the terminal inversion is absent.
+        // The inverted-panic assertion from the good twin would be WRONG here — no
+        // warrant says the function must panic.
+        let bad_src = r#"
+            #[test]
+            fn expected_panic() {
+                let mut m = Machine::new();
+                m.finish();
+            }
+        "#;
+        let bad_out = lift_src(bad_src);
+        // Bad twin: no panic-warranting assertion; it's a plain test with no assertions.
+        assert_eq!(
+            bad_out.assertions_lifted, 0,
+            "bad twin: non-should_panic test with no assert macros has no lifted assertions: {:?}",
+            bad_out.decls
+        );
+        // Verify the inversion is attribute-scoped:
+        // - Good twin: temporal callsite entries use "::temporal#N" naming from
+        //   `temporal_panic_freedom_entry`; the terminal has a DOUBLE-NEGATION
+        //   (`not(not(panic(...)))`) which is the inverted form.
+        // - Bad twin: normal panic-freedom path uses "#panic_callsite#euf" naming.
+        //   The terminal has a SINGLE negation (`not(panic(...))`) — non-inverted.
+        //
+        // The inverted assertion from the good twin would be WRONG for the bad twin —
+        // no warrant says the non-annotated function must panic. That direction-mismatch
+        // is the teeth: swapping the attribute removes the warrant.
+        let bad_dump = format!("{:?}", bad_out.decls);
+        assert!(
+            good_dump.contains("temporal#1"),
+            "good twin: terminal entry should have ::temporal#N naming: {good_dump}"
+        );
+        assert!(
+            !bad_dump.contains("temporal#"),
+            "bad twin: non-should_panic test should use normal panic-freedom naming, not ::temporal#N: {bad_dump}"
         );
     }
 
