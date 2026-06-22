@@ -36,6 +36,7 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     }
     if !is_known_monadic_source(&call.receiver)
         && !try_from_receiver_folds_scoped(&call.receiver, fcx)
+        && !crate::sugar::iter_terminal::recognizes_monadic_terminal(&call.receiver, fcx)
     {
         return None;
     }

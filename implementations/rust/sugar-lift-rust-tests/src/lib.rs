@@ -4258,9 +4258,13 @@ impl TemporalScope {
         if self.is_mut_local(name)
             || self.ambiguous_contains(name)
             || self.plan.interior_mut.contains(name)
-            || self.plan.iterators.contains(name)
         {
             return None;
+        }
+        if self.plan.iterators.contains(name) {
+            return self
+                .let_binding(name)
+                .filter(|init| stable_iterator_next_unwrap_snapshot(init));
         }
         self.let_binding(name)
     }
@@ -12513,6 +12517,54 @@ fn init_is_iterator_construction(expr: &Expr) -> bool {
                 "drain",
             ];
             PRODUCERS.contains(&last.as_str()) || UFCS_SOURCES.contains(&last.as_str())
+        }
+        _ => false,
+    }
+}
+
+fn stable_iterator_next_unwrap_snapshot(expr: &Expr) -> bool {
+    let Expr::MethodCall(unwrap) = strip_refs_groups(expr) else {
+        return false;
+    };
+    let method = unwrap.method.to_string();
+    match method.as_str() {
+        "unwrap" if unwrap.args.is_empty() => {}
+        "expect" if unwrap.args.len() == 1 => {}
+        _ => return false,
+    }
+    let Expr::MethodCall(next) = strip_refs_groups(&unwrap.receiver) else {
+        return false;
+    };
+    next.method == "next"
+        && next.args.is_empty()
+        && stable_identity_iterator_receiver(&next.receiver)
+}
+
+fn stable_identity_iterator_receiver(expr: &Expr) -> bool {
+    match strip_refs_groups(expr) {
+        Expr::Array(_) | Expr::Range(_) => true,
+        Expr::MethodCall(call) if call.args.is_empty() => {
+            let method = call.method.to_string();
+            matches!(
+                method.as_str(),
+                "iter" | "into_iter" | "cloned" | "copied" | "fuse"
+            ) && stable_identity_iterator_receiver(&call.receiver)
+        }
+        Expr::Call(call) if call.args.len() == 1 => {
+            let Expr::Path(path) = call.func.as_ref() else {
+                return false;
+            };
+            let is_into_iter = path
+                .path
+                .segments
+                .last()
+                .is_some_and(|seg| seg.ident == "into_iter")
+                && path
+                    .path
+                    .segments
+                    .iter()
+                    .any(|seg| seg.ident == "IntoIterator");
+            is_into_iter && stable_identity_iterator_receiver(&call.args[0])
         }
         _ => false,
     }

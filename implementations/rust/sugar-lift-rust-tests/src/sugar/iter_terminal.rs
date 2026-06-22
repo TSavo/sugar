@@ -195,6 +195,63 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     }))
 }
 
+pub(crate) fn recognizes_monadic_terminal(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
+    let Expr::MethodCall(call) = strip_refs_groups(expr) else {
+        return false;
+    };
+    let Some(terminal) = recognize_terminal(call) else {
+        return false;
+    };
+    if !matches!(terminal, Terminal::Next) || !stable_next_snapshot_receiver(&call.receiver, fcx, 0)
+    {
+        return false;
+    }
+    if let Some(name) = simple_path_name(&call.receiver) {
+        if fcx.scope().is_consumed_iterator_local(&name)
+            && fcx.scope().temporal_rewrite_expr_for(&name).is_none()
+        {
+            return false;
+        }
+    }
+    recognizes_scan_inner(&call.receiver, fcx) || has_composite(&call.receiver, fcx)
+}
+
+fn stable_next_snapshot_receiver(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
+    if depth > 16 {
+        return false;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Array(_) | Expr::Range(_) => true,
+        Expr::MethodCall(call) if call.args.is_empty() => {
+            let method = call.method.to_string();
+            matches!(
+                method.as_str(),
+                "iter" | "into_iter" | "cloned" | "copied" | "fuse"
+            ) && stable_next_snapshot_receiver(&call.receiver, fcx, depth + 1)
+        }
+        Expr::Call(call) if call.args.len() == 1 => {
+            let Expr::Path(path) = call.func.as_ref() else {
+                return false;
+            };
+            let is_into_iter = path
+                .path
+                .segments
+                .last()
+                .is_some_and(|seg| seg.ident == "into_iter")
+                && path
+                    .path
+                    .segments
+                    .iter()
+                    .any(|seg| seg.ident == "IntoIterator");
+            is_into_iter && stable_next_snapshot_receiver(&call.args[0], fcx, depth + 1)
+        }
+        Expr::Path(_) => simple_path_name(expr)
+            .and_then(|name| fcx.scope().temporal_rewrite_expr_for(&name))
+            .is_some_and(|current| stable_next_snapshot_receiver(&current, fcx, depth + 1)),
+        _ => false,
+    }
+}
+
 fn recognize_terminal(call: &syn::ExprMethodCall) -> Option<Terminal> {
     Some(match call.method.to_string().as_str() {
         // Scalar reductions, extremum terminals, and the nullary positional terminals
