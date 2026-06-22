@@ -5,7 +5,7 @@
 // factory so bound variables keep their RHS/callsite identity; this node owns
 // only the pattern-to-constraint semantics.
 
-use std::rc::Rc;
+use std::{collections::BTreeMap, rc::Rc};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
@@ -22,9 +22,10 @@ pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("constraint_matches_macro", SugarRole::Constraint, recognize);
 
 struct MatchesMacroSugar {
-    subject: Box<dyn Sugar>,
+    subject: Expr,
     pattern: Pat,
     site: String,
+    let_inits: BTreeMap<String, Expr>,
 }
 
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
@@ -43,15 +44,23 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     };
     let (subject, pattern) = Parser::parse2(parser, mac.tokens.clone()).ok()?;
     Some(Box::new(MatchesMacroSugar {
-        subject: build_term(&subject, fcx),
+        subject,
         pattern,
         site: token_key(expr),
+        let_inits: capture_let_inits(fcx),
     }))
+}
+
+fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
+    fcx.let_inits()
+        .iter()
+        .map(|(name, init)| (name.clone(), (**init).clone()))
+        .collect()
 }
 
 impl Sugar for MatchesMacroSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let subject = match term_payload(&*self.subject, ctx) {
+        let subject = match term_payload(&self.subject, ctx, &self.let_inits) {
             Ok(term) => term,
             Err(outcome) => return outcome,
         };
@@ -145,8 +154,23 @@ fn constraint(atom: Rc<Formula>, name: Option<String>) -> Outcome {
     })
 }
 
-fn term_payload(node: &dyn Sugar, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
-    match node.desugar(ctx) {
+fn term_payload(
+    expr: &Expr,
+    ctx: &SugarCtx,
+    captured_let_inits: &BTreeMap<String, Expr>,
+) -> Result<Rc<Term>, Outcome> {
+    let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
+    let let_inits: BTreeMap<String, &Expr> = stable
+        .iter()
+        .map(|(name, init)| (name.clone(), init))
+        .chain(
+            captured_let_inits
+                .iter()
+                .map(|(name, init)| (name.clone(), init)),
+        )
+        .collect();
+    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+    match build_term(expr, &fcx).desugar(ctx) {
         Outcome::Dug(desugared) => desugared.into_term().ok_or_else(|| {
             Outcome::Hit(Effect::Unsupported {
                 reason: STRUCTURAL_BACKSTOP_REASON.to_string(),

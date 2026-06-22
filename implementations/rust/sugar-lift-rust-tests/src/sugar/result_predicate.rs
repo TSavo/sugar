@@ -17,12 +17,15 @@
 // TEETH. `u8::try_from(256u16).is_err()` grounds to `res:err` -> `Bool(true)`;
 // `.is_ok()` -> `Bool(false)` (z3-UNSAT if asserted).
 
+use std::collections::BTreeMap;
+
 use sugar_ir_symbolic::Term;
 use syn::Expr;
 use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::format::stable_let_bindings;
 use crate::sugar::monadic::{RES_ERR, RES_OK};
 use crate::{bool_const, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 
@@ -42,18 +45,38 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     }
     Some(Box::new(ResultPredicateSugar {
         method,
-        receiver: build_term(&call.receiver, fcx),
+        receiver: (*call.receiver).clone(),
+        let_inits: capture_let_inits(fcx),
     }))
 }
 
 struct ResultPredicateSugar {
     method: String,
-    receiver: Box<dyn Sugar>,
+    receiver: Expr,
+    let_inits: BTreeMap<String, Expr>,
+}
+
+fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
+    fcx.let_inits()
+        .iter()
+        .map(|(name, init)| (name.clone(), (**init).clone()))
+        .collect()
 }
 
 impl Sugar for ResultPredicateSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let receiver = match self.receiver.desugar(ctx) {
+        let stable = stable_let_bindings(ctx.scope);
+        let let_inits: BTreeMap<String, &Expr> = stable
+            .iter()
+            .map(|(name, init)| (name.clone(), init))
+            .chain(
+                self.let_inits
+                    .iter()
+                    .map(|(name, init)| (name.clone(), init)),
+            )
+            .collect();
+        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        let receiver = match build_term(&self.receiver, &fcx).desugar(ctx) {
             Outcome::Dug(d) => match d.into_term() {
                 Some(term) => term,
                 None => return Outcome::from_opt(None),

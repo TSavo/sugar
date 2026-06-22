@@ -4,7 +4,7 @@
 // This owns `.map(|x| ...)` and `.unwrap_or(default)` as Option sugar, separate from
 // sequence `MapSugar`.
 
-use std::rc::Rc;
+use std::{collections::BTreeMap, rc::Rc};
 
 use sugar_ir_symbolic::{ConstValue, Term};
 use syn::Expr;
@@ -12,6 +12,7 @@ use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::format::stable_let_bindings;
 use crate::sugar::monadic::{none_term, some_term, OPT_NONE, OPT_SOME};
 use crate::{
     bool_const, const_eval_unary_closure, const_fold_int_term, const_fold_u128_term, num,
@@ -35,13 +36,15 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
                 return None;
             };
             Some(Box::new(OptionAdaptorSugar {
-                receiver: build_term(&call.receiver, fcx),
+                receiver: (*call.receiver).clone(),
                 kind: Kind::Map(f.clone()),
+                let_inits: capture_let_inits(fcx),
             }))
         }
         ("unwrap_or", 1) => Some(Box::new(OptionAdaptorSugar {
-            receiver: build_term(&call.receiver, fcx),
-            kind: Kind::UnwrapOr(build_term(&call.args[0], fcx)),
+            receiver: (*call.receiver).clone(),
+            kind: Kind::UnwrapOr(call.args[0].clone()),
+            let_inits: capture_let_inits(fcx),
         })),
         _ => None,
     }
@@ -84,17 +87,36 @@ fn is_option_source(expr: &Expr) -> bool {
 
 enum Kind {
     Map(syn::ExprClosure),
-    UnwrapOr(Box<dyn Sugar>),
+    UnwrapOr(Expr),
 }
 
 struct OptionAdaptorSugar {
-    receiver: Box<dyn Sugar>,
+    receiver: Expr,
     kind: Kind,
+    let_inits: BTreeMap<String, Expr>,
+}
+
+fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
+    fcx.let_inits()
+        .iter()
+        .map(|(name, init)| (name.clone(), (**init).clone()))
+        .collect()
 }
 
 impl Sugar for OptionAdaptorSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let receiver = match self.receiver.desugar(ctx) {
+        let stable = stable_let_bindings(ctx.scope);
+        let let_inits: BTreeMap<String, &Expr> = stable
+            .iter()
+            .map(|(name, init)| (name.clone(), init))
+            .chain(
+                self.let_inits
+                    .iter()
+                    .map(|(name, init)| (name.clone(), init)),
+            )
+            .collect();
+        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        let receiver = match build_term(&self.receiver, &fcx).desugar(ctx) {
             Outcome::Dug(d) => match d.into_term() {
                 Some(term) => term,
                 None => return Outcome::from_opt(None),
@@ -140,7 +162,7 @@ impl Sugar for OptionAdaptorSugar {
                     Outcome::Dug(Desugared::Term(inner))
                 }
                 Some(None) => {
-                    let default = match default.desugar(ctx) {
+                    let default = match build_term(default, &fcx).desugar(ctx) {
                         Outcome::Dug(d) => match d.into_term() {
                             Some(term) => term,
                             None => return Outcome::from_opt(None),
