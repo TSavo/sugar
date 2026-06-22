@@ -13,7 +13,7 @@ use tracing::debug;
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::format::stable_let_bindings;
-use crate::sugar::monadic::{OPT_NONE, OPT_SOME, RES_ERR, RES_OK};
+use crate::sugar::monadic::{is_grounded_literal_term, OPT_NONE, OPT_SOME, RES_ERR, RES_OK};
 use crate::sugar::nonzero::is_nonzero_new_call;
 use crate::{strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
@@ -79,6 +79,14 @@ impl Sugar for OptionUnwrapSugar {
         };
         match unwrap_monadic(&receiver) {
             Some(Ok(inner)) => {
+                if !is_grounded_literal_term(inner.as_ref()) {
+                    return Outcome::Hit(Effect::Unsupported {
+                        reason: format!(
+                            "monadic `{}` over non-literal payload; refused",
+                            self.method
+                        ),
+                    });
+                }
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::option_unwrap",
                     method = self.method.as_str(),
@@ -111,7 +119,11 @@ fn unwrap_monadic(term: &Rc<Term>) -> Option<Result<Rc<Term>, &'static str>> {
     }
 }
 
-fn receiver_resolves_monadic_source(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
+pub(crate) fn receiver_resolves_monadic_source(
+    expr: &Expr,
+    fcx: &SugarBuildCtx,
+    depth: usize,
+) -> bool {
     if depth > 8 {
         return false;
     }
@@ -134,6 +146,9 @@ fn receiver_resolves_monadic_source(expr: &Expr, fcx: &SugarBuildCtx, depth: usi
             };
             let child_fcx = fcx.with_bound_path(&name);
             receiver_resolves_monadic_source(init, &child_fcx, depth + 1)
+        }
+        Expr::MethodCall(call) if call.method == "map" && call.args.len() == 1 => {
+            receiver_resolves_monadic_source(&call.receiver, fcx, depth + 1)
         }
         Expr::Paren(paren) => receiver_resolves_monadic_source(&paren.expr, fcx, depth + 1),
         Expr::Group(group) => receiver_resolves_monadic_source(&group.expr, fcx, depth + 1),

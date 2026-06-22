@@ -1650,6 +1650,485 @@ fn try_from_predicate_wrong_discriminant_is_unsat() {
     }
 }
 
+#[test]
+fn option_result_literal_methods_compose_to_literal_floor() {
+    fn assert_case(src: &str, path: &str, fn_name: &str, method_marker: &str, expect_sat: bool) {
+        let out = lift_file(&parse(src), path);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "{fn_name} should lift exactly one assertion: {:?}",
+            out.skip_reasons
+        );
+        let decl = out
+            .decls
+            .iter()
+            .find(|decl| decl.name.ends_with(&format!("::{fn_name}")))
+            .or_else(|| out.decls.first())
+            .expect("literal-method assertion decl");
+        let inv = inv_json(decl);
+        let dump = inv.to_string();
+        assert!(
+            !dump.contains(method_marker),
+            "{fn_name} should desugar through the literal floor, not retain {method_marker}: {dump}"
+        );
+        if let Some(sat) = z3_verdict(&inv, fn_name) {
+            assert_eq!(
+                sat,
+                expect_sat,
+                "{fn_name} z3 verdict should be {} for {dump}",
+                if expect_sat { "SAT" } else { "UNSAT" }
+            );
+        }
+    }
+
+    let cases = [
+        (
+            "coretests/option/compose_some_unwrap_good.rs",
+            "t_compose_some_unwrap_good",
+            "method:unwrap",
+            true,
+            r#"
+                #[test]
+                fn t_compose_some_unwrap_good() {
+                    let opt = Some(3i32);
+                    assert_eq!(opt.unwrap(), 3);
+                }
+            "#,
+        ),
+        (
+            "coretests/option/compose_some_unwrap_bad.rs",
+            "t_compose_some_unwrap_bad",
+            "method:unwrap",
+            false,
+            r#"
+                #[test]
+                fn t_compose_some_unwrap_bad() {
+                    let opt = Some(3i32);
+                    assert_eq!(opt.unwrap(), 4);
+                }
+            "#,
+        ),
+        (
+            "coretests/option/compose_some_unwrap_or_good.rs",
+            "t_compose_some_unwrap_or_good",
+            "method:unwrap_or",
+            true,
+            r#"
+                #[test]
+                fn t_compose_some_unwrap_or_good() {
+                    let opt = Some(3i32);
+                    assert_eq!(opt.unwrap_or(9), 3);
+                }
+            "#,
+        ),
+        (
+            "coretests/option/compose_some_unwrap_or_bad.rs",
+            "t_compose_some_unwrap_or_bad",
+            "method:unwrap_or",
+            false,
+            r#"
+                #[test]
+                fn t_compose_some_unwrap_or_bad() {
+                    let opt = Some(3i32);
+                    assert_eq!(opt.unwrap_or(9), 9);
+                }
+            "#,
+        ),
+        (
+            "coretests/option/compose_none_unwrap_or_good.rs",
+            "t_compose_none_unwrap_or_good",
+            "method:unwrap_or",
+            true,
+            r#"
+                #[test]
+                fn t_compose_none_unwrap_or_good() {
+                    let opt: Option<i32> = None;
+                    assert_eq!(opt.unwrap_or(9), 9);
+                }
+            "#,
+        ),
+        (
+            "coretests/option/compose_none_unwrap_or_bad.rs",
+            "t_compose_none_unwrap_or_bad",
+            "method:unwrap_or",
+            false,
+            r#"
+                #[test]
+                fn t_compose_none_unwrap_or_bad() {
+                    let opt: Option<i32> = None;
+                    assert_eq!(opt.unwrap_or(9), 8);
+                }
+            "#,
+        ),
+        (
+            "coretests/option/compose_some_default_good.rs",
+            "t_compose_some_default_good",
+            "method:unwrap_or_default",
+            true,
+            r#"
+                #[test]
+                fn t_compose_some_default_good() {
+                    assert_eq!(Some(3i32).unwrap_or_default(), 3);
+                }
+            "#,
+        ),
+        (
+            "coretests/option/compose_some_default_bad.rs",
+            "t_compose_some_default_bad",
+            "method:unwrap_or_default",
+            false,
+            r#"
+                #[test]
+                fn t_compose_some_default_bad() {
+                    assert_eq!(Some(3i32).unwrap_or_default(), 4);
+                }
+            "#,
+        ),
+        (
+            "coretests/option/compose_none_default_good.rs",
+            "t_compose_none_default_good",
+            "method:unwrap_or_default",
+            true,
+            r#"
+                #[test]
+                fn t_compose_none_default_good() {
+                    assert_eq!(None::<i32>.unwrap_or_default(), 0);
+                }
+            "#,
+        ),
+        (
+            "coretests/option/compose_none_default_bad.rs",
+            "t_compose_none_default_bad",
+            "method:unwrap_or_default",
+            false,
+            r#"
+                #[test]
+                fn t_compose_none_default_bad() {
+                    assert_eq!(None::<i32>.unwrap_or_default(), 1);
+                }
+            "#,
+        ),
+        (
+            "coretests/option/compose_some_map_good.rs",
+            "t_compose_some_map_good",
+            "method:map",
+            true,
+            r#"
+                #[test]
+                fn t_compose_some_map_good() {
+                    let opt = Some(3i32);
+                    assert_eq!(opt.map(|x| x + 1), Some(4));
+                }
+            "#,
+        ),
+        (
+            "coretests/option/compose_some_map_bad.rs",
+            "t_compose_some_map_bad",
+            "method:map",
+            false,
+            r#"
+                #[test]
+                fn t_compose_some_map_bad() {
+                    let opt = Some(3i32);
+                    assert_eq!(opt.map(|x| x + 1), Some(5));
+                }
+            "#,
+        ),
+        (
+            "coretests/option/compose_none_map_good.rs",
+            "t_compose_none_map_good",
+            "method:map",
+            true,
+            r#"
+                #[test]
+                fn t_compose_none_map_good() {
+                    let opt: Option<i32> = None;
+                    assert_eq!(opt.map(|x| x + 1), None);
+                }
+            "#,
+        ),
+        (
+            "coretests/option/compose_none_map_bad.rs",
+            "t_compose_none_map_bad",
+            "method:map",
+            false,
+            r#"
+                #[test]
+                fn t_compose_none_map_bad() {
+                    let opt: Option<i32> = None;
+                    assert_eq!(opt.map(|x| x + 1), Some(1));
+                }
+            "#,
+        ),
+        (
+            "coretests/option/compose_some_pred_bad.rs",
+            "t_compose_some_pred_bad",
+            "method:is_none",
+            false,
+            r#"
+                #[test]
+                fn t_compose_some_pred_bad() {
+                    let opt = Some(3i32);
+                    assert!(opt.is_none());
+                }
+            "#,
+        ),
+        (
+            "coretests/option/compose_none_pred_bad.rs",
+            "t_compose_none_pred_bad",
+            "method:is_some",
+            false,
+            r#"
+                #[test]
+                fn t_compose_none_pred_bad() {
+                    let opt: Option<i32> = None;
+                    assert!(opt.is_some());
+                }
+            "#,
+        ),
+        (
+            "coretests/result/compose_ok_unwrap_or_good.rs",
+            "t_compose_ok_unwrap_or_good",
+            "method:unwrap_or",
+            true,
+            r#"
+                #[test]
+                fn t_compose_ok_unwrap_or_good() {
+                    let r: Result<i32, i32> = Ok(2);
+                    assert_eq!(r.unwrap_or(9), 2);
+                }
+            "#,
+        ),
+        (
+            "coretests/result/compose_ok_unwrap_or_bad.rs",
+            "t_compose_ok_unwrap_or_bad",
+            "method:unwrap_or",
+            false,
+            r#"
+                #[test]
+                fn t_compose_ok_unwrap_or_bad() {
+                    let r: Result<i32, i32> = Ok(2);
+                    assert_eq!(r.unwrap_or(9), 9);
+                }
+            "#,
+        ),
+        (
+            "coretests/result/compose_err_unwrap_or_good.rs",
+            "t_compose_err_unwrap_or_good",
+            "method:unwrap_or",
+            true,
+            r#"
+                #[test]
+                fn t_compose_err_unwrap_or_good() {
+                    let r: Result<i32, i32> = Err(5);
+                    assert_eq!(r.unwrap_or(9), 9);
+                }
+            "#,
+        ),
+        (
+            "coretests/result/compose_err_unwrap_or_bad.rs",
+            "t_compose_err_unwrap_or_bad",
+            "method:unwrap_or",
+            false,
+            r#"
+                #[test]
+                fn t_compose_err_unwrap_or_bad() {
+                    let r: Result<i32, i32> = Err(5);
+                    assert_eq!(r.unwrap_or(9), 8);
+                }
+            "#,
+        ),
+        (
+            "coretests/result/compose_ok_default_good.rs",
+            "t_compose_ok_default_good",
+            "method:unwrap_or_default",
+            true,
+            r#"
+                #[test]
+                fn t_compose_ok_default_good() {
+                    assert_eq!(Ok::<i32, i32>(2).unwrap_or_default(), 2);
+                }
+            "#,
+        ),
+        (
+            "coretests/result/compose_ok_default_bad.rs",
+            "t_compose_ok_default_bad",
+            "method:unwrap_or_default",
+            false,
+            r#"
+                #[test]
+                fn t_compose_ok_default_bad() {
+                    assert_eq!(Ok::<i32, i32>(2).unwrap_or_default(), 3);
+                }
+            "#,
+        ),
+        (
+            "coretests/result/compose_err_default_good.rs",
+            "t_compose_err_default_good",
+            "method:unwrap_or_default",
+            true,
+            r#"
+                #[test]
+                fn t_compose_err_default_good() {
+                    assert_eq!(Err::<i32, i32>(5).unwrap_or_default(), 0);
+                }
+            "#,
+        ),
+        (
+            "coretests/result/compose_err_default_bad.rs",
+            "t_compose_err_default_bad",
+            "method:unwrap_or_default",
+            false,
+            r#"
+                #[test]
+                fn t_compose_err_default_bad() {
+                    assert_eq!(Err::<i32, i32>(5).unwrap_or_default(), 1);
+                }
+            "#,
+        ),
+        (
+            "coretests/result/compose_ok_map_good.rs",
+            "t_compose_ok_map_good",
+            "method:map",
+            true,
+            r#"
+                #[test]
+                fn t_compose_ok_map_good() {
+                    let r: Result<i32, i32> = Ok(2);
+                    assert_eq!(r.map(|x| x + 1), Ok(3));
+                }
+            "#,
+        ),
+        (
+            "coretests/result/compose_ok_map_bad.rs",
+            "t_compose_ok_map_bad",
+            "method:map",
+            false,
+            r#"
+                #[test]
+                fn t_compose_ok_map_bad() {
+                    let r: Result<i32, i32> = Ok(2);
+                    assert_eq!(r.map(|x| x + 1), Ok(4));
+                }
+            "#,
+        ),
+        (
+            "coretests/result/compose_err_map_good.rs",
+            "t_compose_err_map_good",
+            "method:map",
+            true,
+            r#"
+                #[test]
+                fn t_compose_err_map_good() {
+                    let r: Result<i32, i32> = Err(7);
+                    assert_eq!(r.map(|x| x + 1), Err(7));
+                }
+            "#,
+        ),
+        (
+            "coretests/result/compose_err_map_bad.rs",
+            "t_compose_err_map_bad",
+            "method:map",
+            false,
+            r#"
+                #[test]
+                fn t_compose_err_map_bad() {
+                    let r: Result<i32, i32> = Err(7);
+                    assert_eq!(r.map(|x| x + 1), Ok(8));
+                }
+            "#,
+        ),
+        (
+            "coretests/result/compose_ok_pred_bad.rs",
+            "t_compose_ok_pred_bad",
+            "method:is_err",
+            false,
+            r#"
+                #[test]
+                fn t_compose_ok_pred_bad() {
+                    let r: Result<i32, i32> = Ok(2);
+                    assert!(r.is_err());
+                }
+            "#,
+        ),
+        (
+            "coretests/result/compose_err_pred_bad.rs",
+            "t_compose_err_pred_bad",
+            "method:is_ok",
+            false,
+            r#"
+                #[test]
+                fn t_compose_err_pred_bad() {
+                    let r: Result<i32, i32> = Err(7);
+                    assert!(r.is_ok());
+                }
+            "#,
+        ),
+    ];
+
+    for (path, fn_name, marker, expect_sat, src) in cases {
+        assert_case(src, path, fn_name, marker, expect_sat);
+    }
+}
+
+#[test]
+fn option_result_literal_methods_runtime_payloads_decline() {
+    let cases = [
+        (
+            "coretests/option/compose_runtime_some_pred.rs",
+            r#"
+                fn runtime() -> i32 { std::env::args().count() as i32 }
+
+                #[test]
+                fn t_runtime_some_pred() {
+                    assert!(Some(runtime()).is_some());
+                }
+            "#,
+        ),
+        (
+            "coretests/result/compose_runtime_ok_pred.rs",
+            r#"
+                fn runtime() -> i32 { std::env::args().count() as i32 }
+
+                #[test]
+                fn t_runtime_ok_pred() {
+                    assert!(Ok::<i32, i32>(runtime()).is_ok());
+                }
+            "#,
+        ),
+        (
+            "coretests/option/compose_runtime_unwrap_or.rs",
+            r#"
+                fn runtime() -> i32 { std::env::args().count() as i32 }
+
+                #[test]
+                fn t_runtime_unwrap_or() {
+                    assert_eq!(Some(runtime()).unwrap_or(9), 9);
+                }
+            "#,
+        ),
+        (
+            "coretests/result/compose_runtime_unwrap_or.rs",
+            r#"
+                fn runtime() -> i32 { std::env::args().count() as i32 }
+
+                #[test]
+                fn t_runtime_unwrap_or() {
+                    assert_eq!(Ok::<i32, i32>(runtime()).unwrap_or(9), 9);
+                }
+            "#,
+        ),
+    ];
+
+    for (path, src) in cases {
+        let out = lift_file(&parse(src), path);
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "{path} has a runtime payload; literal-method sugar must propagate Hit/refuse instead of inventing a literal assertion"
+        );
+    }
+}
+
 // Signed/unsigned boundary teeth: `i8::try_from(200u16)` overflows (200 > 127) ->
 // Err; `u8::try_from(-1i32)` is negative -> Err; `i8::try_from(-1i32)` fits -> Ok.
 #[test]

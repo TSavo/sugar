@@ -177,6 +177,24 @@ pub(crate) fn err_term(inner: Rc<Term>) -> Rc<Term> {
     })
 }
 
+/// True iff a value is built wholly from scalar literals and structural
+/// constructors. Opaque runtime leaves (`call:`/`method:`), unresolved vars, and
+/// higher-order terms are not literal payloads for Option/Result method sugar.
+pub(crate) fn is_grounded_literal_term(term: &Term) -> bool {
+    match term {
+        Term::Const { .. } => true,
+        Term::Var { name } => name.starts_with("literal:"),
+        Term::Lambda { .. } | Term::Let { .. } => false,
+        Term::Ctor { name, args } => {
+            if name.starts_with("call:") || name.starts_with("method:") {
+                return false;
+            }
+            args.iter()
+                .all(|arg| is_grounded_literal_term(arg.as_ref()))
+        }
+    }
+}
+
 /// The constructive `Option`/`Result` constructor node. Digs its inner child to
 /// a `Term` (for the unary ctors) and emits `Term::Ctor { name, args }` keyed by
 /// the reserved monadic name. A child `Hit` propagates verbatim; a child that
