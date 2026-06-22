@@ -25,7 +25,7 @@ then
 fi
 
 cd "$HERE"
-rm -f blake3-512:*.proof 2>/dev/null || true
+rm -f blake3-512_*.proof 2>/dev/null || true
 rm -rf .sugar/runs .sugar/witnesses 2>/dev/null || true
 rm -f .verify.raw .verify.json 2>/dev/null || true
 

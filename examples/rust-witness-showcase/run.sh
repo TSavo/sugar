@@ -49,7 +49,7 @@ done
 # Clean any prior run artifacts so the witness package is rebuilt from scratch.
 # Minted .proof files are named by their CID WITH a colon (blake3-512:...proof).
 for suite in good bad; do
-  for p in "$HERE/$suite"/blake3-512:*.proof; do [ -e "$p" ] && rm -f "$p"; done
+  for p in "$HERE/$suite"/blake3-512_*.proof; do [ -e "$p" ] && rm -f "$p"; done
   rm -rf "$HERE/$suite/.sugar/runs" "$HERE/$suite/.sugar/witnesses" 2>/dev/null || true
   rm -rf "$HERE/$suite/target" 2>/dev/null || true
 done
@@ -77,7 +77,7 @@ run_suite() {
 
   # Exactly one witness-package .proof should exist now (CID-named, colon form).
   local have_proof=0
-  for p in "$dir"/blake3-512:*.proof; do [ -e "$p" ] && have_proof=1; done
+  for p in "$dir"/blake3-512_*.proof; do [ -e "$p" ] && have_proof=1; done
   [ "$have_proof" = 1 ] || { echo "FAIL[$suite]: mint produced no .proof"; exit 1; }
 
   echo "-- prove: discharge the custom evidence by recompute --"

@@ -189,7 +189,7 @@ run_mint_verify() {
 import glob
 import os
 import sys
-matches = sorted(glob.glob(os.path.join(sys.argv[1], "blake3-512:*.proof")))
+matches = sorted(glob.glob(os.path.join(sys.argv[1], "blake3-512_*.proof")))
 print(matches[0] if matches else "")
 PY
   )"

@@ -7178,7 +7178,7 @@ def handle_resolve_dependency_proofs(msg_id: Any, params: dict) -> None:
     proofs: list[dict] = []
     if os.path.isdir(imports_dir):
         for name in sorted(os.listdir(imports_dir)):
-            if not fnmatch.fnmatch(name, "blake3-512:*.proof"):
+            if not fnmatch.fnmatch(name, "blake3-512_*.proof"):
                 continue
             path = os.path.join(imports_dir, name)
             if not os.path.isfile(path):

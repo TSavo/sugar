@@ -436,7 +436,7 @@ SELF_LIFT_DIR := .sugar/self-lifts/canonicalizer
 self-lift-canonicalizer: build-rust
 	@echo ">> self-lifting sugar-canonicalizer"
 	@mkdir -p $(SELF_LIFT_DIR)
-	@rm -f $(SELF_LIFT_DIR)/blake3-512:*.proof
+	@rm -f $(SELF_LIFT_DIR)/blake3-512_*.proof
 	@out=$$($(SUGAR_LIFT) \
 		--workspace implementations/rust/sugar-canonicalizer \
 		--target-dir $(SELF_LIFT_DIR) --quiet); \
@@ -454,5 +454,5 @@ clean:
 	rm -rf implementations/cpp/target
 	rm -rf implementations/csharp/Sugar.*/bin implementations/csharp/Sugar.*/obj
 	rm -rf node_modules
-	rm -f implementations/*/blake3-512:*.proof
-	rm -f blake3-512:*.proof
+	rm -f implementations/*/blake3-512_*.proof
+	rm -f blake3-512_*.proof

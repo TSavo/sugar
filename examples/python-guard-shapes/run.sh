@@ -23,7 +23,7 @@ if [ ! -x "$VENV/bin/python" ]; then
 fi
 
 cd "$HERE"
-rm -f blake3-512:*.proof 2>/dev/null || true
+rm -f blake3-512_*.proof 2>/dev/null || true
 rm -rf .sugar/runs .sugar/witnesses __pycache__ 2>/dev/null || true
 
 echo "== mint (one WitnessPackageMemento over the 16 cases; oracle runs the suite) =="

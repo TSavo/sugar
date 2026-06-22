@@ -58,7 +58,7 @@ DIR="$HERE/good"
 mfin="$DIR/.sugar/lift/java-test-assertions/manifest.toml.in"
 mf="$DIR/.sugar/lift/java-test-assertions/manifest.toml"
 sed "s#@KIT_JAVA@#${KIT_JAVA}#g; s#@KIT_DIR@#${KIT_DIR}#g" "$mfin" > "$mf"
-for p in "$DIR"/blake3-512:*.proof; do [ -e "$p" ] && rm -f "$p"; done
+for p in "$DIR"/blake3-512_*.proof; do [ -e "$p" ] && rm -f "$p"; done
 rm -rf "$DIR/.sugar/runs" 2>/dev/null || true
 rm -f "$DIR/.dump.json" "$DIR/.bv-tree.json" "$DIR/no-universe.proof" 2>/dev/null || true
 rm -f "$HERE/good-receipt.json" "$HERE/bad-receipt.json" "$HERE/no-universe-receipt.json" 2>/dev/null || true
@@ -69,7 +69,7 @@ echo "== 1. mint: lift Math.java -> int32.eq-bv-expr universe atom =="
 ( cd "$DIR" && "$SUGAR" mint --out . ) >/dev/null 2>&1 || { echo "FAIL: sugar mint failed"; exit 1; }
 
 PROOF=""
-for p in "$DIR"/blake3-512:*.proof; do [ -e "$p" ] && PROOF="$p"; done
+for p in "$DIR"/blake3-512_*.proof; do [ -e "$p" ] && PROOF="$p"; done
 [ -n "$PROOF" ] || { echo "FAIL: mint produced no .proof"; exit 1; }
 echo "   minted: $(basename "$PROOF")"
 

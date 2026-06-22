@@ -83,7 +83,7 @@ for suite in good bad; do
   mfin="$HERE/$suite/.sugar/lift/java-test-assertions/manifest.toml.in"
   mf="$HERE/$suite/.sugar/lift/java-test-assertions/manifest.toml"
   sed "s#@KIT_JAVA@#${KIT_JAVA}#g; s#@KIT_DIR@#${KIT_DIR}#g" "$mfin" > "$mf"
-  for p in "$HERE/$suite"/blake3-512:*.proof; do [ -e "$p" ] && rm -f "$p"; done
+  for p in "$HERE/$suite"/blake3-512_*.proof; do [ -e "$p" ] && rm -f "$p"; done
   rm -rf "$HERE/$suite/.sugar/runs" 2>/dev/null || true
   rm -f "$HERE/$suite"/.prove*.json "$HERE/$suite"/.verify*.json 2>/dev/null || true
 done
@@ -100,7 +100,7 @@ run_suite() {
   ( cd "$dir" && "$SUGAR" mint --out . ) >/dev/null 2>&1 || { echo "FAIL[$suite]: sugar mint failed"; exit 1; }
 
   local have_proof=0
-  for p in "$dir"/blake3-512:*.proof; do [ -e "$p" ] && have_proof=1; done
+  for p in "$dir"/blake3-512_*.proof; do [ -e "$p" ] && have_proof=1; done
   [ "$have_proof" = 1 ] || { echo "FAIL[$suite]: mint produced no .proof"; exit 1; }
 
   # The numeric-universe row must be in the minted proof: an int32.eq-bv-expr atom.
@@ -109,7 +109,7 @@ run_suite() {
 import glob, json, sys
 suite, dirp = sys.argv[1], sys.argv[2]
 found = False
-for p in glob.glob(dirp + "/blake3-512:*.proof"):
+for p in glob.glob(dirp + "/blake3-512_*.proof"):
     if b"int32.eq-bv-expr" in open(p, "rb").read():
         found = True
         break

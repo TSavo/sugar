@@ -68,7 +68,7 @@ for suite in good bad; do
   mf="$HERE/$suite/.sugar/lift/java-test-assertions/manifest.toml"
   sed "s#@KIT_JAVA@#${KIT_JAVA}#g; s#@KIT_DIR@#${KIT_DIR}#g" "$mfin" > "$mf"
   # Clean old state
-  for p in "$HERE/$suite"/blake3-512:*.proof; do [ -e "$p" ] && rm -f "$p"; done
+  for p in "$HERE/$suite"/blake3-512_*.proof; do [ -e "$p" ] && rm -f "$p"; done
   rm -rf "$HERE/$suite/.sugar/runs" 2>/dev/null || true
   rm -f "$HERE/$suite"/.prove*.json "$HERE/$suite"/.verify*.json 2>/dev/null || true
 done
@@ -96,7 +96,7 @@ dump_contract_members() {
 import glob, json, subprocess, sys
 
 sugar, root = sys.argv[1], sys.argv[2]
-proofs = sorted(glob.glob(root + "/blake3-512:*.proof"))
+proofs = sorted(glob.glob(root + "/blake3-512_*.proof"))
 if not proofs:
     print("   proof dump: no top-level proof")
     raise SystemExit
@@ -155,7 +155,7 @@ run_suite() {
   ( cd "$dir" && "$SUGAR" mint --out . ) >/dev/null 2>&1
 
   local have_proof=0
-  for p in "$dir"/blake3-512:*.proof; do [ -e "$p" ] && have_proof=1; done
+  for p in "$dir"/blake3-512_*.proof; do [ -e "$p" ] && have_proof=1; done
   [ "$have_proof" = 1 ] || { echo "FAIL[$suite]: mint produced no .proof"; exit 1; }
 
   echo "-- prove: consistency rows --"

@@ -125,8 +125,8 @@ for jar in target/srcjars/*-sources.jar; do
     unzip -qo "$tj" -d "$work" -x 'META-INF/*' >/dev/null 2>&1 || true
   fi
   render_manifest "$work" "$KIT_DIR"   # drop a java-test-assertions lift manifest onto $work
-  if ( cd "$work" && "$SUGAR" mint --out . ) >/dev/null 2>&1 && ls "$work"/blake3-512:*.proof >/dev/null 2>&1; then
-    proof="$(ls "$work"/blake3-512:*.proof | head -1)"
+  if ( cd "$work" && "$SUGAR" mint --out . ) >/dev/null 2>&1 && ls "$work"/blake3-512_*.proof >/dev/null 2>&1; then
+    proof="$(ls "$work"/blake3-512_*.proof | head -1)"
     cp "$proof" "$OUT/$art.proof"
     nc="$(count_lifted_contracts "$work" "$KIT_DIR")"
     proven=$((proven+1)); printf "  PROOF  %-34s %s contracts\n" "$art" "$nc"

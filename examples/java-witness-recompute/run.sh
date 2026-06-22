@@ -49,7 +49,7 @@ for suite in good bad; do
   mf="$HERE/$suite/.sugar/lift/java-junit-witness/manifest.toml"
   sed "s#@KIT_JAVA@#${KIT_JAVA}#g; s#@KIT_DIR@#${KIT_DIR}#g" "$mfin" > "$mf"
   # Clean old state (anchored: .sugar/runs, .sugar/witnesses, .proof files)
-  for p in "$HERE/$suite"/blake3-512:*.proof; do [ -e "$p" ] && rm -f "$p"; done
+  for p in "$HERE/$suite"/blake3-512_*.proof; do [ -e "$p" ] && rm -f "$p"; done
   rm -rf "$HERE/$suite/.sugar/runs" "$HERE/$suite/.sugar/witnesses" 2>/dev/null || true
   rm -f "$HERE/$suite"/.prove*.json "$HERE/$suite"/.verify*.json 2>/dev/null || true
 done
@@ -64,7 +64,7 @@ echo "-- mint: run tests, emit witness-package contract --"
 ( cd "$HERE/good" && SUGAR_WITNESS_PROJECT_DIR="$(pwd)" "$SUGAR" mint --out . ) >/dev/null 2>&1
 
 have_proof=0
-for p in "$HERE/good"/blake3-512:*.proof; do [ -e "$p" ] && have_proof=1; done
+for p in "$HERE/good"/blake3-512_*.proof; do [ -e "$p" ] && have_proof=1; done
 [ "$have_proof" = 1 ] || { echo "FAIL[good]: mint produced no .proof"; exit 1; }
 
 echo "-- prove: witness-package row --"
@@ -114,7 +114,7 @@ echo "-- mint: run tests (one fails), emit honest witness-package contract --"
 ( cd "$HERE/bad" && SUGAR_WITNESS_PROJECT_DIR="$(pwd)" "$SUGAR" mint --out . ) >/dev/null 2>&1
 
 have_proof=0
-for p in "$HERE/bad"/blake3-512:*.proof; do [ -e "$p" ] && have_proof=1; done
+for p in "$HERE/bad"/blake3-512_*.proof; do [ -e "$p" ] && have_proof=1; done
 [ "$have_proof" = 1 ] || { echo "FAIL[bad]: mint produced no .proof"; exit 1; }
 
 echo "-- prove: honest run -> witness-package should be REFUSED (1 test failed) --"

@@ -152,18 +152,18 @@ mint_contract_proof() {
   echo "contract-row: native-contract/src/lib.rs decodes_four_to_three"
   local base="$CONTRACT_DIR/.sugar/lift/rust-test-assertions"
   sed "s#@RUST_ASSERT_RPC@#${RUST_ASSERT_RPC}#g" "$base/manifest.toml.in" > "$base/manifest.toml"
-  rm -f "$CONTRACT_DIR"/blake3-512:*.proof
+  rm -f "$CONTRACT_DIR"/blake3-512_*.proof
   rm -rf "$CONTRACT_DIR/.sugar/runs" "$CONTRACT_DIR/target"
   (cd "$CONTRACT_DIR" && "$SUGAR" mint --out .) >/dev/null
   local proof
-  proof="$(first_match "$CONTRACT_DIR/blake3-512:*.proof")"
+  proof="$(first_match "$CONTRACT_DIR/blake3-512_*.proof")"
   [ -n "$proof" ] || { echo "FAIL: contract mint produced no proof" >&2; exit 1; }
 
   # The minimal proof must carry EXACTLY the bridge target row and verify clean.
   python3 - "$CONTRACT_DIR" "$TARGET_EUF" <<'PY'
 import glob, sys
 dirp, euf = sys.argv[1], sys.argv[2]
-proofs = sorted(glob.glob(dirp + "/blake3-512:*.proof"))
+proofs = sorted(glob.glob(dirp + "/blake3-512_*.proof"))
 if not proofs:
     print("FAIL: no contract proof found", file=sys.stderr); raise SystemExit(1)
 needle = euf.encode()
@@ -251,7 +251,7 @@ render_manifests() {
 clean_suite() {
   local suite="$1"
   local dir="$HERE/$suite"
-  rm -f "$dir"/blake3-512:*.proof "$dir/.prove.json" "$dir/.verify.json"
+  rm -f "$dir"/blake3-512_*.proof "$dir/.prove.json" "$dir/.verify.json"
   rm -f "$dir/java-panama-ffm.call-edges.json"
   rm -rf "$dir/.sugar/runs" "$dir/.sugar/witnesses" "$dir/target"
   mkdir -p "$dir/.sugar/imports"
@@ -315,7 +315,7 @@ run_suite() {
   echo "-- sugar mint $suite --"
   (cd "$dir" && "$SUGAR" mint --out .) >/dev/null
   local proof
-  proof="$(first_match "$dir/blake3-512:*.proof")"
+  proof="$(first_match "$dir/blake3-512_*.proof")"
   [ -n "$proof" ] || { echo "FAIL[$suite]: mint produced no proof" >&2; exit 1; }
   echo "   proof: $(basename "$proof")"
 

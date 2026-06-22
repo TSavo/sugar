@@ -13,7 +13,7 @@ and stores bundle + receipts in a content-keyed registry:
         meta.json       name, version, sdist sha256, counts
         verify.json     the real receipt (rows, dischargeSplit incl.
                         undecidable/falsePass buckets -- the perimeter)
-        blake3-512:*.proof  the bundle
+        blake3-512_*.proof  the bundle
 
 RESOLVE-ONCE LAW: if the registry entry exists with the same sdist hash,
 the factory exits without work -- the thousandth consumer pays a memcmp,
@@ -253,7 +253,7 @@ def main():
     cited, dep_misses = [], []
     for dep in _direct_dependencies(venv, name):
         dep_proofs = glob.glob(
-            os.path.join(args.registry, canon(dep), "*", "blake3-512:*.proof")
+            os.path.join(args.registry, canon(dep), "*", "blake3-512_*.proof")
         )
         if dep_proofs:
             proof = sorted(dep_proofs)[0]
@@ -324,7 +324,7 @@ def main():
     receipt = json.load(open(verify_path))
 
     bundle_cid = None
-    for proof in glob.glob(os.path.join(project, "blake3-512:*.proof")):
+    for proof in glob.glob(os.path.join(project, "blake3-512_*.proof")):
         shutil.copy(proof, entry)
         bundle_cid = os.path.basename(proof).replace(".proof", "")
 

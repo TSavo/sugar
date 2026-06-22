@@ -56,7 +56,7 @@ dir="$HERE/$suite"
 mfin="$dir/.sugar/lift/java-test-assertions/manifest.toml.in"
 mf="$dir/.sugar/lift/java-test-assertions/manifest.toml"
 sed "s#@KIT_JAVA@#${KIT_JAVA}#g; s#@KIT_DIR@#${KIT_DIR}#g" "$mfin" > "$mf"
-for p in "$dir"/blake3-512:*.proof; do [ -e "$p" ] && rm -f "$p"; done
+for p in "$dir"/blake3-512_*.proof; do [ -e "$p" ] && rm -f "$p"; done
 rm -rf "$dir/.sugar/runs" 2>/dev/null || true
 rm -f "$dir"/.prove*.json "$dir"/.verify*.json 2>/dev/null || true
 
@@ -67,11 +67,11 @@ echo "-- mint --"
 ( cd "$dir" && "$SUGAR" mint --out . ) >/dev/null 2>&1 || { echo "FAIL[$suite]: sugar mint failed"; exit 1; }
 
 have_proof=0
-for p in "$dir"/blake3-512:*.proof; do [ -e "$p" ] && have_proof=1; done
+for p in "$dir"/blake3-512_*.proof; do [ -e "$p" ] && have_proof=1; done
 [ "$have_proof" = 1 ] || { echo "FAIL[$suite]: mint produced no .proof"; exit 1; }
 
 # Verify int32.eq-bv-expr universe row is in the proof (teeth check).
-strings "$dir"/blake3-512:*.proof | grep -q 'int32.eq-bv-expr' || {
+strings "$dir"/blake3-512_*.proof | grep -q 'int32.eq-bv-expr' || {
   echo "FAIL[$suite]: no int32.eq-bv-expr universe row in minted .proof"
   exit 1
 }

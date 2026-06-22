@@ -31,7 +31,7 @@ for suite in good bad; do
     mf="$HERE/$suite/.sugar/lift/$surface/manifest.toml"
     sed "s#@BIN_DIR@#$BIN_DIR#g" "$mfin" > "$mf"
   done
-  for p in "$HERE/$suite"/blake3-512:*.proof; do [ -e "$p" ] && rm -f "$p"; done
+  for p in "$HERE/$suite"/blake3-512_*.proof; do [ -e "$p" ] && rm -f "$p"; done
   rm -rf "$HERE/$suite/.sugar/runs" "$HERE/$suite/.sugar/witnesses" "$HERE/$suite/target" 2>/dev/null || true
   rm -f "$HERE/$suite"/.prove*.json "$HERE/$suite"/.verify*.json 2>/dev/null || true
 done
@@ -57,7 +57,7 @@ run_suite() {
   ( cd "$dir" && "$SUGAR" mint --out . ) >/dev/null
 
   local have_proof=0
-  for p in "$dir"/blake3-512:*.proof; do [ -e "$p" ] && have_proof=1; done
+  for p in "$dir"/blake3-512_*.proof; do [ -e "$p" ] && have_proof=1; done
   [ "$have_proof" = 1 ] || { echo "FAIL[$suite]: mint produced no .proof"; exit 1; }
 
   echo "-- prove: consistency rows plus witness-package row --"

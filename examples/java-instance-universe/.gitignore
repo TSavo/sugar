@@ -1,7 +1,7 @@
 */.sugar/runs/
 */.sugar/witnesses/
 */.sugar/lift/java-test-assertions/manifest.toml
-*/blake3-512:*.proof
+*/blake3-512_*.proof
 */.prove*.json
 */.verify*.json
 */out/

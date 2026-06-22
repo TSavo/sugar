@@ -5,6 +5,6 @@
 */.sugar/lift/rust-test-assertions/manifest.toml
 */target/
 */Cargo.lock
-*/blake3-512:*.proof
+*/blake3-512_*.proof
 */.prove*.json
 */.verify*.json

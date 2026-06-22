@@ -146,7 +146,7 @@ verify_suite() {
   local expected_code="$3"
   local dir="$WORK/$suite"
 
-  rm -f "$dir"/blake3-512:*.proof "$dir/.verify.json" "$dir/.verify.raw"
+  rm -f "$dir"/blake3-512_*.proof "$dir/.verify.json" "$dir/.verify.raw"
   echo "== mint $suite =="
   (cd "$dir" && "$SUGAR" mint --out . --quiet)
 

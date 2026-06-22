@@ -58,7 +58,7 @@ fi
 [ -x "$BIN_DIR/rust_test_assertions_rpc" ] || { echo "FAIL: rust_test_assertions_rpc not built"; exit 1; }
 
 for suite in good bad nonregular; do
-  for p in "$HERE/$suite"/blake3-512:*.proof; do [ -e "$p" ] && rm -f "$p"; done
+  for p in "$HERE/$suite"/blake3-512_*.proof; do [ -e "$p" ] && rm -f "$p"; done
   rm -rf "$HERE/$suite/.sugar/runs" "$HERE/$suite/target" 2>/dev/null || true
   rm -f "$HERE/$suite"/.prove*.json "$HERE/$suite"/.mint*.log "$HERE/$suite/Cargo.lock" 2>/dev/null || true
 done
@@ -80,7 +80,7 @@ run_membership_suite() {
   ( cd "$dir" && "$SUGAR" mint --out . ) >/dev/null 2>&1
 
   local have_proof=0
-  for p in "$dir"/blake3-512:*.proof; do [ -e "$p" ] && have_proof=1; done
+  for p in "$dir"/blake3-512_*.proof; do [ -e "$p" ] && have_proof=1; done
   [ "$have_proof" = 1 ] || { echo "FAIL[$suite]: mint produced no .proof"; exit 1; }
 
   # The str.in-regex universe row must actually be IN the minted proof: a regex
@@ -88,7 +88,7 @@ run_membership_suite() {
   python3 - "$suite" "$dir" <<'PY'
 import glob, sys
 suite, dirp = sys.argv[1], sys.argv[2]
-found = any(b"str.in-regex" in open(p, "rb").read() for p in glob.glob(dirp + "/blake3-512:*.proof"))
+found = any(b"str.in-regex" in open(p, "rb").read() for p in glob.glob(dirp + "/blake3-512_*.proof"))
 if not found:
     raise SystemExit(f"FAIL[{suite}]: no str.in-regex membership row in any minted .proof")
 print("   str.in-regex membership row present in minted .proof")
@@ -133,7 +133,7 @@ run_nonregular_suite() {
   python3 - "$dir" <<'PY'
 import glob, sys
 dirp = sys.argv[1]
-bad = [p for p in glob.glob(dirp + "/blake3-512:*.proof") if b"str.in-regex" in open(p, "rb").read()]
+bad = [p for p in glob.glob(dirp + "/blake3-512_*.proof") if b"str.in-regex" in open(p, "rb").read()]
 if bad:
     raise SystemExit("FAIL[nonregular]: a non-regular pattern must NOT emit a str.in-regex row")
 print("   no str.in-regex row emitted (the weak floor stands)")

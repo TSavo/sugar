@@ -91,7 +91,7 @@ To re-mint locally:
 
 ```sh
 cargo run -p sugar-baseline-rust-std --bin mint-rust-std-baseline -- /tmp/stage
-cp /tmp/stage/blake3-512:*.proof .sugar/baselines/
+cp /tmp/stage/blake3-512_*.proof .sugar/baselines/
 ```
 
 Byte-determinism is asserted: the orchestrator mints into two separate

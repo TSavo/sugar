@@ -120,7 +120,7 @@ proofs must be in `implementations/rust/sugar-cli/.sugar/imports/`:
 ```
 mint libsugar         --out /tmp/dep-libsugar
 mint sugar-shim-rust-std --out /tmp/dep-shim
-cp /tmp/dep-*/blake3-512:*.proof implementations/rust/sugar-cli/.sugar/imports/
+cp /tmp/dep-*/blake3-512_*.proof implementations/rust/sugar-cli/.sugar/imports/
 ```
 
 (Use `scripts/self-apply.sh`, which does exactly this. Do not hand-run it.)

@@ -39,7 +39,7 @@ The lift is the source of truth. The bv_tree is NEVER hardcoded in the CLI or in
 run.sh. The showcase closes the chain end to end:
 
 1. **mint** — `sugar mint` walks `good/vendor/jdk21/java/lang/Math.java` and emits
-   the `int32.eq-bv-expr` universe atom into a `blake3-512:*.proof`.
+   the `int32.eq-bv-expr` universe atom into a `blake3-512_*.proof`.
 2. **extract** — `sugar dump --json` surfaces the minted proof; run.sh pulls the
    universe atom's `args[1]` (the bv_tree) straight out of the dumped artifact.
    The extracted tree carries the lifter's own `"sort": {"kind":"primitive",...}`

@@ -221,7 +221,7 @@ run_suite() {
   local suite="$1" expected_script="$2" expected_output="$3"
   local dir="$WORK/$suite"
   render_sugar_project "$suite"
-  rm -f "$dir"/blake3-512:*.proof "$dir/.verify.raw" "$dir/.verify.json"
+  rm -f "$dir"/blake3-512_*.proof "$dir/.verify.raw" "$dir/.verify.json"
   rm -rf "$dir/.sugar/runs" "$dir/.sugar/witnesses" "$dir/.build"
 
   echo "== mint $suite =="
@@ -269,7 +269,7 @@ run_tampered_script_suite() {
   local dir="$WORK/$suite"
   rm -rf "$dir"
   render_sugar_project good "$suite"
-  rm -f "$dir"/blake3-512:*.proof "$dir/.verify.raw" "$dir/.verify.json"
+  rm -f "$dir"/blake3-512_*.proof "$dir/.verify.raw" "$dir/.verify.json"
   rm -rf "$dir/.sugar/runs" "$dir/.sugar/witnesses" "$dir/.build"
 
   echo "== mint $suite from clean script =="
@@ -297,7 +297,7 @@ run_tampered_output_suite() {
   local dir="$WORK/$suite"
   rm -rf "$dir"
   render_sugar_project good "$suite"
-  rm -f "$dir"/blake3-512:*.proof "$dir/.verify.raw" "$dir/.verify.json"
+  rm -f "$dir"/blake3-512_*.proof "$dir/.verify.raw" "$dir/.verify.json"
   rm -rf "$dir/.sugar/runs" "$dir/.sugar/witnesses" "$dir/.build"
 
   echo "== mint $suite from clean artifact =="

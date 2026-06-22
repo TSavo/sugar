@@ -626,7 +626,7 @@ run_suite() {
   method="$(case_method "$case_name")"
   local dir="$WORK/$case_name/$suite"
 
-  rm -f "$dir"/blake3-512:*.proof "$dir/.prove.json" "$dir/.verify.json" "$dir/.verify_recompute.json" "$dir/.proof-dump.json"
+  rm -f "$dir"/blake3-512_*.proof "$dir/.prove.json" "$dir/.verify.json" "$dir/.verify_recompute.json" "$dir/.proof-dump.json"
   rm -rf "$dir/.sugar/runs" "$dir/.sugar/witnesses" "$dir/target"
 
   echo "== mint $case_name $suite =="
@@ -636,7 +636,7 @@ run_suite() {
 import glob
 import os
 import sys
-matches = sorted(glob.glob(os.path.join(sys.argv[1], "blake3-512:*.proof")))
+matches = sorted(glob.glob(os.path.join(sys.argv[1], "blake3-512_*.proof")))
 print(matches[0] if matches else "")
 PY
   )"

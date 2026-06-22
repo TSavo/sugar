@@ -126,7 +126,7 @@ rm -f "$LIFT_REPORT_JSON" "$LIFT_JSON"
 echo
 echo "== clean state =="
 for suite in good bad; do
-  for p in "$HERE/$suite"/blake3-512:*.proof; do [ -e "$p" ] && rm -f "$p"; done
+  for p in "$HERE/$suite"/blake3-512_*.proof; do [ -e "$p" ] && rm -f "$p"; done
   rm -rf "$HERE/$suite/.sugar/runs" "$HERE/$suite/.sugar/witnesses" 2>/dev/null || true
   rm -f "$HERE/$suite"/.prove*.json "$HERE/$suite"/.verify*.json 2>/dev/null || true
 done
@@ -141,14 +141,14 @@ run_suite() {
   echo "-- mint: lift the Commons CRC32 value-pin contract(s) --"
   ( cd "$dir" && "$SUGAR" mint --out . ) >/dev/null 2>&1
   local have_proof=0
-  for p in "$dir"/blake3-512:*.proof; do [ -e "$p" ] && have_proof=1; done
+  for p in "$dir"/blake3-512_*.proof; do [ -e "$p" ] && have_proof=1; done
   [ "$have_proof" = 1 ] || { echo "FAIL[$suite]: mint produced no .proof"; exit 1; }
 
   python3 - "$suite" "$dir" <<'PY'
 import glob, sys
 suite, dirp = sys.argv[1], sys.argv[2]
 found = any(b"crc32.eq-walked" in open(path, "rb").read()
-            for path in glob.glob(dirp + "/blake3-512:*.proof"))
+            for path in glob.glob(dirp + "/blake3-512_*.proof"))
 if not found:
     raise SystemExit(f"FAIL[{suite}]: no crc32.eq-walked value-pin in minted .proof")
 print("   crc32.eq-walked value-pin present in minted .proof")

@@ -46,7 +46,7 @@ fi
 NUMPY_DIR="$("$VENV/bin/python" -c 'import numpy,os;print(os.path.dirname(numpy.__file__))')"
 
 cd "$HERE"
-rm -f blake3-512:*.proof 2>/dev/null || true
+rm -f blake3-512_*.proof 2>/dev/null || true
 rm -rf .sugar/runs .sugar/witnesses 2>/dev/null || true
 rm -f .sugar/imports/*.proof 2>/dev/null || true
 # Restore the @boundary stub (materialize rewrites it in place; a re-run needs
