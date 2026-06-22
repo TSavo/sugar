@@ -13,8 +13,9 @@
 //       calls must reach normal-return.
 //     - TERMINAL callsite → INVERTED panic-freedom fact (Warranted): the attribute
 //       asserts this specific site panics.
-//     - EMPTY (no liftable callsites, e.g. macro-only body) → synthetic opaque
-//       panic fact: the `#[should_panic]` attribute IS the assertion.
+//     - EMPTY or opaque terminal callsite → named refusal. The attribute says
+//       the test panics, but without a text-determined terminal we have no teeth
+//       for that claim.
 //
 // Design note — catalog wiring gap:
 //   Architecturally `#[should_panic]` is an `Item::Fn`+attribute shape and belongs
@@ -28,11 +29,12 @@
 use syn::{Attribute, Stmt};
 
 use crate::{
-    AssertionEntry, AssertionFactKind, FactoryAuditLog, LiftOptions, ReductionCtx,
-    should_panic_temporal_callsite_records, temporal_panic_freedom_entry,
+    should_panic_temporal_callsite_records, temporal_panic_freedom_entry, AssertionEntry,
+    AssertionFactKind, FactoryAuditLog, LiftOptions, ReductionCtx,
 };
 
-use sugar_ir_symbolic::{atomic_, str_const};
+pub(crate) const OPAQUE_TERMINAL_REASON: &str =
+    "should_panic terminal panic not text-determined (opaque body)";
 
 /// True iff the attribute list contains `#[should_panic]`.
 pub(crate) fn has_attr(attrs: &[Attribute]) -> bool {
@@ -54,6 +56,7 @@ pub(crate) fn lift_entries_if_applicable(
     options: &LiftOptions,
     reducer: &ReductionCtx<'_>,
     entries: &mut Vec<AssertionEntry>,
+    skipped: &mut Vec<String>,
     factory_audits: Option<&FactoryAuditLog>,
     macro_depth: usize,
 ) {
@@ -64,9 +67,8 @@ pub(crate) fn lift_entries_if_applicable(
     match records.split_last() {
         None => {
             // No liftable temporal callsites (e.g. macro-only body like `format!(...)`).
-            // The `#[should_panic]` attribute IS the assertion — warrant it with an opaque
-            // synthetic panic fact so the locus classifies as warranted, not dark/unresolved.
-            entries.push(opaque_warrant_entry(test_name));
+            // This is a named refusal, not a manufactured panic fact.
+            skipped.push(OPAQUE_TERMINAL_REASON.to_string());
         }
         Some((last, prefix)) => {
             for record in prefix {
@@ -83,6 +85,7 @@ pub(crate) fn lift_entries_if_applicable(
                     entries.push(entry);
                 }
             }
+            let mut terminal_emitted = false;
             if let Some(entry) = temporal_panic_freedom_entry(
                 last,
                 test_name,
@@ -93,27 +96,12 @@ pub(crate) fn lift_entries_if_applicable(
                 AssertionFactKind::Warranted,
                 true,
             ) {
+                terminal_emitted = true;
                 entries.push(entry);
             }
-            // If both prefix AND terminal produced None (all calls opaque-bailed), still
-            // warrant the locus via the opaque fallback rather than leaving it dark.
-            if entries.is_empty() {
-                entries.push(opaque_warrant_entry(test_name));
+            if !terminal_emitted {
+                skipped.push(OPAQUE_TERMINAL_REASON.to_string());
             }
         }
-    }
-}
-
-/// Synthetic `AssertionEntry` for `#[should_panic]` functions with no liftable temporal
-/// callsites. The `#[should_panic]` attribute warrants that the function panics; emit an
-/// opaque panic fact so the locus classifies as warranted rather than unresolved.
-pub(crate) fn opaque_warrant_entry(test_name: &str) -> AssertionEntry {
-    let subject = str_const(format!("{test_name}#should_panic_opaque"));
-    AssertionEntry {
-        name: Some(format!("{test_name}::should_panic_opaque")),
-        atom: atomic_("panic", vec![subject]),
-        fact_span: None,
-        kind: AssertionFactKind::Warranted,
-        claim_count: 0,
     }
 }

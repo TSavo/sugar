@@ -2101,6 +2101,7 @@ fn visit_test_fn(
         options,
         reducer,
         &mut entries,
+        &mut skipped,
         factory_audits,
         0,
     );
@@ -19843,12 +19844,10 @@ mod lifter_key_tests {
     }
 
     #[test]
-    fn should_panic_with_macro_only_body_warrants_via_opaque_fallback() {
-        // A `#[should_panic]` test whose body contains ONLY macro calls (no function
-        // or method call sites) produces no temporal callsite records. The opaque
-        // fallback in `should_panic::lift_entries_if_applicable` emits a synthetic
-        // `panic(test_name#should_panic_opaque)` fact so the locus classifies as
-        // warranted rather than dark/unresolved.
+    fn should_panic_macro_only_body_refuses_without_synthetic_warrant() {
+        // A `#[should_panic]` test whose body contains ONLY macro calls has no
+        // text-determined terminal callsite. That is an earned refusal, not a
+        // synthetic warrant over a made-up subject.
         let src = r#"
             #[test]
             #[should_panic]
@@ -19859,21 +19858,25 @@ mod lifter_key_tests {
         let out = lift_src(src);
         assert_eq!(
             out.assertions_lifted, 0,
-            "opaque warrant does not increment scalar assertion count: {:?}",
+            "should_panic callsite facts do not increment scalar assertion count: {:?}",
             out.decls
         );
-        assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+        assert_eq!(out.assertions_refused, 1, "{:?}", out.skip_reasons);
         assert!(
-            out.assertion_facts
-                .iter()
-                .any(|f| f.kind == AssertionFactKind::Warranted),
-            "macro-only should_panic body should emit opaque warrant: {:?}",
+            out.skip_reasons.iter().any(|reason| reason
+                .contains("should_panic terminal panic not text-determined (opaque body)")),
+            "macro-only should_panic body must be refused by name: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.assertion_facts.is_empty(),
+            "macro-only should_panic body must not emit synthetic facts: {:?}",
             out.assertion_facts
         );
         let dump = format!("{:?}", out.decls);
         assert!(
-            dump.contains("panic") && dump.contains("should_panic_opaque"),
-            "opaque warrant fact should contain 'panic' and 'should_panic_opaque': {dump}"
+            !dump.contains("should_panic_opaque"),
+            "opaque should_panic subject must never be manufactured: {dump}"
         );
     }
 
