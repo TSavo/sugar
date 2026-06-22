@@ -806,16 +806,12 @@ any_is_rows = [
     and "tests/any.rs::any_" in (r.get("property") or "")
 ]
 needles = [
-    "cmp::max_by#euf#c:callresult_cmp__max_by_a3(i:1,i:-1,v:f)::assertion",
-    "size_of::<u8>#euf#c:callresult_size_of___u8__a0()::assertion",
-    "size_of::<u16>#euf#c:callresult_size_of___u16__a0()::assertion",
-    "size_of::<usize>#euf#c:callresult_size_of___usize__a0()::assertion",
-    "size_of::<* const usize>#euf#c:callresult_size_of_____const_usize__a0()::assertion",
+    "cmp::max_by#euf#c:callresult_cmp__max_by_a3(i:1,i:-1,c:closure:x . abs () . cmp (& y . abs ())())::assertion",
     "align_of::<u8>#euf#c:callresult_align_of___u8__a0()::assertion",
     "align_of::<u16>#euf#c:callresult_align_of___u16__a0()::assertion",
     "align_of::<usize>#euf#c:callresult_align_of___usize__a0()::assertion",
     "align_of::<* const usize>#euf#c:callresult_align_of_____const_usize__a0()::assertion",
-    "method:to_string#euf#c:callresult_method_to_string_a1(v:tests/fmt/mod.rs::test_lifetime::a@def4)::assertion",
+    "method:to_string#euf#c:callresult_method_to_string_a1(v:tests/fmt/mod.rs::test_lifetime::A)::assertion",
     "method:div_duration_f32#euf#c:callresult_method_div_duration_f32_a2(v:Duration::ZERO,v:Duration::MAX)::assertion",
     "method:div_duration_f32#euf#c:callresult_method_div_duration_f32_a2(v:Duration::ZERO,v:Duration::ZERO)::assertion",
     "method:div_duration_f32#euf#c:callresult_method_div_duration_f32_a2(v:Duration::NANOSECOND,v:Duration::MAX)::assertion",
@@ -828,41 +824,45 @@ needles = [
     "method:unwrap#euf#c:callresult_method_unwrap_a1(c:method:parse::<f32>(s:\"-NaN\"))::assertion",
     "method:unwrap#euf#c:callresult_method_unwrap_a1(c:method:parse::<f64>(s:\"NaN\"))::assertion",
     "method:unwrap#euf#c:callresult_method_unwrap_a1(c:method:parse::<f64>(s:\"-NaN\"))::assertion",
-    "method:is_err#euf#c:callresult_method_is_err_a1(c:method:align_to(v:tests/alloc.rs::layout_errors::layout,i:3))::assertion",
-    "method:is_ok#euf#c:callresult_method_is_ok_a1(c:method:repeat(v:tests/alloc.rs::layout_errors::layout,v:tests/alloc.rs::layout_errors::align_max))::assertion",
+    "method:is_err#euf#c:callresult_method_is_err_a1(c:method:align_to(c:call:Layout::new::<[u8;2]>(),i:3))::assertion",
+    "method:is_ok#euf#c:callresult_method_is_ok_a1(c:method:repeat(c:call:Layout::new::<[u8;2]>(),c:int-div(i:9223372036854775807:usize,c:method:size(c:call:Layout::new::<[u8;2]>()))))::assertion",
     "method:is_some#euf#c:callresult_method_is_some_a1(v:tests/option.rs::const_get_or_insert_default::OPT_DEFAULT)::assertion",
     "method:is_some#euf#c:callresult_method_is_some_a1(v:tests/option.rs::const_get_or_insert_with::OPT_WITH)::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(c:range(i:1,i:5),c:ref(i:0))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(c:range(i:1,i:5),c:ref(i:1))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(c:range_incl(i:1,i:5),c:ref(i:5))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:tests/ops.rs::test_range_bounds_contains::r,c:ref(i:0))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:tests/ops.rs::test_range_bounds_contains::r,c:ref(i:1))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:tests/ops.rs::test_range_bounds_contains::r,c:ref(i:3))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:tests/ops.rs::test_range_bounds_contains::r,c:ref(i:5))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:tests/ops.rs::test_range_bounds_contains::r,c:ref(i:6))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:tests/ops.rs::test_range_inclusive_end_bound::r@def2,c:ref(i:1))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:tests/ops.rs::test_range_bounds::r@def1,c:ref(i:0))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:tests/ops.rs::test_range_bounds::r@def1,c:ref(i:1))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:tests/ops.rs::test_range_bounds::r@def1,c:ref(i:3))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:tests/ops.rs::test_range_bounds::r@def1,c:ref(i:5))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:tests/ops.rs::test_range_bounds::r@def1,c:ref(i:6))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:tests/ops.rs::test_range_bounds::r@def2,c:ref(i:0))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:tests/ops.rs::test_range_bounds::r@def2,c:ref(v:u32::MAX))::assertion",
-    "method:fetch_and#euf#c:callresult_method_fetch_and_a3(v:tests/atomic.rs::uint_and::x,i:4991,v:tests/atomic.rs::uint_and::SeqCst)::assertion",
-    "method:load#euf#c:callresult_method_load_a2(v:tests/atomic.rs::uint_and::x,v:tests/atomic.rs::uint_and::SeqCst)::assertion",
-    "method:load#euf#c:callresult_method_load_a2(v:tests/atomic.rs::uint_nand::x,v:tests/atomic.rs::uint_nand::SeqCst)::assertion",
-    "method:load#euf#c:callresult_method_load_a2(v:tests/atomic.rs::uint_or::x,v:tests/atomic.rs::uint_or::SeqCst)::assertion",
-    "method:load#euf#c:callresult_method_load_a2(v:tests/atomic.rs::uint_xor::x,v:tests/atomic.rs::uint_xor::SeqCst)::assertion",
+    "method:contains#euf#c:callresult_method_contains_a2(c:method:skip(c:range_incl(i:1:u32,i:1),i:1),c:ref(i:1))::assertion",
+    "method:contains#euf#c:callresult_method_contains_a2(v:agg:Tuple(v:Bound::<u32>::Unbounded,v:Bound::Unbounded),c:ref(i:0))::assertion",
+    "method:contains#euf#c:callresult_method_contains_a2(v:agg:Tuple(v:Bound::<u32>::Unbounded,v:Bound::Unbounded),c:ref(i:4294967295))::assertion",
+    "method:contains#euf#c:callresult_method_contains_a2(v:literal:Tuple(c:call:Bound::Excluded(i:1:u32),c:call:Bound::Included(i:5:u32)),c:ref(i:0))::assertion",
+    "method:contains#euf#c:callresult_method_contains_a2(v:literal:Tuple(c:call:Bound::Excluded(i:1:u32),c:call:Bound::Included(i:5:u32)),c:ref(i:1))::assertion",
+    "method:contains#euf#c:callresult_method_contains_a2(v:literal:Tuple(c:call:Bound::Excluded(i:1:u32),c:call:Bound::Included(i:5:u32)),c:ref(i:3))::assertion",
+    "method:contains#euf#c:callresult_method_contains_a2(v:literal:Tuple(c:call:Bound::Excluded(i:1:u32),c:call:Bound::Included(i:5:u32)),c:ref(i:5))::assertion",
+    "method:contains#euf#c:callresult_method_contains_a2(v:literal:Tuple(c:call:Bound::Excluded(i:1:u32),c:call:Bound::Included(i:5:u32)),c:ref(i:6))::assertion",
+    "method:contains#euf#c:callresult_method_contains_a2(v:literal:Tuple(c:call:Bound::Included(i:1:u32),c:call:Bound::Excluded(i:5:u32)),c:ref(i:0))::assertion",
+    "method:contains#euf#c:callresult_method_contains_a2(v:literal:Tuple(c:call:Bound::Included(i:1:u32),c:call:Bound::Excluded(i:5:u32)),c:ref(i:1))::assertion",
+    "method:contains#euf#c:callresult_method_contains_a2(v:literal:Tuple(c:call:Bound::Included(i:1:u32),c:call:Bound::Excluded(i:5:u32)),c:ref(i:3))::assertion",
+    "method:contains#euf#c:callresult_method_contains_a2(v:literal:Tuple(c:call:Bound::Included(i:1:u32),c:call:Bound::Excluded(i:5:u32)),c:ref(i:5))::assertion",
+    "method:contains#euf#c:callresult_method_contains_a2(v:literal:Tuple(c:call:Bound::Included(i:1:u32),c:call:Bound::Excluded(i:5:u32)),c:ref(i:6))::assertion",
+    "method:fetch_and#euf#c:callresult_method_fetch_and_a3(v:tests/atomic.rs::uint_and::x@def2,i:4991,v:tests/atomic.rs::uint_and::SeqCst)::assertion",
+    "method:load#euf#c:callresult_method_load_a2(v:tests/atomic.rs::uint_and::x@def3,v:tests/atomic.rs::uint_and::SeqCst)::assertion",
+    "method:load#euf#c:callresult_method_load_a2(v:tests/atomic.rs::uint_nand::x@def3,v:tests/atomic.rs::uint_nand::SeqCst)::assertion",
+    "method:load#euf#c:callresult_method_load_a2(v:tests/atomic.rs::uint_or::x@def3,v:tests/atomic.rs::uint_or::SeqCst)::assertion",
+    "method:load#euf#c:callresult_method_load_a2(v:tests/atomic.rs::uint_xor::x@def3,v:tests/atomic.rs::uint_xor::SeqCst)::assertion",
     "method:count#euf#c:callresult_method_count_a1(c:range(i:200,i:-5))::assertion",
     "method:count#euf#c:callresult_method_count_a1(c:method:rev(c:range(i:200,i:-5)))::assertion",
     "method:size_hint#euf#c:callresult_method_size_hint_a1(c:range(i:0,i:100))::assertion",
     "method:size_hint#euf#c:callresult_method_size_hint_a1(c:range(i:-10,i:-1))::assertion",
-    "method:map#euf#c:callresult_method_map_a2(v:literal:Array(i:5,i:6,i:1,i:2),v:tests/array.rs::const_array_ops::doubler)::assertion",
     "std::array::from_fn::<_,const:5,_>#euf#c:callresult_std__array__from_fn_____const_5____a1(v:tests/array.rs::const_array_ops::doubler)::assertion",
 ]
 type_id_needles = [
     "consistency:tests/intrinsics.rs::test_typeid_sized_types",
     "consistency:tests/intrinsics.rs::test_typeid_unsized_types",
+]
+mem_location_needles = [
+    "consistency:tests/mem.rs::size_of_basic",
+    "consistency:tests/mem.rs::size_of_64",
+    "consistency:tests/mem.rs::size_of_basic::panic-path::size_of_::___u8_____",
+    "consistency:tests/mem.rs::size_of_basic::panic-path::size_of_::___u16_____",
+    "consistency:tests/mem.rs::size_of_64::panic-path::size_of_::___usize_____",
+    "consistency:tests/mem.rs::size_of_64::panic-path::size_of_::_____const_usize_____",
 ]
 missing = [
     needle for needle in needles
@@ -872,11 +872,23 @@ missing_type_id = [
     needle for needle in type_id_needles
     if not any(needle == (r.get("property") or "") for r in rows)
 ]
+missing_mem_location = [
+    needle for needle in mem_location_needles
+    if not any(needle == (r.get("property") or "") for r in rows)
+]
 type_id_rows = [
     r for r in rows
     if (r.get("property") or "") in type_id_needles
 ]
 failed_type_id = [r for r in type_id_rows if r.get("status") != "discharged"]
+mem_location_rows = [
+    r for r in rows
+    if (r.get("property") or "") in mem_location_needles
+]
+failed_mem_location = [
+    r for r in mem_location_rows
+    if r.get("status") != "discharged"
+]
 const_index_properties = {
     "consistency:tests/intrinsics.rs::test_write_bytes_in_const_contexts",
 }
@@ -904,6 +916,11 @@ if missing_type_id:
     print("missing required TypeId claimed rows:", file=sys.stderr)
     for needle in missing_type_id:
         print(needle, file=sys.stderr)
+if missing_mem_location:
+    print("missing required mem location-keyed rows:", file=sys.stderr)
+    for needle in missing_mem_location:
+        print(needle, file=sys.stderr)
+    raise SystemExit(1)
 if len(cmp_default_rows) != 1:
     print(f"expected exactly one claimed cmp_default row, got {len(cmp_default_rows)}", file=sys.stderr)
     for row in cmp_default_rows:
@@ -998,6 +1015,11 @@ if failed_type_id:
     for row in failed_type_id:
         print(f"{row.get('status')} {row.get('property')} {row.get('reason')}", file=sys.stderr)
     raise SystemExit(1)
+if failed_mem_location:
+    print("non-discharged mem location-keyed rows in claimed slice:", file=sys.stderr)
+    for row in failed_mem_location:
+        print(f"{row.get('status')} {row.get('property')} {row.get('reason')}", file=sys.stderr)
+    raise SystemExit(1)
 if len(const_index_rows) != len(const_index_properties):
     present = {r.get("property") for r in const_index_rows}
     print("missing claimed const-index rows:", file=sys.stderr)
@@ -1012,6 +1034,7 @@ if failed_const_index:
 
 print(f"claimed-euf-rows={len(euf_rows)} discharged={len(euf_rows)} failed=0")
 print(f"typeid-rows={len(type_id_rows)} discharged={len(type_id_rows)} failed=0")
+print(f"claimed-mem-location-rows={len(mem_location_rows)} discharged={len(mem_location_rows)} failed=0")
 print("claimed-const-index-row=1 discharged=1 failed=0 assertions=6")
 print("claimed-cmp-default-row=1 discharged=1 failed=0")
 print("claimed-option-constructor-dispatch-row=1 discharged=1 failed=0 assertions=8")
