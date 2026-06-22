@@ -8026,6 +8026,11 @@ struct TemporalCallsiteVisitor {
 
 impl TemporalCallsiteVisitor {
     fn visit_macro_args(&mut self, mac: &syn::Macro) {
+        if let Some((lhs, rhs)) = assert_eq_const_safe_macro_operands(mac) {
+            self.visit_expr(&lhs);
+            self.visit_expr(&rhs);
+            return;
+        }
         if let Ok(args) = parse_macro_args(mac.tokens.clone()) {
             for expr in args.exprs {
                 self.visit_expr(&expr);
@@ -8165,6 +8170,11 @@ impl PanicFreedomCallsiteVisitor<'_> {
         if is_debug_assert_macro_path(&mac.path) && !debug_assertions_present(self.options) {
             return;
         }
+        if let Some((lhs, rhs)) = assert_eq_const_safe_macro_operands(mac) {
+            self.visit_expr(&lhs);
+            self.visit_expr(&rhs);
+            return;
+        }
         if let Ok(args) = parse_macro_args(mac.tokens.clone()) {
             for expr in args.exprs {
                 self.visit_expr(&expr);
@@ -8218,6 +8228,14 @@ impl<'ast> syn::visit::Visit<'ast> for PanicFreedomCallsiteVisitor<'_> {
     fn visit_expr_closure(&mut self, _expr: &'ast syn::ExprClosure) {}
 
     fn visit_expr_async(&mut self, _expr: &'ast syn::ExprAsync) {}
+}
+
+fn assert_eq_const_safe_macro_operands(mac: &syn::Macro) -> Option<(Expr, Expr)> {
+    let name = mac.path.segments.last()?.ident.to_string();
+    if name != "assert_eq_const_safe" {
+        return None;
+    }
+    sugar::constraint::parse_assert_eq_const_safe_operands(mac.tokens.clone())
 }
 
 /// The component sub-expressions of a 2+-tuple expression (`(a, b)`), or None if `expr`

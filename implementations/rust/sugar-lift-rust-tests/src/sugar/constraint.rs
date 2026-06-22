@@ -22,7 +22,8 @@ use crate::{
     SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON,
 };
 use sugar_ir_symbolic::{and_, atomic_, eq, not_, num, str_const, ConstValue, Formula, Term};
-use syn::{BinOp, Expr, ExprIf, ExprLit, ExprMacro, Lit, UnOp};
+use syn::parse::{Parse, ParseStream};
+use syn::{BinOp, Expr, ExprIf, ExprLit, ExprMacro, Lit, Token, Type, UnOp};
 use tracing::debug;
 
 pub(crate) const RELATION_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::fallback_with_ordering(
@@ -181,11 +182,14 @@ fn bounded_literal_char_only_predicate(method: &str) -> bool {
     matches!(method, "is_alphabetic")
 }
 
-fn recognize_relation_macro(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_relation_macro(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Macro(ExprMacro { mac, .. }) = expr else {
         return None;
     };
     let name = mac.path.segments.last()?.ident.to_string();
+    if name == "assert_eq_const_safe" {
+        return recognize_assert_eq_const_safe_macro(mac, fcx);
+    }
     let (op, debug_gated) = match name.as_str() {
         "assert_eq" => (RelationOp::Eq, false),
         "assert_ne" => (RelationOp::Ne, false),
@@ -204,6 +208,55 @@ fn recognize_relation_macro(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn
         op,
         debug_gated,
     }))
+}
+
+fn recognize_assert_eq_const_safe_macro(
+    mac: &syn::Macro,
+    fcx: &SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
+    if fcx
+        .scope()
+        .macro_registry()
+        .lookup("assert_eq_const_safe")
+        .is_none()
+    {
+        return None;
+    }
+    let (lhs_expr, rhs_expr) = parse_assert_eq_const_safe_operands(mac.tokens.clone())?;
+    Some(Box::new(RelationMacroSugar {
+        name: "assert_eq_const_safe".to_string(),
+        lhs_expr,
+        rhs_expr,
+        op: RelationOp::Eq,
+        debug_gated: false,
+    }))
+}
+
+pub(crate) fn parse_assert_eq_const_safe_operands(
+    tokens: proc_macro2::TokenStream,
+) -> Option<(Expr, Expr)> {
+    let args = syn::parse2::<AssertEqConstSafeArgs>(tokens).ok()?;
+    Some((args.lhs, args.rhs))
+}
+
+struct AssertEqConstSafeArgs {
+    lhs: Expr,
+    rhs: Expr,
+}
+
+impl Parse for AssertEqConstSafeArgs {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let _ty = input.parse::<Type>()?;
+        input.parse::<Token![:]>()?;
+        let lhs = input.parse::<Expr>()?;
+        input.parse::<Token![,]>()?;
+        let rhs = input.parse::<Expr>()?;
+        if input.peek(Token![,]) {
+            input.parse::<Token![,]>()?;
+            let _message = input.parse::<proc_macro2::TokenStream>()?;
+        }
+        Ok(Self { lhs, rhs })
+    }
 }
 
 impl Sugar for RelationMacroSugar {
