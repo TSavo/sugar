@@ -2,6 +2,9 @@
 //
 // Sugar claim catalog and candidate resolution.
 
+use std::cmp::Ordering;
+use std::collections::BTreeMap;
+
 use syn::{Expr, Item};
 
 use crate::sugar::backstop::unsupported;
@@ -210,8 +213,7 @@ pub(crate) fn matching_expr_claims_for_role(
         .filter(|claim| claim.role() == role)
         .filter_map(|claim| (*claim).candidate(expr, fcx))
         .collect();
-    candidates.sort_by_key(|candidate| candidate.priority());
-    assert_no_ambiguous_role_priority(&candidates);
+    order_candidates_or_panic(&mut candidates);
     candidates
 }
 
@@ -242,8 +244,7 @@ pub(crate) fn matching_item_claims_for_role(
         .filter(|claim| claim.role() == role)
         .filter_map(|claim| (*claim).candidate(item, fcx))
         .collect();
-    candidates.sort_by_key(|candidate| candidate.priority());
-    assert_no_ambiguous_role_priority(&candidates);
+    order_candidates_or_panic(&mut candidates);
     candidates
 }
 
@@ -257,36 +258,92 @@ fn candidate_audits(
         .map(|(index, candidate)| FactoryCandidateAudit {
             name: candidate.name(),
             role: format!("{:?}", candidate.role()),
-            priority: format!("{:?}", candidate.priority()),
+            comes_before: candidate.comes_before().to_vec(),
             selected: selected_index == Some(index),
         })
         .collect()
 }
 
-fn assert_no_ambiguous_role_priority(candidates: &[SugarCandidate]) {
-    for (index, candidate) in candidates.iter().enumerate() {
-        if candidates[..index].iter().any(|prior| {
-            prior.role() == candidate.role() && prior.priority() == candidate.priority()
-        }) {
-            continue;
-        }
+fn order_candidates_or_panic(candidates: &mut Vec<SugarCandidate>) {
+    if candidates.len() < 2 {
+        return;
+    }
 
-        let names: Vec<_> = candidates
-            .iter()
-            .filter(|other| {
-                other.role() == candidate.role() && other.priority() == candidate.priority()
-            })
-            .map(|candidate| candidate.name())
-            .collect();
-        if names.len() > 1 {
+    let role = candidates[0].role();
+    let mut by_name = BTreeMap::new();
+    for (index, candidate) in candidates.iter().enumerate() {
+        if candidate.role() != role {
             panic!(
-                "ambiguous Sugar candidates for role {:?} at priority {:?}: {}",
-                candidate.role(),
-                candidate.priority(),
-                names.join(", ")
+                "mixed Sugar roles in candidate ordering: {:?} and {:?}",
+                role,
+                candidate.role()
+            );
+        }
+        if by_name.insert(candidate.name(), index).is_some() {
+            panic!(
+                "duplicate Sugar candidate name for role {:?}: {}",
+                role,
+                candidate.name()
             );
         }
     }
+
+    let mut reach = vec![vec![false; candidates.len()]; candidates.len()];
+    for (index, candidate) in candidates.iter().enumerate() {
+        for target in candidate.comes_before() {
+            if let Some(target_index) = by_name.get(target).copied() {
+                reach[index][target_index] = true;
+            }
+        }
+    }
+
+    for pivot in 0..candidates.len() {
+        for from in 0..candidates.len() {
+            if !reach[from][pivot] {
+                continue;
+            }
+            for to in 0..candidates.len() {
+                reach[from][to] = reach[from][to] || reach[pivot][to];
+            }
+        }
+    }
+
+    for index in 0..candidates.len() {
+        if reach[index][index] {
+            panic!(
+                "cyclic Sugar candidate ordering for role {:?}: {}",
+                role,
+                candidates[index].name()
+            );
+        }
+    }
+
+    for left in 0..candidates.len() {
+        for right in (left + 1)..candidates.len() {
+            if !reach[left][right] && !reach[right][left] {
+                panic!(
+                    "ambiguous Sugar candidates for role {:?}: no comes_before relation between {} and {}",
+                    role,
+                    candidates[left].name(),
+                    candidates[right].name()
+                );
+            }
+        }
+    }
+
+    let mut order: Vec<_> = (0..candidates.len()).collect();
+    order.sort_by(|left, right| {
+        if reach[*left][*right] {
+            Ordering::Less
+        } else if reach[*right][*left] {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        }
+    });
+
+    let mut slots: Vec<_> = candidates.drain(..).map(Some).collect();
+    candidates.extend(order.into_iter().map(|index| slots[index].take().unwrap()));
 }
 
 #[cfg(test)]
@@ -295,7 +352,7 @@ mod tests {
 
     use syn::{Expr, Item};
 
-    use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+    use crate::sugar::claim::{ExprSugarClaim, SugarRole};
     use crate::sugar::factory::SugarBuildCtx;
     use crate::{
         FactoryAuditLog, FactoryDisposition, LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx,
@@ -319,7 +376,7 @@ mod tests {
         let options = LiftOptions::default();
         let let_inits = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
-        let mut candidates: Vec<_> = [
+        let candidates: Vec<_> = [
             SugarRole::Term,
             SugarRole::Composite,
             SugarRole::Constraint,
@@ -332,7 +389,6 @@ mod tests {
         .into_iter()
         .flat_map(|role| super::matching_expr_claims_for_role(expr, &fcx, role))
         .collect();
-        candidates.sort_by_key(|candidate| candidate.priority());
         candidates
             .into_iter()
             .map(|candidate| candidate.name())
@@ -393,27 +449,89 @@ mod tests {
         audits.into_inner()
     }
 
-    static FIRST: ExprSugarClaim =
-        ExprSugarClaim::new("first", SugarRole::Term, SugarPriority::Primary, recognize);
-    static SECOND: ExprSugarClaim =
-        ExprSugarClaim::new("second", SugarRole::Term, SugarPriority::Primary, recognize);
+    static FIRST: ExprSugarClaim = ExprSugarClaim::new("first", SugarRole::Term, recognize);
+    static SECOND: ExprSugarClaim = ExprSugarClaim::new("second", SugarRole::Term, recognize);
+    static FIRST_BEFORE_SECOND: ExprSugarClaim =
+        ExprSugarClaim::with_ordering("first", SugarRole::Term, &["second"], recognize);
+    static SECOND_BEFORE_FIRST: ExprSugarClaim =
+        ExprSugarClaim::with_ordering("second", SugarRole::Term, &["first"], recognize);
+    static SECOND_BEFORE_THIRD: ExprSugarClaim =
+        ExprSugarClaim::with_ordering("second", SugarRole::Term, &["third"], recognize);
+    static THIRD: ExprSugarClaim = ExprSugarClaim::new("third", SugarRole::Term, recognize);
 
     #[test]
-    #[should_panic(
-        expected = "ambiguous Sugar candidates for role Term at priority Primary: first, second"
-    )]
-    fn same_role_same_priority_candidates_are_invalid() {
+    #[should_panic(expected = "ambiguous Sugar candidates for role Term")]
+    fn same_role_unordered_candidates_are_invalid() {
         let scope = TemporalScope::new("catalog-test", TemporalPlan::default());
         let options = LiftOptions::default();
         let let_inits = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
         let expr: Expr = syn::parse_str("1").unwrap();
-        let candidates = vec![
+        let mut candidates = vec![
             FIRST.candidate(&expr, &fcx).unwrap(),
             SECOND.candidate(&expr, &fcx).unwrap(),
         ];
 
-        super::assert_no_ambiguous_role_priority(&candidates);
+        super::order_candidates_or_panic(&mut candidates);
+    }
+
+    #[test]
+    fn same_role_candidates_order_by_declared_edge() {
+        let scope = TemporalScope::new("catalog-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let expr: Expr = syn::parse_str("1").unwrap();
+        let mut candidates = vec![
+            SECOND.candidate(&expr, &fcx).unwrap(),
+            FIRST_BEFORE_SECOND.candidate(&expr, &fcx).unwrap(),
+        ];
+
+        super::order_candidates_or_panic(&mut candidates);
+
+        let names: Vec<_> = candidates
+            .into_iter()
+            .map(|candidate| candidate.name())
+            .collect();
+        assert_eq!(names, vec!["first", "second"]);
+    }
+
+    #[test]
+    fn same_role_candidates_order_by_transitive_edges() {
+        let scope = TemporalScope::new("catalog-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let expr: Expr = syn::parse_str("1").unwrap();
+        let mut candidates = vec![
+            THIRD.candidate(&expr, &fcx).unwrap(),
+            FIRST_BEFORE_SECOND.candidate(&expr, &fcx).unwrap(),
+            SECOND_BEFORE_THIRD.candidate(&expr, &fcx).unwrap(),
+        ];
+
+        super::order_candidates_or_panic(&mut candidates);
+
+        let names: Vec<_> = candidates
+            .into_iter()
+            .map(|candidate| candidate.name())
+            .collect();
+        assert_eq!(names, vec!["first", "second", "third"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "cyclic Sugar candidate ordering for role Term")]
+    fn same_role_candidate_cycles_are_invalid() {
+        let scope = TemporalScope::new("catalog-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let expr: Expr = syn::parse_str("1").unwrap();
+        let mut candidates = vec![
+            FIRST_BEFORE_SECOND.candidate(&expr, &fcx).unwrap(),
+            SECOND_BEFORE_FIRST.candidate(&expr, &fcx).unwrap(),
+        ];
+
+        super::order_candidates_or_panic(&mut candidates);
     }
 
     #[test]
@@ -916,7 +1034,7 @@ mod tests {
     }
 
     #[test]
-    fn overlapping_statement_effects_resolve_by_declared_priority() {
+    fn overlapping_statement_effects_resolve_by_declared_edges() {
         let expr: Expr = syn::parse_str(
             "loop { let _borrow = &mut value; let (lower, upper) = iter.size_hint(); assert!(lower <= upper.unwrap()); }",
         )
@@ -1038,7 +1156,7 @@ mod tests {
     }
 
     #[test]
-    fn overlapping_closure_adaptor_verdicts_resolve_by_declared_priority() {
+    fn overlapping_closure_adaptor_verdicts_resolve_by_declared_edges() {
         let expr: Expr = syn::parse_str(
             "std::env::args().for_each(|x| { total += 1; assert!(!x.is_empty()); })",
         )

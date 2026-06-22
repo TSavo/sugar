@@ -10,8 +10,9 @@
 // `try_from`, whose `desugar` is unconditional). We do NOT accept bare
 // `Ok(..)`/`Err(..)` here: a non-literal/effectful inner could make the build
 // `Hit`/not-ground, turning a recognize-ACCEPT into a desugar-BAIL -- and a bailed
-// Primary becomes a REFUSAL (not opaque-EUF), which would REGRESS coverage in
-// corpus context. A runtime/opaque receiver -> `None`, existing handling stands.
+// specific recognizer becomes a REFUSAL (not opaque-EUF), which would REGRESS
+// coverage in corpus context. A runtime/opaque receiver -> `None`, existing handling
+// stands.
 //
 // TEETH. `u8::try_from(256u16).is_err()` grounds to `res:err` -> `Bool(true)`;
 // `.is_ok()` -> `Bool(false)` (z3-UNSAT if asserted).
@@ -20,17 +21,13 @@ use sugar_ir_symbolic::Term;
 use syn::Expr;
 use tracing::debug;
 
-use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::monadic::{RES_ERR, RES_OK};
 use crate::{bool_const, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
-    "result_predicate",
-    SugarRole::Term,
-    SugarPriority::Primary,
-    recognize,
-);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim =
+    ExprSugarClaim::new("result_predicate", SugarRole::Term, recognize);
 
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::MethodCall(call) = expr else {
@@ -97,9 +94,9 @@ fn result_presence(term: &Term) -> Option<bool> {
 /// to `res:ok`/`res:err` (its `desugar` is unconditional). We deliberately do NOT
 /// accept bare `Ok(..)`/`Err(..)` here: a non-literal/effectful inner can make the
 /// monadic build `Hit` or not-ground, which would turn this recognize-ACCEPT into a
-/// desugar-BAIL -- and a bailed Primary is a REFUSAL, not an opaque-EUF fallback, so
-/// it would REGRESS coverage in corpus context. A shape we might bail on must be
-/// DECLINED here, not accepted-then-bailed.
+/// desugar-BAIL -- and a bailed specific recognizer is a REFUSAL, not an opaque-EUF
+/// fallback, so it would REGRESS coverage in corpus context. A shape we might bail on
+/// must be DECLINED here, not accepted-then-bailed.
 fn is_known_result_source(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
     let Expr::Call(call) = strip_refs_groups(expr) else {
         return false;

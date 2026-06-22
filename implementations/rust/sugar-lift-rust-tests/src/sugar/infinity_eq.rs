@@ -6,7 +6,7 @@
 
 use std::rc::Rc;
 
-use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::configuration;
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::{
@@ -16,17 +16,12 @@ use crate::{
 use sugar_ir_symbolic::{and_, atomic_, Formula, Term};
 use syn::{BinOp, Expr, ExprBinary, ExprMacro};
 
-pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
-    "constraint_infinity_eq",
-    SugarRole::Constraint,
-    SugarPriority::Primary,
-    recognize,
-);
+pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim =
+    ExprSugarClaim::new("constraint_infinity_eq", SugarRole::Constraint, recognize);
 
 pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "assertion_surface_infinity_eq",
     SugarRole::AssertionSurface,
-    SugarPriority::Primary,
     recognize,
 );
 

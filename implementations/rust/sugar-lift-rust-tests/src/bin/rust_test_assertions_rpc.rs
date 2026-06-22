@@ -1780,7 +1780,7 @@ fn factory_audits_json(file: &str, audits: &[FactoryAudit]) -> Vec<Value> {
                 json!({
                     "name": candidate.name,
                     "role": candidate.role,
-                    "priority": candidate.priority,
+                    "comesBefore": candidate.comes_before,
                     "selected": candidate.selected,
                 })
             }).collect::<Vec<_>>(),
@@ -2695,11 +2695,13 @@ mod tests {
             .expect("answer source contract is emitted for linker/conjoiner composition");
         assert_eq!(answer_contract["name"], json!("rust-source::answer"));
         assert!(
-            response["callEdges"].as_array().is_some_and(|edges| edges.iter().any(|edge| {
-                edge["sourceContract"] == json!(fact_and_support_contract)
-                    && edge["targetSymbol"] == json!("call:answer")
-                    && edge["targetContract"] == json!("rust-source::answer")
-            })),
+            response["callEdges"]
+                .as_array()
+                .is_some_and(|edges| edges.iter().any(|edge| {
+                    edge["sourceContract"] == json!(fact_and_support_contract)
+                        && edge["targetSymbol"] == json!("call:answer")
+                        && edge["targetContract"] == json!("rust-source::answer")
+                })),
             "assertion fact must bridge to answer source contract: {response}"
         );
 

@@ -9,8 +9,9 @@ use crate::sugar::factory::SugarBuildCtx;
 use crate::{token_key, Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::closure_adaptor_verdict(
+    crate::sugar::claim::ExprSugarClaim::closure_adaptor_verdict_before(
         "closure_opaque_accessor",
+        &["closure_runtime_receiver"],
         recognize,
     );
 

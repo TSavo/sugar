@@ -12,7 +12,11 @@ use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
 use crate::Sugar;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("to_string", recognize);
+    crate::sugar::claim::ExprSugarClaim::term_before(
+        "to_string",
+        &["method", "transparent_term"],
+        recognize,
+    );
 
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if !is_to_string_shape(expr) {

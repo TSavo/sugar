@@ -8,23 +8,22 @@
 use sugar_ir_symbolic::{atomic_, str_const};
 use syn::{Expr, ExprMacro, RangeLimits, Type};
 
-use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{
     parse_macro_args, token_key, AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant,
 };
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::constraint_before(
     "char_range_filter_map_eq",
-    SugarRole::Constraint,
-    SugarPriority::Primary,
+    &["constraint_assert_macro"],
     recognize,
 );
 
-pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::with_ordering(
     "char_range_filter_map_eq_assertion_surface",
     SugarRole::AssertionSurface,
-    SugarPriority::Primary,
+    &["assertion_surface_assert_macro"],
     recognize,
 );
 

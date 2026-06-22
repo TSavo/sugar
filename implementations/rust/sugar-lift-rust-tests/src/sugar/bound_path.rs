@@ -7,7 +7,7 @@
 // variable.
 
 use crate::sugar::bound::BoundSugar;
-use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_composite, build_constraint, build_term, SugarBuildCtx};
 use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
 use crate::{token_key, Sugar};
@@ -15,17 +15,19 @@ use syn::{Expr, ExprPath};
 use tracing::debug;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::secondary_term("bound_path", recognize);
+    ExprSugarClaim::term_before("bound_path", &["path"], recognize);
 
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "bound_constraint",
     SugarRole::Constraint,
-    SugarPriority::Primary,
     recognize_constraint,
 );
 
-pub(crate) const COMPOSITE_EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::secondary_composite("bound_path_composite", recognize_composite);
+pub(crate) const COMPOSITE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::composite_before(
+    "bound_path_composite",
+    &["reference_sequence"],
+    recognize_composite,
+);
 
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let name = simple_local_path(expr)?;

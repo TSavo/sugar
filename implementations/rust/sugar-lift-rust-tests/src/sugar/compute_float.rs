@@ -20,19 +20,15 @@ use syn::{
 };
 use tracing::{debug, warn};
 
-use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::{
     canonical_term_sig, const_fold_int_term, const_fold_u128_term, strip_refs_groups, Desugared,
     Outcome, Sugar, SugarCtx,
 };
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
-    "compute_float",
-    SugarRole::Term,
-    SugarPriority::Primary,
-    recognize,
-);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim =
+    ExprSugarClaim::new("compute_float", SugarRole::Term, recognize);
 
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Call(call) = expr else {

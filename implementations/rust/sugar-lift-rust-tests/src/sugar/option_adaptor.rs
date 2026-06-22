@@ -10,7 +10,7 @@ use sugar_ir_symbolic::{ConstValue, Term};
 use syn::Expr;
 use tracing::debug;
 
-use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::monadic::{none_term, some_term, OPT_NONE, OPT_SOME};
 use crate::{
@@ -19,12 +19,8 @@ use crate::{
     SugarCtx,
 };
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
-    "option_adaptor",
-    SugarRole::Term,
-    SugarPriority::Primary,
-    recognize,
-);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim =
+    ExprSugarClaim::new("option_adaptor", SugarRole::Term, recognize);
 
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::MethodCall(call) = expr else {

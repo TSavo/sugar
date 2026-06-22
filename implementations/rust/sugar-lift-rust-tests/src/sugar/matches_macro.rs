@@ -7,7 +7,7 @@
 
 use std::rc::Rc;
 
-use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::{
     callsite_assertion_name, lit_membership_term, strict_variant_path, token_key, wrapped_variant,
@@ -18,12 +18,8 @@ use sugar_ir_symbolic::{and_, eq, str_const, Formula, Term};
 use syn::parse::{ParseStream, Parser};
 use syn::{Expr, ExprMacro, Pat, Token};
 
-pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
-    "constraint_matches_macro",
-    SugarRole::Constraint,
-    SugarPriority::Primary,
-    recognize,
-);
+pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim =
+    ExprSugarClaim::new("constraint_matches_macro", SugarRole::Constraint, recognize);
 
 struct MatchesMacroSugar {
     subject: Box<dyn Sugar>,

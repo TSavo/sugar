@@ -12,7 +12,11 @@ use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
 use crate::Sugar;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("format_macro", recognize);
+    crate::sugar::claim::ExprSugarClaim::term_before(
+        "format_macro",
+        &["macro_term", "reference_term"],
+        recognize,
+    );
 
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if !is_format_macro_shape(expr) {

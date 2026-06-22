@@ -20,7 +20,7 @@ use crate::{
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::secondary_composite("map", recognize_composite);
+    crate::sugar::claim::ExprSugarClaim::composite("map", recognize_composite);
 pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("map_term", recognize_term);
 

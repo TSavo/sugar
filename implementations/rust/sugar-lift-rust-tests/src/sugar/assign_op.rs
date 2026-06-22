@@ -14,19 +14,15 @@ use sugar_ir_symbolic::{eq, ConstValue, Sort, Term};
 use syn::{BinOp, Expr, Lit, Pat, RangeLimits, Stmt, UnOp};
 use tracing::{debug, trace};
 
-use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{
     const_int, parse_int_lit, parse_macro_args, simple_path_name, strip_refs_groups, token_key,
     AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant,
 };
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
-    "temporal_assign_op",
-    SugarRole::Constraint,
-    SugarPriority::Primary,
-    recognize,
-);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim =
+    ExprSugarClaim::new("temporal_assign_op", SugarRole::Constraint, recognize);
 
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     fcx.scope()

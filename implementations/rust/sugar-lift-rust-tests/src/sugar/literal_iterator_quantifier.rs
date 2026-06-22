@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_constraint, SugarBuildCtx};
 use crate::{
     ascii_byte_class_atom, ascii_char_class_atom, bool_const, closure_simple_param_name,
@@ -23,7 +23,6 @@ use syn::{Expr, ExprClosure, ExprMethodCall};
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_literal_iterator_quantifier",
     SugarRole::Constraint,
-    SugarPriority::Primary,
     recognize,
 );
 

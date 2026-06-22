@@ -9,17 +9,16 @@ use sugar_ir_symbolic::num;
 use syn::Expr;
 use tracing::debug;
 
-use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::format::{
     is_format_args_macro_shape, stable_let_bindings, try_estimate_format_args_capacity,
 };
 use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
-pub(crate) const ESTIMATED_CAPACITY_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+pub(crate) const ESTIMATED_CAPACITY_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term_before(
     "format_args_estimated_capacity",
-    SugarRole::Term,
-    SugarPriority::Primary,
+    &["method"],
     recognize_estimated_capacity,
 );
 

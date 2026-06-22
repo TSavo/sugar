@@ -16,19 +16,12 @@ use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::method_family::build_literal_sequence_composite;
 use crate::Sugar;
 
-// FALLBACK priority, NOT Primary: this is the GENERAL "reference to a literal
-// sequence" catch. A `&[1, 2, 3]` reference-to-slice-literal is ALSO claimed by the
-// specific `literal_slice` recognizer (Primary); two Primary claims for the same
-// Composite expr trip the catalog's ambiguity guard (a panic). As a fallback,
-// `reference_sequence` only wins when no more-specific composite matches (e.g. a bare
-// `&ys` name reference), and `literal_slice` cleanly wins on slice literals.
+// GENERAL "reference to a literal sequence" catch. A `&[1, 2, 3]`
+// reference-to-slice-literal is also claimed by the specific `literal_slice`
+// recognizer. `literal_slice` declares it comes before this gravitational well, so
+// the catalog never relies on incidental order to select the narrower owner.
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::new(
-        "reference_sequence",
-        crate::sugar::claim::SugarRole::Composite,
-        crate::sugar::claim::SugarPriority::Fallback,
-        recognize_composite,
-    );
+    crate::sugar::claim::ExprSugarClaim::composite("reference_sequence", recognize_composite);
 
 pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     // Narrow to `Expr::Reference`: array/range literals and `.iter()`-family calls keep

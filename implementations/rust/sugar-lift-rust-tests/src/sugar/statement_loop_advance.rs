@@ -4,16 +4,14 @@
 
 use syn::Expr;
 
-use crate::sugar::claim::{SugarPriority, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::statement_position;
 use crate::{token_key, Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::new(
+    crate::sugar::claim::ExprSugarClaim::statement_effect_before(
         "statement_loop_advance",
-        SugarRole::StatementEffect,
-        SugarPriority::Tertiary,
+        &["statement_runtime_expr"],
         recognize,
     );
 

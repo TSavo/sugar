@@ -31,12 +31,12 @@
 //! 3. **NEVER DECIDE EARLY (the sin).** A recognizer only *recognizes and news*;
 //!    degeneracy is a LEAF property that propagates for free through the composites.
 //!
-//! ## Candidate priority
+//! ## Candidate ordering
 //!
-//! Multiple Sugars may correctly claim the same source shape. Each candidate carries its
-//! Sugar-declared priority: lower numbers are better decompositions. The catalog brokers
-//! candidates and sorts by that declared priority; the factory does not encode exclusion
-//! lists.
+//! Multiple Sugars may correctly claim the same source shape. Specific Sugars declare
+//! `comes_before` edges toward broader gravitational wells. The catalog resolves the
+//! resulting graph and panics when two same-role candidates are unordered or cyclic; the
+//! factory does not encode exclusion lists or incidental catalog order.
 //!
 //! ## The genuinely dual shapes
 //!

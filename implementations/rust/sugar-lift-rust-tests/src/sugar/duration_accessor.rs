@@ -37,7 +37,7 @@ use sugar_ir_symbolic::num;
 use syn::{Expr, ExprLit, Lit};
 use tracing::debug;
 
-use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 
@@ -49,12 +49,8 @@ const SECS_PER_HOUR: u128 = 3_600;
 const SECS_PER_DAY: u128 = 86_400;
 const SECS_PER_WEEK: u128 = 604_800;
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
-    "duration_accessor",
-    SugarRole::Term,
-    SugarPriority::Primary,
-    recognize,
-);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim =
+    ExprSugarClaim::new("duration_accessor", SugarRole::Term, recognize);
 
 fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::MethodCall(call) = expr else {

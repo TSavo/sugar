@@ -286,7 +286,7 @@ impl FactoryDisposition {
 pub struct FactoryCandidateAudit {
     pub name: &'static str,
     pub role: String,
-    pub priority: String,
+    pub comes_before: Vec<&'static str>,
     pub selected: bool,
 }
 

@@ -21,30 +21,26 @@
 // ───────────────
 // Pattern (A) fires only on the two-call chain
 //   `assume_init()` over `MaybeUninit::<T>::zeroed()`.
-// No other Primary Term recognizer in the catalog fires on that exact shape.
+// No other current Term recognizer in the catalog fires on that exact shape.
 //
 // Pattern (B) fires only on `Expr::Call` whose func ends in `mem::zeroed`
-// with an explicit type argument.  `call::EXPR_SUGAR` is `fallback_term`
-// (Fallback priority), so a Primary recognizer always wins — no collision.
+// with an explicit type argument. It declares it comes before `call`, the generic
+// gravitational well for call terms.
 
 use std::rc::Rc;
 
 use sugar_ir_symbolic::Term;
 use syn::{Expr, GenericArgument, PathArguments, Type};
 
-use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::term_leaf::resolved_term;
 use crate::{bool_const, num, strip_refs_groups, Sugar};
 
 // ── (A) MaybeUninit::<T>::zeroed().assume_init() ─────────────────────────────
 
-pub(crate) const ASSUME_INIT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
-    "maybe_uninit_zeroed",
-    SugarRole::Term,
-    SugarPriority::Primary,
-    recognize_assume_init,
-);
+pub(crate) const ASSUME_INIT_EXPR_SUGAR: ExprSugarClaim =
+    ExprSugarClaim::term_before("maybe_uninit_zeroed", &["method"], recognize_assume_init);
 
 fn recognize_assume_init(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     // Outer must be `.assume_init()` with no extra arguments.
@@ -93,12 +89,8 @@ fn maybe_uninit_zeroed_term(expr: &Expr) -> Option<Rc<Term>> {
 
 // ── (B) mem::zeroed::<T>() ───────────────────────────────────────────────────
 
-pub(crate) const MEM_ZEROED_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
-    "mem_zeroed",
-    SugarRole::Term,
-    SugarPriority::Primary,
-    recognize_mem_zeroed,
-);
+pub(crate) const MEM_ZEROED_EXPR_SUGAR: ExprSugarClaim =
+    ExprSugarClaim::term_before("mem_zeroed", &["call"], recognize_mem_zeroed);
 
 fn recognize_mem_zeroed(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Call(call) = expr else {

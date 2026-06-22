@@ -13,7 +13,7 @@ use sugar_ir_symbolic::{make_var, num, str_const, ConstValue, Sort, Term};
 use syn::{Expr, ExprClosure, Pat, Stmt};
 use tracing::debug;
 
-use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::collect::literal_vec_term;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::method_family;
@@ -24,12 +24,8 @@ use crate::{
     ConstVal, Desugared, Outcome, Sugar, SugarCtx,
 };
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
-    "result_transpose_collect",
-    SugarRole::Term,
-    SugarPriority::Primary,
-    recognize,
-);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim =
+    ExprSugarClaim::new("result_transpose_collect", SugarRole::Term, recognize);
 
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::MethodCall(collect) = expr else {

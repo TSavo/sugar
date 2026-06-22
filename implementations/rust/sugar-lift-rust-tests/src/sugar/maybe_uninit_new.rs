@@ -16,21 +16,16 @@
 //   * `MaybeUninit::zeroed()` is out of scope for this recognizer.
 //
 // Ambiguity guard: this recognizer fires ONLY on the very specific two-call
-// chain `.assume_init()` over `MaybeUninit::new(<lit>)`.  No other Primary
-// Term recognizer in the catalog fires on that exact shape, so the priority
-// cannot collide (#2308 trap).
+// chain `.assume_init()` over `MaybeUninit::new(<lit>)`. Any future same-role
+// overlap must declare a `comes_before` edge instead of relying on catalog order.
 
-use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::{strip_refs_groups, Outcome, Sugar, SugarCtx};
 use syn::{Expr, UnOp};
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
-    "maybe_uninit_new",
-    SugarRole::Term,
-    SugarPriority::Primary,
-    recognize,
-);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim =
+    ExprSugarClaim::term_before("maybe_uninit_new", &["method"], recognize);
 
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     // Outer must be `.assume_init()` with no extra arguments.
