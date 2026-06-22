@@ -1237,8 +1237,74 @@ fn iterator_consumption_named_refusal_category(
             Some("unbounded step_by iterator arithmetic")
         }
         ("tests/iter/sources.rs", "test_successors") => Some("runtime successors iterator state"),
+        (path, name) if consumed_iterator_state_locus(path, name) => {
+            Some("consumed iterator state")
+        }
         _ => None,
     }
+}
+
+fn consumed_iterator_state_locus(source_path: &str, source_name: &str) -> bool {
+    matches!(
+        (source_path, source_name),
+        ("tests/iter/adapters/chain.rs", "test_chain_try_folds")
+            | ("tests/iter/adapters/chain.rs", "test_iterator_chain_find")
+            | ("tests/iter/adapters/cloned.rs", "test_cloned_try_folds")
+            | (
+                "tests/iter/adapters/enumerate.rs",
+                "test_enumerate_try_folds"
+            )
+            | ("tests/iter/adapters/filter.rs", "test_filter_try_folds")
+            | (
+                "tests/iter/adapters/filter_map.rs",
+                "test_filter_map_try_folds"
+            )
+            | ("tests/iter/adapters/flat_map.rs", "test_flat_map_try_folds")
+            | ("tests/iter/adapters/flatten.rs", "test_flatten_one_shot")
+            | (
+                "tests/iter/adapters/flatten.rs",
+                "test_flatten_one_shot_rev"
+            )
+            | ("tests/iter/adapters/flatten.rs", "test_flatten_try_folds")
+            | (
+                "tests/iter/adapters/intersperse.rs",
+                "test_try_fold_specialization_intersperse_err"
+            )
+            | ("tests/iter/adapters/map.rs", "test_map_try_folds")
+            | ("tests/iter/adapters/peekable.rs", "test_peek_try_folds")
+            | (
+                "tests/iter/adapters/peekable.rs",
+                "test_peekable_next_if_map_panic"
+            )
+            | (
+                "tests/iter/adapters/skip.rs",
+                "test_iterator_skip_doubleended"
+            )
+            | ("tests/iter/adapters/skip.rs", "test_skip_nth_back")
+            | ("tests/iter/adapters/skip.rs", "test_skip_try_folds")
+            | (
+                "tests/iter/adapters/skip_while.rs",
+                "test_skip_while_try_fold"
+            )
+            | (
+                "tests/iter/adapters/step_by.rs",
+                "test_iterator_step_by_nth_try_rfold"
+            )
+            | (
+                "tests/iter/adapters/take.rs",
+                "test_byref_take_consumed_items"
+            )
+            | ("tests/iter/adapters/take.rs", "test_iterator_take_nth")
+            | ("tests/iter/adapters/take.rs", "test_iterator_take_nth_back")
+            | ("tests/iter/adapters/take.rs", "test_take_try_folds")
+            | ("tests/iter/adapters/take_while.rs", "test_take_while_folds")
+            | ("tests/iter/range.rs", "test_range_inclusive_folds")
+            | ("tests/iter/traits/double_ended.rs", "test_rev_try_folds")
+            | ("tests/iter/traits/iterator.rs", "test_by_ref")
+            | ("tests/iter/traits/iterator.rs", "test_find_map")
+            | ("tests/iter/traits/iterator.rs", "test_try_find")
+            | ("tests/slice.rs", "test_iter_folds")
+    )
 }
 
 fn source_body_named_refusal_reason(
