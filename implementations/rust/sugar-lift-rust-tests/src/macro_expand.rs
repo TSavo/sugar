@@ -31,7 +31,7 @@ pub(crate) struct MacroRule {
 #[derive(Clone)]
 enum Binding {
     /// A single fragment capture: the tokens bound to `$x`.
-    Single(TokenStream),
+    Single { tokens: TokenStream, frag: String },
     /// A repetition capture: one set of inner bindings per repetition round.
     Repeated(Vec<Bindings>),
 }
@@ -196,7 +196,13 @@ fn match_prefix(
                         };
                         let (captured, consumed) =
                             capture_fragment(&frag, &input[ii..], follow.as_ref())?;
-                        bindings.insert(name.to_string(), Binding::Single(captured));
+                        bindings.insert(
+                            name.to_string(),
+                            Binding::Single {
+                                tokens: captured,
+                                frag,
+                            },
+                        );
                         ii += consumed;
                         mi += 4;
                     }
@@ -457,7 +463,9 @@ fn transcribe(body: TokenStream, bindings: &Bindings) -> Result<TokenStream, Str
                         continue;
                     }
                     match bindings.get(&name.to_string()) {
-                        Some(Binding::Single(ts)) => out.extend(ts.clone()),
+                        Some(Binding::Single { tokens, frag }) => {
+                            out.extend(transcribe_single_binding(tokens, frag))
+                        }
                         Some(Binding::Repeated(_)) => {
                             return Err(format!(
                                 "transcribe: `${name}` used outside its repetition"
@@ -487,6 +495,18 @@ fn transcribe(body: TokenStream, bindings: &Bindings) -> Result<TokenStream, Str
     Ok(out)
 }
 
+fn transcribe_single_binding(tokens: &TokenStream, frag: &str) -> TokenStream {
+    if frag == "expr" {
+        std::iter::once(TokenTree::Group(proc_macro2::Group::new(
+            Delimiter::None,
+            tokens.clone(),
+        )))
+        .collect()
+    } else {
+        tokens.clone()
+    }
+}
+
 /// Number of repetition rounds for a `$( ... )` transcriber group: the length of
 /// the first repeated binding referenced inside it.
 fn repetition_round_count(inner: &TokenStream, bindings: &Bindings) -> Result<usize, String> {
@@ -510,7 +530,7 @@ fn project_round(bindings: &Bindings, r: usize) -> Bindings {
                     }
                 }
             }
-            Binding::Single(_) => {
+            Binding::Single { .. } => {
                 out.insert(name.clone(), b.clone());
             }
         }
@@ -581,6 +601,31 @@ mod tests {
         assert_eq!(
             out.to_string(),
             quote! { assert!(foo(x).is_ok()) }.to_string()
+        );
+    }
+
+    #[test]
+    fn expr_fragment_substitution_preserves_method_receiver_boundary() {
+        // `$other:expr` must be transcribed as one opaque expression fragment.
+        // Otherwise `$other.get(..)` with `1..2` reparses as `1..(2.get(..))`,
+        // leaking a wrong-sorted range endpoint downstream before desugar owns it.
+        let def = quote! { ($other:expr, $slice:expr) => { $other.get(&$slice as &[_]) }; };
+        let out = expand(&rules_of(def), quote! { 1..2, [0, 1] }).expect("expand");
+        let expr: syn::Expr = syn::parse2(out).expect("expanded expression parses");
+        let call = match expr {
+            syn::Expr::MethodCall(call) => call,
+            other => panic!("expanded `$other.get` must parse as a method call, got {other:?}"),
+        };
+        assert_eq!(call.method, "get");
+        let receiver_is_range = match call.receiver.as_ref() {
+            syn::Expr::Range(_) => true,
+            syn::Expr::Group(group) => matches!(group.expr.as_ref(), syn::Expr::Range(_)),
+            _ => false,
+        };
+        assert!(
+            receiver_is_range,
+            "the whole `1..2` expr fragment must be the receiver, got {:?}",
+            call.receiver
         );
     }
 

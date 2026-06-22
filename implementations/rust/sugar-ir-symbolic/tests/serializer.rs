@@ -67,6 +67,21 @@ fn term_const_int_emits_value_and_sort() {
 }
 
 #[test]
+fn term_const_wide_int_emits_decimal_string_value() {
+    let wide = 170141183460469231731687303715884105727i128;
+    let t = Term::Const {
+        value: ConstValue::Int(wide),
+        sort: Sort::int(),
+    };
+    let v = term_to_value(&t);
+    let s = encode_jcs(&v);
+    assert!(
+        s.contains("\"value\":\"170141183460469231731687303715884105727\""),
+        "wide Int must be precision-safe decimal string JSON, not a lossy number: {s}"
+    );
+}
+
+#[test]
 fn term_const_real_emits_decimal_string_value_and_sort() {
     let t = real_const("2.0");
     let v = term_to_value(t.as_ref());
@@ -349,6 +364,31 @@ fn marshal_declarations_emits_inv_when_present() {
     let decls = sugar_ir_symbolic::finish();
     let s = marshal_declarations(&decls);
     assert!(s.contains("\"inv\":"));
+}
+
+#[test]
+fn marshal_declarations_emits_wide_int_as_decimal_string() {
+    reset_collector();
+    sugar_ir_symbolic::contract(
+        "wide",
+        sugar_ir_symbolic::ContractArgs {
+            inv: Some(eq(
+                num(170141183460469231731687303715884105727i128),
+                num(170141183460469231731687303715884105727i128),
+            )),
+            ..Default::default()
+        },
+    );
+    let decls = sugar_ir_symbolic::finish();
+    let s = marshal_declarations(&decls);
+    assert!(
+        s.contains("\"value\":\"170141183460469231731687303715884105727\""),
+        "wide Int must not be emitted as a bare JSON number: {s}"
+    );
+    assert!(
+        !s.contains("E+") && !s.contains("e+"),
+        "wide Int JSON must not use exponent notation: {s}"
+    );
 }
 
 // ---------------------------------------------------------------------------

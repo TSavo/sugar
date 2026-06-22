@@ -1879,10 +1879,11 @@ fn call_edges_for_report(entries: &[Value]) -> Vec<Value> {
             let mut callsites = Vec::new();
             collect_ctor_terms(formula, &mut callsites);
             for callsite in callsites {
-                let Some(target_symbol) = callsite
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .filter(|symbol| targets_by_symbol.contains_key(*symbol))
+                let Some(callsite_symbol) = callsite.get("name").and_then(Value::as_str) else {
+                    continue;
+                };
+                let Some(target_symbol) =
+                    call_edge_target_symbol(callsite_symbol, &targets_by_symbol)
                 else {
                     continue;
                 };
@@ -1915,6 +1916,17 @@ fn call_edges_for_report(entries: &[Value]) -> Vec<Value> {
         }
     }
     rows
+}
+
+fn call_edge_target_symbol<'a>(
+    callsite_symbol: &'a str,
+    targets_by_symbol: &'a BTreeMap<String, (String, String)>,
+) -> Option<&'a str> {
+    if targets_by_symbol.contains_key(callsite_symbol) {
+        return Some(callsite_symbol);
+    }
+    let base = callsite_symbol.strip_suffix("#panic_callsite")?;
+    targets_by_symbol.contains_key(base).then_some(base)
 }
 
 fn ir_entry_content_cid(entry: &Value) -> String {

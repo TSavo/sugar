@@ -365,6 +365,10 @@ fn ctor_subject_is_tainted(t: &Term) -> bool {
     STRING_TAINTED.with(|set| set.borrow().contains(t))
 }
 
+pub(crate) fn term_is_string_tainted(t: &Term) -> bool {
+    STRING_TAINTED.with(|set| set.borrow().contains(t))
+}
+
 pub(crate) fn routes_to_string_theory(name: &str, args: &[Term]) -> bool {
     if is_string_theory_atomic_predicate(name) {
         return true;

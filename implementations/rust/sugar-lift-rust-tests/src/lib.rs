@@ -4284,6 +4284,12 @@ impl TemporalScope {
         self.temporal_rewrite.borrow().expr_for(name)
     }
 
+    pub(crate) fn unknown_iterator_consumption_reason(&self, name: &str) -> Option<String> {
+        self.temporal_rewrite
+            .borrow()
+            .unknown_iterator_consumption_reason(name)
+    }
+
     pub(crate) fn temporal_rewrite_can_apply(&self, expr: &Expr) -> bool {
         self.temporal_rewrite.borrow().can_apply(expr)
     }
@@ -7506,7 +7512,7 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
                     args.push(dig_child(arg)?);
                 }
                 Some(Rc::new(Term::Ctor {
-                    name: format!("call:{}", expr_head_key(&call.func)),
+                    name: format!("call:{}#panic_callsite", expr_head_key(&call.func)),
                     args,
                 }))
             }
@@ -7527,7 +7533,7 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
                     args.push(dig_child(arg)?);
                 }
                 Some(Rc::new(Term::Ctor {
-                    name: format!("method:{}", sugar::method::method_key(call)),
+                    name: format!("method:{}#panic_callsite", sugar::method::method_key(call)),
                     args,
                 }))
             }
@@ -7546,7 +7552,7 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
         expr: &Expr,
         subject: Rc<Term>,
     ) -> Option<Rc<Formula>> {
-        let _ = expr;
+        let subject = self.opaque_callsite_term(expr).unwrap_or(subject);
         Some(not_(atomic_("panic", vec![subject])))
     }
 
@@ -12393,7 +12399,9 @@ fn is_consuming_iterator_method(method: &str) -> bool {
             // (e.g. `len`) would be unsound (it would split reads that must coalesce);
             // every name below genuinely consumes.
             | "try_fold"
+            | "try_rfold"
             | "try_for_each"
+            | "try_find"
             | "find"
             | "find_map"
             | "position"

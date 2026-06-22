@@ -39,9 +39,15 @@ use sugar_lift_rust_tests::{
 /// One obligation's disposition under the discharge gate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Teeth {
-    Discharged { reflexive: bool },
+    Discharged {
+        reflexive: bool,
+    },
     Refuted,
     Undecided,
+    /// The obligation compiled and entered z3, but the solver exhausted the
+    /// bounded per-query budget. Counted as an undecided solver verdict, not as
+    /// a silent/uncheckable drop.
+    SolverTimeout,
     Uncheckable(String),
 }
 
@@ -116,12 +122,12 @@ fn discharge_inv(inv: &Value, z3_path: &str, label: &str) -> Teeth {
         Z3::Sat => match z3_run(inv, z3_path, &format!("{label}_pos")) {
             Z3::Unsat => Teeth::Refuted,
             Z3::Sat => Teeth::Undecided,
-            Z3::Timeout => Teeth::Uncheckable("z3-timeout".into()),
+            Z3::Timeout => Teeth::SolverTimeout,
             Z3::Absent => Teeth::Uncheckable("z3 absent".into()),
             Z3::Error(e) => Teeth::Uncheckable(e),
         },
         // Could not prove the negation UNSAT within budget -> NOT discharged.
-        Z3::Timeout => Teeth::Uncheckable("z3-timeout".into()),
+        Z3::Timeout => Teeth::SolverTimeout,
         Z3::Absent => Teeth::Uncheckable("z3 absent".into()),
         Z3::Error(e) => Teeth::Uncheckable(e),
     }
@@ -163,6 +169,23 @@ fn value_only_inv(inv: &Value) -> Option<Value> {
         None
     } else {
         Some(inv.clone())
+    }
+}
+
+/// The sweep checks the complete formula surface owned by the declaration. Some
+/// source assertion contracts are emitted as `pre` rather than `inv`; treating
+/// those as no-inv is a measurement drop, not an honest solver verdict.
+fn declaration_formula(decl: &Value) -> Option<Value> {
+    let mut formulas = Vec::new();
+    for slot in ["pre", "post", "inv"] {
+        if let Some(formula) = decl.get(slot).filter(|value| !value.is_null()) {
+            formulas.push(formula.clone());
+        }
+    }
+    match formulas.len() {
+        0 => None,
+        1 => formulas.into_iter().next(),
+        _ => Some(json!({ "kind": "and", "operands": formulas })),
     }
 }
 
@@ -352,6 +375,7 @@ struct Tally {
     undecided: usize,
     uncheckable: usize,
     z3_absent: usize,
+    undecided_reasons: BTreeMap<String, usize>,
     uncheckable_reasons: BTreeMap<String, usize>,
 }
 
@@ -363,6 +387,13 @@ impl Tally {
             Teeth::Discharged { reflexive: false } => self.discharged_substantive += 1,
             Teeth::Refuted => self.refuted += 1,
             Teeth::Undecided => self.undecided += 1,
+            Teeth::SolverTimeout => {
+                self.undecided += 1;
+                *self
+                    .undecided_reasons
+                    .entry("z3-timeout".to_string())
+                    .or_default() += 1;
+            }
             Teeth::Uncheckable(reason) => {
                 self.uncheckable += 1;
                 if reason.contains("z3 absent") {
@@ -392,6 +423,9 @@ impl Tally {
         self.undecided += other.undecided;
         self.uncheckable += other.uncheckable;
         self.z3_absent += other.z3_absent;
+        for (k, v) in other.undecided_reasons {
+            *self.undecided_reasons.entry(k).or_default() += v;
+        }
         for (k, v) in other.uncheckable_reasons {
             *self.uncheckable_reasons.entry(k).or_default() += v;
         }
@@ -553,7 +587,7 @@ fn main() {
             let doc =
                 sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(decl));
             let inv = match serde_json::from_str::<Value>(&doc) {
-                Ok(parsed) => parsed.get(0).and_then(|d| d.get("inv")).cloned(),
+                Ok(parsed) => parsed.get(0).and_then(declaration_formula),
                 Err(_) => None,
             };
             match inv {
@@ -617,11 +651,12 @@ fn main() {
                 signature: refuted_signature(inv),
                 mut_skip_class: *mut_skip,
             });
-            let undecided = matches!(full, Teeth::Undecided).then(|| UndecidedRecord {
-                file: rel.clone(),
-                signature: refuted_signature(inv),
-                dom_op: undecided_dom_op(inv),
-            });
+            let undecided =
+                matches!(full, Teeth::Undecided | Teeth::SolverTimeout).then(|| UndecidedRecord {
+                    file: rel.clone(),
+                    signature: refuted_signature(inv),
+                    dom_op: undecided_dom_op(inv),
+                });
             let uncheckable = match &full {
                 Teeth::Uncheckable(reason) => Some(UncheckableRecord {
                     label: label.clone(),
@@ -747,6 +782,7 @@ fn main() {
                 "undecided": f.undecided,
                 "uncheckable": f.uncheckable,
                 "z3_absent": f.z3_absent,
+                "undecided_reasons": f.undecided_reasons,
                 "uncheckable_reasons": f.uncheckable_reasons,
                 // Panic-filtered VALUE-claim teethedness (drops panic-freedom
                 // conjuncts): the honest "how much of the value is proven".
@@ -870,6 +906,15 @@ fn print_headline(t: &Tally, v: &Tally, z3_seen: bool, z3_path: &str) {
         "  DISCHARGED = z3 proves negation UNSAT (teeth, proven). UNDECIDED = lifted but \
          congruence-only / no teeth (the bucket coverage hid). REFUTED = invariant UNSAT (proven false)."
     );
+    if !t.undecided_reasons.is_empty() {
+        let mut reasons: Vec<_> = t.undecided_reasons.iter().collect();
+        reasons.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+        let shown: Vec<String> = reasons
+            .into_iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect();
+        println!("  undecided by reason: {}", shown.join(" "));
+    }
     if !t.uncheckable_reasons.is_empty() {
         let mut reasons: Vec<_> = t.uncheckable_reasons.iter().collect();
         reasons.sort_by(|a, b| b.1.cmp(a.1));
@@ -906,6 +951,79 @@ mod tests {
     fn z3() -> Option<String> {
         let p = std::env::var("Z3").unwrap_or_else(|_| "/usr/local/bin/z3".to_string());
         Path::new(&p).exists().then_some(p)
+    }
+
+    #[test]
+    fn solver_timeout_is_counted_undecided_not_uncheckable() {
+        let mut tally = Tally::default();
+        tally.record(&Teeth::SolverTimeout);
+        assert_eq!(tally.undecided, 1);
+        assert_eq!(tally.uncheckable, 0);
+        assert_eq!(tally.undecided_reasons.get("z3-timeout"), Some(&1));
+    }
+
+    #[test]
+    fn declaration_formula_uses_pre_post_and_inv_slots() {
+        let pre = json!({
+            "kind": "atomic",
+            "name": "=",
+            "args": [
+                { "kind": "const", "value": 1, "sort": { "kind": "primitive", "name": "Int" } },
+                { "kind": "const", "value": 1, "sort": { "kind": "primitive", "name": "Int" } }
+            ]
+        });
+        let post = json!({
+            "kind": "atomic",
+            "name": "=",
+            "args": [
+                { "kind": "const", "value": 2, "sort": { "kind": "primitive", "name": "Int" } },
+                { "kind": "const", "value": 2, "sort": { "kind": "primitive", "name": "Int" } }
+            ]
+        });
+        let inv = json!({
+            "kind": "atomic",
+            "name": "=",
+            "args": [
+                { "kind": "const", "value": 3, "sort": { "kind": "primitive", "name": "Int" } },
+                { "kind": "const", "value": 3, "sort": { "kind": "primitive", "name": "Int" } }
+            ]
+        });
+        let pre_only = json!({
+            "kind": "contract",
+            "name": "source-pre",
+            "outBinding": "out",
+            "pre": pre
+        });
+        assert_eq!(
+            declaration_formula(&pre_only).expect("pre is a checkable formula"),
+            pre_only["pre"]
+        );
+
+        let all_slots = json!({
+            "kind": "contract",
+            "name": "source-complete",
+            "outBinding": "out",
+            "pre": pre_only["pre"].clone(),
+            "post": post,
+            "inv": inv
+        });
+        assert_eq!(
+            declaration_formula(&all_slots).expect("formula slots are checkable"),
+            json!({
+                "kind": "and",
+                "operands": [
+                    all_slots["pre"].clone(),
+                    all_slots["post"].clone(),
+                    all_slots["inv"].clone()
+                ]
+            })
+        );
+        assert!(declaration_formula(&json!({
+            "kind": "contract",
+            "name": "empty",
+            "outBinding": "out"
+        }))
+        .is_none());
     }
 
     // The discharge gate must give teeth the right verdicts and never DISCHARGE

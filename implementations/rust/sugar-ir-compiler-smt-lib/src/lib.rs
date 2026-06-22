@@ -354,6 +354,173 @@ mod tests {
     }
 
     #[test]
+    fn monadic_method_adaptors_own_receiver_and_return_sorts() {
+        let inv = eq(
+            ctor("method:ok", vec![ctor("call:parse", vec![var("s")])]),
+            ctor("opt:none", vec![]),
+        );
+        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let script = format!("{}{}", parts.preamble, parts.body);
+        assert!(
+            script.contains("(declare-fun |call:parse| (Int) SugarResult)"),
+            "parse receiver of Result::ok must return SugarResult:\n{script}"
+        );
+        assert!(
+            script.contains("(declare-fun |method:ok| (SugarResult) SugarOption)"),
+            "Result::ok must consume SugarResult and return SugarOption:\n{script}"
+        );
+
+        let inv = eq(
+            ctor(
+                "method:unwrap",
+                vec![ctor("method:as_mut", vec![var("ptr")])],
+            ),
+            var("out"),
+        );
+        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let script = format!("{}{}", parts.preamble, parts.body);
+        assert!(
+            script.contains("(declare-fun |method:as_mut| (Int) SugarOption)"),
+            "as_mut Option adaptor must return SugarOption when unwrap consumes it:\n{script}"
+        );
+        assert!(
+            script.contains("(declare-fun |method:unwrap| (SugarOption) Int)"),
+            "unwrap over an Option adaptor must consume SugarOption:\n{script}"
+        );
+
+        let inv = eq(
+            ctor("method:unwrap", vec![ctor("call:get", vec![var("xs")])]),
+            var("out"),
+        );
+        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let script = format!("{}{}", parts.preamble, parts.body);
+        assert!(
+            script.contains("(declare-fun |call:get| (Int) Int)"),
+            "an opaque call result is not monadic unless a monadic adaptor owns that sort:\n{script}"
+        );
+        assert!(
+            script.contains("(declare-fun |method:unwrap| (Int) Int)"),
+            "unwrap over an opaque callsite must stay Int-sorted rather than guessing Option:\n{script}"
+        );
+    }
+
+    #[test]
+    fn quoted_symbols_escape_pipe_and_exact_underscore() {
+        let inv = serde_json::json!({"kind":"and","operands":[
+            eq(ctor("_", vec![]), int_const(1)),
+            eq(ctor("closure:z", vec![]), int_const(0)),
+            eq(ctor("closure:a | b", vec![int_const(1)]), int_const(2)),
+            eq(ctor("closure:a | b", vec![int_const(1), int_const(2)]), int_const(3))
+        ]});
+        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let script = format!("{}{}", parts.preamble, parts.body);
+        assert!(
+            script.contains("|sugar:_|"),
+            "exact `_` must be mapped to a legal stable SMT symbol:\n{script}"
+        );
+        assert!(
+            script.contains("|closure:z#arity0|")
+                && !script.contains("|closure:z|")
+                && script.contains("|closure:a \\| b#arity1|")
+                && script.contains("|closure:a \\| b#arity2|"),
+            "closure symbols must be escaped and arity-mangled, including nullary closures:\n{script}"
+        );
+        if let Some(z3) = which_z3() {
+            let out = run_z3(&z3, &script);
+            assert!(
+                !out.to_lowercase().contains("error")
+                    && !out.contains("unknown constant")
+                    && out.contains("sat"),
+                "escaped symbols must produce a real z3 verdict:\n{out}\n--- script ---\n{script}"
+            );
+        }
+    }
+
+    #[test]
+    fn string_tainted_vars_drive_method_receiver_declarations() {
+        let recv = var("displayed");
+        let prefix = string_const("DynMetadata(0x");
+        let inv = serde_json::json!({"kind":"and","operands":[
+            string_theory_atom("prefix-of", vec![prefix.clone(), recv.clone()]),
+            eq(ctor("method:starts_with", vec![recv, prefix]), int_const(1))
+        ]});
+        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let script = format!("{}{}", parts.preamble, parts.body);
+        assert!(
+            script.contains("(declare-const displayed String)"),
+            "prefix-of forces the receiver var to String:\n{script}"
+        );
+        assert!(
+            script.contains("(declare-fun |method:starts_with| (String Int) Int)"),
+            "method:starts_with must consume the same String-sorted receiver z3 sees:\n{script}"
+        );
+        if let Some(z3) = which_z3() {
+            let out = run_z3(&z3, &script);
+            assert!(
+                !out.to_lowercase().contains("error") && !out.contains("unknown constant"),
+                "string-tainted method receiver must be well-sorted:\n{out}\n--- script ---\n{script}"
+            );
+        }
+    }
+
+    #[test]
+    fn ref_and_deref_monomorphize_adt_argument_sorts() {
+        let result_ref = ctor("ref", vec![ctor("res:ok", vec![int_const(3)])]);
+        let option_deref = ctor("deref", vec![ctor("opt:some", vec![int_const(4)])]);
+        let int_ref = ctor("ref", vec![int_const(3)]);
+        let inv = serde_json::json!({"kind":"and","operands":[
+            eq(result_ref.clone(), result_ref),
+            eq(option_deref.clone(), option_deref),
+            eq(int_ref.clone(), int_ref)
+        ]});
+        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let script = format!("{}{}", parts.preamble, parts.body);
+        assert!(
+            script.contains("(declare-fun |ref#args:SugarResult| (SugarResult) Int)")
+                && script.contains("(declare-fun |deref#args:SugarOption| (SugarOption) Int)")
+                && script.contains("(declare-fun ref (Int) Int)"),
+            "generic ref/deref wrappers need one SMT head per argument sort:\n{script}"
+        );
+        if let Some(z3) = which_z3() {
+            let out = run_z3(&z3, &script);
+            assert!(
+                !out.to_lowercase().contains("error") && !out.contains("unknown constant"),
+                "sort-monomorphized ref/deref wrappers must be well-sorted:\n{out}\n--- script ---\n{script}"
+            );
+        }
+    }
+
+    #[test]
+    fn nested_option_result_adts_are_declared_sort_correctly() {
+        let try_find = ctor("method:try_find", vec![var("xs")]);
+        let ok_none = ctor("res:ok", vec![ctor("opt:none", vec![])]);
+        let try_reduce = ctor("method:try_reduce", vec![var("ys")]);
+        let some_some = ctor("opt:some", vec![ctor("opt:some", vec![int_const(15)])]);
+        let inv = serde_json::json!({"kind":"and","operands":[
+            eq(try_find, ok_none),
+            eq(try_reduce.clone(), some_some),
+            eq(try_reduce, ctor("opt:none", vec![]))
+        ]});
+        let parts = compile_asserted_to_parts(&inv).expect("compile");
+        let script = format!("{}{}", parts.preamble, parts.body);
+        assert!(
+            script.contains("SugarOptionOption")
+                && script.contains("SugarResultOption")
+                && script.contains("|opt:some#option|")
+                && script.contains("|opt:none#option|")
+                && script.contains("|res:ok#option|"),
+            "nested Option/Result constructors must use nested ADT heads:\n{script}"
+        );
+        if let Some(z3) = which_z3() {
+            let out = run_z3(&z3, &script);
+            assert!(
+                !out.to_lowercase().contains("error") && !out.contains("unknown constant"),
+                "nested monadic ADT script must be well-sorted:\n{out}\n--- script ---\n{script}"
+            );
+        }
+    }
+
+    #[test]
     fn mixed_sort_conjunction_is_named_error_not_ill_sorted_script() {
         // H1 [B7]: a GENUINELY String-sorted `call:f` ctor (string-tainted by a
         // chars-in-set universe over it -> String return sort) equated to an Int

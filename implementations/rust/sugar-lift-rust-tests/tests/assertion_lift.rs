@@ -1453,6 +1453,58 @@ fn try_from_normal_return_support_is_well_sorted_and_bad_twin_refutes() {
     }
 }
 
+#[test]
+fn option_returning_method_normal_return_support_uses_opaque_callsite() {
+    let good = r#"
+        #[test]
+        fn t_checked_ilog_reflexive() {
+            let got = 0u8.checked_ilog(4);
+            assert_eq!(got, got);
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/num/checked_ilog_panic_sort.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "checked_ilog assertion should lift: {:?}",
+        out.skip_reasons
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("panic") && dump.contains("method:checked_ilog"),
+        "normal-return support should mention the checked_ilog callsite: {dump}"
+    );
+    assert!(
+        !dump.contains("panic\", args: [Ctor { name: \"opt:some\"")
+            && !dump.contains("panic\", args: [Ctor { name: \"opt:none\""),
+        "panic predicate must not receive the method's Option return value: {dump}"
+    );
+    for (i, decl) in all_warranted_decls(&out).iter().enumerate() {
+        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("checked_ilog_good_{i}")) {
+            assert!(
+                sat,
+                "checked_ilog good invariant must be SAT and well-sorted"
+            );
+        }
+    }
+
+    let bad = r#"
+        #[test]
+        fn t_checked_ilog_anti_reflexive() {
+            let got = 0u8.checked_ilog(4);
+            assert_ne!(got, got);
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/num/checked_ilog_panic_sort_bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bad twin should lift so z3 can refute it: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "checked_ilog_bad") {
+        assert!(!sat, "x != x over checked_ilog must be UNSAT");
+    }
+}
+
 // ---- Lane 4: Range::size_hint decomposes to teethed component eqs ----
 
 // `(0..100).size_hint()` is `(100, Some(100))`. Via the shared tuple_decomp hook,
@@ -4399,9 +4451,9 @@ fn scalar_contradiction() {
     let out = lift_file(&parse(src), "tests/contradiction.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
 
-    let decl = &out.decls[0];
+    let decl = single_warranted_decl(&out);
     assert_eq!(
         decl.name,
         "tests/contradiction.rs::scalar_contradiction::make_value#euf#c:callresult_make_value_a0()::assertion"
@@ -4513,6 +4565,48 @@ fn wide() {
     assert_eq_atom(&operands[1], 18364758544493064727); // 0xfedc_ba98_7654_3217
     assert_eq_atom(&operands[2], 18446744073709551626); // 0x1_0000_0000_0000_000a
     assert_eq_atom(&operands[3], 147808829414345923316083210206383297601i128);
+
+    let good = r#"
+#[test]
+fn wide_i128_good() {
+    assert_eq!(
+        170141183460469231731687303715884105727i128,
+        170141183460469231731687303715884105727i128
+    );
+}
+"#;
+    let good_out = lift_file(&parse(good), "tests/wide_i128_good.rs");
+    assert_eq!(good_out.assertions_lifted, 1, "{:?}", good_out.skip_reasons);
+    let serialized = sugar_ir_symbolic::serialize::marshal_declarations(&good_out.decls);
+    assert!(
+        serialized.contains("\"value\":\"170141183460469231731687303715884105727\""),
+        "wide i128 must serialize as a decimal string before SMT sees it: {serialized}"
+    );
+    assert!(
+        !serialized.contains("E+") && !serialized.contains("e+"),
+        "wide i128 must not leak exponent notation into IR JSON: {serialized}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&good_out.decls[0]), "wide_i128_good") {
+        assert!(sat, "wide i128 equality with itself must be z3-SAT");
+    }
+
+    let bad = r#"
+#[test]
+fn wide_i128_bad() {
+    assert_eq!(
+        170141183460469231731687303715884105727i128,
+        170141183460469231731687303715884105726i128
+    );
+}
+"#;
+    let bad_out = lift_file(&parse(bad), "tests/wide_i128_bad.rs");
+    assert_eq!(bad_out.assertions_lifted, 1, "{:?}", bad_out.skip_reasons);
+    if let Some(sat) = z3_verdict(&inv_json(&bad_out.decls[0]), "wide_i128_bad") {
+        assert!(
+            !sat,
+            "distinct wide i128 constants must be z3-UNSAT, not hidden behind exponent tokens"
+        );
+    }
 }
 
 #[test]
@@ -4901,10 +4995,10 @@ fn generic_identity_is_distinct() {
     let out = lift_file(&parse(src), "tests/mem.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 2);
+    assert_warranted_decl_count(&out, 2);
 
-    let names = out
-        .decls
+    let decls = warranted_decls(&out);
+    let names = decls
         .iter()
         .map(|decl| decl.name.as_str())
         .collect::<Vec<_>>();
@@ -4916,10 +5010,10 @@ fn generic_identity_is_distinct() {
         ]
     );
 
-    let first = inv_operands(&out.decls[0]);
+    let first = inv_operands(decls[0]);
     assert_eq!(first.len(), 1);
     assert_int_zero_arg_call_eq_atom(&first[0], "call:size_of::<u8>", 1);
-    let second = inv_operands(&out.decls[1]);
+    let second = inv_operands(decls[1]);
     assert_eq!(second.len(), 1);
     assert_int_zero_arg_call_eq_atom(&second[0], "call:size_of::<u16>", 2);
 }
@@ -4967,8 +5061,9 @@ fn size_of_inactive_any() {
 
     assert_eq!(out.seen, 2);
     assert_eq!(out.lifted, 2, "warnings: {:?}", out.warnings);
-    let names = out
-        .decls
+    assert_warranted_decl_count(&out, 2);
+    let decls = warranted_decls(&out);
+    let names = decls
         .iter()
         .map(|decl| decl.name.as_str())
         .collect::<Vec<_>>();
@@ -4979,9 +5074,9 @@ fn size_of_inactive_any() {
             "size_of::<* const usize>#euf#c:callresult_size_of_____const_usize__a0()::assertion",
         ]
     );
-    assert_int_zero_arg_call_eq_atom(&inv_operands(&out.decls[0])[0], "call:size_of::<usize>", 8);
+    assert_int_zero_arg_call_eq_atom(&inv_operands(decls[0])[0], "call:size_of::<usize>", 8);
     assert_int_zero_arg_call_eq_atom(
-        &inv_operands(&out.decls[1])[0],
+        &inv_operands(decls[1])[0],
         "call:size_of::<* const usize>",
         8,
     );
@@ -5045,9 +5140,10 @@ mod tests {
 
     assert_eq!(out.seen, 1, "warnings: {:?}", out.warnings);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
     assert_eq!(
-        out.decls[0].name,
+        decl.name,
         "src/lib.rs::tests::scalar_is_six::make_value#euf#c:callresult_make_value_a0()::assertion"
     );
 }
@@ -5071,17 +5167,13 @@ mod tests {
 
     assert_eq!(out.seen, 1, "warnings: {:?}", out.warnings);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
     assert_eq!(
-        out.decls[0].name,
+        decl.name,
         "src/decode.rs::tests::decoded_len_est::decoded_len_estimate#euf#c:callresult_decoded_len_estimate_a1(i:4)::assertion"
     );
-    assert_int_call_eq_atom(
-        &inv_operands(&out.decls[0])[0],
-        3,
-        "call:decoded_len_estimate",
-        4,
-    );
+    assert_int_call_eq_atom(&inv_operands(decl)[0], 3, "call:decoded_len_estimate", 4);
 }
 
 #[test]
@@ -5302,9 +5394,9 @@ fn exponent_float_literal() {
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
     assert_eq!(out.warnings.len(), 0);
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
 
-    let decl = &out.decls[0];
+    let decl = single_warranted_decl(&out);
     assert_eq!(
         decl.name,
         "tests/num/floats.rs::exponent_float_literal::value#euf#c:callresult_value_a0()::assertion"
@@ -5599,10 +5691,10 @@ fn range_rebinds() {
     let out = lift_file(&parse(src), "tests/ops.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 2);
+    assert_warranted_decl_count(&out, 2);
 
-    let names = out
-        .decls
+    let decls = warranted_decls(&out);
+    let names = decls
         .iter()
         .map(|decl| decl.name.as_str())
         .collect::<Vec<_>>();
@@ -7029,10 +7121,10 @@ fn contains() {
     let out = lift_file(&parse(src), "tests/str.rs");
     assert_eq!(out.seen, 3);
     assert_eq!(out.lifted, 3, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 6);
+    assert_warranted_decl_count(&out, 6);
 
-    let names = out
-        .decls
+    let decls = warranted_decls(&out);
+    let names = decls
         .iter()
         .map(|decl| decl.name.as_str())
         .collect::<Vec<_>>();
@@ -7048,8 +7140,8 @@ fn contains() {
         ]
     );
 
-    assert_string_predicate_atom(&inv_operands(&out.decls[0])[0], "prefix-of", &["a", "abc"]);
-    match inv_operands(&out.decls[1])[0].as_ref() {
+    assert_string_predicate_atom(&inv_operands(decls[0])[0], "prefix-of", &["a", "abc"]);
+    match inv_operands(decls[1])[0].as_ref() {
         Formula::Connective { kind, operands } => {
             assert_eq!(kind, "not");
             assert_eq!(operands.len(), 1);
@@ -7057,13 +7149,9 @@ fn contains() {
         }
         other => panic!("expected negated prefix atom, got {other:?}"),
     }
-    assert_string_predicate_atom(&inv_operands(&out.decls[2])[0], "suffix-of", &["c", "abc"]);
-    assert_string_predicate_atom(
-        &inv_operands(&out.decls[3])[0],
-        "contains",
-        &["abcde", "bcd"],
-    );
-    match inv_operands(&out.decls[4])[0].as_ref() {
+    assert_string_predicate_atom(&inv_operands(decls[2])[0], "suffix-of", &["c", "abc"]);
+    assert_string_predicate_atom(&inv_operands(decls[3])[0], "contains", &["abcde", "bcd"]);
+    match inv_operands(decls[4])[0].as_ref() {
         Formula::Connective { kind, operands } => {
             assert_eq!(kind, "not");
             assert_eq!(operands.len(), 1);
@@ -7071,7 +7159,7 @@ fn contains() {
         }
         other => panic!("expected negated contains atom, got {other:?}"),
     }
-    assert_string_predicate_atom(&inv_operands(&out.decls[5])[0], "contains", &["abc", "b"]);
+    assert_string_predicate_atom(&inv_operands(decls[5])[0], "contains", &["abc", "b"]);
 }
 
 #[test]
@@ -7263,27 +7351,28 @@ fn test_len() {
     let out = lift_file(&parse(src), "tests/ascii.rs");
     assert_eq!(out.seen, 2);
     assert_eq!(out.lifted, 2, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 3);
+    assert_warranted_decl_count(&out, 3);
+    let decls = warranted_decls(&out);
 
     assert_eq!(
-        out.decls[0].name,
+        decls[0].name,
         "method:is_ascii#euf#c:callresult_method_is_ascii_a1(s:\"\")::assertion"
     );
-    assert_string_predicate_atom(&inv_operands(&out.decls[0])[0], "str.is_ascii", &[""]);
+    assert_string_predicate_atom(&inv_operands(decls[0])[0], "str.is_ascii", &[""]);
     assert_eq!(
-        out.decls[1].name,
+        decls[1].name,
         "method:is_ascii#euf#c:callresult_method_is_ascii_a1(s:\"banana\\0\\u{7f}\")::assertion"
     );
     assert_string_predicate_atom(
-        &inv_operands(&out.decls[1])[0],
+        &inv_operands(decls[1])[0],
         "str.is_ascii",
         &["banana\0\u{7F}"],
     );
     assert_eq!(
-        out.decls[2].name,
+        decls[2].name,
         "method:len#euf#c:callresult_method_len_a1(s:\"～～～～～\")::assertion"
     );
-    assert_method_len_cmp_atom(&inv_operands(&out.decls[2])[0], "=", "～～～～～", 15);
+    assert_method_len_cmp_atom(&inv_operands(decls[2])[0], "=", "～～～～～", 15);
 }
 
 #[test]
@@ -7565,9 +7654,9 @@ fn comparison_atoms() {
     let out = lift_file(&parse(src), "tests/compare.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
 
-    let decl = &out.decls[0];
+    let decl = single_warranted_decl(&out);
     assert_eq!(
         decl.name,
         "tests/compare.rs::comparison_atoms::value#euf#c:callresult_value_a0()::assertion"
@@ -7593,9 +7682,9 @@ fn connective_atoms() {
     let out = lift_file(&parse(src), "tests/compare.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
 
-    let decl = &out.decls[0];
+    let decl = single_warranted_decl(&out);
     assert_eq!(
         decl.name,
         "tests/compare.rs::connective_atoms::value#euf#c:callresult_value_a0()::assertion"
@@ -7636,9 +7725,9 @@ fn negated_comparison() {
     let out = lift_file(&parse(src), "tests/compare.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
 
-    let decl = &out.decls[0];
+    let decl = single_warranted_decl(&out);
     assert_eq!(
         decl.name,
         "tests/compare.rs::negated_comparison::value#euf#c:callresult_value_a0()::assertion"
@@ -8152,8 +8241,8 @@ fn const_get_or_insert_default() {
     let out = lift_file(&parse(src), "tests/option.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    assert_eq!(out.decls.len(), 1);
-    let decl = &out.decls[0];
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
     assert_eq!(
         decl.name,
         "method:is_some#euf#c:callresult_method_is_some_a1(v:tests/option.rs::const_get_or_insert_default::OPT_DEFAULT)::assertion"
@@ -8596,8 +8685,8 @@ fn encode_abc() {
         "no warnings expected for byte-string literal assertion: {:?}",
         out.warnings
     );
-    assert_eq!(out.decls.len(), 1);
-    let operands = inv_operands(&out.decls[0]);
+    assert_warranted_decl_count(&out, 1);
+    let operands = inv_operands(single_warranted_decl(&out));
     assert_eq!(operands.len(), 1);
     match operands[0].as_ref() {
         Formula::Atomic { name, args } => {
@@ -10381,7 +10470,7 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "src/x.rs");
     assert_eq!(out.assertions_lifted, 1, "warnings: {:?}", out.skip_reasons);
-    let decl = format!("{:?}", out.decls[0]);
+    let decl = format!("{:?}", single_warranted_decl(&out));
     assert!(
         decl.contains("call:compute"),
         "must carry the rewritten callsite subject: {decl}"
@@ -10403,11 +10492,11 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "src/x.rs");
     assert_eq!(out.assertions_lifted, 2, "warnings: {:?}", out.skip_reasons);
-    let ops = inv_operands(&out.decls[0]);
+    let ops = inv_operands(single_warranted_decl(&out));
     assert_eq!(ops.len(), 2);
     // Both atoms are over the same rewritten callsite subject: one equates it
     // to true, the negation to false, so the two cannot both hold.
-    let dump = format!("{:?}", out.decls[0]);
+    let dump = format!("{:?}", single_warranted_decl(&out));
     assert!(dump.contains("call:compute"), "{dump}");
     assert!(
         dump.contains("Bool(true)"),
@@ -10653,7 +10742,7 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/ops.rs");
     assert_eq!(out.assertions_lifted, 1, "warnings: {:?}", out.skip_reasons);
-    let decl = format!("{:?}", out.decls[0]);
+    let decl = format!("{:?}", single_warranted_decl(&out));
     assert!(decl.contains("variant_of"), "must carry variant_of: {decl}");
     assert!(
         decl.contains("OneSidedRangeBound::End"),
@@ -10676,8 +10765,10 @@ fn t() { let s = mk(); assert!(matches!(s, (Bound::End, 1))); }
 #[test]
 fn t() { let s = mk(); assert!(matches!(s, (Bound::Start, 1))); }
 "#;
-    let da = format!("{:?}", lift_file(&parse(a), "tests/ops.rs").decls[0]);
-    let db = format!("{:?}", lift_file(&parse(b), "tests/ops.rs").decls[0]);
+    let out_a = lift_file(&parse(a), "tests/ops.rs");
+    let out_b = lift_file(&parse(b), "tests/ops.rs");
+    let da = format!("{:?}", single_warranted_decl(&out_a));
+    let db = format!("{:?}", single_warranted_decl(&out_b));
     assert!(da.contains("Bound::End"), "a tags End: {da}");
     assert!(db.contains("Bound::Start"), "b tags Start: {db}");
     assert_ne!(
@@ -10698,8 +10789,10 @@ fn t() { let s = mk(); assert!(matches!(s, (Bound::End, 1))); }
 #[test]
 fn t() { let s = mk(); assert!(matches!(s, (Bound::End, 2))); }
 "#;
-    let da = format!("{:?}", lift_file(&parse(a), "tests/ops.rs").decls[0]);
-    let db = format!("{:?}", lift_file(&parse(b), "tests/ops.rs").decls[0]);
+    let out_a = lift_file(&parse(a), "tests/ops.rs");
+    let out_b = lift_file(&parse(b), "tests/ops.rs");
+    let da = format!("{:?}", single_warranted_decl(&out_a));
+    let db = format!("{:?}", single_warranted_decl(&out_b));
     assert_ne!(
         da, db,
         "distinct literal components must be distinct terms (teeth)"
@@ -10780,7 +10873,7 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "src/x.rs");
     assert_eq!(out.assertions_lifted, 2, "warnings: {:?}", out.skip_reasons);
-    let ops = inv_operands(&out.decls[0]);
+    let ops = inv_operands(single_warranted_decl(&out));
     let rhs = |f: &Formula| match f {
         Formula::Atomic { args, .. } => format!("{:?}", args[1]),
         other => panic!("{other:?}"),
@@ -12128,10 +12221,18 @@ fn z3_verdict(inv: &serde_json::Value, label: &str) -> Option<bool> {
     let parts = sugar_ir_compiler_smt_lib::compile_asserted_to_parts(inv)
         .expect("conjoined inv must compile to SMT-LIB");
     let script = format!("{}{}\n(check-sat)\n", parts.preamble, parts.body);
-    let z3 = "/usr/local/bin/z3";
-    if !std::path::Path::new(z3).exists() {
-        return None;
-    }
+    let z3 = std::env::var("Z3").ok().or_else(|| {
+        ["/usr/local/bin/z3", "/usr/bin/z3", "z3"]
+            .into_iter()
+            .find(|candidate| {
+                std::process::Command::new(candidate)
+                    .arg("--version")
+                    .output()
+                    .map(|out| out.status.success())
+                    .unwrap_or(false)
+            })
+            .map(str::to_string)
+    })?;
     // Unique path per call: cargo runs tests in parallel; a shared temp file
     // races (one test reads another's script).
     let path = std::env::temp_dir().join(format!("sugar_vendor_check_{label}.smt2"));
@@ -12148,10 +12249,224 @@ fn z3_verdict(inv: &serde_json::Value, label: &str) -> Option<bool> {
     Some(stdout.contains("sat") && !stdout.contains("unsat"))
 }
 
+fn assert_warranted_decls_not_refuted(out: &AdapterOutput, label: &str) {
+    for (idx, decl) in warranted_decls(out).into_iter().enumerate() {
+        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("{label}_{idx}")) {
+            assert!(
+                sat,
+                "{label} warranted decl must not be z3-UNSAT: {}",
+                decl.name
+            );
+        }
+    }
+}
+
 fn inv_json(decl: &sugar_ir_symbolic::ContractDecl) -> serde_json::Value {
     let doc = sugar_ir_symbolic::serialize::marshal_declarations(std::slice::from_ref(decl));
     let parsed: serde_json::Value = serde_json::from_str(&doc).unwrap();
     parsed[0]["inv"].clone()
+}
+
+#[test]
+fn opaque_result_ok_adaptor_is_well_sorted_with_reflexive_teeth() {
+    let good = r#"
+        #[test]
+        fn t_result_ok_reflexive() {
+            let parsed = "256".parse::<u8>().ok();
+            assert_eq!(parsed, parsed);
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/net/result_ok_sort.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "opaque Result::ok assertion should lift: {:?}",
+        out.skip_reasons
+    );
+    let dump = warranted_doc(&out);
+    assert!(
+        dump.contains("method:ok") && dump.contains("method:parse"),
+        "test must exercise the opaque Result::ok adaptor, not fold away: {dump}"
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "result_ok_reflexive_good",
+    ) {
+        assert!(sat, "x == x over Result::ok must be SAT and well-sorted");
+    }
+
+    let bad = r#"
+        #[test]
+        fn t_result_ok_anti_reflexive() {
+            let parsed = "256".parse::<u8>().ok();
+            assert_ne!(parsed, parsed);
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/net/result_ok_sort_bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bad twin should still lift so z3 can refute it: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "result_ok_reflexive_bad",
+    ) {
+        assert!(!sat, "x != x over Result::ok must be UNSAT");
+    }
+}
+
+#[test]
+fn option_unwrap_adaptor_is_well_sorted_with_reflexive_teeth() {
+    let good = r#"
+        #[test]
+        fn t_option_unwrap_reflexive() {
+            let mut slot = 1;
+            let ptr: *mut i32 = &mut slot;
+            let got = ptr.as_mut().unwrap();
+            assert_eq!(got, got);
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/ptr/as_mut_unwrap_sort.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "opaque as_mut().unwrap() assertion should lift: {:?}",
+        out.skip_reasons
+    );
+    let dump = warranted_doc(&out);
+    assert!(
+        dump.contains("method:unwrap") && dump.contains("method:as_mut"),
+        "test must exercise Option unwrap over as_mut, not fold away: {dump}"
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "option_unwrap_reflexive_good",
+    ) {
+        assert!(
+            sat,
+            "x == x over as_mut().unwrap() must be SAT and well-sorted"
+        );
+    }
+
+    let bad = r#"
+        #[test]
+        fn t_option_unwrap_anti_reflexive() {
+            let mut slot = 1;
+            let ptr: *mut i32 = &mut slot;
+            let got = ptr.as_mut().unwrap();
+            assert_ne!(got, got);
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/ptr/as_mut_unwrap_sort_bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bad twin should still lift so z3 can refute it: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "option_unwrap_reflexive_bad",
+    ) {
+        assert!(!sat, "x != x over as_mut().unwrap() must be UNSAT");
+    }
+}
+
+#[test]
+fn bool_then_closure_option_is_well_sorted_with_bad_twin() {
+    let good = r#"
+        #[test]
+        fn t_bool_then_closure_good() {
+            let got = true.then(|| 0);
+            assert_eq!(got, got);
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/bool/then_closure_sort.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "then(|| ...) assertion should lift: {:?}",
+        out.skip_reasons
+    );
+    let dump = warranted_doc(&out);
+    assert!(
+        dump.contains("closure:") && dump.contains("method:then"),
+        "test must exercise a closure adaptor site: {dump}"
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "bool_then_closure_good",
+    ) {
+        assert!(
+            sat,
+            "x == x over true.then(|| 0) must be SAT and well-sorted"
+        );
+    }
+
+    let bad = r#"
+        #[test]
+        fn t_bool_then_closure_bad() {
+            let got = true.then(|| 0);
+            assert_ne!(got, got);
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/bool/then_closure_sort_bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bad twin should lift so z3 can refute it: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "bool_then_closure_bad",
+    ) {
+        assert!(!sat, "x != x over true.then(|| 0) must be UNSAT");
+    }
+}
+
+#[test]
+fn nested_try_reduce_option_is_well_sorted_with_bad_twin() {
+    let good = r#"
+        #[test]
+        fn t_try_reduce_nested_option_good() {
+            let sum = [1usize, 2, 3].into_iter().try_reduce(|x, y| x.checked_add(y));
+            assert_eq!(sum, sum);
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/iter/try_reduce_nested_sort.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "try_reduce nested Option assertion should lift: {:?}",
+        out.skip_reasons
+    );
+    let dump = warranted_doc(&out);
+    assert!(
+        dump.contains("method:try_reduce") || dump.contains("opt:some"),
+        "test must exercise nested try_reduce/Option shape: {dump}"
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "try_reduce_nested_good",
+    ) {
+        assert!(sat, "x == x over try_reduce nested Option must be SAT");
+    }
+
+    let bad = r#"
+        #[test]
+        fn t_try_reduce_nested_option_bad() {
+            let sum = [1usize, 2, 3].into_iter().try_reduce(|x, y| x.checked_add(y));
+            assert_ne!(sum, sum);
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/iter/try_reduce_nested_sort_bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bad twin should lift so z3 can refute it: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "try_reduce_nested_bad",
+    ) {
+        assert!(!sat, "x != x over try_reduce nested Option must be UNSAT");
+    }
 }
 
 #[test]
@@ -15243,6 +15558,60 @@ fn t() {
         "Clamp/SliceIndex must not remain support-only accounting: {:?}",
         out.skip_reasons
     );
+    let doc = warranted_doc(&out);
+    assert!(
+        !doc.contains("range(i:1,opt:") && !doc.contains("range_incl(i:1,opt:"),
+        "macro expr fragments must preserve range receiver boundaries; \
+         reparsing `$other.get(..)` as `1..opt:some(..)` leaks an ill-sorted term: {doc}"
+    );
+
+    // The same macro-expansion ownership bug as `test_clamp!`: `$range:expr`
+    // followed by `.contains` must keep `1..4` as the receiver. If transcription
+    // drops the expr-fragment boundary, the expanded expression reparses as
+    // `1..(4.contains(..))`, producing an ill-sorted range endpoint instead of a
+    // checkable `Range::contains` verdict.
+    let good = r#"
+macro_rules! in_range {
+    ($range:expr, $x:expr) => {
+        assert!($range.contains(&$x));
+    };
+}
+
+#[test]
+fn t() {
+    in_range!(1..4, 2);
+}
+"#;
+    let out = lift_file(&parse(good), "tests/macro_range_contains_good.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "macro_range_contains_good") {
+        assert!(
+            sat,
+            "macro-owned `(1..4).contains(&2)` must be a well-sorted SAT obligation"
+        );
+    }
+
+    let bad = r#"
+macro_rules! in_range {
+    ($range:expr, $x:expr) => {
+        assert!($range.contains(&$x));
+    };
+}
+
+#[test]
+fn t() {
+    in_range!(1..4, 4);
+}
+"#;
+    let bad_out = lift_file(&parse(bad), "tests/macro_range_contains_bad.rs");
+    assert_eq!(bad_out.assertions_lifted, 1, "{:?}", bad_out.skip_reasons);
+    if let Some(sat) = z3_verdict(&inv_json(&bad_out.decls[0]), "macro_range_contains_bad") {
+        assert!(
+            !sat,
+            "macro-owned `(1..4).contains(&4)` must be z3-UNSAT; \
+             the exclusive endpoint is outside the range"
+        );
+    }
 }
 
 #[test]
@@ -15911,6 +16280,52 @@ fn test_map_try_folds() {
     assert!(
         saw_opaque_runtime,
         "the runtime rows must STAY opaque method:try_fold (not fabricated)"
+    );
+    assert_warranted_decls_not_refuted(&out, "runtime_try_fold_followup_read");
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("unknown iterator consumption")),
+        "post-try_fold/try_rfold iterator reads must be named-refused, not checked \
+         against stale literal state: {:?}",
+        out.skip_reasons
+    );
+
+    let out = lift_one(
+        r#"#[test]
+fn test_try_find() {
+    let xs: &[isize] = &[];
+    assert_eq!(xs.iter().try_find(testfn), Ok(None));
+    let xs: &[isize] = &[1, 2, 3, 4];
+    assert_eq!(xs.iter().try_find(testfn), Ok(Some(&2)));
+    let xs: &[isize] = &[1, 3, 4];
+    assert_eq!(xs.iter().try_find(testfn), Err(()));
+
+    let xs: &[isize] = &[1, 2, 3, 4, 5, 6, 7];
+    let mut iter = xs.iter();
+    assert_eq!(iter.try_find(testfn), Ok(Some(&2)));
+    assert_eq!(iter.try_find(testfn), Err(()));
+    assert_eq!(iter.next(), Some(&5));
+
+    fn testfn(x: &&isize) -> Result<bool, ()> {
+        if **x == 2 {
+            return Ok(true);
+        }
+        if **x == 4 {
+            return Err(());
+        }
+        Ok(false)
+    }
+}"#,
+    );
+    assert_warranted_decls_not_refuted(&out, "runtime_try_find_followup_read");
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("unknown iterator consumption")),
+        "post-try_find iterator reads must be named-refused, not checked against stale \
+         literal state: {:?}",
+        out.skip_reasons
     );
 }
 
@@ -18145,8 +18560,8 @@ fn calls_extern() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/inline.rs");
-    assert_eq!(out.decls.len(), 1);
-    let (lhs, _rhs) = single_eq_atom(&out.decls[0]);
+    assert_warranted_decl_count(&out, 1);
+    let (lhs, _rhs) = single_eq_atom(single_warranted_decl(&out));
     match lhs.as_ref() {
         Term::Ctor { name, .. } => assert_eq!(
             name, "call:extern_fn",
@@ -18174,8 +18589,8 @@ fn calls_h() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/inline.rs");
-    assert_eq!(out.decls.len(), 1);
-    let (lhs, _rhs) = single_eq_atom(&out.decls[0]);
+    assert_warranted_decl_count(&out, 1);
+    let (lhs, _rhs) = single_eq_atom(single_warranted_decl(&out));
     match lhs.as_ref() {
         Term::Ctor { name, .. } => assert_eq!(
             name, "call:h",
@@ -18226,9 +18641,9 @@ fn calls_rec() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/inline.rs");
-    assert_eq!(out.decls.len(), 1);
+    assert_warranted_decl_count(&out, 1);
     assert!(
-        inv_has_opaque_call_leaf(&out.decls[0]),
+        inv_has_opaque_call_leaf(single_warranted_decl(&out)),
         "a recursive fn must bail to the opaque `call:` ctor (depth guard)"
     );
     assert!(!out.reduced_helpers.contains("rec"));
@@ -18437,9 +18852,27 @@ fn calls_h() {
         .as_str()
         .expect("callsite fact has a name");
     assert!(
-        callsite_fact["inv"].to_string().contains("panic")
-            && callsite_fact["inv"].to_string().contains("call:h"),
-        "caller fact must retain the callsite term so implication composition has an edge: {callsite_fact:#}"
+        callsite_fact["inv"].to_string().contains("call:h")
+            && !callsite_fact["inv"].to_string().contains("panic"),
+        "caller value fact must retain the base callsite term, with panic support split out: {callsite_fact:#}"
+    );
+    let panic_support = doc["ir"]
+        .as_array()
+        .and_then(|entries| {
+            entries.iter().find(|entry| {
+                entry["kind"] == serde_json::json!("contract")
+                    && entry["name"]
+                        .as_str()
+                        .is_some_and(|name| name.contains("::h#panic_callsite#"))
+            })
+        })
+        .unwrap_or_else(|| panic!("missing caller-owned panic support fact for h(2): {doc:#}"));
+    assert!(
+        panic_support["inv"].to_string().contains("panic")
+            && panic_support["inv"]
+                .to_string()
+                .contains("call:h#panic_callsite"),
+        "panic support must own the opaque panic-callsite term: {panic_support:#}"
     );
     assert_contract_edge(&doc, source_contract, "call:h", "rust-source::h");
 }
@@ -18483,14 +18916,22 @@ fn caller() {
         driver["pre"].to_string().contains("call:f") && driver["pre"].to_string().contains("panic"),
         "driver precondition must expose the callable-parameter panic-free bridge: {driver:#}"
     );
-    assert!(
-        doc["callEdges"]
-            .as_array()
-            .is_some_and(|edges| edges.iter().any(|edge| {
+    let driver_edge = doc["callEdges"]
+        .as_array()
+        .and_then(|edges| {
+            edges.iter().find(|edge| {
                 edge["targetSymbol"] == serde_json::json!("call:driver")
                     && edge["targetContract"] == serde_json::json!("rust-source::driver")
-            })),
-        "caller support fact must bridge into the driver source contract: {doc:#}"
+            })
+        })
+        .unwrap_or_else(|| {
+            panic!("caller support fact must bridge into the driver source contract: {doc:#}")
+        });
+    assert!(
+        driver_edge["evidenceTerm"]
+            .to_string()
+            .contains("call:driver#panic_callsite"),
+        "the bridge evidence keeps the sort-safe opaque panic-callsite term: {driver_edge:#}"
     );
 }
 
