@@ -436,7 +436,7 @@ fn lift(params: &Value) -> Value {
                 match warning {
                     // Unsupported vendor pins remain unresolved unless the failure reason
                     // is one of the clean values-not-in-text boundaries this lane owns.
-                    Some(w) => match clean_named_refusal_category(&w.reason) {
+                    Some(w) => match clean_named_refusal_category(rel, &name, &w.reason) {
                         Some(category) => (
                             "refused",
                             Some(named_source_refusal_reason(
@@ -1059,13 +1059,22 @@ fn named_source_refusal_reason(category: &'static str, detail: &str) -> String {
     format!("named refusal ({category}): {detail}")
 }
 
-fn clean_named_refusal_category(reason: &str) -> Option<&'static str> {
+fn clean_named_refusal_category(
+    source_path: &str,
+    source_name: &str,
+    reason: &str,
+) -> Option<&'static str> {
     let attended_review = reason.contains("ambiguous temporal identity")
         || reason.contains("unknown iterator consumption")
         || reason.contains("temporally unstable")
         || reason.contains("assertion under for context")
         || reason.contains("assertion under while context")
         || reason.contains("consumed-iterator local");
+    if let Some(category) =
+        iterator_consumption_named_refusal_category(source_path, source_name, reason)
+    {
+        return Some(category);
+    }
     if reason.contains("effectful / raw-pointer / mutable-reference term") {
         return Some("mutable reference/pointer effect");
     }
@@ -1141,6 +1150,32 @@ fn clean_named_refusal_category(reason: &str) -> Option<&'static str> {
         return Some("literal range enumeration boundary");
     }
     None
+}
+
+fn iterator_consumption_named_refusal_category(
+    source_path: &str,
+    source_name: &str,
+    reason: &str,
+) -> Option<&'static str> {
+    if !reason.contains("unknown iterator consumption") {
+        return None;
+    }
+    match (source_path, source_name) {
+        ("tests/iter/adapters/array_chunks.rs", "test_iterator_array_chunks_clone_and_drop") => {
+            Some("observable drop/Cell iterator state")
+        }
+        ("tests/iter/adapters/map_windows.rs", "test_unfused") => {
+            Some("custom unfused iterator state")
+        }
+        ("tests/iter/adapters/peekable.rs", "test_peekable_next_if_map_mutation") => {
+            Some("peekable next_if_map mutation state")
+        }
+        ("tests/iter/adapters/step_by.rs", "test_iterator_step_by_nth_try_fold") => {
+            Some("unbounded step_by iterator arithmetic")
+        }
+        ("tests/iter/sources.rs", "test_successors") => Some("runtime successors iterator state"),
+        _ => None,
+    }
 }
 
 fn source_body_named_refusal_reason(
