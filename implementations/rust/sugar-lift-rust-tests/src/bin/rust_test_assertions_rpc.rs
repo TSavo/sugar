@@ -1306,6 +1306,9 @@ fn clean_named_refusal_category(
     if runtime_regex_pattern_reason(reason) {
         return Some("runtime regex pattern");
     }
+    if effectful_control_flow_reason(reason) {
+        return Some("effectful control-flow boundary");
+    }
     if reason.contains("temporally unstable post-loop read") {
         return Some("temporally unstable post-loop read");
     }
@@ -1330,6 +1333,7 @@ fn clean_named_refusal_category(
         || reason.contains("runtime expression-statement")
         || reason.contains("mutation through &mut")
         || reason.contains("MUTABLE-local receiver")
+        || reason.contains("macro in term position references a `let mut` local")
         || reason.contains("mutable-local state machine driven by fmt-write")
     {
         return Some("mutation/side effect");
@@ -1430,6 +1434,7 @@ fn mutable_view_temporal_reason(reason: &str) -> bool {
             ".chunks_mut()",
             ".rchunks_mut()",
             ".get_disjoint_mut()",
+            ".as_mut()",
         ]
         .iter()
         .any(|method| reason.contains(method)))
@@ -1472,6 +1477,10 @@ fn rpc_method_contract_driver_regex_locus(
                 "regex_from_matcher_method_chain"
             )
     ) && reason.contains("unsupported assertion surface")
+}
+
+fn effectful_control_flow_reason(reason: &str) -> bool {
+    reason.contains("effectful control-flow block (try/async/`?`)")
 }
 
 fn atomic_rmw_runtime_state_reason(reason: &str) -> bool {
