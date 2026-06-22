@@ -5,11 +5,14 @@
 // This owns only the terminal string materialization. The sequence receiver is still
 // built through the factory so array/range/slice/iterator sugar compose normally.
 
+use std::collections::BTreeMap;
+
 use sugar_ir_symbolic::str_const;
 use syn::{Expr, GenericArgument, Lit, Type};
 use tracing::debug;
 
 use crate::sugar::factory::{build_composite, SugarBuildCtx};
+use crate::sugar::format::stable_let_bindings;
 use crate::sugar::method_family;
 use crate::{
     closure_single_param_ident, strip_refs_groups, ConstVal, Desugared, Outcome, Sugar, SugarCtx,
@@ -57,20 +60,23 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         "recognized literal intersperse collect string"
     );
     Some(Box::new(IntersperseCollectStringSugar {
-        seq: build_composite(&map_call.receiver, fcx),
+        seq_expr: (*map_call.receiver).clone(),
         sep,
     }))
 }
 
 struct IntersperseCollectStringSugar {
-    seq: Box<dyn Sugar>,
+    seq_expr: Expr,
     sep: String,
 }
 
 impl Sugar for IntersperseCollectStringSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         Outcome::from_opt((|| {
-            let seq = self.seq.desugar(ctx).dug()?.into_seq()?;
+            let seq = build_composite_in_ctx(&self.seq_expr, ctx)
+                .desugar(ctx)
+                .dug()?
+                .into_seq()?;
             let parts = seq
                 .iter()
                 .map(|elem| elem.value.as_ref().and_then(const_value_to_string))
@@ -84,6 +90,20 @@ impl Sugar for IntersperseCollectStringSugar {
             Some(Desugared::Term(str_const(joined)))
         })())
     }
+}
+
+fn build_composite_in_ctx(expr: &Expr, ctx: &SugarCtx) -> Box<dyn Sugar> {
+    let stable = stable_let_bindings(ctx.scope);
+    let let_inits = stable_let_refs(&stable);
+    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+    build_composite(expr, &fcx)
+}
+
+fn stable_let_refs(stable: &BTreeMap<String, Expr>) -> BTreeMap<String, &Expr> {
+    stable
+        .iter()
+        .map(|(name, init)| (name.clone(), init))
+        .collect()
 }
 
 fn collects_string(call: &syn::ExprMethodCall) -> bool {

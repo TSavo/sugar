@@ -5,11 +5,14 @@
 // The sequence construction is delegated to the existing composite Sugar catalog;
 // this node owns only the terminal string join.
 
+use std::collections::BTreeMap;
+
 use sugar_ir_symbolic::str_const;
 use syn::{Expr, Lit};
 use tracing::debug;
 
 use crate::sugar::factory::{build_composite, SugarBuildCtx};
+use crate::sugar::format::stable_let_bindings;
 use crate::{strip_refs_groups, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -46,21 +49,21 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         sep = %sep,
         "recognized literal intersperse collect concat"
     );
-    Some(Box::new(IntersperseConcatSugar {
-        seq: build_composite(&seq_expr, fcx),
-        sep,
-    }))
+    Some(Box::new(IntersperseConcatSugar { seq_expr, sep }))
 }
 
 struct IntersperseConcatSugar {
-    seq: Box<dyn Sugar>,
+    seq_expr: Expr,
     sep: String,
 }
 
 impl Sugar for IntersperseConcatSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         Outcome::from_opt((|| {
-            let seq = self.seq.desugar(ctx).dug()?.into_seq()?;
+            let seq = build_composite_in_ctx(&self.seq_expr, ctx)
+                .desugar(ctx)
+                .dug()?
+                .into_seq()?;
             let parts = seq_strings(seq)?;
             let joined = parts.join(&self.sep);
             debug!(
@@ -71,6 +74,20 @@ impl Sugar for IntersperseConcatSugar {
             Some(Desugared::Term(str_const(joined)))
         })())
     }
+}
+
+fn build_composite_in_ctx(expr: &Expr, ctx: &SugarCtx) -> Box<dyn Sugar> {
+    let stable = stable_let_bindings(ctx.scope);
+    let let_inits = stable_let_refs(&stable);
+    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+    build_composite(expr, &fcx)
+}
+
+fn stable_let_refs(stable: &BTreeMap<String, Expr>) -> BTreeMap<String, &Expr> {
+    stable
+        .iter()
+        .map(|(name, init)| (name.clone(), init))
+        .collect()
 }
 
 fn resolve_bound_expr(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> Option<Expr> {

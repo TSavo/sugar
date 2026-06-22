@@ -4,10 +4,11 @@
 // outrank the generic boolean-predicate fallback so `assert!(s.starts_with("x"))`
 // emits the string-theory atom it states, not `method:starts_with(...) == true`.
 
-use std::rc::Rc;
+use std::{collections::BTreeMap, rc::Rc};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::format::stable_let_bindings;
 use crate::{
     callsite_assertion_name, token_key, AssertionFactKind, Desugared, Effect, Outcome, Sugar,
     SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON,
@@ -37,7 +38,6 @@ enum StringPredicateKind {
 
 struct StringPredicateSugar {
     method: String,
-    receiver: Box<dyn Sugar>,
     receiver_expr: Expr,
     args: Vec<Expr>,
     kind: StringPredicateKind,
@@ -47,12 +47,12 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {
         Expr::Paren(paren) => recognize(&paren.expr, fcx),
         Expr::Group(group) => recognize(&group.expr, fcx),
-        Expr::MethodCall(call) => recognize_method(call, fcx),
+        Expr::MethodCall(call) => recognize_method(call),
         _ => None,
     }
 }
 
-fn recognize_method(call: &ExprMethodCall, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_method(call: &ExprMethodCall) -> Option<Box<dyn Sugar>> {
     let method = call.method.to_string();
     let kind = match method.as_str() {
         "contains" => {
@@ -172,7 +172,6 @@ fn recognize_method(call: &ExprMethodCall, fcx: &SugarBuildCtx) -> Option<Box<dy
 
     Some(Box::new(StringPredicateSugar {
         method,
-        receiver: build_term(&call.receiver, fcx),
         receiver_expr: (*call.receiver).clone(),
         args: call.args.iter().cloned().collect(),
         kind,
@@ -213,7 +212,8 @@ impl StringPredicateSugar {
                 ));
             }
         }
-        let receiver = match term_payload(&*self.receiver, ctx) {
+        let receiver_node = build_term_in_ctx(&self.receiver_expr, ctx);
+        let receiver = match term_payload(&*receiver_node, ctx) {
             Ok(term) => term,
             Err(outcome) => return outcome,
         };
@@ -356,6 +356,20 @@ fn method_assertion_name(method: &str, args: Vec<Rc<Term>>, local_scope: &str) -
 
 fn unsupported(reason: String) -> Outcome {
     Outcome::Hit(Effect::Unsupported { reason })
+}
+
+fn build_term_in_ctx(expr: &Expr, ctx: &SugarCtx) -> Box<dyn Sugar> {
+    let stable = stable_let_bindings(ctx.scope);
+    let let_inits = stable_let_refs(&stable);
+    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+    build_term(expr, &fcx)
+}
+
+fn stable_let_refs(stable: &BTreeMap<String, Expr>) -> BTreeMap<String, &Expr> {
+    stable
+        .iter()
+        .map(|(name, init)| (name.clone(), init))
+        .collect()
 }
 
 fn string_or_char_literal_term(expr: &Expr) -> Option<Rc<Term>> {
