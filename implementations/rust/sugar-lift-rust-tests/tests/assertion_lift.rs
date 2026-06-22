@@ -21625,6 +21625,138 @@ fn assert_contract_edge(doc: &serde_json::Value, source: &str, symbol: &str, tar
 }
 
 #[test]
+fn rpc_source_no_scalar_value_proposition_panics_not_supports() {
+    let panic = std::panic::catch_unwind(|| {
+        run_rpc_lift(
+            "src/source_no_scalar_array_try_from.rs",
+            r#"
+#[test]
+fn no_scalar_array_try_from_support() {
+    macro_rules! test {
+        ($($N:expr)+) => {
+            $({
+                type Array = [u8; $N];
+                let mut array: Array = [0; $N];
+                let slice: &[u8] = &array[..];
+
+                let result = <&Array>::try_from(slice);
+                assert_eq!(&array, result.unwrap());
+
+                let result = <Array>::try_from(slice);
+                assert_eq!(&array, &result.unwrap());
+
+                let mut_slice: &mut [u8] = &mut array[..];
+                let result = <&mut Array>::try_from(mut_slice);
+                assert_eq!(&[0; $N], result.unwrap());
+
+                let mut_slice: &mut [u8] = &mut array[..];
+                let result = <Array>::try_from(mut_slice);
+                assert_eq!(&array, &result.unwrap());
+            })+
+        }
+    }
+    test! { 0 1 2 }
+}
+
+#[test]
+fn no_scalar_array_try_from_literal_twin() {
+    assert_eq!(1usize, 1usize);
+}
+"#,
+        )
+    })
+    .expect_err("no-scalar value proposition must panic, not become source support");
+
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap_or("");
+    assert!(
+        message.contains("no `lift` (id:2) reply"),
+        "strict source-audit panic should close the RPC without a lift reply, got: {message}"
+    );
+}
+
+#[test]
+fn rpc_source_refuses_fmt_write_mut_local_with_literal_twin() {
+    let doc = run_rpc_lift(
+        "src/source_fmt_write_mut_local.rs",
+        r#"
+use std::fmt::Write;
+
+#[test]
+fn fmt_write_mut_local_refused() {
+    let mut buf = String::new();
+    assert!(write!(&mut buf, "{}", 1).is_ok());
+}
+
+#[test]
+fn fmt_write_mut_local_literal_twin() {
+    assert_eq!(1usize, 1usize);
+}
+"#,
+    );
+
+    assert_rpc_source_refused(&doc, "fmt_write_mut_local_refused", "mutation/side effect");
+    assert_rpc_source_warranted(&doc, "fmt_write_mut_local_literal_twin");
+}
+
+#[test]
+fn rpc_source_refuses_effectful_control_flow_with_literal_twin() {
+    let doc = run_rpc_lift(
+        "src/source_effectful_control_flow.rs",
+        r#"
+#[test]
+fn effectful_control_flow_refused() {
+    let maybe: Option<i32> = None;
+    assert!(Option::is_none(&try { maybe? }));
+}
+
+#[test]
+fn effectful_control_flow_literal_twin() {
+    assert_eq!(3usize, 3usize);
+}
+"#,
+    );
+
+    assert_rpc_source_refused(
+        &doc,
+        "effectful_control_flow_refused",
+        "effectful control-flow boundary",
+    );
+    assert_rpc_source_warranted(&doc, "effectful_control_flow_literal_twin");
+}
+
+#[test]
+fn rpc_source_refuses_mutable_as_mut_view_with_literal_twin() {
+    let doc = run_rpc_lift(
+        "src/source_mutable_as_mut_view.rs",
+        r#"
+#[test]
+fn mutable_as_mut_view_refused() {
+    let mut data = Some([1usize, 2, 3]);
+    let view = data.as_mut();
+    assert_eq!(view.unwrap()[0], 1);
+    assert_eq!(data.as_mut().unwrap().len(), 3);
+}
+
+#[test]
+fn mutable_as_mut_view_literal_twin() {
+    assert_eq!([1usize, 2, 3].len(), 3);
+}
+"#,
+    );
+
+    assert_rpc_source_refused(
+        &doc,
+        "mutable_as_mut_view_refused",
+        "mutable view temporal state",
+    );
+    assert_rpc_source_warranted(&doc, "mutable_as_mut_view_literal_twin");
+}
+
+#[test]
 fn rpc_source_refuses_compile_time_reflection_with_literal_twin() {
     let doc = run_rpc_lift(
         "src/source_reflection.rs",
