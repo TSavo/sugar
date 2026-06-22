@@ -27,10 +27,10 @@ use crate::sugar::{
     option_unwrap, partition_point, path, peekable, primitive_int, range_contains, range_term,
     raw_addr_term, reference_sequence, reference_term, regex_match, repeat_term, result_predicate,
     result_transpose_collect, rev, size_hint, sizeof, skip, skip_while, slice_accessor,
-    slice_index, statement_async_future, statement_control_flow, statement_future_handoff,
-    statement_loop_advance, statement_reflection, statement_runtime_expr, step_by, str_method,
-    string_add, string_predicate, struct_term, take, take_while, term_literal, to_string,
-    transparent_term, try_from, try_from_fn, try_map, tuple_decomp, tuple_term, unary,
+    slice_index, slice_search, statement_async_future, statement_control_flow,
+    statement_future_handoff, statement_loop_advance, statement_reflection, statement_runtime_expr,
+    step_by, str_method, string_add, string_predicate, struct_term, take, take_while, term_literal,
+    to_string, transparent_term, try_from, try_from_fn, try_map, tuple_decomp, tuple_term, unary,
     unsafe_memory, vec_literal, vec_macro, wrapping_neg, zip,
 };
 use crate::{FactoryCandidateAudit, Sugar};
@@ -39,6 +39,7 @@ use crate::{FactoryCandidateAudit, Sugar};
 /// metadata owned by the Sugar module itself.
 const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &tuple_decomp::ASSERTION_SURFACE_EXPR_SUGAR,
+    &slice_search::ASSERTION_SURFACE_EXPR_SUGAR,
     &integer_decode::TUPLE_PRODUCER_EXPR_SUGAR,
     &size_hint::TUPLE_PRODUCER_EXPR_SUGAR,
     &infinity_eq::ASSERTION_SURFACE_EXPR_SUGAR,
@@ -116,6 +117,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &is_empty::EXPR_SUGAR,
     &is_sorted::EXPR_SUGAR,
     &slice_accessor::EXPR_SUGAR,
+    &slice_search::EXPR_SUGAR,
     &duration_accessor::EXPR_SUGAR,
     &nonzero::GET_EXPR_SUGAR,
     &function_map::TERM_EXPR_SUGAR,

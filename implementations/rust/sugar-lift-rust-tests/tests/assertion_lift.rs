@@ -15372,6 +15372,200 @@ fn literal_slice_accessors_have_z3_bad_twins() {
 }
 
 #[test]
+fn literal_slice_search_split_methods_ground_to_literal_floor() {
+    let rposition = lift_eq_decl(
+        "[1, 2, 3, 2].iter().rposition(|x| *x == 2)",
+        "Some(3)",
+        "tests/slice_rposition_good.rs",
+    );
+    assert_eq!(
+        dug_eq_ctor_name_pairs(&rposition),
+        vec![("opt:some".to_string(), "opt:some".to_string())],
+        "`.rposition()` must ground to opt:some(3): {:?}",
+        rposition.inv
+    );
+    assert!(
+        !decl_mentions_ctor(&rposition, "method:rposition"),
+        "no opaque method:rposition may survive: {:?}",
+        rposition.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&rposition), "slice_rposition_good") {
+        assert!(sat, "`.rposition(==2) == Some(3)` must be SAT");
+    }
+
+    let rposition_none = lift_eq_decl(
+        "[1, 2, 3].iter().rposition(|x| *x == 9)",
+        "None",
+        "tests/slice_rposition_none.rs",
+    );
+    assert_eq!(
+        dug_eq_ctor_name_pairs(&rposition_none),
+        vec![("opt:none".to_string(), "opt:none".to_string())],
+        "`.rposition()` with no match must ground to opt:none: {:?}",
+        rposition_none.inv
+    );
+
+    let binary_ok = lift_eq_decl(
+        "[1, 2, 3].binary_search(&2)",
+        "Ok(1)",
+        "tests/slice_binary_search_ok.rs",
+    );
+    assert_eq!(
+        dug_eq_ctor_name_pairs(&binary_ok),
+        vec![("res:ok".to_string(), "res:ok".to_string())],
+        "`.binary_search(&2)` must ground to res:ok(1): {:?}",
+        binary_ok.inv
+    );
+    assert!(
+        !decl_mentions_ctor(&binary_ok, "method:binary_search"),
+        "no opaque method:binary_search may survive: {:?}",
+        binary_ok.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&binary_ok), "slice_binary_search_ok") {
+        assert!(sat, "`.binary_search(&2) == Ok(1)` must be SAT");
+    }
+
+    let binary_err = lift_eq_decl(
+        "[1, 3, 5].binary_search(&4)",
+        "Err(2)",
+        "tests/slice_binary_search_err.rs",
+    );
+    assert_eq!(
+        dug_eq_ctor_name_pairs(&binary_err),
+        vec![("res:err".to_string(), "res:err".to_string())],
+        "`.binary_search(&4)` must ground to res:err(2): {:?}",
+        binary_err.inv
+    );
+
+    let split_first = lift_eq_decl(
+        "[1, 2, 3].split_first()",
+        "Some((&1, &[2, 3][..]))",
+        "tests/slice_split_first_good.rs",
+    );
+    assert_eq!(
+        dug_eq_int_pairs(&split_first),
+        vec![(1, 1), (2, 2), (3, 3)],
+        "`.split_first()` must decompose to scalar head/tail equalities: {:?}",
+        split_first.inv
+    );
+    assert!(
+        !decl_mentions_ctor(&split_first, "method:split_first"),
+        "no opaque method:split_first may survive: {:?}",
+        split_first.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&split_first), "slice_split_first_good") {
+        assert!(sat, "`.split_first()` exact tuple payload must be SAT");
+    }
+
+    let split_last = lift_eq_decl(
+        "[1, 2, 3].split_last()",
+        "Some((&3, &[1, 2][..]))",
+        "tests/slice_split_last_good.rs",
+    );
+    assert_eq!(
+        dug_eq_int_pairs(&split_last),
+        vec![(3, 3), (1, 1), (2, 2)],
+        "`.split_last()` must decompose to scalar last/init equalities: {:?}",
+        split_last.inv
+    );
+    assert!(
+        !decl_mentions_ctor(&split_last, "method:split_last"),
+        "no opaque method:split_last may survive: {:?}",
+        split_last.inv
+    );
+
+    let enumerate_next = lift_eq_decl(
+        "[1, 2, 3].iter().enumerate().next()",
+        "Some((0, &1))",
+        "tests/slice_enumerate_next_good.rs",
+    );
+    assert_eq!(
+        dug_eq_int_pairs(&enumerate_next),
+        vec![(0, 0), (1, 1)],
+        "`.iter().enumerate().next()` must decompose to scalar index/element equalities: {:?}",
+        enumerate_next.inv
+    );
+    assert!(
+        !decl_mentions_ctor(&enumerate_next, "method:next"),
+        "no opaque method:next may survive for enumerate().next(): {:?}",
+        enumerate_next.inv
+    );
+}
+
+#[test]
+fn literal_slice_search_split_methods_have_z3_bad_twins() {
+    let cases = [
+        (
+            "[1, 2, 3, 2].iter().rposition(|x| *x == 2)",
+            "Some(1)",
+            "slice_rposition_bad",
+            ".rposition(==2) == Some(1)",
+        ),
+        (
+            "[1, 2, 3].iter().rposition(|x| *x == 9)",
+            "Some(0)",
+            "slice_rposition_none_bad",
+            ".rposition(==9) == Some(0)",
+        ),
+        (
+            "[1, 2, 3].binary_search(&2)",
+            "Ok(0)",
+            "slice_binary_search_ok_bad",
+            ".binary_search(&2) == Ok(0)",
+        ),
+        (
+            "[1, 3, 5].binary_search(&4)",
+            "Err(1)",
+            "slice_binary_search_err_bad",
+            ".binary_search(&4) == Err(1)",
+        ),
+        (
+            "[1, 2, 3].split_first()",
+            "Some((&9, &[2, 3][..]))",
+            "slice_split_first_head_bad",
+            ".split_first() has wrong head",
+        ),
+        (
+            "[1, 2, 3].split_first()",
+            "Some((&1, &[2, 9][..]))",
+            "slice_split_first_tail_bad",
+            ".split_first() has wrong tail",
+        ),
+        (
+            "[1, 2, 3].split_last()",
+            "Some((&9, &[1, 2][..]))",
+            "slice_split_last_last_bad",
+            ".split_last() has wrong last",
+        ),
+        (
+            "[1, 2, 3].split_last()",
+            "Some((&3, &[1, 9][..]))",
+            "slice_split_last_init_bad",
+            ".split_last() has wrong init",
+        ),
+        (
+            "[1, 2, 3].iter().enumerate().next()",
+            "Some((1, &1))",
+            "slice_enumerate_next_index_bad",
+            ".enumerate().next() has wrong index",
+        ),
+        (
+            "[1, 2, 3].iter().enumerate().next()",
+            "Some((0, &9))",
+            "slice_enumerate_next_elem_bad",
+            ".enumerate().next() has wrong element",
+        ),
+    ];
+
+    for (lhs, rhs, label, display) in cases {
+        let decl = lift_eq_decl(lhs, rhs, &format!("tests/{label}.rs"));
+        if let Some(sat) = z3_verdict(&inv_json(&decl), label) {
+            assert!(!sat, "bad twin `{display}` must be z3-UNSAT");
+        }
+    }
+}
+
+#[test]
 fn iter_next_over_runtime_receiver_stays_opaque_no_fake_dig() {
     // THE EFFECT BOUNDARY HOLDS: a `.next()` over a RUNTIME receiver (a call
     // result / opaque param) is NOT a written literal, so the syntactic-literal
