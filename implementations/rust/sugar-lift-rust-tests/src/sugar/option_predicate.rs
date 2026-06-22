@@ -13,9 +13,9 @@ use tracing::debug;
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::format::stable_let_bindings;
-use crate::sugar::monadic::{OPT_NONE, OPT_SOME};
+use crate::sugar::monadic::{is_grounded_literal_term, OPT_NONE, OPT_SOME};
 use crate::sugar::nonzero::is_nonzero_new_call;
-use crate::{bool_const, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
+use crate::{bool_const, strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("option_predicate", SugarRole::Term, recognize);
@@ -28,7 +28,7 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if !matches!(method.as_str(), "is_some" | "is_none") || !call.args.is_empty() {
         return None;
     }
-    if !is_known_option_source(&call.receiver) {
+    if !receiver_resolves_option_source(&call.receiver, fcx, 0) {
         return None;
     }
     Some(Box::new(OptionPredicateSugar {
@@ -71,8 +71,19 @@ impl Sugar for OptionPredicateSugar {
             },
             Outcome::Hit(e) => return Outcome::Hit(e),
         };
-        let Some(is_some) = option_presence(&receiver) else {
+        let Some(presence) = option_presence(&receiver) else {
             return Outcome::from_opt(None);
+        };
+        let is_some = match presence {
+            Ok(is_some) => is_some,
+            Err(kind) => {
+                return Outcome::Hit(Effect::Unsupported {
+                    reason: format!(
+                        "Option `{}` over non-literal `{kind}` payload; refused",
+                        self.method
+                    ),
+                })
+            }
         };
         let value = if self.method == "is_some" {
             is_some
@@ -89,11 +100,47 @@ impl Sugar for OptionPredicateSugar {
     }
 }
 
-fn option_presence(term: &Term) -> Option<bool> {
+fn option_presence(term: &Term) -> Option<Result<bool, &'static str>> {
     match term {
-        Term::Ctor { name, .. } if name == OPT_SOME => Some(true),
-        Term::Ctor { name, .. } if name == OPT_NONE => Some(false),
+        Term::Ctor { name, args } if name == OPT_SOME && args.len() == 1 => {
+            if is_grounded_literal_term(args[0].as_ref()) {
+                Some(Ok(true))
+            } else {
+                Some(Err(OPT_SOME))
+            }
+        }
+        Term::Ctor { name, args } if name == OPT_NONE && args.is_empty() => Some(Ok(false)),
         _ => None,
+    }
+}
+
+fn receiver_resolves_option_source(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    if is_known_option_source(expr) {
+        return true;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Path(path) if path.qself.is_none() => {
+            let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) else {
+                return false;
+            };
+            if fcx.resolving_bound_path(&name) {
+                return false;
+            }
+            let Some(init) = fcx.scope().stable_let_binding_for_term(&name) else {
+                return false;
+            };
+            let child_fcx = fcx.with_bound_path(&name);
+            receiver_resolves_option_source(init, &child_fcx, depth + 1)
+        }
+        Expr::MethodCall(call) if call.method == "map" && call.args.len() == 1 => {
+            receiver_resolves_option_source(&call.receiver, fcx, depth + 1)
+        }
+        Expr::Paren(paren) => receiver_resolves_option_source(&paren.expr, fcx, depth + 1),
+        Expr::Group(group) => receiver_resolves_option_source(&group.expr, fcx, depth + 1),
+        _ => false,
     }
 }
 
