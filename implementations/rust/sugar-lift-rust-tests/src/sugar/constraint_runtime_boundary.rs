@@ -28,9 +28,11 @@ pub(crate) fn relation_runtime_boundary_reason(
     rhs: &Expr,
     ctx: &SugarCtx,
 ) -> Option<String> {
-    runtime_boundary_term(lhs, ctx, 0)
-        .or_else(|| runtime_boundary_term(rhs, ctx, 0))
-        .map(|boundary| boundary.reason())
+    nan_comparison_reason(lhs, rhs, ctx).or_else(|| {
+        runtime_boundary_term(lhs, ctx, 0)
+            .or_else(|| runtime_boundary_term(rhs, ctx, 0))
+            .map(|boundary| boundary.reason())
+    })
 }
 
 pub(crate) fn panic_payload_match_value_reason(
@@ -95,6 +97,77 @@ fn runtime_boundary_term(expr: &Expr, ctx: &SugarCtx, depth: usize) -> Option<Ru
             .find_map(|elem| runtime_boundary_term(elem, ctx, depth + 1)),
         _ => None,
     }
+}
+
+fn nan_comparison_reason(lhs: &Expr, rhs: &Expr, ctx: &SugarCtx) -> Option<String> {
+    nan_value_site(lhs, ctx, 0)
+        .or_else(|| nan_value_site(rhs, ctx, 0))
+        .map(|site| {
+            format!(
+                "NaN comparison `{site}` uses Rust float PartialEq/PartialOrd semantics, \
+                 not ordinary total-order/equality semantics; refused"
+            )
+        })
+}
+
+fn nan_value_site(expr: &Expr, ctx: &SugarCtx, depth: usize) -> Option<String> {
+    if depth > 16 {
+        return None;
+    }
+    match expr {
+        Expr::Path(path) => {
+            if path_is_float_nan(path) {
+                return Some(token_key(expr));
+            }
+            path.path
+                .get_ident()
+                .and_then(|ident| ctx.scope.stable_let_binding_for_term(&ident.to_string()))
+                .and_then(|init| nan_value_site(init, ctx, depth + 1))
+        }
+        Expr::Paren(paren) => nan_value_site(&paren.expr, ctx, depth + 1),
+        Expr::Group(group) => nan_value_site(&group.expr, ctx, depth + 1),
+        Expr::Reference(reference) => nan_value_site(&reference.expr, ctx, depth + 1),
+        Expr::Unary(unary) => nan_value_site(&unary.expr, ctx, depth + 1),
+        Expr::Cast(cast) => nan_value_site(&cast.expr, ctx, depth + 1),
+        Expr::Array(array) => array
+            .elems
+            .iter()
+            .find_map(|elem| nan_value_site(elem, ctx, depth + 1)),
+        Expr::Tuple(tuple) => tuple
+            .elems
+            .iter()
+            .find_map(|elem| nan_value_site(elem, ctx, depth + 1)),
+        Expr::Repeat(repeat) => nan_value_site(&repeat.expr, ctx, depth + 1)
+            .or_else(|| nan_value_site(&repeat.len, ctx, depth + 1)),
+        Expr::Block(block) => block.block.stmts.iter().rev().find_map(|stmt| match stmt {
+            syn::Stmt::Expr(expr, _) => nan_value_site(expr, ctx, depth + 1),
+            syn::Stmt::Local(local) => local
+                .init
+                .as_ref()
+                .and_then(|init| nan_value_site(&init.expr, ctx, depth + 1)),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
+fn path_is_float_nan(path: &syn::ExprPath) -> bool {
+    let segments: Vec<String> = path
+        .path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect();
+    let names: Vec<&str> = segments.iter().map(String::as_str).collect();
+    matches!(
+        names.as_slice(),
+        ["f32", "NAN"]
+            | ["f64", "NAN"]
+            | ["std", "f32", "NAN"]
+            | ["std", "f64", "NAN"]
+            | ["core", "f32", "NAN"]
+            | ["core", "f64", "NAN"]
+    )
 }
 
 fn atomic_load_boundary(expr: &Expr) -> Option<RuntimeTermBoundary> {

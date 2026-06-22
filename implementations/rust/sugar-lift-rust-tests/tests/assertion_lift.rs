@@ -5713,6 +5713,40 @@ fn float_mixed_refinement_gap() {
         }
         other => panic!("expected negated float refinement atom, got {other:?}"),
     }
+
+    let out = lift_one(
+        r#"#[test]
+fn nan_tuple_partial_ord() {
+    assert!(!((1.0f64, 2.0f64) < (f64::NAN, 3.0)));
+}"#,
+    );
+    assert_warranted_decls_not_refuted(&out, "nan_tuple_partial_ord");
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("NaN comparison") && r.contains("refused")),
+        "NaN tuple partial order must be named-refused, not checked as ordinary \
+         total order: {:?}",
+        out.skip_reasons
+    );
+
+    let out = lift_one(
+        r#"#[test]
+fn nan_array_slice_equality() {
+    let array3: [f32; 3] = [1.0, f32::NAN, 3.0];
+    let slice3: &[f32] = &{ array3 };
+    assert!(array3 != slice3);
+}"#,
+    );
+    assert_warranted_decls_not_refuted(&out, "nan_array_slice_equality");
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("NaN comparison") && r.contains("refused")),
+        "NaN array/slice equality must be named-refused, not checked as ordinary \
+         equality: {:?}",
+        out.skip_reasons
+    );
 }
 
 #[test]
