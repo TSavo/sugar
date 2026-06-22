@@ -23584,6 +23584,141 @@ fn straight_line_mutation_still_warrants_after_counter_gate() {
     }
 }
 
+#[test]
+fn literal_for_loop_scalar_accumulator_post_read_warrants() {
+    let src = r#"
+        #[test]
+        fn t_for_accum_good() {
+            let mut s = 0;
+            for x in [1, 2, 3] {
+                s += x;
+            }
+            assert_eq!(s, 6);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/loop/for_accum_good.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "a pure literal-domain for-loop accumulator must warrant its post-loop value: \
+         lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    let decl = single_warranted_decl(&out);
+    let dump = inv_json(decl).to_string();
+    assert!(
+        dump.contains("\"value\":6") && !dump.contains("temporally unstable"),
+        "the post-loop read must carry the folded final accumulator value: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(decl), "for_accum_good") {
+        assert!(sat, "literal loop sum 1+2+3 == 6 must be z3-SAT");
+    }
+}
+
+#[test]
+fn literal_for_loop_scalar_accumulator_bad_twin_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_for_accum_bad() {
+            let mut s = 0;
+            for x in [1, 2, 3] {
+                s += x;
+            }
+            assert_eq!(s, 7);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/loop/for_accum_bad.rs");
+    let decl = single_warranted_decl(&out);
+    let dump = inv_json(decl).to_string();
+    assert!(
+        dump.contains("\"value\":6") && dump.contains("\"value\":7"),
+        "the bad twin must carry the real folded 6 against the wrong 7: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(decl), "for_accum_bad") {
+        assert!(!sat, "literal loop sum 1+2+3 == 7 must be z3-UNSAT");
+    }
+}
+
+#[test]
+fn literal_bound_range_for_loop_scalar_accumulator_bad_twin_is_unsat() {
+    let src = r#"
+        #[test]
+        fn t_for_range_accum_bad() {
+            let n = 4;
+            let mut s = 0;
+            for i in 0..n {
+                s += i;
+            }
+            assert_eq!(s, 7);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/loop/for_range_accum_bad.rs");
+    let decl = single_warranted_decl(&out);
+    let dump = inv_json(decl).to_string();
+    assert!(
+        dump.contains("\"value\":6") && dump.contains("\"value\":7"),
+        "the literal-bound range twin must carry the real folded 6 against wrong 7: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(decl), "for_range_accum_bad") {
+        assert!(
+            !sat,
+            "literal-bound range loop sum 0+1+2+3 == 7 must be z3-UNSAT"
+        );
+    }
+}
+
+#[test]
+fn runtime_bound_for_loop_accumulator_still_refuses() {
+    let src = r#"
+        #[test]
+        fn t_for_accum_runtime(n: i32) {
+            let mut s = 0;
+            for x in 0..n {
+                s += x;
+            }
+            assert_eq!(s, 6);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/loop/for_accum_runtime.rs");
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("temporally unstable post-loop read")),
+        "runtime-bounded loop accumulator must remain refused, never fabricated: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn literal_loop_then_runtime_loop_same_accumulator_still_refuses() {
+    let src = r#"
+        #[test]
+        fn t_for_accum_mixed(n: i32) {
+            let mut s = 0;
+            for x in [1, 2, 3] {
+                s += x;
+            }
+            for x in 0..n {
+                s += x;
+            }
+            assert_eq!(s, 6);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/loop/for_accum_mixed.rs");
+    assert!(
+        out.assertions_lifted == 0
+            && out
+                .skip_reasons
+                .iter()
+                .any(|r| r.contains("temporally unstable") || r.contains("ambiguous temporal")),
+        "a later runtime-bounded loop over the same accumulator must refuse, never reuse \
+         the literal loop's stale value: lifted={} skips={:?}",
+        out.assertions_lifted,
+        out.skip_reasons
+    );
+}
+
 // GATE: a counter used ONLY inside the loop (the `#2300` reference-pattern unroll
 // substitutes `expected[i]` per step) must NOT be over-refused -- `i` is never read after
 // the loop, so it is not flagged and the loop unrolls and discharges.

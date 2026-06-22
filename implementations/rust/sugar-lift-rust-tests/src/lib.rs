@@ -11593,6 +11593,14 @@ fn temporal_plan_for_stmts(stmts: &[Stmt], inherited_stateful: &BTreeSet<String>
     // the closure-capture + broader loop-body-mutated false-refutation classes. Refuse-only,
     // no new warrant.
     collect_loop_body_mutated(stmts, &mut_locals, &mut temporally_unstable);
+    let replayed_for_loop_locals = collect_replayable_for_loop_accumulators(stmts, &mut_locals);
+    if !replayed_for_loop_locals.is_empty() {
+        let mut irreplayable_loop_mutated = BTreeSet::<String>::new();
+        collect_irreplayable_loop_body_mutated(stmts, &mut_locals, &mut irreplayable_loop_mutated);
+        temporally_unstable.retain(|name| {
+            !replayed_for_loop_locals.contains(name) || irreplayable_loop_mutated.contains(name)
+        });
+    }
     // Consumed-iterator scan (#2348): mut-iterators advanced in a loop-consuming context →
     // their `.len()`/`.count()` size-accessors refuse the stale pre-consumption length.
     // Independent of `temporally_unstable`; refusal fires at the len/iter_terminal recognizers.
@@ -11717,6 +11725,263 @@ fn collect_alias_deref_mutated(
     for stmt in stmts {
         syn::visit::Visit::visit_stmt(&mut v, stmt);
     }
+}
+
+fn collect_replayable_for_loop_accumulators(
+    stmts: &[Stmt],
+    mut_locals: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    fn scan_seq(stmts: &[Stmt], mut_locals: &BTreeSet<String>, out: &mut BTreeSet<String>) {
+        let mut env = BTreeMap::<String, Expr>::new();
+        for stmt in stmts {
+            match stmt {
+                Stmt::Local(local) => {
+                    let Some(name) = let_simple_binding(&local.pat) else {
+                        continue;
+                    };
+                    let Some(init) = local.init.as_ref().filter(|init| init.diverge.is_none())
+                    else {
+                        env.remove(&name);
+                        continue;
+                    };
+                    if temporal_loop_static_value(&init.expr, &env).is_some()
+                        || temporal_loop_static_domain_values(&init.expr, &env).is_some()
+                    {
+                        env.insert(name, (*init.expr).clone());
+                    } else {
+                        env.remove(&name);
+                    }
+                }
+                Stmt::Expr(Expr::ForLoop(for_loop), _) => {
+                    if temporal_loop_static_domain_values(&for_loop.expr, &env).is_some() {
+                        out.extend(temporal_loop_body_accumulators(for_loop, mut_locals));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    struct Walk<'a> {
+        mut_locals: &'a BTreeSet<String>,
+        out: &'a mut BTreeSet<String>,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Walk<'_> {
+        fn visit_block(&mut self, block: &'ast syn::Block) {
+            scan_seq(&block.stmts, self.mut_locals, self.out);
+            syn::visit::visit_block(self, block);
+        }
+    }
+
+    let mut out = BTreeSet::new();
+    scan_seq(stmts, mut_locals, &mut out);
+    let mut walk = Walk {
+        mut_locals,
+        out: &mut out,
+    };
+    for stmt in stmts {
+        syn::visit::Visit::visit_stmt(&mut walk, stmt);
+    }
+    out
+}
+
+fn collect_irreplayable_loop_body_mutated(
+    stmts: &[Stmt],
+    mut_locals: &BTreeSet<String>,
+    out: &mut BTreeSet<String>,
+) {
+    let mut env = BTreeMap::<String, Expr>::new();
+    for stmt in stmts {
+        match stmt {
+            Stmt::Local(local) => {
+                let Some(name) = let_simple_binding(&local.pat) else {
+                    continue;
+                };
+                let Some(init) = local.init.as_ref().filter(|init| init.diverge.is_none()) else {
+                    env.remove(&name);
+                    continue;
+                };
+                if temporal_loop_static_value(&init.expr, &env).is_some()
+                    || temporal_loop_static_domain_values(&init.expr, &env).is_some()
+                {
+                    env.insert(name, (*init.expr).clone());
+                } else {
+                    env.remove(&name);
+                }
+            }
+            Stmt::Expr(Expr::ForLoop(for_loop), _) => {
+                let replayable = temporal_loop_static_domain_values(&for_loop.expr, &env).is_some()
+                    && !temporal_loop_body_accumulators(for_loop, mut_locals).is_empty();
+                if !replayable {
+                    collect_loop_body_mutated(std::slice::from_ref(stmt), mut_locals, out);
+                }
+            }
+            Stmt::Expr(Expr::Block(block), _) => {
+                collect_irreplayable_loop_body_mutated(&block.block.stmts, mut_locals, out);
+            }
+            _ => collect_loop_body_mutated(std::slice::from_ref(stmt), mut_locals, out),
+        }
+    }
+}
+
+fn temporal_loop_body_accumulators(
+    for_loop: &syn::ExprForLoop,
+    mut_locals: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let Some(loop_var) = temporal_loop_var_name(for_loop) else {
+        return BTreeSet::new();
+    };
+    let mut out = BTreeSet::new();
+    for stmt in &for_loop.body.stmts {
+        let Some((target, rhs)) = temporal_loop_assignment_parts(stmt) else {
+            return BTreeSet::new();
+        };
+        if !mut_locals.contains(&target) || !temporal_loop_pure_value_expr(rhs, &loop_var, &target)
+        {
+            return BTreeSet::new();
+        }
+        out.insert(target);
+    }
+    out
+}
+
+fn temporal_loop_var_name(for_loop: &syn::ExprForLoop) -> Option<String> {
+    fn ident(pat: &Pat) -> Option<String> {
+        match pat {
+            Pat::Ident(id) if id.subpat.is_none() => Some(id.ident.to_string()),
+            Pat::Reference(r) => ident(&r.pat),
+            Pat::Paren(p) => ident(&p.pat),
+            Pat::Type(t) => ident(&t.pat),
+            _ => None,
+        }
+    }
+    ident(&for_loop.pat)
+}
+
+fn temporal_loop_assignment_parts(stmt: &Stmt) -> Option<(String, &Expr)> {
+    match stmt {
+        Stmt::Expr(Expr::Binary(binary), _)
+            if matches!(
+                binary.op,
+                BinOp::AddAssign(_) | BinOp::SubAssign(_) | BinOp::MulAssign(_)
+            ) =>
+        {
+            Some((simple_path_name(&binary.left)?, binary.right.as_ref()))
+        }
+        Stmt::Expr(Expr::Assign(assign), _) => {
+            Some((simple_path_name(&assign.left)?, assign.right.as_ref()))
+        }
+        _ => None,
+    }
+}
+
+fn temporal_loop_pure_value_expr(expr: &Expr, loop_var: &str, target: &str) -> bool {
+    match strip_refs_groups(expr) {
+        Expr::Lit(lit) => matches!(lit.lit, Lit::Int(_) | Lit::Byte(_)),
+        Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Neg(_)) => {
+            temporal_loop_pure_value_expr(&unary.expr, loop_var, target)
+        }
+        Expr::Binary(binary)
+            if matches!(
+                binary.op,
+                BinOp::Add(_) | BinOp::Sub(_) | BinOp::Mul(_) | BinOp::Div(_) | BinOp::Rem(_)
+            ) =>
+        {
+            temporal_loop_pure_value_expr(&binary.left, loop_var, target)
+                && temporal_loop_pure_value_expr(&binary.right, loop_var, target)
+        }
+        Expr::Path(_) => {
+            simple_path_name(expr).is_some_and(|name| name == loop_var || name == target)
+        }
+        Expr::Cast(cast) => temporal_loop_pure_value_expr(&cast.expr, loop_var, target),
+        _ => false,
+    }
+}
+
+fn temporal_loop_static_domain_values(
+    expr: &Expr,
+    env: &BTreeMap<String, Expr>,
+) -> Option<Vec<Expr>> {
+    match strip_refs_groups(expr) {
+        Expr::Path(_) => {
+            let name = simple_path_name(expr)?;
+            temporal_loop_static_domain_values(env.get(&name)?, env)
+        }
+        Expr::Array(array) => {
+            let mut values = Vec::new();
+            for elem in &array.elems {
+                let value = temporal_loop_static_value(elem, env)?;
+                values.push(temporal_loop_int_expr(value)?);
+            }
+            Some(values)
+        }
+        Expr::Repeat(repeat) => {
+            let value = temporal_loop_static_value(&repeat.expr, env)?;
+            let len = usize::try_from(temporal_loop_static_value(&repeat.len, env)?).ok()?;
+            Some(vec![temporal_loop_int_expr(value)?; len])
+        }
+        Expr::Range(range) => {
+            let start = range
+                .start
+                .as_deref()
+                .map(|start| temporal_loop_static_value(start, env))
+                .unwrap_or(Some(0))?;
+            let end = temporal_loop_static_value(range.end.as_ref()?, env)?;
+            temporal_loop_range_values(
+                start,
+                end,
+                matches!(range.limits, syn::RangeLimits::Closed(_)),
+            )
+        }
+        _ => None,
+    }
+}
+
+fn temporal_loop_static_value(expr: &Expr, env: &BTreeMap<String, Expr>) -> Option<i128> {
+    match strip_refs_groups(expr) {
+        Expr::Lit(lit) => match &lit.lit {
+            Lit::Int(i) => parse_int_lit(i).ok(),
+            Lit::Byte(b) => Some(i128::from(b.value())),
+            _ => None,
+        },
+        Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Neg(_)) => {
+            temporal_loop_static_value(&unary.expr, env)?.checked_neg()
+        }
+        Expr::Binary(binary) => {
+            let left = temporal_loop_static_value(&binary.left, env)?;
+            let right = temporal_loop_static_value(&binary.right, env)?;
+            match binary.op {
+                BinOp::Add(_) => left.checked_add(right),
+                BinOp::Sub(_) => left.checked_sub(right),
+                BinOp::Mul(_) => left.checked_mul(right),
+                BinOp::Div(_) => (right != 0).then(|| left.checked_div(right)).flatten(),
+                BinOp::Rem(_) => (right != 0).then(|| left.checked_rem(right)).flatten(),
+                _ => None,
+            }
+        }
+        Expr::Path(_) => {
+            let name = simple_path_name(expr)?;
+            temporal_loop_static_value(env.get(&name)?, env)
+        }
+        Expr::Cast(cast) => temporal_loop_static_value(&cast.expr, env),
+        _ => None,
+    }
+}
+
+fn temporal_loop_range_values(start: i128, end: i128, inclusive: bool) -> Option<Vec<Expr>> {
+    let last = if inclusive { end.checked_add(1)? } else { end };
+    if last < start {
+        return None;
+    }
+    let len = usize::try_from(last.checked_sub(start)?).ok()?;
+    if len > SUGAR_SEQ_CAP as usize {
+        return None;
+    }
+    (start..last).map(temporal_loop_int_expr).collect()
+}
+
+fn temporal_loop_int_expr(value: i128) -> Option<Expr> {
+    syn::parse_str::<Expr>(&value.to_string()).ok()
 }
 
 /// THE NO-FALSE-REFUTATION GATE for the FROZEN LOOP COUNTER class (#2342 sibling). A
@@ -12707,12 +12972,15 @@ fn collect_mut_pat_idents(pat: &Pat, out: &mut BTreeSet<String>) {
 
 fn advance_temporal_scope_for_stmt(stmt: &Stmt, scope: &mut TemporalScope) {
     scope.dormant_mut_ref.advance_stmt(stmt);
+    let replayed_for_loop_locals = apply_replayable_for_loop_temporal_rewrite(stmt, scope);
     scope.apply_temporal_rewrite_statement(stmt);
     for name in deterministic_definition_names(stmt) {
         scope.define_local(&name);
     }
     for name in ambiguous_boundary_names_in_stmt(stmt) {
-        scope.mark_ambiguous(&name);
+        if !replayed_for_loop_locals.contains(&name) {
+            scope.mark_ambiguous(&name);
+        }
     }
     // Interior-mutable bindings advance their `t` at EVERY statement: the value
     // may change through `&self` (a `set`/`store`, or the drop side-effects of
@@ -12726,6 +12994,136 @@ fn advance_temporal_scope_for_stmt(stmt: &Stmt, scope: &mut TemporalScope) {
     // starts fresh (cross-statement distinctness is already carried by the version
     // bump above).
     scope.consuming_occurrence.borrow_mut().clear();
+}
+
+fn apply_replayable_for_loop_temporal_rewrite(
+    stmt: &Stmt,
+    scope: &mut TemporalScope,
+) -> BTreeSet<String> {
+    let Stmt::Expr(Expr::ForLoop(for_loop), _) = stmt else {
+        return BTreeSet::new();
+    };
+    let Some(loop_var) = temporal_loop_var_name(for_loop) else {
+        return BTreeSet::new();
+    };
+    let mut scratch = scope.temporal_rewrite.borrow().clone();
+    let Some(values) = temporal_loop_rewrite_domain_values(&for_loop.expr, &scratch) else {
+        return BTreeSet::new();
+    };
+    if values.is_empty() || values.len() > SUGAR_SEQ_CAP as usize {
+        return BTreeSet::new();
+    }
+    let mut targets = BTreeSet::new();
+    for value in values {
+        let mut bindings = ExprBindings::new();
+        bindings.insert(loop_var.clone(), value);
+        for body_stmt in &for_loop.body.stmts {
+            let Some((target, _)) = temporal_loop_assignment_parts(body_stmt) else {
+                return BTreeSet::new();
+            };
+            let Some(expr) = temporal_loop_assignment_expr(body_stmt) else {
+                return BTreeSet::new();
+            };
+            let substituted = substitute_expr(expr, &bindings);
+            if !scratch.apply(&substituted) {
+                return BTreeSet::new();
+            }
+            targets.insert(target);
+        }
+    }
+    if !targets.is_empty() {
+        *scope.temporal_rewrite.borrow_mut() = scratch;
+    }
+    targets
+}
+
+fn temporal_loop_assignment_expr(stmt: &Stmt) -> Option<&Expr> {
+    match stmt {
+        Stmt::Expr(expr @ Expr::Binary(binary), _)
+            if matches!(
+                binary.op,
+                BinOp::AddAssign(_) | BinOp::SubAssign(_) | BinOp::MulAssign(_)
+            ) =>
+        {
+            Some(expr)
+        }
+        Stmt::Expr(expr @ Expr::Assign(_), _) => Some(expr),
+        _ => None,
+    }
+}
+
+fn temporal_loop_rewrite_domain_values(
+    expr: &Expr,
+    state: &sugar::assign_op::TemporalRewriteState,
+) -> Option<Vec<Expr>> {
+    match strip_refs_groups(expr) {
+        Expr::Path(_) => {
+            let name = simple_path_name(expr)?;
+            temporal_loop_rewrite_domain_values(&state.expr_for(&name)?, state)
+        }
+        Expr::Array(array) => {
+            let mut values = Vec::new();
+            for elem in &array.elems {
+                values.push(temporal_loop_int_expr(temporal_loop_rewrite_value(
+                    elem, state,
+                )?)?);
+            }
+            Some(values)
+        }
+        Expr::Repeat(repeat) => {
+            let value = temporal_loop_int_expr(temporal_loop_rewrite_value(&repeat.expr, state)?)?;
+            let len = usize::try_from(temporal_loop_rewrite_value(&repeat.len, state)?).ok()?;
+            Some(vec![value; len])
+        }
+        Expr::Range(range) => {
+            let start = range
+                .start
+                .as_deref()
+                .map(|start| temporal_loop_rewrite_value(start, state))
+                .unwrap_or(Some(0))?;
+            let end = temporal_loop_rewrite_value(range.end.as_ref()?, state)?;
+            temporal_loop_range_values(
+                start,
+                end,
+                matches!(range.limits, syn::RangeLimits::Closed(_)),
+            )
+        }
+        _ => None,
+    }
+}
+
+fn temporal_loop_rewrite_value(
+    expr: &Expr,
+    state: &sugar::assign_op::TemporalRewriteState,
+) -> Option<i128> {
+    match strip_refs_groups(expr) {
+        Expr::Lit(lit) => match &lit.lit {
+            Lit::Int(i) => parse_int_lit(i).ok(),
+            Lit::Byte(b) => Some(i128::from(b.value())),
+            _ => None,
+        },
+        Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Neg(_)) => {
+            temporal_loop_rewrite_value(&unary.expr, state)?.checked_neg()
+        }
+        Expr::Binary(binary) => {
+            let left = temporal_loop_rewrite_value(&binary.left, state)?;
+            let right = temporal_loop_rewrite_value(&binary.right, state)?;
+            match binary.op {
+                BinOp::Add(_) => left.checked_add(right),
+                BinOp::Sub(_) => left.checked_sub(right),
+                BinOp::Mul(_) => left.checked_mul(right),
+                BinOp::Div(_) => (right != 0).then(|| left.checked_div(right)).flatten(),
+                BinOp::Rem(_) => (right != 0).then(|| left.checked_rem(right)).flatten(),
+                _ => None,
+            }
+        }
+        Expr::Path(_) => {
+            let name = simple_path_name(expr)?;
+            temporal_loop_rewrite_value(&state.expr_for(&name)?, state)
+        }
+        Expr::Cast(cast) => temporal_loop_rewrite_value(&cast.expr, state),
+        _ => None,
+    }
 }
 
 fn deterministic_definition_names(stmt: &Stmt) -> Vec<String> {
