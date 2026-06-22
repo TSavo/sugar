@@ -6,7 +6,7 @@
 // mapped value it cannot materialize back to an `Expr`. Lifted verbatim from the
 // `Adaptor::Map(closure)` arm of the former `apply_one_adaptor` match.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use quote::quote;
 use syn::{Expr, Pat, Type};
@@ -16,7 +16,7 @@ use crate::sugar::method_family;
 use crate::{
     closure_body_mutates_captured_runtime_state, const_eval_unary_closure,
     const_eval_unary_closure_with_u128_shift, strip_refs_groups, substitute_expr, Desugared,
-    DesugaredElem, Effect, ExprBindings, Outcome, Sugar, SugarCtx,
+    DesugaredElem, Effect, ExprBindings, Outcome, Sugar, SugarCtx, TemporalScope,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -77,6 +77,9 @@ impl Sugar for MapCallSugar {
         if let Some(outcome) = captured_mutation_refusal(&self.f) {
             return outcome;
         }
+        if let Some(outcome) = captured_runtime_read_refusal(&self.f, ctx) {
+            return outcome;
+        }
         Outcome::from_opt((|| {
             let inner = build_inner_sequence(&self.receiver, ctx)?;
             reduce_map(inner.as_ref(), &self.f, self.u128_shift_hint, ctx).map(Desugared::Seq)
@@ -96,6 +99,9 @@ impl Sugar for MapSugar {
         if let Some(outcome) = captured_mutation_refusal(&self.f) {
             return outcome;
         }
+        if let Some(outcome) = captured_runtime_read_refusal(&self.f, ctx) {
+            return outcome;
+        }
         Outcome::from_opt(
             reduce_map(self.inner.as_ref(), &self.f, self.u128_shift_hint, ctx).map(Desugared::Seq),
         )
@@ -111,6 +117,9 @@ pub(crate) struct MapTermSugar {
 impl Sugar for MapTermSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         if let Some(outcome) = captured_mutation_refusal(&self.f) {
+            return outcome;
+        }
+        if let Some(outcome) = captured_runtime_read_refusal(&self.f, ctx) {
             return outcome;
         }
         Outcome::from_opt((|| {
@@ -151,6 +160,120 @@ fn captured_mutation_refusal(f: &syn::ExprClosure) -> Option<Outcome> {
     }))
 }
 
+fn captured_runtime_read_refusal(f: &syn::ExprClosure, ctx: &SugarCtx) -> Option<Outcome> {
+    let names = runtime_capture_names(f, ctx.scope);
+    if names.is_empty() {
+        return None;
+    }
+    Some(Outcome::Hit(Effect::Unsupported {
+        reason: format!(
+            "iterator adaptor `.map(|..| ..)` over a LITERAL domain whose closure body READS \
+             runtime capture `{}` (bin-2: runtime data, not constructed from source literals); \
+             refused",
+            names.into_iter().collect::<Vec<_>>().join(",")
+        ),
+    }))
+}
+
+fn runtime_capture_names(f: &syn::ExprClosure, scope: &TemporalScope) -> BTreeSet<String> {
+    let mut params = BTreeSet::new();
+    for pat in &f.inputs {
+        collect_pat_idents(pat, &mut params);
+    }
+    let locals = closure_local_bindings(f);
+
+    struct Scan<'a> {
+        params: &'a BTreeSet<String>,
+        locals: &'a BTreeSet<String>,
+        scope: &'a TemporalScope,
+        out: BTreeSet<String>,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for Scan<'_> {
+        fn visit_expr_path(&mut self, path: &'ast syn::ExprPath) {
+            if let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) {
+                if !self.params.contains(&name)
+                    && !self.locals.contains(&name)
+                    && self.scope.stable_let_binding_for_term(&name).is_none()
+                    && self.scope.stable_term_binding_for_term(&name).is_none()
+                    && self.scope.const_expr_for_path(&path.path).is_none()
+                    && !self.scope.has_visible_fn(&name)
+                    && !matches!(name.as_str(), "Some" | "None" | "Ok" | "Err")
+                {
+                    self.out.insert(name);
+                    return;
+                }
+            }
+            syn::visit::visit_expr_path(self, path);
+        }
+
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            if !matches!(strip_refs_groups(&call.func), Expr::Path(_)) {
+                syn::visit::Visit::visit_expr(self, &call.func);
+            }
+            for arg in &call.args {
+                syn::visit::Visit::visit_expr(self, arg);
+            }
+        }
+
+        fn visit_expr_closure(&mut self, _closure: &'ast syn::ExprClosure) {
+            // A nested closure has its own capture boundary.
+        }
+    }
+
+    let mut scan = Scan {
+        params: &params,
+        locals: &locals,
+        scope,
+        out: BTreeSet::new(),
+    };
+    syn::visit::Visit::visit_expr(&mut scan, &f.body);
+    scan.out
+}
+
+fn collect_pat_idents(pat: &Pat, out: &mut BTreeSet<String>) {
+    match pat {
+        Pat::Ident(p) => {
+            out.insert(p.ident.to_string());
+            if let Some((_, subpat)) = &p.subpat {
+                collect_pat_idents(subpat, out);
+            }
+        }
+        Pat::Reference(r) => collect_pat_idents(&r.pat, out),
+        Pat::Paren(p) => collect_pat_idents(&p.pat, out),
+        Pat::Type(t) => collect_pat_idents(&t.pat, out),
+        Pat::Tuple(tuple) => {
+            for elem in &tuple.elems {
+                collect_pat_idents(elem, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn closure_local_bindings(f: &syn::ExprClosure) -> BTreeSet<String> {
+    struct Locals {
+        names: BTreeSet<String>,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for Locals {
+        fn visit_local(&mut self, local: &'ast syn::Local) {
+            collect_pat_idents(&local.pat, &mut self.names);
+            syn::visit::visit_local(self, local);
+        }
+
+        fn visit_expr_closure(&mut self, _closure: &'ast syn::ExprClosure) {
+            // Nested closure locals belong to that nested closure.
+        }
+    }
+
+    let mut locals = Locals {
+        names: BTreeSet::new(),
+    };
+    syn::visit::Visit::visit_expr(&mut locals, &f.body);
+    locals.names
+}
+
 fn reduce_map(
     inner: &dyn Sugar,
     f: &syn::ExprClosure,
@@ -172,7 +295,7 @@ fn reduce_map(
             });
             continue;
         }
-        let expr = rewrite_map_elem(f, &elem.expr)?;
+        let expr = rewrite_map_elem(f, &elem.expr, ctx)?;
         let value = crate::const_eval(&expr, &BTreeMap::new());
         out.push(DesugaredElem { expr, value });
     }
@@ -184,7 +307,7 @@ fn reduce_map(
     Some(out)
 }
 
-fn rewrite_map_elem(f: &syn::ExprClosure, elem: &Expr) -> Option<Expr> {
+fn rewrite_map_elem(f: &syn::ExprClosure, elem: &Expr, ctx: &SugarCtx) -> Option<Expr> {
     if f.inputs.len() != 1 {
         return None;
     }
@@ -197,7 +320,18 @@ fn rewrite_map_elem(f: &syn::ExprClosure, elem: &Expr) -> Option<Expr> {
         None if closure_param_ignores_arg(f.inputs.first()?) => {}
         None => return None,
     }
-    Some(substitute_expr(body, &bindings))
+    let expr = substitute_expr(body, &bindings);
+    Some(substitute_stable_captures(&expr, ctx))
+}
+
+fn substitute_stable_captures(expr: &Expr, ctx: &SugarCtx) -> Expr {
+    let mut bindings = ExprBindings::new();
+    for (name, _) in ctx.scope.let_bindings_iter() {
+        if let Some(init) = ctx.scope.stable_let_binding_for_term(name) {
+            bindings.insert(name.clone(), init.clone());
+        }
+    }
+    substitute_expr(expr, &bindings)
 }
 
 fn closure_value_body(f: &syn::ExprClosure) -> Option<&Expr> {
