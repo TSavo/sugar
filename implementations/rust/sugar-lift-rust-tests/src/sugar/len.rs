@@ -5,6 +5,8 @@
 // axiom over the source construction: the value is the concrete element count. Runtime
 // receivers decline to `MethodSugar`.
 
+use std::collections::BTreeMap;
+
 use sugar_ir_symbolic::num;
 use syn::Expr;
 use tracing::debug;
@@ -38,8 +40,9 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     }
     if has_composite(&call.receiver, fcx) {
         return Some(Box::new(LenSugar {
-            inner: Some(build_composite(&call.receiver, fcx)),
+            inner: Some((*call.receiver).clone()),
             len: None,
+            let_inits: capture_let_inits(fcx),
         }));
     }
     let len = method_family::literal_sequence_static_len_in_scope(
@@ -50,19 +53,45 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     Some(Box::new(LenSugar {
         inner: None,
         len: Some(len),
+        let_inits: capture_let_inits(fcx),
     }))
 }
 
 struct LenSugar {
-    inner: Option<Box<dyn Sugar>>,
+    inner: Option<Expr>,
     len: Option<usize>,
+    let_inits: BTreeMap<String, Expr>,
+}
+
+fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
+    fcx.let_inits()
+        .iter()
+        .map(|(name, init)| (name.clone(), (**init).clone()))
+        .collect()
 }
 
 impl Sugar for LenSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         Outcome::from_opt((|| {
             let len = match &self.inner {
-                Some(inner) => inner.desugar(ctx).dug()?.into_seq()?.len(),
+                Some(inner) => {
+                    let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
+                    let let_inits: BTreeMap<String, &Expr> = stable
+                        .iter()
+                        .map(|(name, init)| (name.clone(), init))
+                        .chain(
+                            self.let_inits
+                                .iter()
+                                .map(|(name, init)| (name.clone(), init)),
+                        )
+                        .collect();
+                    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+                    build_composite(inner, &fcx)
+                        .desugar(ctx)
+                        .dug()?
+                        .into_seq()?
+                        .len()
+                }
                 None => self.len?,
             };
             debug!(

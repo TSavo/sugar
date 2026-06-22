@@ -37,26 +37,29 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     if !method_family::resolves_literal_sequence(&call.receiver, fcx.let_inits()) {
         return None;
     }
-    let Some(plan) = CollectPlan::from_receiver(&call.receiver, fcx) else {
+    let Some(plan) = CollectPlan::from_receiver(&call.receiver) else {
         return None;
     };
-    let fallback = method::recognize(expr, fcx)?;
     debug!(
         target: "sugar_lift_rust_tests::sugar::collect",
         receiver = %crate::token_key(&call.receiver),
         "recognized literal monadic collect"
     );
-    Some(Box::new(CollectSugar { plan, fallback }))
+    Some(Box::new(CollectSugar {
+        plan,
+        fallback: expr.clone(),
+        let_inits: capture_let_inits(fcx),
+    }))
 }
 
 struct CollectSugar {
     plan: CollectPlan,
-    fallback: Box<dyn Sugar>,
+    fallback: Expr,
+    let_inits: BTreeMap<String, Expr>,
 }
 
 enum CollectPlan {
     MapMonadic {
-        base: Box<dyn Sugar>,
         base_expr: Expr,
         closure: ExprClosure,
         kind: CollectKind,
@@ -75,7 +78,7 @@ enum MonadicValue {
 }
 
 impl CollectPlan {
-    fn from_receiver(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Self> {
+    fn from_receiver(expr: &Expr) -> Option<Self> {
         let Expr::MethodCall(call) = strip_refs_groups(expr) else {
             return None;
         };
@@ -87,21 +90,35 @@ impl CollectPlan {
         };
         let kind = monadic_kind_of_closure(closure)?;
         Some(Self::MapMonadic {
-            base: build_composite(&call.receiver, fcx),
             base_expr: (*call.receiver).clone(),
             closure: closure.clone(),
             kind,
         })
     }
 
-    fn reduce(&self, ctx: &SugarCtx) -> Option<Rc<Term>> {
+    fn reduce(
+        &self,
+        ctx: &SugarCtx,
+        captured_let_inits: &BTreeMap<String, Expr>,
+    ) -> Option<Rc<Term>> {
         match self {
             CollectPlan::MapMonadic {
-                base,
                 base_expr,
                 closure,
                 kind,
             } => {
+                let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
+                let let_inits: BTreeMap<String, &Expr> = stable
+                    .iter()
+                    .map(|(name, init)| (name.clone(), init))
+                    .chain(
+                        captured_let_inits
+                            .iter()
+                            .map(|(name, init)| (name.clone(), init)),
+                    )
+                    .collect();
+                let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+                let base = build_composite(base_expr, &fcx);
                 let seq = match base.desugar(ctx) {
                     Outcome::Dug(d) => d.into_seq()?,
                     Outcome::Hit(_) => empty_literal_sequence(base_expr, ctx)?,
@@ -149,6 +166,13 @@ impl CollectPlan {
     }
 }
 
+fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
+    fcx.let_inits()
+        .iter()
+        .map(|(name, init)| (name.clone(), (**init).clone()))
+        .collect()
+}
+
 fn empty_literal_sequence(expr: &Expr, ctx: &SugarCtx) -> Option<Vec<DesugaredElem>> {
     match strip_refs_groups(expr) {
         Expr::Array(arr) if arr.elems.is_empty() => Some(Vec::new()),
@@ -172,9 +196,25 @@ fn empty_literal_sequence(expr: &Expr, ctx: &SugarCtx) -> Option<Vec<DesugaredEl
 
 impl Sugar for CollectSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        match self.plan.reduce(ctx) {
+        match self.plan.reduce(ctx, &self.let_inits) {
             Some(term) => Outcome::Dug(Desugared::Term(term)),
-            None => self.fallback.desugar(ctx),
+            None => {
+                let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
+                let let_inits: BTreeMap<String, &Expr> = stable
+                    .iter()
+                    .map(|(name, init)| (name.clone(), init))
+                    .chain(
+                        self.let_inits
+                            .iter()
+                            .map(|(name, init)| (name.clone(), init)),
+                    )
+                    .collect();
+                let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+                match method::recognize(&self.fallback, &fcx) {
+                    Some(fallback) => fallback.desugar(ctx),
+                    None => Outcome::from_opt(None),
+                }
+            }
         }
     }
 }

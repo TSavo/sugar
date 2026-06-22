@@ -29,20 +29,41 @@ fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
         return None;
     }
     Some(Box::new(KMergeSugar {
-        inner: build_composite(&call.receiver, fcx),
+        inner: (*call.receiver).clone(),
+        let_inits: capture_let_inits(fcx),
     }))
 }
 
 struct KMergeSugar {
-    inner: Box<dyn Sugar>,
+    inner: Expr,
+    let_inits: BTreeMap<String, Expr>,
+}
+
+fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
+    fcx.let_inits()
+        .iter()
+        .map(|(name, init)| (name.clone(), (**init).clone()))
+        .collect()
 }
 
 impl Sugar for KMergeSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         Outcome::from_opt((|| {
-            let outer = self.inner.desugar(ctx).dug()?.into_seq()?;
-            let let_inits = BTreeMap::new();
+            let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
+            let let_inits: BTreeMap<String, &Expr> = stable
+                .iter()
+                .map(|(name, init)| (name.clone(), init))
+                .chain(
+                    self.let_inits
+                        .iter()
+                        .map(|(name, init)| (name.clone(), init)),
+                )
+                .collect();
             let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+            let outer = build_composite(&self.inner, &fcx)
+                .desugar(ctx)
+                .dug()?
+                .into_seq()?;
             let mut out = Vec::new();
             for elem in outer {
                 let sub = match build_composite(&elem.expr, &fcx).desugar(ctx) {

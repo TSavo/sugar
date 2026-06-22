@@ -66,13 +66,14 @@ use sugar_ir_symbolic::{make_var, num, ConstValue, Sort, Term};
 use syn::{Expr, Stmt};
 use tracing::debug;
 
-use crate::sugar::factory::{build_composite, has_composite, SugarBuildCtx};
+use crate::sugar::factory::{build_composite, build_term, has_composite, SugarBuildCtx};
 use crate::sugar::method;
+use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::{
     closure_single_param_ident, const_eval_unary_closure, const_fold_acc_update,
-    const_fold_int_term, parse_int_lit, simple_path_name, strip_refs_groups, ConstVal, Desugared,
-    Outcome, Sugar, SugarCtx,
+    const_fold_int_term, const_int_acc_init, parse_int_lit, simple_path_name, strip_refs_groups,
+    ConstVal, Desugared, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -117,7 +118,7 @@ enum Terminal {
     /// `.advance_by(n)` / `.advance_back_by(n)` -- a direct terminal over an immutable
     /// literal-domain iterator. The returned `Result<(), NonZero<usize>>` is structural:
     /// `Ok(())` when the iterator can advance fully, else `Err(remaining)`.
-    AdvanceBy(Box<dyn Sugar>),
+    AdvanceBy(Expr),
     /// `.reduce(|acc, x| expr)` -- fold with element[0] as the initial accumulator,
     /// returning `Option<T>`: `Some(result)` for a non-empty source, `None` for empty.
     /// The closure has the SAME type for both parameters (unlike `.fold(init, |acc, x|
@@ -146,7 +147,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     let Expr::MethodCall(call) = expr else {
         return None;
     };
-    let terminal = recognize_terminal(call, fcx)?;
+    let terminal = recognize_terminal(call)?;
     // Consumed-iterator gate: ANY terminal applied to a mut-local whose iterator
     // position was advanced by a prior consuming call declines to lift. The
     // static-literal resolver computes from the PRE-consumption position, producing a
@@ -170,7 +171,10 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
             // sides, e.g. `assert_eq!(it.count(), it.count())`) discharge by z3
             // EUF reflexivity, recovering the −11 from #2352. Wrong-literal pairs
             // stay UNDECIDED (z3 cannot refute an opaque symbol). (#19 fix-forward)
-            return method::recognize(expr, fcx);
+            return Some(Box::new(IterTerminalFallbackSugar {
+                expr: expr.clone(),
+                let_inits: capture_let_inits(fcx),
+            }));
         }
     }
     // Try scan as inner receiver FIRST: `.scan(init, closure)` cannot go through
@@ -178,22 +182,20 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     // as a pre-pass that peels scan's OWN receiver via `build_literal_sequence_composite`
     // and threads the state inline. Falls through to the standard peel path if the
     // receiver is not a recognized scan call.
-    let inner = crate::sugar::scan::try_build_scan_inner(&call.receiver, fcx).or_else(|| {
-        has_composite(&call.receiver, fcx).then(|| build_composite(&call.receiver, fcx))
-    })?;
-    // The opaque `method:` fallback -- the EXACT node `method::recognize`
-    // builds for this same expr (built DIRECTLY, not via `build_term`, which would re-enter
-    // this recognizer and loop). Emitted verbatim if the literal desugar does not cleanly
-    // ground, so this node never refuses a form baseline lifted opaquely.
-    let fallback = method::recognize(expr, fcx)?;
+    let has_inner =
+        recognizes_scan_inner(&call.receiver, fcx) || has_composite(&call.receiver, fcx);
+    if !has_inner {
+        return None;
+    }
     Some(Box::new(IterTerminalSugar {
         terminal,
-        inner,
-        fallback,
+        inner: (*call.receiver).clone(),
+        fallback: expr.clone(),
+        let_inits: capture_let_inits(fcx),
     }))
 }
 
-fn recognize_terminal(call: &syn::ExprMethodCall, fcx: &SugarBuildCtx) -> Option<Terminal> {
+fn recognize_terminal(call: &syn::ExprMethodCall) -> Option<Terminal> {
     Some(match call.method.to_string().as_str() {
         // Scalar reductions, extremum terminals, and the nullary positional terminals
         // take no args.
@@ -243,7 +245,7 @@ fn recognize_terminal(call: &syn::ExprMethodCall, fcx: &SugarBuildCtx) -> Option
         // recurses through the factory, so `v.len()`, `100 - v.len()`, consts, casts, etc.
         // compose normally.
         "advance_by" | "advance_back_by" if call.args.len() == 1 => {
-            Terminal::AdvanceBy(crate::sugar::factory::build_term(&call.args[0], fcx))
+            Terminal::AdvanceBy(call.args[0].clone())
         }
         // `.reduce(|acc, x| expr)` -- fold from element[0], returns `Option<T>`.
         // Requires a single closure arg; a non-closure (fn path, partially-applied)
@@ -256,6 +258,31 @@ fn recognize_terminal(call: &syn::ExprMethodCall, fcx: &SugarBuildCtx) -> Option
         }
         _ => return None,
     })
+}
+
+fn recognizes_scan_inner(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
+    let Expr::MethodCall(call) = strip_refs_groups(expr) else {
+        return false;
+    };
+    if call.method != "scan" || call.args.len() != 2 {
+        return false;
+    }
+    if !method_family::resolves_literal_sequence(&call.receiver, fcx.let_inits())
+        && !has_composite(&call.receiver, fcx)
+    {
+        return false;
+    }
+    if const_int_acc_init(&call.args[0], fcx.let_inits()).is_none() {
+        return false;
+    }
+    matches!(strip_refs_groups(&call.args[1]), Expr::Closure(closure) if closure.inputs.len() == 2)
+}
+
+fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
+    fcx.let_inits()
+        .iter()
+        .map(|(name, init)| (name.clone(), (**init).clone()))
+        .collect()
 }
 
 fn unit_term() -> Rc<Term> {
@@ -274,8 +301,34 @@ fn term_as_usize(term: &Rc<Term>) -> Option<usize> {
 /// domain), it emits the fallback (the baseline opaque term) rather than refusing.
 struct IterTerminalSugar {
     terminal: Terminal,
-    inner: Box<dyn Sugar>,
-    fallback: Box<dyn Sugar>,
+    inner: Expr,
+    fallback: Expr,
+    let_inits: BTreeMap<String, Expr>,
+}
+
+struct IterTerminalFallbackSugar {
+    expr: Expr,
+    let_inits: BTreeMap<String, Expr>,
+}
+
+impl Sugar for IterTerminalFallbackSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
+        let let_inits: BTreeMap<String, &Expr> = stable
+            .iter()
+            .map(|(name, init)| (name.clone(), init))
+            .chain(
+                self.let_inits
+                    .iter()
+                    .map(|(name, init)| (name.clone(), init)),
+            )
+            .collect();
+        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        match method::recognize(&self.expr, &fcx) {
+            Some(fallback) => fallback.desugar(ctx),
+            None => Outcome::from_opt(None),
+        }
+    }
 }
 
 impl IterTerminalSugar {
@@ -283,9 +336,22 @@ impl IterTerminalSugar {
     /// ground (the caller then emits the opaque fallback). Never a guessed value: every
     /// `Some` carries the EXACT reduction.
     fn reduce(&self, ctx: &SugarCtx) -> Option<Desugared> {
-        let seq = self.inner.desugar(ctx).dug()?.into_seq()?;
+        let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
+        let let_inits: BTreeMap<String, &Expr> = stable
+            .iter()
+            .map(|(name, init)| (name.clone(), init))
+            .chain(
+                self.let_inits
+                    .iter()
+                    .map(|(name, init)| (name.clone(), init)),
+            )
+            .collect();
+        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        let inner = crate::sugar::scan::try_build_scan_inner(&self.inner, &fcx)
+            .unwrap_or_else(|| build_composite(&self.inner, &fcx));
+        let seq = inner.desugar(ctx).dug()?.into_seq()?;
         if let Terminal::AdvanceBy(arg) = &self.terminal {
-            let n_term = arg.desugar(ctx).dug()?.into_term()?;
+            let n_term = build_term(arg, &fcx).desugar(ctx).dug()?.into_term()?;
             let n = term_as_usize(&n_term)?;
             let len = seq.len();
             debug!(
@@ -459,7 +525,23 @@ impl Sugar for IterTerminalSugar {
         // never reduces over a runtime domain (that domain was filtered out at build).
         match self.reduce(ctx) {
             Some(d) => Outcome::Dug(d),
-            None => self.fallback.desugar(ctx),
+            None => {
+                let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
+                let let_inits: BTreeMap<String, &Expr> = stable
+                    .iter()
+                    .map(|(name, init)| (name.clone(), init))
+                    .chain(
+                        self.let_inits
+                            .iter()
+                            .map(|(name, init)| (name.clone(), init)),
+                    )
+                    .collect();
+                let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+                match method::recognize(&self.fallback, &fcx) {
+                    Some(fallback) => fallback.desugar(ctx),
+                    None => Outcome::from_opt(None),
+                }
+            }
         }
     }
 }
