@@ -37,6 +37,7 @@ pub mod sugar {
     pub mod binop;
     pub mod block_term;
     pub mod bool_bitwise;
+    pub mod bool_method;
     pub mod bound;
     pub mod bound_path;
     pub mod call;
