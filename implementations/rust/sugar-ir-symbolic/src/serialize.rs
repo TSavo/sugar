@@ -26,6 +26,26 @@ use crate::{ConstValue, ContractDecl, EvidenceTerm, Formula, Sort, Term};
 
 // -------- to canonicalizer Value (used by hashing path) --------------
 
+fn int_fits_json_number(n: i128) -> bool {
+    i64::try_from(n).is_ok() || u64::try_from(n).is_ok()
+}
+
+fn int_to_value(n: i128) -> Arc<Value> {
+    if int_fits_json_number(n) {
+        Value::integer(n)
+    } else {
+        Value::string(n.to_string())
+    }
+}
+
+fn write_int(out: &mut String, n: i128) {
+    if int_fits_json_number(n) {
+        out.push_str(&n.to_string());
+    } else {
+        write_string(out, &n.to_string());
+    }
+}
+
 pub fn evidence_to_value(e: &EvidenceTerm) -> Arc<Value> {
     Value::object([
         ("kind", Value::string("evidence")),
@@ -60,7 +80,7 @@ pub fn term_to_value(t: &Term) -> Arc<Value> {
         ]),
         Term::Const { value, sort } => {
             let value_v = match value {
-                ConstValue::Int(n) => Value::integer(*n),
+                ConstValue::Int(n) => int_to_value(*n),
                 ConstValue::Real(n) => Value::string(n.clone()),
                 ConstValue::String(s) => Value::string(s.clone()),
                 ConstValue::Bool(b) => Value::boolean(*b),
@@ -254,7 +274,7 @@ fn write_term(out: &mut String, t: &Term) {
         Term::Const { value, sort } => {
             out.push_str(r#"{"kind":"const","value":"#);
             match value {
-                ConstValue::Int(n) => out.push_str(&n.to_string()),
+                ConstValue::Int(n) => write_int(out, *n),
                 ConstValue::Real(n) => write_string(out, n),
                 ConstValue::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
                 ConstValue::String(s) => write_string(out, s),

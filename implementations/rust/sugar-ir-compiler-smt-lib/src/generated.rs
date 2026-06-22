@@ -26,6 +26,10 @@ use sugar_ir_types::*;
 use crate::{COMPILER_NAME, COMPILER_VERSION, DIALECT};
 
 pub fn emit_term(term: &Term) -> String {
+    emit_term_with_expected(term, None)
+}
+
+fn emit_term_with_expected(term: &Term, expected_ret: Option<&str>) -> String {
     match term {
         // Quote Var names the same way ctor names are quoted: a synthetic
         // name like `#field:code` or `#pat:<hash>` (introduced by the
@@ -48,12 +52,21 @@ pub fn emit_term(term: &Term) -> String {
                 return format!("(str.len {})", emit_string_term(&args[0]));
             }
             if args.is_empty() {
-                return smt_quote(name);
+                if name == OPT_NONE && expected_ret == Some("SugarOptionOption") {
+                    return smt_quote(OPT_NONE_OPTION);
+                }
+                return smt_ctor_head(name, args.len());
             };
-            let args_str = args.iter();
-            let args_str = args_str.map(emit_term);
-            let args_str: Vec<String> = args_str.collect();
-            format!("({} {})", smt_quote(name), args_str.join(" "))
+            let arg_sorts = ctor_arg_sorts(name, args);
+            let head = monadic_ctor_head_for_signature(name, expected_ret, &arg_sorts)
+                .map(smt_quote)
+                .unwrap_or_else(|| smt_ctor_head_for_signature(name, args.len(), &arg_sorts));
+            let args_str: Vec<String> = args
+                .iter()
+                .zip(arg_sorts.iter())
+                .map(|(arg, sort)| emit_term_with_expected(arg, Some(sort)))
+                .collect();
+            format!("({} {})", head, args_str.join(" "))
         }
         Term::Lambda {
             param_name,
@@ -62,7 +75,7 @@ pub fn emit_term(term: &Term) -> String {
             ..
         } => {
             let sort_str = emit_sort(param_sort);
-            let body_str = emit_term(body);
+            let body_str = emit_term_with_expected(body, None);
             // Quote the binder name so a unique-renamed param like `e#0`
             // (the `#N` suffix the lifter's LiftCtx appends) is a legal
             // SMT symbol `|e#0|` -- and matches the quoted Var reference to
@@ -80,7 +93,7 @@ pub fn emit_term(term: &Term) -> String {
             let binding_strs = binding_strs
                 .map(|b| format!("({} {})", smt_quote(&b.name), emit_term(&b.bound_term)));
             let binding_strs: Vec<String> = binding_strs.collect();
-            let body_str = emit_term(body);
+            let body_str = emit_term_with_expected(body, expected_ret);
             format!("(let ({}) {})", binding_strs.join(" "), body_str)
         }
         Term::Ctor { name, args } => {
@@ -88,12 +101,21 @@ pub fn emit_term(term: &Term) -> String {
                 return format!("(str.len {})", emit_string_term(&args[0]));
             }
             if args.is_empty() {
-                return smt_quote(name);
+                if name == OPT_NONE && expected_ret == Some("SugarOptionOption") {
+                    return smt_quote(OPT_NONE_OPTION);
+                }
+                return smt_ctor_head(name, args.len());
             };
-            let args_str = args.iter();
-            let args_str = args_str.map(emit_term);
-            let args_str: Vec<String> = args_str.collect();
-            format!("({} {})", smt_quote(name), args_str.join(" "))
+            let arg_sorts = ctor_arg_sorts(name, args);
+            let head = monadic_ctor_head_for_signature(name, expected_ret, &arg_sorts)
+                .map(smt_quote)
+                .unwrap_or_else(|| smt_ctor_head_for_signature(name, args.len(), &arg_sorts));
+            let args_str: Vec<String> = args
+                .iter()
+                .zip(arg_sorts.iter())
+                .map(|(arg, sort)| emit_term_with_expected(arg, Some(sort)))
+                .collect();
+            format!("({} {})", head, args_str.join(" "))
         }
         Term::Lambda {
             param_name,
@@ -101,7 +123,7 @@ pub fn emit_term(term: &Term) -> String {
             body,
         } => {
             let sort_str = emit_sort(param_sort);
-            let body_str = emit_term(body);
+            let body_str = emit_term_with_expected(body, None);
             // Quote the binder name so a unique-renamed param like `e#0`
             // (the `#N` suffix the lifter's LiftCtx appends) is a legal
             // SMT symbol `|e#0|` -- and matches the quoted Var reference to
@@ -119,7 +141,7 @@ pub fn emit_term(term: &Term) -> String {
             let binding_strs = binding_strs
                 .map(|b| format!("({} {})", smt_quote(&b.name), emit_term(&b.bound_term)));
             let binding_strs: Vec<String> = binding_strs.collect();
-            let body_str = emit_term(body);
+            let body_str = emit_term_with_expected(body, expected_ret);
             format!("(let ({}) {})", binding_strs.join(" "), body_str)
         }
     }
@@ -250,8 +272,9 @@ pub fn emit_formula(formula: &Formula) -> String {
             if args.is_empty() {
                 return smt_name.to_string();
             };
+            let expected = expected_atomic_arg_sort(name, args);
             let args_str = args.iter();
-            let args_str = args_str.map(emit_term);
+            let args_str = args_str.map(|arg| emit_term_with_expected(arg, expected.as_deref()));
             let args_str: Vec<String> = args_str.collect();
             format!("({} {})", smt_name, args_str.join(" "))
         }
@@ -1269,10 +1292,13 @@ fn emit_const_value(value: &serde_json::Value, sort_name: &str) -> String {
     // decimal STRING (serde_json's default Number parse would lose precision to
     // f64). Emit it as the SMT-LIB integer NUMERAL it denotes -- NOT a
     // hash-named opaque symbol, which `encode_const` would do for any string.
-    // SMT-LIB has no negative integer literal, so a leading "-" renders as the
-    // unary-minus application `(- N)`. An in-range Int still arrives as a
-    // Number and falls through to `encode_const` unchanged (byte-identical).
-    if sort_name == "Int" {
+    // Fixed-width Rust integer sorts (`i128`, `u64`, ...) are normalized to SMT
+    // `Int` by `emit_sort_with_reason`, so their wide decimal-string values use
+    // this same numeric path. SMT-LIB has no negative integer literal, so a
+    // leading "-" renders as the unary-minus application `(- N)`. An in-range
+    // Int still arrives as a Number and falls through to `encode_const`
+    // unchanged (byte-identical).
+    if sort_name == "Int" || is_int_width_sort(sort_name) {
         if let Some(s) = value.as_str() {
             if s.parse::<i128>().is_ok() {
                 return match s.strip_prefix('-') {
@@ -1294,15 +1320,91 @@ fn emit_const_value(value: &serde_json::Value, sort_name: &str) -> String {
 // consistently at ctor applications and their declare-fun, so the symbol
 // matches. NOTE: mirror this in tools/generate-from-cddl.py on regeneration.
 fn smt_quote(name: &str) -> String {
+    if name == "_" {
+        return "|sugar:_|".to_string();
+    }
     let simple = !name.is_empty()
         && !name.chars().next().is_some_and(|c| c.is_ascii_digit())
+        && !name.contains(['\\', '|'])
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "~!@$%^&*_-+=<>.?/".contains(c));
     if simple {
         name.to_string()
     } else {
-        format!("|{}|", name)
+        let escaped = name.replace('\\', "\\\\").replace('|', "\\|");
+        format!("|{}|", escaped)
+    }
+}
+
+fn smt_ctor_head(name: &str, arity: usize) -> String {
+    if name.starts_with("closure:") && !name.contains("#arity") {
+        smt_quote(&format!("{name}#arity{arity}"))
+    } else {
+        smt_quote(name)
+    }
+}
+
+fn smt_ctor_head_for_signature(name: &str, arity: usize, arg_sorts: &[String]) -> String {
+    smt_quote(&ctor_decl_key_for_signature(name, arity, arg_sorts))
+}
+
+fn ctor_decl_key_for_signature(name: &str, arity: usize, arg_sorts: &[String]) -> String {
+    let mut key = if name.starts_with("closure:") {
+        format!("{name}#arity{arity}")
+    } else {
+        name.to_string()
+    };
+    if should_monomorphize_ctor_by_arg_sort(name) && arg_sorts.iter().any(|sort| sort != "Int") {
+        key.push_str("#args:");
+        key.push_str(
+            &arg_sorts
+                .iter()
+                .map(|sort| sort_name_fragment(sort))
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+    }
+    key
+}
+
+fn should_monomorphize_ctor_by_arg_sort(name: &str) -> bool {
+    matches!(name, "ref" | "deref")
+}
+
+fn sort_name_fragment(sort: &str) -> String {
+    sort.chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn ctor_arg_sorts(name: &str, args: &[Term]) -> Vec<String> {
+    args.iter()
+        .enumerate()
+        .map(|(idx, arg)| {
+            method_arg_sort(name, idx, arg)
+                .or_else(|| known_term_sort(arg))
+                .unwrap_or_else(|| "Int".to_string())
+        })
+        .collect()
+}
+
+fn monadic_ctor_head_for_signature(
+    name: &str,
+    expected_ret: Option<&str>,
+    arg_sorts: &[String],
+) -> Option<&'static str> {
+    match (name, arg_sorts) {
+        (OPT_SOME, [sort]) if sort == "SugarOption" => Some(OPT_SOME_OPTION),
+        (RES_OK, [sort]) if sort == "SugarOption" => Some(RES_OK_OPTION),
+        (RES_ERR, [_]) if expected_ret == Some("SugarResultOption") => Some(RES_ERR_OPTION),
+        _ => None,
     }
 }
 
@@ -1626,9 +1728,11 @@ fn term_has_real_const(term: &Term) -> bool {
 /// The ADT sort a monadic operand carries (`SugarOption` / `SugarResult`), or
 /// `None` for any non-monadic term. Used as the `=`-atom var-sort context.
 fn monadic_operand_sort(term: &Term) -> Option<&'static str> {
-    match term {
-        Term::Ctor { name, .. } if name == OPT_SOME || name == OPT_NONE => Some("SugarOption"),
-        Term::Ctor { name, .. } if name == RES_OK || name == RES_ERR => Some("SugarResult"),
+    match known_term_sort(term).as_deref() {
+        Some("SugarOption") => Some("SugarOption"),
+        Some("SugarResult") => Some("SugarResult"),
+        Some("SugarOptionOption") => Some("SugarOptionOption"),
+        Some("SugarResultOption") => Some("SugarResultOption"),
         _ => None,
     }
 }
@@ -1802,6 +1906,9 @@ fn known_term_sort(term: &Term) -> Option<String> {
             }
             Some(sort_name(sort))
         }
+        Term::Var { .. } if crate::literal_encoding::term_is_string_tainted(term) => {
+            Some("String".to_string())
+        }
         Term::Var { .. } => Some("Int".to_string()),
         Term::Ctor { name, .. } if name == "str.len" => Some("Int".to_string()),
         // A monadic Option/Result ctor IS its ADT sort. Returning it lets a `=`
@@ -1810,15 +1917,51 @@ fn known_term_sort(term: &Term) -> Option<String> {
         // the script stays well-sorted and the two sides meet structurally
         // (`SugarOption`/`SugarResult` -- not the default `Int`, which would be
         // ill-sorted against the ADT and z3-reject the script).
-        Term::Ctor { name, .. } if name == OPT_SOME || name == OPT_NONE => {
-            Some("SugarOption".to_string())
+        Term::Ctor { name, args } if name == OPT_SOME => {
+            if args.first().and_then(|arg| known_term_sort(arg)).as_deref() == Some("SugarOption") {
+                Some("SugarOptionOption".to_string())
+            } else {
+                Some("SugarOption".to_string())
+            }
         }
-        Term::Ctor { name, .. } if name == RES_OK || name == RES_ERR => {
-            Some("SugarResult".to_string())
+        Term::Ctor { name, .. } if name == OPT_NONE => Some("SugarOption".to_string()),
+        Term::Ctor { name, args } if name == RES_OK => {
+            if args.first().and_then(|arg| known_term_sort(arg)).as_deref() == Some("SugarOption") {
+                Some("SugarResultOption".to_string())
+            } else {
+                Some("SugarResult".to_string())
+            }
+        }
+        Term::Ctor { name, .. } if name == RES_ERR => Some("SugarResult".to_string()),
+        Term::Ctor { name, .. } if known_method_return_sort(name).is_some() => {
+            known_method_return_sort(name).map(str::to_string)
         }
         Term::Ctor { .. } => None,
         Term::Lambda { .. } => None,
         Term::Let { body, .. } => known_term_sort(body),
+    }
+}
+
+fn known_method_return_sort(name: &str) -> Option<&'static str> {
+    match name {
+        "method:ok" | "method:err" | "method:as_mut" | "method:as_ref" => Some("SugarOption"),
+        "method:try_fold" | "method:try_rfold" => Some("SugarOption"),
+        "method:try_reduce" => Some("SugarOptionOption"),
+        "method:try_find" => Some("SugarResultOption"),
+        _ => None,
+    }
+}
+
+fn method_arg_sort(name: &str, index: usize, arg: &Term) -> Option<String> {
+    match (name, index) {
+        ("method:ok" | "method:err", 0) => Some("SugarResult".to_string()),
+        ("method:is_ok" | "method:is_err", 0) => {
+            known_term_sort(arg).filter(|sort| sort == "SugarResult")
+        }
+        ("method:unwrap" | "method:expect", 0) => {
+            known_term_sort(arg).filter(|sort| sort == "SugarOption" || sort == "SugarResult")
+        }
+        _ => None,
     }
 }
 
@@ -1841,10 +1984,13 @@ fn expected_atomic_arg_sort(name: &str, args: &[Term]) -> Option<String> {
     }
     let smt_name = smt_atomic_name(name);
     if matches!(smt_name, "=" | "distinct" | "<" | "<=" | ">" | ">=") {
-        return args
-            .iter()
-            .find_map(known_term_sort)
-            .or_else(|| Some("Int".to_string()));
+        let known: Vec<String> = args.iter().filter_map(known_term_sort).collect();
+        for preferred in ["SugarOptionOption", "SugarResultOption"] {
+            if known.iter().any(|sort| sort == preferred) {
+                return Some(preferred.to_string());
+            }
+        }
+        return known.into_iter().next().or_else(|| Some("Int".to_string()));
     }
     None
 }
@@ -1957,6 +2103,10 @@ const OPT_SOME: &str = "opt:some";
 const OPT_NONE: &str = "opt:none";
 const RES_OK: &str = "res:ok";
 const RES_ERR: &str = "res:err";
+const OPT_SOME_OPTION: &str = "opt:some#option";
+const OPT_NONE_OPTION: &str = "opt:none#option";
+const RES_OK_OPTION: &str = "res:ok#option";
+const RES_ERR_OPTION: &str = "res:err#option";
 
 /// True iff `name` is one of the reserved monadic ctor names -- declared as an
 /// ADT constructor, NOT as an uninterpreted function.
@@ -1970,6 +2120,8 @@ fn is_monadic_ctor(name: &str) -> bool {
 struct MonadicAdtsUsed {
     option: bool,
     result: bool,
+    option_option: bool,
+    result_option: bool,
 }
 
 fn collect_monadic_adts_formula(formula: &Formula, used: &mut MonadicAdtsUsed) {
@@ -2005,10 +2157,14 @@ fn collect_monadic_adts_formula(formula: &Formula, used: &mut MonadicAdtsUsed) {
 fn collect_monadic_adts_term(term: &Term, used: &mut MonadicAdtsUsed) {
     match term {
         Term::Ctor { name, args } => {
-            match name.as_str() {
-                OPT_SOME | OPT_NONE => used.option = true,
-                RES_OK | RES_ERR => used.result = true,
-                _ => {}
+            if let Some(sort) = known_term_sort(term) {
+                mark_monadic_sort(&sort, used);
+            } else {
+                match name.as_str() {
+                    OPT_SOME | OPT_NONE => used.option = true,
+                    RES_OK | RES_ERR => used.result = true,
+                    _ => {}
+                }
             }
             for arg in args {
                 collect_monadic_adts_term(arg, used);
@@ -2051,7 +2207,47 @@ fn monadic_adt_preamble(used: MonadicAdtsUsed) -> String {
             err_f = field(RES_ERR),
         ));
     }
+    if used.option_option {
+        out.push_str(&format!(
+            "(declare-datatypes ((SugarOptionOption 0)) ((({some} ({some_f} SugarOption)) ({none}))))\n",
+            some = smt_quote(OPT_SOME_OPTION),
+            some_f = field(OPT_SOME_OPTION),
+            none = smt_quote(OPT_NONE_OPTION),
+        ));
+    }
+    if used.result_option {
+        out.push_str(&format!(
+            "(declare-datatypes ((SugarResultOption 0)) ((({ok} ({ok_f} SugarOption)) ({err} ({err_f} Int)))))\n",
+            ok = smt_quote(RES_OK_OPTION),
+            ok_f = field(RES_OK_OPTION),
+            err = smt_quote(RES_ERR_OPTION),
+            err_f = field(RES_ERR_OPTION),
+        ));
+    }
     out
+}
+
+fn mark_monadic_sort(sort: &str, used: &mut MonadicAdtsUsed) {
+    match sort {
+        "SugarOption" => used.option = true,
+        "SugarResult" => used.result = true,
+        "SugarOptionOption" => {
+            used.option = true;
+            used.option_option = true;
+        }
+        "SugarResultOption" => {
+            used.option = true;
+            used.result_option = true;
+        }
+        _ => {}
+    }
+}
+
+fn collect_monadic_adts_signature(signature: &CtorSignature, used: &mut MonadicAdtsUsed) {
+    mark_monadic_sort(&signature.ret, used);
+    for arg in &signature.args {
+        mark_monadic_sort(arg, used);
+    }
 }
 
 fn collect_ctor_decls_term(
@@ -2063,7 +2259,12 @@ fn collect_ctor_decls_term(
         Term::Ctor { name, args } => {
             let arg_sorts: Vec<String> = args
                 .iter()
-                .map(|arg| known_term_sort(arg).unwrap_or_else(|| "Int".to_string()))
+                .enumerate()
+                .map(|(idx, arg)| {
+                    method_arg_sort(name, idx, arg)
+                        .or_else(|| known_term_sort(arg))
+                        .unwrap_or_else(|| "Int".to_string())
+                })
                 .collect();
             // Arithmetic theory operators stay interpreted: declaring them as
             // uninterpreted functions would shadow the SMT theory and let the
@@ -2077,9 +2278,13 @@ fn collect_ctor_decls_term(
             // genuine non-builtin ctor nested underneath (e.g. `method:foo`) is
             // declared.
             if !is_builtin_term_operator(name) && !is_monadic_ctor(name) {
-                out.entry(name.clone()).or_insert_with(|| CtorSignature {
+                let decl_key = ctor_decl_key_for_signature(name, args.len(), &arg_sorts);
+                out.entry(decl_key).or_insert_with(|| CtorSignature {
                     args: arg_sorts.clone(),
-                    ret: expected_ret.unwrap_or("Int").to_string(),
+                    ret: expected_ret
+                        .or_else(|| known_method_return_sort(name))
+                        .unwrap_or("Int")
+                        .to_string(),
                 });
             }
             for (arg, arg_sort) in args.iter().zip(arg_sorts.iter()) {
@@ -2387,7 +2592,7 @@ fn collect_string_tainted_subjects(formula: &Formula, out: &mut Vec<Term>) {
         Formula::Atomic { name, args } => {
             if crate::literal_encoding::forces_string_sort(name) {
                 for a in args {
-                    if let Term::Ctor { .. } = a {
+                    if matches!(a, Term::Ctor { .. } | Term::Var { .. }) {
                         if !out.contains(a) {
                             out.push(a.clone());
                         }
@@ -2420,6 +2625,10 @@ pub fn compile_formula(formula: &Formula) -> CompiledFormula {
     let mut free_vars = BTreeMap::new();
     let bound = BTreeSet::new();
     collect_free_vars_formula(formula, &mut free_vars, &bound);
+    let mut ctor_decls = BTreeMap::new();
+    collect_ctor_decls_formula(formula, &mut ctor_decls);
+    let mut predicate_decls = BTreeMap::new();
+    collect_predicate_decls_formula(formula, &mut predicate_decls);
 
     let mut opacities: Vec<OpacityEntry> = Vec::new();
     let body_formula = emit_formula_with_opacities(formula, &mut opacities);
@@ -2451,6 +2660,15 @@ pub fn compile_formula(formula: &Formula) -> CompiledFormula {
     {
         let mut monadic = MonadicAdtsUsed::default();
         collect_monadic_adts_formula(formula, &mut monadic);
+        for sort in free_vars.values() {
+            mark_monadic_sort(sort, &mut monadic);
+        }
+        for signature in ctor_decls.values() {
+            collect_monadic_adts_signature(signature, &mut monadic);
+        }
+        for signature in predicate_decls.values() {
+            collect_monadic_adts_signature(signature, &mut monadic);
+        }
         preamble.push_str(&monadic_adt_preamble(monadic));
     }
     if has_outlives {
@@ -2501,12 +2719,10 @@ pub fn compile_formula(formula: &Formula) -> CompiledFormula {
     // non-arithmetic post term. With declarations present the whitelist is
     // obsolete: the negated path renders any ctor head as a declared
     // uninterpreted symbol instead of an undeclared-function error.
-    let mut ctor_decls = BTreeMap::new();
-    collect_ctor_decls_formula(formula, &mut ctor_decls);
     for (name, signature) in ctor_decls.iter() {
         preamble.push_str(&format!(
             "(declare-fun {} ({}) {})\n",
-            smt_quote(name),
+            smt_ctor_head(name, signature.args.len()),
             signature.args.join(" "),
             signature.ret
         ));
@@ -2515,15 +2731,13 @@ pub fn compile_formula(formula: &Formula) -> CompiledFormula {
     // `is_some` in a guard-discharge obligation `(=> (is_some opt) (is_some
     // opt))`). Skip any name already declared as a value ctor above, so a
     // symbol used in both term and boolean position is declared exactly once.
-    let mut predicate_decls = BTreeMap::new();
-    collect_predicate_decls_formula(formula, &mut predicate_decls);
     for (name, signature) in predicate_decls.iter() {
         if ctor_decls.contains_key(name) {
             continue;
         }
         preamble.push_str(&format!(
             "(declare-fun {} ({}) {})\n",
-            smt_quote(name),
+            smt_ctor_head(name, signature.args.len()),
             signature.args.join(" "),
             signature.ret
         ));
@@ -2582,6 +2796,8 @@ pub fn compile_asserted_formula(formula: &Formula) -> CompiledFormula {
 
     let mut ctor_decls = BTreeMap::new();
     collect_ctor_decls_formula(formula, &mut ctor_decls);
+    let mut predicate_decls = BTreeMap::new();
+    collect_predicate_decls_formula(formula, &mut predicate_decls);
 
     let has_outlives = has_outlives_predicate(formula);
     let mut preamble = String::new();
@@ -2591,6 +2807,15 @@ pub fn compile_asserted_formula(formula: &Formula) -> CompiledFormula {
     {
         let mut monadic = MonadicAdtsUsed::default();
         collect_monadic_adts_formula(formula, &mut monadic);
+        for sort in free_vars.values() {
+            mark_monadic_sort(sort, &mut monadic);
+        }
+        for signature in ctor_decls.values() {
+            collect_monadic_adts_signature(signature, &mut monadic);
+        }
+        for signature in predicate_decls.values() {
+            collect_monadic_adts_signature(signature, &mut monadic);
+        }
         preamble.push_str(&monadic_adt_preamble(monadic));
     }
     if has_outlives {
@@ -2614,22 +2839,20 @@ pub fn compile_asserted_formula(formula: &Formula) -> CompiledFormula {
     for (name, signature) in ctor_decls.iter() {
         preamble.push_str(&format!(
             "(declare-fun {} ({}) {})\n",
-            smt_quote(name),
+            smt_ctor_head(name, signature.args.len()),
             signature.args.join(" "),
             signature.ret
         ));
     }
     // Declare non-builtin atomic predicates in boolean position (see the
     // matching block in `compile_formula`). Same de-dup against ctor decls.
-    let mut predicate_decls = BTreeMap::new();
-    collect_predicate_decls_formula(formula, &mut predicate_decls);
     for (name, signature) in predicate_decls.iter() {
         if ctor_decls.contains_key(name) {
             continue;
         }
         preamble.push_str(&format!(
             "(declare-fun {} ({}) {})\n",
-            smt_quote(name),
+            smt_ctor_head(name, signature.args.len()),
             signature.args.join(" "),
             signature.ret
         ));

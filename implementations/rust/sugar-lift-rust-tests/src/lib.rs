@@ -7506,7 +7506,7 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
                     args.push(dig_child(arg)?);
                 }
                 Some(Rc::new(Term::Ctor {
-                    name: format!("call:{}", expr_head_key(&call.func)),
+                    name: format!("call:{}#panic_callsite", expr_head_key(&call.func)),
                     args,
                 }))
             }
@@ -7527,7 +7527,7 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
                     args.push(dig_child(arg)?);
                 }
                 Some(Rc::new(Term::Ctor {
-                    name: format!("method:{}", sugar::method::method_key(call)),
+                    name: format!("method:{}#panic_callsite", sugar::method::method_key(call)),
                     args,
                 }))
             }
@@ -7546,7 +7546,7 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
         expr: &Expr,
         subject: Rc<Term>,
     ) -> Option<Rc<Formula>> {
-        let _ = expr;
+        let subject = self.opaque_callsite_term(expr).unwrap_or(subject);
         Some(not_(atomic_("panic", vec![subject])))
     }
 
