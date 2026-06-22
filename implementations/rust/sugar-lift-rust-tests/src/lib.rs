@@ -11795,9 +11795,16 @@ fn collect_replayable_for_loop_accumulators(
                         env.remove(&name);
                         continue;
                     };
-                    if temporal_loop_static_value(&init.expr, &env).is_some()
-                        || temporal_loop_static_domain_values(&init.expr, &env).is_some()
-                    {
+                    if let Some(scalar) = temporal_loop_static_value(&init.expr, &env) {
+                        // Shadow guard: `let x = x + expr` with old x in env would store the raw
+                        // expression, making later lookups of x self-referential and causing infinite
+                        // recursion in temporal_loop_static_value. Store concrete evaluated integer.
+                        if let Some(concrete) = temporal_loop_int_expr(scalar) {
+                            env.insert(name, concrete);
+                        } else {
+                            env.remove(&name);
+                        }
+                    } else if temporal_loop_static_domain_values(&init.expr, &env).is_some() {
                         env.insert(name, (*init.expr).clone());
                     } else {
                         env.remove(&name);
@@ -11852,9 +11859,14 @@ fn collect_irreplayable_loop_body_mutated(
                     env.remove(&name);
                     continue;
                 };
-                if temporal_loop_static_value(&init.expr, &env).is_some()
-                    || temporal_loop_static_domain_values(&init.expr, &env).is_some()
-                {
+                if let Some(scalar) = temporal_loop_static_value(&init.expr, &env) {
+                    // Shadow guard: see collect_replayable_for_loop_accumulators for rationale.
+                    if let Some(concrete) = temporal_loop_int_expr(scalar) {
+                        env.insert(name, concrete);
+                    } else {
+                        env.remove(&name);
+                    }
+                } else if temporal_loop_static_domain_values(&init.expr, &env).is_some() {
                     env.insert(name, (*init.expr).clone());
                 } else {
                     env.remove(&name);

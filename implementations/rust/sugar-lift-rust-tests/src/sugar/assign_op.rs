@@ -644,13 +644,34 @@ impl TemporalRewriteState {
 
         self.aliases.remove(&name);
         if let Some(value) = self.trackable_value(&init.expr) {
-            debug!(
-                target: "sugar_lift_rust_tests::temporal_rewrite",
-                binding = name.as_str(),
-                value = %token_key(&value),
-                "temporal rewrite captured literal-backed local"
-            );
-            self.values.insert(name, value);
+            // Shadow guard: a shadowed `let x = x + expr` causes trackable_value to
+            // return the raw expression still containing `x`. Storing it as-is makes
+            // expr_for(x) self-referential and int_value recurse infinitely:
+            //   int_value(x) → expr_for(x) → raw_expr → int_value(x) → ∞.
+            // Detect this and force evaluation to a concrete integer while the old
+            // binding is still live in `values`.
+            let safe_value = if expr_references_name(&value, &name) {
+                self.int_value(&value).and_then(int_expr)
+            } else {
+                Some(value)
+            };
+            if let Some(v) = safe_value {
+                debug!(
+                    target: "sugar_lift_rust_tests::temporal_rewrite",
+                    binding = name.as_str(),
+                    value = %token_key(&v),
+                    "temporal rewrite captured literal-backed local"
+                );
+                self.values.insert(name, v);
+            } else {
+                trace!(
+                    target: "sugar_lift_rust_tests::temporal_rewrite",
+                    binding = name.as_str(),
+                    init = %token_key(&init.expr),
+                    "temporal rewrite declined self-referential local"
+                );
+                self.values.remove(&name);
+            }
         } else {
             trace!(
                 target: "sugar_lift_rust_tests::temporal_rewrite",
@@ -1677,6 +1698,33 @@ fn macro_name_is(mac: &syn::Macro, expected: &str) -> bool {
 
 fn int_expr(value: i128) -> Option<Expr> {
     syn::parse_str::<Expr>(&value.to_string()).ok()
+}
+
+/// Returns true if `expr` contains a path reference to `name`.
+/// Used by `record_local` to detect self-referential shadowed bindings
+/// like `let x = x + 1` before storing them in the temporal values map.
+fn expr_references_name(expr: &Expr, name: &str) -> bool {
+    match strip_refs_groups(expr) {
+        Expr::Path(_) => simple_path_name(expr).as_deref() == Some(name),
+        Expr::Binary(b) => {
+            expr_references_name(&b.left, name) || expr_references_name(&b.right, name)
+        }
+        Expr::Unary(u) => expr_references_name(&u.expr, name),
+        Expr::Cast(c) => expr_references_name(&c.expr, name),
+        Expr::MethodCall(call) => {
+            expr_references_name(&call.receiver, name)
+                || call.args.iter().any(|a| expr_references_name(a, name))
+        }
+        Expr::Call(call) => call.args.iter().any(|a| expr_references_name(a, name)),
+        Expr::Paren(p) => expr_references_name(&p.expr, name),
+        Expr::Group(g) => expr_references_name(&g.expr, name),
+        Expr::Reference(r) => expr_references_name(&r.expr, name),
+        Expr::Range(r) => {
+            r.start.as_ref().is_some_and(|s| expr_references_name(s, name))
+                || r.end.as_ref().is_some_and(|e| expr_references_name(e, name))
+        }
+        _ => false,
+    }
 }
 
 fn bool_term(value: bool) -> Rc<Term> {
