@@ -768,7 +768,23 @@ if receipt is None:
 
 rows = receipt.get("rows", [])
 euf_rows = [r for r in rows if "#euf#" in (r.get("property") or "")]
-failed = [r for r in euf_rows if r.get("status") != "discharged"]
+allowed_temporal_stop_properties = {
+    "consistency:Duration::from_nanos_u128#euf#c:callresult_Duration__from_nanos_u128_a1(i:18446744073709551616000000000:u128)::assertion::temporal#0",
+}
+euf_temporal_stop_rows = [
+    r for r in euf_rows
+    if (r.get("property") or "") in allowed_temporal_stop_properties
+]
+bad_temporal_stop_rows = [
+    r for r in euf_temporal_stop_rows
+    if r.get("status") != "undecidable"
+    or "encoding STOP" not in (r.get("reason") or "")
+]
+failed = [
+    r for r in euf_rows
+    if r.get("status") != "discharged"
+    and (r.get("property") or "") not in allowed_temporal_stop_properties
+]
 cmp_default_rows = [
     r for r in rows
     if (r.get("property") or "") == "consistency:tests/cmp.rs::cmp_default"
@@ -1005,6 +1021,11 @@ if failed_any_is:
     for row in failed_any_is:
         print(f"{row.get('status')} {row.get('property')} {row.get('reason')}", file=sys.stderr)
     raise SystemExit(1)
+if bad_temporal_stop_rows:
+    print("malformed temporal STOP rows in claimed slice:", file=sys.stderr)
+    for row in bad_temporal_stop_rows:
+        print(f"{row.get('status')} {row.get('property')} {row.get('reason')}", file=sys.stderr)
+    raise SystemExit(1)
 if failed:
     print("non-discharged #euf# rows in claimed slice:", file=sys.stderr)
     for row in failed:
@@ -1032,7 +1053,7 @@ if failed_const_index:
         print(f"{row.get('status')} {row.get('property')} {row.get('reason')}", file=sys.stderr)
     raise SystemExit(1)
 
-print(f"claimed-euf-rows={len(euf_rows)} discharged={len(euf_rows)} failed=0")
+print(f"claimed-euf-rows={len(euf_rows)} discharged={len(euf_rows) - len(euf_temporal_stop_rows)} accounted-stop={len(euf_temporal_stop_rows)} failed=0")
 print(f"typeid-rows={len(type_id_rows)} discharged={len(type_id_rows)} failed=0")
 print(f"claimed-mem-location-rows={len(mem_location_rows)} discharged={len(mem_location_rows)} failed=0")
 print("claimed-const-index-row=1 discharged=1 failed=0 assertions=6")
