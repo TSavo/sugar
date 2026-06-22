@@ -1312,6 +1312,232 @@ fn try_from_predicate_wrong_discriminant_is_unsat() {
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_try_from_err_on_ok_bad") {
         assert!(!sat, "255 fits u8 -> is_err() is false -- must be UNSAT");
     }
+
+    let literal_ok_good = r#"
+        #[test]
+        fn t_literal_ok_is_ok_good() {
+            let r_ok: Result<u8, u8> = Ok(10);
+            assert!(r_ok.is_ok());
+        }
+    "#;
+    let out = lift_file(
+        &parse(literal_ok_good),
+        "coretests/result/literal_ok_is_ok_good.rs",
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(true)")
+            && !dump.contains("Ctor { name: \"method:is_ok\", args: [Ctor { name: \"res:ok\""),
+        "let-bound Ok(_).is_ok() must fold true: {dump}"
+    );
+    let decl = out
+        .decls
+        .iter()
+        .find(|decl| decl.name.ends_with("::t_literal_ok_is_ok_good"))
+        .expect("scalar assertion decl for literal Ok is_ok good");
+    if let Some(sat) = z3_verdict(&inv_json(decl), "t_literal_ok_is_ok_good") {
+        assert!(sat, "Ok(_).is_ok() must be SAT");
+    }
+
+    let literal_ok_bad = r#"
+        #[test]
+        fn t_literal_ok_is_err_bad() {
+            let r_ok: Result<u8, u8> = Ok(10);
+            assert!(r_ok.is_err());
+        }
+    "#;
+    let out = lift_file(
+        &parse(literal_ok_bad),
+        "coretests/result/literal_ok_is_err_bad.rs",
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(false)")
+            && !dump.contains("Ctor { name: \"method:is_err\", args: [Ctor { name: \"res:ok\""),
+        "let-bound Ok(_).is_err() bad twin must fold false: {dump}"
+    );
+    let decl = out
+        .decls
+        .iter()
+        .find(|decl| decl.name.ends_with("::t_literal_ok_is_err_bad"))
+        .expect("scalar assertion decl for literal Ok is_err bad");
+    if let Some(sat) = z3_verdict(&inv_json(decl), "t_literal_ok_is_err_bad") {
+        assert!(!sat, "Ok(_).is_err() must be z3-UNSAT");
+    }
+
+    let literal_err_good = r#"
+        #[test]
+        fn t_literal_err_is_err_good() {
+            let r_err: Result<u8, u8> = Err(20);
+            assert!(r_err.is_err());
+        }
+    "#;
+    let out = lift_file(
+        &parse(literal_err_good),
+        "coretests/result/literal_err_is_err_good.rs",
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(true)")
+            && !dump.contains("Ctor { name: \"method:is_err\", args: [Ctor { name: \"res:err\""),
+        "let-bound Err(_).is_err() must fold true: {dump}"
+    );
+    let decl = out
+        .decls
+        .iter()
+        .find(|decl| decl.name.ends_with("::t_literal_err_is_err_good"))
+        .expect("scalar assertion decl for literal Err is_err good");
+    if let Some(sat) = z3_verdict(&inv_json(decl), "t_literal_err_is_err_good") {
+        assert!(sat, "Err(_).is_err() must be SAT");
+    }
+
+    let literal_err_bad = r#"
+        #[test]
+        fn t_literal_err_is_ok_bad() {
+            let r_err: Result<u8, u8> = Err(20);
+            assert!(r_err.is_ok());
+        }
+    "#;
+    let out = lift_file(
+        &parse(literal_err_bad),
+        "coretests/result/literal_err_is_ok_bad.rs",
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(false)")
+            && !dump.contains("Ctor { name: \"method:is_ok\", args: [Ctor { name: \"res:err\""),
+        "let-bound Err(_).is_ok() bad twin must fold false: {dump}"
+    );
+    let decl = out
+        .decls
+        .iter()
+        .find(|decl| decl.name.ends_with("::t_literal_err_is_ok_bad"))
+        .expect("scalar assertion decl for literal Err is_ok bad");
+    if let Some(sat) = z3_verdict(&inv_json(decl), "t_literal_err_is_ok_bad") {
+        assert!(!sat, "Err(_).is_ok() must be z3-UNSAT");
+    }
+
+    let inspect_good = r#"
+        fn noop_u8_ref(_: &u8) {}
+
+        #[test]
+        fn t_result_inspect_is_ok_good() {
+            let r_ok: Result<u8, u8> = Ok(10);
+            let inspected = r_ok.inspect(noop_u8_ref);
+            assert!(inspected.is_ok());
+        }
+    "#;
+    let out = lift_file(
+        &parse(inspect_good),
+        "coretests/result/result_inspect_is_ok_good.rs",
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(true)")
+            && !dump
+                .contains("Ctor { name: \"method:is_ok\", args: [Ctor { name: \"method:inspect\""),
+        "let-bound Ok(_).inspect(...).is_ok() must fold true: {dump}"
+    );
+    let decl = out
+        .decls
+        .iter()
+        .find(|decl| decl.name.ends_with("::t_result_inspect_is_ok_good"))
+        .expect("scalar assertion decl for inspect is_ok good");
+    if let Some(sat) = z3_verdict(&inv_json(decl), "t_result_inspect_is_ok_good") {
+        assert!(sat, "Ok(_).inspect(...).is_ok() must be SAT");
+    }
+
+    let inspect_bad = r#"
+        fn noop_u8_ref(_: &u8) {}
+
+        #[test]
+        fn t_result_inspect_is_err_bad() {
+            let r_ok: Result<u8, u8> = Ok(10);
+            let inspected = r_ok.inspect(noop_u8_ref);
+            assert!(inspected.is_err());
+        }
+    "#;
+    let out = lift_file(
+        &parse(inspect_bad),
+        "coretests/result/result_inspect_is_err_bad.rs",
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(false)")
+            && !dump
+                .contains("Ctor { name: \"method:is_err\", args: [Ctor { name: \"method:inspect\""),
+        "let-bound Ok(_).inspect(...).is_err() bad twin must fold false: {dump}"
+    );
+    let decl = out
+        .decls
+        .iter()
+        .find(|decl| decl.name.ends_with("::t_result_inspect_is_err_bad"))
+        .expect("scalar assertion decl for inspect is_err bad");
+    if let Some(sat) = z3_verdict(&inv_json(decl), "t_result_inspect_is_err_bad") {
+        assert!(!sat, "Ok(_).inspect(...).is_err() must be z3-UNSAT");
+    }
+
+    let inspect_err_good = r#"
+        fn noop_u8_ref(_: &u8) {}
+
+        #[test]
+        fn t_result_inspect_err_is_err_good() {
+            let r_err: Result<u8, u8> = Err(20);
+            let inspected = r_err.inspect_err(noop_u8_ref);
+            assert!(inspected.is_err());
+        }
+    "#;
+    let out = lift_file(
+        &parse(inspect_err_good),
+        "coretests/result/result_inspect_err_is_err_good.rs",
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(true)")
+            && !dump.contains(
+                "Ctor { name: \"method:is_err\", args: [Ctor { name: \"method:inspect_err\""
+            ),
+        "let-bound Err(_).inspect_err(...).is_err() must fold true: {dump}"
+    );
+    let decl = out
+        .decls
+        .iter()
+        .find(|decl| decl.name.ends_with("::t_result_inspect_err_is_err_good"))
+        .expect("scalar assertion decl for inspect_err is_err good");
+    if let Some(sat) = z3_verdict(&inv_json(decl), "t_result_inspect_err_is_err_good") {
+        assert!(sat, "Err(_).inspect_err(...).is_err() must be SAT");
+    }
+
+    let inspect_err_bad = r#"
+        fn noop_u8_ref(_: &u8) {}
+
+        #[test]
+        fn t_result_inspect_err_is_ok_bad() {
+            let r_err: Result<u8, u8> = Err(20);
+            let inspected = r_err.inspect_err(noop_u8_ref);
+            assert!(inspected.is_ok());
+        }
+    "#;
+    let out = lift_file(
+        &parse(inspect_err_bad),
+        "coretests/result/result_inspect_err_is_ok_bad.rs",
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Bool(false)")
+            && !dump.contains(
+                "Ctor { name: \"method:is_ok\", args: [Ctor { name: \"method:inspect_err\""
+            ),
+        "let-bound Err(_).inspect_err(...).is_ok() bad twin must fold false: {dump}"
+    );
+    let decl = out
+        .decls
+        .iter()
+        .find(|decl| decl.name.ends_with("::t_result_inspect_err_is_ok_bad"))
+        .expect("scalar assertion decl for inspect_err is_ok bad");
+    if let Some(sat) = z3_verdict(&inv_json(decl), "t_result_inspect_err_is_ok_bad") {
+        assert!(!sat, "Err(_).inspect_err(...).is_ok() must be z3-UNSAT");
+    }
 }
 
 // Signed/unsigned boundary teeth: `i8::try_from(200u16)` overflows (200 > 127) ->

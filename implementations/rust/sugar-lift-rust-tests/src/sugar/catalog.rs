@@ -105,6 +105,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &int_pow::EXPR_SUGAR,
     &option_adaptor::EXPR_SUGAR,
     &option_predicate::EXPR_SUGAR,
+    &inspect::TERM_EXPR_SUGAR,
     &result_predicate::EXPR_SUGAR,
     &option_unwrap::EXPR_SUGAR,
     &partition_point::EXPR_SUGAR,
