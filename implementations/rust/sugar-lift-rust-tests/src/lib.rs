@@ -40,6 +40,7 @@ pub mod sugar {
     pub mod bound;
     pub mod bound_path;
     pub mod call;
+    pub mod call_sequence;
     pub mod callsite;
     pub mod cast_term;
     pub mod catalog;
@@ -7507,6 +7508,46 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
         } else {
             None
         }
+    }
+
+    /// COMPOSITE-POSITION value-call inlining, the sequence-floor sibling of
+    /// `try_inline_value_call`. Resolve a visible pure helper, rebuild its substituted
+    /// return expression through the composite factory, and commit only if that recursive
+    /// walk bottoms out as a finite sequence. Otherwise the owning Sugar converts the
+    /// decline into the normal structural/effect `Hit`.
+    pub(crate) fn try_inline_sequence_call(
+        &self,
+        func: &Expr,
+        args: &[Expr],
+    ) -> Outcome {
+        if self.macro_depth >= MAX_VALUE_CALL_INLINE_DEPTH {
+            return Outcome::from_opt(None);
+        }
+        let Some(inlined) = resolve_value_call_inline(func, args, self.scope, self.options) else {
+            return Outcome::from_opt(None);
+        };
+        let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
+        let fcx = sugar::factory::SugarBuildCtx::new(self.scope, self.options, &let_inits);
+        let node = sugar::factory::build_composite(&inlined, &fcx);
+        let mut fw = self.float_widths.borrow_mut();
+        let child = sugar_ctx(
+            self.scope,
+            self.options,
+            self.reducer,
+            &mut *fw,
+            self.macro_depth + 1,
+        );
+        let seq = match node.desugar(&child) {
+            Outcome::Dug(d) => match d.into_seq() {
+                Some(seq) => seq,
+                None => return Outcome::from_opt(None),
+            },
+            Outcome::Hit(effect) => return Outcome::Hit(effect),
+        };
+        if let Some(name) = value_call_support_key(func) {
+            self.scope.record_inlined_value_helper(&name);
+        }
+        Outcome::Dug(Desugared::Seq(seq))
     }
 
     /// TERM-POSITION method inlining, the method-call sibling of

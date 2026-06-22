@@ -20318,17 +20318,75 @@ fn chained_next_count_over_literal_iterator_uses_remaining_state() {
 }
 
 #[test]
-fn chained_next_len_over_runtime_receiver_stays_opaque() {
+fn chained_next_len_over_visible_sequence_helper_grounds_returned_literal() {
     let src = r#"
         #[test]
-        fn t_runtime_next_len() {
+        fn t_visible_helper_next_len() {
+            fn make_vec() -> Vec<i32> { vec![1, 2] }
+            assert_eq!(make_vec().iter().next().len(), 1);
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/adapters/visible_helper_next_len.rs",
+    );
+    assert_warranted_decl_count(&out, 1);
+    let operands = inv_operands(single_warranted_decl(&out));
+    assert_eq!(operands.len(), 1, "expected one grounded equality: {operands:?}");
+    match operands[0].as_ref() {
+        Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
+            for arg in args {
+                match arg.as_ref() {
+                    Term::Const {
+                        value: ConstValue::Int(1),
+                        ..
+                    } => {}
+                    other => panic!(
+                        "expected make_vec().iter().next().len() to ground to 1, got {other:?}"
+                    ),
+                }
+            }
+        }
+        other => panic!("expected equality, got {other:?}"),
+    }
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "visible_helper_next_len")
+    {
+        assert!(sat, "after one next() call over helper-returned [1, 2], remaining len is 1");
+    }
+}
+
+#[test]
+fn chained_next_len_over_visible_sequence_helper_bad_twin_refutes() {
+    let src = r#"
+        #[test]
+        fn t_visible_helper_next_len_bad() {
             fn make_vec() -> Vec<i32> { vec![1, 2] }
             assert_eq!(make_vec().iter().next().len(), 0);
         }
     "#;
     let out = lift_file(
         &parse(src),
-        "coretests/iter/adapters/runtime_next_len.rs",
+        "coretests/iter/adapters/visible_helper_next_len_bad.rs",
+    );
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "visible_helper_next_len_bad")
+    {
+        assert!(!sat, "wrong remaining len for helper-returned literal sequence must be z3-UNSAT");
+    }
+}
+
+#[test]
+fn chained_next_len_over_unresolved_sequence_helper_stays_opaque() {
+    let src = r#"
+        #[test]
+        fn t_unresolved_helper_next_len() {
+            fn make_vec() -> Vec<i32> { unknown_vec() }
+            assert_eq!(make_vec().iter().next().len(), 0);
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/adapters/unresolved_helper_next_len.rs",
     );
     assert_warranted_decl_count(&out, 1);
     let operands = inv_operands(single_warranted_decl(&out));
@@ -20336,8 +20394,8 @@ fn chained_next_len_over_runtime_receiver_stays_opaque() {
     match operands[0].as_ref() {
         Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
             assert!(
-                matches!(args[0].as_ref(), Term::Ctor { name, .. } if name == "method:len"),
-                "runtime receiver must not be grounded as literal iterator state: {:?}",
+                matches!(args[0].as_ref(), Term::Var { name } if name.starts_with("opaque:")),
+                "unresolved helper body must stay opaque, not fake literal iterator state: {:?}",
                 args[0]
             );
         }
