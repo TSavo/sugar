@@ -4206,6 +4206,21 @@ impl TemporalScope {
         self.fn_registry.lookup(name).is_some()
     }
 
+    pub(crate) fn visible_fn_has_noop_body(&self, name: &str) -> bool {
+        fn unit_expr(expr: &Expr) -> bool {
+            matches!(strip_refs_groups(expr), Expr::Tuple(tuple) if tuple.elems.is_empty())
+        }
+
+        let Some(helper) = self.fn_registry.lookup(name) else {
+            return false;
+        };
+        match helper.block.stmts.as_slice() {
+            [] => true,
+            [Stmt::Expr(expr, None)] => unit_expr(expr),
+            _ => false,
+        }
+    }
+
     /// Record the in-source inherent impl value registry visible at this scope.
     fn with_impl_value_registry(mut self, registry: ImplValueRegistry) -> Self {
         self.impl_value_registry = registry;

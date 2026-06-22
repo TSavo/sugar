@@ -5,14 +5,11 @@
 // receiver bottoms out to `res:ok(_)` or `res:err(_)`, the predicate is a literal
 // bool, replacing the opaque `method:is_ok` EUF var (no teeth).
 //
-// EXACT-OR-NONE AT RECOGNIZE. We claim ONLY when the receiver is an integer
-// `try_from(literal)` that DEFINITELY folds to a `res:ok`/`res:err` (see
-// `try_from`, whose `desugar` is unconditional). We do NOT accept bare
-// `Ok(..)`/`Err(..)` here: a non-literal/effectful inner could make the build
-// `Hit`/not-ground, turning a recognize-ACCEPT into a desugar-BAIL -- and a bailed
-// specific recognizer becomes a REFUSAL (not opaque-EUF), which would REGRESS
-// coverage in corpus context. A runtime/opaque receiver -> `None`, existing handling
-// stands.
+// EXACT-OR-NONE AT RECOGNIZE. We claim only when the receiver is known to ground
+// to `res:ok`/`res:err`: integer `try_from(literal)`, literal-payload `Ok(..)`/
+// `Err(..)`, or a no-op `inspect`/`inspect_err` chain over one of those stable
+// sources. Runtime/effectful payloads, transforming adaptors, and non-no-op
+// callbacks decline so existing opaque-EUF handling stands.
 //
 // TEETH. `u8::try_from(256u16).is_err()` grounds to `res:err` -> `Bool(true)`;
 // `.is_ok()` -> `Bool(false)` (z3-UNSAT if asserted).
@@ -110,19 +107,12 @@ fn result_presence(term: &Term) -> Option<bool> {
     }
 }
 
-/// A receiver that grounds to a `Result` ctor: an `Ok(..)`/`Err(..)` constructor,
-/// an integer `try_from(literal)` that folds to a `Result`.
+/// A receiver that grounds to a `Result` ctor: an integer `try_from(literal)`,
+/// a literal-payload `Ok(..)`/`Err(..)`, or a no-op `inspect`/`inspect_err` chain over
+/// one of those stable sources.
 ///
-/// EXACT-OR-NONE AT RECOGNIZE: we accept ONLY a `try_from` that DEFINITELY grounds
-/// to `res:ok`/`res:err` (its `desugar` is unconditional). We deliberately do NOT
-/// accept bare `Ok(..)`/`Err(..)` here: a non-literal/effectful inner can make the
-/// monadic build `Hit` or not-ground, which would turn this recognize-ACCEPT into a
-/// desugar-BAIL -- and a bailed specific recognizer is a REFUSAL, not an opaque-EUF
-/// fallback, so it would REGRESS coverage in corpus context. A shape we might bail on
-/// must be DECLINED here, not accepted-then-bailed.
+/// EXACT-OR-NONE AT RECOGNIZE: broad or effectful `Ok(io())`, transforming adaptors,
+/// and non-no-op inspect callbacks still decline to the opaque method path.
 fn is_known_result_source(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
-    let Expr::Call(call) = strip_refs_groups(expr) else {
-        return false;
-    };
-    crate::sugar::try_from::folds_to_result(call, Some(fcx))
+    crate::sugar::inspect::is_stable_result_source(strip_refs_groups(expr), fcx)
 }
