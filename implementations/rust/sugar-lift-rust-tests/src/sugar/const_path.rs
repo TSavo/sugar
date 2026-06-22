@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // `ConstSugar`: a compiler-known `const` path is transparent to its initializer.
-// The compiler already proved the path resolves for compiling code; the factory's
-// job is to recurse into the initializer instead of freezing the path as a free var.
+// The compiler already proved the path resolves for compiling code; recognition
+// captures the raw path, and desugar resolves/rebuilds the initializer instead of
+// freezing the path as a free var.
+
+use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::sugar::term_leaf::resolved_term;
-use std::rc::Rc;
 
 use sugar_ir_symbolic::Term;
 
-use crate::{const_path_key, num, str_const, u128_term, Outcome, Sugar, SugarCtx};
+use crate::{const_path_key, num, str_const, u128_term, Desugared, Outcome, Sugar, SugarCtx};
 use syn::{Expr, ExprPath, Type};
 use tracing::debug;
 
@@ -19,24 +21,18 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::term_before("const", &["path"], recognize);
 
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    if let Some(value) = primitive_assoc_const_expr(expr) {
-        debug!(
-            target: "sugar_lift_rust_tests::sugar::const_path",
-            path = %crate::token_key(expr),
-            term = ?value,
-            "resolved primitive associated const compiler axiom"
-        );
-        return Some(resolved_term(value));
+    if primitive_assoc_const_expr(expr).is_some() {
+        return Some(Box::new(ConstSugar::Primitive { expr: expr.clone() }));
     }
     let (name, path) = simple_const_path(expr)?;
     if fcx.resolving_const_path(&name) {
         return None;
     }
-    let init = fcx.scope().const_expr_for_path(path)?;
-    let child_fcx = fcx.with_const_path(&name);
-    Some(Box::new(ConstSugar {
+    fcx.scope().const_expr_for_path(path)?;
+    Some(Box::new(ConstSugar::Path {
         name,
-        inner: build_term(&init, &child_fcx),
+        path: path.clone(),
+        let_inits: capture_let_inits(fcx),
     }))
 }
 
@@ -51,7 +47,7 @@ fn simple_const_path(expr: &Expr) -> Option<(String, &syn::Path)> {
     Some((name, path))
 }
 
-fn primitive_assoc_const_expr(expr: &Expr) -> Option<Rc<Term>> {
+fn primitive_assoc_const_expr(expr: &Expr) -> Option<PrimitiveAssocConst> {
     let Expr::Path(path) = expr else {
         return None;
     };
@@ -63,7 +59,7 @@ fn primitive_assoc_const_expr(expr: &Expr) -> Option<Rc<Term>> {
     primitive_assoc_const_value(&path.path)
 }
 
-fn primitive_assoc_const_value(path: &syn::Path) -> Option<Rc<Term>> {
+fn primitive_assoc_const_value(path: &syn::Path) -> Option<PrimitiveAssocConst> {
     if path.segments.len() != 2 {
         return None;
     }
@@ -79,7 +75,39 @@ fn primitive_assoc_const_value(path: &syn::Path) -> Option<Rc<Term>> {
     primitive_assoc_const_parts(&ty, &konst)
 }
 
-fn primitive_assoc_const_parts(ty: &str, konst: &str) -> Option<Rc<Term>> {
+fn primitive_assoc_const_parts(ty: &str, konst: &str) -> Option<PrimitiveAssocConst> {
+    primitive_assoc_const_known(ty, konst).then(|| PrimitiveAssocConst {
+        ty: ty.to_string(),
+        konst: konst.to_string(),
+    })
+}
+
+fn primitive_assoc_const_known(ty: &str, konst: &str) -> bool {
+    matches!(
+        (ty, konst),
+        (
+            "i8" | "i16"
+                | "i32"
+                | "i64"
+                | "i128"
+                | "isize"
+                | "u8"
+                | "u16"
+                | "u32"
+                | "u64"
+                | "u128"
+                | "usize",
+            "MIN" | "MAX" | "BITS"
+        ) | ("char", "MAX")
+    )
+}
+
+fn primitive_assoc_const_term(expr: &Expr) -> Option<Rc<Term>> {
+    let parts = primitive_assoc_const_expr(expr)?;
+    primitive_assoc_const_parts_term(&parts.ty, &parts.konst)
+}
+
+fn primitive_assoc_const_parts_term(ty: &str, konst: &str) -> Option<Rc<Term>> {
     let value = match (ty, konst) {
         ("i8", "MIN") => num(i128::from(i8::MIN)),
         ("i8", "MAX") => num(i128::from(i8::MAX)),
@@ -130,14 +158,70 @@ fn primitive_type_name(ty: &Type) -> Option<String> {
     Some(path.path.segments.last()?.ident.to_string())
 }
 
-pub(crate) struct ConstSugar {
-    #[allow(dead_code)]
-    name: String,
-    inner: Box<dyn Sugar>,
+struct PrimitiveAssocConst {
+    ty: String,
+    konst: String,
+}
+
+pub(crate) enum ConstSugar {
+    Primitive {
+        expr: Expr,
+    },
+    Path {
+        #[allow(dead_code)]
+        name: String,
+        path: syn::Path,
+        let_inits: BTreeMap<String, Expr>,
+    },
+}
+
+fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
+    fcx.let_inits()
+        .iter()
+        .map(|(name, init)| (name.clone(), (**init).clone()))
+        .collect()
+}
+
+fn merge_let_inits<'a>(
+    stable: &'a BTreeMap<String, Expr>,
+    captured: &'a BTreeMap<String, Expr>,
+) -> BTreeMap<String, &'a Expr> {
+    stable
+        .iter()
+        .map(|(name, init)| (name.clone(), init))
+        .chain(captured.iter().map(|(name, init)| (name.clone(), init)))
+        .collect()
 }
 
 impl Sugar for ConstSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        self.inner.desugar(ctx)
+        match self {
+            ConstSugar::Primitive { expr } => {
+                let Some(value) = primitive_assoc_const_term(expr) else {
+                    return Outcome::from_opt(None);
+                };
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::const_path",
+                    path = %crate::token_key(expr),
+                    term = ?value,
+                    "resolved primitive associated const compiler axiom"
+                );
+                Outcome::Dug(Desugared::Term(value))
+            }
+            ConstSugar::Path {
+                name,
+                path,
+                let_inits,
+            } => {
+                let Some(init) = ctx.scope.const_expr_for_path(path) else {
+                    return Outcome::from_opt(None);
+                };
+                let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
+                let let_inits = merge_let_inits(&stable, let_inits);
+                let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+                let child_fcx = fcx.with_const_path(name);
+                build_term(init.as_ref(), &child_fcx).desugar(ctx)
+            }
+        }
     }
 }

@@ -9,21 +9,9 @@
 //
 //   Term::Ctor { name: format!("call:{}", expr_head_key(&func)), args: <arg terms> }
 //
-// THE FUNC-HEAD KEY IS CAPTURED AT CONSTRUCTION. The function head (`f`, `Path::seg`,
-// a paren/group-wrapped path, ...) is NOT runtime state -- it is a syntactic key the
-// arm computes with `expr_head_key(&call.func)`. So `CallSugar` holds the already-
-// computed `String` (the decomposer calls `expr_head_key` once, at build time) rather
-// than re-walking the `func` expr in `desugar`. The result is byte-identical: the same
-// `format!("call:{key}")` name the arm emits.
-//
-// THE ARGS ARE PRE-BUILT CHILD SUGAR. Each argument is held as a `Box<dyn Sugar>`
-// (built by the factory from the arg `Expr`), composed IN SOURCE ORDER. `desugar`
-// digs each child and collects its `Term`, preserving order, exactly as the arm's
-// `for arg in &call.args { args.push(translate_term_in_scope(arg, scope)?); }` loop
-// does. A child that does not reduce to a term (`into_term` -> `None`) bails the whole
-// node (the byte-identical structural backstop, the old `?`-propagated `Err`); a child
-// that `Hit`s a named order-loss boundary propagates that `Hit` VERBATIM (the old
-// named `Err` the inner `translate_term_in_scope?` produced).
+// The recognizer captures the raw function expression and raw arguments. `desugar`
+// computes the func-head key and builds each child argument lazily, in source order,
+// once the full binding context is available.
 //
 // THE RECOGNIZER PREAMBLE. The `Expr::Call` shape has an EARLY-RETURN
 // recognizer BEFORE the constructive tail:
@@ -37,13 +25,14 @@
 // `CallSugar` is the CONSTRUCTIVE COMPOSER ONLY -- it is built only after the preamble
 // has been cleared, and then emits the `call:` ctor.
 
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::Term;
 use syn::Expr;
 
 use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
+use crate::sugar::term_leaf::reasoned_hit;
 use crate::{
     const_fold_int_term, const_fold_u128_term, expr_head_key, num, type_id_of_call_term, u128_term,
     Desugared, Outcome, Sugar, SugarCtx,
@@ -59,47 +48,98 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     let Expr::Call(call) = expr else {
         return None;
     };
-    match type_id_of_call_term(&call.func, call.args.len()) {
-        Ok(Some(term)) => return Some(resolved_term(term)),
-        Ok(None) => {}
-        Err(reason) => return Some(reasoned_hit(reason)),
+    if type_id_of_call_decision(&call.func, call.args.len()).is_some() {
+        return Some(Box::new(CallSugar::TypeId {
+            func: call.func.as_ref().clone(),
+            arg_len: call.args.len(),
+        }));
     }
-    let args = call.args.iter().map(|arg| build_term(arg, fcx)).collect();
-    Some(Box::new(CallSugar::from_func(&call.func, args)))
+    Some(Box::new(CallSugar::Constructive {
+        func: call.func.as_ref().clone(),
+        args: call.args.iter().cloned().collect(),
+        let_inits: capture_let_inits(fcx),
+    }))
 }
 
 /// A free-function call `f(a, b, ...)` in term position, composed as a node whose
 /// `desugar` emits the `call:<head>` ctor over its argument child terms (the
 /// constructive tail of the `Expr::Call` arm). See the module header.
-pub(crate) struct CallSugar {
-    /// The function-head key, computed ONCE at construction via `expr_head_key(&func)`
-    /// (a syntactic key, not runtime state). The emitted ctor name is
-    /// `format!("call:{head_key}")` -- byte-identical to the arm.
-    head_key: String,
-    /// The argument child `Sugar`s, IN SOURCE ORDER. `desugar` digs each, reading its
-    /// `Term` back out through `into_term`; the collected terms are the ctor `args`.
-    args: Vec<Box<dyn Sugar>>,
+pub(crate) enum CallSugar {
+    TypeId {
+        func: Expr,
+        arg_len: usize,
+    },
+    Constructive {
+        func: Expr,
+        args: Vec<Expr>,
+        let_inits: BTreeMap<String, Expr>,
+    },
 }
 
 impl CallSugar {
-    /// Build a `CallSugar` from the already-computed func-head key and the pre-built
-    /// argument children (in source order). The decomposer calls `expr_head_key(&func)`
-    /// once and hands the resulting `String` here; the args are built by the factory.
-    pub(crate) fn new(head_key: impl Into<String>, args: Vec<Box<dyn Sugar>>) -> Self {
-        CallSugar {
-            head_key: head_key.into(),
+    pub(crate) fn new(func: Expr, args: Vec<Expr>, let_inits: BTreeMap<String, Expr>) -> Self {
+        CallSugar::Constructive {
+            func,
             args,
+            let_inits,
         }
     }
+}
 
-    /// Convenience: compute the func-head key from the `func` expr (via the shared
-    /// `expr_head_key`) and build the node. Mirrors how the arm computes the name --
-    /// `format!("call:{}", expr_head_key(&call.func))` -- so the call site need not
-    /// reach for the helper itself. No source exprs are retained, so no inline is
-    /// attempted (the direct/test constructor).
-    pub(crate) fn from_func(func: &Expr, args: Vec<Box<dyn Sugar>>) -> Self {
-        CallSugar::new(expr_head_key(func), args)
+fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
+    fcx.let_inits()
+        .iter()
+        .map(|(name, init)| (name.clone(), (**init).clone()))
+        .collect()
+}
+
+fn merge_let_inits<'a>(
+    stable: &'a BTreeMap<String, Expr>,
+    captured: &'a BTreeMap<String, Expr>,
+) -> BTreeMap<String, &'a Expr> {
+    stable
+        .iter()
+        .map(|(name, init)| (name.clone(), init))
+        .chain(captured.iter().map(|(name, init)| (name.clone(), init)))
+        .collect()
+}
+
+fn type_id_of_call_decision(func: &Expr, arg_len: usize) -> Option<Result<(), String>> {
+    if arg_len != 0 {
+        return None;
     }
+    let Expr::Path(path) = func else {
+        return None;
+    };
+    if !is_type_id_of_path(&path.path) {
+        return None;
+    }
+    let Some(last) = path.path.segments.last() else {
+        return None;
+    };
+    let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
+        return Some(Err(
+            "TypeId::of requires exactly one type argument".to_string()
+        ));
+    };
+    if args.args.len() != 1 {
+        return Some(Err(
+            "TypeId::of requires exactly one type argument".to_string()
+        ));
+    }
+    let Some(syn::GenericArgument::Type(_)) = args.args.first() else {
+        return Some(Err("TypeId::of requires a type argument".to_string()));
+    };
+    Some(Ok(()))
+}
+
+fn is_type_id_of_path(path: &syn::Path) -> bool {
+    let segments = path.segments.iter().collect::<Vec<_>>();
+    matches!(
+        segments.as_slice(),
+        [.., type_id, of]
+            if type_id.ident == "TypeId" && of.ident == "of"
+    )
 }
 
 impl Sugar for CallSugar {
@@ -111,44 +151,61 @@ impl Sugar for CallSugar {
     /// the structural backstop (`Outcome::from_opt(None)`, the old `?`-propagated
     /// generic refusal).
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let mut args = Vec::new();
-        for arg in &self.args {
-            let term = match arg.desugar(ctx) {
-                Outcome::Dug(d) => match d.into_term() {
-                    Some(t) => t,
-                    None => return Outcome::from_opt(None),
-                },
-                Outcome::Hit(e) => return Outcome::Hit(e),
-            };
-            args.push(term);
-        }
-        // ARITHMETIC TRAIT-METHOD FOLD: `Add::add(x, y)` → `x + y`, const-evaluated.
-        // Maps std-ops trait method calls (Add::add, Sub::sub, Mul::mul, Div::div,
-        // Rem::rem, Shl::shl, Shr::shr, BitAnd::bitand, BitOr::bitor, BitXor::bitxor)
-        // to their equivalent arithmetic ctor names, then applies the same
-        // `const_fold_int_term` / `const_fold_u128_term` that `BinOpSugar` uses. This
-        // discharges `assert_eq!(result, Op::method(lhs, rhs))` assertions where `lhs`
-        // and `rhs` are let-bound literal values (including `&rhs` ref forms, which
-        // `const_fold_int_term` now transparently strips). Without this fold the call
-        // emits an opaque `call:Add::add(...)` EUF that the SMT cannot evaluate.
-        if args.len() == 2 {
-            if let Some(arith_op) = arith_trait_method_op(&self.head_key) {
-                let folded = Rc::new(Term::Ctor {
-                    name: arith_op.to_string(),
-                    args: args.clone(),
-                });
-                if let Some(value) = const_fold_u128_term(&folded) {
-                    return Outcome::Dug(Desugared::Term(u128_term(value)));
+        match self {
+            CallSugar::TypeId { func, arg_len } => match type_id_of_call_term(func, *arg_len) {
+                Ok(Some(term)) => Outcome::Dug(Desugared::Term(term)),
+                Ok(None) => Outcome::from_opt(None),
+                Err(reason) => reasoned_hit(reason).desugar(ctx),
+            },
+            CallSugar::Constructive {
+                func,
+                args,
+                let_inits,
+            } => {
+                let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
+                let let_inits = merge_let_inits(&stable, let_inits);
+                let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+                let mut terms = Vec::new();
+                for arg in args {
+                    let term = match build_term(arg, &fcx).desugar(ctx) {
+                        Outcome::Dug(d) => match d.into_term() {
+                            Some(t) => t,
+                            None => return Outcome::from_opt(None),
+                        },
+                        Outcome::Hit(e) => return Outcome::Hit(e),
+                    };
+                    terms.push(term);
                 }
-                if let Some(value) = const_fold_int_term(&folded) {
-                    return Outcome::Dug(Desugared::Term(num(value)));
+                let head_key = expr_head_key(func);
+                // ARITHMETIC TRAIT-METHOD FOLD: `Add::add(x, y)` → `x + y`, const-evaluated.
+                // Maps std-ops trait method calls (Add::add, Sub::sub, Mul::mul, Div::div,
+                // Rem::rem, Shl::shl, Shr::shr, BitAnd::bitand, BitOr::bitor, BitXor::bitxor)
+                // to their equivalent arithmetic ctor names, then applies the same
+                // `const_fold_int_term` / `const_fold_u128_term` that `BinOpSugar` uses. This
+                // discharges `assert_eq!(result, Op::method(lhs, rhs))` assertions where `lhs`
+                // and `rhs` are let-bound literal values (including `&rhs` ref forms, which
+                // `const_fold_int_term` now transparently strips). Without this fold the call
+                // emits an opaque `call:Add::add(...)` EUF that the SMT cannot evaluate.
+                if terms.len() == 2 {
+                    if let Some(arith_op) = arith_trait_method_op(&head_key) {
+                        let folded = Rc::new(Term::Ctor {
+                            name: arith_op.to_string(),
+                            args: terms.clone(),
+                        });
+                        if let Some(value) = const_fold_u128_term(&folded) {
+                            return Outcome::Dug(Desugared::Term(u128_term(value)));
+                        }
+                        if let Some(value) = const_fold_int_term(&folded) {
+                            return Outcome::Dug(Desugared::Term(num(value)));
+                        }
+                    }
                 }
+                Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
+                    name: format!("call:{head_key}"),
+                    args: terms,
+                })))
             }
         }
-        Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
-            name: format!("call:{}", self.head_key),
-            args,
-        })))
     }
 }
 
@@ -174,50 +231,24 @@ fn arith_trait_method_op(head_key: &str) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    // `CallSugar` is the CONSTRUCTIVE composer: given pre-built argument children and a
-    // captured func-head key, it emits the `call:<head>` ctor over the child terms. The
-    // tests exercise that constructive tail directly, with LOCAL stub children
-    // (`StubTerm` digs to a fixed leaf term; `StubHit` Hits a named boundary), asserting
-    // the EXACT emitted ctor (name + args order) and verbatim `Hit` propagation. A real
-    // `SugarCtx` is built from the crate's own constructors (`TemporalScope::new` over a
-    // `TemporalPlan::default`, an empty `ReductionCtx::from_items`, `LiftOptions::default`,
-    // a fresh `FloatWidthScope`) via the `sugar_ctx` helper -- the stubs ignore `ctx`, so
-    // any well-formed ctx exercises the dig/collect/emit path.
+    // `CallSugar` is the CONSTRUCTIVE composer: given raw argument expressions and a
+    // raw function expression, it lazily emits the `call:<head>` ctor over the child
+    // terms. These tests exercise that constructive tail directly through the real
+    // factory path, asserting the exact emitted ctor (name + args order) and verbatim
+    // child `Hit` propagation.
     use super::*;
     use crate::{
         sugar_ctx, Desugared, Effect, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar,
-        SugarCtx, TemporalPlan, TemporalScope,
+        TemporalPlan, TemporalScope,
     };
-    use sugar_ir_symbolic::{make_var, Term};
+    use sugar_ir_symbolic::Term;
     use syn::Item;
 
-    /// A test-double leaf `Sugar` that digs to a fixed `Var` term named `tag`, so a
-    /// composite's collected-arg order is observable by the leaf names.
-    struct StubTerm {
-        tag: &'static str,
-    }
-    impl Sugar for StubTerm {
-        fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-            Outcome::Dug(Desugared::Term(make_var(self.tag)))
-        }
+    fn expr(src: &str) -> Expr {
+        syn::parse_str(src).expect("parse expr")
     }
 
-    /// A test-double leaf `Sugar` that Hits a named order-loss boundary, used to assert
-    /// the composite propagates a child `Hit` verbatim.
-    struct StubHit {
-        boundary: &'static str,
-    }
-    impl Sugar for StubHit {
-        fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-            Outcome::Hit(Effect::TemporalRead {
-                boundary: self.boundary.to_string(),
-            })
-        }
-    }
-
-    /// Run `node.desugar` against a freshly-built, minimal-but-real `SugarCtx`. The stub
-    /// children ignore `ctx`, so the ctx contents are immaterial -- it need only be
-    /// well-formed (the lifetime-heavy parts are owned by the caller's locals).
+    /// Run `node.desugar` against a freshly-built, minimal-but-real `SugarCtx`.
     fn run(node: &CallSugar) -> Outcome {
         let items: Vec<Item> = Vec::new();
         let reducer = ReductionCtx::from_items(&items);
@@ -245,13 +276,7 @@ mod tests {
     fn emits_call_ctor_with_args_in_order() {
         // `f(x, y)` -> `Ctor { name: "call:f", args: [Var(x), Var(y)] }` -- the exact
         // ctor the `Expr::Call` constructive tail emits, args in SOURCE ORDER.
-        let node = CallSugar::new(
-            "f",
-            vec![
-                Box::new(StubTerm { tag: "x" }),
-                Box::new(StubTerm { tag: "y" }),
-            ],
-        );
+        let node = CallSugar::new(expr("f"), vec![expr("x"), expr("y")], BTreeMap::new());
         let Outcome::Dug(Desugared::Term(term)) = run(&node) else {
             panic!("expected a Dug term");
         };
@@ -266,7 +291,7 @@ mod tests {
     #[test]
     fn nullary_call_emits_empty_args() {
         // `g()` -> `Ctor { name: "call:g", args: [] }`.
-        let node = CallSugar::new("g", Vec::new());
+        let node = CallSugar::new(expr("g"), Vec::new(), BTreeMap::new());
         let Outcome::Dug(Desugared::Term(term)) = run(&node) else {
             panic!("expected a Dug term");
         };
@@ -281,10 +306,8 @@ mod tests {
 
     #[test]
     fn head_key_computed_from_func_expr() {
-        // `from_func` mirrors the arm's `expr_head_key(&call.func)`: a path head `h`
-        // keys the ctor as `call:h`.
-        let func: Expr = syn::parse_str("h").expect("parse func path");
-        let node = CallSugar::from_func(&func, vec![Box::new(StubTerm { tag: "a" })]);
+        // The function expression is retained raw and keyed lazily in `desugar`.
+        let node = CallSugar::new(expr("h"), vec![expr("a")], BTreeMap::new());
         let Outcome::Dug(Desugared::Term(term)) = run(&node) else {
             panic!("expected a Dug term");
         };
@@ -296,20 +319,18 @@ mod tests {
 
     #[test]
     fn propagates_child_hit_verbatim() {
-        // A child that Hits a named order-loss boundary aborts the whole node with that
-        // SAME `Hit` (the old named inner `translate_term_in_scope?` `Err`).
-        let node = CallSugar::new(
-            "f",
-            vec![
-                Box::new(StubTerm { tag: "x" }),
-                Box::new(StubHit { boundary: "mut[i]" }),
-            ],
-        );
+        // A child that Hits aborts the whole node with that SAME `Hit` (the old named
+        // inner `translate_term_in_scope?` `Err`).
+        let node = CallSugar::new(expr("f"), vec![expr("x"), expr("&mut y")], BTreeMap::new());
         match run(&node) {
-            Outcome::Hit(Effect::TemporalRead { boundary }) => {
-                assert_eq!(boundary, "mut[i]");
+            Outcome::Hit(Effect::Unsupported { reason }) => {
+                assert!(
+                    reason.contains("unsupported term"),
+                    "unexpected reason: {reason}"
+                );
+                assert!(reason.contains("mutable"), "unexpected reason: {reason}");
             }
-            Outcome::Hit(_) => panic!("expected the child's TemporalRead Hit, got a different Hit"),
+            Outcome::Hit(_) => panic!("expected the child's Unsupported Hit, got a different Hit"),
             Outcome::Dug(_) => panic!("expected the child's Hit to propagate, got a Dug"),
         }
     }
