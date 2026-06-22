@@ -18,7 +18,11 @@ use crate::{
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::composite("literal_slice", recognize_composite);
+    crate::sugar::claim::ExprSugarClaim::composite_before(
+        "literal_slice",
+        &["reference_sequence"],
+        recognize_composite,
+    );
 
 pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Index(index) = strip_refs_groups(expr) else {

@@ -44,7 +44,7 @@ use std::collections::BTreeMap;
 use syn::Expr;
 
 use crate::sugar::bound::BoundSugar;
-use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::format::stable_let_bindings;
 use crate::{
@@ -56,7 +56,6 @@ use sugar_ir_symbolic::{atomic_, str_const, Formula, Term};
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_regex_match",
     SugarRole::Constraint,
-    SugarPriority::Primary,
     recognize_constraint,
 );
 

@@ -9,7 +9,11 @@ use crate::sugar::factory::SugarBuildCtx;
 use crate::{token_key, Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::closure_adaptor_verdict("closure_tls_accessor", recognize);
+    crate::sugar::claim::ExprSugarClaim::closure_adaptor_verdict_before(
+        "closure_tls_accessor",
+        &["closure_runtime_receiver"],
+        recognize,
+    );
 
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let site = closure_adaptor::decompose_closure_adaptor(expr, fcx.let_inits())?;

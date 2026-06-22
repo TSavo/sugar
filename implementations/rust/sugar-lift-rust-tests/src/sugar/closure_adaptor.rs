@@ -55,7 +55,7 @@ impl ClosureAdaptorSite {
     }
 
     /// BODY detector: any side-effecting closure body is mutating. Iterator advance is a
-    /// better body owner and wins by Sugar-declared priority when both match.
+    /// better body owner and declares it comes before this verdict when both match.
     pub(crate) fn has_mutating_body(&self) -> bool {
         closure_body_is_side_effecting(&self.closure.body)
     }

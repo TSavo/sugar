@@ -52,7 +52,7 @@ use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::{strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("monadic", recognize);
+    crate::sugar::claim::ExprSugarClaim::term_before("monadic", &["call", "path"], recognize);
 
 /// The reserved monadic ctor names. Distinct from the generic `call:<head>`
 /// ctor (`call:Some`/`call:None`) so the equality routes through the plain

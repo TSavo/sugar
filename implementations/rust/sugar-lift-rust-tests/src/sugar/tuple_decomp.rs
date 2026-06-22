@@ -27,7 +27,7 @@
 
 use std::rc::Rc;
 
-use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::integer_decode;
 use crate::sugar::size_hint;
@@ -38,17 +38,12 @@ use crate::{
 use sugar_ir_symbolic::{and_, atomic_, Term};
 use syn::{BinOp, Expr, ExprBinary, ExprMacro};
 
-pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
-    "constraint_tuple_decomp",
-    SugarRole::Constraint,
-    SugarPriority::Primary,
-    recognize,
-);
+pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim =
+    ExprSugarClaim::new("constraint_tuple_decomp", SugarRole::Constraint, recognize);
 
 pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "assertion_surface_tuple_decomp",
     SugarRole::AssertionSurface,
-    SugarPriority::Primary,
     recognize,
 );
 

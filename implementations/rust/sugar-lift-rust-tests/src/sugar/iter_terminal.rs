@@ -30,8 +30,8 @@
 // THE PREDICATE-BOOL terminals (`.any(p)`/`.all(p)`) const-evaluate the closure over each
 // element and OR (`any`) / AND (`all`) the per-element bools to a GROUNDED bool const.
 //
-// This is the TERM-position node -- it declares a better TERM priority than
-// `method::recognize`, so a recognized literal-domain reduction grounds to its
+// This is the TERM-position node. It declares it comes before `method::recognize`,
+// so a recognized literal-domain reduction grounds to its
 // value instead of the opaque `method:<m>` EUF ctor. A receiver chain the literal-Seq
 // machinery does not own (`peel_fold_adaptors` -> `None`: an unknown adaptor, a closure
 // adaptor that is not const-evaluable here, a `let`-bound receiver that does not resolve
@@ -76,7 +76,7 @@ use crate::{
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("iter_terminal", recognize);
+    crate::sugar::claim::ExprSugarClaim::term_before("iter_terminal", &["method"], recognize);
 
 /// Build a grounded boolean CONST term (`bool(b)`) for the `.any`/`.all` reductions. The
 /// `Bool` sort meets the `assert_eq!(..., true)` RHS bool const structurally (z3 enforces

@@ -4,7 +4,7 @@
 
 use syn::Expr;
 
-use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::statement_position;
 use crate::{token_key, Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON};
@@ -12,14 +12,12 @@ use crate::{token_key, Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REA
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "statement_runtime_expr",
     SugarRole::StatementEffect,
-    SugarPriority::Quaternary,
     recognize_statement_effect,
 );
 
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_runtime_expr",
     SugarRole::Constraint,
-    SugarPriority::Secondary,
     recognize_constraint,
 );
 

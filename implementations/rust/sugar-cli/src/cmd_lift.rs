@@ -2946,16 +2946,24 @@ fn format_factory_candidates(audit: &Value) -> String {
         .filter_map(|candidate| {
             let name = candidate.get("name").and_then(Value::as_str)?;
             let role = candidate.get("role").and_then(Value::as_str).unwrap_or("?");
-            let priority = candidate
-                .get("priority")
-                .and_then(Value::as_str)
-                .unwrap_or("?");
+            let comes_before = candidate
+                .get("comesBefore")
+                .and_then(Value::as_array)
+                .map(|edges| {
+                    edges
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join("|")
+                })
+                .filter(|edges| !edges.is_empty())
+                .unwrap_or_else(|| "-".to_string());
             let selected = candidate
                 .get("selected")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
             let suffix = if selected { "*" } else { "" };
-            Some(format!("{name}[{role}/{priority}]{suffix}"))
+            Some(format!("{name}[{role}/before={comes_before}]{suffix}"))
         })
         .collect::<Vec<_>>()
         .join(", ")
@@ -4404,7 +4412,7 @@ mod tests {
                         {
                             "name": "closure_term",
                             "role": "Term",
-                            "priority": "Primary",
+                            "comesBefore": [],
                             "selected": false
                         }
                     ],
@@ -4428,7 +4436,7 @@ mod tests {
         ));
         assert!(human.contains("site: `|| 1`"), "{human}");
         assert!(
-            human.contains("candidates: closure_term[Term/Primary]"),
+            human.contains("candidates: closure_term[Term/before=-]"),
             "{human}"
         );
         assert!(

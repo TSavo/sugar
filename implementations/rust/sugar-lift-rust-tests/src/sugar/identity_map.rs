@@ -13,7 +13,11 @@ use crate::sugar::method_family;
 use crate::{closure_single_param_ident, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::composite("identity_map", recognize_composite);
+    crate::sugar::claim::ExprSugarClaim::composite_before(
+        "identity_map",
+        &["map"],
+        recognize_composite,
+    );
 
 pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::MethodCall(call) = expr else {

@@ -4,16 +4,14 @@
 
 use syn::Expr;
 
-use crate::sugar::claim::{SugarPriority, SugarRole};
 use crate::sugar::closure_adaptor;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{token_key, Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::new(
+    crate::sugar::claim::ExprSugarClaim::closure_adaptor_verdict_before(
         "closure_mutating_body",
-        SugarRole::ClosureAdaptorVerdict,
-        SugarPriority::Tertiary,
+        &["closure_runtime_receiver"],
         recognize,
     );
 

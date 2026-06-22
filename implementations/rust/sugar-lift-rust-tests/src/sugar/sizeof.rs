@@ -20,12 +20,12 @@ use sugar_ir_symbolic::num;
 use syn::{Expr, ExprCall, ExprPath, GenericArgument, PathArguments, Type};
 use tracing::{debug, warn};
 
-use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{type_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::new("sizeof", SugarRole::Term, SugarPriority::Primary, recognize);
+    ExprSugarClaim::new("sizeof", SugarRole::Term, recognize);
 
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Call(call) = expr else {

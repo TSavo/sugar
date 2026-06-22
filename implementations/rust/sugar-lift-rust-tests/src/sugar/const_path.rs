@@ -4,7 +4,7 @@
 // The compiler already proved the path resolves for compiling code; the factory's
 // job is to recurse into the initializer instead of freezing the path as a free var.
 
-use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::term_leaf::resolved_term;
 use std::rc::Rc;
@@ -16,7 +16,7 @@ use syn::{Expr, ExprPath, Type};
 use tracing::debug;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
-    ExprSugarClaim::new("const", SugarRole::Term, SugarPriority::Tertiary, recognize);
+    ExprSugarClaim::term_before("const", &["path"], recognize);
 
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if let Some(value) = primitive_assoc_const_expr(expr) {

@@ -13,7 +13,7 @@ use syn::{BinOp, Expr, Lit, Pat, Stmt, UnOp};
 use tracing::debug;
 
 use crate::sugar::callsite::{CallsiteOutcome, CallsiteSugar};
-use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::configuration::{resolve as cfg_resolve, CfgDisposition};
 use crate::sugar::extract_if::{ExtractIfSugar, ReplayAction};
 use crate::sugar::factory::{build_composite, build_term, has_composite, SugarBuildCtx};
@@ -27,12 +27,8 @@ use crate::{
     SUGAR_SEQ_CAP,
 };
 
-pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
-    "for_replay",
-    SugarRole::Composite,
-    SugarPriority::Primary,
-    recognize,
-);
+pub(crate) const EXPR_SUGAR: ExprSugarClaim =
+    ExprSugarClaim::composite_before("for_replay", &["forall_loop"], recognize);
 
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::ForLoop(for_loop) = expr else {

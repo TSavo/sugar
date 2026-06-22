@@ -6,7 +6,7 @@
 // meaning is the expression shape underneath (`lhs cmp rhs`, boolean
 // connective, panic locus), not a human method name.
 
-use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::configuration;
 use crate::sugar::constraint_runtime_boundary;
 use std::rc::Rc;
@@ -23,66 +23,67 @@ use sugar_ir_symbolic::{and_, atomic_, eq, not_, num, str_const, ConstValue, For
 use syn::{BinOp, Expr, ExprIf, ExprLit, ExprMacro, Lit, UnOp};
 use tracing::debug;
 
-pub(crate) const RELATION_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+pub(crate) const RELATION_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::constraint_before(
     "constraint_relation_macro",
-    SugarRole::Constraint,
-    SugarPriority::Secondary,
+    &["constraint_bool_expr"],
     recognize_relation_macro,
 );
 
-pub(crate) const RELATION_MACRO_ASSERTION_SURFACE: ExprSugarClaim = ExprSugarClaim::new(
+pub(crate) const RELATION_MACRO_ASSERTION_SURFACE: ExprSugarClaim = ExprSugarClaim::with_ordering(
     "assertion_surface_relation_macro",
     SugarRole::AssertionSurface,
-    SugarPriority::Secondary,
+    &["assertion_surface_assert_macro"],
     recognize_relation_macro,
 );
 
-pub(crate) const BOUNDED_LITERAL_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+pub(crate) const BOUNDED_LITERAL_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::constraint_before(
     "constraint_bounded_literal_macro",
-    SugarRole::Constraint,
-    SugarPriority::Primary,
+    &[
+        "constraint_relation_macro",
+        "constraint_assert_macro",
+        "constraint_bool_expr",
+    ],
     recognize_bounded_literal_macro,
 );
 
-pub(crate) const BOUNDED_LITERAL_MACRO_ASSERTION_SURFACE: ExprSugarClaim = ExprSugarClaim::new(
-    "assertion_surface_bounded_literal_macro",
-    SugarRole::AssertionSurface,
-    SugarPriority::Primary,
-    recognize_bounded_literal_macro,
-);
+pub(crate) const BOUNDED_LITERAL_MACRO_ASSERTION_SURFACE: ExprSugarClaim =
+    ExprSugarClaim::with_ordering(
+        "assertion_surface_bounded_literal_macro",
+        SugarRole::AssertionSurface,
+        &[
+            "assertion_surface_relation_macro",
+            "assertion_surface_assert_macro",
+        ],
+        recognize_bounded_literal_macro,
+    );
 
-pub(crate) const ASSERT_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+pub(crate) const ASSERT_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::constraint_before(
     "constraint_assert_macro",
-    SugarRole::Constraint,
-    SugarPriority::Secondary,
+    &["constraint_bool_expr"],
     recognize_assert_macro,
 );
 
 pub(crate) const ASSERT_MACRO_ASSERTION_SURFACE: ExprSugarClaim = ExprSugarClaim::new(
     "assertion_surface_assert_macro",
     SugarRole::AssertionSurface,
-    SugarPriority::Secondary,
     recognize_assert_macro,
 );
 
 pub(crate) const BOOL_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_bool_expr",
     SugarRole::Constraint,
-    SugarPriority::Tertiary,
     recognize_bool_expr,
 );
 
-pub(crate) const IF_PANIC_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+pub(crate) const IF_PANIC_SUGAR: ExprSugarClaim = ExprSugarClaim::constraint_before(
     "constraint_if_panic",
-    SugarRole::Constraint,
-    SugarPriority::Primary,
+    &["constraint_bool_expr"],
     recognize_if_panic,
 );
 
 pub(crate) const NO_PANIC_CALL_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_no_panic_call",
     SugarRole::SupportConstraint,
-    SugarPriority::Primary,
     recognize_no_panic_call,
 );
 

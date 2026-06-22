@@ -6,7 +6,7 @@
 
 use std::rc::Rc;
 
-use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::{
     callsite_assertion_name, token_key, AssertionFactKind, Desugared, Effect, FloatWidthScope,
@@ -18,7 +18,6 @@ use syn::{Expr, ExprLit, ExprMethodCall, Lit, Type};
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_float_refinement",
     SugarRole::Constraint,
-    SugarPriority::Primary,
     recognize,
 );
 

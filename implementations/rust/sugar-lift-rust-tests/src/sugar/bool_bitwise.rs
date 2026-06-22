@@ -6,7 +6,7 @@
 
 use std::rc::Rc;
 
-use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_constraint, SugarBuildCtx};
 use crate::{
     AssertionFactKind, Desugared, Effect, Outcome, Sugar, SugarCtx, Warrant,
@@ -15,12 +15,8 @@ use crate::{
 use sugar_ir_symbolic::{and_, or_, Formula};
 use syn::{BinOp, Expr, ExprBinary};
 
-pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
-    "constraint_bool_bitwise",
-    SugarRole::Constraint,
-    SugarPriority::Primary,
-    recognize,
-);
+pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim =
+    ExprSugarClaim::new("constraint_bool_bitwise", SugarRole::Constraint, recognize);
 
 struct BoolBitwiseSugar {
     left: Box<dyn Sugar>,

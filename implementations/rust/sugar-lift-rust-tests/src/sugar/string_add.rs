@@ -12,7 +12,7 @@ use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
 use crate::Sugar;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("string_add", recognize);
+    crate::sugar::claim::ExprSugarClaim::term_before("string_add", &["binop"], recognize);
 
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if !is_string_add_shape(expr) {

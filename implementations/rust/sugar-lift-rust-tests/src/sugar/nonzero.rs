@@ -10,25 +10,17 @@ use sugar_ir_symbolic::{ConstValue, Term};
 use syn::Expr;
 use tracing::debug;
 
-use crate::sugar::claim::{ExprSugarClaim, SugarPriority, SugarRole};
+use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::int_sqrt::term_as_int;
 use crate::sugar::monadic::{none_term, some_term};
 use crate::{const_fold_u128_term, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 
-pub(crate) const NEW_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
-    "nonzero_new",
-    SugarRole::Term,
-    SugarPriority::Primary,
-    recognize_new,
-);
+pub(crate) const NEW_EXPR_SUGAR: ExprSugarClaim =
+    ExprSugarClaim::new("nonzero_new", SugarRole::Term, recognize_new);
 
-pub(crate) const GET_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
-    "nonzero_get",
-    SugarRole::Term,
-    SugarPriority::Primary,
-    recognize_get,
-);
+pub(crate) const GET_EXPR_SUGAR: ExprSugarClaim =
+    ExprSugarClaim::new("nonzero_get", SugarRole::Term, recognize_get);
 
 fn recognize_new(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Call(call) = expr else {
