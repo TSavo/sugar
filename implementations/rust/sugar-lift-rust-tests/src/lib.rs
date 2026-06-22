@@ -18969,6 +18969,21 @@ mod lifter_key_tests {
         out.decls.iter().map(|d| d.name.as_str()).collect()
     }
 
+    fn value_claim_decl_dump(out: &AdapterOutput) -> String {
+        let value_claims: std::collections::BTreeSet<&str> = out
+            .assertion_facts
+            .iter()
+            .filter(|fact| fact.kind == AssertionFactKind::Warranted && fact.claim_count > 0)
+            .map(|fact| fact.contract_name.as_str())
+            .collect();
+        let decls = out
+            .decls
+            .iter()
+            .filter(|decl| value_claims.contains(decl.name.as_str()))
+            .collect::<Vec<_>>();
+        format!("{decls:?}")
+    }
+
     fn output_contains_grounded_int_eq(out: &AdapterOutput, lhs: i128, rhs: i128) -> bool {
         out.decls
             .iter()
@@ -19514,16 +19529,14 @@ mod lifter_key_tests {
                 .iter()
                 .filter(|contract| contract.contains("method:next"))
                 .count(),
-            1,
-            "the first next boundary keeps the method:next bridge seam; terminal chain callsites are still warranted separately: {panic_fact_contracts:?}"
+            3,
+            "each next callsite now owns its opaque method subject for panic(Int) support: {panic_fact_contracts:?}"
         );
         assert!(
-            panic_fact_contracts
-                .iter()
-                .filter(|contract| contract.contains("panic-path"))
-                .count()
-                >= 2,
-            "terminal next-chain callsites should still get warranted panic facts: {panic_fact_contracts:?}"
+            std::collections::BTreeSet::<&str>::from_iter(panic_fact_contracts.iter().copied())
+                .len()
+                == panic_fact_contracts.len(),
+            "opaque method callsite identities must distinguish the chain callsites: {panic_fact_contracts:?}"
         );
         let no_panic_facts = out
             .factory_audits
@@ -19970,7 +19983,9 @@ mod lifter_key_tests {
             "post-next len should ground to 2 == 2: {:?}",
             out.decls
         );
-        let dump = format!("{:?}", out.decls);
+        // #2397 adds support-only opaque method keys for panic(Int) callsite
+        // identity; the value claims must still ground away from method:len.
+        let dump = value_claim_decl_dump(&out);
         assert!(
             !dump.contains("method:len"),
             "literal iterator len should not fall back to generic method keys: {dump}"
@@ -20529,7 +20544,9 @@ mod lifter_key_tests {
             "identity map over string literals should not be refused: {:?}",
             out.skip_reasons
         );
-        let dump = format!("{:?}", out.decls);
+        // Support-only panic rows keep opaque method callsite identity; the
+        // value claim proves count still materialized to the literal length.
+        let dump = value_claim_decl_dump(&out);
         assert!(
             dump.contains("value: Int(3)") && !dump.contains("method:count"),
             "identity map should preserve the literal sequence so count grounds to 3: {dump}"
@@ -20718,7 +20735,9 @@ mod lifter_key_tests {
             "literal closure map should not be refused: {:?}",
             out.skip_reasons
         );
-        let dump = format!("{:?}", out.decls);
+        // Support-only panic rows keep opaque method callsite identity; the
+        // value claims must still materialize the mapped literal arrays.
+        let dump = value_claim_decl_dump(&out);
         assert!(
             dump.contains("literal:Array(i:2,i:3,i:4)") && !dump.contains("method:map"),
             "closure map should materialize the mapped literal array: {dump}"
@@ -20806,7 +20825,9 @@ mod lifter_key_tests {
             "ZST try_map should not be refused: {:?}",
             out.skip_reasons
         );
-        let dump = format!("{:?}", out.decls);
+        // Support-only panic rows keep opaque method/call identities; the value
+        // claim must still materialize Some([Zst; 3]).
+        let dump = value_claim_decl_dump(&out);
         assert!(
             dump.contains("opt:some")
                 && dump.contains("literal:Array(v:literal:unitpath:Zst")
