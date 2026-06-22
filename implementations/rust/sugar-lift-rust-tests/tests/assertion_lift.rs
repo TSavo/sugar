@@ -19708,6 +19708,31 @@ fn runtime_callable_element_literal_twin() {
 }
 
 #[test]
+fn rpc_source_refuses_type_inferred_parse_result_with_literal_twin() {
+    let doc = run_rpc_lift(
+        "src/source_type_inferred_parse.rs",
+        r#"
+#[test]
+fn type_inferred_parse_refused() {
+    assert_eq!("127".parse(), Ok(127u8));
+}
+
+#[test]
+fn type_inferred_parse_literal_twin() {
+    assert_eq!("127".parse::<u8>(), Ok(127u8));
+}
+"#,
+    );
+
+    assert_rpc_source_refused(
+        &doc,
+        "type_inferred_parse_refused",
+        "type-inferred runtime parser boundary",
+    );
+    assert_rpc_source_warranted(&doc, "type_inferred_parse_literal_twin");
+}
+
+#[test]
 fn rpc_source_refuses_mutating_closure_value_construction_with_literal_twin() {
     let doc = run_rpc_lift(
         "src/source_mutating_closure_value.rs",
