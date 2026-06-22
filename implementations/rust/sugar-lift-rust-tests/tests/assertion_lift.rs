@@ -21625,11 +21625,9 @@ fn assert_contract_edge(doc: &serde_json::Value, source: &str, symbol: &str, tar
 }
 
 #[test]
-fn rpc_source_no_scalar_value_proposition_panics_not_supports() {
-    let panic = std::panic::catch_unwind(|| {
-        run_rpc_lift(
-            "src/source_no_scalar_array_try_from.rs",
-            r#"
+fn rpc_source_warrants_no_scalar_literal_aggregate_macro_not_supports() {
+    let rel = "src/source_no_scalar_array_try_from.rs";
+    let src = r#"
 #[test]
 fn no_scalar_array_try_from_support() {
     macro_rules! test {
@@ -21662,20 +21660,20 @@ fn no_scalar_array_try_from_support() {
 fn no_scalar_array_try_from_literal_twin() {
     assert_eq!(1usize, 1usize);
 }
-"#,
-        )
-    })
-    .expect_err("no-scalar value proposition must panic, not become source support");
-
-    let message = panic
-        .downcast_ref::<String>()
-        .map(String::as_str)
-        .or_else(|| panic.downcast_ref::<&str>().copied())
-        .unwrap_or("");
+"#;
+    let out = lift_file(&parse(src), rel);
     assert!(
-        message.contains("no `lift` (id:2) reply"),
-        "strict source-audit panic should close the RPC without a lift reply, got: {message}"
+        out.assertions_lifted > 0 && out.warnings.is_empty(),
+        "in-process lift must reach the literal aggregate before RPC ledgering; lifted={} refused={} warnings={:?} facts={:?} decls={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.warnings,
+        out.assertion_facts,
+        out.decls.iter().map(|decl| decl.name.as_str()).collect::<Vec<_>>()
     );
+    let doc = run_rpc_lift(rel, src);
+    assert_rpc_source_warranted(&doc, "no_scalar_array_try_from_support");
+    assert_rpc_source_warranted(&doc, "no_scalar_array_try_from_literal_twin");
 }
 
 #[test]
