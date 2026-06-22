@@ -1060,6 +1060,12 @@ fn named_source_refusal_reason(category: &'static str, detail: &str) -> String {
 }
 
 fn clean_named_refusal_category(reason: &str) -> Option<&'static str> {
+    let attended_review = reason.contains("ambiguous temporal identity")
+        || reason.contains("unknown iterator consumption")
+        || reason.contains("temporally unstable")
+        || reason.contains("assertion under for context")
+        || reason.contains("assertion under while context")
+        || reason.contains("consumed-iterator local");
     if reason.contains("effectful / raw-pointer / mutable-reference term") {
         return Some("mutable reference/pointer effect");
     }
@@ -1099,6 +1105,24 @@ fn clean_named_refusal_category(reason: &str) -> Option<&'static str> {
     }
     if reason.contains("reachable only at runtime when the method is invoked") {
         return Some("runtime impl-method boundary");
+    }
+    if !attended_review
+        && (reason.contains("closure body performs a runtime call through closure body parameter")
+            || reason.contains("dynamic callable element"))
+    {
+        return Some("runtime callable element boundary");
+    }
+    if reason.contains("NaN comparison")
+        && reason.contains("Rust float PartialEq/PartialOrd semantics")
+    {
+        return Some("IEEE NaN comparison boundary");
+    }
+    if !attended_review
+        && reason.contains("iterator/option adaptor")
+        && reason.contains("over an OPAQUE collection")
+        && reason.contains("runtime data, not constructed from source literals")
+    {
+        return Some("opaque runtime iterator collection");
     }
     None
 }
