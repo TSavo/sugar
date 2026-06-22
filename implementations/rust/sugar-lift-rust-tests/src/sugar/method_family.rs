@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 use syn::{Expr, ExprRange};
 
-use crate::sugar::factory::{build_composite, SugarBuildCtx};
+use crate::sugar::factory::{build_composite, has_composite, SugarBuildCtx};
 use crate::sugar::literal_slice;
 use crate::{
     const_int, peel_fold_adaptors, peel_fold_adaptors_in_scope, strip_refs_groups, Sugar,
@@ -74,6 +74,7 @@ pub(crate) fn build_literal_sequence_composite(
     // sequence here so the constructive floor (and its element-wise teeth) is reached.
     if !is_literal_sequence_base_in_scope(base, fcx.scope())
         && !literal_slice::is_literal_slice_base(base, fcx.let_inits())
+        && !has_composite(base, fcx)
     {
         return None;
     }
