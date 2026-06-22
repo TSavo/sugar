@@ -4347,6 +4347,10 @@ impl TemporalScope {
         self.temporal_rewrite.borrow().unknown_mutation_reason(name)
     }
 
+    fn exact_loop_replayed(&self, name: &str) -> bool {
+        self.temporal_rewrite.borrow().exact_loop_replayed(name)
+    }
+
     pub(crate) fn temporal_rewrite_can_apply(&self, expr: &Expr) -> bool {
         self.temporal_rewrite.borrow().can_apply(expr)
     }
@@ -4438,7 +4442,7 @@ impl TemporalScope {
     /// (`scope.ambiguous`). The factory's `Expr::Closure` arm refuses a closure that
     /// captures an ambiguous local; the inline arm read `scope.ambiguous.contains(..)`.
     pub(crate) fn ambiguous_contains(&self, name: &str) -> bool {
-        self.ambiguous.contains(name)
+        self.ambiguous.contains(name) && !self.exact_loop_replayed(name)
     }
 
     /// The recorded version (`@def<v>` suffix) of `name`, or `None`. The factory's
@@ -4473,7 +4477,7 @@ impl TemporalScope {
     /// stale initial literal (which would refute a true assertion). See
     /// `collect_loop_counter_stale_reads`. The #2342 sibling for the loop-counter class.
     pub(crate) fn is_temporally_unstable_read(&self, name: &str) -> bool {
-        self.plan.temporally_unstable.contains(name)
+        self.plan.temporally_unstable.contains(name) && !self.exact_loop_replayed(name)
     }
 
     /// Whether `name` is a CONSUMED iterator local (advanced in a loop-consuming context or

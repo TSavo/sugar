@@ -61,6 +61,7 @@ pub(crate) struct TemporalRewriteState {
     unknown_consumed_iterators: BTreeMap<String, String>,
     unknown_mutations: BTreeMap<String, String>,
     rewritten_bases: BTreeSet<String>,
+    loop_replayed: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -98,6 +99,15 @@ enum IndexSpec {
     Element(usize),
     Slice { start: usize, len: usize },
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LoopStep {
+    Fallthrough,
+    Continue,
+    Break,
+}
+
+const LOOP_REPLAY_CAP: usize = 256;
 
 impl TemporalRewriteState {
     pub(crate) fn expr_for(&self, name: &str) -> Option<Expr> {
@@ -170,6 +180,10 @@ impl TemporalRewriteState {
 
     pub(crate) fn unknown_mutation_reason(&self, name: &str) -> Option<String> {
         self.unknown_mutations.get(name).cloned()
+    }
+
+    pub(crate) fn exact_loop_replayed(&self, name: &str) -> bool {
+        self.loop_replayed.contains(name) && self.expr_for(name).is_some()
     }
 
     pub(crate) fn can_apply(&self, expr: &Expr) -> bool {
@@ -330,11 +344,8 @@ impl TemporalRewriteState {
                 self.apply_consumption_expr(&for_loop.expr)
                     | self.apply_consumption_stmts(&for_loop.body.stmts)
             }
-            Expr::While(while_expr) => {
-                self.apply_consumption_expr(&while_expr.cond)
-                    | self.apply_consumption_stmts(&while_expr.body.stmts)
-            }
-            Expr::Loop(loop_expr) => self.apply_consumption_stmts(&loop_expr.body.stmts),
+            Expr::While(while_expr) => self.apply_while_loop(while_expr),
+            Expr::Loop(loop_expr) => self.apply_loop(loop_expr),
             Expr::If(if_expr) => {
                 let mut applied = self.apply_consumption_expr(&if_expr.cond)
                     | self.apply_consumption_stmts(&if_expr.then_branch.stmts);
@@ -360,6 +371,123 @@ impl TemporalRewriteState {
             applied |= self.apply_statement(stmt);
         }
         applied
+    }
+
+    fn apply_while_loop(&mut self, while_expr: &syn::ExprWhile) -> bool {
+        let mutated = loop_mutation_names_in_stmts(&while_expr.body.stmts);
+        if mutated.is_empty() {
+            return false;
+        }
+        let mut scratch = self.clone();
+        for _ in 0..LOOP_REPLAY_CAP {
+            let Some(cond) = scratch.bool_value(&while_expr.cond) else {
+                return self.invalidate_unreplayed_loop_mutations(&mutated, "while condition");
+            };
+            if !cond {
+                *self = scratch;
+                self.loop_replayed.extend(mutated);
+                return true;
+            }
+            match scratch.apply_loop_stmts_once(&while_expr.body.stmts) {
+                Some(LoopStep::Break) => {
+                    *self = scratch;
+                    self.loop_replayed.extend(mutated);
+                    return true;
+                }
+                Some(LoopStep::Continue | LoopStep::Fallthrough) => {}
+                None => return self.invalidate_unreplayed_loop_mutations(&mutated, "while body"),
+            }
+        }
+        self.invalidate_unreplayed_loop_mutations(&mutated, "while replay cap")
+    }
+
+    fn apply_loop(&mut self, loop_expr: &syn::ExprLoop) -> bool {
+        let mutated = loop_mutation_names_in_stmts(&loop_expr.body.stmts);
+        if mutated.is_empty() {
+            return false;
+        }
+        let mut scratch = self.clone();
+        for _ in 0..LOOP_REPLAY_CAP {
+            match scratch.apply_loop_stmts_once(&loop_expr.body.stmts) {
+                Some(LoopStep::Break) => {
+                    *self = scratch;
+                    self.loop_replayed.extend(mutated);
+                    return true;
+                }
+                Some(LoopStep::Continue | LoopStep::Fallthrough) => {}
+                None => return self.invalidate_unreplayed_loop_mutations(&mutated, "loop body"),
+            }
+        }
+        self.invalidate_unreplayed_loop_mutations(&mutated, "loop replay cap")
+    }
+
+    fn apply_loop_stmts_once(&mut self, stmts: &[Stmt]) -> Option<LoopStep> {
+        for stmt in stmts {
+            match self.apply_loop_stmt_once(stmt)? {
+                LoopStep::Fallthrough => {}
+                flow => return Some(flow),
+            }
+        }
+        Some(LoopStep::Fallthrough)
+    }
+
+    fn apply_loop_stmt_once(&mut self, stmt: &Stmt) -> Option<LoopStep> {
+        match stmt {
+            Stmt::Local(local) => {
+                let init = local.init.as_ref().filter(|init| init.diverge.is_none())?;
+                self.trackable_value(&init.expr)?;
+                self.record_local(local);
+                Some(LoopStep::Fallthrough)
+            }
+            Stmt::Expr(Expr::Break(expr_break), _) => {
+                (expr_break.label.is_none() && expr_break.expr.is_none()).then_some(LoopStep::Break)
+            }
+            Stmt::Expr(Expr::Continue(expr_continue), _) => {
+                expr_continue.label.is_none().then_some(LoopStep::Continue)
+            }
+            Stmt::Expr(Expr::If(if_expr), _) => self.apply_loop_if_once(if_expr),
+            Stmt::Expr(expr, _) => self
+                .apply_with_trace(expr, true)
+                .then_some(LoopStep::Fallthrough),
+            _ => None,
+        }
+    }
+
+    fn apply_loop_if_once(&mut self, if_expr: &syn::ExprIf) -> Option<LoopStep> {
+        if self.bool_value(&if_expr.cond)? {
+            return self.apply_loop_stmts_once(&if_expr.then_branch.stmts);
+        }
+        let Some((_, else_branch)) = &if_expr.else_branch else {
+            return Some(LoopStep::Fallthrough);
+        };
+        match strip_refs_groups(else_branch) {
+            Expr::Block(block) => self.apply_loop_stmts_once(&block.block.stmts),
+            Expr::If(nested) => self.apply_loop_if_once(nested),
+            _ => None,
+        }
+    }
+
+    fn invalidate_unreplayed_loop_mutations(
+        &mut self,
+        names: &BTreeSet<String>,
+        reason: &str,
+    ) -> bool {
+        for name in names {
+            self.values.remove(name);
+            self.aliases.remove(name);
+            self.unknown_consumed_iterators.remove(name);
+            self.rewritten_bases.remove(name);
+            self.loop_replayed.remove(name);
+            self.unknown_mutations.insert(
+                name.clone(),
+                format!(
+                    "temporally unstable post-loop read of `{name}` after {reason}: \
+                     the loop was not exactly replayable from source literals, so there \
+                     is no single timeless value to read at the assertion; refused"
+                ),
+            );
+        }
+        !names.is_empty()
     }
 
     fn advance_iterator_binding(
@@ -396,6 +524,7 @@ impl TemporalRewriteState {
         self.values.remove(name);
         self.aliases.remove(name);
         self.rewritten_bases.remove(name);
+        self.loop_replayed.remove(name);
         self.unknown_consumed_iterators
             .insert(name.to_string(), method.to_string());
         debug!(
@@ -412,6 +541,7 @@ impl TemporalRewriteState {
         self.aliases.remove(name);
         self.unknown_consumed_iterators.remove(name);
         self.rewritten_bases.remove(name);
+        self.loop_replayed.remove(name);
         self.unknown_mutations.insert(
             name.to_string(),
             format!(
@@ -434,6 +564,7 @@ impl TemporalRewriteState {
         self.aliases.remove(name);
         self.unknown_consumed_iterators.remove(name);
         self.rewritten_bases.remove(name);
+        self.loop_replayed.remove(name);
         self.unknown_mutations.insert(
             name.to_string(),
             format!(
@@ -457,6 +588,7 @@ impl TemporalRewriteState {
         self.aliases.remove(name);
         self.unknown_consumed_iterators.remove(name);
         self.rewritten_bases.remove(name);
+        self.loop_replayed.remove(name);
         self.unknown_mutations.insert(
             name.to_string(),
             format!(
@@ -490,6 +622,7 @@ impl TemporalRewriteState {
         self.unknown_consumed_iterators.remove(&name);
         self.unknown_mutations.remove(&name);
         self.rewritten_bases.remove(&name);
+        self.loop_replayed.remove(&name);
         if let Some(base) = borrowed_iterator_source_name(&init.expr)
             .filter(|base| base != &name && self.values.contains_key(base))
         {
@@ -836,6 +969,57 @@ impl TemporalRewriteState {
     fn index_value(&self, expr: &Expr) -> Option<usize> {
         usize::try_from(self.int_value(expr)?).ok()
     }
+
+    fn bool_value(&self, expr: &Expr) -> Option<bool> {
+        match strip_refs_groups(expr) {
+            Expr::Lit(lit) => match &lit.lit {
+                Lit::Bool(b) => Some(b.value),
+                _ => None,
+            },
+            Expr::Path(_) => {
+                let name = simple_path_name(expr)?;
+                self.expr_for(&name)
+                    .and_then(|value| self.bool_value(&value))
+            }
+            Expr::Unary(unary) if matches!(unary.op, UnOp::Not(_)) => {
+                Some(!self.bool_value(&unary.expr)?)
+            }
+            Expr::Binary(binary) => match binary.op {
+                BinOp::And(_) => {
+                    Some(self.bool_value(&binary.left)? && self.bool_value(&binary.right)?)
+                }
+                BinOp::Or(_) => {
+                    Some(self.bool_value(&binary.left)? || self.bool_value(&binary.right)?)
+                }
+                BinOp::Eq(_) => self.eq_value(&binary.left, &binary.right),
+                BinOp::Ne(_) => self.eq_value(&binary.left, &binary.right).map(|same| !same),
+                BinOp::Lt(_) => {
+                    Some(self.int_value(&binary.left)? < self.int_value(&binary.right)?)
+                }
+                BinOp::Le(_) => {
+                    Some(self.int_value(&binary.left)? <= self.int_value(&binary.right)?)
+                }
+                BinOp::Gt(_) => {
+                    Some(self.int_value(&binary.left)? > self.int_value(&binary.right)?)
+                }
+                BinOp::Ge(_) => {
+                    Some(self.int_value(&binary.left)? >= self.int_value(&binary.right)?)
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn eq_value(&self, left: &Expr, right: &Expr) -> Option<bool> {
+        if let (Some(l), Some(r)) = (self.int_value(left), self.int_value(right)) {
+            return Some(l == r);
+        }
+        if let (Some(l), Some(r)) = (self.bool_value(left), self.bool_value(right)) {
+            return Some(l == r);
+        }
+        None
+    }
 }
 
 fn unknown_iterator_consumption(call: &syn::ExprMethodCall) -> bool {
@@ -853,6 +1037,104 @@ fn unknown_iterator_consumption(call: &syn::ExprMethodCall) -> bool {
             | "all"
             | "any"
     )
+}
+
+fn assigned_names_in_stmts(stmts: &[Stmt]) -> BTreeSet<String> {
+    struct V {
+        out: BTreeSet<String>,
+    }
+    impl V {
+        fn record(&mut self, lhs: &Expr) {
+            if let Some(name) = assigned_target_name(lhs) {
+                self.out.insert(name);
+            }
+        }
+    }
+    impl<'ast> syn::visit::Visit<'ast> for V {
+        fn visit_expr_assign(&mut self, assign: &'ast syn::ExprAssign) {
+            self.record(&assign.left);
+            syn::visit::visit_expr_assign(self, assign);
+        }
+
+        fn visit_expr_binary(&mut self, binary: &'ast syn::ExprBinary) {
+            if assignment_op(&binary.op).is_some() {
+                self.record(&binary.left);
+            }
+            syn::visit::visit_expr_binary(self, binary);
+        }
+    }
+
+    let mut v = V {
+        out: BTreeSet::new(),
+    };
+    for stmt in stmts {
+        syn::visit::Visit::visit_stmt(&mut v, stmt);
+    }
+    v.out
+}
+
+fn loop_mutation_names_in_stmts(stmts: &[Stmt]) -> BTreeSet<String> {
+    struct V {
+        out: BTreeSet<String>,
+    }
+
+    impl V {
+        fn record(&mut self, lhs: &Expr) {
+            if let Some(name) = assigned_target_name(lhs) {
+                self.out.insert(name);
+            }
+        }
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for V {
+        fn visit_expr_assign(&mut self, assign: &'ast syn::ExprAssign) {
+            self.record(&assign.left);
+            syn::visit::visit_expr_assign(self, assign);
+        }
+
+        fn visit_expr_binary(&mut self, binary: &'ast syn::ExprBinary) {
+            if assignment_op(&binary.op).is_some() {
+                self.record(&binary.left);
+            }
+            syn::visit::visit_expr_binary(self, binary);
+        }
+
+        fn visit_expr_reference(&mut self, reference: &'ast syn::ExprReference) {
+            if reference.mutability.is_some() {
+                if let Some(name) = simple_path_name(&reference.expr) {
+                    self.out.insert(name);
+                }
+            }
+            syn::visit::visit_expr_reference(self, reference);
+        }
+
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            let method = call.method.to_string();
+            if mutable_view_method(&method) || mutating_receiver_method(&method) {
+                if let Some(name) = simple_path_name(&call.receiver) {
+                    self.out.insert(name);
+                }
+            }
+            syn::visit::visit_expr_method_call(self, call);
+        }
+    }
+
+    let mut v = V {
+        out: assigned_names_in_stmts(stmts),
+    };
+    for stmt in stmts {
+        syn::visit::Visit::visit_stmt(&mut v, stmt);
+    }
+    v.out
+}
+
+fn assigned_target_name(lhs: &Expr) -> Option<String> {
+    match strip_refs_groups(lhs) {
+        Expr::Path(_) => simple_path_name(lhs),
+        Expr::Index(index) => simple_path_name(&index.expr),
+        Expr::Unary(unary) if matches!(unary.op, UnOp::Deref(_)) => simple_path_name(&unary.expr),
+        _ => None,
+    }
 }
 
 fn mutable_view_method(method: &str) -> bool {
