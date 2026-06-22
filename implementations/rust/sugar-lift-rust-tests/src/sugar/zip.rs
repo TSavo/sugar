@@ -14,6 +14,8 @@
 // fallback owns the call -- never a fabricated pairing. A recognized-but-unbounded operand
 // (an open range) has no grounded `Seq`, so `into_seq` bails and the node produces nothing.
 
+use std::collections::BTreeMap;
+
 use syn::Expr;
 use tracing::debug;
 
@@ -38,23 +40,49 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
         return None;
     }
     Some(Box::new(ZipSugar {
-        left: build_composite(&call.receiver, fcx),
-        right: build_composite(&call.args[0], fcx),
+        left: (*call.receiver).clone(),
+        right: call.args[0].clone(),
+        let_inits: capture_let_inits(fcx),
     }))
 }
 
 /// Pair the two finite domains element-wise, truncating to the shorter: element `l_i` and
 /// `r_i` become the tuple `(l_i, r_i)`.
 struct ZipSugar {
-    left: Box<dyn Sugar>,
-    right: Box<dyn Sugar>,
+    left: Expr,
+    right: Expr,
+    let_inits: BTreeMap<String, Expr>,
+}
+
+fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
+    fcx.let_inits()
+        .iter()
+        .map(|(name, init)| (name.clone(), (**init).clone()))
+        .collect()
 }
 
 impl Sugar for ZipSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         Outcome::from_opt((|| {
-            let left = self.left.desugar(ctx).dug()?.into_seq()?;
-            let right = self.right.desugar(ctx).dug()?.into_seq()?;
+            let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
+            let let_inits: BTreeMap<String, &Expr> = stable
+                .iter()
+                .map(|(name, init)| (name.clone(), init))
+                .chain(
+                    self.let_inits
+                        .iter()
+                        .map(|(name, init)| (name.clone(), init)),
+                )
+                .collect();
+            let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+            let left = build_composite(&self.left, &fcx)
+                .desugar(ctx)
+                .dug()?
+                .into_seq()?;
+            let right = build_composite(&self.right, &fcx)
+                .desugar(ctx)
+                .dug()?
+                .into_seq()?;
             // `zip` stops at the shorter side: `min(left.len, right.len)` pairs.
             let len = left.len().min(right.len());
             if len as i64 > SUGAR_SEQ_CAP {

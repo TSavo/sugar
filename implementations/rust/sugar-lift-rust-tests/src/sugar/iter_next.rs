@@ -13,6 +13,8 @@
 // This node only recognizes when the receiver is already a factory-owned composite
 // sequence. Runtime / effect receivers do not enter the node and fall through normally.
 
+use std::collections::BTreeMap;
+
 use syn::Expr;
 use tracing::debug;
 
@@ -48,22 +50,45 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
         return None;
     }
     Some(Box::new(IterNextSugar {
-        inner: build_composite(&call.receiver, fcx),
+        inner: (*call.receiver).clone(),
         direction,
         count,
+        let_inits: capture_let_inits(fcx),
     }))
 }
 
 struct IterNextSugar {
-    inner: Box<dyn Sugar>,
+    inner: Expr,
     direction: Direction,
     count: usize,
+    let_inits: BTreeMap<String, Expr>,
+}
+
+fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
+    fcx.let_inits()
+        .iter()
+        .map(|(name, init)| (name.clone(), (**init).clone()))
+        .collect()
 }
 
 impl Sugar for IterNextSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         Outcome::from_opt((|| {
-            let seq = self.inner.desugar(ctx).dug()?.into_seq()?;
+            let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
+            let let_inits: BTreeMap<String, &Expr> = stable
+                .iter()
+                .map(|(name, init)| (name.clone(), init))
+                .chain(
+                    self.let_inits
+                        .iter()
+                        .map(|(name, init)| (name.clone(), init)),
+                )
+                .collect();
+            let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+            let seq = build_composite(&self.inner, &fcx)
+                .desugar(ctx)
+                .dug()?
+                .into_seq()?;
             debug!(
                 target: "sugar_lift_rust_tests::sugar::iter_next",
                 len = seq.len(),

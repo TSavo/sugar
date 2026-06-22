@@ -4,6 +4,8 @@
 // domain transform, not a terminal method call: the left and right receivers are
 // both built through the composite factory, then concatenated in source order.
 
+use std::collections::BTreeMap;
+
 use syn::Expr;
 use tracing::debug;
 
@@ -28,21 +30,47 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
         return None;
     }
     Some(Box::new(ChainSugar {
-        left: build_composite(&call.receiver, fcx),
-        right: build_composite(&call.args[0], fcx),
+        left: (*call.receiver).clone(),
+        right: call.args[0].clone(),
+        let_inits: capture_let_inits(fcx),
     }))
 }
 
 struct ChainSugar {
-    left: Box<dyn Sugar>,
-    right: Box<dyn Sugar>,
+    left: Expr,
+    right: Expr,
+    let_inits: BTreeMap<String, Expr>,
+}
+
+fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
+    fcx.let_inits()
+        .iter()
+        .map(|(name, init)| (name.clone(), (**init).clone()))
+        .collect()
 }
 
 impl Sugar for ChainSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         Outcome::from_opt((|| {
-            let mut left = self.left.desugar(ctx).dug()?.into_seq()?;
-            let right = self.right.desugar(ctx).dug()?.into_seq()?;
+            let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
+            let let_inits: BTreeMap<String, &Expr> = stable
+                .iter()
+                .map(|(name, init)| (name.clone(), init))
+                .chain(
+                    self.let_inits
+                        .iter()
+                        .map(|(name, init)| (name.clone(), init)),
+                )
+                .collect();
+            let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+            let mut left = build_composite(&self.left, &fcx)
+                .desugar(ctx)
+                .dug()?
+                .into_seq()?;
+            let right = build_composite(&self.right, &fcx)
+                .desugar(ctx)
+                .dug()?
+                .into_seq()?;
             let total = left.len().checked_add(right.len())?;
             if total as i64 > SUGAR_SEQ_CAP {
                 return None;
