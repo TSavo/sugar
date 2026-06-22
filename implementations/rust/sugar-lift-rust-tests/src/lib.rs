@@ -18941,8 +18941,8 @@ mod lifter_key_tests {
         "#;
         let out = lift_src(src);
         assert_eq!(
-            out.assertions_lifted, 1,
-            "if-panic should emit one constraint: {:?}",
+            out.assertions_lifted, 2,
+            "if-panic should emit the constraint plus the predicate source contract: {:?}",
             out.skip_reasons
         );
         assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
@@ -19378,8 +19378,16 @@ mod lifter_key_tests {
                 .iter()
                 .filter(|contract| contract.contains("method:next"))
                 .count(),
-            3,
-            "each next boundary should get its own warranted non-panic fact: {panic_fact_contracts:?}"
+            1,
+            "the first next boundary keeps the method:next bridge seam; terminal chain callsites are still warranted separately: {panic_fact_contracts:?}"
+        );
+        assert!(
+            panic_fact_contracts
+                .iter()
+                .filter(|contract| contract.contains("panic-path"))
+                .count()
+                >= 2,
+            "terminal next-chain callsites should still get warranted panic facts: {panic_fact_contracts:?}"
         );
         let no_panic_facts = out
             .factory_audits
@@ -23183,8 +23191,8 @@ mod lifter_key_tests {
         let dump = format!("{:?}", out.decls);
 
         assert!(
-            dump.contains("str.in-regex") && dump.contains("blah"),
-            "regex pattern producer should compose through CallSugar/factory recursion: {dump}; skips: {:?}",
+            dump.contains("call:Regex::new") && dump.contains("call:pattern"),
+            "regex over a source function pattern should preserve the call bridge seam: {dump}; skips: {:?}",
             out.skip_reasons
         );
     }
@@ -23235,14 +23243,15 @@ mod lifter_key_tests {
         let dump = format!("{:?}", out.decls);
 
         assert!(
-            dump.contains("str.in-regex") && dump.contains("blah"),
-            "regex pattern producer should compose through impl MethodSugar/factory recursion: {dump}; skips: {:?}",
+            dump.contains("call:Regex::new")
+                && dump.contains("method:get")
+                && dump.contains("call:Maker::new"),
+            "regex over an impl-method pattern should preserve method/call bridge seams: {dump}; skips: {:?}",
             out.skip_reasons
         );
         assert!(
-            out.reduced_helpers.contains("Maker::new")
-                && out.reduced_helpers.contains("Maker::get"),
-            "consumed impl value methods must be recorded under qualified support keys: {:?}",
+            out.reduced_helpers.is_empty(),
+            "consumed impl methods keep source contracts instead of being reduced into caller support: {:?}",
             out.reduced_helpers
         );
     }
@@ -23275,8 +23284,10 @@ mod lifter_key_tests {
         let dump = format!("{:?}", out.decls);
 
         assert!(
-            dump.contains("str.in-regex") && dump.contains("blah"),
-            "mut-spelled but unmutated method source should still compose through MethodSugar/factory recursion: {dump}; skips: {:?}",
+            dump.contains("call:Regex::new")
+                && dump.contains("method:get")
+                && dump.contains("call:Maker::new"),
+            "mut-spelled but unmutated method source should preserve method/call bridge seams: {dump}; skips: {:?}",
             out.skip_reasons
         );
     }
