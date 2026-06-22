@@ -1273,6 +1273,36 @@ fn clean_named_refusal_category(
     if iterator_size_hint_runtime_bound_reason(reason) {
         return Some("iterator size_hint runtime bound");
     }
+    if array_repeat_non_literal_length_reason(reason) {
+        return Some("array repeat non-literal length");
+    }
+    if runtime_for_context_reason(reason) {
+        return Some("runtime for-loop domain");
+    }
+    if opaque_for_context_reason(reason) {
+        return Some("opaque runtime for-loop collection");
+    }
+    if runtime_valued_for_accumulator_reason(reason) {
+        return Some("runtime for-loop accumulator");
+    }
+    if mutating_method_temporal_reason(reason) {
+        return Some("mutating method temporal state");
+    }
+    if mutable_view_temporal_reason(reason) {
+        return Some("mutable view temporal state");
+    }
+    if consumed_iterator_temporal_reason(reason) {
+        return Some("consumed iterator temporal state");
+    }
+    if post_loop_temporal_read_reason(reason) {
+        return Some("post-loop temporal state");
+    }
+    if dyn_any_temporal_identity_reason(source_path, source_name, reason) {
+        return Some("type-erased Any runtime identity");
+    }
+    if runtime_regex_pattern_reason(reason) {
+        return Some("runtime regex pattern");
+    }
     if reason.contains("temporally unstable post-loop read") {
         return Some("temporally unstable post-loop read");
     }
@@ -1363,6 +1393,66 @@ fn clean_named_refusal_category(
         return Some("literal range enumeration boundary");
     }
     None
+}
+
+fn array_repeat_non_literal_length_reason(reason: &str) -> bool {
+    reason.contains("array-repeat `[_; N]` has a non-literal length")
+}
+
+fn runtime_for_context_reason(reason: &str) -> bool {
+    reason.contains("assertion under for context")
+        && reason.contains("domain is over a RUNTIME endpoint")
+}
+
+fn opaque_for_context_reason(reason: &str) -> bool {
+    reason.contains("assertion under for context over an OPAQUE collection")
+}
+
+fn runtime_valued_for_accumulator_reason(reason: &str) -> bool {
+    reason.contains("assertion under for context") && reason.contains("RUNTIME-VALUED accumulator")
+}
+
+fn mutating_method_temporal_reason(reason: &str) -> bool {
+    reason.contains("temporally unstable mutating method read")
+        && [".set()", ".replace()", ".swap()"]
+            .iter()
+            .any(|method| reason.contains(method))
+}
+
+fn mutable_view_temporal_reason(reason: &str) -> bool {
+    (reason.contains("temporally unstable mutable view read")
+        && [
+            ".borrow_mut()",
+            ".iter_mut()",
+            ".chunks_mut()",
+            ".rchunks_mut()",
+            ".get_disjoint_mut()",
+        ]
+        .iter()
+        .any(|method| reason.contains(method)))
+        || (reason.contains("ambiguous temporal identity")
+            && reason.contains("after opaque mutable borrow call")
+            && reason.contains("array :: from_mut"))
+}
+
+fn consumed_iterator_temporal_reason(reason: &str) -> bool {
+    reason.contains("consumed-iterator local")
+}
+
+fn post_loop_temporal_read_reason(reason: &str) -> bool {
+    reason.contains("temporally unstable post-loop read")
+}
+
+fn dyn_any_temporal_identity_reason(source_path: &str, source_name: &str, reason: &str) -> bool {
+    source_path == "tests/any.rs"
+        && source_name == "any_fixed_vec"
+        && reason.contains("ambiguous temporal identity for receiver `test`")
+}
+
+fn runtime_regex_pattern_reason(reason: &str) -> bool {
+    reason.contains("assertion surface `assert ! (Regex :: new")
+        && reason.contains(". unwrap () . is_match")
+        && reason.contains("did not reach bedrock")
 }
 
 fn atomic_rmw_runtime_state_reason(reason: &str) -> bool {
@@ -3277,6 +3367,162 @@ fn size_hint_literal_twin() {
             "iterator size_hint runtime bound",
         );
         assert_source_locus_warranted(&response, "size_hint_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_mutating_method_temporal_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_mutating_method_temporal_refuses_with_literal_twin",
+            r#"
+use std::cell::Cell;
+
+#[test]
+fn mutating_method_temporal_refused() {
+    let cell = Cell::new(10);
+    cell.set(20);
+    assert_eq!(cell.get(), 20);
+}
+
+#[test]
+fn mutating_method_temporal_literal_twin() {
+    let value = 20;
+    assert_eq!(value, 20);
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "mutating_method_temporal_refused",
+            "mutating method temporal state",
+        );
+        assert_source_locus_warranted(&response, "mutating_method_temporal_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_mutable_view_temporal_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_mutable_view_temporal_refuses_with_literal_twin",
+            r#"
+use std::cell::RefCell;
+
+#[test]
+fn mutable_view_temporal_refused() {
+    let x = RefCell::new(0);
+    let _borrow = x.borrow_mut();
+    assert!(x.try_borrow().is_err());
+}
+
+#[test]
+fn mutable_view_temporal_literal_twin() {
+    assert!(Option::<i32>::None.is_none());
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "mutable_view_temporal_refused",
+            "mutable view temporal state",
+        );
+        assert_source_locus_warranted(&response, "mutable_view_temporal_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_runtime_for_domain_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_runtime_for_domain_refuses_with_literal_twin",
+            r#"
+use std::char::CharCase;
+
+#[test]
+fn runtime_for_domain_refused() {
+    for c in '\0'..='\u{10FFFF}' {
+        match c.case() {
+            None => assert!(!c.is_cased()),
+            Some(CharCase::Lower) => assert!(c.is_lowercase()),
+            Some(CharCase::Upper) => assert!(c.is_uppercase()),
+            Some(CharCase::Title) => assert!(c.is_titlecase()),
+        }
+    }
+}
+
+#[test]
+fn runtime_for_domain_literal_twin() {
+    for c in 'a'..='c' {
+        assert!(c >= 'a');
+    }
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "runtime_for_domain_refused",
+            "runtime for-loop domain",
+        );
+        assert_source_locus_warranted(&response, "runtime_for_domain_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_array_repeat_non_literal_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_array_repeat_non_literal_refuses_with_literal_twin",
+            r#"
+#[test]
+fn array_repeat_non_literal_refused() {
+    assert_eq!([(); usize::MAX].len(), usize::MAX);
+}
+
+#[test]
+fn array_repeat_literal_twin() {
+    assert_eq!([(); 3].len(), 3);
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "array_repeat_non_literal_refused",
+            "array repeat non-literal length",
+        );
+        assert_source_locus_warranted(&response, "array_repeat_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_runtime_regex_pattern_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_runtime_regex_pattern_refuses_with_literal_twin",
+            r#"
+struct Maker {
+    pattern: &'static str,
+}
+
+impl Maker {
+    fn get(&self) -> &'static str {
+        self.pattern
+    }
+}
+
+#[test]
+fn runtime_regex_pattern_refused() {
+    let m = Maker { pattern: "blah" };
+    assert!(Regex::new(m.get()).unwrap().is_match("blah"));
+}
+
+#[test]
+fn runtime_regex_pattern_literal_twin() {
+    assert!(Regex::new("blah").unwrap().is_match("blah"));
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "runtime_regex_pattern_refused",
+            "runtime regex pattern",
+        );
+        assert_source_locus_warranted(&response, "runtime_regex_pattern_literal_twin");
         let _ = std::fs::remove_dir_all(root);
     }
 
