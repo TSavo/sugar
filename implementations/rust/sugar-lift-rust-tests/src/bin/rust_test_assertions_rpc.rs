@@ -1133,6 +1133,13 @@ fn clean_named_refusal_category(reason: &str) -> Option<&'static str> {
     {
         return Some("opaque runtime iterator collection");
     }
+    if reason.contains("literal range is unbounded")
+        || reason.contains("literal range bound is not text-determined")
+        || reason.contains("literal domain exceeds SUGAR_SEQ_CAP")
+        || reason.contains("literal char range")
+    {
+        return Some("literal range enumeration boundary");
+    }
     None
 }
 
