@@ -4,10 +4,11 @@
 // axiom. For grounded bases this can fold to a literal; for point-wise contracts
 // it rewrites small literal exponents to multiplication over the receiver term.
 
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{num, Term};
-use syn::{Expr, Lit};
+use syn::Expr;
 use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
@@ -28,38 +29,66 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
         return None;
     }
     let exponent = call.args.first()?;
-    if literal_exponent(exponent, fcx).is_none() {
+    if !receiver_looks_primitive_int(exponent, fcx, 0) {
         return None;
     }
     if !receiver_looks_primitive_int(&call.receiver, fcx, 0) {
         return None;
     }
     Some(Box::new(IntPowSugar {
-        receiver: build_term(&call.receiver, fcx),
-        exponent: build_term(exponent, fcx),
+        receiver: (*call.receiver).clone(),
+        exponent: exponent.clone(),
+        let_inits: capture_let_inits(fcx),
     }))
 }
 
 struct IntPowSugar {
-    receiver: Box<dyn Sugar>,
-    exponent: Box<dyn Sugar>,
+    receiver: Expr,
+    exponent: Expr,
+    let_inits: BTreeMap<String, Expr>,
+}
+
+fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
+    fcx.let_inits()
+        .iter()
+        .map(|(name, init)| (name.clone(), (**init).clone()))
+        .collect()
+}
+
+fn merge_let_inits<'a>(
+    stable: &'a BTreeMap<String, Expr>,
+    captured: &'a BTreeMap<String, Expr>,
+) -> BTreeMap<String, &'a Expr> {
+    stable
+        .iter()
+        .map(|(name, init)| (name.clone(), init))
+        .chain(captured.iter().map(|(name, init)| (name.clone(), init)))
+        .collect()
+}
+
+fn desugar_term_expr(
+    expr: &Expr,
+    ctx: &SugarCtx,
+    fcx: &SugarBuildCtx,
+) -> Result<Rc<Term>, Outcome> {
+    match build_term(expr, fcx).desugar(ctx) {
+        Outcome::Dug(d) => d.into_term().ok_or_else(|| Outcome::from_opt(None)),
+        Outcome::Hit(e) => Err(Outcome::Hit(e)),
+    }
 }
 
 impl Sugar for IntPowSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let receiver = match self.receiver.desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
-                Some(term) => term,
-                None => return Outcome::from_opt(None),
-            },
-            Outcome::Hit(e) => return Outcome::Hit(e),
+        let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
+        let let_inits = merge_let_inits(&stable, &self.let_inits);
+        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        let receiver = match desugar_term_expr(&self.receiver, ctx, &fcx) {
+            Ok(term) => term,
+            Err(outcome) => return outcome,
         };
-        let exponent = match self.exponent.desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
-                Some(term) => term,
-                None => return Outcome::from_opt(None),
-            },
-            Outcome::Hit(e) => return Outcome::Hit(e),
+        let exponent = match desugar_term_expr(&self.exponent, ctx, &fcx) {
+            Ok(term) => term,
+            Err(outcome) => return outcome,
         };
         let Some(exponent) = const_fold_int_term(&exponent)
             .or_else(|| const_fold_u128_term(&exponent).and_then(|n| i128::try_from(n).ok()))
@@ -107,20 +136,6 @@ fn pow_term(receiver: Rc<Term>, exponent: i128) -> Option<Rc<Term>> {
     }
 }
 
-fn literal_exponent(expr: &Expr, fcx: &SugarBuildCtx) -> Option<i128> {
-    match strip_refs_groups(expr) {
-        Expr::Lit(lit) => match &lit.lit {
-            Lit::Int(value) => value.base10_parse::<i128>().ok(),
-            _ => None,
-        },
-        _ => {
-            let term = crate::translate_term_in_scope(expr, fcx.scope()).ok()?;
-            const_fold_int_term(&term)
-                .or_else(|| const_fold_u128_term(&term).and_then(|n| i128::try_from(n).ok()))
-        }
-    }
-}
-
 fn receiver_looks_primitive_int(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
     if depth > 8 {
         return false;
@@ -153,13 +168,20 @@ fn receiver_looks_primitive_int(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) 
             "isqrt"
                 | "checked_isqrt"
                 | "count_ones"
+                | "count_zeros"
                 | "leading_zeros"
                 | "trailing_zeros"
                 | "min"
+                | "max"
                 | "checked_add"
                 | "checked_sub"
                 | "checked_mul"
                 | "checked_div"
+                | "wrapping_add"
+                | "wrapping_sub"
+                | "wrapping_mul"
+                | "abs"
+                | "signum"
         ),
         _ => false,
     }

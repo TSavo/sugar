@@ -4,7 +4,10 @@
 // grounded literal terms. The compiler owns these semantics; this sugar reads
 // them out when the receiver/argument have already bottomed out.
 
-use sugar_ir_symbolic::num;
+use std::collections::BTreeMap;
+use std::rc::Rc;
+
+use sugar_ir_symbolic::{num, real_const, ConstValue, Term};
 use syn::{Expr, ExprPath, PathArguments, Type};
 use tracing::debug;
 
@@ -13,8 +16,8 @@ use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::monadic::{none_term, some_term};
 use crate::sugar::option_unwrap::is_known_monadic_source;
 use crate::{
-    const_fold_int_term, const_fold_u128_term, strip_refs_groups, u128_term, Desugared, Outcome,
-    Sugar, SugarCtx,
+    const_fold_int_term, const_fold_u128_term, simple_path_name, strip_refs_groups, u128_term,
+    Desugared, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -24,66 +27,125 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::MethodCall(call) = expr else {
         return None;
     };
-    if !receiver_can_ground(&call.receiver, fcx) {
-        return None;
-    }
     let method = call.method.to_string();
     let kind = match (method.as_str(), call.args.len()) {
-        ("count_ones", 0) => Kind::CountOnes,
-        ("leading_zeros", 0) => Kind::ZeroCount(ZeroCountOp::Leading),
-        ("trailing_zeros", 0) => Kind::ZeroCount(ZeroCountOp::Trailing),
-        ("bit_width", 0) => Kind::BitWidth,
-        ("min", 1) => Kind::Min(build_term(&call.args[0], fcx)),
-        ("checked_add", 1) => Kind::Checked(CheckedOp::Add, build_term(&call.args[0], fcx)),
-        ("checked_sub", 1) => Kind::Checked(CheckedOp::Sub, build_term(&call.args[0], fcx)),
-        ("checked_mul", 1) => Kind::Checked(CheckedOp::Mul, build_term(&call.args[0], fcx)),
-        ("checked_div", 1) => Kind::Checked(CheckedOp::Div, build_term(&call.args[0], fcx)),
+        ("count_ones", 0) if integer_receiver_can_ground(&call.receiver, fcx, 0) => Kind::CountOnes,
+        ("count_zeros", 0) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
+            Kind::ZeroCount(ZeroCountOp::Count)
+        }
+        ("leading_zeros", 0) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
+            Kind::ZeroCount(ZeroCountOp::Leading)
+        }
+        ("trailing_zeros", 0) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
+            Kind::ZeroCount(ZeroCountOp::Trailing)
+        }
+        ("bit_width", 0) if integer_receiver_can_ground(&call.receiver, fcx, 0) => Kind::BitWidth,
+        ("min", 1) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
+            Kind::Min(call.args[0].clone())
+        }
+        ("max", 1)
+            if integer_receiver_can_ground(&call.receiver, fcx, 0)
+                && integer_receiver_can_ground(&call.args[0], fcx, 0) =>
+        {
+            Kind::Max(call.args[0].clone())
+        }
+        ("checked_add", 1) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
+            Kind::Checked(CheckedOp::Add, call.args[0].clone())
+        }
+        ("checked_sub", 1) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
+            Kind::Checked(CheckedOp::Sub, call.args[0].clone())
+        }
+        ("checked_mul", 1) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
+            Kind::Checked(CheckedOp::Mul, call.args[0].clone())
+        }
+        ("checked_div", 1) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
+            Kind::Checked(CheckedOp::Div, call.args[0].clone())
+        }
+        ("wrapping_add", 1)
+            if integer_receiver_can_ground(&call.receiver, fcx, 0)
+                && integer_receiver_can_ground(&call.args[0], fcx, 0) =>
+        {
+            Kind::Wrapping(WrappingOp::Add, call.args[0].clone())
+        }
+        ("wrapping_sub", 1)
+            if integer_receiver_can_ground(&call.receiver, fcx, 0)
+                && integer_receiver_can_ground(&call.args[0], fcx, 0) =>
+        {
+            Kind::Wrapping(WrappingOp::Sub, call.args[0].clone())
+        }
+        ("wrapping_mul", 1)
+            if integer_receiver_can_ground(&call.receiver, fcx, 0)
+                && integer_receiver_can_ground(&call.args[0], fcx, 0) =>
+        {
+            Kind::Wrapping(WrappingOp::Mul, call.args[0].clone())
+        }
+        ("abs", 0) if numeric_receiver_can_ground(&call.receiver, fcx, 0) => Kind::Abs,
+        ("signum", 0) if numeric_receiver_can_ground(&call.receiver, fcx, 0) => Kind::Signum,
         _ => return None,
     };
     Some(Box::new(PrimitiveIntSugar {
         method,
         receiver_expr: (*call.receiver).clone(),
-        receiver: build_term(&call.receiver, fcx),
+        receiver: (*call.receiver).clone(),
         kind,
+        let_inits: capture_let_inits(fcx),
     }))
 }
 
-fn receiver_can_ground(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
+fn integer_receiver_can_ground(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
+    if depth > 8 {
+        return false;
+    }
     match strip_refs_groups(expr) {
         Expr::Lit(lit) => matches!(
             lit.lit,
             syn::Lit::Int(_) | syn::Lit::Byte(_) | syn::Lit::Char(_)
         ),
         Expr::Path(path) => {
-            primitive_assoc_const_path(path).is_some()
-                || path
-                    .path
-                    .get_ident()
-                    .is_some_and(|_| fcx.scope().const_expr_for_path(&path.path).is_some())
+            if primitive_assoc_const_path(path).is_some() {
+                return true;
+            }
+            if let Some(init) = fcx.scope().const_expr_for_path(&path.path) {
+                return integer_receiver_can_ground(&init, fcx, depth + 1);
+            }
+            let Some(name) = simple_path_name(expr) else {
+                return false;
+            };
+            fcx.scope()
+                .stable_let_binding_for_term(&name)
+                .is_some_and(|init| integer_receiver_can_ground(init, fcx, depth + 1))
         }
-        Expr::Cast(cast) => receiver_can_ground(&cast.expr, fcx),
-        Expr::Unary(unary) => receiver_can_ground(&unary.expr, fcx),
+        Expr::Cast(cast) => integer_receiver_can_ground(&cast.expr, fcx, depth + 1),
+        Expr::Unary(unary) => integer_receiver_can_ground(&unary.expr, fcx, depth + 1),
         Expr::Binary(binary) => {
-            receiver_can_ground(&binary.left, fcx) && receiver_can_ground(&binary.right, fcx)
+            integer_receiver_can_ground(&binary.left, fcx, depth + 1)
+                && integer_receiver_can_ground(&binary.right, fcx, depth + 1)
         }
-        Expr::Paren(paren) => receiver_can_ground(&paren.expr, fcx),
-        Expr::Group(group) => receiver_can_ground(&group.expr, fcx),
-        Expr::Reference(reference) => receiver_can_ground(&reference.expr, fcx),
+        Expr::Paren(paren) => integer_receiver_can_ground(&paren.expr, fcx, depth + 1),
+        Expr::Group(group) => integer_receiver_can_ground(&group.expr, fcx, depth + 1),
+        Expr::Reference(reference) => integer_receiver_can_ground(&reference.expr, fcx, depth + 1),
         Expr::MethodCall(call)
             if matches!(
                 call.method.to_string().as_str(),
                 "count_ones"
+                    | "count_zeros"
                     | "leading_zeros"
                     | "trailing_zeros"
                     | "bit_width"
                     | "min"
+                    | "max"
                     | "checked_add"
                     | "checked_sub"
                     | "checked_mul"
                     | "checked_div"
+                    | "wrapping_add"
+                    | "wrapping_sub"
+                    | "wrapping_mul"
+                    | "abs"
+                    | "signum"
             ) =>
         {
-            receiver_can_ground(&call.receiver, fcx)
+            integer_receiver_can_ground(&call.receiver, fcx, depth + 1)
         }
         Expr::MethodCall(call)
             if matches!(call.method.to_string().as_str(), "unwrap" | "expect")
@@ -95,16 +157,51 @@ fn receiver_can_ground(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
     }
 }
 
+fn numeric_receiver_can_ground(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
+    integer_receiver_can_ground(expr, fcx, depth) || float_receiver_can_ground(expr, fcx, depth)
+}
+
+fn float_receiver_can_ground(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Lit(lit) => matches!(lit.lit, syn::Lit::Float(_)),
+        Expr::Path(path) => {
+            if let Some(init) = fcx.scope().const_expr_for_path(&path.path) {
+                return float_receiver_can_ground(&init, fcx, depth + 1);
+            }
+            let Some(name) = simple_path_name(expr) else {
+                return false;
+            };
+            fcx.scope()
+                .stable_let_binding_for_term(&name)
+                .is_some_and(|init| float_receiver_can_ground(init, fcx, depth + 1))
+        }
+        Expr::Cast(cast) => float_receiver_can_ground(&cast.expr, fcx, depth + 1),
+        Expr::Unary(unary) => float_receiver_can_ground(&unary.expr, fcx, depth + 1),
+        Expr::Paren(paren) => float_receiver_can_ground(&paren.expr, fcx, depth + 1),
+        Expr::Group(group) => float_receiver_can_ground(&group.expr, fcx, depth + 1),
+        Expr::Reference(reference) => float_receiver_can_ground(&reference.expr, fcx, depth + 1),
+        _ => false,
+    }
+}
+
 enum Kind {
     CountOnes,
     ZeroCount(ZeroCountOp),
     BitWidth,
-    Min(Box<dyn Sugar>),
-    Checked(CheckedOp, Box<dyn Sugar>),
+    Min(Expr),
+    Max(Expr),
+    Checked(CheckedOp, Expr),
+    Wrapping(WrappingOp, Expr),
+    Abs,
+    Signum,
 }
 
 #[derive(Clone, Copy)]
 enum ZeroCountOp {
+    Count,
     Leading,
     Trailing,
 }
@@ -117,16 +214,53 @@ enum CheckedOp {
     Div,
 }
 
+#[derive(Clone, Copy)]
+enum WrappingOp {
+    Add,
+    Sub,
+    Mul,
+}
+
 struct PrimitiveIntSugar {
     method: String,
     receiver_expr: Expr,
-    receiver: Box<dyn Sugar>,
+    receiver: Expr,
     kind: Kind,
+    let_inits: BTreeMap<String, Expr>,
+}
+
+fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
+    fcx.let_inits()
+        .iter()
+        .map(|(name, init)| (name.clone(), (**init).clone()))
+        .collect()
+}
+
+fn merge_let_inits<'a>(
+    stable: &'a BTreeMap<String, Expr>,
+    captured: &'a BTreeMap<String, Expr>,
+) -> BTreeMap<String, &'a Expr> {
+    stable
+        .iter()
+        .map(|(name, init)| (name.clone(), init))
+        .chain(captured.iter().map(|(name, init)| (name.clone(), init)))
+        .collect()
+}
+
+fn desugar_term_expr(
+    expr: &Expr,
+    ctx: &SugarCtx,
+    fcx: &SugarBuildCtx,
+) -> Result<Rc<Term>, Outcome> {
+    match build_term(expr, fcx).desugar(ctx) {
+        Outcome::Dug(d) => d.into_term().ok_or_else(|| Outcome::from_opt(None)),
+        Outcome::Hit(e) => Err(Outcome::Hit(e)),
+    }
 }
 
 impl Sugar for PrimitiveIntSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        if matches!(self.kind, Kind::CountOnes) {
+        if matches!(&self.kind, Kind::CountOnes) {
             if let Some(value) = assoc_const_count_ones(&self.receiver_expr) {
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::primitive_int",
@@ -138,15 +272,16 @@ impl Sugar for PrimitiveIntSugar {
             }
         }
 
-        let receiver = match self.receiver.desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
-                Some(term) => term,
-                None => return Outcome::from_opt(None),
-            },
-            Outcome::Hit(e) => return Outcome::Hit(e),
+        let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
+        let let_inits = merge_let_inits(&stable, &self.let_inits);
+        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        let receiver = match desugar_term_expr(&self.receiver, ctx, &fcx) {
+            Ok(term) => term,
+            Err(outcome) => return outcome,
         };
         let lhs_u128 = const_fold_u128_term(&receiver);
         let lhs_i128 = const_fold_int_term(&receiver);
+        let kind_hint = integer_kind_hint_in_scope(&self.receiver_expr, &fcx, 0);
 
         match &self.kind {
             Kind::CountOnes => {
@@ -164,8 +299,7 @@ impl Sugar for PrimitiveIntSugar {
                 let Some(lhs) = lhs_i128 else {
                     return Outcome::from_opt(None);
                 };
-                let Some(value) = count_ones_value(lhs, integer_kind_hint(&self.receiver_expr))
-                else {
+                let Some(value) = count_ones_value(lhs, kind_hint) else {
                     return Outcome::from_opt(None);
                 };
                 debug!(
@@ -178,12 +312,7 @@ impl Sugar for PrimitiveIntSugar {
                 Outcome::Dug(Desugared::Term(num(i128::from(value))))
             }
             Kind::ZeroCount(op) => {
-                let Some(value) = zero_count_value(
-                    lhs_i128,
-                    lhs_u128,
-                    integer_kind_hint(&self.receiver_expr),
-                    *op,
-                ) else {
+                let Some(value) = zero_count_value(lhs_i128, lhs_u128, kind_hint, *op) else {
                     return Outcome::from_opt(None);
                 };
                 debug!(
@@ -210,13 +339,10 @@ impl Sugar for PrimitiveIntSugar {
                 );
                 Outcome::Dug(Desugared::Term(num(i128::from(value))))
             }
-            Kind::Min(rhs) => {
-                let rhs = match rhs.desugar(ctx) {
-                    Outcome::Dug(d) => match d.into_term() {
-                        Some(term) => term,
-                        None => return Outcome::from_opt(None),
-                    },
-                    Outcome::Hit(e) => return Outcome::Hit(e),
+            Kind::Min(rhs) | Kind::Max(rhs) => {
+                let rhs = match desugar_term_expr(rhs, ctx, &fcx) {
+                    Ok(term) => term,
+                    Err(outcome) => return outcome,
                 };
                 if lhs_u128.is_some() || const_fold_u128_term(&rhs).is_some() {
                     let Some(lhs) =
@@ -229,14 +355,18 @@ impl Sugar for PrimitiveIntSugar {
                     else {
                         return Outcome::from_opt(None);
                     };
-                    let value = lhs.min(rhs);
+                    let value = if matches!(&self.kind, Kind::Min(_)) {
+                        lhs.min(rhs)
+                    } else {
+                        lhs.max(rhs)
+                    };
                     debug!(
                         target: "sugar_lift_rust_tests::sugar::primitive_int",
                         method = self.method.as_str(),
                         lhs = %lhs,
                         rhs = %rhs,
                         value = %value,
-                        "resolved primitive u128 min axiom"
+                        "resolved primitive u128 extremum axiom"
                     );
                     return Outcome::Dug(Desugared::Term(u128_term(value)));
                 }
@@ -246,24 +376,25 @@ impl Sugar for PrimitiveIntSugar {
                 let Some(rhs) = const_fold_int_term(&rhs) else {
                     return Outcome::from_opt(None);
                 };
-                let value = lhs.min(rhs);
+                let value = if matches!(&self.kind, Kind::Min(_)) {
+                    lhs.min(rhs)
+                } else {
+                    lhs.max(rhs)
+                };
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::primitive_int",
                     method = self.method.as_str(),
                     lhs,
                     rhs,
                     value,
-                    "resolved primitive min axiom"
+                    "resolved primitive extremum axiom"
                 );
                 Outcome::Dug(Desugared::Term(num(value)))
             }
             Kind::Checked(op, rhs) => {
-                let rhs = match rhs.desugar(ctx) {
-                    Outcome::Dug(d) => match d.into_term() {
-                        Some(term) => term,
-                        None => return Outcome::from_opt(None),
-                    },
-                    Outcome::Hit(e) => return Outcome::Hit(e),
+                let rhs = match desugar_term_expr(rhs, ctx, &fcx) {
+                    Ok(term) => term,
+                    Err(outcome) => return outcome,
                 };
                 if lhs_u128.is_some() || const_fold_u128_term(&rhs).is_some() {
                     let Some(lhs) =
@@ -297,7 +428,7 @@ impl Sugar for PrimitiveIntSugar {
                 let Some(rhs) = const_fold_int_term(&rhs) else {
                     return Outcome::from_opt(None);
                 };
-                let result = checked_int_op(lhs, rhs, *op, integer_kind_hint(&self.receiver_expr));
+                let result = checked_int_op(lhs, rhs, *op, kind_hint);
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::primitive_int",
                     method = self.method.as_str(),
@@ -311,6 +442,75 @@ impl Sugar for PrimitiveIntSugar {
                     None => none_term(),
                 };
                 Outcome::Dug(Desugared::Term(term))
+            }
+            Kind::Wrapping(op, rhs) => {
+                let rhs = match desugar_term_expr(rhs, ctx, &fcx) {
+                    Ok(term) => term,
+                    Err(outcome) => return outcome,
+                };
+                let Some(term) = wrapping_int_op_term(lhs_i128, lhs_u128, &rhs, *op, kind_hint)
+                else {
+                    return Outcome::from_opt(None);
+                };
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::primitive_int",
+                    method = self.method.as_str(),
+                    lhs_i128 = ?lhs_i128,
+                    lhs_u128 = ?lhs_u128,
+                    "resolved primitive wrapping integer axiom"
+                );
+                Outcome::Dug(Desugared::Term(term))
+            }
+            Kind::Abs => {
+                if let Some(value) = const_fold_real_term(&receiver) {
+                    let Some(value) = real_abs_value(&value) else {
+                        return Outcome::from_opt(None);
+                    };
+                    debug!(
+                        target: "sugar_lift_rust_tests::sugar::primitive_int",
+                        method = self.method.as_str(),
+                        value = value.as_str(),
+                        "resolved primitive float abs axiom"
+                    );
+                    return Outcome::Dug(Desugared::Term(real_const(value)));
+                }
+                let Some(term) = abs_int_term(lhs_i128, lhs_u128, kind_hint) else {
+                    return Outcome::from_opt(None);
+                };
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::primitive_int",
+                    method = self.method.as_str(),
+                    lhs_i128 = ?lhs_i128,
+                    lhs_u128 = ?lhs_u128,
+                    "resolved primitive integer abs axiom"
+                );
+                Outcome::Dug(Desugared::Term(term))
+            }
+            Kind::Signum => {
+                if let Some(value) = const_fold_real_term(&receiver) {
+                    let Some(value) = real_signum_value(&value) else {
+                        return Outcome::from_opt(None);
+                    };
+                    debug!(
+                        target: "sugar_lift_rust_tests::sugar::primitive_int",
+                        method = self.method.as_str(),
+                        value = value.as_str(),
+                        "resolved primitive float signum axiom"
+                    );
+                    return Outcome::Dug(Desugared::Term(real_const(value)));
+                }
+                let Some(value) = signum_int_value(lhs_i128, lhs_u128, kind_hint) else {
+                    return Outcome::from_opt(None);
+                };
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::primitive_int",
+                    method = self.method.as_str(),
+                    lhs_i128 = ?lhs_i128,
+                    lhs_u128 = ?lhs_u128,
+                    value,
+                    "resolved primitive integer signum axiom"
+                );
+                Outcome::Dug(Desugared::Term(num(value)))
             }
         }
     }
@@ -357,6 +557,152 @@ fn checked_i128(lhs: i128, rhs: i128, op: CheckedOp) -> Option<i128> {
     }
 }
 
+fn wrapping_int_op_term(
+    lhs_i128: Option<i128>,
+    lhs_u128: Option<u128>,
+    rhs: &Rc<Term>,
+    op: WrappingOp,
+    kind: Option<IntegerKind>,
+) -> Option<Rc<Term>> {
+    let kind = kind?;
+    if kind.signed {
+        let lhs = lhs_i128?;
+        let rhs = const_fold_int_term(rhs)?;
+        if !fits_kind(lhs, kind) || !fits_kind(rhs, kind) {
+            return None;
+        }
+        let lhs = masked_raw_bits(lhs, kind)?;
+        let rhs = masked_raw_bits(rhs, kind)?;
+        let raw = apply_wrapping_raw(lhs, rhs, kind.bits, op)?;
+        return Some(num(signed_value_from_raw(raw, kind)?));
+    }
+
+    let lhs = lhs_u128.or_else(|| lhs_i128.and_then(|value| u128::try_from(value).ok()))?;
+    let rhs = const_fold_u128_term(rhs)
+        .or_else(|| const_fold_int_term(rhs).and_then(|value| u128::try_from(value).ok()))?;
+    let raw = apply_wrapping_raw(lhs, rhs, kind.bits, op)?;
+    if kind.bits == 128 {
+        Some(u128_term(raw))
+    } else {
+        Some(num(i128::try_from(raw).ok()?))
+    }
+}
+
+fn apply_wrapping_raw(lhs: u128, rhs: u128, bits: u32, op: WrappingOp) -> Option<u128> {
+    let mask = mask_for_bits(bits)?;
+    let value = match op {
+        WrappingOp::Add => lhs.wrapping_add(rhs),
+        WrappingOp::Sub => lhs.wrapping_sub(rhs),
+        WrappingOp::Mul => lhs.wrapping_mul(rhs),
+    };
+    Some(value & mask)
+}
+
+fn mask_for_bits(bits: u32) -> Option<u128> {
+    if bits == 128 {
+        Some(u128::MAX)
+    } else {
+        (1u128.checked_shl(bits)?).checked_sub(1)
+    }
+}
+
+fn signed_value_from_raw(raw: u128, kind: IntegerKind) -> Option<i128> {
+    if kind.bits == 128 {
+        return Some(raw as i128);
+    }
+    let sign_bit = 1u128.checked_shl(kind.bits - 1)?;
+    if raw & sign_bit == 0 {
+        i128::try_from(raw).ok()
+    } else {
+        let modulus = 1i128.checked_shl(kind.bits)?;
+        i128::try_from(raw).ok()?.checked_sub(modulus)
+    }
+}
+
+fn abs_int_term(
+    lhs_i128: Option<i128>,
+    lhs_u128: Option<u128>,
+    kind: Option<IntegerKind>,
+) -> Option<Rc<Term>> {
+    if lhs_u128.is_some() || kind.is_some_and(|kind| !kind.signed) {
+        return None;
+    }
+    let lhs = lhs_i128?;
+    if let Some(kind) = kind {
+        if !kind.signed || !fits_kind(lhs, kind) {
+            return None;
+        }
+        let (min, _) = signed_bounds(kind.bits);
+        if lhs == min {
+            return None;
+        }
+    }
+    lhs.checked_abs().map(num)
+}
+
+fn signum_int_value(
+    lhs_i128: Option<i128>,
+    lhs_u128: Option<u128>,
+    kind: Option<IntegerKind>,
+) -> Option<i128> {
+    if lhs_u128.is_some() || kind.is_some_and(|kind| !kind.signed) {
+        return None;
+    }
+    let lhs = lhs_i128?;
+    if let Some(kind) = kind {
+        if !kind.signed || !fits_kind(lhs, kind) {
+            return None;
+        }
+    }
+    Some(lhs.signum())
+}
+
+fn const_fold_real_term(term: &Rc<Term>) -> Option<String> {
+    match term.as_ref() {
+        Term::Const {
+            value: ConstValue::Real(value),
+            ..
+        } => Some(value.clone()),
+        Term::Ctor { name, args } if name == "ref" && args.len() == 1 => {
+            const_fold_real_term(&args[0])
+        }
+        _ => None,
+    }
+}
+
+fn real_abs_value(value: &str) -> Option<String> {
+    if real_literal_is_zero_text(value) {
+        return None;
+    }
+    Some(value.strip_prefix('-').unwrap_or(value).to_string())
+}
+
+fn real_signum_value(value: &str) -> Option<String> {
+    if real_literal_is_zero_text(value) {
+        return None;
+    }
+    if value.starts_with('-') {
+        Some("-1".to_string())
+    } else {
+        Some("1".to_string())
+    }
+}
+
+fn real_literal_is_zero_text(text: &str) -> bool {
+    let text = text.strip_prefix('-').unwrap_or(text);
+    let mut saw_digit = false;
+    for ch in text.chars() {
+        if ch == '.' {
+            continue;
+        }
+        saw_digit = true;
+        if ch != '0' {
+            return false;
+        }
+    }
+    saw_digit
+}
+
 fn count_ones_value(value: i128, kind: Option<IntegerKind>) -> Option<u32> {
     let Some(kind) = kind else {
         let value = u128::try_from(value).ok()?;
@@ -396,6 +742,7 @@ fn zero_count_value(
     }
     let value = u128::try_from(lhs_i128?).ok()?;
     match op {
+        ZeroCountOp::Count => None,
         ZeroCountOp::Leading => None,
         ZeroCountOp::Trailing => (value != 0).then_some(value.trailing_zeros()),
     }
@@ -420,6 +767,7 @@ fn bit_width_value(lhs_i128: Option<i128>, lhs_u128: Option<u128>) -> Option<u32
 
 fn apply_zero_count(raw: u128, bits: u32, op: ZeroCountOp) -> u32 {
     match op {
+        ZeroCountOp::Count => bits - raw.count_ones(),
         ZeroCountOp::Leading => {
             if bits == 128 {
                 raw.leading_zeros()
@@ -448,22 +796,41 @@ fn assoc_const_count_ones(expr: &Expr) -> Option<u32> {
     }
 }
 
-fn integer_kind_hint(expr: &Expr) -> Option<IntegerKind> {
+fn integer_kind_hint_in_scope(
+    expr: &Expr,
+    fcx: &SugarBuildCtx,
+    depth: usize,
+) -> Option<IntegerKind> {
+    if depth > 8 {
+        return None;
+    }
     match strip_refs_groups(expr) {
         Expr::Lit(lit) => match &lit.lit {
             syn::Lit::Int(i) => primitive_integer_kind(i.suffix()),
             _ => None,
         },
         Expr::Cast(cast) => integer_kind_from_type(&cast.ty),
-        Expr::Path(path) => primitive_assoc_const_path(path).map(|(kind, _)| kind),
-        Expr::Unary(unary) => integer_kind_hint(&unary.expr),
-        Expr::Paren(paren) => integer_kind_hint(&paren.expr),
-        Expr::Group(group) => integer_kind_hint(&group.expr),
+        Expr::Path(path) => {
+            if let Some((kind, _)) = primitive_assoc_const_path(path) {
+                return Some(kind);
+            }
+            if let Some(init) = fcx.scope().const_expr_for_path(&path.path) {
+                return integer_kind_hint_in_scope(&init, fcx, depth + 1);
+            }
+            let name = simple_path_name(expr)?;
+            fcx.scope()
+                .stable_let_binding_for_term(&name)
+                .and_then(|init| integer_kind_hint_in_scope(init, fcx, depth + 1))
+        }
+        Expr::Unary(unary) => integer_kind_hint_in_scope(&unary.expr, fcx, depth + 1),
+        Expr::Paren(paren) => integer_kind_hint_in_scope(&paren.expr, fcx, depth + 1),
+        Expr::Group(group) => integer_kind_hint_in_scope(&group.expr, fcx, depth + 1),
         Expr::MethodCall(call)
             if matches!(call.method.to_string().as_str(), "unwrap" | "expect")
                 && is_known_monadic_source(&call.receiver) =>
         {
-            nonzero_new_integer_kind(&call.receiver).or_else(|| integer_kind_hint(&call.receiver))
+            nonzero_new_integer_kind(&call.receiver)
+                .or_else(|| integer_kind_hint_in_scope(&call.receiver, fcx, depth + 1))
         }
         _ => None,
     }
