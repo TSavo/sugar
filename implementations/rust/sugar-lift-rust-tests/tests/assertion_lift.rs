@@ -20682,32 +20682,143 @@ fn opaque_iterator_collection_literal_twin() {
 }
 
 #[test]
-fn rpc_source_refuses_runtime_bound_iterator_state_with_literal_twin() {
-    let doc = run_rpc_lift(
-        "src/source_runtime_bound_iterator_state.rs",
-        r#"
-#[test]
-fn runtime_bound_iterator_state_refused() {
-    let data = [10i8, 20, 30, 40, 100, 60];
-    let mut iter = data.into_iter();
-    assert_eq!(iter.try_fold(0_i8, |acc, x| acc.checked_add(x)), None);
-    assert_eq!(iter.next(), Some(60));
+fn rpc_source_refuses_only_genuinely_not_in_text_iterator_state_with_literal_twins() {
+    for (path, target, literal_twin, category, source) in [
+        (
+            "tests/iter/adapters/array_chunks.rs",
+            "test_iterator_array_chunks_clone_and_drop",
+            "array_chunks_literal_twin",
+            "observable drop/Cell iterator state",
+            r#"
+use std::cell::Cell;
+
+struct CountDrop<'a>(&'a Cell<i32>);
+impl<'a> CountDrop<'a> { fn new(count: &'a Cell<i32>) -> Self { Self(count) } }
+impl Drop for CountDrop<'_> {
+    fn drop(&mut self) { self.0.set(self.0.get() + 1); }
 }
 
 #[test]
-fn runtime_bound_iterator_state_literal_twin() {
-    let next_after_fold = Some(60i8);
-    assert_eq!(next_after_fold, Some(60));
+fn test_iterator_array_chunks_clone_and_drop() {
+    let count = Cell::new(0);
+    let mut it = (0..5).map(|_| CountDrop::new(&count)).array_chunks::<3>();
+    assert_eq!(it.by_ref().count(), 1);
+    assert_eq!(count.get(), 3);
+    let mut it2 = it.clone();
+    assert_eq!(count.get(), 3);
+    assert_eq!(it.into_remainder().len(), 2);
+    assert_eq!(count.get(), 5);
+    assert!(it2.next().is_none());
+    assert_eq!(it2.into_remainder().len(), 2);
+    assert_eq!(count.get(), 7);
+}
+
+#[test]
+fn array_chunks_literal_twin() {
+    assert_eq!(3, 3);
 }
 "#,
-    );
+        ),
+        (
+            "tests/iter/adapters/map_windows.rs",
+            "test_unfused",
+            "map_windows_literal_twin",
+            "custom unfused iterator state",
+            r#"
+#[test]
+fn test_unfused() {
+    #[derive(Default)]
+    struct UnfusedIter(usize);
+    impl Iterator for UnfusedIter {
+        type Item = usize;
+        fn next(&mut self) -> Option<usize> {
+            let curr = self.0;
+            self.0 += 1;
+            if curr % 7 == 0 { None } else { Some(curr) }
+        }
+    }
 
-    assert_rpc_source_refused(
-        &doc,
-        "runtime_bound_iterator_state_refused",
-        "runtime-bound iterator state",
-    );
-    assert_rpc_source_warranted(&doc, "runtime_bound_iterator_state_literal_twin");
+    let mut iter = UnfusedIter(1).map_windows(|a: &[_; 3]| *a);
+    assert_eq!(iter.by_ref().collect::<Vec<_>>(), vec![[1, 2, 3], [2, 3, 4]]);
+    assert_eq!(iter.by_ref().collect::<Vec<_>>(), vec![[8, 9, 10]]);
+}
+
+#[test]
+fn map_windows_literal_twin() {
+    assert_eq!([[1, 2, 3]], [[1, 2, 3]]);
+}
+"#,
+        ),
+        (
+            "tests/iter/adapters/peekable.rs",
+            "test_peekable_next_if_map_mutation",
+            "peekable_literal_twin",
+            "peekable next_if_map mutation state",
+            r#"
+#[test]
+fn test_peekable_next_if_map_mutation() {
+    fn collatz((mut num, mut len): (u64, u32)) -> Result<u32, (u64, u32)> {
+        let jump = num.trailing_zeros();
+        num >>= jump;
+        len += jump;
+        if num == 1 { Ok(len) } else { Err((3 * num + 1, len + 1)) }
+    }
+
+    let mut iter = std::iter::once((3, 0)).peekable();
+    assert_eq!(iter.peek(), Some(&(3, 0)));
+    assert_eq!(iter.next_if_map(collatz), None);
+    assert_eq!(iter.peek(), Some(&(10, 1)));
+}
+
+#[test]
+fn peekable_literal_twin() {
+    assert_eq!(Some((10_u64, 1_u32)), Some((10, 1)));
+}
+"#,
+        ),
+        (
+            "tests/iter/adapters/step_by.rs",
+            "test_iterator_step_by_nth_try_fold",
+            "step_by_literal_twin",
+            "unbounded step_by iterator arithmetic",
+            r#"
+#[test]
+fn test_iterator_step_by_nth_try_fold() {
+    let mut it = (0..).step_by(10);
+    assert_eq!(it.try_fold(0, i8::checked_add), None);
+    assert_eq!(it.next(), Some(60));
+}
+
+#[test]
+fn step_by_literal_twin() {
+    assert_eq!(Some(60), Some(60));
+}
+"#,
+        ),
+        (
+            "tests/iter/sources.rs",
+            "test_successors",
+            "successors_literal_twin",
+            "runtime successors iterator state",
+            r#"
+#[test]
+fn test_successors() {
+    let mut powers_of_10 = std::iter::successors(Some(1_u16), |n| n.checked_mul(10));
+    assert_eq!(powers_of_10.by_ref().collect::<Vec<_>>(), &[1, 10, 100, 1_000, 10_000]);
+    assert_eq!(powers_of_10.next(), None);
+}
+
+#[test]
+fn successors_literal_twin() {
+    assert_eq!([1_u16, 10, 100, 1_000, 10_000].len(), 5);
+}
+"#,
+        ),
+    ] {
+        let doc = run_rpc_lift(path, source);
+        assert_rpc_source_refused(&doc, target, category);
+        assert_rpc_source_warranted(&doc, literal_twin);
+    }
 }
 
 #[test]
