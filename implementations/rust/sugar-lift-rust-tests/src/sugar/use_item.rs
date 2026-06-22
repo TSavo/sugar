@@ -94,6 +94,9 @@ fn collect_use_tree_fns(
         UseTree::Path(path) if path.ident == "super" => {
             collect_super_use_tree_fns(&path.tree, source_path, source_fns, out)
         }
+        UseTree::Path(path) if path.ident == "crate" => {
+            collect_crate_use_tree_fns(&path.tree, source_path, source_fns, out)
+        }
         UseTree::Group(group) => {
             for item in &group.items {
                 collect_use_tree_fns(item, source_path, source_fns, out);
@@ -180,6 +183,76 @@ fn collect_super_module_use_tree(
         }
         _ => {}
     }
+}
+
+fn collect_crate_use_tree_fns(
+    tree: &UseTree,
+    source_path: &str,
+    source_fns: &FunctionSourceRegistry,
+    out: &mut FnRegistry,
+) {
+    match tree {
+        UseTree::Path(path) => {
+            collect_crate_module_use_tree_fns(
+                &path.ident.to_string(),
+                &path.tree,
+                source_path,
+                source_fns,
+                out,
+            );
+        }
+        UseTree::Group(group) => {
+            for item in &group.items {
+                collect_crate_use_tree_fns(item, source_path, source_fns, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_crate_module_use_tree_fns(
+    module: &str,
+    tree: &UseTree,
+    source_path: &str,
+    source_fns: &FunctionSourceRegistry,
+    out: &mut FnRegistry,
+) {
+    let Some(module_fns) = crate_module_fns(source_path, module, source_fns) else {
+        return;
+    };
+    match tree {
+        UseTree::Glob(_) => {
+            out.merge_all(module_fns);
+        }
+        UseTree::Name(name) => {
+            if let Some(item) = module_fns.lookup(&name.ident.to_string()) {
+                out.insert(&name.ident.to_string(), item);
+            }
+        }
+        UseTree::Group(group) => {
+            for item in &group.items {
+                collect_crate_module_use_tree_fns(module, item, source_path, source_fns, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn crate_module_fns<'a>(
+    source_path: &str,
+    module: &str,
+    source_fns: &'a FunctionSourceRegistry,
+) -> Option<&'a FnRegistry> {
+    let mut candidates = Vec::new();
+    if let Some((crate_root, _)) = source_path.split_once('/') {
+        candidates.push(format!("{crate_root}/{module}/mod.rs"));
+        candidates.push(format!("{crate_root}/{module}.rs"));
+    }
+    candidates.push(format!("{module}/mod.rs"));
+    candidates.push(format!("{module}.rs"));
+    candidates
+        .into_iter()
+        .find_map(|candidate| source_fns.registry_for_source(&candidate))
 }
 
 fn collect_super_use_tree_fns(

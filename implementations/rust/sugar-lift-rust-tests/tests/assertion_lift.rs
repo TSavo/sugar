@@ -1,8 +1,8 @@
 use sugar_ir_symbolic::{ConstValue, Formula, Term};
 use sugar_lift_rust_tests::{
-    lift_file, lift_file_with_options, lift_file_with_source_imports, AdapterOutput,
-    AssertionFactEmission, AssertionFactKind, ConstSourceRegistry, LiftOptions, MacroRegistry,
-    TargetCfg,
+    lift_file, lift_file_with_all_source_imports, lift_file_with_options,
+    lift_file_with_source_imports, AdapterOutput, AssertionFactEmission, AssertionFactKind,
+    ConstSourceRegistry, FunctionSourceRegistry, LiftOptions, MacroRegistry, TargetCfg,
 };
 
 fn parse(src: &str) -> syn::File {
@@ -22936,9 +22936,98 @@ fn t() {
     }
 }
 
-// EXACT-OR-NONE: a runtime `ldexp_f32(..)` receiver, an unstable f16 literal, and NAN
-// (mantissa not pinned by std) are NOT bit-determinate -> NOT decomposed; they stay the
-// opaque `method:integer_decode` fallback, never a fabricated component tuple.
+#[test]
+fn tuple_decomp_integer_decode_closed_ldexp_lowers_componentwise() {
+    let dep = r#"
+fn ldexp_f32(a: f32, b: i32) -> f32 {
+    ldexp_f64(a as f64, b) as f32
+}
+fn ldexp_f64(a: f64, b: i32) -> f64 {
+    unsafe extern "C" {
+        fn ldexp(x: f64, n: i32) -> f64;
+    }
+    unsafe { ldexp(a, b) }
+}
+"#;
+    let src = r#"
+use crate::num::{ldexp_f32, ldexp_f64};
+#[test]
+fn t() {
+    assert_eq!(ldexp_f32(1.0, 100).integer_decode(), (8388608, 77, 1));
+    assert_eq!(ldexp_f64(1.0, 100).integer_decode(), (4503599627370496, 48, 1));
+}
+"#;
+    let mut fns = FunctionSourceRegistry::new();
+    fns.scan_source("tests/num/mod.rs", dep);
+    let out = lift_file_with_all_source_imports(
+        &parse(src),
+        "tests/num/dec2flt/float.rs",
+        &LiftOptions::default(),
+        &MacroRegistry::new(),
+        &ConstSourceRegistry::new(),
+        &fns,
+    );
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "closed ldexp integer_decode tuple equalities should lift; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons,
+        out.factory_audits,
+        out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        doc.contains("8388608") && doc.contains("4503599627370496"),
+        "ldexp integer_decode must ground both mantissa components: {doc}"
+    );
+}
+
+#[test]
+fn tuple_decomp_integer_decode_closed_ldexp_wrong_component_is_unsat() {
+    let dep = r#"
+fn ldexp_f32(a: f32, b: i32) -> f32 {
+    ldexp_f64(a as f64, b) as f32
+}
+fn ldexp_f64(a: f64, b: i32) -> f64 {
+    unsafe extern "C" {
+        fn ldexp(x: f64, n: i32) -> f64;
+    }
+    unsafe { ldexp(a, b) }
+}
+"#;
+    let src = r#"
+use crate::num::ldexp_f32;
+#[test]
+fn t() {
+    assert_eq!(ldexp_f32(1.0, 100).integer_decode(), (8388608, 76, 1));
+}
+"#;
+    let mut fns = FunctionSourceRegistry::new();
+    fns.scan_source("tests/num/mod.rs", dep);
+    let out = lift_file_with_all_source_imports(
+        &parse(src),
+        "tests/num/dec2flt/float.rs",
+        &LiftOptions::default(),
+        &MacroRegistry::new(),
+        &ConstSourceRegistry::new(),
+        &fns,
+    );
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bad ldexp twin must still lift so z3 can refute it: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "tuple_decomp_id_ldexp_bad") {
+        assert!(
+            !sat,
+            "ldexp_f32(1.0, 100).integer_decode() has exponent 77, not 76"
+        );
+    }
+}
+
+// EXACT-OR-NONE: a shadowed/non-ldexp `ldexp_f32(..)` receiver, an unstable f16 literal,
+// and NAN (mantissa not pinned by std) are NOT bit-determinate -> NOT decomposed; they
+// stay the opaque `method:integer_decode` fallback, never a fabricated component tuple.
 #[test]
 fn tuple_decomp_integer_decode_undeterminable_receivers_stay_opaque() {
     let src = r#"
