@@ -10671,7 +10671,11 @@ fn t() {
         out.factory_audits.iter().all(|audit| {
             !(audit.site.contains("get_mut")
                 && audit.site.contains("+=")
-                && audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Unresolved)
+                && matches!(
+                    audit.disposition,
+                    sugar_lift_rust_tests::FactoryDisposition::WarrantPending
+                        | sugar_lift_rust_tests::FactoryDisposition::Unresolved
+                ))
         }),
         "factory should not leave the method-call assignment unresolved: {:?}",
         out.factory_audits
@@ -10711,7 +10715,11 @@ fn t() {
     assert!(
         out.factory_audits.iter().all(|audit| {
             !(audit.requested_role == "Constraint"
-                && audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Unresolved
+                && matches!(
+                    audit.disposition,
+                    sugar_lift_rust_tests::FactoryDisposition::WarrantPending
+                        | sugar_lift_rust_tests::FactoryDisposition::Unresolved
+                )
                 && audit.site.contains("1 << 47"))
         }),
         "const initializer expression should not be misclassified as unresolved assertion work: {:?}",
@@ -20429,8 +20437,10 @@ fn t() {
         .factory_audits
         .iter()
         .filter(|audit| {
-            audit.disposition.as_str() == "unresolved"
-                && (audit.site.contains("compile_guard") || audit.site.contains("imm_bits_guard"))
+            matches!(
+                audit.disposition.as_str(),
+                "unresolved" | "warrant_pending"
+            ) && (audit.site.contains("compile_guard") || audit.site.contains("imm_bits_guard"))
         })
         .collect();
     assert!(

@@ -289,7 +289,7 @@ impl FactoryAuditSeed {
                 if reason == STRUCTURAL_BACKSTOP_REASON =>
             {
                 (
-                    FactoryDisposition::Unresolved,
+                    FactoryDisposition::WarrantPending,
                     "structural-backstop",
                     Some(self.unresolved_reason()),
                 )
@@ -304,7 +304,7 @@ impl FactoryAuditSeed {
                         Some(format!("inert: {reason}")),
                     ),
                     Disposition::Unclassified => (
-                        FactoryDisposition::Unresolved,
+                        FactoryDisposition::WarrantPending,
                         "structural-backstop",
                         Some(format!("{reason}; write more Sugar for this AST")),
                     ),
@@ -390,7 +390,9 @@ impl Sugar for AccountedSugar {
         let audit = self.seed.audit(&outcome);
         if matches!(
             audit.disposition,
-            FactoryDisposition::Refused | FactoryDisposition::Unresolved
+            FactoryDisposition::Refused
+                | FactoryDisposition::WarrantPending
+                | FactoryDisposition::Unresolved
         ) {
             warn!(
                 ast_kind = audit.ast_kind,

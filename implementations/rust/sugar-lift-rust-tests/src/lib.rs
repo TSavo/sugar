@@ -274,6 +274,18 @@ pub enum FactoryDisposition {
     Warranted,
     Refused,
     Support,
+    /// Text-determined value proposition present but no Sugar recognizer reduces it yet.
+    /// This is WORK — the recognizer worklist. Every locus here represents a real scalar
+    /// assertion the source makes whose value is fixed by the source text; we just have not
+    /// written the Sugar to lift it. Target: drive to zero by adding recognizers.
+    WarrantPending,
+    /// Source makes NO value-proposition at all at this locus (cfg-gated FALSE on this
+    /// target, empty literal domain, type-level-only body, etc.). Contributes ⊤ to the
+    /// proof conjunction — there is nothing to prove here, correctly. NOT work.
+    Vacuous,
+    /// Genuinely ambiguous: the classifier cannot determine whether a value-proposition
+    /// exists or whether the value is text-determined. Should shrink toward zero as the
+    /// classifier improves; never force a verdict you cannot prove.
     Unresolved,
 }
 
@@ -283,6 +295,8 @@ impl FactoryDisposition {
             FactoryDisposition::Warranted => "warranted",
             FactoryDisposition::Refused => "refused",
             FactoryDisposition::Support => "support",
+            FactoryDisposition::WarrantPending => "warrant_pending",
+            FactoryDisposition::Vacuous => "vacuous",
             FactoryDisposition::Unresolved => "unresolved",
         }
     }
@@ -808,7 +822,21 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // `mem/type_info.rs::assert_predicates_exact` (collection), `fmt/float.rs::assert_exact_exp`
         // (mut writer).
         || reason.contains("runtime iterator/collection construct (bin-2")
-        || reason.contains("mutable-local state machine driven by fmt-write");
+        || reason.contains("mutable-local state machine driven by fmt-write")
+        // TERMINAL (ITERATOR CONSUMPTION -- by_ref/collect advanced-state): a MUTABLE
+        // iterator that has been advanced by a prior chained operation (`by_ref()`,
+        // `count()`, `collect()`, `nth()`, etc.) before the assertion point. The state
+        // of the iterator at assertion time is a runtime quantity (determined by how many
+        // elements the prior chain consumed), so there is no single timeless source value
+        // to read -- kin to `temporally unstable` / `bin-2`. EARNED by the iterator-
+        // advancement classifier AFTER detecting the `by_ref`-adaptor / unknown-consumed-
+        // count pattern; a FRESH iterator over a literal source (no prior consume chain)
+        // digs and is never refused here (the fake-refuse guardrail).
+        // DISCRIMINATION: `rpc_source_refuses_only_genuinely_not_in_text_iterator_state_with_literal_twins`
+        // in assertion_lift.rs covers this class with literal twins (e.g. array_chunks,
+        // map_windows, peekable variants) that DO warrant -- confirming the refusals are
+        // runtime-state, not missing Sugar.
+        || reason.contains("unknown iterator consumption");
     if terminal {
         Disposition::Refused
     } else {
@@ -20160,7 +20188,8 @@ mod lifter_key_tests {
             .iter()
             .filter(|audit| {
                 audit.requested_role == "Constraint"
-                    && audit.disposition == FactoryDisposition::Unresolved
+                    && (audit.disposition == FactoryDisposition::WarrantPending
+                        || audit.disposition == FactoryDisposition::Unresolved)
                     && audit.site.contains("+=")
             })
             .collect();
