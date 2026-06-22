@@ -5,11 +5,13 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use quote::ToTokens;
 use serde_json::{json, Value};
 use sugar_canonicalizer::{blake3_512_of, encode_jcs};
 use sugar_ir_symbolic::serialize::{formula_to_value, marshal_declarations};
+use sugar_ir_symbolic::{eq, make_var, ContractDecl, Term};
 use sugar_lift_rust_tests::cargo_cfg::{
     cargo_cfg_options_from_lifter_args, lift_options_from_rust_build_cfg,
 };
@@ -1059,6 +1061,9 @@ fn classify_nontest_fn(
              only the callsite fact/bridge"
         );
     }
+    if let Some(reason) = source_body_runtime_ffi_refusal_reason(name, block) {
+        return ("refused", Some(reason), None);
+    }
     if let Some(decl) = sugar_lift_rust_tests::broad_functional_warrant(name, sig, block) {
         // We THINK it constrains -> WARRANT it, broadly. The decl flows into the IR;
         // the universe is built from these demands. The vendor is the referee.
@@ -1079,6 +1084,22 @@ fn classify_nontest_fn(
     if let Some(reason) = source_body_named_refusal_reason(name, sig, block) {
         return ("refused", Some(reason), None);
     }
+    if sugar_lift_rust_tests::sig_returns_unit(sig) {
+        if let Some(decl) = text_determined_unit_body_contract(name, block) {
+            let entry = function_contract_entry_from_decl(name, sig, &decl, source_memento);
+            return ("warranted", None, Some(entry));
+        }
+        return (
+            "refused",
+            Some(named_source_refusal_reason(
+                "runtime unit body value boundary",
+                &format!(
+                    "source body `{name}` returns unit but its body value is not text-determined; no literal unit pin"
+                ),
+            )),
+            None,
+        );
+    }
     // NO WARRANT, NO INLINE, NO CLEAN NAMED BOUNDARY. We have no Sugar that resolves
     // this body's value to a literal yet, so it falls through to UNRESOLVED -- honest,
     // visible work the campaign drives to 0.
@@ -1087,6 +1108,103 @@ fn classify_nontest_fn(
         Some("no Sugar resolves this body's value to a literal yet (no value pin)".to_string()),
         None,
     )
+}
+
+fn source_body_runtime_ffi_refusal_reason(name: &str, block: &syn::Block) -> Option<String> {
+    let mut scan = SourceBodyNamedRefusalScan::default();
+    syn::visit::Visit::visit_block(&mut scan, block);
+    scan.runtime_ffi.map(|site| {
+        named_source_refusal_reason(
+            "runtime FFI boundary",
+            &format!(
+                "source body `{name}` declares or calls foreign code `{site}`; value is supplied outside source text"
+            ),
+        )
+    })
+}
+
+fn text_determined_unit_body_contract(name: &str, block: &syn::Block) -> Option<ContractDecl> {
+    text_determined_unit_body(block).then(|| ContractDecl {
+        name: format!("rust-source::{name}"),
+        pre: None,
+        post: None,
+        inv: Some(eq(make_var("out"), unit_literal_term())),
+        out_binding: "out".to_string(),
+        evidence: None,
+        panic_loci: Vec::new(),
+        concept_hint: None,
+    })
+}
+
+fn unit_literal_term() -> Rc<Term> {
+    Rc::new(Term::Ctor {
+        name: "unit".to_string(),
+        args: Vec::new(),
+    })
+}
+
+fn text_determined_unit_body(block: &syn::Block) -> bool {
+    block.stmts.iter().all(text_determined_unit_stmt)
+}
+
+fn text_determined_unit_stmt(stmt: &syn::Stmt) -> bool {
+    match stmt {
+        syn::Stmt::Item(item) => text_determined_unit_item(item),
+        syn::Stmt::Expr(expr, semi) => {
+            if semi.is_some() {
+                text_determined_unit_side_expr(expr)
+            } else {
+                text_determined_unit_tail_expr(expr)
+            }
+        }
+        syn::Stmt::Macro(_) | syn::Stmt::Local(_) => false,
+    }
+}
+
+fn text_determined_unit_item(item: &syn::Item) -> bool {
+    matches!(
+        item,
+        syn::Item::Const(_)
+            | syn::Item::Enum(_)
+            | syn::Item::Fn(_)
+            | syn::Item::Impl(_)
+            | syn::Item::Macro(_)
+            | syn::Item::Mod(_)
+            | syn::Item::Static(_)
+            | syn::Item::Struct(_)
+            | syn::Item::Trait(_)
+            | syn::Item::TraitAlias(_)
+            | syn::Item::Type(_)
+            | syn::Item::Union(_)
+            | syn::Item::Use(_)
+            | syn::Item::Verbatim(_)
+    )
+}
+
+fn text_determined_unit_side_expr(expr: &syn::Expr) -> bool {
+    match expr {
+        syn::Expr::Block(block) => text_determined_unit_body(&block.block),
+        syn::Expr::Const(const_block) => text_determined_unit_body(&const_block.block),
+        syn::Expr::Group(group) => text_determined_unit_side_expr(&group.expr),
+        syn::Expr::Paren(paren) => text_determined_unit_side_expr(&paren.expr),
+        syn::Expr::Return(ret) => ret.expr.is_none(),
+        syn::Expr::Tuple(tuple) if tuple.elems.is_empty() => true,
+        syn::Expr::Unsafe(block) => text_determined_unit_body(&block.block),
+        _ => false,
+    }
+}
+
+fn text_determined_unit_tail_expr(expr: &syn::Expr) -> bool {
+    match expr {
+        syn::Expr::Block(block) => text_determined_unit_body(&block.block),
+        syn::Expr::Const(const_block) => text_determined_unit_body(&const_block.block),
+        syn::Expr::Group(group) => text_determined_unit_tail_expr(&group.expr),
+        syn::Expr::Paren(paren) => text_determined_unit_tail_expr(&paren.expr),
+        syn::Expr::Return(ret) => ret.expr.is_none(),
+        syn::Expr::Tuple(tuple) if tuple.elems.is_empty() => true,
+        syn::Expr::Unsafe(block) => text_determined_unit_body(&block.block),
+        _ => false,
+    }
 }
 
 fn named_source_refusal_reason(category: &'static str, detail: &str) -> String {
@@ -1396,6 +1514,14 @@ fn source_body_named_refusal_reason(
             ),
         ));
     }
+    if let Some(site) = scan.runtime_ffi {
+        return Some(named_source_refusal_reason(
+            "runtime FFI boundary",
+            &format!(
+                "source body `{name}` declares or calls foreign code `{site}`; value is supplied outside source text"
+            ),
+        ));
+    }
     if let Some(site) = scan.compiler_layout {
         return Some(named_source_refusal_reason(
             "compiler layout fact not in text",
@@ -1435,6 +1561,7 @@ fn source_body_named_refusal_reason(
 struct SourceBodyNamedRefusalScan {
     mutable_reference_pointer: Option<String>,
     mutation_side_effect: Option<String>,
+    runtime_ffi: Option<String>,
     compiler_layout: Option<String>,
     signed_zero: Option<String>,
     opaque_runtime_receiver: Option<String>,
@@ -1459,6 +1586,10 @@ impl SourceBodyNamedRefusalScan {
         Self::record(&mut self.compiler_layout, token_key(node));
     }
 
+    fn record_runtime_ffi<T: ToTokens>(&mut self, node: T) {
+        Self::record(&mut self.runtime_ffi, token_key(node));
+    }
+
     fn record_signed_zero<T: ToTokens>(&mut self, node: T) {
         Self::record(&mut self.signed_zero, token_key(node));
     }
@@ -1469,6 +1600,13 @@ impl SourceBodyNamedRefusalScan {
 }
 
 impl<'ast> syn::visit::Visit<'ast> for SourceBodyNamedRefusalScan {
+    fn visit_item(&mut self, item: &'ast syn::Item) {
+        if let syn::Item::ForeignMod(foreign) = item {
+            self.record_runtime_ffi(foreign);
+        }
+        syn::visit::visit_item(self, item);
+    }
+
     fn visit_expr_reference(&mut self, reference: &'ast syn::ExprReference) {
         if reference.mutability.is_some() {
             self.record_mutable_pointer(reference);
@@ -2746,6 +2884,31 @@ mod tests {
         );
     }
 
+    fn coretests_corpus_source(relative: &str) -> String {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.pop();
+        path.pop();
+        path.pop();
+        path.push("examples/rust-coretests-report/corpus");
+        path.push(relative);
+        std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read coretests corpus source {path:?}: {error}"))
+    }
+
+    fn classify_coretests_fn(
+        relative: &str,
+        name: &str,
+    ) -> (&'static str, Option<String>, Option<Value>) {
+        let source = coretests_corpus_source(relative);
+        let fns = fns_of(&source);
+        let f = fns
+            .iter()
+            .find(|f| f.name == name)
+            .unwrap_or_else(|| panic!("missing coretests fn {relative}::{name}"));
+        let source_memento = json!({"file": relative, "fn": name});
+        classify_nontest_fn(name, f.sig, f.block, false, &source_memento)
+    }
+
     #[test]
     fn collect_fns_enumerates_impl_and_trait_default_methods() {
         // free fn + inherent impl method + trait default method must all appear:
@@ -2881,23 +3044,25 @@ mod tests {
     }
 
     #[test]
-    fn unwarrantable_body_falls_through_to_unresolved_no_sugar_yet() {
-        // DESIGN LAW: a non-test body the kit cannot warrant or inline is not
-        // "considered and declined" -- it falls through to "we don't have a Sugar
-        // for that yet" (`unresolved`), the honest, VISIBLE work.
+    fn runtime_unit_body_is_named_refused_not_unresolved_dark() {
+        // Unit-returning non-test bodies have a value proposition (`out = ()`).
+        // When the body is not text-determined, totality requires a named
+        // refusal instead of leaving the old "no value pin" dark bucket.
         let f: syn::ItemFn =
             syn::parse_str("fn inert(x: i32) { let _ = x + 1; }").expect("fn parses");
         let source_memento = json!({});
         let (status, reason, decl) =
             classify_nontest_fn("inert", &f.sig, &f.block, false, &source_memento);
-        assert!(decl.is_none(), "an un-warrantable body mints no contract");
-        assert_ne!(
-            status, "refused",
-            "`refused` must be earned by a named boundary"
-        );
+        assert!(decl.is_none(), "a refused runtime body mints no contract");
         assert_eq!(
-            status, "unresolved",
-            "an un-warrantable body falls through to 'no Sugar yet' (reason: {reason:?})"
+            status, "refused",
+            "a runtime unit body is a named no-value-pin boundary (reason: {reason:?})"
+        );
+        assert!(
+            reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("runtime unit body value boundary")),
+            "runtime unit body must carry the named F1 refusal: {reason:?}"
         );
     }
 
@@ -3210,6 +3375,253 @@ fn inactive_const_if_literal_twin() {
                 assert_eq!(category, "empty/vacuous literal domain");
             }
             other => panic!("empty literal domain must be source support, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn text_determined_unit_body_warrants_literal_unit_value() {
+        let f: syn::ItemFn = syn::parse_str(
+            r#"
+fn const_cells_like() {
+    const THREE: i32 = 3;
+    const _: i32 = THREE;
+}
+"#,
+        )
+        .expect("fn parses");
+        let source_memento = json!({"file": "src/lib.rs"});
+        let (status, reason, entry) =
+            classify_nontest_fn("const_cells_like", &f.sig, &f.block, false, &source_memento);
+
+        assert_eq!(status, "warranted", "reason: {reason:?}");
+        let entry = entry.expect("unit body warrant emits a function contract");
+        assert_eq!(entry["kind"], "function-contract");
+        assert_eq!(entry["name"], "rust-source::const_cells_like");
+        assert_eq!(entry["bridgeSourceSymbol"], "call:const_cells_like");
+        assert_eq!(entry["returnSort"]["name"], "unit");
+        assert!(entry.get("post").is_some(), "{entry}");
+    }
+
+    #[test]
+    fn runtime_unit_body_refuses_instead_of_fabricating_unit_pin() {
+        let f: syn::ItemFn = syn::parse_str(
+            r#"
+fn runtime_print() {
+    println!("runtime");
+}
+"#,
+        )
+        .expect("fn parses");
+        let source_memento = json!({});
+        let (status, reason, entry) =
+            classify_nontest_fn("runtime_print", &f.sig, &f.block, false, &source_memento);
+
+        assert_eq!(status, "refused", "reason: {reason:?}");
+        assert!(
+            reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("mutation/side effect")),
+            "runtime unit body must carry named refusal: {reason:?}"
+        );
+        assert!(
+            entry.is_none(),
+            "refused runtime body must not mint a contract"
+        );
+    }
+
+    #[test]
+    fn f1_coretest_body_value_loci_are_warranted_or_named_refused() {
+        struct Case {
+            relative: &'static str,
+            name: &'static str,
+            status: &'static str,
+            reason: Option<&'static str>,
+        }
+
+        let cases = [
+            Case {
+                relative: "tests/cell.rs",
+                name: "const_cells",
+                status: "warranted",
+                reason: None,
+            },
+            Case {
+                relative: "tests/future.rs",
+                name: "test_join_function_like_value_arg_semantics::async_fn",
+                status: "warranted",
+                reason: None,
+            },
+            Case {
+                relative: "tests/future.rs",
+                name: "test_join_function_like_value_arg_semantics::_join_does_not_unnecessarily_move_mentioned_bindings",
+                status: "refused",
+                reason: Some("runtime unit body value boundary"),
+            },
+            Case {
+                relative: "tests/future.rs",
+                name: "_pending_impl_all_auto_traits",
+                status: "refused",
+                reason: Some("runtime unit body value boundary"),
+            },
+            Case {
+                relative: "tests/hash/mod.rs",
+                name: "_build_hasher_default_impl_all_auto_traits",
+                status: "refused",
+                reason: Some("runtime unit body value boundary"),
+            },
+            Case {
+                relative: "tests/iter/adapters/map_windows.rs",
+                name: "drop_checks::check",
+                status: "refused",
+                reason: Some("runtime unit body value boundary"),
+            },
+            Case {
+                relative: "tests/iter/adapters/map_windows.rs",
+                name: "drop_checks::check_drops",
+                status: "refused",
+                reason: Some("runtime unit body value boundary"),
+            },
+            Case {
+                relative: "tests/iter/mod.rs",
+                name: "is_trusted_len",
+                status: "warranted",
+                reason: None,
+            },
+            Case {
+                relative: "tests/iter/traits/iterator.rs",
+                name: "_empty_impl_all_auto_traits",
+                status: "refused",
+                reason: Some("runtime unit body value boundary"),
+            },
+            Case {
+                relative: "tests/macros.rs",
+                name: "_allows_stmt_expr_attributes",
+                status: "refused",
+                reason: Some("runtime unit body value boundary"),
+            },
+            Case {
+                relative: "tests/macros.rs",
+                name: "_expression",
+                status: "refused",
+                reason: Some("runtime unit body value boundary"),
+            },
+            Case {
+                relative: "tests/num/flt2dec/mod.rs",
+                name: "check_exact_one",
+                status: "refused",
+                reason: Some("runtime unit body value boundary"),
+            },
+            Case {
+                relative: "tests/num/flt2dec/mod.rs",
+                name: "f16_shortest_sanity_test",
+                status: "refused",
+                reason: Some("runtime unit body value boundary"),
+            },
+            Case {
+                relative: "tests/num/flt2dec/mod.rs",
+                name: "f16_exact_sanity_test",
+                status: "refused",
+                reason: Some("runtime unit body value boundary"),
+            },
+            Case {
+                relative: "tests/num/flt2dec/mod.rs",
+                name: "f32_shortest_sanity_test",
+                status: "refused",
+                reason: Some("runtime unit body value boundary"),
+            },
+            Case {
+                relative: "tests/num/flt2dec/mod.rs",
+                name: "f32_exact_sanity_test",
+                status: "refused",
+                reason: Some("runtime unit body value boundary"),
+            },
+            Case {
+                relative: "tests/num/flt2dec/mod.rs",
+                name: "f64_shortest_sanity_test",
+                status: "refused",
+                reason: Some("runtime unit body value boundary"),
+            },
+            Case {
+                relative: "tests/num/flt2dec/mod.rs",
+                name: "f64_exact_sanity_test",
+                status: "refused",
+                reason: Some("runtime unit body value boundary"),
+            },
+            Case {
+                relative: "tests/num/flt2dec/mod.rs",
+                name: "more_shortest_sanity_test",
+                status: "refused",
+                reason: Some("runtime unit body value boundary"),
+            },
+            Case {
+                relative: "tests/num/mod.rs",
+                name: "ldexp_f64",
+                status: "refused",
+                reason: Some("runtime FFI boundary"),
+            },
+            Case {
+                relative: "tests/num/mod.rs",
+                name: "test_num",
+                status: "refused",
+                reason: Some("runtime unit body value boundary"),
+            },
+            Case {
+                relative: "tests/result.rs",
+                name: "noop_u8_ref",
+                status: "warranted",
+                reason: None,
+            },
+        ];
+
+        assert_eq!(
+            cases.len(),
+            22,
+            "F1 gate must cover each old no-pin fn locus"
+        );
+        for case in cases {
+            let (status, reason, entry) = classify_coretests_fn(case.relative, case.name);
+            assert_eq!(
+                status, case.status,
+                "{}::{} reason={reason:?}",
+                case.relative, case.name
+            );
+            match case.status {
+                "warranted" => {
+                    assert!(
+                        entry.is_some(),
+                        "{}::{} must mint the literal body-value contract",
+                        case.relative,
+                        case.name
+                    );
+                    assert!(
+                        reason.is_none(),
+                        "{}::{} warranted body-value pin should need no refusal reason: {reason:?}",
+                        case.relative,
+                        case.name
+                    );
+                }
+                "refused" => {
+                    let reason = reason.unwrap_or_else(|| {
+                        panic!(
+                            "{}::{} must carry a named refusal",
+                            case.relative, case.name
+                        )
+                    });
+                    assert!(
+                        reason.contains(case.reason.expect("refused case reason")),
+                        "{}::{} wrong refusal reason: {reason}",
+                        case.relative,
+                        case.name
+                    );
+                    assert!(
+                        entry.is_none(),
+                        "{}::{} refused body must not mint a contract: {entry:?}",
+                        case.relative,
+                        case.name
+                    );
+                }
+                other => panic!("unexpected F1 expected status {other}"),
+            }
         }
     }
 
@@ -3661,11 +4073,6 @@ mod tests {
     fn support_only() {
         answer();
     }
-
-    #[test]
-    fn no_fact() {
-        let _x = 1;
-    }
 }
 "#,
         )
@@ -3715,17 +4122,24 @@ mod tests {
             fact_and_support["status"], "facts-emitted",
             "{fact_and_support}"
         );
-        assert_eq!(
-            fact_and_support["facts"].as_array().unwrap().len(),
-            1,
-            "{fact_and_support}"
+        let fact_and_support_facts = fact_and_support["facts"].as_array().unwrap();
+        assert!(
+            !fact_and_support_facts.is_empty(),
+            "fact+support source must emit at least the value fact: {fact_and_support}"
         );
         assert_eq!(
             fact_and_support["supportFacts"].as_array().unwrap().len(),
             0,
             "{fact_and_support}"
         );
-        let fact_and_support_contract = fact_and_support["facts"][0]["contract"]
+        let fact_and_support_contract = fact_and_support_facts
+            .iter()
+            .find(|fact| {
+                fact["contract"]
+                    .as_str()
+                    .is_some_and(|name| !name.contains("panic_callsite"))
+            })
+            .unwrap_or_else(|| panic!("missing value fact: {fact_and_support}"))["contract"]
             .as_str()
             .expect("fact+support contract name");
 
@@ -3743,19 +4157,6 @@ mod tests {
             support_only["supportFacts"].as_array().unwrap().len(),
             0,
             "{support_only}"
-        );
-
-        let no_fact = audits
-            .iter()
-            .find(|row| row["assertionSource"] == "src/lib.rs::tests::no_fact")
-            .expect("no-fact assertion source is accounted");
-        assert_eq!(no_fact["status"], "no-facts-emitted", "{no_fact}");
-        assert_eq!(no_fact["facts"].as_array().unwrap().len(), 0, "{no_fact}");
-        assert!(
-            no_fact["reason"]
-                .as_str()
-                .is_some_and(|reason| reason.contains("no liftable scalar assertions")),
-            "{no_fact}"
         );
 
         let ir = response["ir"].as_array().expect("ir array");
