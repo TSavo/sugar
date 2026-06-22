@@ -9098,9 +9098,9 @@ fn mut_ref_residual() {
 
 #[test]
 fn assert_eq_const_safe_lowers_to_equality() {
-    // Source-based: the macro_rules! definition is IN SCOPE, so the expander
-    // walks into it and lowers `$t: $l, $r` to assert_eq!($l, $r). No hardcoded
-    // arm: the lifter recognizes the macro only because it can read its source.
+    // Source-based: the macro_rules! definition is IN SCOPE, so the assertion-surface
+    // recognizer may own the scalar `$left == $right` contract directly while still
+    // deferring the operand terms until desugar time.
     let src = r#"
 macro_rules! assert_eq_const_safe {
     ($t:ty: $left:expr, $right:expr) => { assert_eq!($left, $right) };
@@ -9154,13 +9154,26 @@ fn t() {
 
 #[test]
 fn assert_eq_const_safe_contradiction_is_unsat() {
-    // Two assert_eq_const_safe! calls claiming different values for the same
-    // function must produce a contradictory (UNSAT) conjunction, exactly as
-    // assert_eq! does. The teeth test confirms we did not accidentally lose
-    // the contradiction guard by mis-routing to a wrong lower path.
+    // The real coretests macro routes through const_eval_select with nested
+    // runtime/compiletime helpers. The scalar assertion surface is still the
+    // raw `$left == $right` pair at the invocation site. Two claims with
+    // different expected values for the same function must produce a
+    // contradictory (UNSAT) conjunction, exactly as assert_eq! does.
     let src = r#"
 macro_rules! assert_eq_const_safe {
-    ($t:ty: $left:expr, $right:expr) => { assert_eq!($left, $right) };
+    ($t:ty: $left:expr, $right:expr) => {
+        assert_eq_const_safe!($t: $left, $right, concat!(stringify!($left), " == ", stringify!($right)));
+    };
+    ($t:ty: $left:expr, $right:expr$(, $($arg:tt)+)?) => {{
+        fn runtime() {
+            assert_eq!($left, $right, $($($arg)*),*);
+        }
+        const fn compiletime() {
+            const PAT: $t = $right;
+            assert!(matches!($left, PAT), $($($arg)*),*);
+        }
+        core::intrinsics::const_eval_select((), compiletime, runtime)
+    }};
 }
 
 fn make_val() -> u8 { 42 }
@@ -9183,6 +9196,12 @@ fn t() {
     assert_eq!(operands.len(), 2, "must produce a conjunction of two atoms");
     assert_eq_atom(&operands[0], 42);
     assert_eq_atom(&operands[1], 99);
+    if let Some(sat) = z3_verdict(&inv_json(decl), "assert_eq_const_safe_real_body_bad") {
+        assert!(
+            !sat,
+            "assert_eq_const_safe!(u8: make_val(), 99) must be z3-UNSAT"
+        );
+    }
 }
 
 // ---- assert_almost_eq! ----
