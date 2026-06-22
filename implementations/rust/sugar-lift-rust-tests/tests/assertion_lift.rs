@@ -11301,13 +11301,10 @@ fn let_init_test() {
 // --- aggregate element-wise lift tranche (T-AGGREGATE) ---
 
 #[test]
-fn tuple_with_non_literal_elements_lifts_as_agg_term() {
-    // RED before: a tuple with a call element was refused ("contains non-literal
-    // element"). GREEN after: it lifts as agg:Tuple(<element terms>). The elements use
-    // OPAQUE-bodied helpers (`{ opaque() }`) so they stay opaque `call:f`/`call:g` terms:
-    // a pure literal body would now be PEELED by term-position value-call inlining
-    // (capability #1) to `(1, 2)`, a grounded literal tuple, which is no longer the
-    // "non-literal element" agg-term path this test exercises.
+fn tuple_with_non_literal_elements_decomposes_componentwise() {
+    // Tuple equality is stdlib componentwise. Even when tuple elements are opaque calls,
+    // the tuple owner decomposes the surface into per-component equalities; it does not
+    // hide the comparison behind an aggregate key.
     let src = r#"
 fn f() -> i32 { opaque() }
 fn g() -> i32 { opaque2() }
@@ -11319,26 +11316,21 @@ fn tup() {
 "#;
     let out = lift_file(&parse(src), "tests/t.rs");
     assert_eq!(out.assertions_lifted, 1, "warnings: {:?}", out.skip_reasons);
-    let ops = inv_operands(&out.decls[0]);
-    assert_eq!(ops.len(), 1);
-    match ops[0].as_ref() {
-        Formula::Atomic { name, args } => {
-            assert_eq!(name, "=");
-            match args[0].as_ref() {
-                Term::Var { name } => assert!(
-                    name.starts_with("agg:Tuple("),
-                    "non-literal tuple must be an agg term, got {name}"
-                ),
-                other => panic!("expected agg Var, got {other:?}"),
-            }
-        }
-        other => panic!("expected equality, got {other:?}"),
-    }
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        doc.contains("call:f")
+            && doc.contains("call:g")
+            && doc.contains("\"value\":1")
+            && doc.contains("\"value\":2")
+            && !doc.contains("agg:Tuple("),
+        "tuple equality over opaque components must decompose componentwise: {doc}"
+    );
 }
 
 #[test]
-fn all_literal_tuple_keeps_literal_key_discrimination() {
-    // No regression: an all-literal aggregate keeps the literal: key.
+fn all_literal_tuple_decomposes_to_scalar_floor() {
+    // No regression: all-literal tuple equality now decomposes to scalar equalities
+    // instead of a teethless literal:Tuple key.
     let src = r#"
 #[test]
 fn lit_tup() {
@@ -11347,17 +11339,12 @@ fn lit_tup() {
 "#;
     let out = lift_file(&parse(src), "tests/t.rs");
     assert_eq!(out.assertions_lifted, 1);
-    let ops = inv_operands(&out.decls[0]);
-    match ops[0].as_ref() {
-        Formula::Atomic { args, .. } => match args[0].as_ref() {
-            Term::Var { name } => assert!(
-                name.starts_with("literal:Tuple("),
-                "all-literal tuple must keep literal key, got {name}"
-            ),
-            other => panic!("got {other:?}"),
-        },
-        other => panic!("got {other:?}"),
-    }
+    assert_eq!(dug_eq_int_pairs(&out.decls[0]), vec![(1, 1), (2, 2)]);
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        !doc.contains("literal:Tuple("),
+        "all-literal tuple equality must decompose to scalar floor: {doc}"
+    );
 }
 
 // --- item-level const assertion accounting (totality to zero) ---
@@ -13667,8 +13654,8 @@ fn bool_then_closure_option_is_well_sorted_with_bad_twin() {
     );
     let dump = warranted_doc(&out);
     assert!(
-        dump.contains("closure:") && dump.contains("method:then"),
-        "test must exercise a closure adaptor site: {dump}"
+        dump.contains("opt:some") && !dump.contains("method:then") && !dump.contains("closure:"),
+        "literal true.then(|| 0) must compose to the Option floor: {dump}"
     );
     if let Some(sat) = z3_verdict(
         &inv_json(single_warranted_decl(&out)),
@@ -13698,6 +13685,135 @@ fn bool_then_closure_option_is_well_sorted_with_bad_twin() {
         "bool_then_closure_bad",
     ) {
         assert!(!sat, "x != x over true.then(|| 0) must be UNSAT");
+    }
+}
+
+#[test]
+fn bool_literal_methods_compose_to_option_floor_with_teeth() {
+    for (label, assertion, want_sat) in [
+        (
+            "bool_then_some_true_good",
+            "assert_eq!(true.then_some(7_i32), Some(7_i32));",
+            true,
+        ),
+        (
+            "bool_then_some_true_bad",
+            "assert_eq!(true.then_some(7_i32), Some(8_i32));",
+            false,
+        ),
+        (
+            "bool_then_some_false_good",
+            "assert_eq!(false.then_some(7_i32), None);",
+            true,
+        ),
+        (
+            "bool_then_some_false_bad",
+            "assert_eq!(false.then_some(7_i32), Some(7_i32));",
+            false,
+        ),
+        (
+            "bool_then_true_good",
+            "assert_eq!(true.then(|| 7_i32), Some(7_i32));",
+            true,
+        ),
+        (
+            "bool_then_true_bad",
+            "assert_eq!(true.then(|| 7_i32), Some(8_i32));",
+            false,
+        ),
+        (
+            "bool_then_false_good",
+            "assert_eq!(false.then(|| 7_i32), None);",
+            true,
+        ),
+        (
+            "bool_then_false_bad",
+            "assert_eq!(false.then(|| 7_i32), Some(7_i32));",
+            false,
+        ),
+        (
+            "bool_then_some_ssa_good",
+            "let b = true; assert_eq!(b.then_some(4_i32), Some(4_i32));",
+            true,
+        ),
+        (
+            "bool_then_some_ssa_bad",
+            "let b = true; assert_eq!(b.then_some(4_i32), Some(5_i32));",
+            false,
+        ),
+    ] {
+        let src = format!("#[test] fn t() {{ {assertion} }}");
+        let out = lift_file(&parse(&src), "coretests/bool/literal_methods.rs");
+        assert_warranted_decl_count(&out, 1);
+        assert_eq!(
+            out.assertions_refused, 0,
+            "{label}: bool literal method should not refuse: {:?}",
+            out.skip_reasons
+        );
+        let doc = warranted_doc(&out);
+        assert!(
+            (doc.contains("opt:some") || doc.contains("opt:none"))
+                && !doc.contains("method:then")
+                && !doc.contains("method:then_some"),
+            "{label}: bool literal method must compose to the Option floor, not opaque method sugar: {doc}"
+        );
+        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+            assert_eq!(
+                sat, want_sat,
+                "{label}: z3 verdict mismatch for {assertion}"
+            );
+        }
+    }
+}
+
+#[test]
+fn bool_literal_ops_compose_to_bool_floor_with_teeth() {
+    for (label, assertion, want_sat) in [
+        ("bool_not_good", "assert_eq!(!true, false);", true),
+        ("bool_not_bad", "assert_eq!(!true, true);", false),
+        ("bool_and_good", "assert_eq!(true && false, false);", true),
+        ("bool_and_bad", "assert_eq!(true && false, true);", false),
+        ("bool_or_good", "assert_eq!(false || true, true);", true),
+        ("bool_or_bad", "assert_eq!(false || true, false);", false),
+        (
+            "bool_and_ssa_good",
+            "let b1 = true; let b2 = false; assert_eq!(b1 && b2, false);",
+            true,
+        ),
+        (
+            "bool_and_ssa_bad",
+            "let b1 = true; let b2 = false; assert_eq!(b1 && b2, true);",
+            false,
+        ),
+        (
+            "bool_or_ssa_good",
+            "let b1 = false; let b2 = true; assert_eq!(b1 || b2, true);",
+            true,
+        ),
+        (
+            "bool_or_ssa_bad",
+            "let b1 = false; let b2 = true; assert_eq!(b1 || b2, false);",
+            false,
+        ),
+    ] {
+        let src = format!("#[test] fn t() {{ {assertion} }}");
+        let out = lift_file(&parse(&src), "coretests/bool/literal_ops.rs");
+        assert_warranted_decl_count(&out, 1);
+        let doc = warranted_doc(&out);
+        assert!(
+            doc.contains("\"name\":\"Bool\"")
+                && !doc.contains("bit-not")
+                && !doc.contains("method:")
+                && !doc.contains("bit-and")
+                && !doc.contains("bit-or"),
+            "{label}: bool literal op must reduce to Bool constants: {doc}"
+        );
+        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+            assert_eq!(
+                sat, want_sat,
+                "{label}: z3 verdict mismatch for {assertion}"
+            );
+        }
     }
 }
 
@@ -24607,11 +24723,10 @@ fn t() {
     );
 }
 
-// NO REGRESSION: a plain literal-tuple == literal-tuple is NOT a producer-vs-literal pair,
-// so it is left to its existing `literal:Tuple` lowering (the decomposition arm only fires
-// when a tuple-valued PRODUCER is involved).
+// Plain literal tuple equality is itself a tuple-valued stdlib surface. Decompose it
+// componentwise so z3 sees scalar equalities instead of a teethless `literal:Tuple` EUF key.
 #[test]
-fn tuple_decomp_plain_literal_tuple_equality_unaffected() {
+fn tuple_decomp_plain_literal_tuple_equality_has_teeth() {
     let src = r#"
 #[test]
 fn t() {
@@ -24622,9 +24737,81 @@ fn t() {
     assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
     let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
     assert!(
-        doc.contains("literal:Tuple("),
-        "a plain literal tuple equality should keep its existing literal:Tuple lowering: {doc}"
+        !doc.contains("literal:Tuple("),
+        "a plain literal tuple equality should decompose to scalar equalities, not a literal:Tuple key: {doc}"
     );
+    assert_eq!(
+        dug_eq_int_pairs(single_warranted_decl(&out)),
+        vec![(1, 1), (2, 2)]
+    );
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "tuple_plain_good") {
+        assert!(sat, "literal tuple equality good twin must be SAT");
+    }
+}
+
+#[test]
+fn tuple_literal_projection_and_equality_bad_twins_refute() {
+    for (label, assertion, want_pairs, want_sat) in [
+        (
+            "tuple_field_0_good",
+            "assert_eq!((1_i32, 2_i32).0, 1_i32);",
+            vec![(1, 1)],
+            true,
+        ),
+        (
+            "tuple_field_0_bad",
+            "assert_eq!((1_i32, 2_i32).0, 9_i32);",
+            vec![(1, 9)],
+            false,
+        ),
+        (
+            "tuple_field_ssa_good",
+            "let pair = (1_i32, 2_i32); assert_eq!(pair.1, 2_i32);",
+            vec![(2, 2)],
+            true,
+        ),
+        (
+            "tuple_field_ssa_bad",
+            "let pair = (1_i32, 2_i32); assert_eq!(pair.1, 3_i32);",
+            vec![(2, 3)],
+            false,
+        ),
+        (
+            "tuple_literal_eq_bad",
+            "assert_eq!((1_i32, 2_i32), (1_i32, 3_i32));",
+            vec![(1, 1), (2, 3)],
+            false,
+        ),
+        (
+            "tuple_literal_eq_ssa_good",
+            "let a = 1_i32; let b = 2_i32; let x = 1_i32; let y = 2_i32; assert!((a, b) == (x, y));",
+            vec![(1, 1), (2, 2)],
+            true,
+        ),
+        (
+            "tuple_literal_eq_ssa_bad",
+            "let a = 1_i32; let b = 2_i32; let x = 1_i32; assert!((a, b) == (x, 3_i32));",
+            vec![(1, 1), (2, 3)],
+            false,
+        ),
+    ] {
+        let src = format!("#[test] fn t() {{ {assertion} }}");
+        let out = lift_file(&parse(&src), "coretests/tuple/literal_floor.rs");
+        assert_warranted_decl_count(&out, 1);
+        assert_eq!(
+            dug_eq_int_pairs(single_warranted_decl(&out)),
+            want_pairs,
+            "{label}: expected scalar tuple-floor equality pairs"
+        );
+        let doc = warranted_doc(&out);
+        assert!(
+            !doc.contains("literal:Tuple(") && !doc.contains("field:0") && !doc.contains("field:1"),
+            "{label}: tuple literal method must compose to scalar floor: {doc}"
+        );
+        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+            assert_eq!(sat, want_sat, "{label}: z3 verdict mismatch for {assertion}");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

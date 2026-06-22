@@ -71,6 +71,7 @@
 // `Expr` for the token_key, the child }. `UnarySugar` makes no recognition decision of
 // its own; it composes and reduces after the Sugar claim accepts the source shape.
 
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::Term;
@@ -78,8 +79,8 @@ use syn::{Expr, UnOp};
 
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::{
-    const_float, const_int, num, real_const, real_literal_is_zero, token_key, Desugared, Effect,
-    Outcome, Sugar, SugarCtx,
+    const_eval, const_float, const_int, const_val_term, num, real_const, real_literal_is_zero,
+    token_key, ConstVal, Desugared, Effect, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -95,9 +96,17 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
             operand: (*unary.expr).clone(),
             whole: expr.clone(),
             inner: build_term(&unary.expr, fcx),
+            let_inits: capture_let_inits(fcx),
         })),
         _ => None,
     }
+}
+
+fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
+    fcx.let_inits()
+        .iter()
+        .map(|(name, init)| (name.clone(), (**init).clone()))
+        .collect()
 }
 
 /// A unary operator in TERM position (`-x` / `!x` / `*p`). Composes ONE child
@@ -119,6 +128,7 @@ pub(crate) struct UnarySugar {
     /// mirrors `translate_term_in_scope(&unary.expr, scope)?`; a child `Hit`
     /// propagates verbatim.
     pub(crate) inner: Box<dyn Sugar>,
+    pub(crate) let_inits: BTreeMap<String, Expr>,
 }
 
 /// Read a desugared CHILD outcome as the `Rc<Term>` an `Expr::Unary` arm would have
@@ -135,6 +145,37 @@ fn child_term_or_hit(child: Outcome) -> Result<Rc<Term>, Outcome> {
         },
         hit @ Outcome::Hit(_) => Err(hit),
     }
+}
+
+fn merge_let_inits<'a>(
+    stable: &'a BTreeMap<String, Expr>,
+    captured: &'a BTreeMap<String, Expr>,
+) -> BTreeMap<String, &'a Expr> {
+    stable
+        .iter()
+        .map(|(name, init)| (name.clone(), init))
+        .chain(captured.iter().map(|(name, init)| (name.clone(), init)))
+        .collect()
+}
+
+fn const_env(bindings: &BTreeMap<String, &Expr>) -> BTreeMap<String, ConstVal> {
+    let mut env = BTreeMap::new();
+    for _ in 0..bindings.len() {
+        let mut changed = false;
+        for (name, init) in bindings {
+            if env.contains_key(name) {
+                continue;
+            }
+            if let Some(value) = const_eval(init, &env) {
+                env.insert(name.clone(), value);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    env
 }
 
 impl Sugar for UnarySugar {
@@ -175,13 +216,22 @@ impl Sugar for UnarySugar {
                     Err(hit) => hit,
                 }
             }
-            UnOp::Not(_) => match child_term_or_hit(self.inner.desugar(ctx)) {
-                Ok(child) => Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
-                    name: "bit-not".to_string(),
-                    args: vec![child],
-                }))),
-                Err(hit) => hit,
-            },
+            UnOp::Not(_) => {
+                let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
+                let let_inits = merge_let_inits(&stable, &self.let_inits);
+                if let Some(term) = const_eval(&self.whole, &const_env(&let_inits))
+                    .and_then(|value| const_val_term(&value))
+                {
+                    return Outcome::Dug(Desugared::Term(term));
+                }
+                match child_term_or_hit(self.inner.desugar(ctx)) {
+                    Ok(child) => Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
+                        name: "bit-not".to_string(),
+                        args: vec![child],
+                    }))),
+                    Err(hit) => hit,
+                }
+            }
             UnOp::Deref(_) => match child_term_or_hit(self.inner.desugar(ctx)) {
                 // `*&e == e`: dereferencing a SHARED borrow yields its pointee. A shared
                 // borrow freezes its pointee for the borrow's lifetime (the borrow

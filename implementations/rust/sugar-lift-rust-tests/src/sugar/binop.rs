@@ -22,15 +22,15 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{ConstValue, Term};
-use syn::Expr;
+use syn::{BinOp, Expr};
 
 use crate::sugar::compare::CompareSugar;
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
 use crate::{
     const_eval, const_fold_int_term, const_fold_u128_term, const_val_term, num,
-    relation_from_binop, term_binop_name, token_key, u128_term, Desugared, Outcome, Sugar,
-    SugarCtx,
+    relation_from_binop, term_binop_name, token_key, u128_term, ConstVal, Desugared, Effect,
+    Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -47,6 +47,12 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     if let Some(term) = const_eval(expr, &BTreeMap::new()).and_then(|value| const_val_term(&value))
     {
         return Some(resolved_term(term));
+    }
+    if matches!(binary.op, BinOp::And(_) | BinOp::Or(_)) {
+        return Some(Box::new(BoolLogicSugar {
+            whole: expr.clone(),
+            let_inits: capture_let_inits(fcx),
+        }));
     }
     if let Some(rel) = relation_from_binop(&binary.op) {
         return Some(Box::new(CompareSugar {
@@ -66,6 +72,64 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         right: build_term(&binary.right, fcx),
         op_name: op,
     }))
+}
+
+fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
+    fcx.let_inits()
+        .iter()
+        .map(|(name, init)| (name.clone(), (**init).clone()))
+        .collect()
+}
+
+fn merge_let_inits<'a>(
+    stable: &'a BTreeMap<String, Expr>,
+    captured: &'a BTreeMap<String, Expr>,
+) -> BTreeMap<String, &'a Expr> {
+    stable
+        .iter()
+        .map(|(name, init)| (name.clone(), init))
+        .chain(captured.iter().map(|(name, init)| (name.clone(), init)))
+        .collect()
+}
+
+fn const_env(bindings: &BTreeMap<String, &Expr>) -> BTreeMap<String, ConstVal> {
+    let mut env = BTreeMap::new();
+    for _ in 0..bindings.len() {
+        let mut changed = false;
+        for (name, init) in bindings {
+            if env.contains_key(name) {
+                continue;
+            }
+            if let Some(value) = const_eval(init, &env) {
+                env.insert(name.clone(), value);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    env
+}
+
+struct BoolLogicSugar {
+    whole: Expr,
+    let_inits: BTreeMap<String, Expr>,
+}
+
+impl Sugar for BoolLogicSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
+        let let_inits = merge_let_inits(&stable, &self.let_inits);
+        if let Some(term) =
+            const_eval(&self.whole, &const_env(&let_inits)).and_then(|value| const_val_term(&value))
+        {
+            return Outcome::Dug(Desugared::Term(term));
+        }
+        Outcome::Hit(Effect::Unsupported {
+            reason: format!("unsupported term operator `{}`", token_key(&self.whole)),
+        })
+    }
 }
 
 /// The constructive arithmetic-term node. `left`/`right` are the pre-built operand
