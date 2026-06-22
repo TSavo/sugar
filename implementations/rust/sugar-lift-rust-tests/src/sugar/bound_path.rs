@@ -56,6 +56,9 @@ fn recognize_role(expr: &Expr, fcx: &SugarBuildCtx, role: BoundPathRole) -> Opti
     if let Some(hit) = unknown_iterator_consumption_refusal(&name, fcx) {
         return Some(hit);
     }
+    if let Some(hit) = unknown_mutation_refusal(&name, fcx) {
+        return Some(hit);
+    }
     if let Some(hit) = ambiguous_identity_refusal(&name, fcx) {
         return Some(hit);
     }
@@ -235,6 +238,10 @@ fn unknown_iterator_consumption_refusal(name: &str, fcx: &SugarBuildCtx) -> Opti
     fcx.scope()
         .unknown_iterator_consumption_reason(name)
         .map(reasoned_hit)
+}
+
+fn unknown_mutation_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    fcx.scope().unknown_mutation_reason(name).map(reasoned_hit)
 }
 
 fn ambiguous_identity_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {

@@ -15618,7 +15618,9 @@ fn t() {
 fn forloop_runtime_valued_accumulator_refuses_with_named_accum_effect() {
     // CAUSE C: literal range, but a `let mut cur = Big::from(1); mul_pow10(&mut cur, i)`
     // RUNTIME-VALUED accumulator (the flt2dec dragon.rs shape -- NOT a simple `+= const`
-    // counter). Must REFUSE (terminal) with the named "RUNTIME-VALUED accumulator" reason.
+    // counter). Once opaque `&mut` calls invalidate stale reads lazily, this may surface
+    // through the documented higher-precedence body-read cause; either way it must be a
+    // named terminal runtime-cause refusal.
     let src = r#"
 #[test]
 fn t() {
@@ -15635,10 +15637,10 @@ fn t() {
     let r = out
         .skip_reasons
         .iter()
-        .find(|r| r.contains("RUNTIME-VALUED accumulator"))
+        .find(|r| r.contains("RUNTIME-VALUED accumulator") || r.contains("body READS RUNTIME DATA"))
         .unwrap_or_else(|| {
             panic!(
-                "expected a named RUNTIME-VALUED-accumulator refusal: {:?}",
+                "expected a named runtime accumulator/body-read refusal: {:?}",
                 out.skip_reasons
             )
         });
@@ -21629,6 +21631,105 @@ fn unrelated_alias_mutation_does_not_refuse_other_locals() {
             "x == 6 holds; unrelated `*s += 1` must not gate `x` (SAT)"
         );
     }
+}
+
+#[test]
+fn opaque_mut_borrow_call_read_refuses_not_false_refutation() {
+    let src = r#"
+        #[test]
+        fn t_swap() {
+            let mut x = 31337;
+            let mut y = 42;
+            core::mem::swap(&mut x, &mut y);
+            assert_eq!(x, 42);
+            assert_eq!(y, 31337);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/borrow/opaque_mut_borrow_call.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        !(dump.contains("Int(31337)") && dump.contains("Int(42)")),
+        "post-`swap(&mut x, &mut y)` reads must NOT lift stale pre-call values: {dump}"
+    );
+    assert!(
+        out.skip_reasons.iter().any(|r| {
+            r.contains("opaque mutable borrow call")
+                && matches!(
+                    sugar_lift_rust_tests::refusal_disposition(r),
+                    sugar_lift_rust_tests::Disposition::Refused
+                )
+        }),
+        "opaque `&mut` call invalidation must be a named terminal refusal: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn iter_mut_loop_receiver_read_refuses_not_false_refutation() {
+    let src = r#"
+        #[test]
+        fn t_iter_mut() {
+            let mut ok: Result<isize, &'static str> = Ok(100);
+            for loc in ok.iter_mut() {
+                *loc = 200;
+            }
+            assert_eq!(ok, Ok(200));
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/borrow/iter_mut_receiver.rs");
+    let names: Vec<&str> = out.decls.iter().map(|decl| decl.name.as_str()).collect();
+    assert!(
+        names.iter().all(|name| !name.ends_with("::t_iter_mut")),
+        "post-`iter_mut` read must NOT emit a stale value claim: {:?}",
+        names
+    );
+    assert!(
+        out.skip_reasons.iter().any(|r| {
+            r.contains("mutable view")
+                && matches!(
+                    sugar_lift_rust_tests::refusal_disposition(r),
+                    sugar_lift_rust_tests::Disposition::Refused
+                )
+        }),
+        "mutable-view receiver invalidation must be a named terminal refusal: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn interior_mutating_method_receiver_read_refuses_not_false_refutation() {
+    let src = r#"
+        use core::cell::Cell;
+
+        #[test]
+        fn t_cell() {
+            fn f(p: &Cell<i32>) {
+                assert_eq!(p.get(), 12);
+                p.set(13);
+                assert_eq!(p.get(), 13);
+            }
+
+            let p = &Cell::new(12);
+            f(p);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/borrow/interior_mut_method.rs");
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        !(dump.contains("Int(12)") && dump.contains("Int(13)")),
+        "post-`Cell::set` receiver read must NOT coalesce stale interior state: {dump}"
+    );
+    assert!(
+        out.skip_reasons.iter().any(|r| {
+            r.contains("mutating method")
+                && matches!(
+                    sugar_lift_rust_tests::refusal_disposition(r),
+                    sugar_lift_rust_tests::Disposition::Refused
+                )
+        }),
+        "mutating receiver method invalidation must be a named terminal refusal: {:?}",
+        out.skip_reasons
+    );
 }
 
 // ---------------------------------------------------------------------------
