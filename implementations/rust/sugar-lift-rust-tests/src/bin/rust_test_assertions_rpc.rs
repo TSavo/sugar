@@ -1395,6 +1395,9 @@ fn clean_named_refusal_category(
     {
         return Some("literal range enumeration boundary");
     }
+    if reason.contains("literal array element is not text-determined") {
+        return Some("literal array element boundary");
+    }
     None
 }
 
@@ -3641,6 +3644,33 @@ fn inactive_const_if_literal_twin() {
             }
             other => panic!("empty literal domain must be source support, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn source_locus_runtime_array_element_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_runtime_array_element_refuses_with_literal_twin",
+            r#"
+#[test]
+fn runtime_array_element_refused() {
+    let n = std::process::id() as u8;
+    let xs = [n, 2u8];
+    assert_eq!(&xs, &[1u8, 2u8]);
+}
+
+#[test]
+fn runtime_array_element_literal_twin() {
+    assert_eq!([1u8, 2u8], [1u8, 2u8]);
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "runtime_array_element_refused",
+            "literal array element boundary",
+        );
+        assert_source_locus_warranted(&response, "runtime_array_element_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
