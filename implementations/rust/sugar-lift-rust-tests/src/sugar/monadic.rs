@@ -36,19 +36,20 @@
 // stays on the existing call machinery. (A user type's *constructor* named
 // `Some`/`Ok`/`Err`/`None` is pathological and not in scope.)
 //
-// THE INNER IS BUILT VIA THE FACTORY. `Some(x)`'s inner `x` is composed with
-// `build_term`, so a constructor over a literal (`Some(&1)` -> `Some(1)`), a
-// const, or any grounding term flows through. A child `Hit` propagates verbatim
-// (the effect/runtime boundary holds: `Some(some_io())` blows up, never
-// grounds); a child that does not reduce to a term bails via the structural
-// backstop.
+// THE INNER IS BUILT VIA THE FACTORY AT DESUGAR TIME. `Some(x)`'s inner `x` is
+// composed with `build_term`, so a constructor over a literal (`Some(&1)` ->
+// `Some(1)`), a const, or any grounding term flows through. A child `Hit`
+// propagates verbatim (the effect/runtime boundary holds: `Some(some_io())`
+// blows up, never grounds); a child that does not reduce to a term bails via the
+// structural backstop.
 
-use std::rc::Rc;
+use std::{collections::BTreeMap, rc::Rc};
 
 use sugar_ir_symbolic::Term;
 use syn::Expr;
 
 use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::format::stable_let_bindings;
 use crate::{strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -73,11 +74,11 @@ pub(crate) const RES_ERR: &str = "res:err";
 /// Which monadic constructor this node builds.
 enum Kind {
     /// `Some(x)` -- one inner child.
-    Some(Box<dyn Sugar>),
+    Some(Expr),
     /// `Ok(x)` -- one inner child.
-    Ok(Box<dyn Sugar>),
+    Ok(Expr),
     /// `Err(x)` -- one inner child.
-    Err(Box<dyn Sugar>),
+    Err(Expr),
     /// `None` -- nullary.
     None,
 }
@@ -97,9 +98,10 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         // `None::<isize>` with a turbofish, `Option::None`). `is_ident` is too
         // strict (it rejects a turbofish / a qualified path), and `None::<T>` is
         // the common form in vendor code, so match the FINAL SEGMENT ident.
-        Expr::Path(path) if path_ends_with(path, "None") => {
-            Some(Box::new(MonadicSugar { kind: Kind::None }))
-        }
+        Expr::Path(path) if path_ends_with(path, "None") => Some(Box::new(MonadicSugar {
+            kind: Kind::None,
+            let_inits: capture_let_inits(fcx),
+        })),
         // `Some(x)` / `Ok(x)` / `Err(x)`: a single-argument call whose head path's
         // final segment is the constructor ident (also allowing a turbofish /
         // qualified path like `Some::<i32>(x)` / `Option::Some(x)`).
@@ -107,25 +109,19 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
             let Expr::Path(path) = &*call.func else {
                 return None;
             };
-            // Strip a leading `&`/`&mut`/paren/group on the inner: `Some(&1)` and
-            // `Some(1)` denote the SAME `Option` value (a borrow of a literal is
-            // value-equal to the literal under structural `==`), and the iterator
-            // positional terminals yield `Some(&T)` -> `opt:some(<elem>)`, so the
-            // borrow must NOT introduce a spurious `ref(_)` wrapper that would make
-            // `Some(&1)` differ from the grounded `.next()` value. Building the
-            // STRIPPED inner keeps both sides byte-identical so they meet under the
-            // ADT.
-            let inner = || build_term(strip_refs_groups(&call.args[0]), fcx);
             let kind = if path_ends_with(path, "Some") {
-                Kind::Some(inner())
+                Kind::Some(call.args[0].clone())
             } else if path_ends_with(path, "Ok") {
-                Kind::Ok(inner())
+                Kind::Ok(call.args[0].clone())
             } else if path_ends_with(path, "Err") {
-                Kind::Err(inner())
+                Kind::Err(call.args[0].clone())
             } else {
                 return None;
             };
-            Some(Box::new(MonadicSugar { kind }))
+            Some(Box::new(MonadicSugar {
+                kind,
+                let_inits: capture_let_inits(fcx),
+            }))
         }
         _ => None,
     }
@@ -187,11 +183,43 @@ pub(crate) fn err_term(inner: Rc<Term>) -> Rc<Term> {
 /// does not reduce to a term bails via the structural backstop.
 struct MonadicSugar {
     kind: Kind,
+    let_inits: BTreeMap<String, Expr>,
+}
+
+fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
+    fcx.let_inits()
+        .iter()
+        .map(|(name, init)| (name.clone(), (**init).clone()))
+        .collect()
 }
 
 impl MonadicSugar {
-    fn build(name: &str, inner: &dyn Sugar, ctx: &SugarCtx) -> Outcome {
-        let term = match inner.desugar(ctx) {
+    fn build(
+        name: &str,
+        inner: &Expr,
+        ctx: &SugarCtx,
+        captured_let_inits: &BTreeMap<String, Expr>,
+    ) -> Outcome {
+        let stable = stable_let_bindings(ctx.scope);
+        let let_inits: BTreeMap<String, &Expr> = stable
+            .iter()
+            .map(|(name, init)| (name.clone(), init))
+            .chain(
+                captured_let_inits
+                    .iter()
+                    .map(|(name, init)| (name.clone(), init)),
+            )
+            .collect();
+        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        // Strip a leading `&`/`&mut`/paren/group on the inner: `Some(&1)` and
+        // `Some(1)` denote the SAME `Option` value (a borrow of a literal is
+        // value-equal to the literal under structural `==`), and the iterator
+        // positional terminals yield `Some(&T)` -> `opt:some(<elem>)`, so the
+        // borrow must NOT introduce a spurious `ref(_)` wrapper that would make
+        // `Some(&1)` differ from the grounded `.next()` value. Building the
+        // STRIPPED inner keeps both sides byte-identical so they meet under the
+        // ADT.
+        let term = match build_term(strip_refs_groups(inner), &fcx).desugar(ctx) {
             Outcome::Dug(d) => match d.into_term() {
                 Some(t) => t,
                 None => return Outcome::from_opt(None),
@@ -208,9 +236,9 @@ impl MonadicSugar {
 impl Sugar for MonadicSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match &self.kind {
-            Kind::Some(inner) => MonadicSugar::build(OPT_SOME, inner.as_ref(), ctx),
-            Kind::Ok(inner) => MonadicSugar::build(RES_OK, inner.as_ref(), ctx),
-            Kind::Err(inner) => MonadicSugar::build(RES_ERR, inner.as_ref(), ctx),
+            Kind::Some(inner) => MonadicSugar::build(OPT_SOME, inner, ctx, &self.let_inits),
+            Kind::Ok(inner) => MonadicSugar::build(RES_OK, inner, ctx, &self.let_inits),
+            Kind::Err(inner) => MonadicSugar::build(RES_ERR, inner, ctx, &self.let_inits),
             Kind::None => Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
                 name: OPT_NONE.to_string(),
                 args: Vec::new(),
@@ -223,25 +251,7 @@ impl Sugar for MonadicSugar {
 mod tests {
     use super::*;
     use crate::Effect;
-    use sugar_ir_symbolic::{make_var, num};
-
-    // LOCAL stub children: `StubTerm` digs to a held term; `StubHit` strikes a
-    // named effect. They ignore `ctx`, so the parent's `desugar(ctx)` runs over
-    // a minimal real `SugarCtx`.
-    struct StubTerm(Rc<Term>);
-    impl Sugar for StubTerm {
-        fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-            Outcome::Dug(Desugared::Term(Rc::clone(&self.0)))
-        }
-    }
-    struct StubHit;
-    impl Sugar for StubHit {
-        fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-            Outcome::Hit(Effect::IterAdvance {
-                boundary: "stub-iter".to_string(),
-            })
-        }
-    }
+    use sugar_ir_symbolic::num;
 
     fn run(node: &dyn Sugar) -> Outcome {
         let scope = crate::TemporalScope::new("test", crate::TemporalPlan::default());
@@ -270,7 +280,8 @@ mod tests {
     #[test]
     fn some_emits_opt_some_over_inner_term() {
         let node = MonadicSugar {
-            kind: Kind::Some(Box::new(StubTerm(num(1)))),
+            kind: Kind::Some(syn::parse_quote!(1)),
+            let_inits: BTreeMap::new(),
         };
         let term = dug_term(&node);
         let (name, args) = ctor_of(&term);
@@ -282,7 +293,10 @@ mod tests {
 
     #[test]
     fn none_emits_nullary_opt_none() {
-        let node = MonadicSugar { kind: Kind::None };
+        let node = MonadicSugar {
+            kind: Kind::None,
+            let_inits: BTreeMap::new(),
+        };
         let term = dug_term(&node);
         let (name, args) = ctor_of(&term);
         assert_eq!(name, OPT_NONE);
@@ -292,10 +306,12 @@ mod tests {
     #[test]
     fn ok_and_err_are_distinct_reserved_names() {
         let ok = dug_term(&MonadicSugar {
-            kind: Kind::Ok(Box::new(StubTerm(make_var("x")))),
+            kind: Kind::Ok(syn::parse_quote!(x)),
+            let_inits: BTreeMap::new(),
         });
         let err = dug_term(&MonadicSugar {
-            kind: Kind::Err(Box::new(StubTerm(make_var("x")))),
+            kind: Kind::Err(syn::parse_quote!(x)),
+            let_inits: BTreeMap::new(),
         });
         assert_eq!(ctor_of(&ok).0, RES_OK);
         assert_eq!(ctor_of(&err).0, RES_ERR);
@@ -304,14 +320,17 @@ mod tests {
 
     #[test]
     fn child_hit_propagates_verbatim() {
-        // The effect/runtime boundary holds: `Some(<runtime>)` blows up, never
-        // grounds.
+        // The effect/runtime boundary holds: `Some(<unsupported term>)` blows up,
+        // never grounds.
         let node = MonadicSugar {
-            kind: Kind::Some(Box::new(StubHit)),
+            kind: Kind::Some(syn::parse_quote!(async { 1 })),
+            let_inits: BTreeMap::new(),
         };
         match run(&node) {
-            Outcome::Hit(Effect::IterAdvance { boundary }) => assert_eq!(boundary, "stub-iter"),
-            Outcome::Hit(_) => panic!("expected the child's IterAdvance Hit"),
+            Outcome::Hit(Effect::Unsupported { reason }) => {
+                assert!(!reason.is_empty())
+            }
+            Outcome::Hit(_) => panic!("expected the child's Unsupported Hit"),
             Outcome::Dug(_) => panic!("expected the child's Hit, got Dug"),
         }
     }
