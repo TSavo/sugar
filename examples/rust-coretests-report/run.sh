@@ -15,6 +15,8 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 RUST="$REPO/implementations/rust"
+# shellcheck source=examples/rust-coretests-report/run-lib.sh
+source "$HERE/run-lib.sh"
 # RELEASE only -- never run a debug build against a large corpus (the lifter is
 # spawned per file; debug is an order of magnitude slower).
 BIN_DIR="$RUST/target/release"
@@ -38,7 +40,7 @@ sed "s#@BIN_DIR@#$BIN_DIR#g" "$mfin" > "$mf"
 
 OUT="$HERE/coretests-report.out"
 ERR="$HERE/coretests-report.err"
-echo "== lift --report over $(fd -e rs . "$CORPUS/tests" 2>/dev/null | wc -l | tr -d ' ') coretests files =="
+echo "== lift --report over $(count_rs_files "$CORPUS/tests") coretests files =="
 # ONE lift (not two): stdout carries the human ledger, stderr carries the factory
 # disposition trace we tally below into the target list. Disable ANSI at the source
 # (the lifter's tracing layer emits color escapes even when stderr is redirected to a
