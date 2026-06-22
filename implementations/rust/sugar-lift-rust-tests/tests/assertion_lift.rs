@@ -24402,6 +24402,49 @@ fn array_try_from_unwrap_over_literal_slice_lifts_with_bad_twin() {
 }
 
 #[test]
+fn array_try_from_macro_repeat_lifts_source_audit_locus() {
+    let src = r#"
+        use core::convert::TryFrom;
+        #[test]
+        fn array_try_from() {
+            macro_rules! test {
+                ($($N:expr)+) => {
+                    $({
+                        type Array = [u8; $N];
+                        let mut array: Array = [0; $N];
+                        let slice: &[u8] = &array[..];
+
+                        let result = <&Array>::try_from(slice);
+                        assert_eq!(&array, result.unwrap());
+
+                        let result = <Array>::try_from(slice);
+                        assert_eq!(&array, &result.unwrap());
+
+                        let mut_slice: &mut [u8] = &mut array[..];
+                        let result = <&mut Array>::try_from(mut_slice);
+                        assert_eq!(&[0; $N], result.unwrap());
+
+                        let mut_slice: &mut [u8] = &mut array[..];
+                        let result = <Array>::try_from(mut_slice);
+                        assert_eq!(&array, &result.unwrap());
+                    })+
+                }
+            }
+            test! { 0 1 2 3 }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/array/array_try_from_macro.rs");
+    assert!(
+        out.assertions_lifted > 0,
+        "array_try_from macro locus must lift at least one assertion; lifted={} refused={} skips={:?} warnings={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons,
+        out.warnings
+    );
+}
+
+#[test]
 fn array_literal_runtime_element_refuses_not_opaque_warrant() {
     let src = r#"
         #[test]
