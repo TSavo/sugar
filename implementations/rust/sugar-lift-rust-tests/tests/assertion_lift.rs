@@ -16519,6 +16519,53 @@ fn test_map_try_folds() {
 
     let out = lift_one(
         r#"#[test]
+fn test_by_ref_terminal_followup_read() {
+    let mut xs = 0..10;
+    let partial_sum = xs.by_ref().take(5).fold(0, |acc, x| acc + x);
+    assert_eq!(partial_sum, 10);
+    assert_eq!(xs.next(), Some(5));
+}"#,
+    );
+    // `by_ref` keeps `xs` usable after the terminal has advanced it; without
+    // a named refusal the later read is checked against stale initial state.
+    assert_warranted_decls_not_refuted(&out, "by_ref_terminal_followup_read");
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("unknown iterator consumption") && r.contains("xs")),
+        "post-by_ref terminal reads of xs must be named-refused, not checked against \
+         stale literal state: {:?}",
+        out.skip_reasons
+    );
+
+    let out = lift_one(
+        r#"#[test]
+fn test_peekable_next_if_map_followup_peek() {
+    fn collatz((mut num, mut len): (u64, u32)) -> Result<u32, (u64, u32)> {
+        let jump = num.trailing_zeros();
+        num >>= jump;
+        len += jump;
+        if num == 1 { Ok(len) } else { Err((3 * num + 1, len + 1)) }
+    }
+
+    let mut iter = std::iter::once((3, 0)).peekable();
+    assert_eq!(iter.peek(), Some(&(3, 0)));
+    assert_eq!(iter.next_if_map(collatz), None);
+    assert_eq!(iter.peek(), Some(&(10, 1)));
+}"#,
+    );
+    assert_warranted_decls_not_refuted(&out, "peekable_next_if_map_followup_peek");
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("unknown iterator consumption") && r.contains("iter")),
+        "post-next_if_map peeks must be named-refused, not checked against stale \
+         peekable state: {:?}",
+        out.skip_reasons
+    );
+
+    let out = lift_one(
+        r#"#[test]
 fn test_try_find() {
     let xs: &[isize] = &[];
     assert_eq!(xs.iter().try_find(testfn), Ok(None));

@@ -12405,6 +12405,7 @@ fn is_consuming_iterator_method(method: &str) -> bool {
             | "nth_back"
             | "next_if"
             | "next_if_eq"
+            | "next_if_map"
             | "advance_by"
             | "advance_back_by"
             // Short-circuiting `&mut self` terminals: they drive the iterator (so they
