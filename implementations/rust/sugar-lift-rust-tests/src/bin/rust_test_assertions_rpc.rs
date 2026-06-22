@@ -1082,6 +1082,21 @@ fn clean_named_refusal_category(reason: &str) -> Option<&'static str> {
     {
         return Some("opaque runtime receiver");
     }
+    if reason.contains("opaque compile-time reflection") {
+        return Some("compiler reflection fact not in text");
+    }
+    if reason.contains("reachable only via monomorphization of a generic") {
+        return Some("runtime generic instantiation boundary");
+    }
+    if reason.contains("future handoff boundary") {
+        return Some("runtime future handoff boundary");
+    }
+    if reason.contains("runtime searcher state machine before assertion surface") {
+        return Some("runtime state-machine boundary");
+    }
+    if reason.contains("operand is a runtime non-scalar result") {
+        return Some("runtime non-scalar call-result boundary");
+    }
     if reason.contains("reachable only at runtime when the method is invoked") {
         return Some("runtime impl-method boundary");
     }
