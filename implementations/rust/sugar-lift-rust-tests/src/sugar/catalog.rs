@@ -12,7 +12,7 @@ use crate::sugar::claim::{ExprSugarClaim, ItemSugarClaim, SugarCandidate, SugarR
 use crate::sugar::factory::{AccountedSugar, FactoryAuditSeed, SugarBuildCtx};
 use crate::sugar::{
     array_repeat, array_term, assign_op, await_term, binop, block_term, bool_bitwise, bound_path,
-    call, cast_term, chain, char_range_collect_string, char_range_filter_map,
+    call, cast_term, chain, char_method, char_range_collect_string, char_range_filter_map,
     closure_iter_advance_body, closure_mutating_body, closure_opaque_accessor,
     closure_runtime_receiver, closure_term, closure_tls_accessor, collect, collection_literal,
     compute_float, concat_macro, conditional, const_block, const_if, const_item, const_path,
@@ -60,6 +60,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &literal_iterator_quantifier::CONSTRAINT_EXPR_SUGAR,
     &match_scrutinee::CONSTRAINT_EXPR_SUGAR,
     &regex_match::CONSTRAINT_EXPR_SUGAR,
+    &char_method::CONSTRAINT_EXPR_SUGAR,
     &string_predicate::CONSTRAINT_EXPR_SUGAR,
     &float_refinement::CONSTRAINT_EXPR_SUGAR,
     &constraint::BOOL_EXPR_SUGAR,
@@ -88,6 +89,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &len::EXPR_SUGAR,
     &to_string::EXPR_SUGAR,
     &str_method::EXPR_SUGAR,
+    &char_method::EXPR_SUGAR,
     &char_range_collect_string::EXPR_SUGAR,
     &intersperse_collect_string::EXPR_SUGAR,
     &intersperse_concat::EXPR_SUGAR,
@@ -864,6 +866,61 @@ mod tests {
             selected,
             Some("to_string"),
             "specific ToStringSugar should outrank generic transparent recursion"
+        );
+    }
+
+    #[test]
+    fn char_literal_method_prioritizes_char_floor_before_generic_method_sugar() {
+        let expr: Expr = syn::parse_str("'a'.len_utf8()").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Term);
+        let char_method = names
+            .iter()
+            .position(|name| *name == "char_literal_method")
+            .expect("char literal method should be claimed by CharMethodSugar");
+        let method = names
+            .iter()
+            .position(|name| *name == "method")
+            .expect("char literal method should also be claimed by generic MethodSugar");
+
+        assert!(
+            char_method < method,
+            "CharMethodSugar should outrank generic MethodSugar: {names:?}"
+        );
+    }
+
+    #[test]
+    fn char_method_path_receiver_is_recognized_lazily() {
+        let expr: Expr = syn::parse_str("c.to_ascii_lowercase()").unwrap();
+        let selected = selected_candidate_name_for_role(&expr, SugarRole::Term);
+
+        assert_eq!(
+            selected,
+            Some("char_literal_method"),
+            "path receivers must not be rejected at recognize time; desugar owns the literal check"
+        );
+    }
+
+    #[test]
+    fn char_bool_method_constraint_owns_assert_predicate_before_generic_bool() {
+        let expr: Expr = syn::parse_str("'a'.is_lowercase()").unwrap();
+        let selected = selected_candidate_name_for_role(&expr, SugarRole::Constraint);
+
+        assert_eq!(
+            selected,
+            Some("constraint_char_literal_method"),
+            "assert-style char bool predicates keep a teethed constraint owner"
+        );
+    }
+
+    #[test]
+    fn string_ascii_method_stays_with_string_literal_owner() {
+        let expr: Expr = syn::parse_str("\"x\".to_ascii_uppercase()").unwrap();
+        let selected = selected_candidate_name_for_role(&expr, SugarRole::Term);
+
+        assert_eq!(
+            selected,
+            Some("str_method"),
+            "string literal methods remain in the str_method lane"
         );
     }
 
