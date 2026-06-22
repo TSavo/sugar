@@ -34,10 +34,7 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if method == "expect" && call.args.len() != 1 {
         return None;
     }
-    if !is_known_monadic_source(&call.receiver)
-        && !try_from_receiver_folds_scoped(&call.receiver, fcx)
-        && !crate::sugar::iter_terminal::recognizes_monadic_terminal(&call.receiver, fcx)
-    {
+    if !receiver_resolves_monadic_source(&call.receiver, fcx, 0) {
         return None;
     }
     Some(Box::new(OptionUnwrapSugar {
@@ -111,6 +108,36 @@ fn unwrap_monadic(term: &Rc<Term>) -> Option<Result<Rc<Term>, &'static str>> {
         Term::Ctor { name, .. } if name == OPT_NONE => Some(Err(OPT_NONE)),
         Term::Ctor { name, .. } if name == RES_ERR => Some(Err(RES_ERR)),
         _ => None,
+    }
+}
+
+fn receiver_resolves_monadic_source(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    if is_known_monadic_source(expr)
+        || try_from_receiver_folds_scoped(expr, fcx)
+        || crate::sugar::iter_terminal::recognizes_monadic_terminal(expr, fcx)
+    {
+        return true;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Path(path) if path.qself.is_none() => {
+            let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) else {
+                return false;
+            };
+            if fcx.resolving_bound_path(&name) {
+                return false;
+            }
+            let Some(init) = fcx.scope().stable_let_binding_for_term(&name) else {
+                return false;
+            };
+            let child_fcx = fcx.with_bound_path(&name);
+            receiver_resolves_monadic_source(init, &child_fcx, depth + 1)
+        }
+        Expr::Paren(paren) => receiver_resolves_monadic_source(&paren.expr, fcx, depth + 1),
+        Expr::Group(group) => receiver_resolves_monadic_source(&group.expr, fcx, depth + 1),
+        _ => false,
     }
 }
 
