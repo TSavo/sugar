@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // `BoundPathSugar`: a stable `let` binding used as a term is transparent to the
-// ProofIR term it names. This is the general temporal-rewrite hook: consumers ask
-// the factory for a child term, and a stable local such as `m` rewrites to the
-// Sugar for `let m = Maker::new(42);` before `PathSugar` can freeze it as a bare
-// variable.
+// ProofIR term it names. This is the general temporal-rewrite hook: recognition
+// identifies the bound local, then desugar resolves the initializer in the live
+// binding context before asking the factory for the child sugar.
+
+use std::collections::BTreeMap;
 
 use crate::sugar::bound::BoundSugar;
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_composite, build_constraint, build_term, SugarBuildCtx};
 use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
-use crate::{token_key, Sugar};
+use crate::{token_key, Outcome, Sugar, SugarCtx};
 use syn::{Expr, ExprPath};
 use tracing::debug;
 
@@ -30,78 +31,18 @@ pub(crate) const COMPOSITE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::composit
 );
 
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let name = simple_local_path(expr)?;
-    if fcx.resolving_bound_path(&name) {
-        return None;
-    }
-    if let Some(hit) = alias_deref_mutated_refusal(&name, fcx) {
-        return Some(hit);
-    }
-    if let Some(hit) = temporally_unstable_refusal(&name, fcx) {
-        return Some(hit);
-    }
-    if let Some(hit) = ambiguous_identity_refusal(&name, fcx) {
-        return Some(hit);
-    }
-    if let Some(current) = fcx.scope().temporal_rewrite_expr_for(&name) {
-        debug!(
-            target: "sugar_lift_rust_tests::temporal_rewrite",
-            binding = name.as_str(),
-            value = %token_key(&current),
-            role = "Term",
-            "temporal rewrite resolved path read"
-        );
-        let child_fcx = fcx.with_bound_path(&name);
-        return Some(BoundSugar::new(name, build_term(&current, &child_fcx)));
-    }
-    if let Some(term) = fcx.scope().stable_term_binding_for_term(&name) {
-        debug!(
-            target: "sugar_lift_rust_tests::bound_path",
-            binding = name.as_str(),
-            role = "Term",
-            "resolved path read through term binding"
-        );
-        return Some(BoundSugar::new(name, resolved_term(term)));
-    }
-    let init = fcx.scope().stable_let_binding_for_term(&name)?;
-    let child_fcx = fcx.with_bound_path(&name);
-    Some(BoundSugar::new(name, build_term(init, &child_fcx)))
+    recognize_role(expr, fcx, BoundPathRole::Term)
 }
 
 fn recognize_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let name = simple_local_path(expr)?;
-    if fcx.resolving_bound_path(&name) {
-        return None;
-    }
-    if let Some(hit) = alias_deref_mutated_refusal(&name, fcx) {
-        return Some(hit);
-    }
-    if let Some(hit) = temporally_unstable_refusal(&name, fcx) {
-        return Some(hit);
-    }
-    if let Some(hit) = ambiguous_identity_refusal(&name, fcx) {
-        return Some(hit);
-    }
-    if let Some(current) = fcx.scope().temporal_rewrite_expr_for(&name) {
-        debug!(
-            target: "sugar_lift_rust_tests::temporal_rewrite",
-            binding = name.as_str(),
-            value = %token_key(&current),
-            role = "Constraint",
-            "temporal rewrite resolved path read"
-        );
-        let child_fcx = fcx.with_bound_path(&name);
-        return Some(BoundSugar::new(
-            name,
-            build_constraint(&current, &child_fcx),
-        ));
-    }
-    let init = fcx.scope().stable_let_binding_for_term(&name)?;
-    let child_fcx = fcx.with_bound_path(&name);
-    Some(BoundSugar::new(name, build_constraint(init, &child_fcx)))
+    recognize_role(expr, fcx, BoundPathRole::Constraint)
 }
 
 fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    recognize_role(expr, fcx, BoundPathRole::Composite)
+}
+
+fn recognize_role(expr: &Expr, fcx: &SugarBuildCtx, role: BoundPathRole) -> Option<Box<dyn Sugar>> {
     let name = simple_local_path(expr)?;
     if fcx.resolving_bound_path(&name) {
         return None;
@@ -115,20 +56,126 @@ fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
     if let Some(hit) = ambiguous_identity_refusal(&name, fcx) {
         return Some(hit);
     }
-    if let Some(current) = fcx.scope().temporal_rewrite_expr_for(&name) {
-        debug!(
-            target: "sugar_lift_rust_tests::temporal_rewrite",
-            binding = name.as_str(),
-            value = %token_key(&current),
-            role = "Composite",
-            "temporal rewrite resolved sequence path read"
-        );
-        let child_fcx = fcx.with_bound_path(&name);
-        return Some(BoundSugar::new(name, build_composite(&current, &child_fcx)));
+    has_bound_path_candidate(&name, fcx, role).then(|| {
+        Box::new(BoundPathSugar {
+            name,
+            role,
+            let_inits: capture_let_inits(fcx),
+        }) as Box<dyn Sugar>
+    })
+}
+
+#[derive(Clone, Copy)]
+enum BoundPathRole {
+    Term,
+    Constraint,
+    Composite,
+}
+
+impl BoundPathRole {
+    fn as_log_role(self) -> &'static str {
+        match self {
+            BoundPathRole::Term => "Term",
+            BoundPathRole::Constraint => "Constraint",
+            BoundPathRole::Composite => "Composite",
+        }
     }
-    let init = fcx.scope().stable_let_binding_for_term(&name)?;
-    let child_fcx = fcx.with_bound_path(&name);
-    Some(BoundSugar::new(name, build_composite(init, &child_fcx)))
+}
+
+struct BoundPathSugar {
+    name: String,
+    role: BoundPathRole,
+    let_inits: BTreeMap<String, Expr>,
+}
+
+fn has_bound_path_candidate(name: &str, fcx: &SugarBuildCtx, role: BoundPathRole) -> bool {
+    if fcx.scope().temporal_rewrite_expr_for(name).is_some() {
+        return true;
+    }
+    match role {
+        BoundPathRole::Term => {
+            fcx.scope().stable_term_binding_for_term(name).is_some()
+                || fcx.scope().stable_let_binding_for_term(name).is_some()
+        }
+        BoundPathRole::Constraint | BoundPathRole::Composite => {
+            fcx.scope().stable_let_binding_for_term(name).is_some()
+        }
+    }
+}
+
+fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
+    fcx.let_inits()
+        .iter()
+        .map(|(name, init)| (name.clone(), (**init).clone()))
+        .collect()
+}
+
+fn merge_let_inits<'a>(
+    stable: &'a BTreeMap<String, Expr>,
+    captured: &'a BTreeMap<String, Expr>,
+) -> BTreeMap<String, &'a Expr> {
+    stable
+        .iter()
+        .map(|(name, init)| (name.clone(), init))
+        .chain(captured.iter().map(|(name, init)| (name.clone(), init)))
+        .collect()
+}
+
+impl Sugar for BoundPathSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
+        let let_inits = merge_let_inits(&stable, &self.let_inits);
+        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        let child_fcx = fcx.with_bound_path(&self.name);
+        if let Some(current) = ctx.scope.temporal_rewrite_expr_for(&self.name) {
+            debug!(
+                target: "sugar_lift_rust_tests::temporal_rewrite",
+                binding = self.name.as_str(),
+                value = %token_key(&current),
+                role = self.role.as_log_role(),
+                "temporal rewrite resolved path read"
+            );
+            return match self.role {
+                BoundPathRole::Term => {
+                    BoundSugar::new(self.name.as_str(), build_term(&current, &child_fcx))
+                        .desugar(ctx)
+                }
+                BoundPathRole::Constraint => {
+                    BoundSugar::new(self.name.as_str(), build_constraint(&current, &child_fcx))
+                        .desugar(ctx)
+                }
+                BoundPathRole::Composite => {
+                    BoundSugar::new(self.name.as_str(), build_composite(&current, &child_fcx))
+                        .desugar(ctx)
+                }
+            };
+        }
+        if matches!(self.role, BoundPathRole::Term) {
+            if let Some(term) = ctx.scope.stable_term_binding_for_term(&self.name) {
+                debug!(
+                    target: "sugar_lift_rust_tests::bound_path",
+                    binding = self.name.as_str(),
+                    role = "Term",
+                    "resolved path read through term binding"
+                );
+                return BoundSugar::new(self.name.as_str(), resolved_term(term)).desugar(ctx);
+            }
+        }
+        let Some(init) = ctx.scope.stable_let_binding_for_term(&self.name) else {
+            return Outcome::from_opt(None);
+        };
+        match self.role {
+            BoundPathRole::Term => {
+                BoundSugar::new(self.name.as_str(), build_term(init, &child_fcx)).desugar(ctx)
+            }
+            BoundPathRole::Constraint => {
+                BoundSugar::new(self.name.as_str(), build_constraint(init, &child_fcx)).desugar(ctx)
+            }
+            BoundPathRole::Composite => {
+                BoundSugar::new(self.name.as_str(), build_composite(init, &child_fcx)).desugar(ctx)
+            }
+        }
+    }
 }
 
 /// THE NO-FALSE-REFUTATION GATE. A local MUTATED through a `&mut` alias the tracker

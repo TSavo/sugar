@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // TERM recognizer for the VALUE-TRANSPARENT blocks `Expr::Unsafe` (`unsafe { expr }`)
-// and `Expr::Block` (`{ expr }`): a single-tail block is the value of its tail (recurse
-// through `build_term`); any other block shape is refused by name. Byte-identical to
-// the `Expr::Unsafe`/`Expr::Block` arms of the old fat factory.
+// and `Expr::Block` (`{ expr }`): a single-tail block is the value of its tail. The
+// recognizer captures that raw tail expression; `desugar` recurses through
+// `build_term` when the binding context is live. Any other block shape is refused by
+// name. Byte-identical to the `Expr::Unsafe`/`Expr::Block` arms of the old fat factory.
+
+use std::collections::BTreeMap;
 
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::term_leaf::reasoned_hit;
 use crate::sugar::unsafe_memory;
-use crate::{substitute_expr, token_key, ExprBindings, Sugar};
+use crate::{substitute_expr, token_key, ExprBindings, Outcome, Sugar, SugarCtx};
 use syn::{Expr, Item, Pat, Stmt};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -18,9 +21,9 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {
         Expr::Unsafe(block) => Some(if let Some(tail) = inert_prefix_tail(&block.block.stmts) {
-            build_term(tail, fcx)
+            BlockTermSugar::boxed(tail.clone(), fcx)
         } else if let Some(tail) = let_prefix_tail_expr(&block.block.stmts) {
-            build_term(&tail, fcx)
+            BlockTermSugar::boxed(tail, fcx)
         } else if unsafe_memory::unsafe_memory_boundary_stmts(&block.block.stmts) {
             reasoned_hit(unsafe_memory::runtime_memory_reason(&token_key(expr)))
         } else {
@@ -28,13 +31,55 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         }),
         Expr::Block(block) => Some(
             inert_prefix_tail(&block.block.stmts)
-                .map(|tail| build_term(tail, fcx))
+                .map(|tail| BlockTermSugar::boxed(tail.clone(), fcx))
                 .or_else(|| {
-                    let_prefix_tail_expr(&block.block.stmts).map(|tail| build_term(&tail, fcx))
+                    let_prefix_tail_expr(&block.block.stmts)
+                        .map(|tail| BlockTermSugar::boxed(tail, fcx))
                 })
                 .unwrap_or_else(|| reasoned_hit(format!("unsupported term `{}`", token_key(expr)))),
         ),
         _ => None,
+    }
+}
+
+struct BlockTermSugar {
+    tail: Expr,
+    let_inits: BTreeMap<String, Expr>,
+}
+
+impl BlockTermSugar {
+    fn boxed(tail: Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
+        Box::new(Self {
+            tail,
+            let_inits: capture_let_inits(fcx),
+        })
+    }
+}
+
+fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
+    fcx.let_inits()
+        .iter()
+        .map(|(name, init)| (name.clone(), (**init).clone()))
+        .collect()
+}
+
+fn merge_let_inits<'a>(
+    stable: &'a BTreeMap<String, Expr>,
+    captured: &'a BTreeMap<String, Expr>,
+) -> BTreeMap<String, &'a Expr> {
+    stable
+        .iter()
+        .map(|(name, init)| (name.clone(), init))
+        .chain(captured.iter().map(|(name, init)| (name.clone(), init)))
+        .collect()
+}
+
+impl Sugar for BlockTermSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
+        let let_inits = merge_let_inits(&stable, &self.let_inits);
+        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        build_term(&self.tail, &fcx).desugar(ctx)
     }
 }
 
