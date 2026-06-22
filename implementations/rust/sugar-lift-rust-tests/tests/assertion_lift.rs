@@ -8180,6 +8180,170 @@ fn contains() {
 }
 
 #[test]
+fn string_literal_methods_fold_to_literal_floor() {
+    let src = r#"
+#[test]
+fn string_method_terms() {
+    let greeting = "Hello";
+    assert_eq!("hé".len(), 3);
+    assert_eq!("hé".chars().count(), 2);
+    assert_eq!(greeting.bytes().count(), 5);
+    assert_eq!("".is_empty(), true);
+    assert_eq!("Hello".starts_with("He"), true);
+    assert_eq!("Hello".contains("zz"), false);
+    assert_eq!("Rust".to_uppercase(), "RUST");
+    assert_eq!("Rust".to_lowercase(), "rust");
+    assert_eq!("abc".to_string().len(), 3);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/str.rs");
+    assert_eq!(out.seen, 1);
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    assert_warranted_decl_count(&out, 1);
+
+    let doc = warranted_doc(&out);
+    for opaque in [
+        "method:len",
+        "method:count",
+        "method:is_empty",
+        "method:starts_with",
+        "method:contains",
+        "method:to_uppercase",
+        "method:to_lowercase",
+        "method:to_string",
+    ] {
+        assert!(
+            !doc.contains(opaque),
+            "string literal method must fold to the literal floor, not {opaque}: {doc}"
+        );
+    }
+    assert!(
+        doc.contains("\"value\":3")
+            && doc.contains("\"value\":2")
+            && doc.contains("\"value\":5")
+            && doc.contains("\"value\":true")
+            && doc.contains("\"value\":false")
+            && doc.contains("\"value\":\"RUST\"")
+            && doc.contains("\"value\":\"rust\""),
+        "expected grounded int/bool/string constants in folded string methods: {doc}"
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "string_methods_good",
+    ) {
+        assert!(sat, "truthful string method folds must be z3-SAT");
+    }
+}
+
+#[test]
+fn string_literal_method_bad_twins_are_unsat() {
+    let cases = [
+        (
+            "bad_len",
+            r#"
+#[test]
+fn bad_len() {
+    assert_eq!("hé".len(), 2);
+}
+"#,
+        ),
+        (
+            "bad_chars_count",
+            r#"
+#[test]
+fn bad_chars_count() {
+    assert_eq!("hé".chars().count(), 3);
+}
+"#,
+        ),
+        (
+            "bad_bytes_count",
+            r#"
+#[test]
+fn bad_bytes_count() {
+    assert_eq!("hé".bytes().count(), 2);
+}
+"#,
+        ),
+        (
+            "bad_is_empty",
+            r#"
+#[test]
+fn bad_is_empty() {
+    assert_eq!("x".is_empty(), true);
+}
+"#,
+        ),
+        (
+            "bad_starts_with",
+            r#"
+#[test]
+fn bad_starts_with() {
+    assert_eq!("Hello".starts_with("He"), false);
+}
+"#,
+        ),
+        (
+            "bad_contains",
+            r#"
+#[test]
+fn bad_contains() {
+    assert_eq!("Hello".contains("zz"), true);
+}
+"#,
+        ),
+        (
+            "bad_uppercase",
+            r#"
+#[test]
+fn bad_uppercase() {
+    assert_eq!("Rust".to_uppercase(), "RUSt");
+}
+"#,
+        ),
+        (
+            "bad_lowercase",
+            r#"
+#[test]
+fn bad_lowercase() {
+    assert_eq!("Rust".to_lowercase(), "rUst");
+}
+"#,
+        ),
+    ];
+
+    for (label, src) in cases {
+        let out = lift_file(&parse(src), "tests/str.rs");
+        assert_eq!(out.lifted, 1, "{label} warnings: {:?}", out.warnings);
+        assert_warranted_decl_count(&out, 1);
+        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+            assert!(!sat, "{label} must be z3-UNSAT");
+        }
+    }
+}
+
+#[test]
+fn string_literal_method_non_ascii_case_and_format_receivers_do_not_fabricate() {
+    let src = r#"
+#[test]
+fn string_method_frontiers() {
+    assert_eq!("ß".to_uppercase(), "SS");
+    assert_eq!(format!("hi").len(), 2);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/str.rs");
+    let doc = warranted_doc(&out);
+    assert!(
+        doc.contains("opaque:")
+            && doc.contains("to_uppercase")
+            && doc.contains("format !")
+            && !doc.contains("\"args\":[{\"kind\":\"const\",\"value\":\"SS\"")
+            && !doc.contains("\"args\":[{\"kind\":\"const\",\"value\":2"),
+        "non-ASCII case and format!-built receivers are frontiers, not fabricated folds: {doc}"
+    );
+}
+
+#[test]
 fn regex_match_lifts_to_str_in_regex_membership_atom() {
     // RegexSugar: `re.is_match(s)` ⟺ `str.in_re(s, R)`. The pattern literal is
     // walked from `Regex::new("…")` and carried RAW as a String const; the emitted
@@ -8386,10 +8550,10 @@ fn test_len() {
         &["banana\0\u{7F}"],
     );
     assert_eq!(
-        decls[2].name,
-        "method:len#euf#c:callresult_method_len_a1(s:\"～～～～～\")::assertion"
+        decls[2].name, "tests/ascii.rs::test_len",
+        "string literal .len() should fold to the literal floor"
     );
-    assert_method_len_cmp_atom(&inv_operands(decls[2])[0], "=", "～～～～～", 15);
+    assert_eq!(dug_eq_int_pairs(decls[2]), vec![(15, 15)]);
 }
 
 #[test]
@@ -18169,7 +18333,7 @@ fn str_replace_trim_methods_have_teeth() {
 fn str_method_non_ascii_unicode_case_stays_opaque_no_false_warrant() {
     // DISCRIMINATION (no false warrant): `.to_uppercase()` over a NON-ASCII receiver is
     // not byte-wise text-determined here (a Unicode-table dependency we refuse to guess),
-    // so str_method DECLINES and the LHS stays an opaque `method:` term -- never a forged
+    // so str_method Hits the frontier and the LHS stays opaque -- never a forged
     // version-dependent value. (The byte-wise `to_ascii_*` recompute over the same
     // non-ASCII input IS proven exact by the str_method resolver unit tests.)
     let out = lift_file(
@@ -18179,7 +18343,9 @@ fn str_method_non_ascii_unicode_case_stays_opaque_no_false_warrant() {
     let warranted: Vec<_> = warranted_decls(&out).into_iter().cloned().collect();
     let doc = sugar_ir_symbolic::serialize::marshal_declarations(&warranted);
     assert!(
-        doc.contains("method:"),
+        doc.contains("opaque:")
+            && doc.contains("to_uppercase")
+            && !doc.contains("\"args\":[{\"kind\":\"const\",\"value\":\"x\""),
         "a non-ASCII to_uppercase stays opaque (not a forged literal): {doc}"
     );
 }
