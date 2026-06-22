@@ -20682,6 +20682,35 @@ fn opaque_iterator_collection_literal_twin() {
 }
 
 #[test]
+fn rpc_source_refuses_runtime_bound_iterator_state_with_literal_twin() {
+    let doc = run_rpc_lift(
+        "src/source_runtime_bound_iterator_state.rs",
+        r#"
+#[test]
+fn runtime_bound_iterator_state_refused() {
+    let data = [10i8, 20, 30, 40, 100, 60];
+    let mut iter = data.into_iter();
+    assert_eq!(iter.try_fold(0_i8, |acc, x| acc.checked_add(x)), None);
+    assert_eq!(iter.next(), Some(60));
+}
+
+#[test]
+fn runtime_bound_iterator_state_literal_twin() {
+    let next_after_fold = Some(60i8);
+    assert_eq!(next_after_fold, Some(60));
+}
+"#,
+    );
+
+    assert_rpc_source_refused(
+        &doc,
+        "runtime_bound_iterator_state_refused",
+        "runtime-bound iterator state",
+    );
+    assert_rpc_source_warranted(&doc, "runtime_bound_iterator_state_literal_twin");
+}
+
+#[test]
 fn rpc_source_refuses_runtime_callable_element_with_literal_twin() {
     let doc = run_rpc_lift(
         "src/source_runtime_callable.rs",

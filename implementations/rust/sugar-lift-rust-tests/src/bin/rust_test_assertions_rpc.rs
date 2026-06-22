@@ -1066,6 +1066,14 @@ fn clean_named_refusal_category(reason: &str) -> Option<&'static str> {
         || reason.contains("assertion under for context")
         || reason.contains("assertion under while context")
         || reason.contains("consumed-iterator local");
+    let attended_control_or_no_surface = reason.contains("ambiguous temporal identity")
+        || reason.contains("temporally unstable")
+        || reason.contains("assertion under for context")
+        || reason.contains("assertion under while context")
+        || reason.contains("assertion under if context")
+        || reason.contains("consumed-iterator local")
+        || reason.contains("iterator/option adaptor")
+        || reason.contains("assertion surface `");
     if reason.contains("effectful / raw-pointer / mutable-reference term") {
         return Some("mutable reference/pointer effect");
     }
@@ -1139,6 +1147,9 @@ fn clean_named_refusal_category(reason: &str) -> Option<&'static str> {
         || reason.contains("literal char range")
     {
         return Some("literal range enumeration boundary");
+    }
+    if !attended_control_or_no_surface && reason.contains("unknown iterator consumption") {
+        return Some("runtime-bound iterator state");
     }
     None
 }
