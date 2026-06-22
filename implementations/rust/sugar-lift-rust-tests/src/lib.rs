@@ -29,6 +29,7 @@ mod try_fold_eval;
 // `decompose_seq`). One engine: each decorator's `desugar` is `inner.desugar(ctx)?`
 // then that adaptor's exact transform.
 pub mod sugar {
+    pub mod aggregate_decomp;
     pub mod array_repeat;
     pub mod array_term;
     pub mod assign_op;

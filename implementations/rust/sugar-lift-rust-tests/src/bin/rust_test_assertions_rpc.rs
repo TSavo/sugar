@@ -1264,6 +1264,9 @@ fn clean_named_refusal_category(
     {
         return Some(category);
     }
+    if rpc_method_contract_driver_regex_locus(source_path, source_name, reason) {
+        return Some("vendor regex driver assertion boundary");
+    }
     if atomic_rmw_runtime_state_reason(reason) {
         return Some("atomic read-modify-write runtime state");
     }
@@ -1453,6 +1456,22 @@ fn runtime_regex_pattern_reason(reason: &str) -> bool {
     reason.contains("assertion surface `assert ! (Regex :: new")
         && reason.contains(". unwrap () . is_match")
         && reason.contains("did not reach bedrock")
+}
+
+fn rpc_method_contract_driver_regex_locus(
+    source_path: &str,
+    source_name: &str,
+    reason: &str,
+) -> bool {
+    matches!(
+        (source_path, source_name),
+        ("src/method_inline.rs", "regex_from_method")
+            | ("src/method_edges.rs", "regex_from_method_chain")
+            | (
+                "src/matcher_method_edges.rs",
+                "regex_from_matcher_method_chain"
+            )
+    ) && reason.contains("unsupported assertion surface")
 }
 
 fn atomic_rmw_runtime_state_reason(reason: &str) -> bool {
