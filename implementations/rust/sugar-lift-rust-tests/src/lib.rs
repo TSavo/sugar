@@ -467,6 +467,9 @@ pub enum Disposition {
 ///                            whose scrutinee is a runtime non-scalar method/fn result
 ///                            (`b.binary_search(&3)`): the arm taken is the algorithm's runtime
 ///                            output, not a constructible scalar.
+///   * `type-inferred runtime parser result` -- a `str::parse()` call whose result type is
+///                            supplied by the surrounding assertion, not by the call syntax;
+///                            the same site can denote different runtime parser results.
 ///   * `has a non-literal length -- not a finite` -- an array-repeat `[elem; N]` with a
 ///                            NON-literal length (const-generic / const expr): the universe
 ///                            size is symbolic, no finite construction from source literals.
@@ -760,6 +763,13 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // over a CONSTRUCTED literal scrutinee matches None and STAYS the unclassified `only
         // scalar equality` reason (the fake-refuse guardrail). Typed `RuntimeMatchScrutineeEffect`.
         || reason.contains("operand is a runtime non-scalar result")
+        // TERMINAL: `str::parse()` without a turbofish takes its result type from the
+        // surrounding relation (`assert_eq!(input.parse(), Ok(1.0f64))`). The written callsite
+        // therefore does not own a single timeless value: the same `input.parse()` syntax can
+        // be f32, f64, or any FromStr target depending on assertion context. Typed parse
+        // (`parse::<u8>()`) carries the type in the call syntax and remains eligible for normal
+        // opaque lifting; only the type-inferred call is refused.
+        || reason.contains("type-inferred runtime parser result")
         // TERMINAL: an array-repeat `[elem; N]` whose length `N` is NOT a plain literal -- a
         // const-generic param or const expr (`[0u8; SIZE]`, `[(); SIZE - 1]`). The universe
         // size is symbolic, so there is no finite construction from the written literal to
@@ -13744,6 +13754,11 @@ fn lower_assert_eq(
     float_widths: &FloatWidthScope,
     factory_audits: Option<&FactoryAuditLog>,
 ) -> Result<AssertionEntry, String> {
+    if let Some(reason) =
+        sugar::constraint_runtime_boundary::type_inferred_parse_result_reason(lhs_expr, rhs_expr)
+    {
+        return Err(format!("assert_eq!: {reason}"));
+    }
     // Intercept infinity-constant equality before falling through to the
     // Real-equality path. f32/f64 infinity is not a Real value; IEEE exactness
     // gives the sound conjunction instead.
@@ -13769,6 +13784,11 @@ fn lower_assert_ne(
 ) -> Result<AssertionEntry, String> {
     // assert_ne!(a, b) is sugar for assert!(a != b): route through the same
     // relation path so the lifted atom is byte-identical to `a != b`.
+    if let Some(reason) =
+        sugar::constraint_runtime_boundary::type_inferred_parse_result_reason(lhs_expr, rhs_expr)
+    {
+        return Err(format!("assert_ne!: {reason}"));
+    }
     let lhs = translate_assertion_term_in_scope_with_audits(lhs_expr, scope, factory_audits)?;
     let rhs = translate_assertion_term_in_scope_with_audits(rhs_expr, scope, factory_audits)?;
     Ok(assertion_entry_from_relation(
@@ -15023,6 +15043,14 @@ fn translate_binary_bool_assertion_with_audits(
             })
         }
         BinOp::Eq(_) | BinOp::Ne(_) | BinOp::Lt(_) | BinOp::Le(_) | BinOp::Gt(_) | BinOp::Ge(_) => {
+            if let Some(reason) =
+                sugar::constraint_runtime_boundary::type_inferred_parse_result_reason(
+                    &binary.left,
+                    &binary.right,
+                )
+            {
+                return Err(format!("assert!: {reason}"));
+            }
             // For == only: intercept infinity-constant equality before the
             // Real-equality path. != and ordered comparisons fall through unchanged.
             if matches!(binary.op, BinOp::Eq(_)) {
@@ -22736,6 +22764,7 @@ mod lifter_key_tests {
             "assert_eq!: unsupported term `& mut x`: effectful / raw-pointer / mutable-reference term (a `&mut` borrow) is not a constructible timeless value; refused",
             "assert_eq!: unsupported term `& raw const garlic`: effectful / raw-pointer / mutable-reference term (a raw pointer (`&raw const`/`&raw mut`)) is not a constructible timeless value; refused",
             "assert!: only scalar equality is liftable; operand is a runtime non-scalar result `match b . binary_search (& 3) { Ok (1 ..= 3) => true , _ => false , }` (a `match` over a runtime call result, not constructible from source literals); refused",
+            "assert_eq!: unsupported term `input . parse ()`: type-inferred runtime parser result (parse result type is supplied by assertion context, not by the call syntax; no single constructible timeless value); refused",
             "assert_eq!: array-repeat `[_; N]` has a non-literal length -- not a finite construction from the literal; refused by name: `[0u8 ; SIZE]`",
         ] {
             assert_eq!(refusal_disposition(r), Refused, "should be terminal: {r}");

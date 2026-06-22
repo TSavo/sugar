@@ -15709,6 +15709,61 @@ fn t() {
 }
 
 #[test]
+fn type_inferred_parse_result_is_refused_not_refuted() {
+    // REFUSE: `str::parse()` without a turbofish gets its result type from the surrounding
+    // assertion. The same call syntax can therefore denote different runtime parser results,
+    // so the equality boundary must name-refuse it instead of grounding a false refutation.
+    let src = r#"
+#[test]
+fn t_type_inferred_parse() {
+    let input = "1.0";
+    assert_eq!(input.parse(), Ok(1.0f64));
+    assert_eq!(input.parse(), Ok(1.0f32));
+}
+"#;
+    let out = lift_file(&parse(src), "coretests/num/dec2flt/type_inferred_parse.rs");
+    let r = out
+        .skip_reasons
+        .iter()
+        .find(|r| r.contains("type-inferred runtime parser result"))
+        .unwrap_or_else(|| {
+            panic!(
+                "expected a type-inferred parse terminal, got {:?}",
+                out.skip_reasons
+            )
+        });
+    assert_eq!(
+        disp2(r),
+        sugar_lift_rust_tests::Disposition::Refused,
+        "must be terminal: {r}"
+    );
+    assert_warranted_decls_not_refuted(&out, "type_inferred_parse");
+}
+
+#[test]
+fn turbofish_parse_result_stays_warranted_opaque_not_refused() {
+    // DISCRIMINATION: a turbofished parse carries its type in the call syntax, so the
+    // parser-result key is not context-dependent and remains eligible for normal lifting.
+    let src = r#"
+#[test]
+fn t_typed_parse_reflexive() {
+    let parsed = "256".parse::<u8>().ok();
+    assert_eq!(parsed, parsed);
+}
+"#;
+    let out = lift_file(&parse(src), "coretests/net/result_ok_sort.rs");
+    assert!(
+        !out.skip_reasons
+            .iter()
+            .any(|r| r.contains("type-inferred runtime parser result")),
+        "a typed parse must not be refused as type-inferred: {:?}",
+        out.skip_reasons
+    );
+    assert_warranted_decl_count(&out, 1);
+    assert_warranted_decls_not_refuted(&out, "typed_parse_reflexive");
+}
+
+#[test]
 fn runtime_match_scrutinee_is_refused_runtime_nonscalar() {
     // REFUSE: `assert!(match b.binary_search(&3) { Ok(1..=3) => true, _ => false })` -- the arm
     // is taken by a RUNTIME non-scalar search result, not a constructible scalar. (corpus: slice.rs.)
