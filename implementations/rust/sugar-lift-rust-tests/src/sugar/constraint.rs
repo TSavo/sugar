@@ -9,6 +9,8 @@
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::configuration;
 use crate::sugar::constraint_runtime_boundary;
+use crate::sugar::format::stable_let_bindings;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use crate::sugar::factory::{build_constraint, build_term, SugarBuildCtx};
@@ -88,8 +90,6 @@ pub(crate) const NO_PANIC_CALL_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
 
 struct RelationMacroSugar {
     name: String,
-    lhs: Box<dyn Sugar>,
-    rhs: Box<dyn Sugar>,
     lhs_expr: Expr,
     rhs_expr: Expr,
     op: RelationOp,
@@ -181,7 +181,7 @@ fn bounded_literal_char_only_predicate(method: &str) -> bool {
     matches!(method, "is_alphabetic")
 }
 
-fn recognize_relation_macro(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_relation_macro(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Macro(ExprMacro { mac, .. }) = expr else {
         return None;
     };
@@ -199,8 +199,6 @@ fn recognize_relation_macro(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn 
     }
     Some(Box::new(RelationMacroSugar {
         name,
-        lhs: build_term(&args.exprs[0], fcx),
-        rhs: build_term(&args.exprs[1], fcx),
         lhs_expr: args.exprs[0].clone(),
         rhs_expr: args.exprs[1].clone(),
         op,
@@ -220,8 +218,24 @@ impl Sugar for RelationMacroSugar {
         ) {
             return unsupported(format!("{}!: {reason}", self.name));
         }
-        relation_constraint(&self.name, &*self.lhs, &*self.rhs, self.op, ctx)
+        let lhs = build_term_in_ctx(&self.lhs_expr, ctx);
+        let rhs = build_term_in_ctx(&self.rhs_expr, ctx);
+        relation_constraint(&self.name, &*lhs, &*rhs, self.op, ctx)
     }
+}
+
+fn build_term_in_ctx(expr: &Expr, ctx: &SugarCtx) -> Box<dyn Sugar> {
+    let stable = stable_let_bindings(ctx.scope);
+    let let_inits = stable_let_refs(&stable);
+    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+    build_term(expr, &fcx)
+}
+
+fn stable_let_refs(stable: &BTreeMap<String, Expr>) -> BTreeMap<String, &Expr> {
+    stable
+        .iter()
+        .map(|(name, expr)| (name.clone(), expr))
+        .collect()
 }
 
 struct AssertSugar {
