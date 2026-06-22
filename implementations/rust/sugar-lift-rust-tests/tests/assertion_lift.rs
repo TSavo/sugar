@@ -16909,6 +16909,30 @@ fn test_by_ref_terminal_followup_read() {
 
     let out = lift_one(
         r#"#[test]
+fn test_by_ref_adaptor_binding_followup_terminal() {
+    let xs = [0, 1, 2, 3, 4, 5];
+    let mut it = xs.iter();
+    {
+        let mut take = it.by_ref().take(3);
+        while let Some(_x) = take.nth(0) {}
+    }
+    assert_eq!(it.nth(1), Some(&5));
+}"#,
+    );
+    // A `by_ref()` adaptor bound to another local can consume the original iterator by
+    // a loop-dependent amount; the later direct terminal must not replay stale `it`.
+    assert_warranted_decls_not_refuted(&out, "by_ref_adaptor_binding_followup_terminal");
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("unknown iterator consumption") && r.contains("it")),
+        "post-by_ref adaptor terminal reads of it must be named-refused, not checked \
+         against stale literal state: {:?}",
+        out.skip_reasons
+    );
+
+    let out = lift_one(
+        r#"#[test]
 fn test_peekable_next_if_map_followup_peek() {
     fn collatz((mut num, mut len): (u64, u32)) -> Result<u32, (u64, u32)> {
         let jump = num.trailing_zeros();
