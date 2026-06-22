@@ -1,54 +1,221 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// TERM recognizer for closed stdlib STRING-PRODUCING `&str`/`String` methods over
-// written string literals: `.to_ascii_uppercase()`, `.to_ascii_lowercase()`,
-// `.to_uppercase()`/`.to_lowercase()` (ASCII-gated), `.replace(from, to)`,
-// `.trim()`/`.trim_start()`/`.trim_end()`, `.repeat(n)`. These are PURE functions of a
-// literal string, so the result is text-determined: we RECOMPUTE it with the lifter's
-// own stdlib (recompute-don't-trust) and dissolve to the real `str_const`, the same
-// string-theory floor `to_string`/`format!` dissolve to. So `"abc".to_ascii_uppercase()
-// == "ABC"` lifts the checkable `eq("ABC", "ABC")` with real teeth (the wrong-value twin
-// `== "ABD"` is z3-UNSAT), NOT an opaque `method:to_ascii_uppercase(...)` EUF var that
-// the solver would satisfy tautologically.
+// TERM recognizer for closed stdlib `&str`/`String` methods over written string
+// literals: string-producing methods (`.to_ascii_uppercase()`, `.to_ascii_lowercase()`,
+// ASCII-gated `.to_uppercase()`/`.to_lowercase()`, `.replace(from, to)`,
+// `.trim()`/`.trim_start()`/`.trim_end()`, `.repeat(n)`) plus scalar surfaces
+// (`.len()`, `.chars().count()`, `.bytes().count()`, `.is_empty()`,
+// `.starts_with(lit)`, `.contains(lit)`). These are PURE functions of text-determined
+// strings, so the result dissolves to the literal floor (`Int`/`Bool`/`String`) with real
+// z3 teeth, not an opaque `method:*` EUF var.
 //
-// finite-or-refuse: ONLY a literal-resolvable receiver/args warrant; a runtime / opaque
-// receiver DECLINES (returns `None`) so generic `MethodSugar` keeps the conservative
-// opaque term — never a fabricated value. `to_uppercase`/`to_lowercase` are the Unicode
-// full-case mappings; we warrant them ONLY for an ASCII receiver (where they equal the
-// `to_ascii_*` byte mapping and are Unicode-version-INDEPENDENT), declining otherwise.
+// finite-or-refuse: recognition only captures the raw source site. Resolution happens
+// lazily in `desugar`, where the binding context is live. ONLY a literal-resolvable
+// receiver/args warrant; runtime/opaque receivers, `format!`-built receivers, oversized
+// repeats, or non-ASCII full-case mappings Hit the structural frontier — never a
+// fabricated value.
 
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
-use sugar_ir_symbolic::str_const;
+use sugar_ir_symbolic::{num, str_const, Term};
 use syn::{Expr, ExprLit, ExprMethodCall, Lit};
 
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::format::stable_let_bindings;
-use crate::sugar::term_leaf::resolved_term;
-use crate::{strip_refs_groups, Sugar};
+use crate::{
+    bool_const, simple_path_name, strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx,
+    STRUCTURAL_BACKSTOP_REASON,
+};
 
 /// Upper bound on a `.repeat(n)` expansion (bytes). A larger expansion DECLINES rather
 /// than materialize a huge string const — a bounded, conservative cap.
 const REPEAT_BYTE_CAP: usize = 4096;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("str_method", recognize);
+    crate::sugar::claim::ExprSugarClaim::term_before("str_method", &["len"], recognize);
 
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::MethodCall(call) = strip_refs_groups(expr) else {
         return None;
     };
-    // Quick reject: only claim the string-producing methods we own (so an unrelated
-    // method call is never even resolved here).
-    if !is_supported_method(&call.method.to_string()) {
-        return None;
-    }
-    let binds = stable_let_bindings(fcx.scope());
-    // Resolve to ONE text-determined string, else decline to the opaque method path.
-    compute_str_method(call, &binds).map(|s| resolved_term(str_const(s)))
+    let stable = stable_let_bindings(fcx.scope());
+    let let_inits = merged_let_inits(&stable, fcx.let_inits());
+    let kind = recognized_kind(call, &let_inits)?;
+    Some(Box::new(StrMethodSugar {
+        kind,
+        receiver: recognized_receiver(call, kind)?.clone(),
+        args: recognized_args(call, kind),
+    }))
 }
 
-fn is_supported_method(method: &str) -> bool {
+#[derive(Clone, Copy)]
+enum StrMethodKind {
+    String(StringMethodKind),
+    Len,
+    CharsCount,
+    BytesCount,
+    IsEmpty,
+    StartsWith,
+    Contains,
+}
+
+#[derive(Clone, Copy)]
+enum StringMethodKind {
+    ToAsciiUppercase,
+    ToAsciiLowercase,
+    ToUppercase,
+    ToLowercase,
+    Replace,
+    Trim,
+    TrimStart,
+    TrimEnd,
+    Repeat,
+}
+
+struct StrMethodSugar {
+    kind: StrMethodKind,
+    receiver: Expr,
+    args: Vec<Expr>,
+}
+
+impl Sugar for StrMethodSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        match self.eval(ctx) {
+            Ok(term) => Outcome::Dug(Desugared::Term(term)),
+            Err(()) => Outcome::Hit(Effect::Unsupported {
+                reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
+            }),
+        }
+    }
+}
+
+impl StrMethodSugar {
+    fn eval(&self, ctx: &SugarCtx) -> Result<Rc<Term>, ()> {
+        let binds = stable_let_bindings(ctx.scope);
+        let recv = resolve_str_value(&self.receiver, &binds).ok_or(())?;
+        match self.kind {
+            StrMethodKind::String(kind) => compute_string_kind(kind, recv, &self.args)
+                .map(str_const)
+                .ok_or(()),
+            StrMethodKind::Len => Ok(num(recv.len() as i128)),
+            StrMethodKind::CharsCount => Ok(num(rev_char_count(&recv))),
+            StrMethodKind::BytesCount => Ok(num(recv.len() as i128)),
+            StrMethodKind::IsEmpty => Ok(bool_const(recv.is_empty())),
+            StrMethodKind::StartsWith => {
+                let needle = string_literal_value(&self.args[0]).ok_or(())?;
+                Ok(bool_const(recv.starts_with(&needle)))
+            }
+            StrMethodKind::Contains => {
+                let needle = resolve_pattern_value(&self.args[0]).ok_or(())?;
+                Ok(bool_const(recv.contains(&needle)))
+            }
+        }
+    }
+}
+
+fn rev_char_count(s: &str) -> i128 {
+    s.chars().count() as i128
+}
+
+fn recognized_kind(
+    call: &ExprMethodCall,
+    let_inits: &BTreeMap<String, Expr>,
+) -> Option<StrMethodKind> {
+    let method = call.method.to_string();
+    match method.as_str() {
+        "len" if call.args.is_empty() && is_text_receiver_shape(&call.receiver, let_inits) => {
+            Some(StrMethodKind::Len)
+        }
+        "is_empty" if call.args.is_empty() && is_text_receiver_shape(&call.receiver, let_inits) => {
+            Some(StrMethodKind::IsEmpty)
+        }
+        "starts_with"
+            if call.args.len() == 1
+                && string_literal_value(&call.args[0]).is_some()
+                && is_text_receiver_shape(&call.receiver, let_inits) =>
+        {
+            Some(StrMethodKind::StartsWith)
+        }
+        "contains"
+            if call.args.len() == 1
+                && resolve_pattern_value(&call.args[0]).is_some()
+                && is_text_receiver_shape(&call.receiver, let_inits) =>
+        {
+            Some(StrMethodKind::Contains)
+        }
+        "count" if call.args.is_empty() => recognize_string_iterator_count(call, let_inits),
+        _ => recognized_string_method(&method, call, let_inits).map(StrMethodKind::String),
+    }
+}
+
+fn recognized_string_method(
+    method: &str,
+    call: &ExprMethodCall,
+    let_inits: &BTreeMap<String, Expr>,
+) -> Option<StringMethodKind> {
+    let kind = match method {
+        "to_ascii_uppercase" if call.args.is_empty() => StringMethodKind::ToAsciiUppercase,
+        "to_ascii_lowercase" if call.args.is_empty() => StringMethodKind::ToAsciiLowercase,
+        "to_uppercase" if call.args.is_empty() => StringMethodKind::ToUppercase,
+        "to_lowercase" if call.args.is_empty() => StringMethodKind::ToLowercase,
+        "trim" if call.args.is_empty() => StringMethodKind::Trim,
+        "trim_start" if call.args.is_empty() => StringMethodKind::TrimStart,
+        "trim_end" if call.args.is_empty() => StringMethodKind::TrimEnd,
+        "replace"
+            if call.args.len() == 2 && replace_args_are_literal(&call.args[0], &call.args[1]) =>
+        {
+            StringMethodKind::Replace
+        }
+        "repeat" if call.args.len() == 1 && usize_literal_value(&call.args[0]).is_some() => {
+            StringMethodKind::Repeat
+        }
+        _ => return None,
+    };
+    is_text_receiver_shape(&call.receiver, let_inits).then_some(kind)
+}
+
+fn recognize_string_iterator_count(
+    call: &ExprMethodCall,
+    let_inits: &BTreeMap<String, Expr>,
+) -> Option<StrMethodKind> {
+    let Expr::MethodCall(inner) = strip_refs_groups(&call.receiver) else {
+        return None;
+    };
+    if !inner.args.is_empty() {
+        return None;
+    }
+    match inner.method.to_string().as_str() {
+        "chars" if is_text_receiver_shape(&inner.receiver, let_inits) => {
+            Some(StrMethodKind::CharsCount)
+        }
+        "bytes" if is_text_receiver_shape(&inner.receiver, let_inits) => {
+            Some(StrMethodKind::BytesCount)
+        }
+        _ => None,
+    }
+}
+
+fn recognized_receiver(call: &ExprMethodCall, kind: StrMethodKind) -> Option<&Expr> {
+    match kind {
+        StrMethodKind::CharsCount | StrMethodKind::BytesCount => {
+            let Expr::MethodCall(inner) = strip_refs_groups(&call.receiver) else {
+                return None;
+            };
+            Some(inner.receiver.as_ref())
+        }
+        _ => Some(&call.receiver),
+    }
+}
+
+fn recognized_args(call: &ExprMethodCall, kind: StrMethodKind) -> Vec<Expr> {
+    match kind {
+        StrMethodKind::CharsCount | StrMethodKind::BytesCount => Vec::new(),
+        _ => call.args.iter().cloned().collect(),
+    }
+}
+
+fn is_string_result_method(method: &str) -> bool {
     matches!(
         method,
         "to_ascii_uppercase"
@@ -63,38 +230,92 @@ fn is_supported_method(method: &str) -> bool {
     )
 }
 
+fn is_text_receiver_shape(expr: &Expr, let_inits: &BTreeMap<String, Expr>) -> bool {
+    match strip_refs_groups(expr) {
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(_), ..
+        }) => true,
+        Expr::Macro(m) if macro_name_is(m, "format") => true,
+        Expr::Path(_) => simple_path_name(expr)
+            .and_then(|name| let_inits.get(&name))
+            .is_some_and(|bound| is_text_receiver_shape(bound, let_inits)),
+        Expr::MethodCall(call) if call.method == "to_string" && call.args.is_empty() => {
+            is_text_receiver_shape(&call.receiver, let_inits)
+        }
+        Expr::MethodCall(call) if is_string_result_method(&call.method.to_string()) => {
+            is_text_receiver_shape(&call.receiver, let_inits)
+        }
+        _ => false,
+    }
+}
+
+fn merged_let_inits(
+    stable: &BTreeMap<String, Expr>,
+    captured: &BTreeMap<String, &Expr>,
+) -> BTreeMap<String, Expr> {
+    let mut out = stable.clone();
+    out.extend(
+        captured
+            .iter()
+            .map(|(name, init)| (name.clone(), (*init).clone())),
+    );
+    out
+}
+
 /// Compute the result of a supported string method over a literal-resolvable receiver,
 /// or `None` (decline — stays the conservative opaque term, never a forged value).
 fn compute_str_method(call: &ExprMethodCall, binds: &BTreeMap<String, Expr>) -> Option<String> {
     let recv = resolve_str_value(&call.receiver, binds)?;
-    let method = call.method.to_string();
-    match method.as_str() {
-        "to_ascii_uppercase" if call.args.is_empty() => Some(recv.to_ascii_uppercase()),
-        "to_ascii_lowercase" if call.args.is_empty() => Some(recv.to_ascii_lowercase()),
+    let kind = match call.method.to_string().as_str() {
+        "to_ascii_uppercase" if call.args.is_empty() => StringMethodKind::ToAsciiUppercase,
+        "to_ascii_lowercase" if call.args.is_empty() => StringMethodKind::ToAsciiLowercase,
+        "to_uppercase" if call.args.is_empty() => StringMethodKind::ToUppercase,
+        "to_lowercase" if call.args.is_empty() => StringMethodKind::ToLowercase,
+        "trim" if call.args.is_empty() => StringMethodKind::Trim,
+        "trim_start" if call.args.is_empty() => StringMethodKind::TrimStart,
+        "trim_end" if call.args.is_empty() => StringMethodKind::TrimEnd,
+        "replace" if call.args.len() == 2 => StringMethodKind::Replace,
+        "repeat" if call.args.len() == 1 => StringMethodKind::Repeat,
+        _ => return None,
+    };
+    let args: Vec<Expr> = call.args.iter().cloned().collect();
+    compute_string_kind(kind, recv, &args)
+}
+
+fn compute_string_kind(kind: StringMethodKind, recv: String, args: &[Expr]) -> Option<String> {
+    match kind {
+        StringMethodKind::ToAsciiUppercase => Some(recv.to_ascii_uppercase()),
+        StringMethodKind::ToAsciiLowercase => Some(recv.to_ascii_lowercase()),
         // Unicode full-case mapping: warrant ONLY for an ASCII receiver, where it equals
         // the byte-wise `to_ascii_*` and is Unicode-version-independent. A non-ASCII
         // receiver declines (opaque), never a version-dependent guess.
-        "to_uppercase" if call.args.is_empty() && recv.is_ascii() => Some(recv.to_uppercase()),
-        "to_lowercase" if call.args.is_empty() && recv.is_ascii() => Some(recv.to_lowercase()),
-        "trim" if call.args.is_empty() => Some(recv.trim().to_string()),
-        "trim_start" if call.args.is_empty() => Some(recv.trim_start().to_string()),
-        "trim_end" if call.args.is_empty() => Some(recv.trim_end().to_string()),
-        "replace" if call.args.len() == 2 => {
+        StringMethodKind::ToUppercase if recv.is_ascii() => Some(recv.to_uppercase()),
+        StringMethodKind::ToLowercase if recv.is_ascii() => Some(recv.to_lowercase()),
+        StringMethodKind::ToUppercase | StringMethodKind::ToLowercase => None,
+        StringMethodKind::Trim => Some(recv.trim().to_string()),
+        StringMethodKind::TrimStart => Some(recv.trim_start().to_string()),
+        StringMethodKind::TrimEnd => Some(recv.trim_end().to_string()),
+        StringMethodKind::Replace => {
             // `str::replace<P: Pattern>(from: P, to: &str)`: `from` is a `&str`/`char`
             // literal, `to` is a `&str` literal.
-            let from = resolve_pattern_value(&call.args[0])?;
-            let to = string_literal_value(&call.args[1])?;
+            let [from_arg, to_arg] = args else {
+                return None;
+            };
+            let from = resolve_pattern_value(from_arg)?;
+            let to = string_literal_value(to_arg)?;
             Some(recv.replace(&from, &to))
         }
-        "repeat" if call.args.len() == 1 => {
-            let n = usize_literal_value(&call.args[0])?;
+        StringMethodKind::Repeat => {
+            let [n_arg] = args else {
+                return None;
+            };
+            let n = usize_literal_value(n_arg)?;
             // bound the expansion; a huge repeat declines rather than materialize.
             if recv.len().checked_mul(n)? > REPEAT_BYTE_CAP {
                 return None;
             }
             Some(recv.repeat(n))
         }
-        _ => None,
     }
 }
 
@@ -106,6 +327,7 @@ fn resolve_str_value(expr: &Expr, binds: &BTreeMap<String, Expr>) -> Option<Stri
         Expr::Lit(ExprLit {
             lit: Lit::Str(s), ..
         }) => Some(s.value()),
+        Expr::Macro(m) if macro_name_is(m, "format") => None,
         // a `let`/`const`-bound name resolves to its written literal (guard against a
         // self-referential binding, mirroring the format resolver).
         Expr::Path(p) if p.qself.is_none() => {
@@ -115,12 +337,23 @@ fn resolve_str_value(expr: &Expr, binds: &BTreeMap<String, Expr>) -> Option<Stri
             narrowed.remove(&id);
             resolve_str_value(bound, &narrowed)
         }
+        Expr::MethodCall(call) if call.method == "to_string" && call.args.is_empty() => {
+            resolve_str_value(&call.receiver, binds)
+        }
         // a nested supported string-method call composes.
-        Expr::MethodCall(call) if is_supported_method(&call.method.to_string()) => {
+        Expr::MethodCall(call) if is_string_result_method(&call.method.to_string()) => {
             compute_str_method(call, binds)
         }
         _ => None,
     }
+}
+
+fn replace_args_are_literal(from: &Expr, to: &Expr) -> bool {
+    resolve_pattern_value(from).is_some() && string_literal_value(to).is_some()
+}
+
+fn macro_name_is(m: &syn::ExprMacro, name: &str) -> bool {
+    m.mac.path.segments.last().is_some_and(|s| s.ident == name)
 }
 
 /// A `replace` pattern argument: a `&str` OR `char` literal, as a `String`.
