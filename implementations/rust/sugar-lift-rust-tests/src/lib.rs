@@ -539,6 +539,9 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         || reason.contains("number too large")
         || reason.contains("ambiguous temporal identity")
         || reason.contains("temporally unstable")
+        || reason.contains("atomic read-modify-write runtime state")
+        || reason.contains("atomic load/store ordering")
+        || reason.contains("iterator size_hint runtime bound")
         || reason.contains("type-level obligation")
         // TERMINAL: a macro EXPANDED (from a definition we hold) but its expansion
         // contains NO liftable assertion -- the body is type-level or purely effectful,
@@ -23226,6 +23229,9 @@ mod lifter_key_tests {
             "assert!: only scalar equality is liftable; operand is a runtime non-scalar result `match b . binary_search (& 3) { Ok (1 ..= 3) => true , _ => false , }` (a `match` over a runtime call result, not constructible from source literals); refused",
             "assert_eq!: unsupported term `input . parse ()`: type-inferred runtime parser result (parse result type is supplied by assertion context, not by the call syntax; no single constructible timeless value); refused",
             "assert_eq!: array-repeat `[_; N]` has a non-literal length -- not a finite construction from the literal; refused by name: `[0u8 ; SIZE]`",
+            "named refusal (atomic read-modify-write runtime state): vendor pin not liftable: temporally unstable mutating method read of `x` after `.fetch_or()`",
+            "named refusal (atomic load/store ordering): vendor pin not liftable: atomic load reads interior-mutable runtime state",
+            "named refusal (iterator size_hint runtime bound): vendor pin not liftable: assertion surface `it.size_hint()` did not reach bedrock",
         ] {
             assert_eq!(refusal_disposition(r), Refused, "should be terminal: {r}");
         }

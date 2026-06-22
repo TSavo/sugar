@@ -1075,6 +1075,15 @@ fn clean_named_refusal_category(
     {
         return Some(category);
     }
+    if atomic_rmw_runtime_state_reason(reason) {
+        return Some("atomic read-modify-write runtime state");
+    }
+    if atomic_load_store_ordering_reason(reason) {
+        return Some("atomic load/store ordering");
+    }
+    if iterator_size_hint_runtime_bound_reason(reason) {
+        return Some("iterator size_hint runtime bound");
+    }
     if reason.contains("effectful / raw-pointer / mutable-reference term") {
         return Some("mutable reference/pointer effect");
     }
@@ -1150,6 +1159,40 @@ fn clean_named_refusal_category(
         return Some("literal range enumeration boundary");
     }
     None
+}
+
+fn atomic_rmw_runtime_state_reason(reason: &str) -> bool {
+    reason.contains("temporally unstable mutating method read")
+        && [
+            ".fetch_add()",
+            ".fetch_sub()",
+            ".fetch_and()",
+            ".fetch_or()",
+            ".fetch_xor()",
+            ".fetch_nand()",
+            ".fetch_max()",
+            ".fetch_min()",
+            ".fetch_update()",
+            ".compare_exchange()",
+            ".compare_exchange_weak()",
+            ".compare_and_swap()",
+        ]
+        .iter()
+        .any(|method| reason.contains(method))
+}
+
+fn atomic_load_store_ordering_reason(reason: &str) -> bool {
+    reason.contains("atomic load reads interior-mutable runtime state")
+        || (reason.contains("temporally unstable mutating method read")
+            && reason.contains(".store()"))
+}
+
+fn iterator_size_hint_runtime_bound_reason(reason: &str) -> bool {
+    reason.contains("size_hint")
+        && (reason.contains("did not reach bedrock")
+            || reason.contains("per-iteration runtime bounds")
+            || reason.contains("consumed-iterator local")
+            || reason.contains("unknown iterator consumption"))
 }
 
 fn iterator_consumption_named_refusal_category(
@@ -2810,6 +2853,92 @@ fn opaque_runtime_receiver_literal_twin() {
             "opaque runtime receiver",
         );
         assert_source_locus_warranted(&response, "opaque_runtime_receiver_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_atomic_rmw_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_atomic_rmw_refuses_with_literal_twin",
+            r#"
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[test]
+fn atomic_rmw_refused() {
+    let mut x = AtomicUsize::new(0);
+    x.fetch_or(1, Ordering::SeqCst);
+    assert_eq!(*x.get_mut(), 1);
+}
+
+#[test]
+fn atomic_rmw_literal_twin() {
+    assert_eq!(0usize | 1, 1);
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "atomic_rmw_refused",
+            "atomic read-modify-write runtime state",
+        );
+        assert_source_locus_warranted(&response, "atomic_rmw_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_atomic_load_store_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_atomic_load_store_refuses_with_literal_twin",
+            r#"
+use std::sync::atomic::{AtomicBool, Ordering};
+
+#[test]
+fn atomic_load_store_refused() {
+    let flag = AtomicBool::new(false);
+    flag.store(true, Ordering::SeqCst);
+    assert_eq!(flag.load(Ordering::SeqCst), true);
+}
+
+#[test]
+fn atomic_load_store_literal_twin() {
+    let flag = true;
+    assert_eq!(flag, true);
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "atomic_load_store_refused",
+            "atomic load/store ordering",
+        );
+        assert_source_locus_warranted(&response, "atomic_load_store_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_size_hint_runtime_bound_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_size_hint_runtime_bound_refuses_with_literal_twin",
+            r#"
+#[test]
+fn size_hint_runtime_bound_refused() {
+    let mut it = (0..).step_by(1);
+    let _ = it.next();
+    assert_eq!(it.size_hint(), (usize::MAX, None));
+}
+
+#[test]
+fn size_hint_literal_twin() {
+    assert_eq!([1, 2, 3].iter().size_hint(), (3, Some(3)));
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "size_hint_runtime_bound_refused",
+            "iterator size_hint runtime bound",
+        );
+        assert_source_locus_warranted(&response, "size_hint_literal_twin");
         let _ = std::fs::remove_dir_all(root);
     }
 
