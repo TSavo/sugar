@@ -18910,6 +18910,38 @@ mod lifter_key_tests {
         out.decls.iter().map(|d| d.name.as_str()).collect()
     }
 
+    fn output_contains_grounded_int_eq(out: &AdapterOutput, lhs: i128, rhs: i128) -> bool {
+        out.decls
+            .iter()
+            .filter_map(|decl| decl.inv.as_deref())
+            .any(|formula| formula_contains_grounded_int_eq(formula, lhs, rhs))
+    }
+
+    fn formula_contains_grounded_int_eq(formula: &Formula, lhs: i128, rhs: i128) -> bool {
+        match formula {
+            Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
+                term_int(args[0].as_ref()) == Some(lhs) && term_int(args[1].as_ref()) == Some(rhs)
+            }
+            Formula::Connective { operands, .. } => operands
+                .iter()
+                .any(|operand| formula_contains_grounded_int_eq(operand, lhs, rhs)),
+            Formula::Quantifier { body, .. } | Formula::Choice { body, .. } => {
+                formula_contains_grounded_int_eq(body, lhs, rhs)
+            }
+            _ => false,
+        }
+    }
+
+    fn term_int(term: &Term) -> Option<i128> {
+        match term {
+            Term::Const {
+                value: ConstValue::Int(value),
+                ..
+            } => Some(*value),
+            _ => None,
+        }
+    }
+
     // ── const/static ITEM initializer is unconditional (drain-letinit) ───────
 
     #[test]
@@ -19850,7 +19882,9 @@ mod lifter_key_tests {
     #[test]
     fn iterator_reads_do_not_coalesce() {
         // An iterator is consumed/advanced, so `len` observed at two program
-        // points must get distinct keys rather than coalesce.
+        // points must replay against their own receiver states rather than
+        // coalesce. For literal iterators, len now grounds all the way to scalar
+        // facts instead of leaving method-call EUF keys behind.
         let src = r#"
             #[test]
             fn iter_traj() {
@@ -19861,16 +19895,26 @@ mod lifter_key_tests {
             }
         "#;
         let out = lift_src(src);
-        let lens: Vec<&str> = contract_names(&out)
-            .into_iter()
-            .filter(|n| n.contains("method:len"))
-            .collect();
-        assert!(lens.len() >= 2, "expected two len obligations: {lens:?}");
-        let distinct: std::collections::HashSet<&str> = lens.iter().cloned().collect();
         assert_eq!(
-            distinct.len(),
-            lens.len(),
-            "iterator reads must have distinct keys, not coalesce: {lens:?}"
+            out.assertions_lifted, 2,
+            "both iterator len assertions should lift: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+        assert!(
+            output_contains_grounded_int_eq(&out, 3, 3),
+            "pre-next len should ground to 3 == 3: {:?}",
+            out.decls
+        );
+        assert!(
+            output_contains_grounded_int_eq(&out, 2, 2),
+            "post-next len should ground to 2 == 2: {:?}",
+            out.decls
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            !dump.contains("method:len"),
+            "literal iterator len should not fall back to generic method keys: {dump}"
         );
     }
 

@@ -23,7 +23,11 @@ use crate::sugar::term_leaf::resolved_term;
 use crate::{parse_int_lit, simple_path_name, strip_refs_groups, Sugar};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term("dormant_mut_ref", recognize);
+    crate::sugar::claim::ExprSugarClaim::term_before(
+        "dormant_mut_ref",
+        &["bound_path", "path"],
+        recognize,
+    );
 
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Path(path) = expr else {
