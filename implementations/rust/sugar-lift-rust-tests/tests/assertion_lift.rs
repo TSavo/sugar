@@ -19628,6 +19628,85 @@ fn runtime_match_literal_twin() {
 }
 
 #[test]
+fn rpc_source_refuses_opaque_iterator_collection_with_literal_twin() {
+    let doc = run_rpc_lift(
+        "src/source_opaque_iterator_collection.rs",
+        r#"
+#[test]
+fn opaque_iterator_collection_refused() {
+    let v = opaque([1i32, 2, 3]);
+    assert_eq!(v.into_iter().map(|x| x + 1).sum::<i32>(), 9);
+}
+
+#[test]
+fn opaque_iterator_collection_literal_twin() {
+    assert_eq!([1i32, 2, 3].into_iter().map(|x| x + 1).sum::<i32>(), 9);
+}
+"#,
+    );
+
+    assert_rpc_source_refused(
+        &doc,
+        "opaque_iterator_collection_refused",
+        "opaque runtime iterator collection",
+    );
+    assert_rpc_source_warranted(&doc, "opaque_iterator_collection_literal_twin");
+}
+
+#[test]
+fn rpc_source_refuses_runtime_callable_element_with_literal_twin() {
+    let doc = run_rpc_lift(
+        "src/source_runtime_callable.rs",
+        r#"
+fn id(x: i32) -> i32 { x }
+
+#[test]
+fn runtime_callable_element_refused() {
+    let funcs: [fn(i32) -> i32; 1] = [id];
+    assert!(funcs.into_iter().any(|f| f(1) == 1));
+}
+
+#[test]
+fn runtime_callable_element_literal_twin() {
+    assert!([1i32].into_iter().any(|x| x == 1));
+}
+"#,
+    );
+
+    assert_rpc_source_refused(
+        &doc,
+        "runtime_callable_element_refused",
+        "runtime callable element boundary",
+    );
+    assert_rpc_source_warranted(&doc, "runtime_callable_element_literal_twin");
+}
+
+#[test]
+fn rpc_source_refuses_nan_comparison_with_literal_twin() {
+    let doc = run_rpc_lift(
+        "src/source_nan_comparison.rs",
+        r#"
+#[test]
+fn nan_comparison_refused() {
+    assert!(f32::NAN != f32::NAN);
+}
+
+#[test]
+fn nan_comparison_literal_twin() {
+    assert!(1.0f32 == 1.0f32);
+}
+"#,
+    );
+
+    assert_rpc_source_refused(
+        &doc,
+        "nan_comparison_refused",
+        "IEEE NaN comparison boundary",
+    );
+    assert_rpc_source_warranted(&doc, "nan_comparison_literal_twin");
+}
+
+#[test]
 fn rpc_reduced_value_helper_keeps_contract_and_callsite_edge() {
     let doc = run_rpc_lift(
         "src/value_helper_edge.rs",
