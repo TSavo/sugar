@@ -23,14 +23,14 @@ pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 
 pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     recognize_function_map(expr, fcx, SequenceKind::Any)
-        .map(|(inner, func)| Box::new(FunctionMapSugar { inner, func }) as Box<dyn Sugar>)
+        .map(|(receiver, func)| Box::new(FunctionMapCallSugar { receiver, func }) as Box<dyn Sugar>)
 }
 
 pub(crate) fn recognize_term(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    recognize_function_map(expr, fcx, SequenceKind::ArrayOnly).map(|(inner, func)| {
+    recognize_function_map(expr, fcx, SequenceKind::ArrayOnly).map(|(receiver, func)| {
         Box::new(FunctionMapTermSugar {
             source: expr.clone(),
-            inner,
+            receiver,
             func,
         }) as Box<dyn Sugar>
     })
@@ -46,7 +46,7 @@ fn recognize_function_map(
     expr: &Expr,
     fcx: &SugarBuildCtx,
     sequence_kind: SequenceKind,
-) -> Option<(Box<dyn Sugar>, Expr)> {
+) -> Option<(Expr, Expr)> {
     let Expr::MethodCall(call) = expr else {
         return None;
     };
@@ -69,7 +69,21 @@ fn recognize_function_map(
     if !receiver_is_literal {
         return None;
     }
-    Some((build_composite(&call.receiver, fcx), func.clone()))
+    Some(((*call.receiver).clone(), func.clone()))
+}
+
+struct FunctionMapCallSugar {
+    receiver: Expr,
+    func: Expr,
+}
+
+impl Sugar for FunctionMapCallSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        Outcome::from_opt((|| {
+            let inner = build_inner_composite(&self.receiver, ctx);
+            reduce_function_map(inner.as_ref(), &self.func, ctx).map(Desugared::Seq)
+        })())
+    }
 }
 
 pub(crate) struct FunctionMapSugar {
@@ -87,14 +101,15 @@ impl Sugar for FunctionMapSugar {
 
 pub(crate) struct FunctionMapTermSugar {
     pub(crate) source: Expr,
-    pub(crate) inner: Box<dyn Sugar>,
+    pub(crate) receiver: Expr,
     pub(crate) func: Expr,
 }
 
 impl Sugar for FunctionMapTermSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         Outcome::from_opt((|| {
-            let mapped = reduce_function_map(self.inner.as_ref(), &self.func, ctx)?;
+            let inner = build_inner_composite(&self.receiver, ctx);
+            let mapped = reduce_function_map(inner.as_ref(), &self.func, ctx)?;
             let exprs: Vec<Expr> = mapped.into_iter().map(|elem| elem.expr).collect();
             let term =
                 literal_aggregate_term_in_scope("Array", exprs.iter(), &self.source, ctx.scope)
@@ -102,6 +117,19 @@ impl Sugar for FunctionMapTermSugar {
             Some(Desugared::Term(term))
         })())
     }
+}
+
+fn build_inner_composite(receiver: &Expr, ctx: &SugarCtx) -> Box<dyn Sugar> {
+    let let_inits = scope_let_inits(ctx);
+    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+    build_composite(receiver, &fcx)
+}
+
+fn scope_let_inits<'a, 'c>(ctx: &SugarCtx<'a, 'c>) -> BTreeMap<String, &'a Expr> {
+    ctx.scope
+        .let_bindings_iter()
+        .map(|(name, init)| (name.clone(), init))
+        .collect()
 }
 
 fn reduce_function_map(

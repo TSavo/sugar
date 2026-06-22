@@ -115,8 +115,10 @@ fn count_consumed_fold_assertions(call: &syn::ExprMethodCall) -> usize {
 /// `let`-bound receivers through `let_inits` is delegated to `peel_fold_adaptors`.
 /// `extra_rev` appends a final `RevSugar` (for `.rfold`). None on an unrepresentable
 /// adaptor / unresolvable binding (-> bail).
-fn decompose_seq(expr: &Expr, fcx: &SugarBuildCtx, extra_rev: bool) -> Option<Box<dyn Sugar>> {
-    let mut node = method_family::build_literal_sequence_composite(expr, fcx)?;
+fn decompose_seq(expr: &Expr, ctx: &SugarCtx, extra_rev: bool) -> Option<Box<dyn Sugar>> {
+    let let_inits = scope_let_inits(ctx);
+    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+    let mut node = method_family::build_literal_sequence_composite(expr, &fcx)?;
     if extra_rev {
         node = Box::new(crate::sugar::rev::RevSugar { inner: node });
     }
@@ -135,31 +137,23 @@ enum FoldItemBinder {
 /// literal domain is the finite conjunction of the per-iteration body with `acc`
 /// threaded as a CONST-FOLDED integer and `item`/index bound to the concrete
 /// element -- the construction axiom (desugar fold WITH fold). `.rfold` reverses
-/// the element order (the inner seq-sugar already carries the `Rev`). `desugar`
-/// recurses on `inner` for the element sequence, then threads + substitutes;
+/// the element order. `desugar` lazily builds the inner seq-sugar for the element
+/// sequence, then threads + substitutes;
 /// EXACT-OR-BAIL throughout (a non-const-foldable accumulator / side-effecting
 /// body / opaque element -> None).
 pub(crate) struct FoldSugar {
-    inner: Box<dyn Sugar>,
+    receiver: Expr,
+    init_expr: Expr,
     acc_var: String,
     item_binder: FoldItemBinder,
-    acc_0: i64,
     body_stmts: Vec<Stmt>,
     tail: Expr,
     method: String,
+    rev_fold: bool,
     /// The FULL closure body expr (block including the acc-update tail). The
     /// purity gate scans this whole body -- byte-identical to the procedural
     /// defolder, which checked `&closure.body` (tail included).
     closure_body: Expr,
-    /// In-scope LITERAL arrays (`ys -> [13, 15, ..]`), captured from `let_inits` at
-    /// decompose time. Used ONLY to resolve a body `index(ys, <const>)` term to its
-    /// concrete literal element AFTER the accumulator (the index) has been threaded
-    /// to a literal position -- the teeth: the asserted RHS carries the real element
-    /// value, so a wrong-expected twin is z3-REFUTABLE, not vacuously satisfiable.
-    /// Scoped to the fold body so no other (already-discharged) site's lifted form
-    /// changes. A non-literal-array binding is absent -> the `index` term stays the
-    /// uninterpreted EUF accessor (sound under-claim, the established floor).
-    literal_arrays: BTreeMap<String, Vec<Expr>>,
 }
 
 impl Sugar for FoldSugar {
@@ -168,9 +162,12 @@ impl Sugar for FoldSugar {
         // lifts it (the structural bail -> `Hit(Effect::Unsupported)`, discarded by the
         // fall-through consumer exactly as the old `None` was).
         Outcome::from_opt((|| {
+            let let_inits = scope_let_inits(ctx);
+            let acc_0 = const_int_acc_init(&self.init_expr, &let_inits)?;
+            let inner = decompose_seq(&self.receiver, ctx, self.rev_fold)?;
             // The post-adaptor element sequence (the inner seq-sugar bottoms out at a
             // literal domain or bails).
-            let seq = self.inner.desugar(ctx).dug()?.into_seq()?;
+            let seq = inner.desugar(ctx).dug()?.into_seq()?;
             if seq.is_empty() {
                 // The adaptor chain emptied the sequence (`.filter` kept nothing /
                 // `.take(0)`): the fold body never runs -> vacuous. None rather than a
@@ -184,7 +181,7 @@ impl Sugar for FoldSugar {
                 target: "sugar_lift_rust_tests::sugar::fold",
                 method = %self.method,
                 seq_len = seq.len(),
-                acc0 = self.acc_0,
+                acc0 = acc_0,
                 "fold replay resolved temporal sequence"
             );
             let n_body = count_asserts_in_stmts(&self.body_stmts);
@@ -236,7 +233,8 @@ impl Sugar for FoldSugar {
             // threaded. An element that does not translate cleanly drops that array (its
             // `index` reads stay the EUF accessor -- a sound under-claim, never a fake-dig).
             let mut array_terms: BTreeMap<String, Vec<Rc<Term>>> = BTreeMap::new();
-            for (arr, elems) in &self.literal_arrays {
+            let literal_arrays = literal_arrays_from_ctx(ctx);
+            for (arr, elems) in &literal_arrays {
                 // SOUNDNESS: only an IMMUTABLE literal array may have its `index(arr, k)`
                 // read resolved to a literal element. A `let mut arr = [..]` could be
                 // index-assigned / mutated, so its value at a later program point is not
@@ -264,7 +262,7 @@ impl Sugar for FoldSugar {
             // concrete acc_k + the item binder's component(s) into the body formula, and
             // const-fold the tail to acc_{k+1} given those same bindings.
             let mut instances = Vec::with_capacity(seq.len());
-            let mut acc = self.acc_0;
+            let mut acc = acc_0;
             for (iteration, elem) in seq.iter().enumerate() {
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::fold",
@@ -345,11 +343,28 @@ impl Sugar for FoldSugar {
     }
 }
 
+fn scope_let_inits<'a, 'c>(ctx: &SugarCtx<'a, 'c>) -> BTreeMap<String, &'a Expr> {
+    ctx.scope
+        .let_bindings_iter()
+        .map(|(name, init)| (name.clone(), init))
+        .collect()
+}
+
+fn literal_arrays_from_ctx(ctx: &SugarCtx) -> BTreeMap<String, Vec<Expr>> {
+    let mut literal_arrays: BTreeMap<String, Vec<Expr>> = BTreeMap::new();
+    for (name, init) in ctx.scope.let_bindings_iter() {
+        if let Expr::Array(arr) = strip_refs_groups(init) {
+            literal_arrays.insert(name.clone(), arr.elems.iter().cloned().collect());
+        }
+    }
+    literal_arrays
+}
+
 /// Build a `FoldSugar` (or `RFoldSugar`) from a `.fold`/`.rfold` method call, by
-/// decomposing the receiver into its sequence-`Sugar` tree and capturing the
-/// closure's binders + body + acc-update tail. None (bail) on any shape outside
-/// the represented set -- this IS the front half of `try_lift_fold_forall`
-/// (parsing), with the reduction living in `FoldSugar::desugar`.
+/// capturing the raw receiver plus the closure's binders + body + acc-update tail.
+/// None (bail) on any shape outside the represented set -- this IS the front half of
+/// `try_lift_fold_forall` (parsing), with the reduction living in
+/// `FoldSugar::desugar`.
 pub(crate) fn decompose_fold(expr: &Expr, fcx: &SugarBuildCtx) -> Option<FoldSugar> {
     let Expr::MethodCall(call) = expr else {
         return None;
@@ -382,8 +397,10 @@ pub(crate) fn decompose_fold(expr: &Expr, fcx: &SugarBuildCtx) -> Option<FoldSug
         }
         other => FoldItemBinder::Whole(closure_single_param_ident(other)?),
     };
-    let acc_0 = const_int_acc_init(init_expr, fcx.let_inits())?;
-    let inner = decompose_seq(&call.receiver, fcx, rev_fold)?;
+    const_int_acc_init(init_expr, fcx.let_inits())?;
+    if !method_family::resolves_literal_sequence(&call.receiver, fcx.let_inits()) {
+        return None;
+    }
     // The closure body: block-bodied (asserts + acc-update tail). The tail is the
     // final expr-without-semi; the preceding statements are the body.
     let Expr::Block(body_block) = &*closure.body else {
@@ -393,23 +410,15 @@ pub(crate) fn decompose_fold(expr: &Expr, fcx: &SugarBuildCtx) -> Option<FoldSug
     let Some((Stmt::Expr(tail, None), body_stmts)) = stmts.split_last() else {
         return None;
     };
-    // Capture the in-scope LITERAL arrays so the fold body's `index(ys, k)` term
-    // (after the index `k` is threaded to a literal) can be resolved to its element.
-    let mut literal_arrays: BTreeMap<String, Vec<Expr>> = BTreeMap::new();
-    for (name, init) in fcx.let_inits() {
-        if let Expr::Array(arr) = strip_refs_groups(init) {
-            literal_arrays.insert(name.clone(), arr.elems.iter().cloned().collect());
-        }
-    }
     Some(FoldSugar {
-        inner,
+        receiver: (*call.receiver).clone(),
+        init_expr: init_expr.clone(),
         acc_var,
         item_binder,
-        acc_0,
         body_stmts: body_stmts.to_vec(),
         tail: tail.clone(),
         method,
+        rev_fold,
         closure_body: (*closure.body).clone(),
-        literal_arrays,
     })
 }
