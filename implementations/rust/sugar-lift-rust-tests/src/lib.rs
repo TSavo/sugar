@@ -45,6 +45,7 @@ pub mod sugar {
     pub mod callsite;
     pub mod cast_term;
     pub mod catalog;
+    pub mod cfg_select;
     pub mod chain;
     pub mod char_method;
     pub mod char_range_collect_string;

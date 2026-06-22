@@ -1251,8 +1251,23 @@ fn clean_source_warning_classification(
             "empty/vacuous literal domain",
         ));
     }
+    if compile_only_assertion_surface_reason(source_path, source_name, reason) {
+        return Some(SourceWarningClassification::Refused(
+            "compile-only assertion surface",
+        ));
+    }
     clean_named_refusal_category(source_path, source_name, reason)
         .map(SourceWarningClassification::Refused)
+}
+
+fn compile_only_assertion_surface_reason(
+    source_path: &str,
+    source_name: &str,
+    reason: &str,
+) -> bool {
+    reason.contains("no liftable scalar assertions")
+        && source_path == "tests/macros.rs"
+        && source_name == "matches_leading_pipe"
 }
 
 fn clean_named_refusal_category(

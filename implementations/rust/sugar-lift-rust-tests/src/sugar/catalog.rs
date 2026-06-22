@@ -12,7 +12,7 @@ use crate::sugar::claim::{ExprSugarClaim, ItemSugarClaim, SugarCandidate, SugarR
 use crate::sugar::factory::{AccountedSugar, FactoryAuditSeed, SugarBuildCtx};
 use crate::sugar::{
     aggregate_decomp, array_repeat, array_term, assign_op, await_term, binop, block_term,
-    bool_bitwise, bool_method, bound_path, call, cast_term, chain, char_method,
+    bool_bitwise, bool_method, bound_path, call, cast_term, cfg_select, chain, char_method,
     char_range_collect_string, char_range_filter_map, closure_iter_advance_body,
     closure_mutating_body, closure_opaque_accessor, closure_runtime_receiver, closure_term,
     closure_tls_accessor, collect, collection_literal, compute_float, concat_macro, conditional,
@@ -38,6 +38,7 @@ use crate::{FactoryCandidateAudit, Sugar};
 /// The unified expression-Sugar catalog. This is wiring only: each entry points at
 /// metadata owned by the Sugar module itself.
 const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
+    &cfg_select::ASSERTION_SURFACE_EXPR_SUGAR,
     &tuple_decomp::ASSERTION_SURFACE_EXPR_SUGAR,
     &slice_search::ASSERTION_SURFACE_EXPR_SUGAR,
     &integer_decode::TUPLE_PRODUCER_EXPR_SUGAR,
@@ -63,6 +64,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &literal_iterator_quantifier::CONSTRAINT_EXPR_SUGAR,
     &match_scrutinee::CONSTRAINT_EXPR_SUGAR,
     &regex_match::CONSTRAINT_EXPR_SUGAR,
+    &constraint::CFG_MACRO_SUGAR,
     &char_method::CONSTRAINT_EXPR_SUGAR,
     &string_predicate::CONSTRAINT_EXPR_SUGAR,
     &float_refinement::CONSTRAINT_EXPR_SUGAR,

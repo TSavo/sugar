@@ -74,6 +74,12 @@ pub(crate) const ASSERT_MACRO_ASSERTION_SURFACE: ExprSugarClaim =
         recognize_assert_macro,
     );
 
+pub(crate) const CFG_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::constraint_before(
+    "constraint_cfg_macro",
+    &["constraint_bool_expr"],
+    recognize_cfg_macro,
+);
+
 pub(crate) const BOOL_EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::fallback_constraint("constraint_bool_expr", recognize_bool_expr);
 
@@ -322,6 +328,51 @@ impl Sugar for AssertSugar {
             return unsupported(reason);
         }
         self.payload.desugar(ctx)
+    }
+}
+
+struct CfgMacroSugar {
+    mac: syn::Macro,
+}
+
+fn recognize_cfg_macro(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let Expr::Macro(ExprMacro { mac, .. }) = expr else {
+        return None;
+    };
+    if !mac
+        .path
+        .segments
+        .last()
+        .is_some_and(|segment| segment.ident == "cfg")
+    {
+        return None;
+    }
+    Some(Box::new(CfgMacroSugar { mac: mac.clone() }))
+}
+
+impl Sugar for CfgMacroSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        let predicate = match self.mac.parse_body::<CfgPredicate>() {
+            Ok(predicate) => predicate,
+            Err(e) => {
+                return unsupported(format!("cfg!: cannot parse cfg predicate: {e}"));
+            }
+        };
+        let value = match configuration::resolve_predicate(&predicate, ctx.options) {
+            CfgDisposition::Present => true,
+            CfgDisposition::Absent(_) => false,
+            CfgDisposition::Ambiguous(reason) => {
+                return unsupported(format!(
+                    "cfg!: ambiguous cfg predicate `{predicate}`: {reason}"
+                ));
+            }
+        };
+        Outcome::Dug(Desugared::Constraints {
+            atom: eq(bool_const(value), bool_const(true)),
+            n: 1,
+            kind: AssertionFactKind::Warranted,
+            warrant: Warrant { name: None },
+        })
     }
 }
 

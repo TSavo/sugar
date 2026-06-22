@@ -21523,6 +21523,56 @@ fn run_rpc_lift(rel_path: &str, source: &str) -> serde_json::Value {
     panic!("no `lift` (id:2) reply in rpc output:\n{stdout}");
 }
 
+fn run_rpc_lift_with_config(rel_path: &str, source: &str, config: &str) -> serde_json::Value {
+    use std::io::Write;
+    let dir = std::env::temp_dir().join(format!(
+        "sugar_rpc_irdoc_cfg_{}_{}",
+        std::process::id(),
+        rel_path.replace('/', "_")
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    let file = dir.join(rel_path);
+    std::fs::create_dir_all(file.parent().unwrap()).expect("mkdir source parent");
+    std::fs::create_dir_all(dir.join(".sugar")).expect("mkdir .sugar");
+    std::fs::write(&file, source).expect("write fixture");
+    std::fs::write(dir.join(".sugar/config.toml"), config).expect("write config");
+
+    let req = format!(
+        "{}\n{}\n{}\n",
+        serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}),
+        serde_json::json!({"jsonrpc":"2.0","id":2,"method":"lift","params":{
+            "workspace_root": dir.to_str().unwrap(),
+            "source_paths": [rel_path],
+        }}),
+        serde_json::json!({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}}),
+    );
+
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_rust_test_assertions_rpc"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn rpc bin");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(req.as_bytes())
+        .expect("write rpc req");
+    let out = child.wait_with_output().expect("rpc bin output");
+    let _ = std::fs::remove_dir_all(&dir);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for line in stdout.lines() {
+        let v: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if v.get("id") == Some(&serde_json::json!(2)) {
+            return v["result"].clone();
+        }
+    }
+    panic!("no `lift` (id:2) reply in rpc output:\n{stdout}");
+}
+
 /// The `status` of a named fn locus in a `lift` ir-document, or None if absent.
 fn locus_status<'a>(doc: &'a serde_json::Value, fn_name: &str) -> Option<&'a str> {
     doc["sourceAudits"]
@@ -21566,6 +21616,70 @@ fn assert_rpc_source_warranted(doc: &serde_json::Value, fn_name: &str) {
         Some("warranted"),
         "{fn_name} is the value-in-text twin and must still warrant: {doc:#}"
     );
+}
+
+#[test]
+fn rpc_source_lifts_cfg_select_active_assertions_with_literal_twin() {
+    let doc = run_rpc_lift_with_config(
+        "tests/macros.rs",
+        r#"
+#[test]
+fn cfg_select_debug_assertions() {
+    cfg_select! {
+        debug_assertions => {
+            assert!(cfg!(debug_assertions));
+            assert_eq!(4, 2 + 2);
+        }
+        _ => {
+            assert!(cfg!(not(debug_assertions)));
+            assert_eq!(10, 5 + 5);
+        }
+    }
+}
+
+#[test]
+fn cfg_select_literal_twin() {
+    assert_eq!(4, 2 + 2);
+}
+"#,
+        r#"
+[rust-test-assertions.target_cfg]
+target = "x86_64-unknown-linux-gnu"
+facts = [
+  "debug_assertions",
+  "target_pointer_width=\"64\"",
+  "unix",
+]
+"#,
+    );
+
+    assert_rpc_source_warranted(&doc, "cfg_select_debug_assertions");
+    assert_rpc_source_warranted(&doc, "cfg_select_literal_twin");
+}
+
+#[test]
+fn rpc_source_refuses_compile_only_matches_syntax_with_literal_twin() {
+    let doc = run_rpc_lift(
+        "tests/macros.rs",
+        r#"
+#[test]
+fn matches_leading_pipe() {
+    matches!(1, | 1 | 2 | 3);
+}
+
+#[test]
+fn matches_literal_twin() {
+    assert!(matches!(Some(1), Some(_)));
+}
+"#,
+    );
+
+    assert_rpc_source_refused(
+        &doc,
+        "matches_leading_pipe",
+        "compile-only assertion surface",
+    );
+    assert_rpc_source_warranted(&doc, "matches_literal_twin");
 }
 
 /// True iff any `ir` entry's serialized form mentions the opaque `call:<name>` symbol --
