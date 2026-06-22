@@ -25644,6 +25644,97 @@ fn t() {
 }
 
 // ---------------------------------------------------------------------------
+// `RangeInclusive::{start,end}` over literal ranges -- endpoint accessors return
+// references to the written inclusive bounds, so `*range.start()` / `*range.end()`
+// should lower to the concrete literal floor. Wrong endpoint claims are z3-UNSAT.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn range_inclusive_start_end_accessors_lower_to_literal_floor() {
+    let start = lift_eq_decl("*(0..=10).start()", "0", "tests/range_incl_start_good.rs");
+    assert_eq!(
+        dug_eq_int_pairs(&start),
+        vec![(0, 0)],
+        "RangeInclusive::start must expose the literal lower bound"
+    );
+    assert!(
+        !decl_mentions_ctor(&start, "method:start"),
+        "literal RangeInclusive::start must not survive as an opaque method term: {:?}",
+        start.inv
+    );
+
+    let end = lift_eq_decl("*(0..=10).end()", "10", "tests/range_incl_end_good.rs");
+    assert_eq!(
+        dug_eq_int_pairs(&end),
+        vec![(10, 10)],
+        "RangeInclusive::end must expose the literal upper bound"
+    );
+    assert!(
+        !decl_mentions_ctor(&end, "method:end"),
+        "literal RangeInclusive::end must not survive as an opaque method term: {:?}",
+        end.inv
+    );
+}
+
+#[test]
+fn range_inclusive_start_end_bad_twins_are_unsat() {
+    let cases = [
+        (
+            "*(0..=10).start()",
+            "1",
+            "range_incl_start_bad",
+            "tests/range_incl_start_bad.rs",
+        ),
+        (
+            "*(0..=10).end()",
+            "9",
+            "range_incl_end_bad",
+            "tests/range_incl_end_bad.rs",
+        ),
+    ];
+    for (lhs, rhs, label, file) in cases {
+        let decl = lift_eq_decl(lhs, rhs, file);
+        assert!(
+            !dug_eq_int_pairs(&decl).is_empty(),
+            "{lhs} == {rhs} must ground before the bad-twin z3 check: {:?}",
+            decl.inv
+        );
+        if let Some(sat) = z3_verdict(&inv_json(&decl), label) {
+            assert!(
+                !sat,
+                "{lhs} == {rhs} is the wrong endpoint claim and must be z3-UNSAT"
+            );
+        }
+    }
+}
+
+#[test]
+fn range_inclusive_start_end_runtime_bounds_do_not_fabricate_literals() {
+    let src = r#"
+fn runtime() -> i32 { std::env::args().count() as i32 }
+
+#[test]
+fn t() {
+    let hi = runtime();
+    assert_eq!(*(0..=hi).end(), 10);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/range_incl_end_runtime.rs");
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        out.assertions_lifted == 0 || doc.contains("method:end"),
+        "runtime RangeInclusive::end must decline or stay opaque, never fold to a fabricated endpoint: {doc}"
+    );
+    for decl in &out.decls {
+        assert!(
+            dug_eq_int_pairs(decl).is_empty(),
+            "runtime endpoint must not become a ground equality: {:?}",
+            decl.inv
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Lever 23: arith-trait-method fold teeth + bound_path warrant
 //
 // These tests cover two orthogonal layers:
