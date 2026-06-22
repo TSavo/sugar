@@ -59,14 +59,13 @@ pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     recognize_constraint,
 );
 
-/// A recognized rust regex-match assertion: the pattern operand built into an
-/// inner `Sugar`, and the subject expr. lib.rs drives `desugar` to resolve the
-/// pattern string, gates regularity, and emits `str.in-regex(subject, pattern)`.
+/// A recognized rust regex-match assertion: the raw pattern operand and the
+/// subject expr. lib.rs drives `desugar` to build and resolve the pattern string,
+/// gates regularity, and emits `str.in-regex(subject, pattern)`.
 pub(crate) struct RegexMatch {
-    /// The pattern operand of `Regex::new(<pattern>)`, built into an inner `Sugar`.
-    /// Resolving it is `self.pattern.desugar(ctx)` — compositional, so a literal /
-    /// const-string / `concat!` all flow through one path.
-    pub(crate) pattern: Box<dyn Sugar>,
+    /// The raw pattern operand of `Regex::new(<pattern>)`. Resolving it is lazy:
+    /// `resolve_pattern(ctx)` builds the child `Sugar` under the desugar-time scope.
+    pub(crate) pattern: Expr,
     /// The subject expr the regex is matched against (`is_match(subj)` /
     /// `find(subj)`). A literal subject is the decidable POINT case; a variable
     /// subject is the UNIVERSAL membership case (translated as an opaque term in
@@ -79,14 +78,12 @@ pub(crate) struct RegexMatch {
 
 struct RegexMatchSugar {
     matched: RegexMatch,
-    subject: Box<dyn Sugar>,
 }
 
 fn recognize_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let stable = stable_let_bindings(fcx.scope());
     let matched = recognize_regex_match(expr, &stable, fcx)?;
-    let subject = build_term(&matched.subject, fcx);
-    Some(Box::new(RegexMatchSugar { matched, subject }))
+    Some(Box::new(RegexMatchSugar { matched }))
 }
 
 impl Sugar for RegexMatchSugar {
@@ -115,7 +112,8 @@ impl Sugar for RegexMatchSugar {
                 ),
             });
         }
-        let subject = match term_payload(&*self.subject, ctx) {
+        let subject_node = build_term_in_ctx(&self.matched.subject, ctx);
+        let subject = match term_payload(&*subject_node, ctx) {
             Ok(term) => term,
             Err(outcome) => return outcome,
         };
@@ -130,14 +128,17 @@ impl Sugar for RegexMatchSugar {
 }
 
 impl RegexMatch {
-    /// Resolve the pattern operand by DESUGARING the inner pattern `Sugar`
+    /// Resolve the pattern operand by lazily building and DESUGARING the pattern `Sugar`
     /// (mirroring `MapSugar`'s `self.inner.desugar(ctx)`). The caller reads the
     /// resolved string off the `Outcome` via `Desugared::as_string_literal`. A
     /// `Dug` carries the resolved literal term; a `Hit` is a genuinely runtime /
     /// unsupported pattern, so the caller declines on `Hit`. This is the WHOLE
     /// compositional contract: `RegexSugar` consumes whatever its pattern child dug to.
     pub(crate) fn resolve_pattern(&self, ctx: &SugarCtx) -> Outcome {
-        self.pattern.desugar(ctx)
+        let stable = stable_let_bindings(ctx.scope);
+        let let_inits = stable_let_refs(&stable);
+        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        build_pattern_sugar(self.pattern.clone(), &stable, &fcx).desugar(ctx)
     }
 }
 
@@ -152,7 +153,7 @@ impl RegexMatch {
 pub(crate) fn recognize_regex_match(
     expr: &Expr,
     let_bindings: &BTreeMap<String, Expr>,
-    fcx: &SugarBuildCtx,
+    _fcx: &SugarBuildCtx,
 ) -> Option<RegexMatch> {
     match unwrap_grouping(expr) {
         // `<regex>.is_match(subj)`
@@ -162,7 +163,7 @@ pub(crate) fn recognize_regex_match(
             }
             let pattern_expr = regex_pattern_expr(&call.receiver, let_bindings)?;
             Some(RegexMatch {
-                pattern: build_pattern_sugar(pattern_expr, let_bindings, fcx),
+                pattern: pattern_expr,
                 subject: unwrap_grouping(&call.args[0]).clone(),
                 method: "is_match",
             })
@@ -181,7 +182,7 @@ pub(crate) fn recognize_regex_match(
             }
             let pattern_expr = regex_pattern_expr(&find.receiver, let_bindings)?;
             Some(RegexMatch {
-                pattern: build_pattern_sugar(pattern_expr, let_bindings, fcx),
+                pattern: pattern_expr,
                 subject: unwrap_grouping(&find.args[0]).clone(),
                 method: "find",
             })
@@ -316,6 +317,20 @@ fn method_assertion_name(
 
 fn unsupported(reason: String) -> Outcome {
     Outcome::Hit(Effect::Unsupported { reason })
+}
+
+fn build_term_in_ctx(expr: &Expr, ctx: &SugarCtx) -> Box<dyn Sugar> {
+    let stable = stable_let_bindings(ctx.scope);
+    let let_inits = stable_let_refs(&stable);
+    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+    build_term(expr, &fcx)
+}
+
+fn stable_let_refs(stable: &BTreeMap<String, Expr>) -> BTreeMap<String, &Expr> {
+    stable
+        .iter()
+        .map(|(name, init)| (name.clone(), init))
+        .collect()
 }
 
 #[cfg(test)]

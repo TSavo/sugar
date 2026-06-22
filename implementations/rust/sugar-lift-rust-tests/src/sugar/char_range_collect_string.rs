@@ -5,11 +5,14 @@
 // has already accepted the cast; we only materialize the finite literal range into
 // the exact string it denotes.
 
+use std::collections::BTreeMap;
+
 use sugar_ir_symbolic::str_const;
 use syn::{Expr, GenericArgument, Type};
 use tracing::debug;
 
 use crate::sugar::factory::{build_composite, SugarBuildCtx};
+use crate::sugar::format::stable_let_bindings;
 use crate::sugar::method_family;
 use crate::{
     closure_single_param_ident, strip_refs_groups, ConstVal, Desugared, Outcome, Sugar, SugarCtx,
@@ -48,18 +51,21 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         "recognized literal char range collect string"
     );
     Some(Box::new(CharRangeCollectStringSugar {
-        seq: build_composite(&map_call.receiver, fcx),
+        seq_expr: (*map_call.receiver).clone(),
     }))
 }
 
 struct CharRangeCollectStringSugar {
-    seq: Box<dyn Sugar>,
+    seq_expr: Expr,
 }
 
 impl Sugar for CharRangeCollectStringSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         Outcome::from_opt((|| {
-            let seq = self.seq.desugar(ctx).dug()?.into_seq()?;
+            let seq = build_composite_in_ctx(&self.seq_expr, ctx)
+                .desugar(ctx)
+                .dug()?
+                .into_seq()?;
             let mut out = String::with_capacity(seq.len());
             for elem in seq {
                 let n = elem.value.as_ref().and_then(ConstVal::as_int)?;
@@ -74,6 +80,20 @@ impl Sugar for CharRangeCollectStringSugar {
             Some(Desugared::Term(str_const(out)))
         })())
     }
+}
+
+fn build_composite_in_ctx(expr: &Expr, ctx: &SugarCtx) -> Box<dyn Sugar> {
+    let stable = stable_let_bindings(ctx.scope);
+    let let_inits = stable_let_refs(&stable);
+    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+    build_composite(expr, &fcx)
+}
+
+fn stable_let_refs(stable: &BTreeMap<String, Expr>) -> BTreeMap<String, &Expr> {
+    stable
+        .iter()
+        .map(|(name, init)| (name.clone(), init))
+        .collect()
 }
 
 fn collects_string(call: &syn::ExprMethodCall) -> bool {
