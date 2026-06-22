@@ -1538,6 +1538,116 @@ fn try_from_predicate_wrong_discriminant_is_unsat() {
     if let Some(sat) = z3_verdict(&inv_json(decl), "t_result_inspect_err_is_ok_bad") {
         assert!(!sat, "Err(_).inspect_err(...).is_ok() must be z3-UNSAT");
     }
+
+    let bound_unwrap_good = r#"
+        #[test]
+        fn t_result_bound_unwrap_good() {
+            let r_ok: Result<u8, u8> = Ok(42);
+            assert_eq!(r_ok.unwrap(), 42);
+        }
+    "#;
+    let out = lift_file(
+        &parse(bound_unwrap_good),
+        "coretests/result/bound_unwrap_good.rs",
+    );
+    let decl = out
+        .decls
+        .iter()
+        .find(|decl| decl.name.ends_with("::t_result_bound_unwrap_good"))
+        .expect("scalar assertion decl for let-bound Result unwrap good");
+    let inv = inv_json(decl);
+    let dump = inv.to_string();
+    assert!(
+        dump.contains("\"value\":42") && !dump.contains("method:unwrap"),
+        "let-bound Result unwrap receiver must fold to the Ok payload in the assertion: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv, "t_result_bound_unwrap_good") {
+        assert!(sat, "let-bound Ok(_).unwrap() == payload must be SAT");
+    }
+
+    let bound_unwrap_bad = r#"
+        #[test]
+        fn t_result_bound_unwrap_bad() {
+            let r_ok: Result<u8, u8> = Ok(42);
+            assert_eq!(r_ok.unwrap(), 41);
+        }
+    "#;
+    let out = lift_file(
+        &parse(bound_unwrap_bad),
+        "coretests/result/bound_unwrap_bad.rs",
+    );
+    let decl = out
+        .decls
+        .iter()
+        .find(|decl| decl.name.ends_with("::t_result_bound_unwrap_bad"))
+        .expect("scalar assertion decl for let-bound Result unwrap bad");
+    let inv = inv_json(decl);
+    let dump = inv.to_string();
+    assert!(
+        dump.contains("\"value\":42") && !dump.contains("method:unwrap"),
+        "let-bound Result unwrap bad twin must carry the real Ok payload in the assertion: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv, "t_result_bound_unwrap_bad") {
+        assert!(
+            !sat,
+            "let-bound Ok(_).unwrap() wrong payload must be z3-UNSAT"
+        );
+    }
+
+    let bound_expect_good = r#"
+        #[test]
+        fn t_result_bound_expect_good() {
+            let r_ok: Result<u8, u8> = Ok(42);
+            assert_eq!(r_ok.expect("must be ok"), 42);
+        }
+    "#;
+    let out = lift_file(
+        &parse(bound_expect_good),
+        "coretests/result/bound_expect_good.rs",
+    );
+    let decl = out
+        .decls
+        .iter()
+        .find(|decl| decl.name.ends_with("::t_result_bound_expect_good"))
+        .expect("scalar assertion decl for let-bound Result expect good");
+    let inv = inv_json(decl);
+    let dump = inv.to_string();
+    assert!(
+        dump.contains("\"value\":42") && !dump.contains("method:expect"),
+        "let-bound Result expect receiver must fold to the Ok payload in the assertion: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv, "t_result_bound_expect_good") {
+        assert!(sat, "let-bound Ok(_).expect(..) == payload must be SAT");
+    }
+
+    let bound_expect_bad = r#"
+        #[test]
+        fn t_result_bound_expect_bad() {
+            let r_ok: Result<u8, u8> = Ok(42);
+            assert_eq!(r_ok.expect("must be ok"), 41);
+        }
+    "#;
+    let out = lift_file(
+        &parse(bound_expect_bad),
+        "coretests/result/bound_expect_bad.rs",
+    );
+    let decl = out
+        .decls
+        .iter()
+        .find(|decl| decl.name.ends_with("::t_result_bound_expect_bad"))
+        .expect("scalar assertion decl for let-bound Result expect bad");
+    let inv = inv_json(decl);
+    let dump = inv.to_string();
+    assert!(
+        dump.contains("\"value\":42") && !dump.contains("method:expect"),
+        "let-bound Result expect bad twin must carry the real Ok payload in the assertion: {dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv, "t_result_bound_expect_bad") {
+        assert!(
+            !sat,
+            "let-bound Ok(_).expect(..) wrong payload must be z3-UNSAT"
+        );
+    }
 }
 
 // Signed/unsigned boundary teeth: `i8::try_from(200u16)` overflows (200 > 127) ->
