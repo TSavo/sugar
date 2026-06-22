@@ -19135,6 +19135,41 @@ fn locus_status<'a>(doc: &'a serde_json::Value, fn_name: &str) -> Option<&'a str
         .and_then(|l| l["status"].as_str())
 }
 
+/// The refusal/warrant reason of a named fn locus in a `lift` ir-document.
+fn locus_reason<'a>(doc: &'a serde_json::Value, fn_name: &str) -> Option<&'a str> {
+    doc["sourceAudits"]
+        .as_array()?
+        .iter()
+        .flat_map(|a| a["loci"].as_array().into_iter().flatten())
+        .find(|l| l["ast_path"] == serde_json::json!(fn_name))
+        .and_then(|l| l["reason"].as_str())
+}
+
+fn assert_rpc_source_refused(doc: &serde_json::Value, fn_name: &str, category: &str) {
+    assert_eq!(
+        locus_status(doc, fn_name),
+        Some("refused"),
+        "{fn_name} must be named-refused: {doc:#}"
+    );
+    let reason = locus_reason(doc, fn_name).unwrap_or("");
+    assert!(
+        reason.contains(category),
+        "{fn_name} refusal must carry category {category:?}, got {reason:?}: {doc:#}"
+    );
+    assert!(
+        !reason.contains("refuted"),
+        "{fn_name} must refuse by name, not refute: {reason}"
+    );
+}
+
+fn assert_rpc_source_warranted(doc: &serde_json::Value, fn_name: &str) {
+    assert_eq!(
+        locus_status(doc, fn_name),
+        Some("warranted"),
+        "{fn_name} is the value-in-text twin and must still warrant: {doc:#}"
+    );
+}
+
 /// True iff any `ir` entry's serialized form mentions the opaque `call:<name>` symbol --
 /// i.e. a standalone `out=call:<name>` warrant decl was minted into the ir-document.
 fn ir_mentions_call_symbol(doc: &serde_json::Value, name: &str) -> bool {
@@ -19189,6 +19224,150 @@ fn assert_contract_edge(doc: &serde_json::Value, source: &str, symbol: &str, tar
             "{key} must be a prefixed CID, got {cid}: {edge:#}"
         );
     }
+}
+
+#[test]
+fn rpc_source_refuses_compile_time_reflection_with_literal_twin() {
+    let doc = run_rpc_lift(
+        "src/source_reflection.rs",
+        r#"
+#[test]
+fn reflection_refused() {
+    match const { Type::of::<[u16; 4]>() }.kind {
+        TypeKind::Array(array) => {
+            assert_eq!(array.element_ty, TypeId::of::<u16>());
+            assert_eq!(array.len, 4);
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn reflection_literal_twin() {
+    assert_eq!(4, 4);
+}
+"#,
+    );
+
+    assert_rpc_source_refused(
+        &doc,
+        "reflection_refused",
+        "compiler reflection fact not in text",
+    );
+    assert_rpc_source_warranted(&doc, "reflection_literal_twin");
+}
+
+#[test]
+fn rpc_source_refuses_generic_runtime_instantiation_with_literal_twin() {
+    let doc = run_rpc_lift(
+        "src/source_generic_instantiation.rs",
+        r#"
+#[test]
+fn generic_instantiation_refused() {
+    fn test_num<T: PartialEq + Copy>(a: T, b: T) { assert_eq!(a, b); }
+    let _ = opaque(test_num(1u32, 1u32));
+}
+
+#[test]
+fn generic_instantiation_literal_twin() {
+    fn test_num(a: u32, b: u32) { assert_eq!(a, b); }
+    test_num(1u32, 1u32);
+}
+"#,
+    );
+
+    assert_rpc_source_refused(
+        &doc,
+        "generic_instantiation_refused",
+        "runtime generic instantiation boundary",
+    );
+    assert_rpc_source_warranted(&doc, "generic_instantiation_literal_twin");
+}
+
+#[test]
+fn rpc_source_refuses_future_handoff_with_literal_twin() {
+    let doc = run_rpc_lift(
+        "src/source_future_handoff.rs",
+        r#"
+#[test]
+fn future_handoff_refused() {
+    block_on(async move {
+        let x = join!(async { 0 }).await;
+        assert_eq!(x, 0);
+    });
+}
+
+#[test]
+fn future_handoff_literal_twin() {
+    assert_eq!(0, 0);
+}
+"#,
+    );
+
+    assert_rpc_source_refused(
+        &doc,
+        "future_handoff_refused",
+        "runtime future handoff boundary",
+    );
+    assert_rpc_source_warranted(&doc, "future_handoff_literal_twin");
+}
+
+#[test]
+fn rpc_source_refuses_runtime_searcher_state_machine_with_literal_twin() {
+    let doc = run_rpc_lift(
+        "src/source_searcher.rs",
+        r#"
+macro_rules! search_asserts {
+    ($haystack:expr, $needle:expr, [$($func:ident),*], $result:expr) => {
+        let mut searcher = $needle.into_searcher($haystack);
+        let arr = [$( Step::from(searcher.$func()) ),*];
+        assert_eq!(&arr[..], &$result);
+    }
+}
+
+#[test]
+fn runtime_searcher_refused() {
+    search_asserts!("abc", 'a', [next, next], [Matches(0,1), Rejects(1,2)]);
+}
+
+#[test]
+fn runtime_searcher_literal_twin() {
+    assert_eq!(1, 1);
+}
+"#,
+    );
+
+    assert_rpc_source_refused(
+        &doc,
+        "runtime_searcher_refused",
+        "runtime state-machine boundary",
+    );
+    assert_rpc_source_warranted(&doc, "runtime_searcher_literal_twin");
+}
+
+#[test]
+fn rpc_source_refuses_runtime_match_result_with_literal_twin() {
+    let doc = run_rpc_lift(
+        "src/source_runtime_match.rs",
+        r#"
+#[test]
+fn runtime_match_refused() {
+    assert!(match b.binary_search(&3) { Ok(1..=3) => true, _ => false, });
+}
+
+#[test]
+fn runtime_match_literal_twin() {
+    assert_eq!(3, 3);
+}
+"#,
+    );
+
+    assert_rpc_source_refused(
+        &doc,
+        "runtime_match_refused",
+        "runtime non-scalar call-result boundary",
+    );
+    assert_rpc_source_warranted(&doc, "runtime_match_literal_twin");
 }
 
 #[test]
