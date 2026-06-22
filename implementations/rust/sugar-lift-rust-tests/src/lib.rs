@@ -151,6 +151,7 @@ pub mod sugar {
     pub mod sizeof;
     pub mod skip;
     pub mod skip_while;
+    pub mod slice_accessor;
     pub mod slice_index;
     pub mod statement_async_future;
     pub mod statement_control_flow;

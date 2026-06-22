@@ -15098,6 +15098,155 @@ fn iter_nth_and_last_over_literal_array_ground_with_teeth() {
 }
 
 #[test]
+fn literal_slice_accessors_ground_to_literal_floor() {
+    let first = lift_eq_decl("[1, 2, 3].first()", "Some(&1)", "tests/slice_first_good.rs");
+    assert_eq!(
+        dug_eq_ctor_name_pairs(&first),
+        vec![("opt:some".to_string(), "opt:some".to_string())],
+        "`.first()` must ground to opt:some(1): {:?}",
+        first.inv
+    );
+    assert!(
+        !decl_mentions_ctor(&first, "method:first"),
+        "no opaque method:first may survive: {:?}",
+        first.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&first), "slice_first_good") {
+        assert!(sat, "`.first() == Some(&1)` must be SAT");
+    }
+
+    let get = lift_eq_decl("[1, 2, 3].get(1)", "Some(&2)", "tests/slice_get_good.rs");
+    assert_eq!(
+        dug_eq_ctor_name_pairs(&get),
+        vec![("opt:some".to_string(), "opt:some".to_string())],
+        "`.get(1)` must ground to opt:some(2): {:?}",
+        get.inv
+    );
+    assert!(
+        !decl_mentions_ctor(&get, "method:get"),
+        "no opaque method:get may survive: {:?}",
+        get.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&get), "slice_get_good") {
+        assert!(sat, "`.get(1) == Some(&2)` must be SAT");
+    }
+
+    let get_past = lift_eq_decl("[1, 2, 3].get(9)", "None", "tests/slice_get_past_good.rs");
+    assert_eq!(
+        dug_eq_ctor_name_pairs(&get_past),
+        vec![("opt:none".to_string(), "opt:none".to_string())],
+        "`.get(9)` must ground to opt:none: {:?}",
+        get_past.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&get_past), "slice_get_past_good") {
+        assert!(sat, "`.get(9) == None` must be SAT");
+    }
+
+    let contains = lift_eq_decl(
+        "[1, 2, 3].contains(&2)",
+        "true",
+        "tests/slice_contains_good.rs",
+    );
+    assert_eq!(
+        dug_eq_bool_pairs(&contains),
+        vec![(true, true)],
+        "`.contains(&2)` must ground to true: {:?}",
+        contains.inv
+    );
+    assert!(
+        !decl_mentions_ctor(&contains, "method:contains"),
+        "no opaque method:contains may survive: {:?}",
+        contains.inv
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&contains), "slice_contains_good") {
+        assert!(sat, "`.contains(&2) == true` must be SAT");
+    }
+
+    let starts = lift_eq_decl(
+        "[1, 2, 3].starts_with(&[1, 2])",
+        "true",
+        "tests/slice_starts_with_good.rs",
+    );
+    assert_eq!(
+        dug_eq_bool_pairs(&starts),
+        vec![(true, true)],
+        "`.starts_with(&[1, 2])` must ground to true: {:?}",
+        starts.inv
+    );
+    assert!(
+        !decl_mentions_ctor(&starts, "method:starts_with"),
+        "no opaque method:starts_with may survive: {:?}",
+        starts.inv
+    );
+
+    let ends = lift_eq_decl(
+        "[1, 2, 3].ends_with(&[2, 3])",
+        "true",
+        "tests/slice_ends_with_good.rs",
+    );
+    assert_eq!(
+        dug_eq_bool_pairs(&ends),
+        vec![(true, true)],
+        "`.ends_with(&[2, 3])` must ground to true: {:?}",
+        ends.inv
+    );
+    assert!(
+        !decl_mentions_ctor(&ends, "method:ends_with"),
+        "no opaque method:ends_with may survive: {:?}",
+        ends.inv
+    );
+}
+
+#[test]
+fn literal_slice_accessors_have_z3_bad_twins() {
+    let cases = [
+        (
+            "[1, 2, 3].first()",
+            "Some(&9)",
+            "slice_first_bad",
+            ".first() == Some(&9)",
+        ),
+        (
+            "[1, 2, 3].get(1)",
+            "Some(&9)",
+            "slice_get_bad",
+            ".get(1) == Some(&9)",
+        ),
+        (
+            "[1, 2, 3].get(9)",
+            "Some(&1)",
+            "slice_get_past_bad",
+            ".get(9) == Some(&1)",
+        ),
+        (
+            "[1, 2, 3].contains(&9)",
+            "true",
+            "slice_contains_bad",
+            ".contains(&9) == true",
+        ),
+        (
+            "[1, 2, 3].starts_with(&[2])",
+            "true",
+            "slice_starts_with_bad",
+            ".starts_with(&[2]) == true",
+        ),
+        (
+            "[1, 2, 3].ends_with(&[1])",
+            "true",
+            "slice_ends_with_bad",
+            ".ends_with(&[1]) == true",
+        ),
+    ];
+
+    for (lhs, rhs, label, display) in cases {
+        let decl = lift_eq_decl(lhs, rhs, &format!("tests/{label}.rs"));
+        if let Some(sat) = z3_verdict(&inv_json(&decl), label) {
+            assert!(!sat, "bad twin `{display}` must be z3-UNSAT");
+        }
+    }
+}
+
+#[test]
 fn iter_next_over_runtime_receiver_stays_opaque_no_fake_dig() {
     // THE EFFECT BOUNDARY HOLDS: a `.next()` over a RUNTIME receiver (a call
     // result / opaque param) is NOT a written literal, so the syntactic-literal
