@@ -12808,6 +12808,246 @@ fn t() {
     );
 }
 
+#[test]
+fn while_loop_literal_counter_replays_post_loop_value() {
+    let src = r#"
+#[test]
+fn t() {
+    let mut s = 0;
+    let mut i = 0;
+    while i < 3 {
+        s += i;
+        i += 1;
+    }
+    assert_eq!(s, 3);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/while_loop_temporal.rs");
+    assert_eq!(
+        out.assertions_refused, 0,
+        "literal-bounded while replay must not leave stale temporal refusal: {:?}",
+        out.skip_reasons
+    );
+    assert_eq!(warranted_decls(&out).len(), 1, "{:?}", out.decls);
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "while_loop_literal_counter_good",
+    ) {
+        assert!(sat, "true while-loop replay must be SAT");
+    }
+}
+
+#[test]
+fn while_loop_literal_counter_bad_twin_is_unsat() {
+    let src = r#"
+#[test]
+fn t() {
+    let mut s = 0;
+    let mut i = 0;
+    while i < 3 {
+        s += i;
+        i += 1;
+    }
+    assert_eq!(s, 4);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/while_loop_temporal_bad.rs");
+    assert_eq!(warranted_decls(&out).len(), 1, "{:?}", out.decls);
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "while_loop_literal_counter_bad",
+    ) {
+        assert!(!sat, "wrong while-loop replay twin must be UNSAT");
+    }
+}
+
+#[test]
+fn while_loop_runtime_bound_post_loop_read_refuses() {
+    let src = r#"
+fn runtime_n() -> i32 { 3 }
+
+#[test]
+fn t() {
+    let n = runtime_n();
+    let mut s = 0;
+    let mut i = 0;
+    while i < n {
+        s += i;
+        i += 1;
+    }
+    assert_eq!(s, 3);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/while_loop_runtime.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "runtime-bounded while must not fabricate a post-loop value: {:?}",
+        out.decls
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|reason| reason.contains("temporally unstable")),
+        "runtime-bounded post-loop read must remain a named temporal refusal: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn while_loop_side_effecting_body_post_loop_read_refuses() {
+    let src = r#"
+fn bump(x: &mut i32) { *x += 1; }
+
+#[test]
+fn t() {
+    let mut s = 0;
+    let mut i = 0;
+    while i < 3 {
+        bump(&mut s);
+        i += 1;
+    }
+    assert_eq!(s, 3);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/while_loop_side_effect.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "side-effecting loop body must not fabricate a post-loop value: {:?}",
+        out.decls
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|reason| reason.contains("temporally unstable")),
+        "side-effecting loop body must remain a named temporal refusal: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn loop_break_literal_counter_replays_post_loop_value() {
+    let src = r#"
+#[test]
+fn t() {
+    let mut s = 0;
+    let mut i = 0;
+    loop {
+        s += i;
+        i += 1;
+        if i == 3 {
+            break;
+        }
+    }
+    assert_eq!(s, 3);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/loop_break_temporal.rs");
+    assert_eq!(
+        out.assertions_refused, 0,
+        "literal-determined loop/break replay must not leave stale temporal refusal: {:?}",
+        out.skip_reasons
+    );
+    assert_eq!(warranted_decls(&out).len(), 1, "{:?}", out.decls);
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "loop_break_literal_counter_good",
+    ) {
+        assert!(sat, "true loop/break replay must be SAT");
+    }
+}
+
+#[test]
+fn loop_break_literal_counter_bad_twin_is_unsat() {
+    let src = r#"
+#[test]
+fn t() {
+    let mut s = 0;
+    let mut i = 0;
+    loop {
+        s += i;
+        i += 1;
+        if i == 3 {
+            break;
+        }
+    }
+    assert_eq!(s, 4);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/loop_break_temporal_bad.rs");
+    assert_eq!(warranted_decls(&out).len(), 1, "{:?}", out.decls);
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "loop_break_literal_counter_bad",
+    ) {
+        assert!(!sat, "wrong loop/break replay twin must be UNSAT");
+    }
+}
+
+#[test]
+fn loop_continue_literal_counter_replays_reachable_iterations() {
+    let src = r#"
+#[test]
+fn t() {
+    let mut s = 0;
+    let mut i = 0;
+    loop {
+        i += 1;
+        if i < 3 {
+            continue;
+        }
+        s += i;
+        if i == 4 {
+            break;
+        }
+    }
+    assert_eq!(s, 7);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/loop_continue_temporal.rs");
+    assert_eq!(
+        out.assertions_refused, 0,
+        "literal-determined continue path should replay exactly: {:?}",
+        out.skip_reasons
+    );
+    assert_eq!(warranted_decls(&out).len(), 1, "{:?}", out.decls);
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "loop_continue_literal_counter_good",
+    ) {
+        assert!(sat, "true loop/continue replay must be SAT");
+    }
+}
+
+#[test]
+fn loop_continue_literal_counter_bad_twin_is_unsat() {
+    let src = r#"
+#[test]
+fn t() {
+    let mut s = 0;
+    let mut i = 0;
+    loop {
+        i += 1;
+        if i < 3 {
+            continue;
+        }
+        s += i;
+        if i == 4 {
+            break;
+        }
+    }
+    assert_eq!(s, 8);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/loop_continue_temporal_bad.rs");
+    assert_eq!(warranted_decls(&out).len(), 1, "{:?}", out.decls);
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "loop_continue_literal_counter_bad",
+    ) {
+        assert!(!sat, "wrong loop/continue replay twin must be UNSAT");
+    }
+}
+
 // ── Source-audit value-contract emission (emit_value_contract) ──────────────
 // A warrant is real only if the kit EMITS the ProofIR. These pin the slice-1
 // char-class predicate emitter: matches! body -> `out <-> membership` contract.
@@ -23722,7 +23962,7 @@ fn frozen_loop_counter_read_refuses_not_false_refutation() {
 }
 
 #[test]
-fn while_loop_counter_read_refuses() {
+fn while_loop_counter_read_replays_exact_bound() {
     let src = r#"
         #[test]
         fn t_while() {
@@ -23732,13 +23972,12 @@ fn while_loop_counter_read_refuses() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/loop/while_counter.rs");
-    assert!(
-        out.skip_reasons
-            .iter()
-            .any(|r| r.contains("temporally unstable post-loop read")),
-        "a while-loop counter read after the loop must REFUSE: {:?}",
+    assert_eq!(
+        out.assertions_refused, 0,
+        "literal-determined while-loop counter should replay exactly: {:?}",
         out.skip_reasons
     );
+    assert_eq!(warranted_decls(&out).len(), 1, "{:?}", out.decls);
 }
 
 // CLOSURE-CAPTURE temporal instability (#19 residual, #2346): a `let mut n` captured and
