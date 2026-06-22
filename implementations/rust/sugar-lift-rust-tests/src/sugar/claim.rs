@@ -155,6 +155,10 @@ impl ExprSugarClaim {
         Self::fallback_with_ordering(name, SugarRole::Term, &[], recognize)
     }
 
+    pub(crate) const fn fallback_composite(name: &'static str, recognize: ExprRecognizer) -> Self {
+        Self::fallback_with_ordering(name, SugarRole::Composite, &[], recognize)
+    }
+
     pub(crate) const fn fallback_constraint(name: &'static str, recognize: ExprRecognizer) -> Self {
         Self::fallback_with_ordering(name, SugarRole::Constraint, &[], recognize)
     }

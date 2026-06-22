@@ -5369,8 +5369,8 @@ fn range_rebinds() {
     assert_eq!(
         names,
         vec![
-            "method:contains#euf#c:callresult_method_contains_a2(v:tests/ops.rs::range_rebinds::r@def1,c:ref(i:0))::assertion",
-            "method:contains#euf#c:callresult_method_contains_a2(v:tests/ops.rs::range_rebinds::r@def2,c:ref(i:0))::assertion",
+            "method:contains#euf#c:callresult_method_contains_a2(c:range(i:1:u32,i:5),c:ref(i:0))::assertion",
+            "method:contains#euf#c:callresult_method_contains_a2(c:range_incl(i:0:u32,i:4294967295),c:ref(i:0))::assertion",
         ]
     );
 }
@@ -5393,7 +5393,7 @@ fn post_rebind_same_version() {
     assert_eq!(out.decls.len(), 1);
     assert_eq!(
         out.decls[0].name,
-        "method:contains#euf#c:callresult_method_contains_a2(v:tests/ops.rs::post_rebind_same_version::r@def2,c:ref(i:11))::assertion"
+        "method:contains#euf#c:callresult_method_contains_a2(c:range(i:10:u32,i:20),c:ref(i:11))::assertion"
     );
     let operands = inv_operands(&out.decls[0]);
     assert_eq!(operands.len(), 2);
@@ -5416,7 +5416,7 @@ fn inclusive_range_after_next() {
     assert_warranted_decl_count(&out, 1);
     assert_eq!(
         single_warranted_decl(&out).name,
-        "method:contains#euf#c:callresult_method_contains_a2(v:tests/ops.rs::inclusive_range_after_next::r@def2,c:ref(i:1))::assertion"
+        "method:contains#euf#c:callresult_method_contains_a2(c:method:skip(c:range_incl(i:1:u32,i:1),i:1),c:ref(i:1))::assertion"
     );
 }
 
@@ -20811,8 +20811,11 @@ fn consumed_iterator_advance_by_then_next_declines() {
         out.assertions_refused,
         out.skip_reasons,
     );
-    assert_warranted_decl_count(&out, 2);
-    if let Some(sat) = z3_verdict(&inv_json(warranted_decl(&out, 1)), "advance_by_then_next") {
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "advance_by_then_next",
+    ) {
         assert!(
             sat,
             "advance_by(1) should rewrite the iterator receiver before next()"
@@ -20838,11 +20841,11 @@ fn bounded_next_binding_snapshots_return_and_advances_receiver_state() {
         "bounded next over a literal iterator is temporal sugar, not an effect: {:?}",
         out.skip_reasons
     );
-    assert_warranted_decl_count(&out, 2);
-    if let Some(sat) = z3_verdict(&inv_json(warranted_decl(&out, 0)), "bound_next_first") {
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "bound_next_first") {
         assert!(sat, "first must snapshot the pre-consumption next() value");
     }
-    if let Some(sat) = z3_verdict(&inv_json(warranted_decl(&out, 1)), "bound_next_len") {
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "bound_next_len") {
         assert!(
             sat,
             "it.len() must read the post-consumption iterator state"
@@ -20863,8 +20866,8 @@ fn bounded_next_binding_bad_remaining_len_refutes() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/iter/adapters/bound_next_len_bad.rs");
-    assert_warranted_decl_count(&out, 2);
-    if let Some(sat) = z3_verdict(&inv_json(warranted_decl(&out, 1)), "bound_next_len_bad") {
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "bound_next_len_bad") {
         assert!(
             !sat,
             "wrong post-consumption remaining length must be z3-UNSAT"

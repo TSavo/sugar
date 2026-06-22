@@ -21,7 +21,10 @@ use crate::Sugar;
 // recognizer. `literal_slice` declares it comes before this gravitational well, so
 // the catalog never relies on incidental order to select the narrower owner.
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::composite("reference_sequence", recognize_composite);
+    crate::sugar::claim::ExprSugarClaim::fallback_composite(
+        "reference_sequence",
+        recognize_composite,
+    );
 
 pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     // Narrow to `Expr::Reference`: array/range literals and `.iter()`-family calls keep
