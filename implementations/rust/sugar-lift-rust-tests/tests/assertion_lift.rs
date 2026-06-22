@@ -24287,14 +24287,10 @@ fn slice_coercion_cast_warrants_array_value() {
     }
 }
 
-// HONEST teeth note: an array LITERAL lifts to a content-keyed VAR (`literal:Array(..)`),
-// not a structural sequence, so the slice-coercion warrant is REFLEXIVE-teethed (same
-// content -> same var -> equal; the index.rs `get(&s) == get(&s)` shape discharges
-// reflexively) but NOT structurally-teethed over DISTINCT arrays (two different content
-// vars are z3-free -> UNDECIDED, not refuted). That is SOUND (no false discharge -- a
-// distinct-array equality is undecided, never proven) but carries no distinct-array
-// teeth. This test pins what the arm DOES deliver: the cast is transparent (no backstop)
-// and the same-array equality is reflexively consistent.
+// Array/slice equality is a non-scalar assertion surface, but when both sides are
+// text-determined it has scalar teeth: length plus element equalities. The slice coercion
+// remains transparent, and the bad twin now refutes instead of sitting behind
+// content-keyed aggregate vars.
 #[test]
 fn slice_coercion_cast_is_transparent_not_backstop() {
     let src = r#"
@@ -24321,15 +24317,11 @@ fn slice_coercion_cast_is_transparent_not_backstop() {
     );
 }
 
-// KIT BAD-TWIN (cardinal-sin guard for the slice-coercion WARRANT, a628 #2316 revert).
-// The slice-coercion cast is transparent. The DANGER it must NOT reintroduce: a
-// content-LOSING slice abstraction that collapses DISTINCT arrays to one var, which
-// would reflexively DISCHARGE a FALSE equality (`&[10,20,30] == &[10,20,99]`). The arm
-// is sound ONLY IF distinct content -> distinct content-keyed vars -> z3-free ->
-// UNDECIDED (neither refuted nor discharged). This test BREAKS the warrant: asserts a
-// genuinely-FALSE distinct-array equality and demands UNDECIDED, never a discharge.
+// KIT BAD-TWIN: a genuinely false distinct-array equality must lift with scalar teeth and
+// become z3-UNSAT. This is the non-scalar literal floor: the values are in the text, so
+// leaving them as opaque aggregate vars would be an under-lift.
 #[test]
-fn kit_slice_coercion_distinct_arrays_undecided_not_discharged() {
+fn kit_slice_coercion_distinct_arrays_refute_with_literal_teeth() {
     let src = r#"
         #[test]
         fn t_slice_bad_twin() {
@@ -24346,61 +24338,183 @@ fn kit_slice_coercion_distinct_arrays_undecided_not_discharged() {
         out.skip_reasons
     );
     let inv = inv_json(&out.decls[0]);
-    eprintln!(
-        "KIT-BADTWIN inv = {}",
-        serde_json::to_string_pretty(&inv).unwrap()
+    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
+    assert!(
+        !doc.contains("literal:Array("),
+        "literal array equality should decompose to scalar teeth, not aggregate vars: {doc}"
     );
-
-    // The inv is `and{operands:[ atomic{=,[lhs,rhs]} ]}`; unwrap to the equality atomic.
-    let eq_atomic = if inv.get("kind").and_then(|k| k.as_str()) == Some("and") {
-        inv.get("operands")
-            .and_then(|o| o.as_array())
-            .and_then(|o| o.first())
-            .cloned()
-            .expect("and-inv must have an operand")
-    } else {
-        inv.clone()
-    };
-
-    // (1) The two operands must be DISTINCT content-keyed vars. If they collapse to one
-    //     var name, the equality is reflexive -> false discharge (the a628 sin).
-    let args = eq_atomic
-        .get("args")
-        .and_then(|a| a.as_array())
-        .expect("equality inv must have two args");
-    assert_eq!(args.len(), 2, "expected a binary equality, got {inv}");
-    let lhs_name = args[0].get("name").and_then(|n| n.as_str());
-    let rhs_name = args[1].get("name").and_then(|n| n.as_str());
-    eprintln!("KIT-BADTWIN lhs_var={lhs_name:?} rhs_var={rhs_name:?}");
-    assert_ne!(
-        lhs_name, rhs_name,
-        "DISTINCT arrays must lift to DISTINCT content-keyed vars; collapse => false discharge"
-    );
-
-    // (2) Positive relation `lhs == rhs` must be SAT (the two free vars CAN be equal)
-    //     => NOT refuted. A false-refutation here would be the inverse sin.
     if let Some(sat) = z3_verdict(&inv, "kit_slice_bad_twin_pos") {
-        assert!(
-            sat,
-            "distinct-array `==` must be SAT (not refuted): two free vars can coincide"
-        );
+        assert!(!sat, "distinct literal arrays must be z3-UNSAT");
+    }
+}
+
+#[test]
+fn array_try_from_unwrap_over_literal_slice_lifts_with_bad_twin() {
+    let good = r#"
+        use core::convert::TryFrom;
+        #[test]
+        fn t_array_try_from_good() {
+            type Array = [u8; 3];
+            let mut array: Array = [0; 3];
+            let slice: &[u8] = &array[..];
+            let result = <&Array>::try_from(slice);
+            assert_eq!(&array, result.unwrap());
+            let result = <Array>::try_from(slice);
+            assert_eq!(&array, &result.unwrap());
+            let mut_slice: &mut [u8] = &mut array[..];
+            let result = <&mut Array>::try_from(mut_slice);
+            assert_eq!(&[0; 3], result.unwrap());
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/array/try_from_literal_good.rs");
+    assert!(
+        out.assertions_lifted >= 3 && out.assertions_refused == 0,
+        "array try_from over a literal-backed slice must lift: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    for (i, decl) in out.decls.iter().enumerate() {
+        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("array_try_from_good_{i}")) {
+            assert!(sat, "good array try_from literal equality must be SAT");
+        }
     }
 
-    // (3) NEGATION `lhs != rhs` (distinct) must be SAT => the equality is NOT VALID =>
-    //     the discharge gate (DISCHARGED <=> negation UNSAT) does NOT fire. NOT discharged.
-    let negation = serde_json::json!({
-        "kind": "and",
-        "operands": [{
-            "kind": "atomic",
-            "name": "distinct",
-            "args": [args[0].clone(), args[1].clone()],
-        }],
-    });
-    if let Some(neg_sat) = z3_verdict(&negation, "kit_slice_bad_twin_neg") {
+    let bad = r#"
+        use core::convert::TryFrom;
+        #[test]
+        fn t_array_try_from_bad() {
+            type Array = [u8; 3];
+            let mut array: Array = [0; 3];
+            let slice: &[u8] = &array[..];
+            let result = <&Array>::try_from(slice);
+            assert_eq!(&[1u8, 0, 0], result.unwrap());
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/array/try_from_literal_bad.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "array_try_from_bad") {
         assert!(
-            neg_sat,
-            "distinct-array `!=` must be SAT => equality NOT valid => NOT discharged (no fake light)"
+            !sat,
+            "wrong expected array for literal-backed try_from must be z3-UNSAT"
         );
+    }
+}
+
+#[test]
+fn array_literal_runtime_element_refuses_not_opaque_warrant() {
+    let src = r#"
+        #[test]
+        fn t_runtime_array_refuses() {
+            let n = std::process::id() as u8;
+            let xs = [n, 2u8];
+            assert_eq!(&xs, &[1u8, 2u8]);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/array/runtime_elem_refuses.rs");
+    assert_eq!(out.assertions_lifted, 0, "{:?}", out.assertion_facts);
+    assert!(
+        out.assertions_refused >= 1
+            && out
+                .skip_reasons
+                .iter()
+                .any(|reason| reason.contains("literal array element is not text-determined")),
+        "runtime array element must Hit/refuse instead of opaque-warranting: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn bound_literal_array_equality_lifts_with_bad_twin() {
+    let good = r#"
+        #[test]
+        fn t_bound_array_good() {
+            let xs = [1u8, 2, 3];
+            let ys = [1u8, 2, 3];
+            assert_eq!(xs, ys);
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/array/bound_literal_array_good.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "bound_array_good") {
+        assert!(sat, "equal bound literal arrays must be z3-SAT");
+    }
+
+    let bad = r#"
+        #[test]
+        fn t_bound_array_bad() {
+            let xs = [1u8, 2, 3];
+            let ys = [1u8, 2, 4];
+            assert_eq!(xs, ys);
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/array/bound_literal_array_bad.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "bound_array_bad") {
+        assert!(!sat, "wrong bound literal array must be z3-UNSAT");
+    }
+}
+
+#[test]
+fn struct_literal_equality_lifts_with_bad_twin() {
+    let good = r#"
+        #[derive(Debug, PartialEq)]
+        struct Pair { a: u8, b: u8 }
+        #[test]
+        fn t_struct_good() {
+            assert_eq!(Pair { a: 1, b: 2 }, Pair { b: 2, a: 1 });
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/struct/literal_struct_good.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "struct_good") {
+        assert!(sat, "equal text-determined struct literals must be z3-SAT");
+    }
+
+    let bad = r#"
+        #[derive(Debug, PartialEq)]
+        struct Pair { a: u8, b: u8 }
+        #[test]
+        fn t_struct_bad() {
+            assert_eq!(Pair { a: 1, b: 2 }, Pair { b: 3, a: 1 });
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/struct/literal_struct_bad.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "struct_bad") {
+        assert!(
+            !sat,
+            "wrong text-determined struct literal must be z3-UNSAT"
+        );
+    }
+}
+
+#[test]
+fn result_array_equality_lifts_with_bad_twin() {
+    let good = r#"
+        #[test]
+        fn t_result_array_good() {
+            let got: Result<[u8; 2], ()> = Ok([1, 2]);
+            assert_eq!(got, Ok([1, 2]));
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/result/result_array_good.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "result_array_good") {
+        assert!(sat, "equal text-determined Result arrays must be z3-SAT");
+    }
+
+    let bad = r#"
+        #[test]
+        fn t_result_array_bad() {
+            let got: Result<[u8; 2], ()> = Ok([1, 2]);
+            assert_eq!(got, Ok([1, 3]));
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/result/result_array_bad.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "result_array_bad") {
+        assert!(!sat, "wrong text-determined Result array must be z3-UNSAT");
     }
 }
 
