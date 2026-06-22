@@ -25,6 +25,7 @@
 // differ, we decline -> the ordinary equality path applies (no regression, never a false
 // discharge).
 
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
@@ -75,17 +76,13 @@ fn recognize_macro(expr_macro: &ExprMacro, fcx: &SugarBuildCtx) -> Option<Box<dy
 }
 
 fn build(lhs: &Expr, rhs: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let (producer, literal_comps) = match_producer_and_literal(lhs, rhs, fcx)?;
-    if literal_comps.is_empty() {
+    let (producer, literal_exprs) = match_producer_and_literal(lhs, rhs, fcx)?;
+    if literal_exprs.is_empty() {
         return None;
     }
-    let literal_terms = literal_comps
-        .iter()
-        .map(|literal| build_term(literal, fcx))
-        .collect();
     Some(Box::new(TupleDecompSugar {
         producer,
-        literal_terms,
+        literal_exprs,
     }))
 }
 
@@ -96,15 +93,15 @@ fn match_producer_and_literal(
     lhs: &Expr,
     rhs: &Expr,
     fcx: &SugarBuildCtx,
-) -> Option<(Box<dyn Sugar>, Vec<Expr>)> {
+) -> Option<(Expr, Vec<Expr>)> {
     if has_tuple_producer(lhs, fcx) {
         if let Some(l) = literal_tuple_elements(rhs) {
-            return Some((build_tuple_producer(lhs, fcx), l));
+            return Some((lhs.clone(), l));
         }
     }
     if has_tuple_producer(rhs, fcx) {
         if let Some(l) = literal_tuple_elements(lhs) {
-            return Some((build_tuple_producer(rhs, fcx), l));
+            return Some((rhs.clone(), l));
         }
     }
     None
@@ -128,25 +125,33 @@ fn strip_paren_group(expr: &Expr) -> &Expr {
 }
 
 struct TupleDecompSugar {
-    producer: Box<dyn Sugar>,
-    literal_terms: Vec<Box<dyn Sugar>>,
+    producer: Expr,
+    literal_exprs: Vec<Expr>,
 }
 
 impl Sugar for TupleDecompSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let producer_components = match self.producer.desugar(ctx) {
+        let let_inits = scope_let_inits(ctx);
+        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        let producer = build_tuple_producer(&self.producer, &fcx);
+        let literal_terms: Vec<Box<dyn Sugar>> = self
+            .literal_exprs
+            .iter()
+            .map(|literal| build_term(literal, &fcx))
+            .collect();
+        let producer_components = match producer.desugar(ctx) {
             Outcome::Dug(desugared) => match desugared.into_tuple_components() {
                 Some(components) => components,
                 None => return Outcome::from_opt(None),
             },
             Outcome::Hit(effect) => return Outcome::Hit(effect),
         };
-        if producer_components.len() != self.literal_terms.len() {
+        if producer_components.len() != literal_terms.len() {
             return Outcome::from_opt(None);
         }
-        let mut atoms = Vec::with_capacity(self.literal_terms.len());
+        let mut atoms = Vec::with_capacity(literal_terms.len());
         let mut anchor: Option<Rc<Term>> = None;
-        for (lhs_term, rhs) in producer_components.into_iter().zip(&self.literal_terms) {
+        for (lhs_term, rhs) in producer_components.into_iter().zip(&literal_terms) {
             let rhs_term = match term_payload(rhs.as_ref(), ctx) {
                 Ok(term) => term,
                 Err(outcome) => return outcome,
@@ -166,6 +171,13 @@ impl Sugar for TupleDecompSugar {
             warrant: Warrant { name },
         })
     }
+}
+
+fn scope_let_inits<'a, 'c>(ctx: &SugarCtx<'a, 'c>) -> BTreeMap<String, &'a Expr> {
+    ctx.scope
+        .let_bindings_iter()
+        .map(|(name, init)| (name.clone(), init))
+        .collect()
 }
 
 fn term_payload(node: &dyn Sugar, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
