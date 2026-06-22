@@ -180,6 +180,13 @@ impl Sugar for FoldSugar {
             if seq.len() as i64 > SUGAR_SEQ_CAP {
                 return None;
             }
+            debug!(
+                target: "sugar_lift_rust_tests::sugar::fold",
+                method = %self.method,
+                seq_len = seq.len(),
+                acc0 = self.acc_0,
+                "fold replay resolved temporal sequence"
+            );
             let n_body = count_asserts_in_stmts(&self.body_stmts);
             if n_body == 0 {
                 return None;
@@ -258,7 +265,16 @@ impl Sugar for FoldSugar {
             // const-fold the tail to acc_{k+1} given those same bindings.
             let mut instances = Vec::with_capacity(seq.len());
             let mut acc = self.acc_0;
-            for elem in &seq {
+            for (iteration, elem) in seq.iter().enumerate() {
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::fold",
+                    method = %self.method,
+                    iteration,
+                    acc,
+                    item = %token_key(&elem.expr),
+                    value = ?elem.value,
+                    "fold replay iteration"
+                );
                 let mut inst =
                     subst_var_in_formula(&body_conj, &self.acc_var, &num(i128::from(acc)));
                 let mut tail_env: BTreeMap<String, i64> = BTreeMap::new();
