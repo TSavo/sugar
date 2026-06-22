@@ -13284,6 +13284,105 @@ fn inv_json(decl: &sugar_ir_symbolic::ContractDecl) -> serde_json::Value {
     parsed[0]["inv"].clone()
 }
 
+/// Lift a single assertion and z3-check the emitted invariant.
+/// `Some(true)` = SAT (GOOD twin), `Some(false)` = UNSAT (BAD twin), `None` = z3 absent.
+fn single_assertion_verdict(src: &str, label: &str) -> Option<bool> {
+    let out = lift_file(&parse(src), "tests/char_method_teeth.rs");
+    assert_warranted_decl_count(&out, 1);
+    z3_verdict(&inv_json(single_warranted_decl(&out)), label)
+}
+
+fn char_method_eq_verdict(lhs: &str, rhs: &str, label: &str) -> Option<bool> {
+    let src = format!("#[test]\nfn t() {{ assert_eq!({lhs}, {rhs}); }}\n");
+    single_assertion_verdict(&src, label)
+}
+
+#[test]
+fn char_literal_methods_have_z3_bad_twins() {
+    let cases = [
+        ("alphabetic", r#"'a'.is_alphabetic()"#, "true", "false"),
+        ("numeric", r#"'5'.is_numeric()"#, "true", "false"),
+        ("ascii", r#"'A'.is_ascii()"#, "true", "false"),
+        ("alphanumeric", r#"'9'.is_alphanumeric()"#, "true", "false"),
+        ("whitespace", r#"' '.is_whitespace()"#, "true", "false"),
+        ("uppercase", r#"'X'.is_uppercase()"#, "true", "false"),
+        ("lowercase", r#"'x'.is_lowercase()"#, "true", "false"),
+        (
+            "ascii_upper",
+            r#"'x'.to_ascii_uppercase()"#,
+            r#"'X'"#,
+            r#"'Y'"#,
+        ),
+        (
+            "ascii_lower",
+            r#"'X'.to_ascii_lowercase()"#,
+            r#"'x'"#,
+            r#"'z'"#,
+        ),
+        ("len_utf8", r#"'é'.len_utf8()"#, "2", "1"),
+        ("to_digit_some", r#"'5'.to_digit(10)"#, "Some(5)", "Some(4)"),
+        ("to_digit_none", r#"'x'.to_digit(10)"#, "None", "Some(33)"),
+    ];
+
+    for (label, lhs, good_rhs, bad_rhs) in cases {
+        if let Some(good) = char_method_eq_verdict(lhs, good_rhs, &format!("{label}_good")) {
+            assert!(good, "{lhs} == {good_rhs} must be z3-SAT");
+            let bad =
+                char_method_eq_verdict(lhs, bad_rhs, &format!("{label}_bad")).expect("z3 present");
+            assert!(
+                !bad,
+                "{lhs} == {bad_rhs} must be z3-UNSAT as the discrimination twin"
+            );
+        }
+    }
+
+    let ssa_good = r#"
+        #[test]
+        fn t() {
+            let c = 'X';
+            assert_eq!(c.to_ascii_lowercase(), 'x');
+        }
+    "#;
+    if let Some(good) = single_assertion_verdict(ssa_good, "char_method_ssa_lower_good") {
+        assert!(good, "SSA-resolved char literal receiver must discharge");
+        let ssa_bad = r#"
+            #[test]
+            fn t() {
+                let c = 'X';
+                assert_eq!(c.to_ascii_lowercase(), 'q');
+            }
+        "#;
+        let bad =
+            single_assertion_verdict(ssa_bad, "char_method_ssa_lower_bad").expect("z3 present");
+        assert!(
+            !bad,
+            "wrong SSA-resolved char method result must be z3-UNSAT"
+        );
+    }
+
+    let assert_good = r#"
+        #[test]
+        fn t() {
+            assert!('a'.is_lowercase());
+        }
+    "#;
+    if let Some(good) = single_assertion_verdict(assert_good, "char_method_assert_good") {
+        assert!(good, "assert-style char bool method must remain warranted");
+        let assert_bad = r#"
+            #[test]
+            fn t() {
+                assert!(!'a'.is_lowercase());
+            }
+        "#;
+        let bad =
+            single_assertion_verdict(assert_bad, "char_method_assert_bad").expect("z3 present");
+        assert!(
+            !bad,
+            "wrong assert-style char bool method twin must be z3-UNSAT"
+        );
+    }
+}
+
 #[test]
 fn opaque_result_ok_adaptor_is_well_sorted_with_reflexive_teeth() {
     let good = r#"
