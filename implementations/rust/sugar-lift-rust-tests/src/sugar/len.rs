@@ -29,9 +29,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     // value, which refutes true post-consumption assertions (e.g. `it.len() == 0` after
     // exhausting a while-let loop). See `collect_consumed_iterator_locals`.
     if let Some(name) = simple_path_name(&call.receiver) {
-        if fcx.scope().is_consumed_iterator_local(&name)
-            && fcx.scope().temporal_rewrite_expr_for(&name).is_none()
-        {
+        if fcx.scope().is_consumed_iterator_local(&name) {
             return Some(reasoned_hit(format!(
                 "consumed-iterator local `{name}` -- \
                  `.len()` returns stale pre-consumption length (temporal instability)"

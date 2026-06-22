@@ -296,6 +296,16 @@ fn order_candidates_or_panic(candidates: &mut Vec<SugarCandidate>) {
             }
         }
     }
+    for left in 0..candidates.len() {
+        for right in 0..candidates.len() {
+            if left == right {
+                continue;
+            }
+            if !candidates[left].is_fallback_well() && candidates[right].is_fallback_well() {
+                reach[left][right] = true;
+            }
+        }
+    }
 
     for pivot in 0..candidates.len() {
         for from in 0..candidates.len() {
@@ -458,6 +468,7 @@ mod tests {
     static SECOND_BEFORE_THIRD: ExprSugarClaim =
         ExprSugarClaim::with_ordering("second", SugarRole::Term, &["third"], recognize);
     static THIRD: ExprSugarClaim = ExprSugarClaim::new("third", SugarRole::Term, recognize);
+    static FALLBACK: ExprSugarClaim = ExprSugarClaim::fallback_term("fallback", recognize);
 
     #[test]
     #[should_panic(expected = "ambiguous Sugar candidates for role Term")]
@@ -516,6 +527,46 @@ mod tests {
             .map(|candidate| candidate.name())
             .collect();
         assert_eq!(names, vec!["first", "second", "third"]);
+    }
+
+    #[test]
+    fn same_role_specific_candidate_orders_before_fallback_well() {
+        let scope = TemporalScope::new("catalog-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let expr: Expr = syn::parse_str("1").unwrap();
+        let mut candidates = vec![
+            FALLBACK.candidate(&expr, &fcx).unwrap(),
+            FIRST.candidate(&expr, &fcx).unwrap(),
+        ];
+
+        super::order_candidates_or_panic(&mut candidates);
+
+        let names: Vec<_> = candidates
+            .into_iter()
+            .map(|candidate| candidate.name())
+            .collect();
+        assert_eq!(names, vec!["first", "fallback"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "ambiguous Sugar candidates for role Term")]
+    fn same_role_fallback_wells_still_need_an_ordering_relation() {
+        static OTHER_FALLBACK: ExprSugarClaim =
+            ExprSugarClaim::fallback_term("other_fallback", recognize);
+
+        let scope = TemporalScope::new("catalog-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let expr: Expr = syn::parse_str("1").unwrap();
+        let mut candidates = vec![
+            FALLBACK.candidate(&expr, &fcx).unwrap(),
+            OTHER_FALLBACK.candidate(&expr, &fcx).unwrap(),
+        ];
+
+        super::order_candidates_or_panic(&mut candidates);
     }
 
     #[test]
