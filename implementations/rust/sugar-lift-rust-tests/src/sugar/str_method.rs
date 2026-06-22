@@ -33,7 +33,11 @@ use crate::{
 const REPEAT_BYTE_CAP: usize = 4096;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term_before("str_method", &["len"], recognize);
+    crate::sugar::claim::ExprSugarClaim::term_before(
+        "str_method",
+        &["iter_terminal", "is_empty", "len"],
+        recognize,
+    );
 
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::MethodCall(call) = strip_refs_groups(expr) else {

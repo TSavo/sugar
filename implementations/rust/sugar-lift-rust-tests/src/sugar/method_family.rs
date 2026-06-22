@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use syn::{Expr, ExprRange};
+use syn::{Expr, ExprCall, ExprRange, GenericArgument};
 
 use crate::sugar::factory::{build_composite, has_composite, SugarBuildCtx};
 use crate::sugar::literal_slice;
@@ -101,6 +101,25 @@ pub(crate) fn literal_sequence_static_len_in_scope<'a>(
     literal_sequence_static_len_inner(expr, let_inits, Some(scope), 0)
 }
 
+pub(crate) struct StaticCollectionLen {
+    pub(crate) source: Expr,
+    pub(crate) len: usize,
+}
+
+pub(crate) fn literal_collection_adapter_static_len_in_scope<'a>(
+    expr: &'a Expr,
+    let_inits: &BTreeMap<String, &'a Expr>,
+    scope: &'a TemporalScope,
+) -> Option<StaticCollectionLen> {
+    let proof = literal_collection_static_len_proof_inner(expr, let_inits, scope, 0)?;
+    proof
+        .saw_length_only_adapter
+        .then_some(StaticCollectionLen {
+            source: proof.source,
+            len: proof.len,
+        })
+}
+
 fn literal_sequence_static_len_inner<'a>(
     expr: &'a Expr,
     let_inits: &BTreeMap<String, &'a Expr>,
@@ -150,6 +169,205 @@ fn literal_sequence_static_len_inner<'a>(
             None => None,
         },
     }
+}
+
+struct StaticCollectionLenProof {
+    source: Expr,
+    len: usize,
+    saw_length_only_adapter: bool,
+}
+
+fn literal_collection_static_len_proof_inner<'a>(
+    expr: &'a Expr,
+    let_inits: &BTreeMap<String, &'a Expr>,
+    scope: &'a TemporalScope,
+    depth: usize,
+) -> Option<StaticCollectionLenProof> {
+    const MAX_DEPTH: usize = 12;
+    if depth > MAX_DEPTH {
+        return None;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Array(array) => Some(StaticCollectionLenProof {
+            source: expr.clone(),
+            len: array.elems.len(),
+            saw_length_only_adapter: false,
+        }),
+        Expr::Repeat(repeat) => Some(StaticCollectionLenProof {
+            source: expr.clone(),
+            len: crate::repeat_count_in_scope(&repeat.len, scope)?,
+            saw_length_only_adapter: false,
+        }),
+        Expr::Index(_) => Some(StaticCollectionLenProof {
+            source: expr.clone(),
+            len: literal_slice::literal_slice_len(expr, let_inits)?,
+            saw_length_only_adapter: false,
+        }),
+        Expr::Path(path) if path.qself.is_none() => {
+            let name = path.path.get_ident()?.to_string();
+            if let Some(current) = scope.temporal_rewrite_expr_for(&name) {
+                return literal_collection_static_len_proof_inner(
+                    &current,
+                    let_inits,
+                    scope,
+                    depth + 1,
+                );
+            }
+            let init = let_inits
+                .get(&name)
+                .copied()
+                .or_else(|| scope.stable_let_binding_for_term(&name))?;
+            literal_collection_static_len_proof_inner(init, let_inits, scope, depth + 1)
+        }
+        Expr::Call(call) if into_iter_arg(call).is_some() => {
+            literal_collection_static_len_proof_inner(
+                into_iter_arg(call)?,
+                let_inits,
+                scope,
+                depth + 1,
+            )
+        }
+        Expr::MethodCall(call) if call.args.is_empty() => match call.method.to_string().as_str() {
+            "iter" | "into_iter" | "cloned" | "copied" | "fuse" | "peekable" | "by_ref"
+            | "clone" | "rev" | "enumerate" | "to_vec" | "as_slice" | "to_owned" | "into_vec" => {
+                literal_collection_static_len_proof_inner(
+                    &call.receiver,
+                    let_inits,
+                    scope,
+                    depth + 1,
+                )
+            }
+            "array_windows" => {
+                let mut base = literal_collection_static_len_proof_inner(
+                    &call.receiver,
+                    let_inits,
+                    scope,
+                    depth + 1,
+                )?;
+                let n = method_const_usize(call)?;
+                if n == 0 {
+                    return None;
+                }
+                base.len = window_count(base.len, n);
+                base.saw_length_only_adapter = true;
+                Some(base)
+            }
+            "array_chunks" => {
+                let mut base = literal_collection_static_len_proof_inner(
+                    &call.receiver,
+                    let_inits,
+                    scope,
+                    depth + 1,
+                )?;
+                let n = method_const_usize(call)?;
+                if n == 0 {
+                    return None;
+                }
+                base.len /= n;
+                base.saw_length_only_adapter = true;
+                Some(base)
+            }
+            _ => None,
+        },
+        Expr::MethodCall(call) if call.args.len() == 1 => {
+            let mut base = literal_collection_static_len_proof_inner(
+                &call.receiver,
+                let_inits,
+                scope,
+                depth + 1,
+            )?;
+            let n = usize::try_from(const_int(&call.args[0])?).ok()?;
+            match call.method.to_string().as_str() {
+                "skip" => {
+                    base.len = base.len.saturating_sub(n);
+                    Some(base)
+                }
+                "take" => {
+                    base.len = base.len.min(n);
+                    Some(base)
+                }
+                "chunks" | "chunks_mut" | "rchunks" | "rchunks_mut" => {
+                    if n == 0 {
+                        return None;
+                    }
+                    base.len = ceil_div(base.len, n);
+                    base.saw_length_only_adapter = true;
+                    Some(base)
+                }
+                "chunks_exact" | "chunks_exact_mut" | "rchunks_exact" | "rchunks_exact_mut" => {
+                    if n == 0 {
+                        return None;
+                    }
+                    base.len /= n;
+                    base.saw_length_only_adapter = true;
+                    Some(base)
+                }
+                "windows" => {
+                    if n == 0 {
+                        return None;
+                    }
+                    base.len = window_count(base.len, n);
+                    base.saw_length_only_adapter = true;
+                    Some(base)
+                }
+                _ => None,
+            }
+        }
+        other => match crate::sugar::collection_literal::collection_literal_array(other) {
+            Some(array) => match strip_refs_groups(&array) {
+                Expr::Array(arr) => Some(StaticCollectionLenProof {
+                    source: expr.clone(),
+                    len: arr.elems.len(),
+                    saw_length_only_adapter: false,
+                }),
+                _ => None,
+            },
+            None => None,
+        },
+    }
+}
+
+fn ceil_div(n: usize, d: usize) -> usize {
+    if n == 0 {
+        0
+    } else {
+        1 + ((n - 1) / d)
+    }
+}
+
+fn window_count(len: usize, width: usize) -> usize {
+    len.checked_sub(width).map_or(0, |rest| rest + 1)
+}
+
+fn method_const_usize(call: &syn::ExprMethodCall) -> Option<usize> {
+    let args = call.turbofish.as_ref()?;
+    if args.args.len() != 1 {
+        return None;
+    }
+    let GenericArgument::Const(expr) = args.args.first()? else {
+        return None;
+    };
+    usize::try_from(const_int(expr)?).ok()
+}
+
+fn into_iter_arg(call: &ExprCall) -> Option<&Expr> {
+    if call.args.len() != 1 {
+        return None;
+    }
+    let Expr::Path(path) = strip_refs_groups(&call.func) else {
+        return None;
+    };
+    let is_into_iter = path
+        .path
+        .segments
+        .last()
+        .is_some_and(|seg| seg.ident == "into_iter")
+        && path
+            .path
+            .segments
+            .iter()
+            .any(|seg| seg.ident == "IntoIterator");
+    is_into_iter.then(|| &call.args[0])
 }
 
 fn literal_range_len(range: &ExprRange) -> Option<usize> {

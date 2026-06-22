@@ -5386,6 +5386,26 @@ pub(crate) fn peel_fold_adaptors_in_scope<'a>(
     Some((base.into_owned(), adaptors))
 }
 
+fn into_iter_arg(call: &syn::ExprCall) -> Option<&Expr> {
+    if call.args.len() != 1 {
+        return None;
+    }
+    let Expr::Path(path) = strip_refs_groups(&call.func) else {
+        return None;
+    };
+    let is_into_iter = path
+        .path
+        .segments
+        .last()
+        .is_some_and(|seg| seg.ident == "into_iter")
+        && path
+            .path
+            .segments
+            .iter()
+            .any(|seg| seg.ident == "IntoIterator");
+    is_into_iter.then(|| &call.args[0])
+}
+
 fn peel_fold_adaptors_inner<'a>(
     expr: &'a Expr,
     let_inits: &BTreeMap<String, &'a Expr>,
@@ -5412,8 +5432,8 @@ fn peel_fold_adaptors_inner<'a>(
                     // base check: a chain that does not bottom out at a literal sequence is
                     // declined by the caller, so a non-sequence `.to_owned()` never grounds.)
                     (
-                        "iter" | "into_iter" | "cloned" | "copied" | "fuse" | "peekable" | "to_vec"
-                        | "as_slice" | "to_owned" | "into_vec",
+                        "iter" | "into_iter" | "cloned" | "copied" | "fuse" | "peekable" | "clone"
+                        | "to_vec" | "as_slice" | "to_owned" | "into_vec",
                         0,
                     ) => Box::new(|inner| Box::new(sugar::identity::IdentitySugar { inner })),
                     ("rev", 0) => Box::new(wrap_rev),
@@ -5533,6 +5553,7 @@ fn peel_fold_adaptors_inner<'a>(
             Expr::Paren(p) => cur = &p.expr,
             Expr::Group(g) => cur = &g.expr,
             Expr::Reference(r) => cur = &r.expr,
+            Expr::Call(call) if into_iter_arg(call).is_some() => cur = into_iter_arg(call)?,
             // A bare ident bound in this block: resolve to its initializer and re-peel,
             // PREPENDING the inner chain (it applies first, nearer the base).
             Expr::Path(p) => {
