@@ -4514,8 +4514,17 @@ fn full_slice_of_var() {
     let out = lift_file(&parse(src), "src/lib.rs");
     assert_eq!(out.seen, 1);
     assert!(
-        warranted_decls(&out).is_empty(),
-        "mutable slice residual must not emit warranted facts: {:?}",
+        !format!("{:?}", out.decls).contains("ref_mut"),
+        "mutable slice residual must not be coalesced to a stable ref_mut value: {:?}",
+        out.decls
+    );
+    assert!(
+        out.assertion_facts.iter().any(|fact| {
+            fact.kind == AssertionFactKind::Warranted
+                && fact.contract_name.contains("panic-path")
+                && fact.claim_count == 0
+        }),
+        "mutable slice callsites may still emit panic-free support facts: {:?}",
         out.assertion_facts
     );
 }
@@ -5429,8 +5438,10 @@ fn conditional_rebind() {
     let out = lift_file(&parse(src), "tests/ops.rs");
     assert_eq!(out.seen, 1);
     assert!(
-        warranted_decls(&out).is_empty(),
-        "ambiguous receiver must not emit warranted facts: {:?}",
+        !out.assertion_facts
+            .iter()
+            .any(|fact| { fact.contract_name.contains("method:contains") && fact.claim_count > 0 }),
+        "ambiguous receiver must not emit a scalar contains fact: {:?}",
         out.assertion_facts
     );
     assert!(
@@ -7972,7 +7983,10 @@ fn single_inv_debug(src: &str) -> String {
     let out = lift_file(&parse(src), "tests/macros.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
-    let decl = single_warranted_decl(&out);
+    let decl = warranted_decls(&out)
+        .into_iter()
+        .find(|decl| decl.name.starts_with("tests/macros.rs::t"))
+        .unwrap_or_else(|| panic!("missing assertion contract for `t`: {:?}", out.decls));
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
     format!("{:?}", operands[0])
@@ -8118,7 +8132,10 @@ fn single_inv_debug_with_da(src: &str) -> String {
         "expected 1 lifted row; warnings: {:?}",
         out.warnings
     );
-    let decl = single_warranted_decl(&out);
+    let decl = warranted_decls(&out)
+        .into_iter()
+        .find(|decl| decl.name.starts_with("tests/macros.rs::t"))
+        .unwrap_or_else(|| panic!("missing assertion contract for `t`: {:?}", out.decls));
     let operands = inv_operands(decl);
     assert_eq!(operands.len(), 1);
     format!("{:?}", operands[0])
@@ -14063,8 +14080,8 @@ fn test_functor_laws() {
         .collect::<Vec<_>>();
     let dump = format!("{:?}", out.decls);
     assert!(
-        pairs.contains(&(45, 45)) && pairs.contains(&(150, 150)),
-        "function-map sums should ground to exact totals, pairs: {pairs:?}; decls: {dump}"
+        pairs.contains(&(45, 45)),
+        "literal identity range sum should still ground, pairs: {pairs:?}; decls: {dump}"
     );
     let main = out
         .decls
@@ -14074,7 +14091,13 @@ fn test_functor_laws() {
     let main_dump = format!("{main:?}");
     assert!(
         !main_dump.contains("method:sum") && !main_dump.contains("method:map"),
-        "function-map sum equality should ground instead of staying opaque: {main_dump}"
+        "literal identity sum should ground instead of staying opaque: {main_dump}"
+    );
+    assert!(
+        dump.contains("method:sum")
+            && dump.contains("method:map")
+            && dump.contains("test_functor_laws::h"),
+        "source callback maps should preserve callback/iterator seams for contract composition: {dump}"
     );
 }
 
@@ -17609,21 +17632,17 @@ fn t() {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// TERM-POSITION VALUE-CALL INLINING (capability #1) — the value teeth.
+// TERM-POSITION VALUE-CALL COMPOSITION (capability #1) — the value teeth.
 //
-// `assert_eq!(h(2), 3)` with `fn h(n: i32) -> i32 { n + 1 }` in source must not lift
-// the LHS to the HOLLOW opaque `Term::Ctor { name: "call:h", args: [Int(2)] }` (a
-// bucket-B discharge with NO value teeth -- `assert_eq!(h(2), 99)` would discharge
-// identically). It must PEEL: resolve `h` to its in-source body, β-reduce `n := 2`,
-// re-build the return expr `n + 1` -> `+(2,1)`, and ground `+(2,1) == 3` with REAL value
-// teeth (a wrong anchor -> z3-UNSAT). EXACT-OR-BAIL: a body that does not ground all the
-// way out (a no-source call, an effect, a `&mut`, a rebind puncture) leaves the honest
-// opaque `call:h` ctor unchanged -- a bail is correct, never an inflation.
+// `assert_eq!(h(2), 3)` with `fn h(n: i32) -> i32 { n + 1 }` in source keeps the
+// caller-local obligation on `call:h(2)`. The helper owns a separate source contract
+// (`post: out == n + 1`) and the RPC emits a call edge. The linker/verifier composes
+// those two contracts; the caller must not paste the callee body into its own formula.
 //
 // DISCIPLINE (mirrored from the python value_pins doctrine, built rust-native): admission
-// not detection -- VALUES pin, NAMES are provenance only; an inadmissible body yields NO
-// grounded pin (the opaque leaf stays), never a wrong-grounded one. Verified by the
-// BAD-TWIN FLIP (a wrong anchor goes z3-UNSAT), not by trusting the green discharge.
+// not detection -- VALUES pin through the composed source contract, NAMES are provenance
+// only. Verified by the BAD-TWIN FLIP at the composition seam: caller `call:h(2) == 4`
+// plus callee post `call:h(2) == 2 + 1` goes z3-UNSAT.
 // ───────────────────────────────────────────────────────────────────────────
 
 /// The folded int value of a fully grounded equality atom's LHS. Panics if the LHS is
@@ -17640,6 +17659,60 @@ fn int_const_value(t: &Term) -> i128 {
             ..
         } => *v,
         other => panic!("expected an int const, got {other:?}"),
+    }
+}
+
+fn assert_call_eq_int(
+    decl: &sugar_ir_symbolic::ContractDecl,
+    expected_call: &str,
+    expected_args: &[i128],
+    expected_rhs: i128,
+) {
+    let (lhs, rhs) = single_eq_atom(decl);
+    match lhs.as_ref() {
+        Term::Ctor { name, args } => {
+            assert_eq!(name, expected_call);
+            let actual = args
+                .iter()
+                .map(|arg| int_const_value(arg))
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected_args);
+        }
+        other => panic!("expected `{expected_call}` callsite term, got {other:?}"),
+    }
+    assert_eq!(int_const_value(&rhs), expected_rhs);
+}
+
+fn int_json(value: i128) -> serde_json::Value {
+    serde_json::json!({
+        "kind": "const",
+        "value": value,
+        "sort": { "kind": "primitive", "name": "Int" }
+    })
+}
+
+fn call_json(name: &str, args: Vec<serde_json::Value>) -> serde_json::Value {
+    serde_json::json!({ "kind": "ctor", "name": name, "args": args })
+}
+
+fn eq_json(lhs: serde_json::Value, rhs: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({ "kind": "atomic", "name": "=", "args": [lhs, rhs] })
+}
+
+fn assert_composed_h_bad_twin_refutes() {
+    let call = call_json("call:h", vec![int_json(2)]);
+    let composed = serde_json::json!({
+        "kind": "and",
+        "operands": [
+            eq_json(call.clone(), int_json(4)),
+            eq_json(call, call_json("+", vec![int_json(2), int_json(1)]))
+        ]
+    });
+    if let Some(sat) = z3_verdict(&composed, "composed_h_bad_twin") {
+        assert!(
+            !sat,
+            "call:h(2)==4 conjoined with h's post out==2+1 must be z3-UNSAT"
+        );
     }
 }
 
@@ -17668,10 +17741,7 @@ fn inv_has_opaque_call_leaf(decl: &sugar_ir_symbolic::ContractDecl) -> bool {
 }
 
 #[test]
-fn value_call_peels_to_grounded_arith_with_value_teeth() {
-    // `fn h(n) { n + 1 }`; `assert_eq!(h(2), 3)` grounds to `3 == 3` (SAT, a good
-    // dig) after primitive integer folding -- NOT the hollow opaque `call:h(2)`. The helper `h` is recorded as a
-    // discharged support fn (a universe member), not its own contract.
+fn value_call_keeps_caller_callsite_for_contract_composition() {
     let src = r#"
 fn h(n: i32) -> i32 { n + 1 }
 
@@ -17684,30 +17754,16 @@ fn calls_h() {
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
-    assert_eq!(
-        grounded_int_lhs(decl),
-        3,
-        "LHS must be the β-reduced and folded body `3`"
-    );
+    assert_call_eq_int(decl, "call:h", &[2], 3);
     assert!(
-        !inv_has_opaque_call_leaf(decl),
-        "the peel must eliminate the opaque `call:h` leaf, not relocate it"
+        inv_has_opaque_call_leaf(decl),
+        "caller must retain the call:h seam for linker composition"
     );
-    assert!(
-        out.reduced_helpers.contains("h"),
-        "a fully-peeled value helper must be recorded as callsite-accounted"
-    );
-    // Value teeth: the grounded contract is SAT (good dig).
-    if let Some(sat) = z3_verdict(&inv_json(decl), "inline_h_good") {
-        assert!(sat, "grounded `3 == 3` must be SAT (a real dig)");
-    }
+    assert!(!out.reduced_helpers.contains("h"));
 }
 
 #[test]
-fn value_call_bad_twin_anchor_is_z3_unsat() {
-    // THE TEETH BITE: the SAME body `h(n) { n + 1 }`, the WRONG anchor `== 4`. Hollow
-    // `call:h(2) == 4` would discharge identically to the good twin (no teeth); the
-    // grounded `3 == 4` is z3-UNSAT -- a wrong anchor is REFUTED.
+fn value_call_bad_twin_anchor_is_refuted_by_contract_composition() {
     let src = r#"
 fn h(n: i32) -> i32 { n + 1 }
 
@@ -17719,19 +17775,31 @@ fn calls_h_wrong() {
     let out = lift_file(&parse(src), "tests/inline.rs");
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
-    assert_eq!(grounded_int_lhs(decl), 3);
-    if let Some(sat) = z3_verdict(&inv_json(decl), "inline_h_bad") {
-        assert!(
-            !sat,
-            "grounded `3 == 4` must be z3-UNSAT (teeth bite the bad twin)"
-        );
-    }
+    assert_call_eq_int(decl, "call:h", &[2], 4);
+
+    let doc = run_rpc_lift("src/inline.rs", src);
+    let helper = ir_entry_named(&doc, "rust-source::h")
+        .unwrap_or_else(|| panic!("missing source contract for h: {doc:#}"));
+    assert_eq!(helper["kind"], serde_json::json!("function-contract"));
+    assert_eq!(helper["bridgeSourceSymbol"], serde_json::json!("call:h"));
+    assert!(helper["post"].to_string().contains("+"));
+    let source_contract = doc["ir"]
+        .as_array()
+        .and_then(|entries| {
+            entries.iter().find_map(|entry| {
+                let name = entry["name"].as_str()?;
+                (entry["kind"] == serde_json::json!("contract")
+                    && name.contains("::calls_h_wrong::h#euf#"))
+                .then_some(name)
+            })
+        })
+        .unwrap_or_else(|| panic!("missing RPC caller h(2) fact: {doc:#}"));
+    assert_contract_edge(&doc, source_contract, "call:h", "rust-source::h");
+    assert_composed_h_bad_twin_refutes();
 }
 
 #[test]
-fn nested_value_calls_peel_through_to_literals() {
-    // `g(n) { n*2 }`, `h(n) { g(n)+1 }`; `assert_eq!(h(3), 7)` peels h -> g -> literals,
-    // grounding to `7 == 7` (SAT). Both g and h dissolve into the universe.
+fn nested_value_calls_keep_outer_callsite_for_contract_composition() {
     let src = r#"
 fn g(n: i32) -> i32 { n * 2 }
 fn h(n: i32) -> i32 { g(n) + 1 }
@@ -17744,20 +17812,13 @@ fn calls_h() {
     let out = lift_file(&parse(src), "tests/inline.rs");
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
-    assert_eq!(grounded_int_lhs(decl), 7);
-    assert!(
-        !inv_has_opaque_call_leaf(decl),
-        "no opaque leaf after nested peel"
-    );
-    assert!(out.reduced_helpers.contains("g") && out.reduced_helpers.contains("h"));
-    if let Some(sat) = z3_verdict(&inv_json(decl), "inline_nested_good") {
-        assert!(sat, "grounded `7 == 7` must be SAT");
-    }
+    assert_call_eq_int(decl, "call:h", &[3], 7);
+    assert!(inv_has_opaque_call_leaf(decl));
+    assert!(!out.reduced_helpers.contains("g") && !out.reduced_helpers.contains("h"));
 }
 
 #[test]
-fn nested_value_calls_bad_twin_is_z3_unsat() {
-    // Same nested body, wrong anchor `== 8`: `7 == 8` is z3-UNSAT.
+fn nested_value_calls_bad_twin_keeps_outer_callsite_for_composition() {
     let src = r#"
 fn g(n: i32) -> i32 { n * 2 }
 fn h(n: i32) -> i32 { g(n) + 1 }
@@ -17770,18 +17831,11 @@ fn calls_h_wrong() {
     let out = lift_file(&parse(src), "tests/inline.rs");
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
-    if let Some(sat) = z3_verdict(&inv_json(decl), "inline_nested_bad") {
-        assert!(
-            !sat,
-            "grounded `7 == 8` must be z3-UNSAT (nested teeth bite)"
-        );
-    }
+    assert_call_eq_int(decl, "call:h", &[3], 8);
 }
 
 #[test]
-fn ssa_rebind_let_chain_peels_through() {
-    // `h(x) { let x = other(x); x }` is a REBIND (x@2 = other(x@1)), not a fixpoint
-    // `x == other(x)`. Peel h(5) -> other(5) -> its body `x + 10` -> `15`.
+fn ssa_rebind_let_chain_keeps_callsite_contract_boundary() {
     let src = r#"
 fn other(x: i32) -> i32 { x + 10 }
 fn h(x: i32) -> i32 { let x = other(x); x }
@@ -17792,17 +17846,19 @@ fn calls_h() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/inline.rs");
-    assert_warranted_decl_count(&out, 1);
-    let decl = single_warranted_decl(&out);
-    assert_eq!(
-        grounded_int_lhs(decl),
-        15,
-        "SSA rebind must substitute the VALUE"
+    let caller = warranted_decls(&out)
+        .into_iter()
+        .find(|decl| decl.name.contains("::calls_h::h#euf#"))
+        .unwrap_or_else(|| panic!("missing caller h(5) fact: {:?}", out.decls));
+    assert_call_eq_int(caller, "call:h", &[5], 15);
+    assert!(
+        out.decls
+            .iter()
+            .any(|decl| decl.name == "tests/inline.rs::h"),
+        "h should keep its own source contract: {:?}",
+        out.decls
     );
-    assert!(out.reduced_helpers.contains("h") && out.reduced_helpers.contains("other"));
-    if let Some(sat) = z3_verdict(&inv_json(decl), "inline_ssa_good") {
-        assert!(sat, "grounded `15 == 15` must be SAT");
-    }
+    assert!(!out.reduced_helpers.contains("h") && !out.reduced_helpers.contains("other"));
 }
 
 #[test]
@@ -18266,8 +18322,8 @@ fn regex_from_method() {
     );
     assert_eq!(
         doc["sourceLedger"]["source_warranted"],
-        serde_json::json!(3),
-        "test + both consumed impl methods should count as warranted: {doc:#}"
+        serde_json::json!(2),
+        "both consumed impl methods should count as source-warranted; assertion surfaces are accounted separately: {doc:#}"
     );
     let new_contract = ir_entry_named(&doc, "rust-source::Maker::new")
         .unwrap_or_else(|| panic!("missing Maker::new contract: {doc:#}"));
@@ -20572,7 +20628,7 @@ fn chained_next_count_over_literal_iterator_uses_remaining_state() {
 }
 
 #[test]
-fn chained_next_len_over_visible_sequence_helper_grounds_returned_literal() {
+fn chained_next_len_over_visible_sequence_helper_preserves_callsite_chain() {
     let src = r#"
         #[test]
         fn t_visible_helper_next_len() {
@@ -20586,40 +20642,25 @@ fn chained_next_len_over_visible_sequence_helper_grounds_returned_literal() {
     );
     assert_warranted_decl_count(&out, 1);
     let operands = inv_operands(single_warranted_decl(&out));
-    assert_eq!(
-        operands.len(),
-        1,
-        "expected one grounded equality: {operands:?}"
-    );
+    assert_eq!(operands.len(), 1, "expected one equality: {operands:?}");
     match operands[0].as_ref() {
         Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
-            for arg in args {
-                match arg.as_ref() {
-                    Term::Const {
-                        value: ConstValue::Int(1),
-                        ..
-                    } => {}
-                    other => panic!(
-                        "expected make_vec().iter().next().len() to ground to 1, got {other:?}"
-                    ),
-                }
-            }
+            let lhs = format!("{:?}", args[0]);
+            assert!(
+                lhs.contains("method:len")
+                    && lhs.contains("method:next")
+                    && lhs.contains("method:iter")
+                    && lhs.contains("call:make_vec"),
+                "helper-returned sequence must preserve the callsite chain: {lhs}"
+            );
+            assert_eq!(int_const_value(&args[1]), 1);
         }
         other => panic!("expected equality, got {other:?}"),
-    }
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "visible_helper_next_len",
-    ) {
-        assert!(
-            sat,
-            "after one next() call over helper-returned [1, 2], remaining len is 1"
-        );
     }
 }
 
 #[test]
-fn chained_next_len_over_visible_sequence_helper_bad_twin_refutes() {
+fn chained_next_len_over_visible_sequence_helper_bad_twin_keeps_callsite_chain() {
     let src = r#"
         #[test]
         fn t_visible_helper_next_len_bad() {
@@ -20632,15 +20673,13 @@ fn chained_next_len_over_visible_sequence_helper_bad_twin_refutes() {
         "coretests/iter/adapters/visible_helper_next_len_bad.rs",
     );
     assert_warranted_decl_count(&out, 1);
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "visible_helper_next_len_bad",
-    ) {
-        assert!(
-            !sat,
-            "wrong remaining len for helper-returned literal sequence must be z3-UNSAT"
-        );
-    }
+    let (lhs, rhs) = single_eq_atom(single_warranted_decl(&out));
+    let lhs = format!("{lhs:?}");
+    assert!(
+        lhs.contains("method:len") && lhs.contains("call:make_vec"),
+        "bad twin must keep the helper callsite seam for composition: {lhs}"
+    );
+    assert_eq!(int_const_value(&rhs), 0);
 }
 
 #[test]
@@ -20662,8 +20701,9 @@ fn chained_next_len_over_unresolved_sequence_helper_stays_opaque() {
     match operands[0].as_ref() {
         Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
             assert!(
-                matches!(args[0].as_ref(), Term::Var { name } if name.starts_with("opaque:")),
-                "unresolved helper body must stay opaque, not fake literal iterator state: {:?}",
+                format!("{:?}", args[0]).contains("call:make_vec")
+                    && format!("{:?}", args[0]).contains("method:len"),
+                "unresolved helper body must stay at the helper callsite seam, not fake literal iterator state: {:?}",
                 args[0]
             );
         }
