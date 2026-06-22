@@ -20811,16 +20811,72 @@ fn consumed_iterator_advance_by_then_next_declines() {
         out.assertions_refused,
         out.skip_reasons,
     );
-    // The second assertion sees an opaque version-2 `it` (versioning bumped after the
-    // first consuming `.advance_by()` call) → opaque method → UNDECIDED.
+    assert_warranted_decl_count(&out, 2);
+    if let Some(sat) = z3_verdict(&inv_json(warranted_decl(&out, 1)), "advance_by_then_next") {
+        assert!(
+            sat,
+            "advance_by(1) should rewrite the iterator receiver before next()"
+        );
+    }
+}
+
+#[test]
+fn bounded_next_binding_snapshots_return_and_advances_receiver_state() {
+    let src = r#"
+        #[test]
+        fn t_bound_next() {
+            let xs = [1_i32, 2, 3];
+            let mut it = xs.iter();
+            let first = it.next();
+            assert_eq!(first, Some(&1));
+            assert_eq!(it.len(), 2);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/adapters/bound_next_len.rs");
+    assert_eq!(
+        out.assertions_refused, 0,
+        "bounded next over a literal iterator is temporal sugar, not an effect: {:?}",
+        out.skip_reasons
+    );
+    assert_warranted_decl_count(&out, 2);
+    if let Some(sat) = z3_verdict(&inv_json(warranted_decl(&out, 0)), "bound_next_first") {
+        assert!(sat, "first must snapshot the pre-consumption next() value");
+    }
+    if let Some(sat) = z3_verdict(&inv_json(warranted_decl(&out, 1)), "bound_next_len") {
+        assert!(
+            sat,
+            "it.len() must read the post-consumption iterator state"
+        );
+    }
+}
+
+#[test]
+fn bounded_next_binding_bad_remaining_len_refutes() {
+    let src = r#"
+        #[test]
+        fn t_bound_next_bad_len() {
+            let xs = [1_i32, 2, 3];
+            let mut it = xs.iter();
+            let first = it.next();
+            assert_eq!(first, Some(&1));
+            assert_eq!(it.len(), 3);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/adapters/bound_next_len_bad.rs");
+    assert_warranted_decl_count(&out, 2);
+    if let Some(sat) = z3_verdict(&inv_json(warranted_decl(&out, 1)), "bound_next_len_bad") {
+        assert!(
+            !sat,
+            "wrong post-consumption remaining length must be z3-UNSAT"
+        );
+    }
 }
 
 /// `it.next()` advances a mutable iterator local. A later `.fold(..)` over that same
-/// local must not replay the original literal sequence and lift stale closure-body
-/// assertions. It should instead lift an opaque consumed-fold body obligation: accounted,
-/// undecided, and never falsely refuted.
+/// local rewrites the receiver to the remaining literal sequence before the fold body
+/// is unrolled.
 #[test]
-fn consumed_iterator_fold_after_next_declines_stale_body_assertion() {
+fn consumed_iterator_fold_after_next_digs_remaining_sequence() {
     let src = r#"
         #[test]
         fn t_fold_after_next() {
@@ -20837,30 +20893,29 @@ fn consumed_iterator_fold_after_next_declines_stale_body_assertion() {
         &parse(src),
         "coretests/iter/adapters/enumerate_fold_after_next.rs",
     );
+    assert_warranted_decl_count(&out, 1);
     assert!(
-        out.assertions_lifted >= 1,
-        "consumed-local fold body must stay accounted opaquely: lifted={} refused={} skips={:?}",
-        out.assertions_lifted,
-        out.assertions_refused,
-        out.skip_reasons
+        !format!("{:?}", warranted_decl(&out, 0)).contains("iter.consumed_fold_body"),
+        "fold over an exactly advanced literal iterator must not hide behind the consumed fallback: {:?}",
+        warranted_decl(&out, 0)
     );
     assert_eq!(
         out.assertions_refused, 0,
-        "consumed-local fold is temporal uncertainty, not an effect refusal: {:?}",
+        "consumed-local fold is exact temporal sugar here, not an effect refusal: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "consumed_fold_body") {
+    if let Some(sat) = z3_verdict(&inv_json(warranted_decl(&out, 0)), "consumed_fold_body") {
         assert!(
             sat,
-            "consumed fold body obligation must be SAT, not falsely refuted"
+            "fold body over the post-next remaining sequence must be SAT"
         );
     }
 }
 
 /// Same temporal boundary from the back: after `next_back()`, `.rfold(..)` over the
-/// consumed local must not replay the pre-consumption sequence.
+/// consumed local rewrites the receiver before unrolling.
 #[test]
-fn consumed_iterator_rfold_after_next_back_declines_stale_body_assertion() {
+fn consumed_iterator_rfold_after_next_back_digs_remaining_sequence() {
     let src = r#"
         #[test]
         fn t_rfold_after_next_back() {
@@ -20877,22 +20932,21 @@ fn consumed_iterator_rfold_after_next_back_declines_stale_body_assertion() {
         &parse(src),
         "coretests/iter/adapters/enumerate_rfold_after_next_back.rs",
     );
+    assert_warranted_decl_count(&out, 1);
     assert!(
-        out.assertions_lifted >= 1,
-        "consumed-local rfold body must stay accounted opaquely: lifted={} refused={} skips={:?}",
-        out.assertions_lifted,
-        out.assertions_refused,
-        out.skip_reasons
+        !format!("{:?}", warranted_decl(&out, 0)).contains("iter.consumed_fold_body"),
+        "rfold over an exactly advanced literal iterator must not hide behind the consumed fallback: {:?}",
+        warranted_decl(&out, 0)
     );
     assert_eq!(
         out.assertions_refused, 0,
-        "consumed-local rfold is temporal uncertainty, not an effect refusal: {:?}",
+        "consumed-local rfold is exact temporal sugar here, not an effect refusal: {:?}",
         out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "consumed_rfold_body") {
+    if let Some(sat) = z3_verdict(&inv_json(warranted_decl(&out, 0)), "consumed_rfold_body") {
         assert!(
             sat,
-            "consumed rfold body obligation must be SAT, not falsely refuted"
+            "rfold body over the post-next_back remaining sequence must be SAT"
         );
     }
 }

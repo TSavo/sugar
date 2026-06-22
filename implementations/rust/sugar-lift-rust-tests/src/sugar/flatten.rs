@@ -25,12 +25,9 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     };
     // The receiver must resolve to a finite literal sequence (whose ELEMENTS are
     // checked to be sub-sequences at desugar time, bailing if not).
-    if call.method == "flatten"
-        && call.args.is_empty()
-        && method_family::resolves_literal_sequence(&call.receiver, fcx.let_inits())
-    {
+    if call.method == "flatten" && call.args.is_empty() {
         return Some(Box::new(FlattenSugar {
-            inner: build_composite(&call.receiver, fcx),
+            inner: method_family::build_literal_sequence_composite(&call.receiver, fcx)?,
         }));
     }
     None

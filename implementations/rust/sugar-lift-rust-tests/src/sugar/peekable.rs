@@ -10,7 +10,7 @@
 
 use syn::Expr;
 
-use crate::sugar::factory::{build_composite, SugarBuildCtx};
+use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::identity::IdentitySugar;
 use crate::sugar::method_family;
 use crate::Sugar;
@@ -22,12 +22,9 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     let Expr::MethodCall(call) = expr else {
         return None;
     };
-    if call.method == "peekable"
-        && call.args.is_empty()
-        && method_family::resolves_literal_sequence(expr, fcx.let_inits())
-    {
+    if call.method == "peekable" && call.args.is_empty() {
         return Some(Box::new(IdentitySugar {
-            inner: build_composite(&call.receiver, fcx),
+            inner: method_family::build_literal_sequence_composite(&call.receiver, fcx)?,
         }));
     }
     None

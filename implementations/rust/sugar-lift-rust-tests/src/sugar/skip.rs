@@ -6,7 +6,7 @@
 
 use syn::Expr;
 
-use crate::sugar::factory::{build_composite, SugarBuildCtx};
+use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::method_family;
 use crate::{const_int, Desugared, Outcome, Sugar, SugarCtx};
 
@@ -21,11 +21,8 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
         return None;
     }
     let n: usize = const_int(&call.args[0])?.try_into().ok()?;
-    if !method_family::resolves_literal_sequence(expr, fcx.let_inits()) {
-        return None;
-    }
     Some(Box::new(SkipSugar {
-        inner: build_composite(&call.receiver, fcx),
+        inner: method_family::build_literal_sequence_composite(&call.receiver, fcx)?,
         n,
     }))
 }

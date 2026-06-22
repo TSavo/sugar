@@ -8,7 +8,7 @@
 
 use syn::Expr;
 
-use crate::sugar::factory::{build_composite, SugarBuildCtx};
+use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::method_family;
 use crate::{const_eval_unary_closure, Desugared, Outcome, Sugar, SugarCtx};
 
@@ -25,11 +25,8 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     let Expr::Closure(pred) = &call.args[0] else {
         return None;
     };
-    if !method_family::resolves_literal_sequence(expr, fcx.let_inits()) {
-        return None;
-    }
     Some(Box::new(FilterSugar {
-        inner: build_composite(&call.receiver, fcx),
+        inner: method_family::build_literal_sequence_composite(&call.receiver, fcx)?,
         pred: pred.clone(),
     }))
 }

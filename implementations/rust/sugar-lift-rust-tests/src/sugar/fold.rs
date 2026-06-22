@@ -16,14 +16,13 @@ use sugar_ir_symbolic::{and_, atomic_, num, Term};
 use syn::{Expr, Pat, Stmt};
 
 use crate::sugar::factory::SugarBuildCtx;
-use crate::sugar::literal::LiteralSugar;
 use crate::sugar::{method, method_family};
 use crate::{
     closure_body_is_side_effecting, closure_single_param_ident, collect_assertion_entries,
     const_fold_acc_update, const_int_acc_init, count_asserts_in_expr, count_asserts_in_stmts,
-    peel_fold_adaptors, resolve_index_in_formula, simple_path_name, strip_refs_groups,
-    subst_var_in_formula, token_key, translate_term_in_scope, tuple_components, wrap_rev,
-    AssertionFactKind, ConstVal, Desugared, Outcome, Sugar, SugarCtx, Warrant, SUGAR_SEQ_CAP,
+    resolve_index_in_formula, simple_path_name, strip_refs_groups, subst_var_in_formula, token_key,
+    translate_term_in_scope, tuple_components, AssertionFactKind, ConstVal, Desugared, Outcome,
+    Sugar, SugarCtx, Warrant, SUGAR_SEQ_CAP,
 };
 use tracing::debug;
 
@@ -42,7 +41,11 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
                 if let Some(name) = simple_path_name(&call.receiver) {
                     let version = fcx.scope().version_of(&name);
                     let advanced = version.is_some_and(|version| version > 1);
-                    if fcx.scope().is_consumed_iterator_local(&name) || advanced {
+                    let has_temporal_rewrite =
+                        fcx.scope().temporal_rewrite_expr_for(&name).is_some();
+                    if (fcx.scope().is_consumed_iterator_local(&name) || advanced)
+                        && !has_temporal_rewrite
+                    {
                         debug!(
                             target: "sugar::fold",
                             method = %method,
@@ -60,7 +63,7 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
                     }
                 }
             }
-            decompose_fold(expr, fcx.let_inits()).map(|node| Box::new(node) as Box<dyn Sugar>)
+            decompose_fold(expr, fcx).map(|node| Box::new(node) as Box<dyn Sugar>)
         }
         _ => None,
     }
@@ -112,21 +115,10 @@ fn count_consumed_fold_assertions(call: &syn::ExprMethodCall) -> usize {
 /// `let`-bound receivers through `let_inits` is delegated to `peel_fold_adaptors`.
 /// `extra_rev` appends a final `RevSugar` (for `.rfold`). None on an unrepresentable
 /// adaptor / unresolvable binding (-> bail).
-fn decompose_seq(
-    expr: &Expr,
-    let_inits: &BTreeMap<String, &Expr>,
-    extra_rev: bool,
-) -> Option<Box<dyn Sugar>> {
-    let (base, mut adaptors) = peel_fold_adaptors(expr, let_inits, 0)?;
-    if !method_family::is_literal_sequence_base(base) {
-        return None;
-    }
+fn decompose_seq(expr: &Expr, fcx: &SugarBuildCtx, extra_rev: bool) -> Option<Box<dyn Sugar>> {
+    let mut node = method_family::build_literal_sequence_composite(expr, fcx)?;
     if extra_rev {
-        adaptors.push(Box::new(wrap_rev));
-    }
-    let mut node: Box<dyn Sugar> = Box::new(LiteralSugar { base: base.clone() });
-    for wrap in adaptors {
-        node = wrap(node);
+        node = Box::new(crate::sugar::rev::RevSugar { inner: node });
     }
     Some(node)
 }
@@ -342,10 +334,7 @@ impl Sugar for FoldSugar {
 /// closure's binders + body + acc-update tail. None (bail) on any shape outside
 /// the represented set -- this IS the front half of `try_lift_fold_forall`
 /// (parsing), with the reduction living in `FoldSugar::desugar`.
-pub(crate) fn decompose_fold(
-    expr: &Expr,
-    let_inits: &BTreeMap<String, &Expr>,
-) -> Option<FoldSugar> {
+pub(crate) fn decompose_fold(expr: &Expr, fcx: &SugarBuildCtx) -> Option<FoldSugar> {
     let Expr::MethodCall(call) = expr else {
         return None;
     };
@@ -377,8 +366,8 @@ pub(crate) fn decompose_fold(
         }
         other => FoldItemBinder::Whole(closure_single_param_ident(other)?),
     };
-    let acc_0 = const_int_acc_init(init_expr, let_inits)?;
-    let inner = decompose_seq(&call.receiver, let_inits, rev_fold)?;
+    let acc_0 = const_int_acc_init(init_expr, fcx.let_inits())?;
+    let inner = decompose_seq(&call.receiver, fcx, rev_fold)?;
     // The closure body: block-bodied (asserts + acc-update tail). The tail is the
     // final expr-without-semi; the preceding statements are the body.
     let Expr::Block(body_block) = &*closure.body else {
@@ -391,7 +380,7 @@ pub(crate) fn decompose_fold(
     // Capture the in-scope LITERAL arrays so the fold body's `index(ys, k)` term
     // (after the index `k` is threaded to a literal) can be resolved to its element.
     let mut literal_arrays: BTreeMap<String, Vec<Expr>> = BTreeMap::new();
-    for (name, init) in let_inits {
+    for (name, init) in fcx.let_inits() {
         if let Expr::Array(arr) = strip_refs_groups(init) {
             literal_arrays.insert(name.clone(), arr.elems.iter().cloned().collect());
         }
