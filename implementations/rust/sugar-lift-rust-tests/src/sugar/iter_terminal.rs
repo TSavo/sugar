@@ -72,9 +72,10 @@ use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::sugar::term_leaf::reasoned_hit;
 use crate::{
-    closure_single_param_ident, const_eval_unary_closure, const_fold_acc_update,
-    const_fold_int_term, const_int_acc_init, parse_int_lit, simple_path_name, strip_refs_groups,
-    ConstVal, Desugared, Outcome, Sugar, SugarCtx,
+    closure_body_is_side_effecting, closure_single_param_ident, const_eval_unary_closure,
+    const_fold_acc_update, const_fold_int_term, const_int_acc_init, parse_int_lit,
+    simple_path_name, strip_refs_groups, ConstVal, Desugared, DesugaredElem, Effect, Outcome,
+    Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -125,6 +126,9 @@ enum Terminal {
     /// The closure has the SAME type for both parameters (unlike `.fold(init, |acc, x|
     /// ...)`); the body is const-evaluated with `acc` and `x` bound at each step.
     Reduce(syn::ExprClosure),
+    /// `.fold(init, |acc, x| expr)` -- fold from an explicit initializer and return the
+    /// final accumulator value directly.
+    Fold(Expr, syn::ExprClosure),
 }
 
 /// TERM recognizer for the iterator scalar-reduction terminals. `Some` only when the
@@ -317,6 +321,15 @@ fn recognize_terminal(call: &syn::ExprMethodCall) -> Option<Terminal> {
             };
             Terminal::Reduce(closure.clone())
         }
+        // `.fold(init, |acc, x| expr)` -- explicit-initializer accumulator fold.
+        // Requires a closure second arg; a function path stays with the ordinary method
+        // fallback because this reducer cannot instantiate arbitrary code.
+        "fold" if call.args.len() == 2 => {
+            let Expr::Closure(closure) = strip_refs_groups(&call.args[1]) else {
+                return None;
+            };
+            Terminal::Fold(call.args[0].clone(), closure.clone())
+        }
         _ => return None,
     })
 }
@@ -396,7 +409,7 @@ impl IterTerminalSugar {
     /// Reduce the literal `Seq` to the value term, or `None` if it does not cleanly
     /// ground (the caller then emits the opaque fallback). Never a guessed value: every
     /// `Some` carries the EXACT reduction.
-    fn reduce(&self, ctx: &SugarCtx) -> Option<Desugared> {
+    fn reduce(&self, ctx: &SugarCtx) -> Result<Option<Desugared>, Effect> {
         let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
         let let_inits: BTreeMap<String, &Expr> = stable
             .iter()
@@ -410,9 +423,26 @@ impl IterTerminalSugar {
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
         let inner = crate::sugar::scan::try_build_scan_inner(&self.inner, &fcx)
             .unwrap_or_else(|| build_composite(&self.inner, &fcx));
-        let seq = inner.desugar(ctx).dug()?.into_seq()?;
+        let seq = match inner.desugar(ctx) {
+            outcome if outcome.is_structural_bail() => return Ok(None),
+            Outcome::Dug(desugared) => match desugared.into_seq() {
+                Some(seq) => seq,
+                None => return Ok(None),
+            },
+            Outcome::Hit(effect) => return Err(effect),
+        };
+        Ok(self.reduce_seq(ctx, &fcx, &let_inits, seq))
+    }
+
+    fn reduce_seq(
+        &self,
+        ctx: &SugarCtx,
+        fcx: &SugarBuildCtx,
+        let_inits: &BTreeMap<String, &Expr>,
+        seq: Vec<DesugaredElem>,
+    ) -> Option<Desugared> {
         if let Terminal::AdvanceBy(arg) = &self.terminal {
-            let n_term = build_term(arg, &fcx).desugar(ctx).dug()?.into_term()?;
+            let n_term = build_term(arg, fcx).desugar(ctx).dug()?.into_term()?;
             let n = term_as_usize(&n_term)?;
             let len = seq.len();
             debug!(
@@ -555,6 +585,30 @@ impl IterTerminalSugar {
             // Wrap in `Some(...)` -- `.reduce()` always returns `Option<T>`.
             return Some(Desugared::Term(monadic::some_term(num(i128::from(acc)))));
         }
+        // `.fold(init, |acc, x| expr)` -- fold from the explicit initial accumulator.
+        // The accumulator is threaded in source order (`a_i = f(a_{i-1}, n_i)`); every
+        // element and every intermediate must remain exactly const-foldable.
+        if let Terminal::Fold(init_expr, closure) = &self.terminal {
+            if closure_body_is_side_effecting(&closure.body) || closure.inputs.len() != 2 {
+                return None;
+            }
+            let acc_var = closure_single_param_ident(&closure.inputs[0])?;
+            let item_var = closure_single_param_ident(&closure.inputs[1])?;
+            let tail: &Expr = reduce_closure_tail(&closure.body)?;
+            let mut acc = const_int_acc_init(init_expr, let_inits)?;
+            for elem in &seq {
+                let item_val = elem
+                    .value
+                    .as_ref()
+                    .and_then(ConstVal::as_int)
+                    .and_then(|n| i64::try_from(n).ok())?;
+                let mut env: BTreeMap<String, i64> = BTreeMap::new();
+                env.insert(acc_var.clone(), acc);
+                env.insert(item_var.clone(), item_val);
+                acc = const_fold_acc_update(tail, &env)?;
+            }
+            return Some(Desugared::Term(num(i128::from(acc))));
+        }
         // `.sum()` / `.product()`: fold over the elements' EXACT integer const values.
         // EXACT-OR-BAIL: a non-integer / opaque element (a float / string / unresolved
         // element) -> `None` (emit the opaque fallback), never a guessed value.
@@ -585,8 +639,9 @@ impl Sugar for IterTerminalSugar {
         // `reduce` either returns the EXACT scalar or declines (a non-const element); it
         // never reduces over a runtime domain (that domain was filtered out at build).
         match self.reduce(ctx) {
-            Some(d) => Outcome::Dug(d),
-            None => {
+            Ok(Some(d)) => Outcome::Dug(d),
+            Err(effect) => Outcome::Hit(effect),
+            Ok(None) => {
                 let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
                 let let_inits: BTreeMap<String, &Expr> = stable
                     .iter()

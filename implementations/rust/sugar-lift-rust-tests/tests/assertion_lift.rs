@@ -15914,6 +15914,264 @@ fn iter_sum_through_map_filter_and_closed_range_digs() {
 }
 
 #[test]
+fn temporal_closure_adaptor_recognizers_are_lazy_source_audit() {
+    for (name, source) in [
+        ("filter", include_str!("../src/sugar/filter.rs")),
+        ("flat_map", include_str!("../src/sugar/flat_map.rs")),
+        ("skip_while", include_str!("../src/sugar/skip_while.rs")),
+        ("take_while", include_str!("../src/sugar/take_while.rs")),
+        ("map", include_str!("../src/sugar/map.rs")),
+    ] {
+        assert!(
+            !source.contains("inner: method_family::build_literal_sequence_composite(&call.receiver, fcx)?"),
+            "{name} recognizer must capture the raw receiver and defer child sequence construction to desugar"
+        );
+    }
+}
+
+#[test]
+fn temporal_closure_adaptor_terminals_compose_to_literal_floor_with_teeth() {
+    let int_cases: &[(&str, &str, &str, i128, i128)] = &[
+        (
+            "[1i32, 2, 3].into_iter().map(|x| x + 1).sum::<i32>()",
+            "9i32",
+            "tests/temporal_map_sum_good.rs",
+            9,
+            9,
+        ),
+        (
+            "[1i32, 2, 3].into_iter().map(|x| x + 1).sum::<i32>()",
+            "8i32",
+            "tests/temporal_map_sum_bad.rs",
+            9,
+            8,
+        ),
+        (
+            "[1i32, 2, 3].into_iter().filter(|x| *x % 2 == 1).count()",
+            "2usize",
+            "tests/temporal_filter_count_good.rs",
+            2,
+            2,
+        ),
+        (
+            "[1i32, 2, 3].into_iter().filter(|x| *x % 2 == 1).count()",
+            "3usize",
+            "tests/temporal_filter_count_bad.rs",
+            2,
+            3,
+        ),
+        (
+            "[1i32, 2, 3].into_iter().fold(0i32, |a, x| a + x)",
+            "6i32",
+            "tests/temporal_fold_value_good.rs",
+            6,
+            6,
+        ),
+        (
+            "[1i32, 2, 3].into_iter().fold(0i32, |a, x| a + x)",
+            "7i32",
+            "tests/temporal_fold_value_bad.rs",
+            6,
+            7,
+        ),
+        (
+            "[1i32, 2].into_iter().flat_map(|x| [x, x + 10]).sum::<i32>()",
+            "26i32",
+            "tests/temporal_flat_map_sum_good.rs",
+            26,
+            26,
+        ),
+        (
+            "[1i32, 2].into_iter().flat_map(|x| [x, x + 10]).sum::<i32>()",
+            "27i32",
+            "tests/temporal_flat_map_sum_bad.rs",
+            26,
+            27,
+        ),
+        (
+            "[1i32, 2, 3, 4].into_iter().take_while(|x| *x < 3).count()",
+            "2usize",
+            "tests/temporal_take_while_count_good.rs",
+            2,
+            2,
+        ),
+        (
+            "[1i32, 2, 3, 4].into_iter().take_while(|x| *x < 3).count()",
+            "3usize",
+            "tests/temporal_take_while_count_bad.rs",
+            2,
+            3,
+        ),
+        (
+            "[1i32, 2, 3, 4].into_iter().skip_while(|x| *x < 3).sum::<i32>()",
+            "7i32",
+            "tests/temporal_skip_while_sum_good.rs",
+            7,
+            7,
+        ),
+        (
+            "[1i32, 2, 3, 4].into_iter().skip_while(|x| *x < 3).sum::<i32>()",
+            "8i32",
+            "tests/temporal_skip_while_sum_bad.rs",
+            7,
+            8,
+        ),
+        (
+            "[1i32, 2, 3].into_iter().scan(0i32, |s, x| { *s += x; Some(*s) }).sum::<i32>()",
+            "10i32",
+            "tests/temporal_scan_sum_good.rs",
+            10,
+            10,
+        ),
+        (
+            "[1i32, 2, 3].into_iter().scan(0i32, |s, x| { *s += x; Some(*s) }).sum::<i32>()",
+            "11i32",
+            "tests/temporal_scan_sum_bad.rs",
+            10,
+            11,
+        ),
+    ];
+
+    for (idx, (lhs, rhs, file, expected_lhs, expected_rhs)) in int_cases.iter().enumerate() {
+        let decl = lift_eq_decl(lhs, rhs, file);
+        assert_eq!(
+            dug_eq_int_pairs(&decl),
+            vec![(*expected_lhs, *expected_rhs)],
+            "case {idx} must carry the exact literal-floor equality"
+        );
+        if let Some(sat) = z3_verdict(&inv_json(&decl), &format!("temporal_int_case_{idx}")) {
+            assert_eq!(
+                sat,
+                expected_lhs == expected_rhs,
+                "case {idx} z3 verdict must match the literal floor"
+            );
+        }
+    }
+
+    let bool_cases: &[(&str, &str, &str, bool, bool)] = &[
+        (
+            "[1i32, 2, 3].into_iter().any(|x| x == 2)",
+            "true",
+            "tests/temporal_any_good.rs",
+            true,
+            true,
+        ),
+        (
+            "[1i32, 2, 3].into_iter().any(|x| x == 2)",
+            "false",
+            "tests/temporal_any_bad.rs",
+            true,
+            false,
+        ),
+        (
+            "[1i32, 2, 3].into_iter().all(|x| x > 0)",
+            "true",
+            "tests/temporal_all_good.rs",
+            true,
+            true,
+        ),
+        (
+            "[1i32, 2, 3].into_iter().all(|x| x > 0)",
+            "false",
+            "tests/temporal_all_bad.rs",
+            true,
+            false,
+        ),
+    ];
+
+    for (idx, (lhs, rhs, file, expected_lhs, expected_rhs)) in bool_cases.iter().enumerate() {
+        let decl = lift_eq_decl(lhs, rhs, file);
+        assert_eq!(
+            dug_eq_bool_pairs(&decl),
+            vec![(*expected_lhs, *expected_rhs)],
+            "bool case {idx} must carry the exact literal-floor equality"
+        );
+        if let Some(sat) = z3_verdict(&inv_json(&decl), &format!("temporal_bool_case_{idx}")) {
+            assert_eq!(
+                sat,
+                expected_lhs == expected_rhs,
+                "bool case {idx} z3 verdict must match the literal floor"
+            );
+        }
+    }
+
+    let find = lift_eq_decl(
+        "[3i32, 1, 4, 1, 5].into_iter().find(|x| *x > 3)",
+        "Some(4i32)",
+        "tests/temporal_find_good.rs",
+    );
+    assert_eq!(
+        dug_eq_ctor_name_pairs(&find),
+        vec![("opt:some".to_string(), "opt:some".to_string())],
+        "find must ground to the structural Option literal floor"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&find), "temporal_find_good") {
+        assert!(sat, "find good twin must be SAT");
+    }
+    let find_bad = lift_eq_decl(
+        "[3i32, 1, 4, 1, 5].into_iter().find(|x| *x > 3)",
+        "Some(5i32)",
+        "tests/temporal_find_bad.rs",
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&find_bad), "temporal_find_bad") {
+        assert!(!sat, "find bad twin must be z3-UNSAT");
+    }
+
+    let position = lift_eq_decl(
+        "[3i32, 1, 4, 1, 5].into_iter().position(|x| x > 3)",
+        "Some(2usize)",
+        "tests/temporal_position_good.rs",
+    );
+    assert_eq!(
+        dug_eq_ctor_name_pairs(&position),
+        vec![("opt:some".to_string(), "opt:some".to_string())],
+        "position must ground to the structural Option literal floor"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&position), "temporal_position_good") {
+        assert!(sat, "position good twin must be SAT");
+    }
+    let position_bad = lift_eq_decl(
+        "[3i32, 1, 4, 1, 5].into_iter().position(|x| x > 3)",
+        "Some(0usize)",
+        "tests/temporal_position_bad.rs",
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&position_bad), "temporal_position_bad") {
+        assert!(!sat, "position bad twin must be z3-UNSAT");
+    }
+}
+
+#[test]
+fn temporal_closure_adaptor_runtime_boundaries_decline() {
+    let runtime_source = r#"
+fn make_v() -> Vec<i32> { vec![1, 2, 3] }
+
+#[test]
+fn t() {
+    assert_eq!(make_v().into_iter().map(|x| x + 1).sum::<i32>(), 9);
+}
+"#;
+    let out = lift_file(&parse(runtime_source), "tests/temporal_runtime_source.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "runtime source elements must poison the temporal closure chain: {:?}",
+        out.skip_reasons
+    );
+
+    let runtime_capture = r#"
+#[test]
+fn t(cap: i32) {
+    assert_eq!([1i32, 2, 3].into_iter().map(|x| x + cap).sum::<i32>(), 9);
+}
+"#;
+    let out = lift_file(&parse(runtime_capture), "tests/temporal_runtime_capture.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "runtime capture in the closure body must poison the temporal closure chain: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
 fn iter_sum_through_source_function_map_chain_digs() {
     let src = r#"
 #[test]

@@ -14,7 +14,9 @@
 // as `map`/`flatten`. (A range whose start >= end yields the empty sub-sequence, a
 // legitimate flat_map drop.)
 
-use crate::sugar::factory::SugarBuildCtx;
+use std::collections::BTreeMap;
+
+use crate::sugar::factory::{has_composite, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::{
     const_eval_flat_map_closure, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP,
@@ -34,10 +36,67 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     let Expr::Closure(f) = &call.args[0] else {
         return None;
     };
-    Some(Box::new(FlatMapSugar {
-        inner: method_family::build_literal_sequence_composite(&call.receiver, fcx)?,
+    if !method_family::resolves_literal_sequence(&call.receiver, fcx.let_inits())
+        && !has_composite(&call.receiver, fcx)
+    {
+        return None;
+    }
+    Some(Box::new(FlatMapRecognizedSugar {
+        receiver: (*call.receiver).clone(),
         f: f.clone(),
+        let_inits: capture_let_inits(fcx),
     }))
+}
+
+struct FlatMapRecognizedSugar {
+    receiver: Expr,
+    f: syn::ExprClosure,
+    let_inits: BTreeMap<String, Expr>,
+}
+
+fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
+    fcx.let_inits()
+        .iter()
+        .map(|(name, init)| (name.clone(), (**init).clone()))
+        .collect()
+}
+
+impl Sugar for FlatMapRecognizedSugar {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        Outcome::from_opt((|| {
+            let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
+            let let_inits: BTreeMap<String, &Expr> = stable
+                .iter()
+                .map(|(name, init)| (name.clone(), init))
+                .chain(
+                    self.let_inits
+                        .iter()
+                        .map(|(name, init)| (name.clone(), init)),
+                )
+                .collect();
+            let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+            let seq = method_family::build_literal_sequence_composite(&self.receiver, &fcx)?
+                .desugar(ctx)
+                .dug()?
+                .into_seq()?;
+            let mut out = Vec::new();
+            for elem in seq {
+                let value = elem.value.as_ref()?;
+                let sub = const_eval_flat_map_closure(&self.f, value)?;
+                let total = out.len().checked_add(sub.len())?;
+                if total as i64 > SUGAR_SEQ_CAP {
+                    return None;
+                }
+                for v in sub {
+                    out.push(DesugaredElem {
+                        expr: v.to_expr()?,
+                        value: Some(v),
+                    });
+                }
+            }
+            Some(Desugared::Seq(out))
+        })())
+    }
 }
 
 /// Apply the closure to each element and concatenate the resulting finite literal
