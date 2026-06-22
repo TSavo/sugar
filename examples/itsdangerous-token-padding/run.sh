@@ -1406,7 +1406,7 @@ run_twin() {
   local dir="$HERE/$twin"
   echo
   echo "==================== twin: $twin (expect: $expect) ===================="
-  rm -f "$dir"/blake3-512:*.proof 2>/dev/null
+  rm -f "$dir"/blake3-512_*.proof 2>/dev/null
   rm -rf "$dir/.sugar/runs" "$dir/.sugar/witnesses" "$dir/__pycache__" 2>/dev/null
   rm -f "$dir"/.prove*.json "$dir"/.verify*.json 2>/dev/null
 

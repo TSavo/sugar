@@ -678,7 +678,7 @@ def _vendor_proof_binding_templates(root: Path) -> list[dict[str, Any]]:
 
         for dist in importlib_metadata.distributions():
             for file in dist.files or ():
-                if not fnmatch(Path(str(file)).name, "blake3-512:*.proof"):
+                if not fnmatch(Path(str(file)).name, "blake3-512_*.proof"):
                     continue
                 try:
                     located = Path(dist.locate_file(file)).resolve()
@@ -692,7 +692,7 @@ def _vendor_proof_binding_templates(root: Path) -> list[dict[str, Any]]:
     imports_dir = root / ".sugar" / "imports"
     if imports_dir.is_dir():
         proof_paths.update(
-            p for p in imports_dir.glob("blake3-512:*.proof") if p.is_file()
+            p for p in imports_dir.glob("blake3-512_*.proof") if p.is_file()
         )
     templates: list[dict[str, Any]] = []
     for proof_path in sorted(proof_paths):

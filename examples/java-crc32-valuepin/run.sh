@@ -197,7 +197,7 @@ for suite in good bad; do
   mfin="$HERE/$suite/.sugar/lift/java-test-assertions/manifest.toml.in"
   mf="$HERE/$suite/.sugar/lift/java-test-assertions/manifest.toml"
   sed "s#@KIT_JAVA@#${KIT_JAVA}#g; s#@KIT_DIR@#${KIT_DIR}#g" "$mfin" > "$mf"
-  for p in "$HERE/$suite"/blake3-512:*.proof; do [ -e "$p" ] && rm -f "$p"; done
+  for p in "$HERE/$suite"/blake3-512_*.proof; do [ -e "$p" ] && rm -f "$p"; done
   rm -rf "$HERE/$suite/.sugar/runs" 2>/dev/null || true
   rm -f "$HERE/$suite"/.prove*.json "$HERE/$suite"/.verify*.json 2>/dev/null || true
 done
@@ -214,7 +214,7 @@ run_suite() {
   ( cd "$dir" && "$SUGAR" mint --out . ) >/dev/null 2>&1
 
   local have_proof=0
-  for p in "$dir"/blake3-512:*.proof; do [ -e "$p" ] && have_proof=1; done
+  for p in "$dir"/blake3-512_*.proof; do [ -e "$p" ] && have_proof=1; done
   [ "$have_proof" = 1 ] || { echo "FAIL[$suite]: mint produced no .proof"; exit 1; }
 
   # Verify the minted IR contains the value-pin contract (crc32.eq-walked).
@@ -222,7 +222,7 @@ run_suite() {
 import glob, sys
 suite, dirp = sys.argv[1], sys.argv[2]
 found = False
-for p in glob.glob(dirp + "/blake3-512:*.proof"):
+for p in glob.glob(dirp + "/blake3-512_*.proof"):
     b = open(p, "rb").read()
     if b"crc-value-pin" in b and b"crc32.eq-walked" in b:
         found = True; break

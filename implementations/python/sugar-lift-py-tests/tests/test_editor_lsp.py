@@ -281,7 +281,7 @@ def test_live_cli_squiggle_tracks_source(tmp_path, monkeypatch, asserted, expect
     assert subprocess.run(
         [str(_BIN), "mint", "--out", ".", "--quiet"], cwd=str(vendor), env=env, capture_output=True, text=True
     ).returncode == 0
-    proof = next(vendor.glob("blake3-512:*.proof"))
+    proof = next(vendor.glob("blake3-512_*.proof"))
 
     consumer = _live_project(tmp_path / "consumer", "python-tests", "sugar_lift_py_tests.lsp")
     shutil.copy(proof, consumer / ".sugar" / "imports")

@@ -98,7 +98,7 @@ def _project(tmp: Path, surface: str, module: str, exceptions: dict = None) -> P
 
 
 def _one_proof(d: Path) -> Path:
-    proofs = list(d.glob("blake3-512:*.proof"))
+    proofs = list(d.glob("blake3-512_*.proof"))
     assert len(proofs) == 1, [p.name for p in proofs]
     return proofs[0]
 

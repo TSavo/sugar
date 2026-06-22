@@ -4,7 +4,7 @@ bad-receipt.json
 no-universe-receipt.json
 
 # Minted artifacts + run state (produced by `sugar mint` in run.sh)
-good/blake3-512:*.proof
+good/blake3-512_*.proof
 good/.sugar/runs/
 good/.sugar/lift/java-test-assertions/manifest.toml
 good/.dump.json

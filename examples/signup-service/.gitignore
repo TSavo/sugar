@@ -1,4 +1,4 @@
 target/
 proofs/
-blake3-512:*.proof
+blake3-512_*.proof
 .sugar/runs/

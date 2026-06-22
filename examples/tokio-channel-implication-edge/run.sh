@@ -73,7 +73,7 @@ render_manifests() {
 clean_suite() {
   local suite="$1"
   local dir="$HERE/$suite"
-  rm -f "$dir"/blake3-512:*.proof "$dir/.prove.json" "$dir/.verify.json" "$dir/.verify_recompute.json"
+  rm -f "$dir"/blake3-512_*.proof "$dir/.prove.json" "$dir/.verify.json" "$dir/.verify_recompute.json"
   rm -rf "$dir/.sugar/runs" "$dir/.sugar/witnesses" "$dir/target"
 }
 
@@ -180,7 +180,7 @@ run_suite() {
   (cd "$dir" && "$SUGAR" mint --out .) >/dev/null
 
   local proof
-  proof="$(find "$dir" -maxdepth 1 -name 'blake3-512:*.proof' -print -quit)"
+  proof="$(find "$dir" -maxdepth 1 -name 'blake3-512_*.proof' -print -quit)"
   if [ -z "$proof" ]; then
     echo "$suite did not mint a proof" >&2
     exit 1

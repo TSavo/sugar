@@ -106,8 +106,8 @@ implementations/go/sugar-lift-go-tests/sugar-lift-go
 # Self-contract .proof files. The CID is the filename, but these are
 # build artifacts of `sugar mint` runs; the canonical .proof lives in
 # the protocol/ tree, not at the implementations/<lang>/ root.
-implementations/*/blake3-512:*.proof
-/blake3-512:*.proof
+implementations/*/blake3-512_*.proof
+/blake3-512_*.proof
 **/*.proof
 
 # Self-lift experiment artifacts ARE checked in: the .proof is the

@@ -21,7 +21,7 @@ echo "== build the CLI =="
 cargo build --manifest-path "$REPO/implementations/rust/Cargo.toml" -p sugar-cli --bin sugar >/dev/null
 
 cd "$HERE/good"
-rm -f blake3-512:*.proof .pandas-source-report.json .pandas-source-report.txt 2>/dev/null || true
+rm -f blake3-512_*.proof .pandas-source-report.json .pandas-source-report.txt 2>/dev/null || true
 rm -rf .sugar/runs .sugar/witnesses __pycache__ 2>/dev/null || true
 
 echo "== sugar lift --report --json (full pandas package source accounting) =="

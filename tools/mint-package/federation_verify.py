@@ -40,7 +40,7 @@ def canon(name):
 
 
 def bundle_cid(entry):
-    proofs = glob.glob(os.path.join(entry, "blake3-512:*.proof"))
+    proofs = glob.glob(os.path.join(entry, "blake3-512_*.proof"))
     return os.path.basename(proofs[0]) if proofs else None
 
 
@@ -49,7 +49,7 @@ def _conjoined_imports_from_proof(entry):
     (sugar.conjoinedImports) -- the proof-level tie, not the pipeline's
     meta record. Empty if the bundle carries no tie (a leaf) or cbor2 is
     unavailable."""
-    proofs = glob.glob(os.path.join(entry, "blake3-512:*.proof"))
+    proofs = glob.glob(os.path.join(entry, "blake3-512_*.proof"))
     if not proofs:
         return []
     try:

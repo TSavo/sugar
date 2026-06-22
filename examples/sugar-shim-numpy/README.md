@@ -36,7 +36,7 @@ cargo run --manifest-path ../../implementations/rust/Cargo.toml \
     -p sugar-cli --bin sugar -- mint --out .
 
 cargo run --manifest-path ../../implementations/rust/Cargo.toml \
-    -p sugar-cli --bin sugar -- proof inspect blake3-512:*.proof
+    -p sugar-cli --bin sugar -- proof inspect blake3-512_*.proof
 ```
 
 `mint --out .` writes the CID-named `.proof`. Each binding lands as a

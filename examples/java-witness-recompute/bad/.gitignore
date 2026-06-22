@@ -1,5 +1,5 @@
 # Generated artifacts — never commit
-/blake3-512:*.proof
+/blake3-512_*.proof
 /.sugar/runs/
 /.sugar/witnesses/
 /.sugar/lift/*/manifest.toml
