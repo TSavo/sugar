@@ -274,6 +274,8 @@ pub enum FactoryDisposition {
     Warranted,
     Refused,
     Support,
+    /// Top-level value-proposition present but no Sugar recognizer has reduced it yet
+    /// (recognizer gap — the residual dark). Drive to zero by adding recognizers.
     Unresolved,
 }
 
@@ -808,7 +810,21 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // `mem/type_info.rs::assert_predicates_exact` (collection), `fmt/float.rs::assert_exact_exp`
         // (mut writer).
         || reason.contains("runtime iterator/collection construct (bin-2")
-        || reason.contains("mutable-local state machine driven by fmt-write");
+        || reason.contains("mutable-local state machine driven by fmt-write")
+        // TERMINAL (ITERATOR CONSUMPTION -- by_ref/collect advanced-state): a MUTABLE
+        // iterator that has been advanced by a prior chained operation (`by_ref()`,
+        // `count()`, `collect()`, `nth()`, etc.) before the assertion point. The state
+        // of the iterator at assertion time is a runtime quantity (determined by how many
+        // elements the prior chain consumed), so there is no single timeless source value
+        // to read -- kin to `temporally unstable` / `bin-2`. EARNED by the iterator-
+        // advancement classifier AFTER detecting the `by_ref`-adaptor / unknown-consumed-
+        // count pattern; a FRESH iterator over a literal source (no prior consume chain)
+        // digs and is never refused here (the fake-refuse guardrail).
+        // DISCRIMINATION: `rpc_source_refuses_only_genuinely_not_in_text_iterator_state_with_literal_twins`
+        // in assertion_lift.rs covers this class with literal twins (e.g. array_chunks,
+        // map_windows, peekable variants) that DO warrant -- confirming the refusals are
+        // runtime-state, not missing Sugar.
+        || reason.contains("unknown iterator consumption");
     if terminal {
         Disposition::Refused
     } else {

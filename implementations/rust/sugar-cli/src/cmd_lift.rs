@@ -4428,8 +4428,9 @@ mod tests {
         assert!(human.contains(
             "source audit: loci=1 warranted=0 inactive=0 support=0 refused=0 refuted=0 unresolved=1"
         ));
-        assert!(human
-            .contains("factory accounting: sites=1 warranted=0 refused=0 support=0 unresolved=1"));
+        assert!(human.contains(
+            "factory accounting: sites=1 warranted=0 refused=0 support=0 unresolved=1"
+        ), "{human}");
         assert!(human.contains("factory unresolved:"), "{human}");
         assert!(human.contains(
             "src/lib.rs:7 expr role=Composite selected=<none> output=structural-backstop"
