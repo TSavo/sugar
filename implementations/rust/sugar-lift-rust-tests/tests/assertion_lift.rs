@@ -19684,6 +19684,38 @@ fn runtime_callable_element_literal_twin() {
 }
 
 #[test]
+fn rpc_source_refuses_mutating_closure_value_construction_with_literal_twin() {
+    let doc = run_rpc_lift(
+        "src/source_mutating_closure_value.rs",
+        r#"
+#[test]
+fn mutating_closure_value_refused() {
+    let mut total = 0i32;
+    assert_eq!(
+        [1i32, 2, 3].into_iter().map(|x| {
+            total += x;
+            total
+        }).last(),
+        Some(6)
+    );
+}
+
+#[test]
+fn mutating_closure_value_literal_twin() {
+    assert_eq!([1i32, 2, 3].into_iter().map(|x| x + 1).sum::<i32>(), 9);
+}
+"#,
+    );
+
+    assert_rpc_source_refused(
+        &doc,
+        "mutating_closure_value_refused",
+        "mutation/side effect",
+    );
+    assert_rpc_source_warranted(&doc, "mutating_closure_value_literal_twin");
+}
+
+#[test]
 fn rpc_source_refuses_nan_comparison_with_literal_twin() {
     let doc = run_rpc_lift(
         "src/source_nan_comparison.rs",
