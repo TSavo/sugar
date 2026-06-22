@@ -686,6 +686,8 @@ def _source_line_locus(
     }
     if ast_kind:
         locus["ast_kind"] = ast_kind
+    if status == "support":
+        locus["supportKind"] = "inert"
     if reason:
         locus["reason"] = reason
     return locus

@@ -350,6 +350,7 @@ fn size_of_and_primitive_max_consts_are_compiler_axiom_sugar() {
         out.skip_reasons, out.factory_audits
     );
     assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert_warranted_decl_count(&out, 1);
     assert!(
         out.factory_audits
             .iter()
@@ -1494,8 +1495,9 @@ fn size_hint_negative_and_inclusive_semantics() {
     }
 }
 
-// EXACT-OR-NONE: a runtime-bounded range size_hint must NOT decompose (the count
-// is not text-determined) -- tuple_decomp declines, no guessed pair.
+// EXACT-OR-NONE: a runtime-bounded range size_hint is owned by the delayed tuple
+// producer, but it must refuse at desugar time (the count is not text-determined)
+// -- no guessed pair, no warranted scalar assertion.
 #[test]
 fn runtime_size_hint_declines_to_decompose() {
     let src = r#"
@@ -1506,13 +1508,87 @@ fn runtime_size_hint_declines_to_decompose() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/iter/sh_runtime.rs");
+    assert_eq!(out.assertions_lifted, 0, "{:?}", out.decls);
     assert!(
-        !out.factory_audits
+        out.skip_reasons
             .iter()
-            .any(|a| a.selected.is_some_and(|s| s.contains("tuple_decomp"))),
-        "a runtime-bounded size_hint must NOT decompose: {:?}",
+            .any(|reason| reason.contains("literal range bound is not text-determined")),
+        "runtime-bounded size_hint must refuse with the runtime-bound reason: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.factory_audits
+            .iter()
+            .any(|a| a.selected == Some("size_hint_tuple_producer")
+                && a.reason.as_deref().is_some_and(
+                    |reason| reason.contains("literal range bound is not text-determined")
+                )),
+        "a runtime-bounded size_hint must be owned, then refused by the producer: {:?}",
         out.factory_audits
     );
+}
+
+#[test]
+fn kmerge_size_hint_decomposes_after_delayed_tuple_producer_desugar() {
+    let src = r#"
+        #[test]
+        fn kmerge_empty_size_hint_exact_row() {
+            let its = (0..5).map(|_| (0..0));
+            assert_eq!(its.kmerge().size_hint(), (0, Some(0)));
+        }
+    "#;
+    let out = lift_file(&parse(src), "examples/itertools-showcase/good/src/lib.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "kmerge size_hint must lift; skip: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.factory_audits
+            .iter()
+            .any(|a| a.selected.is_some_and(|s| s.contains("tuple_decomp"))),
+        "kmerge size_hint tuple equality must flow through tuple_decomp: {:?}",
+        out.factory_audits
+    );
+    let dump = format!("{:?}", out.decls);
+    assert!(
+        dump.contains("Int(0)") && dump.contains("opt:some"),
+        "delayed size_hint producer must ground both tuple components: {dump}"
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "kmerge_empty_size_hint_exact_row",
+    ) {
+        assert!(sat, "empty kmerge size_hint row must be SAT");
+    }
+}
+
+#[test]
+fn kmerge_size_hint_wrong_component_is_unsat() {
+    let src = r#"
+        #[test]
+        fn kmerge_empty_size_hint_wrong_row() {
+            let its = (0..5).map(|_| (0..0));
+            assert_eq!(its.kmerge().size_hint(), (1, Some(1)));
+        }
+    "#;
+    let out = lift_file(&parse(src), "examples/itertools-showcase/bad/src/lib.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bad twin must still lift so the teeth can bite; skip: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "kmerge_empty_size_hint_wrong_row",
+    ) {
+        assert!(
+            !sat,
+            "empty kmerge size_hint is (0, Some(0)), not (1, Some(1))"
+        );
+    }
 }
 
 // ---- Lane 9: Duration integer accessors fold to a ground int (teeth) ----
@@ -3862,6 +3938,27 @@ fn assert_real_call_eq_atom(formula: &Formula, expected_call: &str, expected_rhs
     }
 }
 
+fn assert_int_call_eq_value(formula: &Formula, expected_call: &str, expected_rhs: i128) {
+    match formula {
+        Formula::Atomic { name, args } => {
+            assert_eq!(name, "=");
+            assert_eq!(args.len(), 2);
+            match args[0].as_ref() {
+                Term::Ctor { name, .. } => assert_eq!(name, expected_call),
+                other => panic!("expected call term lhs, got {other:?}"),
+            }
+            match args[1].as_ref() {
+                Term::Const {
+                    value: ConstValue::Int(value),
+                    ..
+                } => assert_eq!(*value, expected_rhs),
+                other => panic!("expected int rhs, got {other:?}"),
+            }
+        }
+        other => panic!("expected equality atom, got {other:?}"),
+    }
+}
+
 fn assert_float_refinement_atom(formula: &Formula, expected_name: &str, expected_call: &str) {
     match formula {
         Formula::Atomic { name, args } => {
@@ -5131,6 +5228,64 @@ fn exponent_float_literal() {
     assert_eq!(operands.len(), 2);
     assert_real_call_eq_atom(&operands[0], "call:value", "0.001");
     assert_real_call_eq_atom(&operands[1], "call:value", "1250");
+}
+
+#[test]
+fn wide_duration_u128_call_result_stays_exact_integer() {
+    let src = r#"
+struct Duration;
+
+impl Duration {
+    const MAX: Duration = Duration;
+    fn from_nanos_u128(_nanos: u128) -> Duration { Duration }
+    fn as_nanos(&self) -> u128 { 0 }
+}
+
+#[test]
+fn duration_const() {
+    assert_eq!(
+        Duration::from_nanos_u128(18446744073709551616000000000u128).as_nanos(),
+        18446744073709551616000000000u128
+    );
+}
+"#;
+    let out = lift_file(&parse(src), "tests/time.rs");
+    assert_eq!(out.seen, 1);
+    assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
+    assert_warranted_decl_count(&out, 1);
+
+    let decl = single_warranted_decl(&out);
+    assert!(
+        decl.name.contains(
+            "method:as_nanos#euf#c:callresult_method_as_nanos_a1(c:call:Duration::from_nanos_u128(i:18446744073709551616000000000:u128))::assertion"
+        ),
+        "wide u128 must stay exact in the callsite key, got {}",
+        decl.name
+    );
+    let operands = inv_operands(decl);
+    assert_eq!(operands.len(), 1);
+    assert_int_call_eq_value(
+        &operands[0],
+        "method:as_nanos",
+        18446744073709551616000000000i128,
+    );
+
+    let ir = sugar_ir_symbolic::convert::formula_to_ir(decl.inv.as_ref().expect("inv"));
+    let value = match &ir {
+        sugar_ir_symbolic::ir_types::Formula::And { operands } => match &operands[0] {
+            sugar_ir_symbolic::ir_types::Formula::Atomic { args, .. } => match &args[1] {
+                sugar_ir_symbolic::ir_types::Term::Const { value, .. } => value,
+                other => panic!("expected const RHS in IR, got {other:?}"),
+            },
+            other => panic!("expected atomic operand in IR, got {other:?}"),
+        },
+        other => panic!("expected connective inv in IR, got {other:?}"),
+    };
+    assert_eq!(
+        value,
+        &serde_json::Value::String("18446744073709551616000000000".to_string()),
+        "wide integer must serialize as a decimal string, not lossy JSON number"
+    );
 }
 
 #[test]

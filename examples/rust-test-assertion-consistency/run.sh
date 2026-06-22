@@ -14,8 +14,9 @@ echo "== build the CLI + rust test-assertion lifter =="
 cargo build --manifest-path "$RUST/Cargo.toml" \
   -p sugar-cli \
   -p sugar-lift-rust-tests \
+  -p sugar-ir-compiler-smt-lib \
   --bins >/dev/null 2>&1 || cargo build --manifest-path "$RUST/Cargo.toml" \
-  -p sugar-cli -p sugar-lift-rust-tests --bins
+  -p sugar-cli -p sugar-lift-rust-tests -p sugar-ir-compiler-smt-lib --bins
 
 [ -x "$SUGAR" ] || { echo "FAIL: sugar binary not built at $SUGAR"; exit 1; }
 [ -x "$BIN_DIR/rust_test_assertions_rpc" ] || { echo "FAIL: rust_test_assertions_rpc not built"; exit 1; }
@@ -25,7 +26,27 @@ for suite in good bad; do
   rm -rf "$HERE/$suite/.sugar/runs" "$HERE/$suite/target" 2>/dev/null || true
 done
 
-pyget() { python3 -c "import sys,json; d=json.load(open(sys.argv[1])); print($2)" "$1"; }
+consistency_statuses() {
+  python3 - "$1" <<'PY'
+import json
+import sys
+
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+rows = []
+for row in d.get("rows", []):
+    prop = row.get("property") or ""
+    if not prop.startswith("consistency:"):
+        continue
+    if prop.startswith("consistency:rust-source::"):
+        continue
+    if "witness-package" in prop:
+        continue
+    rows.append(row)
+
+for row in rows:
+    print(f"{row.get('status') or 'MISSING'}\t{row.get('property') or 'MISSING'}\t{row.get('reason') or ''}")
+PY
+}
 
 run_suite() {
   local suite="$1" expect="$2"
@@ -44,36 +65,35 @@ run_suite() {
   local prove_json="$dir/.prove.json"
   ( cd "$dir" && "$SUGAR" prove . --json ) > "$prove_json" 2>/dev/null || true
 
-  # Select the TEST-ASSERTION consistency row, not the production function's own
+  # Select all TEST-ASSERTION consistency rows, not the production function's own
   # `consistency:rust-source::<fn>` value self-contract (a single-fact inv that
   # is trivially SAT and always discharges). The SourceOracle audit (PR #2138)
   # began emitting that production self-contract into the same consistency
-  # report; this receipt is about the TEST's assertion-set consistency, which is
-  # the row whose callsite carries the test's source path (`src/lib.rs::...`),
-  # NOT the `rust-source::` production prefix.
-  local row_filter="(r.get('property','') or '').startswith('consistency:') and not (r.get('property','') or '').startswith('consistency:rust-source::') and 'witness-package' not in (r.get('property','') or '')"
-  local status reason
-  status="$(pyget "$prove_json" "next((r.get('status') for r in d.get('rows',[]) if $row_filter), 'MISSING')")"
-  reason="$(pyget "$prove_json" "next((r.get('reason') for r in d.get('rows',[]) if $row_filter), 'MISSING')")"
-  echo "   consistency row status: $status"
-  echo "   reason: $reason"
+  # report; this receipt is about the TEST's assertion-set consistency rows,
+  # whose callsites carry the test source path (`src/lib.rs::...`), NOT the
+  # `rust-source::` production prefix. Check the full set so a stale first
+  # discharged row cannot hide a later contradictory unsatisfied row.
+  local rows
+  rows="$(consistency_statuses "$prove_json")"
+  if [ -z "$rows" ]; then
+    echo "FAIL[$suite]: no consistency row found"
+    exit 1
+  fi
+  echo "   consistency rows:"
+  printf '%s\n' "$rows" | sed 's/^/     /'
 
   if [ "$expect" = "DISCHARGE" ]; then
-    if [ "$status" != "discharged" ]; then
-      echo "FAIL[$suite]: expected consistency DISCHARGED, got status=$status"
+    if printf '%s\n' "$rows" | awk -F '\t' '$1 != "discharged" { found=1 } END { exit found ? 0 : 1 }'; then
+      echo "FAIL[$suite]: expected all relevant consistency rows DISCHARGED"
       exit 1
     fi
     echo "OK[$suite]: scalar assertion consistency is PROVEN."
   else
-    if [ "$status" = "discharged" ]; then
-      echo "FAIL[$suite]: contradictory assertions must REFUSE, got discharged"
+    if ! printf '%s\n' "$rows" | awk -F '\t' '$1 == "unsatisfied" { found=1 } END { exit found ? 0 : 1 }'; then
+      echo "FAIL[$suite]: contradictory assertions must include an UNSATISFIED consistency row"
       exit 1
     fi
-    if [ "$status" = "MISSING" ]; then
-      echo "FAIL[$suite]: no consistency row found"
-      exit 1
-    fi
-    echo "OK[$suite]: contradictory scalar assertions are REFUSED (status=$status)."
+    echo "OK[$suite]: contradictory scalar assertions are REFUSED."
   fi
 }
 

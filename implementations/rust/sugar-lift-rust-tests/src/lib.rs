@@ -110,6 +110,7 @@ pub mod sugar {
     pub mod iter_next;
     pub mod iter_terminal;
     pub mod iterator;
+    pub mod kmerge;
     pub mod len;
     pub mod let_stmt;
     pub mod literal;
@@ -6757,6 +6758,10 @@ pub(crate) enum Desugared {
     /// `Rc<Term>` the `translate_term_in_scope` shard for that shape produces today,
     /// so wiring a node is byte-identical by construction.
     Term(Rc<Term>),
+    /// A tuple-valued producer decomposed into component terms at DESUGAR time.
+    /// `tuple_decomp` consumes this to emit component-wise scalar equalities while
+    /// the producer sugar owns the decomposition semantics.
+    TupleComponents(Vec<Rc<Term>>),
 }
 
 impl Desugared {
@@ -6767,6 +6772,7 @@ impl Desugared {
             Desugared::Seq(s) => Some(s),
             Desugared::Constraints { .. } => None,
             Desugared::Term(_) => None,
+            Desugared::TupleComponents(_) => None,
         }
     }
 
@@ -6779,6 +6785,14 @@ impl Desugared {
             Desugared::Term(t) => Some(t),
             Desugared::Seq(_) => None,
             Desugared::Constraints { .. } => None,
+            Desugared::TupleComponents(_) => None,
+        }
+    }
+
+    pub(crate) fn into_tuple_components(self) -> Option<Vec<Rc<Term>>> {
+        match self {
+            Desugared::TupleComponents(parts) => Some(parts),
+            Desugared::Seq(_) | Desugared::Constraints { .. } | Desugared::Term(_) => None,
         }
     }
 
@@ -6804,6 +6818,7 @@ impl Desugared {
             }
             Desugared::Seq(s) => s,
             Desugared::Constraints { .. } => return None,
+            Desugared::TupleComponents(_) => return None,
         };
         let [only] = seq.as_slice() else {
             return None;
@@ -7629,6 +7644,7 @@ fn emit_desugared(
         // A bare term at statement position is not an emit (a term floor must be
         // wrapped by an asserting node to become a `Constraints`); mirrors `Seq`.
         Desugared::Term(_) => false,
+        Desugared::TupleComponents(_) => false,
     }
 }
 

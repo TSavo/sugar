@@ -151,10 +151,15 @@ fn rewrite_map_elem(f: &syn::ExprClosure, elem: &Expr) -> Option<Expr> {
     if f.inputs.len() != 1 {
         return None;
     }
-    let param = closure_param_ident(f.inputs.first()?)?;
     let body = closure_value_body(f)?;
     let mut bindings = ExprBindings::new();
-    bindings.insert(param, elem.clone());
+    match closure_param_ident(f.inputs.first()?) {
+        Some(param) => {
+            bindings.insert(param, elem.clone());
+        }
+        None if closure_param_ignores_arg(f.inputs.first()?) => {}
+        None => return None,
+    }
     Some(substitute_expr(body, &bindings))
 }
 
@@ -175,6 +180,16 @@ fn closure_param_ident(pat: &Pat) -> Option<String> {
         Pat::Paren(p) => closure_param_ident(&p.pat),
         Pat::Type(t) => closure_param_ident(&t.pat),
         _ => None,
+    }
+}
+
+fn closure_param_ignores_arg(pat: &Pat) -> bool {
+    match pat {
+        Pat::Wild(_) => true,
+        Pat::Reference(r) => closure_param_ignores_arg(&r.pat),
+        Pat::Paren(p) => closure_param_ignores_arg(&p.pat),
+        Pat::Type(t) => closure_param_ignores_arg(&t.pat),
+        _ => false,
     }
 }
 

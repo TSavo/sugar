@@ -193,6 +193,16 @@ pub(crate) fn has_assertion_surface(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
     has_expr_role(expr, fcx, SugarRole::AssertionSurface)
 }
 
+/// TUPLE-PRODUCER wrapper: ask the catalog for a source expression that yields a
+/// tuple value whose components can be decomposed at desugar time.
+pub(crate) fn build_tuple_producer(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
+    build_expr(expr, fcx, SugarRole::TupleProducer)
+}
+
+pub(crate) fn has_tuple_producer(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
+    has_expr_role(expr, fcx, SugarRole::TupleProducer)
+}
+
 pub(crate) struct FactoryAuditSeed {
     ast_kind: &'static str,
     site: String,
@@ -266,6 +276,9 @@ impl FactoryAuditSeed {
                 ),
             },
             Outcome::Dug(Desugared::Term(_)) => (FactoryDisposition::Warranted, "term", None),
+            Outcome::Dug(Desugared::TupleComponents(_)) => {
+                (FactoryDisposition::Warranted, "tuple-components", None)
+            }
             Outcome::Dug(Desugared::Seq(seq)) if seq.is_empty() => (
                 FactoryDisposition::Support,
                 "empty-sequence",
