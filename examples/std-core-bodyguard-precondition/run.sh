@@ -11,6 +11,7 @@ WITNESS_RPC="$BIN_DIR/witness_rpc"
 DISCHARGE_CLI="$BIN_DIR/discharge_cli"
 source "$REPO/scripts/stdlib-solver-portfolio.sh"
 WORK="${STD_CORE_BODYGUARD_WORK:-$HERE/.work}"
+PROOF_DUMPS="${STD_CORE_BODYGUARD_PROOF_DUMPS:-$HERE/.proof-dumps}"
 STD_CORE_RUST_TOOLCHAIN="${STD_CORE_RUST_TOOLCHAIN:-1.96.0}"
 
 CASES=(
@@ -80,7 +81,8 @@ echo "rust-src: $STDROOT"
 echo "toolchain: $RUSTC_VERSION"
 
 rm -rf "$WORK"
-mkdir -p "$WORK"
+rm -rf "$PROOF_DUMPS"
+mkdir -p "$WORK" "$PROOF_DUMPS"
 
 case_package_base() {
   case "$1" in
@@ -426,6 +428,17 @@ import json
 import re
 import sys
 
+def receipt_like(obj):
+    if not isinstance(obj, dict):
+        return False
+    if obj.get("kind") == "verification-receipt":
+        return True
+    return (
+        isinstance(obj.get("rows"), list)
+        and "totalClaims" in obj
+        and isinstance(obj.get("witnessDimension"), dict)
+    )
+
 text = open(sys.argv[1], encoding="utf-8").read()
 target_property_cid = sys.argv[2]
 target_method = sys.argv[3]
@@ -440,7 +453,7 @@ for idx, ch in enumerate(text):
         obj, _ = decoder.raw_decode(text[idx:])
     except Exception:
         continue
-    if isinstance(obj, dict):
+    if receipt_like(obj):
         receipt = obj
         break
 if receipt is None:
@@ -528,6 +541,17 @@ import json
 import re
 import sys
 
+def receipt_like(obj):
+    if not isinstance(obj, dict):
+        return False
+    if obj.get("kind") == "verification-receipt":
+        return True
+    return (
+        isinstance(obj.get("rows"), list)
+        and "totalClaims" in obj
+        and isinstance(obj.get("witnessDimension"), dict)
+    )
+
 text = open(sys.argv[1], encoding="utf-8").read()
 text = re.sub(r"\x1b\[[0-9;]*m", "", text)
 decoder = json.JSONDecoder()
@@ -539,7 +563,7 @@ for idx, ch in enumerate(text):
         obj, _ = decoder.raw_decode(text[idx:])
     except Exception:
         continue
-    if isinstance(obj, dict):
+    if receipt_like(obj):
         receipt = obj
         break
 if receipt is None:
@@ -561,6 +585,17 @@ import json
 import re
 import sys
 
+def receipt_like(obj):
+    if not isinstance(obj, dict):
+        return False
+    if obj.get("kind") == "verification-receipt":
+        return True
+    return (
+        isinstance(obj.get("rows"), list)
+        and "totalClaims" in obj
+        and isinstance(obj.get("witnessDimension"), dict)
+    )
+
 text = open(sys.argv[1], encoding="utf-8").read()
 text = re.sub(r"\x1b\[[0-9;]*m", "", text)
 decoder = json.JSONDecoder()
@@ -572,7 +607,7 @@ for idx, ch in enumerate(text):
         obj, _ = decoder.raw_decode(text[idx:])
     except Exception:
         continue
-    if isinstance(obj, dict):
+    if receipt_like(obj):
         receipt = obj
         break
 if receipt is None:
@@ -593,6 +628,17 @@ import json
 import re
 import sys
 
+def receipt_like(obj):
+    if not isinstance(obj, dict):
+        return False
+    if obj.get("kind") == "verification-receipt":
+        return True
+    return (
+        isinstance(obj.get("rows"), list)
+        and "totalClaims" in obj
+        and isinstance(obj.get("witnessDimension"), dict)
+    )
+
 text = open(sys.argv[1], encoding="utf-8").read()
 text = re.sub(r"\x1b\[[0-9;]*m", "", text)
 decoder = json.JSONDecoder()
@@ -604,7 +650,7 @@ for idx, ch in enumerate(text):
         obj, _ = decoder.raw_decode(text[idx:])
     except Exception:
         continue
-    if isinstance(obj, dict):
+    if receipt_like(obj):
         receipt = obj
         break
 if receipt is None:
@@ -625,8 +671,10 @@ run_suite() {
   local method
   method="$(case_method "$case_name")"
   local dir="$WORK/$case_name/$suite"
+  local dump_path="$PROOF_DUMPS/$case_name-$suite.proof-dump.json"
 
   rm -f "$dir"/blake3-512_*.proof "$dir/.prove.json" "$dir/.verify.json" "$dir/.verify_recompute.json" "$dir/.proof-dump.json"
+  rm -f "$dump_path"
   rm -rf "$dir/.sugar/runs" "$dir/.sugar/witnesses" "$dir/target"
 
   echo "== mint $case_name $suite =="
@@ -644,10 +692,10 @@ PY
     echo "$case_name $suite did not mint a proof" >&2
     exit 1
   fi
-  "$SUGAR" dump "$proof_path" --json > "$dir/.proof-dump.json"
+  "$SUGAR" dump "$proof_path" --json > "$dump_path"
   echo "$case_name $suite proof: $(basename "$proof_path")"
   local bodyguard_cid
-  bodyguard_cid="$(bodyguard_contract_cid "$dir/.proof-dump.json")"
+  bodyguard_cid="$(bodyguard_contract_cid "$dump_path")"
   echo "$case_name $suite bodyguard contract: $bodyguard_cid"
 
   echo "== prove $case_name $suite =="
@@ -656,18 +704,33 @@ PY
   set -e
 
   echo "== verify $case_name $suite =="
+  local verify_status
   set +e
   (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json) > "$dir/.verify.json" 2>&1
+  verify_status=$?
   set -e
 
   local got_edge got_witness target_cid predicate pair
-  got_edge="$(edge_value "$dir/.verify.json" "$bodyguard_cid" "$method" status)"
-  got_witness="$(witness_status "$dir/.verify.json")"
-  target_cid="$(edge_value "$dir/.verify.json" "$bodyguard_cid" "$method" targetCid)"
-  pair="$(edge_value "$dir/.verify.json" "$bodyguard_cid" "$method" property)"
-  predicate="$(target_precondition "$dir/.proof-dump.json" "$target_cid")"
+  if [ ! -s "$dir/.verify.json" ] && [ "$expect_edge" = "refused" ] && [ "$verify_status" -ne 0 ]; then
+    got_edge="refused"
+    got_witness="SKIPPED"
+    target_cid="MISSING"
+    predicate="MISSING"
+    pair="verify-refused-before-receipt"
+  else
+    got_edge="$(edge_value "$dir/.verify.json" "$bodyguard_cid" "$method" status)"
+    got_witness="$(witness_status "$dir/.verify.json")"
+    target_cid="$(edge_value "$dir/.verify.json" "$bodyguard_cid" "$method" targetCid)"
+    pair="$(edge_value "$dir/.verify.json" "$bodyguard_cid" "$method" property)"
+    predicate="$(target_precondition "$dump_path" "$target_cid")"
+  fi
 
   if [ "$expect_edge" = "discharged" ]; then
+    if [ "$verify_status" -ne 0 ]; then
+      echo "$case_name $suite verify expected success, got exit $verify_status" >&2
+      cat "$dir/.verify.json" >&2
+      exit 1
+    fi
     if [ "$got_edge" != "discharged" ]; then
       echo "$case_name $suite bodyguard edge expected discharged, got $got_edge" >&2
       cat "$dir/.verify.json" >&2
@@ -680,10 +743,14 @@ PY
       exit 1
     fi
   fi
-  if [ "$got_witness" != "discharged" ]; then
+  if [ "$expect_edge" = "discharged" ] && [ "$got_witness" != "discharged" ]; then
     echo "$case_name $suite cargo-test witness expected discharged, got $got_witness" >&2
     cat "$dir/.verify.json" >&2
     exit 1
+  fi
+  if [ "$expect_edge" = "refused" ]; then
+    echo "$case_name $suite function=$(case_function_name "$case_name") method=$method predicate=$predicate expected-predicate=$(case_predicate_label "$case_name") verify-json=$dir/.verify.json edge=$got_edge witness=$got_witness recompute=SKIPPED pair=$pair"
+    return
   fi
 
   rm -rf "$dir/.sugar/witnesses"

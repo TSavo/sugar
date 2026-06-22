@@ -16,21 +16,45 @@
 // receiver (e.g. a runtime `ldexp_f32(..)` call) DECLINE (return None) -> the locus stays
 // the opaque `method:integer_decode` fallback.
 
-use syn::{Expr, ExprMethodCall, ExprPath, Lit, UnOp};
+use sugar_ir_symbolic::num;
+use syn::{Expr, ExprPath, Lit, UnOp};
 
-/// The `tuple_decomp` producer hook: if `call` is `<f32/f64 literal>.integer_decode()`,
-/// return the decoded `(mantissa, exponent, sign)` as three literal component exprs
-/// (negatives rendered as unary-neg, matching the corpus tuple syntax). Declines otherwise.
-pub(crate) fn decomposed_component_exprs(call: &ExprMethodCall) -> Option<Vec<Expr>> {
+use crate::sugar::factory::SugarBuildCtx;
+use crate::{Desugared, Outcome, Sugar, SugarCtx};
+
+pub(crate) const TUPLE_PRODUCER_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
+    crate::sugar::claim::ExprSugarClaim::tuple_producer(
+        "integer_decode_tuple_producer",
+        recognize_tuple_producer,
+    );
+
+fn recognize_tuple_producer(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let Expr::MethodCall(call) = expr else {
+        return None;
+    };
     if call.method != "integer_decode" || !call.args.is_empty() {
         return None;
     }
-    let (mantissa, exponent, sign) = decode_receiver(&call.receiver, false)?;
-    Some(vec![
-        syn::parse_str(&mantissa.to_string()).ok()?,
-        syn::parse_str(&exponent.to_string()).ok()?,
-        syn::parse_str(&sign.to_string()).ok()?,
-    ])
+    Some(Box::new(IntegerDecodeTupleProducer {
+        receiver: (*call.receiver).clone(),
+    }))
+}
+
+struct IntegerDecodeTupleProducer {
+    receiver: Expr,
+}
+
+impl Sugar for IntegerDecodeTupleProducer {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        let Some((mantissa, exponent, sign)) = decode_receiver(&self.receiver, false) else {
+            return Outcome::from_opt(None);
+        };
+        Outcome::Dug(Desugared::TupleComponents(vec![
+            num(i128::from(mantissa)),
+            num(i128::from(exponent)),
+            num(i128::from(sign)),
+        ]))
+    }
 }
 
 /// Resolve the receiver to a typed f32/f64 value and compute its `integer_decode`.

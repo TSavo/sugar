@@ -35,9 +35,23 @@ BIN="$REPO/implementations/rust/target/debug/sugar"
 PP="$REPO/implementations/python/sugar-lift-python-source/src:$REPO/implementations/python/sugar-lift-py-tests/src"
 VENV="${NUMPY_WITNESS_VENV:-/tmp/numpy-witness-venv}"
 
+needs_python_env=0
 if [ ! -x "$VENV/bin/python" ]; then
-  python3 -m venv "$VENV"
-  "$VENV/bin/pip" install -q numpy pytest pynacl blake3 \
+  needs_python_env=1
+elif ! "$VENV/bin/python" - <<'PY' >/dev/null 2>&1
+import numpy
+import pytest
+import sugar_lift_py_tests
+import sugar_lift_python_source
+import sugar_pytest_witness
+PY
+then
+  needs_python_env=1
+fi
+
+if [ "$needs_python_env" = "1" ]; then
+  python3 -m venv --clear "$VENV"
+  "$VENV/bin/python" -m pip install -q numpy pytest pynacl blake3 \
     -e "$REPO/implementations/python/sugar-lift-py-tests" \
     -e "$REPO/implementations/python/sugar-lift-python-source" \
     -e "$REPO/implementations/python/sugar-lift-py-pytest-witness"

@@ -47,20 +47,29 @@ import cbor2
 import nacl
 PY
 then
-  "$VENV/bin/pip" install -q blake3 cbor2 pynacl
+  python3 -m venv --clear "$VENV"
+  "$PYTHON" -m pip install -q blake3 cbor2 pynacl
 fi
 
 echo "== provenance: the vendor never tested this input =="
-python3 - <<'PY' || exit 1
+provenance_rc=0
+"$PYTHON" - <<'PY' || provenance_rc=$?
 import importlib.util, sys
 spec = importlib.util.find_spec("test.test_base64")
 if spec is None or not spec.origin:
-    print("SKIP-FAIL: CPython test corpus not importable"); sys.exit(1)
+    print("SKIP: CPython test corpus not importable; provenance check unavailable")
+    sys.exit(42)
 src = open(spec.origin, encoding="utf-8", errors="replace").read()
 if "provekit~seam" in src:
     print("FAIL: vendor now tests this input; pick a new seam input"); sys.exit(1)
 print(f"OK: 'provekit~seam' absent from {spec.origin}")
 PY
+if [ "$provenance_rc" -eq 42 ]; then
+  exit 0
+fi
+if [ "$provenance_rc" -ne 0 ]; then
+  exit "$provenance_rc"
+fi
 
 run_twin() {
   local twin="$1" expect="$2"

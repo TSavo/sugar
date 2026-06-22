@@ -49,9 +49,22 @@ fi
 echo "SCOPE: this showcase proves Python attribute read/access presence via classShapes + pytest witness."
 echo "SCOPE: it does NOT claim whole-program panic-freedom; __init__ attribute-write panic loci remain undecidable and out of scope."
 
+needs_python_env=0
 if [ ! -x "$PYTHON" ] || [ ! -f "$STAMP" ]; then
+  needs_python_env=1
+elif ! "$PYTHON" - <<'PY' >/dev/null 2>&1
+import numpy
+import sugar_lift_py_tests
+import sugar_lift_python_source
+import sugar_pytest_witness
+PY
+then
+  needs_python_env=1
+fi
+
+if [ "$needs_python_env" = "1" ]; then
   echo "== prepare python witness environment =="
-  python3 -m venv "$VENV"
+  python3 -m venv --clear "$VENV"
   $PIP install --quiet --upgrade pip
   $PIP install --quiet --no-cache-dir \
     "numpy==$NUMPY_VERSION" \

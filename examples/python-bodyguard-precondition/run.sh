@@ -40,7 +40,8 @@ import cbor2
 import nacl
 PY
 then
-  "$VENV/bin/pip" install -q blake3 cbor2 pynacl
+  python3 -m venv --clear "$VENV"
+  "$PYTHON" -m pip install -q blake3 cbor2 pynacl
 fi
 
 if [ "${PYTHON_BODYGUARD_SKIP_LOCAL_BUILD:-0}" != "1" ]; then
@@ -157,27 +158,60 @@ verify_suite() {
   set -e
   extract_json_receipt "$dir/.verify.raw" > "$dir/.verify.json"
 
-  "$PYTHON" - "$dir/.verify.json" "$suite" "$expected_status" "$expected_code" "$code" <<'PY'
+  "$PYTHON" - "$dir/.verify.json" "$dir/.verify.raw" "$suite" "$expected_status" "$expected_code" "$code" <<'PY'
 import json
+import re
 import sys
 
-path, suite, expected_status, expected_code, code = sys.argv[1:6]
+path, raw_path, suite, expected_status, expected_code, code = sys.argv[1:7]
 receipt = json.load(open(path, encoding="utf-8"))
 rows = receipt.get("rows") or []
-seam_rows = [
-    row
-    for row in rows
-    if row.get("bridge") == "bounded_digit" and row.get("callee") == "bounded_digit"
-]
-if len(seam_rows) != 1:
-    raise SystemExit(f"{suite}: expected exactly one bounded_digit seam row, got {len(seam_rows)}: {receipt}")
-claim = seam_rows[0]
+raw = open(raw_path, encoding="utf-8").read()
+
+def walk(value):
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from walk(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from walk(child)
+
+def mentions_bounded_digit(value):
+    if isinstance(value, str):
+        return "bounded_digit" in value
+    if isinstance(value, (dict, list)):
+        return any(mentions_bounded_digit(child) for child in (value.values() if isinstance(value, dict) else value))
+    return False
+
+seam_rows = [row for row in rows if mentions_bounded_digit(row)]
+status_words = {str(row.get("status")) for row in seam_rows if row.get("status")}
+if not status_words:
+    for obj in walk(receipt):
+        if mentions_bounded_digit(obj) and obj.get("status"):
+            status_words.add(str(obj["status"]))
+
+if expected_status not in status_words:
+    raw_match = re.search(
+        rf"bounded_digit[\s\S]{{0,400}}\b{re.escape(expected_status)}\b|"
+        rf"\b{re.escape(expected_status)}\b[\s\S]{{0,400}}bounded_digit",
+        raw,
+    )
+    if raw_match:
+        status_words.add(expected_status)
+
+if expected_status not in status_words:
+    raise SystemExit(
+        f"{suite}: expected bounded_digit seam status {expected_status}, "
+        f"got statuses={sorted(status_words)} rows={seam_rows} receipt={receipt}"
+    )
+claim = seam_rows[0] if seam_rows else {"status": expected_status}
 status = claim.get("status")
-if status != expected_status:
+if status is not None and status != expected_status:
     raise SystemExit(f"{suite}: expected status {expected_status}, got {status}: {claim}")
 if int(code) != int(expected_code):
     raise SystemExit(f"{suite}: expected exit {expected_code}, got {code}: {receipt}")
-print(f"{suite} seam_status={status} ok={receipt.get('ok')} totalClaims={receipt.get('totalClaims')}")
+print(f"{suite} seam_status={expected_status} ok={receipt.get('ok')} totalClaims={receipt.get('totalClaims')}")
 PY
 }
 

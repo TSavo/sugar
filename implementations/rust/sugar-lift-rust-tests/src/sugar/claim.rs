@@ -16,6 +16,7 @@ pub(crate) enum SugarRole {
     Composite,
     Constraint,
     AssertionSurface,
+    TupleProducer,
     SupportConstraint,
     StatementEffect,
     ClosureAdaptorVerdict,
@@ -110,6 +111,10 @@ impl ExprSugarClaim {
         recognize: ExprRecognizer,
     ) -> Self {
         Self::with_ordering(name, SugarRole::Constraint, comes_before, recognize)
+    }
+
+    pub(crate) const fn tuple_producer(name: &'static str, recognize: ExprRecognizer) -> Self {
+        Self::new(name, SugarRole::TupleProducer, recognize)
     }
 
     pub(crate) const fn statement_effect(name: &'static str, recognize: ExprRecognizer) -> Self {

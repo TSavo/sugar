@@ -29,20 +29,35 @@ BIN="$TARGET_DIR/debug/sugar"
 
 VENV="${ITSDANGEROUS_LOGO_VENV:-/tmp/itsdangerous-logo-venv}"
 export ITSDANGEROUS_LOGO_VENV="$VENV"
-if [ ! -x "$VENV/bin/python" ]; then
+PYTHON="$VENV/bin/python"
+needs_python_env=0
+if [ ! -x "$PYTHON" ]; then
   echo "== create venv + install the real vendor (itsdangerous) =="
-  python3 -m venv "$VENV"
-fi
-if ! "$VENV/bin/python" - <<'PY' >/dev/null 2>&1
+  needs_python_env=1
+elif ! "$PYTHON" - <<'PY' >/dev/null 2>&1
 import blake3
 import cbor2
 import itsdangerous
 import nacl
 PY
 then
-  "$VENV/bin/pip" install -q itsdangerous blake3 cbor2 pynacl
+  needs_python_env=1
 fi
-"$VENV/bin/python" -c "import itsdangerous; print('vendor:', 'itsdangerous', itsdangerous.__version__ if hasattr(itsdangerous,'__version__') else '(installed)')" || {
+if [ "$needs_python_env" = "1" ]; then
+  python3 -m venv --clear "$VENV"
+  "$PYTHON" -m pip install -q itsdangerous blake3 cbor2 pynacl
+fi
+if ! "$PYTHON" - <<'PY' >/dev/null 2>&1
+import blake3
+import cbor2
+import itsdangerous
+import nacl
+PY
+then
+  echo "FAIL: python venv does not import required packages after install" >&2
+  exit 1
+fi
+"$PYTHON" -c "import itsdangerous; print('vendor:', 'itsdangerous', itsdangerous.__version__ if hasattr(itsdangerous,'__version__') else '(installed)')" || {
   echo "FAIL: vendor install"; exit 1; }
 
 audit_good_source() {

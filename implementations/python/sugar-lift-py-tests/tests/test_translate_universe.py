@@ -5991,6 +5991,25 @@ def b64e(s):
 '''
 
 
+VENDOR_WANT_BYTES_RSTRIP_WITH_DOCSTRING = '''
+def _inner(s):
+    return s
+
+
+def want_bytes(s, encoding="utf-8", errors="strict"):
+    if isinstance(s, str):
+        s = s.encode(encoding, errors)
+
+    return s
+
+
+def b64e(s):
+    """Return a base64url token without padding."""
+    s = want_bytes(s)
+    return _inner(s).rstrip(b"=")
+'''
+
+
 VENDOR_LSTRIP = '''
 def _pack(n):
     return b"\\x00\\x01"
@@ -6068,6 +6087,47 @@ def test_rstrip_source_audit_warrants_return_shape(vendor_path):
         locus["status"] == "warranted"
         and locus.get("ast_kind") == "Attribute"
         and locus.get("ast_path") == "$.body[1].value.func"
+        for locus in audit["loci"]
+    ), audit
+
+
+def test_rstrip_source_audit_accounts_docstring_and_adapter_prelude(vendor_path):
+    vendor_path("vendrstrip_audit_prelude", VENDOR_WANT_BYTES_RSTRIP_WITH_DOCSTRING)
+    out = _lift(
+        """
+        import vendrstrip_audit_prelude
+
+        def test_token():
+            assert vendrstrip_audit_prelude.b64e(b"abc") == b"abc"
+        """
+    )
+
+    audit = next(
+        audit
+        for audit in out.source_audits
+        if audit["role"] == "python.translate-universe"
+        and audit["universe_kind"] == "no-suffix-chars"
+    )
+    assert audit["totals"]["unclassified_source"] == 0
+    assert any(
+        locus["status"] == "support"
+        and locus.get("supportKind") == "inert"
+        and locus.get("ast_kind") == "Expr"
+        and "docstring" in locus.get("reason", "")
+        for locus in audit["loci"]
+    ), audit
+    assert any(
+        locus["status"] == "support"
+        and locus.get("supportKind") == "inert"
+        and locus.get("ast_kind") == "Assign"
+        and locus.get("ast_path") == "$.body[1]"
+        and "prelude/context" in locus.get("reason", "")
+        for locus in audit["loci"]
+    ), audit
+    assert any(
+        locus["status"] == "warranted"
+        and locus.get("ast_kind") == "Return"
+        and locus.get("ast_path") == "$.body[2]"
         for locus in audit["loci"]
     ), audit
 

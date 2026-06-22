@@ -28,9 +28,7 @@
 use std::rc::Rc;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::sugar::integer_decode;
-use crate::sugar::size_hint;
+use crate::sugar::factory::{build_term, build_tuple_producer, has_tuple_producer, SugarBuildCtx};
 use crate::{
     callsite_assertion_name, parse_macro_args, AssertionFactKind, Desugared, Effect, Outcome,
     Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON,
@@ -77,40 +75,39 @@ fn recognize_macro(expr_macro: &ExprMacro, fcx: &SugarBuildCtx) -> Option<Box<dy
 }
 
 fn build(lhs: &Expr, rhs: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    let (producer_comps, literal_comps) = match_producer_and_literal(lhs, rhs)?;
-    if producer_comps.is_empty() || producer_comps.len() != literal_comps.len() {
+    let (producer, literal_comps) = match_producer_and_literal(lhs, rhs, fcx)?;
+    if literal_comps.is_empty() {
         return None;
     }
-    let pairs = producer_comps
+    let literal_terms = literal_comps
         .iter()
-        .zip(literal_comps.iter())
-        .map(|(p, l)| (build_term(p, fcx), build_term(l, fcx)))
+        .map(|literal| build_term(literal, fcx))
         .collect();
-    Some(Box::new(TupleDecompSugar { pairs }))
+    Some(Box::new(TupleDecompSugar {
+        producer,
+        literal_terms,
+    }))
 }
 
-/// Resolve `(producer_component_exprs, literal_tuple_element_exprs)` from the two sides,
-/// in either order. A "producer" is a tuple-valued expr whose components we derive by
-/// running the real host op; a plain literal tuple is NOT a producer here (it keeps its
-/// existing `literal:Tuple` lowering -- we only decompose when a producer is involved).
-fn match_producer_and_literal(lhs: &Expr, rhs: &Expr) -> Option<(Vec<Expr>, Vec<Expr>)> {
-    if let (Some(p), Some(l)) = (producer_components(lhs), literal_tuple_elements(rhs)) {
-        return Some((p, l));
+/// Resolve `(producer_sugar, literal_tuple_element_exprs)` from the two sides, in either
+/// order. A "producer" is a tuple-valued expr whose component decomposition is owned by
+/// its Sugar and delayed until `desugar`; a plain literal tuple is NOT a producer here.
+fn match_producer_and_literal(
+    lhs: &Expr,
+    rhs: &Expr,
+    fcx: &SugarBuildCtx,
+) -> Option<(Box<dyn Sugar>, Vec<Expr>)> {
+    if has_tuple_producer(lhs, fcx) {
+        if let Some(l) = literal_tuple_elements(rhs) {
+            return Some((build_tuple_producer(lhs, fcx), l));
+        }
     }
-    if let (Some(p), Some(l)) = (producer_components(rhs), literal_tuple_elements(lhs)) {
-        return Some((p, l));
+    if has_tuple_producer(rhs, fcx) {
+        if let Some(l) = literal_tuple_elements(lhs) {
+            return Some((build_tuple_producer(rhs, fcx), l));
+        }
     }
     None
-}
-
-/// The extensible producer registry: a tuple-valued expr -> its component source exprs.
-/// Add new tuple-valued producers (size_hint, enumerate idx/val, partition_point, ...) here.
-fn producer_components(expr: &Expr) -> Option<Vec<Expr>> {
-    match strip_paren_group(expr) {
-        Expr::MethodCall(call) => integer_decode::decomposed_component_exprs(call)
-            .or_else(|| size_hint::decomposed_component_exprs(call)),
-        _ => None,
-    }
 }
 
 fn literal_tuple_elements(expr: &Expr) -> Option<Vec<Expr>> {
@@ -131,18 +128,25 @@ fn strip_paren_group(expr: &Expr) -> &Expr {
 }
 
 struct TupleDecompSugar {
-    pairs: Vec<(Box<dyn Sugar>, Box<dyn Sugar>)>,
+    producer: Box<dyn Sugar>,
+    literal_terms: Vec<Box<dyn Sugar>>,
 }
 
 impl Sugar for TupleDecompSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let mut atoms = Vec::with_capacity(self.pairs.len());
+        let producer_components = match self.producer.desugar(ctx) {
+            Outcome::Dug(desugared) => match desugared.into_tuple_components() {
+                Some(components) => components,
+                None => return Outcome::from_opt(None),
+            },
+            Outcome::Hit(effect) => return Outcome::Hit(effect),
+        };
+        if producer_components.len() != self.literal_terms.len() {
+            return Outcome::from_opt(None);
+        }
+        let mut atoms = Vec::with_capacity(self.literal_terms.len());
         let mut anchor: Option<Rc<Term>> = None;
-        for (lhs, rhs) in &self.pairs {
-            let lhs_term = match term_payload(lhs.as_ref(), ctx) {
-                Ok(term) => term,
-                Err(outcome) => return outcome,
-            };
+        for (lhs_term, rhs) in producer_components.into_iter().zip(&self.literal_terms) {
             let rhs_term = match term_payload(rhs.as_ref(), ctx) {
                 Ok(term) => term,
                 Err(outcome) => return outcome,
