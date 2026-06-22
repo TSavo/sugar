@@ -633,19 +633,14 @@ mod tests {
         let expr: Expr =
             syn::parse_str("[1, 2].iter().fold(0, |acc, x| { assert_eq!(x, x); acc + x })")
                 .unwrap();
-        let names = candidate_names(&expr);
-        let fold = names
-            .iter()
-            .position(|name| *name == "fold")
-            .expect("fold-shaped method call should be claimed by FoldSugar");
-        let method = names
-            .iter()
-            .position(|name| *name == "method")
-            .expect("fold-shaped method call should also be claimed by generic MethodSugar");
-
-        assert!(
-            fold < method,
-            "FoldSugar should outrank generic MethodSugar: {names:?}"
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Composite),
+            Some("fold")
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Term),
+            Some("method"),
+            "fold is composite sugar; generic method remains the term fallback"
         );
     }
 
@@ -715,19 +710,14 @@ mod tests {
     #[test]
     fn map_method_call_prioritizes_map_before_generic_method_sugar() {
         let expr: Expr = syn::parse_str("[1, 2].iter().map(|x| x * 2)").unwrap();
-        let names = candidate_names(&expr);
-        let map = names
-            .iter()
-            .position(|name| *name == "map")
-            .expect("map adaptor should be claimed by MapSugar");
-        let method = names
-            .iter()
-            .position(|name| *name == "method")
-            .expect("map adaptor should also be claimed by generic MethodSugar");
-
-        assert!(
-            map < method,
-            "MapSugar should outrank generic MethodSugar: {names:?}"
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Composite),
+            Some("map")
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Term),
+            Some("map_term"),
+            "map_term owns the term role before generic method fallback"
         );
     }
 
