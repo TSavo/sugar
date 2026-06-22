@@ -49,11 +49,8 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     // consuming-iterator advance re-tags the receiver var (`@adv{n}`).
     Some(Box::new(MethodSugar {
         method: method_key(call),
-        lookup_method: call.method.to_string(),
-        receiver_expr: (*call.receiver).clone(),
         receiver: build_term(&call.receiver, fcx),
         is_consuming: is_consuming_iterator_method(&call.method.to_string()),
-        arg_exprs: call.args.iter().cloned().collect(),
         args: call.args.iter().map(|arg| build_term(arg, fcx)).collect(),
     }))
 }
@@ -73,21 +70,13 @@ fn method_key(call: &syn::ExprMethodCall) -> String {
 /// the structural backstop.
 struct MethodSugar {
     method: String,
-    lookup_method: String,
-    receiver_expr: Expr,
     receiver: Box<dyn Sugar>,
     is_consuming: bool,
-    arg_exprs: Vec<Expr>,
     args: Vec<Box<dyn Sugar>>,
 }
 
 impl Sugar for MethodSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        if let Some(term) =
-            ctx.try_inline_value_method(&self.lookup_method, &self.receiver_expr, &self.arg_exprs)
-        {
-            return Outcome::Dug(Desugared::Term(term));
-        }
         let mut receiver = match self.receiver.desugar(ctx) {
             Outcome::Dug(d) => match d.into_term() {
                 Some(t) => t,
