@@ -226,10 +226,11 @@ fn temporally_unstable_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dy
     })
 }
 
-/// A mutable iterator driven by a short-circuit terminal (`try_fold`, `try_find`, `any`, ...)
-/// advances by a data-dependent count. The temporal rewrite ledger intentionally forgets
-/// the pre-consumption literal sequence at that boundary; a later read must NAME-REFUSE
-/// rather than replay stale source text and refute a true assertion.
+/// A mutable iterator driven by a data-dependent terminal (`try_fold`, `try_find`, `any`, ...)
+/// or through a borrowed adaptor (`by_ref().take(..).fold(..)`) advances by a count the
+/// literal replay ledger does not own. The ledger intentionally forgets the pre-consumption
+/// sequence at that boundary; a later read must NAME-REFUSE rather than replay stale source
+/// text and refute a true assertion.
 fn unknown_iterator_consumption_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     fcx.scope()
         .unknown_iterator_consumption_reason(name)

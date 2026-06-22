@@ -118,10 +118,10 @@ impl TemporalRewriteState {
     pub(crate) fn unknown_iterator_consumption_reason(&self, name: &str) -> Option<String> {
         let method = self.unknown_consumed_iterators.get(name)?;
         Some(format!(
-            "unknown iterator consumption for `{name}` via `{method}`: a prior \
-             short-circuit iterator terminal advanced this mutable iterator by a \
-             data-dependent count, so there is no single timeless source value to read \
-             at the assertion; refused"
+            "unknown iterator consumption for `{name}` via `{method}`: a prior iterator \
+             operation advanced this mutable iterator by an unknown or by_ref-adaptor \
+             count, so there is no single timeless source value to read at the assertion; \
+             refused"
         ))
     }
 
@@ -196,6 +196,12 @@ impl TemporalRewriteState {
                     }
                 } else if unknown_iterator_consumption(call) {
                     if let Some(name) = simple_path_name(&call.receiver) {
+                        applied |=
+                            self.invalidate_iterator_binding(&name, &call.method.to_string());
+                    }
+                }
+                if borrowed_iterator_terminal(call) {
+                    if let Some(name) = borrowed_iterator_source_name(&call.receiver) {
                         applied |=
                             self.invalidate_iterator_binding(&name, &call.method.to_string());
                     }
@@ -298,6 +304,11 @@ impl TemporalRewriteState {
         };
 
         self.unknown_consumed_iterators.remove(&name);
+        if let Some(base) = borrowed_iterator_source_name(&init.expr)
+            .filter(|base| base != &name && self.values.contains_key(base))
+        {
+            self.invalidate_iterator_binding(&base, "by_ref");
+        }
         if let Some(base) =
             mut_reference_target(&init.expr).filter(|base| self.values.contains_key(base))
         {
@@ -631,12 +642,106 @@ fn unknown_iterator_consumption(call: &syn::ExprMethodCall) -> bool {
             | "try_rfold"
             | "try_for_each"
             | "try_find"
+            | "next_if_map"
             | "find"
             | "find_map"
             | "position"
             | "rposition"
             | "all"
             | "any"
+    )
+}
+
+fn borrowed_iterator_terminal(call: &syn::ExprMethodCall) -> bool {
+    matches!(
+        call.method.to_string().as_str(),
+        "next"
+            | "next_back"
+            | "nth"
+            | "nth_back"
+            | "advance_by"
+            | "advance_back_by"
+            | "next_if"
+            | "next_if_eq"
+            | "next_if_map"
+            | "try_fold"
+            | "try_rfold"
+            | "try_for_each"
+            | "try_find"
+            | "fold"
+            | "rfold"
+            | "for_each"
+            | "find"
+            | "find_map"
+            | "position"
+            | "rposition"
+            | "all"
+            | "any"
+            | "count"
+            | "last"
+            | "sum"
+            | "product"
+            | "collect"
+            | "reduce"
+            | "try_reduce"
+            | "max"
+            | "min"
+            | "max_by"
+            | "min_by"
+            | "max_by_key"
+            | "min_by_key"
+            | "cmp"
+            | "partial_cmp"
+            | "eq"
+            | "ne"
+            | "lt"
+            | "le"
+            | "gt"
+            | "ge"
+    )
+}
+
+fn borrowed_iterator_source_name(expr: &Expr) -> Option<String> {
+    match strip_refs_groups(expr) {
+        Expr::MethodCall(call) if call.method == "by_ref" && call.args.is_empty() => {
+            simple_path_name(&call.receiver)
+        }
+        Expr::MethodCall(call) if borrowed_iterator_adapter(&call.method.to_string()) => {
+            borrowed_iterator_source_name(&call.receiver)
+        }
+        Expr::Reference(reference) => borrowed_iterator_source_name(&reference.expr),
+        Expr::Paren(paren) => borrowed_iterator_source_name(&paren.expr),
+        Expr::Group(group) => borrowed_iterator_source_name(&group.expr),
+        Expr::Try(try_expr) => borrowed_iterator_source_name(&try_expr.expr),
+        _ => None,
+    }
+}
+
+fn borrowed_iterator_adapter(method: &str) -> bool {
+    matches!(
+        method,
+        "cloned"
+            | "copied"
+            | "fuse"
+            | "peekable"
+            | "enumerate"
+            | "rev"
+            | "skip"
+            | "take"
+            | "step_by"
+            | "map"
+            | "filter"
+            | "filter_map"
+            | "skip_while"
+            | "take_while"
+            | "inspect"
+            | "chain"
+            | "zip"
+            | "flatten"
+            | "flat_map"
+            | "scan"
+            | "cycle"
+            | "map_while"
     )
 }
 
