@@ -7306,7 +7306,7 @@ impl Effect {
             // substring verbatim so a single whitelist entry recognizes it; the emit site's
             // `assert_eq!:` / `assert!:` prefix is preserved by the caller.
             Effect::ArrayRepeat { boundary } => format!(
-                "array-repeat `[_; N]` has a non-literal length -- not a finite \
+                "array-repeat length runtime, not const -- array-repeat `[_; N]` has a non-literal length -- not a finite \
                  construction from the literal; refused by name: `{boundary}`"
             ),
             // The structural backstop carries its OWN pre-built reason verbatim (a term-shaped
