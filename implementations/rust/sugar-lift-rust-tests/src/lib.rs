@@ -4122,6 +4122,10 @@ pub(crate) struct TemporalScope {
     /// before the source-expression binding map, so a pattern-bound value is a normal
     /// recursive factory operand rather than a magic side table.
     term_bindings: BTreeMap<String, Rc<Term>>,
+    /// Locals introduced by a tuple/slice destructure whose source did NOT resolve to a
+    /// literal tuple/array. Reading one of these names cannot be interpreted as a text
+    /// value: the binding participates, but its payload came from runtime state.
+    runtime_destructured_locals: BTreeSet<String>,
     /// A snapshot of the `macro_rules!` definitions VISIBLE at this scope (in-file +
     /// dependency-source), so a TERM-POSITION macro invocation can be EXPANDED at
     /// desugar time. The desugar-time registry hangs off `ReductionCtx`, but the thin
@@ -4186,6 +4190,7 @@ impl TemporalScope {
             literal_arrays: BTreeMap::new(),
             let_bindings: BTreeMap::new(),
             term_bindings: BTreeMap::new(),
+            runtime_destructured_locals: BTreeSet::new(),
             macro_registry: MacroRegistry::new(),
             fn_registry: FnRegistry::new(),
             impl_value_registry: ImplValueRegistry::new(),
@@ -4335,6 +4340,10 @@ impl TemporalScope {
         self.term_bindings.get(name).cloned()
     }
 
+    pub(crate) fn is_runtime_destructured_local(&self, name: &str) -> bool {
+        self.runtime_destructured_locals.contains(name)
+    }
+
     pub(crate) fn temporal_rewrite_expr_for(&self, name: &str) -> Option<Expr> {
         self.temporal_rewrite.borrow().expr_for(name)
     }
@@ -4395,15 +4404,24 @@ impl TemporalScope {
             );
             self.let_bindings.remove(name);
             self.term_bindings.remove(name);
+            self.runtime_destructured_locals.remove(name);
             return;
         }
         self.term_bindings.remove(name);
+        self.runtime_destructured_locals.remove(name);
         self.let_bindings.insert(name.to_string(), rewritten);
     }
 
     pub(crate) fn record_let_term_binding(&mut self, name: &str, term: Rc<Term>) {
         self.let_bindings.remove(name);
+        self.runtime_destructured_locals.remove(name);
         self.term_bindings.insert(name.to_string(), term);
+    }
+
+    fn record_runtime_destructured_binding(&mut self, name: &str) {
+        self.let_bindings.remove(name);
+        self.term_bindings.remove(name);
+        self.runtime_destructured_locals.insert(name.to_string());
     }
 
     fn record_temporal_rewrite_local(&mut self, local: &syn::Local) {
@@ -7494,6 +7512,231 @@ fn scalar_literal_array_elems(expr: &Expr) -> Option<Vec<Expr>> {
     }
 }
 
+fn record_destructured_let_bindings(scope: &mut TemporalScope, pat: &Pat, init: &Expr) {
+    if !destructure_pattern_participates(pat) {
+        return;
+    }
+    if let Some(bindings) = literal_destructure_bindings(scope, pat, init) {
+        for (name, value) in bindings {
+            scope.record_let_binding(&name, value);
+        }
+    } else if !destructure_source_shape_matches(scope, pat, init) {
+        for name in pat_idents(pat) {
+            scope.record_runtime_destructured_binding(&name);
+        }
+    }
+}
+
+fn destructure_pattern_participates(pat: &Pat) -> bool {
+    match pat {
+        Pat::Slice(_) | Pat::Tuple(_) => true,
+        Pat::Paren(paren) => destructure_pattern_participates(&paren.pat),
+        Pat::Reference(reference) => destructure_pattern_participates(&reference.pat),
+        Pat::Type(ty) => destructure_pattern_participates(&ty.pat),
+        _ => false,
+    }
+}
+
+fn literal_destructure_bindings(
+    scope: &TemporalScope,
+    pat: &Pat,
+    init: &Expr,
+) -> Option<Vec<(String, Expr)>> {
+    let source = resolve_destructure_source_expr(scope, init, 0)?;
+    let mut out = Vec::new();
+    collect_literal_destructure_bindings(scope, pat, &source, &mut out).then_some(out)
+}
+
+fn destructure_source_shape_matches(scope: &TemporalScope, pat: &Pat, init: &Expr) -> bool {
+    let Some(source) = resolve_destructure_source_expr(scope, init, 0) else {
+        return false;
+    };
+    destructure_shape_matches(pat, &source)
+}
+
+fn destructure_shape_matches(pat: &Pat, value: &Expr) -> bool {
+    match pat {
+        Pat::Tuple(tuple_pat) => {
+            let Expr::Tuple(tuple_value) = strip_refs_groups(value) else {
+                return false;
+            };
+            tuple_pat.elems.len() == tuple_value.elems.len()
+        }
+        Pat::Slice(_) => matches!(strip_refs_groups(value), Expr::Array(_) | Expr::Repeat(_)),
+        Pat::Paren(paren) => destructure_shape_matches(&paren.pat, value),
+        Pat::Reference(reference) if reference.mutability.is_none() => {
+            destructure_shape_matches(&reference.pat, value)
+        }
+        Pat::Type(ty) => destructure_shape_matches(&ty.pat, value),
+        _ => false,
+    }
+}
+
+fn resolve_destructure_source_expr(
+    scope: &TemporalScope,
+    expr: &Expr,
+    depth: usize,
+) -> Option<Expr> {
+    const MAX_DEPTH: usize = 16;
+    if depth > MAX_DEPTH {
+        return None;
+    }
+    match expr {
+        Expr::Paren(paren) => resolve_destructure_source_expr(scope, &paren.expr, depth + 1),
+        Expr::Group(group) => resolve_destructure_source_expr(scope, &group.expr, depth + 1),
+        Expr::Reference(reference) if reference.mutability.is_none() => {
+            resolve_destructure_source_expr(scope, &reference.expr, depth + 1)
+        }
+        Expr::Path(path) if path.qself.is_none() => {
+            if let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) {
+                if let Some(init) = scope.stable_let_binding_for_term(&name) {
+                    return resolve_destructure_source_expr(scope, init, depth + 1);
+                }
+            }
+            let init = scope.const_expr_for_path(&path.path)?;
+            resolve_destructure_source_expr(scope, &init, depth + 1)
+        }
+        _ => Some(expr.clone()),
+    }
+}
+
+fn collect_literal_destructure_bindings(
+    scope: &TemporalScope,
+    pat: &Pat,
+    value: &Expr,
+    out: &mut Vec<(String, Expr)>,
+) -> bool {
+    match pat {
+        Pat::Ident(ident) if ident.by_ref.is_none() && ident.subpat.is_none() => {
+            let Some(value) = resolve_destructure_literal_leaf(scope, value, 0) else {
+                return false;
+            };
+            out.push((ident.ident.to_string(), value));
+            true
+        }
+        Pat::Wild(_) => true,
+        Pat::Paren(paren) => collect_literal_destructure_bindings(scope, &paren.pat, value, out),
+        Pat::Reference(reference) if reference.mutability.is_none() => {
+            collect_literal_destructure_bindings(scope, &reference.pat, value, out)
+        }
+        Pat::Type(ty) => collect_literal_destructure_bindings(scope, &ty.pat, value, out),
+        Pat::Tuple(tuple_pat) => {
+            let Expr::Tuple(tuple_value) = strip_refs_groups(value) else {
+                return false;
+            };
+            if tuple_pat.elems.len() != tuple_value.elems.len() {
+                return false;
+            }
+            tuple_pat
+                .elems
+                .iter()
+                .zip(tuple_value.elems.iter())
+                .all(|(pat, value)| collect_literal_destructure_bindings(scope, pat, value, out))
+        }
+        Pat::Slice(slice_pat) => {
+            let Some(elems) = literal_destructure_array_elems(scope, value) else {
+                return false;
+            };
+            collect_literal_slice_pattern_bindings(scope, slice_pat, &elems, out)
+        }
+        Pat::Rest(_) => true,
+        _ => false,
+    }
+}
+
+fn collect_literal_slice_pattern_bindings(
+    scope: &TemporalScope,
+    slice_pat: &syn::PatSlice,
+    elems: &[Expr],
+    out: &mut Vec<(String, Expr)>,
+) -> bool {
+    let rest_pos = slice_pat
+        .elems
+        .iter()
+        .position(|pat| matches!(pat, Pat::Rest(_)));
+    let Some(rest_pos) = rest_pos else {
+        return slice_pat.elems.len() == elems.len()
+            && slice_pat
+                .elems
+                .iter()
+                .zip(elems.iter())
+                .all(|(pat, value)| collect_literal_destructure_bindings(scope, pat, value, out));
+    };
+    if slice_pat
+        .elems
+        .iter()
+        .skip(rest_pos + 1)
+        .any(|pat| matches!(pat, Pat::Rest(_)))
+    {
+        return false;
+    }
+    let prefix = rest_pos;
+    let suffix = slice_pat.elems.len().saturating_sub(rest_pos + 1);
+    if elems.len() < prefix + suffix {
+        return false;
+    }
+    for (pat, value) in slice_pat.elems.iter().take(prefix).zip(elems.iter()) {
+        if !collect_literal_destructure_bindings(scope, pat, value, out) {
+            return false;
+        }
+    }
+    for (idx, pat) in slice_pat.elems.iter().skip(rest_pos + 1).enumerate() {
+        let elem_idx = elems.len() - suffix + idx;
+        if !collect_literal_destructure_bindings(scope, pat, &elems[elem_idx], out) {
+            return false;
+        }
+    }
+    true
+}
+
+fn literal_destructure_array_elems(scope: &TemporalScope, expr: &Expr) -> Option<Vec<Expr>> {
+    match strip_refs_groups(expr) {
+        Expr::Array(arr) => arr
+            .elems
+            .iter()
+            .map(|elem| resolve_destructure_literal_leaf(scope, elem, 0))
+            .collect(),
+        Expr::Repeat(repeat) => {
+            let count = repeat_count_in_scope(&repeat.len, scope)?;
+            if count as i64 > SUGAR_SEQ_CAP {
+                return None;
+            }
+            let elem = resolve_destructure_literal_leaf(scope, &repeat.expr, 0)?;
+            Some(std::iter::repeat_n(elem, count).collect())
+        }
+        _ => None,
+    }
+}
+
+fn resolve_destructure_literal_leaf(
+    scope: &TemporalScope,
+    expr: &Expr,
+    depth: usize,
+) -> Option<Expr> {
+    const MAX_DEPTH: usize = 16;
+    if depth > MAX_DEPTH {
+        return None;
+    }
+    match expr {
+        Expr::Paren(paren) => resolve_destructure_literal_leaf(scope, &paren.expr, depth + 1),
+        Expr::Group(group) => resolve_destructure_literal_leaf(scope, &group.expr, depth + 1),
+        Expr::Reference(reference) if reference.mutability.is_none() => {
+            resolve_destructure_literal_leaf(scope, &reference.expr, depth + 1)
+        }
+        Expr::Path(path) if path.qself.is_none() => {
+            if let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) {
+                if let Some(init) = scope.stable_let_binding_for_term(&name) {
+                    return resolve_destructure_literal_leaf(scope, init, depth + 1);
+                }
+            }
+            let init = scope.const_expr_for_path(&path.path)?;
+            resolve_destructure_literal_leaf(scope, &init, depth + 1)
+        }
+        _ if is_closed_scalar_literal(expr) => Some(expr.clone()),
+        _ => None,
+    }
+}
+
 /// A CLOSED scalar literal: an int / char / byte / bool literal, or a unary `-`
 /// over a numeric literal. (Floats are deliberately excluded -- the quantifier
 /// unroll emits Int/Char/Bool comparison atoms, not Real refinements.)
@@ -9613,6 +9856,9 @@ fn collect_assertion_entries<'a>(
                     if init.diverge.is_none() {
                         temporal_scope.record_let_binding(&name, (*init.expr).clone());
                     }
+                }
+                if let Some(init) = local.init.as_ref().filter(|init| init.diverge.is_none()) {
+                    record_destructured_let_bindings(&mut temporal_scope, &local.pat, &init.expr);
                 }
                 temporal_scope.record_temporal_rewrite_local(local);
             }

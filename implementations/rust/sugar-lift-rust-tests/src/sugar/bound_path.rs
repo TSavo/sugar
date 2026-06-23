@@ -62,6 +62,9 @@ fn recognize_role(expr: &Expr, fcx: &SugarBuildCtx, role: BoundPathRole) -> Opti
     if let Some(hit) = ambiguous_identity_refusal(&name, fcx) {
         return Some(hit);
     }
+    if let Some(hit) = runtime_destructured_source_refusal(&name, fcx) {
+        return Some(hit);
+    }
     has_bound_path_candidate(&name, fcx, role).then(|| {
         Box::new(BoundPathSugar {
             name,
@@ -182,6 +185,16 @@ impl Sugar for BoundPathSugar {
             }
         }
     }
+}
+
+fn runtime_destructured_source_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    fcx.scope().is_runtime_destructured_local(name).then(|| {
+        reasoned_hit(format!(
+            "destructured source runtime, not literal for `{name}`: pattern binding participates \
+             in the assertion, but the destructured source did not resolve to a literal tuple/array; \
+             refused"
+        ))
+    })
 }
 
 /// THE NO-FALSE-REFUTATION GATE. A local MUTATED through a `&mut` alias the tracker

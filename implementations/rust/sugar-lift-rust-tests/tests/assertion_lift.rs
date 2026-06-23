@@ -27217,6 +27217,114 @@ fn tuple_literal_projection_and_equality_bad_twins_refute() {
     }
 }
 
+#[test]
+fn slice_tuple_pattern_destructure_literal_sources_have_teeth() {
+    for (label, prelude, assertion, want_pairs, want_sat) in [
+        (
+            "slice_pattern_array_good",
+            "",
+            "let [a, b, c] = [1_i32, 2_i32, 3_i32]; assert_eq!(b, 2_i32);",
+            vec![(2, 2)],
+            true,
+        ),
+        (
+            "slice_pattern_array_bad",
+            "",
+            "let [a, b, c] = [1_i32, 2_i32, 3_i32]; assert_eq!(b, 9_i32);",
+            vec![(2, 9)],
+            false,
+        ),
+        (
+            "tuple_pattern_good",
+            "",
+            "let (x, y) = (4_i32, 5_i32); assert_eq!(x, 4_i32);",
+            vec![(4, 4)],
+            true,
+        ),
+        (
+            "tuple_pattern_bad",
+            "",
+            "let (x, y) = (4_i32, 5_i32); assert_eq!(x, 6_i32);",
+            vec![(4, 6)],
+            false,
+        ),
+        (
+            "slice_pattern_rest_good",
+            "",
+            "let [first, .., last] = [7_i32, 8_i32, 9_i32]; assert_eq!(last, 9_i32);",
+            vec![(9, 9)],
+            true,
+        ),
+        (
+            "slice_pattern_rest_bad",
+            "",
+            "let [first, .., last] = [7_i32, 8_i32, 9_i32]; assert_eq!(first, 8_i32);",
+            vec![(7, 8)],
+            false,
+        ),
+        (
+            "slice_pattern_const_good",
+            "const ARR: [i32; 3] = [10_i32, 11_i32, 12_i32];",
+            "let [a, b, c] = ARR; assert_eq!(c, 12_i32);",
+            vec![(12, 12)],
+            true,
+        ),
+        (
+            "tuple_pattern_const_bad",
+            "const TUP: (i32, i32) = (13_i32, 14_i32);",
+            "let (x, y) = TUP; assert_eq!(y, 15_i32);",
+            vec![(14, 15)],
+            false,
+        ),
+    ] {
+        let src = format!("{prelude} #[test] fn t() {{ {assertion} }}");
+        let out = lift_file(&parse(&src), "coretests/destructure/literal_floor.rs");
+        assert_warranted_decl_count(&out, 1);
+        assert_eq!(
+            dug_eq_int_pairs(single_warranted_decl(&out)),
+            want_pairs,
+            "{label}: destructured literal binding should reduce to scalar floor"
+        );
+        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+            assert_eq!(sat, want_sat, "{label}: z3 verdict mismatch");
+        }
+    }
+}
+
+#[test]
+fn slice_tuple_pattern_destructure_runtime_sources_are_named_refused() {
+    for (label, assertion) in [
+        (
+            "slice_pattern_runtime_source_refused",
+            "fn runtime_arr() -> [i32; 2] { [std::process::id() as i32, 2_i32] } let [a, b] = runtime_arr(); assert_eq!(a, 1_i32);",
+        ),
+        (
+            "tuple_pattern_runtime_source_refused",
+            "fn runtime_tup() -> (i32, i32) { (1_i32, std::process::id() as i32) } let (x, y) = runtime_tup(); assert_eq!(y, 2_i32);",
+        ),
+    ] {
+        let src = format!("#[test] fn t() {{ {assertion} }}");
+        let out = lift_file(&parse(&src), "coretests/destructure/runtime_source.rs");
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "{label}: runtime destructured source must not warrant: {:?}",
+            out.decls
+        );
+        assert_eq!(
+            out.assertions_refused, 1,
+            "{label}: runtime destructured source should be refused, not unsupported: {:?}",
+            out.skip_reasons
+        );
+        assert!(
+            out.skip_reasons
+                .iter()
+                .any(|reason| reason.contains("destructured source runtime, not literal")),
+            "{label}: missing destructured-source refusal reason: {:?}",
+            out.skip_reasons
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // `Range::contains` over literal ranges — `(a..b).contains(&x)` membership is determined
 // entirely by the text, so it folds to a ground `Bool` (a real value with teeth), not an

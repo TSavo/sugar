@@ -1290,6 +1290,9 @@ fn clean_named_refusal_category(
     if iterator_size_hint_runtime_bound_reason(reason) {
         return Some("iterator size_hint runtime bound");
     }
+    if reason.contains("destructured source runtime, not literal") {
+        return Some("destructured source runtime, not literal");
+    }
     if array_repeat_non_literal_length_reason(reason) {
         return Some("array repeat non-literal length");
     }
