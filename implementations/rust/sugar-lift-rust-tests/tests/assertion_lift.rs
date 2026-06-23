@@ -20324,6 +20324,89 @@ fn numeric_literal_methods_ground_with_teeth() {
 }
 
 #[test]
+fn float_literal_to_bits_and_from_bits_have_exact_teeth() {
+    assert_numeric_method_decl_verdict(
+        "assert_eq!(1.5f32.to_bits(), 0x3fc00000u32);",
+        true,
+        "float_to_bits_f32_good",
+    );
+    assert_numeric_method_decl_verdict(
+        "assert_eq!(1.5f32.to_bits(), 0x3fc00001u32);",
+        false,
+        "float_to_bits_f32_bad",
+    );
+    assert_numeric_method_decl_verdict(
+        "assert_eq!((-2.25f64).to_bits(), 0xc002000000000000u64);",
+        true,
+        "float_to_bits_f64_good",
+    );
+    assert_numeric_method_decl_verdict(
+        "assert_eq!((-2.25f64).to_bits(), 0x4002000000000000u64);",
+        false,
+        "float_to_bits_f64_bad",
+    );
+    assert_numeric_method_decl_verdict(
+        "assert_eq!(f32::EPSILON.to_bits(), 0x34000000u32);",
+        true,
+        "float_to_bits_assoc_const_good",
+    );
+    assert_numeric_method_decl_verdict(
+        "assert_eq!(f32::EPSILON.to_bits(), 0x34000001u32);",
+        false,
+        "float_to_bits_assoc_const_bad",
+    );
+    assert_numeric_method_decl_verdict(
+        "assert_eq!(f32::from_bits(0x3fc00000), 1.5f32);",
+        true,
+        "float_from_bits_f32_good",
+    );
+    assert_numeric_method_decl_verdict(
+        "assert_eq!(f32::from_bits(0x3fc00000), 1.25f32);",
+        false,
+        "float_from_bits_f32_bad",
+    );
+    assert_numeric_method_decl_verdict(
+        "assert_eq!(f64::from_bits(0xc002000000000000), -2.25f64);",
+        true,
+        "float_from_bits_f64_good",
+    );
+    assert_numeric_method_decl_verdict(
+        "assert_eq!(f64::from_bits(0xc002000000000000), 2.25f64);",
+        false,
+        "float_from_bits_f64_bad",
+    );
+}
+
+#[test]
+fn runtime_float_to_bits_refuses_with_named_boundary() {
+    let out = lift_file(
+        &parse(
+            r#"
+fn runtime_f32() -> f32 { 1.5 }
+
+#[test]
+fn t() {
+    assert_eq!(runtime_f32().to_bits(), 0x3fc00000u32);
+}
+"#,
+        ),
+        "tests/num/float_runtime_bits.rs",
+    );
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "runtime float to_bits must not lift opaquely: decls={:?}",
+        out.decls
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|reason| reason.contains("runtime float operand, not literal")),
+        "runtime float boundary must be named: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
 fn numeric_runtime_receiver_stays_symbolic() {
     let out = lift_file(
         &parse(
