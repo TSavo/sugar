@@ -23865,6 +23865,164 @@ fn peekable_runtime_slice_source_is_named_refused_not_work() {
 }
 
 #[test]
+fn peekable_runtime_nth_after_peek_is_named_refused_not_work() {
+    let src = r#"
+        pub struct CycleIter<'a, T> {
+            index: usize,
+            data: &'a [T],
+        }
+
+        impl<'a, T> CycleIter<'a, T> {
+            fn new(data: &'a [T]) -> Self {
+                Self { index: 0, data }
+            }
+        }
+
+        impl<'a, T> Iterator for CycleIter<'a, T> {
+            type Item = &'a T;
+
+            fn next(&mut self) -> Option<&'a T> {
+                let elt = self.data.get(self.index);
+                self.index += 1;
+                self.index %= 1 + self.data.len();
+                elt
+            }
+        }
+
+        #[test]
+        fn test_iterator_peekable_remember_peek_none_3() {
+            let data = [0];
+            let mut iter = CycleIter::new(&data).peekable();
+            iter.peek();
+            assert_eq!(iter.nth(0), Some(&0));
+        }
+    "#;
+    let out = lift_file(&parse(src), "tests/iter/adapters/peekable.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "runtime peekable source must not warrant: {:?}",
+        out.assertion_facts
+    );
+    assert!(
+        out.skip_reasons.iter().any(|reason| {
+            reason.contains("runtime slice source, not literal")
+                && matches!(
+                    sugar_lift_rust_tests::refusal_disposition(reason),
+                    sugar_lift_rust_tests::Disposition::Refused
+                )
+        }),
+        "runtime peekable nth source must be terminal refused by name: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn peekable_non_fused_empty_literal_warrants_none_with_teeth() {
+    let good = r#"
+        use std::iter::empty;
+
+        pub struct NonFused<I> {
+            iter: I,
+            done: bool,
+        }
+
+        impl<I> NonFused<I> {
+            pub fn new(iter: I) -> Self {
+                Self { iter, done: false }
+            }
+        }
+
+        impl<I> Iterator for NonFused<I>
+        where
+            I: Iterator,
+        {
+            type Item = I::Item;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                if self.done {
+                    None
+                } else {
+                    self.iter.next().or_else(|| {
+                        self.done = true;
+                        None
+                    })
+                }
+            }
+        }
+
+        impl<I> DoubleEndedIterator for NonFused<I>
+        where
+            I: DoubleEndedIterator,
+        {
+            fn next_back(&mut self) -> Option<Self::Item> {
+                if self.done {
+                    None
+                } else {
+                    self.iter.next_back().or_else(|| {
+                        self.done = true;
+                        None
+                    })
+                }
+            }
+        }
+
+        #[test]
+        fn test_peekable_non_fused() {
+            let mut iter = NonFused::new(empty::<i32>()).peekable();
+            assert_eq!(iter.peek(), None);
+            assert_eq!(iter.next_back(), None);
+        }
+    "#;
+    let good_out = lift_file(&parse(good), "tests/iter/adapters/peekable.rs");
+    assert_eq!(
+        good_out.assertions_lifted, 2,
+        "literal empty NonFused peekable should warrant both None assertions: {:?}; facts={:?}",
+        good_out.skip_reasons, good_out.assertion_facts
+    );
+    assert_eq!(
+        good_out.assertions_refused, 0,
+        "{:?}",
+        good_out.skip_reasons
+    );
+    for (idx, decl) in warranted_decls(&good_out).into_iter().enumerate() {
+        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("peekable_non_fused_good_{idx}")) {
+            assert!(
+                sat,
+                "GOOD peekable None assertion must be SAT: {}",
+                decl.name
+            );
+        }
+    }
+
+    let bad = good
+        .replace(
+            "assert_eq!(iter.peek(), None);",
+            "assert_eq!(iter.peek(), Some(0));",
+        )
+        .replace(
+            "assert_eq!(iter.next_back(), None);",
+            "assert_eq!(iter.next_back(), Some(0));",
+        );
+    let bad_out = lift_file(&parse(&bad), "tests/iter/adapters/peekable_bad.rs");
+    assert_eq!(
+        bad_out.assertions_lifted, 2,
+        "literal empty NonFused peekable bad twin should still warrant: {:?}; facts={:?}",
+        bad_out.skip_reasons, bad_out.assertion_facts
+    );
+    for (idx, decl) in warranted_decls(&bad_out).into_iter().enumerate() {
+        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("peekable_non_fused_bad_{idx}")) {
+            assert!(
+                !sat,
+                "BAD peekable None assertion must be z3-UNSAT: {}; pairs={:?}; inv={}",
+                decl.name,
+                dug_eq_ctor_name_pairs(decl),
+                inv_json(decl)
+            );
+        }
+    }
+}
+
+#[test]
 fn rpc_source_warrants_literal_range_constructors_and_propagates_child_hits() {
     let doc = run_rpc_lift(
         "tests/ops.rs",
