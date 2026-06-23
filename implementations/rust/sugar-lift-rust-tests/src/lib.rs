@@ -11836,18 +11836,24 @@ fn for_context_refusal_reason(
              {DROP_ON_PANIC_SIDE_EFFECT_REASON}; refused"
         );
     }
-    let body_over_opaque = bs.iter().any(|r| {
+    let body_over_runtime = bs.iter().any(|r| {
         r.contains("OPAQUE")
             || r.contains("opaque runtime receiver")
             || r.contains("ambiguous temporal identity")
             || r.contains("mutable container")
+            || r.contains("temporally unstable")
+            || r.contains("atomic load reads interior-mutable runtime state")
+            || r.contains("effectful / raw-pointer / mutable-reference term")
+            || r.contains("panic payload downcast reads runtime exception state")
+            || r.contains("side-effecting closure body")
+            || r.contains("runtime expression-statement")
     });
 
     // (B) RUNTIME BODY READ: a body assert refused over OPAQUE / temporally-unstable /
     // mutable-container data (`fmt.flags()&1`, a runtime accessor). The iterated values
     // are literals but the ASSERTED values are runtime -> the body cannot be a timeless
     // point-wise claim. Terminal Effect, EARNED by the body's own refusal reason.
-    if body_over_opaque {
+    if body_over_runtime {
         return "assertion under for context over a LITERAL domain but the body READS \
                 RUNTIME DATA (an opaque/effectful accessor / temporally-unstable / \
                 mutable-container read); not a finite construction from source literals; \
@@ -21915,6 +21921,68 @@ mod lifter_key_tests {
             contract_names(&out).iter().any(|n| n.contains("range(i:0")),
             "an omitted range start must lift to 0: {:?}",
             contract_names(&out)
+        );
+    }
+
+    #[test]
+    fn empty_literal_slice_chunks_count_reduces_to_zero() {
+        let good = r#"
+            #[test]
+            fn empty_chunks_count() {
+                let v: &[i32] = &[];
+                let c = v.chunks(2);
+                assert_eq!(c.count(), 0);
+            }
+
+            #[test]
+            fn empty_rchunks_count() {
+                let v: &[i32] = &[];
+                let c = v.rchunks(2);
+                assert_eq!(c.count(), 0);
+            }
+        "#;
+        let out = lift_src(good);
+        assert_eq!(
+            out.assertions_lifted, 2,
+            "empty literal slice chunk counts should lift to concrete zero: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "empty literal slice chunk counts should not refuse: {:?}",
+            out.skip_reasons
+        );
+        let dump = value_claim_decl_dump(&out);
+        assert!(
+            dump.contains("value: Int(0)") && !dump.contains("method:count"),
+            "empty chunks/rchunks count should materialize literal zero, not an opaque count: {dump}"
+        );
+
+        let bad = r#"
+            #[test]
+            fn empty_chunks_count_bad_twin() {
+                let v: &[i32] = &[];
+                let c = v.chunks(2);
+                assert_eq!(c.count(), 1);
+            }
+        "#;
+        let out = lift_src(bad);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "bad twin should still lift so z3 can refute the wrong expected value: {:?}",
+            out.skip_reasons
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "bad twin must not be hidden behind a refusal: {:?}",
+            out.skip_reasons
+        );
+        let dump = value_claim_decl_dump(&out);
+        assert!(
+            dump.contains("value: Int(0)")
+                && dump.contains("value: Int(1)")
+                && !dump.contains("method:count"),
+            "bad twin should expose the concrete 0-vs-1 contradiction: {dump}"
         );
     }
 
