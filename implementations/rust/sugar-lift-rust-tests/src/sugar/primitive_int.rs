@@ -14,6 +14,7 @@ use tracing::debug;
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::monadic::{none_term, some_term};
+use crate::sugar::nonzero::nonzero_assoc_const_expr;
 use crate::sugar::option_unwrap::is_known_monadic_source;
 use crate::{
     const_fold_int_term, const_fold_u128_term, simple_path_name, strip_refs_groups, u128_term,
@@ -40,6 +41,9 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
             Kind::ZeroCount(ZeroCountOp::Trailing)
         }
         ("bit_width", 0) if integer_receiver_can_ground(&call.receiver, fcx, 0) => Kind::BitWidth,
+        ("isolate_highest_one", 0) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
+            Kind::IsolateHighestOne
+        }
         ("min", 1) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
             Kind::Min(call.args[0].clone())
         }
@@ -105,6 +109,9 @@ fn integer_receiver_can_ground(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -
             if primitive_assoc_const_path(path).is_some() {
                 return true;
             }
+            if nonzero_assoc_const_expr(expr).is_some() {
+                return true;
+            }
             if let Some(init) = fcx.scope().const_expr_for_path(&path.path) {
                 return integer_receiver_can_ground(&init, fcx, depth + 1);
             }
@@ -132,6 +139,7 @@ fn integer_receiver_can_ground(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -
                     | "leading_zeros"
                     | "trailing_zeros"
                     | "bit_width"
+                    | "isolate_highest_one"
                     | "min"
                     | "max"
                     | "checked_add"
@@ -191,6 +199,7 @@ enum Kind {
     CountOnes,
     ZeroCount(ZeroCountOp),
     BitWidth,
+    IsolateHighestOne,
     Min(Expr),
     Max(Expr),
     Checked(CheckedOp, Expr),
@@ -338,6 +347,19 @@ impl Sugar for PrimitiveIntSugar {
                     "resolved primitive bit_width integer axiom"
                 );
                 Outcome::Dug(Desugared::Term(num(i128::from(value))))
+            }
+            Kind::IsolateHighestOne => {
+                let Some(term) = isolate_highest_one_term(lhs_i128, lhs_u128, kind_hint) else {
+                    return Outcome::from_opt(None);
+                };
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::primitive_int",
+                    method = self.method.as_str(),
+                    lhs_i128 = ?lhs_i128,
+                    lhs_u128 = ?lhs_u128,
+                    "resolved primitive isolate_highest_one integer axiom"
+                );
+                Outcome::Dug(Desugared::Term(term))
             }
             Kind::Min(rhs) | Kind::Max(rhs) => {
                 let rhs = match desugar_term_expr(rhs, ctx, &fcx) {
@@ -765,6 +787,42 @@ fn bit_width_value(lhs_i128: Option<i128>, lhs_u128: Option<u128>) -> Option<u32
     })
 }
 
+fn isolate_highest_one_term(
+    lhs_i128: Option<i128>,
+    lhs_u128: Option<u128>,
+    kind: Option<IntegerKind>,
+) -> Option<Rc<Term>> {
+    if let Some(kind) = kind {
+        let raw = if let Some(value) = lhs_u128 {
+            value & mask_for_bits(kind.bits)?
+        } else {
+            masked_raw_bits(lhs_i128?, kind)?
+        };
+        let isolated = isolate_highest_raw(raw, kind.bits)?;
+        return if kind.signed {
+            signed_value_from_raw(isolated, kind).map(num)
+        } else if kind.bits == 128 {
+            Some(u128_term(isolated))
+        } else {
+            Some(num(i128::try_from(isolated).ok()?))
+        };
+    }
+
+    if let Some(value) = lhs_u128 {
+        return Some(u128_term(isolate_highest_raw(value, 128)?));
+    }
+    let value = u128::try_from(lhs_i128?).ok()?;
+    Some(num(i128::try_from(isolate_highest_raw(value, 128)?).ok()?))
+}
+
+fn isolate_highest_raw(value: u128, bits: u32) -> Option<u128> {
+    if value == 0 {
+        return Some(0);
+    }
+    let leading = apply_zero_count(value, bits, ZeroCountOp::Leading);
+    1u128.checked_shl(bits.checked_sub(1)?.checked_sub(leading)?)
+}
+
 fn apply_zero_count(raw: u128, bits: u32, op: ZeroCountOp) -> u32 {
     match op {
         ZeroCountOp::Count => bits - raw.count_ones(),
@@ -813,6 +871,12 @@ fn integer_kind_hint_in_scope(
         Expr::Path(path) => {
             if let Some((kind, _)) = primitive_assoc_const_path(path) {
                 return Some(kind);
+            }
+            if let Some((kind, _)) = nonzero_assoc_const_expr(expr) {
+                return Some(IntegerKind {
+                    signed: kind.signed,
+                    bits: kind.bits,
+                });
             }
             if let Some(init) = fcx.scope().const_expr_for_path(&path.path) {
                 return integer_kind_hint_in_scope(&init, fcx, depth + 1);

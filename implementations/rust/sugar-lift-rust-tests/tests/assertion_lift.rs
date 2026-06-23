@@ -19964,6 +19964,102 @@ fn t() {
     }
 }
 
+#[test]
+fn nonzero_assoc_const_bit_width_has_teeth() {
+    let good = r#"
+use core::num::NonZero;
+
+#[test]
+fn t() {
+    assert_eq!(NonZero::<u32>::MAX.bit_width(), NonZero::new(32).unwrap());
+}
+"#;
+    let good_out = lift_file(&parse(good), "tests/nonzero-bit-width-good.rs");
+    assert_eq!(
+        good_out.assertions_lifted, 1,
+        "NonZero::MAX.bit_width should ground; skips={:?}; audits={:?}; decls={:?}",
+        good_out.skip_reasons, good_out.factory_audits, good_out.decls
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&good_out)),
+        "nonzero_max_bit_width_good",
+    ) {
+        assert!(sat, "u32::MAX bit_width is 32");
+    }
+
+    let bad = r#"
+use core::num::NonZero;
+
+#[test]
+fn t() {
+    assert_eq!(NonZero::<u32>::MAX.bit_width(), NonZero::new(31).unwrap());
+}
+"#;
+    let bad_out = lift_file(&parse(bad), "tests/nonzero-bit-width-bad.rs");
+    assert_eq!(
+        bad_out.assertions_lifted, 1,
+        "bad bit_width twin must still lift so z3 can bite; skips={:?}",
+        bad_out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&bad_out)),
+        "nonzero_max_bit_width_bad",
+    ) {
+        assert!(!sat, "u32::MAX bit_width is not 31");
+    }
+}
+
+#[test]
+fn nonzero_isolate_highest_one_has_teeth() {
+    let good = r#"
+use core::num::NonZero;
+
+#[test]
+fn t() {
+    assert_eq!(
+        NonZero::<u32>::new(0b0110_0100).unwrap().isolate_highest_one(),
+        NonZero::new(0b0100_0000).unwrap()
+    );
+}
+"#;
+    let good_out = lift_file(&parse(good), "tests/nonzero-isolate-highest-good.rs");
+    assert_eq!(
+        good_out.assertions_lifted, 1,
+        "NonZero isolate_highest_one should ground; skips={:?}; audits={:?}; decls={:?}",
+        good_out.skip_reasons, good_out.factory_audits, good_out.decls
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&good_out)),
+        "nonzero_isolate_highest_good",
+    ) {
+        assert!(sat, "0b0110_0100 isolates to 0b0100_0000");
+    }
+
+    let bad = r#"
+use core::num::NonZero;
+
+#[test]
+fn t() {
+    assert_eq!(
+        NonZero::<u32>::new(0b0110_0100).unwrap().isolate_highest_one(),
+        NonZero::new(0b0010_0000).unwrap()
+    );
+}
+"#;
+    let bad_out = lift_file(&parse(bad), "tests/nonzero-isolate-highest-bad.rs");
+    assert_eq!(
+        bad_out.assertions_lifted, 1,
+        "bad isolate_highest_one twin must still lift so z3 can bite; skips={:?}",
+        bad_out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&bad_out)),
+        "nonzero_isolate_highest_bad",
+    ) {
+        assert!(!sat, "0b0110_0100 does not isolate to 0b0010_0000");
+    }
+}
+
 fn assert_numeric_method_decl_verdict(src: &str, want_sat: bool, label: &str) {
     let full = format!("#[test] fn t() {{ {src} }}");
     let out = lift_file(&parse(&full), "tests/num/literal_methods.rs");
@@ -21770,6 +21866,39 @@ fn literal_ip_twin() {
 
     assert_rpc_source_warranted(&doc, "ip_properties");
     assert_rpc_source_warranted(&doc, "literal_ip_twin");
+}
+
+#[test]
+fn rpc_source_warrants_literal_nonzero_bit_ops() {
+    let doc = run_rpc_lift(
+        "tests/nonzero.rs",
+        r#"
+use core::num::NonZero;
+
+#[test]
+fn test_nonzero_bit_width() {
+    assert_eq!(NonZero::<u32>::new(0b010_1100).unwrap().bit_width(), NonZero::new(6).unwrap());
+    assert_eq!(NonZero::<u32>::MAX.bit_width(), NonZero::new(32).unwrap());
+}
+
+#[test]
+fn test_nonzero_isolate_highest_one() {
+    assert_eq!(
+        NonZero::<u32>::new(0b0110_0100).unwrap().isolate_highest_one(),
+        NonZero::new(0b0100_0000).unwrap()
+    );
+}
+
+#[test]
+fn literal_nonzero_bit_twin() {
+    assert_eq!(NonZero::<u32>::new(0b111_1001).unwrap().bit_width(), NonZero::new(7).unwrap());
+}
+"#,
+    );
+
+    assert_rpc_source_warranted(&doc, "test_nonzero_bit_width");
+    assert_rpc_source_warranted(&doc, "test_nonzero_isolate_highest_one");
+    assert_rpc_source_warranted(&doc, "literal_nonzero_bit_twin");
 }
 
 #[test]

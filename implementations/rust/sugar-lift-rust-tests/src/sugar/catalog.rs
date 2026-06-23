@@ -79,6 +79,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &dormant_mut_ref::EXPR_SUGAR,
     &bound_path::CONSTRAINT_EXPR_SUGAR,
     &bound_path::EXPR_SUGAR,
+    &nonzero::ASSOC_CONST_EXPR_SUGAR,
     &const_path::EXPR_SUGAR,
     &path::EXPR_SUGAR,
     &sizeof::EXPR_SUGAR,
