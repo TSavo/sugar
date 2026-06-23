@@ -214,6 +214,7 @@ impl Sugar for FoldSugar {
                 ctx.factory_audits,
                 ctx.macro_depth,
                 &ctx.scope.plan.interior_mut,
+                ctx.scope.macro_registry(),
                 &BTreeMap::new(),
                 ctx.scope.fn_registry(),
                 &ctx.scope.layout_type_registry,

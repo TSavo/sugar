@@ -111,7 +111,11 @@ fn resolve_literal_ip(expr: &Expr, ctx: &SugarCtx, depth: usize) -> Option<Liter
                 return None;
             }
             let name = expr_macro.mac.path.segments.last()?.ident.to_string();
-            let rules = ctx.reducer.macro_rules(&name)?;
+            let rules = ctx
+                .scope
+                .macro_registry()
+                .lookup(&name)
+                .or_else(|| ctx.reducer.macro_rules(&name))?;
             let expanded =
                 crate::macro_expand::expand(&rules, expr_macro.mac.tokens.clone()).ok()?;
             let parsed: Expr = syn::parse2(expanded).ok()?;
@@ -121,9 +125,30 @@ fn resolve_literal_ip(expr: &Expr, ctx: &SugarCtx, depth: usize) -> Option<Liter
             [syn::Stmt::Expr(tail, None)] => resolve_literal_ip(tail, ctx, depth),
             _ => None,
         },
-        Expr::Path(_) | Expr::Lit(_) | Expr::Array(_) | Expr::Tuple(_) => None,
+        Expr::Path(path) => resolve_ip_const_path(&path.path),
+        Expr::Lit(_) | Expr::Array(_) | Expr::Tuple(_) => None,
         Expr::Paren(paren) => resolve_literal_ip(&paren.expr, ctx, depth),
         Expr::Group(group) => resolve_literal_ip(&group.expr, ctx, depth),
+        _ => None,
+    }
+}
+
+fn resolve_ip_const_path(path: &syn::Path) -> Option<LiteralIp> {
+    let item = path.segments.last()?.ident.to_string();
+    let ty = path
+        .segments
+        .iter()
+        .rev()
+        .skip(1)
+        .find(|segment| matches!(segment.ident.to_string().as_str(), "Ipv4Addr" | "Ipv6Addr"))?
+        .ident
+        .to_string();
+    match (ty.as_str(), item.as_str()) {
+        ("Ipv4Addr", "LOCALHOST") => Some(LiteralIp::V4(Ipv4Addr::new(127, 0, 0, 1))),
+        ("Ipv4Addr", "UNSPECIFIED") => Some(LiteralIp::V4(Ipv4Addr::new(0, 0, 0, 0))),
+        ("Ipv4Addr", "BROADCAST") => Some(LiteralIp::V4(Ipv4Addr::new(255, 255, 255, 255))),
+        ("Ipv6Addr", "LOCALHOST") => Some(LiteralIp::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1))),
+        ("Ipv6Addr", "UNSPECIFIED") => Some(LiteralIp::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0))),
         _ => None,
     }
 }
