@@ -108,6 +108,7 @@ pub mod sugar {
     pub mod insert;
     pub mod inspect;
     pub mod int_literal;
+    pub mod int_midpoint;
     pub mod int_pow;
     pub mod int_sqrt;
     pub mod integer_decode;
