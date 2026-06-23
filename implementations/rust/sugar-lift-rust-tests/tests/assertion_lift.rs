@@ -22855,6 +22855,58 @@ fn ip_addr_literal_property_predicates_have_teeth() {
 }
 
 #[test]
+fn ip_addr_associated_const_property_predicates_have_teeth() {
+    let good = r#"
+        use core::net::{Ipv4Addr, Ipv6Addr};
+
+        #[test]
+        fn ip_const_property_good() {
+            assert!(Ipv4Addr::LOCALHOST.is_loopback());
+            assert!(Ipv4Addr::UNSPECIFIED.is_unspecified());
+            assert!(Ipv4Addr::BROADCAST.is_broadcast());
+            assert!(Ipv6Addr::LOCALHOST.is_loopback());
+            assert!(Ipv6Addr::UNSPECIFIED.is_unspecified());
+        }
+    "#;
+    let good_out = lift_file(&parse(good), "tests/net/ip_const_property_good.rs");
+    assert_eq!(
+        good_out.assertions_lifted, 5,
+        "literal IP associated const properties should warrant; skips={:?}; audits={:?}",
+        good_out.skip_reasons, good_out.factory_audits
+    );
+    for (idx, decl) in warranted_decls(&good_out).into_iter().enumerate() {
+        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("ip_const_property_good_{idx}")) {
+            assert!(sat, "IP associated const good predicate {idx} must be SAT");
+        }
+    }
+
+    let bad = r#"
+        use core::net::{Ipv4Addr, Ipv6Addr};
+
+        #[test]
+        fn ip_const_property_bad() {
+            assert!(Ipv4Addr::LOCALHOST.is_broadcast());
+            assert!(Ipv4Addr::BROADCAST.is_loopback());
+            assert!(Ipv6Addr::UNSPECIFIED.is_loopback());
+        }
+    "#;
+    let bad_out = lift_file(&parse(bad), "tests/net/ip_const_property_bad.rs");
+    assert_eq!(
+        bad_out.assertions_lifted, 3,
+        "bad associated const twins must still lift so z3 can bite; skips={:?}; audits={:?}",
+        bad_out.skip_reasons, bad_out.factory_audits
+    );
+    for (idx, decl) in warranted_decls(&bad_out).into_iter().enumerate() {
+        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("ip_const_property_bad_{idx}")) {
+            assert!(
+                !sat,
+                "IP associated const bad predicate {idx} must be UNSAT"
+            );
+        }
+    }
+}
+
+#[test]
 fn rpc_source_warrants_macro_wrapped_literal_ip_properties() {
     let doc = run_rpc_lift(
         "tests/net/ip_addr.rs",
@@ -22893,6 +22945,106 @@ fn literal_ip_twin() {
 
     assert_rpc_source_warranted(&doc, "ip_properties");
     assert_rpc_source_warranted(&doc, "literal_ip_twin");
+}
+
+#[test]
+fn rpc_source_warrants_aggregate_ip_property_bodies_and_const_methods() {
+    let doc = run_rpc_lift(
+        "tests/net/ip_addr_aggregate.rs",
+        r#"
+use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use core::str::FromStr;
+
+#[test]
+fn ip_properties() {
+    macro_rules! ip {
+        ($s:expr) => {
+            IpAddr::from_str($s).unwrap()
+        };
+    }
+
+    macro_rules! check {
+        ($s:expr, $loopback:expr) => {{
+            if $loopback {
+                assert!(ip!($s).is_loopback());
+            } else {
+                assert!(!ip!($s).is_loopback());
+            }
+        }};
+    }
+
+    check!("127.0.0.1", true);
+    check!("192.0.2.1", false);
+}
+
+#[test]
+fn ipv4_properties() {
+    macro_rules! ip {
+        ($a:expr, $b:expr, $c:expr, $d:expr) => {
+            Ipv4Addr::new($a, $b, $c, $d)
+        };
+    }
+
+    macro_rules! check {
+        ($a:expr, $b:expr, $c:expr, $d:expr, $broadcast:expr) => {{
+            if $broadcast {
+                assert!(ip!($a, $b, $c, $d).is_broadcast());
+            } else {
+                assert!(!ip!($a, $b, $c, $d).is_broadcast());
+            }
+        }};
+    }
+
+    check!(255, 255, 255, 255, true);
+    check!(127, 0, 0, 1, false);
+}
+
+#[test]
+fn ipv6_properties() {
+    macro_rules! ip {
+        ($last:expr) => {
+            Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, $last)
+        };
+    }
+
+    macro_rules! check {
+        ($last:expr, $loopback:expr) => {{
+            if $loopback {
+                assert!(ip!($last).is_loopback());
+            } else {
+                assert!(!ip!($last).is_loopback());
+            }
+        }};
+    }
+
+    check!(1, true);
+    check!(0, false);
+}
+
+#[test]
+fn ipv4_from_constructors() {
+    assert!(Ipv4Addr::LOCALHOST.is_loopback());
+    assert!(Ipv4Addr::UNSPECIFIED.is_unspecified());
+    assert!(Ipv4Addr::BROADCAST.is_broadcast());
+}
+
+#[test]
+fn ipv6_from_constructors() {
+    assert!(Ipv6Addr::LOCALHOST.is_loopback());
+    assert!(Ipv6Addr::UNSPECIFIED.is_unspecified());
+}
+"#,
+    );
+
+    for name in [
+        "ip_properties",
+        "ipv4_properties",
+        "ipv6_properties",
+        "ipv4_from_constructors",
+        "ipv6_from_constructors",
+    ] {
+        assert_rpc_source_warranted(&doc, name);
+    }
 }
 
 #[test]

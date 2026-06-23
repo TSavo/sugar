@@ -1370,6 +1370,7 @@ fn walk_non_test_fns_inner(
                             &mut FloatWidthScope::new(),
                             factory_audits,
                             0,
+                            None,
                         ) {
                             Some(Ok(_)) => format!(
                                 "item-level macro `{mname}`: assertion content lifts only inside a test fn; released to layer 0"
@@ -1832,6 +1833,12 @@ fn source_assertion_entries_in_stmts(
     let mut entries = Vec::new();
     for stmt in stmts {
         match stmt {
+            Stmt::Item(Item::Macro(item_macro)) => {
+                temporal_scope.record_macro_item(item_macro);
+            }
+            Stmt::Item(Item::Verbatim(tokens)) => {
+                temporal_scope.record_verbatim_macro_item(tokens);
+            }
             Stmt::Local(local) => {
                 update_float_width_scope_for_pat(&local.pat, &mut float_widths);
                 if let Some(init) = &local.init {
@@ -1976,6 +1983,7 @@ fn collect_source_assertion_contract_expr(
             float_widths,
             factory_audits,
             0,
+            Some(scope),
         ) {
             entries.extend(
                 expanded
@@ -2111,6 +2119,7 @@ fn visit_test_fn(
         factory_audits,
         0,
         &BTreeSet::new(),
+        &MacroRegistry::new(),
         scoped_fns,
         scoped_fn_registry,
         &LayoutTypeRegistry::new(),
@@ -2904,7 +2913,14 @@ impl MacroRegistry {
         }
     }
 
-    fn lookup(&self, name: &str) -> Option<std::rc::Rc<Vec<macro_expand::MacroRule>>> {
+    fn insert_shadowing(&mut self, name: &str, tokens: proc_macro2::TokenStream) {
+        let Ok(rules) = macro_expand::parse_rules(tokens) else {
+            return;
+        };
+        self.insert_rules(name, std::rc::Rc::new(rules));
+    }
+
+    pub(crate) fn lookup(&self, name: &str) -> Option<std::rc::Rc<Vec<macro_expand::MacroRule>>> {
         if self.ambiguous.contains(name) {
             return None;
         }
@@ -3542,10 +3558,12 @@ fn try_macro_expansion_entries(
     float_widths: &mut FloatWidthScope,
     factory_audits: Option<&FactoryAuditLog>,
     macro_depth: usize,
+    invocation_scope: Option<&TemporalScope>,
 ) -> Option<Result<Vec<AssertionEntry>, String>> {
     let name = path.segments.last()?.ident.to_string();
     let rules = match macro_registry
         .and_then(|registry| registry.lookup(&name))
+        .or_else(|| invocation_scope.and_then(|scope| scope.macro_registry().lookup(&name)))
         .or_else(|| reducer.macro_rules(&name))
     {
         Some(rules) => {
@@ -3579,7 +3597,15 @@ fn try_macro_expansion_entries(
             "macro `{name}`: expansion depth exceeded; released to layer 0"
         )));
     }
-    let expanded = match macro_expand::expand(&rules, tokens.clone()) {
+    let invocation_tokens = invocation_scope
+        .and_then(|scope| {
+            let bindings = stable_macro_arg_bindings(scope);
+            (!bindings.is_empty())
+                .then(|| substitute_macro_arg_tokens(tokens.clone(), &bindings))
+                .flatten()
+        })
+        .unwrap_or_else(|| tokens.clone());
+    let expanded = match macro_expand::expand(&rules, invocation_tokens) {
         Ok(ts) => ts,
         Err(e) => {
             tracing::debug!(
@@ -3652,6 +3678,9 @@ fn try_macro_expansion_entries(
     let mut temp_skipped = Vec::new();
     let mut temp_lifted = 0usize;
     let mut temp_helpers = HashSet::new();
+    let inherited_macros = invocation_scope
+        .map(|scope| scope.macro_registry().clone())
+        .unwrap_or_else(MacroRegistry::new);
     collect_assertion_entries(
         &block.stmts,
         local_scope,
@@ -3665,6 +3694,7 @@ fn try_macro_expansion_entries(
         factory_audits,
         macro_depth + 1,
         &BTreeSet::new(),
+        &inherited_macros,
         &BTreeMap::new(),
         &FnRegistry::new(),
         &LayoutTypeRegistry::new(),
@@ -4306,8 +4336,20 @@ impl TemporalScope {
         self
     }
 
+    fn record_macro_item(&mut self, item: &syn::ItemMacro) {
+        if let Some((ident, tokens)) = declarative_macro_def(item) {
+            self.macro_registry.insert_shadowing(&ident, tokens);
+        }
+    }
+
+    fn record_verbatim_macro_item(&mut self, tokens: &proc_macro2::TokenStream) {
+        if let Some((ident, tokens)) = declarative_verbatim_macro_def(tokens) {
+            self.macro_registry.insert_shadowing(&ident, tokens);
+        }
+    }
+
     /// The `macro_rules!` registry visible at this scope (in-file + dependency source).
-    fn macro_registry(&self) -> &MacroRegistry {
+    pub(crate) fn macro_registry(&self) -> &MacroRegistry {
         &self.macro_registry
     }
 
@@ -9487,6 +9529,7 @@ fn collect_statement_macro_entries<'a>(
         float_widths,
         factory_audits,
         macro_depth,
+        Some(temporal_scope),
     ) {
         Some(Ok(es)) => {
             skipped.truncate(before_s);
@@ -9820,6 +9863,7 @@ fn collect_assertion_entries<'a>(
     factory_audits: Option<&FactoryAuditLog>,
     macro_depth: usize,
     inherited_stateful: &BTreeSet<String>,
+    enclosing_macro_registry: &MacroRegistry,
     // LEXICAL SCOPE: nested fns declared in ENCLOSING blocks (the ancestors of this
     // block). A Rust `fn` item is in scope for the whole enclosing block including all
     // nested sub-blocks (item hoisting), so a helper defined at the `#[test]` fn level
@@ -9856,7 +9900,14 @@ fn collect_assertion_entries<'a>(
         // Carry the reducer's macro registry so a TERM-POSITION macro (`assert_eq!(
         // add2!(2,3), 5)`) expands at desugar time even through the thin
         // `translate_term_in_scope` adapter (which only gets the scope, not the reducer).
-        .with_macro_registry(scoped_macro_registry_for_stmts(stmts, reducer));
+        .with_macro_registry({
+            let mut registry = reducer.macro_registry_snapshot();
+            registry.overlay_all(enclosing_macro_registry);
+            let mut local = MacroRegistry::new();
+            local.scan_stmts(stmts);
+            registry.overlay_all(&local);
+            registry
+        });
     // `let_bindings` is advanced INCREMENTALLY in the statement loop below (see
     // `record_let_binding`), so a `try_fold` operand resolves the binding in EFFECT at
     // its position -- shadowing-correct. (A block-wide capture would let a LATER
@@ -9965,6 +10016,12 @@ fn collect_assertion_entries<'a>(
             &mut panic_freedom_sites,
         );
         match stmt {
+            Stmt::Item(Item::Macro(item_macro)) => {
+                temporal_scope.record_macro_item(item_macro);
+            }
+            Stmt::Item(Item::Verbatim(tokens)) => {
+                temporal_scope.record_verbatim_macro_item(tokens);
+            }
             Stmt::Local(local) => {
                 update_float_width_scope_for_pat(&local.pat, float_widths);
                 if let Some(init) = &local.init {
@@ -9987,6 +10044,7 @@ fn collect_assertion_entries<'a>(
                             factory_audits,
                             macro_depth,
                             &temporal_scope.plan.interior_mut,
+                            temporal_scope.macro_registry(),
                             &local_fns,
                             &visible_fn_registry,
                             &layout_types,
@@ -10013,6 +10071,7 @@ fn collect_assertion_entries<'a>(
                             factory_audits,
                             macro_depth,
                             &temporal_scope.plan.interior_mut,
+                            temporal_scope.macro_registry(),
                             &local_fns,
                             &visible_fn_registry,
                             &layout_types,
@@ -10249,6 +10308,7 @@ fn collect_assertion_entries<'a>(
                     factory_audits,
                     macro_depth,
                     &temporal_scope.plan.interior_mut,
+                    temporal_scope.macro_registry(),
                     &local_fns,
                     &visible_fn_registry,
                     &layout_types,
@@ -10269,6 +10329,7 @@ fn collect_assertion_entries<'a>(
                     factory_audits,
                     macro_depth,
                     &temporal_scope.plan.interior_mut,
+                    temporal_scope.macro_registry(),
                     &local_fns,
                     &visible_fn_registry,
                     &layout_types,
@@ -10398,6 +10459,7 @@ fn collect_assertion_entries<'a>(
                         factory_audits,
                         macro_depth,
                         &temporal_scope.plan.interior_mut,
+                        temporal_scope.macro_registry(),
                         &local_fns,
                         &visible_fn_registry,
                         &layout_types,
@@ -10472,6 +10534,7 @@ fn collect_assertion_entries<'a>(
                             factory_audits,
                             macro_depth,
                             &temporal_scope.plan.interior_mut,
+                            temporal_scope.macro_registry(),
                             &local_fns,
                             &visible_fn_registry,
                             &layout_types,
@@ -10620,6 +10683,7 @@ fn collect_assertion_entries<'a>(
                     factory_audits,
                     macro_depth,
                     &temporal_scope.plan.interior_mut,
+                    temporal_scope.macro_registry(),
                     &local_fns,
                     &visible_fn_registry,
                     &layout_types,
@@ -10683,6 +10747,7 @@ fn collect_assertion_entries<'a>(
                         factory_audits,
                         macro_depth,
                         &temporal_scope.plan.interior_mut,
+                        temporal_scope.macro_registry(),
                         &local_fns,
                         &visible_fn_registry,
                         &layout_types,
@@ -10773,6 +10838,7 @@ fn collect_assertion_entries<'a>(
                                 factory_audits,
                                 macro_depth,
                                 &BTreeSet::new(),
+                                temporal_scope.macro_registry(),
                                 &local_fns,
                                 &visible_fn_registry,
                                 &layout_types,
@@ -10792,6 +10858,7 @@ fn collect_assertion_entries<'a>(
                                 factory_audits,
                                 macro_depth,
                                 &temporal_scope.plan.interior_mut,
+                                temporal_scope.macro_registry(),
                                 &local_fns,
                                 &visible_fn_registry,
                                 &layout_types,
@@ -10813,6 +10880,7 @@ fn collect_assertion_entries<'a>(
                                 factory_audits,
                                 macro_depth,
                                 &temporal_scope.plan.interior_mut,
+                                temporal_scope.macro_registry(),
                                 &local_fns,
                                 &visible_fn_registry,
                                 &layout_types,
@@ -11544,6 +11612,7 @@ fn for_context_refusal_reason(
         factory_audits,
         macro_depth,
         &scope.plan.interior_mut,
+        scope.macro_registry(),
         &BTreeMap::new(),
         &FnRegistry::new(),
         &LayoutTypeRegistry::new(),
@@ -12100,6 +12169,7 @@ fn lift_item_assertions(
         factory_audits,
         0,
         &BTreeSet::new(),
+        &MacroRegistry::new(),
         &BTreeMap::new(),
         &FnRegistry::new(),
         &LayoutTypeRegistry::new(),
@@ -14909,7 +14979,14 @@ fn substitute_macro_tokens(
     mac: &syn::Macro,
     binds: &ExprBindings,
 ) -> Option<proc_macro2::TokenStream> {
-    let args = parse_macro_args(mac.tokens.clone()).ok()?;
+    substitute_macro_arg_tokens(mac.tokens.clone(), binds)
+}
+
+fn substitute_macro_arg_tokens(
+    tokens: proc_macro2::TokenStream,
+    binds: &ExprBindings,
+) -> Option<proc_macro2::TokenStream> {
+    let args = parse_macro_args(tokens).ok()?;
     let subst = substitute_exprs_with_closure_captures(&args.exprs, binds);
     let mut ts = proc_macro2::TokenStream::new();
     for (i, e) in subst.iter().enumerate() {
@@ -14919,6 +14996,17 @@ fn substitute_macro_tokens(
         ts.extend(quote::quote!(#e));
     }
     Some(ts)
+}
+
+fn stable_macro_arg_bindings(scope: &TemporalScope) -> ExprBindings {
+    scope
+        .let_bindings_iter()
+        .filter_map(|(name, _)| {
+            scope
+                .stable_let_binding_for_term(name)
+                .map(|init| (name.clone(), init.clone()))
+        })
+        .collect()
 }
 
 /// Resolve a bare call expression to an inlinable helper: a file-resolvable fn whose
