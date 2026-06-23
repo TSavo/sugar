@@ -23370,6 +23370,179 @@ fn literal_range_collect_vec_has_good_bad_teeth() {
 }
 
 #[test]
+fn iterator_adapter_collect_vec_filter_map_and_intersperse_have_teeth() {
+    let good = r#"
+        #[test]
+        fn iterator_adapter_collect_vec_good() {
+            let it = (0..)
+                .step_by(1)
+                .take(10)
+                .filter_map(|x| if x % 2 == 0 { Some(x * x) } else { None });
+            assert_eq!(it.collect::<Vec<usize>>(), [0 * 0, 2 * 2, 4 * 4, 6 * 6, 8 * 8]);
+
+            let v = std::iter::empty().intersperse(0u32).collect::<Vec<_>>();
+            assert_eq!(v, vec![]);
+
+            let v = std::iter::once(1).intersperse(0).collect::<Vec<_>>();
+            assert_eq!(v, vec![1]);
+
+            let mut ctr = 100;
+            let separator = || {
+                ctr *= 2;
+                ctr
+            };
+            let r = (0..3).intersperse_with(separator).collect::<Vec<_>>();
+            assert_eq!(r, vec![0, 200, 1, 400, 2]);
+        }
+    "#;
+    let good_out = lift_file(&parse(good), "tests/iter/adapter_collect_vec_good.rs");
+    assert_eq!(
+        good_out.assertions_lifted, 4,
+        "literal iterator-adapter collects must warrant; skips={:?}; audits={:?}",
+        good_out.skip_reasons, good_out.factory_audits
+    );
+    assert_eq!(
+        good_out.assertions_refused, 0,
+        "{:?}",
+        good_out.skip_reasons
+    );
+    for (idx, decl) in warranted_decls(&good_out).iter().enumerate() {
+        if let Some(sat) = z3_verdict(
+            &inv_json(decl),
+            &format!("iterator_adapter_collect_vec_good_{idx}"),
+        ) {
+            assert!(sat, "good iterator-adapter collect claim {idx} must be SAT");
+        }
+    }
+
+    let bad = r#"
+        #[test]
+        fn iterator_adapter_collect_vec_bad() {
+            let it = (0..)
+                .step_by(1)
+                .take(10)
+                .filter_map(|x| if x % 2 == 0 { Some(x * x) } else { None });
+            assert_eq!(it.collect::<Vec<usize>>(), [0, 4, 16, 36, 65]);
+
+            let v = std::iter::empty().intersperse(0u32).collect::<Vec<_>>();
+            assert_eq!(v, vec![0]);
+
+            let v = std::iter::once(1).intersperse(0).collect::<Vec<_>>();
+            assert_eq!(v, vec![1, 0]);
+
+            let mut ctr = 100;
+            let separator = || {
+                ctr *= 2;
+                ctr
+            };
+            let r = (0..3).intersperse_with(separator).collect::<Vec<_>>();
+            assert_eq!(r, vec![0, 200, 1, 300, 2]);
+        }
+    "#;
+    let bad_out = lift_file(&parse(bad), "tests/iter/adapter_collect_vec_bad.rs");
+    assert_eq!(
+        bad_out.assertions_lifted, 4,
+        "bad iterator-adapter collect twins must still lift so z3 can bite; skips={:?}; audits={:?}",
+        bad_out.skip_reasons, bad_out.factory_audits
+    );
+    for (idx, decl) in warranted_decls(&bad_out).iter().enumerate() {
+        if let Some(sat) = z3_verdict(
+            &inv_json(decl),
+            &format!("iterator_adapter_collect_vec_bad_{idx}"),
+        ) {
+            assert!(
+                !sat,
+                "bad iterator-adapter collect twin {idx} must be z3-UNSAT"
+            );
+        }
+    }
+}
+
+#[test]
+fn intersperse_with_struct_separator_collects_literal_vec() {
+    let src = r#"
+        #[test]
+        fn intersperse_with_struct_separator_good() {
+            #[derive(PartialEq, Debug)]
+            struct NotClone {
+                u: u32,
+            }
+
+            let r = [NotClone { u: 0 }, NotClone { u: 1 }]
+                .into_iter()
+                .intersperse_with(|| NotClone { u: 2 })
+                .collect::<Vec<_>>();
+            assert_eq!(r, vec![NotClone { u: 0 }, NotClone { u: 2 }, NotClone { u: 1 }]);
+        }
+    "#;
+    let out = lift_file(&parse(src), "tests/iter/intersperse_with_struct.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "struct-valued intersperse_with collect must warrant; skips={:?}; audits={:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let dump = warranted_doc(&out);
+    assert!(
+        dump.contains("struct:NotClone") && dump.contains("field:u"),
+        "struct-valued intersperse_with collect must materialize the literal struct sequence: {dump}"
+    );
+}
+
+#[test]
+fn peekable_runtime_slice_source_is_named_refused_not_work() {
+    let src = r#"
+        pub struct CycleIter<'a, T> {
+            index: usize,
+            data: &'a [T],
+        }
+
+        impl<'a, T> CycleIter<'a, T> {
+            fn new(data: &'a [T]) -> Self {
+                Self { index: 0, data }
+            }
+        }
+
+        impl<'a, T> Iterator for CycleIter<'a, T> {
+            type Item = &'a T;
+
+            fn next(&mut self) -> Option<&'a T> {
+                let elt = self.data.get(self.index);
+                self.index += 1;
+                self.index %= 1 + self.data.len();
+                elt
+            }
+        }
+
+        #[test]
+        fn test_iterator_peekable_remember_peek_none_2() {
+            let data = [0];
+            let mut iter = CycleIter::new(&data).peekable();
+            iter.next();
+            assert_eq!(iter.peek(), None);
+            assert_eq!(iter.last(), None);
+        }
+    "#;
+    let out = lift_file(&parse(src), "tests/iter/adapters/peekable.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "runtime peekable source must not warrant: {:?}",
+        out.assertion_facts
+    );
+    assert!(
+        out.skip_reasons.iter().any(|reason| {
+            reason.contains("runtime slice source, not literal")
+                && matches!(
+                    sugar_lift_rust_tests::refusal_disposition(reason),
+                    sugar_lift_rust_tests::Disposition::Refused
+                )
+        }),
+        "runtime peekable source must be terminal refused by name: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
 fn rpc_source_warrants_literal_range_constructors_and_propagates_child_hits() {
     let doc = run_rpc_lift(
         "tests/ops.rs",

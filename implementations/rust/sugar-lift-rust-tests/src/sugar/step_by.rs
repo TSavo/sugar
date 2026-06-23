@@ -36,6 +36,7 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     }
     Some(Box::new(StepByRecognizedSugar {
         receiver: (*call.receiver).clone(),
+        source: Expr::MethodCall(call.clone()),
         n,
         let_inits: capture_let_inits(fcx),
     }))
@@ -43,6 +44,7 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
 
 struct StepByRecognizedSugar {
     receiver: Expr,
+    source: Expr,
     n: usize,
     let_inits: BTreeMap<String, Expr>,
 }
@@ -73,8 +75,9 @@ impl Sugar for StepByRecognizedSugar {
             let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
             let seq = method_family::build_literal_sequence_composite(&self.receiver, &fcx)?
                 .desugar(ctx)
-                .dug()?
-                .into_seq()?;
+                .dug()
+                .and_then(|d| d.into_seq())
+                .or_else(|| method_family::finite_int_iter_sequence(&self.source))?;
             let out = seq.into_iter().step_by(self.n).collect();
             Some(Desugared::Seq(out))
         })())
@@ -85,6 +88,7 @@ impl Sugar for StepByRecognizedSugar {
 pub(crate) struct StepBySugar {
     pub(crate) inner: Box<dyn Sugar>,
     pub(crate) n: usize,
+    pub(crate) source: Option<Expr>,
 }
 
 impl Sugar for StepBySugar {
@@ -93,7 +97,16 @@ impl Sugar for StepBySugar {
             if self.n == 0 {
                 return None;
             }
-            let seq = self.inner.desugar(ctx).dug()?.into_seq()?;
+            let seq = self
+                .inner
+                .desugar(ctx)
+                .dug()
+                .and_then(|d| d.into_seq())
+                .or_else(|| {
+                    self.source
+                        .as_ref()
+                        .and_then(method_family::finite_int_iter_sequence)
+                })?;
             let out = seq.into_iter().step_by(self.n).collect();
             Some(Desugared::Seq(out))
         })())
