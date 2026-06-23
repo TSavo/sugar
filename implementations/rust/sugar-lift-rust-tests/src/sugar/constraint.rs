@@ -10,7 +10,7 @@ use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::configuration;
 use crate::sugar::constraint_runtime_boundary;
 use crate::sugar::format::stable_let_bindings;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use crate::sugar::factory::{build_constraint, build_term, SugarBuildCtx};
@@ -24,7 +24,7 @@ use crate::{
 };
 use sugar_ir_symbolic::{and_, atomic_, eq, not_, num, str_const, ConstValue, Formula, Term};
 use syn::parse::{Parse, ParseStream};
-use syn::{BinOp, Expr, ExprIf, ExprLit, ExprMacro, Lit, Token, Type, UnOp};
+use syn::{visit::Visit, BinOp, Expr, ExprIf, ExprLit, ExprMacro, Lit, Token, Type, UnOp};
 use tracing::debug;
 
 pub(crate) const RELATION_MACRO_SUGAR: ExprSugarClaim = ExprSugarClaim::fallback_with_ordering(
@@ -845,6 +845,12 @@ impl Sugar for NoPanicCallSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let (normal_universe, name) = match &self.term_expr {
             Some(expr) => {
+                if let Some(reason) = no_panic_callsite_terminal_effect(expr) {
+                    return unsupported(reason);
+                }
+                if is_no_panic_literal_empty_into_iter(expr) {
+                    return no_panic_tautology_for_site(ctx, &self.site);
+                }
                 let Some(subject) = ctx.opaque_callsite_term(expr) else {
                     return Outcome::from_opt(None);
                 };
@@ -893,6 +899,507 @@ impl Sugar for NoPanicCallSugar {
             kind,
             warrant: Warrant { name },
         })
+    }
+}
+
+fn no_panic_tautology_for_site(ctx: &SugarCtx, site: &str) -> Outcome {
+    Outcome::Dug(Desugared::Constraints {
+        atom: eq(bool_const(true), bool_const(true)),
+        n: 0,
+        kind: AssertionFactKind::Warranted,
+        warrant: Warrant {
+            name: Some(format!(
+                "{}::panic-path::{}",
+                ctx.scope.local_scope(),
+                compact_warrant_fragment(site)
+            )),
+        },
+    })
+}
+
+fn no_panic_callsite_terminal_effect(expr: &Expr) -> Option<String> {
+    no_panic_cell_set_reference_reason(expr)
+        .or_else(|| no_panic_iterator_consumption_reason(expr))
+        .or_else(|| no_panic_effectful_adaptor_reason(expr))
+        .or_else(|| no_panic_drop_observable_constructor_reason(expr))
+        .or_else(|| no_panic_option_reference_payload_reason(expr))
+}
+
+fn no_panic_cell_set_reference_reason(expr: &Expr) -> Option<String> {
+    let Expr::MethodCall(call) = strip_groups_parens(expr) else {
+        return None;
+    };
+    let method = call.method.to_string();
+    if !matches!(method.as_str(), "set" | "replace" | "swap") {
+        return None;
+    }
+    if !call
+        .args
+        .iter()
+        .any(expr_contains_runtime_reference_payload)
+    {
+        return None;
+    }
+    Some(format!(
+        "temporally unstable mutating method read of `{}` after `.{method}()`: \
+         interior-mutable state is updated with runtime reference identity (bin-2: \
+         reference/provenance not constructed from source literals); refused",
+        token_key(expr)
+    ))
+}
+
+fn no_panic_iterator_consumption_reason(expr: &Expr) -> Option<String> {
+    struct Scan {
+        reason: Option<String>,
+    }
+    impl<'ast> Visit<'ast> for Scan {
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            if self.reason.is_some() {
+                return;
+            }
+            let method = call.method.to_string();
+            if matches!(method.as_str(), "next" | "next_back" | "nth" | "nth_back")
+                && simple_path_name(&call.receiver).is_some()
+            {
+                self.reason = Some(format!(
+                    "unknown iterator consumption for `{}` via `.{method}()`: consumed-state \
+                     iterator cursor is runtime/temporal (bin-2: not constructed from source \
+                     literals); refused",
+                    token_key(&Expr::MethodCall(call.clone()))
+                ));
+                return;
+            }
+            syn::visit::visit_expr_method_call(self, call);
+        }
+    }
+    let mut scan = Scan { reason: None };
+    Visit::visit_expr(&mut scan, expr);
+    scan.reason
+}
+
+fn no_panic_effectful_adaptor_reason(expr: &Expr) -> Option<String> {
+    struct Scan {
+        reason: Option<String>,
+    }
+    impl<'ast> Visit<'ast> for Scan {
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            if self.reason.is_some() {
+                return;
+            }
+            let method = call.method.to_string();
+            if call.args.iter().any(closure_body_has_mutation) {
+                self.reason = Some(format!(
+                    "side-effecting closure body in iterator adaptor `.{method}(|..| ..)` at `{}` \
+                     mutates runtime state (bin-2: mutation/effect, not constructed from source \
+                     literals); refused",
+                    token_key(&Expr::MethodCall(call.clone()))
+                ));
+                return;
+            }
+            if call
+                .args
+                .iter()
+                .any(closure_body_constructs_drop_observable_state)
+            {
+                self.reason = Some(format!(
+                    "side-effecting closure body in iterator adaptor `.{method}(|..| ..)` at `{}` \
+                     constructs drop/Cell-observable runtime state (bin-2: effectful element \
+                     construction, not constructed from source literals); refused",
+                    token_key(&Expr::MethodCall(call.clone()))
+                ));
+                return;
+            }
+            if call.args.iter().any(closure_body_calls_through_param) {
+                self.reason = Some(format!(
+                    "side-effecting closure body in iterator adaptor `.{method}(|..| ..)` at `{}` \
+                     performs a runtime call through closure body parameter (bin-2: dynamic \
+                     callable element, not constructed from source literals); refused",
+                    token_key(&Expr::MethodCall(call.clone()))
+                ));
+                return;
+            }
+            syn::visit::visit_expr_method_call(self, call);
+        }
+    }
+    let mut scan = Scan { reason: None };
+    Visit::visit_expr(&mut scan, expr);
+    scan.reason
+}
+
+fn no_panic_drop_observable_constructor_reason(expr: &Expr) -> Option<String> {
+    let Expr::Call(call) = strip_groups_parens(expr) else {
+        return None;
+    };
+    if !call_is_drop_observable_constructor(call) {
+        return None;
+    }
+    Some(format!(
+        "side-effecting closure body / adaptor element construction `{}` creates \
+         drop/Cell-observable runtime state (bin-2: effectful value, not constructed \
+         from source literals); refused",
+        token_key(expr)
+    ))
+}
+
+fn no_panic_option_reference_payload_reason(expr: &Expr) -> Option<String> {
+    let Expr::Call(call) = strip_groups_parens(expr) else {
+        return None;
+    };
+    if !call_path_ends_with(call, "Some") {
+        return None;
+    }
+    if !call
+        .args
+        .iter()
+        .any(expr_contains_runtime_reference_payload)
+    {
+        return None;
+    }
+    Some(format!(
+        "Option reference payload `{}` carries runtime reference/provenance identity \
+         (bin-2: value not constructed from source literals); refused",
+        token_key(expr)
+    ))
+}
+
+fn closure_body_has_mutation(expr: &Expr) -> bool {
+    let Expr::Closure(closure) = expr else {
+        return false;
+    };
+    struct Scan {
+        found: bool,
+    }
+    impl<'ast> Visit<'ast> for Scan {
+        fn visit_expr_assign(&mut self, _assign: &'ast syn::ExprAssign) {
+            self.found = true;
+        }
+
+        fn visit_expr_binary(&mut self, binary: &'ast syn::ExprBinary) {
+            if is_assignment_binop(&binary.op) {
+                self.found = true;
+                return;
+            }
+            syn::visit::visit_expr_binary(self, binary);
+        }
+
+        fn visit_expr_reference(&mut self, reference: &'ast syn::ExprReference) {
+            if reference.mutability.is_some() {
+                self.found = true;
+                return;
+            }
+            syn::visit::visit_expr_reference(self, reference);
+        }
+
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            if matches!(
+                call.method.to_string().as_str(),
+                "set"
+                    | "replace"
+                    | "swap"
+                    | "push"
+                    | "push_str"
+                    | "insert"
+                    | "remove"
+                    | "clear"
+                    | "extend"
+                    | "retain"
+                    | "sort"
+                    | "sort_by"
+                    | "sort_unstable"
+            ) {
+                self.found = true;
+                return;
+            }
+            syn::visit::visit_expr_method_call(self, call);
+        }
+
+        fn visit_expr_closure(&mut self, _closure: &'ast syn::ExprClosure) {
+            // Nested closures are only constructed by this body.
+        }
+    }
+    let mut scan = Scan { found: false };
+    Visit::visit_expr(&mut scan, &closure.body);
+    scan.found
+}
+
+fn closure_body_constructs_drop_observable_state(expr: &Expr) -> bool {
+    let Expr::Closure(closure) = expr else {
+        return false;
+    };
+    struct Scan {
+        found: bool,
+    }
+    impl<'ast> Visit<'ast> for Scan {
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            if call_is_drop_observable_constructor(call) {
+                self.found = true;
+                return;
+            }
+            syn::visit::visit_expr_call(self, call);
+        }
+
+        fn visit_expr_closure(&mut self, _closure: &'ast syn::ExprClosure) {
+            // Nested closures are only constructed by this body.
+        }
+    }
+    let mut scan = Scan { found: false };
+    Visit::visit_expr(&mut scan, &closure.body);
+    scan.found
+}
+
+fn closure_body_calls_through_param(expr: &Expr) -> bool {
+    let Expr::Closure(closure) = expr else {
+        return false;
+    };
+    let mut params = BTreeSet::new();
+    for pat in &closure.inputs {
+        collect_pat_idents(pat, &mut params);
+    }
+    if params.is_empty() {
+        return false;
+    }
+    struct Scan<'a> {
+        params: &'a BTreeSet<String>,
+        found: bool,
+    }
+    impl<'ast> Visit<'ast> for Scan<'_> {
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            if expr_refs_any_name(&call.func, self.params) {
+                self.found = true;
+                return;
+            }
+            syn::visit::visit_expr_call(self, call);
+        }
+
+        fn visit_expr_closure(&mut self, _closure: &'ast syn::ExprClosure) {
+            // Nested closures are only constructed by this body.
+        }
+    }
+    let mut scan = Scan {
+        params: &params,
+        found: false,
+    };
+    Visit::visit_expr(&mut scan, &closure.body);
+    scan.found
+}
+
+fn expr_refs_any_name(expr: &Expr, names: &BTreeSet<String>) -> bool {
+    struct Refs<'a> {
+        names: &'a BTreeSet<String>,
+        found: bool,
+    }
+    impl<'ast> Visit<'ast> for Refs<'_> {
+        fn visit_expr_path(&mut self, path: &'ast syn::ExprPath) {
+            if path
+                .path
+                .get_ident()
+                .is_some_and(|ident| self.names.contains(&ident.to_string()))
+            {
+                self.found = true;
+                return;
+            }
+            syn::visit::visit_expr_path(self, path);
+        }
+    }
+    let mut refs = Refs {
+        names,
+        found: false,
+    };
+    Visit::visit_expr(&mut refs, expr);
+    refs.found
+}
+
+fn collect_pat_idents(pat: &syn::Pat, out: &mut BTreeSet<String>) {
+    match pat {
+        syn::Pat::Ident(ident) => {
+            out.insert(ident.ident.to_string());
+        }
+        syn::Pat::Reference(reference) => collect_pat_idents(&reference.pat, out),
+        syn::Pat::Tuple(tuple) => {
+            for elem in &tuple.elems {
+                collect_pat_idents(elem, out);
+            }
+        }
+        syn::Pat::TupleStruct(tuple) => {
+            for elem in &tuple.elems {
+                collect_pat_idents(elem, out);
+            }
+        }
+        syn::Pat::Struct(strukt) => {
+            for field in &strukt.fields {
+                collect_pat_idents(&field.pat, out);
+            }
+        }
+        syn::Pat::Slice(slice) => {
+            for elem in &slice.elems {
+                collect_pat_idents(elem, out);
+            }
+        }
+        syn::Pat::Type(typed) => collect_pat_idents(&typed.pat, out),
+        syn::Pat::Paren(paren) => collect_pat_idents(&paren.pat, out),
+        syn::Pat::Or(or) => {
+            for case in &or.cases {
+                collect_pat_idents(case, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn call_is_drop_observable_constructor(call: &syn::ExprCall) -> bool {
+    let Some(path) = call_path_name(call) else {
+        return false;
+    };
+    path.split("::").any(|segment| segment.contains("Drop"))
+        && path.ends_with("::new")
+        && call
+            .args
+            .iter()
+            .any(expr_contains_runtime_reference_payload)
+}
+
+fn call_path_ends_with(call: &syn::ExprCall, last: &str) -> bool {
+    match call.func.as_ref() {
+        Expr::Path(path) => path.path.segments.last().is_some_and(|s| s.ident == last),
+        _ => false,
+    }
+}
+
+fn call_path_name(call: &syn::ExprCall) -> Option<String> {
+    let Expr::Path(path) = call.func.as_ref() else {
+        return None;
+    };
+    Some(
+        path.path
+            .segments
+            .iter()
+            .map(|segment| segment.ident.to_string())
+            .collect::<Vec<_>>()
+            .join("::"),
+    )
+}
+
+fn expr_contains_runtime_reference_payload(expr: &Expr) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'ast> Visit<'ast> for Scan {
+        fn visit_expr_reference(&mut self, reference: &'ast syn::ExprReference) {
+            if reference.mutability.is_some()
+                || expr_contains_path(&reference.expr)
+                || !expr_is_closed_literal_construction(&reference.expr)
+            {
+                self.found = true;
+                return;
+            }
+            syn::visit::visit_expr_reference(self, reference);
+        }
+
+        fn visit_expr_closure(&mut self, _closure: &'ast syn::ExprClosure) {
+            // The payload value is the closure object, not the nested body.
+        }
+    }
+    let mut scan = Scan { found: false };
+    Visit::visit_expr(&mut scan, expr);
+    scan.found
+}
+
+fn expr_contains_path(expr: &Expr) -> bool {
+    struct Scan {
+        found: bool,
+    }
+    impl<'ast> Visit<'ast> for Scan {
+        fn visit_expr_path(&mut self, _path: &'ast syn::ExprPath) {
+            self.found = true;
+        }
+    }
+    let mut scan = Scan { found: false };
+    Visit::visit_expr(&mut scan, expr);
+    scan.found
+}
+
+fn expr_is_closed_literal_construction(expr: &Expr) -> bool {
+    match strip_groups_parens(expr) {
+        Expr::Lit(_) => true,
+        Expr::Array(array) => array.elems.iter().all(expr_is_closed_literal_construction),
+        Expr::Tuple(tuple) => tuple.elems.iter().all(expr_is_closed_literal_construction),
+        Expr::Repeat(repeat) => {
+            expr_is_closed_literal_construction(&repeat.expr)
+                && matches!(strip_groups_parens(&repeat.len), Expr::Lit(_))
+        }
+        Expr::Index(index) => {
+            expr_is_closed_literal_construction(&index.expr)
+                && matches!(
+                    strip_groups_parens(&index.index),
+                    Expr::Lit(_) | Expr::Range(_)
+                )
+        }
+        Expr::Range(range) => {
+            range
+                .start
+                .as_ref()
+                .is_none_or(|start| expr_is_closed_literal_construction(start))
+                && range
+                    .end
+                    .as_ref()
+                    .is_none_or(|end| expr_is_closed_literal_construction(end))
+        }
+        _ => false,
+    }
+}
+
+fn is_assignment_binop(op: &BinOp) -> bool {
+    matches!(
+        op,
+        BinOp::AddAssign(_)
+            | BinOp::SubAssign(_)
+            | BinOp::MulAssign(_)
+            | BinOp::DivAssign(_)
+            | BinOp::RemAssign(_)
+            | BinOp::BitXorAssign(_)
+            | BinOp::BitAndAssign(_)
+            | BinOp::BitOrAssign(_)
+            | BinOp::ShlAssign(_)
+            | BinOp::ShrAssign(_)
+    )
+}
+
+fn is_no_panic_literal_empty_into_iter(expr: &Expr) -> bool {
+    match strip_groups_parens(expr) {
+        Expr::Call(call) => {
+            let Some(path) = call_path_name(call) else {
+                return false;
+            };
+            path.ends_with("IntoIterator::into_iter")
+                && call.args.len() == 1
+                && call
+                    .args
+                    .first()
+                    .is_some_and(expr_is_empty_literal_array_expr)
+        }
+        Expr::MethodCall(call) => {
+            call.method == "into_iter" && expr_is_empty_literal_array_expr(&call.receiver)
+        }
+        _ => false,
+    }
+}
+
+fn expr_is_empty_literal_array_expr(expr: &Expr) -> bool {
+    match strip_groups_parens(expr) {
+        Expr::Array(array) => array.elems.is_empty(),
+        Expr::Cast(cast) => expr_is_empty_literal_array_expr(&cast.expr),
+        Expr::Reference(reference) if reference.mutability.is_none() => {
+            expr_is_empty_literal_array_expr(&reference.expr)
+        }
+        _ => false,
+    }
+}
+
+fn strip_groups_parens(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(paren) => strip_groups_parens(&paren.expr),
+        Expr::Group(group) => strip_groups_parens(&group.expr),
+        _ => expr,
     }
 }
 

@@ -3444,6 +3444,49 @@ mod tests {
         );
     }
 
+    fn factory_audit_for<'a>(
+        response: &'a Value,
+        selected: &str,
+        site_fragment: &str,
+    ) -> &'a Value {
+        response["factoryAudits"]
+            .as_array()
+            .expect("factoryAudits is an array")
+            .iter()
+            .find(|row| {
+                row["selected"] == selected
+                    && row["site"]
+                        .as_str()
+                        .is_some_and(|site| site.contains(site_fragment))
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing factory audit selected={selected:?} site~={site_fragment:?}: {response}"
+                )
+            })
+    }
+
+    fn assert_factory_audit_status(
+        response: &Value,
+        site_fragment: &str,
+        status: &str,
+        reason_fragment: Option<&str>,
+    ) {
+        let row = factory_audit_for(response, "constraint_no_panic_call", site_fragment);
+        assert_eq!(
+            row["status"], status,
+            "factory row {site_fragment:?} must be {status}: {row}"
+        );
+        if let Some(reason_fragment) = reason_fragment {
+            assert!(
+                row["reason"]
+                    .as_str()
+                    .is_some_and(|reason| reason.contains(reason_fragment)),
+                "factory row {site_fragment:?} reason must contain {reason_fragment:?}: {row}"
+            );
+        }
+    }
+
     #[test]
     fn source_audit_classifier_names_assigned_corpus_refusals() {
         let option_reason = "rust test assertions: unsupported assertion surface; released to layer 0: runtime Option/Result payload, not literal (`unwrap`)";
@@ -3481,6 +3524,90 @@ mod tests {
             clean_named_refusal_category("tests/atomic.rs", "ptr_add_null", runtime_operand_reason),
             None
         );
+    }
+
+    #[test]
+    fn no_panic_effectful_tail_hits_are_named_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "no_panic_effectful_tail_hits_are_named_with_literal_twin",
+            r#"
+use std::cell::Cell;
+
+struct CountDrop<'a>(&'a Cell<usize>);
+impl<'a> CountDrop<'a> {
+    fn new(count: &'a Cell<usize>) -> Self {
+        CountDrop(count)
+    }
+}
+
+#[test]
+fn effectful_tail_refused() {
+    let count = Cell::new(0usize);
+    let _chunks = (0..10).map(|_| CountDrop::new(&count)).array_chunks::<3>();
+
+    let value = 1;
+    let cell = Cell::new(None);
+    cell.set(Some(&value));
+
+    let mut xs = [1, 2, 3];
+    let mut ys = [4, 5, 6];
+    let _zipped = xs
+        .iter_mut()
+        .map(|x| *x += 1)
+        .zip(ys.iter_mut().map(|y| *y += 1));
+
+    let mut it = [1, 2, 3].iter();
+    let _last = it.next_back().unwrap();
+
+    let mut functions: [fn() -> Option<i32>; 1] = [|| Some(1)];
+    let _values: Option<Vec<i32>> = functions.iter_mut().map(|f| (*f)()).collect();
+}
+
+#[test]
+fn literal_empty_callsite_twin_warrants() {
+    let _empty = IntoIterator::into_iter([] as [String; 0]);
+}
+"#,
+        );
+
+        assert_factory_audit_status(
+            &response,
+            "CountDrop :: new (& count)",
+            "refused",
+            Some("side-effecting closure body"),
+        );
+        assert_factory_audit_status(
+            &response,
+            "cell . set (Some (& value))",
+            "refused",
+            Some("temporally unstable"),
+        );
+        assert_factory_audit_status(
+            &response,
+            "xs . iter_mut () . map",
+            "refused",
+            Some("side-effecting closure body"),
+        );
+        assert_factory_audit_status(
+            &response,
+            "it . next_back ()",
+            "refused",
+            Some("unknown iterator consumption"),
+        );
+        assert_factory_audit_status(
+            &response,
+            "functions . iter_mut () . map",
+            "refused",
+            Some("runtime call through closure body parameter"),
+        );
+        assert_factory_audit_status(
+            &response,
+            "IntoIterator :: into_iter ([] as [String ; 0])",
+            "warranted",
+            None,
+        );
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
