@@ -52,6 +52,13 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
         ("isolate_highest_one", 0) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
             Kind::IsolateHighestOne
         }
+        ("isolate_lowest_one", 0) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
+            Kind::IsolateLowestOne
+        }
+        ("highest_one", 0) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
+            Kind::HighestOne
+        }
+        ("lowest_one", 0) if integer_receiver_can_ground(&call.receiver, fcx, 0) => Kind::LowestOne,
         ("min", 1) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
             Kind::Min(call.args[0].clone())
         }
@@ -197,6 +204,9 @@ fn integer_receiver_can_ground(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -
                     | "trailing_zeros"
                     | "bit_width"
                     | "isolate_highest_one"
+                    | "isolate_lowest_one"
+                    | "highest_one"
+                    | "lowest_one"
                     | "min"
                     | "max"
                     | "checked_add"
@@ -267,6 +277,9 @@ enum Kind {
     ZeroCount(ZeroCountOp),
     BitWidth,
     IsolateHighestOne,
+    IsolateLowestOne,
+    HighestOne,
+    LowestOne,
     Min(Expr),
     Max(Expr),
     Checked(CheckedOp, Expr),
@@ -496,6 +509,47 @@ impl Sugar for PrimitiveIntSugar {
                     "resolved primitive isolate_highest_one integer axiom"
                 );
                 Outcome::Dug(Desugared::Term(term))
+            }
+            Kind::IsolateLowestOne => {
+                let Some(term) = isolate_lowest_one_term(lhs_i128, lhs_u128, kind_hint) else {
+                    return Outcome::from_opt(None);
+                };
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::primitive_int",
+                    method = self.method.as_str(),
+                    lhs_i128 = ?lhs_i128,
+                    lhs_u128 = ?lhs_u128,
+                    "resolved primitive isolate_lowest_one integer axiom"
+                );
+                Outcome::Dug(Desugared::Term(term))
+            }
+            Kind::HighestOne => {
+                let Some(value) = highest_one_value(lhs_i128, lhs_u128, kind_hint) else {
+                    return Outcome::from_opt(None);
+                };
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::primitive_int",
+                    method = self.method.as_str(),
+                    lhs_i128 = ?lhs_i128,
+                    lhs_u128 = ?lhs_u128,
+                    value,
+                    "resolved primitive highest_one integer axiom"
+                );
+                Outcome::Dug(Desugared::Term(num(i128::from(value))))
+            }
+            Kind::LowestOne => {
+                let Some(value) = lowest_one_value(lhs_i128, lhs_u128, kind_hint) else {
+                    return Outcome::from_opt(None);
+                };
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::primitive_int",
+                    method = self.method.as_str(),
+                    lhs_i128 = ?lhs_i128,
+                    lhs_u128 = ?lhs_u128,
+                    value,
+                    "resolved primitive lowest_one integer axiom"
+                );
+                Outcome::Dug(Desugared::Term(num(i128::from(value))))
             }
             Kind::Min(rhs) | Kind::Max(rhs) => {
                 let rhs = match desugar_term_expr(rhs, ctx, &fcx) {
@@ -1288,6 +1342,68 @@ fn isolate_highest_raw(value: u128, bits: u32) -> Option<u128> {
     }
     let leading = apply_zero_count(value, bits, ZeroCountOp::Leading);
     1u128.checked_shl(bits.checked_sub(1)?.checked_sub(leading)?)
+}
+
+fn isolate_lowest_one_term(
+    lhs_i128: Option<i128>,
+    lhs_u128: Option<u128>,
+    kind: Option<IntegerKind>,
+) -> Option<Rc<Term>> {
+    if let Some(kind) = kind {
+        let raw = if let Some(value) = lhs_u128 {
+            value & mask_for_bits(kind.bits)?
+        } else {
+            masked_raw_bits(lhs_i128?, kind)?
+        };
+        let isolated = isolate_lowest_raw(raw, kind.bits)?;
+        return if kind.signed {
+            signed_value_from_raw(isolated, kind).map(num)
+        } else if kind.bits == 128 {
+            Some(u128_term(isolated))
+        } else {
+            Some(num(i128::try_from(isolated).ok()?))
+        };
+    }
+
+    if let Some(value) = lhs_u128 {
+        return Some(u128_term(isolate_lowest_raw(value, 128)?));
+    }
+    let value = u128::try_from(lhs_i128?).ok()?;
+    Some(num(i128::try_from(isolate_lowest_raw(value, 128)?).ok()?))
+}
+
+fn isolate_lowest_raw(value: u128, bits: u32) -> Option<u128> {
+    let mask = mask_for_bits(bits)?;
+    let value = value & mask;
+    Some(value & value.wrapping_neg() & mask)
+}
+
+fn highest_one_value(
+    lhs_i128: Option<i128>,
+    lhs_u128: Option<u128>,
+    kind: Option<IntegerKind>,
+) -> Option<u32> {
+    let kind = kind?;
+    let raw = if let Some(value) = lhs_u128 {
+        value & mask_for_bits(kind.bits)?
+    } else {
+        masked_raw_bits(lhs_i128?, kind)?
+    };
+    (raw != 0).then(|| kind.bits - 1 - apply_zero_count(raw, kind.bits, ZeroCountOp::Leading))
+}
+
+fn lowest_one_value(
+    lhs_i128: Option<i128>,
+    lhs_u128: Option<u128>,
+    kind: Option<IntegerKind>,
+) -> Option<u32> {
+    let kind = kind?;
+    let raw = if let Some(value) = lhs_u128 {
+        value & mask_for_bits(kind.bits)?
+    } else {
+        masked_raw_bits(lhs_i128?, kind)?
+    };
+    (raw != 0).then(|| apply_zero_count(raw, kind.bits, ZeroCountOp::Trailing))
 }
 
 fn apply_zero_count(raw: u128, bits: u32, op: ZeroCountOp) -> u32 {

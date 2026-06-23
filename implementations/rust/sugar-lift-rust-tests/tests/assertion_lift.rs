@@ -20661,6 +20661,63 @@ fn t() {
     }
 }
 
+#[test]
+fn nonzero_additional_bit_methods_have_teeth() {
+    let cases = [
+        (
+            "nonzero_isolate_lowest_good",
+            "assert_eq!(NonZero::<u32>::new(0b0110_0100).unwrap().isolate_lowest_one(), NonZero::new(0b0000_0100).unwrap());",
+            true,
+        ),
+        (
+            "nonzero_isolate_lowest_bad",
+            "assert_eq!(NonZero::<u32>::new(0b0110_0100).unwrap().isolate_lowest_one(), NonZero::new(0b0010_0000).unwrap());",
+            false,
+        ),
+        (
+            "nonzero_highest_one_good",
+            "assert_eq!(NonZero::<u32>::new(0b0110_0100).unwrap().highest_one(), 6);",
+            true,
+        ),
+        (
+            "nonzero_highest_one_bad",
+            "assert_eq!(NonZero::<u32>::new(0b0110_0100).unwrap().highest_one(), 5);",
+            false,
+        ),
+        (
+            "nonzero_lowest_one_good",
+            "assert_eq!(NonZero::<u32>::new(0b0110_0100).unwrap().lowest_one(), 2);",
+            true,
+        ),
+        (
+            "nonzero_lowest_one_bad",
+            "assert_eq!(NonZero::<u32>::new(0b0110_0100).unwrap().lowest_one(), 3);",
+            false,
+        ),
+    ];
+    for (label, assertion, want_sat) in cases {
+        let src = format!(
+            r#"
+use core::num::NonZero;
+
+#[test]
+fn t() {{
+    {assertion}
+}}
+"#
+        );
+        let out = lift_file(&parse(&src), "tests/nonzero-additional-bit-methods.rs");
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "{label}: NonZero bit method should ground; skips={:?}; audits={:?}; decls={:?}",
+            out.skip_reasons, out.factory_audits, out.decls
+        );
+        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+            assert_eq!(sat, want_sat, "{label}: wrong-value twin must bite");
+        }
+    }
+}
+
 fn assert_numeric_method_decl_verdict(src: &str, want_sat: bool, label: &str) {
     let full = format!("#[test] fn t() {{ {src} }}");
     let out = lift_file(&parse(&full), "tests/num/literal_methods.rs");
@@ -22633,7 +22690,7 @@ fn literal_ip_twin() {
 #[test]
 fn rpc_source_warrants_literal_nonzero_bit_ops() {
     let doc = run_rpc_lift(
-        "tests/nonzero.rs",
+        "tests/nonzero_coretests_macro_shapes.rs",
         r#"
 use core::num::NonZero;
 
@@ -22661,6 +22718,143 @@ fn literal_nonzero_bit_twin() {
     assert_rpc_source_warranted(&doc, "test_nonzero_bit_width");
     assert_rpc_source_warranted(&doc, "test_nonzero_isolate_highest_one");
     assert_rpc_source_warranted(&doc, "literal_nonzero_bit_twin");
+}
+
+#[test]
+fn rpc_source_warrants_nonzero_coretests_macro_shapes() {
+    let doc = run_rpc_lift(
+        "tests/nonzero.rs",
+        r#"
+use core::num::NonZero;
+
+mod atom {
+    use core::num::NonZero;
+
+    #[derive(PartialEq, Eq)]
+    pub struct Atom {
+        index: NonZero<u32>,
+    }
+
+    pub const FOO_ATOM: Atom = Atom { index: unsafe { NonZero::new_unchecked(7) } };
+}
+
+macro_rules! atom {
+    ("foo") => {
+        atom::FOO_ATOM
+    };
+}
+
+#[test]
+fn test_match_nonzero_const_pattern() {
+    match atom!("foo") {
+        atom!("foo") => {}
+        _ => panic!("Expected the const item as a pattern to match."),
+    }
+}
+
+#[test]
+fn test_nonzero_isolate_highest_one() {
+    macro_rules! nonzero_uint_impl {
+        ($T:ty) => {{
+            const BITS: $T = <$T>::MAX;
+            const MOST_SIG_ONE: $T = 1 << (<$T>::BITS - 1);
+            let mut i = 0;
+            while i < <$T>::BITS {
+                assert_eq!(
+                    NonZero::<$T>::new(BITS >> i).unwrap().isolate_highest_one(),
+                    NonZero::<$T>::new(MOST_SIG_ONE >> i).unwrap().isolate_highest_one()
+                );
+                i += 1;
+            }
+        }};
+    }
+    nonzero_uint_impl!(u8);
+}
+
+#[test]
+fn test_nonzero_isolate_lowest_one() {
+    macro_rules! nonzero_uint_impl {
+        ($T:ty) => {{
+            const BITS: $T = <$T>::MAX;
+            const LEAST_SIG_ONE: $T = 1;
+            let mut i = 0;
+            while i < <$T>::BITS {
+                assert_eq!(
+                    NonZero::<$T>::new(BITS << i).unwrap().isolate_lowest_one(),
+                    NonZero::<$T>::new(LEAST_SIG_ONE << i).unwrap().isolate_lowest_one()
+                );
+                i += 1;
+            }
+        }};
+    }
+    nonzero_uint_impl!(u8);
+}
+
+#[test]
+fn test_nonzero_highest_one() {
+    macro_rules! nonzero_uint_impl {
+        ($T:ty) => {{
+            for i in 0..<$T>::BITS {
+                assert_eq!(NonZero::<$T>::new(1 << i).unwrap().highest_one(), i);
+                assert_eq!(
+                    NonZero::<$T>::new(<$T>::MAX >> i).unwrap().highest_one(),
+                    <$T>::BITS - i - 1,
+                );
+                assert_eq!(
+                    NonZero::<$T>::new(<$T>::MAX << i).unwrap().highest_one(),
+                    <$T>::BITS - 1,
+                );
+            }
+        }};
+    }
+    nonzero_uint_impl!(u8);
+}
+
+#[test]
+fn test_nonzero_lowest_one() {
+    macro_rules! nonzero_uint_impl {
+        ($T:ty) => {{
+            for i in 0..<$T>::BITS {
+                assert_eq!(NonZero::<$T>::new(1 << i).unwrap().lowest_one(), i);
+                assert_eq!(
+                    NonZero::<$T>::new(<$T>::MAX >> i).unwrap().lowest_one(),
+                    0,
+                );
+                assert_eq!(
+                    NonZero::<$T>::new(<$T>::MAX << i).unwrap().lowest_one(),
+                    i,
+                );
+            }
+        }};
+    }
+    nonzero_uint_impl!(u8);
+}
+
+#[test]
+fn test_nonzero_bit_width() {
+    macro_rules! nonzero_uint_impl {
+        ($T:ty) => {{
+            assert_eq!(NonZero::<$T>::new(0b010_1100).unwrap().bit_width(), NonZero::new(6).unwrap());
+            assert_eq!(NonZero::<$T>::new(0b111_1001).unwrap().bit_width(), NonZero::new(7).unwrap());
+            assert_eq!(NonZero::<$T>::MIN.bit_width(), NonZero::new(1).unwrap());
+            assert_eq!(NonZero::<$T>::MAX.bit_width(), NonZero::new(<$T>::BITS).unwrap());
+        }};
+    }
+    nonzero_uint_impl!(u8);
+}
+"#,
+    );
+
+    for name in [
+        "test_match_nonzero_const_pattern",
+        "test_nonzero_isolate_highest_one",
+        "test_nonzero_isolate_lowest_one",
+        "test_nonzero_highest_one",
+        "test_nonzero_lowest_one",
+        "test_nonzero_bit_width",
+    ] {
+        assert_rpc_source_warranted(&doc, name);
+    }
 }
 
 #[test]
