@@ -227,6 +227,16 @@ impl TemporalRewriteState {
         self.loop_replayed.contains(name) && self.expr_for(name).is_some()
     }
 
+    pub(crate) fn mark_loop_replayed(&mut self, name: &str) {
+        if self.expr_for(name).is_some() {
+            self.loop_replayed.insert(name.to_string());
+        }
+    }
+
+    pub(crate) fn clear_loop_replayed(&mut self, name: &str) {
+        self.loop_replayed.remove(name);
+    }
+
     pub(crate) fn can_apply(&self, expr: &Expr) -> bool {
         let mut scratch = self.clone();
         scratch.apply_with_trace(expr, false)
@@ -809,6 +819,16 @@ impl TemporalRewriteState {
             );
             self.values.remove(&name);
         }
+    }
+
+    pub(crate) fn record_literal_value(&mut self, name: &str, value: Expr) {
+        self.unknown_consumed_iterators.remove(name);
+        self.unknown_mutations.remove(name);
+        self.aliases.remove(name);
+        self.cell_values.remove(name);
+        self.rewritten_bases.remove(name);
+        self.loop_replayed.remove(name);
+        self.values.insert(name.to_string(), value);
     }
 
     fn cell_constructor_value(&self, expr: &Expr) -> Option<(CellKind, Option<Expr>)> {

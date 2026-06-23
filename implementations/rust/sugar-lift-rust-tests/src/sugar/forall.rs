@@ -11,7 +11,9 @@
 use std::collections::{BTreeMap, HashSet};
 use std::rc::Rc;
 
-use sugar_ir_symbolic::{and_, forall, implies, lt, lte, num, Formula, Sort, Term};
+use sugar_ir_symbolic::{
+    and_, atomic_, forall, implies, lt, lte, not_, num, str_const, Formula, Sort, Term,
+};
 use syn::{Expr, Pat, Stmt};
 use tracing::debug;
 
@@ -343,10 +345,18 @@ impl Sugar for ForAllSugar {
             // and gates purity. We re-discriminate the domain here (it is consumed by
             // value) by re-reading; pass the already-resolved `BoundedDomain`.
             let domain = match &self.domain {
-                ForAllDomain::Bounded(domain) => domain.clone(),
+                ForAllDomain::Bounded(domain) => {
+                    if bounded_domain_is_static_empty(domain) {
+                        return Some(self.empty_loop_no_panic(ctx));
+                    }
+                    domain.clone()
+                }
                 ForAllDomain::Sequence(receiver) => {
                     let seq = receiver.desugar(ctx).dug()?.into_seq()?;
-                    if seq.is_empty() || seq.len() as i64 > SUGAR_SEQ_CAP {
+                    if seq.is_empty() {
+                        return Some(self.empty_loop_no_panic(ctx));
+                    }
+                    if seq.len() as i64 > SUGAR_SEQ_CAP {
                         debug!(
                             target: "sugar_lift_rust_tests::sugar::forall",
                             var = self.var.as_str(),
@@ -410,6 +420,51 @@ impl Sugar for ForAllSugar {
                 warrant,
             })
         })())
+    }
+}
+
+impl ForAllSugar {
+    fn empty_loop_no_panic(&self, ctx: &SugarCtx) -> Desugared {
+        let subject = str_const(format!(
+            "{}::{}::{}::empty-domain",
+            ctx.scope.local_scope(),
+            self.kind,
+            self.var
+        ));
+        Desugared::Constraints {
+            atom: not_(atomic_("panic", vec![subject])),
+            n: 0,
+            kind: AssertionFactKind::Warranted,
+            warrant: Warrant {
+                name: Some(format!(
+                    "{}::{}::{}::empty-domain",
+                    ctx.scope.local_scope(),
+                    self.kind,
+                    self.var
+                )),
+            },
+        }
+    }
+}
+
+fn bounded_domain_is_static_empty(domain: &BoundedDomain) -> bool {
+    match domain {
+        BoundedDomain::Range {
+            start,
+            end,
+            inclusive,
+        } => term_as_int(start)
+            .or_else(|| const_fold_int_term(start))
+            .zip(term_as_int(end).or_else(|| const_fold_int_term(end)))
+            .and_then(|(s, e)| {
+                if *inclusive {
+                    e.checked_add(1).map(|hi| (s, hi))
+                } else {
+                    Some((s, e))
+                }
+            })
+            .is_some_and(|(lo, hi)| hi <= lo),
+        BoundedDomain::Array(elems) => elems.is_empty(),
     }
 }
 
@@ -487,6 +542,7 @@ pub(crate) fn decompose_for_loop(
 fn for_loop_pat_ident(pat: &Pat) -> Option<String> {
     match pat {
         Pat::Ident(p) if p.subpat.is_none() => Some(p.ident.to_string()),
+        Pat::Wild(_) => Some("_".to_string()),
         Pat::Reference(r) if r.mutability.is_none() => for_loop_pat_ident(&r.pat),
         Pat::Paren(paren) => for_loop_pat_ident(&paren.pat),
         Pat::Type(ty) => for_loop_pat_ident(&ty.pat),
