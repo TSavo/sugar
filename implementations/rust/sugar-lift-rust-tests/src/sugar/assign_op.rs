@@ -339,7 +339,14 @@ impl TemporalRewriteState {
                     }
                 }
                 if borrowed_iterator_terminal(call) {
-                    if let Some(name) = borrowed_iterator_source_name(&call.receiver) {
+                    if let Some(name) = full_drain_borrowed_iterator_terminal_source(call) {
+                        if !self.exhaust_iterator_binding(&name, &call.method.to_string()) {
+                            applied |=
+                                self.invalidate_iterator_binding(&name, &call.method.to_string());
+                        } else {
+                            applied = true;
+                        }
+                    } else if let Some(name) = borrowed_iterator_source_name(&call.receiver) {
                         applied |=
                             self.invalidate_iterator_binding(&name, &call.method.to_string());
                     }
@@ -388,10 +395,15 @@ impl TemporalRewriteState {
             Expr::Block(block) => self.apply_consumption_stmts(&block.block.stmts),
             Expr::Unsafe(block) => self.apply_consumption_stmts(&block.block.stmts),
             Expr::ForLoop(for_loop) => {
-                self.apply_consumption_expr(&for_loop.expr)
-                    | self.apply_consumption_stmts(&for_loop.body.stmts)
+                let mut applied = self.apply_consumption_expr(&for_loop.expr)
+                    | self.apply_consumption_stmts(&for_loop.body.stmts);
+                applied |= self.apply_for_loop_iterator_exhaustion(for_loop);
+                applied
             }
-            Expr::While(while_expr) => self.apply_while_loop(while_expr),
+            Expr::While(while_expr) => {
+                self.apply_while_loop(while_expr)
+                    | self.apply_while_loop_iterator_exhaustion(while_expr)
+            }
             Expr::Loop(loop_expr) => self.apply_loop(loop_expr),
             Expr::If(if_expr) => {
                 let mut applied = self.apply_consumption_expr(&if_expr.cond)
@@ -446,6 +458,26 @@ impl TemporalRewriteState {
             }
         }
         self.invalidate_unreplayed_loop_mutations(&mutated, "while replay cap")
+    }
+
+    fn apply_while_loop_iterator_exhaustion(&mut self, while_expr: &syn::ExprWhile) -> bool {
+        if block_may_escape_iteration(&while_expr.body.stmts) {
+            return false;
+        }
+        let Some(name) = while_let_next_source_name(while_expr) else {
+            return false;
+        };
+        self.exhaust_iterator_binding(&name, "while-next")
+    }
+
+    fn apply_for_loop_iterator_exhaustion(&mut self, for_loop: &syn::ExprForLoop) -> bool {
+        if block_may_escape_iteration(&for_loop.body.stmts) {
+            return false;
+        }
+        let Some(name) = for_loop_full_drain_source_name(&for_loop.expr) else {
+            return false;
+        };
+        self.exhaust_iterator_binding(&name, "for-loop")
     }
 
     fn apply_loop(&mut self, loop_expr: &syn::ExprLoop) -> bool {
@@ -578,6 +610,29 @@ impl TemporalRewriteState {
             binding = name,
             method,
             "temporal rewrite invalidated iterator after unknown-count consumption"
+        );
+        true
+    }
+
+    fn exhaust_iterator_binding(&mut self, name: &str, method: &str) -> bool {
+        let Some(current) = self.expr_for(name) else {
+            return false;
+        };
+        if !iterator_state_expr(&current) {
+            return false;
+        }
+        let exhausted: Expr = syn::parse_quote!([].iter());
+        self.values.insert(name.to_string(), exhausted);
+        self.aliases.remove(name);
+        self.unknown_consumed_iterators.remove(name);
+        self.unknown_mutations.remove(name);
+        self.rewritten_bases.remove(name);
+        self.loop_replayed.remove(name);
+        debug!(
+            target: "sugar_lift_rust_tests::temporal_rewrite",
+            binding = name,
+            method,
+            "temporal rewrite exhausted iterator receiver"
         );
         true
     }
@@ -1504,6 +1559,135 @@ fn borrowed_iterator_source_name(expr: &Expr) -> Option<String> {
         Expr::Try(try_expr) => borrowed_iterator_source_name(&try_expr.expr),
         _ => None,
     }
+}
+
+fn iterator_state_expr(expr: &Expr) -> bool {
+    match strip_refs_groups(expr) {
+        Expr::Range(_) => true,
+        Expr::MethodCall(call) => {
+            let method = call.method.to_string();
+            match method.as_str() {
+                "iter" | "iter_mut" | "into_iter" => call.args.is_empty(),
+                "rev" | "fuse" | "enumerate" | "cloned" | "copied" | "peekable" => {
+                    call.args.is_empty() && iterator_state_expr(&call.receiver)
+                }
+                "skip" | "take" | "step_by" => {
+                    call.args.len() == 1
+                        && const_int(&call.args[0]).is_some()
+                        && iterator_state_expr(&call.receiver)
+                }
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+fn full_drain_borrowed_iterator_terminal_source(call: &syn::ExprMethodCall) -> Option<String> {
+    if call.method != "count" || !call.args.is_empty() {
+        return None;
+    }
+    full_drain_borrowed_iterator_source_name(&call.receiver)
+}
+
+fn full_drain_borrowed_iterator_source_name(expr: &Expr) -> Option<String> {
+    match strip_refs_groups(expr) {
+        Expr::MethodCall(call) if call.method == "by_ref" && call.args.is_empty() => {
+            simple_path_name(&call.receiver)
+        }
+        Expr::MethodCall(call) if full_drain_borrowed_iterator_adapter(call) => {
+            full_drain_borrowed_iterator_source_name(&call.receiver)
+        }
+        Expr::Reference(reference) => full_drain_borrowed_iterator_source_name(&reference.expr),
+        Expr::Paren(paren) => full_drain_borrowed_iterator_source_name(&paren.expr),
+        Expr::Group(group) => full_drain_borrowed_iterator_source_name(&group.expr),
+        _ => None,
+    }
+}
+
+fn full_drain_borrowed_iterator_adapter(call: &syn::ExprMethodCall) -> bool {
+    match call.method.to_string().as_str() {
+        "rev" | "fuse" | "enumerate" | "cloned" | "copied" | "peekable" => call.args.is_empty(),
+        "skip" | "step_by" => call.args.len() == 1 && const_int(&call.args[0]).is_some(),
+        _ => false,
+    }
+}
+
+fn while_let_next_source_name(while_expr: &syn::ExprWhile) -> Option<String> {
+    let Expr::Let(let_expr) = strip_refs_groups(&while_expr.cond) else {
+        return None;
+    };
+    if !pat_is_some_variant(&let_expr.pat) {
+        return None;
+    }
+    let Expr::MethodCall(call) = strip_refs_groups(&let_expr.expr) else {
+        return None;
+    };
+    if !matches!(call.method.to_string().as_str(), "next" | "next_back") || !call.args.is_empty() {
+        return None;
+    }
+    simple_path_name(&call.receiver)
+        .or_else(|| full_drain_borrowed_iterator_source_name(&call.receiver))
+}
+
+fn for_loop_full_drain_source_name(expr: &Expr) -> Option<String> {
+    match strip_refs_groups(expr) {
+        Expr::Path(_) => simple_path_name(expr),
+        Expr::Reference(reference) => simple_path_name(&reference.expr)
+            .or_else(|| for_loop_full_drain_source_name(&reference.expr)),
+        Expr::MethodCall(call) if call.method == "by_ref" && call.args.is_empty() => {
+            simple_path_name(&call.receiver)
+        }
+        Expr::MethodCall(call) if full_drain_borrowed_iterator_adapter(call) => {
+            for_loop_full_drain_source_name(&call.receiver)
+        }
+        Expr::Paren(paren) => for_loop_full_drain_source_name(&paren.expr),
+        Expr::Group(group) => for_loop_full_drain_source_name(&group.expr),
+        _ => None,
+    }
+}
+
+fn pat_is_some_variant(pat: &Pat) -> bool {
+    match pat {
+        Pat::TupleStruct(tuple) => tuple
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == "Some"),
+        Pat::Reference(reference) => pat_is_some_variant(&reference.pat),
+        Pat::Paren(paren) => pat_is_some_variant(&paren.pat),
+        Pat::Type(ty) => pat_is_some_variant(&ty.pat),
+        Pat::Or(or_pat) => or_pat.cases.iter().all(pat_is_some_variant),
+        _ => false,
+    }
+}
+
+fn block_may_escape_iteration(stmts: &[Stmt]) -> bool {
+    struct V {
+        found: bool,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for V {
+        fn visit_expr_break(&mut self, _: &'ast syn::ExprBreak) {
+            self.found = true;
+        }
+
+        fn visit_expr_return(&mut self, _: &'ast syn::ExprReturn) {
+            self.found = true;
+        }
+
+        fn visit_expr_try(&mut self, _: &'ast syn::ExprTry) {
+            self.found = true;
+        }
+
+        fn visit_expr_closure(&mut self, _: &'ast syn::ExprClosure) {}
+    }
+
+    let mut v = V { found: false };
+    for stmt in stmts {
+        syn::visit::Visit::visit_stmt(&mut v, stmt);
+    }
+    v.found
 }
 
 fn borrowed_iterator_adapter(method: &str) -> bool {
