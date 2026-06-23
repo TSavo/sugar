@@ -5053,7 +5053,7 @@ fn runtime_chunk_source_literal_twin() {
         assert_source_locus_refused(
             &response,
             "runtime_chunk_source_refused",
-            "runtime slice source, not literal",
+            "array repeat non-literal length",
         );
         assert_source_locus_warranted(&response, "runtime_slice_source_literal_twin");
         assert_source_locus_warranted(&response, "runtime_chunk_source_literal_twin");
