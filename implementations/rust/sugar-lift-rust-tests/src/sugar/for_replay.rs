@@ -78,7 +78,10 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     }
     let seed_names = accumulator_seed_names(&for_loop.body.stmts, fcx.scope());
     let tuple_loop = vars.len() > 1;
-    let direct_pointwise_loop = tuple_loop;
+    let direct_pointwise_loop = tuple_loop
+        || char_range_domain_shape(&for_loop.expr)
+        || (range_domain_shape(&for_loop.expr)
+            && body_has_relation_assertion_surface(&for_loop.body.stmts));
     if !body_has_replay_shape(
         &for_loop.body.stmts,
         fcx.scope(),
@@ -229,12 +232,50 @@ fn body_has_replay_shape(
         || body_has_helper_call_replay_shape(stmts, scope)
         || body_has_scalar_accumulator_replay_shape(stmts, scope)
         || (finite_replay_domain && body_has_pointwise_assert_replay_shape(stmts, true))
-        // A tuple loop var (`for (i, &x)`) carries replay-only binding work in the
-        // pattern itself. Plain literal-range pointwise assertions are owned by
-        // `forall_loop`, whose desugar path can still reduce them to the literal floor.
+        // Tuple loop vars (`for (i, &x)`) carry their binding work in the pattern itself.
+        // Literal CHAR ranges cannot be lowered as integer foralls, so replay concrete
+        // characters. Relation-style assertion macros over integer ranges also replay
+        // point-wise; bare predicate `assert!(x >= 0)` stays owned by `forall_loop`.
         || (finite_replay_domain
             && direct_pointwise_loop
             && body_has_pointwise_assert_replay_shape(stmts, false))
+}
+
+fn body_has_relation_assertion_surface(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(|stmt| match stmt {
+        Stmt::Macro(stmt_macro) => relation_assert_macro(&stmt_macro.mac),
+        Stmt::Expr(Expr::Macro(expr_macro), _) => relation_assert_macro(&expr_macro.mac),
+        Stmt::Expr(Expr::If(expr_if), _) => if_stmt_has_relation_assertion(expr_if),
+        Stmt::Expr(Expr::ForLoop(for_loop), _) => {
+            body_has_relation_assertion_surface(&for_loop.body.stmts)
+        }
+        _ => false,
+    })
+}
+
+fn if_stmt_has_relation_assertion(expr_if: &syn::ExprIf) -> bool {
+    body_has_relation_assertion_surface(&expr_if.then_branch.stmts)
+        || expr_if
+            .else_branch
+            .as_ref()
+            .is_some_and(|(_, else_branch)| match strip_refs_groups(else_branch) {
+                Expr::Block(block) => body_has_relation_assertion_surface(&block.block.stmts),
+                Expr::If(nested) => if_stmt_has_relation_assertion(nested),
+                _ => false,
+            })
+}
+
+fn relation_assert_macro(mac: &syn::Macro) -> bool {
+    mac.path.segments.last().is_some_and(|segment| {
+        matches!(
+            segment.ident.to_string().as_str(),
+            "assert_eq"
+                | "assert_ne"
+                | "debug_assert_eq"
+                | "debug_assert_ne"
+                | "assert_eq_const_safe"
+        )
+    })
 }
 
 fn domain_has_replay_shape(expr: &Expr, composite_domain: bool) -> bool {
@@ -500,6 +541,23 @@ fn strip_pat(pat: &Pat) -> &Pat {
 
 fn range_domain_shape(expr: &Expr) -> bool {
     matches!(strip_refs_groups(expr), Expr::Range(range) if range.end.is_some())
+}
+
+fn char_range_domain_shape(expr: &Expr) -> bool {
+    let Expr::Range(range) = strip_refs_groups(expr) else {
+        return false;
+    };
+    range.start.as_deref().and_then(literal_char).is_some()
+        && range.end.as_deref().and_then(literal_char).is_some()
+}
+
+fn literal_char(expr: &Expr) -> Option<char> {
+    match strip_refs_groups(expr) {
+        Expr::Lit(syn::ExprLit {
+            lit: Lit::Char(ch), ..
+        }) => Some(ch.value()),
+        _ => None,
+    }
 }
 
 fn range_domain_exceeds_replay_cap(expr: &Expr, scope: &crate::TemporalScope) -> bool {
