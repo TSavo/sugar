@@ -73,8 +73,8 @@ use crate::sugar::term_leaf::reasoned_hit;
 use crate::{
     closure_body_is_side_effecting, closure_single_param_ident, const_eval_unary_closure,
     const_fold_acc_update, const_fold_int_term, const_int, const_int_acc_init, parse_int_lit,
-    simple_path_name, strip_refs_groups, ConstVal, Desugared, DesugaredElem, Effect, Outcome,
-    Sugar, SugarCtx, TemporalScope,
+    simple_path_name, strip_refs_groups, token_key, ConstVal, Desugared, DesugaredElem, Effect,
+    Outcome, Sugar, SugarCtx, TemporalScope,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -189,7 +189,100 @@ fn recognized_receiver_is_static_sequence(
             return false;
         }
     }
+    if matches!(terminal, Terminal::Count) && receiver_is_chunk_window_shape(&call.receiver, fcx, 0)
+    {
+        return true;
+    }
     receiver_resolves_static_sequence(&call.receiver, fcx, 0)
+}
+
+fn receiver_is_chunk_window_shape(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    match strip_refs_groups(expr) {
+        Expr::MethodCall(call) if call.args.len() == 1 => {
+            const_int(&call.args[0]).is_some_and(|n| n > 0)
+                && matches!(
+                    call.method.to_string().as_str(),
+                    "chunks"
+                        | "chunks_mut"
+                        | "chunks_exact"
+                        | "chunks_exact_mut"
+                        | "rchunks"
+                        | "rchunks_mut"
+                        | "rchunks_exact"
+                        | "rchunks_exact_mut"
+                        | "windows"
+                )
+        }
+        Expr::Path(_) => simple_path_name(expr)
+            .and_then(|name| {
+                fcx.scope().temporal_rewrite_expr_for(&name).or_else(|| {
+                    fcx.let_inits()
+                        .get(&name)
+                        .copied()
+                        .or_else(|| fcx.scope().stable_let_binding_for_term(&name))
+                        .cloned()
+                })
+            })
+            .is_some_and(|current| receiver_is_chunk_window_shape(&current, fcx, depth + 1)),
+        Expr::Reference(reference) => {
+            receiver_is_chunk_window_shape(&reference.expr, fcx, depth + 1)
+        }
+        Expr::Paren(paren) => receiver_is_chunk_window_shape(&paren.expr, fcx, depth + 1),
+        Expr::Group(group) => receiver_is_chunk_window_shape(&group.expr, fcx, depth + 1),
+        _ => false,
+    }
+}
+
+fn resolve_chunk_window_receiver<'a>(
+    expr: &Expr,
+    let_inits: &BTreeMap<String, &'a Expr>,
+    scope: &'a TemporalScope,
+    depth: usize,
+) -> Option<Expr> {
+    if depth > 8 {
+        return None;
+    }
+    match strip_refs_groups(expr) {
+        Expr::MethodCall(call)
+            if call.args.len() == 1
+                && const_int(&call.args[0]).is_some_and(|n| n > 0)
+                && matches!(
+                    call.method.to_string().as_str(),
+                    "chunks"
+                        | "chunks_mut"
+                        | "chunks_exact"
+                        | "chunks_exact_mut"
+                        | "rchunks"
+                        | "rchunks_mut"
+                        | "rchunks_exact"
+                        | "rchunks_exact_mut"
+                        | "windows"
+                ) =>
+        {
+            Some(expr.clone())
+        }
+        Expr::Path(_) => {
+            let name = simple_path_name(expr)?;
+            let current = scope
+                .temporal_rewrite_expr_for(&name)
+                .or_else(|| let_inits.get(&name).map(|init| (*init).clone()))
+                .or_else(|| scope.stable_let_binding_for_term(&name).cloned())?;
+            resolve_chunk_window_receiver(&current, let_inits, scope, depth + 1)
+        }
+        Expr::Reference(reference) => {
+            resolve_chunk_window_receiver(&reference.expr, let_inits, scope, depth + 1)
+        }
+        Expr::Paren(paren) => {
+            resolve_chunk_window_receiver(&paren.expr, let_inits, scope, depth + 1)
+        }
+        Expr::Group(group) => {
+            resolve_chunk_window_receiver(&group.expr, let_inits, scope, depth + 1)
+        }
+        _ => None,
+    }
 }
 
 fn receiver_resolves_static_sequence(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
@@ -581,6 +674,42 @@ impl IterTerminalSugar {
             {
                 // Opaque-EUF disposition: UNDECIDED (honest dark), never refused.
                 return Outcome::from_opt(None);
+            }
+        }
+        if matches!(self.terminal, Terminal::Count) {
+            if let Some(chunk_expr) =
+                resolve_chunk_window_receiver(&self.inner, &let_inits, ctx.scope, 0)
+            {
+                if let Some(static_len) =
+                    method_family::literal_collection_adapter_static_len_in_scope(
+                        &chunk_expr,
+                        &let_inits,
+                        ctx.scope,
+                    )
+                {
+                    match self.verify_static_len_source(&static_len.source, &fcx, ctx) {
+                        Ok(true) => {
+                            debug!(
+                                target: "sugar_lift_rust_tests::sugar::iter_terminal",
+                                len = static_len.len,
+                                "reducing literal chunk/window count through verified length-only adapter"
+                            );
+                            return Outcome::Dug(Desugared::Term(num(static_len.len as i128)));
+                        }
+                        Ok(false) => return Outcome::from_opt(None),
+                        Err(hit) => return hit,
+                    }
+                }
+                let receiver = match strip_refs_groups(&chunk_expr) {
+                    Expr::MethodCall(call) => call.receiver.as_ref(),
+                    _ => &chunk_expr,
+                };
+                return Outcome::Hit(Effect::Unsupported {
+                    reason: format!(
+                        "chunk source is runtime slice, not literal `{}`",
+                        token_key(receiver)
+                    ),
+                });
             }
         }
         let static_empty_sequence =
