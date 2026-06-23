@@ -98,7 +98,7 @@ fn is_supported_method(method: &str, argc: usize) -> bool {
         "to_digit" => argc == 1,
         "is_alphabetic" | "is_numeric" | "is_ascii" | "is_alphanumeric" | "is_whitespace"
         | "is_uppercase" | "is_lowercase" | "to_ascii_uppercase" | "to_ascii_lowercase"
-        | "len_utf8" => argc == 0,
+        | "to_uppercase" | "to_lowercase" | "to_string" | "len_utf8" => argc == 0,
         _ => false,
     }
 }
@@ -168,6 +168,43 @@ fn source_resolves_to_char(expr: &Expr, bindings: &BTreeMap<String, &Expr>) -> b
         }
         _ => false,
     }
+}
+
+fn source_resolves_to_char_case_mapping(expr: &Expr, bindings: &BTreeMap<String, &Expr>) -> bool {
+    match strip_refs_groups(expr) {
+        Expr::Path(path) if path.qself.is_none() => {
+            let Some(id) = path.path.get_ident().map(ToString::to_string) else {
+                return false;
+            };
+            let Some(bound) = bindings.get(&id).copied() else {
+                return false;
+            };
+            let mut narrowed = bindings.clone();
+            narrowed.remove(&id);
+            source_resolves_to_char_case_mapping(bound, &narrowed)
+        }
+        Expr::MethodCall(call)
+            if matches!(
+                call.method.to_string().as_str(),
+                "to_uppercase" | "to_lowercase"
+            ) && call.args.is_empty()
+                && call.turbofish.is_none() =>
+        {
+            source_resolves_to_char(&call.receiver, bindings)
+        }
+        _ => false,
+    }
+}
+
+fn term_to_string_const(term: &Rc<Term>) -> Option<String> {
+    let Term::Const {
+        value: ConstValue::String(value),
+        ..
+    } = term.as_ref()
+    else {
+        return None;
+    };
+    Some(value.clone())
 }
 
 fn term_to_char(term: &Rc<Term>) -> Option<char> {
@@ -307,6 +344,21 @@ impl Sugar for CharMethodSugar {
             Ok(term) => term,
             Err(outcome) => return outcome,
         };
+        if self.method == "to_string" {
+            if source_resolves_to_char(&self.receiver, &let_inits) {
+                let Some(ch) = term_to_char(&receiver) else {
+                    return Outcome::from_opt(None);
+                };
+                return Outcome::Dug(Desugared::Term(str_const(ch.to_string())));
+            }
+            if source_resolves_to_char_case_mapping(&self.receiver, &let_inits) {
+                let Some(value) = term_to_string_const(&receiver) else {
+                    return Outcome::from_opt(None);
+                };
+                return Outcome::Dug(Desugared::Term(str_const(value)));
+            }
+            return self.opaque_method_term(receiver, &fcx, ctx);
+        }
         if !source_resolves_to_char(&self.receiver, &let_inits) {
             return self.opaque_method_term(receiver, &fcx, ctx);
         }
@@ -323,6 +375,8 @@ impl Sugar for CharMethodSugar {
             }
             "to_ascii_uppercase" => str_const(ch.to_ascii_uppercase().to_string()),
             "to_ascii_lowercase" => str_const(ch.to_ascii_lowercase().to_string()),
+            "to_uppercase" => str_const(ch.to_uppercase().collect::<String>()),
+            "to_lowercase" => str_const(ch.to_lowercase().collect::<String>()),
             "len_utf8" => num(ch.len_utf8() as i128),
             "to_digit" => {
                 let Some(arg) = self.args.first() else {

@@ -28,10 +28,11 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use sugar_ir_symbolic::Term;
+use sugar_ir_symbolic::{str_const, Term};
 use syn::Expr;
 
 use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::monadic::{none_term, some_term};
 use crate::sugar::term_leaf::reasoned_hit;
 use crate::{
     const_fold_int_term, const_fold_u128_term, expr_head_key, num, type_id_of_call_term, u128_term,
@@ -177,6 +178,11 @@ impl Sugar for CallSugar {
                     terms.push(term);
                 }
                 let head_key = expr_head_key(func);
+                if terms.len() == 1 {
+                    if let Some(term) = fold_char_from_u32_call(&head_key, &terms[0]) {
+                        return Outcome::Dug(Desugared::Term(term));
+                    }
+                }
                 // ARITHMETIC TRAIT-METHOD FOLD: `Add::add(x, y)` → `x + y`, const-evaluated.
                 // Maps std-ops trait method calls (Add::add, Sub::sub, Mul::mul, Div::div,
                 // Rem::rem, Shl::shl, Shr::shr, BitAnd::bitand, BitOr::bitor, BitXor::bitxor)
@@ -207,6 +213,26 @@ impl Sugar for CallSugar {
             }
         }
     }
+}
+
+fn fold_char_from_u32_call(head_key: &str, arg: &Rc<Term>) -> Option<Rc<Term>> {
+    if !is_char_from_u32_head(head_key) {
+        return None;
+    }
+    let codepoint = const_fold_u128_term(arg)
+        .and_then(|value| u32::try_from(value).ok())
+        .or_else(|| const_fold_int_term(arg).and_then(|value| u32::try_from(value).ok()))?;
+    Some(match char::from_u32(codepoint) {
+        Some(ch) => some_term(str_const(ch.to_string())),
+        None => none_term(),
+    })
+}
+
+fn is_char_from_u32_head(head_key: &str) -> bool {
+    matches!(
+        head_key,
+        "char::from_u32" | "core::char::from_u32" | "std::char::from_u32"
+    )
 }
 
 /// Maps arithmetic trait method `head_key`s (as produced by `expr_head_key`) to

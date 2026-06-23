@@ -18555,6 +18555,15 @@ pub(crate) fn assertion_entry_from_relation(
             claim_count: 1,
         };
     }
+    if let Some(atom) = const_char_relation_atom(&lhs, &rhs, op) {
+        return AssertionEntry {
+            name: None,
+            atom,
+            fact_span: None,
+            kind: AssertionFactKind::Warranted,
+            claim_count: 1,
+        };
+    }
 
     let name = if is_ground_value(lhs.as_ref()) {
         callsite_assertion_name(rhs.as_ref(), scope.local_scope())
@@ -18599,6 +18608,32 @@ fn const_u128_relation_atom(lhs: &Rc<Term>, rhs: &Rc<Term>, op: RelationOp) -> O
         RelationOp::Ge => left >= right,
     };
     Some(eq(bool_const(value), bool_const(true)))
+}
+
+fn const_char_relation_atom(lhs: &Rc<Term>, rhs: &Rc<Term>, op: RelationOp) -> Option<Rc<Formula>> {
+    let left = single_char_const(lhs)?;
+    let right = single_char_const(rhs)?;
+    let value = match op {
+        RelationOp::Eq | RelationOp::Ne => return None,
+        RelationOp::Lt => left < right,
+        RelationOp::Le => left <= right,
+        RelationOp::Gt => left > right,
+        RelationOp::Ge => left >= right,
+    };
+    Some(eq(bool_const(value), bool_const(true)))
+}
+
+fn single_char_const(term: &Rc<Term>) -> Option<char> {
+    let Term::Const {
+        value: ConstValue::String(value),
+        ..
+    } = term.as_ref()
+    else {
+        return None;
+    };
+    let mut chars = value.chars();
+    let ch = chars.next()?;
+    chars.next().is_none().then_some(ch)
 }
 
 fn constructor_operator_atom(
