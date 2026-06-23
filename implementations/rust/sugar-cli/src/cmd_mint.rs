@@ -894,6 +894,11 @@ fn lift_options_from_request(
             .and_then(|options| options.get("layer"))
             .and_then(Value::as_str)
             .map(|s| s.to_string()),
+        report_summary: lift_request
+            .get("options")
+            .and_then(|options| options.get("reportSummary"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         contract_bindings,
     }
 }
@@ -1357,6 +1362,7 @@ fn mint_input_multi(
                 workspace_override: plugin.workspace_override.clone(),
                 emit: plugin.emit.clone(),
                 layer: plugin.layer.clone(),
+                report_summary: false,
                 contract_bindings: Vec::new(),
             },
         ));

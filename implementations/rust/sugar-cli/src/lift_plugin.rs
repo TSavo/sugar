@@ -71,6 +71,9 @@ pub struct LiftPluginOptions {
     /// "library-bindings"), so per-plugin config can request the
     /// appropriate layer regardless of the global CLI flag.
     pub layer: Option<String>,
+    /// Ask a reporting-capable lifter to emit only gate summary accounting
+    /// instead of transporting full ProofIR/report sidecars.
+    pub report_summary: bool,
     /// Contract bindings forwarded to implication consumer surfaces. Each
     /// entry is `{ "name": <contract name>, "contract_cid": <attestation cid> }`.
     pub contract_bindings: Vec<Value>,
@@ -447,6 +450,9 @@ pub fn build_lift_params(project_root: &Path, surface: &str, options: LiftPlugin
     if let Some(emit) = options.emit.as_deref() {
         options_obj["emit"] = json!(emit);
     }
+    if options.report_summary {
+        options_obj["reportSummary"] = json!(true);
+    }
     // Preserve the original workspace_override in the request itself,
     // so consumers of the lift_request (like MintKit::transform_session)
     // can distinguish "use the project root" from "this plugin was
@@ -575,6 +581,20 @@ mod tests {
             Some("library-bindings")
         );
         assert_eq!(request["options"]["identifyOnly"].as_bool(), Some(false));
+    }
+
+    #[test]
+    fn lift_plugin_options_pass_report_summary_to_lifter() {
+        let request = build_lift_params(
+            Path::new("."),
+            "rust",
+            LiftPluginOptions {
+                report_summary: true,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(request["options"]["reportSummary"].as_bool(), Some(true));
     }
 
     #[test]
