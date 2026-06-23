@@ -734,8 +734,13 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // resolves a width and lifts, never reaching this reason (the fake-refuse
         // guardrail). Typed as `UnknownFloatWidthEffect`.
         || reason.contains("requires known f32/f64 receiver width")
+        || reason.contains("f16 NaN width not modeled")
         || reason.contains("f16 bit-width not modeled")
         || reason.contains("f128 bit-width not modeled")
+        // TERMINAL: the value proposition is specifically about panic/drop ordering and
+        // atomic counter reads during unwinding. That state is produced by runtime drop
+        // side effects, not by source literals.
+        || reason.contains("drop-on-panic side effect, runtime, not literal")
         // TERMINAL: exact float-bit literal sugar only computes when the float operand
         // or bit operand is text-determined. A runtime float/bit source has no literal
         // IEEE pattern to read from the source text.
@@ -11704,6 +11709,67 @@ fn loop_mutation_is_simple_counter_only(stmts: &[Stmt]) -> bool {
     !scan.saw_mutation || scan.all_simple
 }
 
+const DROP_ON_PANIC_SIDE_EFFECT_REASON: &str = "drop-on-panic side effect, runtime, not literal";
+
+fn stmts_have_drop_on_panic_side_effect(stmts: &[Stmt]) -> bool {
+    struct Scan {
+        saw_catch_unwind: bool,
+        saw_asserting_map: bool,
+        saw_atomic_read: bool,
+        saw_panic_observation: bool,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for Scan {
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            if let Expr::Path(path) = call.func.as_ref() {
+                if path
+                    .path
+                    .segments
+                    .last()
+                    .is_some_and(|seg| seg.ident == "catch_unwind")
+                {
+                    self.saw_catch_unwind = true;
+                }
+            }
+            syn::visit::visit_expr_call(self, call);
+        }
+
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            match call.method.to_string().as_str() {
+                "map" if call.args.iter().any(|arg| count_asserts_in_expr(arg) > 0) => {
+                    self.saw_asserting_map = true;
+                }
+                "load" | "fetch_add" => {
+                    self.saw_atomic_read = true;
+                }
+                "is_err" => {
+                    self.saw_panic_observation = true;
+                }
+                _ => {}
+            }
+            syn::visit::visit_expr_method_call(self, call);
+        }
+    }
+
+    let mut scan = Scan {
+        saw_catch_unwind: false,
+        saw_asserting_map: false,
+        saw_atomic_read: false,
+        saw_panic_observation: false,
+    };
+    for stmt in stmts {
+        syn::visit::Visit::visit_stmt(&mut scan, stmt);
+    }
+    let rendered = stmts.iter().map(token_key).collect::<Vec<_>>().join(" ");
+    let saw_catch_unwind = scan.saw_catch_unwind || rendered.contains("catch_unwind");
+    let saw_atomic_read = scan.saw_atomic_read
+        || rendered.contains(". load")
+        || rendered.contains(". fetch_add")
+        || rendered.contains("AtomicUsize");
+    let saw_panic_observation = scan.saw_panic_observation || rendered.contains(". is_err");
+    saw_catch_unwind && scan.saw_asserting_map && saw_atomic_read && saw_panic_observation
+}
+
 /// Classify a REFUSED literal-domain for-loop into its named terminal Effect (the
 /// REFUSE half of the bin-1 classification), or leave it the existing UNCLASSIFIED
 /// for-context reason when no runtime cause is structurally detected (computable-but-
@@ -11763,8 +11829,15 @@ fn for_context_refusal_reason(
         &FnRegistry::new(),
         &LayoutTypeRegistry::new(),
     );
+    if stmts_have_drop_on_panic_side_effect(&f.body.stmts) {
+        return format!(
+            "assertion under for context over a LITERAL domain reaches \
+             {DROP_ON_PANIC_SIDE_EFFECT_REASON}; refused"
+        );
+    }
     let body_over_opaque = bs.iter().any(|r| {
         r.contains("OPAQUE")
+            || r.contains("opaque runtime receiver")
             || r.contains("ambiguous temporal identity")
             || r.contains("mutable container")
     });
@@ -15925,6 +15998,17 @@ fn translate_float_refinement_assertion(
                     token_key(expr)
                 ));
             }
+            if let Some(unstable_width) = float_refinement_receiver_unstable_width(&call.receiver) {
+                let width_reason = if unstable_width == "f16" && method == "is_nan" {
+                    "f16 NaN width not modeled".to_string()
+                } else {
+                    format!("{unstable_width} bit-width not modeled")
+                };
+                return Err(format!(
+                    "float refinement predicate `{method}` {width_reason} `{}`",
+                    token_key(expr)
+                ));
+            }
             let Some(width) = float_refinement_receiver_width(&call.receiver, float_widths) else {
                 return Err(format!(
                     "float refinement predicate `{method}` requires known f32/f64 receiver width `{}`",
@@ -16001,6 +16085,28 @@ fn parsed_literal_float(expr: &Expr) -> Option<LiteralFloat> {
         Expr::MethodCall(call) if call.method == "parse" && call.args.is_empty() => {
             parse_literal_float_call(call)
         }
+        _ => None,
+    }
+}
+
+fn float_refinement_receiver_unstable_width(expr: &Expr) -> Option<&'static str> {
+    match expr {
+        Expr::MethodCall(call) => unstable_width_from_method_name(&call.method.to_string())
+            .or_else(|| unstable_width_from_method_turbofish(call))
+            .or_else(|| {
+                if call.method == "unwrap" {
+                    float_refinement_receiver_unstable_width(&call.receiver)
+                } else {
+                    None
+                }
+            }),
+        Expr::Path(path) => unstable_width_from_path(&path.path),
+        Expr::Lit(ExprLit {
+            lit: Lit::Float(lit),
+            ..
+        }) => unstable_width_from_suffix(lit.suffix()),
+        Expr::Paren(paren) => float_refinement_receiver_unstable_width(&paren.expr),
+        Expr::Group(group) => float_refinement_receiver_unstable_width(&group.expr),
         _ => None,
     }
 }
@@ -16250,6 +16356,14 @@ fn float_width_from_method_turbofish(call: &syn::ExprMethodCall) -> Option<&'sta
     float_width_from_angle_args(args)
 }
 
+fn unstable_width_from_method_turbofish(call: &syn::ExprMethodCall) -> Option<&'static str> {
+    if call.method != "parse" {
+        return None;
+    }
+    let args = call.turbofish.as_ref()?;
+    unstable_width_from_angle_args(args)
+}
+
 fn float_width_from_angle_args(args: &syn::AngleBracketedGenericArguments) -> Option<&'static str> {
     if args.args.len() != 1 {
         return None;
@@ -16260,11 +16374,42 @@ fn float_width_from_angle_args(args: &syn::AngleBracketedGenericArguments) -> Op
     float_width_from_type(ty)
 }
 
+fn unstable_width_from_angle_args(
+    args: &syn::AngleBracketedGenericArguments,
+) -> Option<&'static str> {
+    if args.args.len() != 1 {
+        return None;
+    }
+    let Some(syn::GenericArgument::Type(ty)) = args.args.first() else {
+        return None;
+    };
+    unstable_width_from_type(ty)
+}
+
+fn unstable_width_from_type(ty: &Type) -> Option<&'static str> {
+    match ty {
+        Type::Path(path) => unstable_width_from_path(&path.path),
+        Type::Paren(paren) => unstable_width_from_type(&paren.elem),
+        Type::Group(group) => unstable_width_from_type(&group.elem),
+        _ => None,
+    }
+}
+
 fn float_width_from_method_name(method: &str) -> Option<&'static str> {
     if method.ends_with("_f32") {
         Some("f32")
     } else if method.ends_with("_f64") {
         Some("f64")
+    } else {
+        None
+    }
+}
+
+fn unstable_width_from_method_name(method: &str) -> Option<&'static str> {
+    if method.ends_with("_f16") {
+        Some("f16")
+    } else if method.ends_with("_f128") {
+        Some("f128")
     } else {
         None
     }
@@ -16281,10 +16426,29 @@ fn float_width_from_path(path: &syn::Path) -> Option<&'static str> {
     None
 }
 
+fn unstable_width_from_path(path: &syn::Path) -> Option<&'static str> {
+    for segment in &path.segments {
+        match segment.ident.to_string().as_str() {
+            "f16" => return Some("f16"),
+            "f128" => return Some("f128"),
+            _ => {}
+        }
+    }
+    None
+}
+
 fn float_width_from_suffix(suffix: &str) -> Option<&'static str> {
     match suffix {
         "f32" => Some("f32"),
         "f64" => Some("f64"),
+        _ => None,
+    }
+}
+
+fn unstable_width_from_suffix(suffix: &str) -> Option<&'static str> {
+    match suffix {
+        "f16" => Some("f16"),
+        "f128" => Some("f128"),
         _ => None,
     }
 }
@@ -17042,6 +17206,52 @@ fn panic_locus_pattern_entry(
     tuple_pattern_entry(subject, pattern, scope)
 }
 
+fn literal_option_variant(
+    expr: &Expr,
+    scope: &TemporalScope,
+    depth: usize,
+) -> Option<&'static str> {
+    if depth > MAX_MACRO_EXPANSION_DEPTH {
+        return None;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Path(path) if path.qself.is_none() => {
+            let last = path.path.segments.last()?.ident.to_string();
+            match last.as_str() {
+                "None" => Some("None"),
+                name => {
+                    let init = scope.stable_let_binding_for_term(name)?;
+                    literal_option_variant(init, scope, depth + 1)
+                }
+            }
+        }
+        Expr::Call(call) => {
+            let Expr::Path(path) = call.func.as_ref() else {
+                return None;
+            };
+            match path.path.segments.last()?.ident.to_string().as_str() {
+                "Some" if call.args.len() == 1 => Some("Some"),
+                _ => None,
+            }
+        }
+        Expr::Paren(paren) => literal_option_variant(&paren.expr, scope, depth + 1),
+        Expr::Group(group) => literal_option_variant(&group.expr, scope, depth + 1),
+        _ => None,
+    }
+}
+
+fn wildcard_survivor_literal_option_entry(
+    subject: &Expr,
+    pattern: &syn::Pat,
+    scope: &TemporalScope,
+) -> Option<AssertionEntry> {
+    if !matches!(strip_pat_ref_paren(pattern), syn::Pat::Wild(_)) {
+        return None;
+    }
+    let variant = literal_option_variant(subject, scope, 0)?;
+    panic_locus_entry(subject, variant, scope)
+}
+
 fn panic_locus_match_survivor<'a>(
     m: &'a syn::ExprMatch,
     scope: &TemporalScope,
@@ -17112,6 +17322,7 @@ fn panic_locus_if_refusal_reason(i: &syn::ExprIf, scope: &TemporalScope) -> Opti
 fn panic_locus_match_entry(m: &syn::ExprMatch, scope: &TemporalScope) -> Option<AssertionEntry> {
     let (subject, pattern) = panic_locus_match_survivor(m, scope)?;
     panic_locus_pattern_entry(subject, pattern, scope)
+        .or_else(|| wildcard_survivor_literal_option_entry(subject, pattern, scope))
 }
 
 /// Panic-locus lifting for `if let PAT = SUBJ { .. } else { panic!() }`.
@@ -24420,7 +24631,7 @@ mod lifter_key_tests {
             "flt2dec assert: operand is not a closed f32/f64 literal term (ldexp or a format! expected); released to layer 0",
             "signed zero float literal remains an IEEE refinement `- 0.0`",
             "assert_eq!: signed zero float literal remains an IEEE refinement `- 0.0f32`",
-            "float refinement predicate `is_nan` requires known f32/f64 receiver width `\"NaN\" . parse :: < f16 > () . unwrap () . is_nan ()`",
+            "float refinement predicate `is_nan` f16 NaN width not modeled `\"NaN\" . parse :: < f16 > () . unwrap () . is_nan ()`",
             "assertion in non-#[test] item `test_num` reachable only via monomorphization of a generic type/const parameter (runtime instantiation: no single concrete type to read; not statically constructible at any call site); refused",
             "assert!: unsupported term `mem::size_of::<T>()`: layout is unknown to this lift (rustc could not compile a monomorphic size_of harness for this type); refused",
             "assert_eq!: unsupported term `& mut x`: effectful / raw-pointer / mutable-reference term (a `&mut` borrow) is not a constructible timeless value; refused",
@@ -24662,7 +24873,7 @@ mod lifter_key_tests {
         assert!(
             out.skip_reasons
                 .iter()
-                .any(|r| r.contains("requires known f32/f64 receiver width")
+                .any(|r| r.contains("f16 NaN width not modeled")
                     && refusal_disposition(r) == Disposition::Refused),
             "the f16 refinement predicate must be REFUSED with its named unknown-width cause: {:?}",
             out.skip_reasons

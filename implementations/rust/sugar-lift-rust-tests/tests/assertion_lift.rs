@@ -7103,8 +7103,8 @@ fn f16_literal_nan_is_named_refused_not_unclassified_with_f32_f64_twins() {
         f16_out
             .skip_reasons
             .iter()
-            .all(|reason| reason.contains("f16 bit-width not modeled")),
-        "f16 refusal must name the missing f16 model: {:?}",
+            .all(|reason| reason.contains("f16 NaN width not modeled")),
+        "f16 refusal must name the missing f16 NaN model: {:?}",
         f16_out.skip_reasons
     );
 
@@ -25328,6 +25328,64 @@ fn t() {
 }
 
 #[test]
+fn catch_unwind_array_map_drop_on_panic_side_effect_is_named_refused() {
+    // array.rs::array_map_drops_unmapped_elements_on_panic, exact source class.
+    // The claims inside the map closure observe drop/atomic side effects during a
+    // panic path. That is a real runtime boundary, not unwritten scalar sugar.
+    let src = r#"
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[test]
+fn t() {
+    struct DropCounter<'a>(usize, &'a AtomicUsize);
+    impl Drop for DropCounter<'_> {
+        fn drop(&mut self) {
+            self.1.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    const MAX: usize = 11;
+    for panic_after in 0..MAX {
+        let counter = AtomicUsize::new(0);
+        let a = core::array::from_fn::<_, 11, _>(|i| DropCounter(i, &counter));
+        let success = std::panic::catch_unwind(|| {
+            let _ = a.map(|x| {
+                assert!(x.0 < panic_after);
+                assert_eq!(counter.load(Ordering::SeqCst), x.0);
+            });
+        });
+        assert!(success.is_err());
+        assert_eq!(counter.load(Ordering::SeqCst), MAX);
+    }
+}
+"#;
+    let out = lift_file(&parse(src), "tests/array.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "drop-on-panic runtime side effects must not warrant scalar facts: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("drop-on-panic side effect, runtime, not literal")),
+        "drop-on-panic locus must carry its named runtime refusal: {:?}",
+        out.skip_reasons
+    );
+    for r in out
+        .skip_reasons
+        .iter()
+        .filter(|r| r.contains("drop-on-panic side effect"))
+    {
+        assert_eq!(
+            sugar_lift_rust_tests::refusal_disposition(r),
+            sugar_lift_rust_tests::Disposition::Refused,
+            "drop-on-panic side-effect refusal must be terminal, not unclassified: {r:?}"
+        );
+    }
+}
+
+#[test]
 fn catch_unwind_letinit_pure_inner_assert_digs_good_twin_and_bad_twin_unsat() {
     // DISCRIMINATION + TEETH (the bad-twin gate). The catch_unwind peel must be EXACT: a
     // genuinely point-wise inner assert over a closed literal still DIGS through the peel
@@ -25380,6 +25438,64 @@ fn t() {
         assert!(
             !sat,
             "the bad twin `v == 6 AND v == 7` must be UNSAT under z3 (the anchor-flip teeth)"
+        );
+    }
+}
+
+#[test]
+fn match_option_empty_vec_panic_locus_warrants_with_bad_twin() {
+    let good = r#"
+#[test]
+fn t() {
+    let a: Option<Vec<isize>> = Some(vec![]);
+    match a {
+        None => panic!("unexpected None while matching on Some(vec![])"),
+        _ => {}
+    }
+}
+"#;
+    let out_good = lift_file(&parse(good), "tests/nonzero.rs");
+    assert_eq!(
+        out_good.assertions_lifted, 1,
+        "literal Some(vec![]) panic-locus must warrant its option discriminant: {:?}",
+        out_good.skip_reasons
+    );
+    let good_dump = format!("{:?}", single_warranted_decl(&out_good));
+    assert!(
+        good_dump.contains("variant_of") && good_dump.contains("variant::Some"),
+        "panic-locus should pin the literal Option discriminant to Some: {good_dump}"
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out_good)),
+        "option_empty_vec_match_good",
+    ) {
+        assert!(sat, "literal Some(vec![]) panic-locus fact must be SAT");
+    }
+
+    let bad = r#"
+#[test]
+fn t() {
+    let a: Option<Vec<isize>> = Some(vec![]);
+    match a {
+        None => panic!("unexpected None while matching on Some(vec![])"),
+        _ => {}
+    }
+    assert!(matches!(a, core::option::Option::None));
+}
+"#;
+    let out_bad = lift_file(&parse(bad), "tests/nonzero.rs");
+    assert_eq!(
+        out_bad.assertions_lifted, 2,
+        "bad twin must lift both the panic-locus Some fact and explicit None claim: {:?}",
+        out_bad.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out_bad)),
+        "option_empty_vec_match_bad",
+    ) {
+        assert!(
+            !sat,
+            "Some(vec![]) plus an explicit None discriminant must be z3-UNSAT"
         );
     }
 }
