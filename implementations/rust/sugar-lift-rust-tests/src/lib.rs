@@ -1364,6 +1364,7 @@ fn walk_non_test_fns_inner(
                             &m.mac.path,
                             &m.mac.tokens,
                             reducer,
+                            None,
                             "item",
                             options,
                             &mut FloatWidthScope::new(),
@@ -1760,7 +1761,7 @@ fn lift_source_assertion_contracts_in_stmts(
 ) -> usize {
     let plan = temporal_plan_for_stmts(stmts, &BTreeSet::new());
     let scope = TemporalScope::new(item_name, plan)
-        .with_macro_registry(reducer.macro_registry_snapshot())
+        .with_macro_registry(scoped_macro_registry_for_stmts(stmts, reducer))
         .with_fn_registry(reducer.fn_registry_snapshot(&BTreeMap::new()))
         .with_impl_value_registry(reducer.impl_value_registry_snapshot())
         .with_layout_type_registry(reducer.layout_type_registry_snapshot())
@@ -1969,6 +1970,7 @@ fn collect_source_assertion_contract_expr(
             &expr_macro.mac.path,
             &expr_macro.mac.tokens,
             reducer,
+            Some(scope.macro_registry()),
             scope.local_scope(),
             options,
             float_widths,
@@ -2606,6 +2608,22 @@ impl ConstRegistry {
         Self::default()
     }
 
+    fn scan_stmts(&mut self, stmts: &[Stmt]) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Item(Item::Const(c)) => {
+                    self.insert(&c.ident.to_string(), Rc::new((*c.expr).clone()));
+                }
+                Stmt::Item(Item::Mod(m)) => {
+                    if let Some((_, items)) = &m.content {
+                        scan_const_items(items, self);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     pub(crate) fn insert(&mut self, name: &str, expr: Rc<Expr>) {
         if self.ambiguous.contains(name) {
             return;
@@ -2779,6 +2797,29 @@ impl MacroRegistry {
         Self::default()
     }
 
+    fn scan_stmts(&mut self, stmts: &[Stmt]) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Item(Item::Macro(m)) => {
+                    if let Some((ident, tokens)) = declarative_macro_def(m) {
+                        self.insert(&ident, tokens);
+                    }
+                }
+                Stmt::Item(Item::Verbatim(tokens)) => {
+                    if let Some((ident, tokens)) = declarative_verbatim_macro_def(tokens) {
+                        self.insert(&ident, tokens);
+                    }
+                }
+                Stmt::Item(Item::Mod(m)) => {
+                    if let Some((_, items)) = &m.content {
+                        self.scan_items(items);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Ingest every `macro_rules!` definition in a parsed source file (recursing
     /// into inline modules). A name defined inconsistently across sources is
     /// marked ambiguous and not expanded.
@@ -2852,6 +2893,15 @@ impl MacroRegistry {
             self.ambiguous.remove(name);
         }
         self.macros.insert(name.to_string(), rules);
+    }
+
+    fn overlay_all(&mut self, other: &MacroRegistry) {
+        for (name, rules) in &other.macros {
+            if other.ambiguous.contains(name) {
+                continue;
+            }
+            self.insert_rules(name, rules.clone());
+        }
     }
 
     fn lookup(&self, name: &str) -> Option<std::rc::Rc<Vec<macro_expand::MacroRule>>> {
@@ -3390,6 +3440,22 @@ fn temporal_scope_from_reducer(local_scope: &str, reducer: &ReductionCtx<'_>) ->
         .with_const_registry(reducer.const_registry_snapshot())
 }
 
+fn scoped_macro_registry_for_stmts(stmts: &[Stmt], reducer: &ReductionCtx<'_>) -> MacroRegistry {
+    let mut registry = reducer.macro_registry_snapshot();
+    let mut local = MacroRegistry::new();
+    local.scan_stmts(stmts);
+    registry.overlay_all(&local);
+    registry
+}
+
+fn scoped_const_registry_for_stmts(stmts: &[Stmt], reducer: &ReductionCtx<'_>) -> ConstRegistry {
+    let mut registry = reducer.const_registry_snapshot();
+    let mut local = ConstRegistry::new();
+    local.scan_stmts(stmts);
+    registry.merge_all(&local);
+    registry
+}
+
 fn try_item_macro_expansion_items(
     path: &syn::Path,
     tokens: &proc_macro2::TokenStream,
@@ -3470,6 +3536,7 @@ fn try_macro_expansion_entries(
     path: &syn::Path,
     tokens: &proc_macro2::TokenStream,
     reducer: &ReductionCtx<'_>,
+    macro_registry: Option<&MacroRegistry>,
     local_scope: &str,
     options: &LiftOptions,
     float_widths: &mut FloatWidthScope,
@@ -3477,7 +3544,10 @@ fn try_macro_expansion_entries(
     macro_depth: usize,
 ) -> Option<Result<Vec<AssertionEntry>, String>> {
     let name = path.segments.last()?.ident.to_string();
-    let rules = match reducer.macro_rules(&name) {
+    let rules = match macro_registry
+        .and_then(|registry| registry.lookup(&name))
+        .or_else(|| reducer.macro_rules(&name))
+    {
         Some(rules) => {
             tracing::debug!(
                 target: "sugar_lift_rust_tests::macro_match",
@@ -3745,9 +3815,9 @@ fn panic_locus_refusal_reason_from_stmts(stmts: &[Stmt], scope: &TemporalScope) 
 fn panic_locus_surface_shape_from_expr(expr: &Expr, scope: &TemporalScope) -> bool {
     match expr {
         Expr::Match(m) => panic_locus_match_survivor(m, scope)
-            .is_some_and(|(_, pat)| pattern_has_panic_locus_teeth(pat)),
+            .is_some_and(|(_, pat)| pattern_has_panic_locus_teeth(pat, scope)),
         Expr::If(i) => panic_locus_if_survivor(i, scope)
-            .is_some_and(|(_, pat)| pattern_has_panic_locus_teeth(pat)),
+            .is_some_and(|(_, pat)| pattern_has_panic_locus_teeth(pat, scope)),
         Expr::Block(b) => panic_locus_surface_shape_from_stmts(&b.block.stmts, scope),
         Expr::Unsafe(u) => panic_locus_surface_shape_from_stmts(&u.block.stmts, scope),
         Expr::Paren(p) => panic_locus_surface_shape_from_expr(&p.expr, scope),
@@ -8247,7 +8317,7 @@ pub(crate) fn should_panic_temporal_callsite_records(
     let temporal_plan = temporal_plan_for_stmts(stmts, &BTreeSet::new());
     let mut temporal_scope = TemporalScope::new(local_scope, temporal_plan)
         .with_literal_arrays(capture_scalar_literal_arrays(stmts))
-        .with_macro_registry(reducer.macro_registry_snapshot())
+        .with_macro_registry(scoped_macro_registry_for_stmts(stmts, reducer))
         .with_fn_registry(reducer.fn_registry_snapshot(&local_fns))
         .with_impl_value_registry(reducer.impl_value_registry_snapshot())
         .with_layout_type_registry(layout_types)
@@ -9408,6 +9478,7 @@ fn collect_statement_macro_entries<'a>(
         &mac.path,
         &mac.tokens,
         reducer,
+        Some(temporal_scope.macro_registry()),
         local_scope,
         options,
         float_widths,
@@ -9587,6 +9658,151 @@ fn rewrite_while_let_next_if_to_for(w: &syn::ExprWhile, stmts: &[Stmt]) -> Optio
     })
 }
 
+fn rewrite_literal_counter_while_to_for(w: &syn::ExprWhile, scope: &TemporalScope) -> Option<Expr> {
+    let (name, end, inclusive) = while_counter_bound(&w.cond)?;
+    let start = scope
+        .let_bindings_iter()
+        .find_map(|(bound, init)| (bound == &name).then_some(init.clone()))?;
+    let (increment, body_stmts) = w.body.stmts.split_last()?;
+    if !stmt_is_unit_increment(increment, &name)
+        || body_stmts
+            .iter()
+            .any(|stmt| stmt_assigns_simple_name(stmt, &name))
+    {
+        return None;
+    }
+    let ident = proc_macro2::Ident::new(&name, proc_macro2::Span::call_site());
+    let range: Expr = if inclusive {
+        syn::parse_quote! { (#start)..=(#end) }
+    } else {
+        syn::parse_quote! { (#start)..(#end) }
+    };
+    Some(syn::parse_quote! {
+        for #ident in #range {
+            #(#body_stmts)*
+        }
+    })
+}
+
+fn while_counter_bound(cond: &Expr) -> Option<(String, Expr, bool)> {
+    let Expr::Binary(binary) = strip_refs_groups(cond) else {
+        return None;
+    };
+    let name = simple_path_name(&binary.left)?;
+    let inclusive = match binary.op {
+        BinOp::Lt(_) => false,
+        BinOp::Le(_) => true,
+        _ => return None,
+    };
+    Some((name, (*binary.right).clone(), inclusive))
+}
+
+fn stmt_is_unit_increment(stmt: &Stmt, name: &str) -> bool {
+    match stmt {
+        Stmt::Expr(Expr::Binary(binary), _)
+            if matches!(binary.op, BinOp::AddAssign(_))
+                && simple_path_name(&binary.left).as_deref() == Some(name) =>
+        {
+            const_int(&binary.right) == Some(1)
+        }
+        Stmt::Expr(Expr::Assign(assign), _)
+            if simple_path_name(&assign.left).as_deref() == Some(name) =>
+        {
+            let Expr::Binary(rhs) = strip_refs_groups(&assign.right) else {
+                return false;
+            };
+            matches!(rhs.op, BinOp::Add(_))
+                && ((simple_path_name(&rhs.left).as_deref() == Some(name)
+                    && const_int(&rhs.right) == Some(1))
+                    || (simple_path_name(&rhs.right).as_deref() == Some(name)
+                        && const_int(&rhs.left) == Some(1)))
+        }
+        _ => false,
+    }
+}
+
+fn stmt_assigns_simple_name(stmt: &Stmt, name: &str) -> bool {
+    match stmt {
+        Stmt::Expr(Expr::Assign(assign), _) => {
+            simple_path_name(&assign.left).as_deref() == Some(name)
+        }
+        Stmt::Expr(Expr::Binary(binary), _)
+            if matches!(
+                binary.op,
+                BinOp::AddAssign(_)
+                    | BinOp::SubAssign(_)
+                    | BinOp::MulAssign(_)
+                    | BinOp::DivAssign(_)
+                    | BinOp::RemAssign(_)
+                    | BinOp::BitAndAssign(_)
+                    | BinOp::BitOrAssign(_)
+                    | BinOp::BitXorAssign(_)
+                    | BinOp::ShlAssign(_)
+                    | BinOp::ShrAssign(_)
+            ) =>
+        {
+            simple_path_name(&binary.left).as_deref() == Some(name)
+        }
+        Stmt::Expr(Expr::Block(block), _) => block
+            .block
+            .stmts
+            .iter()
+            .any(|stmt| stmt_assigns_simple_name(stmt, name)),
+        Stmt::Expr(Expr::If(expr_if), _) => {
+            expr_if
+                .then_branch
+                .stmts
+                .iter()
+                .any(|stmt| stmt_assigns_simple_name(stmt, name))
+                || expr_if
+                    .else_branch
+                    .as_ref()
+                    .is_some_and(|(_, expr)| expr_contains_assignment_to_name(expr, name))
+        }
+        _ => false,
+    }
+}
+
+fn expr_contains_assignment_to_name(expr: &Expr, name: &str) -> bool {
+    match strip_refs_groups(expr) {
+        Expr::Assign(assign) => simple_path_name(&assign.left).as_deref() == Some(name),
+        Expr::Binary(binary)
+            if matches!(
+                binary.op,
+                BinOp::AddAssign(_)
+                    | BinOp::SubAssign(_)
+                    | BinOp::MulAssign(_)
+                    | BinOp::DivAssign(_)
+                    | BinOp::RemAssign(_)
+                    | BinOp::BitAndAssign(_)
+                    | BinOp::BitOrAssign(_)
+                    | BinOp::BitXorAssign(_)
+                    | BinOp::ShlAssign(_)
+                    | BinOp::ShrAssign(_)
+            ) =>
+        {
+            simple_path_name(&binary.left).as_deref() == Some(name)
+        }
+        Expr::Block(block) => block
+            .block
+            .stmts
+            .iter()
+            .any(|stmt| stmt_assigns_simple_name(stmt, name)),
+        Expr::If(expr_if) => {
+            expr_if
+                .then_branch
+                .stmts
+                .iter()
+                .any(|stmt| stmt_assigns_simple_name(stmt, name))
+                || expr_if
+                    .else_branch
+                    .as_ref()
+                    .is_some_and(|(_, expr)| expr_contains_assignment_to_name(expr, name))
+        }
+        _ => false,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn collect_assertion_entries<'a>(
     stmts: &'a [Stmt],
@@ -9637,7 +9853,7 @@ fn collect_assertion_entries<'a>(
         // Carry the reducer's macro registry so a TERM-POSITION macro (`assert_eq!(
         // add2!(2,3), 5)`) expands at desugar time even through the thin
         // `translate_term_in_scope` adapter (which only gets the scope, not the reducer).
-        .with_macro_registry(reducer.macro_registry_snapshot());
+        .with_macro_registry(scoped_macro_registry_for_stmts(stmts, reducer));
     // `let_bindings` is advanced INCREMENTALLY in the statement loop below (see
     // `record_let_binding`), so a `try_fold` operand resolves the binding in EFFECT at
     // its position -- shadowing-correct. (A block-wide capture would let a LATER
@@ -9675,7 +9891,12 @@ fn collect_assertion_entries<'a>(
     temporal_scope =
         temporal_scope.with_impl_value_registry(reducer.impl_value_registry_snapshot());
     temporal_scope = temporal_scope.with_layout_type_registry(layout_types.clone());
-    temporal_scope = temporal_scope.with_const_registry(reducer.const_registry_snapshot());
+    let const_registry = if macro_depth > 0 {
+        scoped_const_registry_for_stmts(stmts, reducer)
+    } else {
+        reducer.const_registry_snapshot()
+    };
+    temporal_scope = temporal_scope.with_const_registry(const_registry);
     // Map of this block's simple `let <ident> = <init>;` / `let <ident>: T = <init>;`
     // bindings, so sequence sugar can resolve a receiver binding (`it.fold(..)` where
     // `it = xs.iter()`, `xs = [..]`) back through to its literal-array / range domain. A
@@ -10118,21 +10339,26 @@ fn collect_assertion_entries<'a>(
                 // lifts through the SAME for-loop factory path (reduce). The rewrite is
                 // sound only when `it` is consumed solely by this loop (enforced in
                 // `rewrite_while_let_next_if_to_for`); otherwise we fall through to refuse.
-                let lifted = rewrite_while_let_next_if_to_for(w, stmts).and_then(|synth_for| {
-                    let ctx = sugar_ctx_with_factory_audits(
-                        &temporal_scope,
-                        options,
-                        reducer,
-                        float_widths,
-                        macro_depth,
-                        factory_audits,
-                    );
-                    let fcx =
-                        sugar::factory::SugarBuildCtx::new(&temporal_scope, options, &let_inits);
-                    sugar::factory::build_composite(&synth_for, &fcx)
-                        .desugar(&ctx)
-                        .dug()
-                });
+                let lifted = rewrite_while_let_next_if_to_for(w, stmts)
+                    .or_else(|| rewrite_literal_counter_while_to_for(w, &temporal_scope))
+                    .and_then(|synth_for| {
+                        let ctx = sugar_ctx_with_factory_audits(
+                            &temporal_scope,
+                            options,
+                            reducer,
+                            float_widths,
+                            macro_depth,
+                            factory_audits,
+                        );
+                        let fcx = sugar::factory::SugarBuildCtx::new(
+                            &temporal_scope,
+                            options,
+                            &let_inits,
+                        );
+                        sugar::factory::build_composite(&synth_for, &fcx)
+                            .desugar(&ctx)
+                            .dug()
+                    });
                 if let Some(desugared) = lifted {
                     emit_desugared(desugared, entries, macros_lifted);
                 } else {
@@ -16328,6 +16554,78 @@ fn scalar_pattern_entry(
     })
 }
 
+fn const_macro_path_panic_locus_entry(
+    subject: &Expr,
+    pat: &syn::Pat,
+    scope: &TemporalScope,
+) -> Option<AssertionEntry> {
+    if !matches!(strip_refs_groups(subject), Expr::Macro(_))
+        && !matches!(strip_pat_ref_paren(pat), syn::Pat::Macro(_))
+    {
+        return None;
+    }
+    let subject_key = const_path_key_from_expr(subject, scope, 0)?;
+    let pat_key = const_path_key_from_pat(pat, scope, 0)?;
+    if subject_key != pat_key {
+        return None;
+    }
+    let lhs = str_const(format!("const::{subject_key}"));
+    let rhs = str_const(format!("const::{pat_key}"));
+    Some(assertion_entry_from_eq(lhs, rhs, scope))
+}
+
+fn const_path_key_from_expr(expr: &Expr, scope: &TemporalScope, depth: usize) -> Option<String> {
+    if depth > MAX_MACRO_EXPANSION_DEPTH {
+        return None;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Path(path) => const_like_path_key(&const_path_key(&path.path)?),
+        Expr::Macro(m) => expanded_const_path_key(&m.mac.path, &m.mac.tokens, scope, depth + 1),
+        _ => None,
+    }
+}
+
+fn const_path_key_from_pat(pat: &syn::Pat, scope: &TemporalScope, depth: usize) -> Option<String> {
+    if depth > MAX_MACRO_EXPANSION_DEPTH {
+        return None;
+    }
+    match strip_pat_ref_paren(pat) {
+        syn::Pat::Path(path) => const_like_path_key(&const_path_key(&path.path)?),
+        syn::Pat::Macro(m) => expanded_const_path_key(&m.mac.path, &m.mac.tokens, scope, depth + 1),
+        _ => None,
+    }
+}
+
+fn expanded_const_path_key(
+    path: &syn::Path,
+    tokens: &proc_macro2::TokenStream,
+    scope: &TemporalScope,
+    depth: usize,
+) -> Option<String> {
+    let name = path.segments.last()?.ident.to_string();
+    let rules = scope.macro_registry().lookup(&name)?;
+    let expanded = macro_expand::expand(&rules, tokens.clone()).ok()?;
+    if let Ok(expr) = syn::parse2::<Expr>(expanded.clone()) {
+        return const_path_key_from_expr(&expr, scope, depth);
+    }
+    let parser = syn::Pat::parse_single;
+    if let Ok(pat) = Parser::parse2(parser, expanded.clone()) {
+        return const_path_key_from_pat(&pat, scope, depth);
+    }
+    if let Ok(path) = syn::parse2::<syn::Path>(expanded) {
+        return const_like_path_key(&const_path_key(&path)?);
+    }
+    None
+}
+
+fn const_like_path_key(key: &str) -> Option<String> {
+    let last = key.rsplit("::").next()?;
+    last.chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_uppercase())
+        .then(|| key.to_string())
+}
+
 fn scalar_pattern_atom(subject: &Rc<Term>, pat: &syn::Pat) -> Option<Rc<Formula>> {
     match strip_pat_ref_paren(pat) {
         syn::Pat::Lit(lit) => Some(eq(subject.clone(), lit_membership_term(&lit.lit)?)),
@@ -16345,11 +16643,14 @@ fn scalar_pattern_atom(subject: &Rc<Term>, pat: &syn::Pat) -> Option<Rc<Formula>
     }
 }
 
-fn pattern_has_panic_locus_teeth(pat: &syn::Pat) -> bool {
+fn pattern_has_panic_locus_teeth(pat: &syn::Pat, scope: &TemporalScope) -> bool {
     if pattern_variant_path(pat).is_some() {
         return true;
     }
-    scalar_pattern_has_teeth(pat) || tuple_pattern_has_teeth(pat)
+    scalar_pattern_has_teeth(pat)
+        || tuple_pattern_has_teeth(pat)
+        || (matches!(strip_pat_ref_paren(pat), syn::Pat::Macro(_))
+            && const_path_key_from_pat(pat, scope, 0).is_some())
 }
 
 fn scalar_pattern_has_teeth(pat: &syn::Pat) -> bool {
@@ -16433,6 +16734,9 @@ fn panic_locus_pattern_entry(
     pattern: &syn::Pat,
     scope: &TemporalScope,
 ) -> Option<AssertionEntry> {
+    if let Some(entry) = const_macro_path_panic_locus_entry(subject, pattern, scope) {
+        return Some(entry);
+    }
     if let Some(variant) = pattern_variant_path(pattern) {
         return panic_locus_entry(subject, &variant, scope);
     }
@@ -16486,7 +16790,7 @@ fn panic_locus_subject_refusal_reason(
     pattern: &syn::Pat,
     scope: &TemporalScope,
 ) -> Option<String> {
-    if !pattern_has_panic_locus_teeth(pattern)
+    if !pattern_has_panic_locus_teeth(pattern, scope)
         || panic_locus_pattern_entry(subject, pattern, scope).is_some()
     {
         return None;

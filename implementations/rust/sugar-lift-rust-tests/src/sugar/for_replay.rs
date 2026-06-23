@@ -396,11 +396,50 @@ fn body_has_pointwise_assert_replay_shape(stmts: &[Stmt], require_binding: bool)
             {
                 saw_assert = true;
             }
+            Stmt::Expr(Expr::If(expr_if), _) if if_stmt_has_pointwise_assert(expr_if) => {
+                saw_assert = true;
+            }
             Stmt::Item(_) => {}
             _ => return false,
         }
     }
     saw_assert && (!require_binding || saw_replay_binding)
+}
+
+fn if_stmt_has_pointwise_assert(expr_if: &syn::ExprIf) -> bool {
+    fn stmts_ok(stmts: &[Stmt]) -> Option<bool> {
+        let mut saw_assert = false;
+        for stmt in stmts {
+            match stmt {
+                Stmt::Macro(stmt_macro) if macro_is_assertion_surface(&stmt_macro.mac) => {
+                    saw_assert = true;
+                }
+                Stmt::Expr(Expr::Macro(expr_macro), _)
+                    if macro_is_assertion_surface(&expr_macro.mac) =>
+                {
+                    saw_assert = true;
+                }
+                Stmt::Expr(Expr::If(expr_if), _) if if_stmt_has_pointwise_assert(expr_if) => {
+                    saw_assert = true;
+                }
+                Stmt::Item(_) => {}
+                _ => return None,
+            }
+        }
+        Some(saw_assert)
+    }
+
+    if stmts_ok(&expr_if.then_branch.stmts).unwrap_or(false) {
+        return true;
+    }
+    let Some((_, else_branch)) = &expr_if.else_branch else {
+        return false;
+    };
+    match strip_refs_groups(else_branch) {
+        Expr::Block(block) => stmts_ok(&block.block.stmts).unwrap_or(false),
+        Expr::If(nested) => if_stmt_has_pointwise_assert(nested),
+        _ => false,
+    }
 }
 
 fn body_has_const_if_local_replay_shape(stmts: &[Stmt]) -> bool {
