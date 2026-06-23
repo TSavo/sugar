@@ -121,17 +121,24 @@ impl CollectPlan {
                     )
                     .collect();
                 let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-                let base = method_family::build_literal_sequence_composite(base_expr, &fcx)
-                    .unwrap_or_else(|| build_composite(base_expr, &fcx));
-                let seq = match base.desugar(ctx) {
-                    Outcome::Dug(d) => match d.into_seq() {
-                        Some(seq) => seq,
-                        None => return Ok(None),
-                    },
-                    Outcome::Hit(effect) => match empty_literal_sequence(base_expr, ctx) {
-                        Some(seq) => seq,
-                        None => return Err(effect),
-                    },
+                let seq = if method_family::literal_sequence_static_len_in_scope(
+                    base_expr, &let_inits, ctx.scope,
+                ) == Some(0)
+                {
+                    Vec::new()
+                } else {
+                    let base = method_family::build_literal_sequence_composite(base_expr, &fcx)
+                        .unwrap_or_else(|| build_composite(base_expr, &fcx));
+                    match base.desugar(ctx) {
+                        Outcome::Dug(d) => match d.into_seq() {
+                            Some(seq) => seq,
+                            None => return Ok(None),
+                        },
+                        Outcome::Hit(effect) => match empty_literal_sequence(base_expr, ctx) {
+                            Some(seq) => seq,
+                            None => return Err(effect),
+                        },
+                    }
                 };
                 let Some(collected) = seq
                     .iter()
@@ -163,17 +170,24 @@ impl CollectPlan {
                     )
                     .collect();
                 let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-                let base = method_family::build_literal_sequence_composite(base_expr, &fcx)
-                    .unwrap_or_else(|| build_composite(base_expr, &fcx));
-                let seq = match base.desugar(ctx) {
-                    Outcome::Dug(d) => match d.into_seq() {
-                        Some(seq) => seq,
-                        None => return Ok(None),
-                    },
-                    Outcome::Hit(effect) => match empty_literal_sequence(base_expr, ctx) {
-                        Some(seq) => seq,
-                        None => return Err(effect),
-                    },
+                let seq = if method_family::literal_sequence_static_len_in_scope(
+                    base_expr, &let_inits, ctx.scope,
+                ) == Some(0)
+                {
+                    Vec::new()
+                } else {
+                    let base = method_family::build_literal_sequence_composite(base_expr, &fcx)
+                        .unwrap_or_else(|| build_composite(base_expr, &fcx));
+                    match base.desugar(ctx) {
+                        Outcome::Dug(d) => match d.into_seq() {
+                            Some(seq) => seq,
+                            None => return Ok(None),
+                        },
+                        Outcome::Hit(effect) => match empty_literal_sequence(base_expr, ctx) {
+                            Some(seq) => seq,
+                            None => return Err(effect),
+                        },
+                    }
                 };
                 let mut collected = Vec::with_capacity(seq.len());
                 for elem in seq {

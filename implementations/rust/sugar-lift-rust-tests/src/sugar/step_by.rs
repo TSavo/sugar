@@ -11,8 +11,9 @@ use std::collections::BTreeMap;
 use syn::Expr;
 
 use crate::sugar::factory::{has_composite, SugarBuildCtx};
+use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::method_family;
-use crate::{const_int, Desugared, Outcome, Sugar, SugarCtx};
+use crate::{const_int, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("step_by", recognize_composite);
@@ -73,11 +74,20 @@ impl Sugar for StepByRecognizedSugar {
                 )
                 .collect();
             let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-            let seq = method_family::build_literal_sequence_composite(&self.receiver, &fcx)?
-                .desugar(ctx)
-                .dug()
-                .and_then(|d| d.into_seq())
-                .or_else(|| method_family::finite_int_iter_sequence(&self.source))?;
+            let seq = if method_family::literal_sequence_static_len_in_scope(
+                &self.receiver,
+                &let_inits,
+                ctx.scope,
+            ) == Some(0)
+            {
+                Vec::new()
+            } else {
+                let outcome =
+                    method_family::build_literal_sequence_composite(&self.receiver, &fcx)?
+                        .desugar(ctx);
+                seq_or_empty(outcome)
+                    .or_else(|| method_family::finite_int_iter_sequence(&self.source))?
+            };
             let out = seq.into_iter().step_by(self.n).collect();
             Some(Desugared::Seq(out))
         })())
@@ -97,18 +107,23 @@ impl Sugar for StepBySugar {
             if self.n == 0 {
                 return None;
             }
-            let seq = self
-                .inner
-                .desugar(ctx)
-                .dug()
-                .and_then(|d| d.into_seq())
-                .or_else(|| {
-                    self.source
-                        .as_ref()
-                        .and_then(method_family::finite_int_iter_sequence)
-                })?;
+            let seq = seq_or_empty(self.inner.desugar(ctx)).or_else(|| {
+                self.source
+                    .as_ref()
+                    .and_then(method_family::finite_int_iter_sequence)
+            })?;
             let out = seq.into_iter().step_by(self.n).collect();
             Some(Desugared::Seq(out))
         })())
+    }
+}
+
+fn seq_or_empty(outcome: Outcome) -> Option<Vec<DesugaredElem>> {
+    match outcome {
+        Outcome::Dug(d) => d.into_seq(),
+        Outcome::Hit(Effect::Unsupported { reason }) if reason == EMPTY_DOMAIN_REASON => {
+            Some(Vec::new())
+        }
+        Outcome::Hit(_) => None,
     }
 }

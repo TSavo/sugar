@@ -125,6 +125,18 @@ impl Sugar for IsEmptySugar {
             );
             return Outcome::Dug(Desugared::Term(bool_const(value)));
         }
+        if method_family::literal_sequence_static_len_in_scope(
+            &self.receiver,
+            &let_inits,
+            ctx.scope,
+        ) == Some(0)
+        {
+            debug!(
+                target: "sugar_lift_rust_tests::sugar::is_empty",
+                "resolved zero-length literal-sequence is_empty stdlib axiom to true"
+            );
+            return Outcome::Dug(Desugared::Term(bool_const(true)));
+        }
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
         let value = match build_composite(&self.receiver, &fcx).desugar(ctx) {
             Outcome::Dug(d) => match d.into_seq() {

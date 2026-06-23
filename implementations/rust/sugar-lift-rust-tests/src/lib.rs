@@ -531,6 +531,7 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         || reason.contains("literal char range")
         || reason.contains("literal range bound is not text-determined")
         || reason.contains("literal array element is not text-determined")
+        || reason.contains("RangeBounds over runtime value")
     {
         return Disposition::Refused;
     }
@@ -8106,6 +8107,12 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
             macro_depth: MAX_VALUE_CALL_INLINE_DEPTH,
         };
         let dig_child = |expr: &Expr| -> Option<Rc<Term>> {
+            if sugar::method_family::literal_sequence_static_len_in_scope(
+                expr, &let_inits, self.scope,
+            ) == Some(0)
+            {
+                return callsite_child_fallback_term(expr, self.scope);
+            }
             match sugar::factory::build_term(expr, &fcx).desugar(&child) {
                 Outcome::Dug(d) => d.into_term(),
                 Outcome::Hit(_) => callsite_child_fallback_term(expr, self.scope),
@@ -10221,7 +10228,15 @@ fn collect_assertion_entries<'a>(
                             options,
                             &let_inits,
                         );
-                        if sugar::factory::has_composite(&init.expr, &fcx) {
+                        let zero_len_literal_sequence =
+                            sugar::method_family::literal_sequence_static_len_in_scope(
+                                &init.expr,
+                                &let_inits,
+                                &temporal_scope,
+                            ) == Some(0);
+                        if !zero_len_literal_sequence
+                            && sugar::factory::has_composite(&init.expr, &fcx)
+                        {
                             Some(sugar::factory::build_composite(&init.expr, &fcx).desugar(&ctx))
                         } else {
                             None

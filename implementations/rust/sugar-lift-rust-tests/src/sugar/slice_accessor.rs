@@ -267,6 +267,11 @@ fn structural_effect() -> Effect {
 }
 
 fn runtime_source_effect(expr: &Expr, fcx: &SugarBuildCtx) -> Effect {
+    if let Some(name) = range_bounds_receiver_name(expr, fcx) {
+        return Effect::Unsupported {
+            reason: format!("RangeBounds over runtime value {name}"),
+        };
+    }
     let reason = if chunk_window_source_shape(expr, fcx, 0) {
         format!(
             "chunk source is runtime slice, not literal `{}`",
@@ -321,6 +326,50 @@ fn runtime_index_effect(expr: &Expr) -> Effect {
             "runtime slice index, not literal `{}`",
             strip_refs_groups(expr).to_token_stream()
         ),
+    }
+}
+
+fn range_bounds_receiver_name(expr: &Expr, fcx: &SugarBuildCtx) -> Option<String> {
+    match strip_refs_groups(expr) {
+        Expr::Path(path) if path.qself.is_none() => {
+            let name = path.path.get_ident()?.to_string();
+            let init = fcx
+                .let_inits()
+                .get(&name)
+                .copied()
+                .or_else(|| fcx.scope().stable_let_binding_for_term(&name))?;
+            is_range_bounds_tuple(init).then_some(name)
+        }
+        Expr::Tuple(_) if is_range_bounds_tuple(expr) => {
+            Some(strip_refs_groups(expr).to_token_stream().to_string())
+        }
+        _ => None,
+    }
+}
+
+fn is_range_bounds_tuple(expr: &Expr) -> bool {
+    let Expr::Tuple(tuple) = strip_refs_groups(expr) else {
+        return false;
+    };
+    tuple.elems.len() == 2 && tuple.elems.iter().all(is_bound_ctor_expr)
+}
+
+fn is_bound_ctor_expr(expr: &Expr) -> bool {
+    match strip_refs_groups(expr) {
+        Expr::Path(path) => path
+            .path
+            .segments
+            .last()
+            .is_some_and(|seg| seg.ident == "Unbounded"),
+        Expr::Call(call) if call.args.len() == 1 => {
+            let Expr::Path(path) = strip_refs_groups(&call.func) else {
+                return false;
+            };
+            path.path.segments.last().is_some_and(|seg| {
+                matches!(seg.ident.to_string().as_str(), "Included" | "Excluded")
+            })
+        }
+        _ => false,
     }
 }
 
