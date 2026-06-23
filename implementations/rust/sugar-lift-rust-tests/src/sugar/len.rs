@@ -81,7 +81,7 @@ impl Sugar for LenSugar {
                 }
                 return reasoned_incomplete(format!(
                     "consumed-iterator local `{name}` -- \
-                     `.len()` returns stale pre-consumption length (temporal instability)"
+                     `.len()` is a temporally unstable stale pre-consumption length read"
                 ))
                 .desugar(ctx);
             }
