@@ -87,6 +87,7 @@ pub mod sugar {
     pub mod filter_map;
     pub mod flat_map;
     pub mod flatten;
+    pub mod float_literal_method;
     pub mod float_refinement;
     pub mod fold;
     pub mod for_each;
@@ -727,6 +728,12 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // resolves a width and lifts, never reaching this reason (the fake-refuse
         // guardrail). Typed as `UnknownFloatWidthEffect`.
         || reason.contains("requires known f32/f64 receiver width")
+        // TERMINAL: exact float-bit literal sugar only computes when the float operand
+        // or bit operand is text-determined. A runtime float/bit source has no literal
+        // IEEE pattern to read from the source text.
+        || reason.contains("runtime float operand, not literal")
+        || reason.contains("f16/f128 float bit model is not expressible")
+        || reason.contains("float bit pattern is not expressible as a finite Real literal")
         // TERMINAL: a GENERIC type/const-parametric helper (`fn test_num<T: Add..>`,
         // `fn check_size_hint<const N: usize>`, `fn inner<SuppressConstPromotion>`,
         // `fn test_parse<T: FromStr>`). Its asserts are written over the type/const
