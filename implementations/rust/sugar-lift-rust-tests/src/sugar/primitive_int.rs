@@ -17,12 +17,20 @@ use crate::sugar::monadic::{none_term, some_term};
 use crate::sugar::nonzero::nonzero_assoc_const_expr;
 use crate::sugar::option_unwrap::is_known_monadic_source;
 use crate::{
-    const_fold_int_term, const_fold_u128_term, simple_path_name, strip_refs_groups, u128_term,
-    Desugared, Outcome, Sugar, SugarCtx,
+    bool_const, canonical_term_sig, const_fold_int_term, const_fold_u128_term, simple_path_name,
+    strip_refs_groups, u128_term, Desugared, Effect, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("primitive_int", SugarRole::Term, recognize);
+
+pub(crate) const TUPLE_PRODUCER_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "primitive_int_tuple_producer",
+    SugarRole::TupleProducer,
+    recognize_tuple_producer,
+);
+
+const RUNTIME_OPERAND_REASON: &str = "runtime operand, not literal";
 
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::MethodCall(call) = expr else {
@@ -53,35 +61,56 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
         {
             Kind::Max(call.args[0].clone())
         }
-        ("checked_add", 1) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
+        ("checked_add", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
             Kind::Checked(CheckedOp::Add, call.args[0].clone())
         }
-        ("checked_sub", 1) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
+        ("checked_sub", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
             Kind::Checked(CheckedOp::Sub, call.args[0].clone())
         }
-        ("checked_mul", 1) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
+        ("checked_mul", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
             Kind::Checked(CheckedOp::Mul, call.args[0].clone())
         }
-        ("checked_div", 1) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
+        ("checked_pow", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
+            Kind::Checked(CheckedOp::Pow, call.args[0].clone())
+        }
+        ("checked_div", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
             Kind::Checked(CheckedOp::Div, call.args[0].clone())
         }
-        ("wrapping_add", 1)
-            if integer_receiver_can_ground(&call.receiver, fcx, 0)
-                && integer_receiver_can_ground(&call.args[0], fcx, 0) =>
-        {
+        ("saturating_add", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
+            Kind::Saturating(SaturatingOp::Add, call.args[0].clone())
+        }
+        ("saturating_sub", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
+            Kind::Saturating(SaturatingOp::Sub, call.args[0].clone())
+        }
+        ("saturating_mul", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
+            Kind::Saturating(SaturatingOp::Mul, call.args[0].clone())
+        }
+        ("saturating_pow", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
+            Kind::Saturating(SaturatingOp::Pow, call.args[0].clone())
+        }
+        ("overflowing_add", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
+            Kind::Overflowing(OverflowingOp::Add, call.args[0].clone())
+        }
+        ("overflowing_sub", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
+            Kind::Overflowing(OverflowingOp::Sub, call.args[0].clone())
+        }
+        ("overflowing_mul", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
+            Kind::Overflowing(OverflowingOp::Mul, call.args[0].clone())
+        }
+        ("overflowing_pow", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
+            Kind::Overflowing(OverflowingOp::Pow, call.args[0].clone())
+        }
+        ("wrapping_add", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
             Kind::Wrapping(WrappingOp::Add, call.args[0].clone())
         }
-        ("wrapping_sub", 1)
-            if integer_receiver_can_ground(&call.receiver, fcx, 0)
-                && integer_receiver_can_ground(&call.args[0], fcx, 0) =>
-        {
+        ("wrapping_sub", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
             Kind::Wrapping(WrappingOp::Sub, call.args[0].clone())
         }
-        ("wrapping_mul", 1)
-            if integer_receiver_can_ground(&call.receiver, fcx, 0)
-                && integer_receiver_can_ground(&call.args[0], fcx, 0) =>
-        {
+        ("wrapping_mul", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
             Kind::Wrapping(WrappingOp::Mul, call.args[0].clone())
+        }
+        ("wrapping_pow", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
+            Kind::Wrapping(WrappingOp::Pow, call.args[0].clone())
         }
         ("abs", 0) if numeric_receiver_can_ground(&call.receiver, fcx, 0) => Kind::Abs,
         ("signum", 0) if numeric_receiver_can_ground(&call.receiver, fcx, 0) => Kind::Signum,
@@ -94,6 +123,34 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
         kind,
         let_inits: capture_let_inits(fcx),
     }))
+}
+
+fn recognize_tuple_producer(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let Expr::MethodCall(call) = expr else {
+        return None;
+    };
+    if call.args.len() != 1 || !integer_binary_candidate(&call.receiver, &call.args[0], fcx) {
+        return None;
+    }
+    let op = match call.method.to_string().as_str() {
+        "overflowing_add" => OverflowingOp::Add,
+        "overflowing_sub" => OverflowingOp::Sub,
+        "overflowing_mul" => OverflowingOp::Mul,
+        "overflowing_pow" => OverflowingOp::Pow,
+        _ => return None,
+    };
+    Some(Box::new(PrimitiveIntTupleProducer {
+        method: call.method.to_string(),
+        receiver_expr: (*call.receiver).clone(),
+        receiver: (*call.receiver).clone(),
+        rhs: call.args[0].clone(),
+        op,
+        let_inits: capture_let_inits(fcx),
+    }))
+}
+
+fn integer_binary_candidate(receiver: &Expr, rhs: &Expr, fcx: &SugarBuildCtx) -> bool {
+    integer_receiver_can_ground(receiver, fcx, 0) || integer_receiver_can_ground(rhs, fcx, 0)
 }
 
 fn integer_receiver_can_ground(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
@@ -146,9 +203,19 @@ fn integer_receiver_can_ground(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -
                     | "checked_sub"
                     | "checked_mul"
                     | "checked_div"
+                    | "checked_pow"
                     | "wrapping_add"
                     | "wrapping_sub"
                     | "wrapping_mul"
+                    | "wrapping_pow"
+                    | "saturating_add"
+                    | "saturating_sub"
+                    | "saturating_mul"
+                    | "saturating_pow"
+                    | "overflowing_add"
+                    | "overflowing_sub"
+                    | "overflowing_mul"
+                    | "overflowing_pow"
                     | "abs"
                     | "signum"
             ) =>
@@ -204,6 +271,8 @@ enum Kind {
     Max(Expr),
     Checked(CheckedOp, Expr),
     Wrapping(WrappingOp, Expr),
+    Saturating(SaturatingOp, Expr),
+    Overflowing(OverflowingOp, Expr),
     Abs,
     Signum,
 }
@@ -221,6 +290,7 @@ enum CheckedOp {
     Sub,
     Mul,
     Div,
+    Pow,
 }
 
 #[derive(Clone, Copy)]
@@ -228,6 +298,23 @@ enum WrappingOp {
     Add,
     Sub,
     Mul,
+    Pow,
+}
+
+#[derive(Clone, Copy)]
+enum SaturatingOp {
+    Add,
+    Sub,
+    Mul,
+    Pow,
+}
+
+#[derive(Clone, Copy)]
+enum OverflowingOp {
+    Add,
+    Sub,
+    Mul,
+    Pow,
 }
 
 struct PrimitiveIntSugar {
@@ -235,6 +322,15 @@ struct PrimitiveIntSugar {
     receiver_expr: Expr,
     receiver: Expr,
     kind: Kind,
+    let_inits: BTreeMap<String, Expr>,
+}
+
+struct PrimitiveIntTupleProducer {
+    method: String,
+    receiver_expr: Expr,
+    receiver: Expr,
+    rhs: Expr,
+    op: OverflowingOp,
     let_inits: BTreeMap<String, Expr>,
 }
 
@@ -264,6 +360,46 @@ fn desugar_term_expr(
     match build_term(expr, fcx).desugar(ctx) {
         Outcome::Dug(d) => d.into_term().ok_or_else(|| Outcome::from_opt(None)),
         Outcome::Hit(e) => Err(Outcome::Hit(e)),
+    }
+}
+
+fn runtime_operand_hit() -> Outcome {
+    Outcome::Hit(Effect::Unsupported {
+        reason: RUNTIME_OPERAND_REASON.to_string(),
+    })
+}
+
+impl Sugar for PrimitiveIntTupleProducer {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
+        let let_inits = merge_let_inits(&stable, &self.let_inits);
+        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        let receiver = match desugar_term_expr(&self.receiver, ctx, &fcx) {
+            Ok(term) => term,
+            Err(outcome) => return outcome,
+        };
+        let rhs = match desugar_term_expr(&self.rhs, ctx, &fcx) {
+            Ok(term) => term,
+            Err(outcome) => return outcome,
+        };
+        let lhs_u128 = const_fold_u128_term(&receiver);
+        let lhs_i128 = const_fold_int_term(&receiver);
+        let kind_hint = integer_kind_hint_in_scope(&self.receiver_expr, &fcx, 0);
+        let Some((value, overflow)) =
+            overflowing_int_op_terms(lhs_i128, lhs_u128, &rhs, self.op, kind_hint)
+        else {
+            return runtime_operand_hit();
+        };
+        debug!(
+            target: "sugar_lift_rust_tests::sugar::primitive_int",
+            method = self.method.as_str(),
+            overflow,
+            "resolved primitive overflowing integer tuple producer"
+        );
+        Outcome::Dug(Desugared::TupleComponents(vec![
+            value,
+            bool_const(overflow),
+        ]))
     }
 }
 
@@ -370,12 +506,12 @@ impl Sugar for PrimitiveIntSugar {
                     let Some(lhs) =
                         lhs_u128.or_else(|| lhs_i128.and_then(|n| u128::try_from(n).ok()))
                     else {
-                        return Outcome::from_opt(None);
+                        return runtime_operand_hit();
                     };
                     let Some(rhs) = const_fold_u128_term(&rhs)
                         .or_else(|| const_fold_int_term(&rhs).and_then(|n| u128::try_from(n).ok()))
                     else {
-                        return Outcome::from_opt(None);
+                        return runtime_operand_hit();
                     };
                     let value = if matches!(&self.kind, Kind::Min(_)) {
                         lhs.min(rhs)
@@ -393,10 +529,10 @@ impl Sugar for PrimitiveIntSugar {
                     return Outcome::Dug(Desugared::Term(u128_term(value)));
                 }
                 let Some(lhs) = lhs_i128 else {
-                    return Outcome::from_opt(None);
+                    return runtime_operand_hit();
                 };
                 let Some(rhs) = const_fold_int_term(&rhs) else {
-                    return Outcome::from_opt(None);
+                    return runtime_operand_hit();
                 };
                 let value = if matches!(&self.kind, Kind::Min(_)) {
                     lhs.min(rhs)
@@ -472,7 +608,7 @@ impl Sugar for PrimitiveIntSugar {
                 };
                 let Some(term) = wrapping_int_op_term(lhs_i128, lhs_u128, &rhs, *op, kind_hint)
                 else {
-                    return Outcome::from_opt(None);
+                    return runtime_operand_hit();
                 };
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::primitive_int",
@@ -482,6 +618,47 @@ impl Sugar for PrimitiveIntSugar {
                     "resolved primitive wrapping integer axiom"
                 );
                 Outcome::Dug(Desugared::Term(term))
+            }
+            Kind::Saturating(op, rhs) => {
+                let rhs = match desugar_term_expr(rhs, ctx, &fcx) {
+                    Ok(term) => term,
+                    Err(outcome) => return outcome,
+                };
+                let Some(term) = saturating_int_op_term(lhs_i128, lhs_u128, &rhs, *op, kind_hint)
+                else {
+                    return runtime_operand_hit();
+                };
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::primitive_int",
+                    method = self.method.as_str(),
+                    lhs_i128 = ?lhs_i128,
+                    lhs_u128 = ?lhs_u128,
+                    "resolved primitive saturating integer axiom"
+                );
+                Outcome::Dug(Desugared::Term(term))
+            }
+            Kind::Overflowing(op, rhs) => {
+                let rhs = match desugar_term_expr(rhs, ctx, &fcx) {
+                    Ok(term) => term,
+                    Err(outcome) => return outcome,
+                };
+                let Some((value, overflow)) =
+                    overflowing_int_op_terms(lhs_i128, lhs_u128, &rhs, *op, kind_hint)
+                else {
+                    return runtime_operand_hit();
+                };
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::primitive_int",
+                    method = self.method.as_str(),
+                    lhs_i128 = ?lhs_i128,
+                    lhs_u128 = ?lhs_u128,
+                    overflow,
+                    "resolved primitive overflowing integer axiom"
+                );
+                Outcome::Dug(Desugared::Term(tuple_term(vec![
+                    value,
+                    bool_const(overflow),
+                ])))
             }
             Kind::Abs => {
                 if let Some(value) = const_fold_real_term(&receiver) {
@@ -544,7 +721,16 @@ fn checked_u128(lhs: u128, rhs: u128, op: CheckedOp) -> Option<u128> {
         CheckedOp::Sub => lhs.checked_sub(rhs),
         CheckedOp::Mul => lhs.checked_mul(rhs),
         CheckedOp::Div => (rhs != 0).then(|| lhs / rhs),
+        CheckedOp::Pow => checked_pow_u128(lhs, u32::try_from(rhs).ok()?),
     }
+}
+
+fn checked_pow_u128(lhs: u128, exp: u32) -> Option<u128> {
+    let mut acc = 1u128;
+    for _ in 0..exp {
+        acc = acc.checked_mul(lhs)?;
+    }
+    Some(acc)
 }
 
 #[derive(Clone, Copy)]
@@ -576,7 +762,16 @@ fn checked_i128(lhs: i128, rhs: i128, op: CheckedOp) -> Option<i128> {
                 lhs.checked_div(rhs)
             }
         }
+        CheckedOp::Pow => checked_pow_i128(lhs, u32::try_from(rhs).ok()?),
     }
+}
+
+fn checked_pow_i128(lhs: i128, exp: u32) -> Option<i128> {
+    let mut acc = 1i128;
+    for _ in 0..exp {
+        acc = acc.checked_mul(lhs)?;
+    }
+    Some(acc)
 }
 
 fn wrapping_int_op_term(
@@ -616,8 +811,280 @@ fn apply_wrapping_raw(lhs: u128, rhs: u128, bits: u32, op: WrappingOp) -> Option
         WrappingOp::Add => lhs.wrapping_add(rhs),
         WrappingOp::Sub => lhs.wrapping_sub(rhs),
         WrappingOp::Mul => lhs.wrapping_mul(rhs),
+        WrappingOp::Pow => {
+            let exp = u32::try_from(rhs).ok()?;
+            let mut acc = 1u128;
+            for _ in 0..exp {
+                acc = acc.wrapping_mul(lhs) & mask;
+            }
+            acc
+        }
     };
     Some(value & mask)
+}
+
+fn saturating_int_op_term(
+    lhs_i128: Option<i128>,
+    lhs_u128: Option<u128>,
+    rhs: &Rc<Term>,
+    op: SaturatingOp,
+    kind: Option<IntegerKind>,
+) -> Option<Rc<Term>> {
+    let kind = kind?;
+    if kind.signed {
+        let lhs = lhs_i128?;
+        if !fits_kind(lhs, kind) {
+            return None;
+        }
+        let (min, max) = signed_bounds(kind.bits);
+        let value = match op {
+            SaturatingOp::Add => {
+                let rhs = signed_rhs(rhs, kind)?;
+                saturating_signed_add(lhs, rhs, min, max)
+            }
+            SaturatingOp::Sub => {
+                let rhs = signed_rhs(rhs, kind)?;
+                saturating_signed_sub(lhs, rhs, min, max)
+            }
+            SaturatingOp::Mul => {
+                let rhs = signed_rhs(rhs, kind)?;
+                saturating_signed_mul(lhs, rhs, min, max)
+            }
+            SaturatingOp::Pow => {
+                let exp = rhs_exponent(rhs)?;
+                let mut acc = 1i128;
+                for _ in 0..exp {
+                    acc = saturating_signed_mul(acc, lhs, min, max);
+                }
+                acc
+            }
+        };
+        return Some(num(value));
+    }
+
+    let max = mask_for_bits(kind.bits)?;
+    let lhs = unsigned_lhs(lhs_i128, lhs_u128, kind)?;
+    let raw = match op {
+        SaturatingOp::Add => {
+            let rhs = unsigned_rhs(rhs, kind)?;
+            lhs.checked_add(rhs)
+                .filter(|value| *value <= max)
+                .unwrap_or(max)
+        }
+        SaturatingOp::Sub => {
+            let rhs = unsigned_rhs(rhs, kind)?;
+            lhs.saturating_sub(rhs)
+        }
+        SaturatingOp::Mul => {
+            let rhs = unsigned_rhs(rhs, kind)?;
+            lhs.checked_mul(rhs)
+                .filter(|value| *value <= max)
+                .unwrap_or(max)
+        }
+        SaturatingOp::Pow => {
+            let exp = rhs_exponent(rhs)?;
+            let mut acc = 1u128;
+            for _ in 0..exp {
+                acc = acc
+                    .checked_mul(lhs)
+                    .filter(|value| *value <= max)
+                    .unwrap_or(max);
+            }
+            acc
+        }
+    };
+    term_for_unsigned_raw(raw, kind)
+}
+
+fn overflowing_int_op_terms(
+    lhs_i128: Option<i128>,
+    lhs_u128: Option<u128>,
+    rhs: &Rc<Term>,
+    op: OverflowingOp,
+    kind: Option<IntegerKind>,
+) -> Option<(Rc<Term>, bool)> {
+    let kind = kind?;
+    if kind.signed {
+        let lhs = lhs_i128?;
+        if !fits_kind(lhs, kind) {
+            return None;
+        }
+        let (value, overflow) = match op {
+            OverflowingOp::Add => {
+                let rhs = signed_rhs(rhs, kind)?;
+                overflowing_signed_add(lhs, rhs, kind)?
+            }
+            OverflowingOp::Sub => {
+                let rhs = signed_rhs(rhs, kind)?;
+                overflowing_signed_sub(lhs, rhs, kind)?
+            }
+            OverflowingOp::Mul => {
+                let rhs = signed_rhs(rhs, kind)?;
+                overflowing_signed_mul(lhs, rhs, kind)?
+            }
+            OverflowingOp::Pow => {
+                let exp = rhs_exponent(rhs)?;
+                let mut acc = 1i128;
+                let mut overflow = false;
+                for _ in 0..exp {
+                    let (next, step_overflow) = overflowing_signed_mul(acc, lhs, kind)?;
+                    acc = next;
+                    overflow |= step_overflow;
+                }
+                (acc, overflow)
+            }
+        };
+        return Some((num(value), overflow));
+    }
+
+    let lhs = unsigned_lhs(lhs_i128, lhs_u128, kind)?;
+    let (raw, overflow) = match op {
+        OverflowingOp::Add => {
+            let rhs = unsigned_rhs(rhs, kind)?;
+            overflowing_unsigned_add(lhs, rhs, kind)?
+        }
+        OverflowingOp::Sub => {
+            let rhs = unsigned_rhs(rhs, kind)?;
+            overflowing_unsigned_sub(lhs, rhs, kind)?
+        }
+        OverflowingOp::Mul => {
+            let rhs = unsigned_rhs(rhs, kind)?;
+            overflowing_unsigned_mul(lhs, rhs, kind)?
+        }
+        OverflowingOp::Pow => {
+            let exp = rhs_exponent(rhs)?;
+            let mut acc = 1u128;
+            let mut overflow = false;
+            for _ in 0..exp {
+                let (next, step_overflow) = overflowing_unsigned_mul(acc, lhs, kind)?;
+                acc = next;
+                overflow |= step_overflow;
+            }
+            (acc, overflow)
+        }
+    };
+    Some((term_for_unsigned_raw(raw, kind)?, overflow))
+}
+
+fn signed_rhs(rhs: &Rc<Term>, kind: IntegerKind) -> Option<i128> {
+    let rhs = const_fold_int_term(rhs)?;
+    fits_kind(rhs, kind).then_some(rhs)
+}
+
+fn unsigned_lhs(lhs_i128: Option<i128>, lhs_u128: Option<u128>, kind: IntegerKind) -> Option<u128> {
+    let value = lhs_u128.or_else(|| lhs_i128.and_then(|n| u128::try_from(n).ok()))?;
+    (value <= mask_for_bits(kind.bits)?).then_some(value)
+}
+
+fn unsigned_rhs(rhs: &Rc<Term>, kind: IntegerKind) -> Option<u128> {
+    let value = const_fold_u128_term(rhs)
+        .or_else(|| const_fold_int_term(rhs).and_then(|n| u128::try_from(n).ok()))?;
+    (value <= mask_for_bits(kind.bits)?).then_some(value)
+}
+
+fn rhs_exponent(rhs: &Rc<Term>) -> Option<u32> {
+    const_fold_u128_term(rhs)
+        .or_else(|| const_fold_int_term(rhs).and_then(|n| u128::try_from(n).ok()))
+        .and_then(|n| u32::try_from(n).ok())
+}
+
+fn term_for_unsigned_raw(raw: u128, kind: IntegerKind) -> Option<Rc<Term>> {
+    let raw = raw & mask_for_bits(kind.bits)?;
+    if kind.bits == 128 {
+        Some(u128_term(raw))
+    } else {
+        Some(num(i128::try_from(raw).ok()?))
+    }
+}
+
+fn saturating_signed_add(lhs: i128, rhs: i128, min: i128, max: i128) -> i128 {
+    lhs.checked_add(rhs)
+        .map(|value| value.clamp(min, max))
+        .unwrap_or_else(|| if rhs >= 0 { max } else { min })
+}
+
+fn saturating_signed_sub(lhs: i128, rhs: i128, min: i128, max: i128) -> i128 {
+    lhs.checked_sub(rhs)
+        .map(|value| value.clamp(min, max))
+        .unwrap_or_else(|| if rhs >= 0 { min } else { max })
+}
+
+fn saturating_signed_mul(lhs: i128, rhs: i128, min: i128, max: i128) -> i128 {
+    lhs.checked_mul(rhs)
+        .map(|value| value.clamp(min, max))
+        .unwrap_or_else(|| if (lhs < 0) ^ (rhs < 0) { min } else { max })
+}
+
+fn overflowing_signed_add(lhs: i128, rhs: i128, kind: IntegerKind) -> Option<(i128, bool)> {
+    let raw = apply_wrapping_raw(
+        masked_raw_bits(lhs, kind)?,
+        masked_raw_bits(rhs, kind)?,
+        kind.bits,
+        WrappingOp::Add,
+    )?;
+    let value = signed_value_from_raw(raw, kind)?;
+    let overflow = lhs
+        .checked_add(rhs)
+        .is_none_or(|value| !fits_kind(value, kind));
+    Some((value, overflow))
+}
+
+fn overflowing_signed_sub(lhs: i128, rhs: i128, kind: IntegerKind) -> Option<(i128, bool)> {
+    let raw = apply_wrapping_raw(
+        masked_raw_bits(lhs, kind)?,
+        masked_raw_bits(rhs, kind)?,
+        kind.bits,
+        WrappingOp::Sub,
+    )?;
+    let value = signed_value_from_raw(raw, kind)?;
+    let overflow = lhs
+        .checked_sub(rhs)
+        .is_none_or(|value| !fits_kind(value, kind));
+    Some((value, overflow))
+}
+
+fn overflowing_signed_mul(lhs: i128, rhs: i128, kind: IntegerKind) -> Option<(i128, bool)> {
+    let raw = apply_wrapping_raw(
+        masked_raw_bits(lhs, kind)?,
+        masked_raw_bits(rhs, kind)?,
+        kind.bits,
+        WrappingOp::Mul,
+    )?;
+    let value = signed_value_from_raw(raw, kind)?;
+    let overflow = lhs
+        .checked_mul(rhs)
+        .is_none_or(|value| !fits_kind(value, kind));
+    Some((value, overflow))
+}
+
+fn overflowing_unsigned_add(lhs: u128, rhs: u128, kind: IntegerKind) -> Option<(u128, bool)> {
+    let max = mask_for_bits(kind.bits)?;
+    let raw = apply_wrapping_raw(lhs, rhs, kind.bits, WrappingOp::Add)?;
+    let overflow = lhs.checked_add(rhs).is_none_or(|value| value > max);
+    Some((raw, overflow))
+}
+
+fn overflowing_unsigned_sub(lhs: u128, rhs: u128, kind: IntegerKind) -> Option<(u128, bool)> {
+    let raw = apply_wrapping_raw(lhs, rhs, kind.bits, WrappingOp::Sub)?;
+    Some((raw, lhs < rhs))
+}
+
+fn overflowing_unsigned_mul(lhs: u128, rhs: u128, kind: IntegerKind) -> Option<(u128, bool)> {
+    let max = mask_for_bits(kind.bits)?;
+    let raw = apply_wrapping_raw(lhs, rhs, kind.bits, WrappingOp::Mul)?;
+    let overflow = lhs.checked_mul(rhs).is_none_or(|value| value > max);
+    Some((raw, overflow))
+}
+
+fn tuple_term(parts: Vec<Rc<Term>>) -> Rc<Term> {
+    let inner = parts
+        .iter()
+        .map(|part| canonical_term_sig(part))
+        .collect::<Vec<_>>()
+        .join(",");
+    Rc::new(Term::Var {
+        name: format!("literal:Tuple({inner})"),
+    })
 }
 
 fn mask_for_bits(bits: u32) -> Option<u128> {
