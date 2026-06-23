@@ -14677,6 +14677,24 @@ fn substitute_expr_inner(
                 .collect();
             Expr::Tuple(out)
         }
+        Expr::Range(range) => {
+            let mut out = range.clone();
+            out.start = range.start.as_ref().map(|start| {
+                Box::new(substitute_expr_inner(
+                    start,
+                    bindings,
+                    substitute_closure_captures,
+                ))
+            });
+            out.end = range.end.as_ref().map(|end| {
+                Box::new(substitute_expr_inner(
+                    end,
+                    bindings,
+                    substitute_closure_captures,
+                ))
+            });
+            Expr::Range(out)
+        }
         Expr::Struct(s) => {
             let mut out = s.clone();
             out.fields = s

@@ -10,6 +10,7 @@
 //   * `.count()`   -> `num(len)`          (`[1,2,3].iter().count()` -> `num(3)`)
 //   * `.next()`    -> `Some(elem[0])`     (`[1,2,3].iter().next()` -> `opt:some(1)`)
 //   * `.nth(k)`    -> `Some(elem[k])` or `None` past the end
+//   * `.next_back()` / `.nth_back(k)` -> the same positional rule from the back
 //   * `.last()`    -> `Some(elem[len-1])` (or `None` for the empty Seq)
 //   * `.min()`     -> `Some(min element)` (`[3,1,2].iter().min()` -> `opt:some(1)`)
 //   * `.max()`     -> `Some(max element)` (`[3,1,2].iter().max()` -> `opt:some(3)`)
@@ -71,7 +72,7 @@ use crate::sugar::monadic;
 use crate::sugar::term_leaf::reasoned_hit;
 use crate::{
     closure_body_is_side_effecting, closure_single_param_ident, const_eval_unary_closure,
-    const_fold_acc_update, const_fold_int_term, const_int_acc_init, parse_int_lit,
+    const_fold_acc_update, const_fold_int_term, const_int, const_int_acc_init, parse_int_lit,
     simple_path_name, strip_refs_groups, ConstVal, Desugared, DesugaredElem, Effect, Outcome,
     Sugar, SugarCtx,
 };
@@ -133,6 +134,25 @@ enum Terminal {
     Fold(Expr, syn::ExprClosure),
 }
 
+impl Terminal {
+    fn returns_monadic_value(&self) -> bool {
+        matches!(
+            self,
+            Terminal::Next
+                | Terminal::NextBack
+                | Terminal::Nth(_)
+                | Terminal::NthBack(_)
+                | Terminal::Last
+                | Terminal::Min
+                | Terminal::Max
+                | Terminal::Find(_)
+                | Terminal::Position(_)
+                | Terminal::AdvanceBy(_)
+                | Terminal::Reduce(_)
+        )
+    }
+}
+
 /// TERM recognizer for the iterator scalar-reduction terminals. `Some` only when the
 /// method is a recognized reduction. Recognition captures the raw receiver only; the
 /// receiver chain is composed to a literal `Seq` lazily in `desugar`, where the live SSA
@@ -173,6 +193,7 @@ fn recognized_receiver_is_static_sequence(
     recognizes_scan_inner(&call.receiver, fcx)
         || method_family::resolves_literal_sequence(&call.receiver, fcx.let_inits())
         || receiver_has_static_sequence_len(&call.receiver, fcx, 0)
+        || stable_monadic_terminal_receiver(&call.receiver, fcx, 0)
 }
 
 fn receiver_has_static_sequence_len(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
@@ -206,12 +227,8 @@ pub(crate) fn recognizes_monadic_terminal(expr: &Expr, fcx: &SugarBuildCtx) -> b
     let Some(terminal) = recognize_terminal(call) else {
         return false;
     };
-    let stable_receiver = stable_next_snapshot_receiver(&call.receiver, fcx, 0);
-    if !matches!(
-        terminal,
-        Terminal::Next | Terminal::NextBack | Terminal::Nth(_) | Terminal::NthBack(_)
-    ) || !stable_receiver
-    {
+    let stable_receiver = stable_monadic_terminal_receiver(&call.receiver, fcx, 0);
+    if !terminal.returns_monadic_value() || !stable_receiver {
         return false;
     }
     if let Some(name) = simple_path_name(&call.receiver) {
@@ -226,7 +243,7 @@ pub(crate) fn recognizes_monadic_terminal(expr: &Expr, fcx: &SugarBuildCtx) -> b
         || has_composite(&call.receiver, fcx)
 }
 
-fn stable_next_snapshot_receiver(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
+fn stable_monadic_terminal_receiver(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
     if depth > 16 {
         return false;
     }
@@ -236,8 +253,31 @@ fn stable_next_snapshot_receiver(expr: &Expr, fcx: &SugarBuildCtx, depth: usize)
             let method = call.method.to_string();
             matches!(
                 method.as_str(),
-                "iter" | "into_iter" | "cloned" | "copied" | "fuse"
-            ) && stable_next_snapshot_receiver(&call.receiver, fcx, depth + 1)
+                "iter"
+                    | "into_iter"
+                    | "cloned"
+                    | "copied"
+                    | "fuse"
+                    | "peekable"
+                    | "clone"
+                    | "rev"
+                    | "enumerate"
+                    | "flatten"
+                    | "to_vec"
+                    | "as_slice"
+                    | "to_owned"
+                    | "into_vec"
+            ) && stable_monadic_terminal_receiver(&call.receiver, fcx, depth + 1)
+        }
+        Expr::MethodCall(call) if call.args.len() == 1 => {
+            let method = call.method.to_string();
+            let arg_ok = match method.as_str() {
+                "skip" | "take" | "step_by" => const_int(&call.args[0]).is_some(),
+                "filter" | "map" | "filter_map" | "skip_while" | "take_while" | "inspect"
+                | "flat_map" => matches!(strip_refs_groups(&call.args[0]), Expr::Closure(_)),
+                _ => false,
+            };
+            arg_ok && stable_monadic_terminal_receiver(&call.receiver, fcx, depth + 1)
         }
         Expr::Call(call) if call.args.len() == 1 => {
             let Expr::Path(path) = call.func.as_ref() else {
@@ -253,7 +293,7 @@ fn stable_next_snapshot_receiver(expr: &Expr, fcx: &SugarBuildCtx, depth: usize)
                     .segments
                     .iter()
                     .any(|seg| seg.ident == "IntoIterator");
-            is_into_iter && stable_next_snapshot_receiver(&call.args[0], fcx, depth + 1)
+            is_into_iter && stable_monadic_terminal_receiver(&call.args[0], fcx, depth + 1)
         }
         Expr::Path(_) => simple_path_name(expr)
             .and_then(|name| {
@@ -274,7 +314,7 @@ fn stable_next_snapshot_receiver(expr: &Expr, fcx: &SugarBuildCtx, depth: usize)
                     .or_else(|| fcx.scope().stable_let_binding_for_term(&name))
                     .cloned()
             })
-            .is_some_and(|current| stable_next_snapshot_receiver(&current, fcx, depth + 1)),
+            .is_some_and(|current| stable_monadic_terminal_receiver(&current, fcx, depth + 1)),
         _ => false,
     }
 }

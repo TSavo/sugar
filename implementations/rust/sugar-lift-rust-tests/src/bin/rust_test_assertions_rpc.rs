@@ -1269,6 +1269,7 @@ fn clean_named_refusal_category(
     let attended_review = reason.contains("ambiguous temporal identity")
         || reason.contains("unknown iterator consumption")
         || reason.contains("temporally unstable")
+        || reason.contains("mutable container is not temporally stable")
         || reason.contains("assertion under for context")
         || reason.contains("assertion under while context")
         || reason.contains("consumed-iterator local");
@@ -1306,6 +1307,9 @@ fn clean_named_refusal_category(
     }
     if mutable_view_temporal_reason(reason) {
         return Some("mutable view temporal state");
+    }
+    if mutable_container_temporal_reason(reason) {
+        return Some("mutable container temporal state");
     }
     if consumed_iterator_temporal_reason(reason) {
         return Some("consumed iterator temporal state");
@@ -1457,6 +1461,10 @@ fn mutable_view_temporal_reason(reason: &str) -> bool {
         || (reason.contains("ambiguous temporal identity")
             && reason.contains("after opaque mutable borrow call")
             && reason.contains("array :: from_mut"))
+}
+
+fn mutable_container_temporal_reason(reason: &str) -> bool {
+    reason.contains("mutable container is not temporally stable")
 }
 
 fn consumed_iterator_temporal_reason(reason: &str) -> bool {
@@ -4162,6 +4170,40 @@ fn consumed_iterator_local_literal_twin() {
             "consumed-iterator local",
         );
         assert_source_locus_warranted(&response, "consumed_iterator_local_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_consumed_iterator_mutable_container_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_consumed_iterator_mutable_container_refuses_with_literal_twin",
+            r#"
+#[test]
+fn consumed_iterator_mutable_container_refused() {
+    let xs = [1, 2, 3];
+    let ys = [1, 2, 0];
+    let mut iter = xs.iter().chain(&ys);
+    iter.next();
+    let mut result = Vec::new();
+    iter.fold((), |(), &elt| result.push(elt));
+    assert_eq!(&[2, 3, 1, 2, 0], &result[..]);
+}
+
+#[test]
+fn consumed_iterator_mutable_container_literal_twin() {
+    assert_eq!(5, 5);
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "consumed_iterator_mutable_container_refused",
+            "mutable container temporal state",
+        );
+        assert_source_locus_warranted(
+            &response,
+            "consumed_iterator_mutable_container_literal_twin",
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
