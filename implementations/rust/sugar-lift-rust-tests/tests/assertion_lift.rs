@@ -24852,42 +24852,42 @@ fn literal_slice_accessor_methods_ground_with_teeth() {
     assert_decl_verdict(
         "assert_eq!([1, 2, 3].first(), Some(&1));",
         true,
-        "slice_first_good",
+        "slice_accessor_first_good",
     );
     assert_decl_verdict(
         "assert_eq!([1, 2, 3].last(), Some(&3));",
         true,
-        "slice_last_good",
+        "slice_accessor_last_good",
     );
     assert_decl_verdict(
         "assert_eq!([1, 2, 3].last(), Some(&2));",
         false,
-        "slice_last_bad",
+        "slice_accessor_last_bad",
     );
     assert_decl_verdict(
         "assert!([1, 2, 3].contains(&2));",
         true,
-        "slice_contains_good",
+        "slice_accessor_contains_good",
     );
     assert_decl_verdict(
         "assert!([1, 2, 3].contains(&9));",
         false,
-        "slice_contains_bad",
+        "slice_accessor_contains_bad",
     );
     assert_decl_verdict(
         "assert!([1, 2, 3, 4].starts_with(&[1, 2]));",
         true,
-        "slice_starts_with_good",
+        "slice_accessor_starts_with_good",
     );
     assert_decl_verdict(
         "assert!([1, 2, 3, 4].ends_with(&[3, 4]));",
         true,
-        "slice_ends_with_good",
+        "slice_accessor_ends_with_good",
     );
     assert_decl_verdict(
         "assert!([1, 2, 3, 4].ends_with(&[2, 4]));",
         false,
-        "slice_ends_with_bad",
+        "slice_accessor_ends_with_bad",
     );
 }
 
