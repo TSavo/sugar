@@ -243,7 +243,7 @@ required = {
     "contains-char": "method:contains#euf#c:callresult_method_contains_a2(s:\"abc\",s:\"b\")::assertion",
     "starts-with": "method:starts_with#euf#c:callresult_method_starts_with_a2(s:\"abc\",s:\"a\")::assertion",
     "ends-with": "method:ends_with#euf#c:callresult_method_ends_with_a2(s:\"abc\",s:\"c\")::assertion",
-    "len": "method:len#euf#c:callresult_method_len_a1(s:\"～～～～～\")::assertion",
+    "len": "method:len#panic_callsite#euf#c:callresult_method_len_panic_callsite_a1(s:\"～～～～～\")::assertion",
     "str-is-ascii": "method:is_ascii#euf#c:callresult_method_is_ascii_a1(s:\"banana\\0\\u{7f}\")::assertion",
     "char-is-ascii": "method:is_ascii#euf#c:callresult_method_is_ascii_a1(s:\"a\")::assertion",
     "char-is-ascii-alpha": "method:is_ascii_alphabetic#euf#c:callresult_method_is_ascii_alphabetic_a1(s:\"A\")::assertion",
