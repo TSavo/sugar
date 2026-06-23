@@ -26218,6 +26218,103 @@ fn t() {
 }
 
 #[test]
+fn literal_slice_chunk_window_count_methods_ground_with_teeth() {
+    let cases = [
+        (
+            "chunks_count",
+            "let v: &[i32] = &[0, 1, 2, 3, 4]; let c = v.chunks(2);",
+            3,
+        ),
+        (
+            "chunks_mut_count",
+            "let v: &mut [i32] = &mut [0, 1, 2, 3, 4]; let c = v.chunks_mut(2);",
+            3,
+        ),
+        (
+            "chunks_exact_count",
+            "let v: &[i32] = &[0, 1, 2, 3, 4]; let c = v.chunks_exact(2);",
+            2,
+        ),
+        (
+            "chunks_exact_mut_count",
+            "let v: &mut [i32] = &mut [0, 1, 2, 3, 4]; let c = v.chunks_exact_mut(2);",
+            2,
+        ),
+        (
+            "rchunks_count",
+            "let v: &[i32] = &[0, 1, 2, 3, 4]; let c = v.rchunks(2);",
+            3,
+        ),
+        (
+            "rchunks_mut_count",
+            "let v: &mut [i32] = &mut [0, 1, 2, 3, 4]; let c = v.rchunks_mut(2);",
+            3,
+        ),
+        (
+            "rchunks_exact_count",
+            "let v: &[i32] = &[0, 1, 2, 3, 4]; let c = v.rchunks_exact(2);",
+            2,
+        ),
+        (
+            "rchunks_exact_mut_count",
+            "let v: &mut [i32] = &mut [0, 1, 2, 3, 4]; let c = v.rchunks_exact_mut(2);",
+            2,
+        ),
+        (
+            "windows_count",
+            "let v: &[i32] = &[0, 1, 2, 3, 4]; let c = v.windows(6);",
+            0,
+        ),
+    ];
+
+    for (label, setup, good) in cases {
+        for (expected, want_sat, suffix) in [(good, true, "good"), (good + 1, false, "bad")] {
+            let src = format!("#[test] fn t() {{ {setup} assert_eq!(c.count(), {expected}); }}");
+            let out = lift_file(&parse(&src), "coretests/slice/chunk_window_count.rs");
+            assert_warranted_decl_count(&out, 1);
+            assert!(
+                out.assertions_refused == 0 && out.skip_reasons.is_empty(),
+                "{label}_{suffix}: literal chunk/window count must not strand or refuse: {:?}",
+                out.skip_reasons
+            );
+            let decl = single_warranted_decl(&out);
+            assert!(
+                !decl_mentions_ctor(decl, "method:count"),
+                "{label}_{suffix}: count must lower to literal usize floor: {:?}",
+                decl.inv
+            );
+            if let Some(sat) = z3_verdict(&inv_json(decl), &format!("{label}_{suffix}")) {
+                assert_eq!(sat, want_sat, "{label}_{suffix}: expected sat={want_sat}");
+            }
+        }
+    }
+}
+
+#[test]
+fn slice_chunk_window_count_runtime_source_refuses_named_boundary() {
+    let src = r#"
+#[test]
+fn t(xs: &[i32]) {
+    let c = xs.chunks(2);
+    assert_eq!(c.count(), 3);
+}
+"#;
+    let out = lift_file(&parse(src), "coretests/slice/chunk_count_runtime_source.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "runtime chunk count source must not warrant: {:?}",
+        out.decls
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("chunk source is runtime slice, not literal")),
+        "runtime chunk count source should refuse with a named boundary: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
 fn slice_chunk_window_runtime_source_refuses_named_boundary() {
     let src = r#"
 #[test]
