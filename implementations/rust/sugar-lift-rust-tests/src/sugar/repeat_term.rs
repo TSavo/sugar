@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// TERM recognizer for `Expr::Repeat` (`[elem; N]`) in TERM position: a literal count
-// expands to the N-fold `literal_aggregate_term` "Array"; a non-literal count is the
-// `ArrayRepeatSugar` refuse-shape (`Effect::ArrayRepeat`). This is the TERM-position
+// TERM recognizer for `Expr::Repeat` (`[elem; N]`) in TERM position: a literal or
+// scope-resolved const count expands to the N-fold `literal_aggregate_term` "Array";
+// a runtime/opaque count is the `ArrayRepeatSugar` refuse-shape (`Effect::ArrayRepeat`).
+// This is the TERM-position
 // node — DISTINCT from the COMPOSITE-catalog `Expr::Repeat` (which boxes
 // `decompose_array_repeat` directly as the refuse-shape). Byte-identical to the
 // `Expr::Repeat` arm of the old fat factory.
@@ -11,7 +12,7 @@ use crate::sugar::array_repeat::decompose_array_repeat;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
 use crate::{
-    literal_aggregate_term_in_scope, repeat_count_literal, token_key, Effect, Outcome, Sugar,
+    literal_aggregate_term_in_scope, repeat_count_in_scope, token_key, Effect, Outcome, Sugar,
 };
 use syn::Expr;
 
@@ -24,7 +25,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         return None;
     };
     let scope = fcx.scope();
-    let Some(count) = repeat_count_literal(&repeat.len) else {
+    let Some(count) = repeat_count_in_scope(&repeat.len, scope) else {
         return Some(match decompose_array_repeat(expr) {
             Some(node) => match node.desugar_ctx_free() {
                 Outcome::Hit(effect @ Effect::ArrayRepeat { .. }) => reasoned_hit(effect.reason()),

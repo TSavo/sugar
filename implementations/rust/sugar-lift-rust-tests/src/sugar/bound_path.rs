@@ -222,9 +222,9 @@ fn temporally_unstable_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dy
     fcx.scope().is_temporally_unstable_read(name).then(|| {
         // Terminal refusal; substring `temporally unstable post-loop read` is pinned by tests.
         reasoned_hit(format!(
-            "temporally unstable post-loop read of `{name}`: mutated inside a loop or closure \
-             body the lifter cannot unroll, so there is no single timeless value to read at \
-             the assertion; refused as temporally unstable"
+            "temporally unstable post-loop read of `{name}`: for-loop domain runtime, not \
+             literal, or loop/closure body not exactly replayable; there is no single \
+             timeless value to read at the assertion; refused as temporally unstable"
         ))
     })
 }

@@ -4677,6 +4677,63 @@ fn const_arithmetic_len_array_repeat_index_grounds_and_twin_refutes() {
     }
 }
 
+#[test]
+fn const_len_array_repeat_bool_equality_grounds_and_twin_refutes() {
+    let good = r#"
+        const SIZE: usize = 3;
+        #[test]
+        fn t_const_repeat_bool_eq() {
+            assert!([5; SIZE] == [5, 5, 5]);
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/repeat/const_repeat_bool_eq.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "const-length repeat boolean equality must ground: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_repeat_bool_eq") {
+        assert!(sat, "[5; SIZE=3] == [5,5,5] must be SAT");
+    }
+
+    let bad = r#"
+        const SIZE: usize = 3;
+        #[test]
+        fn t_const_repeat_bool_eq_bad() {
+            assert!([5; SIZE] == [5, 5, 9]);
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/repeat/const_repeat_bool_eq_bad.rs");
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_const_repeat_bool_eq_bad") {
+        assert!(!sat, "[5; SIZE=3] == [5,5,9] must be UNSAT");
+    }
+}
+
+#[test]
+fn runtime_len_array_repeat_bool_equality_refuses_with_named_boundary() {
+    let src = r#"
+        #[test]
+        fn t_runtime_repeat_bool_eq(n: usize) {
+            assert!([5; n] == [5]);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/repeat/runtime_repeat_bool_eq.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "runtime-length repeat must not lift: {:?}",
+        out.decls
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("array-repeat length runtime, not const")),
+        "runtime-length repeat must name the runtime length boundary: {:?}",
+        out.skip_reasons
+    );
+}
+
 // LEVER H finite-or-refuse (discrimination): a const-GENERIC length `[7; N]` is NOT a
 // concrete in-scope const (it has no registry initializer), so `repeat_count_in_scope`
 // declines and the index stays the symbolic `index(..)` ctor -- a wrong-expected read must
@@ -25443,6 +25500,58 @@ fn literal_bound_range_for_loop_scalar_accumulator_bad_twin_is_unsat() {
 }
 
 #[test]
+fn direct_literal_range_for_loop_scalar_accumulator_has_teeth() {
+    let good = r#"
+        #[test]
+        fn t_for_direct_range_accum_good() {
+            let mut s = 0;
+            for i in 0..5 {
+                s += i;
+            }
+            assert_eq!(s, 10);
+        }
+    "#;
+    let out = lift_file(
+        &parse(good),
+        "coretests/loop/for_direct_range_accum_good.rs",
+    );
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "literal range for-loop accumulator must warrant: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "for_direct_range_good",
+    ) {
+        assert!(sat, "literal range loop sum 0+1+2+3+4 == 10 must be z3-SAT");
+    }
+
+    let bad = r#"
+        #[test]
+        fn t_for_direct_range_accum_bad() {
+            let mut s = 0;
+            for i in 0..5 {
+                s += i;
+            }
+            assert_eq!(s, 11);
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/loop/for_direct_range_accum_bad.rs");
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "for_direct_range_bad",
+    ) {
+        assert!(
+            !sat,
+            "literal range loop sum 0+1+2+3+4 == 11 must be z3-UNSAT"
+        );
+    }
+}
+
+#[test]
 fn runtime_bound_for_loop_accumulator_still_refuses() {
     let src = r#"
         #[test]
@@ -25460,6 +25569,13 @@ fn runtime_bound_for_loop_accumulator_still_refuses() {
             .iter()
             .any(|r| r.contains("temporally unstable post-loop read")),
         "runtime-bounded loop accumulator must remain refused, never fabricated: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("for-loop domain runtime, not literal")),
+        "runtime-bounded loop accumulator must name the runtime domain: {:?}",
         out.skip_reasons
     );
 }

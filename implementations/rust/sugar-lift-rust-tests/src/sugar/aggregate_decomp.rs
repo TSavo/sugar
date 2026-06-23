@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{and_, atomic_, num, str_const, Term};
-use syn::{Expr, ExprMacro};
+use syn::{BinOp, Expr, ExprMacro};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
@@ -38,24 +38,49 @@ fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Macro(expr_macro) = expr else {
         return None;
     };
-    let (lhs, rhs, op) = macro_eq_operands(expr_macro)?;
-    if !aggregateish(&lhs) && !aggregateish(&rhs) {
+    let (lhs, rhs, op, bare_assert) = macro_eq_operands(expr_macro)?;
+    let shape_matches = if bare_assert {
+        explicit_aggregateish(&lhs) || explicit_aggregateish(&rhs)
+    } else {
+        aggregateish(&lhs) || aggregateish(&rhs)
+    };
+    if !shape_matches {
         return None;
     }
     Some(Box::new(AggregateDecompSugar { lhs, rhs, op }))
 }
 
-fn macro_eq_operands(expr_macro: &ExprMacro) -> Option<(Expr, Expr, RelationOp)> {
+fn macro_eq_operands(expr_macro: &ExprMacro) -> Option<(Expr, Expr, RelationOp, bool)> {
     let name = expr_macro.mac.path.segments.last()?.ident.to_string();
-    let op = match name.as_str() {
-        "assert_eq" => RelationOp::Eq,
-        _ => return None,
-    };
     let args = parse_macro_args(expr_macro.mac.tokens.clone()).ok()?;
-    if args.exprs.len() < 2 {
-        return None;
+    match name.as_str() {
+        "assert_eq" => {
+            if args.exprs.len() < 2 {
+                return None;
+            }
+            Some((
+                args.exprs[0].clone(),
+                args.exprs[1].clone(),
+                RelationOp::Eq,
+                false,
+            ))
+        }
+        "assert" => {
+            let Expr::Binary(binary) = args.exprs.first()? else {
+                return None;
+            };
+            if !matches!(binary.op, BinOp::Eq(_)) {
+                return None;
+            }
+            Some((
+                (*binary.left).clone(),
+                (*binary.right).clone(),
+                RelationOp::Eq,
+                true,
+            ))
+        }
+        _ => None,
     }
-    Some((args.exprs[0].clone(), args.exprs[1].clone(), op))
 }
 
 fn aggregateish(expr: &Expr) -> bool {
