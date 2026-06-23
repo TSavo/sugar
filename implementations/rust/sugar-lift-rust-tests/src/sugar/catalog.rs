@@ -440,11 +440,47 @@ mod tests {
             .collect()
     }
 
+    fn candidate_names_for_role_with_let_inits(
+        expr: &Expr,
+        role: SugarRole,
+        let_inits: &BTreeMap<String, Expr>,
+    ) -> Vec<&'static str> {
+        let scope = TemporalScope::new("catalog-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let borrowed_let_inits: BTreeMap<_, _> = let_inits
+            .iter()
+            .map(|(name, init)| (name.clone(), init))
+            .collect();
+        let fcx = SugarBuildCtx::new(&scope, &options, &borrowed_let_inits);
+        super::matching_expr_claims_for_role(expr, &fcx, role)
+            .into_iter()
+            .map(|candidate| candidate.name())
+            .collect()
+    }
+
     fn selected_candidate_name_for_role(expr: &Expr, role: SugarRole) -> Option<&'static str> {
         let scope = TemporalScope::new("catalog-test", TemporalPlan::default());
         let options = LiftOptions::default();
         let let_inits = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        super::matching_expr_claims_for_role(expr, &fcx, role)
+            .into_iter()
+            .next()
+            .map(|candidate| candidate.name())
+    }
+
+    fn selected_candidate_name_for_role_with_let_inits(
+        expr: &Expr,
+        role: SugarRole,
+        let_inits: &BTreeMap<String, Expr>,
+    ) -> Option<&'static str> {
+        let scope = TemporalScope::new("catalog-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let borrowed_let_inits: BTreeMap<_, _> = let_inits
+            .iter()
+            .map(|(name, init)| (name.clone(), init))
+            .collect();
+        let fcx = SugarBuildCtx::new(&scope, &options, &borrowed_let_inits);
         super::matching_expr_claims_for_role(expr, &fcx, role)
             .into_iter()
             .next()
@@ -938,6 +974,59 @@ mod tests {
             selected,
             Some("str_method"),
             "string literal methods remain in the str_method lane"
+        );
+    }
+
+    #[test]
+    fn shared_text_and_slice_methods_dispatch_by_bound_receiver_domain() {
+        let mut string_inits = BTreeMap::new();
+        string_inits.insert(
+            "s".to_string(),
+            syn::parse_str::<Expr>(r#""needle""#).unwrap(),
+        );
+        let string_expr: Expr = syn::parse_str(r#"s.contains("eed")"#).unwrap();
+        let string_names =
+            candidate_names_for_role_with_let_inits(&string_expr, SugarRole::Term, &string_inits);
+        assert!(
+            string_names.contains(&"str_method"),
+            "text-bound receiver should stay in the str_method lane: {string_names:?}"
+        );
+        assert!(
+            !string_names.contains(&"slice_accessor"),
+            "text-bound receiver must not be claimed as a slice accessor: {string_names:?}"
+        );
+        assert_eq!(
+            selected_candidate_name_for_role_with_let_inits(
+                &string_expr,
+                SugarRole::Term,
+                &string_inits
+            ),
+            Some("str_method")
+        );
+
+        let mut slice_inits = BTreeMap::new();
+        slice_inits.insert(
+            "xs".to_string(),
+            syn::parse_str::<Expr>("[1, 2, 3]").unwrap(),
+        );
+        let slice_expr: Expr = syn::parse_str("xs.contains(&2)").unwrap();
+        let slice_names =
+            candidate_names_for_role_with_let_inits(&slice_expr, SugarRole::Term, &slice_inits);
+        assert!(
+            slice_names.contains(&"slice_accessor"),
+            "array-bound receiver should stay in the slice_accessor lane: {slice_names:?}"
+        );
+        assert!(
+            !slice_names.contains(&"str_method"),
+            "array-bound receiver must not be claimed as a string method: {slice_names:?}"
+        );
+        assert_eq!(
+            selected_candidate_name_for_role_with_let_inits(
+                &slice_expr,
+                SugarRole::Term,
+                &slice_inits
+            ),
+            Some("slice_accessor")
         );
     }
 
