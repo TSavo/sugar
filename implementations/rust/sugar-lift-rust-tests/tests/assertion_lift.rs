@@ -22983,6 +22983,139 @@ fn test_nonzero_bit_width() {
 }
 
 #[test]
+fn rpc_source_warrants_macro_repeated_nonzero_bit_width_with_bad_twin() {
+    let doc = run_rpc_lift(
+        "tests/nonzero_macro_repeat.rs",
+        r#"
+use core::num::NonZero;
+
+#[test]
+fn test_nonzero_bit_width() {
+    macro_rules! nonzero_uint_impl {
+        ($($T:ty),+) => {
+            $(
+                {
+                    assert_eq!(NonZero::<$T>::new(0b010_1100).unwrap().bit_width(), NonZero::new(6).unwrap());
+                    assert_eq!(NonZero::<$T>::MAX.bit_width(), NonZero::new(<$T>::BITS).unwrap());
+                }
+            )+
+        };
+    }
+
+    nonzero_uint_impl!(u8, u16, u32, u64, u128, usize);
+}
+"#,
+    );
+
+    assert_rpc_source_warranted(&doc, "test_nonzero_bit_width");
+
+    let bad = r#"
+use core::num::NonZero;
+
+#[test]
+fn t_macro_nonzero_bit_width_bad() {
+    macro_rules! nonzero_uint_impl {
+        ($($T:ty),+) => {
+            $(
+                {
+                    assert_eq!(NonZero::<$T>::new(0b010_1100).unwrap().bit_width(), NonZero::new(7).unwrap());
+                }
+            )+
+        };
+    }
+
+    nonzero_uint_impl!(u8);
+}
+"#;
+    let out = lift_file(&parse(bad), "coretests/nonzero/macro_bit_width_bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bad twin must still lift so z3 can bite; skips={:?}; audits={:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "macro_nonzero_bit_width_bad",
+    ) {
+        assert!(!sat, "bit_width(0b010_1100) is 6, not 7");
+    }
+}
+
+#[test]
+fn rpc_source_warrants_shadowed_fn_local_macro_rules_with_bad_twin() {
+    let doc = run_rpc_lift(
+        "tests/nonzero_local_macro_shadow.rs",
+        r#"
+use core::num::NonZero;
+
+#[test]
+fn first_local_macro() {
+    macro_rules! local_assert {
+        () => {
+            assert_eq!(
+                NonZero::<u32>::new(0b0110_0100).unwrap().isolate_lowest_one(),
+                NonZero::new(0b0000_0100).unwrap()
+            );
+        };
+    }
+
+    local_assert!();
+}
+
+#[test]
+fn second_local_macro() {
+    macro_rules! local_assert {
+        () => {
+            assert_eq!(NonZero::<u32>::new(0b010_1100).unwrap().bit_width(), NonZero::new(6).unwrap());
+        };
+    }
+
+    local_assert!();
+}
+"#,
+    );
+
+    assert_rpc_source_warranted(&doc, "first_local_macro");
+    assert_rpc_source_warranted(&doc, "second_local_macro");
+
+    let bad = r#"
+use core::num::NonZero;
+
+#[test]
+fn first_local_macro_bad() {
+    macro_rules! local_assert {
+        () => {
+            assert_eq!(NonZero::<u32>::new(0b0110_0100).unwrap().highest_one(), 5);
+        };
+    }
+
+    local_assert!();
+}
+
+#[test]
+fn second_local_macro_bad() {
+    macro_rules! local_assert {
+        () => {
+            assert_eq!(NonZero::<u32>::new(0b010_1100).unwrap().bit_width(), NonZero::new(6).unwrap());
+        };
+    }
+
+    local_assert!();
+}
+"#;
+    let out = lift_file(&parse(bad), "coretests/nonzero/local_macro_shadow_bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "same-named fn-local macros must expand lexically; skips={:?}; audits={:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    let decl = warranted_decl_with_name(&out, "first_local_macro_bad");
+    if let Some(sat) = z3_verdict(&inv_json(decl), "nonzero_local_macro_shadow_bad") {
+        assert!(!sat, "highest_one(0b0110_0100) is 6, not 5");
+    }
+}
+
+#[test]
 fn rpc_source_lifts_cfg_select_active_assertions_with_literal_twin() {
     let doc = run_rpc_lift_with_config(
         "tests/macros.rs",

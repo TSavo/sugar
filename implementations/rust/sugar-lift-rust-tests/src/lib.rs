@@ -1721,13 +1721,14 @@ fn visit_non_test_fn(
         sugar::format::lift_flt2dec_helper(f, mode, source_path, modules, out);
         return;
     }
+    let scoped_reducer = reducer.scoped_to_block(&f.block);
     let scoped_name = scoped_test_name(source_path, modules, &fn_name);
     let count = count_asserts_in_stmts(&f.block.stmts);
     let lifted = lift_source_assertion_contracts_in_stmts(
         &f.block.stmts,
         source_path,
         &scoped_name,
-        reducer,
+        &scoped_reducer,
         options,
         factory_audits,
         out,
@@ -2098,11 +2099,12 @@ fn visit_test_fn(
     let mut skipped = Vec::new();
     let mut float_widths = FloatWidthScope::new();
     let mut macros_lifted = 0usize;
+    let scoped_reducer = reducer.scoped_to_block(&f.block);
     collect_assertion_entries(
         &f.block.stmts,
         &test_name,
         collection_options,
-        reducer,
+        &scoped_reducer,
         &mut float_widths,
         &mut entries,
         &mut skipped,
@@ -2120,7 +2122,7 @@ fn visit_test_fn(
         &f.block.stmts,
         &test_name,
         options,
-        reducer,
+        &scoped_reducer,
         &mut entries,
         &mut skipped,
         factory_audits,
@@ -2268,6 +2270,7 @@ fn emit_assertion_fact_metadata(
     }
 }
 
+#[derive(Clone)]
 struct ReductionCtx<'a> {
     functions: BTreeMap<String, &'a syn::ItemFn>,
     ambiguous_functions: BTreeSet<String>,
@@ -2483,6 +2486,61 @@ impl<'a> ReductionCtx<'a> {
         }
     }
 
+    /// Return a reducer whose macro table is scoped to a single function body.
+    /// Function-local `macro_rules!` definitions shadow file/imported definitions
+    /// and, critically, do not make same-named macros in sibling functions
+    /// ambiguous for this function's expansion.
+    fn scoped_to_block(&self, block: &'a syn::Block) -> Self {
+        let mut scoped = self.clone();
+        let mut seen = BTreeSet::new();
+        scoped.collect_shadowing_macros_in_block(block, &mut seen);
+        scoped
+    }
+
+    fn collect_shadowing_macros_in_block(
+        &mut self,
+        block: &'a syn::Block,
+        seen: &mut BTreeSet<String>,
+    ) {
+        for stmt in &block.stmts {
+            match stmt {
+                syn::Stmt::Item(Item::Macro(m)) => {
+                    if let Some((ident, tokens)) = declarative_macro_def(m) {
+                        self.insert_shadowing_macro(&ident, tokens, seen);
+                    }
+                }
+                syn::Stmt::Item(Item::Verbatim(tokens)) => {
+                    if let Some((ident, tokens)) = declarative_verbatim_macro_def(tokens) {
+                        self.insert_shadowing_macro(&ident, tokens, seen);
+                    }
+                }
+                syn::Stmt::Item(Item::Fn(f)) => {
+                    self.collect_shadowing_macros_in_block(&f.block, seen)
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn insert_shadowing_macro(
+        &mut self,
+        name: &str,
+        tokens: proc_macro2::TokenStream,
+        seen: &mut BTreeSet<String>,
+    ) {
+        let Ok(rules) = macro_expand::parse_rules(tokens) else {
+            return;
+        };
+        let rules = std::rc::Rc::new(rules);
+        if !seen.insert(name.to_string()) {
+            self.macros.remove(name);
+            self.ambiguous_macros.insert(name.to_string());
+        } else {
+            self.macros.insert(name.to_string(), rules);
+            self.ambiguous_macros.remove(name);
+        }
+    }
+
     fn insert_function(&mut self, f: &'a syn::ItemFn) {
         let name = f.sig.ident.to_string();
         if self.ambiguous_functions.contains(&name) {
@@ -2525,11 +2583,11 @@ impl<'a> ReductionCtx<'a> {
     /// Look up a `macro_rules!` definition by name for expansion: in-file first
     /// (most specific), then the imported source-graph registry.
     fn macro_rules(&self, name: &str) -> Option<std::rc::Rc<Vec<macro_expand::MacroRule>>> {
-        if self.ambiguous_macros.contains(name) {
-            return None;
-        }
         if let Some(rules) = self.macros.get(name) {
             return Some(rules.clone());
+        }
+        if self.ambiguous_macros.contains(name) {
+            return None;
         }
         self.imported.lookup(name)
     }
