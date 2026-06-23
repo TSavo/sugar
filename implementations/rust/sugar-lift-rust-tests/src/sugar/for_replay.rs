@@ -690,61 +690,86 @@ pub(crate) struct ForReplaySugar {
 
 impl Sugar for ForReplaySugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            let values = finite_domain_exprs(&self.domain, ctx)?;
-            if values.is_empty() || values.len() > SUGAR_SEQ_CAP as usize {
-                return None;
+        let Some(values) = finite_domain_exprs(&self.domain, ctx) else {
+            return Outcome::from_opt(None);
+        };
+        if values.is_empty() || values.len() > SUGAR_SEQ_CAP as usize {
+            return Outcome::from_opt(None);
+        }
+        let source_asserts = replay_assert_count(&self.body_stmts, ctx.scope);
+        if source_asserts == 0 {
+            if replay_temporal_assignment_loop(ctx, &self.vars, &self.body_stmts, values).is_none()
+            {
+                return Outcome::from_opt(None);
             }
-            let source_asserts = replay_assert_count(&self.body_stmts, ctx.scope);
-            if source_asserts == 0 {
-                replay_temporal_assignment_loop(ctx, &self.vars, &self.body_stmts, values)?;
-                return Some(Desugared::Constraints {
-                    atom: eq(bool_const(true), bool_const(true)),
-                    n: 0,
-                    kind: AssertionFactKind::Support,
-                    warrant: Warrant {
-                        name: Some(format!(
-                            "{}::temporal-loop-replay::{}",
-                            ctx.scope.local_scope(),
-                            self.vars.join("_")
-                        )),
-                    },
-                });
-            }
-
-            let mut atoms = Vec::new();
-            if self.seed_names.is_empty() {
-                for value in values {
-                    let mut replay = Replay::new(ctx);
-                    bind_loop_value(&mut replay.bindings, &self.vars, value)?;
-                    replay.replay_stmts(&self.body_stmts)?;
-                    atoms.extend(replay.atoms);
-                }
-            } else {
-                let mut replay = Replay::new(ctx);
-                replay.seed_source_bindings(&self.seed_names)?;
-                for value in values {
-                    bind_loop_value(&mut replay.bindings, &self.vars, value)?;
-                    replay.replay_stmts(&self.body_stmts)?;
-                }
-                atoms.extend(replay.atoms);
-            }
-            if atoms.is_empty() {
-                return None;
-            }
-            Some(Desugared::Constraints {
-                atom: and_(atoms),
-                n: source_asserts,
-                kind: AssertionFactKind::Warranted,
+            return Outcome::Complete(Desugared::Constraints {
+                atom: eq(bool_const(true), bool_const(true)),
+                n: 0,
+                kind: AssertionFactKind::Support,
                 warrant: Warrant {
                     name: Some(format!(
-                        "{}::loop::{}",
+                        "{}::temporal-loop-replay::{}",
                         ctx.scope.local_scope(),
                         self.vars.join("_")
                     )),
                 },
-            })
-        })())
+            });
+        }
+
+        let mut atoms = Vec::new();
+        let mut terminal_effect = None;
+        if self.seed_names.is_empty() {
+            for value in values {
+                let mut replay = Replay::new(ctx);
+                if bind_loop_value(&mut replay.bindings, &self.vars, value).is_none()
+                    || replay.replay_stmts(&self.body_stmts).is_none()
+                {
+                    if terminal_effect.is_none() {
+                        terminal_effect = replay.terminal_effect.take();
+                    }
+                    return terminal_effect
+                        .map(Outcome::Incomplete)
+                        .unwrap_or_else(|| Outcome::from_opt(None));
+                }
+                atoms.extend(replay.atoms);
+            }
+        } else {
+            let mut replay = Replay::new(ctx);
+            if replay.seed_source_bindings(&self.seed_names).is_none() {
+                return Outcome::from_opt(None);
+            }
+            for value in values {
+                if bind_loop_value(&mut replay.bindings, &self.vars, value).is_none()
+                    || replay.replay_stmts(&self.body_stmts).is_none()
+                {
+                    if terminal_effect.is_none() {
+                        terminal_effect = replay.terminal_effect.take();
+                    }
+                    return terminal_effect
+                        .map(Outcome::Incomplete)
+                        .unwrap_or_else(|| Outcome::from_opt(None));
+                }
+            }
+            terminal_effect = replay.terminal_effect.take();
+            atoms.extend(replay.atoms);
+        }
+        if atoms.is_empty() {
+            return terminal_effect
+                .map(Outcome::Incomplete)
+                .unwrap_or_else(|| Outcome::from_opt(None));
+        }
+        Outcome::Complete(Desugared::Constraints {
+            atom: and_(atoms),
+            n: source_asserts,
+            kind: AssertionFactKind::Warranted,
+            warrant: Warrant {
+                name: Some(format!(
+                    "{}::loop::{}",
+                    ctx.scope.local_scope(),
+                    self.vars.join("_")
+                )),
+            },
+        })
     }
 }
 
@@ -793,6 +818,7 @@ struct Replay<'a, 'c, 's> {
     ctx: &'s SugarCtx<'a, 'c>,
     bindings: ExprBindings,
     atoms: Vec<Rc<Formula>>,
+    terminal_effect: Option<Effect>,
     extract_if: ExtractIfSugar,
     insert: InsertSugar,
 }
@@ -803,6 +829,7 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
             ctx,
             bindings: ExprBindings::new(),
             atoms: Vec::new(),
+            terminal_effect: None,
             extract_if: ExtractIfSugar::new(),
             insert: InsertSugar::new(),
         }
@@ -1178,7 +1205,11 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
             {
                 None
             }
-            _ => None,
+            Outcome::Incomplete(effect) => {
+                self.terminal_effect = Some(effect);
+                None
+            }
+            Outcome::Complete(_) => None,
         }
     }
 
@@ -1310,6 +1341,7 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
                         ctx: self.ctx,
                         bindings: child_bindings,
                         atoms: Vec::new(),
+                        terminal_effect: None,
                         extract_if: self.extract_if.clone(),
                         insert: self.insert.clone(),
                     };

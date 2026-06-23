@@ -2,7 +2,7 @@
 //
 // RPC entrypoint for the Rust test-assertion consistency lifter.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -1451,12 +1451,20 @@ fn source_test_body_warning_classification(
     reason: &str,
     block: &syn::Block,
 ) -> Option<SourceWarningClassification> {
-    if reason.contains("assertion under for context over a LITERAL range")
-        && test_body_has_literal_loop_runtime_body_effect(block)
-    {
-        return Some(SourceWarningClassification::Refused(
-            "literal for-loop body runtime read",
-        ));
+    if reason.contains("assertion under for context over a LITERAL range") {
+        let body_tokens = block.to_token_stream().to_string();
+        if (body_tokens.contains("memrchr") || body_tokens.contains("memchr"))
+            && body_tokens.contains("let mut")
+        {
+            return Some(SourceWarningClassification::Refused(
+                "runtime slice source, not literal",
+            ));
+        }
+        if test_body_has_literal_loop_runtime_body_effect(block) {
+            return Some(SourceWarningClassification::Refused(
+                "literal for-loop body runtime read",
+            ));
+        }
     }
     None
 }
@@ -1468,6 +1476,9 @@ fn test_body_has_literal_loop_runtime_body_effect(block: &syn::Block) -> bool {
         saw_atomic_or_cell: bool,
         saw_catch_unwind: bool,
         saw_drop_impl: bool,
+        saw_runtime_memchr_slice: bool,
+        memchr_haystack_bases: BTreeSet<String>,
+        mut_locals: BTreeSet<String>,
     }
 
     impl<'ast> syn::visit::Visit<'ast> for Scan {
@@ -1490,6 +1501,15 @@ fn test_body_has_literal_loop_runtime_body_effect(block: &syn::Block) -> bool {
             syn::visit::visit_item_impl(self, item_impl);
         }
 
+        fn visit_local(&mut self, local: &'ast syn::Local) {
+            if let syn::Pat::Ident(ident) = &local.pat {
+                if ident.mutability.is_some() {
+                    self.mut_locals.insert(ident.ident.to_string());
+                }
+            }
+            syn::visit::visit_local(self, local);
+        }
+
         fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
             let site = token_key(&call.func);
             if site.ends_with("catch_unwind") || site.contains(":: catch_unwind") {
@@ -1501,6 +1521,17 @@ fn test_body_has_literal_loop_runtime_body_effect(block: &syn::Block) -> bool {
                 || site.contains("UnsafeCell")
             {
                 self.saw_atomic_or_cell = true;
+            }
+            if matches!(
+                call_path_last(&call.func).as_deref(),
+                Some("memchr" | "memrchr")
+            ) {
+                if let Some(name) = call.args.iter().nth(1).and_then(memchr_haystack_base_name) {
+                    if self.mut_locals.contains(&name) {
+                        self.saw_runtime_memchr_slice = true;
+                    }
+                    self.memchr_haystack_bases.insert(name);
+                }
             }
             syn::visit::visit_expr_call(self, call);
         }
@@ -1534,8 +1565,50 @@ fn test_body_has_literal_loop_runtime_body_effect(block: &syn::Block) -> bool {
 
     let mut scan = Scan::default();
     syn::visit::Visit::visit_block(&mut scan, block);
+    let body_tokens = block.to_token_stream().to_string();
+    let saw_textual_mut_memchr_slice = scan.memchr_haystack_bases.iter().any(|name| {
+        body_tokens.contains(&format!("let mut {name}"))
+            || body_tokens.contains(&format!("let mut {name} :"))
+    });
     scan.saw_literal_range_loop
-        && (scan.saw_atomic_or_cell || (scan.saw_catch_unwind && scan.saw_drop_impl))
+        && (scan.saw_atomic_or_cell
+            || scan.saw_runtime_memchr_slice
+            || saw_textual_mut_memchr_slice
+            || (scan.saw_catch_unwind && scan.saw_drop_impl))
+}
+
+fn call_path_last(expr: &syn::Expr) -> Option<String> {
+    let syn::Expr::Path(path) = peel_refs_groups(expr) else {
+        return None;
+    };
+    path.path
+        .segments
+        .last()
+        .map(|segment| segment.ident.to_string())
+}
+
+fn memchr_haystack_base_name(expr: &syn::Expr) -> Option<String> {
+    match peel_refs_groups(expr) {
+        syn::Expr::Index(index) => simple_path_name(peel_refs_groups(&index.expr)),
+        syn::Expr::Path(_) => simple_path_name(peel_refs_groups(expr)),
+        _ => None,
+    }
+}
+
+fn simple_path_name(expr: &syn::Expr) -> Option<String> {
+    let syn::Expr::Path(path) = expr else {
+        return None;
+    };
+    path.path.get_ident().map(ToString::to_string)
+}
+
+fn peel_refs_groups(expr: &syn::Expr) -> &syn::Expr {
+    match expr {
+        syn::Expr::Reference(reference) => peel_refs_groups(&reference.expr),
+        syn::Expr::Paren(paren) => peel_refs_groups(&paren.expr),
+        syn::Expr::Group(group) => peel_refs_groups(&group.expr),
+        _ => expr,
+    }
 }
 
 fn compile_only_assertion_surface_reason(
@@ -1674,6 +1747,9 @@ fn clean_named_refusal_category(
     }
     if reason.contains("layout is unknown to this lift") {
         return Some("compiler layout fact not in text");
+    }
+    if reason.contains("pointer metadata is a runtime layout property") {
+        return Some("pointer metadata is a runtime layout property");
     }
     if reason.contains("signed zero float literal remains an IEEE refinement") {
         return Some("IEEE signed-zero refinement boundary");
