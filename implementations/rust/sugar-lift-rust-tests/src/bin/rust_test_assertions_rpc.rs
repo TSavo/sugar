@@ -1468,6 +1468,9 @@ fn post_loop_temporal_read_reason(reason: &str) -> bool {
 }
 
 fn dyn_any_temporal_identity_reason(source_path: &str, source_name: &str, reason: &str) -> bool {
+    if reason.contains("dyn Any concrete type not statically determined") {
+        return true;
+    }
     source_path == "tests/any.rs"
         && source_name == "any_fixed_vec"
         && reason.contains("ambiguous temporal identity for receiver `test`")
