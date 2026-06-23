@@ -24,7 +24,7 @@ use crate::sugar::term_leaf::reasoned_hit;
 use crate::try_fold_eval;
 use crate::{
     angle_args_key, closure_adaptor_refusal, is_consuming_iterator_method,
-    receiver_is_versioned_iterator, Desugared, Outcome, Sugar, SugarCtx,
+    receiver_is_versioned_iterator, simple_path_name, Desugared, Effect, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -118,6 +118,19 @@ impl Sugar for MethodSugar {
                 args,
                 let_inits,
             } => {
+                if matches!(method.as_str(), "starts_with" | "ends_with") {
+                    if let Some(recv_name) = simple_path_name(receiver) {
+                        if ctx.scope.is_mut_local(&recv_name) {
+                            return Outcome::Hit(Effect::Unsupported {
+                                reason: format!(
+                                    "{method} predicate over a MUTABLE-local receiver `{recv_name}` \
+                                     (bin-2: a slice/string mutated by side-effecting iteration, not \
+                                     constructed from source literals); refused"
+                                ),
+                            });
+                        }
+                    }
+                }
                 let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
                 let let_inits = merge_let_inits(&stable, let_inits);
                 let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
