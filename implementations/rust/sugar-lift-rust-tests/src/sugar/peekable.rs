@@ -416,6 +416,11 @@ fn literal_sequence(
     if let Some(arg) = non_fused_new_arg(expr) {
         return literal_sequence(arg, fcx, ctx);
     }
+    if method_family::literal_sequence_static_len_in_scope(expr, fcx.let_inits(), fcx.scope())
+        == Some(0)
+    {
+        return Ok(Vec::new());
+    }
     let node =
         method_family::build_literal_sequence_composite(expr, fcx).ok_or_else(structural_effect)?;
     match node.desugar(ctx) {

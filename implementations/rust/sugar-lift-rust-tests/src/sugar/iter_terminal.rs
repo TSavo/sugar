@@ -599,12 +599,21 @@ impl IterTerminalSugar {
             | Terminal::All(_)
             | Terminal::Find(_)
             | Terminal::Position(_)
-            | Terminal::AdvanceBy(_) => method_family::literal_range_sequence_static_len_in_scope(
-                &self.inner,
-                let_inits,
-                scope,
-            )
-            .is_some(),
+            | Terminal::AdvanceBy(_) => {
+                method_family::literal_range_sequence_static_len_in_scope(
+                    &self.inner,
+                    let_inits,
+                    scope,
+                )
+                .is_some()
+                    || (matches!(self.terminal, Terminal::Count)
+                        && method_family::literal_collection_adapter_static_len_in_scope(
+                            &self.inner,
+                            let_inits,
+                            scope,
+                        )
+                        .is_some())
+            }
             Terminal::Sum | Terminal::Product => false,
         }
     }
@@ -714,7 +723,14 @@ impl IterTerminalSugar {
         }
         let static_empty_sequence =
             method_family::literal_sequence_static_len_in_scope(&self.inner, &let_inits, ctx.scope)
-                == Some(0);
+                == Some(0)
+                || (matches!(self.terminal, Terminal::Count)
+                    && method_family::literal_collection_adapter_static_len_in_scope(
+                        &self.inner,
+                        &let_inits,
+                        ctx.scope,
+                    )
+                    .is_some_and(|proof| proof.len == 0));
         let allow_empty_sequence =
             static_empty_sequence && self.accepts_empty_sequence_for_source(&let_inits, ctx.scope);
         let seq = if allow_empty_sequence {

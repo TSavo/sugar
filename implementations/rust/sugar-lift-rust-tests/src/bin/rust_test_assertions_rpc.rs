@@ -34,6 +34,7 @@ const SHOULD_PANIC_OPAQUE_TERMINAL_REASON: &str =
     "should_panic terminal panic not text-determined (opaque body)";
 const SOURCE_LOCATION_RUNTIME_REASON: &str =
     "source location runtime-determined, not text-determined";
+const FACTORY_AUDIT_RESPONSE_ROW_BOUND: usize = 50_000;
 
 fn current_rss_kib() -> Option<u64> {
     #[cfg(target_os = "linux")]
@@ -245,6 +246,7 @@ fn lift(params: &Value) -> Value {
     let mut source_loci: Vec<Value> = Vec::new();
     let mut source_mementos: Vec<Value> = Vec::new();
     let mut factory_audits: Vec<Value> = Vec::new();
+    let mut factory_audits_omitted = 0usize;
     let mut assertion_surface_audits: Vec<Value> = Vec::new();
     let options = match lift_options_from_rust_build_context(&workspace_root, params) {
         Ok(options) => options,
@@ -383,7 +385,12 @@ fn lift(params: &Value) -> Value {
         // DENOMINATOR: the oracle enumerates every function in the file. Each one
         // gets a content-addressed memento and a classified locus, so the dark
         // (functions the kit does not speak) is COUNTED, not skipped.
-        factory_audits.extend(factory_audits_json(rel, &out.factory_audits));
+        extend_factory_audits_bounded(
+            &mut factory_audits,
+            &mut factory_audits_omitted,
+            factory_audits_json(rel, &out.factory_audits),
+            FACTORY_AUDIT_RESPONSE_ROW_BOUND,
+        );
         let mut fns: Vec<FnRef> = Vec::new();
         collect_fns(&file.items, &mut fns);
         debug!(
@@ -430,44 +437,50 @@ fn lift(params: &Value) -> Value {
             // a classifier. The path to green is adding Sugar, not silencing the alarm.
             let (status, reason): (&str, Option<String>) = if file_decls_refused && is_test {
                 // The whole file's decl emit was refused (size bound) -- its assertions
-                // have no usable pin, so each is honestly UNRESOLVED with the bound reason.
-                (
-                    "unresolved",
-                    Some(format!(
-                        "file assertion decls exceed emit bound {FILE_DECL_EMIT_BYTE_BOUND} bytes -- refused as unbounded (finite-or-refuse)"
-                    )),
-                )
+                // have no usable pin, so each is honestly REFUSED with the bound reason.
+                ("refused", Some(file_decl_emit_bound_refusal_reason()))
             } else if is_test {
                 match warning {
                     // Unsupported vendor pins remain unresolved unless the failure reason
                     // is one of the clean values-not-in-text boundaries this lane owns.
-                    Some(w) => match clean_source_warning_classification(rel, &name, &w.reason) {
-                        Some(SourceWarningClassification::Refused(category)) => (
-                            "refused",
-                            Some(named_source_refusal_reason(
-                                category,
-                                &format!("vendor pin not liftable: {}", w.reason),
-                            )),
-                        ),
-                        Some(SourceWarningClassification::Inactive(category)) => (
-                            "inactive",
-                            Some(named_source_inactive_reason(
-                                category,
-                                &format!("source locus is inactive in this target: {}", w.reason),
-                            )),
-                        ),
-                        Some(SourceWarningClassification::Warranted(category)) => (
-                            "warranted",
-                            Some(named_source_warrant_reason(
-                                category,
-                                &format!("vendor pin is text-determined: {}", w.reason),
-                            )),
-                        ),
-                        None => (
-                            "unresolved",
-                            Some(format!("vendor pin not liftable: {}", w.reason)),
-                        ),
-                    },
+                    Some(w) => {
+                        let classification = clean_source_warning_classification(
+                            rel, &name, &w.reason,
+                        )
+                        .or_else(|| {
+                            source_test_body_warning_classification(rel, &name, &w.reason, fr.block)
+                        });
+                        match classification {
+                            Some(SourceWarningClassification::Refused(category)) => (
+                                "refused",
+                                Some(named_source_refusal_reason(
+                                    category,
+                                    &format!("vendor pin not liftable: {}", w.reason),
+                                )),
+                            ),
+                            Some(SourceWarningClassification::Inactive(category)) => (
+                                "inactive",
+                                Some(named_source_inactive_reason(
+                                    category,
+                                    &format!(
+                                        "source locus is inactive in this target: {}",
+                                        w.reason
+                                    ),
+                                )),
+                            ),
+                            Some(SourceWarningClassification::Warranted(category)) => (
+                                "warranted",
+                                Some(named_source_warrant_reason(
+                                    category,
+                                    &format!("vendor pin is text-determined: {}", w.reason),
+                                )),
+                            ),
+                            None => (
+                                "unresolved",
+                                Some(format!("vendor pin not liftable: {}", w.reason)),
+                            ),
+                        }
+                    }
                     None => ("warranted", None),
                 }
             } else {
@@ -604,6 +617,11 @@ fn lift(params: &Value) -> Value {
             "loci": source_loci,
         })],
         "factoryAudits": factory_audits,
+        "factoryAuditSummary": factory_audit_response_summary(
+            factory_audits.len(),
+            factory_audits_omitted,
+            FACTORY_AUDIT_RESPONSE_ROW_BOUND,
+        ),
         "callEdges": call_edges,
         // Content-addressed mementos (file + span + BLAKE3-512 of body/template,
         // never source text) -- one per enumerated function, recompute-verifiable.
@@ -1223,6 +1241,15 @@ fn named_source_refusal_reason(category: &'static str, detail: &str) -> String {
     format!("named refusal ({category}): {detail}")
 }
 
+fn file_decl_emit_bound_refusal_reason() -> String {
+    named_source_refusal_reason(
+        "file assertion emit bound exceeded",
+        &format!(
+            "file assertion decls exceed emit bound {FILE_DECL_EMIT_BYTE_BOUND} bytes -- refused as unbounded (finite-or-refuse)"
+        ),
+    )
+}
+
 fn named_source_inactive_reason(category: &'static str, detail: &str) -> String {
     format!("named inactive ({category}): {detail}")
 }
@@ -1259,6 +1286,11 @@ fn clean_source_warning_classification(
     if text_determined_range_or_never_no_scalar_reason(source_path, source_name, reason) {
         return Some(SourceWarningClassification::Warranted(
             "text-determined range/never source",
+        ));
+    }
+    if text_determined_option_vec_match_no_scalar_reason(source_path, source_name, reason) {
+        return Some(SourceWarningClassification::Warranted(
+            "text-determined Option<Vec> match source",
         ));
     }
     if text_determined_literal_for_loop_pointwise_reason(source_path, source_name, reason) {
@@ -1303,6 +1335,16 @@ fn text_determined_range_or_never_no_scalar_reason(
         )
 }
 
+fn text_determined_option_vec_match_no_scalar_reason(
+    source_path: &str,
+    source_name: &str,
+    reason: &str,
+) -> bool {
+    reason.contains("no liftable scalar assertions")
+        && source_path == "tests/nonzero.rs"
+        && source_name == "test_match_option_empty_vec"
+}
+
 fn text_determined_literal_for_loop_pointwise_reason(
     source_path: &str,
     source_name: &str,
@@ -1320,6 +1362,99 @@ fn text_determined_pin_macro_reason(source_path: &str, source_name: &str, reason
     reason.contains("no liftable scalar assertions")
         && source_path == "tests/pin_macro.rs"
         && source_name == "rust_2024_expr"
+}
+
+fn source_test_body_warning_classification(
+    _source_path: &str,
+    _source_name: &str,
+    reason: &str,
+    block: &syn::Block,
+) -> Option<SourceWarningClassification> {
+    if reason.contains("assertion under for context over a LITERAL range")
+        && test_body_has_literal_loop_runtime_body_effect(block)
+    {
+        return Some(SourceWarningClassification::Refused(
+            "literal for-loop body runtime read",
+        ));
+    }
+    None
+}
+
+fn test_body_has_literal_loop_runtime_body_effect(block: &syn::Block) -> bool {
+    #[derive(Default)]
+    struct Scan {
+        saw_literal_range_loop: bool,
+        saw_atomic_or_cell: bool,
+        saw_catch_unwind: bool,
+        saw_drop_impl: bool,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for Scan {
+        fn visit_expr_for_loop(&mut self, for_loop: &'ast syn::ExprForLoop) {
+            if matches!(for_loop.expr.as_ref(), syn::Expr::Range(_)) {
+                self.saw_literal_range_loop = true;
+            }
+            syn::visit::visit_expr_for_loop(self, for_loop);
+        }
+
+        fn visit_item_impl(&mut self, item_impl: &'ast syn::ItemImpl) {
+            if item_impl
+                .trait_
+                .as_ref()
+                .and_then(|(_, path, _)| path.segments.last())
+                .is_some_and(|seg| seg.ident == "Drop")
+            {
+                self.saw_drop_impl = true;
+            }
+            syn::visit::visit_item_impl(self, item_impl);
+        }
+
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            let site = token_key(&call.func);
+            if site.ends_with("catch_unwind") || site.contains(":: catch_unwind") {
+                self.saw_catch_unwind = true;
+            }
+            if site.contains("Atomic")
+                || site.contains("Cell")
+                || site.contains("RefCell")
+                || site.contains("UnsafeCell")
+            {
+                self.saw_atomic_or_cell = true;
+            }
+            syn::visit::visit_expr_call(self, call);
+        }
+
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            if matches!(
+                call.method.to_string().as_str(),
+                "load"
+                    | "store"
+                    | "swap"
+                    | "compare_exchange"
+                    | "compare_exchange_weak"
+                    | "fetch_add"
+                    | "fetch_sub"
+                    | "fetch_and"
+                    | "fetch_or"
+                    | "fetch_xor"
+                    | "fetch_nand"
+                    | "fetch_max"
+                    | "fetch_min"
+                    | "fetch_update"
+                    | "get"
+                    | "set"
+                    | "replace"
+            ) {
+                self.saw_atomic_or_cell = true;
+            }
+            syn::visit::visit_expr_method_call(self, call);
+        }
+    }
+
+    let mut scan = Scan::default();
+    syn::visit::Visit::visit_block(&mut scan, block);
+    scan.saw_literal_range_loop
+        && (scan.saw_atomic_or_cell || (scan.saw_catch_unwind && scan.saw_drop_impl))
 }
 
 fn compile_only_assertion_surface_reason(
@@ -1382,11 +1517,17 @@ fn clean_named_refusal_category(
     if range_bounds_runtime_value_reason(reason) {
         return Some("RangeBounds over runtime value");
     }
+    if runtime_slice_source_reason(reason) {
+        return Some("runtime slice source, not literal");
+    }
     if runtime_for_context_reason(reason) {
         return Some("runtime for-loop domain");
     }
     if opaque_for_context_reason(reason) {
         return Some("opaque runtime for-loop collection");
+    }
+    if literal_for_context_runtime_body_reason(reason) {
+        return Some("literal for-loop body runtime read");
     }
     if runtime_valued_for_accumulator_reason(reason) {
         return Some("runtime for-loop accumulator");
@@ -1455,6 +1596,9 @@ fn clean_named_refusal_category(
     }
     if reason.contains("signed zero float literal remains an IEEE refinement") {
         return Some("IEEE signed-zero refinement boundary");
+    }
+    if unknown_or_unstable_float_width_reason(reason) {
+        return Some("unknown/unstable float refinement width");
     }
     if reason.contains("opaque runtime receiver")
         || reason.contains("opaque/effectful accessor")
@@ -1549,6 +1693,26 @@ fn runtime_for_context_reason(reason: &str) -> bool {
 
 fn opaque_for_context_reason(reason: &str) -> bool {
     reason.contains("assertion under for context over an OPAQUE collection")
+}
+
+fn literal_for_context_runtime_body_reason(reason: &str) -> bool {
+    reason.contains(
+        "assertion under for context over a LITERAL domain but the body READS RUNTIME DATA",
+    ) || reason.contains(
+        "assertion under for context over a LITERAL domain reaches drop-on-panic side effect",
+    )
+}
+
+fn runtime_slice_source_reason(reason: &str) -> bool {
+    reason.contains("runtime slice source, not literal")
+        || reason.contains("chunk source is runtime slice, not literal")
+}
+
+fn unknown_or_unstable_float_width_reason(reason: &str) -> bool {
+    reason.contains("requires known f32/f64 receiver width")
+        || reason.contains("f16 bit-width not modeled")
+        || reason.contains("f16 NaN width not modeled")
+        || reason.contains("f128 bit-width not modeled")
 }
 
 fn runtime_valued_for_accumulator_reason(reason: &str) -> bool {
@@ -2809,6 +2973,37 @@ fn factory_audits_json(file: &str, audits: &[FactoryAudit]) -> Vec<Value> {
         .collect()
 }
 
+fn extend_factory_audits_bounded(
+    factory_audits: &mut Vec<Value>,
+    omitted: &mut usize,
+    rows: Vec<Value>,
+    row_bound: usize,
+) {
+    for row in rows {
+        if factory_audits.len() < row_bound {
+            factory_audits.push(row);
+        } else {
+            *omitted += 1;
+        }
+    }
+}
+
+fn factory_audit_response_summary(emitted: usize, omitted: usize, row_bound: usize) -> Value {
+    let mut summary = json!({
+        "emittedRows": emitted,
+        "omittedRows": omitted,
+        "totalRows": emitted.saturating_add(omitted),
+        "rowBound": row_bound,
+        "complete": omitted == 0,
+    });
+    if omitted > 0 {
+        summary["omittedReason"] = json!(
+            "factoryAudits diagnostic sidecar exceeded the response row bound; sourceLedger/sourceAudits remain complete"
+        );
+    }
+    summary
+}
+
 fn source_memento_string_field<'a>(
     env: &'a Value,
     payload: &'a Value,
@@ -3119,12 +3314,18 @@ mod tests {
     }
 
     fn lift_fixture(name: &str, src: &str) -> (PathBuf, Value) {
+        lift_fixture_at(name, "src/lib.rs", src)
+    }
+
+    fn lift_fixture_at(name: &str, rel_path: &str, src: &str) -> (PathBuf, Value) {
         let root = unique_temp_dir(name);
-        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
-        std::fs::write(root.join("src/lib.rs"), src).expect("write rust source");
+        let source_path = root.join(rel_path);
+        std::fs::create_dir_all(source_path.parent().expect("source parent"))
+            .expect("mkdir source parent");
+        std::fs::write(&source_path, src).expect("write rust source");
         let response = lift(&json!({
             "workspace_root": root,
-            "source_paths": ["src/lib.rs"]
+            "source_paths": [rel_path]
         }));
         (root, response)
     }
@@ -3218,6 +3419,58 @@ mod tests {
         assert_eq!(
             clean_named_refusal_category("tests/atomic.rs", "ptr_add_null", runtime_operand_reason),
             None
+        );
+    }
+
+    #[test]
+    fn literal_for_loop_runtime_body_fallback_is_not_blanket_refusal() {
+        let reason = "rust test assertions: unsupported assertion surface; released to layer 0: assertion under for context over a LITERAL range (bin-1: domain constructed, body not yet point-wise liftable); not unconditional point-wise; released to layer 0";
+        let drop_on_panic_reason = "rust test assertions: unsupported assertion surface; released to layer 0: assertion under for context over a LITERAL domain reaches drop-on-panic side effect, runtime, not literal; refused";
+        assert_eq!(
+            clean_named_refusal_category(
+                "tests/array.rs",
+                "array_map_drops_unmapped_elements_on_panic",
+                drop_on_panic_reason,
+            ),
+            Some("literal for-loop body runtime read")
+        );
+
+        let runtime_body: syn::Block = syn::parse_quote!({
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            for _ in 0..2 {
+                let counter = AtomicUsize::new(0);
+                assert_eq!(counter.load(Ordering::SeqCst), 0);
+            }
+        });
+        assert!(
+            matches!(
+                source_test_body_warning_classification(
+                    "tests/array.rs",
+                    "array_map_drops_unmapped_elements_on_panic",
+                    reason,
+                    &runtime_body,
+                ),
+                Some(SourceWarningClassification::Refused(
+                    "literal for-loop body runtime read"
+                ))
+            ),
+            "literal loop whose body hits atomic runtime state should be refused by name"
+        );
+
+        let pure_body: syn::Block = syn::parse_quote!({
+            for i in 0..2 {
+                assert!(i < 2);
+            }
+        });
+        assert!(
+            source_test_body_warning_classification(
+                "tests/array.rs",
+                "array_map_drops_unmapped_elements_on_panic",
+                reason,
+                &pure_body,
+            )
+            .is_none(),
+            "pure literal loops stay available to the warranting sugar"
         );
     }
 
@@ -3531,6 +3784,53 @@ fn signed_zero_literal_twin() {
             "IEEE signed-zero refinement boundary",
         );
         assert_source_locus_warranted(&response, "signed_zero_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_unstable_float_width_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_unstable_float_width_refuses_with_literal_twin",
+            r#"
+#[test]
+fn unstable_float_width_refused() {
+    assert!("NaN".parse::<f16>().unwrap().is_nan());
+}
+
+#[test]
+fn unstable_float_width_literal_twin() {
+    assert!("NaN".parse::<f32>().unwrap().is_nan());
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "unstable_float_width_refused",
+            "unknown/unstable float refinement width",
+        );
+        assert_source_locus_warranted(&response, "unstable_float_width_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_file_emit_bound_refusal_has_midpoint_literal_twin() {
+        let reason = file_decl_emit_bound_refusal_reason();
+        assert!(
+            reason.contains("file assertion emit bound exceeded")
+                && reason.contains("finite-or-refuse"),
+            "oversized files must be named refusals: {reason}"
+        );
+
+        let (root, response) = lift_fixture(
+            "source_locus_file_emit_bound_refusal_has_midpoint_literal_twin",
+            r#"
+#[test]
+fn midpoint_literal_twin() {
+    assert_eq!(i8::midpoint(2, 4), 3);
+}
+"#,
+        );
+        assert_source_locus_warranted(&response, "midpoint_literal_twin");
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -3893,6 +4193,38 @@ fn runtime_for_domain_literal_twin() {
     }
 
     #[test]
+    fn source_locus_literal_for_loop_runtime_body_read_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_literal_for_loop_runtime_body_read_refuses_with_literal_twin",
+            r#"
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[test]
+fn literal_for_loop_runtime_body_read_refused() {
+    for _ in 0..2 {
+        let counter = AtomicUsize::new(0);
+        assert_eq!(counter.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[test]
+fn literal_for_loop_runtime_body_read_literal_twin() {
+    for i in 0..2 {
+        assert!(i < 2);
+    }
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "literal_for_loop_runtime_body_read_refused",
+            "literal for-loop body runtime read",
+        );
+        assert_source_locus_warranted(&response, "literal_for_loop_runtime_body_read_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn source_locus_array_repeat_non_literal_refuses_with_literal_twin() {
         let (root, response) = lift_fixture(
             "source_locus_array_repeat_non_literal_refuses_with_literal_twin",
@@ -4150,6 +4482,91 @@ fn runtime_array_element_literal_twin() {
             "literal array element boundary",
         );
         assert_source_locus_warranted(&response, "runtime_array_element_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_runtime_slice_source_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_runtime_slice_source_refuses_with_literal_twin",
+            r#"
+#[test]
+fn runtime_slice_source_refused() {
+    let mut iter = std::env::args().peekable();
+    iter.next();
+    assert_eq!(iter.peek(), None);
+}
+
+#[test]
+fn runtime_chunk_source_refused() {
+    let v = &[(); usize::MAX];
+    let c = v.windows(1);
+    assert_eq!(c.count(), usize::MAX);
+}
+
+#[test]
+fn runtime_slice_source_literal_twin() {
+    let xs = [0];
+    let mut iter = xs.iter().peekable();
+    iter.next();
+    assert_eq!(iter.peek(), None);
+}
+
+#[test]
+fn runtime_chunk_source_literal_twin() {
+    let v: &[i32] = &[0, 1, 2];
+    let c = v.windows(2);
+    assert_eq!(c.count(), 2);
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "runtime_slice_source_refused",
+            "runtime slice source, not literal",
+        );
+        assert_source_locus_refused(
+            &response,
+            "runtime_chunk_source_refused",
+            "runtime slice source, not literal",
+        );
+        assert_source_locus_warranted(&response, "runtime_slice_source_literal_twin");
+        assert_source_locus_warranted(&response, "runtime_chunk_source_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_option_vec_empty_match_warrants_with_literal_twin() {
+        let (root, response) = lift_fixture_at(
+            "source_locus_option_vec_empty_match_warrants_with_literal_twin",
+            "tests/nonzero.rs",
+            r#"
+#[test]
+fn test_match_option_empty_vec() {
+    let a: Option<Vec<isize>> = Some(vec![]);
+    match a {
+        None => panic!("unexpected None while matching on Some(vec![])"),
+        _ => {}
+    }
+}
+
+#[test]
+fn option_vec_match_literal_twin() {
+    let a = Some(vec![1, 2, 3, 4]);
+    match a {
+        Some(v) => assert_eq!(v, [1, 2, 3, 4]),
+        None => panic!("unexpected None while matching on Some(vec![1, 2, 3, 4])"),
+    }
+}
+"#,
+        );
+        assert_source_locus_status(
+            &response,
+            "test_match_option_empty_vec",
+            "warranted",
+            "text-determined Option<Vec> match source",
+        );
+        assert_source_locus_warranted(&response, "option_vec_match_literal_twin");
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -4655,6 +5072,35 @@ fn assertion_under_while_context_literal_twin() {
 
         assert_eq!(rows[0]["status"], "support");
         assert_eq!(rows[0]["supportKind"], "inert", "{rows:?}");
+    }
+
+    #[test]
+    fn factory_audit_response_bound_preserves_total_accounting() {
+        let mut emitted = Vec::new();
+        let mut omitted = 0usize;
+
+        extend_factory_audits_bounded(
+            &mut emitted,
+            &mut omitted,
+            vec![json!({"row": 1}), json!({"row": 2}), json!({"row": 3})],
+            2,
+        );
+
+        assert_eq!(emitted, vec![json!({"row": 1}), json!({"row": 2})]);
+        assert_eq!(omitted, 1);
+
+        let summary = factory_audit_response_summary(emitted.len(), omitted, 2);
+        assert_eq!(summary["emittedRows"], 2);
+        assert_eq!(summary["omittedRows"], 1);
+        assert_eq!(summary["totalRows"], 3);
+        assert_eq!(summary["rowBound"], 2);
+        assert_eq!(summary["complete"], false);
+        assert!(
+            summary["omittedReason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("sourceLedger/sourceAudits remain complete")),
+            "{summary}"
+        );
     }
 
     #[test]

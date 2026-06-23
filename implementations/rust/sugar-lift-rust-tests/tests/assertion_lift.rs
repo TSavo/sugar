@@ -24023,6 +24023,48 @@ fn peekable_non_fused_empty_literal_warrants_none_with_teeth() {
 }
 
 #[test]
+fn peekable_empty_slice_literal_warrants_none_with_teeth() {
+    let good = r#"
+        #[test]
+        fn test_iterator_peekable_count() {
+            let zs: [i32; 0] = [];
+            let mut it = zs.iter().peekable();
+            assert_eq!(it.peek(), None);
+        }
+    "#;
+    let good_out = lift_file(&parse(good), "tests/iter/adapters/peekable.rs");
+    assert_eq!(
+        good_out.assertions_lifted, 1,
+        "empty literal slice peekable should warrant None: {:?}; facts={:?}",
+        good_out.skip_reasons, good_out.assertion_facts
+    );
+    let good_decl = single_warranted_decl(&good_out);
+    if let Some(sat) = z3_verdict(&inv_json(good_decl), "peekable_empty_slice_good") {
+        assert!(sat, "GOOD empty-slice peekable None should be SAT");
+    }
+
+    let bad = good.replace(
+        "assert_eq!(it.peek(), None);",
+        "assert_eq!(it.peek(), Some(0));",
+    );
+    let bad_out = lift_file(&parse(&bad), "tests/iter/adapters/peekable_bad.rs");
+    assert_eq!(
+        bad_out.assertions_lifted, 1,
+        "empty literal slice peekable bad twin should still warrant: {:?}; facts={:?}",
+        bad_out.skip_reasons, bad_out.assertion_facts
+    );
+    let bad_decl = single_warranted_decl(&bad_out);
+    if let Some(sat) = z3_verdict(&inv_json(bad_decl), "peekable_empty_slice_bad") {
+        assert!(
+            !sat,
+            "BAD empty-slice peekable None should be z3-UNSAT: {}; inv={}",
+            bad_decl.name,
+            inv_json(bad_decl)
+        );
+    }
+}
+
+#[test]
 fn rpc_source_warrants_literal_range_constructors_and_propagates_child_hits() {
     let doc = run_rpc_lift(
         "tests/ops.rs",
