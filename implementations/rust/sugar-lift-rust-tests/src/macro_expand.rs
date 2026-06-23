@@ -756,8 +756,8 @@ mod tests {
                 })+
             };
         };
-        let out = expand(&rules_of(def), quote! { 0 1 2 })
-            .unwrap_or_else(|e| panic!("expand err: {e}"));
+        let out =
+            expand(&rules_of(def), quote! { 0 1 2 }).unwrap_or_else(|e| panic!("expand err: {e}"));
         let expanded = out.to_string();
         assert!(expanded.contains("assert_eq"), "{expanded}");
         assert!(expanded.contains("[u8 ; 0]"), "{expanded}");

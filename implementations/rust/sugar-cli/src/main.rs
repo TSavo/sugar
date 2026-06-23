@@ -263,6 +263,9 @@ pub struct LiftArgs {
     /// Print the lifter's source-audit countdown instead of the raw ProofIR term JSON.
     #[arg(long, conflicts_with_all = ["output", "identify_only", "library_bindings"])]
     pub report: bool,
+    /// With --report, print only source/factory summary accounting and keep the lift-plugin response slim.
+    #[arg(long = "report-summary", requires = "report", conflicts_with_all = ["prove", "contract"])]
+    pub report_summary: bool,
     /// With --report, append the verifier discharge report from the current .proof set.
     #[arg(long = "prove", requires = "report")]
     pub prove: bool,

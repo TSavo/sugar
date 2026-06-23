@@ -432,7 +432,7 @@ coretests-source-audit:
 	sed "s|@BIN_DIR@|$$bin_dir|g" "$$manifest_dir/manifest.toml.in" > "$$manifest_dir/manifest.toml"; \
 	echo "==== coretests-source-audit: panic-armed source totality ===="; \
 	cd "$$corpus"; \
-	NO_COLOR=1 CLICOLOR=0 TERM=dumb "$$bin_dir/sugar" lift --report
+	RUST_LOG=error NO_COLOR=1 CLICOLOR=0 TERM=dumb "$$bin_dir/sugar" lift --report --report-summary
 
 .PHONY: coretests-invariants
 coretests-invariants:

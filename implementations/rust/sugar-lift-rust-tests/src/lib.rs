@@ -918,8 +918,47 @@ pub fn lift_file_with_all_source_imports(
     imported_consts: &ConstSourceRegistry,
     imported_fns: &FunctionSourceRegistry,
 ) -> AdapterOutput {
+    lift_file_with_all_source_imports_and_factory_audits(
+        file,
+        source_path,
+        options,
+        imported_macros,
+        imported_consts,
+        imported_fns,
+        true,
+    )
+}
+
+pub fn lift_file_with_all_source_imports_without_factory_audits(
+    file: &syn::File,
+    source_path: &str,
+    options: &LiftOptions,
+    imported_macros: &MacroRegistry,
+    imported_consts: &ConstSourceRegistry,
+    imported_fns: &FunctionSourceRegistry,
+) -> AdapterOutput {
+    lift_file_with_all_source_imports_and_factory_audits(
+        file,
+        source_path,
+        options,
+        imported_macros,
+        imported_consts,
+        imported_fns,
+        false,
+    )
+}
+
+fn lift_file_with_all_source_imports_and_factory_audits(
+    file: &syn::File,
+    source_path: &str,
+    options: &LiftOptions,
+    imported_macros: &MacroRegistry,
+    imported_consts: &ConstSourceRegistry,
+    imported_fns: &FunctionSourceRegistry,
+    capture_factory_audits: bool,
+) -> AdapterOutput {
     let mut out = AdapterOutput::default();
-    let factory_audits = FactoryAuditLog::default();
+    let factory_audits = capture_factory_audits.then(FactoryAuditLog::default);
     let mut modules = Vec::new();
     let reducer = ReductionCtx::from_items_with_source_imports(
         &file.items,
@@ -935,7 +974,7 @@ pub fn lift_file_with_all_source_imports(
         &mut modules,
         options,
         &reducer,
-        Some(&factory_audits),
+        factory_audits.as_ref(),
         &mut out,
     );
     // Pass 2: walk non-test fns. Emit named refusals for asserts in helper fns
@@ -947,10 +986,12 @@ pub fn lift_file_with_all_source_imports(
         &out.reduced_helpers.clone(),
         &reducer,
         options,
-        Some(&factory_audits),
+        factory_audits.as_ref(),
         &mut out,
     );
-    out.factory_audits = factory_audits.into_inner();
+    if let Some(factory_audits) = factory_audits {
+        out.factory_audits = factory_audits.into_inner();
+    }
     out
 }
 

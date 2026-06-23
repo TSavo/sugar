@@ -54,6 +54,7 @@ pub fn run(args: LiftArgs) -> u8 {
     };
     lift_options.identify_only = args.identify_only;
     lift_options.library_bindings = args.library_bindings;
+    lift_options.report_summary = args.report_summary;
     tracing::trace!(
         surface = %surface,
         emit = ?lift_options.emit,
@@ -61,6 +62,7 @@ pub fn run(args: LiftArgs) -> u8 {
         workspace_override = ?lift_options.workspace_override,
         identify_only = lift_options.identify_only,
         library_bindings = lift_options.library_bindings,
+        report_summary = lift_options.report_summary,
         "lift: dispatching configured surface"
     );
 
@@ -89,6 +91,42 @@ pub fn run(args: LiftArgs) -> u8 {
                 return EXIT_VERIFY_FAIL;
             }
             if args.report {
+                if args.report_summary {
+                    trace_lift_report_checkpoint("before_source_report_summary_from_lift_response");
+                    let summary = match source_report_summary_from_lift_response(response) {
+                        Ok(summary) => summary,
+                        Err(error) => {
+                            eprintln!("{}: {error}", "error".red().bold());
+                            return EXIT_USER_ERROR;
+                        }
+                    };
+                    trace_lift_report_checkpoint("after_source_report_summary_from_lift_response");
+                    let hard_failure = source_report_summary_has_hard_failures(&summary);
+                    let rendered = if args.out.json {
+                        match render_report_summary_json(&summary) {
+                            Ok(rendered) => rendered,
+                            Err(error) => {
+                                eprintln!(
+                                    "{}: render lift summary report: {error}",
+                                    "error".red().bold()
+                                );
+                                return EXIT_USER_ERROR;
+                            }
+                        }
+                    } else {
+                        render_report_summary_human(&summary)
+                    };
+                    trace_lift_render_checkpoint("after_render_summary_report", rendered.len());
+                    if let Err(error) = write_output(None, rendered.as_bytes()) {
+                        eprintln!("{}: {error}", "error".red().bold());
+                        return EXIT_USER_ERROR;
+                    }
+                    trace_lift_render_checkpoint("after_write_summary_report", rendered.len());
+                    if hard_failure {
+                        return EXIT_VERIFY_FAIL;
+                    }
+                    return EXIT_OK;
+                }
                 trace_lift_report_checkpoint("before_source_report_from_lift_response");
                 let report =
                     match source_report_from_lift_response(response, args.contract.as_deref()) {
@@ -497,6 +535,22 @@ struct LiftSourceReport {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+struct LiftReportSummary {
+    ledger: Value,
+    factory: FactoryAccountingSummary,
+    unresolved_factory_sites: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct FactoryAccountingSummary {
+    sites: usize,
+    warranted: usize,
+    refused: usize,
+    support: usize,
+    unresolved: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 struct VendorConjoinReport {
     call: String,
     local_contract: String,
@@ -759,6 +813,159 @@ fn source_file_line_hint(source: &Value) -> (&str, i64) {
         })
         .unwrap_or(-1);
     (file, line)
+}
+
+fn source_report_summary_from_lift_response(response: &Value) -> Result<LiftReportSummary, String> {
+    if let Some(refused) = response.get("sugar-refused").and_then(Value::as_str) {
+        let reason = response
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or("(no reason emitted)");
+        return Err(format!(
+            "lift response was REFUSED upstream (`{refused}`): {reason}. The source-audit ledger could not be measured -- this is a hard failure, not an empty ledger."
+        ));
+    }
+    let ledger = response
+        .get("sourceLedger")
+        .filter(|value| value.is_object())
+        .ok_or_else(|| {
+            "lift response did not include sourceLedger; the kit must emit source-audit accounting"
+                .to_string()
+        })?;
+    if ledger.get("source_unresolved").is_none() && ledger.get("unclassified_source").is_none() {
+        return Err(
+            "lift response sourceLedger is missing source_unresolved; cannot measure unresolved source coverage"
+                .to_string(),
+        );
+    }
+
+    let moved_support_loci = response
+        .get("sourceAudits")
+        .or_else(|| response.get("source_audits"))
+        .and_then(Value::as_array)
+        .map(|audits| {
+            audits
+                .iter()
+                .map(|audit| normalize_source_audit_support(audit.clone()).1)
+                .sum::<i64>()
+        })
+        .unwrap_or(0);
+    let ledger = normalize_source_ledger_support(ledger.clone(), moved_support_loci);
+    let factory = factory_accounting_summary_from_response(response);
+    let unresolved_factory_sites = unresolved_factory_sites_from_response(response);
+    Ok(LiftReportSummary {
+        ledger,
+        factory,
+        unresolved_factory_sites,
+    })
+}
+
+fn factory_accounting_summary_from_response(response: &Value) -> FactoryAccountingSummary {
+    if let Some(summary) = response
+        .get("factoryAuditSummary")
+        .or_else(|| response.get("factory_audit_summary"))
+    {
+        if let Some(status_counts) = summary
+            .get("statusCounts")
+            .or_else(|| summary.get("status_counts"))
+        {
+            let sites = summary
+                .get("emittedRows")
+                .or_else(|| summary.get("emitted_rows"))
+                .or_else(|| summary.get("sites"))
+                .and_then(Value::as_u64)
+                .map(|value| value as usize)
+                .unwrap_or_else(|| {
+                    ["warranted", "refused", "support", "unresolved"]
+                        .iter()
+                        .map(|status| status_count(status_counts, status))
+                        .sum()
+                });
+            return FactoryAccountingSummary {
+                sites,
+                warranted: status_count(status_counts, "warranted"),
+                refused: status_count(status_counts, "refused"),
+                support: status_count(status_counts, "support"),
+                unresolved: status_count(status_counts, "unresolved"),
+            };
+        }
+    }
+
+    response
+        .get("factoryAudits")
+        .or_else(|| response.get("factory_audits"))
+        .and_then(Value::as_array)
+        .map(|rows| factory_accounting_summary_from_rows(rows))
+        .unwrap_or_default()
+}
+
+fn unresolved_factory_sites_from_response(response: &Value) -> Vec<Value> {
+    if let Some(rows) = response
+        .get("factoryAuditSummary")
+        .or_else(|| response.get("factory_audit_summary"))
+        .and_then(|summary| {
+            summary
+                .get("unresolvedSites")
+                .or_else(|| summary.get("unresolved_sites"))
+        })
+        .and_then(Value::as_array)
+    {
+        return rows
+            .iter()
+            .cloned()
+            .map(normalize_unresolved_factory_site_row)
+            .collect();
+    }
+
+    response
+        .get("factoryAudits")
+        .or_else(|| response.get("factory_audits"))
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter(|row| {
+                    normalized_source_status(row.get("status").and_then(Value::as_str))
+                        == "unresolved"
+                })
+                .cloned()
+                .map(normalize_unresolved_factory_site_row)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn normalize_unresolved_factory_site_row(mut row: Value) -> Value {
+    if row.get("term").is_none() {
+        if let Some(site) = row.get("site").cloned() {
+            row["term"] = site;
+        }
+    }
+    row
+}
+
+fn status_count(value: &Value, status: &str) -> usize {
+    value
+        .get(status)
+        .and_then(Value::as_u64)
+        .map(|count| count as usize)
+        .unwrap_or(0)
+}
+
+fn factory_accounting_summary_from_rows(rows: &[Value]) -> FactoryAccountingSummary {
+    let mut summary = FactoryAccountingSummary {
+        sites: rows.len(),
+        ..FactoryAccountingSummary::default()
+    };
+    for audit in rows {
+        match normalized_source_status(audit.get("status").and_then(Value::as_str)) {
+            "warranted" => summary.warranted += 1,
+            "refused" => summary.refused += 1,
+            "support" => summary.support += 1,
+            "unresolved" => summary.unresolved += 1,
+            _ => {}
+        }
+    }
+    summary
 }
 
 fn source_report_from_lift_response(
@@ -1479,6 +1686,138 @@ fn render_report_json(
         rendered.push('\n');
         rendered
     })
+}
+
+fn render_report_summary_json(summary: &LiftReportSummary) -> Result<String, serde_json::Error> {
+    let source_unresolved = source_unresolved_count(&summary.ledger);
+    let mut source_accounting = serde_json::json!({
+        "loci": source_count(&summary.ledger, "source_loci"),
+        "warranted": source_count(&summary.ledger, "source_warranted"),
+        "inactive": source_count(&summary.ledger, "source_inactive"),
+        "support": source_count(&summary.ledger, "source_support"),
+        "refused": source_count(&summary.ledger, "source_refused"),
+    });
+    if source_unresolved > 0 {
+        source_accounting["unresolved"] = serde_json::json!(source_unresolved);
+    }
+    let value = serde_json::json!({
+        "kind": "lift-source-report-summary",
+        "sourceAccounting": source_accounting,
+        "factoryAccounting": {
+            "sites": summary.factory.sites,
+            "warranted": summary.factory.warranted,
+            "refused": summary.factory.refused,
+            "support": summary.factory.support,
+            "unresolved": summary.factory.unresolved,
+        },
+        "unresolvedSourceLines": unresolved_source_lines_json(&summary.unresolved_factory_sites),
+        "unresolvedFactorySites": summary.unresolved_factory_sites,
+    });
+    serde_json::to_string_pretty(&value).map(|mut rendered| {
+        rendered.push('\n');
+        rendered
+    })
+}
+
+fn render_report_summary_human(summary: &LiftReportSummary) -> String {
+    let mut out = String::new();
+    let source_unresolved = source_unresolved_count(&summary.ledger);
+    if source_unresolved > 0 {
+        out.push_str(&format!(
+            "source accounting: loci={} warranted={} inactive={} support={} refused={} unresolved={}\n",
+            source_count(&summary.ledger, "source_loci"),
+            source_count(&summary.ledger, "source_warranted"),
+            source_count(&summary.ledger, "source_inactive"),
+            source_count(&summary.ledger, "source_support"),
+            source_count(&summary.ledger, "source_refused"),
+            source_unresolved,
+        ));
+    }
+    if summary.factory.sites > 0 {
+        out.push_str(&format!(
+            "factory accounting: sites={} warranted={} refused={} support={} unresolved={}\n",
+            summary.factory.sites,
+            summary.factory.warranted,
+            summary.factory.refused,
+            summary.factory.support,
+            summary.factory.unresolved,
+        ));
+    }
+    if !summary.unresolved_factory_sites.is_empty() {
+        let by_line = unresolved_factory_sites_by_line(&summary.unresolved_factory_sites);
+        out.push_str(&format!("unresolved source lines: {}\n", by_line.len()));
+        for ((file, line), rows) in by_line {
+            out.push_str(&format!("  {file}:{line}\n"));
+            for row in rows {
+                out.push_str(&format!(
+                    "    {}\n",
+                    format_unresolved_factory_site_detail(row)
+                ));
+            }
+        }
+    }
+    out
+}
+
+fn unresolved_source_lines_json(rows: &[Value]) -> Vec<Value> {
+    unresolved_factory_sites_by_line(rows)
+        .into_iter()
+        .map(|((file, line), rows)| {
+            serde_json::json!({
+                "file": file,
+                "line": line,
+                "sites": rows,
+            })
+        })
+        .collect()
+}
+
+fn unresolved_factory_sites_by_line(rows: &[Value]) -> BTreeMap<(String, String), Vec<Value>> {
+    let mut by_line: BTreeMap<(String, String), Vec<Value>> = BTreeMap::new();
+    for row in rows {
+        let file = row
+            .get("file")
+            .and_then(Value::as_str)
+            .unwrap_or("<unknown>")
+            .to_string();
+        let line = row
+            .get("line")
+            .and_then(Value::as_u64)
+            .map(|line| line.to_string())
+            .unwrap_or_else(|| "?".to_string());
+        by_line.entry((file, line)).or_default().push(row.clone());
+    }
+    by_line
+}
+
+fn format_unresolved_factory_site_detail(row: Value) -> String {
+    let role = row
+        .get("requested_role")
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown-role>");
+    let ast_kind = row
+        .get("ast_kind")
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown-ast>");
+    let term = row
+        .get("term")
+        .or_else(|| row.get("site"))
+        .and_then(Value::as_str)
+        .unwrap_or("<unknown-site>");
+    let selected = row
+        .get("selected")
+        .and_then(Value::as_str)
+        .unwrap_or("<none>");
+    let reason = row
+        .get("reason")
+        .and_then(Value::as_str)
+        .filter(|reason| !reason.is_empty())
+        .unwrap_or("unclassified");
+    format!("[{role}/{ast_kind}] selected={selected} term=`{term}` reason={reason}")
+}
+
+fn source_report_summary_has_hard_failures(summary: &LiftReportSummary) -> bool {
+    source_unresolved_count(&summary.ledger) > 0 || summary.factory.unresolved > 0
 }
 
 fn render_source_report_human(report: &LiftSourceReport) -> String {
@@ -4086,6 +4425,7 @@ mod tests {
             identify_only: false,
             library_bindings: false,
             report: false,
+            report_summary: false,
             prove: false,
             z3: "z3".to_string(),
             with: vec![],
@@ -4254,7 +4594,9 @@ mod tests {
                 .expect("filtered source report");
         let human = render_source_report_human(&report);
 
-        assert!(human.contains("source audit: loci=29 warranted=15 inactive=13 support=0 refused=1 unresolved=0"));
+        assert!(human.contains(
+            "source audit: loci=29 warranted=15 inactive=13 support=0 refused=1 unresolved=0"
+        ));
         assert!(human.contains("commons-codec.PureJavaCrc32::update(byte[],int,int)"));
         assert!(human.contains("facts observed:"));
         assert!(human.contains("CommonsCodecCrc32Test.java:44 testKnownVector() [java.test-fact]"));
@@ -4326,9 +4668,8 @@ mod tests {
         assert!(human.contains(
             "source audit: loci=3 warranted=1 inactive=0 support=2 refused=0 unresolved=0"
         ));
-        assert!(human.contains(
-            "totals: loci=3 warranted=1 inactive=0 support=2 refused=0 unresolved=0"
-        ));
+        assert!(human
+            .contains("totals: loci=3 warranted=1 inactive=0 support=2 refused=0 unresolved=0"));
         assert!(human.contains("support roots: VendorClassDecl=1, VendorComment=1"));
     }
 
@@ -4934,6 +5275,140 @@ mod tests {
         assert_eq!(parsed["sourceLedger"]["source_loci"], 29);
         assert_eq!(parsed["sourceAudits"].as_array().unwrap().len(), 1);
         assert_eq!(parsed["sourceMementos"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn summary_report_renders_gate_accounting_without_universe_dump() {
+        let response = serde_json::json!({
+            "kind": "ir-document",
+            "ir": [
+                {
+                    "kind": "contract",
+                    "name": "Foo::huge",
+                    "outBinding": "out",
+                    "post": { "kind": "atomic", "name": "=", "args": [
+                        {"kind": "var", "name": "out"}, {"kind": "const", "value": 7}
+                    ]}
+                }
+            ],
+            "sourceLedger": {
+                "source_loci": 2,
+                "source_warranted": 1,
+                "source_inactive": 0,
+                "source_support": 0,
+                "source_refused": 1,
+                "source_unresolved": 0
+            },
+            "sourceAudits": [],
+            "factoryAuditSummary": {
+                "emittedRows": 5,
+                "statusCounts": {
+                    "warranted": 3,
+                    "refused": 1,
+                    "support": 0,
+                    "unresolved": 1
+                },
+                "unresolvedSites": [
+                    {
+                        "file": "tests/foo.rs",
+                        "line": 42,
+                        "requested_role": "Term",
+                        "ast_kind": "expr",
+                        "selected": null,
+                        "site": "opaque()",
+                        "reason": "no sugar recognizer reached bedrock",
+                        "status": "unresolved"
+                    }
+                ]
+            }
+        });
+        let summary = source_report_summary_from_lift_response(&response).expect("summary");
+        let human = render_report_summary_human(&summary);
+        let json = render_report_summary_json(&summary).expect("summary json");
+        let parsed_json: serde_json::Value =
+            serde_json::from_str(&json).expect("valid summary json");
+
+        assert!(!human.contains("source audit:"), "{human}");
+        assert!(!human.contains("unresolved=0"), "{human}");
+        assert!(human
+            .contains("factory accounting: sites=5 warranted=3 refused=1 support=0 unresolved=1"));
+        assert!(human.contains("unresolved source lines: 1"), "{human}");
+        assert!(human.contains("  tests/foo.rs:42"), "{human}");
+        assert!(
+            human.contains(
+                "    [Term/expr] selected=<none> term=`opaque()` reason=no sugar recognizer reached bedrock"
+            ),
+            "{human}"
+        );
+        assert!(parsed_json.get("sourceLedger").is_none(), "{json}");
+        assert_eq!(parsed_json["sourceAccounting"]["loci"], 2);
+        assert!(parsed_json["sourceAccounting"].get("unresolved").is_none());
+        assert_eq!(parsed_json["factoryAccounting"]["unresolved"], 1);
+        assert_eq!(
+            parsed_json["unresolvedSourceLines"][0]["file"],
+            "tests/foo.rs"
+        );
+        assert_eq!(parsed_json["unresolvedSourceLines"][0]["line"], "42");
+        assert_eq!(
+            parsed_json["unresolvedSourceLines"][0]["sites"][0]["term"],
+            "opaque()"
+        );
+        assert_eq!(
+            parsed_json["unresolvedFactorySites"][0]["file"],
+            "tests/foo.rs"
+        );
+        assert_eq!(parsed_json["unresolvedFactorySites"][0]["line"], 42);
+        assert_eq!(parsed_json["unresolvedFactorySites"][0]["term"], "opaque()");
+        assert!(!human.contains("superposition"), "{human}");
+        assert!(!human.contains("universe(s)"), "{human}");
+        assert!(!human.contains("contract: Foo::huge"), "{human}");
+        assert!(!human.contains("lifted FOL"), "{human}");
+    }
+
+    #[test]
+    fn summary_report_treats_unresolved_source_as_hard_failure() {
+        let response = serde_json::json!({
+            "kind": "ir-document",
+            "sourceLedger": {
+                "source_loci": 1,
+                "source_warranted": 0,
+                "source_inactive": 0,
+                "source_support": 0,
+                "source_refused": 0,
+                "source_unresolved": 1
+            },
+            "sourceAudits": []
+        });
+        let summary = source_report_summary_from_lift_response(&response).expect("summary");
+
+        assert!(source_report_summary_has_hard_failures(&summary));
+    }
+
+    #[test]
+    fn summary_report_treats_unresolved_factory_sites_as_hard_failure() {
+        let response = serde_json::json!({
+            "kind": "ir-document",
+            "sourceLedger": {
+                "source_loci": 1,
+                "source_warranted": 1,
+                "source_inactive": 0,
+                "source_support": 0,
+                "source_refused": 0,
+                "source_unresolved": 0
+            },
+            "factoryAuditSummary": {
+                "emittedRows": 1,
+                "statusCounts": {
+                    "warranted": 0,
+                    "refused": 0,
+                    "support": 0,
+                    "unresolved": 1
+                }
+            }
+        });
+        let summary = source_report_summary_from_lift_response(&response).expect("summary");
+
+        assert!(source_report_summary_has_hard_failures(&summary));
     }
 
     #[test]

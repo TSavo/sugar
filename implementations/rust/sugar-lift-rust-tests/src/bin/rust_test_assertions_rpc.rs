@@ -2,7 +2,7 @@
 //
 // RPC entrypoint for the Rust test-assertion consistency lifter.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -34,7 +34,6 @@ const SHOULD_PANIC_OPAQUE_TERMINAL_REASON: &str =
     "should_panic terminal panic not text-determined (opaque body)";
 const SOURCE_LOCATION_RUNTIME_REASON: &str =
     "source location runtime-determined, not text-determined";
-const FACTORY_AUDIT_RESPONSE_ROW_BOUND: usize = 50_000;
 
 fn current_rss_kib() -> Option<u64> {
     #[cfg(target_os = "linux")]
@@ -59,6 +58,14 @@ fn json_array_len(value: &Value, keys: &[&str]) -> usize {
     keys.iter()
         .find_map(|key| value.get(*key).and_then(Value::as_array).map(Vec::len))
         .unwrap_or(0)
+}
+
+fn report_summary_requested(params: &Value) -> bool {
+    params
+        .get("options")
+        .and_then(|options| options.get("reportSummary"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 fn trace_lift_rpc_checkpoint(stage: &'static str, response: &Value) {
@@ -204,8 +211,10 @@ fn lift(params: &Value) -> Value {
     info!(
         workspace_root = %workspace_root.display(),
         requested = ?requested,
+        report_summary = report_summary_requested(params),
         "rust-test-assertions lift request"
     );
+    let report_summary = report_summary_requested(params);
 
     let mut rel_paths = Vec::new();
     for entry in &requested {
@@ -246,7 +255,7 @@ fn lift(params: &Value) -> Value {
     let mut source_loci: Vec<Value> = Vec::new();
     let mut source_mementos: Vec<Value> = Vec::new();
     let mut factory_audits: Vec<Value> = Vec::new();
-    let mut factory_audits_omitted = 0usize;
+    let mut factory_audit_summary = FactoryAuditSummaryAccumulator::new();
     let mut assertion_surface_audits: Vec<Value> = Vec::new();
     let options = match lift_options_from_rust_build_context(&workspace_root, params) {
         Ok(options) => options,
@@ -385,12 +394,11 @@ fn lift(params: &Value) -> Value {
         // DENOMINATOR: the oracle enumerates every function in the file. Each one
         // gets a content-addressed memento and a classified locus, so the dark
         // (functions the kit does not speak) is COUNTED, not skipped.
-        extend_factory_audits_bounded(
-            &mut factory_audits,
-            &mut factory_audits_omitted,
-            factory_audits_json(rel, &out.factory_audits),
-            FACTORY_AUDIT_RESPONSE_ROW_BOUND,
-        );
+        if report_summary {
+            factory_audit_summary.extend_from_audits(rel, &out.factory_audits);
+        } else {
+            factory_audits.extend(factory_audits_json(rel, &out.factory_audits));
+        }
         let mut fns: Vec<FnRef> = Vec::new();
         collect_fns(&file.items, &mut fns);
         debug!(
@@ -492,7 +500,7 @@ fn lift(params: &Value) -> Value {
                     out.reduced_helpers.contains(&name),
                     &memento_json,
                 );
-                if let Some(entry) = entry {
+                if let Some(entry) = entry.filter(|_| !report_summary) {
                     value_entries.push(entry);
                 }
                 (s, r)
@@ -508,7 +516,7 @@ fn lift(params: &Value) -> Value {
             if let Some(r) = reason {
                 locus["reason"] = json!(r);
             }
-            if is_test {
+            if is_test && !report_summary {
                 let assertion_source = format!("{rel}::{name}");
                 assertion_sources.insert(
                     assertion_source.clone(),
@@ -526,24 +534,28 @@ fn lift(params: &Value) -> Value {
                 );
             }
             source_loci.push(locus);
-            source_mementos.push(memento_json);
+            if !report_summary {
+                source_mementos.push(memento_json);
+            }
         }
-        // Flow the emitted value-fn contracts into the IR document, so a
-        // `warranted` source locus is backed by a real relation in `ir`.
-        entries.extend(value_entries);
-        let assertion_entries = attach_assertion_source_warrants(
-            assertion_entries,
-            &out.assertion_facts,
-            &fns,
-            &mut source_cache,
-        );
-        assertion_surface_audits.extend(assertion_surface_audits_for_file(
-            &out.assertion_facts,
-            &assertion_sources,
-            &fns,
-            &mut source_cache,
-        ));
-        entries.extend(assertion_entries);
+        if !report_summary {
+            // Flow the emitted value-fn contracts into the IR document, so a
+            // `warranted` source locus is backed by a real relation in `ir`.
+            entries.extend(value_entries);
+            let assertion_entries = attach_assertion_source_warrants(
+                assertion_entries,
+                &out.assertion_facts,
+                &fns,
+                &mut source_cache,
+            );
+            assertion_surface_audits.extend(assertion_surface_audits_for_file(
+                &out.assertion_facts,
+                &assertion_sources,
+                &fns,
+                &mut source_cache,
+            ));
+            entries.extend(assertion_entries);
+        }
         info!(
             file = rel,
             file_index = file_index + 1,
@@ -564,6 +576,27 @@ fn lift(params: &Value) -> Value {
     panic_on_dark_source_loci(&source_loci);
     let ledger = source_ledger(&source_loci);
     trace_lift_rpc_checkpoint("lift.after_ledger", &Value::Null);
+    let factory_audit_summary = if report_summary {
+        factory_audit_summary.into_json()
+    } else {
+        factory_audit_response_summary(&factory_audits)
+    };
+    if report_summary {
+        let before = current_rss_kib();
+        let response = json!({
+            "kind": "ir-document",
+            "diagnostics": diagnostics,
+            "sourceLedger": ledger,
+            "factoryAuditSummary": factory_audit_summary,
+        });
+        trace_lift_rpc_checkpoint_with_extra(
+            "lift.after_summary_response_json_assembly",
+            &response,
+            0,
+            rss_delta_kib(before, current_rss_kib()),
+        );
+        return response;
+    }
     let call_edges = call_edges_for_report(&entries);
     trace_lift_rpc_checkpoint("lift.after_call_edges", &Value::Null);
     let vendor_conjoins = vendor_conjoins_for_report(&workspace_root, &entries);
@@ -600,11 +633,7 @@ fn lift(params: &Value) -> Value {
             "loci": source_loci,
         })],
         "factoryAudits": factory_audits,
-        "factoryAuditSummary": factory_audit_response_summary(
-            factory_audits.len(),
-            factory_audits_omitted,
-            FACTORY_AUDIT_RESPONSE_ROW_BOUND,
-        ),
+        "factoryAuditSummary": factory_audit_summary,
         "callEdges": call_edges,
         // Content-addressed mementos (file + span + BLAKE3-512 of body/template,
         // never source text) -- one per enumerated function, recompute-verifiable.
@@ -2842,6 +2871,33 @@ fn source_memento_payload(env: &Value) -> Option<&Value> {
     env.get("body").or_else(|| memento_body(env))
 }
 
+fn factory_audit_row(file: &str, audit: &FactoryAudit) -> Value {
+    let mut row = json!({
+        "file": file,
+        "ast_kind": audit.ast_kind,
+        "site": audit.site,
+        "term": audit.site,
+        "line": audit.line,
+        "requested_role": audit.requested_role,
+        "selected": audit.selected,
+        "candidates": audit.candidates.iter().map(|candidate| {
+            json!({
+                "name": candidate.name,
+                "role": candidate.role,
+                "comesBefore": candidate.comes_before,
+                "selected": candidate.selected,
+            })
+        }).collect::<Vec<_>>(),
+        "status": audit.disposition.as_str(),
+        "output": audit.output,
+        "reason": audit.reason,
+    });
+    if audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Support {
+        row["supportKind"] = json!("inert");
+    }
+    row
+}
+
 fn factory_audits_json(file: &str, audits: &[FactoryAudit]) -> Vec<Value> {
     // The recursive factory walk records the SAME terminal across sub-terms, requested
     // roles, and re-walks, so a raw 1:1 mapping emits byte-identical rows hundreds of
@@ -2857,31 +2913,10 @@ fn factory_audits_json(file: &str, audits: &[FactoryAudit]) -> Vec<Value> {
     // is derived independently from `source_loci` (see `source_ledger`), so collapsing
     // these diagnostic rows cannot move a single headline number.
     let mut order: Vec<String> = Vec::new();
-    let mut rows: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
-    let mut occurrences: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    let mut rows: HashMap<String, Value> = HashMap::new();
+    let mut occurrences: HashMap<String, u64> = HashMap::new();
     for audit in audits {
-        let mut row = json!({
-            "file": file,
-            "ast_kind": audit.ast_kind,
-            "site": audit.site,
-            "line": audit.line,
-            "requested_role": audit.requested_role,
-            "selected": audit.selected,
-            "candidates": audit.candidates.iter().map(|candidate| {
-                json!({
-                    "name": candidate.name,
-                    "role": candidate.role,
-                    "comesBefore": candidate.comes_before,
-                    "selected": candidate.selected,
-                })
-            }).collect::<Vec<_>>(),
-            "status": audit.disposition.as_str(),
-            "output": audit.output,
-            "reason": audit.reason,
-        });
-        if audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Support {
-            row["supportKind"] = json!("inert");
-        }
+        let row = factory_audit_row(file, audit);
         // Identity = the full row content, computed BEFORE the `occurrences` tag so the
         // key is stable. serde_json serializes a Value deterministically, so identical
         // rows produce identical keys.
@@ -2903,35 +2938,121 @@ fn factory_audits_json(file: &str, audits: &[FactoryAudit]) -> Vec<Value> {
         .collect()
 }
 
-fn extend_factory_audits_bounded(
-    factory_audits: &mut Vec<Value>,
-    omitted: &mut usize,
-    rows: Vec<Value>,
-    row_bound: usize,
-) {
-    for row in rows {
-        if factory_audits.len() < row_bound {
-            factory_audits.push(row);
-        } else {
-            *omitted += 1;
+#[derive(Debug)]
+struct FactoryAuditSummaryAccumulator {
+    sites: usize,
+    warranted: usize,
+    refused: usize,
+    support: usize,
+    unresolved: usize,
+    unresolved_sites: Vec<Value>,
+}
+
+impl FactoryAuditSummaryAccumulator {
+    fn new() -> Self {
+        Self {
+            sites: 0,
+            warranted: 0,
+            refused: 0,
+            support: 0,
+            unresolved: 0,
+            unresolved_sites: Vec::new(),
         }
+    }
+
+    fn extend_from_audits(&mut self, file: &str, audits: &[FactoryAudit]) {
+        for row in factory_audits_json(file, audits) {
+            self.sites += 1;
+            let status = row.get("status").and_then(Value::as_str).unwrap_or("");
+            self.observe_status(status);
+            if matches!(status, "unresolved" | "unclassified") {
+                self.unresolved_sites.push(row);
+            }
+        }
+    }
+
+    fn observe_status(&mut self, status: &str) {
+        match status {
+            "warranted" => self.warranted += 1,
+            "refused" => self.refused += 1,
+            "support" => self.support += 1,
+            "unresolved" | "unclassified" => self.unresolved += 1,
+            _ => {}
+        }
+    }
+
+    fn into_json(self) -> Value {
+        json!({
+            "sites": self.sites,
+            "emittedRows": self.sites,
+            "omittedRows": 0,
+            "totalRows": self.sites,
+            "complete": true,
+            "statusCounts": {
+                "warranted": self.warranted,
+                "refused": self.refused,
+                "support": self.support,
+                "unresolved": self.unresolved,
+            },
+            "unresolvedSites": self.unresolved_sites,
+        })
     }
 }
 
-fn factory_audit_response_summary(emitted: usize, omitted: usize, row_bound: usize) -> Value {
-    let mut summary = json!({
-        "emittedRows": emitted,
-        "omittedRows": omitted,
-        "totalRows": emitted.saturating_add(omitted),
-        "rowBound": row_bound,
-        "complete": omitted == 0,
-    });
-    if omitted > 0 {
-        summary["omittedReason"] = json!(
-            "factoryAudits diagnostic sidecar exceeded the response row bound; sourceLedger/sourceAudits remain complete"
-        );
+fn factory_audit_response_summary(rows: &[Value]) -> Value {
+    json!({
+        "sites": rows.len(),
+        "emittedRows": rows.len(),
+        "omittedRows": 0,
+        "totalRows": rows.len(),
+        "complete": true,
+        "statusCounts": factory_audit_status_counts(rows),
+        "unresolvedSites": unresolved_factory_audit_rows(rows),
+    })
+}
+
+fn unresolved_factory_audit_rows(rows: &[Value]) -> Vec<Value> {
+    rows.iter()
+        .filter(|row| {
+            matches!(
+                row.get("status").and_then(Value::as_str).unwrap_or(""),
+                "unresolved" | "unclassified"
+            )
+        })
+        .cloned()
+        .map(normalize_unresolved_factory_audit_row)
+        .collect()
+}
+
+fn normalize_unresolved_factory_audit_row(mut row: Value) -> Value {
+    if row.get("term").is_none() {
+        if let Some(site) = row.get("site").cloned() {
+            row["term"] = site;
+        }
     }
-    summary
+    row
+}
+
+fn factory_audit_status_counts(rows: &[Value]) -> Value {
+    let mut warranted = 0usize;
+    let mut refused = 0usize;
+    let mut support = 0usize;
+    let mut unresolved = 0usize;
+    for row in rows {
+        match row.get("status").and_then(Value::as_str).unwrap_or("") {
+            "warranted" => warranted += 1,
+            "refused" => refused += 1,
+            "support" => support += 1,
+            "unresolved" | "unclassified" => unresolved += 1,
+            _ => {}
+        }
+    }
+    json!({
+        "warranted": warranted,
+        "refused": refused,
+        "support": support,
+        "unresolved": unresolved,
+    })
 }
 
 fn source_memento_string_field<'a>(
@@ -5069,35 +5190,130 @@ fn literal_counter_while_literal_twin() {
 
         assert_eq!(rows[0]["status"], "support");
         assert_eq!(rows[0]["supportKind"], "inert", "{rows:?}");
+        assert_eq!(rows[0]["term"], "{}");
     }
 
     #[test]
-    fn factory_audit_response_bound_preserves_total_accounting() {
-        let mut emitted = Vec::new();
-        let mut omitted = 0usize;
+    fn factory_audit_response_summary_reports_unresolved_rows() {
+        let rows = vec![
+            json!({"file": "src/lib.rs", "line": 1, "status": "warranted"}),
+            json!({"file": "src/lib.rs", "line": 2, "status": "unresolved", "site": "opaque()"}),
+            json!({"file": "src/lib.rs", "line": 3, "status": "unclassified", "site": "mystery()"}),
+        ];
 
-        extend_factory_audits_bounded(
-            &mut emitted,
-            &mut omitted,
-            vec![json!({"row": 1}), json!({"row": 2}), json!({"row": 3})],
-            2,
-        );
+        let summary = factory_audit_response_summary(&rows);
 
-        assert_eq!(emitted, vec![json!({"row": 1}), json!({"row": 2})]);
-        assert_eq!(omitted, 1);
-
-        let summary = factory_audit_response_summary(emitted.len(), omitted, 2);
-        assert_eq!(summary["emittedRows"], 2);
-        assert_eq!(summary["omittedRows"], 1);
+        assert_eq!(summary["sites"], 3);
+        assert_eq!(summary["emittedRows"], 3);
+        assert_eq!(summary["omittedRows"], 0);
         assert_eq!(summary["totalRows"], 3);
-        assert_eq!(summary["rowBound"], 2);
-        assert_eq!(summary["complete"], false);
-        assert!(
-            summary["omittedReason"]
-                .as_str()
-                .is_some_and(|reason| reason.contains("sourceLedger/sourceAudits remain complete")),
-            "{summary}"
+        assert_eq!(summary["complete"], true);
+        assert_eq!(summary["statusCounts"]["warranted"], 1);
+        assert_eq!(summary["statusCounts"]["unresolved"], 2);
+        assert_eq!(summary["unresolvedSites"].as_array().unwrap().len(), 2);
+        assert_eq!(summary["unresolvedSites"][0]["line"], 2);
+        assert_eq!(summary["unresolvedSites"][0]["term"], "opaque()");
+        assert_eq!(summary["unresolvedSites"][1]["line"], 3);
+        assert_eq!(summary["unresolvedSites"][1]["term"], "mystery()");
+    }
+
+    #[test]
+    fn factory_audit_summary_accumulator_reports_every_unresolved_site() {
+        let mut acc = FactoryAuditSummaryAccumulator::new();
+        let duplicate = FactoryAudit {
+            ast_kind: "expr",
+            site: "a + b".to_string(),
+            line: 7,
+            requested_role: "Term".to_string(),
+            selected: Some("binary"),
+            candidates: Vec::new(),
+            disposition: sugar_lift_rust_tests::FactoryDisposition::Warranted,
+            output: "term",
+            reason: None,
+        };
+        let refused = FactoryAudit {
+            disposition: sugar_lift_rust_tests::FactoryDisposition::Refused,
+            site: "runtime()".to_string(),
+            reason: Some("runtime".to_string()),
+            ..duplicate.clone()
+        };
+        let unresolved = FactoryAudit {
+            disposition: sugar_lift_rust_tests::FactoryDisposition::Unresolved,
+            site: "opaque()".to_string(),
+            reason: Some("opaque".to_string()),
+            ..duplicate.clone()
+        };
+
+        acc.extend_from_audits(
+            "src/lib.rs",
+            &[duplicate.clone(), duplicate, refused, unresolved],
         );
+        let summary = acc.into_json();
+
+        assert_eq!(summary["sites"], 3);
+        assert_eq!(summary["emittedRows"], 3);
+        assert_eq!(summary["omittedRows"], 0);
+        assert_eq!(summary["complete"], true);
+        assert_eq!(summary["statusCounts"]["warranted"], 1);
+        assert_eq!(summary["statusCounts"]["refused"], 1);
+        assert_eq!(summary["statusCounts"]["unresolved"], 1);
+        assert_eq!(summary["unresolvedSites"].as_array().unwrap().len(), 1);
+        assert_eq!(summary["unresolvedSites"][0]["file"], "src/lib.rs");
+        assert_eq!(summary["unresolvedSites"][0]["line"], 7);
+        assert_eq!(summary["unresolvedSites"][0]["site"], "opaque()");
+        assert_eq!(summary["unresolvedSites"][0]["term"], "opaque()");
+    }
+
+    #[test]
+    fn report_summary_lift_response_omits_heavy_sections_but_preserves_accounting() {
+        let root = unique_temp_dir(
+            "report_summary_lift_response_omits_heavy_sections_but_preserves_accounting",
+        );
+        let source_path = root.join("src/lib.rs");
+        std::fs::create_dir_all(source_path.parent().expect("source parent"))
+            .expect("mkdir source parent");
+        std::fs::write(
+            &source_path,
+            r#"
+#[test]
+fn summary_good() {
+    assert_eq!(1 + 1, 2);
+}
+"#,
+        )
+        .expect("write rust source");
+
+        let response = lift(&json!({
+            "workspace_root": root,
+            "source_paths": ["src/lib.rs"],
+            "options": {"reportSummary": true}
+        }));
+
+        assert_eq!(response["sourceLedger"]["source_loci"], 1);
+        assert_eq!(response["sourceLedger"]["source_warranted"], 1);
+        assert_eq!(response["sourceLedger"]["source_unresolved"], 0);
+        assert!(
+            response.get("sourceAudits").is_none(),
+            "summary response must not transport source-audit rows: {response}"
+        );
+        assert!(response.get("factoryAuditSummary").is_some());
+        assert!(
+            response.get("ir").is_none(),
+            "summary response must not transport full IR: {response}"
+        );
+        assert!(
+            response.get("sourceMementos").is_none(),
+            "summary response must not transport source mementos: {response}"
+        );
+        assert!(
+            response.get("callEdges").is_none(),
+            "summary response must not transport call edges: {response}"
+        );
+        assert!(
+            response.get("vendorConjoins").is_none(),
+            "summary response must not transport vendor conjoins: {response}"
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
