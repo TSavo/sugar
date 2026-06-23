@@ -842,13 +842,8 @@ fn try_from_let_bound_out_of_range_is_err_folds() {
     }
 }
 
-// SOUNDNESS GUARD (i128-lane overflow): `<u128>::MAX` = 2^128-1 does NOT fit the i128
-// resolution lane. CLAMPING it (as the destination-range table does) would give
-// `i128::MAX` -- a WRONG value -- so `try_from(u128::MAX).unwrap() == u128::MAX` would
-// lift `i128::MAX == u128::MAX` -> UNSAT -> REFUTING a true assert (inverse cardinal
-// sin). The const resolver DECLINES on overflow -> opaque/satisfiable, never refutes.
 #[test]
-fn try_from_u128_max_const_overflow_does_not_false_refute() {
+fn literal_128_try_from_u128_max_is_exact_with_teeth() {
     let src = r#"
         #[test]
         fn t_tf_u128max() {
@@ -856,12 +851,63 @@ fn try_from_u128_max_const_overflow_does_not_false_refute() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/num/tf_u128max.rs");
-    // Lazy recognition may select `option_unwrap`; the const resolver still must DECLINE
-    // rather than clamp `u128::MAX` into the i128 lane and false-refute a true assertion.
-    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_tf_u128max") {
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let doc = warranted_doc(&out);
+    assert!(
+        !doc.contains("call:"),
+        "u128::MAX TryFrom identity must lower through the exact u128 floor, not opaque call sugar: {doc}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "literal_128_tf_u128max_good") {
+        assert!(sat, "u128::MAX TryFrom identity must be z3-SAT");
+    }
+
+    let bad = r#"
+        #[test]
+        fn t_tf_u128max_bad() {
+            assert!(<u128 as TryFrom<u128>>::try_from(<u128>::MAX).unwrap() == <u128>::MAX - 1u128);
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/num/tf_u128max_bad.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "literal_128_tf_u128max_bad") {
         assert!(
-            sat,
-            "u128::MAX try_from must stay opaque/undecided, never refute a true assert (got UNSAT)"
+            !sat,
+            "wrong u128::MAX TryFrom value must be z3-UNSAT, not hidden behind EUF opacity"
+        );
+    }
+}
+
+#[test]
+fn literal_128_try_from_u128_to_i128_overflow_is_err_with_teeth() {
+    let good = r#"
+        #[test]
+        fn t_tf_u128_to_i128_err() {
+            assert!(<i128 as TryFrom<u128>>::try_from(<u128>::MAX).is_err());
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/num/tf_u128_to_i128_err.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    if let Some(sat) = z3_verdict(
+        &inv_json(&out.decls[0]),
+        "literal_128_tf_u128_i128_err_good",
+    ) {
+        assert!(sat, "u128::MAX does not fit i128 -> is_err() must be SAT");
+    }
+
+    let bad = r#"
+        #[test]
+        fn t_tf_u128_to_i128_ok_bad() {
+            assert!(<i128 as TryFrom<u128>>::try_from(<u128>::MAX).is_ok());
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/num/tf_u128_to_i128_ok_bad.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "literal_128_tf_u128_i128_err_bad") {
+        assert!(
+            !sat,
+            "wrong u128::MAX -> i128 TryFrom discriminant must be z3-UNSAT"
         );
     }
 }
@@ -20426,6 +20472,45 @@ fn t() {
             !sat,
             "<u8>::from(false)=0 != 1 must be z3-UNSAT (teeth bite the bad twin)"
         );
+    }
+}
+
+#[test]
+fn literal_128_numeric_from_literals_ground_with_teeth() {
+    let good = r#"
+#[test]
+fn t() {
+    assert_eq!(<u128>::from(<u64>::MAX), 18446744073709551615u128);
+    assert_eq!(<i128>::from(<i64>::MIN), -9223372036854775808i128);
+}
+"#;
+    let out = lift_file(&parse(good), "tests/literal_128_numeric_from_good.rs");
+    assert_eq!(out.assertions_lifted, 2, "{:?}", out.skip_reasons);
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let doc = warranted_doc(&out);
+    assert!(
+        !doc.contains("call:u128::from") && !doc.contains("call:i128::from"),
+        "literal numeric From into 128-bit targets must ground, not EUF-collapse: {doc}"
+    );
+    for (idx, decl) in out.decls.iter().enumerate() {
+        if let Some(sat) = z3_verdict(
+            &inv_json(decl),
+            &format!("literal_128_numeric_from_good_{idx}"),
+        ) {
+            assert!(sat, "literal numeric From good twin {idx} must be z3-SAT");
+        }
+    }
+
+    let bad = r#"
+#[test]
+fn t() {
+    assert_eq!(<u128>::from(<u64>::MAX), 18446744073709551614u128);
+}
+"#;
+    let out = lift_file(&parse(bad), "tests/literal_128_numeric_from_bad.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "literal_128_numeric_from_bad") {
+        assert!(!sat, "wrong u64::MAX -> u128 From value must be z3-UNSAT");
     }
 }
 
