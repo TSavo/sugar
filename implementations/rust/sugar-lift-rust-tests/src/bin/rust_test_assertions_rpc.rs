@@ -3663,10 +3663,11 @@ mod tests {
         );
     }
 
-    fn factory_audit_for<'a>(
+    fn factory_audit_for_fn<'a>(
         root: &Path,
         response: &'a Value,
         selected: &str,
+        source_fn: Option<&str>,
         site_fragment: &str,
     ) -> &'a Value {
         response["factoryAudits"]
@@ -3678,13 +3679,18 @@ mod tests {
                     row.get("site").is_none() && row.get("term").is_none(),
                     "factory RPC rows must carry SourceMemento pins, not plaintext source: {row}"
                 );
+                let fn_matches = source_fn.is_none_or(|source_fn| {
+                    row["sourceMemento"]["sourceFunctionName"] == source_fn
+                        || row["sourceMemento"]["source_function_name"] == source_fn
+                });
                 row["selected"] == selected
+                    && fn_matches
                     && factory_audit_source_text(root, row)
                         .is_some_and(|site| source_contains_fragment(&site, site_fragment))
             })
             .unwrap_or_else(|| {
                 panic!(
-                    "missing factory audit selected={selected:?} source~={site_fragment:?}: {response}"
+                    "missing factory audit selected={selected:?} fn={source_fn:?} source~={site_fragment:?}: {response}"
                 )
             })
     }
@@ -3711,17 +3717,37 @@ mod tests {
         status: &str,
         reason_fragment: Option<&str>,
     ) {
-        let row = factory_audit_for(root, response, "constraint_no_panic_call", site_fragment);
+        assert_factory_audit_status_for_selected(
+            root,
+            response,
+            "constraint_no_panic_call",
+            None,
+            site_fragment,
+            status,
+            reason_fragment,
+        );
+    }
+
+    fn assert_factory_audit_status_for_selected(
+        root: &Path,
+        response: &Value,
+        selected: &str,
+        source_fn: Option<&str>,
+        site_fragment: &str,
+        status: &str,
+        reason_fragment: Option<&str>,
+    ) {
+        let row = factory_audit_for_fn(root, response, selected, source_fn, site_fragment);
         assert_eq!(
             row["status"], status,
-            "factory row {site_fragment:?} must be {status}: {row}"
+            "factory row selected={selected:?} site={site_fragment:?} must be {status}: {row}"
         );
         if let Some(reason_fragment) = reason_fragment {
             assert!(
                 row["reason"]
                     .as_str()
                     .is_some_and(|reason| reason.contains(reason_fragment)),
-                "factory row {site_fragment:?} reason must contain {reason_fragment:?}: {row}"
+                "factory row selected={selected:?} site={site_fragment:?} reason must contain {reason_fragment:?}: {row}"
             );
         }
     }
@@ -5027,7 +5053,7 @@ fn runtime_chunk_source_literal_twin() {
         assert_source_locus_refused(
             &response,
             "runtime_chunk_source_refused",
-            "runtime slice source, not literal",
+            "array repeat non-literal length",
         );
         assert_source_locus_warranted(&response, "runtime_slice_source_literal_twin");
         assert_source_locus_warranted(&response, "runtime_chunk_source_literal_twin");
@@ -5433,16 +5459,24 @@ fn ambiguous_temporal_identity_literal_twin() {
     }
 
     #[test]
-    fn source_locus_consumed_iterator_local_refuses_with_literal_twin() {
+    fn source_locus_consumed_iterator_len_splits_full_drain_from_stale_with_twins() {
         let (root, response) = lift_fixture(
-            "source_locus_consumed_iterator_local_refuses_with_literal_twin",
+            "source_locus_consumed_iterator_len_splits_full_drain_from_stale_with_twins",
             r#"
 #[test]
-fn consumed_iterator_local_refused() {
+fn consumed_iterator_full_drain_warranted() {
     let xs = [1, 2, 3];
     let mut it = xs.iter().take(3);
     while let Some(_x) = it.next() {}
     assert_eq!(it.len(), 0);
+}
+
+#[test]
+fn consumed_iterator_partial_drain_refused() {
+    let xs = [1, 2, 3];
+    let mut it = xs.iter();
+    let _ = it.by_ref().take(1).count();
+    assert_eq!(it.len(), 2);
 }
 
 #[test]
@@ -5453,10 +5487,29 @@ fn consumed_iterator_local_literal_twin() {
 }
 "#,
         );
+        assert_source_locus_warranted(&response, "consumed_iterator_full_drain_warranted");
+        assert_factory_audit_status_for_selected(
+            &root,
+            &response,
+            "len",
+            Some("consumed_iterator_full_drain_warranted"),
+            "it.len()",
+            "warranted",
+            None,
+        );
         assert_source_locus_refused(
             &response,
-            "consumed_iterator_local_refused",
+            "consumed_iterator_partial_drain_refused",
             "consumed-iterator local",
+        );
+        assert_factory_audit_status_for_selected(
+            &root,
+            &response,
+            "len",
+            Some("consumed_iterator_partial_drain_refused"),
+            "it.len()",
+            "refused",
+            Some("consumed-iterator local"),
         );
         assert_source_locus_warranted(&response, "consumed_iterator_local_literal_twin");
         let _ = std::fs::remove_dir_all(root);

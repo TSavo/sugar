@@ -61,6 +61,7 @@ pub(crate) struct TemporalRewriteState {
     cell_values: BTreeMap<String, CellState>,
     unknown_consumed_iterators: BTreeMap<String, String>,
     unknown_mutations: BTreeMap<String, String>,
+    exhausted_iterators: BTreeSet<String>,
     rewritten_bases: BTreeSet<String>,
     loop_replayed: BTreeSet<String>,
 }
@@ -135,6 +136,9 @@ impl TemporalRewriteState {
         }
         if let Some(expr) = self.values.get(name) {
             return Some(expr.clone());
+        }
+        if self.exhausted_iterators.contains(name) {
+            return Some(syn::parse_quote!([].iter()));
         }
         match self.aliases.get(name)? {
             RewritePlace::Scalar(base)
@@ -571,6 +575,7 @@ impl TemporalRewriteState {
             self.aliases.remove(name);
             self.unknown_consumed_iterators.remove(name);
             self.rewritten_bases.remove(name);
+            self.exhausted_iterators.remove(name);
             self.loop_replayed.remove(name);
             self.poison_cell(name, reason.clone());
             self.unknown_mutations.insert(name.clone(), reason);
@@ -613,6 +618,7 @@ impl TemporalRewriteState {
         self.aliases.remove(name);
         self.rewritten_bases.remove(name);
         self.loop_replayed.remove(name);
+        self.exhausted_iterators.remove(name);
         self.unknown_consumed_iterators
             .insert(name.to_string(), method.to_string());
         debug!(
@@ -633,6 +639,7 @@ impl TemporalRewriteState {
         }
         let exhausted: Expr = syn::parse_quote!([].iter());
         self.values.insert(name.to_string(), exhausted);
+        self.exhausted_iterators.insert(name.to_string());
         self.aliases.remove(name);
         self.unknown_consumed_iterators.remove(name);
         self.unknown_mutations.remove(name);
@@ -658,6 +665,7 @@ impl TemporalRewriteState {
         self.unknown_consumed_iterators.remove(name);
         self.rewritten_bases.remove(name);
         self.loop_replayed.remove(name);
+        self.exhausted_iterators.remove(name);
         self.poison_cell(name, reason.clone());
         self.unknown_mutations.insert(name.to_string(), reason);
         debug!(
@@ -681,6 +689,7 @@ impl TemporalRewriteState {
         self.unknown_consumed_iterators.remove(name);
         self.rewritten_bases.remove(name);
         self.loop_replayed.remove(name);
+        self.exhausted_iterators.remove(name);
         self.poison_cell(name, reason.clone());
         self.unknown_mutations.insert(name.to_string(), reason);
         debug!(
@@ -703,6 +712,7 @@ impl TemporalRewriteState {
         self.unknown_consumed_iterators.remove(name);
         self.rewritten_bases.remove(name);
         self.loop_replayed.remove(name);
+        self.exhausted_iterators.remove(name);
         self.poison_cell(name, reason.clone());
         self.unknown_mutations.insert(name.to_string(), reason);
         debug!(
@@ -731,6 +741,7 @@ impl TemporalRewriteState {
         self.unknown_mutations.remove(&name);
         self.rewritten_bases.remove(&name);
         self.loop_replayed.remove(&name);
+        self.exhausted_iterators.remove(&name);
         if let Some(base) = borrowed_iterator_source_name(&init.expr)
             .filter(|base| base != &name && self.values.contains_key(base))
         {
@@ -828,6 +839,7 @@ impl TemporalRewriteState {
         self.cell_values.remove(name);
         self.rewritten_bases.remove(name);
         self.loop_replayed.remove(name);
+        self.exhausted_iterators.remove(name);
         self.values.insert(name.to_string(), value);
     }
 
