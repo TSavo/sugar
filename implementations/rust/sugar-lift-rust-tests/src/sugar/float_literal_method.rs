@@ -321,11 +321,28 @@ fn from_bits_width(func: &Expr) -> Option<FloatWidth> {
 }
 
 fn primitive_float_assoc_const(path: &ExprPath, site: &str) -> Result<Option<FloatValue>, Outcome> {
-    if path.qself.is_some() || path.path.segments.len() != 2 {
-        return Ok(None);
-    }
-    let ty = path.path.segments[0].ident.to_string();
-    let konst = path.path.segments[1].ident.to_string();
+    let (ty, konst) = if let Some(qself) = &path.qself {
+        let Some(konst) = path
+            .path
+            .segments
+            .last()
+            .map(|segment| segment.ident.to_string())
+        else {
+            return Ok(None);
+        };
+        let Some(width) = primitive_float_type_name(&qself.ty) else {
+            return Ok(None);
+        };
+        (width, konst)
+    } else {
+        if path.path.segments.len() != 2 {
+            return Ok(None);
+        }
+        (
+            path.path.segments[0].ident.to_string(),
+            path.path.segments[1].ident.to_string(),
+        )
+    };
     let value = match (ty.as_str(), konst.as_str()) {
         ("f32", "MIN") => FloatValue::F32(f32::MIN),
         ("f32", "MAX") => FloatValue::F32(f32::MAX),
@@ -334,6 +351,7 @@ fn primitive_float_assoc_const(path: &ExprPath, site: &str) -> Result<Option<Flo
         ("f32", "INFINITY") => FloatValue::F32(f32::INFINITY),
         ("f32", "NEG_INFINITY") => FloatValue::F32(f32::NEG_INFINITY),
         ("f32", "NAN") => FloatValue::F32(f32::NAN),
+        ("f32", "NEG_NAN") => FloatValue::F32(-f32::NAN),
         ("f64", "MIN") => FloatValue::F64(f64::MIN),
         ("f64", "MAX") => FloatValue::F64(f64::MAX),
         ("f64", "EPSILON") => FloatValue::F64(f64::EPSILON),
@@ -341,6 +359,7 @@ fn primitive_float_assoc_const(path: &ExprPath, site: &str) -> Result<Option<Flo
         ("f64", "INFINITY") => FloatValue::F64(f64::INFINITY),
         ("f64", "NEG_INFINITY") => FloatValue::F64(f64::NEG_INFINITY),
         ("f64", "NAN") => FloatValue::F64(f64::NAN),
+        ("f64", "NEG_NAN") => FloatValue::F64(-f64::NAN),
         ("f16" | "f128", _) => {
             return Err(unsupported(format!(
                 "f16/f128 float bit model is not expressible `{site}`"
@@ -349,6 +368,13 @@ fn primitive_float_assoc_const(path: &ExprPath, site: &str) -> Result<Option<Flo
         _ => return Ok(None),
     };
     Ok(Some(value))
+}
+
+fn primitive_float_type_name(ty: &syn::Type) -> Option<String> {
+    let syn::Type::Path(path) = ty else {
+        return None;
+    };
+    Some(path.path.segments.last()?.ident.to_string())
 }
 
 fn width_from_type(ty: &syn::Type) -> Option<FloatWidth> {

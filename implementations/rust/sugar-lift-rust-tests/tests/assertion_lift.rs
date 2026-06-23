@@ -7030,15 +7030,58 @@ fn parsed_nan_refinement() {
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
     assert_eq!(out.warnings.len(), 0);
-    assert_warranted_decl_count(&out, 2);
+    assert_warranted_decl_count(&out, 1);
 
-    let f32_operands = warranted_inv_operands(&out, 0);
-    assert_eq!(f32_operands.len(), 1);
-    assert_float_refinement_atom(&f32_operands[0], "float.f32.is_nan", "method:unwrap");
+    let operands = warranted_inv_operands(&out, 0);
+    assert_eq!(operands.len(), 2);
+    let doc = warranted_doc(&out);
+    assert!(
+        doc.matches("\"name\":\"Bool\"").count() >= 4 && !doc.contains("float.f"),
+        "parsed literal NaN predicates should reduce to bool floor, got {doc}"
+    );
+}
 
-    let f64_operands = warranted_inv_operands(&out, 1);
-    assert_eq!(f64_operands.len(), 1);
-    assert_float_refinement_atom(&f64_operands[0], "float.f64.is_nan", "method:unwrap");
+#[test]
+fn parsed_literal_nan_is_nan_reduces_to_bool_floor_with_teeth() {
+    for (label, assertion, want_sat) in [
+        (
+            "parse_nan_f32_good",
+            r#"assert!("NaN".parse::<f32>().unwrap().is_nan());"#,
+            true,
+        ),
+        (
+            "parse_nan_f32_bad",
+            r#"assert!(!"NaN".parse::<f32>().unwrap().is_nan());"#,
+            false,
+        ),
+        (
+            "parse_neg_nan_f64_good",
+            r#"assert!("-NaN".parse::<f64>().unwrap().is_nan());"#,
+            true,
+        ),
+        (
+            "parse_neg_nan_f64_bad",
+            r#"assert!(!"-NaN".parse::<f64>().unwrap().is_nan());"#,
+            false,
+        ),
+    ] {
+        let src = format!("#[test] fn t() {{ {assertion} }}");
+        let out = lift_file(&parse(&src), "tests/num/dec2flt/mod.rs");
+        assert_warranted_decl_count(&out, 1);
+        assert_eq!(
+            out.assertions_refused, 0,
+            "{label}: parsed f32/f64 NaN predicate should warrant: {:?}",
+            out.skip_reasons
+        );
+        let doc = warranted_doc(&out);
+        assert!(
+            doc.contains("\"name\":\"Bool\"") && !doc.contains("float.f"),
+            "{label}: parsed literal NaN is_nan should compose to bool floor, got {doc}"
+        );
+        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+            assert_eq!(sat, want_sat, "{label}: z3 verdict mismatch");
+        }
+    }
 }
 
 #[test]
@@ -20862,6 +20905,46 @@ fn float_literal_to_bits_and_from_bits_have_exact_teeth() {
         "assert_eq!(f32::EPSILON.to_bits(), 0x34000001u32);",
         false,
         "float_to_bits_assoc_const_bad",
+    );
+    assert_numeric_method_decl_verdict(
+        "assert_eq!(<f32 as Float>::NAN.to_bits(), 0x7fc00000u32);",
+        true,
+        "float_to_bits_qself_nan_f32_good",
+    );
+    assert_numeric_method_decl_verdict(
+        "assert_eq!(<f32 as Float>::NAN.to_bits(), 0x7fc00001u32);",
+        false,
+        "float_to_bits_qself_nan_f32_bad",
+    );
+    assert_numeric_method_decl_verdict(
+        "assert_eq!(<f32 as Float>::NEG_NAN.to_bits(), 0xffc00000u32);",
+        true,
+        "float_to_bits_qself_neg_nan_f32_good",
+    );
+    assert_numeric_method_decl_verdict(
+        "assert_eq!(<f32 as Float>::NEG_NAN.to_bits(), 0x7fc00000u32);",
+        false,
+        "float_to_bits_qself_neg_nan_f32_bad",
+    );
+    assert_numeric_method_decl_verdict(
+        "assert_eq!(<f64 as Float>::NAN.to_bits(), 0x7ff8000000000000u64);",
+        true,
+        "float_to_bits_qself_nan_f64_good",
+    );
+    assert_numeric_method_decl_verdict(
+        "assert_eq!(<f64 as Float>::NAN.to_bits(), 0x7ff8000000000001u64);",
+        false,
+        "float_to_bits_qself_nan_f64_bad",
+    );
+    assert_numeric_method_decl_verdict(
+        "assert_eq!(<f64 as Float>::NEG_NAN.to_bits(), 0xfff8000000000000u64);",
+        true,
+        "float_to_bits_qself_neg_nan_f64_good",
+    );
+    assert_numeric_method_decl_verdict(
+        "assert_eq!(<f64 as Float>::NEG_NAN.to_bits(), 0x7ff8000000000000u64);",
+        false,
+        "float_to_bits_qself_neg_nan_f64_bad",
     );
     assert_numeric_method_decl_verdict(
         "assert_eq!(f32::from_bits(0x3fc00000), 1.5f32);",

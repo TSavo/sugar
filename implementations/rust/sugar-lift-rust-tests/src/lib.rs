@@ -212,7 +212,7 @@ use syn::parse::{Parse, ParseStream, Parser};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::visit::Visit;
-use syn::{BinOp, Expr, ExprLit, Item, Lit, Pat, Stmt, Token, Type, UnOp};
+use syn::{BinOp, Expr, ExprLit, ExprMethodCall, Item, Lit, Pat, Stmt, Token, Type, UnOp};
 
 #[derive(Debug, Clone)]
 pub struct LiftWarning {
@@ -15695,6 +15695,15 @@ fn translate_float_refinement_assertion(
                     token_key(expr)
                 ));
             };
+            if let Some(value) = literal_float_refinement_value(&method, &call.receiver) {
+                return Ok(Some(AssertionEntry {
+                    name: None,
+                    atom: eq(bool_const(value), bool_const(true)),
+                    fact_span: None,
+                    kind: AssertionFactKind::Warranted,
+                    claim_count: 1,
+                }));
+            }
             let receiver = translate_term_in_scope(&call.receiver, scope)?;
             let name = callsite_assertion_name(receiver.as_ref(), scope.local_scope());
             Ok(Some(AssertionEntry {
@@ -15725,6 +15734,54 @@ fn is_liftable_float_refinement_method(method: &str) -> bool {
             | "is_sign_positive"
             | "is_sign_negative"
     )
+}
+
+enum LiteralFloat {
+    F32(f32),
+    F64(f64),
+}
+
+impl LiteralFloat {
+    fn is_nan(&self) -> bool {
+        match self {
+            LiteralFloat::F32(value) => value.is_nan(),
+            LiteralFloat::F64(value) => value.is_nan(),
+        }
+    }
+}
+
+fn literal_float_refinement_value(method: &str, receiver: &Expr) -> Option<bool> {
+    match method {
+        "is_nan" => parsed_literal_float(receiver).map(|value| value.is_nan()),
+        _ => None,
+    }
+}
+
+fn parsed_literal_float(expr: &Expr) -> Option<LiteralFloat> {
+    match strip_refs_groups(expr) {
+        Expr::MethodCall(call) if call.method == "unwrap" && call.args.is_empty() => {
+            parsed_literal_float(&call.receiver)
+        }
+        Expr::MethodCall(call) if call.method == "parse" && call.args.is_empty() => {
+            parse_literal_float_call(call)
+        }
+        _ => None,
+    }
+}
+
+fn parse_literal_float_call(call: &ExprMethodCall) -> Option<LiteralFloat> {
+    let width = float_width_from_method_turbofish(call)?;
+    let Expr::Lit(ExprLit {
+        lit: Lit::Str(lit), ..
+    }) = strip_refs_groups(&call.receiver)
+    else {
+        return None;
+    };
+    match width {
+        "f32" => lit.value().parse::<f32>().ok().map(LiteralFloat::F32),
+        "f64" => lit.value().parse::<f64>().ok().map(LiteralFloat::F64),
+        _ => None,
+    }
 }
 
 /// If `expr` is exactly `f32::INFINITY`, `f64::INFINITY`, `f32::NEG_INFINITY`,
