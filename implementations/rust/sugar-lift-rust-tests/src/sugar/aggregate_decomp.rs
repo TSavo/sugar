@@ -267,6 +267,7 @@ fn aggregate_components(
             unwrap_result_components(&call.receiver, fcx, ctx, seen)
         }
         Expr::Call(call) => structural_call_components(call, fcx, ctx, seen),
+        Expr::Macro(expr_macro) => vec_macro_components(expr_macro, fcx, ctx, seen),
         Expr::Paren(paren) => aggregate_components(&paren.expr, fcx, ctx, seen),
         Expr::Group(group) => aggregate_components(&group.expr, fcx, ctx, seen),
         _ => Ok(None),
@@ -340,6 +341,34 @@ fn structural_call_components(
         }
         _ => Ok(None),
     }
+}
+
+fn vec_macro_components(
+    expr_macro: &ExprMacro,
+    fcx: &SugarBuildCtx,
+    ctx: &SugarCtx,
+    seen: &mut BTreeSet<String>,
+) -> Result<Option<Vec<Rc<Term>>>, Outcome> {
+    let Some(name) = expr_macro
+        .mac
+        .path
+        .segments
+        .last()
+        .map(|seg| seg.ident.to_string())
+    else {
+        return Ok(None);
+    };
+    if name != "vec" {
+        return Ok(None);
+    }
+    let Ok(args) = parse_macro_args(expr_macro.mac.tokens.clone()) else {
+        return Ok(None);
+    };
+    let mut out = Vec::new();
+    for expr in args.exprs {
+        append_expr_components(&mut out, &expr, fcx, ctx, seen)?;
+    }
+    Ok(Some(out))
 }
 
 fn unwrap_result_components(
