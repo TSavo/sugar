@@ -16,11 +16,12 @@
 // `result_predicate` (`is_ok`/`is_err`) get real teeth.
 //
 // EXACT-OR-NONE. We claim ONLY for an INTEGER destination type with a single
-// integer-LITERAL argument (allowing a unary `-`, through paren/group/ref). A
-// non-integer destination (`String`/`char`/`NonZero`/a user type), an inferred
-// `TryFrom::try_from` with no spelled destination, a runtime/non-literal arg, or
-// a source value that does not fit `i128` -> `None`, so the existing handling
-// stands (no regression, never a guess).
+// integer argument determined by the program text: a literal, a primitive MIN/MAX
+// const path, or a stable let-bound scalar. The helper carries signed/unsigned
+// 128-bit values exactly, so `u128::MAX` stays `u128::MAX` and never clamps into
+// the signed i128 lane. A non-integer destination (`String`/`char`/`NonZero`/a
+// user type), an inferred `TryFrom::try_from` with no spelled destination, or a
+// runtime/non-literal arg -> `None`, so existing handling stands.
 //
 // TEETH. `u8::try_from(255u16)` -> `Ok(255)` (`.unwrap()` -> 255, discharged);
 // `u8::try_from(256u16)` -> `Err(_)` (`.is_err()` -> true; `.unwrap()` panics).
@@ -28,11 +29,12 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use syn::{Expr, ExprCall, ExprLit, ExprPath, Lit, UnOp};
+use syn::{Expr, ExprCall};
 use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::int_literal::{exact_int_value, primitive_int_kind, ExactInt, IntKind};
 use crate::sugar::monadic::{err_term, ok_term};
 use crate::{expr_head_key, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 use sugar_ir_symbolic::{num, Term};
@@ -49,7 +51,7 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
         return None;
     }
     let dst = try_from_destination(&call.func)?;
-    int_dst_bounds(&dst)?;
+    primitive_int_kind(&dst)?;
     Some(Box::new(TryFromSugar { call: call.clone() }))
 }
 
@@ -57,25 +59,25 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
 /// scalar that resolves to an integer)? Exposed so `result_predicate` /
 /// `option_unwrap` can recognize the receiver without re-deriving the shape.
 /// `fcx`: `Some` resolves a let-bound / const-path argument to its value (see
-/// `scalar_int_value`); `None` is the inline-literal-only check (syntactic callers
+/// `exact_int_value`); `None` is the inline-literal-only check (syntactic callers
 /// with no scope, e.g. the width-hint path).
 pub(crate) fn folds_to_result(call: &ExprCall, fcx: Option<&SugarBuildCtx>) -> bool {
     try_from_fold_inputs(call, fcx).is_some()
 }
 
-/// The `(destination bounds, source value)` of a foldable integer `try_from`
-/// call, or `None` if it is not one.
+/// The `(destination kind, source value)` of a foldable integer `try_from` call,
+/// or `None` if it is not one.
 fn try_from_fold_inputs(
     call: &ExprCall,
     fcx: Option<&SugarBuildCtx>,
-) -> Option<((i128, i128), i128)> {
+) -> Option<(IntKind, ExactInt)> {
     if call.args.len() != 1 {
         return None;
     }
     let dst = try_from_destination(&call.func)?;
-    let bounds = int_dst_bounds(&dst)?;
-    let value = scalar_int_value(&call.args[0], fcx)?;
-    Some((bounds, value))
+    let kind = primitive_int_kind(&dst)?;
+    let value = exact_int_value(&call.args[0], fcx)?;
+    Some((kind, value))
 }
 
 /// The spelled destination type of a `try_from` call:
@@ -104,158 +106,6 @@ fn try_from_destination(func: &Expr) -> Option<String> {
     (dst != "TryFrom").then_some(dst)
 }
 
-/// The inclusive `(min, max)` value range of a primitive integer type, expressed
-/// in `i128` (the lane our source value lives in). `None` for a non-integer type.
-/// For the 128-bit types the bounds are clamped to the `i128` lane: a source
-/// value that does not fit `i128` is already declined upstream, so any
-/// representable `i128` source fits `i128`/`u128` exactly as Rust would decide.
-fn int_dst_bounds(name: &str) -> Option<(i128, i128)> {
-    let (signed, bits): (bool, u32) = match name {
-        "i8" => (true, 8),
-        "i16" => (true, 16),
-        "i32" => (true, 32),
-        "i64" => (true, 64),
-        "i128" => (true, 128),
-        "isize" => (true, isize::BITS),
-        "u8" => (false, 8),
-        "u16" => (false, 16),
-        "u32" => (false, 32),
-        "u64" => (false, 64),
-        "u128" => (false, 128),
-        "usize" => (false, usize::BITS),
-        _ => return None,
-    };
-    if signed {
-        if bits >= 128 {
-            return Some((i128::MIN, i128::MAX));
-        }
-        let max = (1i128 << (bits - 1)) - 1;
-        Some((-(1i128 << (bits - 1)), max))
-    } else {
-        if bits >= 128 {
-            // Any non-negative `i128` source fits `u128` (and `i128` source can
-            // never exceed `i128::MAX < u128::MAX`).
-            return Some((0, i128::MAX));
-        }
-        let max = (1i128 << bits) - 1;
-        Some((0, max))
-    }
-}
-
-/// The integer value of a `try_from` source argument that is determined ENTIRELY
-/// by the program text: an integer/byte literal (optionally negated), OR a
-/// resolved scalar — a let-bound local (`let m = 255u16; try_from(m)`) or a
-/// primitive `MIN`/`MAX` const path (`try_from(<u8>::MAX)` / `try_from(i32::MAX)`).
-/// `None` for a non-literal, a float, a runtime value, or a value that does not
-/// fit `i128`, so the existing opaque handling stands (no regression, never a guess).
-///
-/// SOUND RESOLUTION. A let-bound local is read through `stable_let_binding_for_term`,
-/// which returns `None` for a `let mut` / aliased-mutated / interior-mut / iterator
-/// local — so only a provably-immutable binding (the value in effect at the use site,
-/// shadowing-correct) resolves; the `resolving_bound_path` cycle guard bounds the
-/// recursion. The destination range-check (in `try_from_fold_inputs`) then runs on
-/// the RESOLVED value, so a wrong/out-of-range resolved value still produces the
-/// correct `Ok`/`Err` (teethed: a wrong assert refutes).
-fn scalar_int_value(expr: &Expr, fcx: Option<&SugarBuildCtx>) -> Option<i128> {
-    match strip_refs_groups(expr) {
-        Expr::Lit(ExprLit {
-            lit: Lit::Int(i), ..
-        }) => i.base10_parse::<i128>().ok(),
-        Expr::Lit(ExprLit {
-            lit: Lit::Byte(b), ..
-        }) => Some(i128::from(b.value())),
-        Expr::Unary(u) if matches!(u.op, UnOp::Neg(_)) => {
-            scalar_int_value(&u.expr, fcx).and_then(i128::checked_neg)
-        }
-        Expr::Path(p) => path_int_value(p, fcx),
-        _ => None,
-    }
-}
-
-/// Resolve a path-shaped `try_from` argument to its integer value:
-///   * a primitive `MIN`/`MAX` const (`<u8>::MAX`, `i32::MAX`, `u16::MIN`), via the
-///     destination-bounds table — a compile-time constant, exact; OR
-///   * a let-bound immutable local, via the shadowing-correct, mutability-gated
-///     `stable_let_binding_for_term`, recursing into its initializer.
-/// `None` otherwise (a runtime/opaque/mutated local, an unknown const).
-fn path_int_value(p: &ExprPath, fcx: Option<&SugarBuildCtx>) -> Option<i128> {
-    let last = p.path.segments.last()?.ident.to_string();
-    // `<T>::MAX` / `T::MAX` / `<T>::MIN` / `T::MIN` over a primitive integer type.
-    // A compile-time constant — resolves with or without a scope.
-    if last == "MAX" || last == "MIN" {
-        let ty = if let Some(qself) = &p.qself {
-            let syn::Type::Path(tp) = &*qself.ty else {
-                return None;
-            };
-            tp.path.segments.last()?.ident.to_string()
-        } else {
-            p.path.segments.iter().rev().nth(1)?.ident.to_string()
-        };
-        // EXACT value, DECLINE on i128-lane overflow — NOT `int_dst_bounds` (which
-        // CLAMPS 128-bit destination ranges to the i128 lane). Clamping is correct for
-        // a destination range check, but for the const VALUE it is a WRONG number:
-        // `<u128>::MAX` clamped to `i128::MAX` would lift
-        // `try_from(u128::MAX).unwrap() == u128::MAX` to `i128::MAX == u128::MAX` →
-        // UNSAT → REFUTING a true assert (the inverse cardinal sin). Decline instead.
-        return primitive_const_value(&ty, last == "MAX");
-    }
-    // A let-bound local: resolve to its initializer (gated immutable, cycle-guarded).
-    // Only when a scope is available (the inline-literal `None` path declines).
-    let fcx = fcx?;
-    if p.qself.is_none() {
-        let name = p.path.get_ident()?.to_string();
-        if fcx.resolving_bound_path(&name) {
-            return None;
-        }
-        let init = fcx.scope().stable_let_binding_for_term(&name)?;
-        return scalar_int_value(init, Some(&fcx.with_bound_path(&name)));
-    }
-    None
-}
-
-/// The EXACT `MIN`/`MAX` value of a primitive integer type as an `i128`, or `None`
-/// when it cannot be represented EXACTLY in the i128 lane (`u128::MAX` = 2^128-1 >
-/// i128::MAX). Declining there — rather than clamping, as the destination-range
-/// `int_dst_bounds` deliberately does — is the SOUND choice: a value we cannot
-/// represent exactly must NEVER fold to a different constant (that would refute a
-/// true assert). `usize`/`isize` use the host pointer width, matching the existing
-/// `int_dst_bounds` behaviour and the pinned 64-bit corpus target.
-fn primitive_const_value(ty: &str, is_max: bool) -> Option<i128> {
-    let (signed, bits): (bool, u32) = match ty {
-        "i8" => (true, 8),
-        "i16" => (true, 16),
-        "i32" => (true, 32),
-        "i64" => (true, 64),
-        "i128" => (true, 128),
-        "isize" => (true, isize::BITS),
-        "u8" => (false, 8),
-        "u16" => (false, 16),
-        "u32" => (false, 32),
-        "u64" => (false, 64),
-        "u128" => (false, 128),
-        "usize" => (false, usize::BITS),
-        _ => return None,
-    };
-    if signed {
-        if bits >= 128 {
-            Some(if is_max { i128::MAX } else { i128::MIN })
-        } else if is_max {
-            Some((1i128 << (bits - 1)) - 1)
-        } else {
-            Some(-(1i128 << (bits - 1)))
-        }
-    } else if is_max {
-        // unsigned MAX = 2^bits - 1; DECLINE when it exceeds the i128 lane (`u128`).
-        if bits >= 128 {
-            None
-        } else {
-            Some((1i128 << bits) - 1)
-        }
-    } else {
-        Some(0) // unsigned MIN
-    }
-}
-
 struct TryFromSugar {
     call: ExprCall,
 }
@@ -264,16 +114,20 @@ impl Sugar for TryFromSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        if let Some((bounds, value)) = try_from_fold_inputs(&self.call, Some(&fcx)) {
-            let in_range = value >= bounds.0 && value <= bounds.1;
+        if let Some((kind, value)) = try_from_fold_inputs(&self.call, Some(&fcx)) {
+            let in_range = value.fits_kind(kind);
             debug!(
                 target: "sugar_lift_rust_tests::sugar::try_from",
-                value = %value,
+                value = %value.label(),
+                dst = kind.name,
                 in_range = in_range,
                 "resolved TryFrom range check stdlib axiom to Ok/Err"
             );
             let term = if in_range {
-                ok_term(num(value))
+                let Some(value) = value.term_for_kind(kind) else {
+                    return Outcome::from_opt(None);
+                };
+                ok_term(value)
             } else {
                 // `TryFromIntError` carries no observable value; the Err discriminant
                 // is what `is_err`/`unwrap` read. A placeholder inner keeps it well-sorted.

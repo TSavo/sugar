@@ -105,6 +105,7 @@ pub mod sugar {
     pub mod infinity_eq;
     pub mod insert;
     pub mod inspect;
+    pub mod int_literal;
     pub mod int_pow;
     pub mod int_sqrt;
     pub mod integer_decode;
@@ -18138,6 +18139,18 @@ pub(crate) fn assertion_entry_from_relation(
             claim_count: 1,
         };
     }
+    // `rust:u128(hi, lo)` is a constructive literal floor, but whole-ctor equality is
+    // not injective in the SMT encoding. When the relation is fully literal-determined,
+    // the assertion surface owns the final deconstruction to a concrete bool.
+    if let Some(atom) = const_u128_relation_atom(&lhs, &rhs, op) {
+        return AssertionEntry {
+            name: None,
+            atom,
+            fact_span: None,
+            kind: AssertionFactKind::Warranted,
+            claim_count: 1,
+        };
+    }
 
     let name = if is_ground_value(lhs.as_ref()) {
         callsite_assertion_name(rhs.as_ref(), scope.local_scope())
@@ -18161,6 +18174,27 @@ pub(crate) fn assertion_entry_from_relation(
         kind: AssertionFactKind::Warranted,
         claim_count: 1,
     }
+}
+
+fn const_u128_relation_atom(lhs: &Rc<Term>, rhs: &Rc<Term>, op: RelationOp) -> Option<Rc<Formula>> {
+    let left_u = const_fold_u128_term(lhs);
+    let right_u = const_fold_u128_term(rhs);
+    if left_u.is_none() && right_u.is_none() {
+        return None;
+    }
+    let left =
+        left_u.or_else(|| const_fold_int_term(lhs).and_then(|value| u128::try_from(value).ok()))?;
+    let right = right_u
+        .or_else(|| const_fold_int_term(rhs).and_then(|value| u128::try_from(value).ok()))?;
+    let value = match op {
+        RelationOp::Eq => left == right,
+        RelationOp::Ne => left != right,
+        RelationOp::Lt => left < right,
+        RelationOp::Le => left <= right,
+        RelationOp::Gt => left > right,
+        RelationOp::Ge => left >= right,
+    };
+    Some(eq(bool_const(value), bool_const(true)))
 }
 
 fn constructor_operator_atom(
