@@ -14,7 +14,7 @@ use sugar_ir_symbolic::{and_, atomic_, num, str_const, Term};
 use syn::{BinOp, Expr, ExprMacro};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::factory::{build_composite, build_term, SugarBuildCtx};
 use crate::sugar::literal::RUNTIME_ELEM_REASON;
 use crate::sugar::monadic::{is_grounded_literal_term, RES_OK};
 use crate::{
@@ -230,6 +230,13 @@ fn aggregate_components(
             aggregate_components(&index.expr, fcx, ctx, seen)
         }
         Expr::Cast(cast) => aggregate_components(&cast.expr, fcx, ctx, seen),
+        Expr::MethodCall(call)
+            if call.method == "collect"
+                && call.args.is_empty()
+                && crate::sugar::collect::collects_vec(call) =>
+        {
+            collect_vec_components(&call.receiver, fcx, ctx, seen)
+        }
         Expr::Path(path) if path.qself.is_none() => {
             let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) else {
                 return Ok(None);
@@ -264,6 +271,28 @@ fn aggregate_components(
         Expr::Group(group) => aggregate_components(&group.expr, fcx, ctx, seen),
         _ => Ok(None),
     }
+}
+
+fn collect_vec_components(
+    receiver: &Expr,
+    fcx: &SugarBuildCtx,
+    ctx: &SugarCtx,
+    seen: &mut BTreeSet<String>,
+) -> Result<Option<Vec<Rc<Term>>>, Outcome> {
+    let seq = match build_composite(receiver, fcx).desugar(ctx) {
+        Outcome::Dug(desugared) => {
+            let Some(seq) = desugared.into_seq() else {
+                return Ok(None);
+            };
+            seq
+        }
+        Outcome::Hit(effect) => return Err(Outcome::Hit(effect)),
+    };
+    let mut out = Vec::with_capacity(seq.len());
+    for elem in seq {
+        append_expr_components(&mut out, &elem.expr, fcx, ctx, seen)?;
+    }
+    Ok(Some(out))
 }
 
 fn append_expr_components(
