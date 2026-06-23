@@ -25085,6 +25085,148 @@ fn direct_mut_local_still_warrants_post_value() {
 }
 
 #[test]
+fn cell_set_get_literal_pin_warrants_final_value() {
+    let src = r#"
+        use std::cell::Cell;
+
+        #[test]
+        fn t_cell_set_get() {
+            let c = Cell::new(10);
+            c.set(20);
+            assert_eq!(c.get(), 20);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/cell/cell_set_get.rs");
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        out.assertions_refused, 0,
+        "literal-pinned Cell set/get should warrant, not refuse: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "cell_set_get_good") {
+        assert!(sat, "Cell::set(20) then get() == 20 should be z3-SAT");
+    }
+}
+
+#[test]
+fn cell_set_get_bad_twin_is_unsat() {
+    let src = r#"
+        use std::cell::Cell;
+
+        #[test]
+        fn t_cell_set_get_bad() {
+            let c = Cell::new(10);
+            c.set(20);
+            assert_eq!(c.get(), 21);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/cell/cell_set_get_bad.rs");
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "cell_set_get_bad") {
+        assert!(!sat, "wrong final Cell value must be z3-UNSAT");
+    }
+}
+
+#[test]
+fn refcell_borrow_mut_literal_pin_warrants_final_value() {
+    let src = r#"
+        use std::cell::RefCell;
+
+        #[test]
+        fn t_refcell_borrow_mut() {
+            let r = RefCell::new(0);
+            *r.borrow_mut() = 7;
+            assert_eq!(*r.borrow(), 7);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/cell/refcell_borrow_mut.rs");
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        out.assertions_refused, 0,
+        "literal-pinned RefCell borrow_mut/borrow should warrant, not refuse: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "refcell_borrow_mut_good",
+    ) {
+        assert!(
+            sat,
+            "RefCell borrow_mut write then borrow read should be z3-SAT"
+        );
+    }
+}
+
+#[test]
+fn refcell_borrow_mut_bad_twin_is_unsat() {
+    let src = r#"
+        use std::cell::RefCell;
+
+        #[test]
+        fn t_refcell_borrow_mut_bad() {
+            let r = RefCell::new(0);
+            *r.borrow_mut() = 7;
+            assert_eq!(*r.borrow(), 8);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/cell/refcell_borrow_mut_bad.rs");
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "refcell_borrow_mut_bad",
+    ) {
+        assert!(!sat, "wrong final RefCell value must be z3-UNSAT");
+    }
+}
+
+#[test]
+fn cell_runtime_write_refuses_by_name() {
+    let src = r#"
+        use std::cell::Cell;
+
+        fn runtime_value() -> i32 { 99 }
+
+        #[test]
+        fn t_cell_runtime_write() {
+            let c = Cell::new(10);
+            c.set(runtime_value());
+            assert_eq!(c.get(), 99);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/cell/cell_runtime_write.rs");
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|reason| reason.contains("cell value runtime/aliased, not literal-pinned")),
+        "runtime Cell write must refuse by name: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
+fn aliased_cell_write_refuses_by_name() {
+    let src = r#"
+        use std::cell::Cell;
+
+        #[test]
+        fn t_aliased_cell_write() {
+            let c = Cell::new(10);
+            let alias = &c;
+            alias.set(20);
+            assert_eq!(c.get(), 20);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/cell/aliased_cell_write.rs");
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|reason| reason.contains("cell value runtime/aliased, not literal-pinned")),
+        "aliased Cell write must refuse by name: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
 fn disjoint_mut_alias_assign_ops_warrant_replayed_vector() {
     let src = r#"
         #[test]

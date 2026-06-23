@@ -12,8 +12,8 @@ use crate::sugar::claim::{ExprSugarClaim, ItemSugarClaim, SugarCandidate, SugarR
 use crate::sugar::factory::{AccountedSugar, FactoryAuditSeed, SugarBuildCtx};
 use crate::sugar::{
     aggregate_decomp, array_repeat, array_term, assign_op, await_term, binop, block_term,
-    bool_bitwise, bool_method, bound_path, call, cast_term, cfg_select, chain, char_method,
-    char_range_collect_string, char_range_filter_map, closure_iter_advance_body,
+    bool_bitwise, bool_method, bound_path, call, cast_term, cell_refcell, cfg_select, chain,
+    char_method, char_range_collect_string, char_range_filter_map, closure_iter_advance_body,
     closure_mutating_body, closure_opaque_accessor, closure_runtime_receiver, closure_term,
     closure_tls_accessor, collect, collection_literal, compute_float, concat_macro, conditional,
     const_block, const_if, const_item, const_path, constraint, control_flow_term, cstr,
@@ -76,6 +76,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &cstr::EXPR_SUGAR,
     &term_literal::EXPR_SUGAR,
     &const_block::EXPR_SUGAR,
+    &cell_refcell::EXPR_SUGAR,
     &unary::EXPR_SUGAR,
     &dormant_mut_ref::EXPR_SUGAR,
     &bound_path::CONSTRAINT_EXPR_SUGAR,
