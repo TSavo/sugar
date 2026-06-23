@@ -9,8 +9,9 @@ use std::rc::Rc;
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::{
-    callsite_assertion_name, token_key, AssertionFactKind, Desugared, Effect, FloatWidthScope,
-    Outcome, Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON,
+    bool_const, callsite_assertion_name, eq, strip_refs_groups, token_key, AssertionFactKind,
+    Desugared, Effect, FloatWidthScope, Outcome, Sugar, SugarCtx, Warrant,
+    STRUCTURAL_BACKSTOP_REASON,
 };
 use sugar_ir_symbolic::{atomic_, Formula, Term};
 use syn::{Expr, ExprLit, ExprMethodCall, Lit, Type};
@@ -62,6 +63,9 @@ impl Sugar for FloatRefinementSugar {
                 self.method, self.site
             ));
         };
+        if let Some(value) = literal_float_refinement_value(&self.method, &self.receiver_expr) {
+            return constraint(eq(bool_const(value), bool_const(true)), None);
+        }
         let receiver = match term_payload(&*self.receiver, ctx) {
             Ok(term) => term,
             Err(outcome) => return outcome,
@@ -71,6 +75,54 @@ impl Sugar for FloatRefinementSugar {
             atomic_(format!("float.{width}.{}", self.method), vec![receiver]),
             name,
         )
+    }
+}
+
+enum LiteralFloat {
+    F32(f32),
+    F64(f64),
+}
+
+impl LiteralFloat {
+    fn is_nan(&self) -> bool {
+        match self {
+            LiteralFloat::F32(value) => value.is_nan(),
+            LiteralFloat::F64(value) => value.is_nan(),
+        }
+    }
+}
+
+fn literal_float_refinement_value(method: &str, receiver: &Expr) -> Option<bool> {
+    match method {
+        "is_nan" => parsed_literal_float(receiver).map(|value| value.is_nan()),
+        _ => None,
+    }
+}
+
+fn parsed_literal_float(expr: &Expr) -> Option<LiteralFloat> {
+    match strip_refs_groups(expr) {
+        Expr::MethodCall(call) if call.method == "unwrap" && call.args.is_empty() => {
+            parsed_literal_float(&call.receiver)
+        }
+        Expr::MethodCall(call) if call.method == "parse" && call.args.is_empty() => {
+            parse_literal_float_call(call)
+        }
+        _ => None,
+    }
+}
+
+fn parse_literal_float_call(call: &ExprMethodCall) -> Option<LiteralFloat> {
+    let width = float_width_from_method_turbofish(call)?;
+    let Expr::Lit(ExprLit {
+        lit: Lit::Str(lit), ..
+    }) = strip_refs_groups(&call.receiver)
+    else {
+        return None;
+    };
+    match width {
+        "f32" => lit.value().parse::<f32>().ok().map(LiteralFloat::F32),
+        "f64" => lit.value().parse::<f64>().ok().map(LiteralFloat::F64),
+        _ => None,
     }
 }
 
