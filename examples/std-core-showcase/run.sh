@@ -768,9 +768,7 @@ if receipt is None:
 
 rows = receipt.get("rows", [])
 euf_rows = [r for r in rows if "#euf#" in (r.get("property") or "")]
-allowed_temporal_stop_properties = {
-    "consistency:Duration::from_nanos_u128#euf#c:callresult_Duration__from_nanos_u128_a1(i:18446744073709551616000000000:u128)::assertion::temporal#0",
-}
+allowed_temporal_stop_properties = set()
 euf_temporal_stop_rows = [
     r for r in euf_rows
     if (r.get("property") or "") in allowed_temporal_stop_properties
@@ -836,36 +834,35 @@ needles = [
     "method:div_duration_f64#euf#c:callresult_method_div_duration_f64_a2(v:Duration::ZERO,v:Duration::ZERO)::assertion",
     "method:div_duration_f64#euf#c:callresult_method_div_duration_f64_a2(v:Duration::NANOSECOND,v:Duration::MAX)::assertion",
     "method:div_duration_f64#euf#c:callresult_method_div_duration_f64_a2(c:*(v:Duration::SECOND,i:2),v:Duration::SECOND)::assertion",
-    "method:unwrap#euf#c:callresult_method_unwrap_a1(c:method:parse::<f32>(s:\"NaN\"))::assertion",
-    "method:unwrap#euf#c:callresult_method_unwrap_a1(c:method:parse::<f32>(s:\"-NaN\"))::assertion",
-    "method:unwrap#euf#c:callresult_method_unwrap_a1(c:method:parse::<f64>(s:\"NaN\"))::assertion",
-    "method:unwrap#euf#c:callresult_method_unwrap_a1(c:method:parse::<f64>(s:\"-NaN\"))::assertion",
+    "method:unwrap#panic_callsite#euf#c:callresult_method_unwrap_panic_callsite_a1(c:method:parse::<f32>(s:\"NaN\"))::assertion",
+    "method:unwrap#panic_callsite#euf#c:callresult_method_unwrap_panic_callsite_a1(c:method:parse::<f32>(s:\"-NaN\"))::assertion",
+    "method:unwrap#panic_callsite#euf#c:callresult_method_unwrap_panic_callsite_a1(c:method:parse::<f64>(s:\"NaN\"))::assertion",
+    "method:unwrap#panic_callsite#euf#c:callresult_method_unwrap_panic_callsite_a1(c:method:parse::<f64>(s:\"-NaN\"))::assertion",
     "method:is_err#euf#c:callresult_method_is_err_a1(c:method:align_to(c:call:Layout::new::<[u8;2]>(),i:3))::assertion",
     "method:is_ok#euf#c:callresult_method_is_ok_a1(c:method:repeat(c:call:Layout::new::<[u8;2]>(),c:int-div(i:9223372036854775807:usize,c:method:size(c:call:Layout::new::<[u8;2]>()))))::assertion",
     "method:is_some#euf#c:callresult_method_is_some_a1(v:tests/option.rs::const_get_or_insert_default::OPT_DEFAULT)::assertion",
     "method:is_some#euf#c:callresult_method_is_some_a1(v:tests/option.rs::const_get_or_insert_with::OPT_WITH)::assertion",
     "method:contains#euf#c:callresult_method_contains_a2(c:method:skip(c:range_incl(i:1:u32,i:1),i:1),c:ref(i:1))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:agg:Tuple(v:Bound::<u32>::Unbounded,v:Bound::Unbounded),c:ref(i:0))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:agg:Tuple(v:Bound::<u32>::Unbounded,v:Bound::Unbounded),c:ref(i:4294967295))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:literal:Tuple(c:call:Bound::Excluded(i:1:u32),c:call:Bound::Included(i:5:u32)),c:ref(i:0))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:literal:Tuple(c:call:Bound::Excluded(i:1:u32),c:call:Bound::Included(i:5:u32)),c:ref(i:1))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:literal:Tuple(c:call:Bound::Excluded(i:1:u32),c:call:Bound::Included(i:5:u32)),c:ref(i:3))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:literal:Tuple(c:call:Bound::Excluded(i:1:u32),c:call:Bound::Included(i:5:u32)),c:ref(i:5))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:literal:Tuple(c:call:Bound::Excluded(i:1:u32),c:call:Bound::Included(i:5:u32)),c:ref(i:6))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:literal:Tuple(c:call:Bound::Included(i:1:u32),c:call:Bound::Excluded(i:5:u32)),c:ref(i:0))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:literal:Tuple(c:call:Bound::Included(i:1:u32),c:call:Bound::Excluded(i:5:u32)),c:ref(i:1))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:literal:Tuple(c:call:Bound::Included(i:1:u32),c:call:Bound::Excluded(i:5:u32)),c:ref(i:3))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:literal:Tuple(c:call:Bound::Included(i:1:u32),c:call:Bound::Excluded(i:5:u32)),c:ref(i:5))::assertion",
-    "method:contains#euf#c:callresult_method_contains_a2(v:literal:Tuple(c:call:Bound::Included(i:1:u32),c:call:Bound::Excluded(i:5:u32)),c:ref(i:6))::assertion",
+    "method:contains#panic_callsite#euf#c:callresult_method_contains_panic_callsite_a2(v:agg:Tuple(v:Bound::<u32>::Unbounded,v:Bound::Unbounded),c:ref(i:0))::assertion",
+    "method:contains#panic_callsite#euf#c:callresult_method_contains_panic_callsite_a2(v:agg:Tuple(v:Bound::<u32>::Unbounded,v:Bound::Unbounded),c:ref(i:4294967295))::assertion",
+    "method:contains#panic_callsite#euf#c:callresult_method_contains_panic_callsite_a2(v:literal:Tuple(c:call:Bound::Excluded(i:1:u32),c:call:Bound::Included(i:5:u32)),c:ref(i:0))::assertion",
+    "method:contains#panic_callsite#euf#c:callresult_method_contains_panic_callsite_a2(v:literal:Tuple(c:call:Bound::Excluded(i:1:u32),c:call:Bound::Included(i:5:u32)),c:ref(i:1))::assertion",
+    "method:contains#panic_callsite#euf#c:callresult_method_contains_panic_callsite_a2(v:literal:Tuple(c:call:Bound::Excluded(i:1:u32),c:call:Bound::Included(i:5:u32)),c:ref(i:3))::assertion",
+    "method:contains#panic_callsite#euf#c:callresult_method_contains_panic_callsite_a2(v:literal:Tuple(c:call:Bound::Excluded(i:1:u32),c:call:Bound::Included(i:5:u32)),c:ref(i:5))::assertion",
+    "method:contains#panic_callsite#euf#c:callresult_method_contains_panic_callsite_a2(v:literal:Tuple(c:call:Bound::Excluded(i:1:u32),c:call:Bound::Included(i:5:u32)),c:ref(i:6))::assertion",
+    "method:contains#panic_callsite#euf#c:callresult_method_contains_panic_callsite_a2(v:literal:Tuple(c:call:Bound::Included(i:1:u32),c:call:Bound::Excluded(i:5:u32)),c:ref(i:0))::assertion",
+    "method:contains#panic_callsite#euf#c:callresult_method_contains_panic_callsite_a2(v:literal:Tuple(c:call:Bound::Included(i:1:u32),c:call:Bound::Excluded(i:5:u32)),c:ref(i:1))::assertion",
+    "method:contains#panic_callsite#euf#c:callresult_method_contains_panic_callsite_a2(v:literal:Tuple(c:call:Bound::Included(i:1:u32),c:call:Bound::Excluded(i:5:u32)),c:ref(i:3))::assertion",
+    "method:contains#panic_callsite#euf#c:callresult_method_contains_panic_callsite_a2(v:literal:Tuple(c:call:Bound::Included(i:1:u32),c:call:Bound::Excluded(i:5:u32)),c:ref(i:5))::assertion",
+    "method:contains#panic_callsite#euf#c:callresult_method_contains_panic_callsite_a2(v:literal:Tuple(c:call:Bound::Included(i:1:u32),c:call:Bound::Excluded(i:5:u32)),c:ref(i:6))::assertion",
     "method:fetch_and#euf#c:callresult_method_fetch_and_a3(v:tests/atomic.rs::uint_and::x@def2,i:4991,v:tests/atomic.rs::uint_and::SeqCst)::assertion",
-    "method:load#euf#c:callresult_method_load_a2(v:tests/atomic.rs::uint_and::x@def3,v:tests/atomic.rs::uint_and::SeqCst)::assertion",
-    "method:load#euf#c:callresult_method_load_a2(v:tests/atomic.rs::uint_nand::x@def3,v:tests/atomic.rs::uint_nand::SeqCst)::assertion",
-    "method:load#euf#c:callresult_method_load_a2(v:tests/atomic.rs::uint_or::x@def3,v:tests/atomic.rs::uint_or::SeqCst)::assertion",
-    "method:load#euf#c:callresult_method_load_a2(v:tests/atomic.rs::uint_xor::x@def3,v:tests/atomic.rs::uint_xor::SeqCst)::assertion",
-    "method:count#euf#c:callresult_method_count_a1(c:range(i:200,i:-5))::assertion",
-    "method:count#euf#c:callresult_method_count_a1(c:method:rev(c:range(i:200,i:-5)))::assertion",
-    "method:size_hint#euf#c:callresult_method_size_hint_a1(c:range(i:0,i:100))::assertion",
-    "method:size_hint#euf#c:callresult_method_size_hint_a1(c:range(i:-10,i:-1))::assertion",
+    "method:load#panic_callsite#euf#c:callresult_method_load_panic_callsite_a2(v:tests/atomic.rs::uint_and::x@def3,v:tests/atomic.rs::uint_and::SeqCst)::assertion",
+    "method:load#panic_callsite#euf#c:callresult_method_load_panic_callsite_a2(v:tests/atomic.rs::uint_nand::x@def3,v:tests/atomic.rs::uint_nand::SeqCst)::assertion",
+    "method:load#panic_callsite#euf#c:callresult_method_load_panic_callsite_a2(v:tests/atomic.rs::uint_or::x@def3,v:tests/atomic.rs::uint_or::SeqCst)::assertion",
+    "method:load#panic_callsite#euf#c:callresult_method_load_panic_callsite_a2(v:tests/atomic.rs::uint_xor::x@def3,v:tests/atomic.rs::uint_xor::SeqCst)::assertion",
+    "tests/iter/range.rs::test_range",
+    "method:size_hint#panic_callsite#euf#c:callresult_method_size_hint_panic_callsite_a1(c:range(i:0,i:100))::assertion",
+    "method:size_hint#panic_callsite#euf#c:callresult_method_size_hint_panic_callsite_a1(c:range(i:-10,i:-1))::assertion",
     "std::array::from_fn::<_,const:5,_>#euf#c:callresult_std__array__from_fn_____const_5____a1(v:tests/array.rs::const_array_ops::doubler)::assertion",
 ]
 type_id_needles = [
@@ -875,10 +872,10 @@ type_id_needles = [
 mem_location_needles = [
     "consistency:tests/mem.rs::size_of_basic",
     "consistency:tests/mem.rs::size_of_64",
-    "consistency:tests/mem.rs::size_of_basic::panic-path::size_of_::___u8_____",
-    "consistency:tests/mem.rs::size_of_basic::panic-path::size_of_::___u16_____",
-    "consistency:tests/mem.rs::size_of_64::panic-path::size_of_::___usize_____",
-    "consistency:tests/mem.rs::size_of_64::panic-path::size_of_::_____const_usize_____",
+    "consistency:size_of::<u8>#panic_callsite#euf#c:callresult_size_of___u8__panic_callsite_a0()::assertion",
+    "consistency:size_of::<u16>#panic_callsite#euf#c:callresult_size_of___u16__panic_callsite_a0()::assertion",
+    "consistency:size_of::<usize>#panic_callsite#euf#c:callresult_size_of___usize__panic_callsite_a0()::assertion",
+    "consistency:size_of::<* const usize>#panic_callsite#euf#c:callresult_size_of_____const_usize__panic_callsite_a0()::assertion",
 ]
 missing = [
     needle for needle in needles
