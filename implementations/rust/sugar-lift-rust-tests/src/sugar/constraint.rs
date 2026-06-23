@@ -18,8 +18,8 @@ use crate::{
     ascii_byte_class_atom, ascii_char_class_atom, assertion_entry_from_relation, bool_const,
     callsite_assertion_name, const_fold_int_term, const_fold_u128_term,
     literal_char_predicate_atom, literal_string_value, parse_macro_args, token_key,
-    AssertionFactKind, CfgDisposition, CfgPredicate, Desugared, Effect, Outcome, RelationOp, Sugar,
-    SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON,
+    source_location_runtime_reason, AssertionFactKind, CfgDisposition, CfgPredicate, Desugared,
+    Effect, Outcome, RelationOp, Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON,
 };
 use sugar_ir_symbolic::{and_, atomic_, eq, not_, num, str_const, ConstValue, Formula, Term};
 use syn::parse::{Parse, ParseStream};
@@ -270,6 +270,11 @@ impl Sugar for RelationMacroSugar {
         if let Err(reason) = ensure_debug_assertions_active(&self.name, self.debug_gated, ctx) {
             return unsupported(reason);
         }
+        if let Some(reason) = source_location_runtime_reason(&self.lhs_expr)
+            .or_else(|| source_location_runtime_reason(&self.rhs_expr))
+        {
+            return unsupported(format!("{}!: {reason}", self.name));
+        }
         if let Some(reason) = constraint_runtime_boundary::relation_runtime_boundary_reason(
             &self.lhs_expr,
             &self.rhs_expr,
@@ -519,6 +524,11 @@ impl Sugar for BoolExprSugar {
                 if let Some(reason) = constraint_runtime_boundary::relation_runtime_boundary_reason(
                     lhs_expr, rhs_expr, ctx,
                 ) {
+                    return unsupported(format!("assert!: {reason}"));
+                }
+                if let Some(reason) = source_location_runtime_reason(lhs_expr)
+                    .or_else(|| source_location_runtime_reason(rhs_expr))
+                {
                     return unsupported(format!("assert!: {reason}"));
                 }
                 relation_constraint("assert", &**lhs, &**rhs, *op, ctx)

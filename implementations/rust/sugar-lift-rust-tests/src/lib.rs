@@ -144,6 +144,7 @@ pub mod sugar {
     pub mod peekable;
     pub mod primitive_int;
     pub mod range_accessor;
+    pub mod range_construct;
     pub mod range_contains;
     pub mod range_term;
     pub mod raw_addr_term;
@@ -9773,7 +9774,7 @@ fn collect_assertion_entries<'a>(
                             &visible_fn_registry,
                             &layout_types,
                         );
-                    } else if let Some(desugared) = {
+                    } else if let Some(outcome) = {
                         // DESUGAR (the typed `Sugar` spine): a `.fold`/`.rfold`
                         // (`FoldSugar`) or a `.for_each` (`ForEachSugar`) over a
                         // finite literal domain desugars to its finite conjunction
@@ -9795,14 +9796,91 @@ fn collect_assertion_entries<'a>(
                             &let_inits,
                         );
                         if sugar::factory::has_composite(&init.expr, &fcx) {
-                            sugar::factory::build_composite(&init.expr, &fcx)
-                                .desugar(&ctx)
-                                .dug()
+                            Some(sugar::factory::build_composite(&init.expr, &fcx).desugar(&ctx))
                         } else {
                             None
                         }
                     } {
-                        emit_desugared(desugared, entries, macros_lifted);
+                        match outcome {
+                            Outcome::Dug(desugared) => {
+                                emit_desugared(desugared, entries, macros_lifted);
+                            }
+                            Outcome::Hit(Effect::Unsupported { reason })
+                                if reason == STRUCTURAL_BACKSTOP_REASON =>
+                            {
+                                let mut count = count_asserts_in_expr(&init.expr);
+                                if let Some((_, diverge)) = &init.diverge {
+                                    count += count_asserts_in_expr(diverge);
+                                }
+                                let reason = closure_method_terminal_effect(
+                                    &init.expr,
+                                    &temporal_scope,
+                                    options,
+                                    reducer,
+                                    float_widths,
+                                    macro_depth,
+                                    &let_inits,
+                                    factory_audits,
+                                )
+                                .or_else(|| {
+                                    statement_position_terminal_effect(
+                                        &init.expr,
+                                        &temporal_scope,
+                                        options,
+                                        reducer,
+                                        float_widths,
+                                        macro_depth,
+                                        factory_audits,
+                                    )
+                                })
+                                .map(|e| e.reason())
+                                .unwrap_or_else(|| {
+                                    "assertion inside a let-initializer expression: not a top-level point-wise assertion; released to layer 0".to_string()
+                                });
+                                for _ in 0..count {
+                                    skipped.push(reason.clone());
+                                }
+                            }
+                            Outcome::Hit(effect)
+                                if sugar::range_construct::is_range_construct_expr(&init.expr) =>
+                            {
+                                skipped.push(effect.reason())
+                            }
+                            Outcome::Hit(_) => {
+                                let mut count = count_asserts_in_expr(&init.expr);
+                                if let Some((_, diverge)) = &init.diverge {
+                                    count += count_asserts_in_expr(diverge);
+                                }
+                                let reason = closure_method_terminal_effect(
+                                    &init.expr,
+                                    &temporal_scope,
+                                    options,
+                                    reducer,
+                                    float_widths,
+                                    macro_depth,
+                                    &let_inits,
+                                    factory_audits,
+                                )
+                                .or_else(|| {
+                                    statement_position_terminal_effect(
+                                        &init.expr,
+                                        &temporal_scope,
+                                        options,
+                                        reducer,
+                                        float_widths,
+                                        macro_depth,
+                                        factory_audits,
+                                    )
+                                })
+                                .map(|e| e.reason())
+                                .unwrap_or_else(|| {
+                                    "assertion inside a let-initializer expression: not a top-level point-wise assertion; released to layer 0".to_string()
+                                });
+                                for _ in 0..count {
+                                    skipped.push(reason.clone());
+                                }
+                            }
+                        }
                     } else {
                         let mut count = count_asserts_in_expr(&init.expr);
                         if let Some((_, diverge)) = &init.diverge {
@@ -14448,6 +14526,11 @@ fn lower_assert_eq(
     float_widths: &FloatWidthScope,
     factory_audits: Option<&FactoryAuditLog>,
 ) -> Result<AssertionEntry, String> {
+    if let Some(reason) = source_location_runtime_reason(lhs_expr)
+        .or_else(|| source_location_runtime_reason(rhs_expr))
+    {
+        return Err(format!("assert_eq!: {reason}"));
+    }
     if let Some(reason) =
         sugar::constraint_runtime_boundary::type_inferred_parse_result_reason(lhs_expr, rhs_expr)
     {
@@ -14478,6 +14561,11 @@ fn lower_assert_ne(
 ) -> Result<AssertionEntry, String> {
     // assert_ne!(a, b) is sugar for assert!(a != b): route through the same
     // relation path so the lifted atom is byte-identical to `a != b`.
+    if let Some(reason) = source_location_runtime_reason(lhs_expr)
+        .or_else(|| source_location_runtime_reason(rhs_expr))
+    {
+        return Err(format!("assert_ne!: {reason}"));
+    }
     if let Some(reason) =
         sugar::constraint_runtime_boundary::type_inferred_parse_result_reason(lhs_expr, rhs_expr)
     {
@@ -15109,6 +15197,9 @@ fn translate_bool_assertion_with_audits(
     float_widths: &FloatWidthScope,
     factory_audits: Option<&FactoryAuditLog>,
 ) -> Result<AssertionEntry, String> {
+    if let Some(reason) = source_location_runtime_reason(expr) {
+        return Err(format!("assert!: {reason}"));
+    }
     if let Some(entry) = translate_pointer_eq_assertion(expr, scope)? {
         return Ok(entry);
     }
@@ -15755,6 +15846,11 @@ fn translate_binary_bool_assertion_with_audits(
             })
         }
         BinOp::Eq(_) | BinOp::Ne(_) | BinOp::Lt(_) | BinOp::Le(_) | BinOp::Gt(_) | BinOp::Ge(_) => {
+            if let Some(reason) = source_location_runtime_reason(&binary.left)
+                .or_else(|| source_location_runtime_reason(&binary.right))
+            {
+                return Err(format!("assert!: {reason}"));
+            }
             if let Some(reason) =
                 sugar::constraint_runtime_boundary::type_inferred_parse_result_reason(
                     &binary.left,
@@ -15808,6 +15904,45 @@ pub(crate) fn assertion_entry_from_eq(
     scope: &TemporalScope,
 ) -> AssertionEntry {
     assertion_entry_from_relation(lhs, rhs, RelationOp::Eq, scope)
+}
+
+const SOURCE_LOCATION_RUNTIME_REASON: &str =
+    "source location runtime-determined, not text-determined";
+
+fn source_location_runtime_reason(expr: &Expr) -> Option<&'static str> {
+    match expr {
+        Expr::MethodCall(call)
+            if matches!(call.method.to_string().as_str(), "file" | "line" | "column")
+                && location_caller_expr(&call.receiver) =>
+        {
+            Some(SOURCE_LOCATION_RUNTIME_REASON)
+        }
+        Expr::Paren(paren) => source_location_runtime_reason(&paren.expr),
+        Expr::Group(group) => source_location_runtime_reason(&group.expr),
+        Expr::Reference(reference) => source_location_runtime_reason(&reference.expr),
+        _ => None,
+    }
+}
+
+fn location_caller_expr(expr: &Expr) -> bool {
+    match expr {
+        Expr::Call(call) => {
+            let Expr::Path(path) = call.func.as_ref() else {
+                return false;
+            };
+            let segments = path
+                .path
+                .segments
+                .iter()
+                .map(|seg| seg.ident.to_string())
+                .collect::<Vec<_>>();
+            segments.ends_with(&["Location".to_string(), "caller".to_string()])
+        }
+        Expr::Paren(paren) => location_caller_expr(&paren.expr),
+        Expr::Group(group) => location_caller_expr(&group.expr),
+        Expr::Reference(reference) => location_caller_expr(&reference.expr),
+        _ => false,
+    }
 }
 
 /// An expression that diverges: its value is never produced because control

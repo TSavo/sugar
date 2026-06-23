@@ -22128,6 +22128,19 @@ fn assert_rpc_source_refused(doc: &serde_json::Value, fn_name: &str, category: &
     );
 }
 
+fn assert_rpc_source_inactive(doc: &serde_json::Value, fn_name: &str, category: &str) {
+    assert_eq!(
+        locus_status(doc, fn_name),
+        Some("inactive"),
+        "{fn_name} must be marked inactive: {doc:#}"
+    );
+    let reason = locus_reason(doc, fn_name).unwrap_or("");
+    assert!(
+        reason.contains(category),
+        "{fn_name} inactive reason must carry category {category:?}, got {reason:?}: {doc:#}"
+    );
+}
+
 fn assert_rpc_source_warranted(doc: &serde_json::Value, fn_name: &str) {
     assert_eq!(
         locus_status(doc, fn_name),
@@ -22316,6 +22329,186 @@ fn matches_literal_twin() {
         "compile-only assertion surface",
     );
     assert_rpc_source_warranted(&doc, "matches_literal_twin");
+}
+
+#[test]
+fn range_literal_methods_have_good_bad_teeth() {
+    let good = r#"
+        #[test]
+        fn range_literal_good() {
+            assert!((1usize..5).contains(&4));
+            assert_eq!((0usize..3).len(), 3);
+            assert_eq!(*(1usize..=5).start(), 1);
+            assert_eq!(*(1usize..=5).end(), 5);
+            assert!((5usize..5).is_empty());
+        }
+    "#;
+    let good_out = lift_file(&parse(good), "tests/range_literal_good.rs");
+    assert!(
+        good_out.assertions_lifted >= 5,
+        "literal range methods should warrant; lifted={} skips={:?} audits={:?}",
+        good_out.assertions_lifted,
+        good_out.skip_reasons,
+        good_out.factory_audits
+    );
+    assert_warranted_decls_not_refuted(&good_out, "range_literal_good");
+
+    let bad = r#"
+        #[test]
+        fn range_literal_bad() {
+            assert!((1usize..5).contains(&5));
+        }
+    "#;
+    let bad_out = lift_file(&parse(bad), "tests/range_literal_bad.rs");
+    assert_eq!(
+        bad_out.assertions_lifted, 1,
+        "bad range twin must still lift so z3 can bite; skips={:?}; audits={:?}",
+        bad_out.skip_reasons, bad_out.factory_audits
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&bad_out)),
+        "range_literal_bad",
+    ) {
+        assert!(!sat, "literal range BAD twin must be z3-UNSAT");
+    }
+}
+
+#[test]
+fn rpc_source_warrants_literal_range_constructors_and_propagates_child_hits() {
+    let doc = run_rpc_lift(
+        "tests/ops.rs",
+        r#"
+use core::ops::{Range, RangeFrom, RangeInclusive, RangeTo, RangeToInclusive};
+
+#[test]
+fn range_to_literal_constructor() {
+    let _ = RangeTo { end: 42usize };
+}
+
+#[test]
+fn range_to_inclusive_literal_constructor() {
+    let _ = RangeToInclusive { end: 42usize };
+}
+
+#[test]
+fn range_from_literal_constructor() {
+    let _ = RangeFrom { start: 2usize };
+}
+
+#[test]
+fn range_literal_constructor() {
+    let _ = Range { start: 2usize, end: 10usize };
+}
+
+#[test]
+fn range_inclusive_literal_constructor() {
+    let _ = RangeInclusive::new(1usize, 5usize);
+}
+
+#[test]
+fn range_pointer_child_refuses() {
+    let value = 0usize;
+    let _ = RangeTo { end: (&raw const value) as usize };
+}
+
+#[test]
+fn range_literal_method_twin() {
+    assert_eq!((0usize..3).len(), 3);
+}
+"#,
+    );
+
+    for name in [
+        "range_to_literal_constructor",
+        "range_to_inclusive_literal_constructor",
+        "range_from_literal_constructor",
+        "range_literal_constructor",
+        "range_inclusive_literal_constructor",
+        "range_literal_method_twin",
+    ] {
+        assert_rpc_source_warranted(&doc, name);
+    }
+    assert_rpc_source_refused(
+        &doc,
+        "range_pointer_child_refuses",
+        "mutable reference/pointer effect",
+    );
+}
+
+#[test]
+fn rpc_source_refuses_source_location_runtime_boundary_with_literal_twin() {
+    let doc = run_rpc_lift(
+        "tests/panic/location.rs",
+        r#"
+use core::panic::Location;
+
+#[test]
+fn location_file_runtime_refused() {
+    assert_eq!(Location::caller().file(), file!());
+}
+
+#[test]
+fn location_line_runtime_refused() {
+    assert_eq!(Location::caller().line(), 1u32);
+}
+
+#[test]
+fn location_column_runtime_refused() {
+    assert_eq!(Location::caller().column(), 1u32);
+}
+
+#[test]
+fn location_file_lifetime<'x>() {
+    let _: for<'a> fn(&'a Location<'x>) -> &'x str = Location::file;
+}
+
+#[test]
+fn location_literal_twin() {
+    assert_eq!(1usize, 1usize);
+}
+"#,
+    );
+
+    for name in [
+        "location_file_runtime_refused",
+        "location_line_runtime_refused",
+        "location_column_runtime_refused",
+        "location_file_lifetime",
+    ] {
+        assert_rpc_source_refused(&doc, name, "source location runtime-determined");
+    }
+    assert_rpc_source_warranted(&doc, "location_literal_twin");
+}
+
+#[test]
+fn rpc_source_marks_cfg_false_assertions_inactive_with_literal_twin() {
+    let doc = run_rpc_lift_with_config(
+        "tests/cfg_inactive.rs",
+        r#"
+#[test]
+fn cfg_false_assertion_surface() {
+    #[cfg(target_pointer_width = "32")]
+    assert_eq!(1usize, 2usize);
+}
+
+#[test]
+fn cfg_active_literal_twin() {
+    assert_eq!(2usize, 2usize);
+}
+"#,
+        r#"
+[rust-test-assertions.target_cfg]
+target = "x86_64-unknown-linux-gnu"
+facts = [
+  "unix",
+  "target_arch=\"x86_64\"",
+  "target_pointer_width=\"64\"",
+]
+"#,
+    );
+
+    assert_rpc_source_inactive(&doc, "cfg_false_assertion_surface", "inactive cfg");
+    assert_rpc_source_warranted(&doc, "cfg_active_literal_twin");
 }
 
 /// True iff any `ir` entry's serialized form mentions the opaque `call:<name>` symbol --
