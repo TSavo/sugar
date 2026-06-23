@@ -20004,6 +20004,153 @@ fn wrapping_int_api() {
 }
 
 #[test]
+fn literal_integer_arithmetic_methods_ground_with_teeth() {
+    let good = r#"
+#[test]
+fn t() {
+    assert_eq!(u8::MAX.saturating_add(1), u8::MAX);
+    assert_eq!(i8::MIN.saturating_sub(1), i8::MIN);
+    assert_eq!(3u8.saturating_pow(6), u8::MAX);
+    assert_eq!(250u8.wrapping_mul(2), 244u8);
+    assert_eq!(i8::MIN.wrapping_mul(2), 0i8);
+    assert_eq!(7i8.checked_sub(2), Some(5i8));
+    assert_eq!(1u8.checked_sub(2), None);
+}
+"#;
+    let out = lift_file(&parse(good), "tests/integer_arithmetic_methods_good.rs");
+    assert_eq!(
+        out.assertions_lifted, 7,
+        "literal integer arithmetic methods should all warrant; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons, out.factory_audits, out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let doc = warranted_doc(&out);
+    for opaque in [
+        "method:saturating_add",
+        "method:saturating_sub",
+        "method:saturating_pow",
+        "method:wrapping_mul",
+        "method:checked_sub",
+    ] {
+        assert!(
+            !doc.contains(opaque),
+            "{opaque} must lower to literal primitive axioms, not opaque terms: {doc}"
+        );
+    }
+    for (i, decl) in warranted_decls(&out).into_iter().enumerate() {
+        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("int_arith_good_{i}")) {
+            assert!(sat, "literal integer arithmetic good case {i} must be SAT");
+        }
+    }
+
+    let bad = r#"
+#[test]
+fn t() {
+    assert_eq!(u8::MAX.saturating_add(1), 0u8);
+    assert_eq!(3u8.saturating_pow(6), 254u8);
+    assert_eq!(250u8.wrapping_mul(2), 245u8);
+    assert_eq!(7i8.checked_sub(2), Some(4i8));
+    assert_eq!(1u8.checked_sub(2), Some(255u8));
+}
+"#;
+    let out = lift_file(&parse(bad), "tests/integer_arithmetic_methods_bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 5,
+        "bad twins should still warrant real, refutable facts; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons, out.factory_audits, out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    for (i, decl) in warranted_decls(&out).into_iter().enumerate() {
+        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("int_arith_bad_{i}")) {
+            assert!(
+                !sat,
+                "literal integer arithmetic bad twin {i} must be UNSAT"
+            );
+        }
+    }
+}
+
+#[test]
+fn overflowing_integer_arithmetic_tuple_producer_has_flag_teeth() {
+    let good = r#"
+#[test]
+fn t() {
+    assert_eq!(255u8.overflowing_add(1), (0u8, true));
+    assert_eq!(120i8.overflowing_add(5), (125i8, false));
+}
+"#;
+    let out = lift_file(&parse(good), "tests/overflowing_integer_arithmetic_good.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "overflowing arithmetic should decompose to scalar tuple facts; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons, out.factory_audits, out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let doc = warranted_doc(&out);
+    assert!(
+        !doc.contains("method:overflowing_add"),
+        "overflowing_add must lower through tuple producer components, not opaque method terms: {doc}"
+    );
+    for (i, decl) in warranted_decls(&out).into_iter().enumerate() {
+        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("overflowing_int_good_{i}")) {
+            assert!(sat, "overflowing arithmetic good case {i} must be SAT");
+        }
+    }
+
+    let bad = r#"
+#[test]
+fn t() {
+    assert_eq!(255u8.overflowing_add(1), (0u8, false));
+    assert_eq!(120i8.overflowing_add(5), (124i8, false));
+}
+"#;
+    let out = lift_file(&parse(bad), "tests/overflowing_integer_arithmetic_bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "overflowing arithmetic bad twins should still lift to refutable tuple components; skips={:?}; audits={:?}; decls={:?}",
+        out.skip_reasons, out.factory_audits, out.decls
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    for (i, decl) in warranted_decls(&out).into_iter().enumerate() {
+        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("overflowing_int_bad_{i}")) {
+            assert!(!sat, "overflowing arithmetic bad twin {i} must be UNSAT");
+        }
+    }
+}
+
+#[test]
+fn runtime_operand_integer_arithmetic_refuses_not_support() {
+    let src = r#"
+extern "Rust" {
+    fn opaque_u8() -> u8;
+}
+
+#[test]
+fn t() {
+    let y = unsafe { opaque_u8() };
+    assert_eq!(1u8.saturating_add(y), 2u8);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/integer_arithmetic_runtime_operand.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "runtime integer arithmetic operand must not warrant"
+    );
+    assert_eq!(
+        out.assertions_refused, 1,
+        "runtime integer arithmetic operand must be refused, not support/unresolved; skips={:?}; audits={:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|reason| reason.contains("runtime operand, not literal")),
+        "expected named runtime-operand refusal, got {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
 fn nonzero_char_new_lowers_option_predicates() {
     let src = r#"
 use core::num::NonZero;
@@ -20453,7 +20600,7 @@ fn t() {
 }
 
 #[test]
-fn numeric_runtime_receiver_stays_symbolic() {
+fn numeric_runtime_receiver_refuses_with_named_boundary() {
     let out = lift_file(
         &parse(
             r#"
@@ -20468,25 +20615,23 @@ fn t() {
         ),
         "tests/num/literal_methods_runtime.rs",
     );
-    assert!(
-        out.assertions_lifted >= 1,
-        "runtime numeric method surface should still warrant opaquely: skips={:?}",
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "runtime numeric method surface must not warrant opaquely: decls={:?}",
+        out.decls
+    );
+    assert_eq!(
+        out.assertions_refused, 1,
+        "runtime numeric method surface must refuse with a named boundary: skips={:?}",
         out.skip_reasons
     );
-    let doc = warranted_doc(&out);
     assert!(
-        doc.contains("method:wrapping_add"),
-        "runtime receiver must stay opaque, never fabricated into a literal: {doc}"
+        out.skip_reasons
+            .iter()
+            .any(|reason| reason.contains("runtime operand, not literal")),
+        "runtime receiver boundary must be named: {:?}",
+        out.skip_reasons
     );
-    if let Some(sat) = z3_verdict(
-        &inv_json(single_warranted_decl(&out)),
-        "numeric_runtime_receiver_symbolic",
-    ) {
-        assert!(
-            sat,
-            "runtime receiver wrong expected must remain SAT/undecided, not refuted"
-        );
-    }
 }
 
 // `<IntT>::from(bool)` / `IntT::from(bool)` for a primitive integer target is the std
