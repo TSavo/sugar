@@ -62,6 +62,9 @@ fn recognize_role(expr: &Expr, fcx: &SugarBuildCtx, role: BoundPathRole) -> Opti
     if let Some(hit) = ambiguous_identity_refusal(&name, fcx) {
         return Some(hit);
     }
+    if let Some(hit) = unresolved_destructured_source_backstop(&name, fcx) {
+        return Some(hit);
+    }
     if let Some(hit) = runtime_destructured_source_refusal(&name, fcx) {
         return Some(hit);
     }
@@ -193,6 +196,19 @@ fn runtime_destructured_source_refusal(name: &str, fcx: &SugarBuildCtx) -> Optio
             "destructured source runtime, not literal for `{name}`: pattern binding participates \
              in the assertion, but the destructured source did not resolve to a literal tuple/array; \
              refused"
+        ))
+    })
+}
+
+fn unresolved_destructured_source_backstop(
+    name: &str,
+    fcx: &SugarBuildCtx,
+) -> Option<Box<dyn Sugar>> {
+    fcx.scope().is_unresolved_destructured_local(name).then(|| {
+        reasoned_incomplete(format!(
+            "destructured source trace unresolved for `{name}`: pattern binding participates \
+             in the assertion, but SSA has not traced the destructured source to literal \
+             components yet"
         ))
     })
 }

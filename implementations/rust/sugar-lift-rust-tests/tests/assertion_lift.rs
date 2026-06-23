@@ -17028,6 +17028,113 @@ fn literal_slice_split_chunk_destructure_warrants_and_bad_twin_refutes() {
 }
 
 #[test]
+fn literal_array_split_mut_destructure_warrants_and_bad_twin_refutes() {
+    let good = r#"
+        #[test]
+        fn array_split_mut_good() {
+            let mut v = [1, 2, 3, 4, 5, 6];
+
+            let (left, right) = v.split_array_mut::<0>();
+            assert_eq!(left, &mut []);
+            assert_eq!(right, &mut [1, 2, 3, 4, 5, 6]);
+
+            let (left, right) = v.rsplit_array_mut::<6>();
+            assert_eq!(left, &mut []);
+            assert_eq!(right, &mut [1, 2, 3, 4, 5, 6]);
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/array/split_array_mut_good.rs");
+    assert_eq!(
+        out.assertions_lifted, 4,
+        "literal-backed array split mut destructure should warrant: skips={:?}; audits={:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(
+        out.assertions_refused, 0,
+        "literal-backed array split mut destructure must not refuse: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.factory_audits.iter().all(|audit| {
+            !(audit
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("destructured source runtime"))
+                && audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Unresolved)
+        }),
+        "literal-backed array split mut destructure should not stay factory-unresolved: {:?}",
+        out.factory_audits
+    );
+    assert_warranted_decls_not_refuted(&out, "array_split_mut_good");
+
+    let bad = r#"
+        #[test]
+        fn array_split_mut_bad() {
+            let mut v = [1, 2, 3, 4, 5, 6];
+            let (_left, right) = v.split_array_mut::<0>();
+            assert_eq!(right, [1, 2, 3, 4, 5, 9]);
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/array/split_array_mut_bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bad twin must still lift so z3 can refute the wrong split half: skips={:?}; audits={:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(
+        out.assertions_refused, 0,
+        "bad twin must not clear through refusal: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "array_split_mut_bad",
+    ) {
+        assert!(!sat, "wrong split_array_mut half must be z3-UNSAT");
+    }
+}
+
+#[test]
+fn unresolved_destructure_trace_gap_stays_unclassified_not_refused() {
+    let src = r#"
+        use std::cell::{Ref, RefCell};
+
+        #[test]
+        fn ref_map_split_trace_gap() {
+            let x = RefCell::new([1, 2]);
+            let (b1, _b2) = Ref::map_split(x.borrow(), |slc| slc.split_at(1));
+            assert_eq!(*b1, [1]);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/cell/ref_map_split_trace_gap.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "RefCell map_split is not currently traced to a literal source: {:?}",
+        out.decls
+    );
+    assert!(
+        out.skip_reasons.iter().any(|reason| {
+            reason.contains("destructured source trace unresolved")
+                && sugar_lift_rust_tests::refusal_disposition(reason)
+                    == sugar_lift_rust_tests::Disposition::Unclassified
+        }),
+        "untraced destructure should stay unclassified, not terminal refused: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.factory_audits.iter().any(|audit| {
+            audit.reason.as_deref().is_some_and(|reason| {
+                reason.contains("destructured source trace unresolved")
+                    && sugar_lift_rust_tests::refusal_disposition(reason)
+                        == sugar_lift_rust_tests::Disposition::Unclassified
+            }) && audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Unresolved
+        }),
+        "untraced destructure should remain factory-unresolved/unclassified: {:?}",
+        out.factory_audits
+    );
+}
+
+#[test]
 fn iter_next_over_runtime_receiver_stays_opaque_no_fake_dig() {
     // THE EFFECT BOUNDARY HOLDS: a `.next()` over a RUNTIME receiver (a call
     // result / opaque param) is NOT a written literal, so the syntactic-literal
