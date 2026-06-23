@@ -17,9 +17,10 @@ use crate::sugar::factory::{build_constraint, build_term, SugarBuildCtx};
 use crate::{
     ascii_byte_class_atom, ascii_char_class_atom, assertion_entry_from_relation, bool_const,
     callsite_assertion_name, const_fold_int_term, const_fold_u128_term,
-    literal_char_predicate_atom, literal_string_value, parse_macro_args, token_key,
-    source_location_runtime_reason, AssertionFactKind, CfgDisposition, CfgPredicate, Desugared,
-    Effect, Outcome, RelationOp, Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON,
+    literal_char_predicate_atom, literal_string_value, parse_macro_args, simple_path_name,
+    source_location_runtime_reason, strip_refs_groups, token_key, AssertionFactKind,
+    CfgDisposition, CfgPredicate, Desugared, Effect, Outcome, RelationOp, Sugar, SugarCtx, Warrant,
+    STRUCTURAL_BACKSTOP_REASON,
 };
 use sugar_ir_symbolic::{and_, atomic_, eq, not_, num, str_const, ConstValue, Formula, Term};
 use syn::parse::{Parse, ParseStream};
@@ -398,6 +399,7 @@ enum BoolExprKind {
     Literal(bool),
     PredicateTerm {
         term: Box<dyn Sugar>,
+        expr: Expr,
         asserted: bool,
     },
     Wrapper(Box<dyn Sugar>),
@@ -442,6 +444,7 @@ fn recognize_bool_expr(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
         expr if is_predicate_term_expr(expr) => Some(Box::new(BoolExprSugar {
             kind: BoolExprKind::PredicateTerm {
                 term: build_term(expr, fcx),
+                expr: expr.clone(),
                 asserted: true,
             },
         })),
@@ -562,7 +565,14 @@ impl Sugar for BoolExprSugar {
                 );
                 constraint_from_entry(entry)
             }
-            BoolExprKind::PredicateTerm { term, asserted } => {
+            BoolExprKind::PredicateTerm {
+                term,
+                expr,
+                asserted,
+            } => {
+                if let Some(reason) = mutable_local_slice_predicate_reason(expr, ctx) {
+                    return unsupported(reason);
+                }
                 let term = match term_payload(&**term, ctx) {
                     Ok(term) => term,
                     Err(outcome) => return outcome,
@@ -577,6 +587,31 @@ impl Sugar for BoolExprSugar {
             BoolExprKind::Wrapper(inner) => inner.desugar(ctx),
         }
     }
+}
+
+fn mutable_local_slice_predicate_reason(expr: &Expr, ctx: &SugarCtx) -> Option<String> {
+    let Expr::MethodCall(call) = strip_refs_groups(expr) else {
+        return None;
+    };
+    let method = call.method.to_string();
+    if !matches!(method.as_str(), "contains" | "starts_with" | "ends_with") {
+        return None;
+    }
+    let recv_name = simple_path_name(&call.receiver)?;
+    if ctx
+        .scope
+        .let_binding_for_audit(&recv_name)
+        .is_some_and(|init| matches!(strip_refs_groups(init), Expr::Range(_)))
+    {
+        return None;
+    }
+    ctx.scope.is_mut_local(&recv_name).then(|| {
+        format!(
+            "{method} predicate over a MUTABLE-local receiver `{recv_name}` \
+             (bin-2: a slice/string mutated by side-effecting iteration, not \
+             constructed from source literals); refused"
+        )
+    })
 }
 
 fn constraints_from_payload(payload: ConstraintPayload) -> Outcome {

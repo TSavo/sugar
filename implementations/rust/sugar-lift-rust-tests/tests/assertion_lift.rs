@@ -27256,13 +27256,17 @@ fn literal_oversize_domain_named_refused_with_twin() {
 }
 
 #[test]
-fn literal_char_range_named_refused_with_twin() {
-    assert_named_refused(
-        "#[test] fn t() { assert_eq!(('a'..='z').count(), 26); }",
-        "literal char range",
+fn literal_ascii_char_range_count_warrants_with_bad_twin() {
+    assert_still_warrants("#[test] fn t() { assert_eq!(('a'..='z').count(), 26); }");
+
+    let out = lift_file(
+        &parse("#[test] fn t() { assert_eq!(('a'..='z').count(), 25); }"),
+        "tests/char_range_count_bad.rs",
     );
-    // TWIN: an INT range still warrants (only char/AsciiChar bounds are the dragon).
-    assert_still_warrants("#[test] fn t() { assert_eq!((0..3).count(), 3); }");
+    let decl = single_warranted_decl(&out);
+    if let Some(sat) = z3_verdict(&inv_json(decl), "char_range_count_bad") {
+        assert!(!sat, "wrong ASCII char-range count must be z3-UNSAT");
+    }
 }
 
 #[test]

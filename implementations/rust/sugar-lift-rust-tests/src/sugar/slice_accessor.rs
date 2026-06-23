@@ -71,6 +71,9 @@ impl Sugar for SliceAccessorSugar {
 
 impl SliceAccessorSugar {
     fn eval(&self, ctx: &SugarCtx) -> Result<Rc<Term>, Effect> {
+        if let Some(effect) = mutable_local_receiver_effect(self.kind, &self.receiver, ctx) {
+            return Err(effect);
+        }
         let stable = stable_let_bindings(ctx.scope);
         let let_inits = stable
             .iter()
@@ -118,6 +121,36 @@ impl SliceAccessorSugar {
         let term = term_for(strip_refs_groups(arg), fcx, ctx)?;
         const_fold_int_term(&term).ok_or_else(|| runtime_index_effect(strip_refs_groups(arg)))
     }
+}
+
+fn mutable_local_receiver_effect(
+    kind: AccessKind,
+    receiver: &Expr,
+    ctx: &SugarCtx,
+) -> Option<Effect> {
+    let method = match kind {
+        AccessKind::Contains => "contains",
+        AccessKind::StartsWith => "starts_with",
+        AccessKind::EndsWith => "ends_with",
+        _ => return None,
+    };
+    let recv_name = simple_path_name(receiver)?;
+    if ctx
+        .scope
+        .let_binding_for_audit(&recv_name)
+        .is_some_and(|init| matches!(strip_refs_groups(init), Expr::Range(_)))
+    {
+        return None;
+    }
+    ctx.scope
+        .is_mut_local(&recv_name)
+        .then(|| Effect::Unsupported {
+            reason: format!(
+                "{method} predicate over a MUTABLE-local receiver `{recv_name}` \
+                 (bin-2: a slice/string mutated by side-effecting iteration, not \
+                 constructed from source literals); refused"
+            ),
+        })
 }
 
 fn recognize_kind(call: &ExprMethodCall) -> Option<AccessKind> {

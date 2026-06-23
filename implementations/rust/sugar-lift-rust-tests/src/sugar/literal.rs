@@ -94,6 +94,10 @@ impl LiteralSugar {
     /// `desugar` dig body (pure extraction) so warrant behavior is unchanged.
     fn build(&self, ctx: &SugarCtx) -> Option<Desugared> {
         (|| {
+            if let Some(seq) = literal_ascii_char_range_seq(&self.base) {
+                return Some(Desugared::Seq(seq));
+            }
+
             // Discriminate the domain EXACTLY as the defolder does (construction axiom:
             // a literal array unrolls over its element terms; a closed range enumerates
             // its integers). A runtime collection is not a `BoundedDomain` -> None.
@@ -173,6 +177,46 @@ impl LiteralSugar {
             }
             Some(Desugared::Seq(seq))
         })()
+    }
+}
+
+fn literal_ascii_char_range_seq(expr: &Expr) -> Option<Vec<DesugaredElem>> {
+    let Expr::Range(range) = strip_refs_groups(expr) else {
+        return None;
+    };
+    let start = literal_ascii_char(range.start.as_deref()?)?;
+    let end = literal_ascii_char(range.end.as_deref()?)?;
+    if end < start {
+        return None;
+    }
+    let inclusive = matches!(range.limits, syn::RangeLimits::Closed(_));
+    let len = end
+        .checked_sub(start)?
+        .checked_add(if inclusive { 1 } else { 0 })?;
+    if len == 0 || len > SUGAR_SEQ_CAP as u32 {
+        return None;
+    }
+    (0..len)
+        .map(|offset| {
+            let ch = char::from_u32(start.checked_add(offset)?)?;
+            Some(DesugaredElem {
+                expr: Expr::Lit(syn::ExprLit {
+                    attrs: Vec::new(),
+                    lit: syn::Lit::Char(syn::LitChar::new(ch, proc_macro2::Span::call_site())),
+                }),
+                value: Some(ConstVal::Char(ch)),
+            })
+        })
+        .collect()
+}
+
+fn literal_ascii_char(expr: &Expr) -> Option<u32> {
+    match strip_refs_groups(expr) {
+        Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Char(ch),
+            ..
+        }) if ch.value().is_ascii() => Some(u32::from(ch.value())),
+        _ => None,
     }
 }
 

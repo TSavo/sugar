@@ -4627,6 +4627,10 @@ impl TemporalScope {
         self.let_bindings.iter()
     }
 
+    pub(crate) fn let_binding_for_audit(&self, name: &str) -> Option<&Expr> {
+        self.let_binding(name)
+    }
+
     /// Whether `name` is a `let mut` local in this scope (conservatively
     /// unstable). A non-mut local is provably immutable and stable.
     pub(crate) fn is_mut_local(&self, name: &str) -> bool {
@@ -11567,6 +11571,9 @@ fn for_domain_endpoint_is_runtime(expr: &Expr, scope: &TemporalScope) -> bool {
         // A literal array / repeat is a finite literal construction -> NOT runtime.
         Expr::Array(_) | Expr::Repeat(_) => false,
         Expr::Range(r) => {
+            if range_has_char_endpoint(r) {
+                return !ascii_char_range_in_replay_cap(r);
+            }
             let start_lit = r
                 .start
                 .as_ref()
@@ -11583,6 +11590,35 @@ fn for_domain_endpoint_is_runtime(expr: &Expr, scope: &TemporalScope) -> bool {
         // collection -- already bin-2 by `for_iter_domain`; not our concern here.
         _ => false,
     }
+}
+
+fn range_has_char_endpoint(range: &syn::ExprRange) -> bool {
+    range
+        .start
+        .as_deref()
+        .and_then(char_literal_value)
+        .is_some()
+        || range.end.as_deref().and_then(char_literal_value).is_some()
+}
+
+fn ascii_char_range_in_replay_cap(range: &syn::ExprRange) -> bool {
+    let Some(start) = range.start.as_deref().and_then(char_literal_value) else {
+        return false;
+    };
+    let Some(end) = range.end.as_deref().and_then(char_literal_value) else {
+        return false;
+    };
+    if !start.is_ascii() || !end.is_ascii() || end < start {
+        return false;
+    }
+    let inclusive = matches!(range.limits, syn::RangeLimits::Closed(_));
+    let Some(len) = u32::from(end)
+        .checked_sub(u32::from(start))
+        .and_then(|span| span.checked_add(if inclusive { 1 } else { 0 }))
+    else {
+        return false;
+    };
+    len > 0 && len <= SUGAR_SEQ_CAP as u32
 }
 
 fn range_endpoint_const_folds(expr: &Expr, scope: &TemporalScope) -> bool {
@@ -15764,6 +15800,9 @@ fn translate_bool_assertion_with_audits(
     if let Some(reason) = source_location_runtime_reason(expr) {
         return Err(format!("assert!: {reason}"));
     }
+    if let Some(reason) = mutable_local_slice_predicate_reason(expr, scope) {
+        return Err(reason);
+    }
     if let Some(entry) = translate_pointer_eq_assertion(expr, scope)? {
         return Ok(entry);
     }
@@ -15986,6 +16025,30 @@ pub(crate) fn expr_is_runtime_call_result(expr: &Expr) -> bool {
         Expr::Reference(r) => expr_is_runtime_call_result(&r.expr),
         _ => false,
     }
+}
+
+fn mutable_local_slice_predicate_reason(expr: &Expr, scope: &TemporalScope) -> Option<String> {
+    let Expr::MethodCall(call) = strip_refs_groups(expr) else {
+        return None;
+    };
+    let method = call.method.to_string();
+    if !matches!(method.as_str(), "contains" | "starts_with" | "ends_with") {
+        return None;
+    }
+    let recv_name = simple_path_name(&call.receiver)?;
+    if scope
+        .let_binding_for_audit(&recv_name)
+        .is_some_and(|init| matches!(strip_refs_groups(init), Expr::Range(_)))
+    {
+        return None;
+    }
+    scope.is_mut_local(&recv_name).then(|| {
+        format!(
+            "{method} predicate over a MUTABLE-local receiver `{recv_name}` \
+             (bin-2: a slice/string mutated by side-effecting iteration, not \
+             constructed from source literals); refused"
+        )
+    })
 }
 
 fn translate_float_refinement_assertion(

@@ -4566,12 +4566,7 @@ fn option_vec_match_literal_twin() {
 }
 "#,
         );
-        assert_source_locus_status(
-            &response,
-            "test_match_option_empty_vec",
-            "warranted",
-            "text-determined Option<Vec> match source",
-        );
+        assert_source_locus_warranted(&response, "test_match_option_empty_vec");
         assert_source_locus_warranted(&response, "option_vec_match_literal_twin");
         let _ = std::fs::remove_dir_all(root);
     }
@@ -5009,12 +5004,12 @@ fn consumed_iterator_mutable_container_literal_twin() {
     }
 
     #[test]
-    fn source_locus_assertion_under_while_context_refuses_with_literal_twin() {
+    fn source_locus_literal_counter_while_warrants_with_literal_twin() {
         let (root, response) = lift_fixture(
-            "source_locus_assertion_under_while_context_refuses_with_literal_twin",
+            "source_locus_literal_counter_while_warrants_with_literal_twin",
             r#"
 #[test]
-fn assertion_under_while_context_refused() {
+fn literal_counter_while_warranted() {
     let mut i = 0;
     while i < 1 {
         assert_eq!(i, 0);
@@ -5023,17 +5018,13 @@ fn assertion_under_while_context_refused() {
 }
 
 #[test]
-fn assertion_under_while_context_literal_twin() {
+fn literal_counter_while_literal_twin() {
     assert_eq!(0, 0);
 }
 "#,
         );
-        assert_source_locus_refused(
-            &response,
-            "assertion_under_while_context_refused",
-            "assertion under while context",
-        );
-        assert_source_locus_warranted(&response, "assertion_under_while_context_literal_twin");
+        assert_source_locus_warranted(&response, "literal_counter_while_warranted");
+        assert_source_locus_warranted(&response, "literal_counter_while_literal_twin");
         let _ = std::fs::remove_dir_all(root);
     }
 
