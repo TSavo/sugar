@@ -404,6 +404,36 @@ self-attest: build-rust
 # coretests via rust-src, pinned independent of the runner's default stable so the
 # assertion-multiset CID stays stable. Self-provisions the toolchain (idempotent).
 CORETESTS_RUST_VER ?= 1.96.0
+CORETESTS_SOURCE_AUDIT_CORPUS ?= examples/rust-coretests-report/corpus
+
+.PHONY: coretests-source-audit
+coretests-source-audit:
+	@set -e; \
+	if [ "$${CORETESTS_SOURCE_AUDIT_ON_REMOTE:-0}" != "1" ] && [ "$$(uname -s)" != "Linux" ] && [ "$${USE_BCARGO:-1}" != "0" ]; then \
+	  echo "==== coretests-source-audit on battleaxe via bcargo ===="; \
+	  $(BCARGO) build --manifest-path implementations/rust/Cargo.toml \
+	    -p sugar-cli --bin sugar \
+	    -p sugar-lift-rust-tests --bin rust_test_assertions_rpc >/dev/null || exit $$?; \
+	  remote_host="$${BCARGO_REMOTE_HOST:-battleaxe}"; \
+	  remote_tag="$$(printf '%s' "$$(pwd -P)" | shasum 2>/dev/null | cut -c1-12)"; \
+	  remote_tag="$${remote_tag:-default}"; \
+	  remote_root="$${BCARGO_REMOTE_ROOT:-/home/tsavo/remote/sugar-bcargo-$$remote_tag}"; \
+	  remote_repo="$$remote_root/sugar"; \
+	  remote_cmd="cd $$(printf '%q' "$$remote_repo") && CORETESTS_SOURCE_AUDIT_ON_REMOTE=1 USE_BCARGO=0 Z3=$${Z3:-/usr/bin/z3} make coretests-source-audit"; \
+	  ssh -o BatchMode=yes "$$remote_host" "bash -lc $$(printf '%q' "$$remote_cmd")"; \
+	  exit $$?; \
+	fi; \
+	$(CARGO_LOCAL) build --manifest-path implementations/rust/Cargo.toml --release \
+	  -p sugar-cli --bin sugar \
+	  -p sugar-lift-rust-tests --bin rust_test_assertions_rpc >/dev/null || exit $$?; \
+	bin_dir="$$(pwd -P)/implementations/rust/target/release"; \
+	corpus="$(CORETESTS_SOURCE_AUDIT_CORPUS)"; \
+	manifest_dir="$$corpus/.sugar/lift/rust-test-assertions"; \
+	sed "s|@BIN_DIR@|$$bin_dir|g" "$$manifest_dir/manifest.toml.in" > "$$manifest_dir/manifest.toml"; \
+	echo "==== coretests-source-audit: panic-armed source totality ===="; \
+	cd "$$corpus"; \
+	NO_COLOR=1 CLICOLOR=0 TERM=dumb "$$bin_dir/sugar" lift --report
+
 .PHONY: coretests-invariants
 coretests-invariants:
 	@set -e; \
@@ -414,7 +444,7 @@ coretests-invariants:
 	python3 scripts/check-coretests-invariants.py /tmp/coretests-hermetic.out implementations/rust/coretests-invariants.json
 
 .PHONY: ci
-ci: check-cargo-entrypoint test-all test-showcases self-attest coretests-invariants
+ci: check-cargo-entrypoint test-all test-showcases self-attest coretests-source-audit coretests-invariants
 	@echo ""
 	@echo "==== ci: PASS ===="
 

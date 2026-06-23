@@ -402,9 +402,6 @@ fn lift(params: &Value) -> Value {
         // marshalled into the IR alongside the test-assertion decls (below).
         let mut value_entries: Vec<Value> = Vec::new();
         let mut assertion_sources: BTreeMap<String, AssertionSourceRecord> = BTreeMap::new();
-        // Oracle slice: unresolved method-call bodies queued for the RA daemon's
-        // receiver/param-mutability verdict. (source_loci index, LSP positions).
-        let mut oracle_pending: Vec<(usize, Vec<(u32, u32)>)> = Vec::new();
         for fr in &fns {
             let memento = source_cache.function_memento(fr);
             let mut memento_json = memento.to_json();
@@ -500,7 +497,6 @@ fn lift(params: &Value) -> Value {
                 }
                 (s, r)
             };
-            panic_on_dark_source_status(rel, &name, is_test, status, reason.as_deref());
             let mut locus = json!({
                 "file": rel,
                 "role": "rust-test-assertions",
@@ -529,12 +525,6 @@ fn lift(params: &Value) -> Value {
                     },
                 );
             }
-            if source_status_is_dark(status) {
-                let positions = method_call_positions(fr.block);
-                if !positions.is_empty() {
-                    oracle_pending.push((source_loci.len(), positions));
-                }
-            }
             source_loci.push(locus);
             source_mementos.push(memento_json);
         }
@@ -554,14 +544,6 @@ fn lift(params: &Value) -> Value {
             &mut source_cache,
         ));
         entries.extend(assertion_entries);
-        // Oracle slice: ask the resident RA daemon (sugar-linkerd) to resolve the
-        // receiver/param mutability of each queued method-call position. A method
-        // call that is `&mut self` / takes a `&mut` param is the provable
-        // "mutation through &mut" effect -> a named mutation/side-effect refusal. An
-        // unreachable/cold daemon yields no resolutions -> every body stays
-        // unresolved; the oracle never warrants here (RefClean does not rule out
-        // IO/panic the signature can't show).
-        oracle_reclassify_mutating(&workspace_root, rel, &oracle_pending, &mut source_loci);
         info!(
             file = rel,
             file_index = file_index + 1,
@@ -579,6 +561,7 @@ fn lift(params: &Value) -> Value {
     }
 
     trace_lift_rpc_checkpoint("lift.before_ledger", &Value::Null);
+    panic_on_dark_source_loci(&source_loci);
     let ledger = source_ledger(&source_loci);
     trace_lift_rpc_checkpoint("lift.after_ledger", &Value::Null);
     let call_edges = call_edges_for_report(&entries);
@@ -1046,28 +1029,58 @@ fn source_status_is_dark(status: &str) -> bool {
     !matches!(status, "warranted" | "refused" | "support" | "inactive")
 }
 
-fn panic_on_dark_source_status(
-    rel: &str,
-    name: &str,
-    is_test: bool,
-    status: &str,
-    reason: Option<&str>,
-) {
+fn dark_source_locus_line(locus: &Value) -> Option<String> {
+    let status = locus
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("(missing)");
     if !source_status_is_dark(status) {
+        return None;
+    }
+    let file = locus
+        .get("file")
+        .and_then(Value::as_str)
+        .unwrap_or("(file)");
+    let line = locus
+        .get("line")
+        .and_then(Value::as_i64)
+        .map(|line| line.to_string())
+        .unwrap_or_else(|| "?".to_string());
+    let ast_kind = locus
+        .get("ast_kind")
+        .and_then(Value::as_str)
+        .unwrap_or("(ast-kind)");
+    let ast_path = locus
+        .get("ast_path")
+        .and_then(Value::as_str)
+        .unwrap_or("(ast-path)");
+    let reason = locus
+        .get("reason")
+        .and_then(Value::as_str)
+        .unwrap_or("(none)");
+    Some(format!(
+        "{file}:{line} {ast_kind} {ast_path} status={status} reason={reason}"
+    ))
+}
+
+fn panic_on_dark_source_loci(loci: &[Value]) {
+    let dark: Vec<String> = loci.iter().filter_map(dark_source_locus_line).collect();
+    if dark.is_empty() {
         return;
     }
-    let kind = if is_test { "test-fn" } else { "fn" };
-    let detail = reason.unwrap_or("(none)");
-    panic!(
-        "UNCLASSIFIED LOCUS: {rel}::{name} [{kind}]\n\
-         dark status: {status}\n\
-         unresolved reason: {detail}\n\
-         Classify this locus — one of:\n\
-           dig to a literal value     → warranted\n\
-           name a values-not-in-text boundary → refused\n\
-           confirm this locus is inactive in this target → inactive\n\
-         There is no tolerance for unclassified loci. Add a recognizer."
+    let mut message = format!(
+        "SOURCE AUDIT DELTA-EPSILON GATE FAILED: R={} unresolved source loci remain\n\
+         Full dark source locus list:\n",
+        dark.len()
     );
+    for line in &dark {
+        message.push_str("  ");
+        message.push_str(line);
+        message.push('\n');
+    }
+    message
+        .push_str("Classify every locus as warranted, refused, support, or inactive; R must be 0.");
+    panic!("{}", message);
 }
 
 /// Classify a NON-test fn body into its source-ledger status. A body is `warranted`
@@ -2308,89 +2321,6 @@ fn sort_json(name: &str) -> Value {
     json!({"kind": "primitive", "name": name})
 }
 
-/// LSP-coordinate positions (0-based line, 0-based col) of every method-call
-/// ident in a body -- the positions the RA oracle resolves to receiver/param
-/// mutability. proc-macro2 spans are 1-based line / 0-based column, so the line
-/// is decremented to LSP space.
-#[derive(Default)]
-struct MethodCallPositions(Vec<(u32, u32)>);
-
-impl<'ast> syn::visit::Visit<'ast> for MethodCallPositions {
-    fn visit_expr_method_call(&mut self, n: &'ast syn::ExprMethodCall) {
-        let s = n.method.span().start();
-        if s.line >= 1 {
-            self.0.push(((s.line - 1) as u32, s.column as u32));
-        }
-        syn::visit::visit_expr_method_call(self, n);
-    }
-}
-
-fn method_call_positions(block: &syn::Block) -> Vec<(u32, u32)> {
-    let mut v = MethodCallPositions::default();
-    syn::visit::Visit::visit_block(&mut v, block);
-    v.0
-}
-
-/// Oracle slice: resolve the queued unresolved method-call bodies against the
-/// resident RA daemon and reclassify any body with a `&mut self` / `&mut`-param
-/// (Mutating) method call -> named REFUSED reason "mutation through &mut". Sound + safe:
-/// an unreachable/cold daemon returns no resolutions -> a conservative no-op (every
-/// body stays unresolved). Never WARRANTS here -- `RefClean` does not prove the body
-/// free of IO/panic the signature can't reveal.
-fn oracle_reclassify_mutating(
-    workspace_root: &Path,
-    rel: &str,
-    pending: &[(usize, Vec<(u32, u32)>)],
-    source_loci: &mut [Value],
-) {
-    if pending.is_empty() {
-        return;
-    }
-    // OFF by default: resolve_receiver_crates can SPAWN the daemon (-> RA index,
-    // the heavy/Mac-cooking path), so the oracle pass only runs when explicitly
-    // enabled (the supervised run, on a box with a warm RA host). Default builds,
-    // CI, and local measurements stay a pure no-op.
-    if std::env::var("SUGAR_SOURCE_AUDIT_ORACLE").as_deref() != Ok("1") {
-        return;
-    }
-    use sugar_walk::ra_daemon_client::{resolve_receiver_crates, DaemonQuery};
-    let abs = workspace_root.join(rel).to_string_lossy().to_string();
-    let mut queries = Vec::new();
-    for (_, positions) in pending {
-        for &(line, col) in positions {
-            queries.push(DaemonQuery {
-                file: abs.clone(),
-                line,
-                col,
-            });
-        }
-    }
-    let batch = resolve_receiver_crates(workspace_root, &queries);
-    if batch.resolutions.is_empty() {
-        return; // daemon down/cold/not-ready -> conservative no-op
-    }
-    for (idx, positions) in pending {
-        let mutating = positions.iter().any(|&(line, col)| {
-            batch
-                .resolutions
-                .get(&(abs.clone(), line, col))
-                .is_some_and(|r| r.effect == "mutating")
-        });
-        if mutating {
-            if let Some(locus) = source_loci.get_mut(*idx) {
-                // A PROVEN `&mut` mutation is a real effect signal. The oracle still
-                // does not warrant, but it does own this named values-not-in-text
-                // boundary, so the locus terminates as refused rather than unresolved.
-                locus["status"] = json!("refused");
-                locus["reason"] = json!(named_source_refusal_reason(
-                    "mutation/side effect",
-                    "mutation through &mut (oracle): proven effect, no value pin"
-                ));
-            }
-        }
-    }
-}
-
 /// Roll the per-locus statuses into the `sourceLedger` the CLI source-audit gate
 /// requires. The CLI RECOMPUTES this from the loci, so it must be exactly the
 /// per-status counts. `source_unresolved` is the "write more Sugar" bucket.
@@ -3304,6 +3234,16 @@ fn init_tracing() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
+        if let Some(message) = payload.downcast_ref::<String>() {
+            return message.clone();
+        }
+        if let Some(message) = payload.downcast_ref::<&'static str>() {
+            return (*message).to_string();
+        }
+        "<non-string panic>".to_string()
+    }
 
     fn fns_of(src: &str) -> Vec<FnRef<'_>> {
         // leak so the FnRefs can borrow for the test's lifetime
@@ -4442,20 +4382,86 @@ fn test_iterator_flatten_fold_bad_twin() {
     }
 
     #[test]
-    fn source_totality_panic_covers_unclassified_status() {
+    fn source_totality_panic_reports_full_dark_set() {
+        let loci = vec![
+            json!({
+                "file": "tests/iter/range.rs",
+                "role": "rust-test-assertions",
+                "ast_kind": "test-fn",
+                "ast_path": "test_range",
+                "line": 42,
+                "status": "unclassified",
+                "reason": "synthetic dark source status",
+            }),
+            json!({
+                "file": "tests/ptr.rs",
+                "role": "rust-test-assertions",
+                "ast_kind": "test-fn",
+                "ast_path": "test_ptr_dark",
+                "line": 256,
+                "status": "unresolved",
+                "reason": "synthetic unresolved source status",
+            }),
+            json!({
+                "file": "tests/bool.rs",
+                "role": "rust-test-assertions",
+                "ast_kind": "test-fn",
+                "ast_path": "test_bool_warranted",
+                "line": 7,
+                "status": "warranted",
+                "reason": "synthetic classified source status",
+            }),
+        ];
         let panic = std::panic::catch_unwind(|| {
-            panic_on_dark_source_status(
-                "tests/iter/range.rs",
-                "test_range",
-                true,
-                "unclassified",
-                Some("synthetic dark source status"),
-            );
+            panic_on_dark_source_loci(&loci);
         });
-        assert!(
-            panic.is_err(),
-            "`unclassified` must be in the same dark panic set as `unresolved`"
-        );
+        let message = panic_message(panic.expect_err("dark source loci must panic"));
+        assert!(message.contains("SOURCE AUDIT DELTA-EPSILON GATE FAILED"));
+        assert!(message.contains("R=2"));
+        assert!(message.contains("tests/iter/range.rs:42 test-fn test_range status=unclassified"));
+        assert!(message.contains("synthetic dark source status"));
+        assert!(message.contains("tests/ptr.rs:256 test-fn test_ptr_dark status=unresolved"));
+        assert!(message.contains("synthetic unresolved source status"));
+        assert!(!message.contains("test_bool_warranted"));
+    }
+
+    #[test]
+    fn source_totality_panic_is_silent_when_all_loci_classified() {
+        let loci = vec![
+            json!({
+                "file": "tests/support.rs",
+                "role": "rust-test-assertions",
+                "ast_kind": "fn",
+                "ast_path": "helper",
+                "line": 1,
+                "status": "support",
+            }),
+            json!({
+                "file": "tests/inactive.rs",
+                "role": "rust-test-assertions",
+                "ast_kind": "test-fn",
+                "ast_path": "cfgd_out",
+                "line": 2,
+                "status": "inactive",
+            }),
+            json!({
+                "file": "tests/refused.rs",
+                "role": "rust-test-assertions",
+                "ast_kind": "test-fn",
+                "ast_path": "runtime_boundary",
+                "line": 3,
+                "status": "refused",
+            }),
+            json!({
+                "file": "tests/warranted.rs",
+                "role": "rust-test-assertions",
+                "ast_kind": "test-fn",
+                "ast_path": "literal_floor",
+                "line": 4,
+                "status": "warranted",
+            }),
+        ];
+        panic_on_dark_source_loci(&loci);
     }
 
     #[test]
