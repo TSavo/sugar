@@ -1350,11 +1350,7 @@ fn isolate_lowest_one_term(
     kind: Option<IntegerKind>,
 ) -> Option<Rc<Term>> {
     if let Some(kind) = kind {
-        let raw = if let Some(value) = lhs_u128 {
-            value & mask_for_bits(kind.bits)?
-        } else {
-            masked_raw_bits(lhs_i128?, kind)?
-        };
+        let raw = raw_bits_for_integer(lhs_i128, lhs_u128, kind)?;
         let isolated = isolate_lowest_raw(raw, kind.bits)?;
         return if kind.signed {
             signed_value_from_raw(isolated, kind).map(num)
@@ -1372,24 +1368,22 @@ fn isolate_lowest_one_term(
     Some(num(i128::try_from(isolate_lowest_raw(value, 128)?).ok()?))
 }
 
-fn isolate_lowest_raw(value: u128, bits: u32) -> Option<u128> {
-    let mask = mask_for_bits(bits)?;
-    let value = value & mask;
-    Some(value & value.wrapping_neg() & mask)
-}
-
 fn highest_one_value(
     lhs_i128: Option<i128>,
     lhs_u128: Option<u128>,
     kind: Option<IntegerKind>,
 ) -> Option<u32> {
-    let kind = kind?;
-    let raw = if let Some(value) = lhs_u128 {
-        value & mask_for_bits(kind.bits)?
-    } else {
-        masked_raw_bits(lhs_i128?, kind)?
-    };
-    (raw != 0).then(|| kind.bits - 1 - apply_zero_count(raw, kind.bits, ZeroCountOp::Leading))
+    if let Some(kind) = kind {
+        let raw = raw_bits_for_integer(lhs_i128, lhs_u128, kind)?;
+        return (raw != 0)
+            .then_some(kind.bits - 1 - apply_zero_count(raw, kind.bits, ZeroCountOp::Leading));
+    }
+
+    if let Some(value) = lhs_u128 {
+        return (value != 0).then_some(127 - value.leading_zeros());
+    }
+    let value = u128::try_from(lhs_i128?).ok()?;
+    (value != 0).then_some(127 - value.leading_zeros())
 }
 
 fn lowest_one_value(
@@ -1397,13 +1391,38 @@ fn lowest_one_value(
     lhs_u128: Option<u128>,
     kind: Option<IntegerKind>,
 ) -> Option<u32> {
-    let kind = kind?;
-    let raw = if let Some(value) = lhs_u128 {
-        value & mask_for_bits(kind.bits)?
+    if let Some(kind) = kind {
+        let raw = raw_bits_for_integer(lhs_i128, lhs_u128, kind)?;
+        return (raw != 0).then_some(apply_zero_count(raw, kind.bits, ZeroCountOp::Trailing));
+    }
+
+    if let Some(value) = lhs_u128 {
+        return (value != 0).then_some(value.trailing_zeros());
+    }
+    let value = u128::try_from(lhs_i128?).ok()?;
+    (value != 0).then_some(value.trailing_zeros())
+}
+
+fn raw_bits_for_integer(
+    lhs_i128: Option<i128>,
+    lhs_u128: Option<u128>,
+    kind: IntegerKind,
+) -> Option<u128> {
+    if let Some(value) = lhs_u128 {
+        if kind.bits == 128 {
+            Some(value)
+        } else {
+            Some(value & mask_for_bits(kind.bits)?)
+        }
     } else {
-        masked_raw_bits(lhs_i128?, kind)?
-    };
-    (raw != 0).then(|| apply_zero_count(raw, kind.bits, ZeroCountOp::Trailing))
+        masked_raw_bits(lhs_i128?, kind)
+    }
+}
+
+fn isolate_lowest_raw(value: u128, bits: u32) -> Option<u128> {
+    let mask = mask_for_bits(bits)?;
+    let raw = value & mask;
+    Some(raw & raw.wrapping_neg() & mask)
 }
 
 fn apply_zero_count(raw: u128, bits: u32, op: ZeroCountOp) -> u32 {
