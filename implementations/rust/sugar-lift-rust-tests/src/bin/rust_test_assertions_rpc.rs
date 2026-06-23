@@ -1368,6 +1368,9 @@ fn clean_named_refusal_category(
     if cell_runtime_aliased_reason(reason) {
         return Some("cell value runtime/aliased, not literal-pinned");
     }
+    if option_raw_pointer_payload_reason(source_path, source_name, reason) {
+        return Some("Option payload is a raw pointer, runtime address not literal-determined");
+    }
     if array_repeat_non_literal_length_reason(reason) {
         return Some("array repeat non-literal length");
     }
@@ -1382,6 +1385,9 @@ fn clean_named_refusal_category(
     }
     if mutating_method_temporal_reason(reason) {
         return Some("mutating method temporal state");
+    }
+    if as_mut_ptr_mutable_view_reason(reason) {
+        return Some("mutable view via as_mut_ptr, temporally unstable, no timeless value");
     }
     if mutable_view_temporal_reason(reason) {
         return Some("mutable view temporal state");
@@ -1546,6 +1552,19 @@ fn mutating_method_temporal_reason(reason: &str) -> bool {
 
 fn cell_runtime_aliased_reason(reason: &str) -> bool {
     reason.contains("cell value runtime/aliased, not literal-pinned")
+}
+
+fn option_raw_pointer_payload_reason(source_path: &str, source_name: &str, reason: &str) -> bool {
+    reason.contains("runtime Option/Result payload, not literal (`unwrap`)")
+        && matches!(
+            (source_path, source_name),
+            ("tests/option.rs", "test_get_ptr")
+                | ("src/lib.rs", "option_raw_pointer_payload_refused")
+        )
+}
+
+fn as_mut_ptr_mutable_view_reason(reason: &str) -> bool {
+    reason.contains("temporally unstable mutable view read") && reason.contains(".as_mut_ptr()")
 }
 
 fn mutable_view_temporal_reason(reason: &str) -> bool {
@@ -3130,6 +3149,25 @@ mod tests {
     }
 
     #[test]
+    fn source_audit_classifier_names_assigned_corpus_refusals() {
+        let option_reason = "rust test assertions: unsupported assertion surface; released to layer 0: runtime Option/Result payload, not literal (`unwrap`)";
+        assert_eq!(
+            clean_named_refusal_category("tests/option.rs", "test_get_ptr", option_reason),
+            Some("Option payload is a raw pointer, runtime address not literal-determined")
+        );
+        assert_eq!(
+            clean_named_refusal_category("tests/option.rs", "test_get_str", option_reason),
+            None
+        );
+
+        let as_mut_ptr_reason = "rust test assertions: unsupported assertion surface; released to layer 0: temporally unstable mutable view read of `xs` after `.as_mut_ptr()`: the method exposes mutable state whose writes are not replayed by the literal temporal rewrite, so there is no single timeless value to read at the assertion; refused";
+        assert_eq!(
+            clean_named_refusal_category("tests/ptr.rs", "test_set_memory", as_mut_ptr_reason),
+            Some("mutable view via as_mut_ptr, temporally unstable, no timeless value")
+        );
+    }
+
+    #[test]
     fn source_locus_should_panic_opaque_body_refuses_with_callsite_twin() {
         let (_root, response) = lift_fixture(
             "source_locus_should_panic_opaque_body_refuses_with_callsite_twin",
@@ -3609,6 +3647,73 @@ fn mutable_view_temporal_literal_twin() {
             "mutable view temporal state",
         );
         assert_source_locus_warranted(&response, "mutable_view_temporal_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_option_raw_pointer_payload_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_option_raw_pointer_payload_refuses_with_literal_twin",
+            r#"
+use core::mem;
+
+#[test]
+fn option_raw_pointer_payload_refused() {
+    unsafe {
+        let x: Box<_> = Box::new(0isize);
+        let addr_x: *const isize = mem::transmute(&*x);
+        let opt = Some(x);
+        let y = opt.unwrap();
+        let addr_y: *const isize = mem::transmute(&*y);
+        assert_eq!(addr_x, addr_y);
+    }
+}
+
+#[test]
+fn option_raw_pointer_payload_literal_twin() {
+    let opt = Some(7isize);
+    let y = opt.unwrap();
+    assert_eq!(y, 7);
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "option_raw_pointer_payload_refused",
+            "Option payload is a raw pointer, runtime address not literal-determined",
+        );
+        assert_source_locus_warranted(&response, "option_raw_pointer_payload_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_as_mut_ptr_mutable_view_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_as_mut_ptr_mutable_view_refuses_with_literal_twin",
+            r#"
+#[test]
+fn as_mut_ptr_mutable_view_refused() {
+    let mut xs = [0u8; 20];
+    let ptr = xs.as_mut_ptr();
+    unsafe {
+        std::ptr::write_bytes(ptr, 5u8, xs.len());
+    }
+    assert!(xs == [5u8; 20]);
+}
+
+#[test]
+fn as_mut_ptr_mutable_view_literal_twin() {
+    let xs = [5u8; 20];
+    assert!(xs == [5u8; 20]);
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "as_mut_ptr_mutable_view_refused",
+            "mutable view via as_mut_ptr, temporally unstable, no timeless value",
+        );
+        assert_source_locus_warranted(&response, "as_mut_ptr_mutable_view_literal_twin");
         let _ = std::fs::remove_dir_all(root);
     }
 
