@@ -7085,6 +7085,61 @@ fn parsed_literal_nan_is_nan_reduces_to_bool_floor_with_teeth() {
 }
 
 #[test]
+fn f16_literal_nan_is_named_refused_not_unclassified_with_f32_f64_twins() {
+    let f16_src = r#"
+        #[test]
+        fn parsed_f16_nan_refused() {
+            assert!("NaN".parse::<f16>().unwrap().is_nan());
+            assert!("-NaN".parse::<f16>().unwrap().is_nan());
+        }
+    "#;
+    let f16_out = lift_file(&parse(f16_src), "tests/num/dec2flt/mod.rs");
+    assert_eq!(
+        f16_out.assertions_refused, 2,
+        "f16 NaN predicates should be named-refused, not unclassified: skips={:?}",
+        f16_out.skip_reasons
+    );
+    assert!(
+        f16_out
+            .skip_reasons
+            .iter()
+            .all(|reason| reason.contains("f16 bit-width not modeled")),
+        "f16 refusal must name the missing f16 model: {:?}",
+        f16_out.skip_reasons
+    );
+
+    for (label, assertion, want_sat) in [
+        (
+            "parse_nan_f32_literal_twin_good",
+            r#"assert!("NaN".parse::<f32>().unwrap().is_nan());"#,
+            true,
+        ),
+        (
+            "parse_nan_f32_literal_twin_bad",
+            r#"assert!(!"NaN".parse::<f32>().unwrap().is_nan());"#,
+            false,
+        ),
+        (
+            "parse_nan_f64_literal_twin_good",
+            r#"assert!("-NaN".parse::<f64>().unwrap().is_nan());"#,
+            true,
+        ),
+        (
+            "parse_nan_f64_literal_twin_bad",
+            r#"assert!(!"-NaN".parse::<f64>().unwrap().is_nan());"#,
+            false,
+        ),
+    ] {
+        let src = format!("#[test] fn t() {{ {assertion} }}");
+        let out = lift_file(&parse(&src), "tests/num/dec2flt/mod.rs");
+        assert_warranted_decl_count(&out, 1);
+        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), label) {
+            assert_eq!(sat, want_sat, "{label}: z3 verdict mismatch");
+        }
+    }
+}
+
+#[test]
 fn method_call_result_euf_keys_scope_local_receivers_to_avoid_false_collisions() {
     let src = r#"
 struct Cursor;
@@ -27831,6 +27886,88 @@ fn direct_literal_range_for_loop_body_assert_unrolls_pointwise() {
     assert_eq!(dug_eq_int_pairs(decl), vec![(1, 2), (2, 3), (3, 4), (4, 5)]);
     if let Some(sat) = z3_verdict(&inv_json(decl), "for_body_bad") {
         assert!(!sat, "bad point-wise literal body assert must be z3-UNSAT");
+    }
+}
+
+#[test]
+fn nested_alloc_layout_literal_range_loop_replays_pointwise_with_teeth() {
+    let good = r#"
+        use core::alloc::Layout;
+
+        #[test]
+        fn layout_round_up_to_align_edge_cases() {
+            const MAX_SIZE: usize = isize::MAX as usize;
+
+            for shift in 0..2 {
+                let align = 1_usize << shift;
+                let edge = (MAX_SIZE + 1) - align;
+                let low = edge.saturating_sub(1);
+                let high = edge.saturating_add(1);
+                assert!(Layout::from_size_align(low, align).is_ok());
+                assert!(Layout::from_size_align(high, align).is_err());
+                for size in low..=high {
+                    assert_eq!(
+                        Layout::from_size_align(size, align).is_ok(),
+                        size.next_multiple_of(align) <= MAX_SIZE,
+                    );
+                }
+            }
+        }
+    "#;
+    let out = lift_file(&parse(good), "tests/alloc.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "nested literal-range alloc layout loop must warrant point-wise: \
+         lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    assert!(
+        !out.skip_reasons
+            .iter()
+            .any(|reason| reason.contains("for context") || reason.contains("bin-1")),
+        "literal nested range loop must not remain a for-context over-claim: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "alloc_layout_nested_range_good",
+    ) {
+        assert!(
+            sat,
+            "layout edge facts over literal nested ranges must be z3-SAT"
+        );
+    }
+
+    let bad = r#"
+        use core::alloc::Layout;
+
+        #[test]
+        fn layout_round_up_to_align_edge_cases_bad() {
+            const MAX_SIZE: usize = isize::MAX as usize;
+
+            for shift in 0..2 {
+                let align = 1_usize << shift;
+                let edge = (MAX_SIZE + 1) - align;
+                let low = edge.saturating_sub(1);
+                let high = edge.saturating_add(1);
+                for size in low..=high {
+                    assert_eq!(
+                        Layout::from_size_align(size, align).is_ok(),
+                        size.next_multiple_of(align) > MAX_SIZE,
+                    );
+                }
+            }
+        }
+    "#;
+    let out = lift_file(&parse(bad), "tests/alloc.rs");
+    let decl = single_warranted_decl(&out);
+    if let Some(sat) = z3_verdict(&inv_json(decl), "alloc_layout_nested_range_bad") {
+        assert!(
+            !sat,
+            "wrong layout edge expectation over literal nested ranges must be z3-UNSAT"
+        );
     }
 }
 

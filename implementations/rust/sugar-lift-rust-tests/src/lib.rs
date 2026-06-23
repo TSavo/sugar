@@ -734,6 +734,8 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // resolves a width and lifts, never reaching this reason (the fake-refuse
         // guardrail). Typed as `UnknownFloatWidthEffect`.
         || reason.contains("requires known f32/f64 receiver width")
+        || reason.contains("f16 bit-width not modeled")
+        || reason.contains("f128 bit-width not modeled")
         // TERMINAL: exact float-bit literal sugar only computes when the float operand
         // or bit operand is text-determined. A runtime float/bit source has no literal
         // IEEE pattern to read from the source text.
@@ -10476,13 +10478,16 @@ fn collect_assertion_entries<'a>(
             }
             // Control-flow contexts: asserts are conditional or parametric; refuse.
             Stmt::Expr(e @ Expr::ForLoop(f), _) => {
+                let for_scope = temporal_scope
+                    .clone()
+                    .with_const_registry(scoped_const_registry_for_stmts(stmts, reducer));
                 // A bounded loop is the universal it states: `ForAllSugar` reads the
                 // range as a guard and lifts forall x. (guard => body) (or the finite
                 // conjunction over a literal array). If the body does not wholly
                 // compute to truth values, the desugar bails (refuse below).
                 let lifted = {
                     let ctx = sugar_ctx_with_factory_audits(
-                        &temporal_scope,
+                        &for_scope,
                         options,
                         reducer,
                         float_widths,
@@ -10496,10 +10501,12 @@ fn collect_assertion_entries<'a>(
                     // .desugar().dug()` == the old `.and_then(|s| s.desugar().dug())`,
                     // and `boxed(None)` -> `Hit(Unsupported)` -> `.dug()` == the old
                     // `None`. First site where `build()` goes live in the collector.
-                    let fcx =
-                        sugar::factory::SugarBuildCtx::new(&temporal_scope, options, &let_inits);
+                    let fcx = sugar::factory::SugarBuildCtx::new(&for_scope, options, &let_inits);
                     sugar::factory::build_composite(e, &fcx).desugar(&ctx).dug()
                 };
+                for name in for_scope.take_inlined_value_helpers() {
+                    reduced_helpers.insert(name);
+                }
                 if let Some(desugared) = lifted {
                     // The loop memento is named `<test>::loop::<var>` by the
                     // `ForAllSugar` warrant, mirroring the Python reference
@@ -10524,7 +10531,7 @@ fn collect_assertion_entries<'a>(
                     );
                     let reason = for_context_refusal_reason(
                         f,
-                        &temporal_scope,
+                        &for_scope,
                         options,
                         reducer,
                         float_widths,
