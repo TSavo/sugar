@@ -78,7 +78,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     }
     let seed_names = accumulator_seed_names(&for_loop.body.stmts, fcx.scope());
     let tuple_loop = vars.len() > 1;
-    let direct_pointwise_loop = tuple_loop || range_domain_shape(&for_loop.expr);
+    let direct_pointwise_loop = tuple_loop;
     if !body_has_replay_shape(
         &for_loop.body.stmts,
         fcx.scope(),
@@ -229,10 +229,9 @@ fn body_has_replay_shape(
         || body_has_helper_call_replay_shape(stmts, scope)
         || body_has_scalar_accumulator_replay_shape(stmts, scope)
         || (finite_replay_domain && body_has_pointwise_assert_replay_shape(stmts, true))
-        // A tuple loop var (`for (i, &x)`) carries its binding work in the pattern itself.
-        // A literal RANGE loop with direct point-wise body asserts is likewise a finite
-        // imperative twin of an iterator fold: replay every concrete iteration rather
-        // than minting a vacuous/broad universal.
+        // A tuple loop var (`for (i, &x)`) carries replay-only binding work in the
+        // pattern itself. Plain literal-range pointwise assertions are owned by
+        // `forall_loop`, whose desugar path can still reduce them to the literal floor.
         || (finite_replay_domain
             && direct_pointwise_loop
             && body_has_pointwise_assert_replay_shape(stmts, false))
