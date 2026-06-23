@@ -336,6 +336,7 @@ pub(crate) fn desugar_substituted_stmts(
         factory_audits,
         macro_depth + 1,
         &BTreeSet::new(),
+        None,
         &crate::MacroRegistry::new(),
         &BTreeMap::new(),
         &crate::FnRegistry::new(),

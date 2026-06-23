@@ -248,6 +248,7 @@ impl CfgSelectSugar {
             ctx.factory_audits,
             ctx.macro_depth,
             &ctx.scope.plan.interior_mut,
+            None,
             ctx.scope.macro_registry(),
             &BTreeMap::new(),
             &FnRegistry::new(),
