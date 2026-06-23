@@ -73,32 +73,47 @@ hide what it never swore.
 
 ## Why a contract beats a test
 
-A test is a sample. It runs your code on the inputs you thought of, in the
-environment you ran it in, and reports that nothing broke *those* times. Pass it
-a billion times and you have a billion facts about those inputs — and not one
-fact about the input you didn't try.
+A test is a sample. It runs your code on the inputs you happened to have and
+reports that nothing broke *those* times.
 
-Add a variant to an enum: `Blue`, next to `Red` and `Green`. Every test still
-passes — they only ever used `Red` and `Green`. In a language that lets you
-write `match c { Red => …, Green => …, _ => … }`, `Blue` slips through the
-wildcard and does the wrong thing in production, and the green checkmark told you
-nothing. In a language with **exhaustive** matching, the compiler stops you at
-the diff — *non-exhaustive: you didn't handle `Blue`* — before a single test
-runs. The compiler isn't sampling inputs; it is checking a claim about the
-*whole universe* of the type. That claim is a **contract**, and a contract
-change is caught at the boundary, not in production. The test that stayed green
-was right for the wrong reason: green because the dangerous case never walked
-into the room, not because the code handles it.
+Here is the one no compiler can save you from. You total a cart:
+
+```rust
+fn total_cents(items: &[u32]) -> u32 {
+    items.iter().sum()      // perfectly typed. the compiler is delighted.
+}
+```
+
+Every test cart is small; every sum fits; the suite is green a thousand times,
+for a year. Then in production one whale invoice pushes the sum past `u32::MAX`
+and it **wraps** — the customer is billed **$3.71 on a $43-million order**.
+Nothing panics. Nothing logs. The test is *still green*. This is the kind that
+ends careers, because it is **silent**: a wrong answer that looks exactly like a
+right one.
+
+Notice what did *not* catch it: the type system. `u32 + u32 → u32` is a flawless
+type; *"this sum stays under 2³²"* is a fact about **values**, not **shapes**,
+and no compiler in any language checks it — it is not a type error, it is a
+*meaning* error. The test didn't catch it either, for the oldest reason: dev's
+carts were a lucky subset of reality, and the whale never walked into the room.
+**Right for the wrong reason.**
+
+A contract neither samples nor cares about shape. *"The returned total equals
+the real arithmetic sum of the items"* is a claim about values over the **whole
+universe of carts** — the whale included. Check that claim and the overflow
+surfaces at the diff, in dev, before a cent is mischarged. The test made the gap
+**invisible in dev and silent in prod**. The contract makes it **loud in dev and
+impossible in prod.**
 
 > **Tested says it didn't break here, now. Correct says it cannot break, anywhere.**
 
-Sugar is that exhaustiveness check, lifted from a type's *shape* to a program's
-*meaning*. It takes the contracts your code already states — its assertions —
+That gap — between a value's *type* and a program's *meaning* — is exactly where
+Sugar lives. It takes the contracts your code already states — its assertions —
 and proves they hold over the whole closed universe of their inputs, or refuses,
-loudly, naming exactly what it cannot account for. A passing test is an
+loudly, naming the one case it cannot account for. A passing test is an
 existence proof: *there exist* inputs on which it worked. A `.proof` is a
-universal one: *for all* inputs in the universe, it holds. The first says it
-didn't break. The second says it can't.
+universal one: *for all* inputs, it holds. One says it didn't break. The other
+says it can't.
 
 ## Why it matters: the version lied, the behavior moved, Sugar saw it
 
