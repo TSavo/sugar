@@ -1821,7 +1821,8 @@ fn lift_source_assertion_contracts_in_stmts(
         .with_fn_registry(reducer.fn_registry_snapshot(&BTreeMap::new()))
         .with_impl_value_registry(reducer.impl_value_registry_snapshot())
         .with_layout_type_registry(reducer.layout_type_registry_snapshot())
-        .with_const_registry(reducer.const_registry_snapshot());
+        .with_value_type_registry(reducer.value_type_registry_snapshot())
+        .with_const_registry(scoped_const_registry_for_stmts(stmts, reducer));
     let entries =
         source_assertion_entries_in_stmts(stmts, &scope, options, reducer, factory_audits);
     let lifted = entries.len();
@@ -1968,7 +1969,11 @@ fn source_assertion_entries_in_stmts(
                     temporal_scope.record_let_binding(&name, (*init.expr).clone());
                 }
             }
+            if let Some(init) = local.init.as_ref().filter(|init| init.diverge.is_none()) {
+                record_destructured_let_bindings(&mut temporal_scope, &local.pat, &init.expr);
+            }
             temporal_scope.record_temporal_rewrite_local(local);
+            record_const_expanded_temporal_rewrite_local(&mut temporal_scope, local);
         }
         advance_temporal_scope_for_stmt(stmt, &mut temporal_scope);
     }
@@ -2339,6 +2344,7 @@ struct ReductionCtx<'a> {
     imported_fns: FnRegistry,
     impl_values: ImplValueRegistry,
     layout_types: LayoutTypeRegistry,
+    value_types: ValueTypeRegistry,
     consts: ConstRegistry,
     /// In-source `macro_rules!` definitions, by name, parsed into rules. These
     /// are what lets the lifter walk into a macro's definition and expand it,
@@ -2442,6 +2448,7 @@ impl<'a> ReductionCtx<'a> {
             imported_fns: FnRegistry::new(),
             impl_values: ImplValueRegistry::new(),
             layout_types: LayoutTypeRegistry::new(),
+            value_types: ValueTypeRegistry::new(),
             consts: ConstRegistry::new(),
             macros: BTreeMap::new(),
             ambiguous_macros: BTreeSet::new(),
@@ -2492,6 +2499,10 @@ impl<'a> ReductionCtx<'a> {
                 Item::Const(c) => {
                     self.consts
                         .insert(&c.ident.to_string(), Rc::new((*c.expr).clone()));
+                    self.value_types.insert(&c.ident.to_string(), &c.ty);
+                }
+                Item::Static(s) => {
+                    self.value_types.insert(&s.ident.to_string(), &s.ty);
                 }
                 Item::Mod(m) => {
                     if let Some((_, items)) = &m.content {
@@ -2644,8 +2655,98 @@ impl<'a> ReductionCtx<'a> {
         self.layout_types.clone()
     }
 
+    fn value_type_registry_snapshot(&self) -> ValueTypeRegistry {
+        self.value_types.clone()
+    }
+
     fn const_registry_snapshot(&self) -> ConstRegistry {
         self.consts.clone()
+    }
+}
+
+/// In-source value item type declarations visible to a scope. This is intentionally
+/// type-only: it lets a desugar-time coercion trace recover the erased concrete type
+/// from `&STATIC as &dyn Any` without treating the static value as a const initializer.
+#[derive(Default, Clone)]
+pub(crate) struct ValueTypeRegistry {
+    types: BTreeMap<String, String>,
+    ambiguous: BTreeSet<String>,
+}
+
+impl std::fmt::Debug for ValueTypeRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ValueTypeRegistry")
+            .field("types", &self.types.keys().collect::<Vec<_>>())
+            .field("ambiguous", &self.ambiguous)
+            .finish()
+    }
+}
+
+impl ValueTypeRegistry {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    fn scan_stmts(&mut self, stmts: &[Stmt]) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Item(Item::Const(c)) => {
+                    self.insert(&c.ident.to_string(), &c.ty);
+                }
+                Stmt::Item(Item::Static(s)) => {
+                    self.insert(&s.ident.to_string(), &s.ty);
+                }
+                Stmt::Item(Item::Mod(m)) => {
+                    if let Some((_, items)) = &m.content {
+                        scan_value_type_items(items, self);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn insert(&mut self, name: &str, ty: &Type) {
+        let key = type_key(ty);
+        if self.ambiguous.contains(name) {
+            return;
+        }
+        match self.types.get(name) {
+            Some(existing) if existing == &key => {}
+            Some(_) => {
+                self.types.remove(name);
+                self.ambiguous.insert(name.to_string());
+            }
+            None => {
+                self.types.insert(name.to_string(), key);
+            }
+        }
+    }
+
+    fn merge_all(&mut self, imported: &ValueTypeRegistry) {
+        for (name, ty) in &imported.types {
+            if self.ambiguous.contains(name) || imported.ambiguous.contains(name) {
+                self.types.remove(name);
+                self.ambiguous.insert(name.clone());
+                continue;
+            }
+            match self.types.get(name) {
+                Some(existing) if existing == ty => {}
+                Some(_) => {
+                    self.types.remove(name);
+                    self.ambiguous.insert(name.clone());
+                }
+                None => {
+                    self.types.insert(name.clone(), ty.clone());
+                }
+            }
+        }
+    }
+
+    fn lookup(&self, name: &str) -> Option<&str> {
+        (!self.ambiguous.contains(name))
+            .then(|| self.types.get(name).map(String::as_str))
+            .flatten()
     }
 }
 
@@ -2677,7 +2778,9 @@ impl ConstRegistry {
         for stmt in stmts {
             match stmt {
                 Stmt::Item(Item::Const(c)) => {
-                    self.insert(&c.ident.to_string(), Rc::new((*c.expr).clone()));
+                    if local_const_initializer_is_safe(&c.expr) {
+                        self.insert(&c.ident.to_string(), Rc::new((*c.expr).clone()));
+                    }
                 }
                 Stmt::Item(Item::Mod(m)) => {
                     if let Some((_, items)) = &m.content {
@@ -2743,6 +2846,55 @@ impl ConstRegistry {
 
 fn expr_signature(expr: &Expr) -> String {
     expr.to_token_stream().to_string()
+}
+
+fn local_const_initializer_is_safe(expr: &Expr) -> bool {
+    match strip_refs_groups(expr) {
+        _ if is_closed_scalar_literal(expr) => true,
+        Expr::Path(path) if path.qself.is_none() => {
+            primitive_int_const_path_value(&path.path).is_some() || path.path.get_ident().is_some()
+        }
+        Expr::Cast(cast) => local_const_initializer_is_safe(&cast.expr),
+        Expr::Unary(unary) => local_const_initializer_is_safe(&unary.expr),
+        Expr::Binary(binary) => {
+            local_const_initializer_is_safe(&binary.left)
+                && local_const_initializer_is_safe(&binary.right)
+        }
+        _ => false,
+    }
+}
+
+fn primitive_int_const_path_value(path: &syn::Path) -> Option<i128> {
+    if path.segments.len() != 2 {
+        return None;
+    }
+    let ty = path.segments.first()?.ident.to_string();
+    let name = path.segments.last()?.ident.to_string();
+    match (ty.as_str(), name.as_str()) {
+        ("i8", "MIN") => Some(i8::MIN as i128),
+        ("i8", "MAX") => Some(i8::MAX as i128),
+        ("i16", "MIN") => Some(i16::MIN as i128),
+        ("i16", "MAX") => Some(i16::MAX as i128),
+        ("i32", "MIN") => Some(i32::MIN as i128),
+        ("i32", "MAX") => Some(i32::MAX as i128),
+        ("i64", "MIN") => Some(i64::MIN as i128),
+        ("i64", "MAX") => Some(i64::MAX as i128),
+        ("i128", "MIN") => Some(i128::MIN),
+        ("i128", "MAX") => Some(i128::MAX),
+        ("isize", "MIN") => Some(isize::MIN as i128),
+        ("isize", "MAX") => Some(isize::MAX as i128),
+        ("u8", "MIN") => Some(u8::MIN as i128),
+        ("u8", "MAX") => Some(u8::MAX as i128),
+        ("u16", "MIN") => Some(u16::MIN as i128),
+        ("u16", "MAX") => Some(u16::MAX as i128),
+        ("u32", "MIN") => Some(u32::MIN as i128),
+        ("u32", "MAX") => Some(u32::MAX as i128),
+        ("u64", "MIN") => Some(u64::MIN as i128),
+        ("u64", "MAX") => Some(u64::MAX as i128),
+        ("usize", "MIN") => Some(usize::MIN as i128),
+        ("usize", "MAX") => Some(usize::MAX as i128),
+        _ => None,
+    }
 }
 
 pub(crate) fn const_path_key(path: &syn::Path) -> Option<String> {
@@ -2827,6 +2979,25 @@ fn scan_const_items(items: &[Item], registry: &mut ConstRegistry) {
             Item::Mod(m) => {
                 if let Some((_, items)) = &m.content {
                     scan_const_items(items, registry);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn scan_value_type_items(items: &[Item], registry: &mut ValueTypeRegistry) {
+    for item in items {
+        match item {
+            Item::Const(c) => {
+                registry.insert(&c.ident.to_string(), &c.ty);
+            }
+            Item::Static(s) => {
+                registry.insert(&s.ident.to_string(), &s.ty);
+            }
+            Item::Mod(m) => {
+                if let Some((_, items)) = &m.content {
+                    scan_value_type_items(items, registry);
                 }
             }
             _ => {}
@@ -3400,6 +3571,12 @@ fn layout_type_registry_for_stmts(stmts: &[Stmt]) -> LayoutTypeRegistry {
     registry
 }
 
+fn value_type_registry_for_stmts(stmts: &[Stmt]) -> ValueTypeRegistry {
+    let mut registry = ValueTypeRegistry::new();
+    registry.scan_stmts(stmts);
+    registry
+}
+
 /// In-source inherent impl VALUE methods, owned so they can ride on `TemporalScope`
 /// and be consulted by `MethodSugar` at desugar time. Receiver methods and associated
 /// functions are keyed by `Type::method`, so `Maker::new(...)` constrains the receiver
@@ -3509,6 +3686,7 @@ fn temporal_scope_from_reducer(local_scope: &str, reducer: &ReductionCtx<'_>) ->
         .with_fn_registry(reducer.fn_registry_snapshot(&BTreeMap::new()))
         .with_impl_value_registry(reducer.impl_value_registry_snapshot())
         .with_layout_type_registry(reducer.layout_type_registry_snapshot())
+        .with_value_type_registry(reducer.value_type_registry_snapshot())
         .with_const_registry(reducer.const_registry_snapshot())
 }
 
@@ -4319,6 +4497,10 @@ pub(crate) struct TemporalScope {
     /// In-source type items visible to this scope. `SizeOfSugar` uses these as the
     /// prelude for rustc layout interrogation when a concrete local type is named.
     layout_type_registry: LayoutTypeRegistry,
+    /// In-source value item type declarations visible to this scope. Desugar-time
+    /// coercion traces (notably `dyn Any`) use this to recover a concrete type pinned
+    /// at a local coercion without treating statics as const values.
+    value_type_registry: ValueTypeRegistry,
     /// In-source const item initializers visible to this scope. A const path is a
     /// compiler axiom, so `ConstSugar` resolves it to this initializer and recursively
     /// asks the factory to desugar the initializer term.
@@ -4360,6 +4542,7 @@ impl TemporalScope {
             fn_registry: FnRegistry::new(),
             impl_value_registry: ImplValueRegistry::new(),
             layout_type_registry: LayoutTypeRegistry::new(),
+            value_type_registry: ValueTypeRegistry::new(),
             const_registry: ConstRegistry::new(),
             inlined_value_helpers: std::cell::RefCell::new(BTreeSet::new()),
             dormant_mut_ref: sugar::dormant_mut_ref::DormantMutRefState::default(),
@@ -4458,6 +4641,16 @@ impl TemporalScope {
     fn with_layout_type_registry(mut self, registry: LayoutTypeRegistry) -> Self {
         self.layout_type_registry = registry;
         self
+    }
+
+    fn with_value_type_registry(mut self, registry: ValueTypeRegistry) -> Self {
+        self.value_type_registry = registry;
+        self
+    }
+
+    pub(crate) fn value_type_for_path(&self, path: &syn::Path) -> Option<String> {
+        let name = const_path_key(path)?;
+        self.value_type_registry.lookup(&name).map(str::to_string)
     }
 
     pub(crate) fn layout_prelude_for_type(&self, ty: &Type) -> String {
@@ -4586,6 +4779,14 @@ impl TemporalScope {
         self.temporal_rewrite.borrow_mut().apply(expr)
     }
 
+    pub(crate) fn mark_temporal_loop_replayed(&self, name: &str) {
+        self.temporal_rewrite.borrow_mut().mark_loop_replayed(name);
+    }
+
+    fn clear_temporal_loop_replayed(&self, name: &str) {
+        self.temporal_rewrite.borrow_mut().clear_loop_replayed(name);
+    }
+
     pub(crate) fn replayable_let_binding_for_source(&self, name: &str) -> Option<&Expr> {
         if self.is_mut_local(name)
             || self.ambiguous_contains(name)
@@ -4638,6 +4839,12 @@ impl TemporalScope {
 
     fn record_temporal_rewrite_local(&mut self, local: &syn::Local) {
         self.temporal_rewrite.borrow_mut().record_local(local);
+    }
+
+    fn record_temporal_rewrite_value(&mut self, name: &str, value: Expr) {
+        self.temporal_rewrite
+            .borrow_mut()
+            .record_literal_value(name, value);
     }
 
     fn apply_temporal_rewrite_statement(&mut self, stmt: &Stmt) {
@@ -4746,6 +4953,7 @@ impl TemporalScope {
 
     fn mark_ambiguous(&mut self, name: &str) {
         if self.plan.versioned.contains(name) {
+            self.clear_temporal_loop_replayed(name);
             self.ambiguous.insert(name.to_string());
         }
     }
@@ -8219,6 +8427,7 @@ fn resolve_destructure_definiens(scope: &TemporalScope, expr: &Expr, depth: usiz
             let elems = static_literal_slice_elems(scope, expr, depth + 1)?;
             Some(array_expr(elems))
         }
+        _ if is_visible_dyn_any_coercion(expr) => Some(expr.clone()),
         _ if is_closed_scalar_literal(expr) => Some(expr.clone()),
         _ => None,
     }
@@ -8267,9 +8476,56 @@ fn resolve_destructure_literal_leaf(
             let init = scope.const_expr_for_path(&path.path)?;
             resolve_destructure_literal_leaf(scope, &init, depth + 1)
         }
+        _ if is_visible_dyn_any_coercion(expr) => Some(expr.clone()),
         _ if is_closed_scalar_literal(expr) => Some(expr.clone()),
         _ => None,
     }
+}
+
+fn is_visible_dyn_any_coercion(expr: &Expr) -> bool {
+    let Expr::Cast(cast) = strip_refs_groups(expr) else {
+        return false;
+    };
+    is_shared_ref_dyn_any_type(&cast.ty) || is_box_dyn_any_type(&cast.ty)
+}
+
+fn is_shared_ref_dyn_any_type(ty: &Type) -> bool {
+    let Type::Reference(reference) = ty else {
+        return false;
+    };
+    reference.mutability.is_none() && is_dyn_any_trait_object_type(&reference.elem)
+}
+
+fn is_box_dyn_any_type(ty: &Type) -> bool {
+    let Type::Path(path) = ty else {
+        return false;
+    };
+    let Some(segment) = path.path.segments.last() else {
+        return false;
+    };
+    if segment.ident != "Box" {
+        return false;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return false;
+    };
+    matches!(args.args.first(), Some(syn::GenericArgument::Type(ty)) if is_dyn_any_trait_object_type(ty))
+}
+
+fn is_dyn_any_trait_object_type(ty: &Type) -> bool {
+    let Type::TraitObject(trait_object) = ty else {
+        return false;
+    };
+    trait_object.bounds.iter().any(|bound| {
+        let syn::TypeParamBound::Trait(trait_bound) = bound else {
+            return false;
+        };
+        trait_bound
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == "Any")
+    })
 }
 
 /// A CLOSED scalar literal: an int / char / byte / bool literal, or a unary `-`
@@ -8765,6 +9021,8 @@ pub(crate) fn should_panic_temporal_callsite_records(
     }
     let mut layout_types = reducer.layout_type_registry_snapshot();
     layout_types.merge_all(&layout_type_registry_for_stmts(stmts));
+    let mut value_types = reducer.value_type_registry_snapshot();
+    value_types.merge_all(&value_type_registry_for_stmts(stmts));
     let temporal_plan = temporal_plan_for_stmts(stmts, &BTreeSet::new());
     let mut temporal_scope = TemporalScope::new(local_scope, temporal_plan)
         .with_literal_arrays(capture_scalar_literal_arrays(stmts))
@@ -8772,6 +9030,7 @@ pub(crate) fn should_panic_temporal_callsite_records(
         .with_fn_registry(reducer.fn_registry_snapshot(&local_fns))
         .with_impl_value_registry(reducer.impl_value_registry_snapshot())
         .with_layout_type_registry(layout_types)
+        .with_value_type_registry(value_types)
         .with_const_registry(reducer.const_registry_snapshot());
     let mut float_widths = FloatWidthScope::new();
     let mut records = Vec::new();
@@ -10340,6 +10599,8 @@ fn collect_assertion_entries<'a>(
     let mut layout_types = reducer.layout_type_registry_snapshot();
     layout_types.merge_all(enclosing_layout_types);
     layout_types.merge_all(&layout_type_registry_for_stmts(stmts));
+    let mut value_types = reducer.value_type_registry_snapshot();
+    value_types.merge_all(&value_type_registry_for_stmts(stmts));
     // Carry the in-source value-`fn` registry (file-level fns overlaid with the lexically
     // in-scope nested helpers) so a TERM-POSITION value call (`h(2)` in `assert_eq!(h(2),
     // 3)`) can be RESOLVED to its body and β-reduced at desugar time even through the thin
@@ -10353,11 +10614,8 @@ fn collect_assertion_entries<'a>(
     temporal_scope =
         temporal_scope.with_impl_value_registry(reducer.impl_value_registry_snapshot());
     temporal_scope = temporal_scope.with_layout_type_registry(layout_types.clone());
-    let const_registry = if macro_depth > 0 {
-        scoped_const_registry_for_stmts(stmts, reducer)
-    } else {
-        reducer.const_registry_snapshot()
-    };
+    temporal_scope = temporal_scope.with_value_type_registry(value_types);
+    let const_registry = scoped_const_registry_for_stmts(stmts, reducer);
     temporal_scope = temporal_scope.with_const_registry(const_registry);
     // Map of this block's simple `let <ident> = <init>;` / `let <ident>: T = <init>;`
     // bindings, so sequence sugar can resolve a receiver binding (`it.fold(..)` where
@@ -10410,6 +10668,7 @@ fn collect_assertion_entries<'a>(
     let mut panic_freedom_sites: BTreeSet<String> = BTreeSet::new();
     for (stmt_idx, stmt) in stmts.iter().enumerate() {
         let entries_before_stmt = entries.len();
+        let mut statement_temporal_replayed = false;
         let mut panic_support_entries = Vec::new();
         emit_panic_freedom_callsites_in_stmt(
             stmt,
@@ -10659,6 +10918,7 @@ fn collect_assertion_entries<'a>(
                     record_destructured_let_bindings(&mut temporal_scope, &local.pat, &init.expr);
                 }
                 temporal_scope.record_temporal_rewrite_local(local);
+                record_const_expanded_temporal_rewrite_local(&mut temporal_scope, local);
             }
             Stmt::Macro(m) => {
                 collect_statement_macro_entries(
@@ -10823,6 +11083,9 @@ fn collect_assertion_entries<'a>(
                 }
             }
             Stmt::Expr(Expr::While(w), _) => {
+                let body_count = count_asserts_in_stmts(&w.body.stmts);
+                let cond_count = count_asserts_in_expr(&w.cond);
+                let total = body_count + cond_count;
                 // `while let Some(x) = it.next_if(pred) { .. }` over a peekable literal
                 // iterator REWRITES (map) to `for x in domain.take_while(pred) { .. }` and
                 // lifts through the SAME for-loop factory path (reduce). The rewrite is
@@ -10849,11 +11112,11 @@ fn collect_assertion_entries<'a>(
                             .dug()
                     });
                 if let Some(desugared) = lifted {
+                    if total == 0 {
+                        statement_temporal_replayed = true;
+                    }
                     emit_desugared(desugared, entries, macros_lifted);
                 } else {
-                    let body_count = count_asserts_in_stmts(&w.body.stmts);
-                    let cond_count = count_asserts_in_expr(&w.cond);
-                    let total = body_count + cond_count;
                     for _ in 0..total {
                         skipped.push(
                             "assertion under while context: not unconditional point-wise; released to layer 0"
@@ -11576,7 +11839,9 @@ fn collect_assertion_entries<'a>(
         }
         entries.extend(panic_support_entries);
         mark_new_entries_with_fact_span(entries, entries_before_stmt, stmt);
-        advance_temporal_scope_for_stmt(stmt, &mut temporal_scope);
+        if !statement_temporal_replayed {
+            advance_temporal_scope_for_stmt(stmt, &mut temporal_scope);
+        }
     }
     // TERM-POSITION INLINE REDUCTION RECORD (capability #1, the flow-OUT). A value helper
     // PEELED to ground literals by a term-position inline during this block's desugar
@@ -13092,10 +13357,25 @@ fn temporal_loop_assignment_parts(stmt: &Stmt) -> Option<(String, &Expr)> {
                 BinOp::AddAssign(_) | BinOp::SubAssign(_) | BinOp::MulAssign(_)
             ) =>
         {
-            Some((simple_path_name(&binary.left)?, binary.right.as_ref()))
+            Some((
+                temporal_loop_assignment_target_name(&binary.left)?,
+                binary.right.as_ref(),
+            ))
         }
-        Stmt::Expr(Expr::Assign(assign), _) => {
-            Some((simple_path_name(&assign.left)?, assign.right.as_ref()))
+        Stmt::Expr(Expr::Assign(assign), _) => Some((
+            temporal_loop_assignment_target_name(&assign.left)?,
+            assign.right.as_ref(),
+        )),
+        _ => None,
+    }
+}
+
+fn temporal_loop_assignment_target_name(lhs: &Expr) -> Option<String> {
+    match strip_refs_groups(lhs) {
+        Expr::Path(_) => simple_path_name(lhs),
+        Expr::Index(index) => simple_path_name(&index.expr),
+        Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Deref(_)) => {
+            simple_path_name(&unary.expr)
         }
         _ => None,
     }
@@ -14201,12 +14481,18 @@ fn collect_mut_pat_idents(pat: &Pat, out: &mut BTreeSet<String>) {
 fn advance_temporal_scope_for_stmt(stmt: &Stmt, scope: &mut TemporalScope) {
     scope.dormant_mut_ref.advance_stmt(stmt);
     let replayed_for_loop_locals = apply_replayable_for_loop_temporal_rewrite(stmt, scope);
+    let ambiguous_boundary_names = ambiguous_boundary_names_in_stmt(stmt);
+    for name in &ambiguous_boundary_names {
+        if !replayed_for_loop_locals.contains(name) {
+            scope.clear_temporal_loop_replayed(name);
+        }
+    }
     scope.apply_temporal_rewrite_statement(stmt);
     for name in deterministic_definition_names(stmt) {
         scope.define_local(&name);
     }
-    for name in ambiguous_boundary_names_in_stmt(stmt) {
-        if !replayed_for_loop_locals.contains(&name) {
+    for name in ambiguous_boundary_names {
+        if !replayed_for_loop_locals.contains(&name) && !scope.exact_loop_replayed(&name) {
             scope.mark_ambiguous(&name);
         }
     }
@@ -14224,6 +14510,34 @@ fn advance_temporal_scope_for_stmt(stmt: &Stmt, scope: &mut TemporalScope) {
     scope.consuming_occurrence.borrow_mut().clear();
 }
 
+fn record_const_expanded_temporal_rewrite_local(scope: &mut TemporalScope, local: &syn::Local) {
+    let Some(name) = let_simple_value_binding(&local.pat) else {
+        return;
+    };
+    let Some(init) = local.init.as_ref().filter(|init| init.diverge.is_none()) else {
+        return;
+    };
+    let Some(value) = temporal_rewrite_literal_aggregate_init(scope, &init.expr) else {
+        return;
+    };
+    scope.record_temporal_rewrite_value(&name, value);
+}
+
+fn temporal_rewrite_literal_aggregate_init(scope: &TemporalScope, expr: &Expr) -> Option<Expr> {
+    match strip_refs_groups(expr) {
+        Expr::Repeat(repeat) => {
+            let len = repeat_count_in_scope(&repeat.len, scope)?;
+            if len > SUGAR_SEQ_CAP as usize {
+                return None;
+            }
+            let elem = temporal_loop_int_expr(const_len_value_in_scope(&repeat.expr, scope, 0)?)?;
+            let elems = std::iter::repeat_n(elem, len).collect::<Vec<_>>();
+            Some(syn::parse_quote!([#(#elems),*]))
+        }
+        _ => None,
+    }
+}
+
 fn apply_replayable_for_loop_temporal_rewrite(
     stmt: &Stmt,
     scope: &mut TemporalScope,
@@ -14235,7 +14549,7 @@ fn apply_replayable_for_loop_temporal_rewrite(
         return BTreeSet::new();
     };
     let mut scratch = scope.temporal_rewrite.borrow().clone();
-    let Some(values) = temporal_loop_rewrite_domain_values(&for_loop.expr, &scratch) else {
+    let Some(values) = temporal_loop_rewrite_domain_values(&for_loop.expr, &scratch, scope) else {
         return BTreeSet::new();
     };
     if values.is_empty() || values.len() > SUGAR_SEQ_CAP as usize {
@@ -14260,6 +14574,9 @@ fn apply_replayable_for_loop_temporal_rewrite(
         }
     }
     if !targets.is_empty() {
+        for target in &targets {
+            scratch.mark_loop_replayed(target);
+        }
         *scope.temporal_rewrite.borrow_mut() = scratch;
     }
     targets
@@ -14283,33 +14600,40 @@ fn temporal_loop_assignment_expr(stmt: &Stmt) -> Option<&Expr> {
 fn temporal_loop_rewrite_domain_values(
     expr: &Expr,
     state: &sugar::assign_op::TemporalRewriteState,
+    scope: &TemporalScope,
 ) -> Option<Vec<Expr>> {
     match strip_refs_groups(expr) {
-        Expr::Path(_) => {
+        Expr::Path(path) if path.qself.is_none() => {
             let name = simple_path_name(expr)?;
-            temporal_loop_rewrite_domain_values(&state.expr_for(&name)?, state)
+            if let Some(bound) = state.expr_for(&name) {
+                return temporal_loop_rewrite_domain_values(&bound, state, scope);
+            }
+            let init = scope.const_expr_for_path(&path.path)?;
+            temporal_loop_rewrite_domain_values(&init, state, scope)
         }
         Expr::Array(array) => {
             let mut values = Vec::new();
             for elem in &array.elems {
                 values.push(temporal_loop_int_expr(temporal_loop_rewrite_value(
-                    elem, state,
+                    elem, state, scope,
                 )?)?);
             }
             Some(values)
         }
         Expr::Repeat(repeat) => {
-            let value = temporal_loop_int_expr(temporal_loop_rewrite_value(&repeat.expr, state)?)?;
-            let len = usize::try_from(temporal_loop_rewrite_value(&repeat.len, state)?).ok()?;
+            let value =
+                temporal_loop_int_expr(temporal_loop_rewrite_value(&repeat.expr, state, scope)?)?;
+            let len =
+                usize::try_from(temporal_loop_rewrite_value(&repeat.len, state, scope)?).ok()?;
             Some(vec![value; len])
         }
         Expr::Range(range) => {
             let start = range
                 .start
                 .as_deref()
-                .map(|start| temporal_loop_rewrite_value(start, state))
+                .map(|start| temporal_loop_rewrite_value(start, state, scope))
                 .unwrap_or(Some(0))?;
-            let end = temporal_loop_rewrite_value(range.end.as_ref()?, state)?;
+            let end = temporal_loop_rewrite_value(range.end.as_ref()?, state, scope)?;
             temporal_loop_range_values(
                 start,
                 end,
@@ -14323,6 +14647,7 @@ fn temporal_loop_rewrite_domain_values(
 fn temporal_loop_rewrite_value(
     expr: &Expr,
     state: &sugar::assign_op::TemporalRewriteState,
+    scope: &TemporalScope,
 ) -> Option<i128> {
     match strip_refs_groups(expr) {
         Expr::Lit(lit) => match &lit.lit {
@@ -14331,11 +14656,11 @@ fn temporal_loop_rewrite_value(
             _ => None,
         },
         Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Neg(_)) => {
-            temporal_loop_rewrite_value(&unary.expr, state)?.checked_neg()
+            temporal_loop_rewrite_value(&unary.expr, state, scope)?.checked_neg()
         }
         Expr::Binary(binary) => {
-            let left = temporal_loop_rewrite_value(&binary.left, state)?;
-            let right = temporal_loop_rewrite_value(&binary.right, state)?;
+            let left = temporal_loop_rewrite_value(&binary.left, state, scope)?;
+            let right = temporal_loop_rewrite_value(&binary.right, state, scope)?;
             match binary.op {
                 BinOp::Add(_) => left.checked_add(right),
                 BinOp::Sub(_) => left.checked_sub(right),
@@ -14345,11 +14670,15 @@ fn temporal_loop_rewrite_value(
                 _ => None,
             }
         }
-        Expr::Path(_) => {
+        Expr::Path(path) if path.qself.is_none() => {
             let name = simple_path_name(expr)?;
-            temporal_loop_rewrite_value(&state.expr_for(&name)?, state)
+            if let Some(bound) = state.expr_for(&name) {
+                return temporal_loop_rewrite_value(&bound, state, scope);
+            }
+            let init = scope.const_expr_for_path(&path.path)?;
+            temporal_loop_rewrite_value(&init, state, scope)
         }
-        Expr::Cast(cast) => temporal_loop_rewrite_value(&cast.expr, state),
+        Expr::Cast(cast) => temporal_loop_rewrite_value(&cast.expr, state, scope),
         _ => None,
     }
 }
@@ -15706,6 +16035,20 @@ fn substitute_expr_inner(
                 substitute_closure_captures,
             ));
             Expr::Binary(out)
+        }
+        Expr::Assign(assign) => {
+            let mut out = assign.clone();
+            out.left = Box::new(substitute_expr_inner(
+                &assign.left,
+                bindings,
+                substitute_closure_captures,
+            ));
+            out.right = Box::new(substitute_expr_inner(
+                &assign.right,
+                bindings,
+                substitute_closure_captures,
+            ));
+            Expr::Assign(out)
         }
         Expr::Unary(unary) => {
             let mut out = unary.clone();
@@ -20331,9 +20674,13 @@ fn const_len_value_in_scope(expr: &Expr, scope: &TemporalScope, depth: usize) ->
         // const registry and re-scan its initializer (which may itself be a literal, another
         // const, or const arithmetic).
         Expr::Path(path) if path.qself.is_none() => {
+            if let Some(value) = primitive_int_const_path_value(&path.path) {
+                return Some(value);
+            }
             let init = scope.const_expr_for_path(&path.path)?;
             const_len_value_in_scope(&init, scope, depth + 1)
         }
+        Expr::Cast(cast) => const_len_value_in_scope(&cast.expr, scope, depth + 1),
         Expr::Unary(unary) => {
             let v = const_len_value_in_scope(&unary.expr, scope, depth + 1)?;
             match unary.op {

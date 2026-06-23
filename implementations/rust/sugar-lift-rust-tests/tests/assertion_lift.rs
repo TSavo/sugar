@@ -6609,6 +6609,163 @@ fn any_fixed_vec_bad() {
 }
 
 #[test]
+fn dyn_any_tuple_destructure_coercion_trace_has_teeth() {
+    let good = r#"
+use core::any::*;
+
+#[derive(PartialEq, Debug)]
+struct Test;
+static TEST: &'static str = "Test";
+
+#[test]
+fn any_referenced() {
+    let (a, b, c) = (&5 as &dyn Any, &TEST as &dyn Any, &Test as &dyn Any);
+    assert!(a.is::<i32>());
+    assert!(!b.is::<i32>());
+    assert!(!c.is::<i32>());
+    assert!(!a.is::<&'static str>());
+    assert!(b.is::<&'static str>());
+    assert!(!c.is::<&'static str>());
+    assert!(!a.is::<Test>());
+    assert!(!b.is::<Test>());
+    assert!(c.is::<Test>());
+}
+"#;
+    let out = lift_file(&parse(good), "coretests/tests/any.rs");
+    assert_eq!(
+        out.assertions_refused, 0,
+        "locally pinned dyn Any coercions must warrant through tuple SSA, not refuse: {:?}",
+        out.skip_reasons
+    );
+    assert_warranted_decl_count(&out, 1);
+    let doc = warranted_doc(&out);
+    assert!(
+        doc.contains("\"name\":\"Bool\"")
+            && !doc.contains("method:is")
+            && !doc.contains("dyn Any concrete type not statically determined"),
+        "dyn Any tuple coercion trace should reduce to bool literals, got {doc}"
+    );
+    assert!(
+        out.factory_audits.iter().all(|audit| {
+            !(audit.site.contains(". is ::")
+                && audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Unresolved)
+        }),
+        "dyn Any tuple coercion source-audit rows must not stay unresolved: {:?}",
+        out.factory_audits
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "dyn_any_tuple_trace_good",
+    ) {
+        assert!(
+            sat,
+            "coretests any.rs local coercion identities must be z3-SAT"
+        );
+    }
+
+    let bad = r#"
+use core::any::*;
+
+#[derive(PartialEq, Debug)]
+struct Test;
+static TEST: &'static str = "Test";
+
+#[test]
+fn any_referenced_bad() {
+    let (a, _, _) = (&5 as &dyn Any, &TEST as &dyn Any, &Test as &dyn Any);
+    assert!(a.is::<Test>());
+}
+"#;
+    let out = lift_file(&parse(bad), "coretests/tests/any_bad.rs");
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "dyn_any_tuple_trace_bad",
+    ) {
+        assert!(!sat, "wrong dyn Any concrete type twin must be z3-UNSAT");
+    }
+
+    let owning_good = r#"
+use core::any::*;
+
+#[derive(PartialEq, Debug)]
+struct Test;
+static TEST: &'static str = "Test";
+
+#[test]
+fn any_owning() {
+    let (a, b, c) = (
+        Box::new(5_usize) as Box<dyn Any>,
+        Box::new(TEST) as Box<dyn Any>,
+        Box::new(Test) as Box<dyn Any>,
+    );
+    assert!(a.is::<usize>());
+    assert!(!b.is::<usize>());
+    assert!(!c.is::<usize>());
+    assert!(!a.is::<&'static str>());
+    assert!(b.is::<&'static str>());
+    assert!(!c.is::<&'static str>());
+    assert!(!a.is::<Test>());
+    assert!(!b.is::<Test>());
+    assert!(c.is::<Test>());
+}
+"#;
+    let out = lift_file(&parse(owning_good), "coretests/tests/any.rs");
+    assert_eq!(
+        out.assertions_refused, 0,
+        "locally pinned Box<dyn Any> coercions must warrant through tuple SSA, not refuse: {:?}",
+        out.skip_reasons
+    );
+    assert_warranted_decl_count(&out, 1);
+    assert!(
+        out.factory_audits.iter().all(|audit| {
+            !(audit.site.contains(". is ::")
+                && audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Unresolved)
+        }),
+        "owned dyn Any tuple coercion source-audit rows must not stay unresolved: {:?}",
+        out.factory_audits
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "dyn_any_box_tuple_trace_good",
+    ) {
+        assert!(
+            sat,
+            "coretests any.rs owned local coercion identities must be z3-SAT"
+        );
+    }
+
+    let owning_bad = r#"
+use core::any::*;
+
+#[derive(PartialEq, Debug)]
+struct Test;
+static TEST: &'static str = "Test";
+
+#[test]
+fn any_owning_bad() {
+    let (a, _, _) = (
+        Box::new(5_usize) as Box<dyn Any>,
+        Box::new(TEST) as Box<dyn Any>,
+        Box::new(Test) as Box<dyn Any>,
+    );
+    assert!(a.is::<Test>());
+}
+"#;
+    let out = lift_file(&parse(owning_bad), "coretests/tests/any_bad.rs");
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "dyn_any_box_tuple_trace_bad",
+    ) {
+        assert!(
+            !sat,
+            "wrong owned dyn Any concrete type twin must be z3-UNSAT"
+        );
+    }
+}
+
+#[test]
 fn dyn_any_downcast_presence_predicates_have_teeth() {
     for (label, assertion, want_sat) in [
         (
@@ -12585,27 +12742,31 @@ fn t() {
 
 #[test]
 fn array_repeat_nonliteral_length_refused_by_name() {
-    // Discrimination: a const/path length is not a finite construction -> refused.
+    // Discrimination: a function-local const length is text-determined, so it now
+    // unrolls at desugar time; the truly non-literal `SIZE` case below still refuses.
     let src = r#"
 #[test]
 fn t() {
     const LEN: usize = 32;
-    let x = mk();
-    assert_eq!(x, [0u8; LEN]);
+    assert_eq!([0u8; LEN], [1u8; LEN]);
 }
 "#;
     let out = lift_file(&parse(src), "src/x.rs");
     assert_eq!(
-        out.assertions_lifted, 0,
-        "non-literal-length repeat must not lift"
-    );
-    assert!(
-        out.skip_reasons
-            .iter()
-            .any(|r| r.contains("non-literal length")),
-        "refusal must name the non-literal length: {:?}",
+        out.assertions_lifted, 1,
+        "const-length repeat must lift through const SSA: {:?}",
         out.skip_reasons
     );
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "array_repeat_const_len_bad",
+    ) {
+        assert!(
+            !sat,
+            "same x cannot equal two distinct const-length repeats"
+        );
+    }
 }
 
 // --- struct-literal equality tranche (assert_eq!(x, Type { f: v })) ---
@@ -28547,6 +28708,93 @@ fn direct_literal_range_for_loop_body_assert_unrolls_pointwise() {
     assert_eq!(dug_eq_int_pairs(decl), vec![(1, 2), (2, 3), (3, 4), (4, 5)]);
     if let Some(sat) = z3_verdict(&inv_json(decl), "for_body_bad") {
         assert!(!sat, "bad point-wise literal body assert must be z3-UNSAT");
+    }
+}
+
+#[test]
+fn empty_reversed_literal_range_for_loop_warrants_no_panic() {
+    let src = r#"
+        #[test]
+        fn t_empty_rev() {
+            for _ in (10..0).rev() {
+                panic!("unreachable");
+            }
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/range_empty_rev.rs");
+    assert!(
+        all_warranted_decls(&out)
+            .iter()
+            .any(|decl| decl.inv.as_deref().is_some_and(formula_mentions_panic_path)),
+        "empty literal-domain loop must dig to no-panic, not disappear: facts={:?}; decls={:?}; audits={:?}",
+        out.assertion_facts,
+        out.decls,
+        out.factory_audits
+    );
+    assert!(
+        out.factory_audits.iter().all(|audit| {
+            !audit.site.contains("10 .. 0")
+                || audit.disposition != sugar_lift_rust_tests::FactoryDisposition::Unresolved
+        }),
+        "empty literal-domain loop and its range adaptor must not stay unresolved: {:?}",
+        out.factory_audits
+    );
+}
+
+#[test]
+fn const_range_for_loop_index_assignment_replays_post_loop_reads() {
+    let good = r#"
+        #[test]
+        fn const_range_assignment() {
+            const N: usize = 4;
+            let a: &mut [_] = &mut [0; N];
+            for i in 0..N {
+                a[i] = i;
+            }
+            assert_eq!(a[0], 0);
+            assert_eq!(a[3], 3);
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/tests/slice.rs");
+    assert_eq!(
+        out.assertions_refused, 0,
+        "literal-range index assignment loop should replay, not refuse: {:?}",
+        out.skip_reasons
+    );
+    assert_warranted_decl_count(&out, 1);
+    assert!(
+        out.factory_audits.iter().all(|audit| {
+            !(audit.site.contains("for i in 0 .. N")
+                && audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Unresolved)
+        }),
+        "const range index assignment loop must not stay unresolved: {:?}",
+        out.factory_audits
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "const_range_for_loop_index_assignment_good",
+    ) {
+        assert!(sat, "correct replayed array values must be z3-SAT");
+    }
+
+    let bad = r#"
+        #[test]
+        fn const_range_assignment_bad() {
+            const N: usize = 4;
+            let a: &mut [_] = &mut [0; N];
+            for i in 0..N {
+                a[i] = i;
+            }
+            assert_eq!(a[3], 4);
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/tests/slice_bad.rs");
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "const_range_for_loop_index_assignment_bad",
+    ) {
+        assert!(!sat, "wrong replayed array value twin must be z3-UNSAT");
     }
 }
 

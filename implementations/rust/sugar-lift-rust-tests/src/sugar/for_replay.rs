@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::rc::Rc;
 
-use sugar_ir_symbolic::{and_, ConstValue, Formula, Term};
+use sugar_ir_symbolic::{and_, eq, ConstValue, Formula, Term};
 use syn::{BinOp, Expr, Lit, Pat, Stmt, UnOp};
 use tracing::debug;
 
@@ -19,11 +19,11 @@ use crate::sugar::extract_if::{ExtractIfSugar, ReplayAction};
 use crate::sugar::factory::{build_composite, build_term, has_composite, SugarBuildCtx};
 use crate::sugar::insert::InsertSugar;
 use crate::{
-    bounded_domain_from_expr, const_fold_int_term, const_fold_u128_term, count_asserts_in_stmts,
-    helper_param_names, macro_is_assertion_surface, path_to_variant_string, simple_call_name,
-    simple_pat_name, strip_refs_groups, substitute_expr, substitute_macro_tokens, term_as_int,
-    translate_term_in_scope, u128_expr, AssertionFactKind, BoundedDomain, ConstVal, Desugared,
-    Effect, ExprBindings, Outcome, Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON,
+    bool_const, bounded_domain_from_expr, const_fold_int_term, const_fold_u128_term,
+    count_asserts_in_stmts, helper_param_names, macro_is_assertion_surface, path_to_variant_string,
+    simple_call_name, simple_pat_name, strip_refs_groups, substitute_expr, substitute_macro_tokens,
+    term_as_int, translate_term_in_scope, u128_expr, AssertionFactKind, BoundedDomain, ConstVal,
+    Desugared, Effect, ExprBindings, Outcome, Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON,
     SUGAR_SEQ_CAP,
 };
 
@@ -44,7 +44,14 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     };
     let loop_vars = vars.join(", ");
     let assert_count = replay_assert_count(&for_loop.body.stmts, fcx.scope());
-    if assert_count == 0 {
+    let replay_only_assignments = assert_count == 0
+        && vars.len() == 1
+        && body_has_temporal_assignment_replay_shape(
+            &for_loop.body.stmts,
+            fcx.scope(),
+            vars.first()?,
+        );
+    if assert_count == 0 && !replay_only_assignments {
         debug!(
             target: "sugar_lift_rust_tests::sugar::for_replay",
             loop_var = %loop_vars,
@@ -87,7 +94,8 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         fcx.scope(),
         finite_replay_domain,
         direct_pointwise_loop,
-    ) {
+    ) && !replay_only_assignments
+    {
         debug!(
             target: "sugar_lift_rust_tests::sugar::for_replay",
             loop_var = %loop_vars,
@@ -370,6 +378,79 @@ fn body_has_scalar_accumulator_replay_shape(stmts: &[Stmt], scope: &crate::Tempo
     saw_assert || (saw_accumulator_update && helper_call_assert_count(stmts, scope) > 0)
 }
 
+fn body_has_temporal_assignment_replay_shape(
+    stmts: &[Stmt],
+    scope: &crate::TemporalScope,
+    loop_var: &str,
+) -> bool {
+    if stmts.is_empty() {
+        return false;
+    }
+    let available: BTreeSet<String> = scope
+        .let_bindings_iter()
+        .map(|(name, _)| name.clone())
+        .collect();
+    stmts.iter().all(|stmt| {
+        let Some((target, rhs)) = temporal_loop_assignment_parts(stmt) else {
+            return false;
+        };
+        available.contains(&target) && temporal_loop_pure_value_expr(rhs, loop_var, &target)
+    })
+}
+
+fn temporal_loop_assignment_parts(stmt: &Stmt) -> Option<(String, &Expr)> {
+    match stmt {
+        Stmt::Expr(Expr::Binary(binary), _)
+            if matches!(
+                binary.op,
+                BinOp::AddAssign(_) | BinOp::SubAssign(_) | BinOp::MulAssign(_)
+            ) =>
+        {
+            Some((
+                assignment_target_base_name(&binary.left)?,
+                binary.right.as_ref(),
+            ))
+        }
+        Stmt::Expr(Expr::Assign(assign), _) => Some((
+            assignment_target_base_name(&assign.left)?,
+            assign.right.as_ref(),
+        )),
+        _ => None,
+    }
+}
+
+fn assignment_target_base_name(lhs: &Expr) -> Option<String> {
+    match strip_refs_groups(lhs) {
+        Expr::Path(_) => simple_path_name(lhs),
+        Expr::Index(index) => simple_path_name(&index.expr),
+        Expr::Unary(unary) if matches!(unary.op, UnOp::Deref(_)) => simple_path_name(&unary.expr),
+        _ => None,
+    }
+}
+
+fn temporal_loop_pure_value_expr(expr: &Expr, loop_var: &str, target: &str) -> bool {
+    match strip_refs_groups(expr) {
+        Expr::Lit(lit) => matches!(lit.lit, Lit::Int(_) | Lit::Byte(_)),
+        Expr::Unary(unary) if matches!(unary.op, UnOp::Neg(_)) => {
+            temporal_loop_pure_value_expr(&unary.expr, loop_var, target)
+        }
+        Expr::Binary(binary)
+            if matches!(
+                binary.op,
+                BinOp::Add(_) | BinOp::Sub(_) | BinOp::Mul(_) | BinOp::Div(_) | BinOp::Rem(_)
+            ) =>
+        {
+            temporal_loop_pure_value_expr(&binary.left, loop_var, target)
+                && temporal_loop_pure_value_expr(&binary.right, loop_var, target)
+        }
+        Expr::Path(_) => {
+            simple_path_name(expr).is_some_and(|name| name == loop_var || name == target)
+        }
+        Expr::Cast(cast) => temporal_loop_pure_value_expr(&cast.expr, loop_var, target),
+        _ => false,
+    }
+}
+
 fn accumulator_seed_names(stmts: &[Stmt], scope: &crate::TemporalScope) -> Vec<String> {
     let available: BTreeSet<String> = scope
         .let_bindings_iter()
@@ -616,7 +697,19 @@ impl Sugar for ForReplaySugar {
             }
             let source_asserts = replay_assert_count(&self.body_stmts, ctx.scope);
             if source_asserts == 0 {
-                return None;
+                replay_temporal_assignment_loop(ctx, &self.vars, &self.body_stmts, values)?;
+                return Some(Desugared::Constraints {
+                    atom: eq(bool_const(true), bool_const(true)),
+                    n: 0,
+                    kind: AssertionFactKind::Support,
+                    warrant: Warrant {
+                        name: Some(format!(
+                            "{}::temporal-loop-replay::{}",
+                            ctx.scope.local_scope(),
+                            self.vars.join("_")
+                        )),
+                    },
+                });
             }
 
             let mut atoms = Vec::new();
@@ -652,6 +745,47 @@ impl Sugar for ForReplaySugar {
                 },
             })
         })())
+    }
+}
+
+fn replay_temporal_assignment_loop(
+    ctx: &SugarCtx,
+    vars: &[String],
+    body_stmts: &[Stmt],
+    values: Vec<Expr>,
+) -> Option<()> {
+    let mut targets = BTreeSet::new();
+    for value in values {
+        let mut bindings = ExprBindings::new();
+        bind_loop_value(&mut bindings, vars, value)?;
+        for stmt in body_stmts {
+            let (target, _) = temporal_loop_assignment_parts(stmt)?;
+            let expr = temporal_assignment_stmt_expr(stmt)?;
+            let substituted = substitute_expr(expr, &bindings);
+            if !ctx.scope.apply_temporal_rewrite(&substituted) {
+                return None;
+            }
+            targets.insert(target);
+        }
+    }
+    for target in targets {
+        ctx.scope.mark_temporal_loop_replayed(&target);
+    }
+    Some(())
+}
+
+fn temporal_assignment_stmt_expr(stmt: &Stmt) -> Option<&Expr> {
+    match stmt {
+        Stmt::Expr(expr @ Expr::Binary(binary), _)
+            if matches!(
+                binary.op,
+                BinOp::AddAssign(_) | BinOp::SubAssign(_) | BinOp::MulAssign(_)
+            ) =>
+        {
+            Some(expr)
+        }
+        Stmt::Expr(expr @ Expr::Assign(_), _) => Some(expr),
+        _ => None,
     }
 }
 

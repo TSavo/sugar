@@ -10,6 +10,7 @@ use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::configuration;
 use crate::sugar::constraint_runtime_boundary;
 use crate::sugar::format::stable_let_bindings;
+use crate::sugar::method_family;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
@@ -848,8 +849,24 @@ impl Sugar for NoPanicCallSugar {
                 if let Some(reason) = no_panic_callsite_terminal_effect(expr) {
                     return unsupported(reason);
                 }
-                if is_no_panic_literal_empty_into_iter(expr) {
+                if is_no_panic_literal_empty_into_iter(expr)
+                    || is_no_panic_empty_literal_sequence_callsite(expr, ctx)
+                {
                     return no_panic_tautology_for_site(ctx, &self.site);
+                }
+                if is_dyn_any_predicate_call(expr) {
+                    match build_term_in_ctx(expr, ctx).desugar(ctx) {
+                        Outcome::Dug(d) => {
+                            if d.into_term()
+                                .as_ref()
+                                .and_then(|term| term_bool(term.as_ref()))
+                                .is_some()
+                            {
+                                return no_panic_tautology_for_site(ctx, &self.site);
+                            }
+                        }
+                        Outcome::Hit(effect) => return Outcome::Hit(effect),
+                    }
                 }
                 let Some(subject) = ctx.opaque_callsite_term(expr) else {
                     return Outcome::from_opt(None);
@@ -1384,6 +1401,30 @@ fn is_no_panic_literal_empty_into_iter(expr: &Expr) -> bool {
     }
 }
 
+fn is_no_panic_empty_literal_sequence_callsite(expr: &Expr, ctx: &SugarCtx) -> bool {
+    let Expr::MethodCall(call) = strip_groups_parens(expr) else {
+        return false;
+    };
+    let method = call.method.to_string();
+    if !matches!(
+        method.as_str(),
+        "iter"
+            | "into_iter"
+            | "cloned"
+            | "copied"
+            | "fuse"
+            | "rev"
+            | "enumerate"
+            | "skip"
+            | "take"
+            | "step_by"
+    ) {
+        return false;
+    }
+    let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
+    method_family::literal_sequence_static_len_in_scope(expr, &let_inits, ctx.scope) == Some(0)
+}
+
 fn expr_is_empty_literal_array_expr(expr: &Expr) -> bool {
     match strip_groups_parens(expr) {
         Expr::Array(array) => array.elems.is_empty(),
@@ -1624,6 +1665,29 @@ fn is_lane5_no_panic_literal_call(expr: &Expr) -> bool {
             call.args.len() == 1
                 && is_str_or_char_lit(&call.receiver)
                 && is_str_or_char_lit(&call.args[0])
+        }
+        _ => false,
+    }
+}
+
+fn is_dyn_any_predicate_call(expr: &Expr) -> bool {
+    let Expr::MethodCall(call) = strip_refs_groups(expr) else {
+        return false;
+    };
+    let method = call.method.to_string();
+    match method.as_str() {
+        "is" => call.args.is_empty() && call.turbofish.is_some(),
+        "is_some" => {
+            let Expr::MethodCall(inner) = strip_refs_groups(&call.receiver) else {
+                return false;
+            };
+            inner.method == "downcast_ref" && inner.args.is_empty() && inner.turbofish.is_some()
+        }
+        "is_ok" => {
+            let Expr::MethodCall(inner) = strip_refs_groups(&call.receiver) else {
+                return false;
+            };
+            inner.method == "downcast" && inner.args.is_empty() && inner.turbofish.is_some()
         }
         _ => false,
     }

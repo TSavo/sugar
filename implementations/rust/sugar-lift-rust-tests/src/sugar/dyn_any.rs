@@ -143,7 +143,12 @@ impl Sugar for DynAnyConcreteTypeSugar {
             };
             return BoundSugar::new(name, Box::new(child)).desugar(ctx);
         }
-        match concrete_type_from_dyn_any_receiver(&self.receiver, &self.let_inits, self.depth + 1) {
+        match concrete_type_from_dyn_any_receiver(
+            &self.receiver,
+            &self.let_inits,
+            ctx,
+            self.depth + 1,
+        ) {
             Some(concrete) => Outcome::Dug(Desugared::Term(type_id_term(&concrete))),
             None => dyn_any_unknown(),
         }
@@ -182,26 +187,27 @@ fn turbofish_type_key(args: &Option<syn::AngleBracketedGenericArguments>) -> Opt
 fn concrete_type_from_dyn_any_receiver(
     receiver: &Expr,
     let_inits: &BTreeMap<String, Expr>,
+    ctx: &SugarCtx,
     depth: usize,
 ) -> Option<String> {
     if depth > 12 {
         return None;
     }
     if let Some((_, bound)) = let_bound_reference(receiver, let_inits) {
-        return concrete_type_from_dyn_any_receiver(&bound, let_inits, depth + 1);
+        return concrete_type_from_dyn_any_receiver(&bound, let_inits, ctx, depth + 1);
     }
     match receiver {
         Expr::Cast(cast) if is_ref_dyn_any_type(&cast.ty) => {
-            concrete_type_from_ref_coercion_source(&cast.expr, let_inits, depth + 1)
+            concrete_type_from_ref_coercion_source(&cast.expr, let_inits, ctx, depth + 1)
         }
         Expr::Cast(cast) if is_box_dyn_any_type(&cast.ty) => {
-            concrete_type_from_box_coercion_source(&cast.expr, let_inits, depth + 1)
+            concrete_type_from_box_coercion_source(&cast.expr, let_inits, ctx, depth + 1)
         }
         Expr::Paren(paren) => {
-            concrete_type_from_dyn_any_receiver(&paren.expr, let_inits, depth + 1)
+            concrete_type_from_dyn_any_receiver(&paren.expr, let_inits, ctx, depth + 1)
         }
         Expr::Group(group) => {
-            concrete_type_from_dyn_any_receiver(&group.expr, let_inits, depth + 1)
+            concrete_type_from_dyn_any_receiver(&group.expr, let_inits, ctx, depth + 1)
         }
         _ => None,
     }
@@ -210,15 +216,18 @@ fn concrete_type_from_dyn_any_receiver(
 fn concrete_type_from_ref_coercion_source(
     source: &Expr,
     let_inits: &BTreeMap<String, Expr>,
+    ctx: &SugarCtx,
     depth: usize,
 ) -> Option<String> {
     match source {
-        Expr::Reference(reference) => static_type_of_value(&reference.expr, let_inits, depth + 1),
+        Expr::Reference(reference) => {
+            static_type_of_value(&reference.expr, let_inits, ctx, depth + 1)
+        }
         Expr::Paren(paren) => {
-            concrete_type_from_ref_coercion_source(&paren.expr, let_inits, depth + 1)
+            concrete_type_from_ref_coercion_source(&paren.expr, let_inits, ctx, depth + 1)
         }
         Expr::Group(group) => {
-            concrete_type_from_ref_coercion_source(&group.expr, let_inits, depth + 1)
+            concrete_type_from_ref_coercion_source(&group.expr, let_inits, ctx, depth + 1)
         }
         _ => None,
     }
@@ -227,17 +236,18 @@ fn concrete_type_from_ref_coercion_source(
 fn concrete_type_from_box_coercion_source(
     source: &Expr,
     let_inits: &BTreeMap<String, Expr>,
+    ctx: &SugarCtx,
     depth: usize,
 ) -> Option<String> {
     match strip_refs_groups(source) {
         Expr::Call(call) if path_ends_with(&call.func, &["Box", "new"]) && call.args.len() == 1 => {
-            static_type_of_value(call.args.first()?, let_inits, depth + 1)
+            static_type_of_value(call.args.first()?, let_inits, ctx, depth + 1)
         }
         Expr::Paren(paren) => {
-            concrete_type_from_box_coercion_source(&paren.expr, let_inits, depth + 1)
+            concrete_type_from_box_coercion_source(&paren.expr, let_inits, ctx, depth + 1)
         }
         Expr::Group(group) => {
-            concrete_type_from_box_coercion_source(&group.expr, let_inits, depth + 1)
+            concrete_type_from_box_coercion_source(&group.expr, let_inits, ctx, depth + 1)
         }
         _ => None,
     }
@@ -246,6 +256,7 @@ fn concrete_type_from_box_coercion_source(
 fn static_type_of_value(
     expr: &Expr,
     let_inits: &BTreeMap<String, Expr>,
+    ctx: &SugarCtx,
     depth: usize,
 ) -> Option<String> {
     if depth > 12 {
@@ -255,7 +266,10 @@ fn static_type_of_value(
         Expr::Path(path) if path.qself.is_none() => {
             let name = path.path.get_ident()?.to_string();
             if let Some(bound) = let_inits.get(&name) {
-                return static_type_of_value(bound, let_inits, depth + 1);
+                return static_type_of_value(bound, let_inits, ctx, depth + 1);
+            }
+            if let Some(ty) = ctx.scope.value_type_for_path(&path.path) {
+                return Some(ty);
             }
             name.chars()
                 .next()
@@ -265,28 +279,28 @@ fn static_type_of_value(
         Expr::Lit(lit) => literal_type_key(&lit.lit),
         Expr::Array(array) => {
             let mut elems = array.elems.iter();
-            let first = static_type_of_value(elems.next()?, let_inits, depth + 1)?;
+            let first = static_type_of_value(elems.next()?, let_inits, ctx, depth + 1)?;
             elems
                 .all(|elem| {
-                    static_type_of_value(elem, let_inits, depth + 1).as_deref()
+                    static_type_of_value(elem, let_inits, ctx, depth + 1).as_deref()
                         == Some(first.as_str())
                 })
                 .then(|| format!("[{};{}]", first, array.elems.len()))
         }
         Expr::Repeat(repeat) => {
-            let elem = static_type_of_value(&repeat.expr, let_inits, depth + 1)?;
+            let elem = static_type_of_value(&repeat.expr, let_inits, ctx, depth + 1)?;
             Some(format!("[{};{}]", elem, token_key(&repeat.len)))
         }
         Expr::Reference(reference) => {
-            let inner = static_type_of_value(&reference.expr, let_inits, depth + 1)?;
+            let inner = static_type_of_value(&reference.expr, let_inits, ctx, depth + 1)?;
             if reference.mutability.is_some() {
                 Some(format!("&mut {inner}"))
             } else {
                 Some(format!("&{inner}"))
             }
         }
-        Expr::Paren(paren) => static_type_of_value(&paren.expr, let_inits, depth + 1),
-        Expr::Group(group) => static_type_of_value(&group.expr, let_inits, depth + 1),
+        Expr::Paren(paren) => static_type_of_value(&paren.expr, let_inits, ctx, depth + 1),
+        Expr::Group(group) => static_type_of_value(&group.expr, let_inits, ctx, depth + 1),
         _ => None,
     }
 }
