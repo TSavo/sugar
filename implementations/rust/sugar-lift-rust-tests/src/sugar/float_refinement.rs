@@ -61,8 +61,13 @@ impl Sugar for FloatRefinementSugar {
         };
         if let Some(unstable_width) = float_refinement_receiver_unstable_width(&self.receiver_expr)
         {
+            let width_reason = if unstable_width == "f16" && self.method == "is_nan" {
+                "f16 NaN width not modeled".to_string()
+            } else {
+                format!("{unstable_width} bit-width not modeled")
+            };
             return unsupported(format!(
-                "float refinement predicate `{}` {unstable_width} bit-width not modeled `{}`",
+                "float refinement predicate `{}` {width_reason} `{}`",
                 self.method, self.site
             ));
         }
