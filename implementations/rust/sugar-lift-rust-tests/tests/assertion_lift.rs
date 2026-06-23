@@ -14066,6 +14066,117 @@ fn char_literal_methods_have_z3_bad_twins() {
 }
 
 #[test]
+fn unicode_char_methods_from_u32_casts_and_comparisons_have_teeth() {
+    let method_cases = [
+        ("unicode_alpha", r#"'β'.is_alphabetic()"#, "true", "false"),
+        (
+            "unicode_numeric",
+            r#"'\u{0665}'.is_numeric()"#,
+            "true",
+            "false",
+        ),
+        ("unicode_alnum", r#"'ß'.is_alphanumeric()"#, "true", "false"),
+        (
+            "unicode_upper_ascii",
+            r#"'x'.to_uppercase()"#,
+            r#""X""#,
+            r#""x""#,
+        ),
+        (
+            "unicode_upper_non_ascii",
+            r#"'ß'.to_uppercase()"#,
+            r#""SS""#,
+            r#""ẞ""#,
+        ),
+        (
+            "unicode_lower_non_ascii",
+            r#"'İ'.to_lowercase()"#,
+            r#""i\u{307}""#,
+            r#""i""#,
+        ),
+        (
+            "unicode_upper_to_string",
+            r#"'ß'.to_uppercase().to_string()"#,
+            r#""SS""#,
+            r#""S""#,
+        ),
+        (
+            "unicode_lower_to_string",
+            r#"'İ'.to_lowercase().to_string()"#,
+            r#""i\u{307}""#,
+            r#""i""#,
+        ),
+        (
+            "ascii_upper_non_ascii_noop",
+            r#"'é'.to_ascii_uppercase()"#,
+            r#"'é'"#,
+            r#"'É'"#,
+        ),
+    ];
+    for (label, lhs, good_rhs, bad_rhs) in method_cases {
+        let good =
+            char_method_eq_verdict(lhs, good_rhs, &format!("{label}_good")).expect("z3 present");
+        assert!(good, "{lhs} == {good_rhs} must be z3-SAT");
+        let bad =
+            char_method_eq_verdict(lhs, bad_rhs, &format!("{label}_bad")).expect("z3 present");
+        assert!(
+            !bad,
+            "{lhs} == {bad_rhs} must be z3-UNSAT as the discrimination twin"
+        );
+    }
+
+    let eq_cases = [
+        (
+            "char_from_u32_unicode",
+            "char::from_u32(0x1F600)",
+            r#"Some('\u{1f600}')"#,
+            r#"Some('\u{1f601}')"#,
+        ),
+        (
+            "core_char_from_u32_invalid",
+            "core::char::from_u32(0xD800)",
+            "None",
+            "Some('A')",
+        ),
+        ("char_cast_u32_non_ascii", r#"'é' as u32"#, "233", "234"),
+        (
+            "char_cast_u32_plane1",
+            r#"'\u{1f600}' as u32"#,
+            "128512",
+            "128513",
+        ),
+    ];
+    for (label, lhs, good_rhs, bad_rhs) in eq_cases {
+        let good =
+            char_method_eq_verdict(lhs, good_rhs, &format!("{label}_good")).expect("z3 present");
+        assert!(good, "{lhs} == {good_rhs} must be z3-SAT");
+        let bad =
+            char_method_eq_verdict(lhs, bad_rhs, &format!("{label}_bad")).expect("z3 present");
+        assert!(
+            !bad,
+            "{lhs} == {bad_rhs} must be z3-UNSAT as the discrimination twin"
+        );
+    }
+
+    let compare_good = r#"
+        #[test]
+        fn t() {
+            assert!('é' < '\u{1f600}');
+        }
+    "#;
+    let compare_bad = r#"
+        #[test]
+        fn t() {
+            assert!('é' > '\u{1f600}');
+        }
+    "#;
+    let good = single_assertion_verdict(compare_good, "unicode_char_cmp_good").expect("z3 present");
+    assert!(good, "non-ASCII char ordering good twin must be z3-SAT");
+    let bad = single_assertion_verdict(compare_bad, "unicode_char_cmp_bad").expect("z3 present");
+    assert!(!bad, "wrong non-ASCII char ordering twin must be z3-UNSAT");
+}
+
+#[test]
 fn opaque_result_ok_adaptor_is_well_sorted_with_reflexive_teeth() {
     let good = r#"
         #[test]
