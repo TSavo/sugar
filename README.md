@@ -71,6 +71,35 @@ That is the vision. Not "we prove your code is correct." **We make software
 honest** — it can no longer claim more than it can prove, and it can no longer
 hide what it never swore.
 
+## Why a contract beats a test
+
+A test is a sample. It runs your code on the inputs you thought of, in the
+environment you ran it in, and reports that nothing broke *those* times. Pass it
+a billion times and you have a billion facts about those inputs — and not one
+fact about the input you didn't try.
+
+Add a variant to an enum: `Blue`, next to `Red` and `Green`. Every test still
+passes — they only ever used `Red` and `Green`. In a language that lets you
+write `match c { Red => …, Green => …, _ => … }`, `Blue` slips through the
+wildcard and does the wrong thing in production, and the green checkmark told you
+nothing. In a language with **exhaustive** matching, the compiler stops you at
+the diff — *non-exhaustive: you didn't handle `Blue`* — before a single test
+runs. The compiler isn't sampling inputs; it is checking a claim about the
+*whole universe* of the type. That claim is a **contract**, and a contract
+change is caught at the boundary, not in production. The test that stayed green
+was right for the wrong reason: green because the dangerous case never walked
+into the room, not because the code handles it.
+
+> **Tested says it didn't break here, now. Correct says it cannot break, anywhere.**
+
+Sugar is that exhaustiveness check, lifted from a type's *shape* to a program's
+*meaning*. It takes the contracts your code already states — its assertions —
+and proves they hold over the whole closed universe of their inputs, or refuses,
+loudly, naming exactly what it cannot account for. A passing test is an
+existence proof: *there exist* inputs on which it worked. A `.proof` is a
+universal one: *for all* inputs in the universe, it holds. The first says it
+didn't break. The second says it can't.
+
 ## Why it matters: the version lied, the behavior moved, Sugar saw it
 
 SemVer versions the *shadow*. It bumps when the bytes change and holds still when
