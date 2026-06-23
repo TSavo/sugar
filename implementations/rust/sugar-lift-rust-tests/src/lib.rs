@@ -4481,6 +4481,11 @@ pub(crate) struct TemporalScope {
     /// literal tuple/array. Reading one of these names cannot be interpreted as a text
     /// value: the binding participates, but its payload came from runtime state.
     runtime_destructured_locals: BTreeSet<String>,
+    /// Locals introduced by a tuple/slice destructure whose source has not yet been
+    /// traced to literal components. These are WORK, not dragons: they must block the
+    /// fallback `path -> Var` leaf so an untraced binding cannot become a fake
+    /// symbolic warrant, but they must also not emit a terminal runtime refusal.
+    unresolved_destructured_locals: BTreeSet<String>,
     /// A snapshot of the `macro_rules!` definitions VISIBLE at this scope (in-file +
     /// dependency-source), so a TERM-POSITION macro invocation can be EXPANDED at
     /// desugar time. The desugar-time registry hangs off `ReductionCtx`, but the thin
@@ -4550,6 +4555,7 @@ impl TemporalScope {
             let_bindings: BTreeMap::new(),
             term_bindings: BTreeMap::new(),
             runtime_destructured_locals: BTreeSet::new(),
+            unresolved_destructured_locals: BTreeSet::new(),
             macro_registry: MacroRegistry::new(),
             fn_registry: FnRegistry::new(),
             impl_value_registry: ImplValueRegistry::new(),
@@ -4710,6 +4716,8 @@ impl TemporalScope {
         );
         self.runtime_destructured_locals
             .extend(parent.runtime_destructured_locals.iter().cloned());
+        self.unresolved_destructured_locals
+            .extend(parent.unresolved_destructured_locals.iter().cloned());
         self
     }
 
@@ -4747,6 +4755,10 @@ impl TemporalScope {
 
     pub(crate) fn is_runtime_destructured_local(&self, name: &str) -> bool {
         self.runtime_destructured_locals.contains(name)
+    }
+
+    pub(crate) fn is_unresolved_destructured_local(&self, name: &str) -> bool {
+        self.unresolved_destructured_locals.contains(name)
     }
 
     pub(crate) fn temporal_rewrite_expr_for(&self, name: &str) -> Option<Expr> {
@@ -4830,23 +4842,34 @@ impl TemporalScope {
             self.let_bindings.remove(name);
             self.term_bindings.remove(name);
             self.runtime_destructured_locals.remove(name);
+            self.unresolved_destructured_locals.remove(name);
             return;
         }
         self.term_bindings.remove(name);
         self.runtime_destructured_locals.remove(name);
+        self.unresolved_destructured_locals.remove(name);
         self.let_bindings.insert(name.to_string(), rewritten);
     }
 
     pub(crate) fn record_let_term_binding(&mut self, name: &str, term: Rc<Term>) {
         self.let_bindings.remove(name);
         self.runtime_destructured_locals.remove(name);
+        self.unresolved_destructured_locals.remove(name);
         self.term_bindings.insert(name.to_string(), term);
     }
 
     fn record_runtime_destructured_binding(&mut self, name: &str) {
         self.let_bindings.remove(name);
         self.term_bindings.remove(name);
+        self.unresolved_destructured_locals.remove(name);
         self.runtime_destructured_locals.insert(name.to_string());
+    }
+
+    fn record_unresolved_destructured_binding(&mut self, name: &str) {
+        self.let_bindings.remove(name);
+        self.term_bindings.remove(name);
+        self.runtime_destructured_locals.remove(name);
+        self.unresolved_destructured_locals.insert(name.to_string());
     }
 
     fn record_temporal_rewrite_local(&mut self, local: &syn::Local) {
@@ -8095,9 +8118,19 @@ fn record_destructured_let_bindings(scope: &mut TemporalScope, pat: &Pat, init: 
         for (name, value) in bindings {
             scope.record_let_binding(&name, value);
         }
-    } else if !destructure_source_shape_matches(scope, pat, init) {
+    } else if destructure_source_shape_matches(scope, pat, init) {
+        // The destructure shape is visible in the source, but one or more leaves
+        // did not reduce to the literal floor. Leave the normal path/term
+        // machinery to handle those leaves instead of inventing a terminal
+        // verdict here; this preserves guarded EUF cases such as
+        // `let (a, b) = (elapsed_ns(), 1000)`.
+    } else if destructure_source_is_known_runtime(scope, init) {
         for name in pat_idents(pat) {
             scope.record_runtime_destructured_binding(&name);
+        }
+    } else {
+        for name in pat_idents(pat) {
+            scope.record_unresolved_destructured_binding(&name);
         }
     }
 }
@@ -8147,6 +8180,60 @@ fn destructure_shape_matches(pat: &Pat, value: &Expr) -> bool {
     }
 }
 
+fn destructure_source_is_known_runtime(scope: &TemporalScope, expr: &Expr) -> bool {
+    destructure_source_is_known_runtime_inner(scope, expr, 0)
+}
+
+fn destructure_source_is_known_runtime_inner(
+    scope: &TemporalScope,
+    expr: &Expr,
+    depth: usize,
+) -> bool {
+    const MAX_DEPTH: usize = 16;
+    if depth > MAX_DEPTH {
+        return false;
+    }
+    match expr {
+        Expr::Paren(paren) => {
+            destructure_source_is_known_runtime_inner(scope, &paren.expr, depth + 1)
+        }
+        Expr::Group(group) => {
+            destructure_source_is_known_runtime_inner(scope, &group.expr, depth + 1)
+        }
+        Expr::Reference(reference) if reference.mutability.is_none() => {
+            destructure_source_is_known_runtime_inner(scope, &reference.expr, depth + 1)
+        }
+        Expr::MethodCall(call) if call.method == "unwrap" && call.args.is_empty() => {
+            destructure_source_is_known_runtime_inner(scope, &call.receiver, depth + 1)
+        }
+        Expr::MethodCall(call)
+            if is_known_slice_destructure_method(call.method.to_string().as_str()) =>
+        {
+            static_literal_slice_elems(scope, &call.receiver, depth + 1).is_none()
+        }
+        Expr::Call(call) if is_bare_runtime_destructure_call(call) => true,
+        Expr::Path(path) if path.qself.is_none() => {
+            if let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) {
+                if let Some(init) = destructure_binding_expr(scope, &name) {
+                    return destructure_source_is_known_runtime_inner(scope, &init, depth + 1);
+                }
+            }
+            if let Some(init) = scope.const_expr_for_path(&path.path) {
+                return destructure_source_is_known_runtime_inner(scope, &init, depth + 1);
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+fn is_bare_runtime_destructure_call(call: &syn::ExprCall) -> bool {
+    matches!(
+        strip_refs_groups(&call.func),
+        Expr::Path(path) if path.qself.is_none() && path.path.get_ident().is_some()
+    )
+}
+
 fn resolve_destructure_source_expr(
     scope: &TemporalScope,
     expr: &Expr,
@@ -8167,8 +8254,8 @@ fn resolve_destructure_source_expr(
         }
         Expr::Path(path) if path.qself.is_none() => {
             if let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) {
-                if let Some(init) = scope.stable_let_binding_for_term(&name) {
-                    return resolve_destructure_source_expr(scope, init, depth + 1);
+                if let Some(init) = destructure_binding_expr(scope, &name) {
+                    return resolve_destructure_source_expr(scope, &init, depth + 1);
                 }
             }
             let init = scope.const_expr_for_path(&path.path)?;
@@ -8267,6 +8354,26 @@ fn collect_literal_slice_pattern_bindings(
     true
 }
 
+fn is_known_slice_destructure_method(method: &str) -> bool {
+    matches!(
+        method,
+        "split_at"
+            | "split_at_mut"
+            | "split_array_ref"
+            | "split_array_mut"
+            | "rsplit_array_ref"
+            | "rsplit_array_mut"
+            | "split_first_chunk"
+            | "split_first_chunk_mut"
+            | "split_last_chunk"
+            | "split_last_chunk_mut"
+            | "as_chunks"
+            | "as_chunks_mut"
+            | "as_rchunks"
+            | "as_rchunks_mut"
+    )
+}
+
 fn resolve_known_slice_destructure_method(
     scope: &TemporalScope,
     call: &ExprMethodCall,
@@ -8289,7 +8396,7 @@ fn resolve_known_slice_destructure_method(
                 ])
             })
         }
-        "split_first_chunk" | "split_first_chunk_mut" => {
+        "split_array_ref" | "split_array_mut" | "split_first_chunk" | "split_first_chunk_mut" => {
             let n = turbofish_const_usize(scope, call)?;
             (n <= elems.len()).then(|| {
                 tuple_expr(vec![
@@ -8298,7 +8405,7 @@ fn resolve_known_slice_destructure_method(
                 ])
             })
         }
-        "split_last_chunk" | "split_last_chunk_mut" => {
+        "rsplit_array_ref" | "rsplit_array_mut" | "split_last_chunk" | "split_last_chunk_mut" => {
             let n = turbofish_const_usize(scope, call)?;
             (n <= elems.len()).then(|| {
                 let split = elems.len() - n;
@@ -8372,8 +8479,8 @@ fn static_literal_slice_elems(
         }
         Expr::Path(path) if path.qself.is_none() => {
             if let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) {
-                if let Some(init) = scope.stable_let_binding_for_term(&name) {
-                    return static_literal_slice_elems(scope, init, depth + 1);
+                if let Some(init) = destructure_binding_expr(scope, &name) {
+                    return static_literal_slice_elems(scope, &init, depth + 1);
                 }
             }
             let init = scope.const_expr_for_path(&path.path)?;
@@ -8403,6 +8510,13 @@ fn static_slice_bounds(scope: &TemporalScope, expr: &Expr, len: usize) -> Option
 
 fn const_slice_index(scope: &TemporalScope, expr: &Expr) -> Option<usize> {
     usize::try_from(const_len_value_in_scope(expr, scope, 0)?).ok()
+}
+
+fn destructure_binding_expr(scope: &TemporalScope, name: &str) -> Option<Expr> {
+    scope
+        .stable_let_binding_for_term(name)
+        .cloned()
+        .or_else(|| scope.temporal_rewrite_expr_for(name))
 }
 
 fn const_usize_arg(scope: &TemporalScope, expr: &Expr) -> Option<usize> {
@@ -8443,8 +8557,8 @@ fn resolve_destructure_definiens(scope: &TemporalScope, expr: &Expr, depth: usiz
         }
         Expr::Path(path) if path.qself.is_none() => {
             if let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) {
-                if let Some(init) = scope.stable_let_binding_for_term(&name) {
-                    return resolve_destructure_definiens(scope, init, depth + 1);
+                if let Some(init) = destructure_binding_expr(scope, &name) {
+                    return resolve_destructure_definiens(scope, &init, depth + 1);
                 }
             }
             let init = scope.const_expr_for_path(&path.path)?;
@@ -8496,8 +8610,8 @@ fn resolve_destructure_literal_leaf(
         }
         Expr::Path(path) if path.qself.is_none() => {
             if let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) {
-                if let Some(init) = scope.stable_let_binding_for_term(&name) {
-                    return resolve_destructure_literal_leaf(scope, init, depth + 1);
+                if let Some(init) = destructure_binding_expr(scope, &name) {
+                    return resolve_destructure_literal_leaf(scope, &init, depth + 1);
                 }
             }
             let init = scope.const_expr_for_path(&path.path)?;
