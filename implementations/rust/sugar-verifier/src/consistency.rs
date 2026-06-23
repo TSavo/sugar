@@ -1129,6 +1129,7 @@ fn collect_ambient_foralls(inv: &Json, out: &mut Vec<Json>) {
 
 #[derive(Debug, Clone)]
 struct AmbientGroundCallsiteFact {
+    scope: Option<String>,
     term_key: String,
     fact: Json,
 }
@@ -1138,14 +1139,20 @@ struct AmbientGroundCallsiteFact {
 /// still in the pool's shared callsite vocabulary and must constrain sibling
 /// `#euf#` obligations about the same concrete call. We collect only ground
 /// equalities whose subject is a `call:*` ctor; local variables and non-call
-/// helper ctors never travel.
-fn collect_ambient_ground_callsite_facts(inv: &Json, out: &mut Vec<AmbientGroundCallsiteFact>) {
+/// helper ctors never travel. Unlike closed universals, these are finite replay
+/// facts from one assertion context, so they are scoped to that context and do
+/// not pool across independent consumers that happen to name the same callsite.
+fn collect_ambient_ground_callsite_facts(
+    inv: &Json,
+    scope: &Option<String>,
+    out: &mut Vec<AmbientGroundCallsiteFact>,
+) {
     match inv.get("kind").and_then(|k| k.as_str()) {
         Some("forall") | Some("exists") => {}
         Some("and") => {
             if let Some(ops) = inv.get("operands").and_then(|v| v.as_array()) {
                 for op in ops {
-                    collect_ambient_ground_callsite_facts(op, out);
+                    collect_ambient_ground_callsite_facts(op, scope, out);
                 }
             }
         }
@@ -1154,7 +1161,7 @@ fn collect_ambient_ground_callsite_facts(inv: &Json, out: &mut Vec<AmbientGround
                 return;
             };
             if ops.len() == 2 && eval_ground_bool(&ops[0]) == Some(true) {
-                collect_ambient_ground_callsite_facts(&ops[1], out);
+                collect_ambient_ground_callsite_facts(&ops[1], scope, out);
             }
         }
         Some("atomic") if inv.get("name").and_then(|v| v.as_str()) == Some("=") => {
@@ -1165,6 +1172,7 @@ fn collect_ambient_ground_callsite_facts(inv: &Json, out: &mut Vec<AmbientGround
                 return;
             };
             out.push(AmbientGroundCallsiteFact {
+                scope: scope.clone(),
                 term_key,
                 fact: inv.clone(),
             });
@@ -1186,6 +1194,18 @@ fn ground_callsite_term_key(term: &Json) -> Option<String> {
         return None;
     }
     libsugar::canonical::json_jcs(&federate_primitive_sorts(term)).ok()
+}
+
+fn ambient_ground_callsite_scope(property_name: &str) -> Option<String> {
+    if let Some((prefix, _)) = property_name.split_once("#euf#") {
+        return Some(
+            prefix
+                .rsplit_once("::")
+                .map(|(scope, _callee)| scope.to_string())
+                .unwrap_or_else(|| prefix.to_string()),
+        );
+    }
+    None
 }
 
 /// True if every `var` occurrence in the formula/term tree is bound by an
@@ -1539,9 +1559,9 @@ fn with_ambient_foralls(inv: Json, property_name: &str, ambient: &[Json]) -> Jso
 /// This is the finite-replay twin of `with_ambient_foralls`: a replayed literal
 /// loop has already named the concrete calls (`call:g(0)`, `call:g(1)`, ...), so
 /// only facts whose subject exactly appears in the current obligation are
-/// relevant. Bare names still receive nothing; two unrelated tests can share
-/// local spellings, but they cannot share a content-keyed `#euf#` callsite
-/// accidentally.
+/// relevant. Bare names still receive nothing, and callsite-keyed obligations
+/// receive only facts from the same source/test scope; two independent consumers
+/// can share a structural `call:*` term without pooling their asserted values.
 fn with_ambient_ground_callsite_facts(
     inv: Json,
     property_name: &str,
@@ -1560,10 +1580,18 @@ fn with_ambient_ground_callsite_facts(
     if wanted.is_empty() {
         return inv;
     }
+    let obligation_scope = ambient_ground_callsite_scope(property_name);
 
     let mut seen = std::collections::BTreeSet::new();
     let mut facts = Vec::new();
     for fact in ambient {
+        if fact
+            .scope
+            .as_ref()
+            .is_some_and(|scope| Some(scope) != obligation_scope.as_ref())
+        {
+            continue;
+        }
         if !wanted.contains(&fact.term_key) {
             continue;
         }
@@ -1832,20 +1860,26 @@ pub fn verify_consistency(
         if is_witness_member(body) {
             continue;
         }
+        let contract_name = body
+            .get("name")
+            .and_then(|v| v.as_str())
+            .or_else(|| body.get("contractName").and_then(|v| v.as_str()))
+            .unwrap_or("<unnamed>");
         if let Some(inv) = body.get("inv") {
             let inv = canonicalize_formula_json(inv);
             let before = ambient_foralls.len();
             collect_ambient_foralls(&inv, &mut ambient_foralls);
             let found = ambient_foralls.len() - before;
-            collect_ambient_ground_callsite_facts(&inv, &mut ambient_ground_callsite_facts);
+            let ground_scope = ambient_ground_callsite_scope(contract_name);
+            collect_ambient_ground_callsite_facts(
+                &inv,
+                &ground_scope,
+                &mut ambient_ground_callsite_facts,
+            );
             if found > 0 {
                 debug!(
                     cid = cid.as_str(),
-                    contract = body
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .or_else(|| body.get("contractName").and_then(|v| v.as_str()))
-                        .unwrap_or("<unnamed>"),
+                    contract = contract_name,
                     foralls = found,
                     inv_kind = inv.get("kind").and_then(|k| k.as_str()).unwrap_or("?"),
                     "verifier/ambient: collected universal(s) from contract inv"
@@ -2752,7 +2786,7 @@ mod tests {
         insert_contract(
             &mut pool,
             "blake3-512:point-ground",
-            "g#euf#c:callresult_g_a1(i:2)::assertion",
+            "src/lib.rs::tests::t::g#euf#c:callresult_g_a1(i:2)::assertion",
             point_inv,
         );
         let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
@@ -2774,6 +2808,53 @@ mod tests {
             loop_row.verdict,
             ObligationVerdict::Discharged,
             "the replayed loop facts alone are consistent: {res:?}"
+        );
+    }
+
+    #[test]
+    fn ambient_ground_callsite_facts_do_not_cross_consumer_scopes() {
+        let (plan, reg) = z3_plan_and_registry();
+        let callg = |arg: Json| json!({"kind":"ctor","name":"call:g","args":[arg]});
+
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:consumer-a-point",
+            "src/lib.rs::tests::consumer_a::g#euf#c:callresult_g_a1(i:2)::assertion",
+            json!({"kind":"and","operands":[eqf(callg(int(2)), int(1))]}),
+        );
+        insert_contract(
+            &mut pool,
+            "blake3-512:consumer-b-point",
+            "src/lib.rs::tests::consumer_b::g#euf#c:callresult_g_a1(i:2)::assertion",
+            json!({"kind":"and","operands":[eqf(callg(int(2)), int(2))]}),
+        );
+        insert_contract(
+            &mut pool,
+            "blake3-512:consumer-c-point",
+            "src/lib.rs::tests::consumer_c::g#euf#c:callresult_g_a1(i:2)::assertion",
+            json!({"kind":"and","operands":[eqf(callg(int(2)), int(2))]}),
+        );
+
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        assert_eq!(res.len(), 3, "three separate obligations: {res:?}");
+        let consumer_a = res
+            .iter()
+            .find(|r| r.contract_cid == "blake3-512:consumer-a-point")
+            .expect("consumer A point row present");
+        assert_eq!(
+            consumer_a.verdict,
+            ObligationVerdict::Discharged,
+            "consumer A's point assertion must not pool into other consumer scopes: {res:?}"
+        );
+        let consumer_b = res
+            .iter()
+            .find(|r| r.contract_cid == "blake3-512:consumer-b-point")
+            .expect("consumer B point row present");
+        assert_eq!(
+            consumer_b.verdict,
+            ObligationVerdict::Discharged,
+            "consumer B must not see consumer A's different value for the same structural callsite: {res:?}"
         );
     }
 
