@@ -145,12 +145,54 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         return None;
     };
     let terminal = recognize_terminal(call)?;
+    if !recognized_receiver_is_static_sequence(call, &terminal, fcx) {
+        return None;
+    }
     Some(Box::new(IterTerminalSugar {
         terminal,
         inner: (*call.receiver).clone(),
         fallback: expr.clone(),
         let_inits: capture_let_inits(fcx),
     }))
+}
+
+fn recognized_receiver_is_static_sequence(
+    call: &syn::ExprMethodCall,
+    terminal: &Terminal,
+    fcx: &SugarBuildCtx,
+) -> bool {
+    if let Terminal::Fold(_, closure) = terminal {
+        if !fold_terminal_body_is_value_only(closure) {
+            return false;
+        }
+    }
+    recognizes_scan_inner(&call.receiver, fcx)
+        || method_family::resolves_literal_sequence(&call.receiver, fcx.let_inits())
+        || receiver_has_static_sequence_len(&call.receiver, fcx, 0)
+}
+
+fn receiver_has_static_sequence_len(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    method_family::literal_sequence_static_len_in_scope(expr, fcx.let_inits(), fcx.scope())
+        .is_some()
+        || method_family::literal_collection_adapter_static_len_in_scope(
+            expr,
+            fcx.let_inits(),
+            fcx.scope(),
+        )
+        .is_some()
+        || simple_path_name(expr)
+            .and_then(|name| fcx.scope().temporal_rewrite_expr_for(&name))
+            .is_some_and(|current| receiver_has_static_sequence_len(&current, fcx, depth + 1))
+}
+
+fn fold_terminal_body_is_value_only(closure: &syn::ExprClosure) -> bool {
+    match strip_refs_groups(&closure.body) {
+        Expr::Block(block) => matches!(block.block.stmts.as_slice(), [Stmt::Expr(_, None)]),
+        _ => true,
+    }
 }
 
 pub(crate) fn recognizes_monadic_terminal(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
