@@ -84,7 +84,7 @@ impl Sugar for FlatMapRecognizedSugar {
                 let value = elem.value.as_ref()?;
                 let sub = const_eval_flat_map_closure(&self.f, value)?;
                 let total = out.len().checked_add(sub.len())?;
-                if total as i64 > SUGAR_SEQ_CAP {
+                if total > SUGAR_SEQ_CAP as usize {
                     return None;
                 }
                 for v in sub {
@@ -116,7 +116,7 @@ impl Sugar for FlatMapSugar {
                 let value = elem.value.as_ref()?;
                 let sub = const_eval_flat_map_closure(&self.f, value)?;
                 let total = out.len().checked_add(sub.len())?;
-                if total as i64 > SUGAR_SEQ_CAP {
+                if total > SUGAR_SEQ_CAP as usize {
                     return None;
                 }
                 for v in sub {

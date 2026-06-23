@@ -105,7 +105,7 @@ impl LiteralSugar {
             let seq: Vec<DesugaredElem> = match domain {
                 BoundedDomain::Array(_) => match strip_refs_groups(&self.base) {
                     Expr::Array(arr) => {
-                        if arr.elems.len() as i64 > SUGAR_SEQ_CAP {
+                        if arr.elems.len() > SUGAR_SEQ_CAP as usize {
                             return None;
                         }
                         arr.elems
@@ -231,7 +231,7 @@ fn classify_unwarrantable_literal(base: &Expr) -> Option<&'static str> {
             if arr.elems.is_empty() {
                 // `[]` -- zero iterations, vacuously true; no twin can refute (no teeth).
                 Some(EMPTY_DOMAIN_REASON)
-            } else if arr.elems.len() as i64 > SUGAR_SEQ_CAP {
+            } else if arr.elems.len() > SUGAR_SEQ_CAP as usize {
                 Some(OVERSIZE_DOMAIN_REASON)
             } else {
                 // A non-empty, in-cap array that DECLINED can only have an element the term

@@ -152,7 +152,7 @@ where
     F: FnMut() -> Option<DesugaredElem>,
 {
     let out_len = seq.len().checked_mul(2)?.checked_sub(1)?;
-    if out_len as i64 > SUGAR_SEQ_CAP {
+    if out_len > SUGAR_SEQ_CAP as usize {
         return None;
     }
     let mut out = Vec::with_capacity(out_len);

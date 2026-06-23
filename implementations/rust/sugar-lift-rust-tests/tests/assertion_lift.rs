@@ -4920,6 +4920,32 @@ fn runtime_len_array_repeat_bool_equality_refuses_with_named_boundary() {
     );
 }
 
+#[test]
+fn primitive_max_array_repeat_length_refuses_without_allocating() {
+    let src = r#"
+        #[test]
+        fn t_primitive_max_repeat_bool_eq() {
+            assert!([5; usize::MAX] == [5]);
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/repeat/primitive_max_repeat_bool_eq.rs",
+    );
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "over-cap primitive repeat must not allocate or lift: {:?}",
+        out.decls
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("array-repeat length runtime, not const")),
+        "over-cap primitive repeat must terminate as the array-repeat refusal: {:?}",
+        out.skip_reasons
+    );
+}
+
 // LEVER H finite-or-refuse (discrimination): a const-GENERIC length `[7; N]` is NOT a
 // concrete in-scope const (it has no registry initializer), so `repeat_count_in_scope`
 // declines and the index stays the symbolic `index(..)` ctor -- a wrong-expected read must

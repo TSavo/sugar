@@ -20,7 +20,7 @@ use crate::sugar::monadic::{is_grounded_literal_term, RES_OK};
 use crate::{
     callsite_assertion_name, parse_macro_args, path_to_variant_string, repeat_count_in_scope,
     strip_refs_groups, token_key, AssertionFactKind, Desugared, Effect, Outcome, RelationOp, Sugar,
-    SugarCtx, Warrant,
+    SugarCtx, Warrant, SUGAR_SEQ_CAP,
 };
 
 pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim =
@@ -186,9 +186,24 @@ fn aggregate_components(
                     boundary: token_key(expr),
                 }));
             };
+            if count > SUGAR_SEQ_CAP as usize {
+                return Err(Outcome::Hit(Effect::ArrayRepeat {
+                    boundary: token_key(expr),
+                }));
+            }
             let mut elem = Vec::new();
             append_expr_components(&mut elem, &repeat.expr, fcx, ctx, seen)?;
-            let mut out = Vec::with_capacity(elem.len() * count);
+            let Some(total) = elem.len().checked_mul(count) else {
+                return Err(Outcome::Hit(Effect::ArrayRepeat {
+                    boundary: token_key(expr),
+                }));
+            };
+            if total > SUGAR_SEQ_CAP as usize {
+                return Err(Outcome::Hit(Effect::ArrayRepeat {
+                    boundary: token_key(expr),
+                }));
+            }
+            let mut out = Vec::with_capacity(total);
             for _ in 0..count {
                 out.extend(elem.iter().cloned());
             }

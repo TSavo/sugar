@@ -7092,7 +7092,7 @@ fn enumerate_int_range_prefix(
         // Unbounded `a..`: finite only when an outer `.take` supplies the bound.
         None => limit?,
     };
-    if count as i64 > SUGAR_SEQ_CAP {
+    if count > SUGAR_SEQ_CAP as usize {
         return None;
     }
     let mut out = Vec::with_capacity(count);
@@ -8332,7 +8332,7 @@ fn static_literal_slice_elems(
             .collect(),
         Expr::Repeat(repeat) => {
             let count = repeat_count_in_scope(&repeat.len, scope)?;
-            if count as i64 > SUGAR_SEQ_CAP {
+            if count > SUGAR_SEQ_CAP as usize {
                 return None;
             }
             let elem = resolve_destructure_definiens(scope, &repeat.expr, depth + 1)?;
@@ -8442,7 +8442,7 @@ fn literal_destructure_array_elems(scope: &TemporalScope, expr: &Expr) -> Option
             .collect(),
         Expr::Repeat(repeat) => {
             let count = repeat_count_in_scope(&repeat.len, scope)?;
-            if count as i64 > SUGAR_SEQ_CAP {
+            if count > SUGAR_SEQ_CAP as usize {
                 return None;
             }
             let elem = resolve_destructure_literal_leaf(scope, &repeat.expr, 0)?;

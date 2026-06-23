@@ -52,7 +52,7 @@ impl Sugar for FlattenSugar {
                     .dug()?
                     .into_seq()?;
                 let total = out.len().checked_add(sub.len())?;
-                if total as i64 > SUGAR_SEQ_CAP {
+                if total > SUGAR_SEQ_CAP as usize {
                     return None;
                 }
                 out.extend(sub);
