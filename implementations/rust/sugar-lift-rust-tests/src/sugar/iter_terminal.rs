@@ -97,8 +97,12 @@ enum Terminal {
     Count,
     /// `.next()` -- the element at position 0 (or `None` for the empty Seq).
     Next,
+    /// `.next_back()` -- the element at the final position (or `None` for the empty Seq).
+    NextBack,
     /// `.nth(k)` -- the element at position `k` (or `None` past the end).
     Nth(usize),
+    /// `.nth_back(k)` -- the element `k` from the back (or `None` past the end).
+    NthBack(usize),
     /// `.last()` -- the element at position `len-1` (or `None` for the empty Seq).
     Last,
     /// `.min()` -- the minimum int element wrapped in `Some` (the empty Seq, which the
@@ -160,7 +164,11 @@ pub(crate) fn recognizes_monadic_terminal(expr: &Expr, fcx: &SugarBuildCtx) -> b
     let Some(terminal) = recognize_terminal(call) else {
         return false;
     };
-    if !matches!(terminal, Terminal::Next) || !stable_next_snapshot_receiver(&call.receiver, fcx, 0)
+    let stable_receiver = stable_next_snapshot_receiver(&call.receiver, fcx, 0);
+    if !matches!(
+        terminal,
+        Terminal::Next | Terminal::NextBack | Terminal::Nth(_) | Terminal::NthBack(_)
+    ) || !stable_receiver
     {
         return false;
     }
@@ -171,7 +179,9 @@ pub(crate) fn recognizes_monadic_terminal(expr: &Expr, fcx: &SugarBuildCtx) -> b
             return false;
         }
     }
-    recognizes_scan_inner(&call.receiver, fcx) || has_composite(&call.receiver, fcx)
+    stable_receiver
+        || recognizes_scan_inner(&call.receiver, fcx)
+        || has_composite(&call.receiver, fcx)
 }
 
 fn stable_next_snapshot_receiver(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
@@ -204,7 +214,24 @@ fn stable_next_snapshot_receiver(expr: &Expr, fcx: &SugarBuildCtx, depth: usize)
             is_into_iter && stable_next_snapshot_receiver(&call.args[0], fcx, depth + 1)
         }
         Expr::Path(_) => simple_path_name(expr)
-            .and_then(|name| fcx.scope().temporal_rewrite_expr_for(&name))
+            .and_then(|name| {
+                if let Some(current) = fcx.scope().temporal_rewrite_expr_for(&name) {
+                    return Some(current);
+                }
+                if fcx
+                    .scope()
+                    .unknown_iterator_consumption_reason(&name)
+                    .is_some()
+                    || fcx.scope().is_consumed_iterator_local(&name)
+                {
+                    return None;
+                }
+                fcx.let_inits()
+                    .get(&name)
+                    .copied()
+                    .or_else(|| fcx.scope().stable_let_binding_for_term(&name))
+                    .cloned()
+            })
             .is_some_and(|current| stable_next_snapshot_receiver(&current, fcx, depth + 1)),
         _ => false,
     }
@@ -218,6 +245,7 @@ fn recognize_terminal(call: &syn::ExprMethodCall) -> Option<Terminal> {
         "product" if call.args.is_empty() => Terminal::Product,
         "count" if call.args.is_empty() => Terminal::Count,
         "next" if call.args.is_empty() => Terminal::Next,
+        "next_back" if call.args.is_empty() => Terminal::NextBack,
         "last" if call.args.is_empty() => Terminal::Last,
         "min" if call.args.is_empty() => Terminal::Min,
         "max" if call.args.is_empty() => Terminal::Max,
@@ -234,6 +262,18 @@ fn recognize_terminal(call: &syn::ExprMethodCall) -> Option<Terminal> {
             let k = parse_int_lit(k).ok()?;
             let k = usize::try_from(k).ok()?;
             Terminal::Nth(k)
+        }
+        "nth_back" if call.args.len() == 1 => {
+            let Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Int(k),
+                ..
+            }) = strip_refs_groups(&call.args[0])
+            else {
+                return None;
+            };
+            let k = parse_int_lit(k).ok()?;
+            let k = usize::try_from(k).ok()?;
+            Terminal::NthBack(k)
         }
         // The closure-bearing predicate terminals take exactly one CLOSURE arg. A
         // non-closure arg (a fn path, a partially-applied predicate) is NOT recognized
@@ -399,6 +439,7 @@ impl IterTerminalSugar {
             }
         }
         let inner = crate::sugar::scan::try_build_scan_inner(&self.inner, &fcx)
+            .or_else(|| method_family::build_literal_sequence_composite(&self.inner, &fcx))
             .unwrap_or_else(|| build_composite(&self.inner, &fcx));
         let seq = match inner.desugar(ctx) {
             Outcome::Dug(d) => match d.into_seq() {
@@ -523,23 +564,33 @@ impl IterTerminalSugar {
             if matches!(self.terminal, Terminal::Count) {
                 return Some(Desugared::Term(num(seq.len() as i128)));
             }
-            // POSITIONAL terminals (`.next()`/`.nth(k)`/`.last()`): index the literal Seq and
-            // GROUND to a `MonadicSugar` `Some(element)` / `None` (the ADT-backed `opt:some`/
-            // `opt:none` ctor). An in-range element must be an EXACT integer const (the ADT
-            // field sort is `Int`); a non-int element bails to the opaque fallback (never a
-            // guessed value). An out-of-range index grounds to the structural `None`.
-            if let Some(idx) = match &self.terminal {
-                Terminal::Next => Some(0usize),
-                Terminal::Nth(k) => Some(*k),
-                Terminal::Last => seq.len().checked_sub(1),
+            // POSITIONAL terminals (`.next()`/`.next_back()`/`.nth(k)`/`.nth_back(k)`/
+            // `.last()`): index the literal Seq and GROUND to a `MonadicSugar`
+            // `Some(element)` / `None` (the ADT-backed `opt:some`/`opt:none` ctor). An
+            // in-range element must be an EXACT integer const (the ADT field sort is
+            // `Int`); a non-int element bails to the opaque fallback (never a guessed
+            // value). An out-of-range index grounds to the structural `None`.
+            let positional_idx = match &self.terminal {
+                Terminal::Next => Some(Some(0usize)),
+                Terminal::NextBack => Some(seq.len().checked_sub(1)),
+                Terminal::Nth(k) => Some(Some(*k)),
+                Terminal::NthBack(k) => {
+                    let Some(offset) = k.checked_add(1) else {
+                        return Some(Desugared::Term(monadic::none_term()));
+                    };
+                    Some(seq.len().checked_sub(offset))
+                }
+                Terminal::Last => Some(seq.len().checked_sub(1)),
                 _ => None,
-            } {
-                return Some(match seq.get(idx) {
+            };
+            if let Some(idx) = positional_idx {
+                return Some(match idx.and_then(|idx| seq.get(idx)) {
                     Some(elem) => {
                         let n = elem.value.as_ref().and_then(ConstVal::as_int)?;
                         Desugared::Term(monadic::some_term(num(n)))
                     }
-                    // Past the end (or `.last()` on the empty Seq) -- the value IS `None`.
+                    // Past the end (or `.last()` / `.next_back()` on the empty Seq) -- the
+                    // value IS `None`.
                     None => Desugared::Term(monadic::none_term()),
                 });
             }

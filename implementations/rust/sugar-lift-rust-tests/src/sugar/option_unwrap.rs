@@ -13,6 +13,7 @@ use tracing::debug;
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::format::stable_let_bindings;
+use crate::sugar::method;
 use crate::sugar::monadic::{is_grounded_literal_term, OPT_NONE, OPT_SOME, RES_ERR, RES_OK};
 use crate::sugar::nonzero::is_nonzero_new_call;
 use crate::{strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
@@ -34,12 +35,10 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if method == "expect" && call.args.len() != 1 {
         return None;
     }
-    if !receiver_resolves_monadic_source(&call.receiver, fcx, 0) {
-        return None;
-    }
     Some(Box::new(OptionUnwrapSugar {
         method,
         receiver: (*call.receiver).clone(),
+        fallback: expr.clone(),
         let_inits: capture_let_inits(fcx),
     }))
 }
@@ -47,6 +46,7 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
 struct OptionUnwrapSugar {
     method: String,
     receiver: Expr,
+    fallback: Expr,
     let_inits: BTreeMap<String, Expr>,
 }
 
@@ -100,7 +100,9 @@ impl Sugar for OptionUnwrapSugar {
                     self.method
                 ),
             }),
-            None => Outcome::from_opt(None),
+            None => method::recognize(&self.fallback, &fcx)
+                .map(|fallback| fallback.desugar(ctx))
+                .unwrap_or_else(|| Outcome::from_opt(None)),
         }
     }
 }

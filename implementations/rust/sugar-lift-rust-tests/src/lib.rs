@@ -5552,9 +5552,25 @@ fn peel_fold_adaptors_inner<'a>(
                         }
                         Box::new(move |inner| Box::new(sugar::step_by::StepBySugar { inner, n }))
                     }
-                    // `.flatten()`: concatenate each element's own finite literal
-                    // sub-sequence (exact-or-refuse inside `FlattenSugar::desugar`).
+                    // `.map(f).flatten()` is exactly `.flat_map(f)`: the closure maps each
+                    // literal element to a finite sub-sequence (array/range), then flatten
+                    // concatenates those sub-sequences. Route through the existing
+                    // `FlatMapSugar` so range-producing closures such as `|x| x..x+3`
+                    // compose to the literal floor instead of asking scalar `MapSugar` to
+                    // materialize a range as a scalar value.
                     ("flatten", 0) => {
+                        if let Expr::MethodCall(map_call) = strip_refs_groups(&m.receiver) {
+                            if map_call.method == "map" && map_call.args.len() == 1 {
+                                if let Expr::Closure(c) = &map_call.args[0] {
+                                    let f = c.clone();
+                                    adaptors_rev.push(Box::new(move |inner| {
+                                        Box::new(sugar::flat_map::FlatMapSugar { inner, f })
+                                    }));
+                                    cur = &map_call.receiver;
+                                    continue;
+                                }
+                            }
+                        }
                         Box::new(|inner| Box::new(sugar::flatten::FlattenSugar { inner }))
                     }
                     // `.flat_map(|x| [..])`: map each element to a finite literal

@@ -798,7 +798,8 @@ fn try_from_const_path_arg_folds() {
 // NO single timeless value at the binding (`stable_let_binding` gates it), so try_from
 // must NOT resolve it to the STALE first binding. Resolving `m` to 255 here would lift
 // `try_from(255).unwrap() == 254` -> `255 == 254` -> UNSAT, REFUTING a TRUE assert (the
-// inverse cardinal sin). It must stay opaque (option_unwrap declines) -> UNDECIDED.
+// inverse cardinal sin). It must stay opaque / satisfiable rather than proving the wrong
+// ground equality.
 #[test]
 fn try_from_mut_local_arg_does_not_false_refute() {
     let src = r#"
@@ -810,15 +811,8 @@ fn try_from_mut_local_arg_does_not_false_refute() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/num/tf_mut.rs");
-    assert!(
-        !out.factory_audits
-            .iter()
-            .any(|a| a.selected == Some("option_unwrap")),
-        "a reassigned `let mut` arg must NOT fold via option_unwrap (would risk a stale-value \
-         false-refutation); audits: {:?}",
-        out.factory_audits
-    );
-    // And it must NOT have folded to a refutable ground equality on the stale 255.
+    // Lazy recognition may select `option_unwrap`; the soundness gate is at desugar:
+    // it must not fold to a refutable ground equality on the stale 255.
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_tf_mut") {
         assert!(
             sat,
@@ -852,7 +846,7 @@ fn try_from_let_bound_out_of_range_is_err_folds() {
 // resolution lane. CLAMPING it (as the destination-range table does) would give
 // `i128::MAX` -- a WRONG value -- so `try_from(u128::MAX).unwrap() == u128::MAX` would
 // lift `i128::MAX == u128::MAX` -> UNSAT -> REFUTING a true assert (inverse cardinal
-// sin). The const resolver DECLINES on overflow -> opaque -> UNDECIDED, never refutes.
+// sin). The const resolver DECLINES on overflow -> opaque/satisfiable, never refutes.
 #[test]
 fn try_from_u128_max_const_overflow_does_not_false_refute() {
     let src = r#"
@@ -862,14 +856,8 @@ fn try_from_u128_max_const_overflow_does_not_false_refute() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/num/tf_u128max.rs");
-    assert!(
-        !out.factory_audits
-            .iter()
-            .any(|a| a.selected == Some("option_unwrap")),
-        "u128::MAX overflows the i128 lane -- the const resolver must DECLINE (not clamp \
-         to i128::MAX, which would false-refute); audits: {:?}",
-        out.factory_audits
-    );
+    // Lazy recognition may select `option_unwrap`; the const resolver still must DECLINE
+    // rather than clamp `u128::MAX` into the i128 lane and false-refute a true assertion.
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "t_tf_u128max") {
         assert!(
             sat,
@@ -7552,15 +7540,15 @@ fn two_calls() {
 }
 
 #[test]
-fn literal_array_receiver_method_chain_gets_stable_euf_key() {
+fn literal_array_receiver_method_chain_composes_to_literal_with_teeth() {
     // Vendor shape: rust-src library/coretests/tests/array.rs::iterator_last.
-    let src = r#"
+    let good = r#"
 #[test]
 fn iterator_last_literal_array() {
     assert_eq!(IntoIterator::into_iter([0]).last().unwrap(), 0);
 }
 "#;
-    let out = lift_file(&parse(src), "tests/array.rs");
+    let out = lift_file(&parse(good), "tests/array.rs");
     assert_eq!(out.seen, 1);
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
     assert!(
@@ -7570,50 +7558,26 @@ fn iterator_last_literal_array() {
     );
     assert_warranted_decl_count(&out, 1);
     let decl = single_warranted_decl(&out);
-    assert_eq!(
-        decl.name,
-        "method:unwrap#euf#c:callresult_method_unwrap_a1(c:method:last(c:call:IntoIterator::into_iter(v:literal:Array(i:0))))::assertion"
-    );
-    let operands = inv_operands(decl);
-    assert_eq!(operands.len(), 1);
-    match operands[0].as_ref() {
-        Formula::Atomic { name, args } => {
-            assert_eq!(name, "=");
-            assert_eq!(args.len(), 2);
-            match args[0].as_ref() {
-                Term::Ctor { name, args } => {
-                    assert_eq!(name, "method:unwrap");
-                    assert_eq!(args.len(), 1);
-                    match args[0].as_ref() {
-                        Term::Ctor { name, args } => {
-                            assert_eq!(name, "method:last");
-                            assert_eq!(args.len(), 1);
-                            match args[0].as_ref() {
-                                Term::Ctor { name, args } => {
-                                    assert_eq!(name, "call:IntoIterator::into_iter");
-                                    assert_eq!(args.len(), 1);
-                                    match args[0].as_ref() {
-                                        Term::Var { name } => {
-                                            assert_eq!(name, "literal:Array(i:0)");
-                                        }
-                                        other => {
-                                            panic!("expected Array literal identity, got {other:?}")
-                                        }
-                                    }
-                                }
-                                other => {
-                                    panic!("expected IntoIterator::into_iter term, got {other:?}")
-                                }
-                            }
-                        }
-                        other => panic!("expected last method receiver, got {other:?}"),
-                    }
-                }
-                other => panic!("expected unwrap method term, got {other:?}"),
-            }
-            assert_scalar_const(&args[1], ExpectedScalar::Int(0));
-        }
-        other => panic!("expected equality atom, got {other:?}"),
+    let (lhs, rhs) = single_eq_atom(decl);
+    assert_eq!(int_const_value(&lhs), 0);
+    assert_eq!(int_const_value(&rhs), 0);
+    if let Some(sat) = z3_verdict(&inv_json(decl), "array_last_unwrap_good") {
+        assert!(sat, "literal last().unwrap() == 0 must be SAT");
+    }
+
+    let bad = r#"
+#[test]
+fn iterator_last_literal_array_bad() {
+    assert_eq!(IntoIterator::into_iter([0]).last().unwrap(), 1);
+}
+"#;
+    let out = lift_file(&parse(bad), "tests/array.rs");
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "array_last_unwrap_bad",
+    ) {
+        assert!(!sat, "literal last().unwrap() == 1 must be UNSAT");
     }
 }
 
@@ -27226,4 +27190,121 @@ fn test_add_wrong() {
         "discrimination twin must yield a non-reflexive pair (99 ≠ 2): \
          pairs={pairs:?}; atom={inv:?}"
     );
+}
+
+#[test]
+fn singleton_double_ended_filter_next_back_has_literal_teeth() {
+    assert_singleton_decl_verdict(
+        "let xs = [1, 2, 3, 4, 5, 6]; let mut it = xs.iter().filter(|&x| *x & 1 == 0); assert_eq!(it.next_back().unwrap(), &6);",
+        true,
+        "singleton_filter_next_back_good",
+    );
+    assert_singleton_decl_verdict(
+        "let xs = [1, 2, 3, 4, 5, 6]; let mut it = xs.iter().filter(|&x| *x & 1 == 0); assert_eq!(it.next_back().unwrap(), &5);",
+        false,
+        "singleton_filter_next_back_bad",
+    );
+}
+
+#[test]
+fn singleton_double_ended_filter_multi_advance_has_literal_teeth() {
+    let src = r#"
+        #[test]
+        fn t() {
+            let xs = [1, 2, 3, 4, 5, 6];
+            let mut it = xs.iter().filter(|&x| *x & 1 == 0);
+            assert_eq!(it.next_back().unwrap(), &6);
+            assert_eq!(it.next_back().unwrap(), &4);
+            assert_eq!(it.next().unwrap(), &2);
+            assert_eq!(it.next_back(), None);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/singleton.rs");
+    assert_eq!(
+        out.assertions_refused, 0,
+        "iterator stdlib sugar must not originate refusal: skips={:?}",
+        out.skip_reasons
+    );
+    let decl = single_warranted_decl(&out);
+    assert_eq!(
+        inv_operands(decl).len(),
+        4,
+        "multi-advance sequence should emit one grouped four-claim contract: {decl:?}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(decl), "singleton_filter_multi") {
+        assert!(sat, "multi-advance grouped contract must be SAT: {decl:?}");
+    }
+}
+
+#[test]
+fn singleton_double_ended_filter_temporal_back_back_has_literal_teeth() {
+    assert_singleton_decl_verdict(
+        "let xs = [1, 2, 3, 4, 5, 6]; let mut it = xs.iter().filter(|&x| *x & 1 == 0); let _ = it.next_back(); assert_eq!(it.next_back().unwrap(), &4);",
+        true,
+        "singleton_filter_back_back_good",
+    );
+}
+
+#[test]
+fn singleton_double_ended_filter_temporal_back_back_front_has_literal_teeth() {
+    assert_singleton_decl_verdict(
+        "let xs = [1, 2, 3, 4, 5, 6]; let mut it = xs.iter().filter(|&x| *x & 1 == 0); let _ = it.next_back(); let _ = it.next_back(); assert_eq!(it.next().unwrap(), &2);",
+        true,
+        "singleton_filter_back_back_front_good",
+    );
+}
+
+#[test]
+fn singleton_double_ended_filter_temporal_exhausted_next_back_has_literal_teeth() {
+    assert_singleton_decl_verdict(
+        "let xs = [1, 2, 3, 4, 5, 6]; let mut it = xs.iter().filter(|&x| *x & 1 == 0); let _ = it.next_back(); let _ = it.next_back(); let _ = it.next(); assert_eq!(it.next_back(), None);",
+        true,
+        "singleton_filter_exhausted_next_back_good",
+    );
+}
+
+#[test]
+fn singleton_double_ended_filter_map_next_back_has_literal_teeth() {
+    assert_singleton_decl_verdict(
+        "let xs = [1, 2, 3, 4, 5, 6]; let mut it = xs.iter().filter_map(|&x| if x & 1 == 0 { Some(x * 2) } else { None }); assert_eq!(it.next_back().unwrap(), 12);",
+        true,
+        "singleton_filter_map_next_back_good",
+    );
+    assert_singleton_decl_verdict(
+        "let xs = [1, 2, 3, 4, 5, 6]; let mut it = xs.iter().filter_map(|&x| if x & 1 == 0 { Some(x * 2) } else { None }); assert_eq!(it.next_back().unwrap(), 10);",
+        false,
+        "singleton_filter_map_next_back_bad",
+    );
+}
+
+#[test]
+fn singleton_flatten_next_back_has_literal_teeth() {
+    assert_singleton_decl_verdict(
+        "let xs = [0, 3, 6]; let mut it = xs.iter().map(|&x| x..x + 3).flatten(); assert_eq!(it.next_back(), Some(8));",
+        true,
+        "singleton_flatten_next_back_good",
+    );
+    assert_singleton_decl_verdict(
+        "let xs = [0, 3, 6]; let mut it = xs.iter().map(|&x| x..x + 3).flatten(); assert_eq!(it.next_back(), Some(7));",
+        false,
+        "singleton_flatten_next_back_bad",
+    );
+}
+
+fn assert_singleton_decl_verdict(src: &str, want_sat: bool, label: &str) {
+    let full = format!("#[test] fn t() {{ {src} }}");
+    let out = lift_file(&parse(&full), "coretests/iter/singleton.rs");
+    assert_eq!(
+        out.assertions_refused, 0,
+        "{label}: iterator stdlib sugar must not originate refusal: skips={:?}",
+        out.skip_reasons
+    );
+    assert_warranted_decl_count(&out, 1);
+    let decl = single_warranted_decl(&out);
+    if let Some(sat) = z3_verdict(&inv_json(decl), label) {
+        assert_eq!(
+            sat, want_sat,
+            "{label}: expected sat={want_sat} for `{src}`; decl={decl:?}"
+        );
+    }
 }
