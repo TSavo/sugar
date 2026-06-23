@@ -13,8 +13,9 @@ use sugar_ir_symbolic::{make_var, num, str_const, ConstValue, Sort, Term};
 use syn::{Expr, ExprClosure, GenericArgument, Type};
 use tracing::debug;
 
-use crate::sugar::factory::{build_composite, SugarBuildCtx};
+use crate::sugar::factory::{build_composite, build_term, SugarBuildCtx};
 use crate::sugar::method;
+use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::sugar::unit_path::unit_path_literal_name;
 use crate::{
@@ -120,7 +121,8 @@ impl CollectPlan {
                     )
                     .collect();
                 let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-                let base = build_composite(base_expr, &fcx);
+                let base = method_family::build_literal_sequence_composite(base_expr, &fcx)
+                    .unwrap_or_else(|| build_composite(base_expr, &fcx));
                 let seq = match base.desugar(ctx) {
                     Outcome::Dug(d) => match d.into_seq() {
                         Some(seq) => seq,
@@ -133,7 +135,7 @@ impl CollectPlan {
                 };
                 let Some(collected) = seq
                     .iter()
-                    .map(|elem| const_val_term(elem.value.as_ref()?))
+                    .map(|elem| elem_term(elem, ctx, &fcx))
                     .collect::<Option<Vec<_>>>()
                 else {
                     return Ok(None);
@@ -161,7 +163,8 @@ impl CollectPlan {
                     )
                     .collect();
                 let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-                let base = build_composite(base_expr, &fcx);
+                let base = method_family::build_literal_sequence_composite(base_expr, &fcx)
+                    .unwrap_or_else(|| build_composite(base_expr, &fcx));
                 let seq = match base.desugar(ctx) {
                     Outcome::Dug(d) => match d.into_seq() {
                         Some(seq) => seq,
@@ -391,6 +394,13 @@ fn closure_body_expr(closure: &ExprClosure) -> Option<&Expr> {
         },
         other => Some(other),
     }
+}
+
+fn elem_term(elem: &DesugaredElem, ctx: &SugarCtx, fcx: &SugarBuildCtx) -> Option<Rc<Term>> {
+    if let Some(value) = elem.value.as_ref().and_then(const_val_term) {
+        return Some(value);
+    }
+    build_term(&elem.expr, fcx).desugar(ctx).dug()?.into_term()
 }
 
 fn const_val_term(value: &ConstVal) -> Option<Rc<Term>> {

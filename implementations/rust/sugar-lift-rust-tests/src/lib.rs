@@ -111,6 +111,7 @@ pub mod sugar {
     pub mod int_pow;
     pub mod int_sqrt;
     pub mod integer_decode;
+    pub mod intersperse;
     pub mod intersperse_collect_string;
     pub mod intersperse_concat;
     pub mod ip_addr;
@@ -5692,6 +5693,18 @@ fn peel_fold_adaptors_inner<'a>(
                         }
                         _ => return None,
                     },
+                    ("intersperse", 1) => {
+                        let separator = m.args[0].clone();
+                        Box::new(move |inner| {
+                            Box::new(sugar::intersperse::IntersperseSugar { inner, separator })
+                        })
+                    }
+                    ("intersperse_with", 1) => {
+                        let separator = m.args[0].clone();
+                        Box::new(move |inner| {
+                            Box::new(sugar::intersperse::IntersperseWithSugar { inner, separator })
+                        })
+                    }
                     ("skip_while", 1) => match &m.args[0] {
                         Expr::Closure(c) => {
                             let pred = c.clone();
@@ -5716,7 +5729,14 @@ fn peel_fold_adaptors_inner<'a>(
                     }
                     ("take", 1) => {
                         let n: usize = const_int(&m.args[0])?.try_into().ok()?;
-                        Box::new(move |inner| Box::new(sugar::take::TakeSugar { inner, n }))
+                        let source = Expr::MethodCall(m.clone());
+                        Box::new(move |inner| {
+                            Box::new(sugar::take::TakeSugar {
+                                inner,
+                                n,
+                                source: Some(source),
+                            })
+                        })
                     }
                     (
                         "chunks" | "chunks_mut" | "rchunks" | "rchunks_mut" | "chunks_exact"
@@ -5758,7 +5778,14 @@ fn peel_fold_adaptors_inner<'a>(
                         if n == 0 {
                             return None;
                         }
-                        Box::new(move |inner| Box::new(sugar::step_by::StepBySugar { inner, n }))
+                        let source = Expr::MethodCall(m.clone());
+                        Box::new(move |inner| {
+                            Box::new(sugar::step_by::StepBySugar {
+                                inner,
+                                n,
+                                source: Some(source),
+                            })
+                        })
                     }
                     // `.map(f).flatten()` is exactly `.flat_map(f)`: the closure maps each
                     // literal element to a finite sub-sequence (array/range), then flatten
@@ -13581,6 +13608,8 @@ fn init_is_iterator_construction(expr: &Expr) -> bool {
                 "inspect",
                 "cycle",
                 "map_while",
+                "intersperse",
+                "intersperse_with",
             ];
             let m = mc.method.to_string();
             if ITER_SOURCES.contains(&m.as_str()) {

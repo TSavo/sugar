@@ -9,12 +9,12 @@ use syn::{Expr, ExprCall, ExprRange, GenericArgument};
 use crate::sugar::factory::{build_composite, has_composite, SugarBuildCtx};
 use crate::sugar::literal_slice;
 use crate::{
-    const_int, peel_fold_adaptors, peel_fold_adaptors_in_scope, strip_refs_groups, Sugar,
-    TemporalScope,
+    const_eval, const_int, peel_fold_adaptors, peel_fold_adaptors_in_scope, strip_refs_groups,
+    Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, TemporalScope,
 };
 
 pub(crate) fn is_literal_sequence_base(expr: &Expr) -> bool {
-    match strip_refs_groups(expr) {
+    (match strip_refs_groups(expr) {
         Expr::Array(_) | Expr::Range(_) => true,
         // A LITERAL-count repeat `[elem; N]` is a finite literal sequence (N copies of
         // elem); the `array_repeat` composite recognizer expands it. Non-literal counts
@@ -24,7 +24,7 @@ pub(crate) fn is_literal_sequence_base(expr: &Expr) -> bool {
         // Finite-collection constructors over written literals (`vec![a, b, c]`,
         // `Vec::from([a, b, c])`) construct exactly an array literal -- classified the same.
         other => crate::sugar::collection_literal::collection_literal_array(other).is_some(),
-    }
+    }) || literal_iter_call_base(expr)
 }
 
 /// Scope-aware [`is_literal_sequence_base`]: additionally treats a CONST-length repeat
@@ -36,13 +36,13 @@ pub(crate) fn is_literal_sequence_base(expr: &Expr) -> bool {
 /// the same constructive `LiteralRepeatSugar` floor (and element-wise grounding teeth) that a
 /// literal-length repeat already does.
 pub(crate) fn is_literal_sequence_base_in_scope(expr: &Expr, scope: &TemporalScope) -> bool {
-    match strip_refs_groups(expr) {
+    (match strip_refs_groups(expr) {
         Expr::Array(_) | Expr::Range(_) => true,
         Expr::Repeat(repeat) => crate::repeat_count_in_scope(&repeat.len, scope).is_some(),
         // Finite-collection constructors (`vec![..]`, `Vec::from([..])`) -- same as the
         // ctx-free classifier; recognition is purely syntactic, no scope needed.
         other => crate::sugar::collection_literal::collection_literal_array(other).is_some(),
-    }
+    }) || literal_iter_call_base(expr)
 }
 
 pub(crate) fn resolves_literal_sequence<'a>(
@@ -74,15 +74,97 @@ pub(crate) fn build_literal_sequence_composite(
     // sequence here so the constructive floor (and its element-wise teeth) is reached.
     if !is_literal_sequence_base_in_scope(&base, fcx.scope())
         && !literal_slice::is_literal_slice_base(&base, fcx.let_inits())
+        && !literal_iter_call_base(&base)
         && !has_composite(&base, fcx)
     {
         return None;
     }
-    let mut node = build_composite(&base, fcx);
+    let mut node = literal_iter_call_base(&base)
+        .then(|| {
+            Box::new(LiteralIterCallSugar {
+                source: base.clone(),
+            }) as Box<dyn Sugar>
+        })
+        .unwrap_or_else(|| build_composite(&base, fcx));
     for wrap in adaptors {
         node = wrap(node);
     }
     Some(node)
+}
+
+struct LiteralIterCallSugar {
+    source: Expr,
+}
+
+impl Sugar for LiteralIterCallSugar {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        Outcome::from_opt(literal_iter_call_sequence(&self.source).map(Desugared::Seq))
+    }
+}
+
+fn literal_iter_call_base(expr: &Expr) -> bool {
+    literal_iter_call_len_expr(expr).is_some()
+}
+
+fn literal_iter_call_sequence(expr: &Expr) -> Option<Vec<DesugaredElem>> {
+    let Expr::Call(call) = strip_refs_groups(expr) else {
+        return None;
+    };
+    match literal_iter_call_name(call)?.as_str() {
+        "empty" if call.args.is_empty() => Some(Vec::new()),
+        "once" if call.args.len() == 1 => {
+            let elem = call.args.first()?.clone();
+            let value = const_eval(&elem, &BTreeMap::new())?;
+            Some(vec![DesugaredElem {
+                expr: elem,
+                value: Some(value),
+            }])
+        }
+        _ => None,
+    }
+}
+
+fn literal_iter_call_len_expr(expr: &Expr) -> Option<usize> {
+    let Expr::Call(call) = strip_refs_groups(expr) else {
+        return None;
+    };
+    literal_iter_call_len(call)
+}
+
+fn literal_iter_call_len(call: &ExprCall) -> Option<usize> {
+    match literal_iter_call_name(call)?.as_str() {
+        "empty" if call.args.is_empty() => Some(0),
+        "once"
+            if call.args.len() == 1
+                && const_eval(call.args.first()?, &BTreeMap::new()).is_some() =>
+        {
+            Some(1)
+        }
+        _ => None,
+    }
+}
+
+fn literal_iter_call_name(call: &ExprCall) -> Option<String> {
+    let Expr::Path(path) = strip_refs_groups(&call.func) else {
+        return None;
+    };
+    path.path
+        .segments
+        .last()
+        .map(|segment| segment.ident.to_string())
+}
+
+pub(crate) fn finite_int_iter_sequence(expr: &Expr) -> Option<Vec<DesugaredElem>> {
+    crate::const_eval_finite_int_iter(expr, &BTreeMap::new(), None)?
+        .into_iter()
+        .map(|value| {
+            let expr = value.to_expr()?;
+            Some(DesugaredElem {
+                expr,
+                value: Some(value),
+            })
+        })
+        .collect()
 }
 
 #[allow(dead_code)]
@@ -134,6 +216,7 @@ fn literal_sequence_static_len_inner<'a>(
         Expr::Array(array) => Some(array.elems.len()),
         Expr::Range(range) => literal_range_len(range),
         Expr::Index(_) => literal_slice::literal_slice_len(expr, let_inits),
+        Expr::Call(call) => literal_iter_call_len(call),
         Expr::Path(path) if path.qself.is_none() => {
             let name = path.path.get_ident()?.to_string();
             let init = let_inits
@@ -153,10 +236,18 @@ fn literal_sequence_static_len_inner<'a>(
         Expr::MethodCall(call) if call.args.len() == 1 => {
             let base_len =
                 literal_sequence_static_len_inner(&call.receiver, let_inits, scope, depth + 1)?;
-            let n = usize::try_from(const_int(&call.args[0])?).ok()?;
             match call.method.to_string().as_str() {
-                "skip" => Some(base_len.saturating_sub(n)),
-                "take" => Some(base_len.min(n)),
+                "skip" => {
+                    let n = usize::try_from(const_int(&call.args[0])?).ok()?;
+                    Some(base_len.saturating_sub(n))
+                }
+                "take" => {
+                    let n = usize::try_from(const_int(&call.args[0])?).ok()?;
+                    Some(base_len.min(n))
+                }
+                "intersperse" | "intersperse_with" => {
+                    Some(base_len.checked_mul(2)?.saturating_sub(1))
+                }
                 _ => None,
             }
         }
@@ -203,6 +294,13 @@ fn literal_collection_static_len_proof_inner<'a>(
             len: literal_slice::literal_slice_len(expr, let_inits)?,
             saw_length_only_adapter: false,
         }),
+        Expr::Call(call) if literal_iter_call_len(call).is_some() => {
+            Some(StaticCollectionLenProof {
+                source: expr.clone(),
+                len: literal_iter_call_len(call)?,
+                saw_length_only_adapter: false,
+            })
+        }
         Expr::Path(path) if path.qself.is_none() => {
             let name = path.path.get_ident()?.to_string();
             if let Some(current) = scope.temporal_rewrite_expr_for(&name) {
@@ -276,17 +374,23 @@ fn literal_collection_static_len_proof_inner<'a>(
                 scope,
                 depth + 1,
             )?;
-            let n = usize::try_from(const_int(&call.args[0])?).ok()?;
             match call.method.to_string().as_str() {
                 "skip" => {
+                    let n = usize::try_from(const_int(&call.args[0])?).ok()?;
                     base.len = base.len.saturating_sub(n);
                     Some(base)
                 }
                 "take" => {
+                    let n = usize::try_from(const_int(&call.args[0])?).ok()?;
                     base.len = base.len.min(n);
                     Some(base)
                 }
+                "intersperse" | "intersperse_with" => {
+                    base.len = base.len.checked_mul(2)?.saturating_sub(1);
+                    Some(base)
+                }
                 "chunks" | "chunks_mut" | "rchunks" | "rchunks_mut" => {
+                    let n = usize::try_from(const_int(&call.args[0])?).ok()?;
                     if n == 0 {
                         return None;
                     }
@@ -295,6 +399,7 @@ fn literal_collection_static_len_proof_inner<'a>(
                     Some(base)
                 }
                 "chunks_exact" | "chunks_exact_mut" | "rchunks_exact" | "rchunks_exact_mut" => {
+                    let n = usize::try_from(const_int(&call.args[0])?).ok()?;
                     if n == 0 {
                         return None;
                     }
@@ -303,6 +408,7 @@ fn literal_collection_static_len_proof_inner<'a>(
                     Some(base)
                 }
                 "windows" => {
+                    let n = usize::try_from(const_int(&call.args[0])?).ok()?;
                     if n == 0 {
                         return None;
                     }
