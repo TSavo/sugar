@@ -190,10 +190,39 @@ fn recognized_receiver_is_static_sequence(
             return false;
         }
     }
-    recognizes_scan_inner(&call.receiver, fcx)
-        || method_family::resolves_literal_sequence(&call.receiver, fcx.let_inits())
-        || receiver_has_static_sequence_len(&call.receiver, fcx, 0)
-        || stable_monadic_terminal_receiver(&call.receiver, fcx, 0)
+    receiver_resolves_static_sequence(&call.receiver, fcx, 0)
+}
+
+fn receiver_resolves_static_sequence(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    if recognizes_scan_inner(expr, fcx)
+        || method_family::resolves_literal_sequence(expr, fcx.let_inits())
+        || receiver_has_static_sequence_len(expr, fcx, depth)
+        || stable_monadic_terminal_receiver(expr, fcx, depth)
+    {
+        return true;
+    }
+    let Some(name) = simple_path_name(expr) else {
+        return false;
+    };
+    if let Some(current) = fcx.scope().temporal_rewrite_expr_for(&name) {
+        return receiver_resolves_static_sequence(&current, fcx, depth + 1);
+    }
+    if fcx
+        .scope()
+        .unknown_iterator_consumption_reason(&name)
+        .is_some()
+        || fcx.scope().is_consumed_iterator_local(&name)
+    {
+        return false;
+    }
+    fcx.let_inits()
+        .get(&name)
+        .copied()
+        .or_else(|| fcx.scope().stable_let_binding_for_term(&name))
+        .is_some_and(|current| receiver_resolves_static_sequence(current, fcx, depth + 1))
 }
 
 fn receiver_has_static_sequence_len(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
