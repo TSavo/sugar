@@ -88,7 +88,7 @@ impl Sugar for ResultPredicateSugar {
             Err(kind) => {
                 return Outcome::Hit(Effect::Unsupported {
                     reason: format!(
-                        "Result `{}` over non-literal `{kind}` payload; refused",
+                        "runtime Option/Result payload, not literal (`{}` over `{kind}`)",
                         self.method
                     ),
                 })
@@ -163,7 +163,19 @@ fn receiver_resolves_result_source(expr: &Expr, fcx: &SugarBuildCtx, depth: usiz
             let child_fcx = fcx.with_bound_path(&name);
             receiver_resolves_result_source(init, &child_fcx, depth + 1)
         }
-        Expr::MethodCall(call) if call.method == "map" && call.args.len() == 1 => {
+        Expr::MethodCall(call) if call.method == "ok_or" && call.args.len() == 1 => {
+            crate::sugar::option_unwrap::receiver_resolves_monadic_source(
+                &call.receiver,
+                fcx,
+                depth + 1,
+            )
+        }
+        Expr::MethodCall(call)
+            if matches!(
+                call.method.to_string().as_str(),
+                "map" | "and_then" | "map_err"
+            ) =>
+        {
             receiver_resolves_result_source(&call.receiver, fcx, depth + 1)
         }
         Expr::Paren(paren) => receiver_resolves_result_source(&paren.expr, fcx, depth + 1),

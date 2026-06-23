@@ -82,7 +82,7 @@ impl Sugar for OptionUnwrapSugar {
                 if !is_grounded_literal_term(inner.as_ref()) {
                     return Outcome::Hit(Effect::Unsupported {
                         reason: format!(
-                            "monadic `{}` over non-literal payload; refused",
+                            "runtime Option/Result payload, not literal (`{}`)",
                             self.method
                         ),
                     });
@@ -149,7 +149,19 @@ pub(crate) fn receiver_resolves_monadic_source(
             let child_fcx = fcx.with_bound_path(&name);
             receiver_resolves_monadic_source(init, &child_fcx, depth + 1)
         }
-        Expr::MethodCall(call) if call.method == "map" && call.args.len() == 1 => {
+        Expr::MethodCall(call)
+            if matches!(
+                call.method.to_string().as_str(),
+                "map"
+                    | "and_then"
+                    | "filter"
+                    | "ok_or"
+                    | "map_err"
+                    | "unwrap_or_else"
+                    | "unwrap_or"
+                    | "unwrap_or_default"
+            ) =>
+        {
             receiver_resolves_monadic_source(&call.receiver, fcx, depth + 1)
         }
         Expr::Paren(paren) => receiver_resolves_monadic_source(&paren.expr, fcx, depth + 1),
