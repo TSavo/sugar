@@ -21,10 +21,10 @@
 // verdict is made, and the single LEAF owns it:
 //   * the METHOD leaf: a recognized asserting impl method body is reachable only at call time
 //     over the receiver's runtime state -> `ImplMethod`.
-// The composite makes NO check of its own: a recognized node always Hits its `ImplMethod` leaf
+// The composite makes NO check of its own: a recognized node always returns Incomplete its `ImplMethod` leaf
 // (recognition -- an asserting method -- IS the verdict's precondition). The STRUCTURAL
 // backstop (`Effect::Unsupported` with `STRUCTURAL_BACKSTOP_REASON`) is the total-but-
-// unreachable tail kept to mirror the node shape -- a `Hit` the fall-through router would
+// unreachable tail kept to mirror the node shape -- a `Incomplete` the fall-through router would
 // discard exactly as the old `None`, never a fake-refuse.
 
 use syn::{Item, ItemImpl};
@@ -61,7 +61,7 @@ impl ImplMethodSugar {
     /// METHOD leaf: a recognized asserting impl method body is reachable ONLY when the method
     /// runs, observing the receiver's RUNTIME state -- no single timeless `t` -> `ImplMethod`.
     /// Recognition (an asserting method) is this leaf's precondition, so it always fires for a
-    /// built node; it never Digs.
+    /// built node; it never completes.
     fn impl_method_effect(&self) -> Option<Effect> {
         Some(Effect::ImplMethod {
             boundary: format!("impl method `{}`", self.method),
@@ -71,14 +71,14 @@ impl ImplMethodSugar {
 
 impl Sugar for ImplMethodSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        // The composite makes NO verdict of its own: it Hits its single METHOD leaf. A built
+        // The composite makes NO verdict of its own: it returns Incomplete its single METHOD leaf. A built
         // node always names `ImplMethod` (recognition is the verdict's precondition); the
         // STRUCTURAL backstop is the total-but-unreachable tail the fall-through router would
         // discard as the old `None`.
         if let Some(effect) = self.impl_method_effect() {
-            return Outcome::Hit(effect);
+            return Outcome::Incomplete(effect);
         }
-        Outcome::Hit(Effect::Unsupported {
+        Outcome::Incomplete(Effect::Unsupported {
             reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
         })
     }

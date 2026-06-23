@@ -72,7 +72,7 @@ struct ResultTransposeCollectSugar {
 impl Sugar for ResultTransposeCollectSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         Outcome::from_opt((|| {
-            let seq = self.base.desugar(ctx).dug()?.into_seq()?;
+            let seq = self.base.desugar(ctx).complete()?.into_seq()?;
             let mut kept = Vec::new();
             for (index, elem) in seq.into_iter().enumerate() {
                 let value = elem.value.as_ref()?;

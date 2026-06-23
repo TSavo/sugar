@@ -62,18 +62,18 @@ impl Sugar for KMergeSugar {
             let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
             let outer = build_composite(&self.inner, &fcx)
                 .desugar(ctx)
-                .dug()?
+                .complete()?
                 .into_seq()?;
             let mut out = Vec::new();
             for elem in outer {
                 let sub = match build_composite(&elem.expr, &fcx).desugar(ctx) {
-                    Outcome::Dug(desugared) => desugared.into_seq()?,
-                    Outcome::Hit(Effect::Unsupported { reason })
+                    Outcome::Complete(desugared) => desugared.into_seq()?,
+                    Outcome::Incomplete(Effect::Unsupported { reason })
                         if reason == EMPTY_DOMAIN_REASON =>
                     {
                         Vec::new()
                     }
-                    Outcome::Hit(_) => return None,
+                    Outcome::Incomplete(_) => return None,
                 };
                 let total = out.len().checked_add(sub.len())?;
                 if total > SUGAR_SEQ_CAP as usize {

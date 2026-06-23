@@ -376,13 +376,13 @@ fn desugar_term_expr(
     fcx: &SugarBuildCtx,
 ) -> Result<Rc<Term>, Outcome> {
     match build_term(expr, fcx).desugar(ctx) {
-        Outcome::Dug(d) => d.into_term().ok_or_else(|| Outcome::from_opt(None)),
-        Outcome::Hit(e) => Err(Outcome::Hit(e)),
+        Outcome::Complete(d) => d.into_term().ok_or_else(|| Outcome::from_opt(None)),
+        Outcome::Incomplete(e) => Err(Outcome::Incomplete(e)),
     }
 }
 
 fn runtime_operand_hit() -> Outcome {
-    Outcome::Hit(Effect::Unsupported {
+    Outcome::Incomplete(Effect::Unsupported {
         reason: RUNTIME_OPERAND_REASON.to_string(),
     })
 }
@@ -414,7 +414,7 @@ impl Sugar for PrimitiveIntTupleProducer {
             overflow,
             "resolved primitive overflowing integer tuple producer"
         );
-        Outcome::Dug(Desugared::TupleComponents(vec![
+        Outcome::Complete(Desugared::TupleComponents(vec![
             value,
             bool_const(overflow),
         ]))
@@ -431,7 +431,7 @@ impl Sugar for PrimitiveIntSugar {
                     value,
                     "resolved primitive associated-const count_ones axiom"
                 );
-                return Outcome::Dug(Desugared::Term(num(i128::from(value))));
+                return Outcome::Complete(Desugared::Term(num(i128::from(value))));
             }
         }
 
@@ -457,7 +457,7 @@ impl Sugar for PrimitiveIntSugar {
                         value,
                         "resolved primitive u128 count_ones axiom"
                     );
-                    return Outcome::Dug(Desugared::Term(num(i128::from(value))));
+                    return Outcome::Complete(Desugared::Term(num(i128::from(value))));
                 }
                 let Some(lhs) = lhs_i128 else {
                     return Outcome::from_opt(None);
@@ -472,7 +472,7 @@ impl Sugar for PrimitiveIntSugar {
                     value,
                     "resolved primitive count_ones axiom"
                 );
-                Outcome::Dug(Desugared::Term(num(i128::from(value))))
+                Outcome::Complete(Desugared::Term(num(i128::from(value))))
             }
             Kind::ZeroCount(op) => {
                 let Some(value) = zero_count_value(lhs_i128, lhs_u128, kind_hint, *op) else {
@@ -486,7 +486,7 @@ impl Sugar for PrimitiveIntSugar {
                     value,
                     "resolved primitive zero-count integer axiom"
                 );
-                Outcome::Dug(Desugared::Term(num(i128::from(value))))
+                Outcome::Complete(Desugared::Term(num(i128::from(value))))
             }
             Kind::BitWidth => {
                 let Some(value) = bit_width_value(lhs_i128, lhs_u128) else {
@@ -500,7 +500,7 @@ impl Sugar for PrimitiveIntSugar {
                     value,
                     "resolved primitive bit_width integer axiom"
                 );
-                Outcome::Dug(Desugared::Term(num(i128::from(value))))
+                Outcome::Complete(Desugared::Term(num(i128::from(value))))
             }
             Kind::IsolateHighestOne => {
                 let Some(term) = isolate_highest_one_term(lhs_i128, lhs_u128, kind_hint) else {
@@ -513,7 +513,7 @@ impl Sugar for PrimitiveIntSugar {
                     lhs_u128 = ?lhs_u128,
                     "resolved primitive isolate_highest_one integer axiom"
                 );
-                Outcome::Dug(Desugared::Term(term))
+                Outcome::Complete(Desugared::Term(term))
             }
             Kind::IsolateLowestOne => {
                 let Some(term) = isolate_lowest_one_term(lhs_i128, lhs_u128, kind_hint) else {
@@ -526,7 +526,7 @@ impl Sugar for PrimitiveIntSugar {
                     lhs_u128 = ?lhs_u128,
                     "resolved primitive isolate_lowest_one integer axiom"
                 );
-                Outcome::Dug(Desugared::Term(term))
+                Outcome::Complete(Desugared::Term(term))
             }
             Kind::HighestOne => {
                 let Some(value) = highest_one_value(lhs_i128, lhs_u128, kind_hint) else {
@@ -540,7 +540,7 @@ impl Sugar for PrimitiveIntSugar {
                     value,
                     "resolved primitive highest_one integer axiom"
                 );
-                Outcome::Dug(Desugared::Term(num(i128::from(value))))
+                Outcome::Complete(Desugared::Term(num(i128::from(value))))
             }
             Kind::LowestOne => {
                 let Some(value) = lowest_one_value(lhs_i128, lhs_u128, kind_hint) else {
@@ -554,7 +554,7 @@ impl Sugar for PrimitiveIntSugar {
                     value,
                     "resolved primitive lowest_one integer axiom"
                 );
-                Outcome::Dug(Desugared::Term(num(i128::from(value))))
+                Outcome::Complete(Desugared::Term(num(i128::from(value))))
             }
             Kind::Min(rhs) | Kind::Max(rhs) => {
                 let rhs = match desugar_term_expr(rhs, ctx, &fcx) {
@@ -585,7 +585,7 @@ impl Sugar for PrimitiveIntSugar {
                         value = %value,
                         "resolved primitive u128 extremum axiom"
                     );
-                    return Outcome::Dug(Desugared::Term(u128_term(value)));
+                    return Outcome::Complete(Desugared::Term(u128_term(value)));
                 }
                 let Some(lhs) = lhs_i128 else {
                     return runtime_operand_hit();
@@ -606,7 +606,7 @@ impl Sugar for PrimitiveIntSugar {
                     value,
                     "resolved primitive extremum axiom"
                 );
-                Outcome::Dug(Desugared::Term(num(value)))
+                Outcome::Complete(Desugared::Term(num(value)))
             }
             Kind::Checked(op, rhs) => {
                 let rhs = match desugar_term_expr(rhs, ctx, &fcx) {
@@ -637,7 +637,7 @@ impl Sugar for PrimitiveIntSugar {
                         Some(value) => some_term(u128_term(value)),
                         None => none_term(),
                     };
-                    return Outcome::Dug(Desugared::Term(term));
+                    return Outcome::Complete(Desugared::Term(term));
                 }
                 let Some(lhs) = lhs_i128 else {
                     return Outcome::from_opt(None);
@@ -658,7 +658,7 @@ impl Sugar for PrimitiveIntSugar {
                     Some(value) => some_term(num(value)),
                     None => none_term(),
                 };
-                Outcome::Dug(Desugared::Term(term))
+                Outcome::Complete(Desugared::Term(term))
             }
             Kind::Wrapping(op, rhs) => {
                 let rhs = match desugar_term_expr(rhs, ctx, &fcx) {
@@ -676,7 +676,7 @@ impl Sugar for PrimitiveIntSugar {
                     lhs_u128 = ?lhs_u128,
                     "resolved primitive wrapping integer axiom"
                 );
-                Outcome::Dug(Desugared::Term(term))
+                Outcome::Complete(Desugared::Term(term))
             }
             Kind::Saturating(op, rhs) => {
                 let rhs = match desugar_term_expr(rhs, ctx, &fcx) {
@@ -694,7 +694,7 @@ impl Sugar for PrimitiveIntSugar {
                     lhs_u128 = ?lhs_u128,
                     "resolved primitive saturating integer axiom"
                 );
-                Outcome::Dug(Desugared::Term(term))
+                Outcome::Complete(Desugared::Term(term))
             }
             Kind::NextMultipleOf(rhs) => {
                 let rhs = match desugar_term_expr(rhs, ctx, &fcx) {
@@ -712,7 +712,7 @@ impl Sugar for PrimitiveIntSugar {
                     lhs_u128 = ?lhs_u128,
                     "resolved primitive next_multiple_of integer axiom"
                 );
-                Outcome::Dug(Desugared::Term(term))
+                Outcome::Complete(Desugared::Term(term))
             }
             Kind::Overflowing(op, rhs) => {
                 let rhs = match desugar_term_expr(rhs, ctx, &fcx) {
@@ -732,7 +732,7 @@ impl Sugar for PrimitiveIntSugar {
                     overflow,
                     "resolved primitive overflowing integer axiom"
                 );
-                Outcome::Dug(Desugared::Term(tuple_term(vec![
+                Outcome::Complete(Desugared::Term(tuple_term(vec![
                     value,
                     bool_const(overflow),
                 ])))
@@ -748,7 +748,7 @@ impl Sugar for PrimitiveIntSugar {
                         value = value.as_str(),
                         "resolved primitive float abs axiom"
                     );
-                    return Outcome::Dug(Desugared::Term(real_const(value)));
+                    return Outcome::Complete(Desugared::Term(real_const(value)));
                 }
                 let Some(term) = abs_int_term(lhs_i128, lhs_u128, kind_hint) else {
                     return Outcome::from_opt(None);
@@ -760,7 +760,7 @@ impl Sugar for PrimitiveIntSugar {
                     lhs_u128 = ?lhs_u128,
                     "resolved primitive integer abs axiom"
                 );
-                Outcome::Dug(Desugared::Term(term))
+                Outcome::Complete(Desugared::Term(term))
             }
             Kind::Signum => {
                 if let Some(value) = const_fold_real_term(&receiver) {
@@ -773,7 +773,7 @@ impl Sugar for PrimitiveIntSugar {
                         value = value.as_str(),
                         "resolved primitive float signum axiom"
                     );
-                    return Outcome::Dug(Desugared::Term(real_const(value)));
+                    return Outcome::Complete(Desugared::Term(real_const(value)));
                 }
                 let Some(value) = signum_int_value(lhs_i128, lhs_u128, kind_hint) else {
                     return Outcome::from_opt(None);
@@ -786,7 +786,7 @@ impl Sugar for PrimitiveIntSugar {
                     value,
                     "resolved primitive integer signum axiom"
                 );
-                Outcome::Dug(Desugared::Term(num(value)))
+                Outcome::Complete(Desugared::Term(num(value)))
             }
         }
     }

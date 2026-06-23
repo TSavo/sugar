@@ -61,7 +61,7 @@ impl Sugar for BoolBitwiseSugar {
         } else {
             or_(vec![left.atom, right.atom])
         };
-        Outcome::Dug(Desugared::Constraints {
+        Outcome::Complete(Desugared::Constraints {
             atom,
             n: 1,
             kind: if left.kind.is_warranted() || right.kind.is_warranted() {
@@ -84,7 +84,7 @@ struct ConstraintPayload {
 
 fn constraint_payload(node: &dyn Sugar, ctx: &SugarCtx) -> Result<ConstraintPayload, Outcome> {
     match node.desugar(ctx) {
-        Outcome::Dug(Desugared::Constraints {
+        Outcome::Complete(Desugared::Constraints {
             atom,
             kind,
             warrant,
@@ -94,10 +94,10 @@ fn constraint_payload(node: &dyn Sugar, ctx: &SugarCtx) -> Result<ConstraintPayl
             kind,
             name: warrant.name,
         }),
-        Outcome::Dug(_) => Err(Outcome::Hit(Effect::Unsupported {
+        Outcome::Complete(_) => Err(Outcome::Incomplete(Effect::Unsupported {
             reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
         })),
-        Outcome::Hit(effect) => Err(Outcome::Hit(effect)),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
 

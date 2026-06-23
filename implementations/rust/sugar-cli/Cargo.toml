@@ -32,6 +32,7 @@ sugar-ir-types = { path = "../sugar-ir-types" }
 sugar-ir-compiler = { path = "../sugar-ir-compiler" }
 sugar-ir-compiler-coq = { path = "../sugar-ir-compiler-coq" }
 sugar-ir-compiler-smt-lib = { path = "../sugar-ir-compiler-smt-lib" }
+sugar-walk = { path = "../sugar-walk" }
 syn = { workspace = true }
 
 # External.

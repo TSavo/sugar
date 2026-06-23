@@ -80,7 +80,7 @@ impl Sugar for NonZeroAssocConstSugar {
             konst = konst.as_str(),
             "resolved NonZero associated constant axiom"
         );
-        Outcome::Dug(Desugared::Term(term))
+        Outcome::Complete(Desugared::Term(term))
     }
 }
 
@@ -91,11 +91,11 @@ struct NonZeroNewSugar {
 impl Sugar for NonZeroNewSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let value = match self.value.desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
+            Outcome::Complete(d) => match d.into_term() {
                 Some(term) => term,
                 None => return Outcome::from_opt(None),
             },
-            Outcome::Hit(e) => return Outcome::Hit(e),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
         let Some(is_zero) = nonzero_scalar_is_zero(&value) else {
             return Outcome::from_opt(None);
@@ -110,7 +110,7 @@ impl Sugar for NonZeroNewSugar {
         } else {
             some_term(value)
         };
-        Outcome::Dug(Desugared::Term(term))
+        Outcome::Complete(Desugared::Term(term))
     }
 }
 
@@ -148,11 +148,11 @@ struct NonZeroGetSugar {
 impl Sugar for NonZeroGetSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let receiver = match self.receiver.desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
+            Outcome::Complete(d) => match d.into_term() {
                 Some(term) => term,
                 None => return Outcome::from_opt(None),
             },
-            Outcome::Hit(e) => return Outcome::Hit(e),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
         let Some(value) = unwrap_some(&receiver).or_else(|| {
             if term_as_int(&receiver).is_some() || const_fold_u128_term(&receiver).is_some() {
@@ -167,7 +167,7 @@ impl Sugar for NonZeroGetSugar {
             target: "sugar_lift_rust_tests::sugar::nonzero",
             "resolved NonZero::get stdlib axiom to inner literal"
         );
-        Outcome::Dug(Desugared::Term(value))
+        Outcome::Complete(Desugared::Term(value))
     }
 }
 

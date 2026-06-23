@@ -15,7 +15,7 @@
 // constructive ctor (the const-fold to a Bool literal via `const_eval`) -- that early
 // return is owned by `binop::recognize`, which builds this node only for the non-const
 // comparison tail. This node composes its two pre-built children and emits the `cmp:*`
-// ctor over their terms, propagating a child `Hit` verbatim.
+// ctor over their terms, propagating a child `Incomplete` verbatim.
 
 use std::rc::Rc;
 
@@ -37,18 +37,18 @@ pub(crate) struct CompareSugar {
 impl Sugar for CompareSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let lhs = match self.left.desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
+            Outcome::Complete(d) => match d.into_term() {
                 Some(t) => t,
                 None => return Outcome::from_opt(None),
             },
-            Outcome::Hit(e) => return Outcome::Hit(e),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
         let rhs = match self.right.desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
+            Outcome::Complete(d) => match d.into_term() {
                 Some(t) => t,
                 None => return Outcome::from_opt(None),
             },
-            Outcome::Hit(e) => return Outcome::Hit(e),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
         // Collapse-inside-out: once BOTH operands ground to concrete integers
         // (e.g. `a[0] < b[0]` over immutable literal arrays, where `IndexSugar`
@@ -68,9 +68,9 @@ impl Sugar for CompareSugar {
                 RelationOp::Gt => a > b,
                 RelationOp::Ge => a >= b,
             };
-            return Outcome::Dug(Desugared::Term(bool_const(value)));
+            return Outcome::Complete(Desugared::Term(bool_const(value)));
         }
-        Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
+        Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
             name: format!("cmp:{}", self.rel.cmp_ctor_name()),
             args: vec![lhs, rhs],
         })))
@@ -83,20 +83,20 @@ mod tests {
     use crate::Effect;
     use sugar_ir_symbolic::{make_var, ConstValue};
 
-    // ── LOCAL stub children: a `StubTerm` digs to its held term (`Dug(Term)`); a
-    // `StubHit` strikes a named effect (`Hit`). They IGNORE `ctx`, so the parent's
+    // ── LOCAL stub children: a `StubTerm` completes to its held term (`Complete(Term)`); a
+    // `StubIncomplete` strikes a named effect (`Incomplete`). They IGNORE `ctx`, so the parent's
     // `desugar(ctx)` can run over a minimal real `SugarCtx`. ──
     struct StubTerm(Rc<Term>);
     impl Sugar for StubTerm {
         fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-            Outcome::Dug(Desugared::Term(Rc::clone(&self.0)))
+            Outcome::Complete(Desugared::Term(Rc::clone(&self.0)))
         }
     }
 
-    struct StubHit;
-    impl Sugar for StubHit {
+    struct StubIncomplete;
+    impl Sugar for StubIncomplete {
         fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-            Outcome::Hit(Effect::Mutation {
+            Outcome::Incomplete(Effect::Mutation {
                 boundary: "stub".to_string(),
             })
         }
@@ -136,8 +136,8 @@ mod tests {
             rel: RelationOp::Lt,
         };
         let term = match run(&node) {
-            Outcome::Dug(d) => d.into_term().expect("a Term"),
-            Outcome::Hit(_) => panic!("expected Dug, got Hit"),
+            Outcome::Complete(d) => d.into_term().expect("a Term"),
+            Outcome::Incomplete(_) => panic!("expected Complete, got Incomplete"),
         };
         let (name, args) = ctor(&term);
         assert_eq!(name, "cmp:lt");
@@ -156,14 +156,14 @@ mod tests {
             rel: RelationOp::Lt,
         };
         match run(&true_node) {
-            Outcome::Dug(d) => match d.into_term().expect("a Term").as_ref() {
+            Outcome::Complete(d) => match d.into_term().expect("a Term").as_ref() {
                 Term::Const {
                     value: ConstValue::Bool(v),
                     ..
                 } => assert!(*v, "1 < 4 is true"),
                 other => panic!("expected a Bool const, got {other:?}"),
             },
-            Outcome::Hit(_) => panic!("expected Dug"),
+            Outcome::Incomplete(_) => panic!("expected Complete"),
         }
         // Discrimination: the SAME shape with the relation actually false folds to
         // Bool(false) -- the fold carries the real value, it is not a fake-true.
@@ -173,14 +173,14 @@ mod tests {
             rel: RelationOp::Lt,
         };
         match run(&false_node) {
-            Outcome::Dug(d) => match d.into_term().expect("a Term").as_ref() {
+            Outcome::Complete(d) => match d.into_term().expect("a Term").as_ref() {
                 Term::Const {
                     value: ConstValue::Bool(v),
                     ..
                 } => assert!(!*v, "4 < 1 is false"),
                 other => panic!("expected a Bool const, got {other:?}"),
             },
-            Outcome::Hit(_) => panic!("expected Dug"),
+            Outcome::Incomplete(_) => panic!("expected Complete"),
         }
     }
 
@@ -193,8 +193,8 @@ mod tests {
             rel: RelationOp::Ne,
         };
         let term = match run(&node) {
-            Outcome::Dug(d) => d.into_term().expect("a Term"),
-            Outcome::Hit(_) => panic!("expected Dug, got Hit"),
+            Outcome::Complete(d) => d.into_term().expect("a Term"),
+            Outcome::Incomplete(_) => panic!("expected Complete, got Incomplete"),
         };
         let (name, _) = ctor(&term);
         assert_eq!(name, "cmp:neq");
@@ -203,18 +203,18 @@ mod tests {
     #[test]
     fn compare_propagates_left_child_hit_verbatim() {
         let node = CompareSugar {
-            left: Box::new(StubHit),
+            left: Box::new(StubIncomplete),
             right: Box::new(StubTerm(make_var("y"))),
             rel: RelationOp::Lt,
         };
         match run(&node) {
-            Outcome::Hit(Effect::Mutation { boundary }) => {
+            Outcome::Incomplete(Effect::Mutation { boundary }) => {
                 assert_eq!(boundary, "stub");
             }
-            Outcome::Hit(_) => {
-                panic!("expected the left child's Mutation Hit, got a different Effect")
+            Outcome::Incomplete(_) => {
+                panic!("expected the left child's Mutation Incomplete, got a different Effect")
             }
-            Outcome::Dug(_) => panic!("expected the left child's Hit, got Dug"),
+            Outcome::Complete(_) => panic!("expected the left child's Incomplete, got Complete"),
         }
     }
 
@@ -222,17 +222,17 @@ mod tests {
     fn compare_propagates_right_child_hit_verbatim() {
         let node = CompareSugar {
             left: Box::new(StubTerm(make_var("x"))),
-            right: Box::new(StubHit),
+            right: Box::new(StubIncomplete),
             rel: RelationOp::Lt,
         };
         match run(&node) {
-            Outcome::Hit(Effect::Mutation { boundary }) => {
+            Outcome::Incomplete(Effect::Mutation { boundary }) => {
                 assert_eq!(boundary, "stub");
             }
-            Outcome::Hit(_) => {
-                panic!("expected the right child's Mutation Hit, got a different Effect")
+            Outcome::Incomplete(_) => {
+                panic!("expected the right child's Mutation Incomplete, got a different Effect")
             }
-            Outcome::Dug(_) => panic!("expected the right child's Hit, got Dug"),
+            Outcome::Complete(_) => panic!("expected the right child's Incomplete, got Complete"),
         }
     }
 }

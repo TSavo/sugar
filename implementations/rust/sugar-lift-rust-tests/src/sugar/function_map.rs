@@ -137,7 +137,7 @@ fn reduce_function_map(
     func: &Expr,
     ctx: &SugarCtx,
 ) -> Option<Vec<DesugaredElem>> {
-    let seq = inner.desugar(ctx).dug()?.into_seq()?;
+    let seq = inner.desugar(ctx).complete()?.into_seq()?;
     let mut out = Vec::with_capacity(seq.len());
     for elem in seq {
         let value = elem.value.as_ref()?;

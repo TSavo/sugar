@@ -10,7 +10,7 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{make_var, Term};
 
 use crate::sugar::factory::SugarBuildCtx;
-use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
+use crate::sugar::term_leaf::{reasoned_incomplete, resolved_term};
 use crate::{is_unqualified_local_name, names_referenced_in_expr, token_key, Sugar};
 use syn::{Expr, Pat};
 
@@ -42,7 +42,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         }
         if is_unqualified_local_name(&name) && scope.plan_versioned_contains(&name) {
             if scope.ambiguous_contains(&name) {
-                return Some(reasoned_hit(format!(
+                return Some(reasoned_incomplete(format!(
                     "closure captures ambiguous local `{name}`; refused"
                 )));
             }

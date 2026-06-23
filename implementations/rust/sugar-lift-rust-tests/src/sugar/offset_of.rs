@@ -100,7 +100,7 @@ impl Sugar for OffsetOfSugar {
                 local_type_prelude_bytes = prelude.len(),
                 "resolved offset_of compiler axiom with rustc layout harness"
             );
-            return Outcome::Dug(Desugared::Term(num(offset)));
+            return Outcome::Complete(Desugared::Term(num(offset)));
         }
         debug!(
             target: "sugar_lift_rust_tests::sugar::offset_of",
@@ -109,7 +109,7 @@ impl Sugar for OffsetOfSugar {
             local_type_prelude_bytes = prelude.len(),
             "offset_of compiler axiom layout is not known to this lift"
         );
-        Outcome::Hit(Effect::Unsupported {
+        Outcome::Incomplete(Effect::Unsupported {
             reason: format!(
                 "unsupported term `offset_of!({}, {})`: layout is unknown to this lift \
                  (rustc could not compile a monomorphic offset_of harness for this type); refused",

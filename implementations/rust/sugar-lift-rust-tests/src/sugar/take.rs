@@ -66,7 +66,7 @@ impl Sugar for TakeRecognizedSugar {
             let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
             let seq = method_family::build_literal_sequence_composite(&self.receiver, &fcx)?
                 .desugar(ctx)
-                .dug()
+                .complete()
                 .and_then(|d| d.into_seq())
                 .or_else(|| method_family::finite_int_iter_sequence(&self.source))?;
             let out = seq.into_iter().take(self.n).collect();
@@ -88,7 +88,7 @@ impl Sugar for TakeSugar {
             let seq = self
                 .inner
                 .desugar(ctx)
-                .dug()
+                .complete()
                 .and_then(|d| d.into_seq())
                 .or_else(|| {
                     self.source

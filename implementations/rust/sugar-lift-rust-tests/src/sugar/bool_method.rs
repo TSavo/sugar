@@ -95,8 +95,8 @@ fn const_bool(expr: &Expr, bindings: &BTreeMap<String, &Expr>) -> Option<bool> {
 
 fn build_child_term(expr: &Expr, fcx: &SugarBuildCtx, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
     match build_term(expr, fcx).desugar(ctx) {
-        Outcome::Dug(d) => d.into_term().ok_or_else(|| Outcome::from_opt(None)),
-        Outcome::Hit(e) => Err(Outcome::Hit(e)),
+        Outcome::Complete(d) => d.into_term().ok_or_else(|| Outcome::from_opt(None)),
+        Outcome::Incomplete(e) => Err(Outcome::Incomplete(e)),
     }
 }
 
@@ -122,7 +122,7 @@ impl BoolMethodSugar {
             };
             terms.push(term);
         }
-        Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
+        Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
             name: format!("method:{}", self.method),
             args: terms,
         })))
@@ -152,7 +152,7 @@ impl Sugar for BoolMethodSugar {
                     Ok(term) => term,
                     Err(outcome) => return outcome,
                 };
-                Outcome::Dug(Desugared::Term(if value {
+                Outcome::Complete(Desugared::Term(if value {
                     some_term(payload)
                 } else {
                     none_term()
@@ -163,7 +163,7 @@ impl Sugar for BoolMethodSugar {
                     return Outcome::from_opt(None);
                 };
                 if !value {
-                    return Outcome::Dug(Desugared::Term(none_term()));
+                    return Outcome::Complete(Desugared::Term(none_term()));
                 }
                 let Some(closure) = zero_arg_closure(arg) else {
                     return self.opaque_method_term(receiver, &fcx, ctx);
@@ -172,7 +172,7 @@ impl Sugar for BoolMethodSugar {
                     Ok(term) => term,
                     Err(outcome) => return outcome,
                 };
-                Outcome::Dug(Desugared::Term(some_term(payload)))
+                Outcome::Complete(Desugared::Term(some_term(payload)))
             }
             _ => Outcome::from_opt(None),
         }

@@ -38,7 +38,7 @@
 //
 // THE INNER IS BUILT VIA THE FACTORY AT DESUGAR TIME. `Some(x)`'s inner `x` is
 // composed with `build_term`, so a constructor over a literal (`Some(&1)` ->
-// `Some(1)`), a const, or any grounding term flows through. A child `Hit`
+// `Some(1)`), a const, or any grounding term flows through. A child `Incomplete`
 // propagates verbatim (the effect/runtime boundary holds: `Some(some_io())`
 // blows up, never grounds); a child that does not reduce to a term bails via the
 // structural backstop.
@@ -195,9 +195,9 @@ pub(crate) fn is_grounded_literal_term(term: &Term) -> bool {
     }
 }
 
-/// The constructive `Option`/`Result` constructor node. Digs its inner child to
+/// The constructive `Option`/`Result` constructor node. completes its inner child to
 /// a `Term` (for the unary ctors) and emits `Term::Ctor { name, args }` keyed by
-/// the reserved monadic name. A child `Hit` propagates verbatim; a child that
+/// the reserved monadic name. A child `Incomplete` propagates verbatim; a child that
 /// does not reduce to a term bails via the structural backstop.
 struct MonadicSugar {
     kind: Kind,
@@ -238,13 +238,13 @@ impl MonadicSugar {
         // STRIPPED inner keeps both sides byte-identical so they meet under the
         // ADT.
         let term = match build_term(strip_refs_groups(inner), &fcx).desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
+            Outcome::Complete(d) => match d.into_term() {
                 Some(t) => t,
                 None => return Outcome::from_opt(None),
             },
-            Outcome::Hit(e) => return Outcome::Hit(e),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
-        Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
+        Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
             name: name.to_string(),
             args: vec![term],
         })))
@@ -257,7 +257,7 @@ impl Sugar for MonadicSugar {
             Kind::Some(inner) => MonadicSugar::build(OPT_SOME, inner, ctx, &self.let_inits),
             Kind::Ok(inner) => MonadicSugar::build(RES_OK, inner, ctx, &self.let_inits),
             Kind::Err(inner) => MonadicSugar::build(RES_ERR, inner, ctx, &self.let_inits),
-            Kind::None => Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
+            Kind::None => Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
                 name: OPT_NONE.to_string(),
                 args: Vec::new(),
             }))),
@@ -290,8 +290,8 @@ mod tests {
 
     fn dug_term(node: &dyn Sugar) -> Rc<Term> {
         match run(node) {
-            Outcome::Dug(d) => d.into_term().expect("a Term"),
-            Outcome::Hit(_) => panic!("expected Dug, got Hit"),
+            Outcome::Complete(d) => d.into_term().expect("a Term"),
+            Outcome::Incomplete(_) => panic!("expected Complete, got Incomplete"),
         }
     }
 
@@ -345,11 +345,11 @@ mod tests {
             let_inits: BTreeMap::new(),
         };
         match run(&node) {
-            Outcome::Hit(Effect::Unsupported { reason }) => {
+            Outcome::Incomplete(Effect::Unsupported { reason }) => {
                 assert!(!reason.is_empty())
             }
-            Outcome::Hit(_) => panic!("expected the child's Unsupported Hit"),
-            Outcome::Dug(_) => panic!("expected the child's Hit, got Dug"),
+            Outcome::Incomplete(_) => panic!("expected the child's Unsupported Incomplete"),
+            Outcome::Complete(_) => panic!("expected the child's Incomplete, got Complete"),
         }
     }
 

@@ -79,7 +79,7 @@ impl Sugar for FieldTermSugar {
         if let Some(term) =
             const_eval(&self.whole, &const_env(&let_inits)).and_then(|value| const_val_term(&value))
         {
-            return Outcome::Dug(Desugared::Term(term));
+            return Outcome::Complete(Desugared::Term(term));
         }
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
         CtorSugar::new(

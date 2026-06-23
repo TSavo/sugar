@@ -28,9 +28,9 @@ struct StatementReflectionSugar {
 impl Sugar for StatementReflectionSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         if let Some(boundary) = statement_position::reflection_boundary(&self.expr) {
-            return Outcome::Hit(Effect::Reflection { boundary });
+            return Outcome::Incomplete(Effect::Reflection { boundary });
         }
-        Outcome::Hit(Effect::Unsupported {
+        Outcome::Incomplete(Effect::Unsupported {
             reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
         })
     }

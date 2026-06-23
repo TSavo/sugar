@@ -54,7 +54,7 @@ impl Sugar for SizeOfSugar {
                 size,
                 "resolved primitive size_of compiler axiom to literal"
             );
-            return Outcome::Dug(Desugared::Term(num(size)));
+            return Outcome::Complete(Desugared::Term(num(size)));
         }
         if let Some(size) = core_atomic_size_of(&self.ty) {
             debug!(
@@ -63,7 +63,7 @@ impl Sugar for SizeOfSugar {
                 size,
                 "resolved size_of compiler axiom for a core atomic (layout == underlying)"
             );
-            return Outcome::Dug(Desugared::Term(num(size)));
+            return Outcome::Complete(Desugared::Term(num(size)));
         }
         let prelude = ctx.scope.layout_prelude_for_type(&self.ty);
         if let Some(size) = rustc_size_of_type(&self.ty_key, &self.ty_src, &prelude) {
@@ -74,7 +74,7 @@ impl Sugar for SizeOfSugar {
                 local_type_prelude_bytes = prelude.len(),
                 "resolved size_of compiler axiom with rustc layout harness"
             );
-            return Outcome::Dug(Desugared::Term(num(size)));
+            return Outcome::Complete(Desugared::Term(num(size)));
         }
         debug!(
             target: "sugar_lift_rust_tests::sugar::sizeof",
@@ -82,7 +82,7 @@ impl Sugar for SizeOfSugar {
             local_type_prelude_bytes = prelude.len(),
             "size_of compiler axiom layout is not known to this lift"
         );
-        Outcome::Hit(Effect::Unsupported {
+        Outcome::Incomplete(Effect::Unsupported {
             reason: format!(
                 "unsupported term `mem::size_of::<{}>()`: layout is unknown to this lift \
                  (rustc could not compile a monomorphic size_of harness for this type); refused",

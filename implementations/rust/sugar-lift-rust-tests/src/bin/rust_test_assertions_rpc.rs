@@ -18,8 +18,8 @@ use sugar_lift_rust_tests::cargo_cfg::{
 use sugar_lift_rust_tests::source_oracle;
 use sugar_lift_rust_tests::{
     lift_file_with_all_source_imports, AssertionFactEmission, AssertionFactKind,
-    ConstSourceRegistry, FactoryAudit, FunctionSourceRegistry, LiftOptions, MacroRegistry,
-    TargetCfg,
+    ConstSourceRegistry, FactoryAudit, FactoryAuditSpan, FunctionSourceRegistry, LiftOptions,
+    MacroRegistry, TargetCfg,
 };
 use sugar_verifier::types::{memento_body, memento_body_field, memento_kind};
 use tracing::{debug, info, warn};
@@ -391,16 +391,26 @@ fn lift(params: &Value) -> Value {
                 "reason": w.reason,
             }));
         }
+        let mut fns: Vec<FnRef> = Vec::new();
+        collect_fns(&file.items, &mut fns);
         // DENOMINATOR: the oracle enumerates every function in the file. Each one
         // gets a content-addressed memento and a classified locus, so the dark
         // (functions the kit does not speak) is COUNTED, not skipped.
         if report_summary {
-            factory_audit_summary.extend_from_audits(rel, &out.factory_audits);
+            factory_audit_summary.extend_from_audits(
+                rel,
+                &out.factory_audits,
+                &mut source_cache,
+                &fns,
+            );
         } else {
-            factory_audits.extend(factory_audits_json(rel, &out.factory_audits));
+            factory_audits.extend(factory_audits_json(
+                rel,
+                &out.factory_audits,
+                &mut source_cache,
+                &fns,
+            ));
         }
-        let mut fns: Vec<FnRef> = Vec::new();
-        collect_fns(&file.items, &mut fns);
         debug!(
             file = rel,
             functions = fns.len(),
@@ -436,7 +446,7 @@ fn lift(params: &Value) -> Value {
                 .iter()
                 .find(|w| w.item_name == name || w.item_name.ends_with(&format!("::{name}")));
             // TOTAL classifier. Every function exits into exactly one of:
-            //   warranted (dug to a value) | refused (named boundary) | support (inert)
+            //   warranted (completed to a value) | refused (named boundary) | support (inert)
             //   | inactive (not part of this target).
             // Any other status is dark: it fires a panic naming the locus and requesting
             // a classifier. The path to green is adding Sugar, not silencing the alarm.
@@ -751,6 +761,7 @@ struct FileSourceOracleCache<'a> {
     fragments: source_oracle::SourceFragmentCache<'a>,
     function_mementos: BTreeMap<String, source_oracle::SourceMemento>,
     statement_mementos: BTreeMap<String, Option<Value>>,
+    term_mementos: BTreeMap<String, Option<Value>>,
 }
 
 impl<'a> FileSourceOracleCache<'a> {
@@ -760,6 +771,7 @@ impl<'a> FileSourceOracleCache<'a> {
             fragments: source_oracle::SourceFragmentCache::new(src),
             function_mementos: BTreeMap::new(),
             statement_mementos: BTreeMap::new(),
+            term_mementos: BTreeMap::new(),
         }
     }
 
@@ -802,6 +814,33 @@ impl<'a> FileSourceOracleCache<'a> {
             .source_memento_of_statement_span(self.rel, span, &owner.name, owner.sig, owner.block)
             .map(|memento| memento.to_json());
         self.statement_mementos.insert(key, memento.clone());
+        memento
+    }
+
+    fn term_memento(&mut self, owner: &FnRef<'_>, span: &FactoryAuditSpan) -> Option<Value> {
+        let key = format!(
+            "{}@{}:{}-{}:{}",
+            owner.name, span.start_line, span.start_col, span.end_line, span.end_col
+        );
+        if let Some(memento) = self.term_mementos.get(&key) {
+            return memento.clone();
+        }
+        let target = source_oracle::SrcSpan {
+            start_line: span.start_line,
+            start_col: span.start_col,
+            end_line: span.end_line,
+            end_col: span.end_col,
+        };
+        let memento = self
+            .fragments
+            .source_memento_of_term_src_span(self.rel, &target, &owner.name, owner.sig, owner.block)
+            .or_else(|| {
+                self.fragments
+                    .source_fragment_of_raw_src_span(self.rel, &target, &owner.name, owner.sig)
+                    .map(|fragment| fragment.to_memento())
+            })
+            .map(|memento| memento.to_json());
+        self.term_mementos.insert(key, memento.clone());
         memento
     }
 }
@@ -2871,12 +2910,15 @@ fn source_memento_payload(env: &Value) -> Option<&Value> {
     env.get("body").or_else(|| memento_body(env))
 }
 
-fn factory_audit_row(file: &str, audit: &FactoryAudit) -> Value {
+fn factory_audit_row(
+    file: &str,
+    audit: &FactoryAudit,
+    source_cache: &mut FileSourceOracleCache<'_>,
+    fns: &[FnRef<'_>],
+) -> Value {
     let mut row = json!({
         "file": file,
         "ast_kind": audit.ast_kind,
-        "site": audit.site,
-        "term": audit.site,
         "line": audit.line,
         "requested_role": audit.requested_role,
         "selected": audit.selected,
@@ -2892,13 +2934,52 @@ fn factory_audit_row(file: &str, audit: &FactoryAudit) -> Value {
         "output": audit.output,
         "reason": audit.reason,
     });
+    if let Some(span) = &audit.span {
+        row["span"] = json!({
+            "start_line": span.start_line,
+            "start_col": span.start_col,
+            "end_line": span.end_line,
+            "end_col": span.end_col,
+        });
+        if let Some(owner) = owner_fn_for_audit_span(fns, span) {
+            if let Some(memento) = source_cache.term_memento(owner, span) {
+                row["sourceMemento"] = memento;
+            }
+        }
+    }
     if audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Support {
         row["supportKind"] = json!("inert");
     }
     row
 }
 
-fn factory_audits_json(file: &str, audits: &[FactoryAudit]) -> Vec<Value> {
+fn owner_fn_for_audit_span<'a, 'src>(
+    fns: &'a [FnRef<'src>],
+    span: &FactoryAuditSpan,
+) -> Option<&'a FnRef<'src>> {
+    fns.iter()
+        .filter(|fr| {
+            let start = fr.span.start();
+            let end = fr.block.brace_token.span.close().end();
+            (start.line, start.column) <= (span.start_line, span.start_col)
+                && (span.end_line, span.end_col) <= (end.line, end.column)
+        })
+        .min_by_key(|fr| {
+            let start = fr.span.start();
+            let end = fr.block.brace_token.span.close().end();
+            (
+                end.line.saturating_sub(start.line),
+                end.column.saturating_sub(start.column),
+            )
+        })
+}
+
+fn factory_audits_json(
+    file: &str,
+    audits: &[FactoryAudit],
+    source_cache: &mut FileSourceOracleCache<'_>,
+    fns: &[FnRef<'_>],
+) -> Vec<Value> {
     // The recursive factory walk records the SAME terminal across sub-terms, requested
     // roles, and re-walks, so a raw 1:1 mapping emits byte-identical rows hundreds of
     // times per locus (observed: ~1.18M rows over ~1.5K loci on the coretests corpus).
@@ -2916,7 +2997,7 @@ fn factory_audits_json(file: &str, audits: &[FactoryAudit]) -> Vec<Value> {
     let mut rows: HashMap<String, Value> = HashMap::new();
     let mut occurrences: HashMap<String, u64> = HashMap::new();
     for audit in audits {
-        let row = factory_audit_row(file, audit);
+        let row = factory_audit_row(file, audit, source_cache, fns);
         // Identity = the full row content, computed BEFORE the `occurrences` tag so the
         // key is stable. serde_json serializes a Value deterministically, so identical
         // rows produce identical keys.
@@ -2946,6 +3027,7 @@ struct FactoryAuditSummaryAccumulator {
     support: usize,
     unresolved: usize,
     unresolved_sites: Vec<Value>,
+    walk: Vec<Value>,
 }
 
 impl FactoryAuditSummaryAccumulator {
@@ -2957,17 +3039,25 @@ impl FactoryAuditSummaryAccumulator {
             support: 0,
             unresolved: 0,
             unresolved_sites: Vec::new(),
+            walk: Vec::new(),
         }
     }
 
-    fn extend_from_audits(&mut self, file: &str, audits: &[FactoryAudit]) {
-        for row in factory_audits_json(file, audits) {
+    fn extend_from_audits(
+        &mut self,
+        file: &str,
+        audits: &[FactoryAudit],
+        source_cache: &mut FileSourceOracleCache<'_>,
+        fns: &[FnRef<'_>],
+    ) {
+        for row in factory_audits_json(file, audits, source_cache, fns) {
             self.sites += 1;
             let status = row.get("status").and_then(Value::as_str).unwrap_or("");
             self.observe_status(status);
             if matches!(status, "unresolved" | "unclassified") {
-                self.unresolved_sites.push(row);
+                self.unresolved_sites.push(factory_summary_site_row(&row));
             }
+            self.walk.push(factory_walk_row(&row));
         }
     }
 
@@ -2995,6 +3085,7 @@ impl FactoryAuditSummaryAccumulator {
                 "unresolved": self.unresolved,
             },
             "unresolvedSites": self.unresolved_sites,
+            "factoryWalk": self.walk,
         })
     }
 }
@@ -3008,7 +3099,69 @@ fn factory_audit_response_summary(rows: &[Value]) -> Value {
         "complete": true,
         "statusCounts": factory_audit_status_counts(rows),
         "unresolvedSites": unresolved_factory_audit_rows(rows),
+        "factoryWalk": factory_walk_rows(rows),
     })
+}
+
+fn factory_walk_rows(rows: &[Value]) -> Vec<Value> {
+    rows.iter().map(factory_walk_row).collect()
+}
+
+fn factory_walk_row(row: &Value) -> Value {
+    let status = row.get("status").and_then(Value::as_str).unwrap_or("");
+    let verdict = match status {
+        "warranted" | "support" => "complete",
+        "refused" | "unresolved" | "unclassified" => "incomplete",
+        _ => "incomplete",
+    };
+    let mut compact = json!({
+        "file": row.get("file").cloned().unwrap_or(Value::Null),
+        "line": row.get("line").cloned().unwrap_or(Value::Null),
+        "requested_role": row.get("requested_role").cloned().unwrap_or(Value::Null),
+        "ast_kind": row.get("ast_kind").cloned().unwrap_or(Value::Null),
+        "selected": row.get("selected").cloned().unwrap_or(Value::Null),
+        "status": status,
+        "verdict": verdict,
+        "output": row.get("output").cloned().unwrap_or(Value::Null),
+    });
+    if let Some(span) = row.get("span").cloned() {
+        compact["span"] = span;
+    }
+    if let Some(memento) = row.get("sourceMemento").cloned() {
+        compact["sourceMemento"] = memento;
+    }
+    if let Some(reason) = row.get("reason").cloned() {
+        compact["reason"] = reason;
+    }
+    if let Some(occurrences) = row.get("occurrences").cloned() {
+        compact["occurrences"] = occurrences;
+    }
+    compact
+}
+
+fn factory_summary_site_row(row: &Value) -> Value {
+    let mut compact = json!({
+        "file": row.get("file").cloned().unwrap_or(Value::Null),
+        "line": row.get("line").cloned().unwrap_or(Value::Null),
+        "requested_role": row.get("requested_role").cloned().unwrap_or(Value::Null),
+        "ast_kind": row.get("ast_kind").cloned().unwrap_or(Value::Null),
+        "selected": row.get("selected").cloned().unwrap_or(Value::Null),
+        "status": row.get("status").cloned().unwrap_or(Value::Null),
+        "output": row.get("output").cloned().unwrap_or(Value::Null),
+    });
+    if let Some(span) = row.get("span").cloned() {
+        compact["span"] = span;
+    }
+    if let Some(memento) = row.get("sourceMemento").cloned() {
+        compact["sourceMemento"] = memento;
+    }
+    if let Some(reason) = row.get("reason").cloned() {
+        compact["reason"] = reason;
+    }
+    if let Some(occurrences) = row.get("occurrences").cloned() {
+        compact["occurrences"] = occurrences;
+    }
+    compact
 }
 
 fn unresolved_factory_audit_rows(rows: &[Value]) -> Vec<Value> {
@@ -3019,18 +3172,8 @@ fn unresolved_factory_audit_rows(rows: &[Value]) -> Vec<Value> {
                 "unresolved" | "unclassified"
             )
         })
-        .cloned()
-        .map(normalize_unresolved_factory_audit_row)
+        .map(factory_summary_site_row)
         .collect()
-}
-
-fn normalize_unresolved_factory_audit_row(mut row: Value) -> Value {
-    if row.get("term").is_none() {
-        if let Some(site) = row.get("site").cloned() {
-            row["term"] = site;
-        }
-    }
-    row
 }
 
 fn factory_audit_status_counts(rows: &[Value]) -> Value {
@@ -3445,6 +3588,7 @@ mod tests {
     }
 
     fn factory_audit_for<'a>(
+        root: &Path,
         response: &'a Value,
         selected: &str,
         site_fragment: &str,
@@ -3454,25 +3598,44 @@ mod tests {
             .expect("factoryAudits is an array")
             .iter()
             .find(|row| {
+                assert!(
+                    row.get("site").is_none() && row.get("term").is_none(),
+                    "factory RPC rows must carry SourceMemento pins, not plaintext source: {row}"
+                );
                 row["selected"] == selected
-                    && row["site"]
-                        .as_str()
-                        .is_some_and(|site| site.contains(site_fragment))
+                    && factory_audit_source_text(root, row)
+                        .is_some_and(|site| source_contains_fragment(&site, site_fragment))
             })
             .unwrap_or_else(|| {
                 panic!(
-                    "missing factory audit selected={selected:?} site~={site_fragment:?}: {response}"
+                    "missing factory audit selected={selected:?} source~={site_fragment:?}: {response}"
                 )
             })
     }
 
+    fn factory_audit_source_text(root: &Path, row: &Value) -> Option<String> {
+        let memento = source_memento_from_json(row.get("sourceMemento")?)?;
+        source_oracle::resolve_source_memento(root, &memento)
+            .ok()
+            .map(|resolved| resolved.fragment.body_text)
+    }
+
+    fn source_contains_fragment(source: &str, fragment: &str) -> bool {
+        source.contains(fragment) || compact_source(source).contains(&compact_source(fragment))
+    }
+
+    fn compact_source(source: &str) -> String {
+        source.chars().filter(|ch| !ch.is_whitespace()).collect()
+    }
+
     fn assert_factory_audit_status(
+        root: &Path,
         response: &Value,
         site_fragment: &str,
         status: &str,
         reason_fragment: Option<&str>,
     ) {
-        let row = factory_audit_for(response, "constraint_no_panic_call", site_fragment);
+        let row = factory_audit_for(root, response, "constraint_no_panic_call", site_fragment);
         assert_eq!(
             row["status"], status,
             "factory row {site_fragment:?} must be {status}: {row}"
@@ -3571,36 +3734,42 @@ fn literal_empty_callsite_twin_warrants() {
         );
 
         assert_factory_audit_status(
+            &root,
             &response,
             "CountDrop :: new (& count)",
             "refused",
             Some("side-effecting closure body"),
         );
         assert_factory_audit_status(
+            &root,
             &response,
             "cell . set (Some (& value))",
             "refused",
             Some("temporally unstable"),
         );
         assert_factory_audit_status(
+            &root,
             &response,
             "xs . iter_mut () . map",
             "refused",
             Some("side-effecting closure body"),
         );
         assert_factory_audit_status(
+            &root,
             &response,
             "it . next_back ()",
             "refused",
             Some("unknown iterator consumption"),
         );
         assert_factory_audit_status(
+            &root,
             &response,
             "functions . iter_mut () . map",
             "refused",
             Some("runtime call through closure body parameter"),
         );
         assert_factory_audit_status(
+            &root,
             &response,
             "IntoIterator :: into_iter ([] as [String ; 0])",
             "warranted",
@@ -5300,12 +5469,15 @@ fn literal_counter_while_literal_twin() {
 
     #[test]
     fn factory_support_audits_carry_inert_support_kind() {
+        let mut source_cache = FileSourceOracleCache::new("src/lib.rs", "");
+        let fns = Vec::new();
         let rows = factory_audits_json(
             "src/lib.rs",
             &[FactoryAudit {
                 ast_kind: "expr",
                 site: "{}".to_string(),
                 line: 1,
+                span: None,
                 requested_role: "Composite".to_string(),
                 selected: Some("empty_sequence"),
                 candidates: Vec::new(),
@@ -5313,19 +5485,22 @@ fn literal_counter_while_literal_twin() {
                 output: "empty-sequence",
                 reason: Some("empty sequence is inert support".to_string()),
             }],
+            &mut source_cache,
+            &fns,
         );
 
         assert_eq!(rows[0]["status"], "support");
         assert_eq!(rows[0]["supportKind"], "inert", "{rows:?}");
-        assert_eq!(rows[0]["term"], "{}");
+        assert!(rows[0].get("term").is_none(), "{rows:?}");
+        assert!(rows[0].get("site").is_none(), "{rows:?}");
     }
 
     #[test]
     fn factory_audit_response_summary_reports_unresolved_rows() {
         let rows = vec![
             json!({"file": "src/lib.rs", "line": 1, "status": "warranted"}),
-            json!({"file": "src/lib.rs", "line": 2, "status": "unresolved", "site": "opaque()"}),
-            json!({"file": "src/lib.rs", "line": 3, "status": "unclassified", "site": "mystery()"}),
+            json!({"file": "src/lib.rs", "line": 2, "status": "unresolved", "sourceMemento": {"kind": "source-memento", "file": "src/lib.rs"}}),
+            json!({"file": "src/lib.rs", "line": 3, "status": "unclassified", "sourceMemento": {"kind": "source-memento", "file": "src/lib.rs"}}),
         ];
 
         let summary = factory_audit_response_summary(&rows);
@@ -5339,9 +5514,11 @@ fn literal_counter_while_literal_twin() {
         assert_eq!(summary["statusCounts"]["unresolved"], 2);
         assert_eq!(summary["unresolvedSites"].as_array().unwrap().len(), 2);
         assert_eq!(summary["unresolvedSites"][0]["line"], 2);
-        assert_eq!(summary["unresolvedSites"][0]["term"], "opaque()");
         assert_eq!(summary["unresolvedSites"][1]["line"], 3);
-        assert_eq!(summary["unresolvedSites"][1]["term"], "mystery()");
+        assert!(summary["unresolvedSites"][0].get("term").is_none());
+        assert!(summary["unresolvedSites"][0].get("site").is_none());
+        assert!(summary["factoryWalk"][1].get("term").is_none());
+        assert!(summary["factoryWalk"][1].get("site").is_none());
     }
 
     #[test]
@@ -5351,6 +5528,7 @@ fn literal_counter_while_literal_twin() {
             ast_kind: "expr",
             site: "a + b".to_string(),
             line: 7,
+            span: None,
             requested_role: "Term".to_string(),
             selected: Some("binary"),
             candidates: Vec::new(),
@@ -5371,9 +5549,13 @@ fn literal_counter_while_literal_twin() {
             ..duplicate.clone()
         };
 
+        let mut source_cache = FileSourceOracleCache::new("src/lib.rs", "");
+        let fns = Vec::new();
         acc.extend_from_audits(
             "src/lib.rs",
             &[duplicate.clone(), duplicate, refused, unresolved],
+            &mut source_cache,
+            &fns,
         );
         let summary = acc.into_json();
 
@@ -5387,8 +5569,8 @@ fn literal_counter_while_literal_twin() {
         assert_eq!(summary["unresolvedSites"].as_array().unwrap().len(), 1);
         assert_eq!(summary["unresolvedSites"][0]["file"], "src/lib.rs");
         assert_eq!(summary["unresolvedSites"][0]["line"], 7);
-        assert_eq!(summary["unresolvedSites"][0]["site"], "opaque()");
-        assert_eq!(summary["unresolvedSites"][0]["term"], "opaque()");
+        assert!(summary["unresolvedSites"][0].get("site").is_none());
+        assert!(summary["unresolvedSites"][0].get("term").is_none());
     }
 
     #[test]
@@ -5424,6 +5606,21 @@ fn summary_good() {
             "summary response must not transport source-audit rows: {response}"
         );
         assert!(response.get("factoryAuditSummary").is_some());
+        let walk = response["factoryAuditSummary"]["factoryWalk"]
+            .as_array()
+            .expect("factory walk rows");
+        assert!(
+            !walk.is_empty(),
+            "summary response must emit the roll-call walk"
+        );
+        assert!(
+            walk.iter().all(|row| {
+                row.get("term").is_none()
+                    && row.get("site").is_none()
+                    && row.get("source").is_none()
+            }),
+            "factory walk rows must carry mementos, never plaintext source: {walk:?}"
+        );
         assert!(
             response.get("ir").is_none(),
             "summary response must not transport full IR: {response}"
@@ -5652,19 +5849,30 @@ mod tests {
             "assertion term lowering must go through the audited Sugar factory: {response}"
         );
         assert!(
-            audits.iter().any(|audit| audit["site"] == "make_value ()"),
+            audits
+                .iter()
+                .all(|audit| audit.get("site").is_none() && audit.get("term").is_none()),
+            "factory audit RPC rows must not carry plaintext source: {audits:?}"
+        );
+        assert!(
+            audits.iter().any(|audit| {
+                factory_audit_source_text(&root, audit)
+                    .is_some_and(|site| source_contains_fragment(&site, "make_value ()"))
+            }),
             "call operand should be factory-accounted: {audits:?}"
         );
         assert!(
-            audits.iter().any(|audit| audit["site"] == "6"),
+            audits.iter().any(|audit| {
+                factory_audit_source_text(&root, audit)
+                    .is_some_and(|site| source_contains_fragment(&site, "6"))
+            }),
             "literal operand should be factory-accounted: {audits:?}"
         );
         assert!(
             audits.iter().any(|audit| {
                 audit["requested_role"] == "AssertionSurface"
                     && audit["selected"] == "assertion_surface_relation_macro"
-                    && audit["site"]
-                        .as_str()
+                    && factory_audit_source_text(&root, audit)
                         .is_some_and(|site| site.contains("assert_eq"))
             }),
             "assertion macro spelling should be factory-accounted as assertion-surface Sugar: {audits:?}"

@@ -99,6 +99,6 @@ impl Sugar for RangeContainsSugar {
             value = self.value,
             "resolved range contains stdlib axiom to a ground bool"
         );
-        Outcome::Dug(Desugared::Term(bool_const(self.value)))
+        Outcome::Complete(Desugared::Term(bool_const(self.value)))
     }
 }

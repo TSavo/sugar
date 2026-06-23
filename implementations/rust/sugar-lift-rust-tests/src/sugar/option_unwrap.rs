@@ -71,16 +71,16 @@ impl Sugar for OptionUnwrapSugar {
             .collect();
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
         let receiver = match build_term(&self.receiver, &fcx).desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
+            Outcome::Complete(d) => match d.into_term() {
                 Some(term) => term,
                 None => return Outcome::from_opt(None),
             },
-            Outcome::Hit(e) => return Outcome::Hit(e),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
         match unwrap_monadic(&receiver) {
             Some(Ok(inner)) => {
                 if !is_grounded_literal_term(inner.as_ref()) {
-                    return Outcome::Hit(Effect::Unsupported {
+                    return Outcome::Incomplete(Effect::Unsupported {
                         reason: format!(
                             "runtime Option/Result payload, not literal (`{}`)",
                             self.method
@@ -92,9 +92,9 @@ impl Sugar for OptionUnwrapSugar {
                     method = self.method.as_str(),
                     "resolved monadic unwrap/expect stdlib axiom to inner literal"
                 );
-                Outcome::Dug(Desugared::Term(inner))
+                Outcome::Complete(Desugared::Term(inner))
             }
-            Some(Err(kind)) => Outcome::Hit(Effect::Unsupported {
+            Some(Err(kind)) => Outcome::Incomplete(Effect::Unsupported {
                 reason: format!(
                     "monadic `{}` on literal `{kind}` panics; refused",
                     self.method

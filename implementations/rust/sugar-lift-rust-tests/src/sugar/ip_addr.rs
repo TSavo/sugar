@@ -61,7 +61,7 @@ impl Sugar for IpAddrPropertySugar {
         let Some(value) = eval_property(ip, &self.method) else {
             return Outcome::from_opt(None);
         };
-        Outcome::Dug(Desugared::Constraints {
+        Outcome::Complete(Desugared::Constraints {
             atom: eq(bool_const(value), bool_const(true)),
             n: 1,
             kind: AssertionFactKind::Warranted,

@@ -2291,7 +2291,7 @@ fn option_result_literal_methods_runtime_payloads_decline() {
         let out = lift_file(&parse(src), path);
         assert_eq!(
             out.assertions_lifted, 0,
-            "{path} has a runtime payload; literal-method sugar must propagate Hit/refuse instead of inventing a literal assertion"
+            "{path} has a runtime payload; literal-method sugar must propagate Incomplete/refuse instead of inventing a literal assertion"
         );
         assert!(
             out.skip_reasons
@@ -3287,7 +3287,7 @@ fn array_literal_is_empty_folds_with_teeth() {
 
 // EXACT-OR-NONE: a runtime-bounded range must NOT fold. The `is_empty` sugar
 // recognizes the method shape, then desugar composes the receiver and propagates the
-// runtime-bound range `Hit` -- never a guessed bool.
+// runtime-bound range `Incomplete` -- never a guessed bool.
 #[test]
 fn runtime_range_is_empty_declines_to_fold() {
     let src = r#"
@@ -5847,7 +5847,7 @@ fn byte_contradiction() {
 
 #[test]
 fn wide_int_literal_lifts_to_exact_value() {
-    // DIG: a wide Rust literal beyond i64::MAX is a VALID literal and an EXACT
+    // COMPLETE: a wide Rust literal beyond i64::MAX is a VALID literal and an EXACT
     // mathematical-Int constant (the FOL/SMT `Int` sort is unbounded). It must
     // lift to its EXACT i128 value, never refuse with "number too large".
     //   u64::MAX                 = 18446744073709551615  (0xffffffffffffffff)
@@ -9096,9 +9096,9 @@ fn concat_pattern_composes() {
 #[test]
 fn regex_match_format_pattern_bails_today_as_composition_frontier() {
     // COMPOSITION FRONTIER: `Regex::new(format!(…))` IS recognized as a Regex::new
-    // construction, but the pattern operand desugars to `Hit` (runtime — no
+    // construction, but the pattern operand desugars to `Incomplete` (runtime — no
     // FormatSugar yet), so the regex node DECLINES (no str.in-regex row). This is
-    // NOT a refusal-by-name; it is the case that flips to dig FOR FREE the instant
+    // NOT a refusal-by-name; it is the case that flips to complete FOR FREE the instant
     // a FormatSugar producer lands, with zero change to RegexSugar.
     let src = r#"
 #[test]
@@ -9156,7 +9156,7 @@ fn regex_match_refuses_non_regular_pattern_by_name() {
     // REFUSE BY NAME: a backreference / lookahead is NOT a regular language, so it
     // is not expressible as RegLan. The lifter refuses at lift time (mirroring the
     // Java PatternUniverseWalker) — NO str.in-regex row is emitted, and the reason
-    // names the non-regular feature. This is the teeth against a fake-dig: a
+    // names the non-regular feature. This is the teeth against a fake-complete: a
     // non-regular pattern is never silently admitted as a trivially-true membership.
     let src = r#"
 #[test]
@@ -9259,7 +9259,7 @@ fn test_len() {
         decls[2].name, "tests/ascii.rs::test_len",
         "string literal .len() should fold to the literal floor"
     );
-    assert_eq!(dug_eq_int_pairs(decls[2]), vec![(15, 15)]);
+    assert_eq!(complete_eq_int_pairs(decls[2]), vec![(15, 15)]);
 }
 
 #[test]
@@ -9757,7 +9757,7 @@ fn cmp_term() {
 fn comparison_over_mut_container_still_bails_not_fake_dig() {
     // STRUCTURAL / BAIL: the same shape but `a` is `let mut` -- a mutable container
     // is NOT temporally stable, so `a[0]` (an order-dependent read) must BAIL via
-    // the index/mut oracle. The comparison must NOT become a fake-dig over a
+    // the index/mut oracle. The comparison must NOT become a fake-complete over a
     // stale value: the whole assertion is REFUSED (lifted == 0), not discharged.
     let src = r#"
 #[test]
@@ -9773,7 +9773,7 @@ fn cmp_over_mut() {
     assert_eq!(
         out.lifted, 0,
         "a `mut` container operand is not temporally stable -> the comparison must \
-         BAIL, never fake-dig; warnings: {:?}",
+         BAIL, never fake-complete; warnings: {:?}",
         out.warnings
     );
 }
@@ -11598,7 +11598,7 @@ fn bad_twin() {
 
 #[test]
 fn bare_bool_literal_assert_lifts_with_teeth() {
-    // SUB-DIG: a bare boolean LITERAL assert is a constant claim. `assert!(true)`
+    // SUB-COMPLETE: a bare boolean LITERAL assert is a constant claim. `assert!(true)`
     // lifts to the tautology `true == true`; `assert!(false)` lifts to the REFUTABLE
     // `false == true` (UNSAT). The `false` literal must survive into the formula so
     // the refutation is real (a masking lift would be a fake-discharge).
@@ -11631,11 +11631,11 @@ fn bare() {
 }
 
 #[test]
-fn runtime_if_guard_stays_refused_not_fake_dug() {
+fn runtime_if_guard_stays_refused_not_fake_complete() {
     // DISCRIMINATION (bucket 1, the bad direction): a RUNTIME if-guard does NOT
     // const-fold (its truth is not fixed from source). `if it.next().is_some() {
     // .. }` advances an iterator -- the guard lift bails, the assert STAYS refused
-    // (under-if-context), never fake-dug as a constant.
+    // (under-if-context), never fake-completed as a constant.
     let src = r#"
 #[test]
 fn rt() {
@@ -11649,7 +11649,7 @@ fn rt() {
     assert_eq!(
         out.assertions_lifted,
         0,
-        "a runtime if-guard must NOT dig (no const fold): {:?}",
+        "a runtime if-guard must NOT complete (no const fold): {:?}",
         refusal_reasons(&out)
     );
     assert!(
@@ -11666,7 +11666,7 @@ fn match_cfg_inactive_arm_digs_surviving_arm() {
     // DIG (bucket 2): `match () { #[cfg(tpw="32")] () => A, #[cfg(tpw="64")] () => B }`.
     // Arm-level cfg resolves against the target (64-bit): the cfg(32) arm is stripped
     // (it does not exist on this target), the surviving `() => B` unit arm is
-    // unconditional and B digs. The cfg-inactive arm's assert is accounted as a
+    // unconditional and B completes. The cfg-inactive arm's assert is accounted as a
     // cfg-inactive refusal (SILENT stays 0). Corpus: num/wrapping.rs.
     let src = r#"
 #[test]
@@ -11693,7 +11693,7 @@ fn wrapping() {
     assert_eq!(
         out.assertions_lifted,
         1,
-        "the surviving (active-cfg) arm's assert must dig: {:?}",
+        "the surviving (active-cfg) arm's assert must complete: {:?}",
         refusal_reasons(&out)
     );
     assert_eq!(
@@ -11709,7 +11709,7 @@ fn wrapping() {
         "the stripped arm must carry the precise cfg-inactive reason: {:?}",
         refusal_reasons(&out)
     );
-    // SILENT=0: exactly the two source asserts are accounted (1 dug + 1 refused).
+    // SILENT=0: exactly the two source asserts are accounted (1 complete + 1 refused).
     assert_eq!(
         out.assertions_lifted + out.assertions_refused,
         2,
@@ -11719,11 +11719,11 @@ fn wrapping() {
 }
 
 #[test]
-fn effectful_scrutinee_match_is_refused_not_dug() {
+fn effectful_scrutinee_match_is_refused_not_complete() {
     // DISCRIMINATION (bucket 2, the bad direction) + RESOLVE-THEN-CLASSIFY: a match whose
     // scrutinee ADVANCES an iterator (`it.next()`) is a RUNTIME call result -- the
     // scrutinee is not a timeless value, the arm asserts read the runtime arm taken, so
-    // the whole match is terminal-REFUSED (runtime non-scalar result), never fake-dug.
+    // the whole match is terminal-REFUSED (runtime non-scalar result), never fake-completed.
     // Corpus: option.rs::test_mut_iter (`match it.next() { Some(interior) =>
     // { assert_eq!(*interior, val); *interior = .. } None => assert!(false) }`).
     let src = r#"
@@ -11742,7 +11742,7 @@ fn eff() {
     assert_eq!(
         out.assertions_lifted,
         0,
-        "an effectful-scrutinee match must NOT dig: {:?}",
+        "an effectful-scrutinee match must NOT complete: {:?}",
         refusal_reasons(&out)
     );
     assert!(
@@ -11776,7 +11776,7 @@ fn ctor() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/ctor.rs");
-    // Whatever the dig outcome, NO reason may be the runtime-scrutinee terminal: a
+    // Whatever the complete outcome, NO reason may be the runtime-scrutinee terminal: a
     // constructed scrutinee is not a runtime call result.
     assert!(
         refusal_reasons(&out)
@@ -12052,7 +12052,7 @@ fn lit_tup() {
 "#;
     let out = lift_file(&parse(src), "tests/t.rs");
     assert_eq!(out.assertions_lifted, 1);
-    assert_eq!(dug_eq_int_pairs(&out.decls[0]), vec![(1, 1), (2, 2)]);
+    assert_eq!(complete_eq_int_pairs(&out.decls[0]), vec![(1, 1), (2, 2)]);
     let doc = sugar_ir_symbolic::serialize::marshal_declarations(&out.decls);
     assert!(
         !doc.contains("literal:Tuple("),
@@ -12105,7 +12105,7 @@ fn nonempty_assert_helper_is_not_terminal_refused_the_twin() {
     // discharges its point-wise obligation -- the recoverable work is RECOVERED, never
     // laundered into a fake type-level zero. The discrimination remains exactly
     // empty-vs-non-empty body: an empty body is the terminal type-level obligation; a
-    // non-empty pure body is a real value predicate that digs.
+    // non-empty pure body is a real value predicate that completes.
     let src = r#"
 #[test]
 fn t() {
@@ -12114,7 +12114,7 @@ fn t() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/flatten.rs");
-    // The pure body `assert_eq!(x, 0u8)` with `x := 0u8` digs to `eq(0, 0)`: a real
+    // The pure body `assert_eq!(x, 0u8)` with `x := 0u8` completes to `eq(0, 0)`: a real
     // point-wise obligation. (Soundness: this is the vendor's stated claim at the closed
     // call site, lifted as a checkable atom; a contradictory body would be lifted too and
     // caught by the consistency pass -- never silently dropped, never fake-discharged.)
@@ -13449,7 +13449,10 @@ fn t() {
         "scalar accumulator replay must not be emitted as forall: {:?}",
         loop_decl.inv
     );
-    assert_eq!(dug_eq_int_pairs(loop_decl), vec![(1, 0), (2, 1), (3, 2)]);
+    assert_eq!(
+        complete_eq_int_pairs(loop_decl),
+        vec![(1, 0), (2, 1), (3, 2)]
+    );
 }
 
 #[test]
@@ -15833,7 +15836,7 @@ fn t() {
 // inner value cannot equal two distinct pins, so a wrong-expected twin is UNSAT.
 // (B) STRUCTURAL discrimination: only the WRAPPER is transparent. A temporally-unstable
 // inner read (`&mut *cell.get()` -- `&mut` of a deref, not an immutable value) still
-// BAILS through the ordinary operand path. No fake-dig: the unsafe wrapper does not
+// BAILS through the ordinary operand path. No fake-complete: the unsafe wrapper does not
 // launder a mutable-raw deref into a discharge.
 #[test]
 fn unsafe_block_mutable_raw_deref_still_bails() {
@@ -15922,7 +15925,7 @@ fn test_join() {
     let out = lift_file(&parse(src), "tests/future.rs");
     assert_eq!(
         out.assertions_lifted, 0,
-        "await-bound asserts must NOT discharge (fake-dig risk): {:?}",
+        "await-bound asserts must NOT discharge (fake-complete risk): {:?}",
         out.warnings
     );
     let reason = out
@@ -15998,7 +16001,7 @@ fn test_arrays() {
 
 /// (boundary/guardrail) A `match` over a CONSTRUCTED LITERAL scrutinee is NOT
 /// reflection -- the value IS in scope. It must NOT be reflection-terminalized; it
-/// digs (or stays unclassified), proving the refusal is qualification-driven (the
+/// completes (or stays unclassified), proving the refusal is qualification-driven (the
 /// reflection scrutinee), not match-position-driven.
 #[test]
 fn literal_scrutinee_match_is_not_reflection_refused() {
@@ -16022,7 +16025,7 @@ fn t() {
     );
     assert_eq!(
         out.lifted, 1,
-        "the literal match digs (panic-locus variant pin): {:?}",
+        "the literal match completes (panic-locus variant pin): {:?}",
         out.warnings
     );
 }
@@ -16049,7 +16052,11 @@ fn t() {
         "a literal block must NEVER be statement-position terminalized: {:?}",
         out.skip_reasons
     );
-    assert_eq!(out.lifted, 1, "the literal block digs: {:?}", out.warnings);
+    assert_eq!(
+        out.lifted, 1,
+        "the literal block completes: {:?}",
+        out.warnings
+    );
     assert_eq!(
         out.assertions_lifted, 1,
         "the in-scope literal assert lifts"
@@ -16065,11 +16072,11 @@ fn t() {
 // indexed read `ys[acc]` (acc a literal position) resolves to the literal element.
 // The fold INIT (`ys.len()` / `xs.len() - 1`) over a literal array is itself a
 // literal cursor extent. EXACT-OR-BAIL: a runtime-indexed array or an un-nameable
-// cursor stays unclassified, never fake-dug.
+// cursor stays unclassified, never fake-completed.
 
 /// Collect every `(lhs, rhs)` int pair from the `=` atoms of a decl's flattened inv
-/// conjunction. Both sides must be int consts (a fully-dug point-wise claim).
-fn dug_eq_int_pairs(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<(i128, i128)> {
+/// conjunction. Both sides must be int consts (a fully-complete point-wise claim).
+fn complete_eq_int_pairs(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<(i128, i128)> {
     fn walk(f: &Formula, out: &mut Vec<(i128, i128)>) {
         match f {
             Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
@@ -16107,7 +16114,7 @@ fn dug_eq_int_pairs(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<(i128, i128)>
 /// assert the monadic `Option`/`Result` constructors GROUND to their reserved
 /// ADT-backed names (not the federated `call:eq:Some` EUF, which would be a
 /// `=(call:eq:Some(..), true)` shape with a Bool-const operand, not two ctors).
-fn dug_eq_ctor_name_pairs(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<(String, String)> {
+fn complete_eq_ctor_name_pairs(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<(String, String)> {
     fn ctor_name(t: &Term) -> Option<String> {
         match t {
             Term::Ctor { name, .. } => Some(name.clone()),
@@ -16191,7 +16198,7 @@ fn monadic_some_equal_is_sat_and_bad_twin_is_unsat() {
     // is z3-UNSAT (constructor injectivity -- the teeth).
     let good = lift_eq_decl("Some(1)", "Some(1)", "tests/monadic_some_good.rs");
     assert_eq!(
-        dug_eq_ctor_name_pairs(&good),
+        complete_eq_ctor_name_pairs(&good),
         vec![("opt:some".to_string(), "opt:some".to_string())],
         "Some(1)==Some(1) must ground to two opt:some ctors (NOT the federated call:eq:Some)"
     );
@@ -16217,7 +16224,7 @@ fn monadic_some_equal_is_sat_and_bad_twin_is_unsat() {
 fn monadic_some_vs_none_is_unsat() {
     // `Some(1) == None` is z3-UNSAT (constructor distinctness -- the teeth).
     let decl = lift_eq_decl("Some(1)", "None", "tests/monadic_some_none.rs");
-    let pairs = dug_eq_ctor_name_pairs(&decl);
+    let pairs = complete_eq_ctor_name_pairs(&decl);
     assert_eq!(
         pairs,
         vec![("opt:some".to_string(), "opt:none".to_string())],
@@ -16235,7 +16242,7 @@ fn monadic_result_ok_equal_sat_bad_twin_and_cross_variant_unsat() {
     // UNSAT (cross-variant distinctness).
     let good = lift_eq_decl("Ok(1)", "Ok(1)", "tests/monadic_ok_good.rs");
     assert_eq!(
-        dug_eq_ctor_name_pairs(&good),
+        complete_eq_ctor_name_pairs(&good),
         vec![("res:ok".to_string(), "res:ok".to_string())],
         "Ok(1)==Ok(1) must ground to two res:ok ctors"
     );
@@ -16250,7 +16257,7 @@ fn monadic_result_ok_equal_sat_bad_twin_and_cross_variant_unsat() {
 
     let cross = lift_eq_decl("Ok(1)", "Err(1)", "tests/monadic_ok_err.rs");
     assert_eq!(
-        dug_eq_ctor_name_pairs(&cross),
+        complete_eq_ctor_name_pairs(&cross),
         vec![("res:ok".to_string(), "res:err".to_string())],
         "Ok(1)==Err(1) must ground to res:ok vs res:err ctors"
     );
@@ -16276,12 +16283,12 @@ fn iter_next_over_literal_array_grounds_to_some_first_element() {
     assert_eq!(
         good_out.skip_reasons,
         Vec::<String>::new(),
-        "the literal-domain `.next()` must dig, not refuse: {:?}",
+        "the literal-domain `.next()` must complete, not refuse: {:?}",
         good_out.skip_reasons
     );
     let good = &good_out.decls[0];
     assert_eq!(
-        dug_eq_ctor_name_pairs(good),
+        complete_eq_ctor_name_pairs(good),
         vec![("opt:some".to_string(), "opt:some".to_string())],
         "`.next()` and `Some(&1)` must BOTH ground to opt:some (no opaque var): {:?}",
         good.inv
@@ -16321,7 +16328,7 @@ fn iter_nth_and_last_over_literal_array_ground_with_teeth() {
         "tests/iter_nth_good.rs",
     );
     assert_eq!(
-        dug_eq_ctor_name_pairs(&nth),
+        complete_eq_ctor_name_pairs(&nth),
         vec![("opt:some".to_string(), "opt:some".to_string())],
         "`.nth(1)` must ground to opt:some(20): {:?}",
         nth.inv
@@ -16345,7 +16352,7 @@ fn iter_nth_and_last_over_literal_array_ground_with_teeth() {
         "tests/iter_last_good.rs",
     );
     assert_eq!(
-        dug_eq_ctor_name_pairs(&last),
+        complete_eq_ctor_name_pairs(&last),
         vec![("opt:some".to_string(), "opt:some".to_string())],
         "`.last()` must ground to opt:some(30): {:?}",
         last.inv
@@ -16362,7 +16369,7 @@ fn iter_nth_and_last_over_literal_array_ground_with_teeth() {
         "tests/iter_nth_past.rs",
     );
     assert_eq!(
-        dug_eq_ctor_name_pairs(&past),
+        complete_eq_ctor_name_pairs(&past),
         vec![("opt:none".to_string(), "opt:none".to_string())],
         "`.nth(9)` past the end must ground to opt:none: {:?}",
         past.inv
@@ -16384,7 +16391,7 @@ fn iter_nth_and_last_over_literal_array_ground_with_teeth() {
 fn literal_slice_accessors_ground_to_literal_floor() {
     let first = lift_eq_decl("[1, 2, 3].first()", "Some(&1)", "tests/slice_first_good.rs");
     assert_eq!(
-        dug_eq_ctor_name_pairs(&first),
+        complete_eq_ctor_name_pairs(&first),
         vec![("opt:some".to_string(), "opt:some".to_string())],
         "`.first()` must ground to opt:some(1): {:?}",
         first.inv
@@ -16400,7 +16407,7 @@ fn literal_slice_accessors_ground_to_literal_floor() {
 
     let get = lift_eq_decl("[1, 2, 3].get(1)", "Some(&2)", "tests/slice_get_good.rs");
     assert_eq!(
-        dug_eq_ctor_name_pairs(&get),
+        complete_eq_ctor_name_pairs(&get),
         vec![("opt:some".to_string(), "opt:some".to_string())],
         "`.get(1)` must ground to opt:some(2): {:?}",
         get.inv
@@ -16416,7 +16423,7 @@ fn literal_slice_accessors_ground_to_literal_floor() {
 
     let get_past = lift_eq_decl("[1, 2, 3].get(9)", "None", "tests/slice_get_past_good.rs");
     assert_eq!(
-        dug_eq_ctor_name_pairs(&get_past),
+        complete_eq_ctor_name_pairs(&get_past),
         vec![("opt:none".to_string(), "opt:none".to_string())],
         "`.get(9)` must ground to opt:none: {:?}",
         get_past.inv
@@ -16431,7 +16438,7 @@ fn literal_slice_accessors_ground_to_literal_floor() {
         "tests/slice_contains_good.rs",
     );
     assert_eq!(
-        dug_eq_bool_pairs(&contains),
+        complete_eq_bool_pairs(&contains),
         vec![(true, true)],
         "`.contains(&2)` must ground to true: {:?}",
         contains.inv
@@ -16451,7 +16458,7 @@ fn literal_slice_accessors_ground_to_literal_floor() {
         "tests/slice_starts_with_good.rs",
     );
     assert_eq!(
-        dug_eq_bool_pairs(&starts),
+        complete_eq_bool_pairs(&starts),
         vec![(true, true)],
         "`.starts_with(&[1, 2])` must ground to true: {:?}",
         starts.inv
@@ -16468,7 +16475,7 @@ fn literal_slice_accessors_ground_to_literal_floor() {
         "tests/slice_ends_with_good.rs",
     );
     assert_eq!(
-        dug_eq_bool_pairs(&ends),
+        complete_eq_bool_pairs(&ends),
         vec![(true, true)],
         "`.ends_with(&[2, 3])` must ground to true: {:?}",
         ends.inv
@@ -16537,7 +16544,7 @@ fn literal_slice_search_split_methods_ground_to_literal_floor() {
         "tests/slice_rposition_good.rs",
     );
     assert_eq!(
-        dug_eq_ctor_name_pairs(&rposition),
+        complete_eq_ctor_name_pairs(&rposition),
         vec![("opt:some".to_string(), "opt:some".to_string())],
         "`.rposition()` must ground to opt:some(3): {:?}",
         rposition.inv
@@ -16557,7 +16564,7 @@ fn literal_slice_search_split_methods_ground_to_literal_floor() {
         "tests/slice_rposition_none.rs",
     );
     assert_eq!(
-        dug_eq_ctor_name_pairs(&rposition_none),
+        complete_eq_ctor_name_pairs(&rposition_none),
         vec![("opt:none".to_string(), "opt:none".to_string())],
         "`.rposition()` with no match must ground to opt:none: {:?}",
         rposition_none.inv
@@ -16569,7 +16576,7 @@ fn literal_slice_search_split_methods_ground_to_literal_floor() {
         "tests/slice_binary_search_ok.rs",
     );
     assert_eq!(
-        dug_eq_ctor_name_pairs(&binary_ok),
+        complete_eq_ctor_name_pairs(&binary_ok),
         vec![("res:ok".to_string(), "res:ok".to_string())],
         "`.binary_search(&2)` must ground to res:ok(1): {:?}",
         binary_ok.inv
@@ -16589,7 +16596,7 @@ fn literal_slice_search_split_methods_ground_to_literal_floor() {
         "tests/slice_binary_search_err.rs",
     );
     assert_eq!(
-        dug_eq_ctor_name_pairs(&binary_err),
+        complete_eq_ctor_name_pairs(&binary_err),
         vec![("res:err".to_string(), "res:err".to_string())],
         "`.binary_search(&4)` must ground to res:err(2): {:?}",
         binary_err.inv
@@ -16601,7 +16608,7 @@ fn literal_slice_search_split_methods_ground_to_literal_floor() {
         "tests/slice_split_first_good.rs",
     );
     assert_eq!(
-        dug_eq_int_pairs(&split_first),
+        complete_eq_int_pairs(&split_first),
         vec![(1, 1), (2, 2), (3, 3)],
         "`.split_first()` must decompose to scalar head/tail equalities: {:?}",
         split_first.inv
@@ -16621,7 +16628,7 @@ fn literal_slice_search_split_methods_ground_to_literal_floor() {
         "tests/slice_split_last_good.rs",
     );
     assert_eq!(
-        dug_eq_int_pairs(&split_last),
+        complete_eq_int_pairs(&split_last),
         vec![(3, 3), (1, 1), (2, 2)],
         "`.split_last()` must decompose to scalar last/init equalities: {:?}",
         split_last.inv
@@ -16638,7 +16645,7 @@ fn literal_slice_search_split_methods_ground_to_literal_floor() {
         "tests/slice_enumerate_next_good.rs",
     );
     assert_eq!(
-        dug_eq_int_pairs(&enumerate_next),
+        complete_eq_int_pairs(&enumerate_next),
         vec![(0, 0), (1, 1)],
         "`.iter().enumerate().next()` must decompose to scalar index/element equalities: {:?}",
         enumerate_next.inv
@@ -16879,7 +16886,7 @@ fn iter_next_over_runtime_receiver_stays_opaque_no_fake_dig() {
     // THE EFFECT BOUNDARY HOLDS: a `.next()` over a RUNTIME receiver (a call
     // result / opaque param) is NOT a written literal, so the syntactic-literal
     // gate declines and the term stays the opaque `method:next` ctor -- never
-    // grounded to `opt:some(_)`. A fake-dig would mint a structural Option over a
+    // grounded to `opt:some(_)`. A fake-complete would mint a structural Option over a
     // runtime domain (the cardinal sin).
     for (src, file) in [
         (
@@ -16894,11 +16901,11 @@ fn iter_next_over_runtime_receiver_stays_opaque_no_fake_dig() {
         let out = lift_file(&parse(src), file);
         assert!(
             out.decls.iter().all(|d| {
-                !dug_eq_ctor_name_pairs(d)
+                !complete_eq_ctor_name_pairs(d)
                     .iter()
                     .any(|(a, b)| a == "opt:some" && b == "opt:some")
             }),
-            "{file}: a runtime `.next()` must NOT ground to opt:some on BOTH sides (no fake-dig)"
+            "{file}: a runtime `.next()` must NOT ground to opt:some on BOTH sides (no fake-complete)"
         );
         assert!(
             out.decls.iter().any(|d| decl_mentions_ctor(d, "method:next")),
@@ -16912,7 +16919,7 @@ fn iter_next_over_runtime_receiver_stays_opaque_no_fake_dig() {
 /// `Bool` (e.g. `=(bool(true), bool(true))`). Used to assert the term-position
 /// `.any`/`.all` reductions ground to a literal bool const (so a wrong-expected
 /// twin `=(bool(true), bool(false))` is z3-UNSAT -- the teeth).
-fn dug_eq_bool_pairs(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<(bool, bool)> {
+fn complete_eq_bool_pairs(decl: &sugar_ir_symbolic::ContractDecl) -> Vec<(bool, bool)> {
     fn walk(f: &Formula, out: &mut Vec<(bool, bool)>) {
         match f {
             Formula::Atomic { name, args } if name == "=" && args.len() == 2 => {
@@ -16966,7 +16973,7 @@ fn iter_min_max_over_literal_array_ground_to_some_extremum() {
         "tests/iter_min_good.rs",
     );
     assert_eq!(
-        dug_eq_ctor_name_pairs(&min),
+        complete_eq_ctor_name_pairs(&min),
         vec![("opt:some".to_string(), "opt:some".to_string())],
         "`.min()` and `Some(&1)` must BOTH ground to opt:some: {:?}",
         min.inv
@@ -16998,7 +17005,7 @@ fn iter_min_max_over_literal_array_ground_to_some_extremum() {
         "tests/iter_max_good.rs",
     );
     assert_eq!(
-        dug_eq_ctor_name_pairs(&max),
+        complete_eq_ctor_name_pairs(&max),
         vec![("opt:some".to_string(), "opt:some".to_string())],
         "`.max()` must ground to opt:some(3): {:?}",
         max.inv
@@ -17026,11 +17033,11 @@ fn iter_min_over_runtime_receiver_stays_opaque_no_fake_dig() {
     let out = lift_file(&parse(src), "tests/iter_min_runtime.rs");
     assert!(
         out.decls.iter().all(|d| {
-            !dug_eq_ctor_name_pairs(d)
+            !complete_eq_ctor_name_pairs(d)
                 .iter()
                 .any(|(a, b)| a == "opt:some" && b == "opt:some")
         }),
-        "a runtime `.min()` must NOT ground to opt:some on BOTH sides (no fake-dig)"
+        "a runtime `.min()` must NOT ground to opt:some on BOTH sides (no fake-complete)"
     );
     assert!(
         out.decls
@@ -17052,7 +17059,7 @@ fn iter_find_and_position_over_literal_array_ground_with_teeth() {
         "tests/iter_find_good.rs",
     );
     assert_eq!(
-        dug_eq_ctor_name_pairs(&find),
+        complete_eq_ctor_name_pairs(&find),
         vec![("opt:some".to_string(), "opt:some".to_string())],
         "`.find()` must ground to opt:some(4): {:?}",
         find.inv
@@ -17084,7 +17091,7 @@ fn iter_find_and_position_over_literal_array_ground_with_teeth() {
         "tests/iter_find_none.rs",
     );
     assert_eq!(
-        dug_eq_ctor_name_pairs(&find_none),
+        complete_eq_ctor_name_pairs(&find_none),
         vec![("opt:none".to_string(), "opt:none".to_string())],
         "`.find()` with no match must ground to opt:none: {:?}",
         find_none.inv
@@ -17101,7 +17108,7 @@ fn iter_find_and_position_over_literal_array_ground_with_teeth() {
         "tests/iter_position_good.rs",
     );
     assert_eq!(
-        dug_eq_ctor_name_pairs(&pos),
+        complete_eq_ctor_name_pairs(&pos),
         vec![("opt:some".to_string(), "opt:some".to_string())],
         "`.position()` must ground to opt:some(2): {:?}",
         pos.inv
@@ -17137,7 +17144,7 @@ fn iter_any_all_term_position_ground_to_bool_const_with_teeth() {
         "tests/iter_any_good.rs",
     );
     assert_eq!(
-        dug_eq_bool_pairs(&any),
+        complete_eq_bool_pairs(&any),
         vec![(true, true)],
         "`.any(>2)` must ground to bool(true): {:?}",
         any.inv
@@ -17171,7 +17178,7 @@ fn iter_any_all_term_position_ground_to_bool_const_with_teeth() {
         "tests/iter_all_good.rs",
     );
     assert_eq!(
-        dug_eq_bool_pairs(&all),
+        complete_eq_bool_pairs(&all),
         vec![(true, true)],
         "`.all(>0)` must ground to bool(true): {:?}",
         all.inv
@@ -17187,7 +17194,7 @@ fn iter_any_all_term_position_ground_to_bool_const_with_teeth() {
         "tests/iter_all_false_good.rs",
     );
     assert_eq!(
-        dug_eq_bool_pairs(&all_false),
+        complete_eq_bool_pairs(&all_false),
         vec![(false, false)],
         "`.all(>1)` must ground to bool(false): {:?}",
         all_false.inv
@@ -17209,9 +17216,9 @@ fn iter_any_all_term_position_ground_to_bool_const_with_teeth() {
 fn iter_any_over_effect_domain_receiver_stays_opaque_no_fake_dig() {
     // THE EFFECT BOUNDARY HOLDS: a `.any(..)` over a RUNTIME receiver is NOT a
     // written literal -> the syntactic-literal gate in `iter_terminal` declines (the
-    // inner Seq desugar Hits), so the reduction never grounds a bool. The
+    // inner Seq desugar returns Incomplete), so the reduction never grounds a bool. The
     // closure-adaptor provenance path then NAMES it bin-2 (an OPAQUE collection) and
-    // refuses -- no grounded bool over a runtime domain, no fake-dig.
+    // refuses -- no grounded bool over a runtime domain, no fake-complete.
     let src = "fn make_v() -> Vec<i32> { vec![1, 2, 3] }\n#[test]\nfn t() { let v = make_v(); assert_eq!(v.iter().any(|x| *x > 2), true); }\n";
     let out = lift_file(&parse(src), "tests/iter_any_runtime.rs");
     assert!(
@@ -17220,8 +17227,10 @@ fn iter_any_over_effect_domain_receiver_stays_opaque_no_fake_dig() {
         out.assertion_facts
     );
     assert!(
-        out.decls.iter().all(|d| dug_eq_bool_pairs(d).is_empty()),
-        "a runtime `.any()` must NOT ground to a bool-const equality (no fake-dig): {:?}",
+        out.decls
+            .iter()
+            .all(|d| complete_eq_bool_pairs(d).is_empty()),
+        "a runtime `.any()` must NOT ground to a bool-const equality (no fake-complete): {:?}",
         out.decls.iter().map(|d| d.inv.clone()).collect::<Vec<_>>()
     );
     assert!(
@@ -17237,7 +17246,7 @@ fn iter_any_over_effect_domain_receiver_stays_opaque_no_fake_dig() {
 fn iter_find_with_unconstevaluable_closure_stays_opaque() {
     // CONST-EVAL-OR-BAIL: a `.find` closure whose body reads an OUTER runtime
     // capture (`cap`, not the closure param) cannot const-evaluate over the literal
-    // elements -> the `iter_terminal` reduction bails (the inner desugar would dig,
+    // elements -> the `iter_terminal` reduction bails (the inner desugar would complete,
     // but `const_eval_unary_closure` returns None on the unbound capture), so the
     // closure-adaptor provenance path names it (bin-1: domain constructed, body not
     // yet point-wise liftable) and refuses -- never a fake grounded `opt:some`.
@@ -17251,7 +17260,7 @@ fn iter_find_with_unconstevaluable_closure_stays_opaque() {
     );
     assert!(
         out.decls.iter().all(|d| {
-            !dug_eq_ctor_name_pairs(d)
+            !complete_eq_ctor_name_pairs(d)
                 .iter()
                 .any(|(a, b)| a == "opt:some" && b == "opt:some")
         }),
@@ -17279,29 +17288,29 @@ fn t() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/cursor_rfold.rs");
-    // The cursor rfold (the let-init fold) must dig; the trailing `assert_eq!(i,0)` lifts too.
+    // The cursor rfold (the let-init fold) must complete; the trailing `assert_eq!(i,0)` lifts too.
     assert!(
         !out.skip_reasons
             .iter()
             .any(|r| r.contains("let-initializer")),
-        "the cursor rfold over literal arrays must dig, not stay a let-init refusal: {:?}",
+        "the cursor rfold over literal arrays must complete, not stay a let-init refusal: {:?}",
         out.skip_reasons
     );
     let rfold_decl = warranted_decl_with_name(&out, "rfold");
-    let pairs = dug_eq_int_pairs(rfold_decl);
+    let pairs = complete_eq_int_pairs(rfold_decl);
     assert_eq!(
         pairs,
         vec![(6, 6), (4, 4), (2, 2), (0, 0)],
-        "each cursor step must dig to the EXACT (element, ys[pos]) literal pair"
+        "each cursor step must complete to the EXACT (element, ys[pos]) literal pair"
     );
 }
 
 #[test]
 fn cursor_fold_bad_twin_is_refutable_carrying_real_elements() {
     // TEETH (break-the-twin): assert the element equals the WRONG expected value (ys
-    // all 99). The dug formula must carry the REAL element values (6,4,2,0) on the LHS
+    // all 99). The completed formula must carry the REAL element values (6,4,2,0) on the LHS
     // and the wrong 99 on the RHS -- a z3-REFUTABLE `6 == 99` claim, NOT a vacuously
-    // satisfiable `6 == index(ys, k)`. A fake-dig would have produced the uninterpreted
+    // satisfiable `6 == index(ys, k)`. A fake-complete would have produced the uninterpreted
     // EUF accessor (always SAT); the real literal makes the false claim UNSAT.
     let src = r#"
 #[test]
@@ -17314,14 +17323,14 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/cursor_rfold_twin.rs");
     let rfold_decl = warranted_decl_with_name(&out, "rfold");
-    let pairs = dug_eq_int_pairs(rfold_decl);
+    let pairs = complete_eq_int_pairs(rfold_decl);
     assert_eq!(
         pairs,
         vec![(6, 99), (4, 99), (2, 99), (0, 99)],
         "the bad twin must lift to refutable (elem != 99) pairs carrying the REAL element"
     );
     // Every pair is a genuine contradiction (lhs != rhs) -- the obligation is UNSAT,
-    // not coalesced/vacuous. This is the discriminant of a real dig.
+    // not coalesced/vacuous. This is the discriminant of a real complete.
     assert!(
         pairs.iter().all(|(a, b)| a != b),
         "every bad-twin claim must be a real (refutable) inequality: {pairs:?}"
@@ -17331,7 +17340,7 @@ fn t() {
 #[test]
 fn cursor_fold_skip_while_deref_predicate_digs() {
     // POSITIVE: `.skip_while(|&x| *x < 15)` -- the `*x` deref predicate const-evaluates
-    // over the literal element; the kept tail is [15,16,17,19] = ys, dug exactly.
+    // over the literal element; the kept tail is [15,16,17,19] = ys, completed exactly.
     let src = r#"
 #[test]
 fn t() {
@@ -17347,24 +17356,24 @@ fn t() {
         !out.skip_reasons
             .iter()
             .any(|r| r.contains("let-initializer")),
-        "the skip_while(*x) cursor fold must dig: {:?}",
+        "the skip_while(*x) cursor fold must complete: {:?}",
         out.skip_reasons
     );
     let fold_decl = warranted_decl_with_name(&out, "fold");
-    let pairs = dug_eq_int_pairs(fold_decl);
+    let pairs = complete_eq_int_pairs(fold_decl);
     assert_eq!(
         pairs,
         vec![(15, 15), (16, 16), (17, 17), (19, 19)],
-        "skip_while(*x<15) keeps [15,16,17,19] and digs each exactly"
+        "skip_while(*x<15) keeps [15,16,17,19] and complete each exactly"
     );
 }
 
 #[test]
-fn cursor_fold_over_runtime_indexed_array_stays_unclassified_not_dug() {
+fn cursor_fold_over_runtime_indexed_array_stays_unclassified_not_complete() {
     // BAIL (guardrail #1): the indexed array `ys` is a RUNTIME value (a call result),
     // not a source literal. The fold init `ys.len()` then has no literal extent and the
     // `ys[i-1]` read cannot resolve to a literal element. This MUST stay unclassified
-    // (a safe under-claim), never be dug -- digging a runtime value is the cardinal sin.
+    // (a safe under-claim), never be completed -- digging a runtime value is the cardinal sin.
     let src = r#"
 fn make_ys() -> Vec<i32> { vec![0, 2, 4, 6] }
 
@@ -17377,7 +17386,7 @@ fn t() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/cursor_runtime_ys.rs");
-    // The runtime-init fold is NOT dug; it stays a let-init refusal (honest under-claim).
+    // The runtime-init fold is NOT completed; it stays a let-init refusal (honest under-claim).
     assert!(
         out.skip_reasons
             .iter()
@@ -17389,11 +17398,11 @@ fn t() {
         !warranted_decls(&out)
             .iter()
             .any(|d| d.name.contains("rfold")),
-        "no rfold obligation may be minted over a runtime array (no fake-dig)"
+        "no rfold obligation may be minted over a runtime array (no fake-complete)"
     );
 }
 
-// ── DIG: the `.filter_map(|x| <opt>)` composable adaptor (`FilterMapSugar`) ───────
+// ── COMPLETE: the `.filter_map(|x| <opt>)` composable adaptor (`FilterMapSugar`) ───────
 //
 // `coretests/tests/iter/adapters/filter_map.rs::test_filter_map_fold` is the verbatim
 // shape: `xs.iter().filter_map(|&x| if x%2==0 { Some(x*x) } else { None }).fold(0,
@@ -17408,7 +17417,7 @@ fn t() {
 fn filter_map_cursor_fold_over_literal_array_digs_exact_elements() {
     // POSITIVE (the verbatim coretests `test_filter_map_fold` fold half): keep the even
     // elements squared -> [0,4,16,36,64] = ys; the cursor fold (i 0..4) resolves ys[i]
-    // to each EXACT literal element. A real dig produces the literal pair `(elem, elem)`.
+    // to each EXACT literal element. A real complete walk produces the literal pair `(elem, elem)`.
     let src = r#"
 #[test]
 fn t() {
@@ -17424,21 +17433,21 @@ fn t() {
         !out.skip_reasons
             .iter()
             .any(|r| r.contains("let-initializer")),
-        "the filter_map cursor fold must dig, not stay a let-init refusal: {:?}",
+        "the filter_map cursor fold must complete, not stay a let-init refusal: {:?}",
         out.skip_reasons
     );
     let fold_decl = warranted_decl_with_name(&out, "fold");
-    let pairs = dug_eq_int_pairs(fold_decl);
+    let pairs = complete_eq_int_pairs(fold_decl);
     assert_eq!(
         pairs,
         vec![(0, 0), (4, 4), (16, 16), (36, 36), (64, 64)],
-        "filter_map(even -> x*x) keeps [0,4,16,36,64] and digs each exact (elem, ys[pos]) pair"
+        "filter_map(even -> x*x) keeps [0,4,16,36,64] and complete each exact (elem, ys[pos]) pair"
     );
     // Each ground equality is true -> SAT (teeth: real, not vacuous).
     if let Some(sat) = z3_verdict(&inv_json(fold_decl), "filter_map_fold_good") {
         assert!(
             sat,
-            "the filter_map dig (0==0 ∧ 4==4 ∧ ..) must be satisfiable"
+            "the filter_map complete walk (0==0 ∧ 4==4 ∧ ..) must be satisfiable"
         );
     }
 }
@@ -17463,24 +17472,24 @@ fn t() {
         !out.skip_reasons
             .iter()
             .any(|r| r.contains("let-initializer")),
-        "the filter_map cursor rfold must dig: {:?}",
+        "the filter_map cursor rfold must complete: {:?}",
         out.skip_reasons
     );
     let rfold_decl = warranted_decl_with_name(&out, "rfold");
-    let pairs = dug_eq_int_pairs(rfold_decl);
+    let pairs = complete_eq_int_pairs(rfold_decl);
     assert_eq!(
         pairs,
         vec![(64, 64), (36, 36), (16, 16), (4, 4), (0, 0)],
-        "filter_map + rfold walks the reversed kept sequence and digs each exact pair"
+        "filter_map + rfold walks the reversed kept sequence and complete each exact pair"
     );
 }
 
 #[test]
 fn filter_map_cursor_fold_bad_twin_is_refutable_carrying_real_elements() {
     // TEETH (break-the-twin): the SAME filter_map keep [0,4,16,36,64] asserted against a
-    // WRONG expected `ys` (all 99). A real dig carries the REAL kept-mapped element on
+    // WRONG expected `ys` (all 99). A real complete carries the REAL kept-mapped element on
     // the LHS and 99 on the RHS -- a z3-REFUTABLE `4 == 99`, NOT a vacuously satisfiable
-    // `4 == index(ys, k)`. A fake-dig (uninterpreted EUF accessor) would be SAT; the real
+    // `4 == index(ys, k)`. A fake-complete (uninterpreted EUF accessor) would be SAT; the real
     // literal makes the false claim UNSAT.
     let src = r#"
 #[test]
@@ -17493,7 +17502,7 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/filter_map_fold_twin.rs");
     let fold_decl = warranted_decl_with_name(&out, "fold");
-    let pairs = dug_eq_int_pairs(fold_decl);
+    let pairs = complete_eq_int_pairs(fold_decl);
     assert_eq!(
         pairs,
         vec![(0, 99), (4, 99), (16, 99), (36, 99), (64, 99)],
@@ -17513,10 +17522,10 @@ fn t() {
 }
 
 #[test]
-fn filter_map_over_opaque_element_stays_unclassified_not_dug() {
+fn filter_map_over_opaque_element_stays_unclassified_not_complete() {
     // BAIL (guardrail): the indexed array `xs` is a RUNTIME value (a call result), so the
     // filter_map's elements are opaque -- no const value to apply the Option-closure to.
-    // The let-init fold MUST stay unclassified (a safe under-claim), never be fake-dug.
+    // The let-init fold MUST stay unclassified (a safe under-claim), never be fake-completed.
     let src = r#"
 fn make_xs() -> Vec<i32> { vec![0, 1, 2, 3, 4] }
 
@@ -17529,13 +17538,13 @@ fn t() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/filter_map_opaque.rs");
-    // The opaque (runtime) receiver makes the filter_map elements non-const: the dig
+    // The opaque (runtime) receiver makes the filter_map elements non-const: the complete
     // BAILS. It is refused as an opaque-runtime-receiver source property (a terminal
-    // bin-2 refusal), never fake-dug. The exact disposition (terminal-refused here, vs a
+    // bin-2 refusal), never fake-completed. The exact disposition (terminal-refused here, vs a
     // let-init structural bail) is unimportant; the LAW is: NOT lifted.
     assert_eq!(
         out.assertions_lifted, 0,
-        "a filter_map over a runtime (opaque) array must NOT lift (no fake-dig): {:?}",
+        "a filter_map over a runtime (opaque) array must NOT lift (no fake-complete): {:?}",
         out.skip_reasons
     );
     assert!(
@@ -17547,7 +17556,7 @@ fn t() {
         !warranted_decls(&out)
             .iter()
             .any(|d| d.name.contains("fold")),
-        "no fold obligation may be minted over an opaque filter_map (no fake-dig)"
+        "no fold obligation may be minted over an opaque filter_map (no fake-complete)"
     );
 }
 
@@ -17559,16 +17568,16 @@ fn t() {
 // a TERM recognizer BEFORE the opaque `method:` ctor). The receiver chain is built by the
 // SAME `peel_fold_adaptors` -> `LiteralSugar` machinery `fold` uses, so it shares the
 // adaptor decorators (`.map`/`.filter`/`.rev`/closed ranges) AND the soundness boundary:
-// an effect / runtime / opaque domain makes the inner desugar `Hit`, propagated verbatim
-// (refuse). The result is a bare scalar compared against a bare int literal, so the dig is
+// an effect / runtime / opaque domain makes the inner desugar `Incomplete`, propagated verbatim
+// (refuse). The result is a bare scalar compared against a bare int literal, so the complete is
 // VALUE-REFUTABLE -- a wrong-expected twin is z3-UNSAT (the teeth). The Option-returning
 // terminals (`.next()`/`.nth()`/`.min()`/`.max()`) are NOT grounded here: `assert_eq!(x,
 // Some(&v))` lifts as the opaque federated `eq:Some(..) == true`, where a bad twin stays
-// SAT (no value-refutation), so grounding them would be a fake-dig -- they stay refused.
+// SAT (no value-refutation), so grounding them would be a fake-complete -- they stay refused.
 
 #[test]
 fn iter_sum_over_literal_array_digs_exact_total() {
-    // POSITIVE: `[1,2,3,4,5].iter().sum()` reduces to 15; `assert_eq!(.., 15)` digs the
+    // POSITIVE: `[1,2,3,4,5].iter().sum()` reduces to 15; `assert_eq!(.., 15)` completes the
     // EXACT `=(15, 15)` pair -- the real total on the LHS, not an opaque `method:sum`.
     let src = r#"
 #[test]
@@ -17580,26 +17589,26 @@ fn t() {
     assert_eq!(
         out.skip_reasons,
         Vec::<String>::new(),
-        "the literal-domain `.sum()` must dig, not refuse: {:?}",
+        "the literal-domain `.sum()` must complete, not refuse: {:?}",
         out.skip_reasons
     );
     let decl = &out.decls[0];
     assert_eq!(
-        dug_eq_int_pairs(decl),
+        complete_eq_int_pairs(decl),
         vec![(15, 15)],
         "the sum terminal must ground the LHS to the EXACT total 15 (not an opaque ctor)"
     );
     // The grounded equality is a true fact -> SAT (teeth: real, not vacuous).
     if let Some(sat) = z3_verdict(&inv_json(decl), "iter_sum_good") {
-        assert!(sat, "the dig `15 == 15` must be satisfiable");
+        assert!(sat, "the complete `15 == 15` must be satisfiable");
     }
 }
 
 #[test]
 fn iter_sum_bad_twin_is_z3_unsat() {
-    // TEETH (break-the-twin): assert the WRONG total 16. A real dig carries the REAL
+    // TEETH (break-the-twin): assert the WRONG total 16. A real complete carries the REAL
     // total 15 on the LHS and the wrong 16 on the RHS -- a z3-REFUTABLE `15 == 16`, NOT a
-    // vacuously satisfiable `method:sum(..) == 16`. A fake-dig (opaque ctor) would be SAT.
+    // vacuously satisfiable `method:sum(..) == 16`. A fake-complete (opaque ctor) would be SAT.
     let src = r#"
 #[test]
 fn t() {
@@ -17609,7 +17618,7 @@ fn t() {
     let out = lift_file(&parse(src), "tests/iter_sum_twin.rs");
     let decl = &out.decls[0];
     assert_eq!(
-        dug_eq_int_pairs(decl),
+        complete_eq_int_pairs(decl),
         vec![(15, 16)],
         "the bad twin must carry the REAL total 15 against the wrong 16 (refutable)"
     );
@@ -17623,14 +17632,14 @@ fn iter_product_over_literal_array_digs_and_bad_twin_refutes() {
     // POSITIVE: `[1,2,3,4,5].iter().product()` reduces to 120.
     let good = r#"#[test] fn t() { assert_eq!([1, 2, 3, 4, 5].iter().product::<i32>(), 120); }"#;
     let out = lift_file(&parse(good), "tests/iter_product.rs");
-    assert_eq!(dug_eq_int_pairs(&out.decls[0]), vec![(120, 120)]);
+    assert_eq!(complete_eq_int_pairs(&out.decls[0]), vec![(120, 120)]);
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "iter_prod_good") {
         assert!(sat, "`120 == 120` must be SAT");
     }
     // TEETH: a wrong product (100) is z3-UNSAT.
     let bad = r#"#[test] fn t() { assert_eq!([1, 2, 3, 4, 5].iter().product::<i32>(), 100); }"#;
     let out = lift_file(&parse(bad), "tests/iter_product_twin.rs");
-    assert_eq!(dug_eq_int_pairs(&out.decls[0]), vec![(120, 100)]);
+    assert_eq!(complete_eq_int_pairs(&out.decls[0]), vec![(120, 100)]);
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "iter_prod_bad") {
         assert!(!sat, "the bad-twin `120 == 100` must be z3-UNSAT (refutes)");
     }
@@ -17641,14 +17650,14 @@ fn iter_count_over_literal_array_digs_length_and_bad_twin_refutes() {
     // POSITIVE: `.count()` reduces to the literal LENGTH 3.
     let good = r#"#[test] fn t() { assert_eq!([1, 2, 3].iter().count(), 3); }"#;
     let out = lift_file(&parse(good), "tests/iter_count.rs");
-    assert_eq!(dug_eq_int_pairs(&out.decls[0]), vec![(3, 3)]);
+    assert_eq!(complete_eq_int_pairs(&out.decls[0]), vec![(3, 3)]);
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "iter_count_good") {
         assert!(sat, "`3 == 3` must be SAT");
     }
     // TEETH: a wrong length (4) is z3-UNSAT.
     let bad = r#"#[test] fn t() { assert_eq!([1, 2, 3].iter().count(), 4); }"#;
     let out = lift_file(&parse(bad), "tests/iter_count_twin.rs");
-    assert_eq!(dug_eq_int_pairs(&out.decls[0]), vec![(3, 4)]);
+    assert_eq!(complete_eq_int_pairs(&out.decls[0]), vec![(3, 4)]);
     if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "iter_count_bad") {
         assert!(!sat, "the bad-twin `3 == 4` must be z3-UNSAT (refutes)");
     }
@@ -17741,7 +17750,7 @@ fn t() {
         let out = lift_file(&parse(src), "tests/literal_collection_alias.rs");
         assert_warranted_decl_count(&out, 1);
         assert_eq!(
-            dug_eq_int_pairs(single_warranted_decl(&out)),
+            complete_eq_int_pairs(single_warranted_decl(&out)),
             vec![(*expected, *expected)],
             "{label}: SSA-clean literal collection alias must reduce to the literal floor"
         );
@@ -17842,7 +17851,7 @@ fn t() {
         let out = lift_file(&parse(src), "tests/literal_collection_alias_bad.rs");
         assert_warranted_decl_count(&out, 1);
         assert_eq!(
-            dug_eq_int_pairs(single_warranted_decl(&out)),
+            complete_eq_int_pairs(single_warranted_decl(&out)),
             vec![(*real, *wrong)],
             "{label}: bad twin must carry the real literal-floor value"
         );
@@ -17916,7 +17925,7 @@ fn iter_sum_through_map_filter_and_closed_range_digs() {
     for (i, (src, total)) in cases.iter().enumerate() {
         let out = lift_file(&parse(src), "tests/iter_compose.rs");
         assert_eq!(
-            dug_eq_int_pairs(&out.decls[0]),
+            complete_eq_int_pairs(&out.decls[0]),
             vec![(*total, *total)],
             "case {i}: the composed reduction must ground to the exact total {total}"
         );
@@ -18048,7 +18057,7 @@ fn temporal_closure_adaptor_terminals_compose_to_literal_floor_with_teeth() {
     for (idx, (lhs, rhs, file, expected_lhs, expected_rhs)) in int_cases.iter().enumerate() {
         let decl = lift_eq_decl(lhs, rhs, file);
         assert_eq!(
-            dug_eq_int_pairs(&decl),
+            complete_eq_int_pairs(&decl),
             vec![(*expected_lhs, *expected_rhs)],
             "case {idx} must carry the exact literal-floor equality"
         );
@@ -18095,7 +18104,7 @@ fn temporal_closure_adaptor_terminals_compose_to_literal_floor_with_teeth() {
     for (idx, (lhs, rhs, file, expected_lhs, expected_rhs)) in bool_cases.iter().enumerate() {
         let decl = lift_eq_decl(lhs, rhs, file);
         assert_eq!(
-            dug_eq_bool_pairs(&decl),
+            complete_eq_bool_pairs(&decl),
             vec![(*expected_lhs, *expected_rhs)],
             "bool case {idx} must carry the exact literal-floor equality"
         );
@@ -18114,7 +18123,7 @@ fn temporal_closure_adaptor_terminals_compose_to_literal_floor_with_teeth() {
         "tests/temporal_find_good.rs",
     );
     assert_eq!(
-        dug_eq_ctor_name_pairs(&find),
+        complete_eq_ctor_name_pairs(&find),
         vec![("opt:some".to_string(), "opt:some".to_string())],
         "find must ground to the structural Option literal floor"
     );
@@ -18136,7 +18145,7 @@ fn temporal_closure_adaptor_terminals_compose_to_literal_floor_with_teeth() {
         "tests/temporal_position_good.rs",
     );
     assert_eq!(
-        dug_eq_ctor_name_pairs(&position),
+        complete_eq_ctor_name_pairs(&position),
         vec![("opt:some".to_string(), "opt:some".to_string())],
         "position must ground to the structural Option literal floor"
     );
@@ -18212,7 +18221,7 @@ fn test_functor_laws() {
     let pairs = out
         .decls
         .iter()
-        .flat_map(dug_eq_int_pairs)
+        .flat_map(complete_eq_int_pairs)
         .collect::<Vec<_>>();
     let dump = format!("{:?}", out.decls);
     assert!(
@@ -18243,7 +18252,7 @@ fn iter_sum_over_runtime_collection_is_not_value_grounded() {
     // (a call result), NOT a written literal. The build-time syntactic-literal gate
     // therefore declines the reduction (the peeled base is not an `Array`/`Range`), and
     // the term stays the OPAQUE `method:sum` ctor (the established sound under-claim) --
-    // NEVER value-grounded to the total `6`. A fake-dig would have minted `_ == 6` over a
+    // NEVER value-grounded to the total `6`. A fake-complete would have minted `_ == 6` over a
     // runtime domain (the cardinal sin); the opaque under-claim has no value teeth (an
     // uninterpreted `method:sum(..)`), exactly as baseline. `someFileIo.iter().sum()` is
     // the same shape.
@@ -18258,10 +18267,12 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/iter_sum_runtime.rs");
     // No grounded total is minted: the LHS stays the opaque `method:sum` ctor, so there
-    // is no `=(6, 6)` / `=(_, 6)` ground-int pair (the fake-dig we forbid).
+    // is no `=(6, 6)` / `=(_, 6)` ground-int pair (the fake-complete we forbid).
     assert!(
-        out.decls.iter().all(|d| dug_eq_int_pairs(d).is_empty()),
-        "no grounded int total may be minted over a runtime collection (no fake-dig)"
+        out.decls
+            .iter()
+            .all(|d| complete_eq_int_pairs(d).is_empty()),
+        "no grounded int total may be minted over a runtime collection (no fake-complete)"
     );
     let dump = format!(
         "{:?}",
@@ -18278,7 +18289,7 @@ fn iter_sum_over_opaque_param_receiver_is_not_value_grounded() {
     // BAIL: an OPAQUE PARAM receiver (`io: X`) is not a written literal -- the syntactic
     // gate declines and the term stays the opaque `method:sum` ctor. The canonical
     // effect-domain twin: a `.sum()` over an effect/runtime source is NEVER value-grounded
-    // (it would be the cardinal-sin fake-dig); it stays the opaque under-claim.
+    // (it would be the cardinal-sin fake-complete); it stays the opaque under-claim.
     let src = r#"
 #[test]
 fn t(io: X) {
@@ -18287,8 +18298,10 @@ fn t(io: X) {
 "#;
     let out = lift_file(&parse(src), "tests/iter_sum_opaque.rs");
     assert!(
-        out.decls.iter().all(|d| dug_eq_int_pairs(d).is_empty()),
-        "no grounded int total may be minted over an opaque param receiver (no fake-dig)"
+        out.decls
+            .iter()
+            .all(|d| complete_eq_int_pairs(d).is_empty()),
+        "no grounded int total may be minted over an opaque param receiver (no fake-complete)"
     );
     let dump = format!(
         "{:?}",
@@ -18350,21 +18363,21 @@ fn t() {
 // TODO (MonadicSugar): `.next()` over a literal domain must GROUND, not stay opaque — no
 // opaque sugar. `assert_eq!([1,2,3].iter().next(), Some(&1))` is sugar all the way to
 // literals: unwrap the `Some` (an Option ctor over a literal, structural `==`) + positional
-// `.next` unroll -> `1 == 1`, bad-twin `Some(&2)` -> z3-UNSAT (real teeth, NOT a fake-dig —
+// `.next` unroll -> `1 == 1`, bad-twin `Some(&2)` -> z3-UNSAT (real teeth, NOT a fake-complete —
 // the SAT-only behavior was a consequence of leaving it opaque). The grounded teeth test
 // lands with `MonadicSugar`; this opaque-pinning test was removed because its premise
-// ("grounding would be a fake-dig") is false.
+// ("grounding would be a fake-complete") is false.
 
 // ── DIG WAVE: for-loop-body cursor -- index-read unroll over a LITERAL-INT range ──
 //
 // `for i in 0..n { assert_eq!(v[i], ys[i]) }` over a LITERAL int range and IMMUTABLE
-// literal `v`/`ys` is the value-in-scope dig applied to the loop body: the iteration
+// literal `v`/`ys` is the value-in-scope complete applied to the loop body: the iteration
 // domain is the FINITE set of concrete positions {0..n-1} (a literal in scope, exactly
 // as a literal array's elements are), so the loop is the finite conjunction of the
 // per-position claims with `i` threaded to each concrete `num(k)` and each `v[i]`/`ys[i]`
 // resolved to its literal element. EXACT-OR-BAIL: a runtime endpoint (`0..v.len()`), a
 // mutable container, a runtime-indexed read, or a mutated/conditional body stays
-// unclassified, never fake-dug.
+// unclassified, never fake-completed.
 
 #[test]
 fn forloop_index_read_over_literal_range_digs_exact_elements() {
@@ -18383,7 +18396,7 @@ fn t() {
     let out = lift_file(&parse(src), "tests/forloop_index.rs");
     assert!(
         !out.skip_reasons.iter().any(|r| r.contains("for context")),
-        "the literal-range index-read loop must dig point-wise, not stay a for-context refusal: {:?}",
+        "the literal-range index-read loop must complete point-wise, not stay a for-context refusal: {:?}",
         out.skip_reasons
     );
     let loop_decl = out
@@ -18391,19 +18404,19 @@ fn t() {
         .iter()
         .find(|d| d.name.contains("loop"))
         .expect("a loop decl must be emitted");
-    let pairs = dug_eq_int_pairs(loop_decl);
+    let pairs = complete_eq_int_pairs(loop_decl);
     assert_eq!(
         pairs,
         vec![(10, 10), (20, 20), (30, 30)],
-        "each unrolled position must dig to the EXACT (v[i], ys[i]) literal pair"
+        "each unrolled position must complete to the EXACT (v[i], ys[i]) literal pair"
     );
 }
 
 #[test]
 fn forloop_index_read_bad_twin_is_refutable_carrying_real_elements() {
-    // TEETH (break-the-twin): `v` and `ys` DISAGREE element-wise. The dug formula must
+    // TEETH (break-the-twin): `v` and `ys` DISAGREE element-wise. The completed formula must
     // carry the REAL element values on both sides -- a z3-REFUTABLE `10 == 99` claim,
-    // NOT a vacuously satisfiable `index(v,k) == index(ys,k)`. A fake-dig would have left
+    // NOT a vacuously satisfiable `index(v,k) == index(ys,k)`. A fake-complete would have left
     // the uninterpreted EUF accessors (always SAT over distinct arrays); the real
     // literals make the false claim UNSAT.
     let src = r#"
@@ -18422,7 +18435,7 @@ fn t() {
         .iter()
         .find(|d| d.name.contains("loop"))
         .expect("a loop decl must be emitted");
-    let pairs = dug_eq_int_pairs(loop_decl);
+    let pairs = complete_eq_int_pairs(loop_decl);
     assert_eq!(
         pairs,
         vec![(10, 99), (20, 99), (30, 99)],
@@ -18435,7 +18448,7 @@ fn t() {
 }
 
 #[test]
-fn forloop_simple_counter_step_over_literal_range_is_not_dug_as_universal() {
+fn forloop_simple_counter_step_over_literal_range_is_not_complete_as_universal() {
     // BAIL (guardrail #1, simple-counter accumulator): a body that MUTATES an
     // accumulator (`sum += v[i]`) is NOT a clean universal over the loop variable --
     // `loop_body_mutates` gates it. The for-loop lift MUST refuse (the post-loop
@@ -18455,11 +18468,11 @@ fn t() {
 "#;
     let out = lift_file(&parse(src), "tests/forloop_accum.rs");
     // The loop body itself has no assert (the assert is the post-loop one); the loop is
-    // not lifted as a universal, and the mutating body must not be dug. The only assert
+    // not lifted as a universal, and the mutating body must not be completed. The only assert
     // is `sum == 60`; `sum` is a mutated local, so it must NOT be fake-resolved to 60.
     let claims_sum_eq_60_as_closed = out.decls.iter().any(|d| {
         let dump = format!("{:?}", d.inv);
-        // a fabricated dig would emit a bare `60 == 60` (both sides const) with no `sum` var.
+        // a fabricated complete would emit a bare `60 == 60` (both sides const) with no `sum` var.
         dump.contains("Int(60)") && dump.matches("Int(60)").count() >= 2 && !dump.contains("sum")
     });
     assert!(
@@ -18499,13 +18512,13 @@ fn t() {
         loop_decl.inv
     );
     assert_eq!(
-        dug_eq_int_pairs(loop_decl),
+        complete_eq_int_pairs(loop_decl),
         vec![(0, 0), (1, 1), (2, 2), (3, 3), (4, 4)]
     );
 }
 
 #[test]
-fn forloop_index_read_over_mutable_array_stays_uninterpreted_not_dug() {
+fn forloop_index_read_over_mutable_array_stays_uninterpreted_not_complete() {
     // BAIL (guardrail #2, mutable container): `let mut buf = [..]` is index-assignable, so
     // its value at a later point is not the written literal. A body `index(buf, k)` read
     // must STAY the uninterpreted EUF accessor (the established floor), never resolve to a
@@ -18529,8 +18542,8 @@ fn t() {
     // [0,0,0], not [10,20,30] -- a fabrication either way).
     let claims_buf0_as_closed_literal = out.decls.iter().any(|d| {
         let dump = format!("{:?}", d.inv);
-        // a fabricated dig over the literal `[0,0,0]` would emit `0 == 10` or over a
-        // hallucinated post-state `10 == 10`; either is a fake-dig of a mutable array.
+        // a fabricated complete over the literal `[0,0,0]` would emit `0 == 10` or over a
+        // hallucinated post-state `10 == 10`; either is a fake-complete of a mutable array.
         dump.contains("Int(10)")
             && dump.matches("Int(10)").count() >= 2
             && !dump.contains("buf")
@@ -18547,10 +18560,10 @@ fn t() {
 }
 
 // ── REFUSE HALF: a literal-domain for-loop with a RUNTIME domain/body/accumulator is a
-// NAMED terminal Effect (Hit side of Outcome{Dug|Hit}), detection-EARNED. The dig fires
+// NAMED terminal Effect (Incomplete side of Outcome{Complete|Incomplete}), detection-EARNED. The complete fires
 // first (above); these prove the refuse half names the SPECIFIC runtime cause as a
 // terminal refusal -- AND that a computable-but-unimplemented body STAYS unclassified
-// (the fake-refuse guard, the inverse of fake-dig).
+// (the fake-refuse guard, the inverse of fake-complete).
 
 fn disp(reason: &str) -> sugar_lift_rust_tests::Disposition {
     sugar_lift_rust_tests::refusal_disposition(reason)
@@ -18560,7 +18573,7 @@ fn disp(reason: &str) -> sugar_lift_rust_tests::Disposition {
 fn forloop_runtime_endpoint_refuses_with_named_domain_effect() {
     // CAUSE A: `for i in 0..n` -- runtime endpoint. The body advances a runtime
     // iterator (`let mut iter; iter.advance_by(i)` -- the iter/traits/iterator.rs shape),
-    // so the dig declines (loop_body_mutates) and the RUNTIME DOMAIN cause fires FIRST in
+    // so the complete declines (loop_body_mutates) and the RUNTIME DOMAIN cause fires FIRST in
     // the precedence. Must REFUSE (terminal) with the specific "RUNTIME endpoint" reason,
     // not a generic "not point-wise" unclassified.
     let src = r#"
@@ -18668,7 +18681,7 @@ fn t() {
 fn forloop_simple_counter_is_not_refused_as_runtime_accumulator() {
     // FAKE-REFUSE GUARD (the inverse direction): a SIMPLE COUNTER `acc += 1` over a
     // literal range is NOT a runtime-valued accumulator -- it must NOT be terminal-refused
-    // by cause C. (It either digs, lifts as a forall, or stays unclassified -- but never
+    // by cause C. (It either completes, lifts as a forall, or stays unclassified -- but never
     // gets the runtime-accumulator terminal, which would be a fake-refuse of a computable
     // counter.) `loop_mutation_is_simple_counter_only` returns true, so cause C declines.
     let src = r#"
@@ -18735,7 +18748,7 @@ fn t() {
 
 // ── Residual runtime-term refusal (residual-refuse2): each bucket REFUSE + DISCRIMINATION ──
 //
-// The Hit side of Outcome{Dug|Hit}: a runtime / non-constructible value is a NAMED terminal
+// The Incomplete side of Outcome{Complete|Incomplete}: a runtime / non-constructible value is a NAMED terminal
 // Effect (refused), accounted not silent. Each test pairs the REFUSE direction (a detected
 // runtime/non-constructible cause) with the DISCRIMINATION direction (a computable / matcher-
 // gap / reach case that STAYS UNCLASSIFIED -- the inverse-sin guardrail against fake-refuse).
@@ -19809,7 +19822,7 @@ fn try_fold_skip_while_row_grounds_both_sides_equal() {
 #[test]
 fn try_fold_cloned_array_literal_row_grounds_both_sides_equal() {
     // cloned.rs:43  a.iter().cloned().try_fold(7, f) == a.iter().try_fold(7, f_ref)
-    // is a FRESH iterator over a literal array source. It must dig to a concrete
+    // is a FRESH iterator over a literal array source. It must complete to a concrete
     // Option value, not inherit the consumed-iterator refusal used by the later
     // mutable `iter.try_fold(..); iter.next()` rows in the same corpus test.
     let out = lift_one(
@@ -20331,7 +20344,7 @@ fn case3_discrimination_concrete_nested_fn_still_inlines_not_refused() {
     // no loop) must still DIG via call-site inlining after the block-local-keying
     // change -- the deferred-inner-fn drain is preserved for non-loop nested fns.
     // Two test fns each declaring a same-named `fn inner` with DISTINCT bodies: both
-    // must dig on their OWN bodies (no collision suppression).
+    // must complete on their OWN bodies (no collision suppression).
     let src = r#"
         #[test]
         fn a() {
@@ -20356,7 +20369,7 @@ fn case3_discrimination_concrete_nested_fn_still_inlines_not_refused() {
          bodies (no collision suppression): {:?}",
         out.skip_reasons
     );
-    // Each `inner` body's `assert!(x < N)` digs at its literal call sites. Crucially
+    // Each `inner` body's `assert!(x < N)` completes at its literal call sites. Crucially
     // `a`'s inner uses its OWN `< 10` and `b`'s its OWN `< 100` -- the block-local
     // keying did NOT cross-contaminate the two same-named-but-distinct bodies.
     let mut a_bounds: Vec<i128> = out
@@ -20378,10 +20391,14 @@ fn case3_discrimination_concrete_nested_fn_still_inlines_not_refused() {
     assert_eq!(
         a_bounds,
         vec![10],
-        "a's inner digs with ITS OWN `< 10`: {:?}",
+        "a's inner completes with ITS OWN `< 10`: {:?}",
         out.decls.iter().map(|d| &d.name).collect::<Vec<_>>()
     );
-    assert_eq!(b_bounds, vec![100], "b's inner digs with ITS OWN `< 100`");
+    assert_eq!(
+        b_bounds,
+        vec![100],
+        "b's inner completes with ITS OWN `< 100`"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────
@@ -20620,7 +20637,7 @@ fn str_replace_trim_methods_have_teeth() {
 fn str_method_non_ascii_unicode_case_stays_opaque_no_false_warrant() {
     // DISCRIMINATION (no false warrant): `.to_uppercase()` over a NON-ASCII receiver is
     // not byte-wise text-determined here (a Unicode-table dependency we refuse to guess),
-    // so str_method Hits the frontier and the LHS stays opaque -- never a forged
+    // so str_method returns Incomplete the frontier and the LHS stays opaque -- never a forged
     // version-dependent value. (The byte-wise `to_ascii_*` recompute over the same
     // non-ASCII input IS proven exact by the str_method resolver unit tests.)
     let out = lift_file(
@@ -20639,7 +20656,7 @@ fn str_method_non_ascii_unicode_case_stays_opaque_no_false_warrant() {
 
 #[test]
 fn format_runtime_arg_does_not_overfire() {
-    // DISCRIMINATION (fake-dig guard): a `format!` over a RUNTIME arg must NOT dissolve
+    // DISCRIMINATION (fake-complete guard): a `format!` over a RUNTIME arg must NOT dissolve
     // to a str_const (it has no written-literal value). It falls through to the opaque
     // path, so the obligation is NOT a `eq(str_const, str_const)` the wrong-twin would
     // refute -- i.e. FormatSugar does not forge a value it cannot reconstruct.
@@ -22339,13 +22356,13 @@ fn t() {
     );
 }
 
-// ── Term-position macro_rules expansion (the deferred dig in `macro_term`) ──────────
+// ── Term-position macro_rules expansion (the deferred complete walk in `macro_term`) ──────────
 //
 // A fn-local `macro_rules!` invoked in TERM position used to go opaque: `add2!(2, 3)`
 // in `assert_eq!(add2!(2, 3), 5)` lifted to a coarse `macro:add2!(2,3)` EUF var the
 // solver satisfied tautologically (no teeth). Now `macro_term`'s `MacroSugar` expands
 // the invocation against the held definition at desugar time and feeds the expansion
-// (`2 + 3`) back to the factory, so the LHS digs to a GROUNDED `+(2, 3)` arithmetic
+// (`2 + 3`) back to the factory, so the LHS completes to a GROUNDED `+(2, 3)` arithmetic
 // term. The grounded form has teeth: `== 5` is z3-SAT (consistent), the bad twin `== 6`
 // is z3-UNSAT (refutable) -- where the old opaque var made BOTH satisfiable.
 
@@ -22368,12 +22385,12 @@ fn single_eq_atom(
     }
 }
 
-fn dug_eq_opt_some_int_pair(decl: &sugar_ir_symbolic::ContractDecl) -> (i128, i128) {
+fn complete_eq_opt_some_int_pair(decl: &sugar_ir_symbolic::ContractDecl) -> (i128, i128) {
     let (lhs, rhs) = single_eq_atom(decl);
     (opt_some_int_value(&lhs), opt_some_int_value(&rhs))
 }
 
-fn dug_eq_unwrap_int_pair(decl: &sugar_ir_symbolic::ContractDecl) -> (i128, i128) {
+fn complete_eq_unwrap_int_pair(decl: &sugar_ir_symbolic::ContractDecl) -> (i128, i128) {
     let (lhs, rhs) = single_eq_atom(decl);
     (unwrap_or_int_value(&lhs), unwrap_or_int_value(&rhs))
 }
@@ -22426,7 +22443,7 @@ fn z3_sat_of_inv(decl: &sugar_ir_symbolic::ContractDecl, tag: &str) -> Option<bo
 #[test]
 fn term_position_macro_rules_expands_to_grounded_arith_with_teeth() {
     // The macro `add2!` is held (fn-local `macro_rules!`); its term-position invocation
-    // expands to its body `$a + $b` and digs through primitive integer sugar to the
+    // expands to its body `$a + $b` and completes through primitive integer sugar to the
     // grounded compiler axiom `5` -- NOT opaque.
     let good = r#"
 #[test]
@@ -22439,7 +22456,7 @@ fn t() {
     assert_eq!(out.lifted, 1, "warnings: {:?}", out.warnings);
     assert_eq!(out.decls.len(), 1, "warnings: {:?}", out.warnings);
 
-    // GROUNDED dig: LHS and RHS are the int const 5. No `macro:` var anywhere.
+    // GROUNDED complete: LHS and RHS are the int const 5. No `macro:` var anywhere.
     let (lhs, rhs) = single_eq_atom(&out.decls[0]);
     assert_eq!(
         int_const_value(&lhs),
@@ -22496,8 +22513,8 @@ fn t() {
 fn unexpandable_term_position_macro_still_falls_back_to_opaque_var() {
     // REGRESSION GUARD: a macro we hold NO definition for (a builtin / opaque macro,
     // here `line!`) in term position must STILL fall back to the coarse opaque
-    // `macro:<tokens>` EUF var -- the deferred-dig expansion path declines (no held
-    // definition) and `MacroSugar::desugar` digs the pre-built opaque var unchanged.
+    // `macro:<tokens>` EUF var -- the deferred-complete expansion path declines (no held
+    // definition) and `MacroSugar::desugar` completes the pre-built opaque var unchanged.
     let src = r#"
 #[test]
 fn t() {
@@ -24353,7 +24370,7 @@ fn peekable_non_fused_empty_literal_warrants_none_with_teeth() {
                 !sat,
                 "BAD peekable None assertion must be z3-UNSAT: {}; pairs={:?}; inv={}",
                 decl.name,
-                dug_eq_ctor_name_pairs(decl),
+                complete_eq_ctor_name_pairs(decl),
                 inv_json(decl)
             );
         }
@@ -25854,7 +25871,7 @@ fn calls_h() {
 // honest disposition. The inner `let _ = recv.map(|x| { assert.. })` is then a
 // `Stmt::Local` whose init IS a top-level `MethodCall`, so the existing
 // `closure_method_terminal_effect` names the boundary (a side-effecting / runtime closure
-// body) and TERMINALIZES it -- moving unclassified -> refused HONESTLY, never a fake-dig.
+// body) and TERMINALIZES it -- moving unclassified -> refused HONESTLY, never a fake-complete.
 
 #[test]
 fn catch_unwind_letinit_side_effecting_closure_body_terminalizes() {
@@ -27128,7 +27145,7 @@ fn iter_reduce_over_literal_digs_with_teeth() {
         "tests/iter_reduce_good.rs",
     );
     assert_eq!(
-        dug_eq_ctor_name_pairs(&good),
+        complete_eq_ctor_name_pairs(&good),
         vec![("opt:some".to_string(), "opt:some".to_string())],
         "`.reduce()` over [1,2,3] must ground to opt:some(6): {:?}",
         good.inv
@@ -27160,7 +27177,7 @@ fn iter_reduce_empty_source_is_none() {
         "tests/iter_reduce_empty.rs",
     );
     assert_eq!(
-        dug_eq_ctor_name_pairs(&good),
+        complete_eq_ctor_name_pairs(&good),
         vec![("opt:none".to_string(), "opt:none".to_string())],
         "`.reduce()` over empty source must ground to opt:none: {:?}",
         good.inv
@@ -27206,7 +27223,7 @@ fn iter_scan_last_over_literal_digs_with_teeth() {
         "tests/iter_scan_last_good.rs",
     );
     assert_eq!(
-        dug_eq_ctor_name_pairs(&good),
+        complete_eq_ctor_name_pairs(&good),
         vec![("opt:some".to_string(), "opt:some".to_string())],
         "`.scan(..).last()` must ground to opt:some(6): {:?}",
         good.inv
@@ -27238,7 +27255,7 @@ fn iter_scan_sum_over_literal_digs_with_teeth() {
         "tests/iter_scan_sum_good.rs",
     );
     assert_eq!(
-        dug_eq_int_pairs(&good),
+        complete_eq_int_pairs(&good),
         vec![(10, 10)],
         "`.scan(..).sum()` must ground to the exact total 10: {:?}",
         good.inv
@@ -27253,7 +27270,7 @@ fn iter_scan_sum_over_literal_digs_with_teeth() {
         "tests/iter_scan_sum_bad.rs",
     );
     assert_eq!(
-        dug_eq_int_pairs(&bad),
+        complete_eq_int_pairs(&bad),
         vec![(10, 11)],
         "the bad twin must carry the REAL total 10 against the wrong 11 (refutable): {:?}",
         bad.inv
@@ -28315,7 +28332,7 @@ fn array_literal_runtime_element_refuses_not_opaque_warrant() {
                 .skip_reasons
                 .iter()
                 .any(|reason| reason.contains("literal array element is not text-determined")),
-        "runtime array element must Hit/refuse instead of opaque-warranting: {:?}",
+        "runtime array element must Incomplete/refuse instead of opaque-warranting: {:?}",
         out.skip_reasons
     );
 }
@@ -28716,7 +28733,10 @@ fn direct_literal_range_for_loop_body_assert_unrolls_pointwise() {
         "literal-range body asserts must replay as a finite conjunction, not forall: {:?}",
         decl.inv
     );
-    assert_eq!(dug_eq_int_pairs(decl), vec![(1, 1), (2, 2), (3, 3), (4, 4)]);
+    assert_eq!(
+        complete_eq_int_pairs(decl),
+        vec![(1, 1), (2, 2), (3, 3), (4, 4)]
+    );
     if let Some(sat) = z3_verdict(&inv_json(decl), "for_body_good") {
         assert!(sat, "point-wise literal body assert must be z3-SAT");
     }
@@ -28731,7 +28751,10 @@ fn direct_literal_range_for_loop_body_assert_unrolls_pointwise() {
     "#;
     let out = lift_file(&parse(bad), "coretests/loop/for_body_bad.rs");
     let decl = single_warranted_decl(&out);
-    assert_eq!(dug_eq_int_pairs(decl), vec![(1, 2), (2, 3), (3, 4), (4, 5)]);
+    assert_eq!(
+        complete_eq_int_pairs(decl),
+        vec![(1, 2), (2, 3), (3, 4), (4, 5)]
+    );
     if let Some(sat) = z3_verdict(&inv_json(decl), "for_body_bad") {
         assert!(!sat, "bad point-wise literal body assert must be z3-UNSAT");
     }
@@ -28752,7 +28775,7 @@ fn empty_reversed_literal_range_for_loop_warrants_no_panic() {
         all_warranted_decls(&out)
             .iter()
             .any(|decl| decl.inv.as_deref().is_some_and(formula_mentions_panic_path)),
-        "empty literal-domain loop must dig to no-panic, not disappear: facts={:?}; decls={:?}; audits={:?}",
+        "empty literal-domain loop must complete to no-panic, not disappear: facts={:?}; decls={:?}; audits={:?}",
         out.assertion_facts,
         out.decls,
         out.factory_audits
@@ -29021,7 +29044,10 @@ fn consumed_iterator_len_after_full_drain_rewrites_to_zero_with_twins() {
         "fully-drained `.len()` must warrant 0, not refuse: skips={:?}",
         out.skip_reasons,
     );
-    assert_eq!(dug_eq_int_pairs(single_warranted_decl(&out)), vec![(0, 0)]);
+    assert_eq!(
+        complete_eq_int_pairs(single_warranted_decl(&out)),
+        vec![(0, 0)]
+    );
     if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "drained_len_good") {
         assert!(sat, "fully drained iterator len == 0 should be SAT");
     }
@@ -29037,7 +29063,10 @@ fn consumed_iterator_len_after_full_drain_rewrites_to_zero_with_twins() {
     "#;
     let out = lift_file(&parse(src), "coretests/iter/consumed_len_post_loop_bad.rs");
     assert_warranted_decl_count(&out, 1);
-    assert_eq!(dug_eq_int_pairs(single_warranted_decl(&out)), vec![(0, 1)]);
+    assert_eq!(
+        complete_eq_int_pairs(single_warranted_decl(&out)),
+        vec![(0, 1)]
+    );
     if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "drained_len_bad") {
         assert!(!sat, "wrong exhausted iterator len must be z3-UNSAT");
     }
@@ -29054,7 +29083,7 @@ fn consumed_iterator_len_after_full_drain_rewrites_to_zero_with_twins() {
     let out = lift_file(&parse(src), "coretests/iter/consumed_len_by_ref_count.rs");
     assert_warranted_decl_count(&out, 1);
     assert_eq!(
-        dug_eq_int_pairs(single_warranted_decl(&out)),
+        complete_eq_int_pairs(single_warranted_decl(&out)),
         vec![(0, 0)],
         "by_ref().count() exhausts the SSA-current iterator"
     );
@@ -29071,7 +29100,7 @@ fn consumed_iterator_len_after_full_drain_rewrites_to_zero_with_twins() {
     let out = lift_file(&parse(src), "coretests/iter/consumed_len_for_by_ref.rs");
     assert_warranted_decl_count(&out, 1);
     assert_eq!(
-        dug_eq_int_pairs(single_warranted_decl(&out)),
+        complete_eq_int_pairs(single_warranted_decl(&out)),
         vec![(0, 0)],
         "for-loop over by_ref() exhausts the SSA-current iterator"
     );
@@ -29437,10 +29466,10 @@ fn chained_next_len_over_unresolved_sequence_helper_stays_opaque() {
 
 /// Discrimination twins for the iter_terminal.rs opaque-EUF gate fix (#19 fix-forward).
 ///
-/// Pre-#2352-fix: the consumed-iterator gate called `reasoned_hit(...)` which places the
+/// Pre-#2352-fix: the consumed-iterator gate called `reasoned_incomplete(...)` which places the
 /// assertion in `skip_reasons` (never reaches z3) → the obligation is SKIPPED, not lifted.
 /// Two consequenecs: (a) reflexive assertions `assert_eq!(it.count(), it.count())` both
-/// become distinct Hit nodes so z3 can never prove equality → discharged dropped −11;
+/// become distinct Incomplete nodes so z3 can never prove equality → discharged dropped −11;
 /// (b) wrong-literal assertions become skips rather than warranted UNDECIDED obligations.
 ///
 /// Fix: `return method::recognize(expr, fcx)` — opaque EUF term `method:count(receiver)`.
@@ -29453,7 +29482,7 @@ fn chained_next_len_over_unresolved_sequence_helper_stays_opaque() {
 #[test]
 fn consumed_iterator_terminal_gate_opaque_euf_not_skip() {
     // Twin A (wrong-literal): post-loop `.count()` with a wrong literal.
-    // Old: skip_reasons contains "consumed-iterator" (reasoned_hit skipped the assertion).
+    // Old: skip_reasons contains "consumed-iterator" (reasoned_incomplete skipped the assertion).
     // New: opaque-EUF lifted → no skip_reason; UNDECIDED (z3 sees opaque, cannot refute).
     let src_wrong = r#"
         #[test]
@@ -29480,7 +29509,7 @@ fn consumed_iterator_terminal_gate_opaque_euf_not_skip() {
         out_wrong.assertions_refused,
     );
     // Twin B (reflexive): post-loop `assert_eq!(it.count(), it.count())`.
-    // Old: both sides are distinct Hit nodes → z3 sees X≠Y → not discharged.
+    // Old: both sides are distinct Incomplete nodes → z3 sees X≠Y → not discharged.
     // New: both sides produce the same opaque symbol method:count(receiver) → z3 discharges
     //      by EUF reflexivity (f(x) == f(x)) — confirmed by teethgap-scout sweep (−11 recovery).
     let src_refl = r#"
@@ -29589,7 +29618,7 @@ fn bounded_next_binding_snapshots_return_and_advances_receiver_state() {
     let out = lift_file(&parse(src), "coretests/array/ufcs_into_iter_count.rs");
     assert_warranted_decl_count(&out, 1);
     assert_eq!(
-        dug_eq_int_pairs(single_warranted_decl(&out)),
+        complete_eq_int_pairs(single_warranted_decl(&out)),
         vec![(3, 3)],
         "UFCS IntoIterator local must resolve to the post-next assigner"
     );
@@ -29611,7 +29640,7 @@ fn bounded_next_binding_snapshots_return_and_advances_receiver_state() {
     let out = lift_file(&parse(src), "coretests/iter/adapters/bound_next_unwrap.rs");
     assert_warranted_decl_count(&out, 1);
     assert_eq!(
-        dug_eq_int_pairs(single_warranted_decl(&out)),
+        complete_eq_int_pairs(single_warranted_decl(&out)),
         vec![(10, 10)],
         "let-bound next().unwrap() good twin must carry the first item"
     );
@@ -29660,7 +29689,7 @@ fn bounded_next_binding_bad_remaining_len_refutes() {
     let out = lift_file(&parse(src), "coretests/array/ufcs_into_iter_count_bad.rs");
     assert_warranted_decl_count(&out, 1);
     assert_eq!(
-        dug_eq_int_pairs(single_warranted_decl(&out)),
+        complete_eq_int_pairs(single_warranted_decl(&out)),
         vec![(3, 4)],
         "UFCS IntoIterator bad twin must carry the real remaining count"
     );
@@ -29688,7 +29717,7 @@ fn bounded_next_binding_bad_remaining_len_refutes() {
     );
     assert_warranted_decl_count(&out, 1);
     assert_eq!(
-        dug_eq_int_pairs(single_warranted_decl(&out)),
+        complete_eq_int_pairs(single_warranted_decl(&out)),
         vec![(10, 11)],
         "let-bound next().unwrap() bad twin must carry the real first item"
     );
@@ -29804,7 +29833,7 @@ fn consumed_flatten_fold_after_next_back_digs_remaining_sequence() {
     );
     assert_warranted_decl_count(&out, 1);
     assert_eq!(
-        dug_eq_int_pairs(single_warranted_decl(&out)),
+        complete_eq_int_pairs(single_warranted_decl(&out)),
         vec![(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7)],
         "flatten().fold() must see the post-consumption middle sequence: {:?}",
         single_warranted_decl(&out).inv
@@ -29844,7 +29873,7 @@ fn consumed_flatten_fold_after_next_back_bad_twin_refutes() {
     );
     assert_warranted_decl_count(&out, 1);
     assert_eq!(
-        dug_eq_int_pairs(single_warranted_decl(&out)),
+        complete_eq_int_pairs(single_warranted_decl(&out)),
         vec![(1, 1), (2, 2), (3, 3), (4, 99), (5, 5), (6, 6), (7, 7)],
         "bad twin must carry the real consumed flattened fold sequence: {:?}",
         single_warranted_decl(&out).inv
@@ -29882,7 +29911,7 @@ fn consumed_flatten_rfold_after_next_back_digs_remaining_sequence() {
     );
     assert_warranted_decl_count(&out, 1);
     assert_eq!(
-        dug_eq_int_pairs(single_warranted_decl(&out)),
+        complete_eq_int_pairs(single_warranted_decl(&out)),
         vec![(7, 7), (6, 6), (5, 5), (4, 4), (3, 3), (2, 2), (1, 1)],
         "flatten().rfold() must see the reversed post-consumption middle sequence: {:?}",
         single_warranted_decl(&out).inv
@@ -29922,7 +29951,7 @@ fn consumed_flatten_rfold_after_next_back_bad_twin_refutes() {
     );
     assert_warranted_decl_count(&out, 1);
     assert_eq!(
-        dug_eq_int_pairs(single_warranted_decl(&out)),
+        complete_eq_int_pairs(single_warranted_decl(&out)),
         vec![(7, 7), (6, 6), (5, 5), (4, 99), (3, 3), (2, 2), (1, 1)],
         "bad twin must carry the real consumed flattened rfold sequence: {:?}",
         single_warranted_decl(&out).inv
@@ -29955,7 +29984,7 @@ fn consumed_iterator_position_after_next_digs_remaining_index() {
     );
     assert_warranted_decl_count(&out, 1);
     assert_eq!(
-        dug_eq_opt_some_int_pair(single_warranted_decl(&out)),
+        complete_eq_opt_some_int_pair(single_warranted_decl(&out)),
         (2, 2),
         "position() must see the remaining iterator after next(): {:?}",
         single_warranted_decl(&out).inv
@@ -29990,7 +30019,7 @@ fn consumed_iterator_position_after_next_bad_twin_refutes() {
     );
     assert_warranted_decl_count(&out, 1);
     assert_eq!(
-        dug_eq_opt_some_int_pair(single_warranted_decl(&out)),
+        complete_eq_opt_some_int_pair(single_warranted_decl(&out)),
         (2, 3),
         "bad twin must carry the real post-consumption position: {:?}",
         single_warranted_decl(&out).inv
@@ -30023,7 +30052,7 @@ fn consumed_filter_next_back_after_next_back_digs_remaining_tail() {
     );
     assert_warranted_decl_count(&out, 1);
     assert_eq!(
-        dug_eq_unwrap_int_pair(single_warranted_decl(&out)),
+        complete_eq_unwrap_int_pair(single_warranted_decl(&out)),
         (4, 4),
         "next_back() must read the post-consumption filtered tail: {:?}",
         single_warranted_decl(&out).inv
@@ -30058,7 +30087,7 @@ fn consumed_filter_next_back_after_next_back_bad_twin_refutes() {
     );
     assert_warranted_decl_count(&out, 1);
     assert_eq!(
-        dug_eq_unwrap_int_pair(single_warranted_decl(&out)),
+        complete_eq_unwrap_int_pair(single_warranted_decl(&out)),
         (4, 6),
         "bad twin must carry the real post-consumption filtered tail: {:?}",
         single_warranted_decl(&out).inv
@@ -30090,7 +30119,7 @@ fn consumed_filter_next_back_exhausted_digs_none() {
     );
     assert_warranted_decl_count(&out, 1);
     assert_eq!(
-        dug_eq_ctor_name_pairs(single_warranted_decl(&out)),
+        complete_eq_ctor_name_pairs(single_warranted_decl(&out)),
         vec![("opt:none".to_string(), "opt:none".to_string())],
         "exhausted post-consumption filtered iterator must ground to opt:none: {:?}",
         single_warranted_decl(&out).inv
@@ -30402,7 +30431,7 @@ fn t() {
         "a plain literal tuple equality should decompose to scalar equalities, not a literal:Tuple key: {doc}"
     );
     assert_eq!(
-        dug_eq_int_pairs(single_warranted_decl(&out)),
+        complete_eq_int_pairs(single_warranted_decl(&out)),
         vec![(1, 1), (2, 2)]
     );
     if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "tuple_plain_good") {
@@ -30460,7 +30489,7 @@ fn tuple_literal_projection_and_equality_bad_twins_refute() {
         let out = lift_file(&parse(&src), "coretests/tuple/literal_floor.rs");
         assert_warranted_decl_count(&out, 1);
         assert_eq!(
-            dug_eq_int_pairs(single_warranted_decl(&out)),
+            complete_eq_int_pairs(single_warranted_decl(&out)),
             want_pairs,
             "{label}: expected scalar tuple-floor equality pairs"
         );
@@ -30539,7 +30568,7 @@ fn slice_tuple_pattern_destructure_literal_sources_have_teeth() {
         let out = lift_file(&parse(&src), "coretests/destructure/literal_floor.rs");
         assert_warranted_decl_count(&out, 1);
         assert_eq!(
-            dug_eq_int_pairs(single_warranted_decl(&out)),
+            complete_eq_int_pairs(single_warranted_decl(&out)),
             want_pairs,
             "{label}: destructured literal binding should reduce to scalar floor"
         );
@@ -30728,7 +30757,7 @@ fn t() {
 fn range_inclusive_start_end_accessors_lower_to_literal_floor() {
     let start = lift_eq_decl("*(0..=10).start()", "0", "tests/range_incl_start_good.rs");
     assert_eq!(
-        dug_eq_int_pairs(&start),
+        complete_eq_int_pairs(&start),
         vec![(0, 0)],
         "RangeInclusive::start must expose the literal lower bound"
     );
@@ -30740,7 +30769,7 @@ fn range_inclusive_start_end_accessors_lower_to_literal_floor() {
 
     let end = lift_eq_decl("*(0..=10).end()", "10", "tests/range_incl_end_good.rs");
     assert_eq!(
-        dug_eq_int_pairs(&end),
+        complete_eq_int_pairs(&end),
         vec![(10, 10)],
         "RangeInclusive::end must expose the literal upper bound"
     );
@@ -30770,7 +30799,7 @@ fn range_inclusive_start_end_bad_twins_are_unsat() {
     for (lhs, rhs, label, file) in cases {
         let decl = lift_eq_decl(lhs, rhs, file);
         assert!(
-            !dug_eq_int_pairs(&decl).is_empty(),
+            !complete_eq_int_pairs(&decl).is_empty(),
             "{lhs} == {rhs} must ground before the bad-twin z3 check: {:?}",
             decl.inv
         );
@@ -30802,7 +30831,7 @@ fn t() {
     );
     for decl in &out.decls {
         assert!(
-            dug_eq_int_pairs(decl).is_empty(),
+            complete_eq_int_pairs(decl).is_empty(),
             "runtime endpoint must not become a ground equality: {:?}",
             decl.inv
         );

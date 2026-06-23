@@ -23,10 +23,10 @@
 // is made, and the single LEAF owns it:
 //   * the SCRUTINEE leaf: a recognized runtime-call scrutinee is a non-scalar runtime result
 //     -- the arm taken is not constructible from source literals -> `RuntimeMatchScrutinee`.
-// The composite makes NO check of its own: a recognized node always Hits its scrutinee leaf
+// The composite makes NO check of its own: a recognized node always returns Incomplete its scrutinee leaf
 // (recognition -- a runtime-call scrutinee -- IS the verdict's precondition). The STRUCTURAL
 // backstop (`Effect::Unsupported` with `STRUCTURAL_BACKSTOP_REASON`) is the total-but-
-// unreachable tail kept to mirror the node shape -- a `Hit` the fall-through routers (both
+// unreachable tail kept to mirror the node shape -- a `Incomplete` the fall-through routers (both
 // callsites) discard exactly as the old `None` was, never a fake-refuse.
 
 use syn::Expr;
@@ -70,7 +70,7 @@ impl MatchScrutineeSugar {
     /// through parens/groups/references) reads its asserted value out of the arm taken by a
     /// value produced only at run time -- not constructible from source literals, no single
     /// timeless `t` -> `RuntimeMatchScrutinee`. Recognition (a runtime-call scrutinee) is this
-    /// leaf's precondition, so it always fires for a built node; it never Digs.
+    /// leaf's precondition, so it always fires for a built node; it never completes.
     fn runtime_scrutinee_effect(&self) -> Option<Effect> {
         Some(Effect::RuntimeMatchScrutinee {
             boundary: token_key(&self.expr),
@@ -82,15 +82,15 @@ impl MatchScrutineeSugar {
     /// `Sugar::desugar(&ctx)` impl delegates here so the node has the canonical trait shape,
     /// while the thin node-router (`runtime_match_scrutinee_effect`) reads the SAME verdict
     /// through the trait.
-    /// The composite makes NO verdict of its own: it Hits its single SCRUTINEE leaf. A built
+    /// The composite makes NO verdict of its own: it returns Incomplete its single SCRUTINEE leaf. A built
     /// node always names `RuntimeMatchScrutinee` (recognition is the verdict's precondition);
     /// the STRUCTURAL backstop is the total-but-unreachable tail the fall-through routers
     /// discard as the old `None`.
     pub(crate) fn desugar_ctx_free(&self) -> Outcome {
         if let Some(effect) = self.runtime_scrutinee_effect() {
-            return Outcome::Hit(effect);
+            return Outcome::Incomplete(effect);
         }
-        Outcome::Hit(Effect::Unsupported {
+        Outcome::Incomplete(Effect::Unsupported {
             reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
         })
     }

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // TERM recognizer for `Expr::Macro`: the mut-local temporal-instability refusal, then -- for a
-// `macro_rules!` we HOLD THE DEFINITION FOR -- an EXPANSION dig that feeds the macro's
+// `macro_rules!` we HOLD THE DEFINITION FOR -- an EXPANSION complete walk that feeds the macro's
 // own body back to the factory (`my_macro!(2,3)` -> `2 + 3` -> `+(2,3)`, which grounds),
 // and only ELSE the opaque `macro:<tokens>` EUF var.
 //
 // The expansion lives at DESUGAR time, not recognize time: the macro_rules registry
 // hangs off `ReductionCtx`, which is in the DESUGAR-time `SugarCtx` (`ctx.reducer`), NOT
-// the build-time `SugarBuildCtx`. So a term-position macro we can expand is a deferred dig:
+// the build-time `SugarBuildCtx`. So a term-position macro we can expand is a deferred complete walk:
 // `recognize` news a `MacroSugar` carrying the macro node + the opaque fallback term, and
 // `desugar` does the lookup + token expansion + `build_term` recursion when it finally
 // holds the reducer. An unexpandable macro (no held definition, opaque/builtin macro, or
@@ -21,7 +21,7 @@ use sugar_ir_symbolic::{make_var, Term};
 use syn::Expr;
 
 use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::sugar::term_leaf::reasoned_hit;
+use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::{
     macro_literal_contains_mut_local, sugar_ctx, token_key, Desugared, Outcome, Sugar, SugarCtx,
     MAX_MACRO_EXPANSION_DEPTH,
@@ -46,7 +46,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         _ => false,
     });
     if contains_mut_local {
-        return Some(reasoned_hit(format!(
+        return Some(reasoned_incomplete(format!(
             "macro in term position references a `let mut` local; \
              temporally unstable — refused: `{token_str}`"
         )));
@@ -65,10 +65,10 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
 /// `ctx.reducer` holds a `macro_rules!` definition for the macro's name, `desugar`
 /// expands the invocation tokens against that definition, parses the expansion as a
 /// single `syn::Expr`, and lifts that expression back through `build_term` -- so a macro
-/// whose body is `$a + $b` digs to a GROUNDED `+(a, b)` term rather than going opaque.
+/// whose body is `$a + $b` completes to a GROUNDED `+(a, b)` term rather than going opaque.
 /// Otherwise (no held definition, an unparseable / non-`Expr` expansion, or expansion
-/// depth exceeded) it Digs the pre-built `opaque` `macro:<tokens>` EUF var -- the exact
-/// coarse-but-valid universe-dig the old factory emitted. No regression for the
+/// depth exceeded) it completes the pre-built `opaque` `macro:<tokens>` EUF var -- the exact
+/// coarse-but-valid universe-complete the old factory emitted. No regression for the
 /// unexpandable case.
 pub(crate) struct MacroSugar {
     /// The macro invocation node (e.g. `add2!(2, 3)`), owned so the expansion can run at
@@ -87,7 +87,7 @@ impl MacroSugar {
     /// block). Recursion is bounded by `ctx.macro_depth`.
     fn try_expand(&self, ctx: &SugarCtx) -> Option<Box<dyn Sugar>> {
         // Recursion guard: a macro whose body invokes another (in-source) macro must not
-        // loop. Beyond the cap, fall back to opaque -- the coarse but valid dig.
+        // loop. Beyond the cap, fall back to opaque -- the coarse but valid complete.
         if ctx.macro_depth >= MAX_MACRO_EXPANSION_DEPTH {
             return None;
         }
@@ -128,8 +128,8 @@ impl Sugar for MacroSugar {
             return node.desugar(&bumped);
         }
         // Unexpandable macro (no held definition / opaque / builtin / non-term
-        // expansion / depth exceeded): the coarse-but-valid opaque universe-dig, the
+        // expansion / depth exceeded): the coarse-but-valid opaque universe-complete, the
         // exact term the old factory emitted.
-        Outcome::Dug(Desugared::Term(Rc::clone(&self.opaque)))
+        Outcome::Complete(Desugared::Term(Rc::clone(&self.opaque)))
     }
 }

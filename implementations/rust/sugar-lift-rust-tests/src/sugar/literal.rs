@@ -69,10 +69,10 @@ pub(crate) struct LiteralSugar {
 impl Sugar for LiteralSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         // WARRANT FIRST (byte-unchanged): a finite/nonempty/text-determined literal domain
-        // builds its element `Seq` and digs. This path is identical to the old code, so no
+        // builds its element `Seq` and completes. This path is identical to the old code, so no
         // warrantable literal can become a refusal below.
         if let Some(seq) = self.build(ctx) {
-            return Outcome::Dug(seq);
+            return Outcome::Complete(seq);
         }
         // The warrant declined. If the SHAPE is one of the six unwarrantable literal dragons
         // (empty / unbounded / over-cap / char / runtime-bound / runtime-element), NAME it as a
@@ -80,7 +80,7 @@ impl Sugar for LiteralSugar {
         // (`unresolved`, which reads as missing work). A genuinely-unrecognized decline stays
         // the generic backstop. PURE RECLASSIFICATION -- only declines are ever named.
         if let Some(reason) = classify_unwarrantable_literal(&self.base) {
-            return Outcome::Hit(Effect::Unsupported {
+            return Outcome::Incomplete(Effect::Unsupported {
                 reason: reason.to_string(),
             });
         }
@@ -91,7 +91,7 @@ impl Sugar for LiteralSugar {
 impl LiteralSugar {
     /// The WARRANT path: build the element `Seq` for a finite literal domain, or `None` on a
     /// decline (empty / over-cap / non-const / runtime). Byte-identical to the former
-    /// `desugar` dig body (pure extraction) so warrant behavior is unchanged.
+    /// `desugar` complete body (pure extraction) so warrant behavior is unchanged.
     fn build(&self, ctx: &SugarCtx) -> Option<Desugared> {
         (|| {
             if let Some(seq) = literal_ascii_char_range_seq(&self.base) {

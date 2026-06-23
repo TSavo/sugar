@@ -62,7 +62,7 @@ impl Sugar for IntersperseConcatSugar {
         Outcome::from_opt((|| {
             let seq = build_composite_in_ctx(&self.seq_expr, ctx)
                 .desugar(ctx)
-                .dug()?
+                .complete()?
                 .into_seq()?;
             let parts = seq_strings(seq)?;
             let joined = parts.join(&self.sep);

@@ -4,7 +4,7 @@
 // slices, ranges, and identity iterator chains over them, `.len()` is a compiler/std
 // axiom over the source construction: the value is the concrete element count. Recognition
 // only captures the raw receiver; desugar composes the receiver to a literal `Seq` in the
-// live binding context, then reduces. Named receiver `Hit`s propagate; structural bails
+// live binding context, then reduces. Named receiver `Incomplete`s propagate; structural bails
 // remain opaque/undecided at the term accounting layer.
 
 use std::collections::BTreeMap;
@@ -17,7 +17,7 @@ use crate::sugar::factory::{build_composite, SugarBuildCtx};
 use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::method;
 use crate::sugar::method_family;
-use crate::sugar::term_leaf::reasoned_hit;
+use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::{simple_path_name, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -77,9 +77,9 @@ impl Sugar for LenSugar {
                         binding = name.as_str(),
                         "reducing exhausted consumed-iterator len through temporal rewrite"
                     );
-                    return Outcome::Dug(Desugared::Term(num(0)));
+                    return Outcome::Complete(Desugared::Term(num(0)));
                 }
-                return reasoned_hit(format!(
+                return reasoned_incomplete(format!(
                     "consumed-iterator local `{name}` -- \
                      `.len()` returns stale pre-consumption length (temporal instability)"
                 ))
@@ -97,14 +97,14 @@ impl Sugar for LenSugar {
                 len = 0usize,
                 "reducing empty literal sequence len"
             );
-            return Outcome::Dug(Desugared::Term(num(0)));
+            return Outcome::Complete(Desugared::Term(num(0)));
         }
         let seq = match build_composite(&self.receiver, &fcx).desugar(ctx) {
-            Outcome::Dug(d) => match d.into_seq() {
+            Outcome::Complete(d) => match d.into_seq() {
                 Some(seq) => seq,
                 None => return self.fallback_method(ctx, &fcx),
             },
-            Outcome::Hit(Effect::Unsupported { reason })
+            Outcome::Incomplete(Effect::Unsupported { reason })
                 if reason == EMPTY_DOMAIN_REASON
                     && method_family::literal_sequence_static_len_in_scope(
                         &self.receiver,
@@ -117,16 +117,16 @@ impl Sugar for LenSugar {
                     len = 0usize,
                     "reducing empty literal sequence len"
                 );
-                return Outcome::Dug(Desugared::Term(num(0)));
+                return Outcome::Complete(Desugared::Term(num(0)));
             }
             hit if hit.is_structural_bail() => {
                 match method_family::build_literal_sequence_composite(&self.receiver, &fcx) {
                     Some(inner) => match inner.desugar(ctx) {
-                        Outcome::Dug(d) => match d.into_seq() {
+                        Outcome::Complete(d) => match d.into_seq() {
                             Some(seq) => seq,
                             None => return self.fallback_method(ctx, &fcx),
                         },
-                        Outcome::Hit(Effect::Unsupported { reason })
+                        Outcome::Incomplete(Effect::Unsupported { reason })
                             if reason == EMPTY_DOMAIN_REASON =>
                         {
                             debug!(
@@ -134,7 +134,7 @@ impl Sugar for LenSugar {
                                 len = 0usize,
                                 "reducing empty literal sequence len"
                             );
-                            return Outcome::Dug(Desugared::Term(num(0)));
+                            return Outcome::Complete(Desugared::Term(num(0)));
                         }
                         hit if hit.is_structural_bail() => return self.fallback_method(ctx, &fcx),
                         hit => return hit,
@@ -154,7 +154,7 @@ impl Sugar for LenSugar {
                                         len = static_len.len,
                                         "reducing literal collection len through verified length-only adapter"
                                     );
-                                    return Outcome::Dug(Desugared::Term(num(
+                                    return Outcome::Complete(Desugared::Term(num(
                                         static_len.len as i128
                                     )));
                                 }
@@ -174,7 +174,7 @@ impl Sugar for LenSugar {
             len,
             "reducing literal sequence len"
         );
-        Outcome::Dug(Desugared::Term(num(len as i128)))
+        Outcome::Complete(Desugared::Term(num(len as i128)))
     }
 }
 
@@ -188,8 +188,10 @@ impl LenSugar {
         let candidate = method_family::build_literal_sequence_composite(source, fcx)
             .unwrap_or_else(|| build_composite(source, fcx));
         match candidate.desugar(ctx) {
-            Outcome::Dug(d) => Ok(d.into_seq().is_some()),
-            Outcome::Hit(Effect::Unsupported { reason }) if reason == EMPTY_DOMAIN_REASON => {
+            Outcome::Complete(d) => Ok(d.into_seq().is_some()),
+            Outcome::Incomplete(Effect::Unsupported { reason })
+                if reason == EMPTY_DOMAIN_REASON =>
+            {
                 Ok(true)
             }
             hit if hit.is_structural_bail() => Ok(false),

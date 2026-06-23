@@ -188,11 +188,11 @@ fn arm_body_stmts(body: &Expr) -> Vec<Stmt> {
 /// `MatchSugar::desugar`.
 /// The trivial inner for an arm's `ConfigurationSugar`: the arm-filter asks the node only
 /// for its `disposition` (which never desugars the inner), so this placeholder's `desugar`
-/// is never reached on the filter path. It digs the empty floor for soundness if it ever is.
+/// is never reached on the filter path. It completes the empty floor for soundness if it ever is.
 struct ArmPresent;
 impl Sugar for ArmPresent {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        Outcome::Dug(Desugared::Seq(Vec::new()))
+        Outcome::Complete(Desugared::Seq(Vec::new()))
     }
 }
 
@@ -203,7 +203,7 @@ struct MatchValueTermSugar {
 impl Sugar for MatchValueTermSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         if let Some(reason) = panic_payload_match_value_reason(&self.m, ctx) {
-            return Outcome::Hit(Effect::Unsupported { reason });
+            return Outcome::Incomplete(Effect::Unsupported { reason });
         }
         let Some((pat, body)) = single_surviving_value_arm(&self.m) else {
             return Outcome::from_opt(None);
@@ -211,11 +211,11 @@ impl Sugar for MatchValueTermSugar {
         let empty = BTreeMap::new();
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &empty);
         let scrutinee = match build_term(&self.m.expr, &fcx).desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
+            Outcome::Complete(d) => match d.into_term() {
                 Some(term) => term,
                 None => return Outcome::from_opt(None),
             },
-            Outcome::Hit(effect) => return Outcome::Hit(effect),
+            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
         let Some(bindings) = value_arm_term_bindings(pat, &scrutinee) else {
             return Outcome::from_opt(None);
@@ -235,11 +235,11 @@ impl Sugar for MatchValueTermSugar {
             ctx.factory_audits,
         );
         match build_term(body, &arm_fcx).desugar(&arm_ctx) {
-            Outcome::Dug(d) => match d.into_term() {
-                Some(term) => Outcome::Dug(Desugared::Term(term)),
+            Outcome::Complete(d) => match d.into_term() {
+                Some(term) => Outcome::Complete(Desugared::Term(term)),
                 None => Outcome::from_opt(None),
             },
-            Outcome::Hit(effect) => Outcome::Hit(effect),
+            Outcome::Incomplete(effect) => Outcome::Incomplete(effect),
         }
     }
 }
@@ -414,8 +414,8 @@ pub(crate) fn decompose_match(
 
 impl Sugar for MatchSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        // TOTAL: the dig body computes the legacy `Option<Desugared>`; `Outcome::from_opt`
-        // lifts it (the structural bail -> `Hit(Effect::Unsupported)`, discarded by the
+        // TOTAL: the complete body computes the legacy `Option<Desugared>`; `Outcome::from_opt`
+        // lifts it (the structural bail -> `Incomplete(Effect::Unsupported)`, discarded by the
         // fall-through consumer exactly as the old `None` was).
         Outcome::from_opt((|| {
             // At least one arm must carry an assertion (else nothing to classify --

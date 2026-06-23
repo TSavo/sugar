@@ -20,7 +20,7 @@ use sugar_ir_symbolic::Term;
 use syn::{Expr, Lit, RangeLimits};
 
 use crate::sugar::monadic;
-use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
+use crate::sugar::term_leaf::{reasoned_incomplete, resolved_term};
 use crate::{
     literal_aggregate_term_in_scope, parse_int_lit, strip_refs_groups, token_key,
     translate_term_in_scope, Sugar,
@@ -38,7 +38,7 @@ pub(crate) fn recognize(
     };
     match call.method.to_string().as_str() {
         "get_mut" | "index_mut" if call.args.len() == 1 => {
-            return Some(reasoned_hit(format!(
+            return Some(reasoned_incomplete(format!(
                 "unsupported term `{}`: effectful / raw-pointer / mutable-reference term (a `&mut` slice borrow) is not a constructible timeless value; refused",
                 token_key(expr)
             )));
@@ -47,7 +47,7 @@ pub(crate) fn recognize(
             // `&mut T` result: a mutable-reference term, not a constructible timeless
             // value -- same boundary as `get_mut`/`index_mut`. Warranting a value
             // through a `&mut` belongs to the borrow path, not here.
-            return Some(reasoned_hit(format!(
+            return Some(reasoned_incomplete(format!(
                 "unsupported term `{}`: effectful / raw-pointer / mutable-reference term (an unchecked `&mut` slice borrow) is not a constructible timeless value; refused",
                 token_key(expr)
             )));
@@ -80,7 +80,7 @@ pub(crate) fn recognize(
             monadic::some_term(inner)
         }
         (MethodKind::Index, None) => {
-            return Some(reasoned_hit(format!(
+            return Some(reasoned_incomplete(format!(
                 "slice index `{}` is out of bounds for a literal slice; refused",
                 token_key(expr)
             )));
@@ -133,7 +133,7 @@ fn recognize_get_unchecked(
             );
             Some(resolved_term(term))
         }
-        None => Some(reasoned_hit(format!(
+        None => Some(reasoned_incomplete(format!(
             "out-of-bounds unchecked slice indexing `{}` is undefined behavior with no determinate value; refused",
             token_key(expr)
         ))),

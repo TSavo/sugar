@@ -4,7 +4,7 @@
 // and emit the raw lifted ProofIR response. Minting is a separate composition
 // step owned by `sugar mint`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -93,13 +93,14 @@ pub fn run(args: LiftArgs) -> u8 {
             if args.report {
                 if args.report_summary {
                     trace_lift_report_checkpoint("before_source_report_summary_from_lift_response");
-                    let summary = match source_report_summary_from_lift_response(response) {
-                        Ok(summary) => summary,
-                        Err(error) => {
-                            eprintln!("{}: {error}", "error".red().bold());
-                            return EXIT_USER_ERROR;
-                        }
-                    };
+                    let summary =
+                        match source_report_summary_from_lift_response(response, &project_root) {
+                            Ok(summary) => summary,
+                            Err(error) => {
+                                eprintln!("{}: {error}", "error".red().bold());
+                                return EXIT_USER_ERROR;
+                            }
+                        };
                     trace_lift_report_checkpoint("after_source_report_summary_from_lift_response");
                     let hard_failure = source_report_summary_has_hard_failures(&summary);
                     let rendered = if args.out.json {
@@ -539,6 +540,8 @@ struct LiftReportSummary {
     ledger: Value,
     factory: FactoryAccountingSummary,
     unresolved_factory_sites: Vec<Value>,
+    factory_walk: Vec<Value>,
+    project_root: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -815,7 +818,10 @@ fn source_file_line_hint(source: &Value) -> (&str, i64) {
     (file, line)
 }
 
-fn source_report_summary_from_lift_response(response: &Value) -> Result<LiftReportSummary, String> {
+fn source_report_summary_from_lift_response(
+    response: &Value,
+    project_root: &Path,
+) -> Result<LiftReportSummary, String> {
     if let Some(refused) = response.get("sugar-refused").and_then(Value::as_str) {
         let reason = response
             .get("reason")
@@ -841,7 +847,6 @@ fn source_report_summary_from_lift_response(response: &Value) -> Result<LiftRepo
 
     let moved_support_loci = response
         .get("sourceAudits")
-        .or_else(|| response.get("source_audits"))
         .and_then(Value::as_array)
         .map(|audits| {
             audits
@@ -851,96 +856,87 @@ fn source_report_summary_from_lift_response(response: &Value) -> Result<LiftRepo
         })
         .unwrap_or(0);
     let ledger = normalize_source_ledger_support(ledger.clone(), moved_support_loci);
-    let factory = factory_accounting_summary_from_response(response);
-    let unresolved_factory_sites = unresolved_factory_sites_from_response(response);
+    let factory = factory_accounting_summary_from_response(response)?;
+    let unresolved_factory_sites = unresolved_factory_sites_from_response(response)?;
+    let factory_walk = factory_walk_from_response(response)?;
     Ok(LiftReportSummary {
         ledger,
         factory,
         unresolved_factory_sites,
+        factory_walk,
+        project_root: Some(project_root.to_path_buf()),
     })
 }
 
-fn factory_accounting_summary_from_response(response: &Value) -> FactoryAccountingSummary {
-    if let Some(summary) = response
+fn factory_walk_from_response(response: &Value) -> Result<Vec<Value>, String> {
+    let rows = response
         .get("factoryAuditSummary")
-        .or_else(|| response.get("factory_audit_summary"))
-    {
-        if let Some(status_counts) = summary
-            .get("statusCounts")
-            .or_else(|| summary.get("status_counts"))
-        {
-            let sites = summary
-                .get("emittedRows")
-                .or_else(|| summary.get("emitted_rows"))
-                .or_else(|| summary.get("sites"))
-                .and_then(Value::as_u64)
-                .map(|value| value as usize)
-                .unwrap_or_else(|| {
-                    ["warranted", "refused", "support", "unresolved"]
-                        .iter()
-                        .map(|status| status_count(status_counts, status))
-                        .sum()
-                });
-            return FactoryAccountingSummary {
-                sites,
-                warranted: status_count(status_counts, "warranted"),
-                refused: status_count(status_counts, "refused"),
-                support: status_count(status_counts, "support"),
-                unresolved: status_count(status_counts, "unresolved"),
-            };
+        .and_then(|summary| summary.get("factoryWalk"))
+        .and_then(Value::as_array)
+        .cloned()
+        .ok_or_else(|| {
+            "lift response did not include factoryAuditSummary.factoryWalk; the kit must emit the memento roll-call report"
+                .to_string()
+        })?;
+    for row in &rows {
+        if row.get("term").is_some() || row.get("site").is_some() || row.get("source").is_some() {
+            return Err(
+                "factoryAuditSummary.factoryWalk carried plaintext source/term; walk rows must carry SourceMemento pins only"
+                    .to_string(),
+            );
         }
     }
-
-    response
-        .get("factoryAudits")
-        .or_else(|| response.get("factory_audits"))
-        .and_then(Value::as_array)
-        .map(|rows| factory_accounting_summary_from_rows(rows))
-        .unwrap_or_default()
+    Ok(rows)
 }
 
-fn unresolved_factory_sites_from_response(response: &Value) -> Vec<Value> {
-    if let Some(rows) = response
+fn factory_accounting_summary_from_response(
+    response: &Value,
+) -> Result<FactoryAccountingSummary, String> {
+    let summary = response
         .get("factoryAuditSummary")
-        .or_else(|| response.get("factory_audit_summary"))
-        .and_then(|summary| {
-            summary
-                .get("unresolvedSites")
-                .or_else(|| summary.get("unresolved_sites"))
-        })
-        .and_then(Value::as_array)
-    {
-        return rows
-            .iter()
-            .cloned()
-            .map(normalize_unresolved_factory_site_row)
-            .collect();
-    }
-
-    response
-        .get("factoryAudits")
-        .or_else(|| response.get("factory_audits"))
-        .and_then(Value::as_array)
-        .map(|rows| {
-            rows.iter()
-                .filter(|row| {
-                    normalized_source_status(row.get("status").and_then(Value::as_str))
-                        == "unresolved"
-                })
-                .cloned()
-                .map(normalize_unresolved_factory_site_row)
-                .collect()
-        })
-        .unwrap_or_default()
+        .ok_or_else(|| {
+            "lift response did not include factoryAuditSummary; the kit must emit factory walk accounting"
+                .to_string()
+        })?;
+    let status_counts = summary.get("statusCounts").ok_or_else(|| {
+        "lift response factoryAuditSummary is missing statusCounts; cannot measure factory coverage"
+            .to_string()
+    })?;
+    let sites = summary
+        .get("emittedRows")
+        .and_then(Value::as_u64)
+        .map(|value| value as usize)
+        .ok_or_else(|| {
+            "lift response factoryAuditSummary is missing emittedRows; cannot measure factory coverage"
+                .to_string()
+        })?;
+    Ok(FactoryAccountingSummary {
+        sites,
+        warranted: status_count(status_counts, "warranted"),
+        refused: status_count(status_counts, "refused"),
+        support: status_count(status_counts, "support"),
+        unresolved: status_count(status_counts, "unresolved"),
+    })
 }
 
-fn normalize_unresolved_factory_site_row(mut row: Value) -> Value {
-    if row.get("term").is_none() {
-        if let Some(site) = row.get("site").cloned() {
-            row["term"] = site;
+fn unresolved_factory_sites_from_response(response: &Value) -> Result<Vec<Value>, String> {
+    let rows = response
+        .get("factoryAuditSummary")
+        .and_then(|summary| summary.get("unresolvedSites"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            "lift response factoryAuditSummary is missing unresolvedSites; cannot report unresolved factory loci"
+                .to_string()
+        })?;
+    for row in rows {
+        if row.get("term").is_some() || row.get("site").is_some() || row.get("source").is_some() {
+            return Err(
+                "factoryAuditSummary.unresolvedSites carried plaintext source/term; unresolved rows must carry SourceMemento pins only"
+                    .to_string(),
+            );
         }
     }
-    row
+    Ok(rows.to_vec())
 }
 
 fn status_count(value: &Value, status: &str) -> usize {
@@ -949,23 +945,6 @@ fn status_count(value: &Value, status: &str) -> usize {
         .and_then(Value::as_u64)
         .map(|count| count as usize)
         .unwrap_or(0)
-}
-
-fn factory_accounting_summary_from_rows(rows: &[Value]) -> FactoryAccountingSummary {
-    let mut summary = FactoryAccountingSummary {
-        sites: rows.len(),
-        ..FactoryAccountingSummary::default()
-    };
-    for audit in rows {
-        match normalized_source_status(audit.get("status").and_then(Value::as_str)) {
-            "warranted" => summary.warranted += 1,
-            "refused" => summary.refused += 1,
-            "support" => summary.support += 1,
-            "unresolved" => summary.unresolved += 1,
-            _ => {}
-        }
-    }
-    summary
 }
 
 fn source_report_from_lift_response(
@@ -1051,7 +1030,7 @@ fn source_report_from_lift_response(
         "source_report.ledger",
         ledger.as_object().map_or(0, Map::len),
     );
-    let factory_audits = matching_report_factory_audits(response, contract_filter);
+    let factory_audits = matching_report_factory_audits(response, contract_filter)?;
     trace_lift_collection_checkpoint("source_report.factory_audits", factory_audits.len());
     let assertion_surface_audits =
         matching_report_assertion_surface_audits(response, contract_filter);
@@ -1226,20 +1205,31 @@ fn call_edge_matches_filter(edge: &Value, filter: &str, audit_bases: &[String]) 
         })
 }
 
-fn matching_report_factory_audits(response: &Value, contract_filter: Option<&str>) -> Vec<Value> {
+fn matching_report_factory_audits(
+    response: &Value,
+    contract_filter: Option<&str>,
+) -> Result<Vec<Value>, String> {
     let Some(rows) = response
         .get("factoryAudits")
         .or_else(|| response.get("factory_audits"))
         .and_then(Value::as_array)
     else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
-    clone_matching_report_values(
+    for row in rows {
+        if row.get("term").is_some() || row.get("site").is_some() || row.get("source").is_some() {
+            return Err(
+                "factoryAudits carried plaintext source/term; RPC rows must carry SourceMemento pins only"
+                    .to_string(),
+            );
+        }
+    }
+    Ok(clone_matching_report_values(
         "matching_report_factory_audits",
         rows,
         |row| contract_filter.is_none_or(|filter| factory_audit_matches_filter(row, filter)),
         |row| row,
-    )
+    ))
 }
 
 fn matching_report_assertion_surface_audits(
@@ -1318,7 +1308,6 @@ fn assertion_surface_audit_matches_filter(row: &Value, filter: &str) -> bool {
 fn factory_audit_matches_filter(row: &Value, filter: &str) -> bool {
     [
         row.get("file").and_then(Value::as_str),
-        row.get("site").and_then(Value::as_str),
         row.get("requested_role").and_then(Value::as_str),
         row.get("selected").and_then(Value::as_str),
         row.get("status").and_then(Value::as_str),
@@ -1690,16 +1679,14 @@ fn render_report_json(
 
 fn render_report_summary_json(summary: &LiftReportSummary) -> Result<String, serde_json::Error> {
     let source_unresolved = source_unresolved_count(&summary.ledger);
-    let mut source_accounting = serde_json::json!({
+    let source_accounting = serde_json::json!({
         "loci": source_count(&summary.ledger, "source_loci"),
         "warranted": source_count(&summary.ledger, "source_warranted"),
         "inactive": source_count(&summary.ledger, "source_inactive"),
         "support": source_count(&summary.ledger, "source_support"),
         "refused": source_count(&summary.ledger, "source_refused"),
+        "unresolved": source_unresolved,
     });
-    if source_unresolved > 0 {
-        source_accounting["unresolved"] = serde_json::json!(source_unresolved);
-    }
     let value = serde_json::json!({
         "kind": "lift-source-report-summary",
         "sourceAccounting": source_accounting,
@@ -1712,6 +1699,7 @@ fn render_report_summary_json(summary: &LiftReportSummary) -> Result<String, ser
         },
         "unresolvedSourceLines": unresolved_source_lines_json(&summary.unresolved_factory_sites),
         "unresolvedFactorySites": summary.unresolved_factory_sites,
+        "factoryWalk": summary.factory_walk,
     });
     serde_json::to_string_pretty(&value).map(|mut rendered| {
         rendered.push('\n');
@@ -1722,17 +1710,15 @@ fn render_report_summary_json(summary: &LiftReportSummary) -> Result<String, ser
 fn render_report_summary_human(summary: &LiftReportSummary) -> String {
     let mut out = String::new();
     let source_unresolved = source_unresolved_count(&summary.ledger);
-    if source_unresolved > 0 {
-        out.push_str(&format!(
-            "source accounting: loci={} warranted={} inactive={} support={} refused={} unresolved={}\n",
-            source_count(&summary.ledger, "source_loci"),
-            source_count(&summary.ledger, "source_warranted"),
-            source_count(&summary.ledger, "source_inactive"),
-            source_count(&summary.ledger, "source_support"),
-            source_count(&summary.ledger, "source_refused"),
-            source_unresolved,
-        ));
-    }
+    out.push_str(&format!(
+        "source accounting: loci={} warranted={} inactive={} support={} refused={} unresolved={}\n",
+        source_count(&summary.ledger, "source_loci"),
+        source_count(&summary.ledger, "source_warranted"),
+        source_count(&summary.ledger, "source_inactive"),
+        source_count(&summary.ledger, "source_support"),
+        source_count(&summary.ledger, "source_refused"),
+        source_unresolved,
+    ));
     if summary.factory.sites > 0 {
         out.push_str(&format!(
             "factory accounting: sites={} warranted={} refused={} support={} unresolved={}\n",
@@ -1751,11 +1737,12 @@ fn render_report_summary_human(summary: &LiftReportSummary) -> String {
             for row in rows {
                 out.push_str(&format!(
                     "    {}\n",
-                    format_unresolved_factory_site_detail(row)
+                    format_unresolved_factory_site_detail(summary.project_root.as_deref(), &row)
                 ));
             }
         }
     }
+    out.push_str(&render_factory_walk(summary));
     out
 }
 
@@ -1790,7 +1777,7 @@ fn unresolved_factory_sites_by_line(rows: &[Value]) -> BTreeMap<(String, String)
     by_line
 }
 
-fn format_unresolved_factory_site_detail(row: Value) -> String {
+fn format_unresolved_factory_site_detail(project_root: Option<&Path>, row: &Value) -> String {
     let role = row
         .get("requested_role")
         .and_then(Value::as_str)
@@ -1799,11 +1786,6 @@ fn format_unresolved_factory_site_detail(row: Value) -> String {
         .get("ast_kind")
         .and_then(Value::as_str)
         .unwrap_or("<unknown-ast>");
-    let term = row
-        .get("term")
-        .or_else(|| row.get("site"))
-        .and_then(Value::as_str)
-        .unwrap_or("<unknown-site>");
     let selected = row
         .get("selected")
         .and_then(Value::as_str)
@@ -1813,7 +1795,159 @@ fn format_unresolved_factory_site_detail(row: Value) -> String {
         .and_then(Value::as_str)
         .filter(|reason| !reason.is_empty())
         .unwrap_or("unclassified");
+    let term = resolve_factory_walk_term(project_root, row);
     format!("[{role}/{ast_kind}] selected={selected} term=`{term}` reason={reason}")
+}
+
+fn render_factory_walk(summary: &LiftReportSummary) -> String {
+    if summary.factory_walk.is_empty() {
+        return String::new();
+    }
+    let mut by_line: BTreeMap<(String, u64), Vec<Value>> = BTreeMap::new();
+    for row in &summary.factory_walk {
+        let file = row
+            .get("file")
+            .and_then(Value::as_str)
+            .unwrap_or("<unknown>")
+            .to_string();
+        let line = row
+            .get("line")
+            .and_then(Value::as_u64)
+            .or_else(|| {
+                row.get("sourceMemento")
+                    .and_then(|memento| memento.get("span"))
+                    .and_then(|span| span.get("start_line"))
+                    .and_then(Value::as_u64)
+            })
+            .unwrap_or(0);
+        by_line.entry((file, line)).or_default().push(row.clone());
+    }
+
+    let mut out = String::new();
+    out.push_str("factory whole-walk:\n");
+    let mut incomplete_here_seen: BTreeSet<(String, u64)> = BTreeSet::new();
+    for ((file, line), mut rows) in by_line {
+        rows.sort_by_key(|row| {
+            row.get("sourceMemento")
+                .and_then(|memento| memento.get("span"))
+                .map(source_span_sort_key)
+                .unwrap_or((line, 0, line, 0))
+        });
+        out.push_str(&format!("  {file}:{line}\n"));
+        for row in rows {
+            let raw_verdict = row
+                .get("verdict")
+                .and_then(Value::as_str)
+                .unwrap_or("incomplete");
+            let verdict = if raw_verdict == "complete" {
+                "complete"
+            } else if incomplete_here_seen.insert((file.clone(), line)) {
+                "INCOMPLETE HERE"
+            } else {
+                "incomplete"
+            };
+            let role = row
+                .get("requested_role")
+                .and_then(Value::as_str)
+                .unwrap_or("?");
+            let ast_kind = row.get("ast_kind").and_then(Value::as_str).unwrap_or("?");
+            let selected = row
+                .get("selected")
+                .and_then(Value::as_str)
+                .unwrap_or("<none>");
+            let output = row.get("output").and_then(Value::as_str).unwrap_or("?");
+            let term = resolve_factory_walk_term(summary.project_root.as_deref(), &row);
+            out.push_str(&format!(
+                "    {verdict} [{role}/{ast_kind}] selected={selected} output={output} term=`{term}`"
+            ));
+            if let Some(reason) = row
+                .get("reason")
+                .and_then(Value::as_str)
+                .filter(|reason| !reason.is_empty())
+            {
+                out.push_str(&format!(" reason={reason}"));
+            }
+            if let Some(occurrences) = row.get("occurrences").and_then(Value::as_u64) {
+                if occurrences > 1 {
+                    out.push_str(&format!(" occurrences={occurrences}"));
+                }
+            }
+            out.push('\n');
+        }
+    }
+    out
+}
+
+fn source_span_sort_key(span: &Value) -> (u64, u64, u64, u64) {
+    (
+        span.get("start_line").and_then(Value::as_u64).unwrap_or(0),
+        span.get("start_col").and_then(Value::as_u64).unwrap_or(0),
+        span.get("end_line").and_then(Value::as_u64).unwrap_or(0),
+        span.get("end_col").and_then(Value::as_u64).unwrap_or(0),
+    )
+}
+
+fn resolve_factory_walk_term(project_root: Option<&Path>, row: &Value) -> String {
+    let Some(root) = project_root else {
+        return "<source memento unresolved: missing project root>".to_string();
+    };
+    let Some(memento_value) = row.get("sourceMemento") else {
+        return "<source memento absent>".to_string();
+    };
+    let Some(memento) = source_memento_from_report_json(memento_value) else {
+        return "<source memento invalid>".to_string();
+    };
+    match sugar_walk::source_oracle::resolve_source_memento(root, &memento) {
+        Ok(resolved) => resolved.fragment.body_text,
+        Err(refusal) => format!("<source memento unresolved: {}>", refusal.reason),
+    }
+}
+
+fn source_memento_from_report_json(
+    value: &Value,
+) -> Option<sugar_walk::source_oracle::SourceMemento> {
+    let file = value.get("file").and_then(Value::as_str)?.to_string();
+    let span = value.get("span")?;
+    let param_names = value
+        .get("paramNames")
+        .or_else(|| value.get("param_names"))
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(sugar_walk::source_oracle::SourceMemento {
+        file,
+        function_name: value
+            .get("sourceFunctionName")
+            .or_else(|| value.get("source_function_name"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        span: sugar_walk::source_oracle::SrcSpan {
+            start_line: span.get("start_line").and_then(Value::as_u64).unwrap_or(0) as usize,
+            start_col: span.get("start_col").and_then(Value::as_u64).unwrap_or(0) as usize,
+            end_line: span.get("end_line").and_then(Value::as_u64).unwrap_or(0) as usize,
+            end_col: span.get("end_col").and_then(Value::as_u64).unwrap_or(0) as usize,
+        },
+        param_names,
+        source_cid: value
+            .get("source_cid")
+            .or_else(|| value.get("sourceCid"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        template_cid: value
+            .get("template_cid")
+            .or_else(|| value.get("templateCid"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    })
 }
 
 fn source_report_summary_has_hard_failures(summary: &LiftReportSummary) -> bool {
@@ -2036,7 +2170,7 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
             .filter(|memento| !is_fact_source_memento(memento))
             .collect::<Vec<_>>();
         if !warranted_mementos.is_empty() || !group_audits.is_empty() {
-            out.push_str("warranted digs:\n");
+            out.push_str("warranted complete walks:\n");
             for memento in warranted_mementos {
                 out.push_str(&format!("  - {}\n", format_source_memento_value(memento)));
             }
@@ -2086,7 +2220,7 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
                 .get("universe_kind")
                 .and_then(Value::as_str)
                 .unwrap_or("unknown");
-            out.push_str(&format!("  dig: {role} / {universe}\n"));
+            out.push_str(&format!("  complete walk: {role} / {universe}\n"));
             if let Some(totals) = audit.get("totals") {
                 out.push_str(&format!("  totals: {}\n", format_counts(totals)));
             }
@@ -3186,10 +3320,9 @@ fn render_factory_accounting(factory_audits: &[Value]) -> String {
                 .and_then(Value::as_i64)
                 .unwrap_or(i64::MAX),
             audit
-                .get("site")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
+                .get("span")
+                .map(source_span_sort_key)
+                .unwrap_or((0, 0, 0, 0)),
         )
     });
 
@@ -3259,9 +3392,12 @@ fn format_factory_audit_row(audit: &Value) -> String {
         .and_then(Value::as_str)
         .unwrap_or("<none>");
     let output = audit.get("output").and_then(Value::as_str).unwrap_or("?");
-    let site = audit.get("site").and_then(Value::as_str).unwrap_or("?");
+    let source = audit
+        .get("sourceMemento")
+        .map(format_source_memento_value)
+        .unwrap_or_else(|| "<source memento absent>".to_string());
     let mut row = format!(
-        "  - {file}:{line} {ast_kind} role={role} selected={selected} output={output}\n    site: `{site}`\n"
+        "  - {file}:{line} {ast_kind} role={role} selected={selected} output={output}\n    source: {source}\n"
     );
     let candidates = format_factory_candidates(audit);
     if !candidates.is_empty() {
@@ -4156,6 +4292,7 @@ mod tests {
     use crate::project_config::PluginEntry;
     use crate::OutputFlags;
     use sugar_verifier::{CallSite, Report, ReportRow};
+    use syn::spanned::Spanned;
 
     fn minimal_source_report() -> LiftSourceReport {
         LiftSourceReport {
@@ -4605,7 +4742,7 @@ mod tests {
         ));
         assert!(human.contains("call edges observed:"));
         assert!(human.contains("commons-codec.PureJavaCrc32::knownVector -> call:update -> commons-codec.PureJavaCrc32::update(byte[],int,int) cid=blake3-512:target @ CommonsCodecCrc32Test.java:44 inv"));
-        assert!(human.contains("warranted digs:"));
+        assert!(human.contains("warranted complete walks:"));
         assert!(human.contains("606 warranted Assignment crc32.slicing-by-8 input fold"));
     }
 
@@ -4724,7 +4861,7 @@ mod tests {
     }
 
     #[test]
-    fn human_report_shows_factory_unresolved_sites_with_candidates() {
+    fn source_report_rejects_plaintext_factory_audit_sites() {
         let response = serde_json::json!({
             "kind": "ir-document",
             "ir": [],
@@ -4760,30 +4897,12 @@ mod tests {
                 }
             ]
         });
-        let report = source_report_from_lift_response(&response, None).expect("source report");
-        let human = render_source_report_human(&report);
+        let error = source_report_from_lift_response(&response, None)
+            .expect_err("plaintext source in factoryAudits must be a protocol error");
 
-        assert!(human.contains(
-            "source audit: loci=1 warranted=0 inactive=0 support=0 refused=0 unresolved=1"
-        ));
         assert!(
-            human.contains(
-                "factory accounting: sites=1 warranted=0 refused=0 support=0 unresolved=1"
-            ),
-            "{human}"
-        );
-        assert!(human.contains("factory unresolved:"), "{human}");
-        assert!(human.contains(
-            "src/lib.rs:7 expr role=Composite selected=<none> output=structural-backstop"
-        ));
-        assert!(human.contains("site: `|| 1`"), "{human}");
-        assert!(
-            human.contains("candidates: closure_term[Term/before=-]"),
-            "{human}"
-        );
-        assert!(
-            human.contains("reason: no Sugar candidate for role Composite at `|| 1`; write more Sugar for this AST"),
-            "{human}"
+            error.contains("factoryAudits carried plaintext source/term"),
+            "{error}"
         );
     }
 
@@ -5279,6 +5398,47 @@ mod tests {
 
     #[test]
     fn summary_report_renders_gate_accounting_without_universe_dump() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let source_dir = root.path().join("tests");
+        std::fs::create_dir_all(&source_dir).expect("mkdir source dir");
+        std::fs::write(
+            source_dir.join("foo.rs"),
+            "fn sample() { let x = 1 + 2; let y = runtime(); }\n",
+        )
+        .expect("write source");
+        let source: syn::File = syn::parse_file(
+            &std::fs::read_to_string(source_dir.join("foo.rs")).expect("read source"),
+        )
+        .expect("parse source");
+        let syn::Item::Fn(item) = &source.items[0] else {
+            panic!("expected function");
+        };
+        let syn::Stmt::Local(first) = &item.block.stmts[0] else {
+            panic!("expected first let");
+        };
+        let syn::Stmt::Local(second) = &item.block.stmts[1] else {
+            panic!("expected second let");
+        };
+        let first_memento = sugar_walk::source_oracle::source_memento_of_term_span(
+            "tests/foo.rs",
+            &std::fs::read_to_string(source_dir.join("foo.rs")).expect("read source"),
+            first.init.as_ref().expect("first init").expr.span(),
+            "sample",
+            &item.sig,
+            &item.block,
+        )
+        .expect("first term memento")
+        .to_json();
+        let second_memento = sugar_walk::source_oracle::source_memento_of_term_span(
+            "tests/foo.rs",
+            &std::fs::read_to_string(source_dir.join("foo.rs")).expect("read source"),
+            second.init.as_ref().expect("second init").expr.span(),
+            "sample",
+            &item.sig,
+            &item.block,
+        )
+        .expect("second term memento")
+        .to_json();
         let response = serde_json::json!({
             "kind": "ir-document",
             "ir": [
@@ -5311,58 +5471,178 @@ mod tests {
                 "unresolvedSites": [
                     {
                         "file": "tests/foo.rs",
-                        "line": 42,
+                        "line": 1,
                         "requested_role": "Term",
                         "ast_kind": "expr",
                         "selected": null,
-                        "site": "opaque()",
                         "reason": "no sugar recognizer reached bedrock",
-                        "status": "unresolved"
+                        "status": "unresolved",
+                        "sourceMemento": second_memento
+                    }
+                ],
+                "factoryWalk": [
+                    {
+                        "file": "tests/foo.rs",
+                        "line": 1,
+                        "requested_role": "Term",
+                        "ast_kind": "expr",
+                        "selected": "binary",
+                        "status": "warranted",
+                        "verdict": "complete",
+                        "output": "term",
+                        "sourceMemento": first_memento
+                    },
+                    {
+                        "file": "tests/foo.rs",
+                        "line": 1,
+                        "requested_role": "Term",
+                        "ast_kind": "expr",
+                        "selected": null,
+                        "status": "unresolved",
+                        "verdict": "incomplete",
+                        "output": "structural-backstop",
+                        "reason": "no sugar recognizer reached bedrock",
+                        "sourceMemento": second_memento
                     }
                 ]
             }
         });
-        let summary = source_report_summary_from_lift_response(&response).expect("summary");
+        let summary =
+            source_report_summary_from_lift_response(&response, root.path()).expect("summary");
         let human = render_report_summary_human(&summary);
         let json = render_report_summary_json(&summary).expect("summary json");
         let parsed_json: serde_json::Value =
             serde_json::from_str(&json).expect("valid summary json");
 
-        assert!(!human.contains("source audit:"), "{human}");
-        assert!(!human.contains("unresolved=0"), "{human}");
+        assert!(human.contains(
+            "source accounting: loci=2 warranted=1 inactive=0 support=0 refused=1 unresolved=0"
+        ));
         assert!(human
             .contains("factory accounting: sites=5 warranted=3 refused=1 support=0 unresolved=1"));
         assert!(human.contains("unresolved source lines: 1"), "{human}");
-        assert!(human.contains("  tests/foo.rs:42"), "{human}");
+        assert!(human.contains("  tests/foo.rs:1"), "{human}");
         assert!(
             human.contains(
-                "    [Term/expr] selected=<none> term=`opaque()` reason=no sugar recognizer reached bedrock"
+                "    [Term/expr] selected=<none> term=`runtime()` reason=no sugar recognizer reached bedrock"
             ),
             "{human}"
         );
+        assert!(human.contains("factory whole-walk:"), "{human}");
+        assert!(human.contains("complete [Term/expr] selected=binary output=term term=`1 + 2`"));
+        assert!(human.contains(
+            "INCOMPLETE HERE [Term/expr] selected=<none> output=structural-backstop term=`runtime()`"
+        ));
         assert!(parsed_json.get("sourceLedger").is_none(), "{json}");
         assert_eq!(parsed_json["sourceAccounting"]["loci"], 2);
-        assert!(parsed_json["sourceAccounting"].get("unresolved").is_none());
+        assert_eq!(parsed_json["sourceAccounting"]["unresolved"], 0);
         assert_eq!(parsed_json["factoryAccounting"]["unresolved"], 1);
         assert_eq!(
             parsed_json["unresolvedSourceLines"][0]["file"],
             "tests/foo.rs"
         );
-        assert_eq!(parsed_json["unresolvedSourceLines"][0]["line"], "42");
+        assert_eq!(parsed_json["unresolvedSourceLines"][0]["line"], "1");
         assert_eq!(
-            parsed_json["unresolvedSourceLines"][0]["sites"][0]["term"],
-            "opaque()"
+            parsed_json["unresolvedSourceLines"][0]["sites"][0]["sourceMemento"]["file"],
+            "tests/foo.rs"
         );
         assert_eq!(
             parsed_json["unresolvedFactorySites"][0]["file"],
             "tests/foo.rs"
         );
-        assert_eq!(parsed_json["unresolvedFactorySites"][0]["line"], 42);
-        assert_eq!(parsed_json["unresolvedFactorySites"][0]["term"], "opaque()");
+        assert_eq!(parsed_json["unresolvedFactorySites"][0]["line"], 1);
+        assert!(parsed_json["unresolvedFactorySites"][0]
+            .get("term")
+            .is_none());
+        assert!(parsed_json["unresolvedFactorySites"][0]
+            .get("site")
+            .is_none());
+        assert!(parsed_json["factoryWalk"][0].get("term").is_none());
+        assert!(parsed_json["factoryWalk"][0].get("site").is_none());
         assert!(!human.contains("superposition"), "{human}");
         assert!(!human.contains("universe(s)"), "{human}");
         assert!(!human.contains("contract: Foo::huge"), "{human}");
         assert!(!human.contains("lifted FOL"), "{human}");
+    }
+
+    #[test]
+    fn summary_report_rejects_plaintext_factory_walk_terms() {
+        let response = serde_json::json!({
+            "kind": "ir-document",
+            "sourceLedger": {
+                "source_loci": 1,
+                "source_warranted": 1,
+                "source_inactive": 0,
+                "source_support": 0,
+                "source_refused": 0,
+                "source_unresolved": 0
+            },
+            "factoryAuditSummary": {
+                "emittedRows": 1,
+                "statusCounts": {
+                    "warranted": 1,
+                    "refused": 0,
+                    "support": 0,
+                    "unresolved": 0
+                },
+                "unresolvedSites": [],
+                "factoryWalk": [
+                    {
+                        "file": "tests/foo.rs",
+                        "line": 1,
+                        "status": "warranted",
+                        "verdict": "complete",
+                        "term": "1 + 2"
+                    }
+                ]
+            }
+        });
+        let error = source_report_summary_from_lift_response(&response, Path::new("."))
+            .expect_err("plaintext term in factoryWalk must be rejected");
+
+        assert!(
+            error.contains("plaintext source/term"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn summary_report_rejects_plaintext_unresolved_sites() {
+        let response = serde_json::json!({
+            "kind": "ir-document",
+            "sourceLedger": {
+                "source_loci": 1,
+                "source_warranted": 0,
+                "source_inactive": 0,
+                "source_support": 0,
+                "source_refused": 0,
+                "source_unresolved": 1
+            },
+            "factoryAuditSummary": {
+                "emittedRows": 1,
+                "statusCounts": {
+                    "warranted": 0,
+                    "refused": 0,
+                    "support": 0,
+                    "unresolved": 1
+                },
+                "unresolvedSites": [
+                    {
+                        "file": "tests/foo.rs",
+                        "line": 1,
+                        "status": "unresolved",
+                        "site": "opaque()"
+                    }
+                ],
+                "factoryWalk": []
+            }
+        });
+        let error = source_report_summary_from_lift_response(&response, Path::new("."))
+            .expect_err("plaintext unresolved site must be rejected");
+
+        assert!(
+            error.contains("plaintext source/term"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]
@@ -5379,7 +5659,23 @@ mod tests {
             },
             "sourceAudits": []
         });
-        let summary = source_report_summary_from_lift_response(&response).expect("summary");
+        let response = {
+            let mut response = response;
+            response["factoryAuditSummary"] = serde_json::json!({
+                "emittedRows": 0,
+                "statusCounts": {
+                    "warranted": 0,
+                    "refused": 0,
+                    "support": 0,
+                    "unresolved": 0
+                },
+                "unresolvedSites": [],
+                "factoryWalk": []
+            });
+            response
+        };
+        let summary =
+            source_report_summary_from_lift_response(&response, Path::new(".")).expect("summary");
 
         assert!(source_report_summary_has_hard_failures(&summary));
     }
@@ -5403,10 +5699,13 @@ mod tests {
                     "refused": 0,
                     "support": 0,
                     "unresolved": 1
-                }
+                },
+                "unresolvedSites": [],
+                "factoryWalk": []
             }
         });
-        let summary = source_report_summary_from_lift_response(&response).expect("summary");
+        let summary =
+            source_report_summary_from_lift_response(&response, Path::new(".")).expect("summary");
 
         assert!(source_report_summary_has_hard_failures(&summary));
     }
@@ -5648,7 +5947,7 @@ mod tests {
             human.contains("lifted FOL:\n  - z :: result = v"),
             "{human}"
         );
-        assert!(human.contains("warranted digs:"), "{human}");
+        assert!(human.contains("warranted complete walks:"), "{human}");
         assert!(
             !human.contains("facts observed:\n  - not emitted by kit"),
             "{human}"
@@ -5793,7 +6092,7 @@ mod tests {
             "{human}"
         );
         assert!(
-            human.contains("dig: rust-test-assertions / test-assertion"),
+            human.contains("complete walk: rust-test-assertions / test-assertion"),
             "{human}"
         );
         assert!(human.contains("src/lib.rs:10 warranted fn"), "{human}");

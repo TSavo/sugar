@@ -170,11 +170,11 @@ impl Sugar for TupleDecompSugar {
                     .map(|literal| build_term(literal, &fcx))
                     .collect();
                 let producer_components = match producer.desugar(ctx) {
-                    Outcome::Dug(desugared) => match desugared.into_tuple_components() {
+                    Outcome::Complete(desugared) => match desugared.into_tuple_components() {
                         Some(components) => components,
                         None => return Outcome::from_opt(None),
                     },
-                    Outcome::Hit(effect) => return Outcome::Hit(effect),
+                    Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
                 };
                 if producer_components.len() != literal_terms.len() {
                     return Outcome::from_opt(None);
@@ -230,7 +230,7 @@ fn constraints(
     let atom = and_(atoms);
     let name =
         anchor.and_then(|term| callsite_assertion_name(term.as_ref(), ctx.scope.local_scope()));
-    Outcome::Dug(Desugared::Constraints {
+    Outcome::Complete(Desugared::Constraints {
         atom,
         n: 1,
         kind: AssertionFactKind::Warranted,
@@ -247,12 +247,12 @@ fn scope_let_inits<'a, 'c>(ctx: &SugarCtx<'a, 'c>) -> BTreeMap<String, &'a Expr>
 
 fn term_payload(node: &dyn Sugar, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
     match node.desugar(ctx) {
-        Outcome::Dug(desugared) => desugared.into_term().ok_or_else(|| {
-            Outcome::Hit(Effect::Unsupported {
+        Outcome::Complete(desugared) => desugared.into_term().ok_or_else(|| {
+            Outcome::Incomplete(Effect::Unsupported {
                 reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
             })
         }),
-        Outcome::Hit(effect) => Err(Outcome::Hit(effect)),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
 

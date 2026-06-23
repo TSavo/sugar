@@ -8,7 +8,7 @@ use syn::{visit::Visit, Expr, Stmt};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
-use crate::sugar::term_leaf::reasoned_hit;
+use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::{token_key, Effect, Sugar};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -19,7 +19,7 @@ pub(crate) fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sug
         return None;
     };
     is_unsafe_memory_method(&call.method)
-        .then(|| reasoned_hit(runtime_memory_reason(&token_key(expr))))
+        .then(|| reasoned_incomplete(runtime_memory_reason(&token_key(expr))))
 }
 
 pub(crate) fn unsafe_memory_boundary_stmts(stmts: &[Stmt]) -> bool {

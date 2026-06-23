@@ -168,7 +168,7 @@ impl Sugar for BoundedLiteralMacroSugar {
         if atoms.is_empty() {
             return unsupported("bounded literal macro emitted no predicate atoms".to_string());
         }
-        Outcome::Dug(Desugared::Constraints {
+        Outcome::Complete(Desugared::Constraints {
             atom: and_(atoms),
             n: 1,
             kind: AssertionFactKind::Warranted,
@@ -374,7 +374,7 @@ impl Sugar for CfgMacroSugar {
                 ));
             }
         };
-        Outcome::Dug(Desugared::Constraints {
+        Outcome::Complete(Desugared::Constraints {
             atom: eq(bool_const(value), bool_const(true)),
             n: 1,
             kind: AssertionFactKind::Warranted,
@@ -505,7 +505,7 @@ impl Sugar for BoolExprSugar {
                 } else {
                     sugar_ir_symbolic::or_(vec![left.atom, right.atom])
                 };
-                Outcome::Dug(Desugared::Constraints {
+                Outcome::Complete(Desugared::Constraints {
                     atom,
                     n: 1,
                     kind: if left.kind.is_warranted() || right.kind.is_warranted() {
@@ -543,14 +543,14 @@ impl Sugar for BoolExprSugar {
                     Err(outcome) => return outcome,
                 };
                 if let Some(atom) = bool_true_assertion_as_false(inner.atom.as_ref()) {
-                    return Outcome::Dug(Desugared::Constraints {
+                    return Outcome::Complete(Desugared::Constraints {
                         atom,
                         n: 1,
                         kind: inner.kind,
                         warrant: Warrant { name: inner.name },
                     });
                 }
-                Outcome::Dug(Desugared::Constraints {
+                Outcome::Complete(Desugared::Constraints {
                     atom: not_(inner.atom),
                     n: 1,
                     kind: inner.kind,
@@ -616,7 +616,7 @@ fn mutable_local_slice_predicate_reason(expr: &Expr, ctx: &SugarCtx) -> Option<S
 }
 
 fn constraints_from_payload(payload: ConstraintPayload) -> Outcome {
-    Outcome::Dug(Desugared::Constraints {
+    Outcome::Complete(Desugared::Constraints {
         atom: payload.atom,
         n: 1,
         kind: payload.kind,
@@ -802,7 +802,7 @@ impl Sugar for IfPanicSugar {
         } else {
             payload.atom
         };
-        Outcome::Dug(Desugared::Constraints {
+        Outcome::Complete(Desugared::Constraints {
             atom,
             n: 1,
             kind: payload.kind,
@@ -856,7 +856,7 @@ impl Sugar for NoPanicCallSugar {
                 }
                 if is_dyn_any_predicate_call(expr) {
                     match build_term_in_ctx(expr, ctx).desugar(ctx) {
-                        Outcome::Dug(d) => {
+                        Outcome::Complete(d) => {
                             if d.into_term()
                                 .as_ref()
                                 .and_then(|term| term_bool(term.as_ref()))
@@ -865,7 +865,7 @@ impl Sugar for NoPanicCallSugar {
                                 return no_panic_tautology_for_site(ctx, &self.site);
                             }
                         }
-                        Outcome::Hit(effect) => return Outcome::Hit(effect),
+                        Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
                     }
                 }
                 let Some(subject) = ctx.opaque_callsite_term(expr) else {
@@ -878,7 +878,7 @@ impl Sugar for NoPanicCallSugar {
                 // would block z3 discharge.
                 if is_lane5_no_panic_literal_call(expr) {
                     let name = callsite_assertion_name(subject.as_ref(), ctx.scope.local_scope());
-                    return Outcome::Dug(Desugared::Constraints {
+                    return Outcome::Complete(Desugared::Constraints {
                         atom: eq(bool_const(true), bool_const(true)),
                         n: 0,
                         kind: AssertionFactKind::Warranted,
@@ -910,7 +910,7 @@ impl Sugar for NoPanicCallSugar {
                 compact_warrant_fragment(&self.site)
             ))
         });
-        Outcome::Dug(Desugared::Constraints {
+        Outcome::Complete(Desugared::Constraints {
             atom,
             n: 0,
             kind,
@@ -920,7 +920,7 @@ impl Sugar for NoPanicCallSugar {
 }
 
 fn no_panic_tautology_for_site(ctx: &SugarCtx, site: &str) -> Outcome {
-    Outcome::Dug(Desugared::Constraints {
+    Outcome::Complete(Desugared::Constraints {
         atom: eq(bool_const(true), bool_const(true)),
         n: 0,
         kind: AssertionFactKind::Warranted,
@@ -1542,7 +1542,7 @@ fn ensure_debug_assertions_active(
 }
 
 fn constraint_from_entry(entry: crate::AssertionEntry) -> Outcome {
-    Outcome::Dug(Desugared::Constraints {
+    Outcome::Complete(Desugared::Constraints {
         atom: entry.atom,
         n: 1,
         kind: AssertionFactKind::Warranted,
@@ -1558,7 +1558,7 @@ struct ConstraintPayload {
 
 fn constraint_payload(node: &dyn Sugar, ctx: &SugarCtx) -> Result<ConstraintPayload, Outcome> {
     match node.desugar(ctx) {
-        Outcome::Dug(Desugared::Constraints {
+        Outcome::Complete(Desugared::Constraints {
             atom,
             kind,
             warrant,
@@ -1568,10 +1568,10 @@ fn constraint_payload(node: &dyn Sugar, ctx: &SugarCtx) -> Result<ConstraintPayl
             kind,
             name: warrant.name,
         }),
-        Outcome::Dug(_) => Err(Outcome::Hit(Effect::Unsupported {
+        Outcome::Complete(_) => Err(Outcome::Incomplete(Effect::Unsupported {
             reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
         })),
-        Outcome::Hit(effect) => Err(Outcome::Hit(effect)),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
 
@@ -1595,18 +1595,20 @@ fn relation_constraint(
 
 fn term_payload(node: &dyn Sugar, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
     match node.desugar(ctx) {
-        Outcome::Dug(desugared) => desugared.into_term().ok_or_else(|| {
-            Outcome::Hit(Effect::Unsupported {
+        Outcome::Complete(desugared) => desugared.into_term().ok_or_else(|| {
+            Outcome::Incomplete(Effect::Unsupported {
                 reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
             })
         }),
-        Outcome::Hit(effect) => Err(Outcome::Hit(effect)),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
 
 fn prefixed_backstop(name: &str, outcome: Outcome) -> Outcome {
     match outcome {
-        Outcome::Hit(Effect::Unsupported { reason }) if reason != STRUCTURAL_BACKSTOP_REASON => {
+        Outcome::Incomplete(Effect::Unsupported { reason })
+            if reason != STRUCTURAL_BACKSTOP_REASON =>
+        {
             unsupported(format!("{name}!: {reason}"))
         }
         other => other,
@@ -1724,5 +1726,5 @@ fn is_str_or_char_lit(expr: &Expr) -> bool {
 }
 
 fn unsupported(reason: String) -> Outcome {
-    Outcome::Hit(Effect::Unsupported { reason })
+    Outcome::Incomplete(Effect::Unsupported { reason })
 }

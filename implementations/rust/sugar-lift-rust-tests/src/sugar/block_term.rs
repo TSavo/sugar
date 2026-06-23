@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 
 use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::sugar::term_leaf::reasoned_hit;
+use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::sugar::unsafe_memory;
 use crate::{substitute_expr, token_key, ExprBindings, Outcome, Sugar, SugarCtx};
 use syn::{Expr, Item, Pat, Stmt};
@@ -25,9 +25,9 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         } else if let Some(tail) = let_prefix_tail_expr(&block.block.stmts) {
             BlockTermSugar::boxed(tail, fcx)
         } else if unsafe_memory::unsafe_memory_boundary_stmts(&block.block.stmts) {
-            reasoned_hit(unsafe_memory::runtime_memory_reason(&token_key(expr)))
+            reasoned_incomplete(unsafe_memory::runtime_memory_reason(&token_key(expr)))
         } else {
-            reasoned_hit(format!("unsupported term `{}`", token_key(expr)))
+            reasoned_incomplete(format!("unsupported term `{}`", token_key(expr)))
         }),
         Expr::Block(block) => Some(
             inert_prefix_tail(&block.block.stmts)
@@ -36,7 +36,9 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
                     let_prefix_tail_expr(&block.block.stmts)
                         .map(|tail| BlockTermSugar::boxed(tail, fcx))
                 })
-                .unwrap_or_else(|| reasoned_hit(format!("unsupported term `{}`", token_key(expr)))),
+                .unwrap_or_else(|| {
+                    reasoned_incomplete(format!("unsupported term `{}`", token_key(expr)))
+                }),
         ),
         _ => None,
     }

@@ -35,7 +35,7 @@
 // shape-matched terminal gets the first chance to compose to the literal floor instead of
 // immediately becoming the opaque `method:<m>` EUF ctor. Receiver ownership is decided at
 // desugar time: a literal `Seq` reduces, a structural bail falls back to `MethodSugar`, and
-// a named `Hit` propagates.
+// a named `Incomplete` propagates.
 //
 // THE POSITIONAL TERMINALS GROUND VIA `MonadicSugar`. The positional terminals return
 // `Option<&T>`; we GROUND them to a `MonadicSugar` `Some(element)` / `None` constructed
@@ -48,12 +48,12 @@
 // so the positional terminals had to stay opaque; with `MonadicSugar`'s ADT-backed
 // `Option`/`Result` the bad-twin-UNSAT bar is met, so they ground honestly.
 //
-// THE HARD SOUNDNESS LINE. The node Digs ONLY when the WHOLE receiver chain desugars to a
-// LITERAL `Seq`. If the receiver desugar `Hit`s -- the base was an effect / runtime call /
-// opaque collection (`someFileIo.iter()`, `make_ys().iter()`) -- the `Hit` is PROPAGATED
+// THE HARD SOUNDNESS LINE. The node completes ONLY when the WHOLE receiver chain desugars to a
+// LITERAL `Seq`. If the receiver desugar `Incomplete`s -- the base was an effect / runtime call /
+// opaque collection (`someFileIo.iter()`, `make_ys().iter()`) -- the `Incomplete` is PROPAGATED
 // VERBATIM. A literal element that is not an exact integer const (a float / string /
 // opaque element) bails the whole reduction (EXACT-OR-BAIL), then the generic method
-// fallback owns the term. There are no fake-digs: every grounded value carries the real
+// fallback owns the term. There are no fake-completes: every grounded value carries the real
 // reduction, so a wrong-expected twin is z3-UNSAT (the teeth), not a vacuously-satisfiable
 // opaque accessor.
 
@@ -69,7 +69,7 @@ use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::method;
 use crate::sugar::method_family;
 use crate::sugar::monadic;
-use crate::sugar::term_leaf::reasoned_hit;
+use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::{
     closure_body_is_side_effecting, closure_single_param_ident, const_eval_unary_closure,
     const_fold_acc_update, const_fold_int_term, const_int, const_int_acc_init, parse_int_lit,
@@ -157,10 +157,10 @@ impl Terminal {
 /// receiver chain is composed to a literal `Seq` lazily in `desugar`, where the live SSA
 /// binding/temporal context exists. Any receiver that cannot compose to a text-determined
 /// sequence structurally bails to the opaque `method:` fallback, while named receiver
-/// `Hit`s propagate.
+/// `Incomplete`s propagate.
 ///
-/// The soundness line is the receiver `Outcome`: a `Dug(Seq)` is the only path to a
-/// grounded value; a named `Hit` poisons the terminal and propagates; a structural bail
+/// The soundness line is the receiver `Outcome`: a `Complete(Seq)` is the only path to a
+/// grounded value; a named `Incomplete` poisons the terminal and propagates; a structural bail
 /// emits the opaque fallback. So the node can only ever ground-with-teeth, propagate a
 /// real boundary, or reproduce the baseline opaque term -- never reduce-to-maybe-wrong.
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
@@ -483,7 +483,7 @@ fn recognize_terminal(call: &syn::ExprMethodCall) -> Option<Terminal> {
         // here -> fall through to the opaque ctor. The closure is const-evaluated over
         // each literal element at desugar; a closure that cannot const-eval (a runtime
         // capture, a multi-statement body) bails the whole reduction to the opaque
-        // fallback (never a fake-dig).
+        // fallback (never a fake-complete).
         "any" | "all" | "find" | "position" if call.args.len() == 1 => {
             let Expr::Closure(closure) = strip_refs_groups(&call.args[0]) else {
                 return None;
@@ -631,8 +631,8 @@ impl IterTerminalSugar {
         allow_empty_domain: bool,
     ) -> Result<Option<Vec<DesugaredElem>>, Outcome> {
         match candidate.desugar(ctx) {
-            Outcome::Dug(d) => Ok(d.into_seq()),
-            Outcome::Hit(Effect::Unsupported { reason })
+            Outcome::Complete(d) => Ok(d.into_seq()),
+            Outcome::Incomplete(Effect::Unsupported { reason })
                 if allow_empty_domain && reason == EMPTY_DOMAIN_REASON =>
             {
                 Ok(Some(Vec::new()))
@@ -658,8 +658,8 @@ impl IterTerminalSugar {
     }
 
     /// Reduce the literal `Seq` to the value term. Receiver composition happens here,
-    /// at desugar time: named `Hit`s propagate, while a generic structural bail lets the
-    /// caller emit the opaque fallback. Never a guessed value: every `Dug` carries the
+    /// at desugar time: named `Incomplete`s propagate, while a generic structural bail lets the
+    /// caller emit the opaque fallback. Never a guessed value: every `Complete` carries the
     /// EXACT reduction.
     fn reduce(&self, ctx: &SugarCtx) -> Outcome {
         let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
@@ -676,7 +676,7 @@ impl IterTerminalSugar {
         // Consumed-iterator gate: apply it lazily, with the live temporal rewrite table.
         if let Some(name) = simple_path_name(&self.inner) {
             if let Some(reason) = ctx.scope.unknown_iterator_consumption_reason(&name) {
-                return reasoned_hit(reason).desugar(ctx);
+                return reasoned_incomplete(reason).desugar(ctx);
             }
             if ctx.scope.is_consumed_iterator_local(&name)
                 && ctx.scope.temporal_rewrite_expr_for(&name).is_none()
@@ -703,7 +703,7 @@ impl IterTerminalSugar {
                                 len = static_len.len,
                                 "reducing literal chunk/window count through verified length-only adapter"
                             );
-                            return Outcome::Dug(Desugared::Term(num(static_len.len as i128)));
+                            return Outcome::Complete(Desugared::Term(num(static_len.len as i128)));
                         }
                         Ok(false) => return Outcome::from_opt(None),
                         Err(hit) => return hit,
@@ -713,7 +713,7 @@ impl IterTerminalSugar {
                     Expr::MethodCall(call) => call.receiver.as_ref(),
                     _ => &chunk_expr,
                 };
-                return Outcome::Hit(Effect::Unsupported {
+                return Outcome::Incomplete(Effect::Unsupported {
                     reason: format!(
                         "chunk source is runtime slice, not literal `{}`",
                         token_key(receiver)
@@ -740,11 +740,11 @@ impl IterTerminalSugar {
                 .or_else(|| method_family::build_literal_sequence_composite(&self.inner, &fcx))
                 .unwrap_or_else(|| build_composite(&self.inner, &fcx));
             match inner.desugar(ctx) {
-                Outcome::Dug(d) => match d.into_seq() {
+                Outcome::Complete(d) => match d.into_seq() {
                     Some(seq) => seq,
                     None => return Outcome::from_opt(None),
                 },
-                Outcome::Hit(Effect::Unsupported { reason })
+                Outcome::Incomplete(Effect::Unsupported { reason })
                     if reason == EMPTY_DOMAIN_REASON && allow_empty_sequence =>
                 {
                     Vec::new()
@@ -775,7 +775,7 @@ impl IterTerminalSugar {
                                                     len = static_len.len,
                                                     "reducing literal collection count through verified length-only adapter"
                                                 );
-                                                return Outcome::Dug(Desugared::Term(num(
+                                                return Outcome::Complete(Desugared::Term(num(
                                                     static_len.len as i128,
                                                 )));
                                             }
@@ -803,7 +803,7 @@ impl IterTerminalSugar {
                                         len = static_len.len,
                                         "reducing literal collection count through verified length-only adapter"
                                     );
-                                    return Outcome::Dug(Desugared::Term(num(
+                                    return Outcome::Complete(Desugared::Term(num(
                                         static_len.len as i128
                                     )));
                                 }
@@ -822,7 +822,7 @@ impl IterTerminalSugar {
         };
         if let Terminal::AdvanceBy(arg) = &self.terminal {
             let n_term = match build_term(arg, &fcx).desugar(ctx) {
-                Outcome::Dug(d) => match d.into_term() {
+                Outcome::Complete(d) => match d.into_term() {
                     Some(term) => term,
                     None => return Outcome::from_opt(None),
                 },
@@ -844,11 +844,11 @@ impl IterTerminalSugar {
             } else {
                 monadic::err_term(num((n - len) as i128))
             };
-            return Outcome::Dug(Desugared::Term(term));
+            return Outcome::Complete(Desugared::Term(term));
         }
         Outcome::from_opt((|| {
             // `.count()` reduces structure (the LENGTH) after the receiver has composed to a
-            // literal `Seq`. A receiver `Hit` has already propagated above.
+            // literal `Seq`. A receiver `Incomplete` has already propagated above.
             if matches!(self.terminal, Terminal::Count) {
                 return Some(Desugared::Term(num(seq.len() as i128)));
             }
@@ -1018,11 +1018,11 @@ impl IterTerminalSugar {
 impl Sugar for IterTerminalSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         // GROUND the literal reduction with teeth, or emit the opaque baseline fallback.
-        // Receiver composition is lazy: only a Dug literal sequence reaches `reduce`;
-        // structural bail falls through to the generic method shape, and named Hits
+        // Receiver composition is lazy: only a Complete literal sequence reaches `reduce`;
+        // structural bail falls through to the generic method shape, and named returns Incomplete
         // propagate unchanged.
         match self.reduce(ctx) {
-            Outcome::Dug(d) => Outcome::Dug(d),
+            Outcome::Complete(d) => Outcome::Complete(d),
             hit if hit.is_structural_bail() => {
                 let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
                 let let_inits: BTreeMap<String, &Expr> = stable

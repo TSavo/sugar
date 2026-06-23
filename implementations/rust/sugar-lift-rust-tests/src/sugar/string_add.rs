@@ -8,7 +8,7 @@ use syn::Expr;
 
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::format::{is_string_add_shape, stable_let_bindings, try_resolve_format};
-use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
+use crate::sugar::term_leaf::{reasoned_incomplete, resolved_term};
 use crate::Sugar;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -21,7 +21,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     let stable = stable_let_bindings(fcx.scope());
     match try_resolve_format(expr, &stable) {
         Ok(Some(s)) => Some(resolved_term(str_const(s))),
-        Err(reason) => Some(reasoned_hit(reason)),
+        Err(reason) => Some(reasoned_incomplete(reason)),
         Ok(None) => None,
     }
 }

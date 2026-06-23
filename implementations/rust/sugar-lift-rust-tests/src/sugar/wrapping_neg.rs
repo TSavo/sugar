@@ -38,11 +38,11 @@ struct WrappingNegSugar {
 impl Sugar for WrappingNegSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let receiver = match self.receiver.desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
+            Outcome::Complete(d) => match d.into_term() {
                 Some(term) => term,
                 None => return Outcome::from_opt(None),
             },
-            Outcome::Hit(e) => return Outcome::Hit(e),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
         let Some(value) = term_as_int(&receiver) else {
             return Outcome::from_opt(None);
@@ -56,7 +56,7 @@ impl Sugar for WrappingNegSugar {
             result,
             "resolved primitive wrapping_neg stdlib axiom to literal"
         );
-        Outcome::Dug(Desugared::Term(num(result)))
+        Outcome::Complete(Desugared::Term(num(result)))
     }
 }
 

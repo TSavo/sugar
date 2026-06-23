@@ -64,7 +64,7 @@ impl Sugar for CharRangeCollectStringSugar {
         Outcome::from_opt((|| {
             let seq = build_composite_in_ctx(&self.seq_expr, ctx)
                 .desugar(ctx)
-                .dug()?
+                .complete()?
                 .into_seq()?;
             let mut out = String::with_capacity(seq.len());
             for elem in seq {

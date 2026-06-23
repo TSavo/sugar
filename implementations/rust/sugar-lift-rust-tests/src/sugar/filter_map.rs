@@ -6,7 +6,7 @@
 // mirror of the `filter_map` arm already proven diggable in the closed `try_fold`
 // value-evaluator (`try_fold_eval::eval_seq_chain`): SAME `const_eval` floor, SAME
 // `Some`/`None` Option-shape, now wired as a decorator so a `filter_map` feeding a
-// `fold`/`rfold`/`for_each`/for-loop terminal digs through the ordinary `Sugar` tree.
+// `fold`/`rfold`/`for_each`/for-loop terminal completes through the ordinary `Sugar` tree.
 // Bails (None) on an opaque element (no const value), a non-`Option` / runtime closure
 // result, or a kept value it cannot materialize back to an `Expr` -- exact-or-bail,
 // same as `MapSugar` / `FilterSugar`.
@@ -45,7 +45,7 @@ pub(crate) struct FilterMapSugar {
 impl Sugar for FilterMapSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         Outcome::from_opt((|| {
-            let seq = self.inner.desugar(ctx).dug()?.into_seq()?;
+            let seq = self.inner.desugar(ctx).complete()?.into_seq()?;
             let mut out = Vec::with_capacity(seq.len());
             for elem in seq {
                 let v = elem.value.as_ref()?; // opaque element under a filter_map -> bail

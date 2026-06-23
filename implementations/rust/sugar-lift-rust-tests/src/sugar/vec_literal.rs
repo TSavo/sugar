@@ -44,7 +44,7 @@ impl Sugar for VecLiteralSugar {
             source = %token_key(&self.source),
             "resolved vec builder to literal sequence"
         );
-        Outcome::Dug(Desugared::Seq(seq))
+        Outcome::Complete(Desugared::Seq(seq))
     }
 }
 

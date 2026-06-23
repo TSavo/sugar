@@ -50,7 +50,7 @@ fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
 
 impl Sugar for CharRangeFilterMapSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::Dug(Desugared::Constraints {
+        Outcome::Complete(Desugared::Constraints {
             atom: atomic_(
                 "stdlib_char_range_filter_map_eq",
                 vec![str_const(self.site.clone())],

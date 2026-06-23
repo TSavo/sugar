@@ -122,11 +122,11 @@ fn lift_bounded_forall(
             end,
             inclusive,
         } => {
-            // LITERAL-INT RANGE UNROLL (the value-in-scope dig). When BOTH endpoints
+            // LITERAL-INT RANGE UNROLL (the value-in-scope complete). When BOTH endpoints
             // are literal int constants, the iteration domain is the FINITE set of
             // concrete positions {start, start+1, ..} -- a literal in scope, exactly
             // as a literal array's elements are. THE LAW: a value at a determinable
-            // position over a literal domain is in scope -> dig. We unroll to the
+            // position over a literal domain is in scope -> complete. We unroll to the
             // finite conjunction body[var:=start] ∧ .. ∧ body[var:=last], each `var`
             // a concrete `num(k)`, then resolve any `index(arr, k)` read against the
             // captured immutable literal arrays so the asserted RHS carries the REAL
@@ -305,8 +305,8 @@ enum ForAllDomain {
 
 impl Sugar for ForAllSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        // TOTAL: the dig body computes the legacy `Option<Desugared>`; `Outcome::from_opt`
-        // lifts it (the structural bail -> `Hit(Effect::Unsupported)`, discarded by the
+        // TOTAL: the complete body computes the legacy `Option<Desugared>`; `Outcome::from_opt`
+        // lifts it (the structural bail -> `Incomplete(Effect::Unsupported)`, discarded by the
         // fall-through consumer exactly as the old `None` was).
         Outcome::from_opt((|| {
             // Translate the captured literal arrays' element exprs to TERMS so the body's
@@ -316,7 +316,7 @@ impl Sugar for ForAllSugar {
             // its value at a later point is not the written literal (leave its reads as
             // the EUF accessor). An element that does not translate cleanly drops that
             // array (its reads stay the EUF accessor -- a sound under-claim, never a
-            // fake-dig). Byte-identical to `FoldSugar`'s array_terms capture.
+            // fake-complete). Byte-identical to `FoldSugar`'s array_terms capture.
             let mut array_terms: BTreeMap<String, Vec<Rc<Term>>> = BTreeMap::new();
             for (arr, elems) in &self.literal_arrays {
                 if ctx.scope.is_mut_local(arr) {
@@ -352,7 +352,7 @@ impl Sugar for ForAllSugar {
                     domain.clone()
                 }
                 ForAllDomain::Sequence(receiver) => {
-                    let seq = receiver.desugar(ctx).dug()?.into_seq()?;
+                    let seq = receiver.desugar(ctx).complete()?.into_seq()?;
                     if seq.is_empty() {
                         return Some(self.empty_loop_no_panic(ctx));
                     }

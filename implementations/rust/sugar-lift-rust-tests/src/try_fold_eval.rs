@@ -31,7 +31,7 @@
 // arithmetic regime mirrors `const_eval`'s i128 carrier with an EXPLICIT
 // per-operation width clamp (`i8`/`i32`/`usize`/...), because `T::checked_*`'s
 // overflow boundary is exactly `T`'s range -- modeling it at the wrong width would
-// be a fake-dig.
+// be a fake-complete.
 
 use std::collections::BTreeMap;
 
@@ -47,7 +47,7 @@ const TRY_FOLD_SEQ_CAP: usize = 4096;
 /// The integer width a `T::checked_*` call computes in. The `checked_*` family
 /// returns `None` exactly when the mathematical result is outside `T`'s range, so
 /// modeling the overflow boundary requires the DECLARED width -- a wrong width would
-/// be a fake-dig.
+/// be a fake-complete.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum IntWidth {
     I8,
@@ -732,7 +732,7 @@ mod tests {
     // EVALUATOR-VALIDATION: the materialized ABSOLUTE value must equal the value real
     // Rust std computes (hand-computed and cross-checked by running the exact assertion
     // in a Rust playground). NOT merely LHS==RHS -- the concrete `Some(n)`. A wrong value
-    // here would mean a fake-dig, so we pin the absolute output of EACH side of all 6
+    // here would mean a fake-complete, so we pin the absolute output of EACH side of all 6
     // rows. (These are the 6 `coretests/.../{map,enumerate,filter_map}.rs` `try_fold`
     // rows; the closures are bound as in the source.)
 
@@ -920,7 +920,7 @@ mod tests {
         // A `checked_add` whose result exceeds the DECLARED width yields `None` (the
         // checked-op short-circuit). `i8::checked_add(100, 100)` overflows i8 (max 127),
         // so a one-element fold over `[100]` with `|acc, x| i8::checked_add(acc, x)`
-        // starting at 100 grounds to `None`. (Validates the width clamp -- a fake-dig
+        // starting at 100 grounds to `None`. (Validates the width clamp -- a fake-complete
         // would compute 200 in i128 and wrongly ground Some(200).)
         let block = "{ let g = &|acc, x| i8::checked_add(acc, x); }";
         assert_eq!(

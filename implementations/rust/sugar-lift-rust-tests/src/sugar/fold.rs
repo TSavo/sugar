@@ -78,13 +78,13 @@ struct ConsumedFoldSugar {
 impl Sugar for ConsumedFoldSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let term = match self.fallback.desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
+            Outcome::Complete(d) => match d.into_term() {
                 Some(term) => term,
                 None => return Outcome::from_opt(None),
             },
-            Outcome::Hit(effect) => return Outcome::Hit(effect),
+            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
-        Outcome::Dug(Desugared::Constraints {
+        Outcome::Complete(Desugared::Constraints {
             atom: atomic_("iter.consumed_fold_body", vec![term]),
             n: self.claim_count,
             kind: AssertionFactKind::Warranted,
@@ -158,8 +158,8 @@ pub(crate) struct FoldSugar {
 
 impl Sugar for FoldSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        // TOTAL: the dig body computes the legacy `Option<Desugared>`; `Outcome::from_opt`
-        // lifts it (the structural bail -> `Hit(Effect::Unsupported)`, discarded by the
+        // TOTAL: the complete body computes the legacy `Option<Desugared>`; `Outcome::from_opt`
+        // lifts it (the structural bail -> `Incomplete(Effect::Unsupported)`, discarded by the
         // fall-through consumer exactly as the old `None` was).
         Outcome::from_opt((|| {
             let let_inits = scope_let_inits(ctx);
@@ -167,7 +167,7 @@ impl Sugar for FoldSugar {
             let inner = decompose_seq(&self.receiver, ctx, self.rev_fold)?;
             // The post-adaptor element sequence (the inner seq-sugar bottoms out at a
             // literal domain or bails).
-            let seq = inner.desugar(ctx).dug()?.into_seq()?;
+            let seq = inner.desugar(ctx).complete()?.into_seq()?;
             if seq.is_empty() {
                 // The adaptor chain emptied the sequence (`.filter` kept nothing /
                 // `.take(0)`): the fold body never runs -> vacuous. None rather than a
@@ -233,7 +233,7 @@ impl Sugar for FoldSugar {
             // Pre-translate the captured literal arrays' element exprs to TERMS so a body
             // `index(ys, <const>)` can resolve to its concrete element after the index is
             // threaded. An element that does not translate cleanly drops that array (its
-            // `index` reads stay the EUF accessor -- a sound under-claim, never a fake-dig).
+            // `index` reads stay the EUF accessor -- a sound under-claim, never a fake-complete).
             let mut array_terms: BTreeMap<String, Vec<Rc<Term>>> = BTreeMap::new();
             let literal_arrays = literal_arrays_from_ctx(ctx);
             for (arr, elems) in &literal_arrays {

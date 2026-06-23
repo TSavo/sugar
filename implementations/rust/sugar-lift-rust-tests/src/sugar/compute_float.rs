@@ -55,18 +55,18 @@ struct ComputeFloatSugar {
 impl Sugar for ComputeFloatSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let q = match self.q.desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
+            Outcome::Complete(d) => match d.into_term() {
                 Some(term) => term,
                 None => return Outcome::from_opt(None),
             },
-            Outcome::Hit(e) => return Outcome::Hit(e),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
         let w = match self.w.desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
+            Outcome::Complete(d) => match d.into_term() {
                 Some(term) => term,
                 None => return Outcome::from_opt(None),
             },
-            Outcome::Hit(e) => return Outcome::Hit(e),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
         let Some(q) = const_fold_int_term(&q).and_then(|value| i64::try_from(value).ok()) else {
             debug!(
@@ -99,7 +99,7 @@ impl Sugar for ComputeFloatSugar {
             mantissa = fp.m,
             "resolved compute_float stdlib axiom to literal tuple"
         );
-        Outcome::Dug(Desugared::Term(biased_fp_tuple_term(fp)))
+        Outcome::Complete(Desugared::Term(biased_fp_tuple_term(fp)))
     }
 }
 

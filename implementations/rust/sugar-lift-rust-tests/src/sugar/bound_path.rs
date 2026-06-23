@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use crate::sugar::bound::BoundSugar;
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_composite, build_constraint, build_term, SugarBuildCtx};
-use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
+use crate::sugar::term_leaf::{reasoned_incomplete, resolved_term};
 use crate::{token_key, Outcome, Sugar, SugarCtx};
 use syn::{Expr, ExprPath};
 use tracing::debug;
@@ -189,7 +189,7 @@ impl Sugar for BoundPathSugar {
 
 fn runtime_destructured_source_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     fcx.scope().is_runtime_destructured_local(name).then(|| {
-        reasoned_hit(format!(
+        reasoned_incomplete(format!(
             "destructured source runtime, not literal for `{name}`: pattern binding participates \
              in the assertion, but the destructured source did not resolve to a literal tuple/array; \
              refused"
@@ -214,7 +214,7 @@ fn alias_deref_mutated_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dy
         // conditionally/aliased-mutated receiver. Per the boundary-call note on that
         // reason, it flips to a warrant once the attended SSA arm teaches alias-mutation
         // resolution; until then it is a NAMED dragon, not a stale fake-light.
-        reasoned_hit(format!(
+        reasoned_incomplete(format!(
             "ambiguous temporal identity for `{name}`: mutated through a `&mut` alias \
              between borrow and read, so there is no single timeless value to read at the \
              assertion; refused"
@@ -234,7 +234,7 @@ fn alias_deref_mutated_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dy
 fn temporally_unstable_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     fcx.scope().is_temporally_unstable_read(name).then(|| {
         // Terminal refusal; substring `temporally unstable post-loop read` is pinned by tests.
-        reasoned_hit(format!(
+        reasoned_incomplete(format!(
             "temporally unstable post-loop read of `{name}`: for-loop domain runtime, not \
              literal, or loop/closure body not exactly replayable; there is no single \
              timeless value to read at the assertion; refused as temporally unstable"
@@ -250,16 +250,18 @@ fn temporally_unstable_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dy
 fn unknown_iterator_consumption_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     fcx.scope()
         .unknown_iterator_consumption_reason(name)
-        .map(reasoned_hit)
+        .map(reasoned_incomplete)
 }
 
 fn unknown_mutation_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    fcx.scope().unknown_mutation_reason(name).map(reasoned_hit)
+    fcx.scope()
+        .unknown_mutation_reason(name)
+        .map(reasoned_incomplete)
 }
 
 fn ambiguous_identity_refusal(name: &str, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     fcx.scope().ambiguous_contains(name).then(|| {
-        reasoned_hit(format!(
+        reasoned_incomplete(format!(
             "ambiguous temporal identity for receiver `{name}`; skipped assertion"
         ))
     })

@@ -144,11 +144,11 @@ impl Sugar for OptionAdaptorSugar {
             .collect();
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
         let receiver = match build_term(&self.receiver, &fcx).desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
+            Outcome::Complete(d) => match d.into_term() {
                 Some(term) => term,
                 None => return Outcome::from_opt(None),
             },
-            Outcome::Hit(e) => return Outcome::Hit(e),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
         match &self.kind {
             Kind::Map(f) => {
@@ -271,7 +271,7 @@ fn desugar_option_and_then(f: &syn::ExprClosure, payload: Option<Rc<Term>>) -> O
                 method = "and_then",
                 "resolved Option::and_then stdlib axiom over Some"
             );
-            Outcome::Dug(Desugared::Term(option_payload_term(mapped)))
+            Outcome::Complete(Desugared::Term(option_payload_term(mapped)))
         }
         None => {
             debug!(
@@ -279,7 +279,7 @@ fn desugar_option_and_then(f: &syn::ExprClosure, payload: Option<Rc<Term>>) -> O
                 method = "and_then",
                 "resolved Option::and_then stdlib axiom over None"
             );
-            Outcome::Dug(Desugared::Term(none_term()))
+            Outcome::Complete(Desugared::Term(none_term()))
         }
     }
 }
@@ -301,7 +301,7 @@ fn desugar_result_and_then(f: &syn::ExprClosure, payload: ResultPayload) -> Outc
                 method = "and_then",
                 "resolved Result::and_then stdlib axiom over Ok"
             );
-            Outcome::Dug(Desugared::Term(result_payload_term(mapped)))
+            Outcome::Complete(Desugared::Term(result_payload_term(mapped)))
         }
         ResultPayload::Err(inner) => {
             if let Err(outcome) = ensure_grounded_payload(&inner, "and_then", RES_ERR) {
@@ -312,7 +312,7 @@ fn desugar_result_and_then(f: &syn::ExprClosure, payload: ResultPayload) -> Outc
                 method = "and_then",
                 "resolved Result::and_then stdlib axiom over Err"
             );
-            Outcome::Dug(Desugared::Term(err_term(inner)))
+            Outcome::Complete(Desugared::Term(err_term(inner)))
         }
     }
 }
@@ -336,7 +336,7 @@ fn desugar_option_filter(f: &syn::ExprClosure, payload: Option<Rc<Term>>) -> Out
                 keep,
                 "resolved Option::filter stdlib axiom over Some"
             );
-            Outcome::Dug(Desugared::Term(if keep {
+            Outcome::Complete(Desugared::Term(if keep {
                 some_term(inner)
             } else {
                 none_term()
@@ -348,7 +348,7 @@ fn desugar_option_filter(f: &syn::ExprClosure, payload: Option<Rc<Term>>) -> Out
                 method = "filter",
                 "resolved Option::filter stdlib axiom over None"
             );
-            Outcome::Dug(Desugared::Term(none_term()))
+            Outcome::Complete(Desugared::Term(none_term()))
         }
     }
 }
@@ -364,7 +364,7 @@ fn desugar_option_ok_or(payload: Option<Rc<Term>>, default: Rc<Term>) -> Outcome
                 method = "ok_or",
                 "resolved Option::ok_or stdlib axiom over Some"
             );
-            Outcome::Dug(Desugared::Term(ok_term(inner)))
+            Outcome::Complete(Desugared::Term(ok_term(inner)))
         }
         None => {
             debug!(
@@ -372,7 +372,7 @@ fn desugar_option_ok_or(payload: Option<Rc<Term>>, default: Rc<Term>) -> Outcome
                 method = "ok_or",
                 "resolved Option::ok_or stdlib axiom over None"
             );
-            Outcome::Dug(Desugared::Term(err_term(default)))
+            Outcome::Complete(Desugared::Term(err_term(default)))
         }
     }
 }
@@ -397,7 +397,7 @@ fn desugar_option_map(f: &syn::ExprClosure, payload: Option<Rc<Term>>) -> Outcom
                 method = "map",
                 "resolved Option::map stdlib axiom over Some"
             );
-            Outcome::Dug(Desugared::Term(some_term(term)))
+            Outcome::Complete(Desugared::Term(some_term(term)))
         }
         None => {
             debug!(
@@ -405,7 +405,7 @@ fn desugar_option_map(f: &syn::ExprClosure, payload: Option<Rc<Term>>) -> Outcom
                 method = "map",
                 "resolved Option::map stdlib axiom over None"
             );
-            Outcome::Dug(Desugared::Term(none_term()))
+            Outcome::Complete(Desugared::Term(none_term()))
         }
     }
 }
@@ -430,7 +430,7 @@ fn desugar_result_map(f: &syn::ExprClosure, payload: ResultPayload) -> Outcome {
                 method = "map",
                 "resolved Result::map stdlib axiom over Ok"
             );
-            Outcome::Dug(Desugared::Term(ok_term(term)))
+            Outcome::Complete(Desugared::Term(ok_term(term)))
         }
         ResultPayload::Err(inner) => {
             if let Err(outcome) = ensure_grounded_payload(&inner, "map", RES_ERR) {
@@ -441,7 +441,7 @@ fn desugar_result_map(f: &syn::ExprClosure, payload: ResultPayload) -> Outcome {
                 method = "map",
                 "resolved Result::map stdlib axiom over Err"
             );
-            Outcome::Dug(Desugared::Term(err_term(inner)))
+            Outcome::Complete(Desugared::Term(err_term(inner)))
         }
     }
 }
@@ -457,7 +457,7 @@ fn desugar_result_map_err(f: &syn::ExprClosure, payload: ResultPayload) -> Outco
                 method = "map_err",
                 "resolved Result::map_err stdlib axiom over Ok"
             );
-            Outcome::Dug(Desugared::Term(ok_term(inner)))
+            Outcome::Complete(Desugared::Term(ok_term(inner)))
         }
         ResultPayload::Err(inner) => {
             if let Err(outcome) = ensure_grounded_payload(&inner, "map_err", RES_ERR) {
@@ -477,7 +477,7 @@ fn desugar_result_map_err(f: &syn::ExprClosure, payload: ResultPayload) -> Outco
                 method = "map_err",
                 "resolved Result::map_err stdlib axiom over Err"
             );
-            Outcome::Dug(Desugared::Term(err_term(term)))
+            Outcome::Complete(Desugared::Term(err_term(term)))
         }
     }
 }
@@ -493,7 +493,7 @@ fn desugar_option_unwrap_or(payload: Option<Rc<Term>>, default: Rc<Term>) -> Out
                 method = "unwrap_or",
                 "resolved Option::unwrap_or stdlib axiom over Some"
             );
-            Outcome::Dug(Desugared::Term(inner))
+            Outcome::Complete(Desugared::Term(inner))
         }
         None => {
             debug!(
@@ -501,7 +501,7 @@ fn desugar_option_unwrap_or(payload: Option<Rc<Term>>, default: Rc<Term>) -> Out
                 method = "unwrap_or",
                 "resolved Option::unwrap_or stdlib axiom over None"
             );
-            Outcome::Dug(Desugared::Term(default))
+            Outcome::Complete(Desugared::Term(default))
         }
     }
 }
@@ -517,7 +517,7 @@ fn desugar_option_unwrap_or_else(f: &syn::ExprClosure, payload: Option<Rc<Term>>
                 method = "unwrap_or_else",
                 "resolved Option::unwrap_or_else stdlib axiom over Some"
             );
-            Outcome::Dug(Desugared::Term(inner))
+            Outcome::Complete(Desugared::Term(inner))
         }
         None => {
             let Some(default) =
@@ -530,7 +530,7 @@ fn desugar_option_unwrap_or_else(f: &syn::ExprClosure, payload: Option<Rc<Term>>
                 method = "unwrap_or_else",
                 "resolved Option::unwrap_or_else stdlib axiom over None"
             );
-            Outcome::Dug(Desugared::Term(default))
+            Outcome::Complete(Desugared::Term(default))
         }
     }
 }
@@ -546,7 +546,7 @@ fn desugar_result_unwrap_or_else(f: &syn::ExprClosure, payload: ResultPayload) -
                 method = "unwrap_or_else",
                 "resolved Result::unwrap_or_else stdlib axiom over Ok"
             );
-            Outcome::Dug(Desugared::Term(inner))
+            Outcome::Complete(Desugared::Term(inner))
         }
         ResultPayload::Err(inner) => {
             if let Err(outcome) = ensure_grounded_payload(&inner, "unwrap_or_else", RES_ERR) {
@@ -565,7 +565,7 @@ fn desugar_result_unwrap_or_else(f: &syn::ExprClosure, payload: ResultPayload) -
                 method = "unwrap_or_else",
                 "resolved Result::unwrap_or_else stdlib axiom over Err"
             );
-            Outcome::Dug(Desugared::Term(default))
+            Outcome::Complete(Desugared::Term(default))
         }
     }
 }
@@ -581,7 +581,7 @@ fn desugar_result_unwrap_or(payload: ResultPayload, default: Rc<Term>) -> Outcom
                 method = "unwrap_or",
                 "resolved Result::unwrap_or stdlib axiom over Ok"
             );
-            Outcome::Dug(Desugared::Term(inner))
+            Outcome::Complete(Desugared::Term(inner))
         }
         ResultPayload::Err(inner) => {
             if let Err(outcome) = ensure_grounded_payload(&inner, "unwrap_or", RES_ERR) {
@@ -592,7 +592,7 @@ fn desugar_result_unwrap_or(payload: ResultPayload, default: Rc<Term>) -> Outcom
                 method = "unwrap_or",
                 "resolved Result::unwrap_or stdlib axiom over Err"
             );
-            Outcome::Dug(Desugared::Term(default))
+            Outcome::Complete(Desugared::Term(default))
         }
     }
 }
@@ -612,7 +612,7 @@ fn desugar_option_unwrap_or_default(
                 method = "unwrap_or_default",
                 "resolved Option::unwrap_or_default stdlib axiom over Some"
             );
-            Outcome::Dug(Desugared::Term(inner))
+            Outcome::Complete(Desugared::Term(inner))
         }
         None => {
             let Some(default) = default_term_for_receiver(receiver, fcx, 0) else {
@@ -623,7 +623,7 @@ fn desugar_option_unwrap_or_default(
                 method = "unwrap_or_default",
                 "resolved Option::unwrap_or_default stdlib axiom over None"
             );
-            Outcome::Dug(Desugared::Term(default))
+            Outcome::Complete(Desugared::Term(default))
         }
     }
 }
@@ -643,7 +643,7 @@ fn desugar_result_unwrap_or_default(
                 method = "unwrap_or_default",
                 "resolved Result::unwrap_or_default stdlib axiom over Ok"
             );
-            Outcome::Dug(Desugared::Term(inner))
+            Outcome::Complete(Desugared::Term(inner))
         }
         ResultPayload::Err(inner) => {
             if let Err(outcome) = ensure_grounded_payload(&inner, "unwrap_or_default", RES_ERR) {
@@ -657,7 +657,7 @@ fn desugar_result_unwrap_or_default(
                 method = "unwrap_or_default",
                 "resolved Result::unwrap_or_default stdlib axiom over Err"
             );
-            Outcome::Dug(Desugared::Term(default))
+            Outcome::Complete(Desugared::Term(default))
         }
     }
 }
@@ -668,14 +668,14 @@ fn build_eager_default(
     ctx: &SugarCtx,
 ) -> Result<Rc<Term>, Outcome> {
     let term = match build_term(default, fcx).desugar(ctx) {
-        Outcome::Dug(d) => match d.into_term() {
+        Outcome::Complete(d) => match d.into_term() {
             Some(term) => term,
             None => return Err(Outcome::from_opt(None)),
         },
-        Outcome::Hit(e) => return Err(Outcome::Hit(e)),
+        Outcome::Incomplete(e) => return Err(Outcome::Incomplete(e)),
     };
     if !is_grounded_literal_term(term.as_ref()) {
-        return Err(Outcome::Hit(Effect::Unsupported {
+        return Err(Outcome::Incomplete(Effect::Unsupported {
             reason: "monadic unwrap_or over non-literal default; refused".to_string(),
         }));
     }
@@ -690,7 +690,7 @@ fn ensure_grounded_payload(
     if is_grounded_literal_term(term.as_ref()) {
         return Ok(());
     }
-    Err(Outcome::Hit(Effect::Unsupported {
+    Err(Outcome::Incomplete(Effect::Unsupported {
         reason: format!("runtime Option/Result payload, not literal (`{method}` over `{ctor}`)"),
     }))
 }

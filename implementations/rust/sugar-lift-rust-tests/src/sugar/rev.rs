@@ -44,10 +44,10 @@ impl Sugar for RevSugar {
 
 fn seq_or_empty(outcome: Outcome) -> Option<Vec<DesugaredElem>> {
     match outcome {
-        Outcome::Dug(d) => d.into_seq(),
-        Outcome::Hit(Effect::Unsupported { reason }) if reason == EMPTY_DOMAIN_REASON => {
+        Outcome::Complete(d) => d.into_seq(),
+        Outcome::Incomplete(Effect::Unsupported { reason }) if reason == EMPTY_DOMAIN_REASON => {
             Some(Vec::new())
         }
-        Outcome::Hit(_) => None,
+        Outcome::Incomplete(_) => None,
     }
 }

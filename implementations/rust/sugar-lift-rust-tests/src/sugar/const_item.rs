@@ -50,6 +50,6 @@ impl Sugar for ConstItemSugar {
             initializer = self.initializer.as_str(),
             "const/static item initializer accounted as inert compiler axiom"
         );
-        Outcome::Dug(Desugared::Seq(Vec::new()))
+        Outcome::Complete(Desugared::Seq(Vec::new()))
     }
 }

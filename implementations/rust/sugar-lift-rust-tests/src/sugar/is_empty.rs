@@ -21,7 +21,7 @@
 // repeat needs a const count. A runtime endpoint, an open-ended range, a
 // runtime / mutated / opaque receiver (a runtime `Vec` / `String` / unstable local) --
 // anything desugar cannot compose to a literal `Seq` structurally bails to the opaque
-// term layer, while named receiver `Hit`s propagate. No guess is made in recognition.
+// term layer, while named receiver `Incomplete`s propagate. No guess is made in recognition.
 //
 // TEETH. The lowered `Bool` is a real value: `assert!((0..5).is_empty())` lowers
 // to `Bool(false)` -> the obligation is z3-UNSAT (a wrong claim is REFUTED);
@@ -123,7 +123,7 @@ impl Sugar for IsEmptySugar {
                 value,
                 "resolved range is_empty stdlib axiom to a ground bool"
             );
-            return Outcome::Dug(Desugared::Term(bool_const(value)));
+            return Outcome::Complete(Desugared::Term(bool_const(value)));
         }
         if method_family::literal_sequence_static_len_in_scope(
             &self.receiver,
@@ -135,15 +135,15 @@ impl Sugar for IsEmptySugar {
                 target: "sugar_lift_rust_tests::sugar::is_empty",
                 "resolved zero-length literal-sequence is_empty stdlib axiom to true"
             );
-            return Outcome::Dug(Desugared::Term(bool_const(true)));
+            return Outcome::Complete(Desugared::Term(bool_const(true)));
         }
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
         let value = match build_composite(&self.receiver, &fcx).desugar(ctx) {
-            Outcome::Dug(d) => match d.into_seq() {
+            Outcome::Complete(d) => match d.into_seq() {
                 Some(seq) => seq.is_empty(),
                 None => return self.fallback_method(ctx, &fcx),
             },
-            Outcome::Hit(Effect::Unsupported { reason })
+            Outcome::Incomplete(Effect::Unsupported { reason })
                 if reason == EMPTY_DOMAIN_REASON
                     && method_family::literal_sequence_static_len_in_scope(
                         &self.receiver,
@@ -156,11 +156,11 @@ impl Sugar for IsEmptySugar {
             hit if hit.is_structural_bail() => {
                 match method_family::build_literal_sequence_composite(&self.receiver, &fcx) {
                     Some(inner) => match inner.desugar(ctx) {
-                        Outcome::Dug(d) => match d.into_seq() {
+                        Outcome::Complete(d) => match d.into_seq() {
                             Some(seq) => seq.is_empty(),
                             None => return self.fallback_method(ctx, &fcx),
                         },
-                        Outcome::Hit(Effect::Unsupported { reason })
+                        Outcome::Incomplete(Effect::Unsupported { reason })
                             if reason == EMPTY_DOMAIN_REASON =>
                         {
                             true
@@ -194,7 +194,7 @@ impl Sugar for IsEmptySugar {
             value,
             "resolved literal-sequence is_empty stdlib axiom to a ground bool"
         );
-        Outcome::Dug(Desugared::Term(bool_const(value)))
+        Outcome::Complete(Desugared::Term(bool_const(value)))
     }
 }
 
@@ -208,8 +208,10 @@ impl IsEmptySugar {
         let candidate = method_family::build_literal_sequence_composite(source, fcx)
             .unwrap_or_else(|| build_composite(source, fcx));
         match candidate.desugar(ctx) {
-            Outcome::Dug(d) => Ok(d.into_seq().is_some()),
-            Outcome::Hit(Effect::Unsupported { reason }) if reason == EMPTY_DOMAIN_REASON => {
+            Outcome::Complete(d) => Ok(d.into_seq().is_some()),
+            Outcome::Incomplete(Effect::Unsupported { reason })
+                if reason == EMPTY_DOMAIN_REASON =>
+            {
                 Ok(true)
             }
             hit if hit.is_structural_bail() => Ok(false),

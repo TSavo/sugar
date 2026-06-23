@@ -54,12 +54,12 @@
 // / `deref` composition). The fold uses the SAME `const_int`/`const_float`/`num`/
 // `real_const` helpers the arm called.
 //
-// THE CHILD HIT PROPAGATES VERBATIM. The non-literal Neg branch and both the Not
+// THE CHILD INCOMPLETE PROPAGATES VERBATIM. The non-literal Neg branch and both the Not
 // and Deref arms wrap `translate_term_in_scope(&unary.expr, scope)?` -- the inner
 // `?` propagated the operand's named `Err`. The node mirrors that: it desugars the
-// child, reads its term via `into_term()`, and if the child `Hit`s a named effect
-// it RETURNS that `Hit` UNCHANGED (the same boundary the inner `?` would have
-// surfaced). A child that Digs a non-`Term` payload (a `Seq`/`Constraints` -- an
+// child, reads its term via `into_term()`, and if the child `Incomplete`s a named effect
+// it RETURNS that `Incomplete` UNCHANGED (the same boundary the inner `?` would have
+// surfaced). A child that completes a non-`Term` payload (a `Seq`/`Constraints` -- an
 // impossible state for a term-position operand) yields `into_term() == None`; that
 // degenerate case maps to the structural backstop (`Outcome::from_opt(None)`),
 // never a fake construction. The child-read seam is the module-private
@@ -125,25 +125,25 @@ pub(crate) struct UnarySugar {
     /// signed-zero-float refusal reason (byte-identical to the arm's `token_key(expr)`).
     pub(crate) whole: Expr,
     /// The child `Sugar` built from the operand. Its `desugar(ctx).into_term()`
-    /// mirrors `translate_term_in_scope(&unary.expr, scope)?`; a child `Hit`
+    /// mirrors `translate_term_in_scope(&unary.expr, scope)?`; a child `Incomplete`
     /// propagates verbatim.
     pub(crate) inner: Box<dyn Sugar>,
     pub(crate) let_inits: BTreeMap<String, Expr>,
 }
 
 /// Read a desugared CHILD outcome as the `Rc<Term>` an `Expr::Unary` arm would have
-/// obtained from `translate_term_in_scope(&unary.expr, scope)?`. A child `Dug(Term)`
-/// yields the term (`Ok`); a child `Hit(effect)` propagates VERBATIM (`Err(Hit)`) --
-/// the same named boundary the inner `?` would have surfaced; a child that Dug a
+/// obtained from `translate_term_in_scope(&unary.expr, scope)?`. A child `Complete(Term)`
+/// yields the term (`Ok`); a child `Incomplete(effect)` propagates VERBATIM (`Err(Incomplete)`) --
+/// the same named boundary the inner `?` would have surfaced; a child that Complete a
 /// non-`Term` payload (impossible for a term-position operand) maps to the structural
 /// backstop (`Err(from_opt(None))`). Module-private so no `crate::` helper is added.
 fn child_term_or_hit(child: Outcome) -> Result<Rc<Term>, Outcome> {
     match child {
-        Outcome::Dug(d) => match d.into_term() {
+        Outcome::Complete(d) => match d.into_term() {
             Some(term) => Ok(term),
             None => Err(Outcome::from_opt(None)),
         },
-        hit @ Outcome::Hit(_) => Err(hit),
+        hit @ Outcome::Incomplete(_) => Err(hit),
     }
 }
 
@@ -184,32 +184,32 @@ impl Sugar for UnarySugar {
             UnOp::Neg(_) => {
                 // `-x` over a written int literal folds to `num(-value)`.
                 if let Some(value) = const_int(&self.operand) {
-                    return Outcome::Dug(Desugared::Term(num(-value)));
+                    return Outcome::Complete(Desugared::Term(num(-value)));
                 }
                 // `-x` over a finite-decimal-float literal folds to
                 // `real_const("-{value}")`; a SIGNED-ZERO float literal is REFUSED
                 // BY NAME (an IEEE refinement). `const_float` itself can `Err` (a
                 // non-finite / unparsable float) -- that named `Err` propagates as a
-                // `Hit`, mirroring the arm's `?`.
+                // `Incomplete`, mirroring the arm's `?`.
                 match const_float(&self.operand) {
                     Ok(Some(value)) => {
                         if real_literal_is_zero(&value) {
-                            return Outcome::Hit(Effect::Unsupported {
+                            return Outcome::Incomplete(Effect::Unsupported {
                                 reason: format!(
                                     "signed zero float literal remains an IEEE refinement `{}`",
                                     token_key(&self.whole)
                                 ),
                             });
                         }
-                        return Outcome::Dug(Desugared::Term(real_const(format!("-{value}"))));
+                        return Outcome::Complete(Desugared::Term(real_const(format!("-{value}"))));
                     }
                     Ok(None) => {}
-                    Err(reason) => return Outcome::Hit(Effect::Unsupported { reason }),
+                    Err(reason) => return Outcome::Incomplete(Effect::Unsupported { reason }),
                 }
                 // Non-literal `-x`: `0 - x`, the integer-subtraction ctor over the
-                // recursively-desugared operand. A child Hit propagates verbatim.
+                // recursively-desugared operand. A child Incomplete propagates verbatim.
                 match child_term_or_hit(self.inner.desugar(ctx)) {
-                    Ok(child) => Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
+                    Ok(child) => Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
                         name: "-".to_string(),
                         args: vec![num(0), child],
                     }))),
@@ -222,10 +222,10 @@ impl Sugar for UnarySugar {
                 if let Some(term) = const_eval(&self.whole, &const_env(&let_inits))
                     .and_then(|value| const_val_term(&value))
                 {
-                    return Outcome::Dug(Desugared::Term(term));
+                    return Outcome::Complete(Desugared::Term(term));
                 }
                 match child_term_or_hit(self.inner.desugar(ctx)) {
-                    Ok(child) => Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
+                    Ok(child) => Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
                         name: "bit-not".to_string(),
                         args: vec![child],
                     }))),
@@ -250,10 +250,10 @@ impl Sugar for UnarySugar {
                 Ok(child) => {
                     if let Term::Ctor { name, args } = child.as_ref() {
                         if name == "ref" && args.len() == 1 {
-                            return Outcome::Dug(Desugared::Term(Rc::clone(&args[0])));
+                            return Outcome::Complete(Desugared::Term(Rc::clone(&args[0])));
                         }
                     }
-                    Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
+                    Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
                         name: "deref".to_string(),
                         args: vec![child],
                     })))
@@ -271,7 +271,7 @@ impl Sugar for UnarySugar {
 
 #[cfg(test)]
 mod tests {
-    // The child-Hit-propagation + child-term-read contract is the module-private
+    // The child-Incomplete-propagation + child-term-read contract is the module-private
     // `child_term_or_hit` seam -- pure (it reads an `Outcome`, no `SugarCtx`), so it
     // is unit-tested directly with hand-built child `Outcome`s. The op-arm term
     // assembly (`Ctor("-"/"bit-not"/"deref", ..)`) is likewise pure given the child
@@ -285,39 +285,39 @@ mod tests {
 
     #[test]
     fn child_hit_propagates_verbatim() {
-        // A child that Hits a named effect propagates UNCHANGED through the seam --
+        // A child that returns Incomplete a named effect propagates UNCHANGED through the seam --
         // the same boundary the inner `?` would have surfaced.
-        let child = Outcome::Hit(Effect::OpaqueRuntime {
+        let child = Outcome::Incomplete(Effect::OpaqueRuntime {
             boundary: "child-boundary".to_string(),
             accessor: false,
         });
         match child_term_or_hit(child) {
-            Err(Outcome::Hit(Effect::OpaqueRuntime { boundary, accessor })) => {
+            Err(Outcome::Incomplete(Effect::OpaqueRuntime { boundary, accessor })) => {
                 assert_eq!(boundary, "child-boundary");
                 assert!(!accessor);
             }
-            _ => panic!("expected the child Hit, propagated verbatim"),
+            _ => panic!("expected the child Incomplete, propagated verbatim"),
         }
     }
 
     #[test]
     fn child_dug_term_reads_through() {
-        // A child that Digs a `Term` yields that exact `Rc<Term>` for the parent to
+        // A child that completes a `Term` yields that exact `Rc<Term>` for the parent to
         // wrap. (`Outcome` is not `Debug`, so we `match` rather than `.expect()`.)
-        let child = Outcome::Dug(Desugared::Term(make_var("p".to_string())));
+        let child = Outcome::Complete(Desugared::Term(make_var("p".to_string())));
         match child_term_or_hit(child) {
             Ok(term) => assert!(matches!(&*term, Term::Var { name } if name == "p")),
-            Err(_) => panic!("expected a dug term, got a Hit"),
+            Err(_) => panic!("expected a completed term, got a Incomplete"),
         }
     }
 
     #[test]
     fn child_dug_non_term_is_structural_backstop() {
-        // A child that Digs a non-`Term` payload (impossible for a term-position
+        // A child that completes a non-`Term` payload (impossible for a term-position
         // operand) maps to the structural backstop, never a fake construction.
-        let child = Outcome::Dug(Desugared::Seq(Vec::new()));
+        let child = Outcome::Complete(Desugared::Seq(Vec::new()));
         match child_term_or_hit(child) {
-            Err(Outcome::Hit(Effect::Unsupported { .. })) => {}
+            Err(Outcome::Incomplete(Effect::Unsupported { .. })) => {}
             _ => panic!("expected the structural backstop"),
         }
     }

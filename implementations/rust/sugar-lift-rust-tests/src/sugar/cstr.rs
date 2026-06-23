@@ -115,7 +115,7 @@ impl CStrSugar {
 impl Sugar for CStrSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let Some(bytes) = cstr_receiver_bytes_in_ctx(&self.expr, ctx, &mut Vec::new()) else {
-            return Outcome::Hit(Effect::Unsupported {
+            return Outcome::Incomplete(Effect::Unsupported {
                 reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
             });
         };
@@ -125,7 +125,7 @@ impl Sugar for CStrSugar {
             CStrKind::ToBytes => bytes_literal_term_from_bytes(&bytes.without_nul),
             CStrKind::ToBytesWithNul => bytes_literal_term_from_bytes(&bytes.with_nul),
         };
-        Outcome::Dug(Desugared::Term(term))
+        Outcome::Complete(Desugared::Term(term))
     }
 }
 

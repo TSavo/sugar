@@ -6,7 +6,7 @@
 // the source meaning.
 
 use crate::sugar::factory::SugarBuildCtx;
-use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
+use crate::sugar::term_leaf::{reasoned_incomplete, resolved_term};
 use crate::sugar::unit_path::{unit_path_literal_name, unit_path_name};
 use crate::{
     make_var, scope_const_block_locals, token_key, translate_expression_only_block_in_scope, Sugar,
@@ -28,7 +28,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
                 return Some(resolved_term(make_var(unit_path_literal_name(&name))));
             }
             if scope.const_expr_for_path(&path.path).is_none() {
-                return Some(reasoned_hit(format!(
+                return Some(reasoned_incomplete(format!(
                     "unsupported term `{}`",
                     token_key(expr)
                 )));
@@ -40,6 +40,6 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
             term,
             scope.local_scope(),
         ))),
-        Err(reason) => Some(reasoned_hit(reason)),
+        Err(reason) => Some(reasoned_incomplete(reason)),
     }
 }

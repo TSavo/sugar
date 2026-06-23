@@ -54,17 +54,17 @@ struct IntSqrtSugar {
 impl Sugar for IntSqrtSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let receiver = match self.receiver.desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
+            Outcome::Complete(d) => match d.into_term() {
                 Some(term) => term,
                 None => return Outcome::from_opt(None),
             },
-            Outcome::Hit(e) => return Outcome::Hit(e),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
         if let Some(value) = const_fold_u128_term(&receiver) {
             return self.desugar_u128(value);
         }
         let Some(value) = const_fold_int_term(&receiver) else {
-            return Outcome::Dug(Desugared::Term(self.symbolic_term(receiver)));
+            return Outcome::Complete(Desugared::Term(self.symbolic_term(receiver)));
         };
         self.desugar_i128(value)
     }
@@ -91,7 +91,7 @@ impl IntSqrtSugar {
         match self.kind {
             Kind::Sqrt => {
                 let Some(root) = int_sqrt(value) else {
-                    return Outcome::Hit(Effect::Unsupported {
+                    return Outcome::Incomplete(Effect::Unsupported {
                         reason: format!(
                             "primitive integer `isqrt` on negative literal `{value}` panics; refused"
                         ),
@@ -103,7 +103,7 @@ impl IntSqrtSugar {
                     root,
                     "resolved primitive integer isqrt stdlib axiom to literal"
                 );
-                Outcome::Dug(Desugared::Term(num(root)))
+                Outcome::Complete(Desugared::Term(num(root)))
             }
             Kind::CheckedSqrt => {
                 let term = match int_sqrt(value) {
@@ -125,7 +125,7 @@ impl IntSqrtSugar {
                         none_term()
                     }
                 };
-                Outcome::Dug(Desugared::Term(term))
+                Outcome::Complete(Desugared::Term(term))
             }
         }
     }
@@ -140,7 +140,7 @@ impl IntSqrtSugar {
                     root = %root,
                     "resolved primitive u128 isqrt stdlib axiom to literal"
                 );
-                Outcome::Dug(Desugared::Term(u128_term(root)))
+                Outcome::Complete(Desugared::Term(u128_term(root)))
             }
             Kind::CheckedSqrt => {
                 debug!(
@@ -149,7 +149,7 @@ impl IntSqrtSugar {
                     root = %root,
                     "resolved primitive u128 checked_isqrt stdlib axiom to Some literal"
                 );
-                Outcome::Dug(Desugared::Term(some_term(u128_term(root))))
+                Outcome::Complete(Desugared::Term(some_term(u128_term(root))))
             }
         }
     }

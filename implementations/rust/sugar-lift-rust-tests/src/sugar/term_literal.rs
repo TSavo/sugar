@@ -22,9 +22,9 @@
 // unused (a literal's value is fixed by its tokens, not by scope). To mirror the
 // arm BYTE-IDENTICALLY and avoid ANY drift, the node CALLS the shared `translate_lit`
 // helper (imported from `crate::`) rather than re-transcribing its width-keyed body:
-// the arm IS `translate_lit(lit)`, so the node is too. `Ok(term)` Digs to
+// the arm IS `translate_lit(lit)`, so the node is too. `Ok(term)` completes to
 // `Desugared::Term(term)`; an `Err(reason)` -- a non-scalar literal (e.g. a
-// `Lit::Verbatim`) -- Hits `Effect::Unsupported { reason }`, carrying the verbatim
+// `Lit::Verbatim`) -- returns Incomplete `Effect::Unsupported { reason }`, carrying the verbatim
 // reason the arm's `Err` propagated, so the wire format (CID + counts) is conserved.
 //
 // SIBLING TO `LiteralSugar`, NOT A COLLISION (the naming + purpose split). A
@@ -76,16 +76,16 @@ pub(crate) struct TermLiteralSugar {
 }
 
 impl Sugar for TermLiteralSugar {
-    /// LEAF term reduction: `translate_lit(&self.lit)`. `Ok(term)` Digs to
+    /// LEAF term reduction: `translate_lit(&self.lit)`. `Ok(term)` completes to
     /// `Desugared::Term(term)` (the width-keyed `Const` / `str_const` / `bool_const`
     /// / content-keyed bytes `Var` the arm produced); an `Err(reason)` -- a
-    /// non-scalar literal -- Hits `Effect::Unsupported { reason }`, the verbatim
+    /// non-scalar literal -- returns Incomplete `Effect::Unsupported { reason }`, the verbatim
     /// reason the arm's `Err` carried. `ctx` is unused: a literal is atomic, its
     /// value fixed by its tokens.
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         match translate_lit(&self.lit) {
-            Ok(term) => Outcome::Dug(Desugared::Term(term)),
-            Err(reason) => Outcome::Hit(Effect::Unsupported { reason }),
+            Ok(term) => Outcome::Complete(Desugared::Term(term)),
+            Err(reason) => Outcome::Incomplete(Effect::Unsupported { reason }),
         }
     }
 }
@@ -99,7 +99,7 @@ mod tests {
     // SEAM against the shared helper it mirrors: `desugar` is `translate_lit(&lit)`
     // wrapped, so `translate_lit(&lit)` IS the ground truth for the produced term,
     // and we verify the exact `Term` shape `translate_lit` yields for each scalar
-    // kind here (the same shapes `desugar` Digs). The end-to-end byte-identity is
+    // kind here (the same shapes `desugar` completes). The end-to-end byte-identity is
     // exercised through `tests/assertion_lift.rs` once the factory routes the scalar
     // `Expr::Lit` term arm here (the wiring slice).
     use super::*;
@@ -118,7 +118,7 @@ mod tests {
     }
 
     /// An UNSUFFIXED int lifts to a plain `num` (`Const { Int, sort: int }`) -- the
-    /// exact term `desugar` Digs (`translate_lit` -> `num(value)`).
+    /// exact term `desugar` completes (`translate_lit` -> `num(value)`).
     #[test]
     fn unsuffixed_int_is_plain_int_const() {
         let lit: ExprLit = parse_quote!(7);
@@ -133,7 +133,7 @@ mod tests {
     }
 
     /// A SUFFIXED int carries its width in the `sort` name (`42u8` -> sort "u8") --
-    /// the width-keyed `Const` `desugar` Digs.
+    /// the width-keyed `Const` `desugar` completes.
     #[test]
     fn suffixed_int_carries_width_in_sort() {
         let lit: ExprLit = parse_quote!(42u8);

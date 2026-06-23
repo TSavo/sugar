@@ -50,24 +50,24 @@ struct FromPrimitiveSugar {
 impl Sugar for FromPrimitiveSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         if let Some(term) = from_bool_term(&self.call) {
-            return Outcome::Dug(Desugared::Term(term));
+            return Outcome::Complete(Desugared::Term(term));
         }
 
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
         if let Some(term) = from_char_term(&self.call.args[0], self.dst, &fcx) {
-            return Outcome::Dug(Desugared::Term(term));
+            return Outcome::Complete(Desugared::Term(term));
         }
         if self.dst.name == "u128" {
             if let Some(value) = ipv6_u128_source(&self.call.args[0], &fcx) {
-                return Outcome::Dug(Desugared::Term(u128_term(value)));
+                return Outcome::Complete(Desugared::Term(u128_term(value)));
             }
         }
         if let Some(source) = exact_int_source(&self.call.args[0], Some(&fcx)) {
             if let Some(src_kind) = source.kind {
                 if from_impl_exists(src_kind, self.dst) {
                     if let Some(term) = source.value.term_for_kind(self.dst) {
-                        return Outcome::Dug(Desugared::Term(term));
+                        return Outcome::Complete(Desugared::Term(term));
                     }
                 }
             }
@@ -75,7 +75,7 @@ impl Sugar for FromPrimitiveSugar {
         }
 
         if self.dst.bits == 128 {
-            return Outcome::Hit(Effect::Unsupported {
+            return Outcome::Incomplete(Effect::Unsupported {
                 reason: format!("runtime {} operand, not literal-determined", self.dst.name),
             });
         }
@@ -88,15 +88,15 @@ impl FromPrimitiveSugar {
         let mut args: Vec<Rc<Term>> = Vec::new();
         for arg in &self.call.args {
             let term = match build_term(arg, fcx).desugar(ctx) {
-                Outcome::Dug(d) => match d.into_term() {
+                Outcome::Complete(d) => match d.into_term() {
                     Some(term) => term,
                     None => return Outcome::from_opt(None),
                 },
-                Outcome::Hit(effect) => return Outcome::Hit(effect),
+                Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
             };
             args.push(term);
         }
-        Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
+        Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
             name: format!("call:{}", expr_head_key(&self.call.func)),
             args,
         })))

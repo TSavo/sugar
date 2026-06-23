@@ -81,6 +81,6 @@ impl Sugar for PartitionPointSugar {
             index = self.index as i64,
             "resolved literal-slice partition_point stdlib axiom to a ground index"
         );
-        Outcome::Dug(Desugared::Term(num(self.index)))
+        Outcome::Complete(Desugared::Term(num(self.index)))
     }
 }

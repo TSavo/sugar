@@ -65,11 +65,11 @@ impl Sugar for ChainSugar {
             let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
             let mut left = build_composite(&self.left, &fcx)
                 .desugar(ctx)
-                .dug()?
+                .complete()?
                 .into_seq()?;
             let right = build_composite(&self.right, &fcx)
                 .desugar(ctx)
-                .dug()?
+                .complete()?
                 .into_seq()?;
             let total = left.len().checked_add(right.len())?;
             if total > SUGAR_SEQ_CAP as usize {

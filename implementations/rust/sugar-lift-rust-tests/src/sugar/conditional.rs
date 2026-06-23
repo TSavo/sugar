@@ -48,8 +48,8 @@ pub(crate) struct ConditionalSugar {
 
 impl Sugar for ConditionalSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        // TOTAL: the dig body computes the legacy `Option<Desugared>`; `Outcome::from_opt`
-        // lifts it (the structural bail -> `Hit(Effect::Unsupported)`, discarded by the
+        // TOTAL: the complete body computes the legacy `Option<Desugared>`; `Outcome::from_opt`
+        // lifts it (the structural bail -> `Incomplete(Effect::Unsupported)`, discarded by the
         // fall-through consumer exactly as the old `None` was).
         Outcome::from_opt((|| {
             // An `if let PAT = e { .. }` is a pattern-match guard, not a boolean
@@ -286,8 +286,8 @@ fn term_for_guard_operand(ctx: &SugarCtx, expr: &Expr) -> Option<Rc<Term>> {
     let empty = BTreeMap::new();
     let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &empty);
     match build_term(expr, &fcx).desugar(ctx) {
-        Outcome::Dug(desugared) => desugared.into_term(),
-        Outcome::Hit(_) => None,
+        Outcome::Complete(desugared) => desugared.into_term(),
+        Outcome::Incomplete(_) => None,
     }
 }
 

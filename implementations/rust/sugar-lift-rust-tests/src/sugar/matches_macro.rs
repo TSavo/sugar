@@ -146,7 +146,7 @@ fn variant_atom(subject: Rc<Term>, variant: &str) -> Rc<Formula> {
 }
 
 fn constraint(atom: Rc<Formula>, name: Option<String>) -> Outcome {
-    Outcome::Dug(Desugared::Constraints {
+    Outcome::Complete(Desugared::Constraints {
         atom,
         n: 1,
         kind: AssertionFactKind::Warranted,
@@ -171,15 +171,15 @@ fn term_payload(
         .collect();
     let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
     match build_term(expr, &fcx).desugar(ctx) {
-        Outcome::Dug(desugared) => desugared.into_term().ok_or_else(|| {
-            Outcome::Hit(Effect::Unsupported {
+        Outcome::Complete(desugared) => desugared.into_term().ok_or_else(|| {
+            Outcome::Incomplete(Effect::Unsupported {
                 reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
             })
         }),
-        Outcome::Hit(effect) => Err(Outcome::Hit(effect)),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
 
 fn unsupported(reason: String) -> Outcome {
-    Outcome::Hit(Effect::Unsupported { reason })
+    Outcome::Incomplete(Effect::Unsupported { reason })
 }

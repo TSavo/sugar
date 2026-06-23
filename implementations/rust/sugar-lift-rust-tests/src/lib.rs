@@ -317,12 +317,21 @@ pub struct FactoryAudit {
     pub ast_kind: &'static str,
     pub site: String,
     pub line: usize,
+    pub span: Option<FactoryAuditSpan>,
     pub requested_role: String,
     pub selected: Option<&'static str>,
     pub candidates: Vec<FactoryCandidateAudit>,
     pub disposition: FactoryDisposition,
     pub output: &'static str,
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FactoryAuditSpan {
+    pub start_line: usize,
+    pub start_col: usize,
+    pub end_line: usize,
+    pub end_col: usize,
 }
 
 pub type FactoryAuditLog = RefCell<Vec<FactoryAudit>>;
@@ -605,7 +614,7 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // discharged 5700 -> 5704 (+4 sound inlining-unblock, no fake-discharge) /
         // refused 359 -> 371 / unclassified 356 -> 346. Confirmed by negating this clause:
         // the typed-SideEffect machinery alone reproduces baseline 5700/359/356 exactly,
-        // so the dig path is untouched -- the delta is purely the gate coupling. See report.
+        // so the complete path is untouched -- the delta is purely the gate coupling. See report.
         || reason.contains("mutable container is not temporally stable")
         // TERMINAL: an `async`/`try` block or a `?` operator in term position. A `try`
         // block short-circuits on `Err`, an `async` block is a deferred future, and `?`
@@ -622,7 +631,7 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // from source literals -- the SAME class as the `bin-2` "runtime data, not
         // constructed from source literals" terminal. EARNED by detecting the reflection
         // scrutinee (`statement_position_terminal_effect`); a match over a CONSTRUCTED
-        // literal scrutinee never reaches it (it digs / stays unclassified). (THE DRAIN:
+        // literal scrutinee never reaches it (it completes / stays unclassified). (THE DRAIN:
         // the `mem/type_info.rs` Type::of-match rows fell to the unenumerated safety net;
         // typing + whitelisting moves them unclassified -> refused. Not a fake-zero -- the
         // reflective scrutinee is held + named.)
@@ -637,7 +646,7 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         || reason.contains("loop over a runtime-advanced iterator")
         // TERMINAL (REFUSE HALF of the bin-1 for-context classification): a literal-DOMAIN
         // for-loop whose DOMAIN / BODY / ACCUMULATOR is provably RUNTIME is a NAMED Effect,
-        // the Hit side of Outcome{Dug|Hit}. The DIG already fired first (a literal-domain +
+        // the Incomplete side of Outcome{Complete|Incomplete}. The DIG already fired first (a literal-domain +
         // literal-body + simple-counter loop is lifted by `lift_bounded_forall`); these three
         // reasons are EARNED by a structurally-detected runtime cause in
         // `for_context_refusal_reason` (never a blanket relabel -- a computable-but-
@@ -647,7 +656,7 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // (A) RUNTIME DOMAIN ENDPOINT (`for i in 0..v.len()`): the universe is not a finite
         // construction from source literals (runtime count) -- kin to `bin-2`. EARNED by a
         // non-literal range endpoint (`for_domain_endpoint_is_runtime`); a literal-int range
-        // never matches (it digs / stays unclassified).
+        // never matches (it completes / stays unclassified).
         || reason.contains("domain is over a RUNTIME endpoint")
         // (B) RUNTIME BODY READ over a literal domain: the iterated values are literals but
         // the ASSERTED values are runtime (`fmt.flags()&1`, a runtime accessor / temporally-
@@ -659,7 +668,7 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // non-int accumulator (NOT a simple `acc += <const>` counter), so its value at a
         // later iteration is a runtime quantity and a single universal would be false. EARNED
         // by `loop_body_mutates && !loop_mutation_is_simple_counter_only` (a genuine simple
-        // counter does not reach here -- it digs or lifts as a forall).
+        // counter does not reach here -- it completes or lifts as a forall).
         || reason.contains("RUNTIME-VALUED accumulator")
         // TERMINAL: an assertion in an `impl` METHOD body (top-level `Item::Impl` or a
         // nested impl declared as a statement). It runs only when the method is INVOKED,
@@ -838,7 +847,7 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         //       into a Vec/HashSet over runtime parameter contents (bin-2 aggregate data,
         //       not constructed from source literals).
         // EARNED by the source-body classifier (`init_is_runtime_collection` / the `let mut`
-        // arm) AFTER resolution -- a RESOLVED-and-PURE body still digs (the dig path is
+        // arm) AFTER resolution -- a RESOLVED-and-PURE body still completes (the complete path is
         // untouched), so this can only refuse a body whose runtime cause is SHOWN; never a
         // fake-refuse (a pure body discharges) and never an unresolved fake-terminal (the
         // unresolved "has no visible source" stays UNCLASSIFIED below). Corpus:
@@ -854,7 +863,7 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // to read -- kin to `temporally unstable` / `bin-2`. EARNED by the iterator-
         // advancement classifier AFTER detecting the `by_ref`-adaptor / unknown-consumed-
         // count pattern; a FRESH iterator over a literal source (no prior consume chain)
-        // digs and is never refused here (the fake-refuse guardrail).
+        // completes and is never refused here (the fake-refuse guardrail).
         // DISCRIMINATION: `rpc_source_refuses_only_genuinely_not_in_text_iterator_state_with_literal_twins`
         // in assertion_lift.rs covers this class with literal twins (e.g. array_chunks,
         // map_windows, peekable variants) that DO warrant -- confirming the refusals are
@@ -1083,7 +1092,7 @@ fn census_walk_stmts(
                 let mut fw = FloatWidthScope::new();
                 let outcome = cs.desugar(scope, idx, options, reducer, &mut fw, reduced, 0, None);
                 let row = match outcome {
-                    sugar::callsite::CallsiteOutcome::Dug(_) => CallsiteCensusRow {
+                    sugar::callsite::CallsiteOutcome::Complete(_) => CallsiteCensusRow {
                         helper: cs.name.clone(),
                         category: sugar::callsite::ResidueCategory::PureUntranslatedTerm,
                         added_unclassified: 0,
@@ -2004,7 +2013,7 @@ fn collect_source_assertion_contract_expr(
         let ctx =
             sugar_ctx_with_factory_audits(scope, options, reducer, float_widths, 0, factory_audits);
         match sugar::factory::build_constraint(expr, &fcx).desugar(&ctx) {
-            Outcome::Dug(Desugared::Constraints {
+            Outcome::Complete(Desugared::Constraints {
                 atom,
                 warrant,
                 kind,
@@ -2028,7 +2037,7 @@ fn collect_source_assertion_contract_expr(
                 });
                 return;
             }
-            Outcome::Dug(_) | Outcome::Hit(_) => {}
+            Outcome::Complete(_) | Outcome::Incomplete(_) => {}
         }
     }
 
@@ -5526,7 +5535,7 @@ fn resolve_index_in_term(term: &Rc<Term>, arrays: &BTreeMap<String, Vec<Rc<Term>
                 if let Some(elems) = arrays.get(arr) {
                     // `usize::try_from` (NOT `as usize`): a wide i128 index must
                     // never wrap into a spuriously in-range slot -- that would
-                    // resolve to the WRONG element (a fake-dig). Out of usize
+                    // resolve to the WRONG element (a fake-complete). Out of usize
                     // range -> leave the index symbolic.
                     if let Ok(ki) = usize::try_from(k) {
                         if ki < elems.len() {
@@ -5811,7 +5820,7 @@ fn bounded_domain_from_expr(expr: &Expr, scope: &TemporalScope) -> Option<Bounde
 /// capture the closure we const-evaluate over each concrete element. Only
 /// EXACT-replicable adaptors produce a wrapper; an unrepresentable adaptor (flat_map
 /// / flatten / a windowing/stateful one) makes the peel return None -> bail (honest,
-/// never a fake-dig). (`filter_map` IS replicable via the closed Option-eval, so it
+/// never a fake-complete). (`filter_map` IS replicable via the closed Option-eval, so it
 /// produces a `FilterMapSugar` wrapper.)
 type AdaptorWrap = Box<dyn FnOnce(Box<dyn Sugar>) -> Box<dyn Sugar>>;
 
@@ -5839,7 +5848,7 @@ fn wrap_rev(inner: Box<dyn Sugar>) -> Box<dyn Sugar> {
 /// receivers through `let_inits`, reaching the base literal-domain expression PLUS the
 /// ordered adaptor chain (in APPLICATION order: base -> ... -> fold). Returns
 /// (base, wrappers) or None on an unrepresentable adaptor / unresolvable binding /
-/// non-literal `n` for skip/take (-> bail). Stdlib sugar over written literals -> dig;
+/// non-literal `n` for skip/take (-> bail). Stdlib sugar over written literals -> complete;
 /// monkey business -> the const-evaluator that runs the closures will itself bail.
 fn peel_fold_adaptors<'a>(
     expr: &'a Expr,
@@ -6110,7 +6119,7 @@ fn peel_fold_adaptors_inner<'a>(
                         _ => return None,
                     },
                     // Every other adaptor: not yet provably exact -> bail. (`filter_map`
-                    // digs above via the composable `FilterMapSugar` over the closed
+                    // completes above via the composable `FilterMapSugar` over the closed
                     // Option-eval.)
                     _ => return None,
                 };
@@ -7351,7 +7360,7 @@ fn closure_single_param_ident(pat: &Pat) -> Option<String> {
 /// of the exact `const_eval`: it shares the same overflow/div-zero guards but returns an
 /// `i64` (the accumulator regime). Any shape / unbound ident / non-int value -> None
 /// (bail the defold -- a non-const-foldable accumulator is honest unclassified, never a
-/// fake-dig).
+/// fake-complete).
 fn const_fold_acc_update(tail: &Expr, env: &BTreeMap<String, i64>) -> Option<i64> {
     let cv_env: BTreeMap<String, ConstVal> = env
         .iter()
@@ -7359,7 +7368,7 @@ fn const_fold_acc_update(tail: &Expr, env: &BTreeMap<String, i64>) -> Option<i64
         .collect();
     // The accumulator stays in the bounded i64 cursor regime: a folded value
     // beyond i64 is not a representable accumulator position -> bail
-    // (EXACT-OR-BAIL; a truncation would be a fake-dig), mirroring
+    // (EXACT-OR-BAIL; a truncation would be a fake-complete), mirroring
     // `const_int_acc_init`.
     const_eval(tail, &cv_env)?
         .as_int()
@@ -7482,7 +7491,7 @@ impl Desugared {
     /// same literal value. `None` for any non-string-literal payload (a
     /// multi-element seq, a constraint terminal, a non-`LitStr` element) -- the
     /// caller bails. This is the COMPOSITIONAL read: the regex node consumes
-    /// whatever its pattern child dug to, so a literal / const-string /
+    /// whatever its pattern child completed to, so a literal / const-string /
     /// `concat!` / `format!` / pure helper call all flow through the same
     /// `desugar` -> `as_string_literal` path.
     pub(crate) fn as_string_literal(&self) -> Option<String> {
@@ -7526,32 +7535,46 @@ struct SugarCtx<'a, 'c> {
 }
 
 /// A node in the desugaring tree. `desugar` recurses inward (each child is a
-/// `Sugar` whose `desugar` we call) until `LiteralSugar` bottoms out, or the walk
-/// strikes an order-loss boundary (`Hit`). The reduction is TOTAL: it ALWAYS returns
-/// an `Outcome` -- `Dug` (reached truth) or `Hit` (a named effect). There is no
-/// `Option`/`None` bail and no unclassified return path. Adding a construct = adding
-/// one class with one `desugar`.
+/// `Sugar` whose `desugar` we call) until the node either reaches the literal floor
+/// or a runtime/opaque boundary stops it. The reduction is TOTAL: it ALWAYS returns
+/// an `Outcome` -- `Complete` or `Incomplete`. There is no `Option`/`None` bail and
+/// no unclassified return path. Adding a construct = adding one class with one
+/// `desugar`.
 trait Sugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome;
 }
 
-// ── The total reduction: `Outcome { Dug | Hit }` ─────────────────────────────
+// ── The total reduction: `Outcome { Complete | Incomplete }` ─────────────────────────────
 //
-// `Sugar::desugar` is the DIG side -- it walks inward until it reaches literal
-// truth (`Dug`). When the walk hits MONKEY BUSINESS -- a side effect, an opaque
-// runtime value, an iterator advance, a mutable read -- it `Hit`s a named `Effect`.
-// `Outcome` is TOTAL (two cases, no third): every reduction is `Dug` or `Hit`,
-// nothing else. The old untyped `None` bail + downstream reason STRING is gone; the
-// bail is now a typed `Hit(Effect)` carrying the SAME reason string the collector
-// emits into `skip_reasons` (recognized as terminal by `refusal_disposition`). The
-// wire format -- and thus the CID + counts -- is unchanged.
+// `Sugar::desugar` is the only place that decides the verdict for a recognized node.
+// The walk descends through the raw child expressions captured by `recognize`, asks each
+// child for its own `Outcome`, and then emits exactly one verdict for the current node.
+//
+// `Complete` means this node reduced all the way to the literal floor: a term, a finite
+// sequence, tuple components, or emitted constraints whose leaves are fully determined by
+// source text. No runtime effect stopped the walk. Composition is conjunctive: a composed
+// node is `Complete` iff every child it depends on is `Complete`.
+//
+// `Incomplete` means the walk reached the dragon: IO, mutation, an opaque/runtime value,
+// a non-literal payload, iterator state, temporal state, or the structural backstop for
+// pure syntax this recognizer still does not know how to lower. One `Incomplete` child
+// makes the parent `Incomplete`, but sibling literal leaves remain individually
+// `Complete` and are still emitted as such by the report walk. If this node is where the
+// runtime boundary was first discovered, the report marks it `INCOMPLETE HERE`; parents
+// that merely receive the child verdict are plain `incomplete`.
+//
+// `Outcome` is TOTAL (two cases, no third): every reduction is `Complete` or
+// `Incomplete`, nothing else. The old untyped `None` bail + downstream reason STRING is
+// gone; the bail is now a typed `Incomplete(Effect)` carrying the SAME reason string the
+// collector emits into `skip_reasons` (recognized as terminal by
+// `refusal_disposition`). The wire format -- and thus the CID + counts -- is unchanged.
 //
 // `Effect` is a FLAT enum of named order-loss boundaries (a mutation, an iterator
 // advance, an opaque runtime value, TLS, IO, a mutable read, ...), each a structural
 // property of the SOURCE (not a missing lift) that destroys the single timeless `t` a
 // point-wise value claim needs. `Effect::reason()` is the proto refusal string;
 // `Effect::boundary()` is the `SourceMemento` (the bail-side rope, mirroring the
-// dig-side `Warrant`). Adding an effect = adding one variant + one `reason()` arm.
+// complete-side `Warrant`). Adding an effect = adding one variant + one `reason()` arm.
 //
 // SOUNDNESS (the critical line, do NOT cross it): an `Effect` is ONLY for a PROVABLE
 // order-loss effect -- a syntactic mutation / `iter.next()` / `&mut` / `.push` on
@@ -7565,7 +7588,7 @@ trait Sugar {
 
 /// The bail-side rope: a `SourceMemento` ties a refusal to the source boundary that
 /// warrants it (the span / token-key of the offending construct). The mirror of the
-/// dig-side `Warrant` (which ropes a discharged constraint to the sugar that minted
+/// complete-side `Warrant` (which ropes a discharged constraint to the sugar that minted
 /// it). `boundary` is the rendered token-key / description of the order-loss site.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SourceMemento {
@@ -7573,68 +7596,69 @@ struct SourceMemento {
     boundary: String,
 }
 
-/// The outcome of a desugar attempt -- the TOTAL reduction. `Dug` reached truth (a
-/// discharged `Desugared`); `Hit` struck a NAMED, WARRANTED order-loss boundary (an
+/// The outcome of a desugar attempt -- the TOTAL reduction. `Complete` reached truth (a
+/// discharged `Desugared`); `Incomplete` struck a NAMED, WARRANTED order-loss boundary (an
 /// `Effect`, a terminal loud refusal with a cause). There is no third case: the
 /// reduction is total. The collector unwraps it to the existing entries / skip_reasons
 /// emission so the wire format (and thus the CID + counts) is unchanged.
 enum Outcome {
     /// Reached truth: the desugared literal floor / emitted obligation. -> discharged.
-    Dug(Desugared),
+    Complete(Desugared),
     /// Struck a named order-loss boundary. -> refused (terminal, loud, with cause).
-    Hit(Effect),
+    Incomplete(Effect),
 }
 
 impl Outcome {
-    /// Lift the legacy `Option<Desugared>` into the total `Outcome`: `Some(d)` reached
-    /// truth (`Dug`); a `None` bail is the STRUCTURAL backstop (`Hit(Effect::Unsupported)`
-    /// carrying the byte-identical generic skip reason -- a bare structural bail that the
-    /// fall-through consumer discards exactly as it discarded `None`, then emits its own
-    /// site-specific generic reason). This is the ONE place the legacy `?`/`Option` body of
-    /// a `Sugar` becomes total. There is no longer any unclassified return path from
-    /// `desugar`.
+    /// Lift the legacy `Option<Desugared>` into the total `Outcome`: `Some(d)` is
+    /// `Complete`; `None` is the STRUCTURAL backstop
+    /// (`Incomplete(Effect::Unsupported)` carrying the byte-identical generic skip
+    /// reason). A consumer that wants old fall-through behavior discards only this
+    /// generic structural backstop and emits its own site-specific reason. There is no
+    /// longer any unclassified return path from `desugar`.
     fn from_opt(opt: Option<Desugared>) -> Outcome {
         match opt {
-            Some(d) => Outcome::Dug(d),
-            None => Outcome::Hit(Effect::Unsupported {
+            Some(d) => Outcome::Complete(d),
+            None => Outcome::Incomplete(Effect::Unsupported {
                 reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
             }),
         }
     }
 
-    /// The discharged payload, or `None` if this struck a boundary (`Hit`). The dual
-    /// of `from_opt`: a consumer that wants the legacy `Option<Desugared>` fall-through
-    /// (`.and_then` / `?`) reads through this. A `Hit` is discarded exactly as the old
-    /// `None` was -- the consumer's own site-specific reason classification is unchanged.
-    fn dug(self) -> Option<Desugared> {
+    /// The completed payload, or `None` if this struck a boundary (`Incomplete`). The
+    /// dual of `from_opt`: a consumer that wants the legacy `Option<Desugared>`
+    /// fall-through (`.and_then` / `?`) reads through this. An `Incomplete` is
+    /// discarded exactly as the old `None` was -- the consumer's own site-specific
+    /// reason classification is unchanged.
+    fn complete(self) -> Option<Desugared> {
         match self {
-            Outcome::Dug(d) => Some(d),
-            Outcome::Hit(_) => None,
+            Outcome::Complete(d) => Some(d),
+            Outcome::Incomplete(_) => None,
         }
     }
 
-    /// True iff this struck ONLY the GENERIC structural backstop -- `Hit(Effect::
+    /// True iff this struck ONLY the GENERIC structural backstop -- `Incomplete(Effect::
     /// Unsupported)` carrying the `STRUCTURAL_BACKSTOP_REASON` (a pure-but-untranslated
-    /// term, "the dig did not reach truth here"), NOT a NAMED order-loss effect
+    /// term, "the complete did not reach truth here"), NOT a NAMED order-loss effect
     /// (mutation / iter-advance / runtime / TLS / IO / temporal). FIX(a) uses this at the
     /// factory: in TERM position a recognized sugar's generic structural bail degrades to
     /// an opaque-EUF term (warranted-UNDECIDED, congruence-only, can't false-discharge),
     /// never a refusal -- a named effect, by contrast, stays the loud terminal refusal.
     pub(crate) fn is_structural_bail(&self) -> bool {
-        matches!(self, Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON)
+        matches!(self, Outcome::Incomplete(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON)
     }
 }
 
 /// The STRUCTURAL backstop reason: the bare structural bail of a `Sugar::desugar`
-/// (the old `None`). It is NEVER emitted to `skip_reasons` -- a `Hit(Effect::Unsupported)`
-/// from a `Sugar` bail is discarded by the fall-through consumer (via `Outcome::dug`)
+/// (the old `None`). It is NEVER emitted to `skip_reasons` -- a
+/// `Incomplete(Effect::Unsupported)` from a `Sugar` bail is discarded by the
+/// fall-through consumer (via `Outcome::complete`)
 /// exactly as the old `None` was, and that consumer emits its OWN site-specific reason.
 /// This string exists only so `Effect` is total over the structural bail; it is the
-/// in-code name of "the dig walk did not reach truth here" with no wire footprint.
+/// in-code name of "the complete walk did not reach truth here" with no wire footprint.
 const STRUCTURAL_BACKSTOP_REASON: &str =
-    "structural bail: the desugar dig did not reach truth (no named effect); fall through";
+    "structural bail: the desugar complete did not reach truth (no named effect); fall through";
 
-/// A typed order-loss boundary -- the `Hit` side of `Outcome`. A FLAT enum: one variant
+/// A typed order-loss boundary -- the `Incomplete` side of `Outcome`. A FLAT enum: one variant
 /// per named effect (a mutation, an iterator advance, an opaque runtime value, TLS, IO, a
 /// mutable read, ...), plus the `Unsupported` STRUCTURAL backstop (a bare structural bail,
 /// or a term-shaped `unsupported term`). `reason()` returns the terminal refusal string
@@ -7756,9 +7780,9 @@ enum Effect {
     ///     pointer `&raw const`/`&raw mut`, a raw pointer cast, a `const { <bare path> }`
     ///     block). EARNED at the specific term arm; a PURE untranslated term is NOT given
     ///     this reason.
-    ///   * the bare structural bail of a `Sugar::desugar` dig that did not reach truth (the
+    ///   * the bare structural bail of a `Sugar::desugar` complete that did not reach truth (the
     ///     old `None`), with `STRUCTURAL_BACKSTOP_REASON` -- NEVER emitted to `skip_reasons`
-    ///     (the fall-through consumer discards it via `Outcome::dug` and emits its own reason).
+    ///     (the fall-through consumer discards it via `Outcome::complete` and emits its own reason).
     /// This is the ONE catch-all variant: it carries a pre-built `reason` string so the emit
     /// site's wire format is conserved.
     Unsupported { reason: String },
@@ -7890,7 +7914,7 @@ impl Effect {
     }
 
     /// The `SourceMemento` warranting that the bail names a SOURCE property -- the bail-side
-    /// rope (mirror of the dig-side `Warrant`). For `Unsupported`, the boundary is the reason
+    /// rope (mirror of the complete-side `Warrant`). For `Unsupported`, the boundary is the reason
     /// itself (the backstop carries no separate token-key; the reason names the construct).
     fn boundary(&self) -> SourceMemento {
         let boundary = match self {
@@ -8623,7 +8647,7 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
     /// well-formed normal-return fact.
     ///
     /// The root call/method is therefore forced to the generic `call:`/`method:`
-    /// ctor here, while its receiver/arguments are still dug lazily through the
+    /// ctor here, while its receiver/arguments are still completed lazily through the
     /// factory so stable bindings and literal children remain canonical.
     pub(crate) fn opaque_callsite_term(&self, expr: &Expr) -> Option<Rc<Term>> {
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
@@ -8645,8 +8669,8 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
                 return callsite_child_fallback_term(expr, self.scope);
             }
             match sugar::factory::build_term(expr, &fcx).desugar(&child) {
-                Outcome::Dug(d) => d.into_term(),
-                Outcome::Hit(_) => callsite_child_fallback_term(expr, self.scope),
+                Outcome::Complete(d) => d.into_term(),
+                Outcome::Incomplete(_) => callsite_child_fallback_term(expr, self.scope),
             }
         };
         match expr {
@@ -8733,8 +8757,8 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
             self.macro_depth + 1,
         );
         let term = match node.desugar(&child) {
-            Outcome::Dug(d) => d.into_term()?,
-            Outcome::Hit(_) => return None, // a named effect -> bail to opaque
+            Outcome::Complete(d) => d.into_term()?,
+            Outcome::Incomplete(_) => return None, // a named effect -> bail to opaque
         };
         // EXACT-OR-BAIL: commit the peel only if it grounded all the way out.
         if is_fully_grounded_term(&term) {
@@ -8853,18 +8877,20 @@ fn emit_constraint_outcome(
     macros_lifted: &mut usize,
 ) {
     match outcome {
-        Outcome::Dug(desugared @ Desugared::Constraints { .. }) => {
+        Outcome::Complete(desugared @ Desugared::Constraints { .. }) => {
             emit_desugared(desugared, entries, macros_lifted);
         }
-        Outcome::Dug(_) => skipped.push(format!(
+        Outcome::Complete(_) => skipped.push(format!(
             "constraint-shaped expression did not emit a constraint `{site}`; released to layer 0"
         )),
-        Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {
+        Outcome::Incomplete(Effect::Unsupported { reason })
+            if reason == STRUCTURAL_BACKSTOP_REASON =>
+        {
             skipped.push(format!(
                 "constraint-shaped expression did not reach bedrock `{site}`; released to layer 0"
             ));
         }
-        Outcome::Hit(effect) => skipped.push(effect.reason()),
+        Outcome::Incomplete(effect) => skipped.push(effect.reason()),
     }
 }
 
@@ -8876,7 +8902,7 @@ fn emit_assertion_surface_outcome(
     macros_lifted: &mut usize,
 ) {
     match outcome {
-        Outcome::Dug(Desugared::Constraints {
+        Outcome::Complete(Desugared::Constraints {
             atom,
             n,
             kind,
@@ -8897,17 +8923,19 @@ fn emit_assertion_surface_outcome(
                 ));
             }
         }
-        Outcome::Dug(_) => {
+        Outcome::Complete(_) => {
             skipped.push(format!(
                 "assertion surface `{site}` did not emit a constraint; released to layer 0"
             ));
         }
-        Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {
+        Outcome::Incomplete(Effect::Unsupported { reason })
+            if reason == STRUCTURAL_BACKSTOP_REASON =>
+        {
             skipped.push(format!(
                 "assertion surface `{site}` did not reach bedrock; released to layer 0"
             ));
         }
-        Outcome::Hit(effect) => skipped.push(effect.reason()),
+        Outcome::Incomplete(effect) => skipped.push(effect.reason()),
     }
 }
 
@@ -8981,7 +9009,7 @@ fn emit_panic_freedom_callsites_in_stmt(
         let outcome =
             sugar::factory::build_expr(&expr, &fcx, sugar::claim::SugarRole::SupportConstraint)
                 .desugar(&ctx);
-        if let Outcome::Dug(Desugared::Constraints {
+        if let Outcome::Complete(Desugared::Constraints {
             atom,
             warrant,
             kind,
@@ -9085,8 +9113,8 @@ pub(crate) fn temporal_panic_freedom_entry(
         factory_audits,
     );
     let term = match sugar::factory::build_term(&record.expr, &fcx).desugar(&ctx) {
-        Outcome::Dug(d) => d.into_term()?,
-        Outcome::Hit(_) => return None,
+        Outcome::Complete(d) => d.into_term()?,
+        Outcome::Incomplete(_) => return None,
     };
     let temporal_subject = Rc::new(Term::Ctor {
         name: "temporal-callsite".to_string(),
@@ -9552,11 +9580,11 @@ fn closure_body_advances_iterator(body: &Expr) -> bool {
 
 /// If `expr` is a CLOSURE-BEARING method call whose closure asserts but is NOT a
 /// dissolvable/liftable pure point-wise iteration, return the NAMED `Effect` the
-/// `ClosureAdaptorSugar` node's `desugar` `Hit`s (a mutation / iterator-advance /
+/// `ClosureAdaptorSugar` node's `desugar` `Incomplete`s (a mutation / iterator-advance /
 /// opaque-runtime / TLS boundary). A THIN ADAPTER over the node, which lives in
 /// `sugar::closure_adaptor`: it asks the catalog for the closure-adaptor verdict role,
 /// `desugar`s it once, and reads the verdict -- mapping the node's STRUCTURAL backstop
-/// `Hit` back to `None` (the honest-unclassified fall-through, the old `None`). The caller
+/// `Incomplete` back to `None` (the honest-unclassified fall-through, the old `None`). The caller
 /// renders `effect.reason()` into `skip_reasons` -- the wire format is unchanged.
 ///
 /// Returns `None` for a PURE adaptor over a PURE body over a LITERAL-resolvable receiver
@@ -9589,13 +9617,15 @@ fn closure_method_terminal_effect(
     );
     match node.desugar(&ctx) {
         // The STRUCTURAL backstop = the honest-unclassified fall-through (the old `None`).
-        Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {
+        Outcome::Incomplete(Effect::Unsupported { reason })
+            if reason == STRUCTURAL_BACKSTOP_REASON =>
+        {
             None
         }
         // A NAMED order-loss boundary -- the verdict the caller renders to skip_reasons.
-        Outcome::Hit(effect) => Some(effect),
-        // A bail-side node never reaches truth; `Dug` is unreachable here.
-        Outcome::Dug(_) => None,
+        Outcome::Incomplete(effect) => Some(effect),
+        // A bail-side node never reaches truth; `Complete` is unreachable here.
+        Outcome::Complete(_) => None,
     }
 }
 
@@ -9627,7 +9657,7 @@ fn expr_contains_await(expr: &Expr) -> bool {
 /// identity: `Type::of::<T>()` / `<expr>.info()` / a `.kind` read off such, optionally
 /// wrapped in a `const { .. }` block. A `TypeId`/`Type` is a target/compiler-determined
 /// identity, not a value constructed from source literals. Detected structurally so a
-/// `match` over a CONSTRUCTED literal scrutinee never matches (it digs / stays
+/// `match` over a CONSTRUCTED literal scrutinee never matches (it completes / stays
 /// unclassified). Returns the rendered scrutinee for the boundary, or None.
 fn reflection_scrutinee(scrut: &Expr) -> Option<String> {
     // A reflection call is `Type::of::<..>()` / `TypeId::of::<..>()` / `<e>.info()`.
@@ -9839,13 +9869,15 @@ fn statement_position_terminal_effect(
     );
     match node.desugar(&ctx) {
         // The STRUCTURAL backstop = the honest-unclassified fall-through (the old `None`).
-        Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {
+        Outcome::Incomplete(Effect::Unsupported { reason })
+            if reason == STRUCTURAL_BACKSTOP_REASON =>
+        {
             None
         }
         // A NAMED statement-position boundary -- the verdict the caller renders to skip_reasons.
-        Outcome::Hit(effect) => Some(effect),
-        // A bail-side node never reaches truth; `Dug` is unreachable here.
-        Outcome::Dug(_) => None,
+        Outcome::Incomplete(effect) => Some(effect),
+        // A bail-side node never reaches truth; `Complete` is unreachable here.
+        Outcome::Complete(_) => None,
     }
 }
 
@@ -9892,13 +9924,15 @@ fn impl_method_terminal_effect(
     );
     match node.desugar(&ctx) {
         // The STRUCTURAL backstop = the honest-unclassified fall-through (the old `None`).
-        Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {
+        Outcome::Incomplete(Effect::Unsupported { reason })
+            if reason == STRUCTURAL_BACKSTOP_REASON =>
+        {
             None
         }
         // A NAMED impl-method boundary -- the verdict the caller renders to skipped.
-        Outcome::Hit(effect) => Some(effect),
-        // A bail-side node never reaches truth; `Dug` is unreachable here.
-        Outcome::Dug(_) => None,
+        Outcome::Incomplete(effect) => Some(effect),
+        // A bail-side node never reaches truth; `Complete` is unreachable here.
+        Outcome::Complete(_) => None,
     }
 }
 
@@ -9931,7 +9965,7 @@ fn const_item_inert_support(
     );
     matches!(
         node.desugar(&ctx),
-        Outcome::Dug(Desugared::Seq(seq)) if seq.is_empty()
+        Outcome::Complete(Desugared::Seq(seq)) if seq.is_empty()
     )
 }
 
@@ -9985,7 +10019,7 @@ fn unconditional_block_stmts(expr: &Expr) -> Option<&[Stmt]> {
 /// `let _ = recv.map(|x| { assert.. });`, is then a `Stmt::Local` whose init is a
 /// TOP-LEVEL `MethodCall`, so the existing `closure_method_terminal_effect` NAMES its
 /// side-effecting / runtime boundary -- moving the assert from the generic UNCLASSIFIED
-/// let-initializer reason to its true TERMINAL refusal, never a fake-dig.)
+/// let-initializer reason to its true TERMINAL refusal, never a fake-complete.)
 ///
 /// Narrow on purpose: only a `catch_unwind` whose SOLE argument is a closure with a BLOCK
 /// body. Any other call (or a closure with a bare-expr body, or extra args) returns `None`
@@ -10096,7 +10130,7 @@ struct ConfigGateSugar;
 
 impl Sugar for ConfigGateSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        Outcome::Dug(Desugared::Seq(Vec::new()))
+        Outcome::Complete(Desugared::Seq(Vec::new()))
     }
 }
 
@@ -10535,13 +10569,13 @@ fn collect_assertion_entries<'a>(
     // nested sub-blocks (item hoisting), so a helper defined at the `#[test]` fn level
     // (`fn assert_predicates_exact(..)`) IS lexically visible at a call inside a bare
     // `{ .. }` block. We merge these into THIS block's `local_fns` so the call resolves
-    // and its body is RE-LIFTED at the call site -- a pure body digs, a RUNTIME body
+    // and its body is RE-LIFTED at the call site -- a pure body completes, a RUNTIME body
     // (HashSet/Vec collect over TypeId, `fmt::write` over a `let mut` writer) refuses
     // with a NAMED effect. Without this, such a call fell to the unresolved
     // "has no visible source" (UNCLASSIFIED) -- a reach gap, not a source property.
-    // SOUND: the SAME reducer re-digs the body, so this can only DRAIN (dig or named-
-    // refuse) a body whose cause is now SHOWN; it never fake-digs (a runtime body bails
-    // / refuses) and never fake-refuses (a pure body discharges through the dig path).
+    // SOUND: the SAME reducer re-completes the body, so this can only DRAIN (complete or named-
+    // refuse) a body whose cause is now SHOWN; it never fake-completes (a runtime body bails
+    // / refuses) and never fake-refuses (a pure body discharges through the complete path).
     enclosing_fns: &BTreeMap<String, &'a syn::ItemFn>,
     enclosing_fn_registry: &FnRegistry,
     enclosing_layout_types: &LayoutTypeRegistry,
@@ -10694,7 +10728,7 @@ fn collect_assertion_entries<'a>(
                 if let Some(init) = &local.init {
                     // `LetSugar`: a let initializer is still a fact-emission surface.
                     // Feed initializer-level macro / if / match / block surfaces back to
-                    // the ordinary statement collector so the factory decides Dug vs Hit.
+                    // the ordinary statement collector so the factory decides Complete vs Incomplete.
                     // The `let` position itself must not hide a fact behind the generic
                     // "not top-level" accounting bucket.
                     if let Some(stmts) = sugar::let_stmt::initializer_fact_stmts(&init.expr) {
@@ -10781,10 +10815,10 @@ fn collect_assertion_entries<'a>(
                         }
                     } {
                         match outcome {
-                            Outcome::Dug(desugared) => {
+                            Outcome::Complete(desugared) => {
                                 emit_desugared(desugared, entries, macros_lifted);
                             }
-                            Outcome::Hit(Effect::Unsupported { reason })
+                            Outcome::Incomplete(Effect::Unsupported { reason })
                                 if reason == STRUCTURAL_BACKSTOP_REASON =>
                             {
                                 let mut count = count_asserts_in_expr(&init.expr);
@@ -10820,12 +10854,12 @@ fn collect_assertion_entries<'a>(
                                     skipped.push(reason.clone());
                                 }
                             }
-                            Outcome::Hit(effect)
+                            Outcome::Incomplete(effect)
                                 if sugar::range_construct::is_range_construct_expr(&init.expr) =>
                             {
                                 skipped.push(effect.reason())
                             }
-                            Outcome::Hit(_) => {
+                            Outcome::Incomplete(_) => {
                                 let mut count = count_asserts_in_expr(&init.expr);
                                 if let Some((_, diverge)) = &init.diverge {
                                     count += count_asserts_in_expr(diverge);
@@ -11037,11 +11071,13 @@ fn collect_assertion_entries<'a>(
                     // dispatches `Expr::ForLoop` to `decompose_for_loop` (its arm is
                     // `boxed(decompose_for_loop(f, scope, let_inits))`), so this is the
                     // byte-identical drop-in for the former inline call -- `boxed(Some)
-                    // .desugar().dug()` == the old `.and_then(|s| s.desugar().dug())`,
-                    // and `boxed(None)` -> `Hit(Unsupported)` -> `.dug()` == the old
+                    // .desugar().complete()` == the old `.and_then(|s| s.desugar().complete())`,
+                    // and `boxed(None)` -> `Incomplete(Unsupported)` -> `.complete()` == the old
                     // `None`. First site where `build()` goes live in the collector.
                     let fcx = sugar::factory::SugarBuildCtx::new(&for_scope, options, &let_inits);
-                    sugar::factory::build_composite(e, &fcx).desugar(&ctx).dug()
+                    sugar::factory::build_composite(e, &fcx)
+                        .desugar(&ctx)
+                        .complete()
                 };
                 for name in for_scope.take_inlined_value_helpers() {
                     reduced_helpers.insert(name);
@@ -11056,12 +11092,12 @@ fn collect_assertion_entries<'a>(
                     // The DIG declined (literal-body half handled above by
                     // `lift_bounded_forall`). This is the REFUSE half: a for-loop whose
                     // DOMAIN / BODY / ACCUMULATOR is provably RUNTIME is a NAMED terminal
-                    // Effect (Hit side of Outcome{Dug|Hit}) -- not unclassified WORK. The
+                    // Effect (Incomplete side of Outcome{Complete|Incomplete}) -- not unclassified WORK. The
                     // classification is detection-EARNED (a specific runtime cause), never
                     // a blanket relabel: a literal-domain + literal-body + simple-counter
                     // loop DIGS above; a computable-but-unimplemented body (in-scope value,
                     // no runtime cause detected -- e.g. a `let`-SSA + conditional over the
-                    // loop var) STAYS UNCLASSIFIED here (the inverse of fake-dig is
+                    // loop var) STAYS UNCLASSIFIED here (the inverse of fake-complete is
                     // fake-REFUSE, equally forbidden -- never refuse to zero the count).
                     let count = count_assertion_surface_sites_in_stmts_with_source(
                         &f.body.stmts,
@@ -11109,7 +11145,7 @@ fn collect_assertion_entries<'a>(
                         );
                         sugar::factory::build_composite(&synth_for, &fcx)
                             .desugar(&ctx)
-                            .dug()
+                            .complete()
                     });
                 if let Some(desugared) = lifted {
                     if total == 0 {
@@ -11175,7 +11211,9 @@ fn collect_assertion_entries<'a>(
                     );
                     let fcx =
                         sugar::factory::SugarBuildCtx::new(&temporal_scope, options, &let_inits);
-                    sugar::factory::build_composite(e, &fcx).desugar(&ctx).dug()
+                    sugar::factory::build_composite(e, &fcx)
+                        .desugar(&ctx)
+                        .complete()
                 } {
                     emit_desugared(desugared, entries, macros_lifted);
                 } else {
@@ -11188,11 +11226,11 @@ fn collect_assertion_entries<'a>(
                     //     a `&mut` borrow, a method call on a runtime receiver) is a NAMED
                     //     terminal Effect: `guard => then` cannot be a constructible point-wise
                     //     predicate because the guard's truth is not fixed from source literals.
-                    //     Typed as `IfGuardRuntimeEffect`. (The Hit side.)
+                    //     Typed as `IfGuardRuntimeEffect`. (The Incomplete side.)
                     //   * a CONST/cfg/literal guard (`!false`, `cfg!(..)`, a const-eq) is
                     //     COMPUTABLE-but-unimplemented: the implication just is not lifted yet.
                     //     It STAYS UNCLASSIFIED -- refusing it would be FAKE-REFUSE (the inverse
-                    //     sin of fake-dig). This is the discrimination guardrail.
+                    //     sin of fake-complete). This is the discrimination guardrail.
                     let reason = if if_guard_is_runtime(&i.cond) {
                         (Effect::IfGuardRuntime {
                             boundary: token_key(&i.cond),
@@ -11240,7 +11278,7 @@ fn collect_assertion_entries<'a>(
                 // account them here so they do not fall to the unenumerated safety net.
                 // The variant-pin discharge (below) is unchanged. A match over a
                 // CONSTRUCTED literal scrutinee has no reflection call -> None -> the
-                // ordinary path (dig / under-match-context), never reflection-refused.
+                // ordinary path (complete / under-match-context), never reflection-refused.
                 let reflection_boundary = reflection_scrutinee(strip_const_block(&m.expr));
                 if let Some(b) = &reflection_boundary {
                     let body_asserts: usize = m
@@ -11298,7 +11336,9 @@ fn collect_assertion_entries<'a>(
                     );
                     let fcx =
                         sugar::factory::SugarBuildCtx::new(&temporal_scope, options, &let_inits);
-                    sugar::factory::build_composite(e, &fcx).desugar(&ctx).dug()
+                    sugar::factory::build_composite(e, &fcx)
+                        .desugar(&ctx)
+                        .complete()
                 } {
                     emit_desugared(desugared, entries, macros_lifted);
                     // `decompose_match` dropped any arm gated by an INACTIVE `#[cfg(..)]`
@@ -11503,7 +11543,9 @@ fn collect_assertion_entries<'a>(
                                 macro_depth,
                                 factory_audits,
                             );
-                            sugar::factory::build_composite(e, &fcx).desugar(&ctx).dug()
+                            sugar::factory::build_composite(e, &fcx)
+                                .desugar(&ctx)
+                                .complete()
                         } else {
                             None
                         }
@@ -11598,7 +11640,7 @@ fn collect_assertion_entries<'a>(
                                 macro_depth,
                                 factory_audits,
                             ) {
-                                sugar::callsite::CallsiteOutcome::Dug(commit) => {
+                                sugar::callsite::CallsiteOutcome::Complete(commit) => {
                                     let driver_name = commit.name.clone();
                                     entries.extend(commit.entries);
                                     skipped.extend(commit.skipped);
@@ -11636,7 +11678,7 @@ fn collect_assertion_entries<'a>(
                                 macro_depth,
                                 factory_audits,
                             ) {
-                                sugar::callsite::CallsiteOutcome::Dug(commit) => {
+                                sugar::callsite::CallsiteOutcome::Complete(commit) => {
                                     entries.extend(commit.entries);
                                     skipped.extend(commit.skipped);
                                     *macros_lifted += commit.macros_lifted;
@@ -11667,7 +11709,7 @@ fn collect_assertion_entries<'a>(
                                 macro_depth,
                                 factory_audits,
                             ) {
-                                sugar::callsite::CallsiteOutcome::Dug(commit) => {
+                                sugar::callsite::CallsiteOutcome::Complete(commit) => {
                                     entries.extend(commit.entries);
                                     skipped.extend(commit.skipped);
                                     *macros_lifted += commit.macros_lifted;
@@ -11708,9 +11750,9 @@ fn collect_assertion_entries<'a>(
                                 macro_depth,
                                 factory_audits,
                             ) {
-                                sugar::callsite::CallsiteOutcome::Dug(commit) => {
+                                sugar::callsite::CallsiteOutcome::Complete(commit) => {
                                     // The body fully reduced: COMMIT the trial buffers (the
-                                    // asserts lift via the byte-identical dig path). This is
+                                    // asserts lift via the byte-identical complete path). This is
                                     // the blessed inlining-unblock.
                                     entries.extend(commit.entries);
                                     skipped.extend(commit.skipped);
@@ -11723,7 +11765,7 @@ fn collect_assertion_entries<'a>(
                                 // BAIL: the body did not fully reduce (honest unclassified
                                 // residue). Leave the helper unreduced; Pass 2 keeps the
                                 // single "reachable only via call-site inlining" refusal.
-                                // Never fake-dug, never fake-refused.
+                                // Never fake-complete, never fake-refused.
                                 sugar::callsite::CallsiteOutcome::Bail(_) => false,
                             }
                         } else if let Some(cs) = sugar::callsite::MethodCallsiteSugar::decompose(
@@ -11748,7 +11790,7 @@ fn collect_assertion_entries<'a>(
                                 macro_depth,
                                 factory_audits,
                             ) {
-                                sugar::callsite::CallsiteOutcome::Dug(commit) => {
+                                sugar::callsite::CallsiteOutcome::Complete(commit) => {
                                     entries.extend(commit.entries);
                                     skipped.extend(commit.skipped);
                                     *macros_lifted += commit.macros_lifted;
@@ -11786,7 +11828,7 @@ fn collect_assertion_entries<'a>(
                             // mem::take(&mut val))`): mutably aliased, so the read has no single
                             // timeless `t`. Typed as `RuntimeExprStmtEffect`. A statement
                             // carrying a CONSTRUCTED literal matches none -> None -> the generic
-                            // unclassified skip (the value-IN-scope dig path).
+                            // unclassified skip (the value-IN-scope complete path).
                             closure_method_terminal_effect(
                                 e,
                                 &temporal_scope,
@@ -11873,9 +11915,9 @@ fn collect_assertion_entries<'a>(
     // refusal. Before refusing, replay the SAME gated `desugar` trial at EVERY distinct
     // arg-position call site of the helper: extract that site's `param := actual`
     // bindings, β-reduce the body, and commit the body's asserts point-wise iff the
-    // substituted body adds zero unclassified. A site whose body does not fully dig
+    // substituted body adds zero unclassified. A site whose body does not fully complete
     // (a runtime actual the asserts read, an effectful body) BAILS and is left for the
-    // refusal -- never fake-dug. Distinct sites with distinct literal actuals produce
+    // refusal -- never fake-complete. Distinct sites with distinct literal actuals produce
     // distinct point-wise obligations (no collapse); inlining N sites of one source
     // assert is N obligations (accounted in `unaccounted`, never a silent drop).
     let already_reduced_here = reduced_here(&reduced_in_block, reduced_helpers);
@@ -11953,7 +11995,7 @@ fn collect_assertion_entries<'a>(
                 macro_depth,
                 factory_audits,
             ) {
-                sugar::callsite::CallsiteOutcome::Dug(commit) => {
+                sugar::callsite::CallsiteOutcome::Complete(commit) => {
                     tracing::debug!(
                         helper = %fn_name,
                         site_idx,
@@ -11981,7 +12023,7 @@ fn collect_assertion_entries<'a>(
             }
         }
         if any_committed {
-            // At least one site fully dug: the helper's asserts are accounted point-wise
+            // At least one site fully completed: the helper's asserts are accounted point-wise
             // at the committing sites. Mark reduced so the refusal-drain below does not
             // ALSO refuse (double-count). A site that bailed contributed nothing; its
             // path is the outer runtime assertion (already accounted elsewhere).
@@ -12101,7 +12143,7 @@ fn collect_arg_position_call_sites(stmts: &[Stmt], fn_name: &str, arity: usize) 
 /// True when the iteration domain is a RANGE whose endpoint is NOT a literal int --
 /// `for i in 0..v.len()`, `for i in 0..xs.len()`, `for i in lo..hi` (lo/hi runtime).
 /// The universe is then NOT a finite construction from source literals (the count is a
-/// runtime quantity), so the loop is a Hit(Effect) domain refusal, not unclassified WORK.
+/// runtime quantity), so the loop is a Incomplete(Effect) domain refusal, not unclassified WORK.
 /// A literal-array / literal-int-range domain is NOT runtime (returns false -> the cause
 /// is body-side or the loop is computable-but-unimplemented). EXACT: both endpoints must
 /// const-fold to ints for the domain to be finite-literal; a missing or non-literal end
@@ -12352,7 +12394,7 @@ fn stmts_have_drop_on_panic_side_effect(stmts: &[Stmt]) -> bool {
 /// REFUSE half of the bin-1 classification), or leave it the existing UNCLASSIFIED
 /// for-context reason when no runtime cause is structurally detected (computable-but-
 /// unimplemented -- in-scope value, just no lifter yet). Detection-EARNED, precedence
-/// runtime-domain > runtime-body-read > runtime-accumulator; the dig already fired
+/// runtime-domain > runtime-body-read > runtime-accumulator; the complete already fired
 /// (this is the `else` after `desugar` declined).
 #[allow(clippy::too_many_arguments)]
 fn for_context_refusal_reason(
@@ -12444,7 +12486,7 @@ fn for_context_refusal_reason(
     // `let mut curpow10` + `mul_pow10(&mut ..)`, a `Big`/struct accumulator. Its value at
     // a later iteration is a runtime quantity, so a single universal would be false.
     // Terminal Effect, EARNED by the non-counter mutation. (A genuine simple-counter loop
-    // does NOT reach here -- the dig path threads it, or it lifts as a forall.)
+    // does NOT reach here -- the complete path threads it, or it lifts as a forall.)
     if loop_body_mutates(&f.body.stmts) && !loop_mutation_is_simple_counter_only(&f.body.stmts) {
         return "assertion under for context over a LITERAL domain with a RUNTIME-VALUED \
                 accumulator (a mutated builder / non-int accumulator, not a simple counter \
@@ -13104,7 +13146,7 @@ fn temporal_plan_for_stmts(stmts: &[Stmt], inherited_stateful: &BTreeSet<String>
 /// resolved to that stale literal would lift a value the program never holds -- e.g.
 /// `assert_eq!(x, 6)` lifting `5 == 6` (UNSAT), which REFUTES a true assertion (the
 /// inverse cardinal sin / a fake dragon). This is the SOUNDNESS GATE: a read of such a
-/// local REFUSES instead of resolving to the stale value (`bound_path` Hits by name) --
+/// local REFUSES instead of resolving to the stale value (`bound_path` returns Incomplete by name) --
 /// conservative refuse-tightening, zero new warrant, so zero cardinal-sin risk. It does
 /// NOT warrant the post-mutation value (that is the attended SSA arm's job); it only
 /// stops the stale read. A `&mut` borrow that is never deref-mutated does not qualify.
@@ -13495,7 +13537,7 @@ fn temporal_loop_int_expr(value: i128) -> Option<Expr> {
 /// tracker cannot unroll-resolve, then READ in a statement AFTER the loop, lifts its STALE
 /// initial literal (the loop mutations are never applied) -- `assert_eq!(n, 3)` -> `0 == 3`
 /// (UNSAT), which REFUTES a true assertion (the inverse cardinal sin / a fake dragon). Such
-/// a post-loop read must REFUSE (`bound_path` Hits by name) rather than lift the stale
+/// a post-loop read must REFUSE (`bound_path` returns Incomplete by name) rather than lift the stale
 /// value. Conservative refuse-tightening: zero new warrant -> zero cardinal-sin risk; it
 /// does NOT warrant the post-loop value (that is warrant-side SSA, out of scope) -- it only
 /// stops the stale read.
@@ -13607,7 +13649,7 @@ fn collect_loop_counter_stale_reads(
 /// if it is mutated (direct/compound assignment) at loop-or-closure depth > 0 -- including
 /// captured-and-mutated inside a closure body (`xs.iter().inspect(|_| n += 1).collect()`).
 /// A post-context read then lifts a STALE value (`0 == 3` UNSAT) which would REFUTE a true
-/// assertion (the inverse cardinal sin). A read of such a local REFUSES (`bound_path` Hits
+/// assertion (the inverse cardinal sin). A read of such a local REFUSES (`bound_path` returns Incomplete
 /// by name). A superset of `collect_loop_counter_stale_reads` (adds closure-body mutation);
 /// both feed the same `temporally_unstable` set. Refuse-only (zero new warrant -> zero
 /// cardinal-sin risk). In-loop counter reads stay safe: the `#2300` `expected[i]` unroll
@@ -15891,7 +15933,7 @@ fn stable_macro_arg_bindings(scope: &TemporalScope) -> ExprBindings {
 /// INSIDE a `#[test]` fn body (`fn test<T>(x: T) { .. } test(0u32);`). The global
 /// `ReductionCtx` registers only TOP-LEVEL non-test fns, so a nested helper was
 /// invisible and its body asserts fell to "reachable only via call-site inlining"
-/// unclassified even when the body digs clean. Resolving `local_fns` first makes a
+/// unclassified even when the body completes clean. Resolving `local_fns` first makes a
 /// nested closed-arg helper inline exactly like a top-level one. SOUND: a nested fn
 /// is in scope at the call site by construction, lexical shadowing is honored
 /// (local takes precedence), and the SAME monotonic `added_unclassified == 0` gate
@@ -16624,13 +16666,15 @@ fn runtime_match_scrutinee_effect(expr: &Expr, scope: &TemporalScope) -> Option<
         sugar::catalog::build_expr_role(expr, &fcx, sugar::claim::SugarRole::MatchScrutineeVerdict);
     match node.desugar(&ctx) {
         // The STRUCTURAL backstop = the honest-unclassified fall-through (the old `None`).
-        Outcome::Hit(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON => {
+        Outcome::Incomplete(Effect::Unsupported { reason })
+            if reason == STRUCTURAL_BACKSTOP_REASON =>
+        {
             None
         }
         // A NAMED runtime-match-scrutinee boundary -- the verdict the caller renders.
-        Outcome::Hit(effect) => Some(effect),
-        // A bail-side node never reaches truth; `Dug` is unreachable here.
-        Outcome::Dug(_) => None,
+        Outcome::Incomplete(effect) => Some(effect),
+        // A bail-side node never reaches truth; `Complete` is unreachable here.
+        Outcome::Complete(_) => None,
     }
 }
 
@@ -18342,7 +18386,7 @@ fn translate_string_predicate_assertion(
 /// `regex_regln` is the single lowering authority and the refuse-by-name boundary
 /// for non-regular features (backreference / lookahead / atomic / inline flag /
 /// `\b`), which it drops without approximating. Returns `None` when the expr is
-/// not a recognized regex-match shape or the pattern child does not dig to a
+/// not a recognized regex-match shape or the pattern child does not complete to a
 /// string literal — never a fake-refuse; the construct simply is not a regex
 /// membership.
 fn translate_regex_match_assertion(
@@ -18369,18 +18413,18 @@ fn translate_regex_match_assertion(
         return Ok(None);
     };
     // COMPOSITIONAL pattern resolution: the pattern operand is an INNER `Sugar`,
-    // resolved by DESUGARING it (mirroring `MapSugar`'s inner). `Dug` -> the
+    // resolved by DESUGARING it (mirroring `MapSugar`'s inner). `Complete` -> the
     // resolved string literal (a literal / const-string / `concat!` / `format!` /
-    // pure helper call all flow through this one path); `Hit` -> a genuinely
+    // pure helper call all flow through this one path); `Incomplete` -> a genuinely
     // runtime / unsupported pattern -> DECLINE (None), the composition frontier
-    // that flips to dig when its producer lands. We never bail merely because the
+    // that flips to complete when its producer lands. We never bail merely because the
     // pattern is not an inline literal.
     let mut fw = FloatWidthScope::new();
     let reducer = ReductionCtx::from_items(&[]);
     let ctx = sugar_ctx(scope, &options, &reducer, &mut fw, 0);
     let Some(pattern_str) = m
         .resolve_pattern(&ctx)
-        .dug()
+        .complete()
         .and_then(|d| d.as_string_literal())
     else {
         // Runtime / unsupported pattern operand -> not a recognized regex
@@ -20411,11 +20455,11 @@ fn macro_literal_contains_mut_local(lit_text: &str, scope: &TemporalScope) -> bo
 /// only to keep the name + signature its many callers depend on. It builds a
 /// `SugarBuildCtx` + `SugarCtx` from `scope` (the dual build-time / desugar-time envs),
 /// runs `build(expr).desugar(ctx)`, and unwraps the total `Outcome`:
-///   * `Dug(Term)` -> `Ok(term)` (the term floor reached truth);
-///   * `Dug(Seq | Constraints)` -> the structural backstop `Err` (a term-position
-///     operand that dug to a non-term payload -- impossible for the term arms, but
+///   * `Complete(Term)` -> `Ok(term)` (the term floor reached truth);
+///   * `Complete(Seq | Constraints)` -> the structural backstop `Err` (a term-position
+///     operand that completed to a non-term payload -- impossible for the term arms, but
 ///     total here via `into_term() -> None`);
-///   * `Hit(effect)` -> `Err(effect.reason())` (a named order-loss boundary / a
+///   * `Incomplete(effect)` -> `Err(effect.reason())` (a named order-loss boundary / a
 ///     reasoned `unsupported term` leaf -- the SAME string the old arm's `Err`
 ///     carried, so the wire format / CID / counts are conserved).
 /// There is NO legacy fallback: every shape is owned by a `build` arm.
@@ -20448,10 +20492,10 @@ fn translate_term_in_scope_with_audits(
         factory_audits,
     );
     match node.desugar(&ctx) {
-        Outcome::Dug(d) => d
+        Outcome::Complete(d) => d
             .into_term()
             .ok_or_else(|| format!("unsupported term `{}`", token_key(expr))),
-        Outcome::Hit(effect) => Err(effect.reason()),
+        Outcome::Incomplete(effect) => Err(effect.reason()),
     }
 }
 
@@ -21309,7 +21353,7 @@ fn const_int(expr: &Expr) -> Option<i128> {
 /// A literal array's length IS a literal value in scope -- the cursor extent is the
 /// concrete count, not a runtime quantity. None for a non-literal-array receiver (a
 /// runtime collection / a range / `[x; N]` repeat -- whose length is not a written
-/// element list); the caller then declines (a safe under-claim, never a fake-dig).
+/// element list); the caller then declines (a safe under-claim, never a fake-complete).
 fn literal_array_len_with_lets(expr: &Expr, let_inits: &BTreeMap<String, &Expr>) -> Option<i64> {
     match strip_refs_groups(expr) {
         Expr::Array(arr) => Some(arr.elems.len() as i64),
@@ -21334,12 +21378,12 @@ fn literal_array_len_with_lets(expr: &Expr, let_inits: &BTreeMap<String, &Expr>)
 /// LITERAL value in scope -- it reduces to the concrete count, so the cursor
 /// position is statically determinable. EXACT-OR-BAIL: anything outside this closed
 /// set (a runtime `.len()`, a non-arithmetic op, a div/rem we don't const-fold here)
-/// returns None and the defolder declines -- a safe under-claim, never a fake-dig.
+/// returns None and the defolder declines -- a safe under-claim, never a fake-complete.
 fn const_int_acc_init(expr: &Expr, let_inits: &BTreeMap<String, &Expr>) -> Option<i64> {
     if let Some(n) = const_int(expr) {
         // The accumulator start is a bounded cursor position (i64/usize
         // domain). A wide literal here is not a representable cursor start ->
-        // bail (EXACT-OR-BAIL; a truncation would be a fake-dig).
+        // bail (EXACT-OR-BAIL; a truncation would be a fake-complete).
         return i64::try_from(n).ok();
     }
     match expr {
@@ -22392,7 +22436,7 @@ mod lifter_key_tests {
     #[test]
     fn source_shaped_method_assertion_lifts_without_method_name_whitelist() {
         // The method name is not semantic. The shape is semantic: the method source is
-        // visible, its body is constraint-shaped, and the collector re-digs that body at
+        // visible, its body is constraint-shaped, and the collector re-completes that body at
         // the call site.
         let src = r#"
             fn value() -> i32 { 3 }
@@ -22425,7 +22469,7 @@ mod lifter_key_tests {
                 && fact
                     .contract_name
                     .starts_with("method:totally_not_a_magic_name#")),
-            "visible if-panic method body should be re-dug as a warranted fact by shape, not by method name: {:?}",
+            "visible if-panic method body should be re-completed as a warranted fact by shape, not by method name: {:?}",
             out.assertion_facts
         );
         assert!(
@@ -22433,7 +22477,7 @@ mod lifter_key_tests {
                 && fact
                     .contract_name
                     .starts_with("method:still_not_vocabulary#")),
-            "visible assert macro method body should be re-dug as a warranted fact by shape, not by method name: {:?}",
+            "visible assert macro method body should be re-completed as a warranted fact by shape, not by method name: {:?}",
             out.assertion_facts
         );
         assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
@@ -23967,7 +24011,7 @@ mod lifter_key_tests {
 
     // ── The typed BAIL: `SideEffect` (the mirror of `Sugar`) ───────────────────
     //
-    // `Sugar::desugar` reaches truth (Dug). When the walk hits monkey business it
+    // `Sugar::desugar` reaches truth (Complete). When the walk hits monkey business it
     // BAILS; a `SideEffect` RETYPES that bail as a NAMED, WARRANTED order-loss
     // boundary. THE CRITICAL LINE: a `SideEffect` is only for a PROVABLE order-loss
     // effect (a mutation / iter-advance / opaque-runtime value / mutable read); a
@@ -23978,7 +24022,7 @@ mod lifter_key_tests {
         // Every named `Effect`'s `reason()` is recognized terminal by
         // `refusal_disposition` (the bail is a CLAIM, earned). `boundary()` ropes the
         // refusal to the source construct that warrants it (the bail-side `SourceMemento`,
-        // mirror of the dig-side `Warrant`).
+        // mirror of the complete-side `Warrant`).
         let effects: Vec<Effect> = vec![
             Effect::Mutation {
                 boundary: "v.push(x)".to_string(),
@@ -24126,7 +24170,7 @@ mod lifter_key_tests {
         // SideEffect. A VALUE-POSITION `loop`/`break` term (`loop { break 5; }`) is
         // PURE -- no mutation, no iter-advance, no runtime value (it breaks with a
         // literal) -- we simply have not transcribed a value-producing `loop { break v }`
-        // yet. (The EUF term path digs MOST untranslated calls as uninterpreted symbols
+        // yet. (The EUF term path completes MOST untranslated calls as uninterpreted symbols
         // -- e.g. `char::from_u32(i).unwrap().to_ascii_uppercase()` over `0..3` lifts
         // soundly via EUF -- so a genuine term-GAP is rare; this loop-break term is one.
         // Refusing it as an effect would be a FAKE-REFUSE: mislabeling our own work as a
@@ -24410,8 +24454,8 @@ mod lifter_key_tests {
     //
     // `.filter`/`.map`/`.skip`/`.take`/`.skip_while`/`.take_while` ARE stdlib sugar; over a
     // literal domain their closures const-evaluate on the concrete elements, so the
-    // resulting sequence is exact and the fold digs. EXACT-OR-BAIL: a runtime/inexact
-    // closure makes the const-evaluator bail (honest unclassified), never a fake-dig.
+    // resulting sequence is exact and the fold completes. EXACT-OR-BAIL: a runtime/inexact
+    // closure makes the const-evaluator bail (honest unclassified), never a fake-complete.
 
     #[test]
     fn dig_filter_drops_elements_exactly() {
@@ -24513,7 +24557,7 @@ mod lifter_key_tests {
             }
         "#;
         let out = lift_src(src);
-        // It DOES lift (the defolder digs the literal-derived sequence) ...
+        // It DOES lift (the defolder completes the literal-derived sequence) ...
         assert_eq!(
             out.assertions_lifted, 1,
             "the enumerate fold lifts: {:?}",
@@ -24540,7 +24584,7 @@ mod lifter_key_tests {
     fn dig_runtime_predicate_in_filter_bails() {
         // (d) BAIL: the `.filter` predicate references a RUNTIME binding (`threshold`, bound
         // to a fn call), so the const-evaluator cannot decide which elements are kept -- it
-        // bails. The fold stays UNCLASSIFIED (honest), NEVER a fake-dig over a guessed seq.
+        // bails. The fold stays UNCLASSIFIED (honest), NEVER a fake-complete over a guessed seq.
         let src = r#"
             #[test]
             fn rt_filt() {
@@ -25455,7 +25499,7 @@ mod lifter_key_tests {
 
     // ── Runtime-residue refusal: impl-method / runtime if-guard / runtime expr-stmt ──
     //
-    // The Hit side of Outcome{Dug|Hit}: a runtime/un-nameable value is a NAMED terminal
+    // The Incomplete side of Outcome{Complete|Incomplete}: a runtime/un-nameable value is a NAMED terminal
     // Effect (refused), accounted not silent. Each test pairs the REFUSE direction (a
     // detected runtime cause) with the DISCRIMINATION direction (a const/computable shape
     // that STAYS UNCLASSIFIED -- the inverse-sin guardrail against fake-refuse).
@@ -25562,7 +25606,7 @@ mod lifter_key_tests {
 
     // ── FLOAT TAIL refusal: flt2dec runtime output / signed-zero / unknown f-width ──
     //
-    // The Hit side of Outcome{Dug|Hit}: a float value with no constructible timeless FOL
+    // The Incomplete side of Outcome{Complete|Incomplete}: a float value with no constructible timeless FOL
     // form is a NAMED terminal Effect (refused), accounted not silent. Each test pairs the
     // REFUSE direction (a detected runtime / sign-sensitive / unstable-width cause) with the
     // DISCRIMINATION direction (a CLOSED-literal float that STAYS on its current path --
@@ -25708,7 +25752,7 @@ mod lifter_key_tests {
             );
         }
         // The cfg!-guard variant resolves only against explicit target facts; with
-        // 64-bit facts it const-folds and digs (it must NOT stay under-if-context).
+        // 64-bit facts it const-folds and completes (it must NOT stay under-if-context).
         {
             let out = lift_src_cfg(
                 r#"
@@ -25729,7 +25773,7 @@ mod lifter_key_tests {
             );
             assert_eq!(
                 out.assertions_lifted, 1,
-                "the cfg-active branch digs: {:?}",
+                "the cfg-active branch completes: {:?}",
                 out.skip_reasons
             );
         }
@@ -25829,7 +25873,7 @@ mod lifter_key_tests {
     // ── Refuse parametric call-site tail: a GENERIC type/const helper is terminal,
     //    a CONCRETE scalar/slice / a no-visible-source helper STAYS unclassified ──
     //
-    // The Hit side of Outcome{Dug|Hit}: a helper reachable only at RUNTIME
+    // The Incomplete side of Outcome{Complete|Incomplete}: a helper reachable only at RUNTIME
     // INSTANTIATION (monomorphization of a generic type/const parameter) is a NAMED
     // terminal Effect, accounted not silent. Each corpus shape pairs the REFUSE
     // direction (a detected generic cause) with the DISCRIMINATION direction (a
@@ -25890,7 +25934,7 @@ mod lifter_key_tests {
         // literals (`zero_byte(0xdead.., 0)`), so a closed-literal call site CAN pin it; the
         // inability to lift is call-queueing (only-in-macro-arg-position) reach, NOT a source
         // property. Must STAY unclassified (refusing it would be fake-refuse of a carryable
-        // concrete call -- left for the dig path).
+        // concrete call -- left for the complete path).
         let zero_byte = pf("fn zero_byte(val: u64, byte: usize) -> u64 { assert!(byte < 8); val }");
         assert!(!helper_is_generic_parametric(&zero_byte));
         assert!(!helper_is_runtime_parametric(&zero_byte));
@@ -26372,7 +26416,7 @@ mod lifter_key_tests {
             out.skip_reasons
         );
         // No bin-2 terminal refusal manufactured for the pure case (it discharges or
-        // stays non-terminal); the mut-capture path leaves the pure dig path untouched.
+        // stays non-terminal); the mut-capture path leaves the pure complete path untouched.
         assert!(
             !out.skip_reasons.iter().any(|r| r.contains("bin-2")),
             "a pure literal-array `.any` must not be terminalized as bin-2: {:?}",

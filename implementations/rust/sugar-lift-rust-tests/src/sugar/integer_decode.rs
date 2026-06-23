@@ -55,7 +55,7 @@ impl Sugar for IntegerDecodeTupleProducer {
         else {
             return Outcome::from_opt(None);
         };
-        Outcome::Dug(Desugared::TupleComponents(vec![
+        Outcome::Complete(Desugared::TupleComponents(vec![
             num(i128::from(mantissa)),
             num(i128::from(exponent)),
             num(i128::from(sign)),

@@ -51,14 +51,16 @@ impl Sugar for SizeHintTupleProducer {
         }
         let receiver = build_composite(&self.receiver, &fcx);
         let seq = match receiver.desugar(ctx) {
-            Outcome::Dug(desugared) => match desugared.into_seq() {
+            Outcome::Complete(desugared) => match desugared.into_seq() {
                 Some(seq) => seq,
                 None => return Outcome::from_opt(None),
             },
-            Outcome::Hit(Effect::Unsupported { reason }) if reason == EMPTY_DOMAIN_REASON => {
+            Outcome::Incomplete(Effect::Unsupported { reason })
+                if reason == EMPTY_DOMAIN_REASON =>
+            {
                 Vec::new()
             }
-            Outcome::Hit(effect) => return Outcome::Hit(effect),
+            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
         let len = seq.len();
         debug!(
@@ -71,7 +73,7 @@ impl Sugar for SizeHintTupleProducer {
 }
 
 fn tuple_components(len: usize) -> Outcome {
-    Outcome::Dug(Desugared::TupleComponents(vec![
+    Outcome::Complete(Desugared::TupleComponents(vec![
         num(len as i128),
         monadic::some_term(num(len as i128)),
     ]))

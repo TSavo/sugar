@@ -5,7 +5,7 @@
 // This is the array/slice sibling of `tuple_decomp`: `assert_eq!(&[1, 2], &[1, 3])`
 // is not a scalar assertion, but it is fully determined by source text. Lower it to
 // scalar teeth: a length equality plus one equality per element. Runtime elements or
-// unstable bindings Hit at desugar time.
+// unstable bindings Incomplete at desugar time.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
@@ -158,7 +158,7 @@ fn decompose_eq(lhs: Vec<Rc<Term>>, rhs: Vec<Rc<Term>>, ctx: &SugarCtx) -> Outco
     }
     let name =
         anchor.and_then(|term| callsite_assertion_name(term.as_ref(), ctx.scope.local_scope()));
-    Outcome::Dug(Desugared::Constraints {
+    Outcome::Complete(Desugared::Constraints {
         atom: and_(atoms),
         n: 1,
         kind: AssertionFactKind::Warranted,
@@ -182,24 +182,24 @@ fn aggregate_components(
         }
         Expr::Repeat(repeat) => {
             let Some(count) = repeat_count_in_scope(&repeat.len, ctx.scope) else {
-                return Err(Outcome::Hit(Effect::ArrayRepeat {
+                return Err(Outcome::Incomplete(Effect::ArrayRepeat {
                     boundary: token_key(expr),
                 }));
             };
             if count > SUGAR_SEQ_CAP as usize {
-                return Err(Outcome::Hit(Effect::ArrayRepeat {
+                return Err(Outcome::Incomplete(Effect::ArrayRepeat {
                     boundary: token_key(expr),
                 }));
             }
             let mut elem = Vec::new();
             append_expr_components(&mut elem, &repeat.expr, fcx, ctx, seen)?;
             let Some(total) = elem.len().checked_mul(count) else {
-                return Err(Outcome::Hit(Effect::ArrayRepeat {
+                return Err(Outcome::Incomplete(Effect::ArrayRepeat {
                     boundary: token_key(expr),
                 }));
             };
             if total > SUGAR_SEQ_CAP as usize {
-                return Err(Outcome::Hit(Effect::ArrayRepeat {
+                return Err(Outcome::Incomplete(Effect::ArrayRepeat {
                     boundary: token_key(expr),
                 }));
             }
@@ -211,7 +211,7 @@ fn aggregate_components(
         }
         Expr::Struct(strukt) => {
             if strukt.rest.is_some() {
-                return Err(Outcome::Hit(Effect::Unsupported {
+                return Err(Outcome::Incomplete(Effect::Unsupported {
                     reason: format!(
                         "struct literal with `..rest` is not fully pinned from the literal: `{}`",
                         token_key(expr)
@@ -296,13 +296,13 @@ fn collect_vec_components(
     seen: &mut BTreeSet<String>,
 ) -> Result<Option<Vec<Rc<Term>>>, Outcome> {
     let seq = match build_composite(receiver, fcx).desugar(ctx) {
-        Outcome::Dug(desugared) => {
+        Outcome::Complete(desugared) => {
             let Some(seq) = desugared.into_seq() else {
                 return Ok(None);
             };
             seq
         }
-        Outcome::Hit(effect) => return Err(Outcome::Hit(effect)),
+        Outcome::Incomplete(effect) => return Err(Outcome::Incomplete(effect)),
     };
     let mut out = Vec::with_capacity(seq.len());
     for elem in seq {
@@ -416,10 +416,10 @@ fn unwrap_result_components(
         }
         Expr::Call(_) => {
             let term = build_term(receiver, fcx).desugar(ctx);
-            let Outcome::Dug(desugared) = term else {
+            let Outcome::Complete(desugared) = term else {
                 return match term {
-                    Outcome::Hit(effect) => Err(Outcome::Hit(effect)),
-                    Outcome::Dug(_) => Ok(None),
+                    Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
+                    Outcome::Complete(_) => Ok(None),
                 };
             };
             let Some(term) = desugared.into_term() else {
@@ -446,7 +446,7 @@ fn text_determined_term(
     ctx: &SugarCtx,
 ) -> Result<Rc<Term>, Outcome> {
     match build_term(expr, fcx).desugar(ctx) {
-        Outcome::Dug(desugared) => {
+        Outcome::Complete(desugared) => {
             let Some(term) = desugared.into_term() else {
                 return Err(runtime_hit());
             };
@@ -456,7 +456,7 @@ fn text_determined_term(
                 Err(runtime_hit())
             }
         }
-        Outcome::Hit(effect) => Err(Outcome::Hit(effect)),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
 
@@ -527,7 +527,7 @@ fn fallback_relation(
         Err(outcome) => return outcome,
     };
     let entry = crate::assertion_entry_from_relation(lhs, rhs, op, ctx.scope);
-    Outcome::Dug(Desugared::Constraints {
+    Outcome::Complete(Desugared::Constraints {
         atom: entry.atom,
         n: 1,
         kind: AssertionFactKind::Warranted,
@@ -541,8 +541,8 @@ fn text_term_or_backstop(
     ctx: &SugarCtx,
 ) -> Result<Rc<Term>, Outcome> {
     match build_term(expr, fcx).desugar(ctx) {
-        Outcome::Dug(desugared) => desugared.into_term().ok_or_else(runtime_hit),
-        Outcome::Hit(effect) => Err(Outcome::Hit(effect)),
+        Outcome::Complete(desugared) => desugared.into_term().ok_or_else(runtime_hit),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
 
@@ -574,7 +574,7 @@ fn strip_value_ref(mut term: Rc<Term>) -> Rc<Term> {
 }
 
 fn runtime_hit() -> Outcome {
-    Outcome::Hit(Effect::Unsupported {
+    Outcome::Incomplete(Effect::Unsupported {
         reason: RUNTIME_ELEM_REASON.to_string(),
     })
 }

@@ -111,16 +111,16 @@ impl Sugar for DynAnyPredicateSugar {
             depth: 0,
         };
         let concrete = match source.desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
+            Outcome::Complete(d) => match d.into_term() {
                 Some(term) => type_key_from_type_id_term(&term),
                 None => None,
             },
-            Outcome::Hit(e) => return Outcome::Hit(e),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
         let Some(concrete) = concrete else {
             return Outcome::from_opt(None);
         };
-        Outcome::Dug(Desugared::Term(bool_const(concrete == self.kind.target())))
+        Outcome::Complete(Desugared::Term(bool_const(concrete == self.kind.target())))
     }
 }
 
@@ -149,7 +149,7 @@ impl Sugar for DynAnyConcreteTypeSugar {
             ctx,
             self.depth + 1,
         ) {
-            Some(concrete) => Outcome::Dug(Desugared::Term(type_id_term(&concrete))),
+            Some(concrete) => Outcome::Complete(Desugared::Term(type_id_term(&concrete))),
             None => dyn_any_unknown(),
         }
     }
@@ -418,7 +418,7 @@ fn type_key_from_type_id_term(term: &Rc<Term>) -> Option<String> {
 }
 
 fn dyn_any_unknown() -> Outcome {
-    Outcome::Hit(Effect::Unsupported {
+    Outcome::Incomplete(Effect::Unsupported {
         reason: "dyn Any concrete type not statically determined".to_string(),
     })
 }
