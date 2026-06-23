@@ -220,7 +220,7 @@ fn literal_sequence(
     ctx: &SugarCtx,
 ) -> Result<Vec<DesugaredElem>, Effect> {
     let node = method_family::build_literal_sequence_composite(expr, fcx)
-        .ok_or_else(|| runtime_source_effect(expr))?;
+        .ok_or_else(|| runtime_source_effect(expr, fcx))?;
     match node.desugar(ctx) {
         Outcome::Dug(d) => d.into_seq().ok_or_else(structural_effect),
         Outcome::Hit(effect) => Err(effect),
@@ -266,12 +266,52 @@ fn structural_effect() -> Effect {
     }
 }
 
-fn runtime_source_effect(expr: &Expr) -> Effect {
-    Effect::Unsupported {
-        reason: format!(
+fn runtime_source_effect(expr: &Expr, fcx: &SugarBuildCtx) -> Effect {
+    let reason = if chunk_window_source_shape(expr, fcx, 0) {
+        format!(
+            "chunk source is runtime slice, not literal `{}`",
+            strip_refs_groups(expr).to_token_stream()
+        )
+    } else {
+        format!(
             "runtime slice source, not literal `{}`",
             strip_refs_groups(expr).to_token_stream()
+        )
+    };
+    Effect::Unsupported { reason }
+}
+
+fn chunk_window_source_shape(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    match strip_refs_groups(expr) {
+        Expr::MethodCall(call) if call.args.len() == 1 => matches!(
+            call.method.to_string().as_str(),
+            "chunks"
+                | "chunks_mut"
+                | "chunks_exact"
+                | "chunks_exact_mut"
+                | "rchunks"
+                | "rchunks_mut"
+                | "rchunks_exact"
+                | "rchunks_exact_mut"
+                | "windows"
         ),
+        Expr::Path(path) if path.qself.is_none() => {
+            let Some(name) = path.path.get_ident().map(ToString::to_string) else {
+                return false;
+            };
+            fcx.let_inits()
+                .get(&name)
+                .copied()
+                .or_else(|| fcx.scope().stable_let_binding_for_term(&name))
+                .is_some_and(|init| chunk_window_source_shape(init, fcx, depth + 1))
+        }
+        Expr::Reference(reference) => chunk_window_source_shape(&reference.expr, fcx, depth + 1),
+        Expr::Paren(paren) => chunk_window_source_shape(&paren.expr, fcx, depth + 1),
+        Expr::Group(group) => chunk_window_source_shape(&group.expr, fcx, depth + 1),
+        _ => false,
     }
 }
 

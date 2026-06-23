@@ -34,7 +34,7 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     let Expr::Closure(f) = &call.args[0] else {
         return None;
     };
-    if !method_family::resolves_literal_sequence(&call.receiver, fcx.let_inits()) {
+    if !crate::resolves_literal_sequence_in_scope(&call.receiver, fcx) {
         return None;
     }
     Some(Box::new(MapCallSugar {
@@ -54,7 +54,7 @@ pub(crate) fn recognize_term(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn
     let Expr::Closure(f) = &call.args[0] else {
         return None;
     };
-    if !method_family::resolves_literal_sequence(&call.receiver, fcx.let_inits()) {
+    if !crate::resolves_literal_sequence_in_scope(&call.receiver, fcx) {
         return None;
     }
     Some(Box::new(MapTermSugar {

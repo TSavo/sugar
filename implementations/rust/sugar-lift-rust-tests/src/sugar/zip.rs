@@ -21,6 +21,7 @@ use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_composite, has_composite, SugarBuildCtx};
+use crate::sugar::method_family;
 use crate::{ConstVal, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -36,7 +37,9 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     // Both operands resolve through the FACTORY (`has_composite`/`build_composite`), exactly
     // like `chain`. A runtime/opaque operand has no composite -> decline so the opaque
     // `method:` fallback owns the call (the established sound under-claim).
-    if !has_composite(&call.receiver, fcx) || !has_composite(&call.args[0], fcx) {
+    if !operand_resolves_literal_sequence(&call.receiver, fcx)
+        || !operand_resolves_literal_sequence(&call.args[0], fcx)
+    {
         return None;
     }
     Some(Box::new(ZipSugar {
@@ -44,6 +47,10 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
         right: call.args[0].clone(),
         let_inits: capture_let_inits(fcx),
     }))
+}
+
+fn operand_resolves_literal_sequence(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
+    has_composite(expr, fcx) || crate::resolves_literal_sequence_in_scope(expr, fcx)
 }
 
 /// Pair the two finite domains element-wise, truncating to the shorter: element `l_i` and
@@ -75,14 +82,12 @@ impl Sugar for ZipSugar {
                 )
                 .collect();
             let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-            let left = build_composite(&self.left, &fcx)
-                .desugar(ctx)
-                .dug()?
-                .into_seq()?;
-            let right = build_composite(&self.right, &fcx)
-                .desugar(ctx)
-                .dug()?
-                .into_seq()?;
+            let left_node = method_family::build_literal_sequence_composite(&self.left, &fcx)
+                .unwrap_or_else(|| build_composite(&self.left, &fcx));
+            let right_node = method_family::build_literal_sequence_composite(&self.right, &fcx)
+                .unwrap_or_else(|| build_composite(&self.right, &fcx));
+            let left = left_node.desugar(ctx).dug()?.into_seq()?;
+            let right = right_node.desugar(ctx).dug()?.into_seq()?;
             // `zip` stops at the shorter side: `min(left.len, right.len)` pairs.
             let len = left.len().min(right.len());
             if len as i64 > SUGAR_SEQ_CAP {

@@ -25669,6 +25669,176 @@ fn t() {
     );
 }
 
+#[test]
+fn literal_slice_chunk_window_zip_collects_ground_with_teeth() {
+    let cases = [
+        (
+            r#"
+#[test]
+fn t() {
+    let v1: &[i32] = &[0, 1, 2, 3, 4];
+    let v2: &[i32] = &[6, 7, 8, 9, 10];
+    let res = v1
+        .chunks(2)
+        .zip(v2.chunks(2))
+        .map(|(a, b)| a.iter().sum::<i32>() + b.iter().sum::<i32>())
+        .collect::<Vec<_>>();
+    assert_eq!(res, vec![14, 22, 14]);
+}
+"#,
+            "slice_chunks_zip_good",
+            true,
+        ),
+        (
+            r#"
+#[test]
+fn t() {
+    let v1: &[i32] = &[0, 1, 2, 3, 4];
+    let v2: &[i32] = &[6, 7, 8, 9, 10];
+    let res = v1
+        .chunks_exact(2)
+        .zip(v2.chunks_exact(2))
+        .map(|(a, b)| a.iter().sum::<i32>() + b.iter().sum::<i32>())
+        .collect::<Vec<_>>();
+    assert_eq!(res, vec![14, 22]);
+}
+"#,
+            "slice_chunks_exact_zip_good",
+            true,
+        ),
+        (
+            r#"
+#[test]
+fn t() {
+    let v1: &[i32] = &[0, 1, 2, 3, 4];
+    let v2: &[i32] = &[6, 7, 8, 9, 10];
+    let res = v1
+        .rchunks(2)
+        .zip(v2.rchunks(2))
+        .map(|(a, b)| a.iter().sum::<i32>() + b.iter().sum::<i32>())
+        .collect::<Vec<_>>();
+    assert_eq!(res, vec![26, 18, 6]);
+}
+"#,
+            "slice_rchunks_zip_good",
+            true,
+        ),
+        (
+            r#"
+#[test]
+fn t() {
+    let v1: &[i32] = &[0, 1, 2, 3, 4];
+    let v2: &[i32] = &[6, 7, 8, 9, 10];
+    let res = v1
+        .rchunks_exact(2)
+        .zip(v2.rchunks_exact(2))
+        .map(|(a, b)| a.iter().sum::<i32>() + b.iter().sum::<i32>())
+        .collect::<Vec<_>>();
+    assert_eq!(res, vec![26, 18]);
+}
+"#,
+            "slice_rchunks_exact_zip_good",
+            true,
+        ),
+        (
+            r#"
+#[test]
+fn t() {
+    let v1: &[i32] = &[0, 1, 2, 3, 4];
+    let v2: &[i32] = &[6, 7, 8, 9, 10];
+    let res = v1
+        .windows(2)
+        .zip(v2.windows(2))
+        .map(|(a, b)| a.iter().sum::<i32>() + b.iter().sum::<i32>())
+        .collect::<Vec<_>>();
+    assert_eq!(res, [14, 18, 22, 26]);
+}
+"#,
+            "slice_windows_zip_good",
+            true,
+        ),
+        (
+            r#"
+#[test]
+fn t() {
+    let v1: &[i32] = &[0, 1, 2, 3, 4];
+    let v2: &[i32] = &[6, 7, 8, 9, 10];
+    let res = v1
+        .chunks(2)
+        .zip(v2.chunks(2))
+        .map(|(a, b)| a.iter().sum::<i32>() + b.iter().sum::<i32>())
+        .collect::<Vec<_>>();
+    assert_eq!(res, vec![14, 22, 99]);
+}
+"#,
+            "slice_chunks_zip_bad",
+            false,
+        ),
+        (
+            r#"
+#[test]
+fn t() {
+    let v1: &[i32] = &[0, 1, 2, 3, 4];
+    let v2: &[i32] = &[6, 7, 8, 9, 10];
+    let res = v1
+        .windows(2)
+        .zip(v2.windows(2))
+        .map(|(a, b)| a.iter().sum::<i32>() + b.iter().sum::<i32>())
+        .collect::<Vec<_>>();
+    assert_eq!(res, [14, 18, 22, 99]);
+}
+"#,
+            "slice_windows_zip_bad",
+            false,
+        ),
+    ];
+
+    for (src, label, want_sat) in cases {
+        let out = lift_file(&parse(src), "coretests/slice/chunk_window_zip.rs");
+        assert_warranted_decl_count(&out, 1);
+        assert!(
+            out.assertions_refused == 0 && out.skip_reasons.is_empty(),
+            "{label}: literal chunk/window zip must not strand or refuse: {:?}",
+            out.skip_reasons
+        );
+        let decl = single_warranted_decl(&out);
+        assert!(
+            !decl_mentions_ctor(decl, "method:collect")
+                && !decl_mentions_ctor(decl, "method:zip")
+                && !decl_mentions_ctor(decl, "method:map"),
+            "{label}: literal chunk/window zip must lower to literal floor: {:?}",
+            decl.inv
+        );
+        if let Some(sat) = z3_verdict(&inv_json(decl), label) {
+            assert_eq!(sat, want_sat, "{label}: expected sat={want_sat}");
+        }
+    }
+}
+
+#[test]
+fn slice_chunk_window_runtime_source_refuses_named_boundary() {
+    let src = r#"
+#[test]
+fn t(xs: &[i32]) {
+    let c = xs.chunks(2);
+    assert_eq!(c.last().unwrap()[0], 1);
+}
+"#;
+    let out = lift_file(&parse(src), "coretests/slice/chunk_runtime_source.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "runtime chunk source must not warrant: {:?}",
+        out.decls
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("chunk source is runtime slice, not literal")),
+        "runtime chunk source should refuse with a named boundary: {:?}",
+        out.skip_reasons
+    );
+}
+
 // finite-or-refuse: a RUNTIME element (`compute()`) has no const value, so the constructor
 // is NOT fabricated -- the indexed read of that element stays the symbolic congruence-only
 // ctor, satisfiable for ANY right-hand side. The wrong-expected twin must stay SAT (never

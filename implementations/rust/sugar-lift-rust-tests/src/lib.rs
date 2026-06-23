@@ -163,6 +163,7 @@ pub mod sugar {
     pub mod skip;
     pub mod skip_while;
     pub mod slice_accessor;
+    pub mod slice_chunk_window;
     pub mod slice_index;
     pub mod slice_search;
     pub mod statement_async_future;
@@ -740,6 +741,7 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // TERMINAL: slice/array accessors only ground when the receiver and any index
         // are text-determined literals. Runtime slice sources or runtime indexes are
         // participating stdlib sugar, but there is no literal floor to compute.
+        || reason.contains("chunk source is runtime slice, not literal")
         || reason.contains("runtime slice source, not literal")
         || reason.contains("runtime slice index, not literal")
         // TERMINAL: a GENERIC type/const-parametric helper (`fn test_num<T: Add..>`,
@@ -5571,6 +5573,18 @@ pub(crate) fn peel_fold_adaptors_in_scope<'a>(
     Some((base.into_owned(), adaptors))
 }
 
+pub(crate) fn resolves_literal_sequence_in_scope(
+    expr: &Expr,
+    fcx: &sugar::factory::SugarBuildCtx,
+) -> bool {
+    let Some((base, _)) = peel_fold_adaptors_in_scope(expr, fcx.let_inits(), fcx.scope(), 0) else {
+        return false;
+    };
+    sugar::method_family::is_literal_sequence_base_in_scope(&base, fcx.scope())
+        || sugar::literal_slice::is_literal_slice_base(&base, fcx.let_inits())
+        || sugar::factory::has_composite(&base, fcx)
+}
+
 fn into_iter_arg(call: &syn::ExprCall) -> Option<&Expr> {
     if call.args.len() != 1 {
         return None;
@@ -5609,6 +5623,9 @@ fn peel_fold_adaptors_inner<'a>(
         match cur {
             Expr::MethodCall(m) => {
                 let name = m.method.to_string();
+                if name == "zip" && m.args.len() == 1 {
+                    break;
+                }
                 let ad: AdaptorWrap = match (name.as_str(), m.args.len()) {
                     // Value-identity adaptors over the element sequence: `.iter()`/`.cloned()`
                     // and the finite-collection conversions `.to_vec()`/`.as_slice()`/
@@ -5700,6 +5717,39 @@ fn peel_fold_adaptors_inner<'a>(
                     ("take", 1) => {
                         let n: usize = const_int(&m.args[0])?.try_into().ok()?;
                         Box::new(move |inner| Box::new(sugar::take::TakeSugar { inner, n }))
+                    }
+                    (
+                        "chunks" | "chunks_mut" | "rchunks" | "rchunks_mut" | "chunks_exact"
+                        | "chunks_exact_mut" | "rchunks_exact" | "rchunks_exact_mut" | "windows",
+                        1,
+                    ) => {
+                        let n: usize = const_int(&m.args[0])?.try_into().ok()?;
+                        if n == 0 {
+                            return None;
+                        }
+                        let kind = match name.as_str() {
+                            "chunks" | "chunks_mut" => {
+                                sugar::slice_chunk_window::SliceChunkWindowKind::Chunks
+                            }
+                            "rchunks" | "rchunks_mut" => {
+                                sugar::slice_chunk_window::SliceChunkWindowKind::RChunks
+                            }
+                            "chunks_exact" | "chunks_exact_mut" => {
+                                sugar::slice_chunk_window::SliceChunkWindowKind::ChunksExact
+                            }
+                            "rchunks_exact" | "rchunks_exact_mut" => {
+                                sugar::slice_chunk_window::SliceChunkWindowKind::RChunksExact
+                            }
+                            "windows" => sugar::slice_chunk_window::SliceChunkWindowKind::Windows,
+                            _ => return None,
+                        };
+                        Box::new(move |inner| {
+                            Box::new(sugar::slice_chunk_window::SliceChunkWindowSugar {
+                                inner,
+                                kind,
+                                n,
+                            })
+                        })
                     }
                     // `.step_by(n)`: keep every n-th element from index 0. `n == 0`
                     // panics at runtime -> bail (never guess).
@@ -6014,6 +6064,14 @@ fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal>
                 vals.push(const_eval(e, env)?);
             }
             Some(ConstVal::Tuple(vals))
+        }
+        Expr::MethodCall(call) if call.method == "sum" && call.args.is_empty() => {
+            let elems = const_eval_iterable_tuple(&call.receiver, env)?;
+            let mut total = 0i128;
+            for elem in elems {
+                total = total.checked_add(elem.as_int()?)?;
+            }
+            Some(ConstVal::Int(total))
         }
         // `pair.0` / `pair.1` on a const tuple.
         Expr::Field(f) => {
@@ -6901,6 +6959,36 @@ fn const_eval_option_expr(
     }
 }
 
+fn const_eval_iterable_tuple(
+    expr: &Expr,
+    env: &BTreeMap<String, ConstVal>,
+) -> Option<Vec<ConstVal>> {
+    match strip_refs_groups(expr) {
+        Expr::MethodCall(call)
+            if call.args.is_empty()
+                && matches!(
+                    call.method.to_string().as_str(),
+                    "iter" | "into_iter" | "copied" | "cloned" | "by_ref"
+                ) =>
+        {
+            const_eval_iterable_tuple(&call.receiver, env)
+        }
+        Expr::Path(path) => {
+            let name = path.path.get_ident()?.to_string();
+            match env.get(&name)? {
+                ConstVal::Tuple(items) => Some(items.clone()),
+                _ => None,
+            }
+        }
+        Expr::Array(array) => array
+            .elems
+            .iter()
+            .map(|elem| const_eval(elem, env))
+            .collect(),
+        _ => None,
+    }
+}
+
 fn bind_const_closure_arg(
     pat: &Pat,
     arg: &ConstVal,
@@ -6911,8 +6999,17 @@ fn bind_const_closure_arg(
             env.insert(p.ident.to_string(), arg.clone());
             Some(())
         }
-        Pat::Tuple(tuple) if tuple.elems.is_empty() => {
-            matches!(arg, ConstVal::Tuple(items) if items.is_empty()).then_some(())
+        Pat::Tuple(tuple) => {
+            let ConstVal::Tuple(items) = arg else {
+                return None;
+            };
+            if tuple.elems.len() != items.len() {
+                return None;
+            }
+            for (pat, item) in tuple.elems.iter().zip(items) {
+                bind_const_closure_arg(pat, item, env)?;
+            }
+            Some(())
         }
         Pat::Wild(_) => Some(()),
         Pat::Paren(paren) => bind_const_closure_arg(&paren.pat, arg, env),

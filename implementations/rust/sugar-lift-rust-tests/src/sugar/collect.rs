@@ -15,7 +15,6 @@ use tracing::debug;
 
 use crate::sugar::factory::{build_composite, SugarBuildCtx};
 use crate::sugar::method;
-use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::sugar::unit_path::unit_path_literal_name;
 use crate::{
@@ -34,7 +33,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     if call.method != "collect" || !call.args.is_empty() {
         return None;
     }
-    if !method_family::resolves_literal_sequence(&call.receiver, fcx.let_inits()) {
+    if !crate::resolves_literal_sequence_in_scope(&call.receiver, fcx) {
         return None;
     }
     let plan = if collects_vec(call) && CollectPlan::from_receiver(&call.receiver).is_none() {
