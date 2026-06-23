@@ -90,7 +90,7 @@ impl Sugar for ZipSugar {
             let right = right_node.desugar(ctx).dug()?.into_seq()?;
             // `zip` stops at the shorter side: `min(left.len, right.len)` pairs.
             let len = left.len().min(right.len());
-            if len as i64 > SUGAR_SEQ_CAP {
+            if len > SUGAR_SEQ_CAP as usize {
                 return None;
             }
             let mut out = Vec::with_capacity(len);

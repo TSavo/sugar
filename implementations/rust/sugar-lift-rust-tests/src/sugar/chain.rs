@@ -72,7 +72,7 @@ impl Sugar for ChainSugar {
                 .dug()?
                 .into_seq()?;
             let total = left.len().checked_add(right.len())?;
-            if total as i64 > SUGAR_SEQ_CAP {
+            if total > SUGAR_SEQ_CAP as usize {
                 return None;
             }
             left.extend(right);

@@ -76,7 +76,7 @@ impl Sugar for KMergeSugar {
                     Outcome::Hit(_) => return None,
                 };
                 let total = out.len().checked_add(sub.len())?;
-                if total as i64 > SUGAR_SEQ_CAP {
+                if total > SUGAR_SEQ_CAP as usize {
                     return None;
                 }
                 out.extend(sub);

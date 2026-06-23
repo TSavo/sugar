@@ -80,7 +80,7 @@ pub(crate) struct LiteralRepeatSugar {
 impl Sugar for LiteralRepeatSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         // An enormous repeat is not a usefully-finite construction -> refuse (finite-or-refuse).
-        if self.count as i64 > SUGAR_SEQ_CAP {
+        if self.count > SUGAR_SEQ_CAP as usize {
             return Outcome::Hit(Effect::ArrayRepeat {
                 boundary: self.boundary.clone(),
             });

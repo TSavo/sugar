@@ -356,7 +356,7 @@ impl Sugar for ForAllSugar {
                     if seq.is_empty() {
                         return Some(self.empty_loop_no_panic(ctx));
                     }
-                    if seq.len() as i64 > SUGAR_SEQ_CAP {
+                    if seq.len() > SUGAR_SEQ_CAP as usize {
                         debug!(
                             target: "sugar_lift_rust_tests::sugar::forall",
                             var = self.var.as_str(),

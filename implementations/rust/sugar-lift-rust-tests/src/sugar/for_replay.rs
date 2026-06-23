@@ -692,7 +692,7 @@ impl Sugar for ForReplaySugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         Outcome::from_opt((|| {
             let values = finite_domain_exprs(&self.domain, ctx)?;
-            if values.is_empty() || values.len() as i64 > SUGAR_SEQ_CAP {
+            if values.is_empty() || values.len() > SUGAR_SEQ_CAP as usize {
                 return None;
             }
             let source_asserts = replay_assert_count(&self.body_stmts, ctx.scope);
@@ -933,7 +933,7 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
             return None;
         }
         let values = finite_domain_exprs(&domain, self.ctx)?;
-        if values.is_empty() || values.len() as i64 > SUGAR_SEQ_CAP {
+        if values.is_empty() || values.len() > SUGAR_SEQ_CAP as usize {
             return None;
         }
         let saved: Vec<_> = vars
@@ -1609,7 +1609,7 @@ fn finite_domain_exprs(expr: &Expr, ctx: &SugarCtx) -> Option<Vec<Expr>> {
     let let_inits = BTreeMap::new();
     let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
     let seq = build_composite(expr, &fcx).desugar(ctx).dug()?.into_seq()?;
-    if seq.is_empty() || seq.len() as i64 > SUGAR_SEQ_CAP {
+    if seq.is_empty() || seq.len() > SUGAR_SEQ_CAP as usize {
         return None;
     }
     let mut values = Vec::with_capacity(seq.len());

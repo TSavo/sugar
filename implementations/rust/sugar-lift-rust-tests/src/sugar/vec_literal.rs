@@ -35,7 +35,7 @@ impl Sugar for VecLiteralSugar {
         let Some(seq) = eval_vec_builder_source(&self.source, ctx, 0) else {
             return Outcome::from_opt(None);
         };
-        if seq.is_empty() || seq.len() as i64 > SUGAR_SEQ_CAP {
+        if seq.is_empty() || seq.len() > SUGAR_SEQ_CAP as usize {
             return Outcome::from_opt(None);
         }
         debug!(
@@ -98,7 +98,7 @@ fn eval_vec_builder_block(stmts: &[Stmt]) -> Option<Vec<DesugaredElem>> {
         values.push((!x) & mask);
         let shifted = if w >= 128 { 0 } else { (x << w) & mask };
         x = (x ^ shifted) & mask;
-        if values.len() as i64 > SUGAR_SEQ_CAP {
+        if values.len() > SUGAR_SEQ_CAP as usize {
             return None;
         }
     }

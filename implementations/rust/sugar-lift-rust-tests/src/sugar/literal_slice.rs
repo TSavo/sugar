@@ -112,7 +112,7 @@ fn resolve_literal_array<'a>(
 }
 
 fn slice_bounds(expr: &Expr, len: usize) -> Option<(usize, usize)> {
-    if len as i64 > SUGAR_SEQ_CAP {
+    if len > SUGAR_SEQ_CAP as usize {
         return None;
     }
     let Expr::Range(range) = strip_refs_groups(expr) else {

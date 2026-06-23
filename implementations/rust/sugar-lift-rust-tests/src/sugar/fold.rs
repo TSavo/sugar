@@ -174,7 +174,7 @@ impl Sugar for FoldSugar {
                 // vacuous `true`.
                 return None;
             }
-            if seq.len() as i64 > SUGAR_SEQ_CAP {
+            if seq.len() > SUGAR_SEQ_CAP as usize {
                 return None;
             }
             debug!(

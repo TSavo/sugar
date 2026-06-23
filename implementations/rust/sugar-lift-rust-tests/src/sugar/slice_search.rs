@@ -440,7 +440,7 @@ fn literal_int_slice_receiver(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) ->
                     fcx.let_inits(),
                     fcx.scope(),
                 )
-                .is_some_and(|len| len as i64 <= SUGAR_SEQ_CAP)
+                .is_some_and(|len| len <= SUGAR_SEQ_CAP as usize)
         }
         Expr::Index(index) => {
             literal_int_slice_receiver(&index.expr, fcx, depth + 1)
@@ -497,7 +497,7 @@ fn literal_int_values_syntax(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> 
     }
     match strip_refs_groups(expr) {
         Expr::Array(array) => {
-            if array.elems.len() as i64 > SUGAR_SEQ_CAP {
+            if array.elems.len() > SUGAR_SEQ_CAP as usize {
                 return None;
             }
             array
@@ -513,7 +513,7 @@ fn literal_int_values_syntax(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> 
                 fcx.let_inits(),
                 fcx.scope(),
             )?;
-            if len as i64 > SUGAR_SEQ_CAP {
+            if len > SUGAR_SEQ_CAP as usize {
                 return None;
             }
             Some(vec![value; len])
