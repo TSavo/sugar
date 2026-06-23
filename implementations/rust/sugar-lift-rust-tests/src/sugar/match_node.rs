@@ -516,6 +516,7 @@ impl MatchSugar {
             ctx.factory_audits,
             ctx.macro_depth,
             &ctx.scope.plan.interior_mut,
+            None,
             ctx.scope.macro_registry(),
             &BTreeMap::new(),
             ctx.scope.fn_registry(),

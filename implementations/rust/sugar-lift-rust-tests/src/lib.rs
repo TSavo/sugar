@@ -215,7 +215,9 @@ use syn::parse::{Parse, ParseStream, Parser};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::visit::Visit;
-use syn::{BinOp, Expr, ExprLit, ExprMethodCall, Item, Lit, Pat, Stmt, Token, Type, UnOp};
+use syn::{
+    BinOp, Expr, ExprLit, ExprMethodCall, GenericArgument, Item, Lit, Pat, Stmt, Token, Type, UnOp,
+};
 
 #[derive(Debug, Clone)]
 pub struct LiftWarning {
@@ -2172,6 +2174,7 @@ fn visit_test_fn(
         factory_audits,
         0,
         &BTreeSet::new(),
+        None,
         &MacroRegistry::new(),
         scoped_fns,
         scoped_fn_registry,
@@ -3747,6 +3750,7 @@ fn try_macro_expansion_entries(
         factory_audits,
         macro_depth + 1,
         &BTreeSet::new(),
+        None,
         &inherited_macros,
         &BTreeMap::new(),
         &FnRegistry::new(),
@@ -4478,6 +4482,29 @@ impl TemporalScope {
     /// Record the in-scope literal-array bindings for this block (see field doc).
     fn with_literal_arrays(mut self, arrays: BTreeMap<String, Vec<Expr>>) -> Self {
         self.literal_arrays = arrays;
+        self
+    }
+
+    fn with_lexical_parent(mut self, parent: Option<&TemporalScope>) -> Self {
+        let Some(parent) = parent else {
+            return self;
+        };
+        self.let_bindings.extend(
+            parent
+                .let_bindings
+                .iter()
+                .filter(|(name, _)| parent.stable_let_binding_for_term(name).is_some())
+                .map(|(name, expr)| (name.clone(), expr.clone())),
+        );
+        self.term_bindings.extend(
+            parent
+                .term_bindings
+                .iter()
+                .filter(|(name, _)| parent.stable_term_binding_for_term(name).is_some())
+                .map(|(name, term)| (name.clone(), term.clone())),
+        );
+        self.runtime_destructured_locals
+            .extend(parent.runtime_destructured_locals.iter().cloned());
         self
     }
 
@@ -7900,6 +7927,9 @@ fn resolve_destructure_source_expr(
         Expr::Reference(reference) if reference.mutability.is_none() => {
             resolve_destructure_source_expr(scope, &reference.expr, depth + 1)
         }
+        Expr::MethodCall(call) => {
+            resolve_known_slice_destructure_method(scope, call).or_else(|| Some(expr.clone()))
+        }
         Expr::Path(path) if path.qself.is_none() => {
             if let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) {
                 if let Some(init) = scope.stable_let_binding_for_term(&name) {
@@ -7921,7 +7951,7 @@ fn collect_literal_destructure_bindings(
 ) -> bool {
     match pat {
         Pat::Ident(ident) if ident.by_ref.is_none() && ident.subpat.is_none() => {
-            let Some(value) = resolve_destructure_literal_leaf(scope, value, 0) else {
+            let Some(value) = resolve_destructure_definiens(scope, value, 0) else {
                 return false;
             };
             out.push((ident.ident.to_string(), value));
@@ -8000,6 +8030,198 @@ fn collect_literal_slice_pattern_bindings(
         }
     }
     true
+}
+
+fn resolve_known_slice_destructure_method(
+    scope: &TemporalScope,
+    call: &ExprMethodCall,
+) -> Option<Expr> {
+    if call.method == "unwrap" && call.args.is_empty() {
+        let Expr::MethodCall(inner) = strip_refs_groups(&call.receiver) else {
+            return None;
+        };
+        return resolve_known_slice_destructure_method(scope, inner);
+    }
+    let method = call.method.to_string();
+    let elems = static_literal_slice_elems(scope, &call.receiver, 0)?;
+    match method.as_str() {
+        "split_at" | "split_at_mut" => {
+            let n = const_usize_arg(scope, call.args.first()?)?;
+            (n <= elems.len()).then(|| {
+                tuple_expr(vec![
+                    array_expr(elems[..n].to_vec()),
+                    array_expr(elems[n..].to_vec()),
+                ])
+            })
+        }
+        "split_first_chunk" | "split_first_chunk_mut" => {
+            let n = turbofish_const_usize(scope, call)?;
+            (n <= elems.len()).then(|| {
+                tuple_expr(vec![
+                    array_expr(elems[..n].to_vec()),
+                    array_expr(elems[n..].to_vec()),
+                ])
+            })
+        }
+        "split_last_chunk" | "split_last_chunk_mut" => {
+            let n = turbofish_const_usize(scope, call)?;
+            (n <= elems.len()).then(|| {
+                let split = elems.len() - n;
+                tuple_expr(vec![
+                    array_expr(elems[..split].to_vec()),
+                    array_expr(elems[split..].to_vec()),
+                ])
+            })
+        }
+        "as_chunks" | "as_chunks_mut" => {
+            let n = turbofish_const_usize(scope, call)?;
+            if n == 0 {
+                return None;
+            }
+            let full = elems.len() / n;
+            let chunked = elems[..full * n]
+                .chunks(n)
+                .map(|chunk| array_expr(chunk.to_vec()))
+                .collect();
+            Some(tuple_expr(vec![
+                array_expr(chunked),
+                array_expr(elems[full * n..].to_vec()),
+            ]))
+        }
+        "as_rchunks" | "as_rchunks_mut" => {
+            let n = turbofish_const_usize(scope, call)?;
+            if n == 0 {
+                return None;
+            }
+            let rem = elems.len() % n;
+            let chunked = elems[rem..]
+                .chunks(n)
+                .map(|chunk| array_expr(chunk.to_vec()))
+                .collect();
+            Some(tuple_expr(vec![
+                array_expr(elems[..rem].to_vec()),
+                array_expr(chunked),
+            ]))
+        }
+        _ => None,
+    }
+}
+
+fn static_literal_slice_elems(
+    scope: &TemporalScope,
+    expr: &Expr,
+    depth: usize,
+) -> Option<Vec<Expr>> {
+    const MAX_DEPTH: usize = 16;
+    if depth > MAX_DEPTH {
+        return None;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Array(array) => array
+            .elems
+            .iter()
+            .map(|elem| resolve_destructure_definiens(scope, elem, depth + 1))
+            .collect(),
+        Expr::Repeat(repeat) => {
+            let count = repeat_count_in_scope(&repeat.len, scope)?;
+            if count as i64 > SUGAR_SEQ_CAP {
+                return None;
+            }
+            let elem = resolve_destructure_definiens(scope, &repeat.expr, depth + 1)?;
+            Some(std::iter::repeat_n(elem, count).collect())
+        }
+        Expr::Index(index) => {
+            let elems = static_literal_slice_elems(scope, &index.expr, depth + 1)?;
+            let (start, end) = static_slice_bounds(scope, &index.index, elems.len())?;
+            Some(elems[start..end].to_vec())
+        }
+        Expr::Path(path) if path.qself.is_none() => {
+            if let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) {
+                if let Some(init) = scope.stable_let_binding_for_term(&name) {
+                    return static_literal_slice_elems(scope, init, depth + 1);
+                }
+            }
+            let init = scope.const_expr_for_path(&path.path)?;
+            static_literal_slice_elems(scope, &init, depth + 1)
+        }
+        _ => None,
+    }
+}
+
+fn static_slice_bounds(scope: &TemporalScope, expr: &Expr, len: usize) -> Option<(usize, usize)> {
+    let Expr::Range(range) = strip_refs_groups(expr) else {
+        return None;
+    };
+    let start = match &range.start {
+        Some(start) => const_slice_index(scope, start)?,
+        None => 0,
+    };
+    let mut end = match &range.end {
+        Some(end) => const_slice_index(scope, end)?,
+        None => len,
+    };
+    if matches!(range.limits, syn::RangeLimits::Closed(_)) {
+        end = end.checked_add(1)?;
+    }
+    (start <= end && end <= len).then_some((start, end))
+}
+
+fn const_slice_index(scope: &TemporalScope, expr: &Expr) -> Option<usize> {
+    usize::try_from(const_len_value_in_scope(expr, scope, 0)?).ok()
+}
+
+fn const_usize_arg(scope: &TemporalScope, expr: &Expr) -> Option<usize> {
+    usize::try_from(const_len_value_in_scope(expr, scope, 0)?).ok()
+}
+
+fn turbofish_const_usize(scope: &TemporalScope, call: &ExprMethodCall) -> Option<usize> {
+    let args = call.turbofish.as_ref()?;
+    for arg in &args.args {
+        if let GenericArgument::Const(expr) = arg {
+            return const_usize_arg(scope, expr);
+        }
+    }
+    None
+}
+
+fn array_expr(elems: Vec<Expr>) -> Expr {
+    syn::parse2(quote::quote! { [#(#elems),*] }).expect("generated array expression parses")
+}
+
+fn tuple_expr(elems: Vec<Expr>) -> Expr {
+    syn::parse2(quote::quote! { (#(#elems),*) }).expect("generated tuple expression parses")
+}
+
+fn resolve_destructure_definiens(scope: &TemporalScope, expr: &Expr, depth: usize) -> Option<Expr> {
+    const MAX_DEPTH: usize = 16;
+    if depth > MAX_DEPTH {
+        return None;
+    }
+    match expr {
+        Expr::Paren(paren) => resolve_destructure_definiens(scope, &paren.expr, depth + 1),
+        Expr::Group(group) => resolve_destructure_definiens(scope, &group.expr, depth + 1),
+        Expr::Reference(reference) => {
+            let inner = resolve_destructure_definiens(scope, &reference.expr, depth + 1)?;
+            let mut out = reference.clone();
+            out.expr = Box::new(inner);
+            Some(Expr::Reference(out))
+        }
+        Expr::Path(path) if path.qself.is_none() => {
+            if let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) {
+                if let Some(init) = scope.stable_let_binding_for_term(&name) {
+                    return resolve_destructure_definiens(scope, init, depth + 1);
+                }
+            }
+            let init = scope.const_expr_for_path(&path.path)?;
+            resolve_destructure_definiens(scope, &init, depth + 1)
+        }
+        Expr::Array(_) | Expr::Repeat(_) => {
+            let elems = static_literal_slice_elems(scope, expr, depth + 1)?;
+            Some(array_expr(elems))
+        }
+        _ if is_closed_scalar_literal(expr) => Some(expr.clone()),
+        _ => None,
+    }
 }
 
 fn literal_destructure_array_elems(scope: &TemporalScope, expr: &Expr) -> Option<Vec<Expr>> {
@@ -10047,6 +10269,7 @@ fn collect_assertion_entries<'a>(
     factory_audits: Option<&FactoryAuditLog>,
     macro_depth: usize,
     inherited_stateful: &BTreeSet<String>,
+    lexical_parent: Option<&TemporalScope>,
     enclosing_macro_registry: &MacroRegistry,
     // LEXICAL SCOPE: nested fns declared in ENCLOSING blocks (the ancestors of this
     // block). A Rust `fn` item is in scope for the whole enclosing block including all
@@ -10080,6 +10303,7 @@ fn collect_assertion_entries<'a>(
     let entries_start = entries.len();
     let temporal_plan = temporal_plan_for_stmts(stmts, inherited_stateful);
     let mut temporal_scope = TemporalScope::new(local_scope, temporal_plan)
+        .with_lexical_parent(lexical_parent)
         .with_literal_arrays(capture_scalar_literal_arrays(stmts))
         // Carry the reducer's macro registry so a TERM-POSITION macro (`assert_eq!(
         // add2!(2,3), 5)`) expands at desugar time even through the thin
@@ -10228,6 +10452,7 @@ fn collect_assertion_entries<'a>(
                             factory_audits,
                             macro_depth,
                             &temporal_scope.plan.interior_mut,
+                            Some(&temporal_scope),
                             temporal_scope.macro_registry(),
                             &local_fns,
                             &visible_fn_registry,
@@ -10255,6 +10480,7 @@ fn collect_assertion_entries<'a>(
                             factory_audits,
                             macro_depth,
                             &temporal_scope.plan.interior_mut,
+                            Some(&temporal_scope),
                             temporal_scope.macro_registry(),
                             &local_fns,
                             &visible_fn_registry,
@@ -10500,6 +10726,7 @@ fn collect_assertion_entries<'a>(
                     factory_audits,
                     macro_depth,
                     &temporal_scope.plan.interior_mut,
+                    Some(&temporal_scope),
                     temporal_scope.macro_registry(),
                     &local_fns,
                     &visible_fn_registry,
@@ -10521,6 +10748,7 @@ fn collect_assertion_entries<'a>(
                     factory_audits,
                     macro_depth,
                     &temporal_scope.plan.interior_mut,
+                    Some(&temporal_scope),
                     temporal_scope.macro_registry(),
                     &local_fns,
                     &visible_fn_registry,
@@ -10656,6 +10884,7 @@ fn collect_assertion_entries<'a>(
                         factory_audits,
                         macro_depth,
                         &temporal_scope.plan.interior_mut,
+                        Some(&temporal_scope),
                         temporal_scope.macro_registry(),
                         &local_fns,
                         &visible_fn_registry,
@@ -10731,6 +10960,7 @@ fn collect_assertion_entries<'a>(
                             factory_audits,
                             macro_depth,
                             &temporal_scope.plan.interior_mut,
+                            Some(&temporal_scope),
                             temporal_scope.macro_registry(),
                             &local_fns,
                             &visible_fn_registry,
@@ -10880,6 +11110,7 @@ fn collect_assertion_entries<'a>(
                     factory_audits,
                     macro_depth,
                     &temporal_scope.plan.interior_mut,
+                    Some(&temporal_scope),
                     temporal_scope.macro_registry(),
                     &local_fns,
                     &visible_fn_registry,
@@ -10944,6 +11175,7 @@ fn collect_assertion_entries<'a>(
                         factory_audits,
                         macro_depth,
                         &temporal_scope.plan.interior_mut,
+                        Some(&temporal_scope),
                         temporal_scope.macro_registry(),
                         &local_fns,
                         &visible_fn_registry,
@@ -11035,6 +11267,7 @@ fn collect_assertion_entries<'a>(
                                 factory_audits,
                                 macro_depth,
                                 &BTreeSet::new(),
+                                None,
                                 temporal_scope.macro_registry(),
                                 &local_fns,
                                 &visible_fn_registry,
@@ -11055,6 +11288,7 @@ fn collect_assertion_entries<'a>(
                                 factory_audits,
                                 macro_depth,
                                 &temporal_scope.plan.interior_mut,
+                                Some(&temporal_scope),
                                 temporal_scope.macro_registry(),
                                 &local_fns,
                                 &visible_fn_registry,
@@ -11077,6 +11311,7 @@ fn collect_assertion_entries<'a>(
                                 factory_audits,
                                 macro_depth,
                                 &temporal_scope.plan.interior_mut,
+                                Some(&temporal_scope),
                                 temporal_scope.macro_registry(),
                                 &local_fns,
                                 &visible_fn_registry,
@@ -11902,6 +12137,7 @@ fn for_context_refusal_reason(
         factory_audits,
         macro_depth,
         &scope.plan.interior_mut,
+        None,
         scope.macro_registry(),
         &BTreeMap::new(),
         &FnRegistry::new(),
@@ -12472,6 +12708,7 @@ fn lift_item_assertions(
         factory_audits,
         0,
         &BTreeSet::new(),
+        None,
         &MacroRegistry::new(),
         &BTreeMap::new(),
         &FnRegistry::new(),

@@ -90,6 +90,7 @@ fn lift_bounded_forall(
         factory_audits,
         macro_depth,
         &scope.plan.interior_mut,
+        None,
         scope.macro_registry(),
         &BTreeMap::new(),
         scope.fn_registry(),

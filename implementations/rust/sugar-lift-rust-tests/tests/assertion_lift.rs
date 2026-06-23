@@ -16537,6 +16537,157 @@ fn literal_slice_search_split_methods_have_z3_bad_twins() {
 }
 
 #[test]
+fn literal_slice_split_chunk_destructure_warrants_and_bad_twin_refutes() {
+    let good = r#"
+        const CUT: usize = 2;
+
+        #[test]
+        fn split_chunk_destructure_good() {
+            let xs = &[1, 2, 3, 4, 5][..];
+            let (head, tail) = xs.split_at(CUT);
+            assert_eq!(head, [1, 2]);
+            assert_eq!(tail, [3, 4, 5]);
+
+            let (chunks, remainder) = xs.as_chunks::<2>();
+            assert_eq!(chunks.len(), 2);
+            assert_eq!(remainder, [5]);
+
+            let v = &mut [1, 2, 3, 4, 5, 6][..];
+
+            let (left, right) = v.split_first_chunk_mut::<2>().unwrap();
+            assert_eq!(left, &mut [1, 2]);
+            assert_eq!(right, [3, 4, 5, 6]);
+
+            let (prefix, suffix) = v.split_last_chunk_mut::<2>().unwrap();
+            assert_eq!(prefix, [1, 2, 3, 4]);
+            assert_eq!(suffix, &mut [5, 6]);
+
+            {
+                let (left, right) = v.split_first_chunk_mut::<0>().unwrap();
+                assert_eq!(left, &mut []);
+                assert_eq!(right, [1, 2, 3, 4, 5, 6]);
+            }
+
+            {
+                let (left, right) = v.split_last_chunk_mut::<6>().unwrap();
+                assert_eq!(left, []);
+                assert_eq!(right, &mut [1, 2, 3, 4, 5, 6]);
+            }
+        }
+    "#;
+    let out = lift_file(
+        &parse(good),
+        "coretests/slice/split_chunk_destructure_good.rs",
+    );
+    assert_eq!(
+        out.assertions_lifted, 12,
+        "static split chunk destructure halves should warrant: skips={:?}; audits={:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(
+        out.assertions_refused, 0,
+        "static split chunk destructure must not be hidden behind refusal: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        !out.skip_reasons
+            .iter()
+            .any(|reason| reason.contains("destructured source runtime")),
+        "literal-backed split chunk destructure should resolve to literal halves: {:?}",
+        out.skip_reasons
+    );
+    assert_warranted_decls_not_refuted(&out, "split_chunk_destructure_good");
+
+    let bad = r#"
+        #[test]
+        fn split_chunk_destructure_bad() {
+            let v = &mut [1, 2, 3, 4, 5, 6][..];
+            let (_left, right) = v.split_first_chunk_mut::<2>().unwrap();
+            assert_eq!(right, [3, 4, 5, 9]);
+        }
+    "#;
+    let out = lift_file(
+        &parse(bad),
+        "coretests/slice/split_chunk_destructure_bad.rs",
+    );
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bad twin must still lift so z3 can refute the wrong half: skips={:?}",
+        out.skip_reasons
+    );
+    assert_eq!(
+        out.assertions_refused, 0,
+        "bad twin must not clear through refusal: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "split_chunk_bad") {
+        assert!(!sat, "wrong split chunk half must be z3-UNSAT");
+    }
+
+    let bad_len = r#"
+        #[test]
+        fn split_chunk_destructure_bad_len() {
+            let xs = &[1, 2, 3, 4, 5][..];
+            let (chunks, _remainder) = xs.as_chunks::<2>();
+            assert_eq!(chunks.len(), 3);
+        }
+    "#;
+    let out = lift_file(
+        &parse(bad_len),
+        "coretests/slice/split_chunk_destructure_bad_len.rs",
+    );
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bad len twin must lift so z3 can refute the wrong chunk count: skips={:?}",
+        out.skip_reasons
+    );
+    assert_eq!(
+        out.assertions_refused, 0,
+        "bad len twin must not clear through refusal: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "split_chunk_bad_len",
+    ) {
+        assert!(!sat, "wrong as_chunks len must be z3-UNSAT");
+    }
+
+    let runtime = r#"
+        fn runtime_slice() -> &'static [i32] {
+            todo!()
+        }
+
+        #[test]
+        fn split_chunk_destructure_runtime() {
+            let (left, _right) = runtime_slice().split_at(1);
+            assert_eq!(left, [1]);
+        }
+    "#;
+    let out = lift_file(
+        &parse(runtime),
+        "coretests/slice/split_chunk_destructure_runtime.rs",
+    );
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "runtime split source must not warrant: {:?}",
+        out.decls
+    );
+    assert_eq!(
+        out.assertions_refused, 1,
+        "runtime split source should be refused by the destructure boundary: {:?}",
+        out.skip_reasons
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|reason| reason.contains("destructured source runtime, not literal")),
+        "runtime split source should name the destructured-source boundary: {:?}",
+        out.skip_reasons
+    );
+}
+
+#[test]
 fn iter_next_over_runtime_receiver_stays_opaque_no_fake_dig() {
     // THE EFFECT BOUNDARY HOLDS: a `.next()` over a RUNTIME receiver (a call
     // result / opaque param) is NOT a written literal, so the syntactic-literal
