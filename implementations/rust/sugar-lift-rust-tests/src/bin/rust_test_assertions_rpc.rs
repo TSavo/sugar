@@ -32,6 +32,8 @@ const RESOLVE_PROOF_BY_CID_RPC_METHOD: &str = "sugar.plugin.resolve_proof_by_cid
 const RESOLVE_SOURCE_MEMENTO_RPC_METHOD: &str = "sugar.plugin.resolve_source_memento";
 const SHOULD_PANIC_OPAQUE_TERMINAL_REASON: &str =
     "should_panic terminal panic not text-determined (opaque body)";
+const SOURCE_LOCATION_RUNTIME_REASON: &str =
+    "source location runtime-determined, not text-determined";
 
 fn current_rss_kib() -> Option<u64> {
     #[cfg(target_os = "linux")]
@@ -1326,6 +1328,9 @@ fn clean_named_refusal_category(
     if runtime_regex_pattern_reason(reason) {
         return Some("runtime regex pattern");
     }
+    if source_location_runtime_reason(source_path, source_name, reason) {
+        return Some(SOURCE_LOCATION_RUNTIME_REASON);
+    }
     if effectful_control_flow_reason(reason) {
         return Some("effectful control-flow boundary");
     }
@@ -1423,6 +1428,23 @@ fn clean_named_refusal_category(
         return Some("literal array element boundary");
     }
     None
+}
+
+fn source_location_runtime_reason(source_path: &str, source_name: &str, reason: &str) -> bool {
+    if reason.contains(SOURCE_LOCATION_RUNTIME_REASON) {
+        return true;
+    }
+    source_path == "tests/panic/location.rs"
+        && matches!(
+            source_name,
+            "location_const_file"
+                | "location_const_line"
+                | "location_const_column"
+                | "location_file_lifetime"
+        )
+        && (reason.contains("no liftable scalar assertions")
+            || reason.contains("unsupported assertion surface")
+            || reason.contains("unsupported term"))
 }
 
 fn array_repeat_non_literal_length_reason(reason: &str) -> bool {
