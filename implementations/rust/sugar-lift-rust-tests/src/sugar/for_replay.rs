@@ -401,11 +401,23 @@ fn body_has_pointwise_assert_replay_shape(stmts: &[Stmt], require_binding: bool)
             Stmt::Expr(Expr::If(expr_if), _) if if_stmt_has_pointwise_assert(expr_if) => {
                 saw_assert = true;
             }
+            Stmt::Expr(Expr::ForLoop(for_loop), _)
+                if nested_for_loop_has_pointwise_assert_replay_shape(for_loop) =>
+            {
+                saw_assert = true;
+                saw_replay_binding = true;
+            }
             Stmt::Item(_) => {}
             _ => return false,
         }
     }
     saw_assert && (!require_binding || saw_replay_binding)
+}
+
+fn nested_for_loop_has_pointwise_assert_replay_shape(for_loop: &syn::ExprForLoop) -> bool {
+    loop_var_bindings(for_loop.pat.as_ref()).is_some()
+        && range_domain_shape(&for_loop.expr)
+        && body_has_pointwise_assert_replay_shape(&for_loop.body.stmts, false)
 }
 
 fn if_stmt_has_pointwise_assert(expr_if: &syn::ExprIf) -> bool {
@@ -660,6 +672,7 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
             Stmt::Macro(stmt_macro) => self.emit_macro(&stmt_macro.mac),
             Stmt::Expr(Expr::Macro(expr_macro), _) => self.emit_macro(&expr_macro.mac),
             Stmt::Expr(Expr::If(expr_if), _) => self.replay_if_stmt(expr_if),
+            Stmt::Expr(Expr::ForLoop(for_loop), _) => self.replay_for_loop(for_loop),
             Stmt::Expr(Expr::Match(expr_match), _) => self.replay_match(expr_match),
             Stmt::Expr(Expr::Binary(binary), _)
                 if matches!(
@@ -720,6 +733,37 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
                 other => self.replay_stmt(&Stmt::Expr(other.clone(), None)),
             }
         }
+    }
+
+    fn replay_for_loop(&mut self, for_loop: &syn::ExprForLoop) -> Option<()> {
+        let vars = loop_var_bindings(for_loop.pat.as_ref())?;
+        let domain = substitute_expr(&for_loop.expr, &self.bindings);
+        if range_domain_exceeds_replay_cap(&domain, self.ctx.scope) {
+            return None;
+        }
+        let values = finite_domain_exprs(&domain, self.ctx)?;
+        if values.is_empty() || values.len() as i64 > SUGAR_SEQ_CAP {
+            return None;
+        }
+        let saved: Vec<_> = vars
+            .iter()
+            .map(|name| (name.clone(), self.bindings.get(name).cloned()))
+            .collect();
+        let result = (|| {
+            for value in values {
+                bind_loop_value(&mut self.bindings, &vars, value)?;
+                self.replay_stmts(&for_loop.body.stmts)?;
+            }
+            Some(())
+        })();
+        for (name, previous) in saved {
+            if let Some(expr) = previous {
+                self.bindings.insert(name, expr);
+            } else {
+                self.bindings.remove(&name);
+            }
+        }
+        result
     }
 
     fn replay_helper_call_expr(&mut self, expr: &Expr) -> Option<bool> {

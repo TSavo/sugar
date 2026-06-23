@@ -95,6 +95,9 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
         ("saturating_pow", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
             Kind::Saturating(SaturatingOp::Pow, call.args[0].clone())
         }
+        ("next_multiple_of", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
+            Kind::NextMultipleOf(call.args[0].clone())
+        }
         ("overflowing_add", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
             Kind::Overflowing(OverflowingOp::Add, call.args[0].clone())
         }
@@ -160,7 +163,7 @@ fn integer_binary_candidate(receiver: &Expr, rhs: &Expr, fcx: &SugarBuildCtx) ->
     integer_receiver_can_ground(receiver, fcx, 0) || integer_receiver_can_ground(rhs, fcx, 0)
 }
 
-fn integer_receiver_can_ground(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
+pub(crate) fn integer_receiver_can_ground(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
     if depth > 8 {
         return false;
     }
@@ -222,6 +225,7 @@ fn integer_receiver_can_ground(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -
                     | "saturating_sub"
                     | "saturating_mul"
                     | "saturating_pow"
+                    | "next_multiple_of"
                     | "overflowing_add"
                     | "overflowing_sub"
                     | "overflowing_mul"
@@ -285,6 +289,7 @@ enum Kind {
     Checked(CheckedOp, Expr),
     Wrapping(WrappingOp, Expr),
     Saturating(SaturatingOp, Expr),
+    NextMultipleOf(Expr),
     Overflowing(OverflowingOp, Expr),
     Abs,
     Signum,
@@ -691,6 +696,24 @@ impl Sugar for PrimitiveIntSugar {
                 );
                 Outcome::Dug(Desugared::Term(term))
             }
+            Kind::NextMultipleOf(rhs) => {
+                let rhs = match desugar_term_expr(rhs, ctx, &fcx) {
+                    Ok(term) => term,
+                    Err(outcome) => return outcome,
+                };
+                let Some(term) = next_multiple_of_int_term(lhs_i128, lhs_u128, &rhs, kind_hint)
+                else {
+                    return runtime_operand_hit();
+                };
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::primitive_int",
+                    method = self.method.as_str(),
+                    lhs_i128 = ?lhs_i128,
+                    lhs_u128 = ?lhs_u128,
+                    "resolved primitive next_multiple_of integer axiom"
+                );
+                Outcome::Dug(Desugared::Term(term))
+            }
             Kind::Overflowing(op, rhs) => {
                 let rhs = match desugar_term_expr(rhs, ctx, &fcx) {
                     Ok(term) => term,
@@ -787,7 +810,7 @@ fn checked_pow_u128(lhs: u128, exp: u32) -> Option<u128> {
     Some(acc)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct IntegerKind {
     signed: bool,
     bits: u32,
@@ -948,6 +971,40 @@ fn saturating_int_op_term(
         }
     };
     term_for_unsigned_raw(raw, kind)
+}
+
+fn next_multiple_of_int_term(
+    lhs_i128: Option<i128>,
+    lhs_u128: Option<u128>,
+    rhs: &Rc<Term>,
+    kind: Option<IntegerKind>,
+) -> Option<Rc<Term>> {
+    if kind.is_some_and(|kind| kind.signed) {
+        return None;
+    }
+    let lhs = lhs_u128.or_else(|| lhs_i128.and_then(|n| u128::try_from(n).ok()))?;
+    let rhs = const_fold_u128_term(rhs)
+        .or_else(|| const_fold_int_term(rhs).and_then(|n| u128::try_from(n).ok()))?;
+    if rhs == 0 {
+        return None;
+    }
+    let rem = lhs % rhs;
+    let value = if rem == 0 {
+        lhs
+    } else {
+        lhs.checked_add(rhs.checked_sub(rem)?)?
+    };
+    if let Some(kind) = kind {
+        if value > mask_for_bits(kind.bits)? {
+            return None;
+        }
+        return term_for_unsigned_raw(value, kind);
+    }
+    if let Ok(value) = i128::try_from(value) {
+        Some(num(value))
+    } else {
+        Some(u128_term(value))
+    }
 }
 
 fn overflowing_int_op_terms(
@@ -1470,6 +1527,15 @@ fn integer_kind_hint_in_scope(
                 .and_then(|init| integer_kind_hint_in_scope(init, fcx, depth + 1))
         }
         Expr::Unary(unary) => integer_kind_hint_in_scope(&unary.expr, fcx, depth + 1),
+        Expr::Binary(binary) => {
+            let left = integer_kind_hint_in_scope(&binary.left, fcx, depth + 1);
+            let right = integer_kind_hint_in_scope(&binary.right, fcx, depth + 1);
+            match (left, right) {
+                (Some(left), Some(right)) if left == right => Some(left),
+                (Some(kind), None) | (None, Some(kind)) => Some(kind),
+                _ => None,
+            }
+        }
         Expr::Paren(paren) => integer_kind_hint_in_scope(&paren.expr, fcx, depth + 1),
         Expr::Group(group) => integer_kind_hint_in_scope(&group.expr, fcx, depth + 1),
         Expr::MethodCall(call)

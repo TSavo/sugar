@@ -4,10 +4,12 @@
 // first-order refinement atoms over the receiver, not generic
 // `method:is_nan(receiver) == true` booleans.
 
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::format::stable_let_bindings;
 use crate::{
     bool_const, callsite_assertion_name, eq, strip_refs_groups, token_key, AssertionFactKind,
     Desugared, Effect, FloatWidthScope, Outcome, Sugar, SugarCtx, Warrant,
@@ -24,8 +26,8 @@ pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
 
 struct FloatRefinementSugar {
     method: String,
-    receiver: Box<dyn Sugar>,
     receiver_expr: Expr,
+    let_inits: BTreeMap<String, Expr>,
     site: String,
 }
 
@@ -45,8 +47,8 @@ fn recognize_method(call: &ExprMethodCall, fcx: &SugarBuildCtx) -> Option<Box<dy
     }
     Some(Box::new(FloatRefinementSugar {
         method,
-        receiver: build_term(&call.receiver, fcx),
         receiver_expr: (*call.receiver).clone(),
+        let_inits: capture_let_inits(fcx),
         site: token_key(Expr::MethodCall(call.clone())),
     }))
 }
@@ -57,6 +59,13 @@ impl Sugar for FloatRefinementSugar {
             let widths = ctx.float_widths.borrow();
             float_refinement_receiver_width(&self.receiver_expr, &widths)
         };
+        if let Some(unstable_width) = float_refinement_receiver_unstable_width(&self.receiver_expr)
+        {
+            return unsupported(format!(
+                "float refinement predicate `{}` {unstable_width} bit-width not modeled `{}`",
+                self.method, self.site
+            ));
+        }
         let Some(width) = width else {
             return unsupported(format!(
                 "float refinement predicate `{}` requires known f32/f64 receiver width `{}`",
@@ -66,7 +75,19 @@ impl Sugar for FloatRefinementSugar {
         if let Some(value) = literal_float_refinement_value(&self.method, &self.receiver_expr) {
             return constraint(eq(bool_const(value), bool_const(true)), None);
         }
-        let receiver = match term_payload(&*self.receiver, ctx) {
+        let stable = stable_let_bindings(ctx.scope);
+        let let_inits: BTreeMap<String, &Expr> = stable
+            .iter()
+            .map(|(name, init)| (name.clone(), init))
+            .chain(
+                self.let_inits
+                    .iter()
+                    .map(|(name, init)| (name.clone(), init)),
+            )
+            .collect();
+        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        let receiver_node = build_term(&self.receiver_expr, &fcx);
+        let receiver = match term_payload(receiver_node.as_ref(), ctx) {
             Ok(term) => term,
             Err(outcome) => return outcome,
         };
@@ -76,6 +97,13 @@ impl Sugar for FloatRefinementSugar {
             name,
         )
     }
+}
+
+fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
+    fcx.let_inits()
+        .iter()
+        .map(|(name, init)| (name.clone(), (**init).clone()))
+        .collect()
 }
 
 enum LiteralFloat {
@@ -169,12 +197,42 @@ fn float_refinement_receiver_width(
     }
 }
 
+fn float_refinement_receiver_unstable_width(expr: &Expr) -> Option<&'static str> {
+    match expr {
+        Expr::MethodCall(call) => unstable_width_from_method_name(&call.method.to_string())
+            .or_else(|| unstable_width_from_method_turbofish(call))
+            .or_else(|| {
+                if call.method == "unwrap" {
+                    float_refinement_receiver_unstable_width(&call.receiver)
+                } else {
+                    None
+                }
+            }),
+        Expr::Path(path) => unstable_width_from_path(&path.path),
+        Expr::Lit(ExprLit {
+            lit: Lit::Float(lit),
+            ..
+        }) => unstable_width_from_suffix(lit.suffix()),
+        Expr::Paren(paren) => float_refinement_receiver_unstable_width(&paren.expr),
+        Expr::Group(group) => float_refinement_receiver_unstable_width(&group.expr),
+        _ => None,
+    }
+}
+
 fn float_width_from_method_turbofish(call: &ExprMethodCall) -> Option<&'static str> {
     if call.method != "parse" {
         return None;
     }
     let args = call.turbofish.as_ref()?;
     float_width_from_angle_args(args)
+}
+
+fn unstable_width_from_method_turbofish(call: &ExprMethodCall) -> Option<&'static str> {
+    if call.method != "parse" {
+        return None;
+    }
+    let args = call.turbofish.as_ref()?;
+    unstable_width_from_angle_args(args)
 }
 
 fn float_width_from_angle_args(args: &syn::AngleBracketedGenericArguments) -> Option<&'static str> {
@@ -187,6 +245,18 @@ fn float_width_from_angle_args(args: &syn::AngleBracketedGenericArguments) -> Op
     float_width_from_type(ty)
 }
 
+fn unstable_width_from_angle_args(
+    args: &syn::AngleBracketedGenericArguments,
+) -> Option<&'static str> {
+    if args.args.len() != 1 {
+        return None;
+    }
+    let Some(syn::GenericArgument::Type(ty)) = args.args.first() else {
+        return None;
+    };
+    unstable_width_from_type(ty)
+}
+
 fn float_width_from_type(ty: &Type) -> Option<&'static str> {
     match ty {
         Type::Path(path) => float_width_from_path(&path.path),
@@ -196,11 +266,30 @@ fn float_width_from_type(ty: &Type) -> Option<&'static str> {
     }
 }
 
+fn unstable_width_from_type(ty: &Type) -> Option<&'static str> {
+    match ty {
+        Type::Path(path) => unstable_width_from_path(&path.path),
+        Type::Paren(paren) => unstable_width_from_type(&paren.elem),
+        Type::Group(group) => unstable_width_from_type(&group.elem),
+        _ => None,
+    }
+}
+
 fn float_width_from_method_name(method: &str) -> Option<&'static str> {
     if method.ends_with("_f32") {
         Some("f32")
     } else if method.ends_with("_f64") {
         Some("f64")
+    } else {
+        None
+    }
+}
+
+fn unstable_width_from_method_name(method: &str) -> Option<&'static str> {
+    if method.ends_with("_f16") {
+        Some("f16")
+    } else if method.ends_with("_f128") {
+        Some("f128")
     } else {
         None
     }
@@ -217,10 +306,29 @@ fn float_width_from_path(path: &syn::Path) -> Option<&'static str> {
     None
 }
 
+fn unstable_width_from_path(path: &syn::Path) -> Option<&'static str> {
+    for segment in &path.segments {
+        match segment.ident.to_string().as_str() {
+            "f16" => return Some("f16"),
+            "f128" => return Some("f128"),
+            _ => {}
+        }
+    }
+    None
+}
+
 fn float_width_from_suffix(suffix: &str) -> Option<&'static str> {
     match suffix {
         "f32" => Some("f32"),
         "f64" => Some("f64"),
+        _ => None,
+    }
+}
+
+fn unstable_width_from_suffix(suffix: &str) -> Option<&'static str> {
+    match suffix {
+        "f16" => Some("f16"),
+        "f128" => Some("f128"),
         _ => None,
     }
 }
