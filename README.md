@@ -73,47 +73,46 @@ hide what it never swore.
 
 ## Why a contract beats a test
 
-A test is a sample. It runs your code on the inputs you happened to have and
-reports that nothing broke *those* times.
+A test checks your code against the world *as it was the day you wrote the
+test* — the inputs in your fixtures, the dependency in your lockfile, the
+environment on your laptop.
 
-Here is the one no compiler can save you from. You total a cart:
+Here is the one no compiler and no test will catch. You depend on a library
+whose `search(q)` returns matches **sorted by score**, so your code takes
+`results[0]` as the best match — and has, correctly, for years. One release, the
+vendor drops the guarantee: *"results are no longer ordered; sort client-side if
+you need it."* It is right there in the changelog. They **advertised** it.
 
-```rust
-fn total_cents(items: &[u32]) -> u32 {
-    items.iter().sum()      // perfectly typed. the compiler is delighted.
-}
-```
+Nothing in your code changes — nothing *can*. The type never moved: `Vec<Match>`
+before, `Vec<Match>` after; order was never in the type. And not one unit test
+turns red, because your tests run against the version in your lockfile — the old
+one, still sorted — so `results[0]` is still best, and green is green. The
+breaking change is real, shipped, and announced, and **completely invisible to
+your suite**, because your suite verifies your code against the dependency *as it
+sat in dev*, not as it now *is*.
 
-Every test cart is small; every sum fits; the suite is green a thousand times,
-for a year. Then in production one whale invoice pushes the sum past `u32::MAX`
-and it **wraps** — the customer is billed **$3.71 on a $43-million order**.
-Nothing panics. Nothing logs. The test is *still green*. This is the kind that
-ends careers, because it is **silent**: a wrong answer that looks exactly like a
-right one.
+Then prod pulls the new release. `results[0]` is whatever came back first, and
+every user silently gets the wrong top result. Here is the part that should
+sting: **that same unit test, run in production against the new dependency, goes
+red.** The test was never wrong — it was running in the *wrong universe*, pinned
+to a behavior the world had already moved past.
 
-Notice what did *not* catch it: the type system. `u32 + u32 → u32` is a flawless
-type; *"this sum stays under 2³²"* is a fact about **values**, not **shapes**,
-and no compiler in any language checks it — it is not a type error, it is a
-*meaning* error. The test didn't catch it either, for the oldest reason: dev's
-carts were a lucky subset of reality, and the whale never walked into the room.
-**Right for the wrong reason.**
-
-A contract neither samples nor cares about shape. *"The returned total equals
-the real arithmetic sum of the items"* is a claim about values over the **whole
-universe of carts** — the whale included. Check that claim and the overflow
-surfaces at the diff, in dev, before a cent is mischarged. The test made the gap
-**invisible in dev and silent in prod**. The contract makes it **loud in dev and
-impossible in prod.**
+A type can't catch it: order is not a shape. A test can't catch it: it only ever
+saw the old behavior, in dev. What moved was the **contract** — a postcondition
+the vendor advertised away — and the contract is the one thing neither your
+compiler nor your test runner is even looking at.
 
 > **Tested says it didn't break here, now. Correct says it cannot break, anywhere.**
 
-That gap — between a value's *type* and a program's *meaning* — is exactly where
-Sugar lives. It takes the contracts your code already states — its assertions —
-and proves they hold over the whole closed universe of their inputs, or refuses,
-loudly, naming the one case it cannot account for. A passing test is an
-existence proof: *there exist* inputs on which it worked. A `.proof` is a
-universal one: *for all* inputs, it holds. One says it didn't break. The other
-says it can't.
+That contract is what a `.proof` *is*: the dependency's behavior, pinned and
+content-addressed, that you compose against instead of trusting a version
+number. The day the vendor's behavior moves, its `.proof` moves with it — a new
+CID — and your composition stops verifying, **at the diff, in any environment,
+before prod ever pulls the release.** A passing test is an existence proof:
+*there exist* inputs, in dev, on which it worked. A `.proof` is a universal one:
+*for all* inputs, against the behavior as it actually is, it holds. One says it
+didn't break here. The other says it can't break anywhere — and trips the
+instant the ground moves under it.
 
 ## Why it matters: the version lied, the behavior moved, Sugar saw it
 
