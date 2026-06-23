@@ -14224,6 +14224,99 @@ fn char_method_eq_verdict(lhs: &str, rhs: &str, label: &str) -> Option<bool> {
     single_assertion_verdict(&src, label)
 }
 
+fn midpoint_eq_verdict(lhs: &str, rhs: &str, label: &str) -> Option<bool> {
+    let src = format!("#[test]\nfn t() {{ assert_eq!({lhs}, {rhs}); }}\n");
+    let out = lift_file(&parse(&src), "tests/num/midpoint.rs");
+    assert_warranted_decl_count(&out, 1);
+    z3_verdict(&inv_json(single_warranted_decl(&out)), label)
+}
+
+#[test]
+fn integer_midpoint_literal_calls_have_z3_bad_twins() {
+    let cases = [
+        ("i8_positive", "i8::midpoint(2, 5)", "3", "4"),
+        // Current std/corpus semantics match integer division by 2: signed odd
+        // sums truncate toward zero, so this is 0 rather than the floor value -1.
+        ("i8_negative_trunc", "i8::midpoint(-1, 0)", "0", "-1"),
+        ("u8_high", "u8::midpoint(250, 255)", "252", "253"),
+        (
+            "i128_extremes_no_overflow",
+            "i128::midpoint(i128::MAX, i128::MIN)",
+            "0",
+            "1",
+        ),
+    ];
+
+    for (label, lhs, good_rhs, bad_rhs) in cases {
+        if let Some(good) = midpoint_eq_verdict(lhs, good_rhs, &format!("{label}_good")) {
+            assert!(good, "{lhs} == {good_rhs} must be z3-SAT");
+            let bad =
+                midpoint_eq_verdict(lhs, bad_rhs, &format!("{label}_bad")).expect("z3 present");
+            assert!(
+                !bad,
+                "{lhs} == {bad_rhs} must be z3-UNSAT as the midpoint bad twin"
+            );
+        }
+    }
+}
+
+#[test]
+fn integer_midpoint_literal_range_loop_has_teeth() {
+    let good = r#"
+        #[test]
+        fn midpoint_loop_good() {
+            for a in -2i8..=2i8 {
+                for b in -2i8..=2i8 {
+                    assert_eq!(i8::midpoint(a, b), ((a as i16 + b as i16) / 2) as i8);
+                }
+            }
+        }
+    "#;
+    let out = lift_file(&parse(good), "tests/num/midpoint_loop.rs");
+    assert_warranted_decls_not_refuted(&out, "midpoint_loop_good");
+
+    let bad = r#"
+        #[test]
+        fn midpoint_loop_bad() {
+            for a in -2i8..=2i8 {
+                for b in -2i8..=2i8 {
+                    assert_eq!(i8::midpoint(a, b), (((a as i16 + b as i16) / 2) + 1) as i8);
+                }
+            }
+        }
+    "#;
+    let out = lift_file(&parse(bad), "tests/num/midpoint_loop_bad.rs");
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "midpoint_loop_bad") {
+        assert!(!sat, "wrong midpoint loop twin must be z3-UNSAT");
+    }
+}
+
+#[test]
+fn integer_midpoint_runtime_operand_refuses_by_name() {
+    let src = r#"
+        fn opaque_i8() -> i8 { panic!("runtime") }
+
+        #[test]
+        fn t() {
+            assert_eq!(i8::midpoint(opaque_i8(), 1), 1);
+        }
+    "#;
+    let out = lift_file(&parse(src), "tests/num/midpoint_runtime.rs");
+    assert!(
+        warranted_decls(&out).is_empty(),
+        "runtime midpoint operand must not warrant: {:?}",
+        out.decls
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|reason| reason.contains("runtime i8 midpoint operand, not literal-determined")),
+        "runtime midpoint operand must refuse by name: {:?}",
+        out.skip_reasons
+    );
+}
+
 #[test]
 fn char_literal_methods_have_z3_bad_twins() {
     let cases = [
