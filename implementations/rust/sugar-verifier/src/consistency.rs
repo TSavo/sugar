@@ -117,12 +117,18 @@ pub(crate) fn is_consistency_candidate(body: &Json) -> bool {
     if !(has_inv && !has_pre) {
         return false;
     }
-    let name = body
-        .get("name")
+    let name = contract_body_name(body).unwrap_or("");
+    !is_setup_binding_name(name)
+}
+
+fn contract_body_name(body: &Json) -> Option<&str> {
+    body.get("name")
         .and_then(|v| v.as_str())
         .or_else(|| body.get("contractName").and_then(|v| v.as_str()))
-        .unwrap_or("");
-    !is_setup_binding_name(name)
+}
+
+fn is_callsite_keyed_obligation_name(name: &str) -> bool {
+    name.contains("#euf#")
 }
 
 /// A `::facts` / `::facts::N` contract is a setup binding, not an asserted
@@ -1837,7 +1843,9 @@ pub fn verify_consistency(
             let before = ambient_foralls.len();
             collect_ambient_foralls(&inv, &mut ambient_foralls);
             let found = ambient_foralls.len() - before;
-            collect_ambient_ground_callsite_facts(&inv, &mut ambient_ground_callsite_facts);
+            if !contract_body_name(body).is_some_and(is_callsite_keyed_obligation_name) {
+                collect_ambient_ground_callsite_facts(&inv, &mut ambient_ground_callsite_facts);
+            }
             if found > 0 {
                 debug!(
                     cid = cid.as_str(),
