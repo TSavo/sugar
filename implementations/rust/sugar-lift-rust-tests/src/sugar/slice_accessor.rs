@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use quote::ToTokens;
 use sugar_ir_symbolic::Term;
-use syn::{Expr, ExprMethodCall};
+use syn::{Expr, ExprLit, ExprMethodCall, Lit};
 
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::format::stable_let_bindings;
@@ -146,8 +146,14 @@ fn slice_receiver_shape(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool 
             let Some(name) = path.path.get_ident().map(ToString::to_string) else {
                 return false;
             };
-            fcx.let_inits().contains_key(&name)
-                || fcx.scope().stable_let_binding_for_term(&name).is_some()
+            // Shared method names (`contains`, `starts_with`) dispatch by receiver domain:
+            // a visible text binding belongs to `str_method`, not this slice lane.
+            let bound = fcx
+                .let_inits()
+                .get(&name)
+                .copied()
+                .or_else(|| fcx.scope().stable_let_binding_for_term(&name));
+            bound.is_some_and(|init| !text_receiver_shape(init, fcx, depth + 1))
         }
         Expr::MethodCall(call) if call.args.is_empty() => {
             matches!(
@@ -157,6 +163,55 @@ fn slice_receiver_shape(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool 
         }
         other => crate::sugar::collection_literal::collection_literal_array(other).is_some(),
     }
+}
+
+fn text_receiver_shape(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(_), ..
+        }) => true,
+        Expr::Macro(m) => m
+            .mac
+            .path
+            .segments
+            .last()
+            .is_some_and(|s| s.ident == "format"),
+        Expr::Path(path) if path.qself.is_none() => {
+            let Some(name) = path.path.get_ident().map(ToString::to_string) else {
+                return false;
+            };
+            fcx.let_inits()
+                .get(&name)
+                .copied()
+                .or_else(|| fcx.scope().stable_let_binding_for_term(&name))
+                .is_some_and(|init| text_receiver_shape(init, fcx, depth + 1))
+        }
+        Expr::MethodCall(call) if call.method == "to_string" && call.args.is_empty() => {
+            text_receiver_shape(&call.receiver, fcx, depth + 1)
+        }
+        Expr::MethodCall(call) if string_result_method(&call.method.to_string()) => {
+            text_receiver_shape(&call.receiver, fcx, depth + 1)
+        }
+        _ => false,
+    }
+}
+
+fn string_result_method(method: &str) -> bool {
+    matches!(
+        method,
+        "to_ascii_uppercase"
+            | "to_ascii_lowercase"
+            | "to_uppercase"
+            | "to_lowercase"
+            | "replace"
+            | "trim"
+            | "trim_start"
+            | "trim_end"
+            | "repeat"
+    )
 }
 
 fn literal_sequence(
