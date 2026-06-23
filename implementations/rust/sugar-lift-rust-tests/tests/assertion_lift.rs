@@ -20996,6 +20996,34 @@ fn single_eq_atom(
     }
 }
 
+fn dug_eq_opt_some_int_pair(decl: &sugar_ir_symbolic::ContractDecl) -> (i128, i128) {
+    let (lhs, rhs) = single_eq_atom(decl);
+    (opt_some_int_value(&lhs), opt_some_int_value(&rhs))
+}
+
+fn dug_eq_unwrap_int_pair(decl: &sugar_ir_symbolic::ContractDecl) -> (i128, i128) {
+    let (lhs, rhs) = single_eq_atom(decl);
+    (unwrap_or_int_value(&lhs), unwrap_or_int_value(&rhs))
+}
+
+fn unwrap_or_int_value(t: &Term) -> i128 {
+    match t {
+        Term::Ctor { name, args } if name == "method:unwrap" && args.len() == 1 => {
+            opt_some_int_value(&args[0])
+        }
+        _ => int_const_value(t),
+    }
+}
+
+fn opt_some_int_value(t: &Term) -> i128 {
+    match t {
+        Term::Ctor { name, args } if name == "opt:some" && args.len() == 1 => {
+            int_const_value(&args[0])
+        }
+        other => panic!("expected opt:some(int), got {other:?}"),
+    }
+}
+
 /// Run z3 over a lifted decl's asserted inv; returns Some(true)=sat, Some(false)=unsat,
 /// None if z3 is absent (skip-when-absent: a host-tool test must not fail without it).
 fn z3_sat_of_inv(decl: &sugar_ir_symbolic::ContractDecl, tag: &str) -> Option<bool> {
@@ -26209,6 +26237,332 @@ fn consumed_iterator_rfold_after_next_back_digs_remaining_sequence() {
             sat,
             "rfold body over the post-next_back remaining sequence must be SAT"
         );
+    }
+}
+
+#[test]
+fn consumed_flatten_fold_after_next_back_digs_remaining_sequence() {
+    let src = r#"
+        #[test]
+        fn t_flatten_fold_after_next_back() {
+            let xs = [0_i32, 3, 6];
+            let ys = [1_i32, 2, 3, 4, 5, 6, 7];
+            let mut it = xs.iter().map(|&x| x..x + 3).flatten();
+            let _front = it.next();
+            let _back = it.next_back();
+            let _done = it.fold(0, |i, x| {
+                assert_eq!(x, ys[i]);
+                i + 1
+            });
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/adapters/flatten_fold_after_next_back.rs",
+    );
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        dug_eq_int_pairs(single_warranted_decl(&out)),
+        vec![(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7)],
+        "flatten().fold() must see the post-consumption middle sequence: {:?}",
+        single_warranted_decl(&out).inv
+    );
+    assert_eq!(
+        out.assertions_refused, 0,
+        "literal-source consumed flatten fold should warrant exactly: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "flatten_fold_after_next_back_good",
+    ) {
+        assert!(sat, "remaining flattened fold sequence should be SAT");
+    }
+}
+
+#[test]
+fn consumed_flatten_fold_after_next_back_bad_twin_refutes() {
+    let src = r#"
+        #[test]
+        fn t_flatten_fold_after_next_back_bad() {
+            let xs = [0_i32, 3, 6];
+            let ys = [1_i32, 2, 3, 99, 5, 6, 7];
+            let mut it = xs.iter().map(|&x| x..x + 3).flatten();
+            let _front = it.next();
+            let _back = it.next_back();
+            let _done = it.fold(0, |i, x| {
+                assert_eq!(x, ys[i]);
+                i + 1
+            });
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/adapters/flatten_fold_after_next_back_bad.rs",
+    );
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        dug_eq_int_pairs(single_warranted_decl(&out)),
+        vec![(1, 1), (2, 2), (3, 3), (4, 99), (5, 5), (6, 6), (7, 7)],
+        "bad twin must carry the real consumed flattened fold sequence: {:?}",
+        single_warranted_decl(&out).inv
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "flatten_fold_after_next_back_bad",
+    ) {
+        assert!(
+            !sat,
+            "wrong middle element in consumed flattened fold must be z3-UNSAT"
+        );
+    }
+}
+
+#[test]
+fn consumed_flatten_rfold_after_next_back_digs_remaining_sequence() {
+    let src = r#"
+        #[test]
+        fn t_flatten_rfold_after_next_back() {
+            let xs = [0_i32, 3, 6];
+            let ys = [1_i32, 2, 3, 4, 5, 6, 7];
+            let mut it = xs.iter().map(|&x| x..x + 3).flatten();
+            let _front = it.next();
+            let _back = it.next_back();
+            let _done = it.rfold(ys.len(), |i, x| {
+                assert_eq!(x, ys[i - 1]);
+                i - 1
+            });
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/adapters/flatten_rfold_after_next_back.rs",
+    );
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        dug_eq_int_pairs(single_warranted_decl(&out)),
+        vec![(7, 7), (6, 6), (5, 5), (4, 4), (3, 3), (2, 2), (1, 1)],
+        "flatten().rfold() must see the reversed post-consumption middle sequence: {:?}",
+        single_warranted_decl(&out).inv
+    );
+    assert_eq!(
+        out.assertions_refused, 0,
+        "literal-source consumed flatten rfold should warrant exactly: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "flatten_rfold_after_next_back_good",
+    ) {
+        assert!(sat, "remaining flattened rfold sequence should be SAT");
+    }
+}
+
+#[test]
+fn consumed_flatten_rfold_after_next_back_bad_twin_refutes() {
+    let src = r#"
+        #[test]
+        fn t_flatten_rfold_after_next_back_bad() {
+            let xs = [0_i32, 3, 6];
+            let ys = [1_i32, 2, 3, 99, 5, 6, 7];
+            let mut it = xs.iter().map(|&x| x..x + 3).flatten();
+            let _front = it.next();
+            let _back = it.next_back();
+            let _done = it.rfold(ys.len(), |i, x| {
+                assert_eq!(x, ys[i - 1]);
+                i - 1
+            });
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/adapters/flatten_rfold_after_next_back_bad.rs",
+    );
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        dug_eq_int_pairs(single_warranted_decl(&out)),
+        vec![(7, 7), (6, 6), (5, 5), (4, 99), (3, 3), (2, 2), (1, 1)],
+        "bad twin must carry the real consumed flattened rfold sequence: {:?}",
+        single_warranted_decl(&out).inv
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "flatten_rfold_after_next_back_bad",
+    ) {
+        assert!(
+            !sat,
+            "wrong middle element in consumed flattened rfold must be z3-UNSAT"
+        );
+    }
+}
+
+#[test]
+fn consumed_iterator_position_after_next_digs_remaining_index() {
+    let src = r#"
+        #[test]
+        fn t_position_after_next() {
+            let xs = [0_i32, 1, 2, 3, 4, 5];
+            let mut it = xs.iter().copied();
+            let _first = it.next();
+            assert_eq!(it.position(|x| x == 3), Some(2));
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/adapters/position_after_next.rs",
+    );
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        dug_eq_opt_some_int_pair(single_warranted_decl(&out)),
+        (2, 2),
+        "position() must see the remaining iterator after next(): {:?}",
+        single_warranted_decl(&out).inv
+    );
+    assert_eq!(
+        out.assertions_refused, 0,
+        "literal-source post-consumption position is exact temporal sugar, not support/refusal: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "position_after_next_good",
+    ) {
+        assert!(sat, "post-next position should ground to Some(2)");
+    }
+}
+
+#[test]
+fn consumed_iterator_position_after_next_bad_twin_refutes() {
+    let src = r#"
+        #[test]
+        fn t_position_after_next_bad() {
+            let xs = [0_i32, 1, 2, 3, 4, 5];
+            let mut it = xs.iter().copied();
+            let _first = it.next();
+            assert_eq!(it.position(|x| x == 3), Some(3));
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/adapters/position_after_next_bad.rs",
+    );
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        dug_eq_opt_some_int_pair(single_warranted_decl(&out)),
+        (2, 3),
+        "bad twin must carry the real post-consumption position: {:?}",
+        single_warranted_decl(&out).inv
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "position_after_next_bad",
+    ) {
+        assert!(
+            !sat,
+            "wrong post-next position must be z3-UNSAT, not undecided/support"
+        );
+    }
+}
+
+#[test]
+fn consumed_filter_next_back_after_next_back_digs_remaining_tail() {
+    let src = r#"
+        #[test]
+        fn t_filter_next_back_after_next_back() {
+            let xs = [1_i32, 2, 3, 4, 5, 6];
+            let mut it = xs.iter().filter(|&x| *x & 1 == 0);
+            let _last = it.next_back();
+            assert_eq!(it.next_back().unwrap(), &4);
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/adapters/filter_next_back_after_next_back.rs",
+    );
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        dug_eq_unwrap_int_pair(single_warranted_decl(&out)),
+        (4, 4),
+        "next_back() must read the post-consumption filtered tail: {:?}",
+        single_warranted_decl(&out).inv
+    );
+    assert_eq!(
+        out.assertions_refused, 0,
+        "literal-source post-consumption next_back is exact temporal sugar: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "filter_next_back_after_next_back_good",
+    ) {
+        assert!(sat, "post-next_back filtered tail should ground to 4");
+    }
+}
+
+#[test]
+fn consumed_filter_next_back_after_next_back_bad_twin_refutes() {
+    let src = r#"
+        #[test]
+        fn t_filter_next_back_after_next_back_bad() {
+            let xs = [1_i32, 2, 3, 4, 5, 6];
+            let mut it = xs.iter().filter(|&x| *x & 1 == 0);
+            let _last = it.next_back();
+            assert_eq!(it.next_back().unwrap(), &6);
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/adapters/filter_next_back_after_next_back_bad.rs",
+    );
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        dug_eq_unwrap_int_pair(single_warranted_decl(&out)),
+        (4, 6),
+        "bad twin must carry the real post-consumption filtered tail: {:?}",
+        single_warranted_decl(&out).inv
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "filter_next_back_after_next_back_bad",
+    ) {
+        assert!(!sat, "wrong post-next_back filtered tail must be z3-UNSAT");
+    }
+}
+
+#[test]
+fn consumed_filter_next_back_exhausted_digs_none() {
+    let src = r#"
+        #[test]
+        fn t_filter_next_back_exhausted() {
+            let xs = [1_i32, 2, 3, 4, 5, 6];
+            let mut it = xs.iter().filter(|&x| *x & 1 == 0);
+            let _six = it.next_back();
+            let _four = it.next_back();
+            let _two = it.next();
+            assert_eq!(it.next_back(), None);
+        }
+    "#;
+    let out = lift_file(
+        &parse(src),
+        "coretests/iter/adapters/filter_next_back_exhausted.rs",
+    );
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        dug_eq_ctor_name_pairs(single_warranted_decl(&out)),
+        vec![("opt:none".to_string(), "opt:none".to_string())],
+        "exhausted post-consumption filtered iterator must ground to opt:none: {:?}",
+        single_warranted_decl(&out).inv
+    );
+    assert_eq!(
+        out.assertions_refused, 0,
+        "exhausted literal-source filtered iterator should ground to None, not refuse: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "filter_next_back_exhausted_good",
+    ) {
+        assert!(sat, "exhausted next_back should ground to None");
     }
 }
 

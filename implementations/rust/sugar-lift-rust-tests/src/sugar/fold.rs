@@ -398,7 +398,9 @@ pub(crate) fn decompose_fold(expr: &Expr, fcx: &SugarBuildCtx) -> Option<FoldSug
         other => FoldItemBinder::Whole(closure_single_param_ident(other)?),
     };
     const_int_acc_init(init_expr, fcx.let_inits())?;
-    if !method_family::resolves_literal_sequence(&call.receiver, fcx.let_inits()) {
+    if !method_family::resolves_literal_sequence(&call.receiver, fcx.let_inits())
+        && !receiver_has_temporal_rewrite(&call.receiver, fcx)
+    {
         return None;
     }
     // The closure body: block-bodied (asserts + acc-update tail). The tail is the
@@ -421,4 +423,11 @@ pub(crate) fn decompose_fold(expr: &Expr, fcx: &SugarBuildCtx) -> Option<FoldSug
         rev_fold,
         closure_body: (*closure.body).clone(),
     })
+}
+
+fn receiver_has_temporal_rewrite(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
+    let Some(name) = simple_path_name(expr) else {
+        return false;
+    };
+    fcx.scope().temporal_rewrite_expr_for(&name).is_some()
 }
