@@ -138,31 +138,21 @@ fn lift_bounded_forall(
             // forall (the unroll would be unrepresentable). (3) the index resolution
             // only fires over an IMMUTABLE literal array (the caller mut-gated
             // `literal_arrays`); an unknown / mutable array read stays the EUF floor.
-            // (4) the unroll engages ONLY when there is at least one resolvable literal
-            // array to index into (`!literal_arrays.is_empty()`): a plain `for x in
-            // 0..3 { g(x) }` with no literal-array read has NOTHING to dig, so it stays
-            // the guarded forall it always was (the unroll would merely reshape an
-            // already-discharged universal -- no new teeth, and it would change the
-            // lifted FOL form of existing-discharged loops; we leave those untouched so
-            // discharged/CID are conserved). The unroll is purely ADDITIVE: it only
-            // reaches a literal-domain loop whose body indexes an immutable literal
-            // array, the value-in-scope dig the guarded forall could not express.
-            let lit_bounds = if literal_arrays.is_empty() {
-                None
-            } else {
-                term_as_int(&start)
-                    .or_else(|| const_fold_int_term(&start))
-                    .zip(term_as_int(&end).or_else(|| const_fold_int_term(&end)))
-                    // `checked_add`: an inclusive end at i128::MAX would
-                    // overflow; bail (None) rather than wrap.
-                    .and_then(|(s, e)| {
-                        if inclusive {
-                            e.checked_add(1).map(|hi| (s, hi))
-                        } else {
-                            Some((s, e))
-                        }
-                    })
-            };
+            // Plain literal-range body assertions also reduce here: `forall_loop` owns
+            // the source shape, and the closed literal endpoints give the concrete
+            // iteration values to substitute into the body.
+            let lit_bounds = term_as_int(&start)
+                .or_else(|| const_fold_int_term(&start))
+                .zip(term_as_int(&end).or_else(|| const_fold_int_term(&end)))
+                // `checked_add`: an inclusive end at i128::MAX would overflow; bail
+                // (None) rather than wrap.
+                .and_then(|(s, e)| {
+                    if inclusive {
+                        e.checked_add(1).map(|hi| (s, hi))
+                    } else {
+                        Some((s, e))
+                    }
+                });
             match lit_bounds {
                 Some((lo, hi)) if hi > lo && (hi - lo) <= i128::from(SUGAR_SEQ_CAP) => {
                     // The cap gate bounds `hi - lo` to <= 4096, so `as usize`
@@ -170,6 +160,7 @@ fn lift_bounded_forall(
                     let mut instances = Vec::with_capacity((hi - lo) as usize);
                     for k in lo..hi {
                         let mut inst = subst_var_in_formula(&body_conj, var, &num(k));
+                        inst = fold_literal_int_terms_in_formula(&inst);
                         if !literal_arrays.is_empty() {
                             inst = resolve_index_in_formula(&inst, literal_arrays);
                         }
@@ -210,6 +201,7 @@ fn lift_bounded_forall(
                 .iter()
                 .map(|e| {
                     let mut inst = subst_var_in_formula(&body_conj, var, e);
+                    inst = fold_literal_int_terms_in_formula(&inst);
                     // Resolve a body `index(arr, <const>)` read whose index const-folds
                     // to a literal (e.g. the element `e` is itself a literal position).
                     // A non-resolvable read stays the EUF accessor (sound floor).
@@ -223,6 +215,57 @@ fn lift_bounded_forall(
         }
     };
     Some((quantified, n_body))
+}
+
+fn fold_literal_int_terms_in_formula(formula: &Rc<Formula>) -> Rc<Formula> {
+    match formula.as_ref() {
+        Formula::Atomic { name, args } => Rc::new(Formula::Atomic {
+            name: name.clone(),
+            args: args.iter().map(fold_literal_int_term).collect(),
+        }),
+        Formula::Connective { kind, operands } => Rc::new(Formula::Connective {
+            kind: kind.clone(),
+            operands: operands
+                .iter()
+                .map(fold_literal_int_terms_in_formula)
+                .collect(),
+        }),
+        Formula::Quantifier {
+            kind,
+            name,
+            sort,
+            body,
+        } => Rc::new(Formula::Quantifier {
+            kind: kind.clone(),
+            name: name.clone(),
+            sort: sort.clone(),
+            body: fold_literal_int_terms_in_formula(body),
+        }),
+        Formula::Choice {
+            var_name,
+            sort,
+            body,
+        } => Rc::new(Formula::Choice {
+            var_name: var_name.clone(),
+            sort: sort.clone(),
+            body: fold_literal_int_terms_in_formula(body),
+        }),
+    }
+}
+
+fn fold_literal_int_term(term: &Rc<Term>) -> Rc<Term> {
+    match term.as_ref() {
+        Term::Ctor { name, args } => const_fold_int_term(term).map_or_else(
+            || {
+                Rc::new(Term::Ctor {
+                    name: name.clone(),
+                    args: args.iter().map(fold_literal_int_term).collect(),
+                })
+            },
+            num,
+        ),
+        _ => term.clone(),
+    }
 }
 
 /// `ForEachSugar` / `ForAllSugar`: a bounded universal over a finite-construction

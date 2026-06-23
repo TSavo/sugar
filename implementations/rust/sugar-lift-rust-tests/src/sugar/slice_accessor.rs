@@ -5,7 +5,6 @@
 // `.is_empty()` are owned by their existing sugars; this node only covers the
 // direct accessor surfaces that otherwise fall through to opaque `method:*`.
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use quote::ToTokens;
@@ -33,14 +32,15 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         return None;
     };
     let kind = recognize_kind(call)?;
-    if !slice_receiver_shape(&call.receiver, fcx, 0) {
+    if !slice_receiver_shape(&call.receiver, fcx, 0)
+        && !mutable_path_slice_predicate_receiver_shape(kind, &call.receiver, fcx)
+    {
         return None;
     }
     Some(Box::new(SliceAccessorSugar {
         kind,
         receiver: call.receiver.as_ref().clone(),
         args: call.args.iter().cloned().collect(),
-        let_inits: capture_let_inits(fcx),
     }))
 }
 
@@ -58,7 +58,6 @@ struct SliceAccessorSugar {
     kind: AccessKind,
     receiver: Expr,
     args: Vec<Expr>,
-    let_inits: BTreeMap<String, Expr>,
 }
 
 impl Sugar for SliceAccessorSugar {
@@ -73,9 +72,12 @@ impl Sugar for SliceAccessorSugar {
 impl SliceAccessorSugar {
     fn eval(&self, ctx: &SugarCtx) -> Result<Rc<Term>, Effect> {
         let stable = stable_let_bindings(ctx.scope);
-        let let_inits = merge_let_inits(&stable, &self.let_inits);
+        let let_inits = stable
+            .iter()
+            .map(|(name, init)| (name.clone(), init))
+            .collect();
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        let seq = literal_sequence(&self.receiver, &fcx, ctx)?;
+        let seq = literal_sequence(&self.receiver, &fcx, ctx, Some(self.kind))?;
         match self.kind {
             AccessKind::First => option_at(seq.first()),
             AccessKind::Last => option_at(seq.last()),
@@ -128,6 +130,19 @@ fn recognize_kind(call: &ExprMethodCall) -> Option<AccessKind> {
         "ends_with" if call.args.len() == 1 => AccessKind::EndsWith,
         _ => return None,
     })
+}
+
+impl AccessKind {
+    fn method_name(self) -> &'static str {
+        match self {
+            AccessKind::First => "first",
+            AccessKind::Last => "last",
+            AccessKind::Get => "get",
+            AccessKind::Contains => "contains",
+            AccessKind::StartsWith => "starts_with",
+            AccessKind::EndsWith => "ends_with",
+        }
+    }
 }
 
 fn slice_receiver_shape(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
@@ -214,13 +229,27 @@ fn string_result_method(method: &str) -> bool {
     )
 }
 
+fn mutable_path_slice_predicate_receiver_shape(
+    kind: AccessKind,
+    expr: &Expr,
+    fcx: &SugarBuildCtx,
+) -> bool {
+    if !matches!(kind, AccessKind::StartsWith | AccessKind::EndsWith) {
+        return false;
+    }
+    simple_path_name(expr).is_some_and(|name| {
+        fcx.scope().is_mut_local(&name) && !fcx.scope().ambiguous_contains(&name)
+    })
+}
+
 fn literal_sequence(
     expr: &Expr,
     fcx: &SugarBuildCtx,
     ctx: &SugarCtx,
+    method: Option<AccessKind>,
 ) -> Result<Vec<DesugaredElem>, Effect> {
     let node = method_family::build_literal_sequence_composite(expr, fcx)
-        .ok_or_else(|| runtime_source_effect(expr, fcx))?;
+        .ok_or_else(|| runtime_source_effect(expr, fcx, method))?;
     match node.desugar(ctx) {
         Outcome::Dug(d) => d.into_seq().ok_or_else(structural_effect),
         Outcome::Hit(effect) => Err(effect),
@@ -232,7 +261,7 @@ fn literal_int_sequence_arg(
     fcx: &SugarBuildCtx,
     ctx: &SugarCtx,
 ) -> Result<Vec<i128>, Effect> {
-    int_values(&literal_sequence(strip_refs_groups(expr), fcx, ctx)?)
+    int_values(&literal_sequence(strip_refs_groups(expr), fcx, ctx, None)?)
 }
 
 fn term_for(expr: &Expr, fcx: &SugarBuildCtx, ctx: &SugarCtx) -> Result<Rc<Term>, Effect> {
@@ -266,11 +295,25 @@ fn structural_effect() -> Effect {
     }
 }
 
-fn runtime_source_effect(expr: &Expr, fcx: &SugarBuildCtx) -> Effect {
+fn runtime_source_effect(expr: &Expr, fcx: &SugarBuildCtx, method: Option<AccessKind>) -> Effect {
     if let Some(name) = range_bounds_receiver_name(expr, fcx) {
         return Effect::Unsupported {
             reason: format!("RangeBounds over runtime value {name}"),
         };
+    }
+    if let Some(name) = simple_path_name(expr) {
+        if fcx.scope().is_mut_local(&name) {
+            let method = method
+                .map(AccessKind::method_name)
+                .unwrap_or("slice accessor");
+            return Effect::Unsupported {
+                reason: format!(
+                    "{method} predicate over a MUTABLE-local receiver `{name}` \
+                     (bin-2: a slice/string mutated by side-effecting iteration, not \
+                     constructed from source literals); refused"
+                ),
+            };
+        }
     }
     let reason = if chunk_window_source_shape(expr, fcx, 0) {
         format!(
@@ -373,20 +416,9 @@ fn is_bound_ctor_expr(expr: &Expr) -> bool {
     }
 }
 
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
-}
-
-fn merge_let_inits<'a>(
-    stable: &'a BTreeMap<String, Expr>,
-    captured: &'a BTreeMap<String, Expr>,
-) -> BTreeMap<String, &'a Expr> {
-    stable
-        .iter()
-        .map(|(name, init)| (name.clone(), init))
-        .chain(captured.iter().map(|(name, init)| (name.clone(), init)))
-        .collect()
+fn simple_path_name(expr: &Expr) -> Option<String> {
+    match strip_refs_groups(expr) {
+        Expr::Path(path) if path.qself.is_none() => path.path.get_ident().map(ToString::to_string),
+        _ => None,
+    }
 }
