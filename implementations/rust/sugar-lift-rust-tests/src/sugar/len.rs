@@ -52,15 +52,6 @@ fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
 
 impl Sugar for LenSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        if let Some(name) = simple_path_name(&self.receiver) {
-            if ctx.scope.is_consumed_iterator_local(&name) {
-                return reasoned_hit(format!(
-                    "consumed-iterator local `{name}` -- \
-                     `.len()` returns stale pre-consumption length (temporal instability)"
-                ))
-                .desugar(ctx);
-            }
-        }
         let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
         let let_inits: BTreeMap<String, &Expr> = stable
             .iter()
@@ -72,6 +63,29 @@ impl Sugar for LenSugar {
             )
             .collect();
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        if let Some(name) = simple_path_name(&self.receiver) {
+            if ctx.scope.is_consumed_iterator_local(&name) {
+                if method_family::literal_sequence_static_len_in_scope(
+                    &self.receiver,
+                    &let_inits,
+                    ctx.scope,
+                ) == Some(0)
+                {
+                    debug!(
+                        target: "sugar_lift_rust_tests::sugar::len",
+                        len = 0usize,
+                        binding = name.as_str(),
+                        "reducing exhausted consumed-iterator len through temporal rewrite"
+                    );
+                    return Outcome::Dug(Desugared::Term(num(0)));
+                }
+                return reasoned_hit(format!(
+                    "consumed-iterator local `{name}` -- \
+                     `.len()` returns stale pre-consumption length (temporal instability)"
+                ))
+                .desugar(ctx);
+            }
+        }
         if method_family::literal_sequence_static_len_in_scope(
             &self.receiver,
             &let_inits,

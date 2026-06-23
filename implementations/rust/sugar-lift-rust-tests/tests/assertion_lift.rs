@@ -28569,17 +28569,17 @@ fn in_loop_counter_not_over_refused() {
 // ── consumed-iterator size-accessor refusal (temporal instability gate) ──────────────
 //
 // A mut-iterator local advanced via `.next()` / `while let Some(_) = it.next()` has a
-// stale internal position in the syntactic tracker. A subsequent `.len()` / `.count()`
-// call returns the PRE-consumption static length -- stale, refuting true post-consumption
-// assertions (the inverse cardinal sin). The refusal gate must:
-//   (a) REFUSE `it.len()` after `it` is consumed (no false-refutation).
+// temporal position that must be read from the SSA-current iterator state, never from the
+// original source. The consumed-iterator gate must:
+//   (a) REWRITE fully-drained iterators to their exhausted state, so `it.len()` warrants 0.
 //   (b) NOT refuse `it.next()` itself -- the consuming call must still warrant.
 //   (c) NOT refuse `it.len()` when `it` is NOT consumed (non-consumed `.len()` OK).
+//   (d) REFUSE partial/unknown drains that do not prove exhaustion.
 
-/// (a) `it.len()` called after `while let Some(_) = it.next()` must be REFUSED --
-/// the static length is pre-consumption and would produce a false refutation.
+/// (a) `it.len()` after a statically full drain rewrites through the temporal ledger to
+/// the exhausted iterator state. Wrong literal twin must refute; partial drains still refuse.
 #[test]
-fn consumed_iterator_len_post_while_next_refuses() {
+fn consumed_iterator_len_after_full_drain_rewrites_to_zero_with_twins() {
     let src = r#"
         #[test]
         fn t_consumed_len() {
@@ -28590,12 +28590,83 @@ fn consumed_iterator_len_post_while_next_refuses() {
         }
     "#;
     let out = lift_file(&parse(src), "coretests/iter/consumed_len_post_loop.rs");
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        out.assertions_refused, 0,
+        "fully-drained `.len()` must warrant 0, not refuse: skips={:?}",
+        out.skip_reasons,
+    );
+    assert_eq!(dug_eq_int_pairs(single_warranted_decl(&out)), vec![(0, 0)]);
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "drained_len_good") {
+        assert!(sat, "fully drained iterator len == 0 should be SAT");
+    }
+
+    let src = r#"
+        #[test]
+        fn t_consumed_len_bad() {
+            let xs = [1, 2, 3];
+            let mut it = xs.iter().take(3);
+            while let Some(_x) = it.next() {}
+            assert_eq!(it.len(), 1);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/consumed_len_post_loop_bad.rs");
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(dug_eq_int_pairs(single_warranted_decl(&out)), vec![(0, 1)]);
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "drained_len_bad") {
+        assert!(!sat, "wrong exhausted iterator len must be z3-UNSAT");
+    }
+
+    let src = r#"
+        #[test]
+        fn t_consumed_len_by_ref_count() {
+            let xs = [1, 2, 3];
+            let mut it = xs.iter();
+            let _ = it.by_ref().count();
+            assert_eq!(it.len(), 0);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/consumed_len_by_ref_count.rs");
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        dug_eq_int_pairs(single_warranted_decl(&out)),
+        vec![(0, 0)],
+        "by_ref().count() exhausts the SSA-current iterator"
+    );
+
+    let src = r#"
+        #[test]
+        fn t_consumed_len_for_by_ref() {
+            let xs = [1, 2, 3];
+            let mut it = xs.iter().skip(1);
+            for _ in it.by_ref() {}
+            assert_eq!(it.len(), 0);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/consumed_len_for_by_ref.rs");
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        dug_eq_int_pairs(single_warranted_decl(&out)),
+        vec![(0, 0)],
+        "for-loop over by_ref() exhausts the SSA-current iterator"
+    );
+
+    let src = r#"
+        #[test]
+        fn t_partial_consumed_len_refuses() {
+            let xs = [1, 2, 3];
+            let mut it = xs.iter();
+            let _ = it.by_ref().take(1).count();
+            assert_eq!(it.len(), 2);
+        }
+    "#;
+    let out = lift_file(&parse(src), "coretests/iter/partial_consumed_len.rs");
     assert!(
         out.skip_reasons
             .iter()
             .any(|r| r.contains("consumed-iterator")),
-        "`.len()` on a consumed-iterator local must REFUSE with 'consumed-iterator' reason; \
-         got skip_reasons={:?} lifted={} refused={}",
+        "partial borrowed drain must remain refused, not fake-warranted: \
+         skips={:?} lifted={} refused={}",
         out.skip_reasons,
         out.assertions_lifted,
         out.assertions_refused,
