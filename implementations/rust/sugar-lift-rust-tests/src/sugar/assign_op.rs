@@ -58,10 +58,27 @@ impl Sugar for AssignOpSugar {
 pub(crate) struct TemporalRewriteState {
     values: BTreeMap<String, Expr>,
     aliases: BTreeMap<String, RewritePlace>,
+    cell_values: BTreeMap<String, CellState>,
     unknown_consumed_iterators: BTreeMap<String, String>,
     unknown_mutations: BTreeMap<String, String>,
     rewritten_bases: BTreeSet<String>,
     loop_replayed: BTreeSet<String>,
+}
+
+pub(crate) const CELL_RUNTIME_ALIASED_REASON: &str =
+    "cell value runtime/aliased, not literal-pinned";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CellKind {
+    Cell,
+    RefCell,
+}
+
+#[derive(Clone, Debug)]
+struct CellState {
+    kind: CellKind,
+    value: Option<Expr>,
+    reason: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -182,6 +199,30 @@ impl TemporalRewriteState {
         self.unknown_mutations.get(name).cloned()
     }
 
+    pub(crate) fn cell_kind(&self, name: &str) -> Option<CellKind> {
+        self.cell_values.get(name).map(|state| state.kind)
+    }
+
+    pub(crate) fn cell_value_expr(
+        &self,
+        name: &str,
+        kind: CellKind,
+    ) -> Result<Option<Expr>, String> {
+        let Some(state) = self.cell_values.get(name) else {
+            return Ok(None);
+        };
+        if state.kind != kind {
+            return Ok(None);
+        }
+        match &state.value {
+            Some(value) => Ok(Some(value.clone())),
+            None => Err(state
+                .reason
+                .clone()
+                .unwrap_or_else(|| CELL_RUNTIME_ALIASED_REASON.to_string())),
+        }
+    }
+
     pub(crate) fn exact_loop_replayed(&self, name: &str) -> bool {
         self.loop_replayed.contains(name) && self.expr_for(name).is_some()
     }
@@ -245,7 +286,10 @@ impl TemporalRewriteState {
 
     fn apply_with_trace(&mut self, expr: &Expr, emit_trace: bool) -> bool {
         match strip_refs_groups(expr) {
-            Expr::Assign(assign) => self.apply_assign(&assign.left, &assign.right, emit_trace),
+            Expr::Assign(assign) => {
+                self.apply_refcell_borrow_mut_assign(&assign.left, &assign.right, emit_trace)
+                    || self.apply_assign(&assign.left, &assign.right, emit_trace)
+            }
             Expr::Binary(binary) if assignment_op(&binary.op).is_some() => {
                 self.apply_compound_assign(binary, emit_trace)
             }
@@ -271,12 +315,14 @@ impl TemporalRewriteState {
                 for arg in &call.args {
                     applied |= self.apply_consumption_expr(arg);
                 }
-                if mutable_view_method(&call.method.to_string()) {
+                let handled_cell_set = self.apply_cell_set(call);
+                applied |= handled_cell_set;
+                if !handled_cell_set && mutable_view_method(&call.method.to_string()) {
                     if let Some(name) = simple_path_name(&call.receiver) {
                         applied |= self.invalidate_mutable_view(&name, &call.method.to_string());
                     }
                 }
-                if mutating_receiver_method(&call.method.to_string()) {
+                if !handled_cell_set && mutating_receiver_method(&call.method.to_string()) {
                     if let Some(name) = simple_path_name(&call.receiver) {
                         applied |=
                             self.invalidate_mutating_receiver(&name, &call.method.to_string());
@@ -335,8 +381,9 @@ impl TemporalRewriteState {
                     | self.apply_consumption_expr(&binary.right)
             }
             Expr::Assign(assign) => {
-                self.apply_consumption_expr(&assign.left)
-                    | self.apply_consumption_expr(&assign.right)
+                self.apply_refcell_borrow_mut_assign(&assign.left, &assign.right, false)
+                    || (self.apply_consumption_expr(&assign.left)
+                        | self.apply_consumption_expr(&assign.right))
             }
             Expr::Block(block) => self.apply_consumption_stmts(&block.block.stmts),
             Expr::Unsafe(block) => self.apply_consumption_stmts(&block.block.stmts),
@@ -473,19 +520,18 @@ impl TemporalRewriteState {
         reason: &str,
     ) -> bool {
         for name in names {
+            let reason = format!(
+                "temporally unstable post-loop read of `{name}` after {reason}: \
+                 the loop was not exactly replayable from source literals, so there \
+                 is no single timeless value to read at the assertion; refused"
+            );
             self.values.remove(name);
             self.aliases.remove(name);
             self.unknown_consumed_iterators.remove(name);
             self.rewritten_bases.remove(name);
             self.loop_replayed.remove(name);
-            self.unknown_mutations.insert(
-                name.clone(),
-                format!(
-                    "temporally unstable post-loop read of `{name}` after {reason}: \
-                     the loop was not exactly replayable from source literals, so there \
-                     is no single timeless value to read at the assertion; refused"
-                ),
-            );
+            self.poison_cell(name, reason.clone());
+            self.unknown_mutations.insert(name.clone(), reason);
         }
         !names.is_empty()
     }
@@ -537,19 +583,18 @@ impl TemporalRewriteState {
     }
 
     fn invalidate_opaque_mut_borrow_call(&mut self, name: &str, site: &str) -> bool {
+        let reason = format!(
+            "ambiguous temporal identity for `{name}` after opaque mutable borrow call \
+             `{site}`: the call may write through `&mut`, so there is no single \
+             timeless value to read at the assertion; refused"
+        );
         self.values.remove(name);
         self.aliases.remove(name);
         self.unknown_consumed_iterators.remove(name);
         self.rewritten_bases.remove(name);
         self.loop_replayed.remove(name);
-        self.unknown_mutations.insert(
-            name.to_string(),
-            format!(
-                "ambiguous temporal identity for `{name}` after opaque mutable borrow call \
-                 `{site}`: the call may write through `&mut`, so there is no single \
-                 timeless value to read at the assertion; refused"
-            ),
-        );
+        self.poison_cell(name, reason.clone());
+        self.unknown_mutations.insert(name.to_string(), reason);
         debug!(
             target: "sugar_lift_rust_tests::temporal_rewrite",
             binding = name,
@@ -560,20 +605,19 @@ impl TemporalRewriteState {
     }
 
     fn invalidate_mutable_view(&mut self, name: &str, method: &str) -> bool {
+        let reason = format!(
+            "temporally unstable mutable view read of `{name}` after `.{method}()`: \
+             the method exposes mutable state whose writes are not replayed by the \
+             literal temporal rewrite, so there is no single timeless value to read \
+             at the assertion; refused"
+        );
         self.values.remove(name);
         self.aliases.remove(name);
         self.unknown_consumed_iterators.remove(name);
         self.rewritten_bases.remove(name);
         self.loop_replayed.remove(name);
-        self.unknown_mutations.insert(
-            name.to_string(),
-            format!(
-                "temporally unstable mutable view read of `{name}` after `.{method}()`: \
-                 the method exposes mutable state whose writes are not replayed by the \
-                 literal temporal rewrite, so there is no single timeless value to read \
-                 at the assertion; refused"
-            ),
-        );
+        self.poison_cell(name, reason.clone());
+        self.unknown_mutations.insert(name.to_string(), reason);
         debug!(
             target: "sugar_lift_rust_tests::temporal_rewrite",
             binding = name,
@@ -584,19 +628,18 @@ impl TemporalRewriteState {
     }
 
     fn invalidate_mutating_receiver(&mut self, name: &str, method: &str) -> bool {
+        let reason = format!(
+            "temporally unstable mutating method read of `{name}` after `.{method}()`: \
+             the method may write receiver state outside the literal temporal rewrite, \
+             so there is no single timeless value to read at the assertion; refused"
+        );
         self.values.remove(name);
         self.aliases.remove(name);
         self.unknown_consumed_iterators.remove(name);
         self.rewritten_bases.remove(name);
         self.loop_replayed.remove(name);
-        self.unknown_mutations.insert(
-            name.to_string(),
-            format!(
-                "temporally unstable mutating method read of `{name}` after `.{method}()`: \
-                 the method may write receiver state outside the literal temporal rewrite, \
-                 so there is no single timeless value to read at the assertion; refused"
-            ),
-        );
+        self.poison_cell(name, reason.clone());
+        self.unknown_mutations.insert(name.to_string(), reason);
         debug!(
             target: "sugar_lift_rust_tests::temporal_rewrite",
             binding = name,
@@ -641,8 +684,38 @@ impl TemporalRewriteState {
             self.aliases.insert(name, RewritePlace::Scalar(base));
             return;
         }
+        if let Some(base) =
+            cell_reference_target(&init.expr).filter(|base| self.cell_values.contains_key(base))
+        {
+            self.invalidate_cell(&base);
+            self.cell_values.remove(&name);
+            return;
+        }
 
         self.aliases.remove(&name);
+        if let Some((kind, value)) = self.cell_constructor_value(&init.expr) {
+            let value_label = value
+                .as_ref()
+                .map(token_key)
+                .unwrap_or_else(|| "<runtime>".to_string());
+            debug!(
+                target: "sugar_lift_rust_tests::temporal_rewrite",
+                binding = name.as_str(),
+                kind = ?kind,
+                value = value_label.as_str(),
+                "temporal rewrite captured interior-mutable literal cell"
+            );
+            self.cell_values.insert(
+                name,
+                CellState {
+                    kind,
+                    value,
+                    reason: None,
+                },
+            );
+            return;
+        }
+        self.cell_values.remove(&name);
         if let Some(value) = self.trackable_value(&init.expr) {
             // Shadow guard: a shadowed `let x = x + expr` causes trackable_value to
             // return the raw expression still containing `x`. Storing it as-is makes
@@ -681,6 +754,86 @@ impl TemporalRewriteState {
             );
             self.values.remove(&name);
         }
+    }
+
+    fn cell_constructor_value(&self, expr: &Expr) -> Option<(CellKind, Option<Expr>)> {
+        let (kind, value) = cell_constructor_arg(expr)?;
+        Some((kind, self.trackable_value(value)))
+    }
+
+    fn apply_cell_set(&mut self, call: &syn::ExprMethodCall) -> bool {
+        if call.method != "set" || call.args.len() != 1 {
+            return false;
+        }
+        let Some(name) = simple_path_name(&call.receiver) else {
+            return false;
+        };
+        if self.cell_kind(&name) != Some(CellKind::Cell) {
+            return false;
+        }
+        let Some(arg) = call.args.first() else {
+            return false;
+        };
+        let value = self.trackable_value(arg);
+        self.set_cell_value(&name, CellKind::Cell, value)
+    }
+
+    fn apply_refcell_borrow_mut_assign(
+        &mut self,
+        lhs: &Expr,
+        rhs: &Expr,
+        emit_trace: bool,
+    ) -> bool {
+        let Some(name) = refcell_borrow_mut_assignment_target(lhs) else {
+            return false;
+        };
+        if self.cell_kind(&name) != Some(CellKind::RefCell) {
+            return false;
+        }
+        let value = self.trackable_value(rhs);
+        let applied = self.set_cell_value(&name, CellKind::RefCell, value);
+        if applied && emit_trace {
+            debug!(
+                target: "sugar_lift_rust_tests::temporal_rewrite",
+                binding = name.as_str(),
+                rhs = %token_key(rhs),
+                "temporal rewrite applied RefCell borrow_mut assignment"
+            );
+        }
+        applied
+    }
+
+    fn set_cell_value(&mut self, name: &str, kind: CellKind, value: Option<Expr>) -> bool {
+        let Some(state) = self.cell_values.get_mut(name) else {
+            return false;
+        };
+        if state.kind != kind {
+            return false;
+        }
+        match value {
+            Some(value) => {
+                state.value = Some(value);
+                state.reason = None;
+            }
+            None => {
+                state.value = None;
+                state.reason = Some(CELL_RUNTIME_ALIASED_REASON.to_string());
+            }
+        }
+        true
+    }
+
+    fn invalidate_cell(&mut self, name: &str) -> bool {
+        self.poison_cell(name, CELL_RUNTIME_ALIASED_REASON.to_string())
+    }
+
+    fn poison_cell(&mut self, name: &str, reason: String) -> bool {
+        let Some(state) = self.cell_values.get_mut(name) else {
+            return false;
+        };
+        state.value = None;
+        state.reason = Some(reason);
+        true
     }
 
     fn record_get_disjoint_mut_aliases(&mut self, pat: &Pat, init: &Expr) -> bool {
@@ -1646,6 +1799,53 @@ fn mut_reference_target(expr: &Expr) -> Option<String> {
     }
 }
 
+fn cell_reference_target(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Reference(reference) => simple_path_name(&reference.expr),
+        Expr::Paren(paren) => cell_reference_target(&paren.expr),
+        Expr::Group(group) => cell_reference_target(&group.expr),
+        _ => None,
+    }
+}
+
+fn cell_constructor_arg(expr: &Expr) -> Option<(CellKind, &Expr)> {
+    let Expr::Call(call) = strip_refs_groups(expr) else {
+        return None;
+    };
+    if call.args.len() != 1 {
+        return None;
+    }
+    let Expr::Path(path) = strip_refs_groups(&call.func) else {
+        return None;
+    };
+    let mut segments = path.path.segments.iter().rev();
+    let method = segments.next()?.ident.to_string();
+    if method != "new" {
+        return None;
+    }
+    let ty = segments.next()?.ident.to_string();
+    let kind = match ty.as_str() {
+        "Cell" => CellKind::Cell,
+        "RefCell" => CellKind::RefCell,
+        _ => return None,
+    };
+    Some((kind, call.args.first()?))
+}
+
+fn refcell_borrow_mut_assignment_target(lhs: &Expr) -> Option<String> {
+    let Expr::Unary(unary) = strip_refs_groups(lhs) else {
+        return None;
+    };
+    if !matches!(unary.op, UnOp::Deref(_)) {
+        return None;
+    }
+    let Expr::MethodCall(call) = strip_refs_groups(&unary.expr) else {
+        return None;
+    };
+    (call.method == "borrow_mut" && call.args.is_empty()).then(|| ())?;
+    simple_path_name(&call.receiver)
+}
+
 fn simple_pat_binding(pat: &Pat) -> Option<String> {
     match pat {
         Pat::Ident(ident) if ident.by_ref.is_none() && ident.subpat.is_none() => {
@@ -1720,8 +1920,12 @@ fn expr_references_name(expr: &Expr, name: &str) -> bool {
         Expr::Group(g) => expr_references_name(&g.expr, name),
         Expr::Reference(r) => expr_references_name(&r.expr, name),
         Expr::Range(r) => {
-            r.start.as_ref().is_some_and(|s| expr_references_name(s, name))
-                || r.end.as_ref().is_some_and(|e| expr_references_name(e, name))
+            r.start
+                .as_ref()
+                .is_some_and(|s| expr_references_name(s, name))
+                || r.end
+                    .as_ref()
+                    .is_some_and(|e| expr_references_name(e, name))
         }
         _ => false,
     }

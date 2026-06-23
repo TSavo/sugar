@@ -45,6 +45,7 @@ pub mod sugar {
     pub mod callsite;
     pub mod cast_term;
     pub mod catalog;
+    pub mod cell_refcell;
     pub mod cfg_select;
     pub mod chain;
     pub mod char_method;
@@ -547,6 +548,7 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
     let terminal = reason.contains("bin-2")
         || reason.contains("number too large")
         || reason.contains("ambiguous temporal identity")
+        || reason.contains("cell value runtime/aliased, not literal-pinned")
         || reason.contains("temporally unstable")
         || reason.contains("atomic read-modify-write runtime state")
         || reason.contains("atomic load/store ordering")
@@ -4360,6 +4362,18 @@ impl TemporalScope {
 
     pub(crate) fn unknown_mutation_reason(&self, name: &str) -> Option<String> {
         self.temporal_rewrite.borrow().unknown_mutation_reason(name)
+    }
+
+    pub(crate) fn temporal_cell_kind(&self, name: &str) -> Option<sugar::assign_op::CellKind> {
+        self.temporal_rewrite.borrow().cell_kind(name)
+    }
+
+    pub(crate) fn temporal_cell_value_expr(
+        &self,
+        name: &str,
+        kind: sugar::assign_op::CellKind,
+    ) -> Result<Option<Expr>, String> {
+        self.temporal_rewrite.borrow().cell_value_expr(name, kind)
     }
 
     fn exact_loop_replayed(&self, name: &str) -> bool {
@@ -23642,6 +23656,7 @@ mod lifter_key_tests {
             "assert_eq!: array-repeat `[_; N]` has a non-literal length -- not a finite construction from the literal; refused by name: `[0u8 ; SIZE]`",
             "named refusal (atomic read-modify-write runtime state): vendor pin not liftable: temporally unstable mutating method read of `x` after `.fetch_or()`",
             "named refusal (atomic load/store ordering): vendor pin not liftable: atomic load reads interior-mutable runtime state",
+            "named refusal (cell value runtime/aliased, not literal-pinned): vendor pin not liftable: cell value runtime/aliased, not literal-pinned",
             "named refusal (iterator size_hint runtime bound): vendor pin not liftable: assertion surface `it.size_hint()` did not reach bedrock",
         ] {
             assert_eq!(refusal_disposition(r), Refused, "should be terminal: {r}");

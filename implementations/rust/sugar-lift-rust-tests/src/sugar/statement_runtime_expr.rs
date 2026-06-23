@@ -20,13 +20,19 @@ pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim =
 
 pub(crate) fn recognize_statement_effect(
     expr: &Expr,
-    _fcx: &SugarBuildCtx,
+    fcx: &SugarBuildCtx,
 ) -> Option<Box<dyn Sugar>> {
+    if fcx.scope().temporal_rewrite_can_apply(expr) {
+        return None;
+    }
     statement_position::has_runtime_expr(expr)
         .then(|| Box::new(StatementRuntimeExprSugar { expr: expr.clone() }) as Box<dyn Sugar>)
 }
 
-pub(crate) fn recognize_constraint(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+pub(crate) fn recognize_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    if fcx.scope().temporal_rewrite_can_apply(expr) {
+        return None;
+    }
     statement_position::is_runtime_mutation_statement(expr)
         .then(|| Box::new(StatementRuntimeExprSugar { expr: expr.clone() }) as Box<dyn Sugar>)
 }

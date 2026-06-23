@@ -1268,6 +1268,7 @@ fn clean_named_refusal_category(
 ) -> Option<&'static str> {
     let attended_review = reason.contains("ambiguous temporal identity")
         || reason.contains("unknown iterator consumption")
+        || reason.contains("cell value runtime/aliased, not literal-pinned")
         || reason.contains("temporally unstable")
         || reason.contains("mutable container is not temporally stable")
         || reason.contains("assertion under for context")
@@ -1292,6 +1293,9 @@ fn clean_named_refusal_category(
     }
     if reason.contains("destructured source runtime, not literal") {
         return Some("destructured source runtime, not literal");
+    }
+    if cell_runtime_aliased_reason(reason) {
+        return Some("cell value runtime/aliased, not literal-pinned");
     }
     if array_repeat_non_literal_length_reason(reason) {
         return Some("array repeat non-literal length");
@@ -1447,6 +1451,10 @@ fn mutating_method_temporal_reason(reason: &str) -> bool {
         && [".set()", ".replace()", ".swap()"]
             .iter()
             .any(|method| reason.contains(method))
+}
+
+fn cell_runtime_aliased_reason(reason: &str) -> bool {
+    reason.contains("cell value runtime/aliased, not literal-pinned")
 }
 
 fn mutable_view_temporal_reason(reason: &str) -> bool {
@@ -3464,7 +3472,7 @@ use std::cell::Cell;
 #[test]
 fn mutating_method_temporal_refused() {
     let cell = Cell::new(10);
-    cell.set(20);
+    cell.replace(20);
     assert_eq!(cell.get(), 20);
 }
 
