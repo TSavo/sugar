@@ -826,17 +826,18 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // (`parse::<u8>()`) carries the type in the call syntax and remains eligible for normal
         // opaque lifting; only the type-inferred call is refused.
         || reason.contains("type-inferred runtime parser result")
-        // TERMINAL: an array-repeat `[elem; N]` whose length `N` is NOT a plain literal -- a
-        // const-generic param or const expr (`[0u8; SIZE]`, `[(); SIZE - 1]`). The universe
-        // size is symbolic, so there is no finite construction from the written literal to
-        // materialize -- no aggregate term can be pinned. A SOURCE property (not a finite
-        // construction from source literals), not a lifter gap. EARNED by the `None` arm of
-        // `repeat_count_literal` (`ArrayRepeatNonLiteralEffect`); a LITERAL length lifts the
-        // unrolled array and never reaches here (the fake-refuse guardrail). (THE DRAIN: the
-        // `mem.rs`/`slice.rs` non-literal-repeat rows fell to unclassified only because the
-        // "refused by name" reason was not whitelisted; not a fake-zero -- the non-literal
-        // length is detected by `repeat_count_literal`.)
+        // TERMINAL: an array-repeat `[elem; N]` whose length cannot be expanded into an
+        // in-cap finite literal sequence. Two earned refusal leaves share this class:
+        //   (1) `N` is not a plain/source-resolved literal length (`[0u8; SIZE]`,
+        //       `[(); SIZE - 1]`), so the universe size is symbolic; and
+        //   (2) `N` is text-determined but larger than `SUGAR_SEQ_CAP` (`[(); usize::MAX]`),
+        //       so the domain is finite only in theory and cannot be materialized into teeth.
+        // A small literal length still expands before this terminal path, so the finite twin
+        // warrants and wrong expected values refute.
         || reason.contains("has a non-literal length -- not a finite")
+        || (reason.contains("array-repeat length")
+            && reason.contains("exceeds the")
+            && reason.contains("expansion bound"))
         // TERMINAL (RESOLVE-THEN-CLASSIFY -- the test-nested-helper drain): a helper whose
         // source is now SHOWN (lexically resolved from an enclosing `#[test]` fn scope,
         // formerly the unresolved "has no visible source" / "reachable only via call-site
@@ -25439,6 +25440,7 @@ mod lifter_key_tests {
             "assert!: only scalar equality is liftable; operand is a runtime non-scalar result `match b . binary_search (& 3) { Ok (1 ..= 3) => true , _ => false , }` (a `match` over a runtime call result, not constructible from source literals); refused",
             "assert_eq!: unsupported term `input . parse ()`: type-inferred runtime parser result (parse result type is supplied by assertion context, not by the call syntax; no single constructible timeless value); refused",
             "assert_eq!: array-repeat `[_; N]` has a non-literal length -- not a finite construction from the literal; refused by name: `[0u8 ; SIZE]`",
+            "array-repeat length 18446744073709551615 exceeds the 4096-element expansion bound; refused by name: `[() ; usize :: MAX]`",
             "named refusal (atomic read-modify-write runtime state): vendor pin not liftable: temporally unstable mutating method read of `x` after `.fetch_or()`",
             "named refusal (atomic load/store ordering): vendor pin not liftable: atomic load reads interior-mutable runtime state",
             "named refusal (cell value runtime/aliased, not literal-pinned): vendor pin not liftable: cell value runtime/aliased, not literal-pinned",
