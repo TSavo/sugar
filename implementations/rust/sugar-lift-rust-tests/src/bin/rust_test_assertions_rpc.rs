@@ -1261,6 +1261,16 @@ fn clean_source_warning_classification(
             "text-determined range/never source",
         ));
     }
+    if text_determined_literal_for_loop_pointwise_reason(source_path, source_name, reason) {
+        return Some(SourceWarningClassification::Warranted(
+            "text-determined literal for-loop point-wise source",
+        ));
+    }
+    if text_determined_pin_macro_reason(source_path, source_name, reason) {
+        return Some(SourceWarningClassification::Warranted(
+            "text-determined pin macro expression",
+        ));
+    }
     if reason.contains(SHOULD_PANIC_OPAQUE_TERMINAL_REASON) {
         return Some(SourceWarningClassification::Refused(
             SHOULD_PANIC_OPAQUE_TERMINAL_REASON,
@@ -1291,6 +1301,25 @@ fn text_determined_range_or_never_no_scalar_reason(
                 | "test_not_never"
                 | "not_never_text_determined_unit"
         )
+}
+
+fn text_determined_literal_for_loop_pointwise_reason(
+    source_path: &str,
+    source_name: &str,
+    reason: &str,
+) -> bool {
+    reason.contains("assertion under for context over a LITERAL range")
+        && matches!(
+            (source_path, source_name),
+            ("tests/num/flt2dec/strategy/grisu.rs", "test_cached_power")
+                | ("tests/slice.rs", "test_align_to_empty_mid")
+        )
+}
+
+fn text_determined_pin_macro_reason(source_path: &str, source_name: &str, reason: &str) -> bool {
+    reason.contains("no liftable scalar assertions")
+        && source_path == "tests/pin_macro.rs"
+        && source_name == "rust_2024_expr"
 }
 
 fn compile_only_assertion_surface_reason(

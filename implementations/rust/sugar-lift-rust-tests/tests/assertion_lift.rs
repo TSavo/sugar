@@ -10993,8 +10993,9 @@ fn refusal_reasons(out: &sugar_lift_rust_tests::AdapterOutput) -> Vec<String> {
 fn assert_in_for_loop_is_named_refusal_not_silent() {
     // A loop the lifter cannot read as a clean universal (here a runtime
     // collection, no concrete range to transcribe as a guard) is refused with a
-    // "for context" reason, not silently dropped. (A concrete bounded loop with
-    // a pure body lifts as a forall instead; see bounded_for_loop_lifts_as_forall.)
+    // "for context" reason, not silently dropped. A concrete bounded loop with
+    // a pure body now replays as finite point-wise obligations; see
+    // bounded_for_loop_lifts_as_finite_replay.
     let src = r#"
 #[test]
 fn loop_test() {
@@ -13073,7 +13074,7 @@ fn t() {
     assert_eq!(out.assertions_lifted, 0, "closure assert must not lift");
 }
 
-// --- bounded loop -> universal quantifier (L5) ---
+// --- bounded loop -> finite point-wise replay (L5) ---
 
 fn inv_formula(decl: &sugar_ir_symbolic::ContractDecl) -> std::rc::Rc<Formula> {
     decl.inv.clone().expect("decl has inv")
@@ -13088,8 +13089,9 @@ fn contains_forall(f: &Formula) -> bool {
 }
 
 #[test]
-fn bounded_for_loop_lifts_as_forall() {
-    // for x in 0..3 { assert_eq!(g(x), 1) } reads as forall x. (0<=x<3 => g(x)==1).
+fn bounded_for_loop_lifts_as_finite_replay() {
+    // for x in 0..3 { assert_eq!(g(x), 1) } is the imperative twin of a finite fold:
+    // replay each literal-domain iteration as a point-wise obligation.
     let src = r#"
 #[test]
 fn t() {
@@ -13106,8 +13108,13 @@ fn t() {
     );
     assert_eq!(out.decls.len(), 1);
     assert!(
-        contains_forall(&inv_formula(&out.decls[0])),
-        "lifted loop must contain a forall quantifier"
+        !contains_forall(&inv_formula(&out.decls[0])),
+        "literal-domain loop must replay as finite point-wise obligations"
+    );
+    let dump = format!("{:?}", out.decls[0].inv);
+    assert!(
+        dump.contains("call:g") && dump.contains("Int(0)") && dump.contains("Int(2)"),
+        "finite replay must retain each concrete callsite argument: {dump}"
     );
 }
 
@@ -23213,6 +23220,72 @@ facts = [
     assert_rpc_source_warranted(&doc, "cfg_active_literal_twin");
 }
 
+#[test]
+fn rpc_source_warrants_literal_range_for_loop_body_asserts_with_twins() {
+    let grisu_doc = run_rpc_lift(
+        "tests/num/flt2dec/strategy/grisu.rs",
+        r#"
+#[test]
+fn test_cached_power() {
+    for e in -3..3 {
+        let low = 10 - e;
+        let high = 12 - e;
+        let cached = 11 - e;
+        assert!(low <= cached && cached <= high);
+    }
+}
+
+#[test]
+fn cached_power_literal_twin() {
+    assert_eq!(3usize, 3usize);
+}
+"#,
+    );
+    assert_rpc_source_warranted(&grisu_doc, "test_cached_power");
+    assert_rpc_source_warranted(&grisu_doc, "cached_power_literal_twin");
+
+    let slice_doc = run_rpc_lift(
+        "tests/slice.rs",
+        r#"
+#[test]
+fn test_align_to_empty_mid() {
+    for offset in 0..4 {
+        let aligned = offset + (4 - offset);
+        assert_eq!(aligned % 4, 0);
+    }
+}
+
+#[test]
+fn align_to_empty_mid_literal_twin() {
+    assert_eq!((0usize..4).count(), 4);
+}
+"#,
+    );
+    assert_rpc_source_warranted(&slice_doc, "test_align_to_empty_mid");
+    assert_rpc_source_warranted(&slice_doc, "align_to_empty_mid_literal_twin");
+}
+
+#[test]
+fn rpc_source_warrants_text_determined_pin_macro_with_literal_twin() {
+    let doc = run_rpc_lift(
+        "tests/pin_macro.rs",
+        r#"
+#[test]
+fn rust_2024_expr() {
+    std::pin::pin!(const { 1 });
+}
+
+#[test]
+fn pin_macro_literal_twin() {
+    assert_eq!(1usize, 1usize);
+}
+"#,
+    );
+
+    assert_rpc_source_warranted(&doc, "rust_2024_expr");
+    assert_rpc_source_warranted(&doc, "pin_macro_literal_twin");
+}
+
 /// True iff any `ir` entry's serialized form mentions the opaque `call:<name>` symbol --
 /// i.e. a standalone `out=call:<name>` warrant decl was minted into the ir-document.
 fn ir_mentions_call_symbol(doc: &serde_json::Value, name: &str) -> bool {
@@ -26843,6 +26916,51 @@ fn direct_literal_range_for_loop_scalar_accumulator_has_teeth() {
             !sat,
             "literal range loop sum 0+1+2+3+4 == 11 must be z3-UNSAT"
         );
+    }
+}
+
+#[test]
+fn direct_literal_range_for_loop_body_assert_unrolls_pointwise() {
+    let good = r#"
+        #[test]
+        fn t_for_body_good() {
+            for i in 0..4 {
+                assert_eq!(i + 1, i + 1);
+            }
+        }
+    "#;
+    let out = lift_file(&parse(good), "coretests/loop/for_body_good.rs");
+    assert!(
+        out.assertions_lifted >= 1 && out.assertions_refused == 0,
+        "literal-range body asserts must warrant point-wise: lifted={} refused={} skips={:?}",
+        out.assertions_lifted,
+        out.assertions_refused,
+        out.skip_reasons
+    );
+    let decl = single_warranted_decl(&out);
+    assert!(
+        !contains_forall(&inv_formula(decl)),
+        "literal-range body asserts must replay as a finite conjunction, not forall: {:?}",
+        decl.inv
+    );
+    assert_eq!(dug_eq_int_pairs(decl), vec![(1, 1), (2, 2), (3, 3), (4, 4)]);
+    if let Some(sat) = z3_verdict(&inv_json(decl), "for_body_good") {
+        assert!(sat, "point-wise literal body assert must be z3-SAT");
+    }
+
+    let bad = r#"
+        #[test]
+        fn t_for_body_bad() {
+            for i in 0..4 {
+                assert_eq!(i + 1, i + 2);
+            }
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/loop/for_body_bad.rs");
+    let decl = single_warranted_decl(&out);
+    assert_eq!(dug_eq_int_pairs(decl), vec![(1, 2), (2, 3), (3, 4), (4, 5)]);
+    if let Some(sat) = z3_verdict(&inv_json(decl), "for_body_bad") {
+        assert!(!sat, "bad point-wise literal body assert must be z3-UNSAT");
     }
 }
 

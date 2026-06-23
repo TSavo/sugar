@@ -78,11 +78,12 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     }
     let seed_names = accumulator_seed_names(&for_loop.body.stmts, fcx.scope());
     let tuple_loop = vars.len() > 1;
+    let direct_pointwise_loop = tuple_loop || range_domain_shape(&for_loop.expr);
     if !body_has_replay_shape(
         &for_loop.body.stmts,
         fcx.scope(),
         finite_replay_domain,
-        tuple_loop,
+        direct_pointwise_loop,
     ) {
         debug!(
             target: "sugar_lift_rust_tests::sugar::for_replay",
@@ -199,7 +200,7 @@ fn body_has_replay_shape(
     stmts: &[Stmt],
     scope: &crate::TemporalScope,
     finite_replay_domain: bool,
-    tuple_loop: bool,
+    direct_pointwise_loop: bool,
 ) -> bool {
     let has_source_helper_destructure = stmts.iter().any(|stmt| {
         let Stmt::Local(local) = stmt else {
@@ -228,12 +229,13 @@ fn body_has_replay_shape(
         || body_has_helper_call_replay_shape(stmts, scope)
         || body_has_scalar_accumulator_replay_shape(stmts, scope)
         || (finite_replay_domain && body_has_pointwise_assert_replay_shape(stmts, true))
-        // A TUPLE loop var (`for (i, &x)` over `.enumerate()`/pairs) carries its per-step
-        // binding work in the pattern itself, so a body of pure point-wise asserts is
-        // replayable WITHOUT a separate body binding. Restricted to tuple loops so
-        // single-ident bare-assert foralls still route to `forall_loop` (a universal,
-        // not an unrolled conjunction).
-        || (finite_replay_domain && tuple_loop && body_has_pointwise_assert_replay_shape(stmts, false))
+        // A tuple loop var (`for (i, &x)`) carries its binding work in the pattern itself.
+        // A literal RANGE loop with direct point-wise body asserts is likewise a finite
+        // imperative twin of an iterator fold: replay every concrete iteration rather
+        // than minting a vacuous/broad universal.
+        || (finite_replay_domain
+            && direct_pointwise_loop
+            && body_has_pointwise_assert_replay_shape(stmts, false))
 }
 
 fn domain_has_replay_shape(expr: &Expr, composite_domain: bool) -> bool {
