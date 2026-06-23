@@ -23459,6 +23459,180 @@ fn iterator_adapter_collect_vec_filter_map_and_intersperse_have_teeth() {
 }
 
 #[test]
+fn reversed_literal_range_terminals_and_step_collect_have_teeth() {
+    let good = r#"
+        #[test]
+        fn reversed_literal_range_terminals_good() {
+            assert_eq!((200..-5).count(), 0);
+            assert_eq!((200..-5).rev().count(), 0);
+            assert_eq!((200..200).rev().count(), 0);
+            assert_eq!((5..5).max(), None);
+            assert_eq!((5..5).min(), None);
+            assert_eq!((200..-5).step_by(1).collect::<Vec<isize>>(), []);
+            assert_eq!((0..20).step_by(5).collect::<Vec<isize>>(), [0, 5, 10, 15]);
+            let mut empty = 10..10;
+            assert!(empty.is_empty());
+        }
+    "#;
+    let good_out = lift_file(&parse(good), "tests/iter/range_step_collect_good.rs");
+    assert_eq!(
+        good_out.assertions_lifted, 8,
+        "reversed/stepped literal ranges must warrant; skips={:?}; audits={:?}",
+        good_out.skip_reasons, good_out.factory_audits
+    );
+    assert_eq!(
+        good_out.assertions_refused, 0,
+        "{:?}",
+        good_out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&good_out)),
+        "reversed_literal_range_terminals_good",
+    ) {
+        assert!(sat, "literal range terminal/collect good row must be SAT");
+    }
+
+    let bad_count = r#"
+        #[test]
+        fn reversed_literal_range_count_bad() {
+            assert_eq!((200..-5).rev().count(), 1);
+        }
+    "#;
+    let bad_count_out = lift_file(&parse(bad_count), "tests/iter/range_count_bad.rs");
+    assert_eq!(
+        bad_count_out.assertions_lifted, 1,
+        "bad reversed-range count twin must still lift; skips={:?}; audits={:?}",
+        bad_count_out.skip_reasons, bad_count_out.factory_audits
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&bad_count_out)),
+        "reversed_literal_range_count_bad",
+    ) {
+        assert!(!sat, "reversed empty range has count 0, not 1");
+    }
+
+    let good_next = r#"
+        #[test]
+        fn empty_literal_range_next_good() {
+            let mut r = 10..10;
+            assert_eq!(r.next(), None);
+        }
+    "#;
+    let good_next_out = lift_file(&parse(good_next), "tests/iter/range_next_good.rs");
+    assert_eq!(
+        good_next_out.assertions_lifted, 1,
+        "empty literal range next() must warrant None; skips={:?}; audits={:?}",
+        good_next_out.skip_reasons, good_next_out.factory_audits
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&good_next_out)),
+        "empty_literal_range_next_good",
+    ) {
+        assert!(sat, "empty literal range next() returns None");
+    }
+
+    let bad_is_empty = r#"
+        #[test]
+        fn empty_literal_range_is_empty_bad() {
+            let mut r = 10..10;
+            assert!(!r.is_empty());
+        }
+    "#;
+    let bad_is_empty_out = lift_file(&parse(bad_is_empty), "tests/iter/range_is_empty_bad.rs");
+    assert_eq!(
+        bad_is_empty_out.assertions_lifted, 1,
+        "bad bound empty-range is_empty twin must still lift; skips={:?}; audits={:?}",
+        bad_is_empty_out.skip_reasons, bad_is_empty_out.factory_audits
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&bad_is_empty_out)),
+        "empty_literal_range_is_empty_bad",
+    ) {
+        assert!(!sat, "bound empty literal range is_empty() is true");
+    }
+
+    let bad_next = r#"
+        #[test]
+        fn empty_literal_range_next_bad() {
+            let mut r = 10..10;
+            assert_eq!(r.next(), Some(10));
+        }
+    "#;
+    let bad_next_out = lift_file(&parse(bad_next), "tests/iter/range_next_bad.rs");
+    assert_eq!(
+        bad_next_out.assertions_lifted, 1,
+        "bad empty-range next twin must still lift; skips={:?}; audits={:?}",
+        bad_next_out.skip_reasons, bad_next_out.factory_audits
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&bad_next_out)),
+        "empty_literal_range_next_bad",
+    ) {
+        assert!(!sat, "empty literal range next() is None, not Some(10)");
+    }
+
+    let bad_max = r#"
+        #[test]
+        fn empty_literal_range_max_bad() {
+            assert_eq!((5..5).max(), Some(5));
+        }
+    "#;
+    let bad_max_out = lift_file(&parse(bad_max), "tests/iter/range_max_bad.rs");
+    assert_eq!(
+        bad_max_out.assertions_lifted, 1,
+        "bad empty-range max twin must still lift; skips={:?}; audits={:?}",
+        bad_max_out.skip_reasons, bad_max_out.factory_audits
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&bad_max_out)),
+        "empty_literal_range_max_bad",
+    ) {
+        assert!(!sat, "empty literal range max() is None, not Some(5)");
+    }
+
+    let bad_min = r#"
+        #[test]
+        fn empty_literal_range_min_bad() {
+            assert_eq!((5..5).min(), Some(5));
+        }
+    "#;
+    let bad_min_out = lift_file(&parse(bad_min), "tests/iter/range_min_bad.rs");
+    assert_eq!(
+        bad_min_out.assertions_lifted, 1,
+        "bad empty-range min twin must still lift; skips={:?}; audits={:?}",
+        bad_min_out.skip_reasons, bad_min_out.factory_audits
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&bad_min_out)),
+        "empty_literal_range_min_bad",
+    ) {
+        assert!(!sat, "empty literal range min() is None, not Some(5)");
+    }
+
+    let bad_collect = r#"
+        #[test]
+        fn literal_range_step_collect_bad() {
+            assert_eq!((0..20).step_by(5).collect::<Vec<isize>>(), [0, 5, 10, 99]);
+        }
+    "#;
+    let bad_collect_out = lift_file(&parse(bad_collect), "tests/iter/range_step_collect_bad.rs");
+    assert_eq!(
+        bad_collect_out.assertions_lifted, 1,
+        "bad step_by collect twin must still lift; skips={:?}; audits={:?}",
+        bad_collect_out.skip_reasons, bad_collect_out.factory_audits
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&bad_collect_out)),
+        "literal_range_step_collect_bad",
+    ) {
+        assert!(
+            !sat,
+            "step_by collect yields [0,5,10,15], not a trailing 99"
+        );
+    }
+}
+
+#[test]
 fn intersperse_with_struct_separator_collects_literal_vec() {
     let src = r#"
         #[test]

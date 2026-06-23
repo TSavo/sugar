@@ -22,8 +22,8 @@
 //     `Err(NonZero(n - len))` with the remaining count.
 //
 // THE EXTREMUM TERMINALS (`.min()`/`.max()`) fold to the min/max of the literal int
-// elements and wrap that extremum via `MonadicSugar`'s `opt:some` (the empty Seq, which
-// `LiteralSugar` declines, never reaches the reduction -> stays opaque, no fake-`None`).
+// elements and wrap that extremum via `MonadicSugar`'s `opt:some`; empty literal ranges
+// ground to `opt:none`, while other empty literal domains still decline before reduction.
 // THE PREDICATE-POSITIONAL terminals (`.find(p)`/`.position(p)`) const-evaluate the
 // closure (the SAME `const_eval_unary_closure` floor `MapSugar`/`FilterSugar` use) over
 // each literal element; `.find` grounds the FIRST satisfying element to `opt:some(elem)`,
@@ -74,7 +74,7 @@ use crate::{
     closure_body_is_side_effecting, closure_single_param_ident, const_eval_unary_closure,
     const_fold_acc_update, const_fold_int_term, const_int, const_int_acc_init, parse_int_lit,
     simple_path_name, strip_refs_groups, ConstVal, Desugared, DesugaredElem, Effect, Outcome,
-    Sugar, SugarCtx,
+    Sugar, SugarCtx, TemporalScope,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -106,8 +106,7 @@ enum Terminal {
     NthBack(usize),
     /// `.last()` -- the element at position `len-1` (or `None` for the empty Seq).
     Last,
-    /// `.min()` -- the minimum int element wrapped in `Some` (the empty Seq, which the
-    /// `LiteralSugar` floor declines, never reaches here).
+    /// `.min()` -- the minimum int element wrapped in `Some` (or `None` for empty ranges).
     Min,
     /// `.max()` -- the maximum int element wrapped in `Some`.
     Max,
@@ -482,6 +481,41 @@ struct IterTerminalSugar {
 }
 
 impl IterTerminalSugar {
+    fn accepts_empty_sequence_for_source<'a>(
+        &self,
+        let_inits: &BTreeMap<String, &'a Expr>,
+        scope: &'a TemporalScope,
+    ) -> bool {
+        match self.terminal {
+            // `.reduce()`/`.fold()` define structural empty-sequence results for literal
+            // arrays as well as ranges. Keep that existing owner broad.
+            Terminal::Reduce(_) | Terminal::Fold(_, _) => true,
+            // Range-family terminals have a real floor on empty/reversed literal ranges
+            // (`count == 0`, positional terminals are `None`, predicates fold to their
+            // identity). Do not generalize this to empty `sum`/`product`: those remain
+            // outside this lane's range/range-bounds partition.
+            Terminal::Count
+            | Terminal::Next
+            | Terminal::NextBack
+            | Terminal::Nth(_)
+            | Terminal::NthBack(_)
+            | Terminal::Last
+            | Terminal::Min
+            | Terminal::Max
+            | Terminal::Any(_)
+            | Terminal::All(_)
+            | Terminal::Find(_)
+            | Terminal::Position(_)
+            | Terminal::AdvanceBy(_) => method_family::literal_range_sequence_static_len_in_scope(
+                &self.inner,
+                let_inits,
+                scope,
+            )
+            .is_some(),
+            Terminal::Sum | Terminal::Product => false,
+        }
+    }
+
     fn can_try_literal_sequence_family(&self) -> bool {
         matches!(
             self.terminal,
@@ -549,99 +583,97 @@ impl IterTerminalSugar {
                 return Outcome::from_opt(None);
             }
         }
-        let inner = crate::sugar::scan::try_build_scan_inner(&self.inner, &fcx)
-            .or_else(|| method_family::build_literal_sequence_composite(&self.inner, &fcx))
-            .unwrap_or_else(|| build_composite(&self.inner, &fcx));
-        let seq = match inner.desugar(ctx) {
-            Outcome::Dug(d) => match d.into_seq() {
-                Some(seq) => seq,
-                None => return Outcome::from_opt(None),
-            },
-            Outcome::Hit(Effect::Unsupported { reason })
-                if reason == EMPTY_DOMAIN_REASON
-                    && method_family::literal_sequence_static_len_in_scope(
-                        &self.inner,
-                        &let_inits,
-                        ctx.scope,
-                    ) == Some(0) =>
-            {
-                Vec::new()
-            }
-            hit if hit.is_structural_bail() && self.can_try_literal_sequence_family() => {
-                if let Some(candidate) =
-                    method_family::build_literal_sequence_composite(&self.inner, &fcx)
+        let static_empty_sequence =
+            method_family::literal_sequence_static_len_in_scope(&self.inner, &let_inits, ctx.scope)
+                == Some(0);
+        let allow_empty_sequence =
+            static_empty_sequence && self.accepts_empty_sequence_for_source(&let_inits, ctx.scope);
+        let seq = if allow_empty_sequence {
+            Vec::new()
+        } else {
+            let inner = crate::sugar::scan::try_build_scan_inner(&self.inner, &fcx)
+                .or_else(|| method_family::build_literal_sequence_composite(&self.inner, &fcx))
+                .unwrap_or_else(|| build_composite(&self.inner, &fcx));
+            match inner.desugar(ctx) {
+                Outcome::Dug(d) => match d.into_seq() {
+                    Some(seq) => seq,
+                    None => return Outcome::from_opt(None),
+                },
+                Outcome::Hit(Effect::Unsupported { reason })
+                    if reason == EMPTY_DOMAIN_REASON && allow_empty_sequence =>
                 {
-                    match Self::desugar_seq_candidate(
-                        candidate,
-                        ctx,
-                        method_family::literal_sequence_static_len_in_scope(
-                            &self.inner,
-                            &let_inits,
-                            ctx.scope,
-                        ) == Some(0),
-                    ) {
-                        Ok(Some(seq)) => seq,
-                        Ok(None) => {
-                            if let Terminal::Count = self.terminal {
-                                if let Some(static_len) =
-                                    method_family::literal_collection_adapter_static_len_in_scope(
-                                        &self.inner,
-                                        &let_inits,
-                                        ctx.scope,
-                                    )
-                                {
-                                    match self.verify_static_len_source(
-                                        &static_len.source,
-                                        &fcx,
-                                        ctx,
-                                    ) {
-                                        Ok(true) => {
-                                            debug!(
-                                                target: "sugar_lift_rust_tests::sugar::iter_terminal",
-                                                len = static_len.len,
-                                                "reducing literal collection count through verified length-only adapter"
-                                            );
-                                            return Outcome::Dug(Desugared::Term(num(
-                                                static_len.len as i128,
-                                            )));
+                    Vec::new()
+                }
+                hit if hit.is_structural_bail() && self.can_try_literal_sequence_family() => {
+                    if let Some(candidate) =
+                        method_family::build_literal_sequence_composite(&self.inner, &fcx)
+                    {
+                        match Self::desugar_seq_candidate(candidate, ctx, allow_empty_sequence) {
+                            Ok(Some(seq)) => seq,
+                            Ok(None) => {
+                                if let Terminal::Count = self.terminal {
+                                    if let Some(static_len) =
+                                        method_family::literal_collection_adapter_static_len_in_scope(
+                                            &self.inner,
+                                            &let_inits,
+                                            ctx.scope,
+                                        )
+                                    {
+                                        match self.verify_static_len_source(
+                                            &static_len.source,
+                                            &fcx,
+                                            ctx,
+                                        ) {
+                                            Ok(true) => {
+                                                debug!(
+                                                    target: "sugar_lift_rust_tests::sugar::iter_terminal",
+                                                    len = static_len.len,
+                                                    "reducing literal collection count through verified length-only adapter"
+                                                );
+                                                return Outcome::Dug(Desugared::Term(num(
+                                                    static_len.len as i128,
+                                                )));
+                                            }
+                                            Ok(false) => return Outcome::from_opt(None),
+                                            Err(hit) => return hit,
                                         }
-                                        Ok(false) => return Outcome::from_opt(None),
-                                        Err(hit) => return hit,
                                     }
                                 }
+                                return Outcome::from_opt(None);
                             }
-                            return Outcome::from_opt(None);
-                        }
-                        Err(hit) => return hit,
-                    }
-                } else if let Terminal::Count = self.terminal {
-                    if let Some(static_len) =
-                        method_family::literal_collection_adapter_static_len_in_scope(
-                            &self.inner,
-                            &let_inits,
-                            ctx.scope,
-                        )
-                    {
-                        match self.verify_static_len_source(&static_len.source, &fcx, ctx) {
-                            Ok(true) => {
-                                debug!(
-                                    target: "sugar_lift_rust_tests::sugar::iter_terminal",
-                                    len = static_len.len,
-                                    "reducing literal collection count through verified length-only adapter"
-                                );
-                                return Outcome::Dug(Desugared::Term(num(static_len.len as i128)));
-                            }
-                            Ok(false) => return Outcome::from_opt(None),
                             Err(hit) => return hit,
                         }
+                    } else if let Terminal::Count = self.terminal {
+                        if let Some(static_len) =
+                            method_family::literal_collection_adapter_static_len_in_scope(
+                                &self.inner,
+                                &let_inits,
+                                ctx.scope,
+                            )
+                        {
+                            match self.verify_static_len_source(&static_len.source, &fcx, ctx) {
+                                Ok(true) => {
+                                    debug!(
+                                        target: "sugar_lift_rust_tests::sugar::iter_terminal",
+                                        len = static_len.len,
+                                        "reducing literal collection count through verified length-only adapter"
+                                    );
+                                    return Outcome::Dug(Desugared::Term(num(
+                                        static_len.len as i128
+                                    )));
+                                }
+                                Ok(false) => return Outcome::from_opt(None),
+                                Err(hit) => return hit,
+                            }
+                        }
+                        return Outcome::from_opt(None);
+                    } else {
+                        return Outcome::from_opt(None);
                     }
-                    return Outcome::from_opt(None);
-                } else {
-                    return Outcome::from_opt(None);
                 }
+                hit if hit.is_structural_bail() => return Outcome::from_opt(None),
+                hit => return hit,
             }
-            hit if hit.is_structural_bail() => return Outcome::from_opt(None),
-            hit => return hit,
         };
         if let Terminal::AdvanceBy(arg) = &self.terminal {
             let n_term = match build_term(arg, &fcx).desugar(ctx) {
@@ -708,10 +740,12 @@ impl IterTerminalSugar {
             // EXTREMUM terminals (`.min()`/`.max()`): fold over the elements' EXACT integer
             // const values and wrap the extremum in `MonadicSugar`'s `opt:some` (the result of
             // `.min()`/`.max()` is `Option<&T>`). EXACT-OR-BAIL: a non-int / opaque element ->
-            // `None` (the opaque fallback). The empty Seq (which `LiteralSugar` declines, so it
-            // never reaches here) would be the `opt:none` case -- it stays opaque, never a
-            // fake-`None`.
+            // `None` (the opaque fallback). Empty literal ranges have the real floor `None`;
+            // empty non-range literal domains still decline before this arm.
             if matches!(self.terminal, Terminal::Min | Terminal::Max) {
+                if seq.is_empty() {
+                    return Some(Desugared::Term(monadic::none_term()));
+                }
                 let mut ext: Option<i128> = None;
                 for elem in &seq {
                     let n = elem.value.as_ref().and_then(ConstVal::as_int)?;

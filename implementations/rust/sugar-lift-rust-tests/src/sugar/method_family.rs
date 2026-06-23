@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use syn::{Expr, ExprCall, ExprRange, GenericArgument};
+use syn::{Expr, ExprCall, ExprRange, GenericArgument, UnOp};
 
 use crate::sugar::factory::{build_composite, has_composite, SugarBuildCtx};
 use crate::sugar::literal_slice;
@@ -169,18 +169,26 @@ pub(crate) fn finite_int_iter_sequence(expr: &Expr) -> Option<Vec<DesugaredElem>
 
 #[allow(dead_code)]
 pub(crate) fn literal_sequence_static_len<'a>(
-    expr: &'a Expr,
+    expr: &Expr,
     let_inits: &BTreeMap<String, &'a Expr>,
 ) -> Option<usize> {
     literal_sequence_static_len_inner(expr, let_inits, None, 0)
 }
 
 pub(crate) fn literal_sequence_static_len_in_scope<'a>(
-    expr: &'a Expr,
+    expr: &Expr,
     let_inits: &BTreeMap<String, &'a Expr>,
     scope: &'a TemporalScope,
 ) -> Option<usize> {
     literal_sequence_static_len_inner(expr, let_inits, Some(scope), 0)
+}
+
+pub(crate) fn literal_range_sequence_static_len_in_scope<'a>(
+    expr: &Expr,
+    let_inits: &BTreeMap<String, &'a Expr>,
+    scope: &'a TemporalScope,
+) -> Option<usize> {
+    literal_range_sequence_static_len_inner(expr, let_inits, scope, 0)
 }
 
 pub(crate) struct StaticCollectionLen {
@@ -203,7 +211,7 @@ pub(crate) fn literal_collection_adapter_static_len_in_scope<'a>(
 }
 
 fn literal_sequence_static_len_inner<'a>(
-    expr: &'a Expr,
+    expr: &Expr,
     let_inits: &BTreeMap<String, &'a Expr>,
     scope: Option<&'a TemporalScope>,
     depth: usize,
@@ -219,6 +227,9 @@ fn literal_sequence_static_len_inner<'a>(
         Expr::Call(call) => literal_iter_call_len(call),
         Expr::Path(path) if path.qself.is_none() => {
             let name = path.path.get_ident()?.to_string();
+            if let Some(current) = scope.and_then(|scope| scope.temporal_rewrite_expr_for(&name)) {
+                return literal_sequence_static_len_inner(&current, let_inits, scope, depth + 1);
+            }
             let init = let_inits
                 .get(&name)
                 .copied()
@@ -248,6 +259,10 @@ fn literal_sequence_static_len_inner<'a>(
                 "intersperse" | "intersperse_with" => {
                     Some(base_len.checked_mul(2)?.saturating_sub(1))
                 }
+                "step_by" => {
+                    let n = usize::try_from(const_int(&call.args[0])?).ok()?;
+                    (n > 0).then_some(stepped_len(base_len, n))
+                }
                 _ => None,
             }
         }
@@ -259,6 +274,59 @@ fn literal_sequence_static_len_inner<'a>(
             },
             None => None,
         },
+    }
+}
+
+fn literal_range_sequence_static_len_inner<'a>(
+    expr: &Expr,
+    let_inits: &BTreeMap<String, &'a Expr>,
+    scope: &'a TemporalScope,
+    depth: usize,
+) -> Option<usize> {
+    const MAX_DEPTH: usize = 8;
+    if depth > MAX_DEPTH {
+        return None;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Range(range) => literal_range_len(range),
+        Expr::Path(path) if path.qself.is_none() => {
+            let name = path.path.get_ident()?.to_string();
+            if let Some(current) = scope.temporal_rewrite_expr_for(&name) {
+                return literal_range_sequence_static_len_inner(
+                    &current,
+                    let_inits,
+                    scope,
+                    depth + 1,
+                );
+            }
+            let init = let_inits
+                .get(&name)
+                .copied()
+                .or_else(|| scope.stable_let_binding_for_term(&name))?;
+            literal_range_sequence_static_len_inner(init, let_inits, scope, depth + 1)
+        }
+        Expr::MethodCall(call) if call.args.is_empty() => match call.method.to_string().as_str() {
+            "iter" | "into_iter" | "cloned" | "copied" | "fuse" | "rev" | "enumerate" => {
+                literal_range_sequence_static_len_inner(&call.receiver, let_inits, scope, depth + 1)
+            }
+            _ => None,
+        },
+        Expr::MethodCall(call) if call.args.len() == 1 => {
+            let base_len = literal_range_sequence_static_len_inner(
+                &call.receiver,
+                let_inits,
+                scope,
+                depth + 1,
+            )?;
+            let n = usize::try_from(const_int(&call.args[0])?).ok()?;
+            match call.method.to_string().as_str() {
+                "skip" => Some(base_len.saturating_sub(n)),
+                "take" => Some(base_len.min(n)),
+                "step_by" if n > 0 => Some(stepped_len(base_len, n)),
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }
 
@@ -478,20 +546,45 @@ fn into_iter_arg(call: &ExprCall) -> Option<&Expr> {
 
 fn literal_range_len(range: &ExprRange) -> Option<usize> {
     let start = match &range.start {
-        Some(start) => const_int(start)?,
+        Some(start) => const_range_endpoint_int(start)?,
         None => 0,
     };
     let end = match &range.end {
-        Some(end) => const_int(end)?,
+        Some(end) => const_range_endpoint_int(end)?,
         None => return None,
     };
-    if end < start {
-        return None;
-    }
-    let span = end.checked_sub(start)?;
     let len = match range.limits {
-        syn::RangeLimits::HalfOpen(_) => span,
-        syn::RangeLimits::Closed(_) => span.checked_add(1)?,
+        syn::RangeLimits::HalfOpen(_) => {
+            if end <= start {
+                0
+            } else {
+                end.checked_sub(start)?
+            }
+        }
+        syn::RangeLimits::Closed(_) => {
+            if end < start {
+                0
+            } else {
+                end.checked_sub(start)?.checked_add(1)?
+            }
+        }
     };
     usize::try_from(len).ok()
+}
+
+fn const_range_endpoint_int(expr: &Expr) -> Option<i128> {
+    match strip_refs_groups(expr) {
+        Expr::Unary(unary) if matches!(unary.op, UnOp::Neg(_)) => {
+            const_range_endpoint_int(&unary.expr)?.checked_neg()
+        }
+        other => const_int(other),
+    }
+}
+
+fn stepped_len(len: usize, step: usize) -> usize {
+    if len == 0 {
+        0
+    } else {
+        1 + (len - 1) / step
+    }
 }

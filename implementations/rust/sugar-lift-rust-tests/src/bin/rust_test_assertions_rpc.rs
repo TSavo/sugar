@@ -1379,6 +1379,9 @@ fn clean_named_refusal_category(
     if array_repeat_non_literal_length_reason(reason) {
         return Some("array repeat non-literal length");
     }
+    if range_bounds_runtime_value_reason(reason) {
+        return Some("RangeBounds over runtime value");
+    }
     if runtime_for_context_reason(reason) {
         return Some("runtime for-loop domain");
     }
@@ -1533,6 +1536,10 @@ fn source_location_runtime_reason(source_path: &str, source_name: &str, reason: 
 
 fn array_repeat_non_literal_length_reason(reason: &str) -> bool {
     reason.contains("array-repeat `[_; N]` has a non-literal length")
+}
+
+fn range_bounds_runtime_value_reason(reason: &str) -> bool {
+    reason.contains("RangeBounds over runtime value")
 }
 
 fn runtime_for_context_reason(reason: &str) -> bool {
@@ -4143,6 +4150,38 @@ fn runtime_array_element_literal_twin() {
             "literal array element boundary",
         );
         assert_source_locus_warranted(&response, "runtime_array_element_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_range_bounds_runtime_value_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_range_bounds_runtime_value_refuses_with_literal_twin",
+            r#"
+use core::ops::Bound;
+
+#[test]
+fn range_bounds_runtime_value_refused() {
+    let r = (Bound::Included(1u32), Bound::Excluded(5u32));
+    assert!(!r.contains(&0));
+    assert!(r.contains(&1));
+    assert!(r.contains(&3));
+    assert!(!r.contains(&5));
+    assert!(!r.contains(&6));
+}
+
+#[test]
+fn range_bounds_literal_twin() {
+    assert!((1u32..5).contains(&3));
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "range_bounds_runtime_value_refused",
+            "RangeBounds over runtime value r",
+        );
+        assert_source_locus_warranted(&response, "range_bounds_literal_twin");
         let _ = std::fs::remove_dir_all(root);
     }
 

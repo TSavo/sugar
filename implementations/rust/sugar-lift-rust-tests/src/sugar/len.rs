@@ -72,6 +72,19 @@ impl Sugar for LenSugar {
             )
             .collect();
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        if method_family::literal_sequence_static_len_in_scope(
+            &self.receiver,
+            &let_inits,
+            ctx.scope,
+        ) == Some(0)
+        {
+            debug!(
+                target: "sugar_lift_rust_tests::sugar::len",
+                len = 0usize,
+                "reducing empty literal sequence len"
+            );
+            return Outcome::Dug(Desugared::Term(num(0)));
+        }
         let seq = match build_composite(&self.receiver, &fcx).desugar(ctx) {
             Outcome::Dug(d) => match d.into_seq() {
                 Some(seq) => seq,
