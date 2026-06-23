@@ -13,12 +13,12 @@
 // This node only recognizes when the receiver is already a factory-owned composite
 // sequence. Runtime / effect receivers do not enter the node and fall through normally.
 
-use std::collections::BTreeMap;
-
 use syn::Expr;
 use tracing::debug;
 
-use crate::sugar::factory::{build_composite, has_composite, SugarBuildCtx};
+use crate::sugar::factory::{
+    compat_reduction, has_composite, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+};
 use crate::{const_int, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -49,61 +49,57 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     if !has_composite(&call.receiver, fcx) {
         return None;
     }
-    Some(Box::new(IterNextSugar {
-        inner: (*call.receiver).clone(),
-        direction,
-        count,
-        let_inits: capture_let_inits(fcx),
-    }))
+    let inner = SugarBody::composite(&call.receiver, fcx);
+    Some(IterNextSugar::new(inner, direction, count))
 }
 
 struct IterNextSugar {
-    inner: Expr,
+    inner: SugarBody,
     direction: Direction,
     count: usize,
-    let_inits: BTreeMap<String, Expr>,
 }
 
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
+impl IterNextSugar {
+    fn new(inner: SugarBody, direction: Direction, count: usize) -> Box<dyn Sugar> {
+        Box::new(Self {
+            inner,
+            direction,
+            count,
+        })
+    }
 }
 
 impl Sugar for IterNextSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-            let let_inits: BTreeMap<String, &Expr> = stable
-                .iter()
-                .map(|(name, init)| (name.clone(), init))
-                .chain(
-                    self.let_inits
-                        .iter()
-                        .map(|(name, init)| (name.clone(), init)),
-                )
-                .collect();
-            let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-            let seq = build_composite(&self.inner, &fcx)
-                .desugar(ctx)
-                .complete()?
-                .into_seq()?;
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::iter_next",
-                len = seq.len(),
-                count = self.count,
-                from_back = matches!(self.direction, Direction::Back),
-                "advancing literal iterator state in composite position"
-            );
-            let out = match self.direction {
-                Direction::Front => seq.into_iter().skip(self.count).collect(),
-                Direction::Back => {
-                    let keep = seq.len().saturating_sub(self.count);
-                    seq.into_iter().take(keep).collect()
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+        let seq = match self.inner.reduce(ctx)? {
+            Outcome::Complete(desugared) => match desugared.into_seq() {
+                Some(seq) => seq,
+                None => {
+                    return Err(FactoryGap::new(
+                        "iter_next composite receiver reduced to non-sequence",
+                    ))
                 }
-            };
-            Some(Desugared::Seq(out))
-        })())
+            },
+            Outcome::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+        };
+        debug!(
+            target: "sugar_lift_rust_tests::sugar::iter_next",
+            len = seq.len(),
+            count = self.count,
+            from_back = matches!(self.direction, Direction::Back),
+            "advancing literal iterator state in composite position"
+        );
+        let out = match self.direction {
+            Direction::Front => seq.into_iter().skip(self.count).collect(),
+            Direction::Back => {
+                let keep = seq.len().saturating_sub(self.count);
+                seq.into_iter().take(keep).collect()
+            }
+        };
+        Ok(Outcome::Complete(Desugared::Seq(out)))
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
     }
 }

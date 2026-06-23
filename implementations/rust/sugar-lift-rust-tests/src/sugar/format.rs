@@ -23,19 +23,19 @@
 //
 // REFUSE BY NAME, NEVER GUESS. A format spec we do not FAITHFULLY reproduce
 // (`{:p}` pointer, an unhandled fill/align/width/sign/precision combination) does not
-// complete — it bails so the caller falls through to the conservative opaque path. We only
-// complete a spec we render through a STATICALLY-WRITTEN real `format!` call (we cannot pass
-// a runtime spec string to `format!`, whose first arg must be a compile-time literal;
-// so each supported spec is one written arm calling the real macro). `f16`/`f128` are
-// unstable and unformattable on the stable toolchain the lifter ships — they bail with
-// a terminal Display-unsupported reason carrying the k-remedy (build on nightly).
+// complete; it takes the factory gap path. We only complete a spec we render through a
+// STATICALLY-WRITTEN real `format!` call (we cannot pass a runtime spec string to
+// `format!`, whose first arg must be a compile-time literal; so each supported spec is
+// one written arm calling the real macro). `f16`/`f128` are unstable and unformattable on
+// the stable toolchain the lifter ships; they bail with a terminal Display-unsupported
+// reason carrying the k-remedy (build on nightly).
 
 use std::collections::BTreeMap;
 
 use syn::punctuated::Punctuated;
 use syn::{Expr, ExprLit, Lit, Pat, Stmt, Token};
 
-use crate::{strip_refs_groups, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx};
+use crate::{strip_refs_groups, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx};
 
 /// The terminal reason for an `f16`/`f128` formatting operand: the stable toolchain
 /// the lifter ships cannot Display it, and we never model the algorithm (no-model
@@ -72,15 +72,10 @@ impl Sugar for FormatSugar {
                 value: None,
             }])),
             // A runtime / unsupported producer (runtime arg, runtime fmt string, an
-            // unsupported spec) -> bail TODAY. The caller falls through to its
-            // conservative path (the opaque `macro:` EUF var). The structural backstop
-            // (`Incomplete(Effect::Unsupported)`).
+            // unsupported spec) -> structural gap.
             Ok(None) => Outcome::from_opt(None),
-            // A NAMED terminal (f16/f128 Display unsupported) -> the caller surfaces
-            // this reason; for now a bail with the structural backstop is the
-            // conservative wire (the caller's fall-through emits its own reason). We
-            // still distinguish it for the recognizer-level refusal at the call site.
-            Err(_) => Outcome::from_opt(None),
+            // A NAMED terminal (f16/f128 Display unsupported) -> refused by reason.
+            Err(reason) => Outcome::Incomplete(Effect::Unsupported { reason }),
         }
     }
 }
@@ -959,8 +954,8 @@ fn resolve_fmt_value(
             // Integer `+ - * / %` of two reconstructed integer literals CONSTANT-FOLDS
             // (recompute-don't-trust) with CHECKED, width-aware semantics. A mixed-width
             // pair / i128-carrier overflow / divide-by-zero / result outside the type's
-            // range BAILS (stays the conservative opaque term), never forging a wrapped
-            // value for an expression real rust would panic on.
+            // range BAILS to the factory gap path, never forging a wrapped value for an
+            // expression real rust would panic on.
             if let (
                 Some(FmtValue::Int {
                     value: lv,
@@ -1037,8 +1032,8 @@ fn is_fmt_arith_op(op: &syn::BinOp) -> bool {
 
 /// Constant-fold an integer `+ - * / %` over two reconstructed literal operands with
 /// CHECKED, width-aware semantics — the recompute-don't-trust floor for closed integer
-/// arithmetic. Returns `None` (bail → the operand stays the conservative opaque term,
-/// never a forged value) when the result is NOT text-determined to a single in-range
+/// arithmetic. Returns `None` (bail -> factory gap, never a forged value) when the
+/// result is NOT text-determined to a single in-range
 /// value: a mixed concrete-width pair (not a valid rust expr), an i128-carrier overflow,
 /// a divide/remainder by zero, a `u128` operand (the i128 carrier cannot faithfully hold
 /// the full `u128` range), or a result outside the resolved type's value range (a real
@@ -1167,8 +1162,8 @@ fn reconstruct_lit(lit: &Lit) -> Result<Option<FmtValue>, String> {
 
 /// Public entry: resolve a format-producing expr to its string value, classifying the
 /// outcome for the caller's term-translation hook. `Ok(Some(s))` completes to `str_const(s)`;
-/// `Ok(None)` falls through to the conservative opaque path; `Err(reason)` is a named
-/// terminal refusal (f16/f128 Display unsupported).
+/// `Ok(None)` is a gap; `Err(reason)` is a named terminal refusal (f16/f128 Display
+/// unsupported).
 pub(crate) fn try_resolve_format(
     expr: &Expr,
     let_bindings: &BTreeMap<String, Expr>,

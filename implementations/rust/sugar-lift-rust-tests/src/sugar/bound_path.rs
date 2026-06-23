@@ -1,15 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // `BoundPathSugar`: a stable `let` binding used as a term is transparent to the
-// ProofIR term it names. This is the general temporal-rewrite hook: recognition
-// identifies the bound local, then desugar resolves the initializer in the live
-// binding context before asking the factory for the child sugar.
+// ProofIR term it names. Recognition identifies the bound local and the factory hands
+// this sugar its already-built body. Desugar never re-opens the factory from raw syntax.
 
-use std::collections::BTreeMap;
-
-use crate::sugar::bound::BoundSugar;
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{build_composite, build_constraint, build_term, SugarBuildCtx};
+use crate::sugar::factory::{compat_reduction, FactoryReduction, SugarBody, SugarBuildCtx};
 use crate::sugar::term_leaf::{reasoned_incomplete, resolved_term};
 use crate::{token_key, Outcome, Sugar, SugarCtx};
 use syn::{Expr, ExprPath};
@@ -68,13 +64,8 @@ fn recognize_role(expr: &Expr, fcx: &SugarBuildCtx, role: BoundPathRole) -> Opti
     if let Some(hit) = runtime_destructured_source_refusal(&name, fcx) {
         return Some(hit);
     }
-    has_bound_path_candidate(&name, fcx, role).then(|| {
-        Box::new(BoundPathSugar {
-            name,
-            role,
-            let_inits: capture_let_inits(fcx),
-        }) as Box<dyn Sugar>
-    })
+    let body = construct_bound_path_body(&name, fcx, role)?;
+    Some(BoundPathSugar::new(name, role, body))
 }
 
 #[derive(Clone, Copy)]
@@ -97,96 +88,71 @@ impl BoundPathRole {
 struct BoundPathSugar {
     name: String,
     role: BoundPathRole,
-    let_inits: BTreeMap<String, Expr>,
+    body: SugarBody,
 }
 
-fn has_bound_path_candidate(name: &str, fcx: &SugarBuildCtx, role: BoundPathRole) -> bool {
-    if fcx.scope().temporal_rewrite_expr_for(name).is_some() {
-        return true;
-    }
-    match role {
-        BoundPathRole::Term => {
-            fcx.scope().stable_term_binding_for_term(name).is_some()
-                || fcx.scope().stable_let_binding_for_term(name).is_some()
-        }
-        BoundPathRole::Constraint | BoundPathRole::Composite => {
-            fcx.scope().stable_let_binding_for_term(name).is_some()
-        }
+impl BoundPathSugar {
+    fn new(name: String, role: BoundPathRole, body: SugarBody) -> Box<dyn Sugar> {
+        Box::new(Self { name, role, body })
     }
 }
 
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
+fn construct_bound_path_body(
+    name: &str,
+    fcx: &SugarBuildCtx,
+    role: BoundPathRole,
+) -> Option<SugarBody> {
+    let child_fcx = fcx.with_bound_path(name);
+    if let Some(current) = fcx.scope().temporal_rewrite_expr_for(name) {
+        debug!(
+            target: "sugar_lift_rust_tests::temporal_rewrite",
+            binding = name,
+            value = %token_key(&current),
+            role = role.as_log_role(),
+            "factory constructed bound path temporal body"
+        );
+        return Some(role.body_from_expr(&current, &child_fcx));
+    }
+
+    if matches!(role, BoundPathRole::Term) {
+        if let Some(term) = fcx.scope().stable_term_binding_for_term(name) {
+            debug!(
+                target: "sugar_lift_rust_tests::bound_path",
+                binding = name,
+                role = "Term",
+                "factory constructed bound path term-binding body"
+            );
+            return Some(SugarBody::from_node(resolved_term(term)));
+        }
+    };
+
+    let init = fcx.scope().stable_let_binding_for_term(name)?;
+    Some(role.body_from_expr(init, &child_fcx))
 }
 
-fn merge_let_inits<'a>(
-    stable: &'a BTreeMap<String, Expr>,
-    captured: &'a BTreeMap<String, Expr>,
-) -> BTreeMap<String, &'a Expr> {
-    stable
-        .iter()
-        .map(|(name, init)| (name.clone(), init))
-        .chain(captured.iter().map(|(name, init)| (name.clone(), init)))
-        .collect()
+impl BoundPathRole {
+    fn body_from_expr(self, expr: &Expr, fcx: &SugarBuildCtx) -> SugarBody {
+        match self {
+            BoundPathRole::Term => SugarBody::term(expr, fcx),
+            BoundPathRole::Constraint => SugarBody::constraint(expr, fcx),
+            BoundPathRole::Composite => SugarBody::composite(expr, fcx),
+        }
+    }
 }
 
 impl Sugar for BoundPathSugar {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+        debug!(
+            target: "sugar_lift_rust_tests::bound_path",
+            binding = self.name.as_str(),
+            role = self.role.as_log_role(),
+            "reducing factory-constructed bound path body"
+        );
+        self.body.reduce(ctx)
+    }
+
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-        let let_inits = merge_let_inits(&stable, &self.let_inits);
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        let child_fcx = fcx.with_bound_path(&self.name);
-        if let Some(current) = ctx.scope.temporal_rewrite_expr_for(&self.name) {
-            debug!(
-                target: "sugar_lift_rust_tests::temporal_rewrite",
-                binding = self.name.as_str(),
-                value = %token_key(&current),
-                role = self.role.as_log_role(),
-                "temporal rewrite resolved path read"
-            );
-            return match self.role {
-                BoundPathRole::Term => {
-                    BoundSugar::new(self.name.as_str(), build_term(&current, &child_fcx))
-                        .desugar(ctx)
-                }
-                BoundPathRole::Constraint => {
-                    BoundSugar::new(self.name.as_str(), build_constraint(&current, &child_fcx))
-                        .desugar(ctx)
-                }
-                BoundPathRole::Composite => {
-                    BoundSugar::new(self.name.as_str(), build_composite(&current, &child_fcx))
-                        .desugar(ctx)
-                }
-            };
-        }
-        if matches!(self.role, BoundPathRole::Term) {
-            if let Some(term) = ctx.scope.stable_term_binding_for_term(&self.name) {
-                debug!(
-                    target: "sugar_lift_rust_tests::bound_path",
-                    binding = self.name.as_str(),
-                    role = "Term",
-                    "resolved path read through term binding"
-                );
-                return BoundSugar::new(self.name.as_str(), resolved_term(term)).desugar(ctx);
-            }
-        }
-        let Some(init) = ctx.scope.stable_let_binding_for_term(&self.name) else {
-            return Outcome::from_opt(None);
-        };
-        match self.role {
-            BoundPathRole::Term => {
-                BoundSugar::new(self.name.as_str(), build_term(init, &child_fcx)).desugar(ctx)
-            }
-            BoundPathRole::Constraint => {
-                BoundSugar::new(self.name.as_str(), build_constraint(init, &child_fcx)).desugar(ctx)
-            }
-            BoundPathRole::Composite => {
-                BoundSugar::new(self.name.as_str(), build_composite(init, &child_fcx)).desugar(ctx)
-            }
-        }
+        compat_reduction(self.reduce(ctx))
     }
 }
 

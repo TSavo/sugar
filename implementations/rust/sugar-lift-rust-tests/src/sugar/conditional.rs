@@ -14,7 +14,7 @@ use sugar_ir_symbolic::{and_, eq, implies, not_, Formula, Term};
 use syn::{BinOp, Expr, Stmt};
 
 use crate::sugar::backstop::boxed;
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::factory::{build_composite, build_term, SugarBuildCtx};
 use crate::{
     bool_const, closure_body_is_side_effecting, collect_assertion_entries, const_fold_int_term,
     const_fold_u128_term, count_asserts_in_stmts, loop_body_mutates, lower_assert_condition,
@@ -48,9 +48,16 @@ pub(crate) struct ConditionalSugar {
 
 impl Sugar for ConditionalSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        // TOTAL: the complete body computes the legacy `Option<Desugared>`; `Outcome::from_opt`
-        // lifts it (the structural bail -> `Incomplete(Effect::Unsupported)`, discarded by the
-        // fall-through consumer exactly as the old `None` was).
+        let then_count = count_asserts_in_stmts(&self.then_stmts);
+        let else_count = count_asserts_in_stmts(&self.else_stmts);
+        if then_count + else_count == 0 {
+            return self
+                .desugar_sequence_branch(ctx)
+                .unwrap_or_else(|| Outcome::from_opt(None));
+        }
+        // The assertion-bearing path still uses the legacy `Option<Desugared>` bridge.
+        // A structural `None` here is plumbing for the older fall-through path, not a
+        // semantic runtime/effect verdict.
         Outcome::from_opt((|| {
             // An `if let PAT = e { .. }` is a pattern-match guard, not a boolean
             // predicate -- the panic-locus path handles the diverging-else shape;
@@ -64,13 +71,8 @@ impl Sugar for ConditionalSugar {
             if closure_body_is_side_effecting(&self.cond) {
                 return None;
             }
-            let then_count = count_asserts_in_stmts(&self.then_stmts);
-            let else_count = count_asserts_in_stmts(&self.else_stmts);
             // At least one branch must carry an assertion (else nothing to classify --
             // leave it to the existing handling).
-            if then_count + else_count == 0 {
-                return None;
-            }
             if let Some(guard_value) = const_fold_bool_guard(ctx, &self.cond) {
                 let (active_stmts, active_count, inactive_count) = if guard_value {
                     (&self.then_stmts, then_count, else_count)
@@ -149,6 +151,23 @@ impl Sugar for ConditionalSugar {
 }
 
 impl ConditionalSugar {
+    fn desugar_sequence_branch(&self, ctx: &SugarCtx) -> Option<Outcome> {
+        let guard_value = const_fold_bool_guard(ctx, &self.cond)?;
+        let branch = if guard_value {
+            &self.then_stmts
+        } else {
+            &self.else_stmts
+        };
+        let tail = single_expr_tail(branch)?;
+        let let_inits = ctx
+            .scope
+            .let_bindings_iter()
+            .map(|(name, init)| (name.clone(), init))
+            .collect();
+        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        Some(build_composite(tail, &fcx).desugar(ctx))
+    }
+
     /// Lift a branch's statements all-or-nothing through the normal collector,
     /// returning the conjunction of its assert atoms or None (bail) if any branch
     /// assert refuses / is missing (truth-table-or-gutter, mirroring
@@ -187,6 +206,13 @@ impl ConditionalSugar {
             return None;
         }
         Some(and_(body_entries.iter().map(|e| e.atom.clone()).collect()))
+    }
+}
+
+fn single_expr_tail(stmts: &[Stmt]) -> Option<&Expr> {
+    match stmts {
+        [Stmt::Expr(expr, None)] => Some(expr),
+        _ => None,
     }
 }
 

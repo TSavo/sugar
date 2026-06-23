@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// `size_hint` — a delayed tuple-valued PRODUCER for the shared `tuple_decomp` arm.
+// `size_hint` -- a delayed tuple-valued PRODUCER for the shared `tuple_decomp` arm.
 //
 // The recognizer only owns the source shape: `<composite>.size_hint()`, capturing the raw
 // receiver. The decomposition is delayed until `desugar`, where exact static-size adaptor
@@ -9,13 +9,13 @@
 // hits an effect/runtime boundary, that boundary propagates. Empty literal domains are inert
 // and contribute length zero.
 
-use std::collections::BTreeMap;
-
 use sugar_ir_symbolic::num;
 use syn::Expr;
 use tracing::debug;
 
-use crate::sugar::factory::{build_composite, has_composite, SugarBuildCtx};
+use crate::sugar::factory::{
+    compat_reduction, has_composite, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+};
 use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::monadic;
 use crate::{const_int, strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
@@ -33,34 +33,46 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if !has_composite(&call.receiver, fcx) {
         return None;
     }
-    Some(Box::new(SizeHintTupleProducer {
-        receiver: (*call.receiver).clone(),
-    }))
+    Some(SizeHintTupleProducer::new(
+        (*call.receiver).clone(),
+        SugarBody::composite(&call.receiver, fcx),
+    ))
 }
 
 struct SizeHintTupleProducer {
-    receiver: Expr,
+    receiver_expr: Expr,
+    receiver: SugarBody,
+}
+
+impl SizeHintTupleProducer {
+    fn new(receiver_expr: Expr, receiver: SugarBody) -> Box<dyn Sugar> {
+        Box::new(Self {
+            receiver_expr,
+            receiver,
+        })
+    }
 }
 
 impl Sugar for SizeHintTupleProducer {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let let_inits = scope_let_inits(ctx);
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        if let Some(len) = exact_static_size_hint_len(&self.receiver) {
-            return tuple_components(len);
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+        if let Some(len) = exact_static_size_hint_len(&self.receiver_expr) {
+            return Ok(tuple_components(len));
         }
-        let receiver = build_composite(&self.receiver, &fcx);
-        let seq = match receiver.desugar(ctx) {
+        let seq = match self.receiver.reduce(ctx)? {
             Outcome::Complete(desugared) => match desugared.into_seq() {
                 Some(seq) => seq,
-                None => return Outcome::from_opt(None),
+                None => {
+                    return Err(FactoryGap::new(
+                        "size_hint receiver reduced to non-sequence",
+                    ))
+                }
             },
             Outcome::Incomplete(Effect::Unsupported { reason })
                 if reason == EMPTY_DOMAIN_REASON =>
             {
                 Vec::new()
             }
-            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+            Outcome::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
         };
         let len = seq.len();
         debug!(
@@ -68,7 +80,11 @@ impl Sugar for SizeHintTupleProducer {
             len,
             "resolved finite composite size_hint to tuple components"
         );
-        tuple_components(len)
+        Ok(tuple_components(len))
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
     }
 }
 
@@ -77,13 +93,6 @@ fn tuple_components(len: usize) -> Outcome {
         num(len as i128),
         monadic::some_term(num(len as i128)),
     ]))
-}
-
-fn scope_let_inits<'a, 'c>(ctx: &SugarCtx<'a, 'c>) -> BTreeMap<String, &'a Expr> {
-    ctx.scope
-        .let_bindings_iter()
-        .map(|(name, init)| (name.clone(), init))
-        .collect()
 }
 
 fn exact_static_size_hint_len(expr: &Expr) -> Option<usize> {

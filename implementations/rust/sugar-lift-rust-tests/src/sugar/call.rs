@@ -25,13 +25,14 @@
 // `CallSugar` is the CONSTRUCTIVE COMPOSER ONLY -- it is built only after the preamble
 // has been cleared, and then emits the `call:` ctor.
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{str_const, Term};
 use syn::Expr;
 
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::factory::{
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+};
 use crate::sugar::monadic::{none_term, some_term};
 use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::{
@@ -57,8 +58,11 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     }
     Some(Box::new(CallSugar::Constructive {
         func: call.func.as_ref().clone(),
-        args: call.args.iter().cloned().collect(),
-        let_inits: capture_let_inits(fcx),
+        args: call
+            .args
+            .iter()
+            .map(|arg| SugarBody::term(arg, fcx))
+            .collect(),
     }))
 }
 
@@ -66,43 +70,15 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
 /// `desugar` emits the `call:<head>` ctor over its argument child terms (the
 /// constructive tail of the `Expr::Call` arm). See the module header.
 pub(crate) enum CallSugar {
-    TypeId {
-        func: Expr,
-        arg_len: usize,
-    },
-    Constructive {
-        func: Expr,
-        args: Vec<Expr>,
-        let_inits: BTreeMap<String, Expr>,
-    },
+    TypeId { func: Expr, arg_len: usize },
+    Constructive { func: Expr, args: Vec<SugarBody> },
 }
 
 impl CallSugar {
-    pub(crate) fn new(func: Expr, args: Vec<Expr>, let_inits: BTreeMap<String, Expr>) -> Self {
-        CallSugar::Constructive {
-            func,
-            args,
-            let_inits,
-        }
+    #[allow(dead_code)]
+    pub(crate) fn new(func: Expr, args: Vec<SugarBody>) -> Self {
+        CallSugar::Constructive { func, args }
     }
-}
-
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
-}
-
-fn merge_let_inits<'a>(
-    stable: &'a BTreeMap<String, Expr>,
-    captured: &'a BTreeMap<String, Expr>,
-) -> BTreeMap<String, &'a Expr> {
-    stable
-        .iter()
-        .map(|(name, init)| (name.clone(), init))
-        .chain(captured.iter().map(|(name, init)| (name.clone(), init)))
-        .collect()
 }
 
 fn type_id_of_call_decision(func: &Expr, arg_len: usize) -> Option<Result<(), String>> {
@@ -151,36 +127,36 @@ impl Sugar for CallSugar {
     /// that completes to a non-term `Desugared` (`into_term` -> `None`) bails the node via
     /// the structural backstop (`Outcome::from_opt(None)`, the old `?`-propagated
     /// generic refusal).
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
         match self {
             CallSugar::TypeId { func, arg_len } => match type_id_of_call_term(func, *arg_len) {
-                Ok(Some(term)) => Outcome::Complete(Desugared::Term(term)),
-                Ok(None) => Outcome::from_opt(None),
-                Err(reason) => reasoned_incomplete(reason).desugar(ctx),
+                Ok(Some(term)) => Ok(Outcome::Complete(Desugared::Term(term))),
+                Ok(None) => Err(FactoryGap::new(
+                    "TypeId::of call did not resolve; write more Sugar for this AST",
+                )),
+                Err(reason) => Ok(reasoned_incomplete(reason).desugar(ctx)),
             },
-            CallSugar::Constructive {
-                func,
-                args,
-                let_inits,
-            } => {
-                let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-                let let_inits = merge_let_inits(&stable, let_inits);
-                let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+            CallSugar::Constructive { func, args } => {
                 let mut terms = Vec::new();
                 for arg in args {
-                    let term = match build_term(arg, &fcx).desugar(ctx) {
+                    let term = match arg.reduce(ctx)? {
                         Outcome::Complete(d) => match d.into_term() {
                             Some(t) => t,
-                            None => return Outcome::from_opt(None),
+                            None => {
+                                return Err(FactoryGap::new(format!(
+                                    "call `{}` argument completed a non-Term where a Term was required; write more Sugar for this AST",
+                                    expr_head_key(func)
+                                )))
+                            }
                         },
-                        Outcome::Incomplete(e) => return Outcome::Incomplete(e),
+                        Outcome::Incomplete(e) => return Ok(Outcome::Incomplete(e)),
                     };
                     terms.push(term);
                 }
                 let head_key = expr_head_key(func);
                 if terms.len() == 1 {
                     if let Some(term) = fold_char_from_u32_call(&head_key, &terms[0]) {
-                        return Outcome::Complete(Desugared::Term(term));
+                        return Ok(Outcome::Complete(Desugared::Term(term)));
                     }
                 }
                 // ARITHMETIC TRAIT-METHOD FOLD: `Add::add(x, y)` → `x + y`, const-evaluated.
@@ -199,19 +175,23 @@ impl Sugar for CallSugar {
                             args: terms.clone(),
                         });
                         if let Some(value) = const_fold_u128_term(&folded) {
-                            return Outcome::Complete(Desugared::Term(u128_term(value)));
+                            return Ok(Outcome::Complete(Desugared::Term(u128_term(value))));
                         }
                         if let Some(value) = const_fold_int_term(&folded) {
-                            return Outcome::Complete(Desugared::Term(num(value)));
+                            return Ok(Outcome::Complete(Desugared::Term(num(value))));
                         }
                     }
                 }
-                Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
+                Ok(Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
                     name: format!("call:{head_key}"),
                     args: terms,
-                })))
+                }))))
             }
         }
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
     }
 }
 

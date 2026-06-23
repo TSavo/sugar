@@ -44,6 +44,7 @@
 // evaluators into `Sugar` producers (the CallsiteSugar knot). They stay as-is; this
 // node unifies the binding resolution that is ALREADY at the `Sugar` level.
 
+use crate::sugar::factory::{compat_reduction, FactoryReduction};
 use crate::{Outcome, Sugar, SugarCtx};
 
 /// A recognized `let name = <init>;` reference appearing as a consuming node's
@@ -64,8 +65,12 @@ impl Sugar for BoundSugar {
     /// collapses to. The binding `name` is carried (the provenance rope) but does not
     /// alter the outcome -- the resolved `Complete`/`Incomplete` is byte-identical to desugaring
     /// the init directly, so the binding reference is transparent to the wire format.
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+        self.inner.reduce(ctx)
+    }
+
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        self.inner.desugar(ctx)
+        compat_reduction(self.reduce(ctx))
     }
 }
 

@@ -18,7 +18,7 @@
 
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::ctor_term::CtorSugar;
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx};
 use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::{is_immutable_value_expr, token_key, Effect, Sugar, UnsupportedTermCause};
 use syn::Expr;
@@ -34,13 +34,13 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     if reference.mutability.is_none() {
         return Some(Box::new(CtorSugar::new(
             "ref",
-            vec![build_term(&reference.expr, fcx)],
+            vec![SugarBody::term(&reference.expr, fcx)],
         )));
     }
     if is_immutable_value_expr(&reference.expr) {
         return Some(Box::new(CtorSugar::new(
             "ref_mut",
-            vec![build_term(&reference.expr, fcx)],
+            vec![SugarBody::term(&reference.expr, fcx)],
         )));
     }
     // reference.mutability.is_some() && not an immutable value place.

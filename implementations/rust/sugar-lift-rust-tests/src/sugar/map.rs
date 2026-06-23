@@ -7,16 +7,19 @@
 // `Adaptor::Map(closure)` arm of the former `apply_one_adaptor` match.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
-use quote::quote;
+use sugar_ir_symbolic::{make_var, Term};
 use syn::{Expr, Pat, Type};
 
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::factory::{
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+};
 use crate::sugar::method_family;
 use crate::{
-    closure_body_mutates_captured_runtime_state, const_eval_unary_closure,
-    const_eval_unary_closure_with_u128_shift, strip_refs_groups, substitute_expr, Desugared,
-    DesugaredElem, Effect, ExprBindings, Outcome, Sugar, SugarCtx, TemporalScope,
+    canonical_term_sig, closure_body_mutates_captured_runtime_state, const_eval_unary_closure,
+    const_eval_unary_closure_with_u128_shift, const_val_term, strip_refs_groups, substitute_expr,
+    Desugared, DesugaredElem, Effect, ExprBindings, Outcome, Sugar, SugarCtx, TemporalScope,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -38,7 +41,10 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
         return None;
     }
     Some(Box::new(MapCallSugar {
-        receiver: (*call.receiver).clone(),
+        inner: SugarBody::from_node(method_family::build_literal_sequence_composite(
+            &call.receiver,
+            fcx,
+        )?),
         f: f.clone(),
         u128_shift_hint: receiver_is_u128_count_ones_range(&call.receiver),
     }))
@@ -58,7 +64,10 @@ pub(crate) fn recognize_term(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn
         return None;
     }
     Some(Box::new(MapTermSugar {
-        receiver: (*call.receiver).clone(),
+        inner: SugarBody::from_node(method_family::build_literal_sequence_composite(
+            &call.receiver,
+            fcx,
+        )?),
         f: f.clone(),
         u128_shift_hint: receiver_is_u128_count_ones_range(&call.receiver),
     }))
@@ -67,23 +76,28 @@ pub(crate) fn recognize_term(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn
 /// A source-level `.map(..)` site. It captures the raw receiver and builds the
 /// sequence child lazily in `desugar`, once the full scope is available.
 struct MapCallSugar {
-    receiver: Expr,
+    inner: SugarBody,
     f: syn::ExprClosure,
     u128_shift_hint: bool,
 }
 
 impl Sugar for MapCallSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
         if let Some(outcome) = captured_mutation_refusal(&self.f) {
-            return outcome;
+            return Ok(outcome);
         }
         if let Some(outcome) = captured_runtime_read_refusal(&self.f, ctx) {
-            return outcome;
+            return Ok(outcome);
         }
-        Outcome::from_opt((|| {
-            let inner = build_inner_sequence(&self.receiver, ctx)?;
-            reduce_map(inner.as_ref(), &self.f, self.u128_shift_hint, ctx).map(Desugared::Seq)
-        })())
+        let mapped = match reduce_map_body(&self.inner, &self.f, self.u128_shift_hint, ctx) {
+            Ok(mapped) => mapped,
+            Err(reduction) => return reduction,
+        };
+        Ok(Outcome::Complete(Desugared::Seq(mapped)))
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
     }
 }
 
@@ -109,46 +123,31 @@ impl Sugar for MapSugar {
 }
 
 pub(crate) struct MapTermSugar {
-    pub(crate) receiver: Expr,
+    pub(crate) inner: SugarBody,
     pub(crate) f: syn::ExprClosure,
     pub(crate) u128_shift_hint: bool,
 }
 
 impl Sugar for MapTermSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
         if let Some(outcome) = captured_mutation_refusal(&self.f) {
-            return outcome;
+            return Ok(outcome);
         }
         if let Some(outcome) = captured_runtime_read_refusal(&self.f, ctx) {
-            return outcome;
+            return Ok(outcome);
         }
-        Outcome::from_opt((|| {
-            let inner = build_inner_sequence(&self.receiver, ctx)?;
-            let mapped = reduce_map(inner.as_ref(), &self.f, self.u128_shift_hint, ctx)?;
-            let exprs: Vec<Expr> = mapped.into_iter().map(|elem| elem.expr).collect();
-            let array = array_expr(exprs)?;
-            let let_inits = scope_let_inits(ctx);
-            let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-            let term = build_term(&array, &fcx)
-                .desugar(ctx)
-                .complete()?
-                .into_term()?;
-            Some(Desugared::Term(term))
-        })())
+        let mapped = match reduce_map_body(&self.inner, &self.f, self.u128_shift_hint, ctx) {
+            Ok(mapped) => mapped,
+            Err(reduction) => return reduction,
+        };
+        let term = literal_array_term_from_mapped_values(&mapped)
+            .ok_or_else(|| FactoryGap::new("map term produced non-literal mapped element"))?;
+        Ok(Outcome::Complete(Desugared::Term(term)))
     }
-}
 
-fn build_inner_sequence(receiver: &Expr, ctx: &SugarCtx) -> Option<Box<dyn Sugar>> {
-    let let_inits = scope_let_inits(ctx);
-    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-    method_family::build_literal_sequence_composite(receiver, &fcx)
-}
-
-fn scope_let_inits<'a, 'c>(ctx: &SugarCtx<'a, 'c>) -> BTreeMap<String, &'a Expr> {
-    ctx.scope
-        .let_bindings_iter()
-        .map(|(name, init)| (name.clone(), init))
-        .collect()
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
+    }
 }
 
 fn captured_mutation_refusal(f: &syn::ExprClosure) -> Option<Outcome> {
@@ -284,6 +283,35 @@ fn reduce_map(
     ctx: &SugarCtx,
 ) -> Option<Vec<DesugaredElem>> {
     let seq = inner.desugar(ctx).complete()?.into_seq()?;
+    reduce_map_sequence(seq, f, u128_shift_hint, ctx)
+}
+
+fn reduce_map_body(
+    inner: &SugarBody,
+    f: &syn::ExprClosure,
+    u128_shift_hint: bool,
+    ctx: &SugarCtx,
+) -> Result<Vec<DesugaredElem>, FactoryReduction> {
+    let seq = match inner.reduce(ctx) {
+        Ok(Outcome::Complete(d)) => d
+            .into_seq()
+            .ok_or_else(|| Err(FactoryGap::new("map receiver reduced to non-sequence")))?,
+        Ok(Outcome::Incomplete(effect)) => return Err(Ok(Outcome::Incomplete(effect))),
+        Err(gap) => return Err(Err(gap)),
+    };
+    reduce_map_sequence(seq, f, u128_shift_hint, ctx).ok_or_else(|| {
+        Err(FactoryGap::new(
+            "map closure did not reduce over literal sequence",
+        ))
+    })
+}
+
+fn reduce_map_sequence(
+    seq: Vec<DesugaredElem>,
+    f: &syn::ExprClosure,
+    u128_shift_hint: bool,
+    ctx: &SugarCtx,
+) -> Option<Vec<DesugaredElem>> {
     let mut out = Vec::with_capacity(seq.len());
     for elem in seq {
         if let Some(mapped) = elem.value.as_ref().and_then(|v| {
@@ -308,6 +336,19 @@ fn reduce_map(
         "literal closure map reduced"
     );
     Some(out)
+}
+
+fn literal_array_term_from_mapped_values(mapped: &[DesugaredElem]) -> Option<Rc<Term>> {
+    let terms = mapped
+        .iter()
+        .map(|elem| const_val_term(elem.value.as_ref()?))
+        .collect::<Option<Vec<_>>>()?;
+    let inner = terms
+        .iter()
+        .map(|term| canonical_term_sig(term))
+        .collect::<Vec<_>>()
+        .join(",");
+    Some(make_var(format!("literal:Array({inner})")))
 }
 
 fn rewrite_map_elem(f: &syn::ExprClosure, elem: &Expr, ctx: &SugarCtx) -> Option<Expr> {
@@ -365,10 +406,6 @@ fn closure_param_ignores_arg(pat: &Pat) -> bool {
         Pat::Type(t) => closure_param_ignores_arg(&t.pat),
         _ => false,
     }
-}
-
-fn array_expr(exprs: Vec<Expr>) -> Option<Expr> {
-    syn::parse2(quote!([#(#exprs),*])).ok()
 }
 
 fn receiver_is_u128_count_ones_range(expr: &Expr) -> bool {

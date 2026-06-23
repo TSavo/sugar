@@ -13,9 +13,9 @@
 // TEETH: `MaybeUninit::<u32>::zeroed().assume_init() == 1` becomes UNSAT.
 //
 // Finite-or-refuse: for types where all-zeros is UB or indeterminate
-// (`NonZero*`, references, raw pointers, user-defined structs, …) the
-// recognizer returns `None` and falls through to the opaque generic sugar —
-// never fabricate a zero for those types.
+// (`NonZero*`, references, raw pointers, user-defined structs, ...) the recognizer
+// emits a named refusal. It never fabricates a zero and never falls through to an
+// opaque generic sugar after recognizing the zeroed shape.
 //
 // Ambiguity guard
 // ───────────────
@@ -34,7 +34,7 @@ use syn::{Expr, GenericArgument, PathArguments, Type};
 
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::SugarBuildCtx;
-use crate::sugar::term_leaf::resolved_term;
+use crate::sugar::term_leaf::{reasoned_incomplete, resolved_term};
 use crate::{bool_const, num, strip_refs_groups, Sugar};
 
 // ── (A) MaybeUninit::<T>::zeroed().assume_init() ─────────────────────────────
@@ -50,14 +50,13 @@ fn recognize_assume_init(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Su
     if outer.method != "assume_init" || !outer.args.is_empty() {
         return None;
     }
-    // Receiver must be `MaybeUninit::<T>::zeroed()` for a zero-safe type T.
-    let zero_term = maybe_uninit_zeroed_term(&outer.receiver)?;
-    Some(resolved_term(zero_term))
+    // Receiver must be `MaybeUninit::<T>::zeroed()`.
+    let ty = maybe_uninit_zeroed_type(&outer.receiver)?;
+    Some(zeroed_type_sugar(&ty))
 }
 
-/// Return the zero-value `Term` for `MaybeUninit::<T>::zeroed()`, or `None`
-/// if the receiver is not that shape or T is not a zero-safe primitive.
-fn maybe_uninit_zeroed_term(expr: &Expr) -> Option<Rc<Term>> {
+/// Return `T` for `MaybeUninit::<T>::zeroed()`, or `None` if the receiver is not that shape.
+fn maybe_uninit_zeroed_type(expr: &Expr) -> Option<Type> {
     let Expr::Call(call) = strip_refs_groups(expr) else {
         return None;
     };
@@ -83,8 +82,7 @@ fn maybe_uninit_zeroed_term(expr: &Expr) -> Option<Rc<Term>> {
     }
     // Type T comes from the angle brackets on the `MaybeUninit` segment:
     // `MaybeUninit::<T>`.
-    let ty = angle_bracket_type_arg(&second_last.arguments)?;
-    primitive_zero_term(&ty)
+    angle_bracket_type_arg(&second_last.arguments)
 }
 
 // ── (B) mem::zeroed::<T>() ───────────────────────────────────────────────────
@@ -100,13 +98,12 @@ fn recognize_mem_zeroed(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sug
     if !call.args.is_empty() {
         return None;
     }
-    let zero_term = mem_zeroed_term(&call.func)?;
-    Some(resolved_term(zero_term))
+    let ty = mem_zeroed_type(&call.func)?;
+    Some(zeroed_type_sugar(&ty))
 }
 
-/// Return the zero-value `Term` for `mem::zeroed::<T>()` / `core::mem::zeroed::<T>()`,
-/// or `None` if the func is not that shape or T is not a zero-safe primitive.
-fn mem_zeroed_term(func: &Expr) -> Option<Rc<Term>> {
+/// Return `T` for `mem::zeroed::<T>()` / `core::mem::zeroed::<T>()`, or `None` if the func is not that shape.
+fn mem_zeroed_type(func: &Expr) -> Option<Type> {
     let Expr::Path(path_expr) = strip_refs_groups(func) else {
         return None;
     };
@@ -131,8 +128,7 @@ fn mem_zeroed_term(func: &Expr) -> Option<Rc<Term>> {
         return None;
     }
     // Type T comes from the turbofish on the `zeroed` segment: `zeroed::<T>`.
-    let ty = angle_bracket_type_arg(&last.arguments)?;
-    primitive_zero_term(&ty)
+    angle_bracket_type_arg(&last.arguments)
 }
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
@@ -158,7 +154,7 @@ fn angle_bracket_type_arg(args: &PathArguments) -> Option<Type> {
 ///   `num(0)` (the plain unsorted integer zero, same sort as unsuffixed `0`
 ///   literals and `u32::MIN` / `i64::MIN` from `const_path`).
 /// * `bool` → `bool_const(false)` (all-zeros bit-pattern for bool is `false`).
-/// * Everything else (`NonZero*`, references, raw pointers, structs, …) →
+/// * Everything else (`NonZero*`, references, raw pointers, structs, ...) ->
 ///   `None` (finite-or-refuse: never fabricate a zero for these types).
 fn primitive_zero_term(ty: &Type) -> Option<Rc<Term>> {
     let Type::Path(tp) = ty else {
@@ -171,8 +167,16 @@ fn primitive_zero_term(ty: &Type) -> Option<Rc<Term>> {
         "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64" | "i128"
         | "isize" => Some(num(0)),
         "bool" => Some(bool_const(false)),
-        // All other types — NonZero*, &T, *T, structs, enums, … — fall through
-        // to the opaque generic sugar.  Never fabricate a zero for them.
         _ => None,
     }
+}
+
+fn zeroed_type_sugar(ty: &Type) -> Box<dyn Sugar> {
+    if let Some(term) = primitive_zero_term(ty) {
+        return resolved_term(term);
+    }
+    reasoned_incomplete(format!(
+        "all-zeros bit-pattern is not a determinate valid value for `{}`; refused",
+        quote::ToTokens::to_token_stream(ty)
+    ))
 }

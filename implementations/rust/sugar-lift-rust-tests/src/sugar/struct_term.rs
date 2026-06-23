@@ -6,7 +6,7 @@
 // `Expr::Struct` arm of the old fat factory.
 
 use crate::sugar::ctor_term::CtorSugar;
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx};
 use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::{path_to_variant_string, token_key, Sugar};
 use syn::Expr;
@@ -25,19 +25,22 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
             token_key(expr)
         )));
     }
-    let mut fields: Vec<(String, Box<dyn Sugar>)> = Vec::new();
+    let mut fields: Vec<(String, SugarBody)> = Vec::new();
     for fv in &s.fields {
         let fname = match &fv.member {
             syn::Member::Named(id) => id.to_string(),
             syn::Member::Unnamed(idx) => idx.index.to_string(),
         };
-        fields.push((fname, build_term(&fv.expr, fcx)));
+        fields.push((fname, SugarBody::term(&fv.expr, fcx)));
     }
     fields.sort_by(|a, b| a.0.cmp(&b.0));
-    let field_ctors: Vec<Box<dyn Sugar>> = fields
+    let field_ctors: Vec<SugarBody> = fields
         .into_iter()
         .map(|(fname, child)| {
-            Box::new(CtorSugar::new(format!("field:{fname}"), vec![child])) as Box<dyn Sugar>
+            SugarBody::from_node(Box::new(CtorSugar::new(
+                format!("field:{fname}"),
+                vec![child],
+            )))
         })
         .collect();
     Some(Box::new(CtorSugar::new(

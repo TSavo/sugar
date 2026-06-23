@@ -2,14 +2,14 @@
 //
 // `ConstSugar`: a compiler-known `const` path is transparent to its initializer.
 // The compiler already proved the path resolves for compiling code; recognition
-// captures the raw path, and desugar resolves/rebuilds the initializer instead of
-// freezing the path as a free var.
+// constructs the initializer body up front instead of freezing the path as a free var.
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use crate::sugar::claim::ExprSugarClaim;
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::factory::{
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+};
 
 use sugar_ir_symbolic::Term;
 
@@ -20,20 +20,28 @@ use tracing::debug;
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::term_before("const", &["path"], recognize);
 
+pub(crate) const COMPOSITE_EXPR_SUGAR: ExprSugarClaim =
+    ExprSugarClaim::composite("const_composite", recognize_composite);
+
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if primitive_assoc_const_expr(expr).is_some() {
-        return Some(Box::new(ConstSugar::Primitive { expr: expr.clone() }));
+        return Some(ConstSugar::new_primitive(expr.clone()));
     }
     let (name, path) = simple_const_path(expr)?;
     if fcx.resolving_const_path(&name) {
         return None;
     }
-    fcx.scope().const_expr_for_path(path)?;
-    Some(Box::new(ConstSugar::Path {
-        name,
-        path: path.clone(),
-        let_inits: capture_let_inits(fcx),
-    }))
+    let body = construct_const_body(&name, path, fcx, ConstBodyRole::Term)?;
+    Some(ConstSugar::new_path(name, body))
+}
+
+fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    let (name, path) = simple_const_path(expr)?;
+    if fcx.resolving_const_path(&name) {
+        return None;
+    }
+    let body = construct_const_body(&name, path, fcx, ConstBodyRole::Composite)?;
+    Some(ConstCompositeSugar::new(name, body))
 }
 
 fn simple_const_path(expr: &Expr) -> Option<(String, &syn::Path)> {
@@ -164,41 +172,60 @@ struct PrimitiveAssocConst {
 }
 
 pub(crate) enum ConstSugar {
-    Primitive {
-        expr: Expr,
-    },
-    Path {
-        #[allow(dead_code)]
-        name: String,
-        path: syn::Path,
-        let_inits: BTreeMap<String, Expr>,
-    },
+    Primitive { expr: Expr },
+    Path { name: String, body: SugarBody },
 }
 
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
+pub(crate) struct ConstCompositeSugar {
+    name: String,
+    body: SugarBody,
 }
 
-fn merge_let_inits<'a>(
-    stable: &'a BTreeMap<String, Expr>,
-    captured: &'a BTreeMap<String, Expr>,
-) -> BTreeMap<String, &'a Expr> {
-    stable
-        .iter()
-        .map(|(name, init)| (name.clone(), init))
-        .chain(captured.iter().map(|(name, init)| (name.clone(), init)))
-        .collect()
+impl ConstSugar {
+    fn new_primitive(expr: Expr) -> Box<dyn Sugar> {
+        Box::new(Self::Primitive { expr })
+    }
+
+    fn new_path(name: String, body: SugarBody) -> Box<dyn Sugar> {
+        Box::new(Self::Path { name, body })
+    }
+}
+
+impl ConstCompositeSugar {
+    fn new(name: String, body: SugarBody) -> Box<dyn Sugar> {
+        Box::new(Self { name, body })
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ConstBodyRole {
+    Term,
+    Composite,
+}
+
+fn construct_const_body(
+    name: &str,
+    path: &syn::Path,
+    fcx: &SugarBuildCtx,
+    role: ConstBodyRole,
+) -> Option<SugarBody> {
+    let init = fcx.scope().const_expr_for_path(path)?;
+    let child_fcx = fcx.with_const_path(name);
+    Some(match role {
+        ConstBodyRole::Term => SugarBody::term(init.as_ref(), &child_fcx),
+        ConstBodyRole::Composite => SugarBody::composite(init.as_ref(), &child_fcx),
+    })
 }
 
 impl Sugar for ConstSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
         match self {
             ConstSugar::Primitive { expr } => {
                 let Some(value) = primitive_assoc_const_term(expr) else {
-                    return Outcome::from_opt(None);
+                    return Err(FactoryGap::new(format!(
+                        "primitive associated const `{}` recognized but did not reduce",
+                        crate::token_key(expr)
+                    )));
                 };
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::const_path",
@@ -206,22 +233,35 @@ impl Sugar for ConstSugar {
                     term = ?value,
                     "resolved primitive associated const compiler axiom"
                 );
-                Outcome::Complete(Desugared::Term(value))
+                Ok(Outcome::Complete(Desugared::Term(value)))
             }
-            ConstSugar::Path {
-                name,
-                path,
-                let_inits,
-            } => {
-                let Some(init) = ctx.scope.const_expr_for_path(path) else {
-                    return Outcome::from_opt(None);
-                };
-                let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-                let let_inits = merge_let_inits(&stable, let_inits);
-                let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-                let child_fcx = fcx.with_const_path(name);
-                build_term(init.as_ref(), &child_fcx).desugar(ctx)
+            ConstSugar::Path { name, body } => {
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::const_path",
+                    path = name.as_str(),
+                    "reducing factory-constructed const body"
+                );
+                body.reduce(ctx)
             }
         }
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
+    }
+}
+
+impl Sugar for ConstCompositeSugar {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+        debug!(
+            target: "sugar_lift_rust_tests::sugar::const_path",
+            path = self.name.as_str(),
+            "reducing factory-constructed const composite body"
+        );
+        self.body.reduce(ctx)
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
     }
 }

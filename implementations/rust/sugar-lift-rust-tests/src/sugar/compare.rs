@@ -21,6 +21,7 @@ use std::rc::Rc;
 
 use sugar_ir_symbolic::Term;
 
+use crate::sugar::factory::{compat_reduction, FactoryGap, FactoryReduction, SugarBody};
 use crate::{bool_const, const_fold_int_term, Desugared, Outcome, RelationOp, Sugar, SugarCtx};
 
 /// The constructive comparison-term node. `left`/`right` are the pre-built operand
@@ -29,26 +30,34 @@ use crate::{bool_const, const_fold_int_term, Desugared, Outcome, RelationOp, Sug
 /// composes the children's terms and emits `cmp:<rel.cmp_ctor_name()>(l, r)` --
 /// byte-identical to the `translate_term_in_scope` arm.
 pub(crate) struct CompareSugar {
-    pub(crate) left: Box<dyn Sugar>,
-    pub(crate) right: Box<dyn Sugar>,
+    pub(crate) left: SugarBody,
+    pub(crate) right: SugarBody,
     pub(crate) rel: RelationOp,
 }
 
 impl Sugar for CompareSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let lhs = match self.left.desugar(ctx) {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+        let lhs = match self.left.reduce(ctx)? {
             Outcome::Complete(d) => match d.into_term() {
                 Some(t) => t,
-                None => return Outcome::from_opt(None),
+                None => {
+                    return Err(FactoryGap::new(
+                        "comparison child completed a non-Term where a Term was required; write more Sugar for this AST",
+                    ))
+                }
             },
-            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
+            Outcome::Incomplete(e) => return Ok(Outcome::Incomplete(e)),
         };
-        let rhs = match self.right.desugar(ctx) {
+        let rhs = match self.right.reduce(ctx)? {
             Outcome::Complete(d) => match d.into_term() {
                 Some(t) => t,
-                None => return Outcome::from_opt(None),
+                None => {
+                    return Err(FactoryGap::new(
+                        "comparison child completed a non-Term where a Term was required; write more Sugar for this AST",
+                    ))
+                }
             },
-            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
+            Outcome::Incomplete(e) => return Ok(Outcome::Incomplete(e)),
         };
         // Collapse-inside-out: once BOTH operands ground to concrete integers
         // (e.g. `a[0] < b[0]` over immutable literal arrays, where `IndexSugar`
@@ -68,12 +77,16 @@ impl Sugar for CompareSugar {
                 RelationOp::Gt => a > b,
                 RelationOp::Ge => a >= b,
             };
-            return Outcome::Complete(Desugared::Term(bool_const(value)));
+            return Ok(Outcome::Complete(Desugared::Term(bool_const(value))));
         }
-        Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
+        Ok(Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
             name: format!("cmp:{}", self.rel.cmp_ctor_name()),
             args: vec![lhs, rhs],
-        })))
+        }))))
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
     }
 }
 

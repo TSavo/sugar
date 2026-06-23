@@ -10,7 +10,9 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{ConstValue, Sort, Term};
 
 use crate::sugar::ctor_term::CtorSugar;
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::factory::{
+    build_term, compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+};
 use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::{
     cast_const_fold_value, const_fold_int_term, is_shared_dyn_any_type, scalar_cast_type_key,
@@ -49,13 +51,13 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     if is_shared_dyn_any_type(&cast.ty) {
         return Some(Box::new(CtorSugar::new(
             format!("cast:{}", type_key(&cast.ty)),
-            vec![build_term(&cast.expr, fcx)],
+            vec![SugarBody::term(&cast.expr, fcx)],
         )));
     }
     if let Some(cast_type) = scalar_cast_type_key(&cast.ty) {
         return Some(Box::new(CastSugar {
             cast_type: cast_type.to_string(),
-            inner: build_term(&cast.expr, fcx),
+            inner: SugarBody::term(&cast.expr, fcx),
         }));
     }
     Some(reasoned_incomplete(format!(
@@ -74,25 +76,34 @@ fn is_slice_reference_cast(ty: &Type) -> bool {
 
 struct CastSugar {
     cast_type: String,
-    inner: Box<dyn Sugar>,
+    inner: SugarBody,
 }
 
 impl Sugar for CastSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let inner = match self.inner.desugar(ctx) {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+        let inner = match self.inner.reduce(ctx)? {
             Outcome::Complete(d) => match d.into_term() {
                 Some(term) => term,
-                None => return Outcome::from_opt(None),
+                None => {
+                    return Err(FactoryGap::new(format!(
+                        "cast `{}` child completed a non-Term where a Term was required; write more Sugar for this AST",
+                        self.cast_type
+                    )))
+                }
             },
-            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
+            Outcome::Incomplete(e) => return Ok(Outcome::Incomplete(e)),
         };
         if let Some(term) = fold_grounded_scalar_cast(&inner, &self.cast_type) {
-            return Outcome::Complete(Desugared::Term(term));
+            return Ok(Outcome::Complete(Desugared::Term(term)));
         }
-        Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
+        Ok(Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
             name: format!("cast:{}", self.cast_type),
             args: vec![inner],
-        })))
+        }))))
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
     }
 }
 

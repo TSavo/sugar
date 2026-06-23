@@ -13,8 +13,9 @@ use syn::{Expr, GenericArgument, Path, PathArguments, Type};
 use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::sugar::format::stable_let_bindings;
+use crate::sugar::factory::{
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+};
 use crate::sugar::monadic::{
     err_term, is_grounded_literal_term, none_term, ok_term, some_term, OPT_NONE, OPT_SOME, RES_ERR,
     RES_OK,
@@ -41,67 +42,61 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
             let Expr::Closure(f) = &call.args[0] else {
                 return None;
             };
-            Some(Box::new(OptionAdaptorSugar {
-                receiver: (*call.receiver).clone(),
-                kind: Kind::Map(f.clone()),
-                let_inits: capture_let_inits(fcx),
-            }))
+            Some(OptionAdaptorSugar::new(
+                SugarBody::term(&call.receiver, fcx),
+                Kind::Map(f.clone()),
+            ))
         }
         ("and_then", 1) => {
             let Expr::Closure(f) = &call.args[0] else {
                 return None;
             };
-            Some(Box::new(OptionAdaptorSugar {
-                receiver: (*call.receiver).clone(),
-                kind: Kind::AndThen(f.clone()),
-                let_inits: capture_let_inits(fcx),
-            }))
+            Some(OptionAdaptorSugar::new(
+                SugarBody::term(&call.receiver, fcx),
+                Kind::AndThen(f.clone()),
+            ))
         }
         ("filter", 1) => {
             let Expr::Closure(f) = &call.args[0] else {
                 return None;
             };
-            Some(Box::new(OptionAdaptorSugar {
-                receiver: (*call.receiver).clone(),
-                kind: Kind::Filter(f.clone()),
-                let_inits: capture_let_inits(fcx),
-            }))
+            Some(OptionAdaptorSugar::new(
+                SugarBody::term(&call.receiver, fcx),
+                Kind::Filter(f.clone()),
+            ))
         }
-        ("ok_or", 1) => Some(Box::new(OptionAdaptorSugar {
-            receiver: (*call.receiver).clone(),
-            kind: Kind::OkOr(call.args[0].clone()),
-            let_inits: capture_let_inits(fcx),
-        })),
+        ("ok_or", 1) => Some(OptionAdaptorSugar::new(
+            SugarBody::term(&call.receiver, fcx),
+            Kind::OkOr(SugarBody::term(&call.args[0], fcx)),
+        )),
         ("map_err", 1) => {
             let Expr::Closure(f) = &call.args[0] else {
                 return None;
             };
-            Some(Box::new(OptionAdaptorSugar {
-                receiver: (*call.receiver).clone(),
-                kind: Kind::MapErr(f.clone()),
-                let_inits: capture_let_inits(fcx),
-            }))
+            Some(OptionAdaptorSugar::new(
+                SugarBody::term(&call.receiver, fcx),
+                Kind::MapErr(f.clone()),
+            ))
         }
-        ("unwrap_or", 1) => Some(Box::new(OptionAdaptorSugar {
-            receiver: (*call.receiver).clone(),
-            kind: Kind::UnwrapOr(call.args[0].clone()),
-            let_inits: capture_let_inits(fcx),
-        })),
+        ("unwrap_or", 1) => Some(OptionAdaptorSugar::new(
+            SugarBody::term(&call.receiver, fcx),
+            Kind::UnwrapOr(SugarBody::term(&call.args[0], fcx)),
+        )),
         ("unwrap_or_else", 1) => {
             let Expr::Closure(f) = &call.args[0] else {
                 return None;
             };
-            Some(Box::new(OptionAdaptorSugar {
-                receiver: (*call.receiver).clone(),
-                kind: Kind::UnwrapOrElse(f.clone()),
-                let_inits: capture_let_inits(fcx),
-            }))
+            Some(OptionAdaptorSugar::new(
+                SugarBody::term(&call.receiver, fcx),
+                Kind::UnwrapOrElse(f.clone()),
+            ))
         }
-        ("unwrap_or_default", 0) => Some(Box::new(OptionAdaptorSugar {
-            receiver: (*call.receiver).clone(),
-            kind: Kind::UnwrapOrDefault,
-            let_inits: capture_let_inits(fcx),
-        })),
+        ("unwrap_or_default", 0) => Some(OptionAdaptorSugar::new(
+            SugarBody::term(&call.receiver, fcx),
+            Kind::UnwrapOrDefault {
+                default: default_term_for_receiver(&call.receiver, fcx, 0),
+            },
+        )),
         _ => None,
     }
 }
@@ -110,119 +105,136 @@ enum Kind {
     Map(syn::ExprClosure),
     AndThen(syn::ExprClosure),
     Filter(syn::ExprClosure),
-    OkOr(Expr),
+    OkOr(SugarBody),
     MapErr(syn::ExprClosure),
-    UnwrapOr(Expr),
+    UnwrapOr(SugarBody),
     UnwrapOrElse(syn::ExprClosure),
-    UnwrapOrDefault,
+    UnwrapOrDefault { default: Option<Rc<Term>> },
 }
 
 struct OptionAdaptorSugar {
-    receiver: Expr,
+    receiver: SugarBody,
     kind: Kind,
-    let_inits: BTreeMap<String, Expr>,
 }
 
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
+impl OptionAdaptorSugar {
+    fn new(receiver: SugarBody, kind: Kind) -> Box<dyn Sugar> {
+        Box::new(Self { receiver, kind })
+    }
 }
 
 impl Sugar for OptionAdaptorSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let stable = stable_let_bindings(ctx.scope);
-        let let_inits: BTreeMap<String, &Expr> = stable
-            .iter()
-            .map(|(name, init)| (name.clone(), init))
-            .chain(
-                self.let_inits
-                    .iter()
-                    .map(|(name, init)| (name.clone(), init)),
-            )
-            .collect();
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        let receiver = match build_term(&self.receiver, &fcx).desugar(ctx) {
-            Outcome::Complete(d) => match d.into_term() {
-                Some(term) => term,
-                None => return Outcome::from_opt(None),
-            },
-            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+        let receiver = match term_from_body(&self.receiver, ctx, "option adaptor receiver") {
+            Ok(term) => term,
+            Err(reduction) => return reduction,
         };
-        match &self.kind {
+        let outcome = match &self.kind {
             Kind::Map(f) => {
                 if let Some(payload) = option_payload(&receiver) {
-                    return desugar_option_map(f, payload);
+                    desugar_option_map(f, payload)
+                } else if let Some(payload) = result_payload(&receiver) {
+                    desugar_result_map(f, payload)
+                } else {
+                    Outcome::from_opt(None)
                 }
-                if let Some(payload) = result_payload(&receiver) {
-                    return desugar_result_map(f, payload);
-                }
-                Outcome::from_opt(None)
             }
             Kind::AndThen(f) => {
                 if let Some(payload) = option_payload(&receiver) {
-                    return desugar_option_and_then(f, payload);
+                    desugar_option_and_then(f, payload)
+                } else if let Some(payload) = result_payload(&receiver) {
+                    desugar_result_and_then(f, payload)
+                } else {
+                    Outcome::from_opt(None)
                 }
-                if let Some(payload) = result_payload(&receiver) {
-                    return desugar_result_and_then(f, payload);
-                }
-                Outcome::from_opt(None)
             }
             Kind::Filter(f) => {
                 if let Some(payload) = option_payload(&receiver) {
-                    return desugar_option_filter(f, payload);
+                    desugar_option_filter(f, payload)
+                } else {
+                    Outcome::from_opt(None)
                 }
-                Outcome::from_opt(None)
             }
             Kind::OkOr(default) => {
-                let default = match build_eager_default(default, &fcx, ctx) {
+                let default = match build_eager_default(default, ctx) {
                     Ok(term) => term,
-                    Err(outcome) => return outcome,
+                    Err(reduction) => return reduction,
                 };
                 if let Some(payload) = option_payload(&receiver) {
-                    return desugar_option_ok_or(payload, default);
+                    desugar_option_ok_or(payload, default)
+                } else {
+                    Outcome::from_opt(None)
                 }
-                Outcome::from_opt(None)
             }
             Kind::MapErr(f) => {
                 if let Some(payload) = result_payload(&receiver) {
-                    return desugar_result_map_err(f, payload);
+                    desugar_result_map_err(f, payload)
+                } else {
+                    Outcome::from_opt(None)
                 }
-                Outcome::from_opt(None)
             }
             Kind::UnwrapOr(default) => {
-                let default = match build_eager_default(default, &fcx, ctx) {
+                let default = match build_eager_default(default, ctx) {
                     Ok(term) => term,
-                    Err(outcome) => return outcome,
+                    Err(reduction) => return reduction,
                 };
                 if let Some(payload) = option_payload(&receiver) {
-                    return desugar_option_unwrap_or(payload, default);
+                    desugar_option_unwrap_or(payload, default)
+                } else if let Some(payload) = result_payload(&receiver) {
+                    desugar_result_unwrap_or(payload, default)
+                } else {
+                    Outcome::from_opt(None)
                 }
-                if let Some(payload) = result_payload(&receiver) {
-                    return desugar_result_unwrap_or(payload, default);
-                }
-                Outcome::from_opt(None)
             }
             Kind::UnwrapOrElse(f) => {
                 if let Some(payload) = option_payload(&receiver) {
-                    return desugar_option_unwrap_or_else(f, payload);
+                    desugar_option_unwrap_or_else(f, payload)
+                } else if let Some(payload) = result_payload(&receiver) {
+                    desugar_result_unwrap_or_else(f, payload)
+                } else {
+                    Outcome::from_opt(None)
                 }
-                if let Some(payload) = result_payload(&receiver) {
-                    return desugar_result_unwrap_or_else(f, payload);
-                }
-                Outcome::from_opt(None)
             }
-            Kind::UnwrapOrDefault => {
+            Kind::UnwrapOrDefault { default } => {
                 if let Some(payload) = option_payload(&receiver) {
-                    return desugar_option_unwrap_or_default(payload, &self.receiver, &fcx);
+                    desugar_option_unwrap_or_default(payload, default.clone())
+                } else if let Some(payload) = result_payload(&receiver) {
+                    desugar_result_unwrap_or_default(payload, default.clone())
+                } else {
+                    Outcome::from_opt(None)
                 }
-                if let Some(payload) = result_payload(&receiver) {
-                    return desugar_result_unwrap_or_default(payload, &self.receiver, &fcx);
-                }
-                Outcome::from_opt(None)
             }
-        }
+        };
+        outcome_to_reduction(
+            outcome,
+            "option adaptor did not reduce to a terminal verdict",
+        )
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
+    }
+}
+
+fn term_from_body(
+    body: &SugarBody,
+    ctx: &SugarCtx,
+    label: &'static str,
+) -> Result<Rc<Term>, FactoryReduction> {
+    match body.reduce(ctx) {
+        Ok(Outcome::Complete(d)) => d
+            .into_term()
+            .ok_or_else(|| Err(FactoryGap::new(format!("{label} reduced to non-term")))),
+        Ok(Outcome::Incomplete(effect)) => Err(Ok(Outcome::Incomplete(effect))),
+        Err(gap) => Err(Err(gap)),
+    }
+}
+
+fn outcome_to_reduction(outcome: Outcome, gap_reason: &'static str) -> FactoryReduction {
+    if outcome.is_structural_bail() {
+        Err(FactoryGap::new(gap_reason))
+    } else {
+        Ok(outcome)
     }
 }
 
@@ -599,8 +611,7 @@ fn desugar_result_unwrap_or(payload: ResultPayload, default: Rc<Term>) -> Outcom
 
 fn desugar_option_unwrap_or_default(
     payload: Option<Rc<Term>>,
-    receiver: &Expr,
-    fcx: &SugarBuildCtx,
+    default: Option<Rc<Term>>,
 ) -> Outcome {
     match payload {
         Some(inner) => {
@@ -615,7 +626,7 @@ fn desugar_option_unwrap_or_default(
             Outcome::Complete(Desugared::Term(inner))
         }
         None => {
-            let Some(default) = default_term_for_receiver(receiver, fcx, 0) else {
+            let Some(default) = default else {
                 return Outcome::from_opt(None);
             };
             debug!(
@@ -628,11 +639,7 @@ fn desugar_option_unwrap_or_default(
     }
 }
 
-fn desugar_result_unwrap_or_default(
-    payload: ResultPayload,
-    receiver: &Expr,
-    fcx: &SugarBuildCtx,
-) -> Outcome {
+fn desugar_result_unwrap_or_default(payload: ResultPayload, default: Option<Rc<Term>>) -> Outcome {
     match payload {
         ResultPayload::Ok(inner) => {
             if let Err(outcome) = ensure_grounded_payload(&inner, "unwrap_or_default", RES_OK) {
@@ -649,7 +656,7 @@ fn desugar_result_unwrap_or_default(
             if let Err(outcome) = ensure_grounded_payload(&inner, "unwrap_or_default", RES_ERR) {
                 return outcome;
             }
-            let Some(default) = default_term_for_receiver(receiver, fcx, 0) else {
+            let Some(default) = default else {
                 return Outcome::from_opt(None);
             };
             debug!(
@@ -662,22 +669,15 @@ fn desugar_result_unwrap_or_default(
     }
 }
 
-fn build_eager_default(
-    default: &Expr,
-    fcx: &SugarBuildCtx,
-    ctx: &SugarCtx,
-) -> Result<Rc<Term>, Outcome> {
-    let term = match build_term(default, fcx).desugar(ctx) {
-        Outcome::Complete(d) => match d.into_term() {
-            Some(term) => term,
-            None => return Err(Outcome::from_opt(None)),
-        },
-        Outcome::Incomplete(e) => return Err(Outcome::Incomplete(e)),
+fn build_eager_default(default: &SugarBody, ctx: &SugarCtx) -> Result<Rc<Term>, FactoryReduction> {
+    let term = match term_from_body(default, ctx, "monadic eager default") {
+        Ok(term) => term,
+        Err(reduction) => return Err(reduction),
     };
     if !is_grounded_literal_term(term.as_ref()) {
-        return Err(Outcome::Incomplete(Effect::Unsupported {
+        return Err(Ok(Outcome::Incomplete(Effect::Unsupported {
             reason: "monadic unwrap_or over non-literal default; refused".to_string(),
-        }));
+        })));
     }
     Ok(term)
 }

@@ -3,7 +3,11 @@
 // `IteratorSugar`: the `.iter()` / `.into_iter()` identity-family adaptor over a
 // sequence Sugar. It is the explicit node between a literal domain and terminals like
 // `.next()`: `[1, 2, 3]` -> `LiteralSugar`, `.iter()` -> `IteratorSugar`, `.next()` ->
-// `IterTerminalSugar`.
+// `IterTerminalSugar`. Recognition claims only receivers that are already literal-resolvable
+// through the Composite/literal-sequence factory gates; unknown runtime-looking receivers stay
+// structural factory holes instead of being laundered into a named runtime verdict.
+
+use std::collections::BTreeMap;
 
 use syn::Expr;
 
@@ -23,9 +27,12 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
         return None;
     }
     match call.method.to_string().as_str() {
-        "iter" | "into_iter" | "cloned" | "copied" | "fuse" => {
-            let inner = method_family::build_literal_sequence_composite(&call.receiver, fcx)?;
-            Some(Box::new(IteratorSugar { inner }))
+        "iter" | "into_iter" | "cloned" | "copied" | "fuse" | "by_ref" => {
+            method_family::build_literal_sequence_composite(&call.receiver, fcx)?;
+            Some(Box::new(IteratorSugar {
+                receiver: (*call.receiver).clone(),
+                let_inits: capture_let_inits(fcx),
+            }))
         }
         _ => None,
     }
@@ -33,14 +40,40 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
 
 /// Identity-family iterator adaptor. Desugars by passing through the inner sequence.
 pub(crate) struct IteratorSugar {
-    pub(crate) inner: Box<dyn Sugar>,
+    pub(crate) receiver: Expr,
+    pub(crate) let_inits: BTreeMap<String, Expr>,
+}
+
+fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
+    fcx.let_inits()
+        .iter()
+        .map(|(name, init)| (name.clone(), (**init).clone()))
+        .collect()
 }
 
 impl Sugar for IteratorSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            let seq = self.inner.desugar(ctx).complete()?.into_seq()?;
-            Some(Desugared::Seq(seq))
-        })())
+        let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
+        let let_inits: BTreeMap<String, &Expr> = stable
+            .iter()
+            .map(|(name, init)| (name.clone(), init))
+            .chain(
+                self.let_inits
+                    .iter()
+                    .map(|(name, init)| (name.clone(), init)),
+            )
+            .collect();
+        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        let Some(inner) = method_family::build_literal_sequence_composite(&self.receiver, &fcx)
+        else {
+            return Outcome::from_opt(None);
+        };
+        match inner.desugar(ctx) {
+            Outcome::Complete(desugared) => match desugared.into_seq() {
+                Some(seq) => Outcome::Complete(Desugared::Seq(seq)),
+                None => Outcome::from_opt(None),
+            },
+            Outcome::Incomplete(effect) => Outcome::Incomplete(effect),
+        }
     }
 }

@@ -14,7 +14,6 @@ use syn::{Expr, ExprClosure, GenericArgument, Type};
 use tracing::debug;
 
 use crate::sugar::factory::{build_composite, build_term, SugarBuildCtx};
-use crate::sugar::method;
 use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::sugar::unit_path::unit_path_literal_name;
@@ -47,18 +46,16 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     debug!(
         target: "sugar_lift_rust_tests::sugar::collect",
         receiver = %crate::token_key(&call.receiver),
-        "recognized literal collect"
+        "recognized collect"
     );
     Some(Box::new(CollectSugar {
         plan,
-        fallback: expr.clone(),
         let_inits: capture_let_inits(fcx),
     }))
 }
 
 struct CollectSugar {
     plan: CollectPlan,
-    fallback: Expr,
     let_inits: BTreeMap<String, Expr>,
 }
 
@@ -271,23 +268,7 @@ impl Sugar for CollectSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match self.plan.reduce(ctx, &self.let_inits) {
             Ok(Some(term)) => Outcome::Complete(Desugared::Term(term)),
-            Ok(None) => {
-                let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-                let let_inits: BTreeMap<String, &Expr> = stable
-                    .iter()
-                    .map(|(name, init)| (name.clone(), init))
-                    .chain(
-                        self.let_inits
-                            .iter()
-                            .map(|(name, init)| (name.clone(), init)),
-                    )
-                    .collect();
-                let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-                match method::recognize(&self.fallback, &fcx) {
-                    Some(fallback) => fallback.desugar(ctx),
-                    None => Outcome::from_opt(None),
-                }
-            }
+            Ok(None) => Outcome::from_opt(None),
             Err(effect) => Outcome::Incomplete(effect),
         }
     }
