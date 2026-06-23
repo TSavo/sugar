@@ -22770,11 +22770,57 @@ fn range_literal_methods_have_good_bad_teeth() {
 }
 
 #[test]
+fn literal_range_collect_vec_has_good_bad_teeth() {
+    let good = r#"
+        #[test]
+        fn literal_range_collect_vec_good() {
+            assert_eq!((0..5).collect::<Vec<_>>(), [0, 1, 2, 3, 4]);
+        }
+    "#;
+    let good_out = lift_file(&parse(good), "tests/iter/range_collect_good.rs");
+    assert_eq!(
+        good_out.assertions_lifted, 1,
+        "literal range collect::<Vec<_>>() must warrant; skips={:?}; audits={:?}",
+        good_out.skip_reasons, good_out.factory_audits
+    );
+    assert_eq!(
+        good_out.assertions_refused, 0,
+        "{:?}",
+        good_out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&good_out)),
+        "literal_range_collect_vec_good",
+    ) {
+        assert!(sat, "collecting 0..5 yields [0,1,2,3,4]");
+    }
+
+    let bad = r#"
+        #[test]
+        fn literal_range_collect_vec_bad() {
+            assert_eq!((0..5).collect::<Vec<_>>(), [0, 1, 2, 3, 9]);
+        }
+    "#;
+    let bad_out = lift_file(&parse(bad), "tests/iter/range_collect_bad.rs");
+    assert_eq!(
+        bad_out.assertions_lifted, 1,
+        "bad collect twin must still lift so z3 can bite; skips={:?}; audits={:?}",
+        bad_out.skip_reasons, bad_out.factory_audits
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&bad_out)),
+        "literal_range_collect_vec_bad",
+    ) {
+        assert!(!sat, "collecting 0..5 does not yield a trailing 9");
+    }
+}
+
+#[test]
 fn rpc_source_warrants_literal_range_constructors_and_propagates_child_hits() {
     let doc = run_rpc_lift(
         "tests/ops.rs",
         r#"
-use core::ops::{Range, RangeFrom, RangeInclusive, RangeTo, RangeToInclusive};
+use core::ops::{Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive};
 
 #[test]
 fn range_to_literal_constructor() {
@@ -22802,6 +22848,30 @@ fn range_inclusive_literal_constructor() {
 }
 
 #[test]
+fn full_range_literal_constructor() {
+    let _ = RangeFull;
+}
+
+#[test]
+fn range_syntax_in_return_statement() {
+    fn range_to() -> RangeTo<usize> {
+        ..1usize
+    }
+
+    fn range_full() -> RangeFull {
+        ..
+    }
+
+    let _ = range_to;
+    let _ = range_full;
+}
+
+#[test]
+fn not_never_text_determined_unit() {
+    if !return () {}
+}
+
+#[test]
 fn range_pointer_child_refuses() {
     let value = 0usize;
     let _ = RangeTo { end: (&raw const value) as usize };
@@ -22820,6 +22890,9 @@ fn range_literal_method_twin() {
         "range_from_literal_constructor",
         "range_literal_constructor",
         "range_inclusive_literal_constructor",
+        "full_range_literal_constructor",
+        "range_syntax_in_return_statement",
+        "not_never_text_determined_unit",
         "range_literal_method_twin",
     ] {
         assert_rpc_source_warranted(&doc, name);
@@ -22904,6 +22977,45 @@ facts = [
     );
 
     assert_rpc_source_inactive(&doc, "cfg_false_assertion_surface", "inactive cfg");
+    assert_rpc_source_warranted(&doc, "cfg_active_literal_twin");
+}
+
+#[test]
+fn rpc_source_marks_cfg_inactive_match_arm_inactive_with_literal_twin() {
+    let doc = run_rpc_lift_with_config(
+        "tests/num/wrapping.rs",
+        r#"
+#[test]
+fn wrapping_int_api() {
+    match () {
+        #[cfg(target_pointer_width = "32")]
+        () => {
+            assert_eq!(1i64, 99i64);
+        }
+        #[cfg(target_pointer_width = "64")]
+        () => {
+            assert_eq!(3i64, 3i64);
+        }
+    }
+}
+
+#[test]
+fn cfg_active_literal_twin() {
+    assert_eq!(2usize, 2usize);
+}
+"#,
+        r#"
+[rust-test-assertions.target_cfg]
+target = "x86_64-unknown-linux-gnu"
+facts = [
+  "unix",
+  "target_arch=\"x86_64\"",
+  "target_pointer_width=\"64\"",
+]
+"#,
+    );
+
+    assert_rpc_source_inactive(&doc, "wrapping_int_api", "cfg-inactive match arm");
     assert_rpc_source_warranted(&doc, "cfg_active_literal_twin");
 }
 

@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// `CollectSugar`: `collect::<Option<Vec<_>>>()` / `collect::<Result<Vec<_>, _>>()`
-// over a finite literal sequence whose final `.map` closure constructs `Some`/`None`
-// or `Ok`/`Err`. This is stdlib short-circuit sugar over a source-constructed domain:
-// all `Some` -> `Some(Vec(..))`, first `None` -> `None`; all `Ok` -> `Ok(Vec(..))`,
-// first `Err(e)` -> `Err(e)`.
+// `CollectSugar`: `collect::<Vec<_>>()`, plus `collect::<Option<Vec<_>>>()` /
+// `collect::<Result<Vec<_>, _>>()` over a finite literal sequence whose final `.map`
+// closure constructs `Some`/`None` or `Ok`/`Err`. This is stdlib collection sugar over
+// a source-constructed domain: plain `Vec` materializes every element; `Option` /
+// `Result` short-circuit on the first `None` / `Err`.
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{make_var, num, str_const, ConstValue, Sort, Term};
-use syn::{Expr, ExprClosure};
+use syn::{Expr, ExprClosure, GenericArgument, Type};
 use tracing::debug;
 
 use crate::sugar::factory::{build_composite, SugarBuildCtx};
@@ -21,7 +21,7 @@ use crate::sugar::unit_path::unit_path_literal_name;
 use crate::{
     canonical_term_sig, closure_single_param_ident, const_eval, const_fold_int_term,
     primitive_int_term, strip_refs_groups, term_as_int, u128_term, BoundedDomain, ConstVal,
-    Desugared, DesugaredElem, Outcome, Sugar, SugarCtx,
+    Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -37,13 +37,17 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     if !method_family::resolves_literal_sequence(&call.receiver, fcx.let_inits()) {
         return None;
     }
-    let Some(plan) = CollectPlan::from_receiver(&call.receiver) else {
-        return None;
+    let plan = if collects_vec(call) && CollectPlan::from_receiver(&call.receiver).is_none() {
+        CollectPlan::PlainVec {
+            base_expr: (*call.receiver).clone(),
+        }
+    } else {
+        CollectPlan::from_receiver(&call.receiver)?
     };
     debug!(
         target: "sugar_lift_rust_tests::sugar::collect",
         receiver = %crate::token_key(&call.receiver),
-        "recognized literal monadic collect"
+        "recognized literal collect"
     );
     Some(Box::new(CollectSugar {
         plan,
@@ -59,6 +63,9 @@ struct CollectSugar {
 }
 
 enum CollectPlan {
+    PlainVec {
+        base_expr: Expr,
+    },
     MapMonadic {
         base_expr: Expr,
         closure: ExprClosure,
@@ -100,8 +107,45 @@ impl CollectPlan {
         &self,
         ctx: &SugarCtx,
         captured_let_inits: &BTreeMap<String, Expr>,
-    ) -> Option<Rc<Term>> {
+    ) -> Result<Option<Rc<Term>>, Effect> {
         match self {
+            CollectPlan::PlainVec { base_expr } => {
+                let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
+                let let_inits: BTreeMap<String, &Expr> = stable
+                    .iter()
+                    .map(|(name, init)| (name.clone(), init))
+                    .chain(
+                        captured_let_inits
+                            .iter()
+                            .map(|(name, init)| (name.clone(), init)),
+                    )
+                    .collect();
+                let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+                let base = build_composite(base_expr, &fcx);
+                let seq = match base.desugar(ctx) {
+                    Outcome::Dug(d) => match d.into_seq() {
+                        Some(seq) => seq,
+                        None => return Ok(None),
+                    },
+                    Outcome::Hit(effect) => match empty_literal_sequence(base_expr, ctx) {
+                        Some(seq) => seq,
+                        None => return Err(effect),
+                    },
+                };
+                let Some(collected) = seq
+                    .iter()
+                    .map(|elem| const_val_term(elem.value.as_ref()?))
+                    .collect::<Option<Vec<_>>>()
+                else {
+                    return Ok(None);
+                };
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::collect",
+                    len = collected.len(),
+                    "literal Vec collect reduced"
+                );
+                Ok(Some(literal_vec_term(&collected)))
+            }
             CollectPlan::MapMonadic {
                 base_expr,
                 closure,
@@ -120,13 +164,24 @@ impl CollectPlan {
                 let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
                 let base = build_composite(base_expr, &fcx);
                 let seq = match base.desugar(ctx) {
-                    Outcome::Dug(d) => d.into_seq()?,
-                    Outcome::Hit(_) => empty_literal_sequence(base_expr, ctx)?,
+                    Outcome::Dug(d) => match d.into_seq() {
+                        Some(seq) => seq,
+                        None => return Ok(None),
+                    },
+                    Outcome::Hit(effect) => match empty_literal_sequence(base_expr, ctx) {
+                        Some(seq) => seq,
+                        None => return Err(effect),
+                    },
                 };
                 let mut collected = Vec::with_capacity(seq.len());
                 for elem in seq {
-                    let value = elem.value.as_ref()?;
-                    match (*kind, eval_monadic_closure(closure, value)?) {
+                    let Some(value) = elem.value.as_ref() else {
+                        return Ok(None);
+                    };
+                    let Some(monadic_value) = eval_monadic_closure(closure, value) else {
+                        return Ok(None);
+                    };
+                    match (*kind, monadic_value) {
                         (CollectKind::Option, MonadicValue::Option(Some(term))) => {
                             collected.push(term)
                         }
@@ -135,7 +190,7 @@ impl CollectPlan {
                                 target: "sugar_lift_rust_tests::sugar::collect",
                                 "literal Option collect short-circuited to None"
                             );
-                            return Some(monadic::none_term());
+                            return Ok(Some(monadic::none_term()));
                         }
                         (CollectKind::Result, MonadicValue::Result(Ok(term))) => {
                             collected.push(term)
@@ -145,9 +200,9 @@ impl CollectPlan {
                                 target: "sugar_lift_rust_tests::sugar::collect",
                                 "literal Result collect short-circuited to Err"
                             );
-                            return Some(monadic::err_term(term));
+                            return Ok(Some(monadic::err_term(term)));
                         }
-                        _ => return None,
+                        _ => return Ok(None),
                     }
                 }
                 let vec = literal_vec_term(&collected);
@@ -157,10 +212,10 @@ impl CollectPlan {
                     kind = ?kind,
                     "literal monadic collect reduced"
                 );
-                Some(match kind {
+                Ok(Some(match kind {
                     CollectKind::Option => monadic::some_term(vec),
                     CollectKind::Result => monadic::ok_term(vec),
-                })
+                }))
             }
         }
     }
@@ -197,8 +252,8 @@ fn empty_literal_sequence(expr: &Expr, ctx: &SugarCtx) -> Option<Vec<DesugaredEl
 impl Sugar for CollectSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match self.plan.reduce(ctx, &self.let_inits) {
-            Some(term) => Outcome::Dug(Desugared::Term(term)),
-            None => {
+            Ok(Some(term)) => Outcome::Dug(Desugared::Term(term)),
+            Ok(None) => {
                 let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
                 let let_inits: BTreeMap<String, &Expr> = stable
                     .iter()
@@ -215,8 +270,24 @@ impl Sugar for CollectSugar {
                     None => Outcome::from_opt(None),
                 }
             }
+            Err(effect) => Outcome::Hit(effect),
         }
     }
+}
+
+pub(crate) fn collects_vec(call: &syn::ExprMethodCall) -> bool {
+    let Some(turbofish) = &call.turbofish else {
+        return false;
+    };
+    if turbofish.args.len() != 1 {
+        return false;
+    }
+    matches!(
+        turbofish.args.first(),
+        Some(GenericArgument::Type(Type::Path(path)))
+            if path.qself.is_none()
+                && path.path.segments.iter().any(|seg| seg.ident == "Vec")
+    )
 }
 
 fn monadic_kind_of_closure(closure: &ExprClosure) -> Option<CollectKind> {

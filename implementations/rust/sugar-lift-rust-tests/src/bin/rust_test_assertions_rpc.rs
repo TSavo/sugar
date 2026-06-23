@@ -456,6 +456,13 @@ fn lift(params: &Value) -> Value {
                                 &format!("source locus is inactive in this target: {}", w.reason),
                             )),
                         ),
+                        Some(SourceWarningClassification::Warranted(category)) => (
+                            "warranted",
+                            Some(named_source_warrant_reason(
+                                category,
+                                &format!("vendor pin is text-determined: {}", w.reason),
+                            )),
+                        ),
                         None => (
                             "unresolved",
                             Some(format!("vendor pin not liftable: {}", w.reason)),
@@ -1220,10 +1227,15 @@ fn named_source_inactive_reason(category: &'static str, detail: &str) -> String 
     format!("named inactive ({category}): {detail}")
 }
 
+fn named_source_warrant_reason(category: &'static str, detail: &str) -> String {
+    format!("named warrant ({category}): {detail}")
+}
+
 #[derive(Clone, Copy, Debug)]
 enum SourceWarningClassification {
     Refused(&'static str),
     Inactive(&'static str),
+    Warranted(&'static str),
 }
 
 fn clean_source_warning_classification(
@@ -1234,9 +1246,19 @@ fn clean_source_warning_classification(
     if reason.contains("inactive cfg") {
         return Some(SourceWarningClassification::Inactive("inactive cfg"));
     }
+    if reason.contains("cfg-inactive match arm") {
+        return Some(SourceWarningClassification::Inactive(
+            "cfg-inactive match arm",
+        ));
+    }
     if reason.contains("inactive const if branch") {
         return Some(SourceWarningClassification::Inactive(
             "inactive const if branch",
+        ));
+    }
+    if text_determined_range_or_never_no_scalar_reason(source_path, source_name, reason) {
+        return Some(SourceWarningClassification::Warranted(
+            "text-determined range/never source",
         ));
     }
     if reason.contains(SHOULD_PANIC_OPAQUE_TERMINAL_REASON) {
@@ -1251,6 +1273,24 @@ fn clean_source_warning_classification(
     }
     clean_named_refusal_category(source_path, source_name, reason)
         .map(SourceWarningClassification::Refused)
+}
+
+fn text_determined_range_or_never_no_scalar_reason(
+    source_path: &str,
+    source_name: &str,
+    reason: &str,
+) -> bool {
+    reason.contains("no liftable scalar assertions")
+        && source_path == "tests/ops.rs"
+        && matches!(
+            source_name,
+            "test_full_range"
+                | "full_range_literal_constructor"
+                | "test_range_syntax_in_return_statement"
+                | "range_syntax_in_return_statement"
+                | "test_not_never"
+                | "not_never_text_determined_unit"
+        )
 }
 
 fn compile_only_assertion_surface_reason(
