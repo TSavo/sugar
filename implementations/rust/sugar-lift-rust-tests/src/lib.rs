@@ -17512,16 +17512,6 @@ fn translate_string_predicate_assertion(
                     if call.args.len() != 1 {
                         return Err(format!("{method} predicate expects one literal pattern"));
                     }
-                    let Some(pattern) = string_or_char_literal_term(&call.args[0]) else {
-                        return Ok(None);
-                    };
-                    // The receiver is type-guaranteed a string (`starts_with` /
-                    // `ends_with` exist only on str/String), so translate it as a
-                    // TERM -- literal OR opaque (e.g. `cid.starts_with("blake3-512:")`
-                    // where `cid` is a computed value). No type info needed; the
-                    // method's existence proves stringness. The PATTERN must still be
-                    // a literal (the known prefix/suffix). `prefix-of(pattern, recv)`
-                    // is the faithful FOL, teethed against a contradicting claim.
                     // TERMINAL (bin-2): a `starts_with`/`ends_with` whose RECEIVER is a
                     // provably-MUTABLE local (`let mut a = Vec::new()`). The slice/string
                     // its contents form is produced by side-effecting mutation between
@@ -17543,6 +17533,13 @@ fn translate_string_predicate_assertion(
                             ));
                         }
                     }
+                    // After the mut-local guard, this string predicate path only owns
+                    // string/char literal patterns. Slice-pattern twins fall through to
+                    // the slice method sugar and can still warrant when the receiver is
+                    // immutable and literal-backed.
+                    let Some(pattern) = string_or_char_literal_term(&call.args[0]) else {
+                        return Ok(None);
+                    };
                     let Ok(receiver) = translate_term_in_scope(&call.receiver, scope) else {
                         return Ok(None);
                     };

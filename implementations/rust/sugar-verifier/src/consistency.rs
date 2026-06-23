@@ -1127,6 +1127,67 @@ fn collect_ambient_foralls(inv: &Json, out: &mut Vec<Json>) {
     }
 }
 
+#[derive(Debug, Clone)]
+struct AmbientGroundCallsiteFact {
+    term_key: String,
+    fact: Json,
+}
+
+/// Collect closed ground facts about concrete callsite terms. A literal-domain
+/// loop replay may emit `call:g(3) == 1` rather than a universal. That fact is
+/// still in the pool's shared callsite vocabulary and must constrain sibling
+/// `#euf#` obligations about the same concrete call. We collect only ground
+/// equalities whose subject is a `call:*` ctor; local variables and non-call
+/// helper ctors never travel.
+fn collect_ambient_ground_callsite_facts(inv: &Json, out: &mut Vec<AmbientGroundCallsiteFact>) {
+    match inv.get("kind").and_then(|k| k.as_str()) {
+        Some("forall") | Some("exists") => {}
+        Some("and") => {
+            if let Some(ops) = inv.get("operands").and_then(|v| v.as_array()) {
+                for op in ops {
+                    collect_ambient_ground_callsite_facts(op, out);
+                }
+            }
+        }
+        Some("implies") => {
+            let Some(ops) = inv.get("operands").and_then(|v| v.as_array()) else {
+                return;
+            };
+            if ops.len() == 2 && eval_ground_bool(&ops[0]) == Some(true) {
+                collect_ambient_ground_callsite_facts(&ops[1], out);
+            }
+        }
+        Some("atomic") if inv.get("name").and_then(|v| v.as_str()) == Some("=") => {
+            let Some((term, _value)) = ground_term_const_equality(inv) else {
+                return;
+            };
+            let Some(term_key) = ground_callsite_term_key(term) else {
+                return;
+            };
+            out.push(AmbientGroundCallsiteFact {
+                term_key,
+                fact: inv.clone(),
+            });
+        }
+        _ => {}
+    }
+}
+
+fn is_callsite_ctor_term(term: &Json) -> bool {
+    term.get("kind").and_then(|k| k.as_str()) == Some("ctor")
+        && term
+            .get("name")
+            .and_then(|n| n.as_str())
+            .is_some_and(|name| name.starts_with("call:"))
+}
+
+fn ground_callsite_term_key(term: &Json) -> Option<String> {
+    if !is_callsite_ctor_term(term) {
+        return None;
+    }
+    libsugar::canonical::json_jcs(&federate_primitive_sorts(term)).ok()
+}
+
 /// True if every `var` occurrence in the formula/term tree is bound by an
 /// enclosing quantifier. Walks `operands`/`args`/`body` recursively; `forall`
 /// and `exists` extend the bound set for their body. Any binder shape we do
@@ -1474,6 +1535,54 @@ fn with_ambient_foralls(inv: Json, property_name: &str, ambient: &[Json]) -> Jso
     serde_json::json!({ "kind": "and", "operands": operands })
 }
 
+/// Conjoin closed ground callsite facts into matching callsite-keyed obligations.
+/// This is the finite-replay twin of `with_ambient_foralls`: a replayed literal
+/// loop has already named the concrete calls (`call:g(0)`, `call:g(1)`, ...), so
+/// only facts whose subject exactly appears in the current obligation are
+/// relevant. Bare names still receive nothing; two unrelated tests can share
+/// local spellings, but they cannot share a content-keyed `#euf#` callsite
+/// accidentally.
+fn with_ambient_ground_callsite_facts(
+    inv: Json,
+    property_name: &str,
+    ambient: &[AmbientGroundCallsiteFact],
+) -> Json {
+    if ambient.is_empty() || !property_name.contains("#euf#") {
+        return inv;
+    }
+
+    let mut callsites = Vec::new();
+    collect_unquantified_ctor_terms(&inv, &mut callsites);
+    let wanted: std::collections::BTreeSet<String> = callsites
+        .iter()
+        .filter_map(ground_callsite_term_key)
+        .collect();
+    if wanted.is_empty() {
+        return inv;
+    }
+
+    let mut seen = std::collections::BTreeSet::new();
+    let mut facts = Vec::new();
+    for fact in ambient {
+        if !wanted.contains(&fact.term_key) {
+            continue;
+        }
+        let key = libsugar::canonical::json_jcs(&fact.fact)
+            .unwrap_or_else(|_| serde_json::to_string(&fact.fact).unwrap_or_default());
+        if seen.insert(key) {
+            facts.push(fact.fact.clone());
+        }
+    }
+    if facts.is_empty() {
+        return inv;
+    }
+
+    let mut operands = Vec::with_capacity(facts.len() + 1);
+    operands.push(inv);
+    operands.extend(facts);
+    serde_json::json!({ "kind": "and", "operands": operands })
+}
+
 #[derive(Debug, Clone)]
 struct AmbientPost {
     source_symbol: String,
@@ -1718,6 +1827,7 @@ pub fn verify_consistency(
     // invs are likewise never ambient-collected. Answered ONCE here, in the
     // shared engine, not per-lifter.
     let mut ambient_foralls: Vec<Json> = Vec::new();
+    let mut ambient_ground_callsite_facts: Vec<AmbientGroundCallsiteFact> = Vec::new();
     for (cid, body) in &candidates {
         if is_witness_member(body) {
             continue;
@@ -1727,6 +1837,7 @@ pub fn verify_consistency(
             let before = ambient_foralls.len();
             collect_ambient_foralls(&inv, &mut ambient_foralls);
             let found = ambient_foralls.len() - before;
+            collect_ambient_ground_callsite_facts(&inv, &mut ambient_ground_callsite_facts);
             if found > 0 {
                 debug!(
                     cid = cid.as_str(),
@@ -1745,6 +1856,7 @@ pub fn verify_consistency(
     info!(
         candidates = candidates.len(),
         ambient_foralls = ambient_foralls.len(),
+        ambient_ground_callsite_facts = ambient_ground_callsite_facts.len(),
         "verifier/ambient: universals will be conjoined into every obligation"
     );
     let ambient_posts = collect_ambient_posts(pool);
@@ -1817,6 +1929,11 @@ pub fn verify_consistency(
                     .collect();
                 let inv = serde_json::json!({ "kind": "and", "operands": invs });
                 let (inv, linked_posts) = with_ambient_posts_with_instances(inv, &ambient_posts);
+                let inv = with_ambient_ground_callsite_facts(
+                    inv,
+                    property_name,
+                    &ambient_ground_callsite_facts,
+                );
                 out.push(check_inv_consistency(
                     inv_cids[0].clone(),
                     property_name,
@@ -1831,6 +1948,11 @@ pub fn verify_consistency(
                     let inv = canonicalize_formula_json(&axiom_context_formula(body));
                     let (inv, linked_posts) =
                         with_ambient_posts_with_instances(inv, &ambient_posts);
+                    let inv = with_ambient_ground_callsite_facts(
+                        inv,
+                        property_name,
+                        &ambient_ground_callsite_facts,
+                    );
                     out.push(check_inv_consistency(
                         (*cid).clone(),
                         property_name,
@@ -2602,6 +2724,56 @@ mod tests {
             loop_row.verdict,
             ObligationVerdict::Discharged,
             "the loop universal alone is consistent: {res:?}"
+        );
+    }
+
+    /// LITERAL-REPLAY TWIN. A finite literal loop may replay to concrete callsite
+    /// facts rather than a quantifier: `call:g(0)==1`, `call:g(1)==1`, ... . Those
+    /// facts are still closed pool vocabulary and must constrain a separate `#euf#`
+    /// point claim about the same concrete call.
+    #[test]
+    fn ambient_ground_callsite_fact_refutes_separate_point_claim_memento() {
+        let (plan, reg) = z3_plan_and_registry();
+        let callg = |arg: Json| json!({"kind":"ctor","name":"call:g","args":[arg]});
+        let loop_inv = json!({"kind":"and","operands":[
+            eqf(callg(int(0)), int(1)),
+            eqf(callg(int(1)), int(1)),
+            eqf(callg(int(2)), int(1)),
+        ]});
+        let point_inv = json!({"kind":"and","operands":[eqf(callg(int(2)), int(2))]});
+
+        let mut pool = MementoPool::default();
+        insert_contract(
+            &mut pool,
+            "blake3-512:loop-ground",
+            "src/lib.rs::tests::t::loop::x",
+            loop_inv,
+        );
+        insert_contract(
+            &mut pool,
+            "blake3-512:point-ground",
+            "g#euf#c:callresult_g_a1(i:2)::assertion",
+            point_inv,
+        );
+        let res = verify_consistency(&pool, &plan, &reg, &test_compilers());
+        assert_eq!(res.len(), 2, "two separate obligations: {res:?}");
+        let point = res
+            .iter()
+            .find(|r| r.contract_cid == "blake3-512:point-ground")
+            .expect("point-claim row present");
+        assert_eq!(
+            point.verdict,
+            ObligationVerdict::Unsatisfied,
+            "the replayed ground callsite fact must refute the point claim: {res:?}"
+        );
+        let loop_row = res
+            .iter()
+            .find(|r| r.contract_cid == "blake3-512:loop-ground")
+            .expect("loop row present");
+        assert_eq!(
+            loop_row.verdict,
+            ObligationVerdict::Discharged,
+            "the replayed loop facts alone are consistent: {res:?}"
         );
     }
 
