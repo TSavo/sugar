@@ -62,13 +62,13 @@ fn recognize_method(call: &ExprMethodCall) -> Option<Box<dyn Sugar>> {
             StringPredicateKind::Contains
         }
         "starts_with" => {
-            if call.args.len() != 1 {
+            if call.args.len() != 1 || string_or_char_literal_term(&call.args[0]).is_none() {
                 return None;
             }
             StringPredicateKind::Prefix
         }
         "ends_with" => {
-            if call.args.len() != 1 {
+            if call.args.len() != 1 || string_or_char_literal_term(&call.args[0]).is_none() {
                 return None;
             }
             StringPredicateKind::Suffix

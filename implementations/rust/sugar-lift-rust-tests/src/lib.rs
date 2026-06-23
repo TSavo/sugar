@@ -737,6 +737,11 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         || reason.contains("runtime float operand, not literal")
         || reason.contains("f16/f128 float bit model is not expressible")
         || reason.contains("float bit pattern is not expressible as a finite Real literal")
+        // TERMINAL: slice/array accessors only ground when the receiver and any index
+        // are text-determined literals. Runtime slice sources or runtime indexes are
+        // participating stdlib sugar, but there is no literal floor to compute.
+        || reason.contains("runtime slice source, not literal")
+        || reason.contains("runtime slice index, not literal")
         // TERMINAL: a GENERIC type/const-parametric helper (`fn test_num<T: Add..>`,
         // `fn check_size_hint<const N: usize>`, `fn inner<SuppressConstPromotion>`,
         // `fn test_parse<T: FromStr>`). Its asserts are written over the type/const
@@ -16623,6 +16628,12 @@ fn translate_string_predicate_assertion(
                     }))
                 }
                 "starts_with" | "ends_with" => {
+                    if call.args.len() != 1 {
+                        return Err(format!("{method} predicate expects one literal pattern"));
+                    }
+                    let Some(pattern) = string_or_char_literal_term(&call.args[0]) else {
+                        return Ok(None);
+                    };
                     // The receiver is type-guaranteed a string (`starts_with` /
                     // `ends_with` exist only on str/String), so translate it as a
                     // TERM -- literal OR opaque (e.g. `cid.starts_with("blake3-512:")`
@@ -16653,15 +16664,6 @@ fn translate_string_predicate_assertion(
                     }
                     let Ok(receiver) = translate_term_in_scope(&call.receiver, scope) else {
                         return Ok(None);
-                    };
-                    if call.args.len() != 1 {
-                        return Err(format!("{method} predicate expects one literal pattern"));
-                    }
-                    let Some(pattern) = string_or_char_literal_term(&call.args[0]) else {
-                        return Err(format!(
-                            "{method} predicate needs a string/char literal pattern, got `{}`",
-                            token_key(&call.args[0])
-                        ));
                     };
                     let name = method_call_assertion_name(
                         method.as_str(),
@@ -24426,11 +24428,10 @@ mod lifter_key_tests {
     }
 
     #[test]
-    fn starts_with_slice_pattern_over_immutable_receiver_stays_unclassified() {
-        // DISCRIMINATION (fake-refuse guard #2): a NON-mut receiver with a SLICE pattern
-        // (`&[1, 2, 3]`, not a string/char literal) is a lifter-reach gap, NOT a proven
-        // source property. It must STAY the UNCLASSIFIED "needs a string/char literal
-        // pattern" reason -- never terminalized by the mut-receiver path.
+    fn starts_with_slice_pattern_over_immutable_receiver_warrants() {
+        // DISCRIMINATION: a NON-mut receiver with a SLICE pattern (`&[1, 2, 3]`, not a
+        // string/char literal) is slice/array method sugar, not a string predicate.
+        // It must fall through and warrant by computing the literal slice predicate.
         let src = r#"
             #[test]
             fn t() {
@@ -24446,12 +24447,9 @@ mod lifter_key_tests {
             "an immutable receiver must NOT trip the mut-receiver refuse: {:?}",
             out.skip_reasons
         );
-        assert!(
-            out.skip_reasons.iter().any(|r| {
-                r.contains("needs a string/char literal pattern")
-                    && matches!(refusal_disposition(r), Disposition::Unclassified)
-            }),
-            "an immutable slice-pattern starts_with must stay UNCLASSIFIED work: {:?}",
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "immutable literal slice starts_with should warrant: skips={:?}",
             out.skip_reasons
         );
     }

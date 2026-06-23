@@ -24451,6 +24451,96 @@ fn as_slice_and_to_owned_over_literal_array_ground_with_teeth() {
     );
 }
 
+#[test]
+fn literal_slice_accessor_methods_ground_with_teeth() {
+    assert_decl_verdict(
+        "assert_eq!([1, 2, 3].first(), Some(&1));",
+        true,
+        "slice_first_good",
+    );
+    assert_decl_verdict(
+        "assert_eq!([1, 2, 3].last(), Some(&3));",
+        true,
+        "slice_last_good",
+    );
+    assert_decl_verdict(
+        "assert_eq!([1, 2, 3].last(), Some(&2));",
+        false,
+        "slice_last_bad",
+    );
+    assert_decl_verdict(
+        "assert!([1, 2, 3].contains(&2));",
+        true,
+        "slice_contains_good",
+    );
+    assert_decl_verdict(
+        "assert!([1, 2, 3].contains(&9));",
+        false,
+        "slice_contains_bad",
+    );
+    assert_decl_verdict(
+        "assert!([1, 2, 3, 4].starts_with(&[1, 2]));",
+        true,
+        "slice_starts_with_good",
+    );
+    assert_decl_verdict(
+        "assert!([1, 2, 3, 4].ends_with(&[3, 4]));",
+        true,
+        "slice_ends_with_good",
+    );
+    assert_decl_verdict(
+        "assert!([1, 2, 3, 4].ends_with(&[2, 4]));",
+        false,
+        "slice_ends_with_bad",
+    );
+}
+
+#[test]
+fn slice_accessor_runtime_source_or_index_refuses_named_boundary() {
+    let runtime_source = r#"
+#[test]
+fn t() {
+    fn make_array() -> [i32; 3] { [1, 2, 3] }
+    let xs = make_array();
+    assert_eq!(xs.first(), Some(&1));
+}
+"#;
+    let out = lift_file(&parse(runtime_source), "coretests/slice/runtime_source.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "runtime slice source must not warrant: {:?}",
+        out.decls
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("runtime slice source, not literal")),
+        "runtime slice source should refuse with a named boundary: {:?}",
+        out.skip_reasons
+    );
+
+    let runtime_index = r#"
+#[test]
+fn t() {
+    fn runtime_index() -> usize { 1 }
+    assert_eq!([1, 2, 3].get(runtime_index()), Some(&2));
+}
+"#;
+    let out = lift_file(&parse(runtime_index), "coretests/slice/runtime_index.rs");
+    assert_eq!(
+        out.assertions_lifted, 0,
+        "runtime slice index must not warrant: {:?}",
+        out.decls
+    );
+    assert!(
+        out.skip_reasons
+            .iter()
+            .any(|r| r.contains("runtime slice index, not literal")),
+        "runtime slice index should refuse with a named boundary: {:?}",
+        out.skip_reasons
+    );
+}
+
 // finite-or-refuse: a RUNTIME element (`compute()`) has no const value, so the constructor
 // is NOT fabricated -- the indexed read of that element stays the symbolic congruence-only
 // ctor, satisfiable for ANY right-hand side. The wrong-expected twin must stay SAT (never

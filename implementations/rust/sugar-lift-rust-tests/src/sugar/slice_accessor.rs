@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
+use quote::ToTokens;
 use sugar_ir_symbolic::Term;
 use syn::{Expr, ExprMethodCall};
 
@@ -21,14 +22,18 @@ use crate::{
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
-    crate::sugar::claim::ExprSugarClaim::term_before("slice_accessor", &["method"], recognize);
+    crate::sugar::claim::ExprSugarClaim::term_before(
+        "slice_accessor",
+        &["iter_terminal", "method"],
+        recognize,
+    );
 
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::MethodCall(call) = strip_refs_groups(expr) else {
         return None;
     };
     let kind = recognize_kind(call)?;
-    if !literal_slice_receiver(&call.receiver, fcx, 0) {
+    if !slice_receiver_shape(&call.receiver, fcx, 0) {
         return None;
     }
     Some(Box::new(SliceAccessorSugar {
@@ -42,6 +47,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
 #[derive(Clone, Copy)]
 enum AccessKind {
     First,
+    Last,
     Get,
     Contains,
     StartsWith,
@@ -72,6 +78,7 @@ impl SliceAccessorSugar {
         let seq = literal_sequence(&self.receiver, &fcx, ctx)?;
         match self.kind {
             AccessKind::First => option_at(seq.first()),
+            AccessKind::Last => option_at(seq.last()),
             AccessKind::Get => {
                 let idx = self.index_arg(&fcx, ctx)?;
                 Ok(match seq.get(idx) {
@@ -107,13 +114,14 @@ impl SliceAccessorSugar {
     fn int_arg(&self, idx: usize, fcx: &SugarBuildCtx, ctx: &SugarCtx) -> Result<i128, Effect> {
         let arg = self.args.get(idx).ok_or_else(structural_effect)?;
         let term = term_for(strip_refs_groups(arg), fcx, ctx)?;
-        const_fold_int_term(&term).ok_or_else(structural_effect)
+        const_fold_int_term(&term).ok_or_else(|| runtime_index_effect(strip_refs_groups(arg)))
     }
 }
 
 fn recognize_kind(call: &ExprMethodCall) -> Option<AccessKind> {
     Some(match call.method.to_string().as_str() {
         "first" if call.args.is_empty() => AccessKind::First,
+        "last" if call.args.is_empty() => AccessKind::Last,
         "get" if call.args.len() == 1 => AccessKind::Get,
         "contains" if call.args.len() == 1 => AccessKind::Contains,
         "starts_with" if call.args.len() == 1 => AccessKind::StartsWith,
@@ -122,31 +130,30 @@ fn recognize_kind(call: &ExprMethodCall) -> Option<AccessKind> {
     })
 }
 
-fn literal_slice_receiver(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
+fn slice_receiver_shape(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
     if depth > 8 {
         return false;
     }
     match strip_refs_groups(expr) {
-        Expr::Array(_) => true,
-        Expr::Repeat(_) | Expr::Index(_) => {
-            method_family::literal_sequence_static_len_in_scope(expr, fcx.let_inits(), fcx.scope())
-                .is_some()
-        }
+        Expr::Range(_)
+        | Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(_),
+            ..
+        }) => false,
+        Expr::Array(_) | Expr::Repeat(_) | Expr::Index(_) => true,
+        Expr::Reference(reference) => slice_receiver_shape(&reference.expr, fcx, depth + 1),
         Expr::Path(path) if path.qself.is_none() => {
             let Some(name) = path.path.get_ident().map(ToString::to_string) else {
                 return false;
             };
-            fcx.let_inits()
-                .get(&name)
-                .copied()
-                .or_else(|| fcx.scope().stable_let_binding_for_term(&name))
-                .is_some_and(|init| literal_slice_receiver(init, fcx, depth + 1))
+            fcx.let_inits().contains_key(&name)
+                || fcx.scope().stable_let_binding_for_term(&name).is_some()
         }
         Expr::MethodCall(call) if call.args.is_empty() => {
             matches!(
                 call.method.to_string().as_str(),
                 "as_slice" | "to_vec" | "to_owned" | "into_vec"
-            ) && literal_slice_receiver(&call.receiver, fcx, depth + 1)
+            ) && slice_receiver_shape(&call.receiver, fcx, depth + 1)
         }
         other => crate::sugar::collection_literal::collection_literal_array(other).is_some(),
     }
@@ -157,8 +164,8 @@ fn literal_sequence(
     fcx: &SugarBuildCtx,
     ctx: &SugarCtx,
 ) -> Result<Vec<DesugaredElem>, Effect> {
-    let node =
-        method_family::build_literal_sequence_composite(expr, fcx).ok_or_else(structural_effect)?;
+    let node = method_family::build_literal_sequence_composite(expr, fcx)
+        .ok_or_else(|| runtime_source_effect(expr))?;
     match node.desugar(ctx) {
         Outcome::Dug(d) => d.into_seq().ok_or_else(structural_effect),
         Outcome::Hit(effect) => Err(effect),
@@ -201,6 +208,24 @@ fn elem_int(elem: &DesugaredElem) -> Result<i128, Effect> {
 fn structural_effect() -> Effect {
     Effect::Unsupported {
         reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
+    }
+}
+
+fn runtime_source_effect(expr: &Expr) -> Effect {
+    Effect::Unsupported {
+        reason: format!(
+            "runtime slice source, not literal `{}`",
+            strip_refs_groups(expr).to_token_stream()
+        ),
+    }
+}
+
+fn runtime_index_effect(expr: &Expr) -> Effect {
+    Effect::Unsupported {
+        reason: format!(
+            "runtime slice index, not literal `{}`",
+            strip_refs_groups(expr).to_token_stream()
+        ),
     }
 }
 
