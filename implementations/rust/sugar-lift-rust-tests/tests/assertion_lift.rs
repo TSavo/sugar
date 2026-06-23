@@ -21057,6 +21057,124 @@ fn t() {
     }
 }
 
+#[test]
+fn u128_from_char_literals_ground_with_teeth() {
+    let good = r#"
+#[test]
+fn t() {
+    assert_eq!(u128::from('c'), 0x63u128);
+    assert!(u128::from('c') == 0x63u128);
+}
+"#;
+    let out = lift_file(&parse(good), "tests/u128_from_char_good.rs");
+    assert_eq!(out.assertions_lifted, 2, "{:?}", out.skip_reasons);
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let doc = warranted_doc(&out);
+    assert!(
+        !doc.contains("call:u128::from"),
+        "char literal From into u128 must ground to the Unicode scalar value: {doc}"
+    );
+    for (idx, decl) in out.decls.iter().enumerate() {
+        if let Some(sat) = z3_verdict(&inv_json(decl), &format!("u128_from_char_good_{idx}")) {
+            assert!(sat, "char -> u128 good twin {idx} must be z3-SAT");
+        }
+    }
+
+    let bad = r#"
+#[test]
+fn t() {
+    assert_eq!(u128::from('c'), 0x64u128);
+}
+"#;
+    let out = lift_file(&parse(bad), "tests/u128_from_char_bad.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "u128_from_char_bad") {
+        assert!(!sat, "wrong char -> u128 value must be z3-UNSAT");
+    }
+}
+
+#[test]
+fn u128_from_ipv6_literal_constructor_has_teeth() {
+    let good = r#"
+use std::net::Ipv6Addr;
+
+#[test]
+fn t() {
+    let a = Ipv6Addr::new(0x1122, 0x3344, 0x5566, 0x7788, 0x99aa, 0xbbcc, 0xddee, 0xff11);
+    assert_eq!(u128::from(a), 0x112233445566778899aabbccddeeff11u128);
+}
+"#;
+    let out = lift_file(&parse(good), "tests/u128_from_ipv6_good.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let doc = warranted_doc(&out);
+    assert!(
+        !doc.contains("call:u128::from"),
+        "literal IPv6 constructor should reduce through u128::from, not EUF-collapse: {doc}"
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "u128_from_ipv6_good",
+    ) {
+        assert!(sat, "IPv6 -> u128 good twin must be z3-SAT");
+    }
+
+    let bad = r#"
+use std::net::Ipv6Addr;
+
+#[test]
+fn t() {
+    let a = Ipv6Addr::new(0x1122, 0x3344, 0x5566, 0x7788, 0x99aa, 0xbbcc, 0xddee, 0xff11);
+    assert_eq!(u128::from(a), 0x112233445566778899aabbccddeeff10u128);
+}
+"#;
+    let out = lift_file(&parse(bad), "tests/u128_from_ipv6_bad.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    let doc = warranted_doc(&out);
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "u128_from_ipv6_bad") {
+        assert!(!sat, "wrong IPv6 -> u128 value must be z3-UNSAT: {doc}");
+    }
+}
+
+#[test]
+fn full_width_unsuffixed_u128_hex_literal_has_teeth() {
+    let good = r#"
+#[test]
+fn t() {
+    assert_eq!(
+        0xa4093822299f31d0082efa98ec4e6c89u128,
+        0xa4093822299f31d0082efa98ec4e6c89
+    );
+}
+"#;
+    let out = lift_file(&parse(good), "tests/full_width_u128_hex_good.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let doc = warranted_doc(&out);
+    assert!(
+        !doc.contains("number too large"),
+        "unsuffixed full-width u128 literal should parse exactly as u128 and may const-fold afterward: {doc}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "full_width_u128_hex_good") {
+        assert!(sat, "full-width u128 literal equality must be z3-SAT");
+    }
+
+    let bad = r#"
+#[test]
+fn t() {
+    assert_eq!(
+        0xa4093822299f31d0082efa98ec4e6c89u128,
+        0xa4093822299f31d0082efa98ec4e6c88
+    );
+}
+"#;
+    let out = lift_file(&parse(bad), "tests/full_width_u128_hex_bad.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    if let Some(sat) = z3_verdict(&inv_json(&out.decls[0]), "full_width_u128_hex_bad") {
+        assert!(!sat, "wrong full-width u128 literal must be z3-UNSAT");
+    }
+}
+
 // The real `num/mod.rs` corpus shape: a `test_impl_from!(_, bool, $target)` body binds
 // `one`/`zero` locals and asserts them against `<$target>::from(true/false)`. End-to-end
 // the From<bool> RHS must lower to scalar 1/0 (no opaque `call:from`).

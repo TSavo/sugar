@@ -5945,7 +5945,10 @@ fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal>
                         .map(|raw| ConstVal::PrimitiveInt { raw, kind })
                 })
             }
-            Lit::Int(i) => parse_int_lit(i).ok().map(ConstVal::Int),
+            Lit::Int(i) => parse_int_lit(i)
+                .ok()
+                .map(ConstVal::Int)
+                .or_else(|| parse_u128_lit(i).ok().map(ConstVal::UInt128)),
             Lit::Bool(b) => Some(ConstVal::Bool(b.value)),
             Lit::Char(c) => Some(ConstVal::Char(c.value())),
             Lit::Byte(b) => Some(ConstVal::Int(i128::from(b.value()))),
@@ -19750,10 +19753,13 @@ fn translate_lit(lit: &ExprLit) -> Result<Rc<Term>, String> {
             if suffix == "u128" {
                 return Ok(u128_term(parse_u128_lit(i)?));
             }
-            let value = parse_int_lit(i)?;
             if suffix.is_empty() {
-                Ok(num(value))
+                match parse_int_lit(i) {
+                    Ok(value) => Ok(num(value)),
+                    Err(_) => Ok(u128_term(parse_u128_lit(i)?)),
+                }
             } else {
+                let value = parse_int_lit(i)?;
                 Ok(Rc::new(Term::Const {
                     value: ConstValue::Int(value),
                     sort: sugar_ir_symbolic::Sort {
@@ -19835,10 +19841,9 @@ fn bytes_literal_term(expr: &Expr) -> Option<Rc<Term>> {
 fn parse_int_lit(lit: &syn::LitInt) -> Result<i128, String> {
     // i128 carrier: a wide Rust literal (u64::MAX, u128 within i128 range,
     // large isize) is an EXACT mathematical-Int constant -- the FOL/SMT `Int`
-    // sort is unbounded, so there is no "too large" for anything i128 can
-    // hold. A literal beyond i128 range (e.g. u128::MAX) still fails here and
-    // is refused upstream ("number too large") -- an honest, EXACT-OR-BAIL
-    // refusal, never a silent truncation.
+    // sort is unbounded, so there is no "too large" for anything i128 can hold.
+    // Callers that own a Rust u128 floor may deliberately retry `parse_u128_lit`
+    // after this signed carrier declines; this helper itself never truncates.
     let (radix, digits) = int_lit_radix_digits(lit);
     i128::from_str_radix(&digits, radix).map_err(|e| format!("int literal `{}`: {e}", lit))
 }

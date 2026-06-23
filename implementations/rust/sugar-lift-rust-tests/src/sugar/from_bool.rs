@@ -11,14 +11,19 @@
 // so the complete sort-correct value can be emitted as a concrete int/u128 floor.
 
 use std::collections::BTreeMap;
+use std::net::Ipv6Addr;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{num, Term};
 use syn::{Expr, ExprCall, Lit, PathArguments, Type};
 
 use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::sugar::int_literal::{exact_int_source, from_impl_exists, primitive_int_kind, IntKind};
-use crate::{expr_head_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::sugar::int_literal::{
+    exact_int_source, from_impl_exists, primitive_int_kind, ExactInt, IntKind,
+};
+use crate::{
+    expr_head_key, strip_refs_groups, u128_term, Desugared, Effect, Outcome, Sugar, SugarCtx,
+};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("from_bool", recognize);
@@ -50,6 +55,14 @@ impl Sugar for FromPrimitiveSugar {
 
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+        if let Some(term) = from_char_term(&self.call.args[0], self.dst, &fcx) {
+            return Outcome::Dug(Desugared::Term(term));
+        }
+        if self.dst.name == "u128" {
+            if let Some(value) = ipv6_u128_source(&self.call.args[0], &fcx) {
+                return Outcome::Dug(Desugared::Term(u128_term(value)));
+            }
+        }
         if let Some(source) = exact_int_source(&self.call.args[0], Some(&fcx)) {
             if let Some(src_kind) = source.kind {
                 if from_impl_exists(src_kind, self.dst) {
@@ -98,6 +111,101 @@ fn from_bool_term(call: &ExprCall) -> Option<Rc<Term>> {
         return None;
     };
     Some(num(if b.value { 1 } else { 0 }))
+}
+
+fn from_char_term(expr: &Expr, dst: IntKind, fcx: &SugarBuildCtx) -> Option<Rc<Term>> {
+    if !char_from_impl_exists(dst) {
+        return None;
+    }
+    let ch = char_source(expr, fcx)?;
+    ExactInt::Unsigned(u128::from(u32::from(ch))).term_for_kind(dst)
+}
+
+fn char_from_impl_exists(dst: IntKind) -> bool {
+    !dst.signed && dst.bits >= 32
+}
+
+fn char_source(expr: &Expr, fcx: &SugarBuildCtx) -> Option<char> {
+    match strip_refs_groups(expr) {
+        Expr::Lit(lit) => match &lit.lit {
+            Lit::Char(ch) => Some(ch.value()),
+            _ => None,
+        },
+        Expr::Path(path) if path.qself.is_none() => {
+            let name = path.path.get_ident()?.to_string();
+            if fcx.resolving_bound_path(&name) {
+                return None;
+            }
+            let init = fcx.scope().stable_let_binding_for_term(&name)?;
+            char_source(init, &fcx.with_bound_path(&name))
+        }
+        _ => None,
+    }
+}
+
+fn ipv6_u128_source(expr: &Expr, fcx: &SugarBuildCtx) -> Option<u128> {
+    let addr = ipv6_source(expr, fcx)?;
+    Some(u128::from_be_bytes(addr.octets()))
+}
+
+fn ipv6_source(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Ipv6Addr> {
+    match strip_refs_groups(expr) {
+        Expr::Call(call) => ipv6_call_source(call, fcx),
+        Expr::Path(path) if path.qself.is_none() => {
+            let name = path.path.get_ident()?.to_string();
+            if fcx.resolving_bound_path(&name) {
+                return None;
+            }
+            let init = fcx.scope().stable_let_binding_for_term(&name)?;
+            ipv6_source(init, &fcx.with_bound_path(&name))
+        }
+        _ => None,
+    }
+}
+
+fn ipv6_call_source(call: &ExprCall, fcx: &SugarBuildCtx) -> Option<Ipv6Addr> {
+    let Expr::Path(path) = strip_refs_groups(&call.func) else {
+        return None;
+    };
+    let (ty, method) = ip_path_type_and_method(&path.path)?;
+    if ty != "Ipv6Addr" || method != "new" || call.args.len() != 8 {
+        return None;
+    }
+    let mut segments = [0u16; 8];
+    for (slot, arg) in segments.iter_mut().zip(call.args.iter()) {
+        *slot = u16_from_literal_source(arg, fcx)?;
+    }
+    Some(Ipv6Addr::new(
+        segments[0],
+        segments[1],
+        segments[2],
+        segments[3],
+        segments[4],
+        segments[5],
+        segments[6],
+        segments[7],
+    ))
+}
+
+fn ip_path_type_and_method(path: &syn::Path) -> Option<(String, String)> {
+    let method = path.segments.last()?.ident.to_string();
+    let ty = path
+        .segments
+        .iter()
+        .rev()
+        .skip(1)
+        .find(|segment| segment.ident == "Ipv6Addr")?
+        .ident
+        .to_string();
+    Some((ty, method))
+}
+
+fn u16_from_literal_source(expr: &Expr, fcx: &SugarBuildCtx) -> Option<u16> {
+    let source = exact_int_source(expr, Some(fcx))?;
+    match source.value {
+        ExactInt::Signed(value) => u16::try_from(value).ok(),
+        ExactInt::Unsigned(value) => u16::try_from(value).ok(),
+    }
 }
 
 /// `<IntT>::from` (qself) or `IntT::from` (two-segment path) where `IntT` is a known
