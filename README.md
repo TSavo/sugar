@@ -144,6 +144,44 @@ Honest scope: this works **today** as `cargo sugar` (Rust) and `sugar-check`
 (Python pre-commit hook). The npm/JS wedge is in progress; what is missing is the
 lifter, not the thesis.
 
+## What `sugar diff` measures: your coupling, their cohesion
+
+Upgrade a dependency and run `sugar diff`. You don't get the *"these bytes
+changed"* report — that's `git`, the shadow: blind to a backdoor, loud about a
+rename. You don't get the *"we think the API works this way now"* report —
+that's the changelog, prose, optimistic and unmapped to your code. You get the
+**"here be the new dragons"** report: the diff of the **behavior**, recomputed,
+intersected with exactly what your code leans on. Not *"the vendor changed
+`search`"* — *"your dependence on `search` returning sorted is now unproven."*
+The exact welds that broke. Your real blast radius, before prod.
+
+That is **cohesion and coupling, finally measured.** They have been the two axes
+of software quality since 1974, and for fifty years they were *adjectives* —
+eyeballed in review, approximated by what-imports-what. A `.proof` makes them
+data. The provider's `.proof` is a **cohesion surface**: the coherent set of
+behaviors it actually holds — *our surface is this.* Your composition is a
+**coupling**: the subset of that surface your code provably leans on — *you are
+coupled in this way.* Every dependency edge is a coupling aimed at a cohesion
+surface, and `sugar diff` is what happens when the surface moves under the
+coupling.
+
+Two levers fall out — the ones shape-based metrics could never hand you:
+
+- **Minimize coupling on purpose.** Depend on the smallest surface you can, and
+  your blast radius on *any* release is exactly the size of `your coupling ∩
+  their change` — a number you drive toward zero deliberately, instead of
+  praying through the upgrade.
+- **Publish cohesion, and be held to it.** A provider states their surface —
+  *this, and no more* — and a tight, honest surface is visibly safer to depend
+  on than a sprawling, accidental one, *before* you take the dependency.
+
+And it is the one report **no vendor can ship**, for a precise reason: the
+dragons are `your coupling ∩ their change`, and that needs **both halves at
+once**. The provider owns the cohesion surface and can publish it; only you own
+your coupling. Only you, at compose time, hold both — so the vendor has one side
+of the equation and cannot finish it. You have the other, and `sugar diff`
+completes it.
+
 ## How a `.proof` works: the claim, formally
 
 Correctness is `k(I) = t`: a program `k` applied to an input/precondition `I`
