@@ -134,6 +134,7 @@ pub mod sugar {
     pub mod matches_macro;
     pub mod maybe_uninit_new;
     pub mod maybe_uninit_zeroed;
+    pub mod memchr;
     pub mod method;
     pub mod method_family;
     pub mod monadic;
@@ -146,6 +147,7 @@ pub mod sugar {
     pub mod path;
     pub mod peekable;
     pub mod primitive_int;
+    pub mod ptr_metadata;
     pub mod range_accessor;
     pub mod range_construct;
     pub mod range_contains;

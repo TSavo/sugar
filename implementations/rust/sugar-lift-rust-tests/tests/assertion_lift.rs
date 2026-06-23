@@ -16731,6 +16731,152 @@ fn literal_slice_search_split_methods_have_z3_bad_twins() {
 }
 
 #[test]
+fn terminal_verdict_binary_search_by_overflow_warrants_and_bad_twin_refutes() {
+    let good = r#"
+        use std::cmp::Ordering;
+
+        #[test]
+        fn test_binary_search_by_overflow() {
+            let b = [(); usize::MAX];
+            assert_eq!(b.binary_search_by(|_| Ordering::Equal), Ok(usize::MAX - 1));
+            assert_eq!(b.binary_search_by(|_| Ordering::Greater), Err(0));
+            assert_eq!(b.binary_search_by(|_| Ordering::Less), Err(usize::MAX));
+        }
+    "#;
+    let out = lift_file(
+        &parse(good),
+        "tests/slice/binary_search_by_overflow_good.rs",
+    );
+    assert_eq!(
+        out.assertions_lifted, 3,
+        "constant binary_search_by over [(); usize::MAX] must reach terminal warranted facts: skips={:?}; audits={:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_warranted_decl_count(&out, 1);
+    assert_warranted_decls_not_refuted(&out, "binary_search_by_overflow_good");
+
+    let bad = r#"
+        use std::cmp::Ordering;
+
+        #[test]
+        fn test_binary_search_by_overflow_bad() {
+            let b = [(); usize::MAX];
+            assert_eq!(b.binary_search_by(|_| Ordering::Equal), Ok(usize::MAX - 2));
+        }
+    "#;
+    let out = lift_file(&parse(bad), "tests/slice/binary_search_by_overflow_bad.rs");
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "binary_search_by_overflow_bad",
+    ) {
+        assert!(
+            !sat,
+            "wrong binary_search_by overflow index must be z3-UNSAT"
+        );
+    }
+}
+
+#[test]
+fn terminal_verdict_ptr_metadata_literal_warrants_and_runtime_layout_refuses() {
+    let good = r#"
+        use std::ptr::metadata;
+
+        #[test]
+        fn ptr_metadata_literals() {
+            assert_eq!(metadata("foo"), 3_usize);
+            assert_eq!(metadata(&[4, 7][..]), 2_usize);
+        }
+    "#;
+    let out = lift_file(&parse(good), "tests/ptr/metadata_literals.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "literal metadata should reduce to written lengths: skips={:?}; audits={:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_warranted_decls_not_refuted(&out, "ptr_metadata_literals");
+
+    let bad = r#"
+        use std::ptr::metadata;
+
+        #[test]
+        fn ptr_metadata_literal_bad() {
+            assert_eq!(metadata("foo"), 4_usize);
+        }
+    "#;
+    let out = lift_file(&parse(bad), "tests/ptr/metadata_literal_bad.rs");
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "ptr_metadata_bad") {
+        assert!(!sat, "wrong string metadata length must be z3-UNSAT");
+    }
+
+    let runtime = r#"
+        use std::fmt::Debug;
+        use std::ptr::metadata;
+
+        #[test]
+        fn ptr_metadata_vtable_runtime() {
+            assert_eq!(metadata(&4_u16 as &dyn Debug), metadata(&4_u16 as &dyn Debug));
+        }
+    "#;
+    let doc = run_rpc_lift("tests/ptr.rs", runtime);
+    assert_rpc_source_refused(
+        &doc,
+        "ptr_metadata_vtable_runtime",
+        "pointer metadata is a runtime layout property",
+    );
+}
+
+#[test]
+fn terminal_verdict_memrchr_literal_warrants_and_mutable_alignment_refuses() {
+    let good = r#"
+        #[test]
+        fn memrchr_literal_good() {
+            assert_eq!(Some(4), memrchr(b'\x00', b"aaaa\x00"));
+            assert_eq!(None, memrchr(b'a', b"xyz"));
+        }
+    "#;
+    let out = lift_file(&parse(good), "tests/slice/memrchr_literal_good.rs");
+    assert_eq!(
+        out.assertions_lifted, 2,
+        "literal memrchr should reduce to option literals: skips={:?}; audits={:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_warranted_decls_not_refuted(&out, "memrchr_literal_good");
+
+    let bad = r#"
+        #[test]
+        fn memrchr_literal_bad() {
+            assert_eq!(Some(3), memrchr(b'\x00', b"aaaa\x00"));
+        }
+    "#;
+    let out = lift_file(&parse(bad), "tests/slice/memrchr_literal_bad.rs");
+    assert_warranted_decl_count(&out, 1);
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "memrchr_bad") {
+        assert!(!sat, "wrong memrchr literal position must be z3-UNSAT");
+    }
+
+    let mutable_alignment = r#"
+        #[test]
+        fn each_alignment_reversed() {
+            let mut data = [1u8; 64];
+            let needle = 2;
+            let pos = 40;
+            data[pos] = needle;
+            for start in 0..16 {
+                assert_eq!(Some(pos - start), memrchr(needle, &data[start..]));
+            }
+        }
+    "#;
+    let doc = run_rpc_lift("tests/slice.rs", mutable_alignment);
+    assert_rpc_source_refused(
+        &doc,
+        "each_alignment_reversed",
+        "runtime slice source, not literal",
+    );
+}
+
+#[test]
 fn literal_slice_split_chunk_destructure_warrants_and_bad_twin_refutes() {
     let good = r#"
         const CUT: usize = 2;

@@ -1951,7 +1951,7 @@ fn source_memento_from_report_json(
 }
 
 fn source_report_summary_has_hard_failures(summary: &LiftReportSummary) -> bool {
-    source_unresolved_count(&summary.ledger) > 0 || summary.factory.unresolved > 0
+    source_unresolved_count(&summary.ledger) > 0
 }
 
 fn render_source_report_human(report: &LiftSourceReport) -> String {
@@ -5681,7 +5681,7 @@ mod tests {
     }
 
     #[test]
-    fn summary_report_treats_unresolved_factory_sites_as_hard_failure() {
+    fn summary_report_reports_unresolved_factory_sites_without_hard_failure() {
         let response = serde_json::json!({
             "kind": "ir-document",
             "sourceLedger": {
@@ -5707,7 +5707,8 @@ mod tests {
         let summary =
             source_report_summary_from_lift_response(&response, Path::new(".")).expect("summary");
 
-        assert!(source_report_summary_has_hard_failures(&summary));
+        assert!(!source_report_summary_has_hard_failures(&summary));
+        assert_eq!(summary.factory.unresolved, 1);
     }
 
     #[test]

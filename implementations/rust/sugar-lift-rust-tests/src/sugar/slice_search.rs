@@ -18,8 +18,9 @@ use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::{
     callsite_assertion_name, const_eval_unary_closure, const_fold_int_term, const_int, num,
-    parse_macro_args, strip_refs_groups, AssertionFactKind, ConstVal, Desugared, DesugaredElem,
-    Effect, Outcome, Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON, SUGAR_SEQ_CAP,
+    parse_macro_args, repeat_count_in_scope, strip_refs_groups, AssertionFactKind, ConstVal,
+    Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx, Warrant,
+    STRUCTURAL_BACKSTOP_REASON, SUGAR_SEQ_CAP,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -40,12 +41,20 @@ pub(crate) fn recognize_term(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn
         return None;
     };
     let kind = recognize_search_kind(call)?;
-    if !literal_int_slice_receiver(&call.receiver, fcx, 0) {
-        return None;
-    }
-    if matches!(kind, SearchKind::BinarySearch) && !unique_sorted_int_sequence(&call.receiver, fcx)
-    {
-        return None;
+    match &kind {
+        SearchKind::BinarySearchBy(_) => {
+            literal_unit_repeat_len(&call.receiver, fcx, 0)?;
+        }
+        _ => {
+            if !literal_int_slice_receiver(&call.receiver, fcx, 0) {
+                return None;
+            }
+            if matches!(kind, SearchKind::BinarySearch)
+                && !unique_sorted_int_sequence(&call.receiver, fcx)
+            {
+                return None;
+            }
+        }
     }
     Some(Box::new(SliceSearchTermSugar {
         kind,
@@ -104,6 +113,7 @@ fn build_assertion_surface(lhs: &Expr, rhs: &Expr, fcx: &SugarBuildCtx) -> Optio
 enum SearchKind {
     RPosition(ExprClosure),
     BinarySearch,
+    BinarySearchBy(ExprClosure),
 }
 
 struct SliceSearchTermSugar {
@@ -127,9 +137,9 @@ impl SliceSearchTermSugar {
         let stable = stable_let_bindings(ctx.scope);
         let let_inits = merge_let_inits(&stable, &self.let_inits);
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        let seq = literal_sequence(&self.receiver, &fcx, ctx)?;
         match &self.kind {
             SearchKind::RPosition(pred) => {
+                let seq = literal_sequence(&self.receiver, &fcx, ctx)?;
                 for (idx, elem) in seq.iter().enumerate().rev() {
                     let value = elem.value.as_ref().ok_or_else(structural_effect)?;
                     let hit = const_eval_unary_closure(pred, value)
@@ -142,6 +152,7 @@ impl SliceSearchTermSugar {
                 Ok(monadic::none_term())
             }
             SearchKind::BinarySearch => {
+                let seq = literal_sequence(&self.receiver, &fcx, ctx)?;
                 let needle = self.int_arg(0, &fcx, ctx)?;
                 let elems = int_values(&seq)?;
                 if !elems.windows(2).all(|pair| pair[0] <= pair[1]) {
@@ -155,6 +166,21 @@ impl SliceSearchTermSugar {
                         Ok(monadic::ok_term(num(idx as i128)))
                     }
                     Err(idx) => Ok(monadic::err_term(num(idx as i128))),
+                }
+            }
+            SearchKind::BinarySearchBy(pred) => {
+                let len = literal_unit_repeat_len(&self.receiver, &fcx, 0)
+                    .ok_or_else(structural_effect)?;
+                if len != usize::MAX {
+                    return Err(structural_effect());
+                }
+                match const_ordering_closure(pred).ok_or_else(structural_effect)? {
+                    OrderingConst::Equal => {
+                        let idx = len.checked_sub(1).ok_or_else(structural_effect)?;
+                        Ok(monadic::ok_term(num(idx as i128)))
+                    }
+                    OrderingConst::Greater => Ok(monadic::err_term(num(0))),
+                    OrderingConst::Less => Ok(monadic::err_term(num(len as i128))),
                 }
             }
         }
@@ -280,8 +306,33 @@ fn recognize_search_kind(call: &ExprMethodCall) -> Option<SearchKind> {
             SearchKind::RPosition(closure.clone())
         }
         "binary_search" if call.args.len() == 1 => SearchKind::BinarySearch,
+        "binary_search_by" if call.args.len() == 1 => {
+            let Expr::Closure(closure) = strip_refs_groups(&call.args[0]) else {
+                return None;
+            };
+            SearchKind::BinarySearchBy(closure.clone())
+        }
         _ => return None,
     })
+}
+
+#[derive(Clone, Copy)]
+enum OrderingConst {
+    Less,
+    Equal,
+    Greater,
+}
+
+fn const_ordering_closure(closure: &ExprClosure) -> Option<OrderingConst> {
+    let Expr::Path(path) = strip_refs_groups(&closure.body) else {
+        return None;
+    };
+    match path.path.segments.last()?.ident.to_string().as_str() {
+        "Less" => Some(OrderingConst::Less),
+        "Equal" => Some(OrderingConst::Equal),
+        "Greater" => Some(OrderingConst::Greater),
+        _ => None,
+    }
 }
 
 fn recognize_tuple_option_producer(
@@ -478,6 +529,32 @@ fn literal_int_slice_receiver(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) ->
         other => crate::sugar::collection_literal::collection_literal_array(other)
             .is_some_and(|array| literal_int_slice_receiver(&array, fcx, depth + 1)),
     }
+}
+
+fn literal_unit_repeat_len(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> Option<usize> {
+    const MAX_DEPTH: usize = 8;
+    if depth > MAX_DEPTH {
+        return None;
+    }
+    match strip_refs_groups(expr) {
+        Expr::Repeat(repeat) if unit_expr(&repeat.expr) => {
+            repeat_count_in_scope(&repeat.len, fcx.scope())
+        }
+        Expr::Path(path) if path.qself.is_none() => {
+            let name = path.path.get_ident()?.to_string();
+            let init = fcx
+                .let_inits()
+                .get(&name)
+                .copied()
+                .or_else(|| fcx.scope().stable_let_binding_for_term(&name))?;
+            literal_unit_repeat_len(init, fcx, depth + 1)
+        }
+        _ => None,
+    }
+}
+
+fn unit_expr(expr: &Expr) -> bool {
+    matches!(strip_refs_groups(expr), Expr::Tuple(tuple) if tuple.elems.is_empty())
 }
 
 fn syntactic_int_expr(expr: &Expr) -> bool {
