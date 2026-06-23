@@ -90,7 +90,7 @@ impl Sugar for ResultPredicateSugar {
                 value,
                 "resolved Layout::from_size_align Result predicate compiler axiom"
             );
-            return Outcome::Dug(Desugared::Term(bool_const(value)));
+            return Outcome::Complete(Desugared::Term(bool_const(value)));
         }
         let receiver = match desugar_term_expr(&self.receiver, ctx, &fcx) {
             Ok(term) => term,
@@ -102,7 +102,7 @@ impl Sugar for ResultPredicateSugar {
         let is_ok = match presence {
             Ok(is_ok) => is_ok,
             Err(kind) => {
-                return Outcome::Hit(Effect::Unsupported {
+                return Outcome::Incomplete(Effect::Unsupported {
                     reason: format!(
                         "runtime Option/Result payload, not literal (`{}` over `{kind}`)",
                         self.method
@@ -121,7 +121,7 @@ impl Sugar for ResultPredicateSugar {
             value,
             "resolved Result presence predicate stdlib axiom"
         );
-        Outcome::Dug(Desugared::Term(bool_const(value)))
+        Outcome::Complete(Desugared::Term(bool_const(value)))
     }
 }
 
@@ -252,8 +252,8 @@ fn desugar_term_expr(
     fcx: &SugarBuildCtx,
 ) -> Result<Rc<Term>, Outcome> {
     match build_term(expr, fcx).desugar(ctx) {
-        Outcome::Dug(d) => d.into_term().ok_or_else(|| Outcome::from_opt(None)),
-        Outcome::Hit(e) => Err(Outcome::Hit(e)),
+        Outcome::Complete(d) => d.into_term().ok_or_else(|| Outcome::from_opt(None)),
+        Outcome::Incomplete(e) => Err(Outcome::Incomplete(e)),
     }
 }
 

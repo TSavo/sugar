@@ -10,14 +10,14 @@
 //   Term::Ctor { name: "index".to_string(), args: vec![container, idx] }
 //
 // THE CHILDREN ARE LAZY. The container `a` and the index `i` are held as raw source
-// expressions. `desugar` builds and digs the container FIRST, then the index, mirroring
+// expressions. `desugar` builds and completes the container FIRST, then the index, mirroring
 // the arm's
 // `let container = translate_term_in_scope(&index.expr, scope)?;` /
 // `let idx = translate_term_in_scope(&index.index, scope)?;` order, and emits
 // `index(container, idx)` -- the args in that exact order. A child that does not reduce
 // to a term (`into_term` -> `None`) bails the whole node (the byte-identical structural
-// backstop, the old `?`-propagated `Err`); a child that `Hit`s a named order-loss
-// boundary propagates that `Hit` VERBATIM (the old named inner `Err`).
+// backstop, the old `?`-propagated `Err`); a child that `Incomplete`s a named order-loss
+// boundary propagates that `Incomplete` VERBATIM (the old named inner `Err`).
 //
 // THE RECOGNIZER PREAMBLE. The `Expr::Index` shape has TWO
 // EARLY-RETURN recognizers BEFORE the constructive tail:
@@ -27,7 +27,7 @@
 //   }
 //   ...
 //   if let Some(node) = sugar::temporal_read::decompose_temporal_read(expr, scope) {
-//       if let Outcome::Hit(effect @ Effect::TemporalRead { .. }) = node.desugar_ctx_free()
+//       if let Outcome::Incomplete(effect @ Effect::TemporalRead { .. }) = node.desugar_ctx_free()
 //       {
 //           return Err(effect.reason());
 //       }
@@ -92,11 +92,11 @@ impl IndexSugar {
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
         let seq = method_family::build_literal_sequence_composite(&self.index.expr, &fcx)?
             .desugar(ctx)
-            .dug()?
+            .complete()?
             .into_seq()?;
         let idx = build_term(&self.index.index, &fcx)
             .desugar(ctx)
-            .dug()?
+            .complete()?
             .into_term()?;
         let k = const_fold_int_term(&idx).and_then(|k| usize::try_from(k).ok())?;
         let elem = seq.get(k)?;
@@ -110,7 +110,7 @@ impl IndexSugar {
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
         let idx = build_term(&self.index.index, &fcx)
             .desugar(ctx)
-            .dug()?
+            .complete()?
             .into_term()?;
         let k = const_fold_int_term(&idx).and_then(|k| usize::try_from(k).ok())?;
         let elem = ctx.scope.temporal_rewrite_index_expr_for(&base, k)?;
@@ -122,23 +122,25 @@ impl Sugar for IndexSugar {
     /// Dig the container child to its `Term`, then the index child, then emit the
     /// `index` ctor over `[container, idx]` -- the constructive tail of the
     /// `Expr::Index` arm, byte-identical (ctor name `"index"`, args in container-then-
-    /// index order). A child that `Hit`s a named order-loss boundary propagates that
-    /// `Hit` verbatim (the old named inner `Err`); a child that digs to a non-term
+    /// index order). A child that `Incomplete`s a named order-loss boundary propagates that
+    /// `Incomplete` verbatim (the old named inner `Err`); a child that completes to a non-term
     /// `Desugared` (`into_term` -> `None`) bails the node via the structural backstop
     /// (`Outcome::from_opt(None)`, the old `?`-propagated generic refusal).
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match const_index_term_in_scope(&self.index, ctx.scope) {
-            Ok(Some(term)) => return Outcome::Dug(Desugared::Term(term)),
+            Ok(Some(term)) => return Outcome::Complete(Desugared::Term(term)),
             Ok(None) => {}
-            Err(reason) => return Outcome::Hit(Effect::Unsupported { reason }),
+            Err(reason) => return Outcome::Incomplete(Effect::Unsupported { reason }),
         }
         if let Some(outcome) = self.ground_temporal_rewrite_index(ctx) {
             return outcome;
         }
         let source = Expr::Index(self.index.clone());
         if let Some(node) = decompose_temporal_read(&source, ctx.scope) {
-            if let Outcome::Hit(effect @ Effect::TemporalRead { .. }) = node.desugar_ctx_free() {
-                return Outcome::Hit(Effect::Unsupported {
+            if let Outcome::Incomplete(effect @ Effect::TemporalRead { .. }) =
+                node.desugar_ctx_free()
+            {
+                return Outcome::Incomplete(Effect::Unsupported {
                     reason: effect.reason(),
                 });
             }
@@ -148,25 +150,25 @@ impl Sugar for IndexSugar {
         // solver can satisfy with anything (which would over-discharge `a[k] == wrong`).
         // Falls through to the symbolic ctor for a non-literal container.
         if let Some(term) = self.ground_literal_index(ctx) {
-            return Outcome::Dug(Desugared::Term(term));
+            return Outcome::Complete(Desugared::Term(term));
         }
         let let_inits = scope_let_inits(ctx);
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
         let container = match build_term(&self.index.expr, &fcx).desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
+            Outcome::Complete(d) => match d.into_term() {
                 Some(t) => t,
                 None => return Outcome::from_opt(None),
             },
-            Outcome::Hit(e) => return Outcome::Hit(e),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
         let idx = match build_term(&self.index.index, &fcx).desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
+            Outcome::Complete(d) => match d.into_term() {
                 Some(t) => t,
                 None => return Outcome::from_opt(None),
             },
-            Outcome::Hit(e) => return Outcome::Hit(e),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
-        Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
+        Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
             name: "index".to_string(),
             args: vec![container, idx],
         })))
@@ -229,8 +231,8 @@ mod tests {
         // `a[i]` -> `Ctor { name: "index", args: [Var(a), Var(i)] }` -- the exact ctor
         // the `Expr::Index` constructive tail emits, container FIRST then index.
         let node = node_from(parse_quote!(a[i]));
-        let Outcome::Dug(Desugared::Term(term)) = run(&node) else {
-            panic!("expected a Dug term");
+        let Outcome::Complete(Desugared::Term(term)) = run(&node) else {
+            panic!("expected a Complete term");
         };
         match &*term {
             Term::Ctor { name, args } => {

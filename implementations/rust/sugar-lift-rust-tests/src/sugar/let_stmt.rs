@@ -8,7 +8,7 @@
 //
 // This module does not interpret assertion vocabulary and does not decide the fact.
 // It only presents initializer expression shapes back to the existing factory/collector.
-// The downstream sugar walk still has exactly two outcomes: Dug or Hit.
+// The downstream sugar walk still has exactly two outcomes: Complete or Incomplete.
 
 use syn::{Expr, Stmt};
 

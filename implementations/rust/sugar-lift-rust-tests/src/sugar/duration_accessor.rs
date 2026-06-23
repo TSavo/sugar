@@ -157,6 +157,6 @@ struct DurationAccessorSugar {
 
 impl Sugar for DurationAccessorSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        Outcome::Dug(Desugared::Term(num(self.value)))
+        Outcome::Complete(Desugared::Term(num(self.value)))
     }
 }

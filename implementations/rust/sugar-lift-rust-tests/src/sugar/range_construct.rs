@@ -3,7 +3,7 @@
 // COMPOSITE recognizer for literal range constructor values used as statement/let
 // surfaces. The recognizer only captures the raw bound expressions; desugar builds
 // each bound lazily and either emits construction field facts or propagates the
-// child's named Hit unchanged.
+// child's named Incomplete unchanged.
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -164,11 +164,11 @@ impl Sugar for RangeConstructSugar {
         let mut fields = Vec::new();
         for (name, expr) in &self.fields {
             let term = match build_term(expr, &fcx).desugar(ctx) {
-                Outcome::Dug(d) => match d.into_term() {
+                Outcome::Complete(d) => match d.into_term() {
                     Some(term) => term,
                     None => return Outcome::from_opt(None),
                 },
-                Outcome::Hit(effect) => return Outcome::Hit(effect),
+                Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
             };
             fields.push((name.clone(), term));
         }
@@ -190,7 +190,7 @@ impl Sugar for RangeConstructSugar {
         if n == 0 {
             return Outcome::from_opt(None);
         }
-        Outcome::Dug(Desugared::Constraints {
+        Outcome::Complete(Desugared::Constraints {
             atom: and_(atoms),
             n,
             kind: AssertionFactKind::Warranted,

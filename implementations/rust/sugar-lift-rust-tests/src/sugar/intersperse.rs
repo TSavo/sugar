@@ -113,7 +113,7 @@ fn reduce_intersperse(
     separator: &Expr,
     ctx: &SugarCtx,
 ) -> Option<Vec<DesugaredElem>> {
-    let seq = inner.desugar(ctx).dug()?.into_seq()?;
+    let seq = inner.desugar(ctx).complete()?.into_seq()?;
     if seq.len() <= 1 {
         return Some(seq);
     }
@@ -132,7 +132,7 @@ fn reduce_intersperse_with(
     separator: &Expr,
     ctx: &SugarCtx,
 ) -> Option<Vec<DesugaredElem>> {
-    let seq = inner.desugar(ctx).dug()?.into_seq()?;
+    let seq = inner.desugar(ctx).complete()?.into_seq()?;
     if seq.len() <= 1 {
         return Some(seq);
     }

@@ -39,7 +39,7 @@ impl Sugar for AssignOpSugar {
         if !ctx.scope.apply_temporal_rewrite(&self.expr) {
             return Outcome::from_opt(None);
         }
-        Outcome::Dug(Desugared::Constraints {
+        Outcome::Complete(Desugared::Constraints {
             atom: eq(bool_term(true), bool_term(true)),
             n: 0,
             kind: AssertionFactKind::Support,

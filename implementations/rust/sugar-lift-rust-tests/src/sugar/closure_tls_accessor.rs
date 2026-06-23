@@ -28,11 +28,11 @@ struct ClosureTlsAccessorSugar {
 impl Sugar for ClosureTlsAccessorSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         if self.site.has_tls_accessor() {
-            return Outcome::Hit(Effect::Tls {
+            return Outcome::Incomplete(Effect::Tls {
                 boundary: token_key(self.site.expr()),
             });
         }
-        Outcome::Hit(Effect::Unsupported {
+        Outcome::Incomplete(Effect::Unsupported {
             reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
         })
     }

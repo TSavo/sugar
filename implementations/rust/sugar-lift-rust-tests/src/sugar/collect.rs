@@ -130,11 +130,12 @@ impl CollectPlan {
                     let base = method_family::build_literal_sequence_composite(base_expr, &fcx)
                         .unwrap_or_else(|| build_composite(base_expr, &fcx));
                     match base.desugar(ctx) {
-                        Outcome::Dug(d) => match d.into_seq() {
+                        Outcome::Complete(d) => match d.into_seq() {
                             Some(seq) => seq,
                             None => return Ok(None),
                         },
-                        Outcome::Hit(effect) => match empty_literal_sequence(base_expr, ctx) {
+                        Outcome::Incomplete(effect) => match empty_literal_sequence(base_expr, ctx)
+                        {
                             Some(seq) => seq,
                             None => return Err(effect),
                         },
@@ -179,11 +180,12 @@ impl CollectPlan {
                     let base = method_family::build_literal_sequence_composite(base_expr, &fcx)
                         .unwrap_or_else(|| build_composite(base_expr, &fcx));
                     match base.desugar(ctx) {
-                        Outcome::Dug(d) => match d.into_seq() {
+                        Outcome::Complete(d) => match d.into_seq() {
                             Some(seq) => seq,
                             None => return Ok(None),
                         },
-                        Outcome::Hit(effect) => match empty_literal_sequence(base_expr, ctx) {
+                        Outcome::Incomplete(effect) => match empty_literal_sequence(base_expr, ctx)
+                        {
                             Some(seq) => seq,
                             None => return Err(effect),
                         },
@@ -268,7 +270,7 @@ fn empty_literal_sequence(expr: &Expr, ctx: &SugarCtx) -> Option<Vec<DesugaredEl
 impl Sugar for CollectSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match self.plan.reduce(ctx, &self.let_inits) {
-            Ok(Some(term)) => Outcome::Dug(Desugared::Term(term)),
+            Ok(Some(term)) => Outcome::Complete(Desugared::Term(term)),
             Ok(None) => {
                 let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
                 let let_inits: BTreeMap<String, &Expr> = stable
@@ -286,7 +288,7 @@ impl Sugar for CollectSugar {
                     None => Outcome::from_opt(None),
                 }
             }
-            Err(effect) => Outcome::Hit(effect),
+            Err(effect) => Outcome::Incomplete(effect),
         }
     }
 }
@@ -414,7 +416,10 @@ fn elem_term(elem: &DesugaredElem, ctx: &SugarCtx, fcx: &SugarBuildCtx) -> Optio
     if let Some(value) = elem.value.as_ref().and_then(const_val_term) {
         return Some(value);
     }
-    build_term(&elem.expr, fcx).desugar(ctx).dug()?.into_term()
+    build_term(&elem.expr, fcx)
+        .desugar(ctx)
+        .complete()?
+        .into_term()
 }
 
 fn const_val_term(value: &ConstVal) -> Option<Rc<Term>> {

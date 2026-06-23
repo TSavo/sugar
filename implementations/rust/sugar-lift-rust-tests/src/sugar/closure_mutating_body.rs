@@ -38,11 +38,11 @@ struct ClosureMutatingBodySugar {
 impl Sugar for ClosureMutatingBodySugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         if self.site.has_mutating_body() {
-            return Outcome::Hit(Effect::Mutation {
+            return Outcome::Incomplete(Effect::Mutation {
                 boundary: token_key(self.site.expr()),
             });
         }
-        Outcome::Hit(Effect::Unsupported {
+        Outcome::Incomplete(Effect::Unsupported {
             reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
         })
     }

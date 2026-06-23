@@ -65,11 +65,11 @@ impl Sugar for OptionPredicateSugar {
             .collect();
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
         let receiver = match build_term(&self.receiver, &fcx).desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
+            Outcome::Complete(d) => match d.into_term() {
                 Some(term) => term,
                 None => return Outcome::from_opt(None),
             },
-            Outcome::Hit(e) => return Outcome::Hit(e),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
         let Some(presence) = option_presence(&receiver) else {
             return Outcome::from_opt(None);
@@ -77,7 +77,7 @@ impl Sugar for OptionPredicateSugar {
         let is_some = match presence {
             Ok(is_some) => is_some,
             Err(kind) => {
-                return Outcome::Hit(Effect::Unsupported {
+                return Outcome::Incomplete(Effect::Unsupported {
                     reason: format!(
                         "runtime Option/Result payload, not literal (`{}` over `{kind}`)",
                         self.method
@@ -96,7 +96,7 @@ impl Sugar for OptionPredicateSugar {
             value,
             "resolved Option presence predicate stdlib axiom"
         );
-        Outcome::Dug(Desugared::Term(bool_const(value)))
+        Outcome::Complete(Desugared::Term(bool_const(value)))
     }
 }
 

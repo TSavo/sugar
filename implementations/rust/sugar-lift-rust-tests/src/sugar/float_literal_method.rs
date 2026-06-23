@@ -4,7 +4,7 @@
 //
 // Recognition is lazy: it captures `to_bits` / `from_bits` source shapes and raw
 // child expressions only. Desugar resolves the receiver/argument under the live
-// scope and either emits the exact literal floor or propagates a named Hit.
+// scope and either emits the exact literal floor or propagates a named Incomplete.
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -86,7 +86,7 @@ impl Sugar for FloatLiteralMethodSugar {
                     Ok(value) => value,
                     Err(outcome) => return outcome,
                 };
-                Outcome::Dug(Desugared::Term(value.to_bits_term()))
+                Outcome::Complete(Desugared::Term(value.to_bits_term()))
             }
             FloatLiteralMethodSugar::FromBits {
                 width,
@@ -106,7 +106,7 @@ impl Sugar for FloatLiteralMethodSugar {
                     Err(outcome) => return outcome,
                 };
                 match value.to_real_term(site) {
-                    Ok(term) => Outcome::Dug(Desugared::Term(term)),
+                    Ok(term) => Outcome::Complete(Desugared::Term(term)),
                     Err(outcome) => outcome,
                 }
             }
@@ -261,7 +261,7 @@ fn resolve_bits(
     site: &str,
 ) -> Result<u128, Outcome> {
     match build_term(expr, fcx).desugar(ctx) {
-        Outcome::Dug(d) => {
+        Outcome::Complete(d) => {
             let Some(term) = d.into_term() else {
                 return Err(runtime_float(site));
             };
@@ -269,7 +269,7 @@ fn resolve_bits(
                 .or_else(|| const_fold_int_term(&term).and_then(|n| u128::try_from(n).ok()))
                 .ok_or_else(|| runtime_float(site))
         }
-        Outcome::Hit(effect) => Err(Outcome::Hit(effect)),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
 
@@ -397,5 +397,5 @@ fn runtime_float(site: &str) -> Outcome {
 }
 
 fn unsupported(reason: String) -> Outcome {
-    Outcome::Hit(Effect::Unsupported { reason })
+    Outcome::Incomplete(Effect::Unsupported { reason })
 }

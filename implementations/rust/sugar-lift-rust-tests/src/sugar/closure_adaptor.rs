@@ -24,8 +24,8 @@ pub(crate) struct ClosureAdaptorSite {
     /// The closure. The BODY leaf: its body is scanned for the side-effecting / iter-advance
     /// degeneracy.
     closure: syn::ExprClosure,
-    /// The receiver of the closure-bearing call. The RECEIVER leaf: it Digs on a finite
-    /// literal domain and `Hit`s `OpaqueRuntime` on runtime data.
+    /// The receiver of the closure-bearing call. The RECEIVER leaf: it completes on a finite
+    /// literal domain and `Incomplete`s `OpaqueRuntime` on runtime data.
     receiver: Expr,
     /// Owned snapshot of the in-scope `let` initializers (name -> init expr), captured at
     /// build time. Rebuilt into the borrowed `&Expr` map at desugar to drive

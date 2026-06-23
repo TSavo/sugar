@@ -1446,6 +1446,7 @@ dependencies = [
  "sugar-plugin-loader",
  "sugar-proof-envelope",
  "sugar-verifier",
+ "sugar-walk",
  "syn",
  "tempfile",
  "thiserror",

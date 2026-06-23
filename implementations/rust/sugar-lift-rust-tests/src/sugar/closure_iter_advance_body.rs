@@ -28,11 +28,11 @@ struct ClosureIterAdvanceBodySugar {
 impl Sugar for ClosureIterAdvanceBodySugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         if self.site.has_iter_advance_body() {
-            return Outcome::Hit(Effect::IterAdvance {
+            return Outcome::Incomplete(Effect::IterAdvance {
                 boundary: token_key(self.site.expr()),
             });
         }
-        Outcome::Hit(Effect::Unsupported {
+        Outcome::Incomplete(Effect::Unsupported {
             reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
         })
     }

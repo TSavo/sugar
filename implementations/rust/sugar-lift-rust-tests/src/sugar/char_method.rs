@@ -257,8 +257,8 @@ impl CharMethodSugar {
         ctx: &SugarCtx,
     ) -> Result<Rc<Term>, Outcome> {
         match build_term(expr, fcx).desugar(ctx) {
-            Outcome::Dug(d) => d.into_term().ok_or_else(|| Outcome::from_opt(None)),
-            Outcome::Hit(e) => Err(Outcome::Hit(e)),
+            Outcome::Complete(d) => d.into_term().ok_or_else(|| Outcome::from_opt(None)),
+            Outcome::Incomplete(e) => Err(Outcome::Incomplete(e)),
         }
     }
 
@@ -276,7 +276,7 @@ impl CharMethodSugar {
             };
             terms.push(term);
         }
-        Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
+        Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
             name: format!("method:{}", self.method),
             args: terms,
         })))
@@ -284,7 +284,7 @@ impl CharMethodSugar {
 }
 
 fn constraint(atom: Rc<Formula>, name: Option<String>) -> Outcome {
-    Outcome::Dug(Desugared::Constraints {
+    Outcome::Complete(Desugared::Constraints {
         atom,
         n: 1,
         kind: AssertionFactKind::Warranted,
@@ -349,13 +349,13 @@ impl Sugar for CharMethodSugar {
                 let Some(ch) = term_to_char(&receiver) else {
                     return Outcome::from_opt(None);
                 };
-                return Outcome::Dug(Desugared::Term(str_const(ch.to_string())));
+                return Outcome::Complete(Desugared::Term(str_const(ch.to_string())));
             }
             if source_resolves_to_char_case_mapping(&self.receiver, &let_inits) {
                 let Some(value) = term_to_string_const(&receiver) else {
                     return Outcome::from_opt(None);
                 };
-                return Outcome::Dug(Desugared::Term(str_const(value)));
+                return Outcome::Complete(Desugared::Term(str_const(value)));
             }
             return self.opaque_method_term(receiver, &fcx, ctx);
         }
@@ -396,6 +396,6 @@ impl Sugar for CharMethodSugar {
             }
             _ => return Outcome::from_opt(None),
         };
-        Outcome::Dug(Desugared::Term(term))
+        Outcome::Complete(Desugared::Term(term))
     }
 }

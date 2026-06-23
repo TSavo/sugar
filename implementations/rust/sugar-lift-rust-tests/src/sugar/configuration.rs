@@ -12,11 +12,11 @@
 //! the predicate ONCE, and compose:
 //!
 //!   * **Active**    -> desugar the wrapped inner `Sugar` (the construct exists here).
-//!   * **Inactive**  -> `Dug(Seq[])` -- the no-op / empty floor (rustc strips the
+//!   * **Inactive**  -> `Complete(Seq[])` -- the no-op / empty floor (rustc strips the
 //!     construct pre-codegen, so it contributes nothing; NOT a refusal).
-//!   * **Ambiguous** -> `Hit(Effect::Unsupported { "ambiguous cfg: <reason>" })` -- with
+//!   * **Ambiguous** -> `Incomplete(Effect::Unsupported { "ambiguous cfg: <reason>" })` -- with
 //!     no target facts we honestly cannot resolve it. By the no-scan / `Outcome` law this
-//!     HITS (a named, terminal effect); it is NEVER a silent skip.
+//!     RETURNS INCOMPLETE (a named, terminal effect); it is NEVER a silent skip.
 //!
 //! The resolution is the EXISTING `cfg_eval_for_attrs` over the pinned target facts
 //! (`SugarCtx::options.target_cfg`) -- a SEMANTIC predicate evaluation, never a syntactic
@@ -39,7 +39,7 @@ use crate::{
 ///   * `Present` -- the construct exists on this target (include / desugar it).
 ///   * `Absent(reason)` -- rustc strips it before codegen (a no-op: drop it / account it
 ///     inactive); `reason` is the inactive predicate, carried verbatim for the emit string.
-///   * `Ambiguous(reason)` -- no pinned facts, so we honestly cannot resolve it (bail / Hit).
+///   * `Ambiguous(reason)` -- no pinned facts, so we honestly cannot resolve it (bail / Incomplete).
 /// Sites match on THIS, never on a re-derived `CfgEval::{Active|Inactive|Ambiguous}` dispatch.
 /// It carries the same two reason strings `CfgEval` did, so a site's emitted skip string is
 /// byte-identical -- this is a 1:1 composition of the predicate result, not a re-decision.
@@ -160,8 +160,8 @@ fn cfg_trace_fields(disposition: &CfgDisposition) -> CfgTraceFields<'_> {
 }
 
 /// A cfg-attributed construct: the `#[cfg(..)]` attrs paired with the inner `Sugar` they
-/// gate. `desugar` resolves the predicate ONCE (via [`resolve`]) and either digs the inner
-/// (Present), digs the empty floor (Absent), or Hits the ambiguous-cfg boundary. The wrapped
+/// gate. `desugar` resolves the predicate ONCE (via [`resolve`]) and either completes the inner
+/// (Present), completes the empty floor (Absent), or returns Incomplete the ambiguous-cfg boundary. The wrapped
 /// `inner` is built unconditionally by the factory; this node decides -- purely from the
 /// pinned target facts -- whether it CONTRIBUTES. This is the canonical composing form of a
 /// cfg-gated construct; the collector sites that cannot yield a single `Outcome` (they emit
@@ -196,10 +196,10 @@ impl Sugar for ConfigurationSugar {
             // Stripped on this target (like rustc pre-codegen): the empty literal floor,
             // a no-op that contributes nothing. NOT a refusal -- inactive is not in this
             // target's universe.
-            CfgDisposition::Absent(_) => Outcome::Dug(Desugared::Seq(Vec::new())),
+            CfgDisposition::Absent(_) => Outcome::Complete(Desugared::Seq(Vec::new())),
             // No pinned target facts -> we cannot resolve the predicate. The no-scan law:
-            // a named, terminal Hit, never a silent skip.
-            CfgDisposition::Ambiguous(reason) => Outcome::Hit(Effect::Unsupported {
+            // a named, terminal Incomplete, never a silent skip.
+            CfgDisposition::Ambiguous(reason) => Outcome::Incomplete(Effect::Unsupported {
                 reason: format!("ambiguous cfg: {reason}"),
             }),
         }
@@ -211,12 +211,12 @@ mod tests {
     use super::*;
     use crate::{LiftOptions, TargetCfg};
 
-    // A stub inner child that digs to a single-element sequence floor (its presence is
+    // A stub inner child that completes to a single-element sequence floor (its presence is
     // observable as a non-empty `Seq`), ignoring `ctx`.
     struct StubInner;
     impl Sugar for StubInner {
         fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-            Outcome::Dug(Desugared::Seq(vec![crate::DesugaredElem {
+            Outcome::Complete(Desugared::Seq(vec![crate::DesugaredElem {
                 expr: syn::parse_quote!(1),
                 value: None,
             }]))
@@ -284,44 +284,56 @@ mod tests {
         let target = TargetCfg::from_rustc_cfg_facts(["target_os=\"linux\""]).unwrap();
         let options = LiftOptions::for_target_cfg(target);
         match run(vec![cfg_attr(quote::quote!(target_os = "linux"))], &options) {
-            Outcome::Dug(Desugared::Seq(s)) => assert_eq!(s.len(), 1, "inner floor flows through"),
-            Outcome::Dug(_) => panic!("expected the inner's Dug(Seq[1]), got a different Dug"),
-            Outcome::Hit(_) => panic!("expected the inner's Dug(Seq[1]), got Hit"),
+            Outcome::Complete(Desugared::Seq(s)) => {
+                assert_eq!(s.len(), 1, "inner floor flows through")
+            }
+            Outcome::Complete(_) => {
+                panic!("expected the inner's Complete(Seq[1]), got a different Complete")
+            }
+            Outcome::Incomplete(_) => {
+                panic!("expected the inner's Complete(Seq[1]), got Incomplete")
+            }
         }
     }
 
     #[test]
     fn inactive_cfg_digs_the_empty_floor() {
         // target_os = "windows" with only linux pinned -> Inactive -> empty `Seq[]`,
-        // the no-op floor (stripped on this target), NOT a Hit.
+        // the no-op floor (stripped on this target), NOT a Incomplete.
         let target = TargetCfg::from_rustc_cfg_facts(["target_os=\"linux\""]).unwrap();
         let options = LiftOptions::for_target_cfg(target);
         match run(
             vec![cfg_attr(quote::quote!(target_os = "windows"))],
             &options,
         ) {
-            Outcome::Dug(Desugared::Seq(s)) => {
+            Outcome::Complete(Desugared::Seq(s)) => {
                 assert!(s.is_empty(), "inactive strips to the empty no-op floor")
             }
-            Outcome::Dug(_) => panic!("expected Dug(Seq[]), got a different Dug"),
-            Outcome::Hit(_) => panic!("expected Dug(Seq[]), inactive must NOT Hit"),
+            Outcome::Complete(_) => panic!("expected Complete(Seq[]), got a different Complete"),
+            Outcome::Incomplete(_) => {
+                panic!("expected Complete(Seq[]), inactive must NOT Incomplete")
+            }
         }
     }
 
     #[test]
     fn ambiguous_cfg_hits_unsupported_not_silent() {
-        // No target_cfg pinned at all -> Ambiguous -> Hit(Unsupported "ambiguous cfg: ..").
-        // The no-scan law: it HITS, it is not a silent skip.
+        // No target_cfg pinned at all -> Ambiguous -> Incomplete(Unsupported "ambiguous cfg: ..").
+        // The no-scan law: it RETURNS INCOMPLETE, it is not a silent skip.
         let options = LiftOptions::default();
         match run(vec![cfg_attr(quote::quote!(target_os = "linux"))], &options) {
-            Outcome::Hit(Effect::Unsupported { reason }) => {
+            Outcome::Incomplete(Effect::Unsupported { reason }) => {
                 assert!(
                     reason.starts_with("ambiguous cfg: "),
                     "ambiguous cfg names its boundary, got {reason:?}"
                 );
             }
-            Outcome::Hit(_) => panic!("expected Hit(Unsupported), got a different Hit"),
-            Outcome::Dug(_) => panic!("ambiguous cfg must HIT (no-scan law), not Dug"),
+            Outcome::Incomplete(_) => {
+                panic!("expected Incomplete(Unsupported), got a different Incomplete")
+            }
+            Outcome::Complete(_) => {
+                panic!("ambiguous cfg must INCOMPLETE (no-scan law), not Complete")
+            }
         }
     }
 
@@ -330,9 +342,13 @@ mod tests {
         // An empty attr set -> `cfg_eval_for_attrs` is Active -> inner flows through.
         let options = LiftOptions::default();
         match run(Vec::new(), &options) {
-            Outcome::Dug(Desugared::Seq(s)) => assert_eq!(s.len(), 1),
-            Outcome::Dug(_) => panic!("expected the inner's Dug(Seq[1]), got a different Dug"),
-            Outcome::Hit(_) => panic!("no cfg attrs is Active; expected Dug, got Hit"),
+            Outcome::Complete(Desugared::Seq(s)) => assert_eq!(s.len(), 1),
+            Outcome::Complete(_) => {
+                panic!("expected the inner's Complete(Seq[1]), got a different Complete")
+            }
+            Outcome::Incomplete(_) => {
+                panic!("no cfg attrs is Active; expected Complete, got Incomplete")
+            }
         }
     }
 }

@@ -17,9 +17,9 @@
 // then β-reduces (substitutes the actuals into the helper body) and re-decomposes /
 // desugars the substituted body THROUGH THE SAME hierarchy (the ordinary collector,
 // which itself dispatches Fold/ForAll/Conditional/Literal/term/macro/...). This is
-// the doctrine's dig-to-literals applied across a call boundary.
+// the doctrine's complete-to-literals applied across a call boundary.
 //
-// THE GATE (exact-or-bail, the soundness line). The dig is the fake-discharge-
+// THE GATE (exact-or-bail, the soundness line). The complete is the fake-discharge-
 // dangerous direction: inlining a body that does NOT fully reduce would turn one
 // honest "reachable only via call-site inlining" refusal into N×M unclassified
 // instances (the helper is called from N sites, each re-hitting the same M gaps).
@@ -85,28 +85,28 @@ pub(crate) struct InlineCommit {
 }
 
 /// The typed outcome of a `CallsiteSugar::desugar`, the inlining mirror of the
-/// crate-root `Outcome { Dug, Hit }`:
+/// crate-root `Outcome { Complete, Incomplete }`:
 ///
-///   * `Dug(InlineCommit)` -- the substituted body FULLY reduced (every body assert
+///   * `Complete(InlineCommit)` -- the substituted body FULLY reduced (every body assert
 ///     discharged or terminal-refused; `added_unclassified == 0`). The inline
-///     commits; the asserts lift via the byte-identical dig path. This is the
+///     commits; the asserts lift via the byte-identical complete path. This is the
 ///     blessed inlining-unblock: `discharged` may rise, no fake-discharge.
 ///   * `Bail(BailCause)` -- the substituted body did NOT fully reduce (some body
 ///     assert is honestly unclassified -- a pure-but-untranslated term, or an
 ///     unsupported construct), OR the call was not a carryable closed-arg call to a
 ///     resolvable helper. The helper stays unreduced; Pass 2 keeps the single
 ///     "reachable only via call-site inlining" refusal. HONEST: a pure-but-
-///     untranslated body stays unclassified -- never fake-dug, never fake-refused.
+///     untranslated body stays unclassified -- never fake-complete, never fake-refused.
 ///
-/// There is deliberately NO callsite-level `Hit(Effect)` variant that COMMITS a
+/// There is deliberately NO callsite-level `Incomplete(Effect)` variant that COMMITS a
 /// differently-shaped result: a body whose asserts are ALL order-loss effects
-/// already has `added_unclassified == 0`, so it reaches `Dug` and commits-as-refused
+/// already has `added_unclassified == 0`, so it reaches `Complete` and commits-as-refused
 /// through the normal collector (the effect asserts become terminal-refused entries
-/// inside the inlined body). Introducing a separate committing `Hit` here would move
+/// inside the inlined body). Introducing a separate committing `Incomplete` here would move
 /// the counts. The `BailCause` below NAMES an effect when the bail residue is one,
 /// for the census -- it does not change which bodies commit.
 pub(crate) enum CallsiteOutcome {
-    Dug(InlineCommit),
+    Complete(InlineCommit),
     Bail(BailCause),
 }
 
@@ -182,9 +182,9 @@ impl<'a> CallsiteSugar<'a> {
     /// substituted body adds zero unclassified. A param bound to a RUNTIME actual that
     /// the body's asserts actually read produces unclassified residue (an uninterpreted
     /// term it cannot close) and BAILS; a param bound to a closed literal that the asserts
-    /// read digs to a point-wise FOL obligation. A runtime actual the asserts do NOT read
+    /// read completes to a point-wise FOL obligation. A runtime actual the asserts do NOT read
     /// (e.g. `zero_byte`'s `val`, used only to compute the unasserted return value) never
-    /// reaches an obligation, so the body still digs -- exactly the intended drain.
+    /// reaches an obligation, so the body still completes -- exactly the intended drain.
     pub(crate) fn from_bindings(
         helper: &'a ItemFn,
         name: String,
@@ -201,7 +201,7 @@ impl<'a> CallsiteSugar<'a> {
     /// `closed_args` (param := callsite actual) into the helper body, then runs the
     /// SAME collector (which re-dispatches the body's own Fold/ForAll/Conditional/
     /// Literal/term/macro sugars) on the substituted body in SCRATCH buffers. Commits
-    /// (`Dug`) iff the body adds zero unclassified; bails otherwise.
+    /// (`Complete`) iff the body adds zero unclassified; bails otherwise.
     ///
     /// `local_scope` / `stmt_idx` reproduce the old arm's
     /// `child_block_scope(local_scope, stmt_idx)` for the inlined body's consistency
@@ -308,7 +308,7 @@ pub(crate) fn desugar_substituted_stmts(
             return CallsiteOutcome::Bail(BailCause::NotInlinable);
         }
         th.insert(name.to_string());
-        return CallsiteOutcome::Dug(InlineCommit {
+        return CallsiteOutcome::Complete(InlineCommit {
             entries: te,
             skipped: vec![helper_body_runtime_terminal_reason(name); count],
             macros_lifted: tl,
@@ -351,7 +351,7 @@ pub(crate) fn desugar_substituted_stmts(
             return CallsiteOutcome::Bail(BailCause::NotInlinable);
         }
         th.insert(name.to_string());
-        CallsiteOutcome::Dug(InlineCommit {
+        CallsiteOutcome::Complete(InlineCommit {
             entries: te,
             skipped: ts,
             macros_lifted: tl,
@@ -400,7 +400,7 @@ pub enum ResidueCategory {
     /// fake-refused.
     PureUntranslatedTerm,
     /// An unsupported CONSTRUCT: a control-flow / adaptor shape the body uses that the
-    /// hierarchy does not yet dig through (an `if`/`while`/`match` branch, a bin-1
+    /// hierarchy does not yet complete through (an `if`/`while`/`match` branch, a bin-1
     /// literal-domain loop body, a closure adaptor, a nested unlifted expr stmt).
     UnsupportedConstruct,
     /// A genuine order-loss EFFECT that nonetheless surfaced as UNCLASSIFIED (it was
@@ -439,7 +439,7 @@ pub fn classify_residue_reason(reason: &str) -> ResidueCategory {
         return ResidueCategory::PureUntranslatedTerm;
     }
     // Everything else unclassified is an unsupported CONSTRUCT: a control-flow shape
-    // or adaptor the dig does not yet enter (`under for context`, bin-1 literal
+    // or adaptor the complete does not yet enter (`under for context`, bin-1 literal
     // domain, nested unlifted expr stmt, unsupported macro matcher, ...).
     ResidueCategory::UnsupportedConstruct
 }
@@ -495,7 +495,7 @@ mod tests {
 
     // ── REFUTABLE (not fake-green): a CONTRADICTORY inlined body is NOT laundered to
     // green. The inline commits (the body's assert lifts) and the verifier's
-    // consistency pass would catch the contradiction -- the dig path is byte-identical,
+    // consistency pass would catch the contradiction -- the complete path is byte-identical,
     // so a false body is CAUGHT, not masked. We assert the assert is lifted as an atom
     // (entered the obligation set), not silently dropped. ──
     #[test]
@@ -508,7 +508,7 @@ mod tests {
             "#,
         );
         // The contradictory assert MUST be accounted (lifted as an atom for the
-        // consistency pass), never silently dropped -- the dig is refutable.
+        // consistency pass), never silently dropped -- the complete is refutable.
         assert!(
             discharged(&out) >= 1,
             "the contradictory body must be lifted as an obligation, not dropped"
@@ -519,13 +519,13 @@ mod tests {
     // ── BAIL (honest): a helper whose inlined body leaves a genuinely UNCLASSIFIED
     // residue must NOT be force-committed -- it stays "reachable only" (Pass 2). This
     // is the bail direction of the monotonic gate (`added_unclassified == 0` to
-    // commit). EFFECT-OR-LEAVE: an un-digging body is left unclassified, never fake-dug.
+    // commit). EFFECT-OR-LEAVE: an incomplete body is left unclassified, never fake-complete.
     //
     // The body's assert lives under a `closure` -- a closure body is NOT
     // unconditionally evaluated (it may never run, or runs per-call), so the
     // hierarchy classifies it UNCLASSIFIED (an honest WORK item, not a source
     // property). This is the SAME blocker the live corpus census reports for the
-    // un-drained nested helpers (a body assert under a construct the dig does not
+    // un-drained nested helpers (a body assert under a construct the complete does not
     // yet enter point-wise). The gate refuses to commit, so the helper is unreduced
     // and the single "reachable only via call-site inlining" refusal survives.
     // Soundness: the assert is accounted (no silent drop) and NOT laundered to a
@@ -562,7 +562,7 @@ mod tests {
     // ── UNINTERPRETED-LIFT IS NOT A FALSE GREEN: a helper body asserting over an
     // opaque sub-term (a runtime call result) lifts that sub-term as an UNINTERPRETED
     // symbol -- a sound point-wise obligation `gt(uf, 0)`, exactly as the term path
-    // does at top level (the inline is byte-identical to the dig path). This is the
+    // does at top level (the inline is byte-identical to the complete path). This is the
     // stated-not-derived discipline: the vendor's point-wise claim at this call is
     // recorded as an obligation the consistency pass checks; it does NOT assert the
     // helper is universally true. The inline therefore commits and is accounted (no
@@ -631,7 +631,7 @@ mod tests {
     // args, INLINES at the call sites and is NOT left as "reachable only". This is the
     // corpus's dominant blocked shape (slice.rs `fn test<T>(x)`, char.rs `fn check`).
     // Before the drain, a nested helper was invisible to the global reducer, so its
-    // body asserts fell to "reachable only" unclassified even when the body digs.
+    // body asserts fell to "reachable only" unclassified even when the body completes.
     // Resolving `local_fns` first (in `decompose`) plus DEFERRING the nested-fn-
     // definition refusal (block-local Pass-2 in the collector) makes a nested closed-
     // arg helper inline exactly like a top-level one. SOUNDNESS: same monotonic gate;
@@ -657,7 +657,7 @@ mod tests {
             "a nested closed-arg helper must inline (drain), not be left reachable-only: {:?}",
             out.skip_reasons
         );
-        // It discharges point-wise per call site (the inline commits via the dig path).
+        // It discharges point-wise per call site (the inline commits via the complete path).
         assert!(
             discharged(&out) >= 1,
             "the inlined nested-helper body must discharge: {}",
@@ -681,7 +681,7 @@ mod tests {
 
     // ── BUCKET 1 (assert-prefixed nested helper resolved lexically): an `assert_*`-
     // prefixed helper defined INSIDE the `#[test]` fn body, called as a bare statement,
-    // is resolved via `local_fns` (not the global registry) and its body re-digs. A
+    // is resolved via `local_fns` (not the global registry) and its body re-completes. A
     // pure point-wise body discharges -- this is the "has no visible source" drain when
     // the body is liftable. ──
     #[test]
@@ -710,16 +710,16 @@ mod tests {
         );
     }
 
-    // ── BUCKET 1 BAD-TWIN (RESOLVE-THEN-CLASSIFY, honest non-dig): a nested `assert_*`
+    // ── BUCKET 1 BAD-TWIN (RESOLVE-THEN-CLASSIFY, honest non-complete): a nested `assert_*`
     // helper whose body is RUNTIME (a `let mut` mutable-local trajectory) must NOT be
-    // fake-dug. It resolves lexically (its source is now SHOWN), and its `let mut`
+    // fake-complete. It resolves lexically (its source is now SHOWN), and its `let mut`
     // trajectory is a SOURCE property (a mutated local has no single timeless `t`, kin to
     // `temporally unstable`) -- so it is terminal-REFUSED with a named effect, never
     // discharged. (Mirrors the real corpus `assert_exact_exp`'s `let mut writer`; the
     // `assert_predicates_exact` collection twin is covered below.) The KEY guarantee: the
-    // body is accounted and NOT discharged (no fake-dig). ──
+    // body is accounted and NOT discharged (no fake-complete). ──
     #[test]
-    fn nested_assert_prefixed_helper_with_runtime_body_is_refused_not_fake_dug() {
+    fn nested_assert_prefixed_helper_with_runtime_body_is_refused_not_fake_complete() {
         let out = lift(
             r#"
             #[test]
@@ -738,7 +738,7 @@ mod tests {
         assert_eq!(
             discharged(&out),
             0,
-            "a runtime `let mut` body must NOT be fake-dug: {:?}",
+            "a runtime `let mut` body must NOT be fake-complete: {:?}",
             out.skip_reasons
         );
         assert!(
@@ -752,10 +752,10 @@ mod tests {
 
     // ── BUCKET 1 COLLECTION TWIN (RESOLVE-THEN-CLASSIFY): a nested helper whose body is a
     // RUNTIME ITERATOR/COLLECTION construct (`xs.iter().map(..).collect()`) resolves
-    // lexically and is terminal-REFUSED (bin-2 runtime aggregate data), never fake-dug.
+    // lexically and is terminal-REFUSED (bin-2 runtime aggregate data), never fake-complete.
     // Mirrors the real corpus `mem/type_info.rs::assert_predicates_exact`. ──
     #[test]
-    fn nested_assert_prefixed_helper_with_collection_body_is_refused_not_fake_dug() {
+    fn nested_assert_prefixed_helper_with_collection_body_is_refused_not_fake_complete() {
         let out = lift(
             r#"
             #[test]
@@ -774,7 +774,7 @@ mod tests {
         assert_eq!(
             discharged(&out),
             0,
-            "a runtime collection body must NOT be fake-dug: {:?}",
+            "a runtime collection body must NOT be fake-complete: {:?}",
             out.skip_reasons
         );
         assert!(
@@ -817,7 +817,7 @@ mod tests {
     // ONLY in argument position (`outer(helper(LIT))`, never as a bare statement) has its
     // INTERNAL assert lifted point-wise at the literal call sites. This is the `zero_byte`
     // shape: `assert_ne!(hash(&val), hash(&zero_byte(val, 0)))` -- the internal
-    // `assert!(byte < 8)` digs with `byte := 0`, even though `val` is runtime (the assert
+    // `assert!(byte < 8)` completes with `byte := 0`, even though `val` is runtime (the assert
     // does not read it). ──
     #[test]
     fn arg_position_concrete_helper_internal_assert_digs_at_literal_sites() {

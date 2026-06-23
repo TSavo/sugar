@@ -17,10 +17,10 @@
 // the binding name as provenance.
 //
 // THE PROVENANCE ROPE. `name` is the `let`-bound identifier the reference named. On a
-// `Dug`, it records "this discharged value flowed through the binding `name`" (the
-// dig-side rope, kin to `Warrant`); on a `Hit`, the inner's named `Effect` already
+// `Complete`, it records "this discharged value flowed through the binding `name`" (the
+// complete-side rope, kin to `Warrant`); on a `Incomplete`, the inner's named `Effect` already
 // carries the offending construct's `SourceMemento` (the bail-side rope) -- a
-// runtime-bound init `Hit`s with ITS boundary, not a generic "binding unresolved".
+// runtime-bound init `Incomplete`s with ITS boundary, not a generic "binding unresolved".
 // Either way the resolved outcome is byte-identical to resolving the init directly:
 // the binding reference is transparent to the wire format, exactly as a `let`-inlined
 // reference should be (`Regex::new(let p = "a.c"; p)` lifts identically to
@@ -62,7 +62,7 @@ pub(crate) struct BoundSugar {
 impl Sugar for BoundSugar {
     /// Pass through: a recognized binding collapses to whatever its bound `Sugar`
     /// collapses to. The binding `name` is carried (the provenance rope) but does not
-    /// alter the outcome -- the resolved `Dug`/`Hit` is byte-identical to desugaring
+    /// alter the outcome -- the resolved `Complete`/`Incomplete` is byte-identical to desugaring
     /// the init directly, so the binding reference is transparent to the wire format.
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         self.inner.desugar(ctx)
@@ -72,7 +72,7 @@ impl Sugar for BoundSugar {
 impl BoundSugar {
     /// Wrap an init `Sugar` with its binding provenance. The consumer calls this when
     /// it resolves an operand reference to a `let`-bound name: it hands the resulting
-    /// `BoundSugar` to the dig instead of inlining a `let_bindings.get(name)` lookup.
+    /// `BoundSugar` to the complete instead of inlining a `let_bindings.get(name)` lookup.
     pub(crate) fn new(name: impl Into<String>, inner: Box<dyn Sugar>) -> Box<dyn Sugar> {
         Box::new(BoundSugar {
             name: name.into(),
@@ -105,14 +105,14 @@ mod tests {
     impl Sugar for Sentinel {
         fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
             // Never invoked in these (ctx-free) tests; present so `Sentinel: Sugar`.
-            Outcome::Dug(Desugared::Seq(Vec::new()))
+            Outcome::Complete(Desugared::Seq(Vec::new()))
         }
     }
 
     #[test]
     fn carries_binding_provenance() {
         // The node ropes the resolved outcome to the `let`-bound name it resolved
-        // through -- the dig-side provenance (`name was bound to this`).
+        // through -- the complete-side provenance (`name was bound to this`).
         let node = BoundSugar {
             name: "pat".to_string(),
             inner: Box::new(Sentinel),

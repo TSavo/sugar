@@ -3,7 +3,7 @@
 // TERM recognizer for `Expr::Cast` (`x as T`): an inferred target (`as _`) is
 // compiler type inference and therefore transparent; raw-pointer target casts are
 // refused as provenance/address boundaries; a shared `dyn Any` cast or a scalar cast
-// -> `cast:<T>` ctor over the child; any other cast -> reasoned Hit.
+// -> `cast:<T>` ctor over the child; any other cast -> reasoned Incomplete.
 
 use std::rc::Rc;
 
@@ -11,7 +11,7 @@ use sugar_ir_symbolic::{ConstValue, Sort, Term};
 
 use crate::sugar::ctor_term::CtorSugar;
 use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::sugar::term_leaf::reasoned_hit;
+use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::{
     cast_const_fold_value, const_fold_int_term, is_shared_dyn_any_type, scalar_cast_type_key,
     str_const, token_key, type_key, u128_term, Desugared, Effect, Outcome, Sugar, SugarCtx,
@@ -44,7 +44,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     if matches!(cast.ty.as_ref(), Type::Ptr(_)) {
         let effect =
             Effect::unsupported_term(&token_key(expr), UnsupportedTermCause::RawPointerCast);
-        return Some(reasoned_hit(effect.reason()));
+        return Some(reasoned_incomplete(effect.reason()));
     }
     if is_shared_dyn_any_type(&cast.ty) {
         return Some(Box::new(CtorSugar::new(
@@ -58,7 +58,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
             inner: build_term(&cast.expr, fcx),
         }));
     }
-    Some(reasoned_hit(format!(
+    Some(reasoned_incomplete(format!(
         "unsupported term `{}`",
         token_key(expr)
     )))
@@ -80,16 +80,16 @@ struct CastSugar {
 impl Sugar for CastSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let inner = match self.inner.desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
+            Outcome::Complete(d) => match d.into_term() {
                 Some(term) => term,
                 None => return Outcome::from_opt(None),
             },
-            Outcome::Hit(e) => return Outcome::Hit(e),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
         if let Some(term) = fold_grounded_scalar_cast(&inner, &self.cast_type) {
-            return Outcome::Dug(Desugared::Term(term));
+            return Outcome::Complete(Desugared::Term(term));
         }
-        Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
+        Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
             name: format!("cast:{}", self.cast_type),
             args: vec![inner],
         })))

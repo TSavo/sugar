@@ -149,7 +149,7 @@ impl Sugar for CfgSelectSugar {
         let arms = match syn::parse2::<CfgSelectArms>(self.mac.tokens.clone()) {
             Ok(arms) => arms,
             Err(e) => {
-                return Outcome::Hit(Effect::Unsupported {
+                return Outcome::Incomplete(Effect::Unsupported {
                     reason: format!(
                         "macro `cfg_select`: cannot parse cfg-select arms at desugar time: {e}; released to layer 0"
                     ),
@@ -167,7 +167,7 @@ impl Sugar for CfgSelectSugar {
                         false
                     }
                     CfgDisposition::Ambiguous(reason) => {
-                        return Outcome::Hit(Effect::Unsupported {
+                        return Outcome::Incomplete(Effect::Unsupported {
                             reason: format!(
                                 "macro `cfg_select`: ambiguous cfg branch `{predicate}`: {reason}; released to layer 0"
                             ),
@@ -182,7 +182,7 @@ impl Sugar for CfgSelectSugar {
         }
 
         if inactive_assertions > 0 {
-            Outcome::Hit(Effect::Unsupported {
+            Outcome::Incomplete(Effect::Unsupported {
                 reason: format!(
                     "inactive cfg select: {inactive_assertions} assertion surface(s) stripped on this target"
                 ),
@@ -202,7 +202,7 @@ impl CfgSelectSugar {
     ) -> Outcome {
         let expected = syntactic_assert_count_in_stmts(stmts);
         if expected == 0 {
-            return Outcome::Hit(Effect::Unsupported {
+            return Outcome::Incomplete(Effect::Unsupported {
                 reason: format!(
                     "inactive cfg select: {inactive_before} assertion surface(s) stripped before selected assertion-free branch"
                 ),
@@ -211,7 +211,7 @@ impl CfgSelectSugar {
         let Some(atom) = self.lift_branch_conj(stmts, expected, ctx) else {
             return Outcome::from_opt(None);
         };
-        Outcome::Dug(Desugared::Constraints {
+        Outcome::Complete(Desugared::Constraints {
             atom,
             n: expected,
             kind: AssertionFactKind::Warranted,

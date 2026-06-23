@@ -31,7 +31,7 @@ struct StatementAsyncFutureSugar {
 
 impl Sugar for StatementAsyncFutureSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        Outcome::Hit(Effect::DormantFuture {
+        Outcome::Incomplete(Effect::DormantFuture {
             boundary: token_key(&self.expr),
         })
     }

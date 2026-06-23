@@ -34,7 +34,7 @@ pub(crate) struct EnumerateSugar {
 impl Sugar for EnumerateSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         Outcome::from_opt((|| {
-            let seq = self.inner.desugar(ctx).dug()?.into_seq()?;
+            let seq = self.inner.desugar(ctx).complete()?.into_seq()?;
             let mut out = Vec::with_capacity(seq.len());
             for (i, elem) in seq.into_iter().enumerate() {
                 // Pair value: (i, elem). The EXPR pair `(i, <expr>)` is always

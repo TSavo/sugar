@@ -16,7 +16,7 @@
 // term operator" refusal). Those early returns and the op-name resolution are owned by
 // `recognize`, which builds this node only for the arithmetic tail. This node composes
 // its two pre-built children and emits the arithmetic ctor over their terms, propagating
-// a child `Hit` verbatim.
+// a child `Incomplete` verbatim.
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -26,7 +26,7 @@ use syn::{BinOp, Expr};
 
 use crate::sugar::compare::CompareSugar;
 use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
+use crate::sugar::term_leaf::{reasoned_incomplete, resolved_term};
 use crate::{
     const_eval, const_fold_int_term, const_fold_u128_term, const_val_term, num,
     relation_from_binop, term_binop_name, token_key, u128_term, ConstVal, Desugared, Effect,
@@ -39,7 +39,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// TERM recognizer for `Expr::Binary`. Mirrors the source-of-truth arm in order: the
 /// comparison branch (const-fold to a Bool, else the `cmp:*` [`CompareSugar`]), then
 /// the arithmetic-op [`BinOpSugar`] (or the
-/// `term_binop_name`-`None` "unsupported term operator" reasoned-Hit).
+/// `term_binop_name`-`None` "unsupported term operator" reasoned-Incomplete).
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Binary(binary) = expr else {
         return None;
@@ -62,7 +62,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         }));
     }
     let Some(op) = term_binop_name(&binary.op) else {
-        return Some(reasoned_hit(format!(
+        return Some(reasoned_incomplete(format!(
             "unsupported term operator `{}`",
             token_key(expr)
         )));
@@ -124,9 +124,9 @@ impl Sugar for BoolLogicSugar {
         if let Some(term) =
             const_eval(&self.whole, &const_env(&let_inits)).and_then(|value| const_val_term(&value))
         {
-            return Outcome::Dug(Desugared::Term(term));
+            return Outcome::Complete(Desugared::Term(term));
         }
-        Outcome::Hit(Effect::Unsupported {
+        Outcome::Incomplete(Effect::Unsupported {
             reason: format!("unsupported term operator `{}`", token_key(&self.whole)),
         })
     }
@@ -146,32 +146,32 @@ pub(crate) struct BinOpSugar {
 impl Sugar for BinOpSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let lhs = match self.left.desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
+            Outcome::Complete(d) => match d.into_term() {
                 Some(t) => t,
                 None => return Outcome::from_opt(None),
             },
-            Outcome::Hit(e) => return Outcome::Hit(e),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
         let rhs = match self.right.desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
+            Outcome::Complete(d) => match d.into_term() {
                 Some(t) => t,
                 None => return Outcome::from_opt(None),
             },
-            Outcome::Hit(e) => return Outcome::Hit(e),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
         let term = Rc::new(Term::Ctor {
             name: self.op_name.to_string(),
             args: vec![lhs, rhs],
         });
         if let Some(value) = const_fold_u128_term(&term) {
-            return Outcome::Dug(Desugared::Term(u128_term(value)));
+            return Outcome::Complete(Desugared::Term(u128_term(value)));
         }
         if int_fold_is_sort_safe(&term) {
             if let Some(value) = const_fold_int_term(&term) {
-                return Outcome::Dug(Desugared::Term(num(value)));
+                return Outcome::Complete(Desugared::Term(num(value)));
             }
         }
-        Outcome::Dug(Desugared::Term(term))
+        Outcome::Complete(Desugared::Term(term))
     }
 }
 
@@ -192,20 +192,20 @@ mod tests {
     use crate::Effect;
     use sugar_ir_symbolic::{make_var, ConstValue};
 
-    // ── LOCAL stub children: a `StubTerm` digs to its held term (`Dug(Term)`); a
-    // `StubHit` strikes a named effect (`Hit`). They IGNORE `ctx`, so the parent's
+    // ── LOCAL stub children: a `StubTerm` completes to its held term (`Complete(Term)`); a
+    // `StubIncomplete` strikes a named effect (`Incomplete`). They IGNORE `ctx`, so the parent's
     // `desugar(ctx)` can run over a minimal real `SugarCtx`. ──
     struct StubTerm(Rc<Term>);
     impl Sugar for StubTerm {
         fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-            Outcome::Dug(Desugared::Term(Rc::clone(&self.0)))
+            Outcome::Complete(Desugared::Term(Rc::clone(&self.0)))
         }
     }
 
-    struct StubHit;
-    impl Sugar for StubHit {
+    struct StubIncomplete;
+    impl Sugar for StubIncomplete {
         fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-            Outcome::Hit(Effect::Mutation {
+            Outcome::Incomplete(Effect::Mutation {
                 boundary: "stub".to_string(),
             })
         }
@@ -258,8 +258,8 @@ mod tests {
             op_name: "+",
         };
         let term = match run(&node) {
-            Outcome::Dug(d) => d.into_term().expect("a Term"),
-            Outcome::Hit(_) => panic!("expected Dug, got Hit"),
+            Outcome::Complete(d) => d.into_term().expect("a Term"),
+            Outcome::Incomplete(_) => panic!("expected Complete, got Incomplete"),
         };
         let (name, args) = ctor(&term);
         assert_eq!(name, "+");
@@ -278,8 +278,8 @@ mod tests {
             op_name: "int-div",
         };
         let term = match run(&node) {
-            Outcome::Dug(d) => d.into_term().expect("a Term"),
-            Outcome::Hit(_) => panic!("expected Dug, got Hit"),
+            Outcome::Complete(d) => d.into_term().expect("a Term"),
+            Outcome::Incomplete(_) => panic!("expected Complete, got Incomplete"),
         };
         let (name, _) = ctor(&term);
         assert_eq!(name, "int-div");
@@ -293,8 +293,8 @@ mod tests {
             op_name: "+",
         };
         let term = match run(&node) {
-            Outcome::Dug(d) => d.into_term().expect("a Term"),
-            Outcome::Hit(_) => panic!("expected Dug, got Hit"),
+            Outcome::Complete(d) => d.into_term().expect("a Term"),
+            Outcome::Incomplete(_) => panic!("expected Complete, got Incomplete"),
         };
         assert_eq!(int_const(&term), 7);
     }
@@ -302,18 +302,18 @@ mod tests {
     #[test]
     fn binop_propagates_left_child_hit_verbatim() {
         let node = BinOpSugar {
-            left: Box::new(StubHit),
+            left: Box::new(StubIncomplete),
             right: Box::new(StubTerm(make_var("y"))),
             op_name: "+",
         };
         match run(&node) {
-            Outcome::Hit(Effect::Mutation { boundary }) => {
+            Outcome::Incomplete(Effect::Mutation { boundary }) => {
                 assert_eq!(boundary, "stub");
             }
-            Outcome::Hit(_) => {
-                panic!("expected the left child's Mutation Hit, got a different Effect")
+            Outcome::Incomplete(_) => {
+                panic!("expected the left child's Mutation Incomplete, got a different Effect")
             }
-            Outcome::Dug(_) => panic!("expected the left child's Hit, got Dug"),
+            Outcome::Complete(_) => panic!("expected the left child's Incomplete, got Complete"),
         }
     }
 
@@ -321,17 +321,17 @@ mod tests {
     fn binop_propagates_right_child_hit_verbatim() {
         let node = BinOpSugar {
             left: Box::new(StubTerm(make_var("x"))),
-            right: Box::new(StubHit),
+            right: Box::new(StubIncomplete),
             op_name: "+",
         };
         match run(&node) {
-            Outcome::Hit(Effect::Mutation { boundary }) => {
+            Outcome::Incomplete(Effect::Mutation { boundary }) => {
                 assert_eq!(boundary, "stub");
             }
-            Outcome::Hit(_) => {
-                panic!("expected the right child's Mutation Hit, got a different Effect")
+            Outcome::Incomplete(_) => {
+                panic!("expected the right child's Mutation Incomplete, got a different Effect")
             }
-            Outcome::Dug(_) => panic!("expected the right child's Hit, got Dug"),
+            Outcome::Complete(_) => panic!("expected the right child's Incomplete, got Complete"),
         }
     }
 }

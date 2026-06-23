@@ -133,7 +133,7 @@ impl Sugar for TryFromSugar {
                 // is what `is_err`/`unwrap` read. A placeholder inner keeps it well-sorted.
                 err_term(num(0))
             };
-            Outcome::Dug(Desugared::Term(term))
+            Outcome::Complete(Desugared::Term(term))
         } else {
             self.fallback_call(ctx, &fcx)
         }
@@ -145,15 +145,15 @@ impl TryFromSugar {
         let mut args: Vec<Rc<Term>> = Vec::new();
         for arg in &self.call.args {
             let term = match build_term(arg, fcx).desugar(ctx) {
-                Outcome::Dug(d) => match d.into_term() {
+                Outcome::Complete(d) => match d.into_term() {
                     Some(term) => term,
                     None => return Outcome::from_opt(None),
                 },
-                Outcome::Hit(effect) => return Outcome::Hit(effect),
+                Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
             };
             args.push(term);
         }
-        Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
+        Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
             name: format!("call:{}", expr_head_key(&self.call.func)),
             args,
         })))

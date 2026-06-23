@@ -33,7 +33,7 @@ use syn::Expr;
 
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::monadic::{none_term, some_term};
-use crate::sugar::term_leaf::reasoned_hit;
+use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::{
     const_fold_int_term, const_fold_u128_term, expr_head_key, num, type_id_of_call_term, u128_term,
     Desugared, Outcome, Sugar, SugarCtx,
@@ -43,7 +43,7 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::fallback_term("call", recognize);
 
 /// TERM recognizer for `Expr::Call`. Mirrors the source-of-truth arm in order: the
-/// `TypeId::of` const-fold preamble FIRST (a resolved term, or a reasoned-Hit on
+/// `TypeId::of` const-fold preamble FIRST (a resolved term, or a reasoned-Incomplete on
 /// `Err`), then the constructive `call:<head>` ctor over the arg children ([`CallSugar`]).
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Call(call) = expr else {
@@ -146,17 +146,17 @@ fn is_type_id_of_path(path: &syn::Path) -> bool {
 impl Sugar for CallSugar {
     /// Dig each argument child to its `Term` (in source order), then emit the
     /// `call:<head>` ctor over the collected terms -- the constructive tail of the
-    /// `Expr::Call` arm, byte-identical. A child that `Hit`s a named order-loss
-    /// boundary propagates that `Hit` verbatim (the old named inner `Err`); a child
-    /// that digs to a non-term `Desugared` (`into_term` -> `None`) bails the node via
+    /// `Expr::Call` arm, byte-identical. A child that `Incomplete`s a named order-loss
+    /// boundary propagates that `Incomplete` verbatim (the old named inner `Err`); a child
+    /// that completes to a non-term `Desugared` (`into_term` -> `None`) bails the node via
     /// the structural backstop (`Outcome::from_opt(None)`, the old `?`-propagated
     /// generic refusal).
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match self {
             CallSugar::TypeId { func, arg_len } => match type_id_of_call_term(func, *arg_len) {
-                Ok(Some(term)) => Outcome::Dug(Desugared::Term(term)),
+                Ok(Some(term)) => Outcome::Complete(Desugared::Term(term)),
                 Ok(None) => Outcome::from_opt(None),
-                Err(reason) => reasoned_hit(reason).desugar(ctx),
+                Err(reason) => reasoned_incomplete(reason).desugar(ctx),
             },
             CallSugar::Constructive {
                 func,
@@ -169,18 +169,18 @@ impl Sugar for CallSugar {
                 let mut terms = Vec::new();
                 for arg in args {
                     let term = match build_term(arg, &fcx).desugar(ctx) {
-                        Outcome::Dug(d) => match d.into_term() {
+                        Outcome::Complete(d) => match d.into_term() {
                             Some(t) => t,
                             None => return Outcome::from_opt(None),
                         },
-                        Outcome::Hit(e) => return Outcome::Hit(e),
+                        Outcome::Incomplete(e) => return Outcome::Incomplete(e),
                     };
                     terms.push(term);
                 }
                 let head_key = expr_head_key(func);
                 if terms.len() == 1 {
                     if let Some(term) = fold_char_from_u32_call(&head_key, &terms[0]) {
-                        return Outcome::Dug(Desugared::Term(term));
+                        return Outcome::Complete(Desugared::Term(term));
                     }
                 }
                 // ARITHMETIC TRAIT-METHOD FOLD: `Add::add(x, y)` → `x + y`, const-evaluated.
@@ -199,14 +199,14 @@ impl Sugar for CallSugar {
                             args: terms.clone(),
                         });
                         if let Some(value) = const_fold_u128_term(&folded) {
-                            return Outcome::Dug(Desugared::Term(u128_term(value)));
+                            return Outcome::Complete(Desugared::Term(u128_term(value)));
                         }
                         if let Some(value) = const_fold_int_term(&folded) {
-                            return Outcome::Dug(Desugared::Term(num(value)));
+                            return Outcome::Complete(Desugared::Term(num(value)));
                         }
                     }
                 }
-                Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
+                Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
                     name: format!("call:{head_key}"),
                     args: terms,
                 })))
@@ -261,7 +261,7 @@ mod tests {
     // raw function expression, it lazily emits the `call:<head>` ctor over the child
     // terms. These tests exercise that constructive tail directly through the real
     // factory path, asserting the exact emitted ctor (name + args order) and verbatim
-    // child `Hit` propagation.
+    // child `Incomplete` propagation.
     use super::*;
     use crate::{
         sugar_ctx, Desugared, Effect, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar,
@@ -303,8 +303,8 @@ mod tests {
         // `f(x, y)` -> `Ctor { name: "call:f", args: [Var(x), Var(y)] }` -- the exact
         // ctor the `Expr::Call` constructive tail emits, args in SOURCE ORDER.
         let node = CallSugar::new(expr("f"), vec![expr("x"), expr("y")], BTreeMap::new());
-        let Outcome::Dug(Desugared::Term(term)) = run(&node) else {
-            panic!("expected a Dug term");
+        let Outcome::Complete(Desugared::Term(term)) = run(&node) else {
+            panic!("expected a Complete term");
         };
         match &*term {
             Term::Ctor { name, .. } => assert_eq!(name, "call:f"),
@@ -318,8 +318,8 @@ mod tests {
     fn nullary_call_emits_empty_args() {
         // `g()` -> `Ctor { name: "call:g", args: [] }`.
         let node = CallSugar::new(expr("g"), Vec::new(), BTreeMap::new());
-        let Outcome::Dug(Desugared::Term(term)) = run(&node) else {
-            panic!("expected a Dug term");
+        let Outcome::Complete(Desugared::Term(term)) = run(&node) else {
+            panic!("expected a Complete term");
         };
         match &*term {
             Term::Ctor { name, args } => {
@@ -334,8 +334,8 @@ mod tests {
     fn head_key_computed_from_func_expr() {
         // The function expression is retained raw and keyed lazily in `desugar`.
         let node = CallSugar::new(expr("h"), vec![expr("a")], BTreeMap::new());
-        let Outcome::Dug(Desugared::Term(term)) = run(&node) else {
-            panic!("expected a Dug term");
+        let Outcome::Complete(Desugared::Term(term)) = run(&node) else {
+            panic!("expected a Complete term");
         };
         match &*term {
             Term::Ctor { name, .. } => assert_eq!(name, "call:h"),
@@ -345,19 +345,23 @@ mod tests {
 
     #[test]
     fn propagates_child_hit_verbatim() {
-        // A child that Hits aborts the whole node with that SAME `Hit` (the old named
+        // A child that returns Incomplete aborts the whole node with that SAME `Incomplete` (the old named
         // inner `translate_term_in_scope?` `Err`).
         let node = CallSugar::new(expr("f"), vec![expr("x"), expr("&mut y")], BTreeMap::new());
         match run(&node) {
-            Outcome::Hit(Effect::Unsupported { reason }) => {
+            Outcome::Incomplete(Effect::Unsupported { reason }) => {
                 assert!(
                     reason.contains("unsupported term"),
                     "unexpected reason: {reason}"
                 );
                 assert!(reason.contains("mutable"), "unexpected reason: {reason}");
             }
-            Outcome::Hit(_) => panic!("expected the child's Unsupported Hit, got a different Hit"),
-            Outcome::Dug(_) => panic!("expected the child's Hit to propagate, got a Dug"),
+            Outcome::Incomplete(_) => {
+                panic!("expected the child's Unsupported Incomplete, got a different Incomplete")
+            }
+            Outcome::Complete(_) => {
+                panic!("expected the child's Incomplete to propagate, got a Complete")
+            }
         }
     }
 }

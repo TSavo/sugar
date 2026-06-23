@@ -53,7 +53,7 @@ impl Sugar for CellRefCellSugar {
         let value = match ctx.scope.temporal_cell_value_expr(&name, self.kind) {
             Ok(Some(value)) => value,
             Ok(None) => return Outcome::from_opt(None),
-            Err(reason) => return Outcome::Hit(Effect::Unsupported { reason }),
+            Err(reason) => return Outcome::Incomplete(Effect::Unsupported { reason }),
         };
         let stable = stable_let_bindings(ctx.scope);
         let let_inits: BTreeMap<String, &Expr> = stable
@@ -67,11 +67,11 @@ impl Sugar for CellRefCellSugar {
             .collect();
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
         match build_term(&value, &fcx).desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
-                Some(term) => Outcome::Dug(Desugared::Term(term)),
+            Outcome::Complete(d) => match d.into_term() {
+                Some(term) => Outcome::Complete(Desugared::Term(term)),
                 None => Outcome::from_opt(None),
             },
-            Outcome::Hit(effect) => Outcome::Hit(effect),
+            Outcome::Incomplete(effect) => Outcome::Incomplete(effect),
         }
     }
 }

@@ -12,7 +12,7 @@
 // finite-or-refuse: recognition only captures the raw source site. Resolution happens
 // lazily in `desugar`, where the binding context is live. ONLY a literal-resolvable
 // receiver/args warrant; runtime/opaque receivers, `format!`-built receivers, oversized
-// repeats, or non-ASCII full-case mappings Hit the structural frontier — never a
+// repeats, or non-ASCII full-case mappings Incomplete the structural frontier — never a
 // fabricated value.
 
 use std::collections::BTreeMap;
@@ -86,8 +86,8 @@ struct StrMethodSugar {
 impl Sugar for StrMethodSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match self.eval(ctx) {
-            Ok(term) => Outcome::Dug(Desugared::Term(term)),
-            Err(()) => Outcome::Hit(Effect::Unsupported {
+            Ok(term) => Outcome::Complete(Desugared::Term(term)),
+            Err(()) => Outcome::Incomplete(Effect::Unsupported {
                 reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
             }),
         }

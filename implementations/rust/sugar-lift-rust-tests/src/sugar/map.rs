@@ -129,7 +129,10 @@ impl Sugar for MapTermSugar {
             let array = array_expr(exprs)?;
             let let_inits = scope_let_inits(ctx);
             let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-            let term = build_term(&array, &fcx).desugar(ctx).dug()?.into_term()?;
+            let term = build_term(&array, &fcx)
+                .desugar(ctx)
+                .complete()?
+                .into_term()?;
             Some(Desugared::Term(term))
         })())
     }
@@ -152,7 +155,7 @@ fn captured_mutation_refusal(f: &syn::ExprClosure) -> Option<Outcome> {
     if !closure_body_mutates_captured_runtime_state(&Expr::Closure(f.clone())) {
         return None;
     }
-    Some(Outcome::Hit(Effect::Unsupported {
+    Some(Outcome::Incomplete(Effect::Unsupported {
         reason: "iterator/option adaptor `.map(|..| ..)` over a LITERAL domain whose closure body \
                  MUTATES captured runtime state (bin-2: runtime side effect during value \
                  construction, not constructed from source literals); refused"
@@ -165,7 +168,7 @@ fn captured_runtime_read_refusal(f: &syn::ExprClosure, ctx: &SugarCtx) -> Option
     if names.is_empty() {
         return None;
     }
-    Some(Outcome::Hit(Effect::Unsupported {
+    Some(Outcome::Incomplete(Effect::Unsupported {
         reason: format!(
             "iterator adaptor `.map(|..| ..)` over a LITERAL domain whose closure body READS \
              runtime capture `{}` (bin-2: runtime data, not constructed from source literals); \
@@ -280,7 +283,7 @@ fn reduce_map(
     u128_shift_hint: bool,
     ctx: &SugarCtx,
 ) -> Option<Vec<DesugaredElem>> {
-    let seq = inner.desugar(ctx).dug()?.into_seq()?;
+    let seq = inner.desugar(ctx).complete()?.into_seq()?;
     let mut out = Vec::with_capacity(seq.len());
     for elem in seq {
         if let Some(mapped) = elem.value.as_ref().and_then(|v| {

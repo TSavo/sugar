@@ -28,9 +28,9 @@ struct StatementFutureHandoffSugar {
 impl Sugar for StatementFutureHandoffSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         if let Some(boundary) = statement_position::future_handoff_boundary(&self.expr) {
-            return Outcome::Hit(Effect::FutureHandoff { boundary });
+            return Outcome::Incomplete(Effect::FutureHandoff { boundary });
         }
-        Outcome::Hit(Effect::Unsupported {
+        Outcome::Incomplete(Effect::Unsupported {
             reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
         })
     }

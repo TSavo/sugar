@@ -39,7 +39,7 @@ pub(crate) struct IteratorSugar {
 impl Sugar for IteratorSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         Outcome::from_opt((|| {
-            let seq = self.inner.desugar(ctx).dug()?.into_seq()?;
+            let seq = self.inner.desugar(ctx).complete()?.into_seq()?;
             Some(Desugared::Seq(seq))
         })())
     }

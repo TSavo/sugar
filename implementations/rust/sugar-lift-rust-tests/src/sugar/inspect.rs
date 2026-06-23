@@ -101,15 +101,15 @@ impl Sugar for ResultInspectSugar {
         let let_inits = merge_let_inits(&stable, &self.let_inits);
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
         let receiver = match build_term(&self.receiver, &fcx).desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
+            Outcome::Complete(d) => match d.into_term() {
                 Some(term) => term,
                 None => return self.fallback(ctx),
             },
-            Outcome::Hit(e) => return Outcome::Hit(e),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
         match receiver.as_ref() {
             sugar_ir_symbolic::Term::Ctor { name, .. } if name == RES_OK || name == RES_ERR => {
-                Outcome::Dug(Desugared::Term(receiver))
+                Outcome::Complete(Desugared::Term(receiver))
             }
             _ => self.fallback(ctx),
         }

@@ -3,7 +3,7 @@
 // Literal `RangeInclusive` endpoint accessors.
 //
 // `RangeInclusive::{start,end}` returns shared references to the written endpoints.  For an
-// inline inclusive range whose selected endpoint digs to a concrete integer literal, this is
+// inline inclusive range whose selected endpoint completes to a concrete integer literal, this is
 // value sugar: lower to `ref(<endpoint>)` so the existing unary deref rule can reduce
 // `*(a..=b).start()` / `*(a..=b).end()` to the literal floor. Recognition is deliberately
 // syntactic and lazy: it only captures the raw receiver, and the endpoint child is built here
@@ -78,16 +78,16 @@ impl Sugar for RangeAccessorSugar {
         let let_inits = merge_let_inits(&stable, &self.let_inits);
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
         let endpoint = match build_term(endpoint, &fcx).desugar(ctx) {
-            Outcome::Dug(d) => match d.into_term() {
+            Outcome::Complete(d) => match d.into_term() {
                 Some(term) => term,
                 None => return Outcome::from_opt(None),
             },
-            Outcome::Hit(effect) => return Outcome::Hit(effect),
+            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
         if const_fold_int_term(&endpoint).is_none() {
             return Outcome::from_opt(None);
         }
-        Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
+        Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
             name: "ref".to_string(),
             args: vec![endpoint],
         })))

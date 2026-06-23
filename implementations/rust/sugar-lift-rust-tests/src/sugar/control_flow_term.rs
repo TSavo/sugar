@@ -23,7 +23,7 @@
 // is where the verdict is made, and the single LEAF owns it:
 //   * the CONTROL-FLOW leaf: a recognized try/async/`?` construct is deferred/early-returning
 //     control flow, not a timeless point-wise value -> `ControlFlow`.
-// The composite makes NO check of its own: a recognized node always Hits its control-flow leaf
+// The composite makes NO check of its own: a recognized node always returns Incomplete its control-flow leaf
 // (recognition -- a try/async/`?` construct -- IS the verdict's precondition). The verdict is
 // purely SYNTACTIC, so it is delegated by `desugar` to `desugar_ctx_free`. The STRUCTURAL
 // backstop (`Effect::Unsupported` with `STRUCTURAL_BACKSTOP_REASON`) is the total-but-unreachable
@@ -33,7 +33,7 @@ use syn::Expr;
 
 use crate::sugar::backstop::boxed;
 use crate::sugar::factory::SugarBuildCtx;
-use crate::sugar::term_leaf::reasoned_hit;
+use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::{token_key, Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON};
 
 pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -43,7 +43,7 @@ pub(crate) const COMPOSITE_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("control_flow_composite", recognize_composite);
 
 /// TERM recognizer for effectful control-flow (`Expr::TryBlock`/`Async`/`Try`): the
-/// `ControlFlowTermSugar` refuse-shape, surfaced as a reasoned-Hit carrying the
+/// `ControlFlowTermSugar` refuse-shape, surfaced as a reasoned-Incomplete carrying the
 /// `Effect::ControlFlow` reason (or the term catch-all on a non-`ControlFlow` verdict).
 /// Byte-identical to the `Expr::TryBlock | Expr::Async | Expr::Try` TERM arm of the old
 /// fat factory. DISTINCT from the COMPOSITE recognizer, which boxes the node directly.
@@ -52,12 +52,12 @@ pub(crate) fn recognize_term(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dy
         Expr::TryBlock(_) | Expr::Async(_) | Expr::Try(_) => {
             Some(match decompose_control_flow_term(expr) {
                 Some(node) => match node.desugar_ctx_free() {
-                    Outcome::Hit(effect @ Effect::ControlFlow { .. }) => {
-                        reasoned_hit(effect.reason())
+                    Outcome::Incomplete(effect @ Effect::ControlFlow { .. }) => {
+                        reasoned_incomplete(effect.reason())
                     }
-                    _ => reasoned_hit(format!("unsupported term `{}`", token_key(expr))),
+                    _ => reasoned_incomplete(format!("unsupported term `{}`", token_key(expr))),
                 },
-                None => reasoned_hit(format!("unsupported term `{}`", token_key(expr))),
+                None => reasoned_incomplete(format!("unsupported term `{}`", token_key(expr))),
             })
         }
         _ => None,
@@ -65,8 +65,8 @@ pub(crate) fn recognize_term(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dy
 }
 
 /// COMPOSITE recognizer for effectful control-flow (`Expr::TryBlock`/`Async`/`Try`):
-/// boxes the `ControlFlowTermSugar` refuse-shape directly (the collector's `.dug()`
-/// site reads its `Effect::ControlFlow` Hit). Byte-identical to the
+/// boxes the `ControlFlowTermSugar` refuse-shape directly (the collector's `.complete()`
+/// site reads its `Effect::ControlFlow` Incomplete). Byte-identical to the
 /// `Expr::TryBlock | Expr::Async | Expr::Try => boxed(decompose_control_flow_term(expr))`
 /// COMPOSITE arm of the old fat factory.
 pub(crate) fn recognize_composite(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
@@ -91,7 +91,7 @@ impl ControlFlowTermSugar {
     /// CONTROL-FLOW leaf: a recognized try/async/`?` construct is deferred or early-returning
     /// control flow -- not a single timeless point-wise value, no construction-from-literals to
     /// walk -> `ControlFlow`. Recognition (the construct shape) is this leaf's precondition, so
-    /// it always fires for a built node; it never Digs.
+    /// it always fires for a built node; it never completes.
     fn control_flow_effect(&self) -> Option<Effect> {
         Some(Effect::ControlFlow {
             boundary: self.boundary.clone(),
@@ -102,14 +102,14 @@ impl ControlFlowTermSugar {
     /// reads only the recognized construct shape), so it does not need scope/options. The
     /// `Sugar::desugar(&ctx)` impl delegates here so the node has the canonical trait shape,
     /// while the thin caller-router (the `Expr::TryBlock | Expr::Async | Expr::Try` arm) reads
-    /// the SAME verdict here. The composite makes NO verdict of its own: it Hits its single
+    /// the SAME verdict here. The composite makes NO verdict of its own: it returns Incomplete its single
     /// CONTROL-FLOW leaf. A built node always names `ControlFlow` (recognition is the verdict's
     /// precondition); the STRUCTURAL backstop is the total-but-unreachable tail.
     pub(crate) fn desugar_ctx_free(&self) -> Outcome {
         if let Some(effect) = self.control_flow_effect() {
-            return Outcome::Hit(effect);
+            return Outcome::Incomplete(effect);
         }
-        Outcome::Hit(Effect::Unsupported {
+        Outcome::Incomplete(Effect::Unsupported {
             reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
         })
     }

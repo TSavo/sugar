@@ -2,12 +2,12 @@
 //
 // TERM recognizer for `Expr::Struct`: a constructor `struct:<path>` with sorted
 // `field:<name>` subctors over the field-value children. A `..rest` struct literal is
-// not fully pinned from the literal -> reasoned Hit. Byte-identical to the
+// not fully pinned from the literal -> reasoned Incomplete. Byte-identical to the
 // `Expr::Struct` arm of the old fat factory.
 
 use crate::sugar::ctor_term::CtorSugar;
 use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::sugar::term_leaf::reasoned_hit;
+use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::{path_to_variant_string, token_key, Sugar};
 use syn::Expr;
 
@@ -20,7 +20,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         return None;
     };
     if s.rest.is_some() {
-        return Some(reasoned_hit(format!(
+        return Some(reasoned_incomplete(format!(
             "struct literal with `..rest` is not fully pinned from the literal: `{}`",
             token_key(expr)
         )));

@@ -112,6 +112,6 @@ impl Sugar for IsSortedSugar {
             value = self.value,
             "resolved literal-array is_sorted stdlib axiom to a ground bool"
         );
-        Outcome::Dug(Desugared::Term(bool_const(self.value)))
+        Outcome::Complete(Desugared::Term(bool_const(self.value)))
     }
 }

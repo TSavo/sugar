@@ -562,7 +562,7 @@ fn main() {
         let refused = refused_total;
 
         // Raw-accounting delta. Positive means a real assert macro the collector
-        // never reached. Negative means the source body was dug at multiple
+        // never reached. Negative means the source body was completed at multiple
         // callsites, creating more obligations than textual assert macros.
         let raw_delta = census.total as i64 - discharged as i64 - refused as i64;
         if raw_delta > 0 {
@@ -649,7 +649,7 @@ fn main() {
         pct(missing_assertions.max(0) as usize)
     );
     println!(
-        "  callsite-expanded obligations:{:>5}   (source body dug at N call sites)",
+        "  callsite-expanded obligations:{:>5}   (source body completed at N call sites)",
         callsite_expansion
     );
     println!(

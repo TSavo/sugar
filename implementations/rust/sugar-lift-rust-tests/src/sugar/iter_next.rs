@@ -87,7 +87,7 @@ impl Sugar for IterNextSugar {
             let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
             let seq = build_composite(&self.inner, &fcx)
                 .desugar(ctx)
-                .dug()?
+                .complete()?
                 .into_seq()?;
             debug!(
                 target: "sugar_lift_rust_tests::sugar::iter_next",

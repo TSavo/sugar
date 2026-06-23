@@ -70,7 +70,7 @@ pub(crate) struct SliceChunkWindowSugar {
 impl Sugar for SliceChunkWindowSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let seq = match self.inner.desugar(ctx) {
-            Outcome::Dug(d) => match d.into_seq() {
+            Outcome::Complete(d) => match d.into_seq() {
                 Some(seq) => seq,
                 None => return Outcome::from_opt(None),
             },
@@ -83,7 +83,7 @@ impl Sugar for SliceChunkWindowSugar {
         let Some(out) = chunk_window_sequence(&seq, self.kind, self.n) else {
             return Outcome::from_opt(None);
         };
-        Outcome::Dug(Desugared::Seq(out))
+        Outcome::Complete(Desugared::Seq(out))
     }
 }
 
@@ -102,7 +102,7 @@ impl Sugar for SliceChunkWindowCallSugar {
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
         let Some(inner) = method_family::build_literal_sequence_composite(&self.receiver, &fcx)
         else {
-            return Outcome::Hit(crate::Effect::Unsupported {
+            return Outcome::Incomplete(crate::Effect::Unsupported {
                 reason: format!(
                     "chunk source is runtime slice, not literal `{}`",
                     crate::token_key(&self.receiver)
@@ -110,7 +110,7 @@ impl Sugar for SliceChunkWindowCallSugar {
             });
         };
         let seq = match inner.desugar(ctx) {
-            Outcome::Dug(d) => match d.into_seq() {
+            Outcome::Complete(d) => match d.into_seq() {
                 Some(seq) => seq,
                 None => return Outcome::from_opt(None),
             },
@@ -120,7 +120,7 @@ impl Sugar for SliceChunkWindowCallSugar {
         let Some(out) = chunk_window_sequence(&seq, self.kind, self.n) else {
             return Outcome::from_opt(None);
         };
-        Outcome::Dug(Desugared::Seq(out))
+        Outcome::Complete(Desugared::Seq(out))
     }
 }
 

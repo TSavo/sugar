@@ -13,15 +13,15 @@
 // THE PATTERN IS A CHILD SUGAR, NOT A RAW LITERAL. The `<pattern>` operand of
 // `Regex::new(<pattern>)` is built into an inner `Sugar` by the SAME `build` walk
 // as everything else (mirroring `MapSugar`'s inner sequence). The regex node's
-// `desugar` resolves it: `self.pattern.desugar(ctx).dug()?.as_string_literal()?`.
+// `desugar` resolves it: `self.pattern.desugar(ctx).complete()?.as_string_literal()?`.
 // So the pattern is not REQUIRED to BE a `LitStr` — it must DESUGAR to one:
-//   * an inline `"pat"` literal builds to a string `LiteralSugar` (digs NOW);
+//   * an inline `"pat"` literal builds to a string `LiteralSugar` (completes NOW);
 //   * a `let p = "pat";` / `const PAT: &str = "pat";` builds to whatever resolves
-//     the binding (digs NOW via the in-scope `let`-binding resolver);
+//     the binding (completes NOW via the in-scope `let`-binding resolver);
 //   * a `concat!("a", "b")` / `format!(...)` builds through the ordinary term
 //     catalog and bottoms out in a string `Term` when its operands are closed;
 //   * a pure in-source helper such as `pattern()` composes through `CallSugar`.
-// The node bails (`Hit`) ONLY if the pattern operand `desugar`s to `Hit` (runtime /
+// The node bails (`Incomplete`) ONLY if the pattern operand `desugar`s to `Incomplete` (runtime /
 // unsupported), NEVER merely because the pattern is not an inline literal.
 //
 // THE EMISSION IS THE JAVA `@Pattern` PASS, MIRRORED. The Java kit's `@Pattern`
@@ -89,15 +89,15 @@ fn recognize_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
 impl Sugar for RegexMatchSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let pattern_str = match self.matched.resolve_pattern(ctx) {
-            Outcome::Dug(desugared) => match desugared.as_string_literal() {
+            Outcome::Complete(desugared) => match desugared.as_string_literal() {
                 Some(pattern) => pattern,
                 None => {
-                    return Outcome::Hit(Effect::Unsupported {
+                    return Outcome::Incomplete(Effect::Unsupported {
                         reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
                     });
                 }
             },
-            Outcome::Hit(effect) => return Outcome::Hit(effect),
+            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
         if let Err(e) = sugar_ir_compiler_smt_lib::regex_regln::regex_to_regln(&pattern_str) {
             return unsupported(match e {
@@ -131,9 +131,9 @@ impl RegexMatch {
     /// Resolve the pattern operand by lazily building and DESUGARING the pattern `Sugar`
     /// (mirroring `MapSugar`'s `self.inner.desugar(ctx)`). The caller reads the
     /// resolved string off the `Outcome` via `Desugared::as_string_literal`. A
-    /// `Dug` carries the resolved literal term; a `Hit` is a genuinely runtime /
-    /// unsupported pattern, so the caller declines on `Hit`. This is the WHOLE
-    /// compositional contract: `RegexSugar` consumes whatever its pattern child dug to.
+    /// `Complete` carries the resolved literal term; a `Incomplete` is a genuinely runtime /
+    /// unsupported pattern, so the caller declines on `Incomplete`. This is the WHOLE
+    /// compositional contract: `RegexSugar` consumes whatever its pattern child completed to.
     pub(crate) fn resolve_pattern(&self, ctx: &SugarCtx) -> Outcome {
         let stable = stable_let_bindings(ctx.scope);
         let let_inits = stable_let_refs(&stable);
@@ -147,7 +147,7 @@ impl RegexMatch {
 /// to recognize) on a non-regex shape or an unrecognized API. The pattern is NOT
 /// required to be an inline literal here — recognition keys ONLY on the
 /// construction site `Regex::new(<anything>)`; whether that `<anything>` resolves
-/// to a string literal is decided LATER by `resolve_pattern` (the dig), so a
+/// to a string literal is decided LATER by `resolve_pattern` (the complete), so a
 /// `const`/`concat!`/future-`format!` pattern is recognized and composes. No
 /// source that does not name `Regex::new` can fire this node.
 pub(crate) fn recognize_regex_match(
@@ -253,7 +253,7 @@ fn unwrap_grouping(expr: &Expr) -> &Expr {
 // `Regex::new(<pattern>)`. A bare stable binding gets a `BoundSugar` provenance wrapper;
 // everything else goes through the ordinary term factory.
 
-/// Build the pattern operand into a child `Sugar`. The operand digs to a string
+/// Build the pattern operand into a child `Sugar`. The operand completes to a string
 /// literal when the recursive factory bottoms it out as a string term. Runtime or
 /// unsupported producers decline later when the resolved term is not a string const.
 pub(crate) fn build_pattern_sugar(
@@ -284,7 +284,7 @@ fn let_bound_reference(
 }
 
 fn constraint(atom: std::rc::Rc<Formula>, name: Option<String>) -> Outcome {
-    Outcome::Dug(Desugared::Constraints {
+    Outcome::Complete(Desugared::Constraints {
         atom,
         n: 1,
         kind: AssertionFactKind::Warranted,
@@ -294,12 +294,12 @@ fn constraint(atom: std::rc::Rc<Formula>, name: Option<String>) -> Outcome {
 
 fn term_payload(node: &dyn Sugar, ctx: &SugarCtx) -> Result<std::rc::Rc<Term>, Outcome> {
     match node.desugar(ctx) {
-        Outcome::Dug(desugared) => desugared.into_term().ok_or_else(|| {
-            Outcome::Hit(Effect::Unsupported {
+        Outcome::Complete(desugared) => desugared.into_term().ok_or_else(|| {
+            Outcome::Incomplete(Effect::Unsupported {
                 reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
             })
         }),
-        Outcome::Hit(effect) => Err(Outcome::Hit(effect)),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
 
@@ -316,7 +316,7 @@ fn method_assertion_name(
 }
 
 fn unsupported(reason: String) -> Outcome {
-    Outcome::Hit(Effect::Unsupported { reason })
+    Outcome::Incomplete(Effect::Unsupported { reason })
 }
 
 fn build_term_in_ctx(expr: &Expr, ctx: &SugarCtx) -> Box<dyn Sugar> {
@@ -376,7 +376,7 @@ mod tests {
     #[test]
     fn recognizes_const_pattern_through_let_binding() {
         // The pattern operand is a NON-inline `const`-string name resolved via the
-        // binding map; recognition succeeds (the dig resolves it later).
+        // binding map; recognition succeeds (the complete resolves it later).
         let mut binds = BTreeMap::new();
         binds.insert("PAT".to_string(), parse(r#""a.c""#));
         let e = parse(r#"Regex::new(PAT).unwrap().is_match(s)"#);
@@ -389,7 +389,7 @@ mod tests {
     fn recognizes_runtime_pattern_shape_but_resolves_to_none() {
         // `Regex::new(format!(…))` IS recognized (it is a Regex::new construction);
         // this one only fails to RESOLVE because the format argument is runtime. The
-        // recognizer does not pre-judge resolvability -- that is the dig's job.
+        // recognizer does not pre-judge resolvability -- that is the complete's job.
         let e = parse(r#"Regex::new(format!("{}", x)).unwrap().is_match(s)"#);
         let m = with_fcx(|fcx| recognize_regex_match(&e, &no_bindings(), fcx))
             .expect("recognized regex construction");

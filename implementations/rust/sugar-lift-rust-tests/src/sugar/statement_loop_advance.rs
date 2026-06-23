@@ -27,11 +27,11 @@ struct StatementLoopAdvanceSugar {
 impl Sugar for StatementLoopAdvanceSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         if statement_position::has_loop_advance(&self.expr) {
-            return Outcome::Hit(Effect::LoopAdvance {
+            return Outcome::Incomplete(Effect::LoopAdvance {
                 boundary: token_key(&self.expr),
             });
         }
-        Outcome::Hit(Effect::Unsupported {
+        Outcome::Incomplete(Effect::Unsupported {
             reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
         })
     }

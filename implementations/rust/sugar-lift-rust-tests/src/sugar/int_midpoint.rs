@@ -72,7 +72,7 @@ impl Sugar for IntMidpointSugar {
             Err(outcome) => return outcome,
         };
         let Some(term) = midpoint_term(&lhs, &rhs, self.kind) else {
-            return Outcome::Hit(Effect::Unsupported {
+            return Outcome::Incomplete(Effect::Unsupported {
                 reason: format!(
                     "runtime {} midpoint operand, not literal-determined",
                     self.kind.name
@@ -84,14 +84,14 @@ impl Sugar for IntMidpointSugar {
             kind = self.kind.name,
             "resolved primitive integer midpoint stdlib axiom"
         );
-        Outcome::Dug(Desugared::Term(term))
+        Outcome::Complete(Desugared::Term(term))
     }
 }
 
 fn desugar_arg(expr: &Expr, ctx: &SugarCtx, fcx: &SugarBuildCtx) -> Result<Rc<Term>, Outcome> {
     match build_term(expr, fcx).desugar(ctx) {
-        Outcome::Dug(d) => d.into_term().ok_or_else(|| Outcome::from_opt(None)),
-        Outcome::Hit(effect) => Err(Outcome::Hit(effect)),
+        Outcome::Complete(d) => d.into_term().ok_or_else(|| Outcome::from_opt(None)),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
 

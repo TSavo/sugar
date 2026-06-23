@@ -16,13 +16,13 @@
 //! building any children via `build_term`/`build_composite` -- else `None`) AND its
 //! `desugar`. The former free `decompose_*` functions are reused INSIDE these
 //! recognizers; the old inline `MethodSugar`/`CtorSugar`/`ResolvedTermSugar`/
-//! `ReasonedHitSugar` now live in their own modules. Ambiguity is represented by
+//! `ReasonedIncompleteSugar` now live in their own modules. Ambiguity is represented by
 //! MULTIPLE candidates, not by a hidden factory choice.
 //!
 //! ## The three laws
 //!
 //! 1. **TOTAL.** Every `Expr` maps to *some* `Box<dyn Sugar>`. A term shape with no
-//!    constructible value becomes a reasoned leaf (a `ReasonedHitSugar` carrying the
+//!    constructible value becomes a reasoned leaf (a `ReasonedIncompleteSugar` carrying the
 //!    arm's EXACT refusal string, or [`UnsupportedSugar`] for the structural backstop)
 //!    — NEVER a silent skip. The walk cannot return `None`.
 //! 2. **RECURSIVE.** A composite term node builds each operand with `build_term(child)`
@@ -61,8 +61,8 @@ use crate::sugar::catalog;
 use crate::sugar::claim::SugarRole;
 use crate::{
     refusal_disposition, token_key, AssertionFactKind, Desugared, Disposition, Effect,
-    FactoryAudit, FactoryCandidateAudit, FactoryDisposition, LiftOptions, Outcome, Sugar, SugarCtx,
-    TemporalScope, STRUCTURAL_BACKSTOP_REASON,
+    FactoryAudit, FactoryAuditSpan, FactoryCandidateAudit, FactoryDisposition, LiftOptions,
+    Outcome, Sugar, SugarCtx, TemporalScope, STRUCTURAL_BACKSTOP_REASON,
 };
 
 /// What a recognizer needs from its environment to construct a node: the temporal
@@ -207,6 +207,7 @@ pub(crate) struct FactoryAuditSeed {
     ast_kind: &'static str,
     site: String,
     line: usize,
+    span: Option<FactoryAuditSpan>,
     requested_role: String,
     selected: Option<&'static str>,
     candidates: Vec<FactoryCandidateAudit>,
@@ -223,6 +224,7 @@ impl FactoryAuditSeed {
             ast_kind: "expr",
             site: token_key(expr),
             line: expr.span().start().line,
+            span: Some(factory_audit_span(expr.span())),
             requested_role: format!("{requested_role:?}"),
             selected,
             candidates,
@@ -239,6 +241,7 @@ impl FactoryAuditSeed {
             ast_kind: "item",
             site: item.to_token_stream().to_string(),
             line: item.span().start().line,
+            span: Some(factory_audit_span(item.span())),
             requested_role: format!("{requested_role:?}"),
             selected,
             candidates,
@@ -251,6 +254,7 @@ impl FactoryAuditSeed {
             ast_kind: self.ast_kind,
             site: self.site.clone(),
             line: self.line,
+            span: self.span.clone(),
             requested_role: self.requested_role.clone(),
             selected: self.selected,
             candidates: self.candidates.clone(),
@@ -262,7 +266,7 @@ impl FactoryAuditSeed {
 
     fn disposition(&self, outcome: &Outcome) -> (FactoryDisposition, &'static str, Option<String>) {
         match outcome {
-            Outcome::Dug(Desugared::Constraints { kind, .. }) => match kind {
+            Outcome::Complete(Desugared::Constraints { kind, .. }) => match kind {
                 AssertionFactKind::Warranted => {
                     (FactoryDisposition::Warranted, "constraints", None)
                 }
@@ -275,17 +279,17 @@ impl FactoryAuditSeed {
                     ),
                 ),
             },
-            Outcome::Dug(Desugared::Term(_)) => (FactoryDisposition::Warranted, "term", None),
-            Outcome::Dug(Desugared::TupleComponents(_)) => {
+            Outcome::Complete(Desugared::Term(_)) => (FactoryDisposition::Warranted, "term", None),
+            Outcome::Complete(Desugared::TupleComponents(_)) => {
                 (FactoryDisposition::Warranted, "tuple-components", None)
             }
-            Outcome::Dug(Desugared::Seq(seq)) if seq.is_empty() => (
+            Outcome::Complete(Desugared::Seq(seq)) if seq.is_empty() => (
                 FactoryDisposition::Support,
                 "empty-sequence",
                 Some("inert: empty sequence; no obligation emitted".to_string()),
             ),
-            Outcome::Dug(Desugared::Seq(_)) => (FactoryDisposition::Warranted, "sequence", None),
-            Outcome::Hit(Effect::Unsupported { reason })
+            Outcome::Complete(Desugared::Seq(_)) => (FactoryDisposition::Warranted, "sequence", None),
+            Outcome::Incomplete(Effect::Unsupported { reason })
                 if reason == STRUCTURAL_BACKSTOP_REASON =>
             {
                 (
@@ -294,7 +298,7 @@ impl FactoryAuditSeed {
                     Some(self.unresolved_reason()),
                 )
             }
-            Outcome::Hit(effect) => {
+            Outcome::Incomplete(effect) => {
                 let reason = effect.reason();
                 match refusal_disposition(&reason) {
                     Disposition::Refused => (FactoryDisposition::Refused, "effect", Some(reason)),
@@ -324,6 +328,17 @@ impl FactoryAuditSeed {
                 self.requested_role, self.site
             ),
         }
+    }
+}
+
+fn factory_audit_span(span: proc_macro2::Span) -> FactoryAuditSpan {
+    let start = span.start();
+    let end = span.end();
+    FactoryAuditSpan {
+        start_line: start.line,
+        start_col: start.column,
+        end_line: end.line,
+        end_col: end.column,
     }
 }
 
@@ -369,7 +384,7 @@ fn term_bail_to_opaque(
         )
         && outcome.is_structural_bail();
     if eligible {
-        Outcome::Dug(Desugared::Term(std::rc::Rc::new(
+        Outcome::Complete(Desugared::Term(std::rc::Rc::new(
             sugar_ir_symbolic::Term::Var {
                 name: format!("opaque:{site}"),
             },
@@ -434,11 +449,12 @@ mod tests {
             ast_kind: "expr",
             site: "panic_free_call()".to_string(),
             line: 1,
+            span: None,
             requested_role: "Constraint".to_string(),
             selected: Some("panic_free"),
             candidates: Vec::new(),
         };
-        let outcome = Outcome::Dug(Desugared::Constraints {
+        let outcome = Outcome::Complete(Desugared::Constraints {
             atom: eq(bool_const(true), bool_const(true)),
             n: 0,
             kind: AssertionFactKind::Support,
@@ -463,16 +479,16 @@ mod tests {
     // FIX(a) discrimination: a recognized-TERM GENERIC structural bail degrades to an
     // opaque-EUF term (warranted-UNDECIDED), never a refusal -- but a named/reasoned
     // refusal, an unrecognized backstop, a non-Term role, the exempt recognizers, and a
-    // successful Dug are all left UNCHANGED. (opaque-EUF carries no teeth, so the only
+    // successful Complete are all left UNCHANGED. (opaque-EUF carries no teeth, so the only
     // motion is refused->undecided: it can neither false-discharge nor false-refute.)
     #[test]
     fn fix_a_term_structural_bail_degrades_to_opaque_undecided_not_refused() {
         use sugar_ir_symbolic::Term;
         let is_opaque = |o: &Outcome| {
-            matches!(o, Outcome::Dug(Desugared::Term(t))
+            matches!(o, Outcome::Complete(Desugared::Term(t))
                 if matches!(t.as_ref(), Term::Var { name } if name.starts_with("opaque:")))
         };
-        let is_refused = |o: &Outcome| matches!(o, Outcome::Hit(_));
+        let is_refused = |o: &Outcome| matches!(o, Outcome::Incomplete(_));
 
         // (1) THE FIX: a recognized-Term generic structural bail -> opaque-EUF (undecided).
         let bailed = term_bail_to_opaque("Term", Some("binop"), "a + b", Outcome::from_opt(None));
@@ -482,7 +498,7 @@ mod tests {
         );
 
         // (2) a NAMED / reasoned refusal (non-backstop reason) STAYS the loud refusal.
-        let named = Outcome::Hit(Effect::Unsupported {
+        let named = Outcome::Incomplete(Effect::Unsupported {
             reason: "unsupported term operator `@`".to_string(),
         });
         assert!(
@@ -525,14 +541,14 @@ mod tests {
             );
         }
 
-        // (6) a successful Dug passes through unchanged (no spurious opaque substitution).
-        let dug = Outcome::Dug(Desugared::Term(std::rc::Rc::new(Term::Var {
+        // (6) a successful Complete passes through unchanged (no spurious opaque substitution).
+        let completed = Outcome::Complete(Desugared::Term(std::rc::Rc::new(Term::Var {
             name: "real".to_string(),
         })));
         assert!(
-            matches!(term_bail_to_opaque("Term", Some("binop"), "x", dug),
-                Outcome::Dug(Desugared::Term(t)) if matches!(t.as_ref(), Term::Var { name } if name == "real")),
-            "a successful Dug must pass through unchanged"
+            matches!(term_bail_to_opaque("Term", Some("binop"), "x", completed),
+                Outcome::Complete(Desugared::Term(t)) if matches!(t.as_ref(), Term::Var { name } if name == "real")),
+            "a successful Complete must pass through unchanged"
         );
     }
 }

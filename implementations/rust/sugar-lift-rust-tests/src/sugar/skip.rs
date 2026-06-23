@@ -36,7 +36,7 @@ pub(crate) struct SkipSugar {
 impl Sugar for SkipSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         Outcome::from_opt((|| {
-            let seq = self.inner.desugar(ctx).dug()?.into_seq()?;
+            let seq = self.inner.desugar(ctx).complete()?.into_seq()?;
             let out = seq.into_iter().skip(self.n).collect();
             Some(Desugared::Seq(out))
         })())

@@ -24,7 +24,7 @@
 // is where the verdict is made, and the single LEAF owns it:
 //   * the CONTAINER leaf: a recognized mutable-local container is sequence/position-dependent
 //     -- no single timeless `t` -> `TemporalRead`.
-// The composite makes NO check of its own: a recognized node always Hits its container leaf
+// The composite makes NO check of its own: a recognized node always returns Incomplete its container leaf
 // (recognition -- a `mut`-local container -- IS the verdict's precondition). The verdict, once
 // the `mut`-oracle predicate is settled at build time, is purely SYNTACTIC, so it is delegated
 // by `desugar` to `desugar_ctx_free`. The STRUCTURAL backstop (`Effect::Unsupported` with
@@ -50,7 +50,7 @@ impl TemporalReadSugar {
     /// CONTAINER leaf: a recognized mutable-local container is a sequence/position-dependent
     /// read -- the `mut` oracle proved it may be index-assigned or method-mutated, so there is
     /// no single timeless `t` -> `TemporalRead`. Recognition (a `mut`-local container) is this
-    /// leaf's precondition, so it always fires for a built node; it never Digs.
+    /// leaf's precondition, so it always fires for a built node; it never completes.
     fn temporal_read_effect(&self) -> Option<Effect> {
         Some(Effect::TemporalRead {
             boundary: self.boundary.clone(),
@@ -62,14 +62,14 @@ impl TemporalReadSugar {
     /// reads only the recognized shape and does not need scope/options. The `Sugar::desugar(&ctx)`
     /// impl delegates here so the node has the canonical trait shape, while the thin caller-router
     /// (the `Expr::Index` arm) reads the SAME verdict here. The composite makes NO verdict of its
-    /// own: it Hits its single CONTAINER leaf. A built node always names `TemporalRead`
+    /// own: it returns Incomplete its single CONTAINER leaf. A built node always names `TemporalRead`
     /// (recognition is the verdict's precondition); the STRUCTURAL backstop is the
     /// total-but-unreachable tail.
     pub(crate) fn desugar_ctx_free(&self) -> Outcome {
         if let Some(effect) = self.temporal_read_effect() {
-            return Outcome::Hit(effect);
+            return Outcome::Incomplete(effect);
         }
-        Outcome::Hit(Effect::Unsupported {
+        Outcome::Incomplete(Effect::Unsupported {
             reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
         })
     }

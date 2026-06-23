@@ -1003,7 +1003,7 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
             self.ctx.macro_depth,
             self.ctx.factory_audits,
         ) {
-            CallsiteOutcome::Dug(commit) if commit.skipped.is_empty() => {
+            CallsiteOutcome::Complete(commit) if commit.skipped.is_empty() => {
                 for helper in &commit.reduced_helpers {
                     self.ctx.scope.record_inlined_value_helper(helper);
                 }
@@ -1017,7 +1017,7 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
                 );
                 Some(true)
             }
-            CallsiteOutcome::Dug(commit) => {
+            CallsiteOutcome::Complete(commit) => {
                 debug!(
                     sugar = "for_replay",
                     helper = name.as_str(),
@@ -1165,7 +1165,7 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
         let fcx = SugarBuildCtx::new(self.ctx.scope, self.ctx.options, &let_inits);
         let node = crate::sugar::factory::build_constraint(expr, &fcx);
         match node.desugar(self.ctx) {
-            Outcome::Dug(Desugared::Constraints {
+            Outcome::Complete(Desugared::Constraints {
                 atom,
                 kind: AssertionFactKind::Warranted,
                 ..
@@ -1173,7 +1173,7 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
                 self.atoms.push(atom);
                 Some(())
             }
-            Outcome::Hit(Effect::Unsupported { reason })
+            Outcome::Incomplete(Effect::Unsupported { reason })
                 if reason == STRUCTURAL_BACKSTOP_REASON =>
             {
                 None
@@ -1211,7 +1211,10 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
     fn term_from_factory(&self, expr: &Expr) -> Option<Rc<Term>> {
         let let_inits = BTreeMap::new();
         let fcx = SugarBuildCtx::new(self.ctx.scope, self.ctx.options, &let_inits);
-        build_term(expr, &fcx).desugar(self.ctx).dug()?.into_term()
+        build_term(expr, &fcx)
+            .desugar(self.ctx)
+            .complete()?
+            .into_term()
     }
 
     fn eval_if_value(&self, expr_if: &syn::ExprIf) -> Option<Expr> {
@@ -1608,7 +1611,10 @@ fn is_const_pattern_ident(name: &str) -> bool {
 fn finite_domain_exprs(expr: &Expr, ctx: &SugarCtx) -> Option<Vec<Expr>> {
     let let_inits = BTreeMap::new();
     let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-    let seq = build_composite(expr, &fcx).desugar(ctx).dug()?.into_seq()?;
+    let seq = build_composite(expr, &fcx)
+        .desugar(ctx)
+        .complete()?
+        .into_seq()?;
     if seq.is_empty() || seq.len() > SUGAR_SEQ_CAP as usize {
         return None;
     }

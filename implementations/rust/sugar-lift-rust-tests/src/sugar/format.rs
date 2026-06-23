@@ -16,15 +16,15 @@
 // translator falls back to (which the solver satisfies tautologically — no teeth).
 //
 // COMPOSITIONAL. Each format ARGUMENT is itself resolved through this same module:
-// `format!("{}", x)` digs when `x` resolves to a literal (inline literal, a `let`/
+// `format!("{}", x)` completes when `x` resolves to a literal (inline literal, a `let`/
 // `const`-bound literal, a nested `format!`/`concat!`/`.to_string()`); it BAILS (a
 // genuinely runtime arg) when `x` is opaque. The format-string operand MUST be a
 // literal; a runtime format string bails.
 //
 // REFUSE BY NAME, NEVER GUESS. A format spec we do not FAITHFULLY reproduce
 // (`{:p}` pointer, an unhandled fill/align/width/sign/precision combination) does not
-// dig — it bails so the caller falls through to the conservative opaque path. We only
-// dig a spec we render through a STATICALLY-WRITTEN real `format!` call (we cannot pass
+// complete — it bails so the caller falls through to the conservative opaque path. We only
+// complete a spec we render through a STATICALLY-WRITTEN real `format!` call (we cannot pass
 // a runtime spec string to `format!`, whose first arg must be a compile-time literal;
 // so each supported spec is one written arm calling the real macro). `f16`/`f128` are
 // unstable and unformattable on the stable toolchain the lifter ships — they bail with
@@ -57,7 +57,7 @@ fn string_literal_expr(s: &str) -> Expr {
 /// literals. `let_bindings` resolves a `let`/`const`-bound operand to its written
 /// literal (one or more pure indirections), exactly like `RegexSugar`'s pattern
 /// resolver. Recognition keys on the construction SHAPE; whether the operands resolve
-/// to literals is decided LATER by `desugar` (the dig), so a binding/nested-format
+/// to literals is decided LATER by `desugar` (the complete), so a binding/nested-format
 /// operand is recognized and composes.
 pub(crate) struct FormatSugar {
     expr: Expr,
@@ -67,14 +67,14 @@ pub(crate) struct FormatSugar {
 impl Sugar for FormatSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         match resolve_format_string(&self.expr, &self.let_bindings) {
-            Ok(Some(s)) => Outcome::Dug(Desugared::Seq(vec![DesugaredElem {
+            Ok(Some(s)) => Outcome::Complete(Desugared::Seq(vec![DesugaredElem {
                 expr: string_literal_expr(&s),
                 value: None,
             }])),
             // A runtime / unsupported producer (runtime arg, runtime fmt string, an
             // unsupported spec) -> bail TODAY. The caller falls through to its
             // conservative path (the opaque `macro:` EUF var). The structural backstop
-            // (`Hit(Effect::Unsupported)`).
+            // (`Incomplete(Effect::Unsupported)`).
             Ok(None) => Outcome::from_opt(None),
             // A NAMED terminal (f16/f128 Display unsupported) -> the caller surfaces
             // this reason; for now a bail with the structural backstop is the
@@ -87,7 +87,7 @@ impl Sugar for FormatSugar {
 
 /// Build a `FormatSugar` for any format-producing SHAPE (`format!`/`concat!`/
 /// `.to_string()`/ string `+`), else `None` (decline to recognize — not this node).
-/// Recognition does NOT pre-judge resolvability; the dig decides that.
+/// Recognition does NOT pre-judge resolvability; the complete decides that.
 pub(crate) fn decompose_format(
     expr: &Expr,
     let_bindings: &BTreeMap<String, Expr>,
@@ -1166,7 +1166,7 @@ fn reconstruct_lit(lit: &Lit) -> Result<Option<FmtValue>, String> {
 }
 
 /// Public entry: resolve a format-producing expr to its string value, classifying the
-/// outcome for the caller's term-translation hook. `Ok(Some(s))` digs to `str_const(s)`;
+/// outcome for the caller's term-translation hook. `Ok(Some(s))` completes to `str_const(s)`;
 /// `Ok(None)` falls through to the conservative opaque path; `Err(reason)` is a named
 /// terminal refusal (f16/f128 Display unsupported).
 pub(crate) fn try_resolve_format(

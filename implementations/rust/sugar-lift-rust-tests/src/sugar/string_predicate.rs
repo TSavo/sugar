@@ -247,7 +247,7 @@ impl StringPredicateSugar {
             return constraint(atomic_("str.is_ascii", vec![receiver]), name);
         }
         let Some(bytes) = literal_byte_string_value(&self.receiver_expr) else {
-            return Outcome::Hit(Effect::Unsupported {
+            return Outcome::Incomplete(Effect::Unsupported {
                 reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
             });
         };
@@ -273,7 +273,7 @@ impl StringPredicateSugar {
             return unsupported(format!("{} predicate expects no arguments", self.method));
         }
         let Some(ch) = byte_or_char_literal_value(&self.receiver_expr) else {
-            return Outcome::Hit(Effect::Unsupported {
+            return Outcome::Incomplete(Effect::Unsupported {
                 reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
             });
         };
@@ -290,12 +290,12 @@ impl StringPredicateSugar {
             return unsupported("eq_ignore_ascii_case expects one argument".to_string());
         }
         let Some(recv_str) = string_literal_string_value(&self.receiver_expr) else {
-            return Outcome::Hit(Effect::Unsupported {
+            return Outcome::Incomplete(Effect::Unsupported {
                 reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
             });
         };
         let Some(arg_str) = string_literal_string_value(&self.args[0]) else {
-            return Outcome::Hit(Effect::Unsupported {
+            return Outcome::Incomplete(Effect::Unsupported {
                 reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
             });
         };
@@ -316,7 +316,7 @@ impl StringPredicateSugar {
             return unsupported("is_alphabetic predicate expects no arguments".to_string());
         }
         let Some(ch) = char_literal_value(&self.receiver_expr) else {
-            return Outcome::Hit(Effect::Unsupported {
+            return Outcome::Incomplete(Effect::Unsupported {
                 reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
             });
         };
@@ -327,7 +327,7 @@ impl StringPredicateSugar {
 }
 
 fn constraint(atom: Rc<Formula>, name: Option<String>) -> Outcome {
-    Outcome::Dug(Desugared::Constraints {
+    Outcome::Complete(Desugared::Constraints {
         atom,
         n: 1,
         kind: AssertionFactKind::Warranted,
@@ -337,12 +337,12 @@ fn constraint(atom: Rc<Formula>, name: Option<String>) -> Outcome {
 
 fn term_payload(node: &dyn Sugar, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
     match node.desugar(ctx) {
-        Outcome::Dug(desugared) => desugared.into_term().ok_or_else(|| {
-            Outcome::Hit(Effect::Unsupported {
+        Outcome::Complete(desugared) => desugared.into_term().ok_or_else(|| {
+            Outcome::Incomplete(Effect::Unsupported {
                 reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
             })
         }),
-        Outcome::Hit(effect) => Err(Outcome::Hit(effect)),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
 
@@ -355,7 +355,7 @@ fn method_assertion_name(method: &str, args: Vec<Rc<Term>>, local_scope: &str) -
 }
 
 fn unsupported(reason: String) -> Outcome {
-    Outcome::Hit(Effect::Unsupported { reason })
+    Outcome::Incomplete(Effect::Unsupported { reason })
 }
 
 fn build_term_in_ctx(expr: &Expr, ctx: &SugarCtx) -> Box<dyn Sugar> {

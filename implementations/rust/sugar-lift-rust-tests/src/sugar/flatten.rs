@@ -41,15 +41,15 @@ pub(crate) struct FlattenSugar {
 impl Sugar for FlattenSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         Outcome::from_opt((|| {
-            let outer = self.inner.desugar(ctx).dug()?.into_seq()?;
+            let outer = self.inner.desugar(ctx).complete()?.into_seq()?;
             let let_inits = BTreeMap::new();
             let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
             let mut out = Vec::new();
             for elem in outer {
-                // Each outer element must itself dig to a finite literal sub-sequence.
+                // Each outer element must itself complete to a finite literal sub-sequence.
                 let sub = build_composite(&elem.expr, &fcx)
                     .desugar(ctx)
-                    .dug()?
+                    .complete()?
                     .into_seq()?;
                 let total = out.len().checked_add(sub.len())?;
                 if total > SUGAR_SEQ_CAP as usize {

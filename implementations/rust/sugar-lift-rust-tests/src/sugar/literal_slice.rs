@@ -78,7 +78,7 @@ struct LiteralSliceSugar {
 
 impl Sugar for LiteralSliceSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        Outcome::Dug(Desugared::Seq(
+        Outcome::Complete(Desugared::Seq(
             self.elems
                 .iter()
                 .cloned()

@@ -90,7 +90,7 @@ impl Sugar for LiteralIteratorQuantifierSugar {
                     self.method.as_str()
                 ));
             }
-            return Outcome::Hit(Effect::Unsupported {
+            return Outcome::Incomplete(Effect::Unsupported {
                 reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
             });
         };
@@ -113,7 +113,7 @@ impl Sugar for LiteralIteratorQuantifierSugar {
         }
 
         let Some(elements) = scalar_iter_domain_elems(&self.receiver, ctx.scope) else {
-            return Outcome::Hit(Effect::Unsupported {
+            return Outcome::Incomplete(Effect::Unsupported {
                 reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
             });
         };
@@ -244,18 +244,18 @@ struct ConstraintPayload {
 
 fn constraint_payload(node: &dyn Sugar, ctx: &SugarCtx) -> Result<ConstraintPayload, Outcome> {
     match node.desugar(ctx) {
-        Outcome::Dug(Desugared::Constraints { atom, kind, .. }) => {
+        Outcome::Complete(Desugared::Constraints { atom, kind, .. }) => {
             Ok(ConstraintPayload { atom, kind })
         }
-        Outcome::Dug(_) => Err(Outcome::Hit(Effect::Unsupported {
+        Outcome::Complete(_) => Err(Outcome::Incomplete(Effect::Unsupported {
             reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
         })),
-        Outcome::Hit(effect) => Err(Outcome::Hit(effect)),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
 
 fn constraint(atom: Rc<Formula>, kind: AssertionFactKind, name: Option<String>) -> Outcome {
-    Outcome::Dug(Desugared::Constraints {
+    Outcome::Complete(Desugared::Constraints {
         atom,
         n: 1,
         kind,
@@ -264,5 +264,5 @@ fn constraint(atom: Rc<Formula>, kind: AssertionFactKind, name: Option<String>) 
 }
 
 fn unsupported(reason: String) -> Outcome {
-    Outcome::Hit(Effect::Unsupported { reason })
+    Outcome::Incomplete(Effect::Unsupported { reason })
 }

@@ -18,9 +18,9 @@
 // when a versioned receiver has an AMBIGUOUS temporal identity (`ambiguous
 // temporal identity for receiver ...; skipped assertion`). The old arm
 // propagated that `Err` verbatim through `?`. The node mirrors that EXACTLY: an
-// `Err(reason)` becomes `Outcome::Hit(Effect::Unsupported { reason })`, carrying
+// `Err(reason)` becomes `Outcome::Incomplete(Effect::Unsupported { reason })`, carrying
 // the SAME reason string the collector emitted into `skip_reasons` before -- the
-// wire format (and thus the CID + counts) is conserved. An `Ok(name)` Digs to
+// wire format (and thus the CID + counts) is conserved. An `Ok(name)` completes to
 // `Term::Var { name }` via the shared `make_var` helper, byte-identical to the
 // arm's `make_var(..)`.
 //
@@ -92,14 +92,14 @@ pub(crate) struct PathSugar {
 
 impl Sugar for PathSugar {
     /// LEAF term reduction: `Term::Var { name: scope.path_name(&path.path)? }`.
-    /// An `Ok(name)` Digs to the `make_var` term (byte-identical to the arm); an
-    /// `Err(reason)` -- an ambiguous versioned-receiver identity -- Hits
+    /// An `Ok(name)` completes to the `make_var` term (byte-identical to the arm); an
+    /// `Err(reason)` -- an ambiguous versioned-receiver identity -- returns Incomplete
     /// `Effect::Unsupported { reason }`, carrying the verbatim reason the `?`
     /// propagated before. No child, no recursion: a path is atomic.
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match ctx.scope.path_name(&self.path.path) {
-            Ok(name) => Outcome::Dug(Desugared::Term(make_var(name))),
-            Err(reason) => Outcome::Hit(Effect::Unsupported { reason }),
+            Ok(name) => Outcome::Complete(Desugared::Term(make_var(name))),
+            Err(reason) => Outcome::Incomplete(Effect::Unsupported { reason }),
         }
     }
 }

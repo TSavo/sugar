@@ -84,7 +84,7 @@ pub(crate) struct IdentityMapSugar {
 impl Sugar for IdentityMapSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         Outcome::from_opt((|| {
-            let seq = self.inner.desugar(ctx).dug()?.into_seq()?;
+            let seq = self.inner.desugar(ctx).complete()?.into_seq()?;
             debug!(
                 target: "sugar_lift_rust_tests::sugar::identity_map",
                 len = seq.len(),

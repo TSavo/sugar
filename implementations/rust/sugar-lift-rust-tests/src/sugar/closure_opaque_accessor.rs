@@ -28,12 +28,12 @@ struct ClosureOpaqueAccessorSugar {
 impl Sugar for ClosureOpaqueAccessorSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         if self.site.has_opaque_accessor() {
-            return Outcome::Hit(Effect::OpaqueRuntime {
+            return Outcome::Incomplete(Effect::OpaqueRuntime {
                 boundary: token_key(self.site.expr()),
                 accessor: true,
             });
         }
-        Outcome::Hit(Effect::Unsupported {
+        Outcome::Incomplete(Effect::Unsupported {
             reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
         })
     }

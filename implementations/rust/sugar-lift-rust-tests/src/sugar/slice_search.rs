@@ -116,8 +116,8 @@ struct SliceSearchTermSugar {
 impl Sugar for SliceSearchTermSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match self.eval(ctx) {
-            Ok(term) => Outcome::Dug(Desugared::Term(term)),
-            Err(effect) => Outcome::Hit(effect),
+            Ok(term) => Outcome::Complete(Desugared::Term(term)),
+            Err(effect) => Outcome::Incomplete(effect),
         }
     }
 }
@@ -189,7 +189,7 @@ struct SliceSplitAssertionSugar {
 impl Sugar for SliceSplitAssertionSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match self.constraints(ctx) {
-            Ok((atom, anchor)) => Outcome::Dug(Desugared::Constraints {
+            Ok((atom, anchor)) => Outcome::Complete(Desugared::Constraints {
                 atom,
                 n: 1,
                 kind: AssertionFactKind::Warranted,
@@ -199,7 +199,7 @@ impl Sugar for SliceSplitAssertionSugar {
                     }),
                 },
             }),
-            Err(effect) => Outcome::Hit(effect),
+            Err(effect) => Outcome::Incomplete(effect),
         }
     }
 }
@@ -558,8 +558,8 @@ fn literal_sequence(
     let node =
         method_family::build_literal_sequence_composite(expr, fcx).ok_or_else(structural_effect)?;
     match node.desugar(ctx) {
-        Outcome::Dug(d) => d.into_seq().ok_or_else(structural_effect),
-        Outcome::Hit(effect) => Err(effect),
+        Outcome::Complete(d) => d.into_seq().ok_or_else(structural_effect),
+        Outcome::Incomplete(effect) => Err(effect),
     }
 }
 
@@ -573,8 +573,8 @@ fn literal_int_sequence_arg(
 
 fn term_for(expr: &Expr, fcx: &SugarBuildCtx, ctx: &SugarCtx) -> Result<Rc<Term>, Effect> {
     match build_term(expr, fcx).desugar(ctx) {
-        Outcome::Dug(d) => d.into_term().ok_or_else(structural_effect),
-        Outcome::Hit(effect) => Err(effect),
+        Outcome::Complete(d) => d.into_term().ok_or_else(structural_effect),
+        Outcome::Incomplete(effect) => Err(effect),
     }
 }
 

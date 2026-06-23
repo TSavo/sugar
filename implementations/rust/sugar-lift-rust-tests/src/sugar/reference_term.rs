@@ -2,7 +2,7 @@
 //
 // TERM recognizer for `Expr::Reference`. Mirrors the three source-of-truth guard arms
 // in order: `&x` -> `ref` ctor; `&mut <immutable value>` -> `ref_mut` ctor; any other
-// `&mut <place>` -> reasoned Hit (mutable reference). Byte-identical to the
+// `&mut <place>` -> reasoned Incomplete (mutable reference). Byte-identical to the
 // `Expr::Reference` arms of the old fat factory.
 //
 // THE `ref`/`ref_mut` CTORS ARE STRUCTURAL: they keep a borrowed value distinct as a
@@ -19,7 +19,7 @@
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::ctor_term::CtorSugar;
 use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::sugar::term_leaf::reasoned_hit;
+use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::{is_immutable_value_expr, token_key, Effect, Sugar, UnsupportedTermCause};
 use syn::Expr;
 
@@ -45,5 +45,5 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     }
     // reference.mutability.is_some() && not an immutable value place.
     let effect = Effect::unsupported_term(&token_key(expr), UnsupportedTermCause::MutableReference);
-    Some(reasoned_hit(effect.reason()))
+    Some(reasoned_incomplete(effect.reason()))
 }

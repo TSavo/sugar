@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // TERM recognizer for `Expr::RawAddr` (`&raw const x` / `&raw mut x`): a raw pointer
-// -> reasoned Hit. Byte-identical to the `Expr::RawAddr` arm of the old fat factory.
+// -> reasoned Incomplete. Byte-identical to the `Expr::RawAddr` arm of the old fat factory.
 
 use crate::sugar::factory::SugarBuildCtx;
-use crate::sugar::term_leaf::reasoned_hit;
+use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::{token_key, Effect, Sugar, UnsupportedTermCause};
 use syn::Expr;
 
@@ -17,7 +17,7 @@ pub(crate) fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sug
         Expr::RawAddr(_) => {
             let effect =
                 Effect::unsupported_term(&token_key(expr), UnsupportedTermCause::RawPointer);
-            Some(reasoned_hit(effect.reason()))
+            Some(reasoned_incomplete(effect.reason()))
         }
         _ => None,
     }

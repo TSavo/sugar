@@ -211,6 +211,42 @@ impl<'a> SourceTextIndex<'a> {
             .map(|fragment| fragment.to_memento())
     }
 
+    pub fn source_memento_of_term_span(
+        &self,
+        file_rel: &str,
+        span: proc_macro2::Span,
+        owner_name: &str,
+        sig: &syn::Signature,
+        block: &syn::Block,
+    ) -> Option<SourceMemento> {
+        self.source_fragment_of_term_span(file_rel, span, owner_name, sig, block)
+            .map(|fragment| fragment.to_memento())
+    }
+
+    pub fn source_memento_of_term_src_span(
+        &self,
+        file_rel: &str,
+        target: &SrcSpan,
+        owner_name: &str,
+        sig: &syn::Signature,
+        block: &syn::Block,
+    ) -> Option<SourceMemento> {
+        self.source_fragment_of_term_src_span(file_rel, target, owner_name, sig, block)
+            .map(|fragment| fragment.to_memento())
+    }
+
+    pub fn source_fragment_of_term_span(
+        &self,
+        file_rel: &str,
+        span: proc_macro2::Span,
+        owner_name: &str,
+        sig: &syn::Signature,
+        block: &syn::Block,
+    ) -> Option<SourceFragment> {
+        let target = span_to_src_span(span);
+        self.source_fragment_of_term_src_span(file_rel, &target, owner_name, sig, block)
+    }
+
     pub fn source_fragment_of_statement_span(
         &self,
         file_rel: &str,
@@ -221,6 +257,38 @@ impl<'a> SourceTextIndex<'a> {
     ) -> Option<SourceFragment> {
         let target = span_to_src_span(span);
         self.source_fragment_of_statement_src_span(file_rel, &target, owner_name, sig, block)
+    }
+
+    pub fn source_fragment_of_term_src_span(
+        &self,
+        file_rel: &str,
+        target: &SrcSpan,
+        owner_name: &str,
+        sig: &syn::Signature,
+        block: &syn::Block,
+    ) -> Option<SourceFragment> {
+        let params = param_names_without_receiver_from_signature(sig);
+        let expr = find_expr_by_span(block, target)?;
+        Some(self.source_fragment_of_expr(file_rel, owner_name, &params, expr))
+    }
+
+    pub fn source_fragment_of_raw_src_span(
+        &self,
+        file_rel: &str,
+        target: &SrcSpan,
+        owner_name: &str,
+        sig: &syn::Signature,
+    ) -> Option<SourceFragment> {
+        let param_names = param_names_without_receiver_from_signature(sig);
+        let source_text =
+            self.source_slice_between(src_span_start(target), src_span_end(target))?;
+        Some(raw_source_fragment(
+            file_rel,
+            target,
+            owner_name,
+            &param_names,
+            source_text,
+        ))
     }
 
     fn source_fragment_of_statement_src_span(
@@ -289,6 +357,29 @@ impl<'a> SourceTextIndex<'a> {
             param_names: param_names.to_vec(),
             body_text,
             ast_template,
+        }
+    }
+
+    pub fn source_fragment_of_expr(
+        &self,
+        file_rel: &str,
+        owner_name: &str,
+        param_names: &[String],
+        expr: &syn::Expr,
+    ) -> SourceFragment {
+        let span = span_to_src_span(expr.span());
+        let body_text = self
+            .source_slice_between(expr.span().start(), expr.span().end())
+            .map(canonical_sugar_body_text)
+            .unwrap_or_default()
+            .to_string();
+        SourceFragment {
+            file: file_rel.to_string(),
+            function_name: owner_name.to_string(),
+            span,
+            param_names: param_names.to_vec(),
+            body_text,
+            ast_template: expr_to_template(expr, param_names),
         }
     }
 
@@ -368,6 +459,30 @@ impl<'a> SourceFragmentCache<'a> {
             .map(|fragment| fragment.to_memento())
     }
 
+    pub fn source_memento_of_term_span(
+        &mut self,
+        file_rel: &str,
+        span: proc_macro2::Span,
+        owner_name: &str,
+        sig: &syn::Signature,
+        block: &syn::Block,
+    ) -> Option<SourceMemento> {
+        self.source_fragment_of_term_span(file_rel, span, owner_name, sig, block)
+            .map(|fragment| fragment.to_memento())
+    }
+
+    pub fn source_memento_of_term_src_span(
+        &mut self,
+        file_rel: &str,
+        target: &SrcSpan,
+        owner_name: &str,
+        sig: &syn::Signature,
+        block: &syn::Block,
+    ) -> Option<SourceMemento> {
+        self.source_fragment_of_term_src_span(file_rel, target, owner_name, sig, block)
+            .map(|fragment| fragment.to_memento())
+    }
+
     pub fn source_fragment_of(
         &mut self,
         file_rel: &str,
@@ -402,6 +517,52 @@ impl<'a> SourceFragmentCache<'a> {
         Some(self.source_fragment_of_stmt(file_rel, owner_name, &params, stmt))
     }
 
+    pub fn source_fragment_of_term_span(
+        &mut self,
+        file_rel: &str,
+        span: proc_macro2::Span,
+        owner_name: &str,
+        sig: &syn::Signature,
+        block: &syn::Block,
+    ) -> Option<SourceFragment> {
+        let target = span_to_src_span(span);
+        let params = param_names_without_receiver_from_signature(sig);
+        let expr = find_expr_by_span(block, &target)?;
+        Some(self.source_fragment_of_expr(file_rel, owner_name, &params, expr))
+    }
+
+    pub fn source_fragment_of_term_src_span(
+        &mut self,
+        file_rel: &str,
+        target: &SrcSpan,
+        owner_name: &str,
+        sig: &syn::Signature,
+        block: &syn::Block,
+    ) -> Option<SourceFragment> {
+        let params = param_names_without_receiver_from_signature(sig);
+        let expr = find_expr_by_span(block, target)?;
+        Some(self.source_fragment_of_expr(file_rel, owner_name, &params, expr))
+    }
+
+    pub fn source_fragment_of_raw_src_span(
+        &mut self,
+        file_rel: &str,
+        target: &SrcSpan,
+        owner_name: &str,
+        sig: &syn::Signature,
+    ) -> Option<SourceFragment> {
+        let param_names = param_names_without_receiver_from_signature(sig);
+        let source_text = self.source_text_from_cached_fragment(target).or_else(|| {
+            self.index
+                .source_slice_between(src_span_start(target), src_span_end(target))
+                .map(str::to_string)
+        })?;
+        let fragment =
+            raw_source_fragment(file_rel, target, owner_name, &param_names, &source_text);
+        self.insert_fragment(fragment.clone(), source_text);
+        Some(fragment)
+    }
+
     pub fn source_fragment_of_stmt(
         &mut self,
         file_rel: &str,
@@ -426,6 +587,35 @@ impl<'a> SourceFragmentCache<'a> {
             param_names: param_names.to_vec(),
             body_text,
             ast_template: stmt_to_template(stmt, param_names),
+        };
+        self.insert_fragment(fragment.clone(), source_text);
+        fragment
+    }
+
+    pub fn source_fragment_of_expr(
+        &mut self,
+        file_rel: &str,
+        owner_name: &str,
+        param_names: &[String],
+        expr: &syn::Expr,
+    ) -> SourceFragment {
+        let span = span_to_src_span(expr.span());
+        let source_text = self
+            .source_text_from_cached_fragment(&span)
+            .unwrap_or_else(|| {
+                self.index
+                    .source_slice_between(expr.span().start(), expr.span().end())
+                    .unwrap_or_default()
+                    .to_string()
+            });
+        let body_text = canonical_sugar_body_text(&source_text).to_string();
+        let fragment = SourceFragment {
+            file: file_rel.to_string(),
+            function_name: owner_name.to_string(),
+            span,
+            param_names: param_names.to_vec(),
+            body_text,
+            ast_template: expr_to_template(expr, param_names),
         };
         self.insert_fragment(fragment.clone(), source_text);
         fragment
@@ -469,6 +659,42 @@ impl<'a> SourceFragmentCache<'a> {
 
 fn span_start_key(span: &SrcSpan) -> (usize, usize) {
     (span.start_line, span.start_col)
+}
+
+fn raw_source_fragment(
+    file_rel: &str,
+    target: &SrcSpan,
+    owner_name: &str,
+    param_names: &[String],
+    source_text: &str,
+) -> SourceFragment {
+    let body_text = canonical_sugar_body_text(source_text).to_string();
+    let source_cid = blake3_512_of(body_text.as_bytes());
+    SourceFragment {
+        file: file_rel.to_string(),
+        function_name: owner_name.to_string(),
+        span: target.clone(),
+        param_names: param_names.to_vec(),
+        body_text,
+        ast_template: json!({
+            "kind": "source-span",
+            "source_cid": source_cid,
+        }),
+    }
+}
+
+fn src_span_start(span: &SrcSpan) -> proc_macro2::LineColumn {
+    proc_macro2::LineColumn {
+        line: span.start_line,
+        column: span.start_col,
+    }
+}
+
+fn src_span_end(span: &SrcSpan) -> proc_macro2::LineColumn {
+    proc_macro2::LineColumn {
+        line: span.end_line,
+        column: span.end_col,
+    }
 }
 
 fn span_contains(parent: &SrcSpan, child: &SrcSpan) -> bool {
@@ -540,6 +766,32 @@ pub fn source_memento_of_statement_span(
         .map(|fragment| fragment.to_memento())
 }
 
+pub fn source_memento_of_term_span(
+    file_rel: &str,
+    src: &str,
+    span: proc_macro2::Span,
+    owner_name: &str,
+    sig: &syn::Signature,
+    block: &syn::Block,
+) -> Option<SourceMemento> {
+    SourceTextIndex::new(src)
+        .source_fragment_of_term_span(file_rel, span, owner_name, sig, block)
+        .map(|fragment| fragment.to_memento())
+}
+
+pub fn source_memento_of_term_src_span(
+    file_rel: &str,
+    src: &str,
+    target: &SrcSpan,
+    owner_name: &str,
+    sig: &syn::Signature,
+    block: &syn::Block,
+) -> Option<SourceMemento> {
+    SourceTextIndex::new(src)
+        .source_fragment_of_term_src_span(file_rel, target, owner_name, sig, block)
+        .map(|fragment| fragment.to_memento())
+}
+
 pub fn source_fragment_of_statement_span(
     file_rel: &str,
     src: &str,
@@ -550,6 +802,29 @@ pub fn source_fragment_of_statement_span(
 ) -> Option<SourceFragment> {
     SourceTextIndex::new(src)
         .source_fragment_of_statement_span(file_rel, span, owner_name, sig, block)
+}
+
+pub fn source_fragment_of_term_span(
+    file_rel: &str,
+    src: &str,
+    span: proc_macro2::Span,
+    owner_name: &str,
+    sig: &syn::Signature,
+    block: &syn::Block,
+) -> Option<SourceFragment> {
+    SourceTextIndex::new(src).source_fragment_of_term_span(file_rel, span, owner_name, sig, block)
+}
+
+pub fn source_fragment_of_term_src_span(
+    file_rel: &str,
+    src: &str,
+    target: &SrcSpan,
+    owner_name: &str,
+    sig: &syn::Signature,
+    block: &syn::Block,
+) -> Option<SourceFragment> {
+    SourceTextIndex::new(src)
+        .source_fragment_of_term_src_span(file_rel, target, owner_name, sig, block)
 }
 
 pub fn source_fragment_of(
@@ -684,13 +959,14 @@ pub fn resolve_source_memento(
     {
         whole_fragment
     } else {
-        // Not a whole-function memento: locate the pinned STATEMENT by its span. If
-        // the statement is gone (the body drifted under the pin), fall through to the
-        // whole-function fragment so the CID comparison below still reports drift as
-        // "source CID misaligned" -- a function we located by name whose pinned
-        // fragment span is now absent IS drift, never a bare "fragment not found".
+        // Not a whole-function memento: locate the pinned statement OR term by its
+        // span. If the fragment is gone (the body drifted under the pin), fall
+        // through to the whole-function fragment so the CID comparison below still
+        // reports drift as "source CID misaligned" -- a function we located by name
+        // whose pinned fragment span is now absent IS drift, never a bare "fragment
+        // not found".
         source_index
-            .source_fragment_of_statement_src_span(
+            .source_fragment_of_term_src_span(
                 &memento.file,
                 &memento.span,
                 memento
@@ -699,6 +975,27 @@ pub fn resolve_source_memento(
                 source_fn.sig,
                 source_fn.block,
             )
+            .or_else(|| {
+                source_index.source_fragment_of_statement_src_span(
+                    &memento.file,
+                    &memento.span,
+                    memento
+                        .source_function_name()
+                        .unwrap_or(&source_fn.full_name),
+                    source_fn.sig,
+                    source_fn.block,
+                )
+            })
+            .or_else(|| {
+                source_index.source_fragment_of_raw_src_span(
+                    &memento.file,
+                    &memento.span,
+                    memento
+                        .source_function_name()
+                        .unwrap_or(&source_fn.full_name),
+                    source_fn.sig,
+                )
+            })
             .unwrap_or(whole_fragment)
     };
     let recomputed = fragment.to_memento();
@@ -903,6 +1200,32 @@ fn find_stmt_by_span<'a>(block: &'a syn::Block, target: &SrcSpan) -> Option<&'a 
                 return;
             }
             syn::visit::visit_stmt(self, stmt);
+        }
+    }
+
+    let mut finder = Finder {
+        target: target.clone(),
+        found: None,
+    };
+    syn::visit::Visit::visit_block(&mut finder, block);
+    finder.found
+}
+
+fn find_expr_by_span<'a>(block: &'a syn::Block, target: &SrcSpan) -> Option<&'a syn::Expr> {
+    struct Finder<'a> {
+        target: SrcSpan,
+        found: Option<&'a syn::Expr>,
+    }
+    impl<'a> syn::visit::Visit<'a> for Finder<'a> {
+        fn visit_expr(&mut self, expr: &'a syn::Expr) {
+            if self.found.is_some() {
+                return;
+            }
+            if source_span_eq(&span_to_src_span(expr.span()), &self.target) {
+                self.found = Some(expr);
+                return;
+            }
+            syn::visit::visit_expr(self, expr);
         }
     }
 
@@ -1259,6 +1582,66 @@ mod tests {
         assert_eq!(
             resolved_statement.fragment.body_text,
             "assert_eq!(1 + 1, 2);"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_oracle_mints_and_resolves_term_mementos_without_embedding_source() {
+        use syn::spanned::Spanned;
+
+        let root = std::env::temp_dir().join(format!(
+            "sugar-source-oracle-term-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src")).expect("mkdir src");
+        let src = r#"
+fn computes(x: i64) -> i64 {
+    let y = x + 1;
+    y * 2
+}
+"#;
+        std::fs::write(root.join("src/lib.rs"), src).expect("write source");
+        let file: syn::File = syn::parse_str(src).expect("parses");
+        let syn::Item::Fn(item) = &file.items[0] else {
+            panic!("expected function");
+        };
+        let syn::Stmt::Local(local) = &item.block.stmts[0] else {
+            panic!("expected let");
+        };
+        let init = local.init.as_ref().expect("let init");
+
+        let term = source_memento_of_term_span(
+            "src/lib.rs",
+            src,
+            init.expr.span(),
+            "computes",
+            &item.sig,
+            &item.block,
+        )
+        .expect("term memento");
+        let rendered = term.to_json().to_string();
+        assert!(!rendered.contains("x + 1"));
+        assert!(term.to_json().get("body_text").is_none());
+        assert!(term.to_json().get("ast_template").is_none());
+
+        let resolved = resolve_source_memento(&root, &term).expect("term resolves");
+        assert_eq!(resolved.fragment.span, term.span);
+        assert_eq!(resolved.fragment.body_text, "x + 1");
+        assert_eq!(resolved.fragment.ast_template["kind"], "binary");
+
+        std::fs::write(root.join("src/lib.rs"), src.replace("x + 1", "x + 2"))
+            .expect("rewrite drifted source");
+        let drift = resolve_source_memento(&root, &term).expect_err("term drift must refuse");
+        assert!(
+            drift.reason.contains("source CID misaligned"),
+            "unexpected drift reason: {}",
+            drift.reason
         );
 
         let _ = std::fs::remove_dir_all(root);

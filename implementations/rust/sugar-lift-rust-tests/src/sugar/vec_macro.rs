@@ -8,7 +8,7 @@ use syn::Expr;
 use tracing::debug;
 
 use crate::sugar::factory::SugarBuildCtx;
-use crate::sugar::term_leaf::{reasoned_hit, resolved_term};
+use crate::sugar::term_leaf::{reasoned_incomplete, resolved_term};
 use crate::{literal_aggregate_term_in_scope, parse_macro_args, Sugar};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -35,6 +35,6 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     );
     match literal_aggregate_term_in_scope("Vec", args.exprs.iter(), expr, fcx.scope()) {
         Ok(term) => Some(resolved_term(term)),
-        Err(reason) => Some(reasoned_hit(reason)),
+        Err(reason) => Some(reasoned_incomplete(reason)),
     }
 }

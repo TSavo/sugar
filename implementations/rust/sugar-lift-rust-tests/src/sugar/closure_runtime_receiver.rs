@@ -29,12 +29,12 @@ struct ClosureRuntimeReceiverSugar {
 impl Sugar for ClosureRuntimeReceiverSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         if self.site.has_runtime_receiver(ctx.scope) {
-            return Outcome::Hit(Effect::OpaqueRuntime {
+            return Outcome::Incomplete(Effect::OpaqueRuntime {
                 boundary: token_key(self.site.expr()),
                 accessor: false,
             });
         }
-        Outcome::Hit(Effect::Unsupported {
+        Outcome::Incomplete(Effect::Unsupported {
             reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
         })
     }

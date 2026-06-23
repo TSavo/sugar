@@ -68,7 +68,7 @@ impl Sugar for TakeWhileRecognizedSugar {
             let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
             let seq = method_family::build_literal_sequence_composite(&self.receiver, &fcx)?
                 .desugar(ctx)
-                .dug()?
+                .complete()?
                 .into_seq()?;
             let mut out = Vec::new();
             for elem in seq {
@@ -93,7 +93,7 @@ pub(crate) struct TakeWhileSugar {
 impl Sugar for TakeWhileSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         Outcome::from_opt((|| {
-            let seq = self.inner.desugar(ctx).dug()?.into_seq()?;
+            let seq = self.inner.desugar(ctx).complete()?.into_seq()?;
             let mut out = Vec::new();
             for elem in seq {
                 let v = elem.value.as_ref()?;

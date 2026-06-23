@@ -23,11 +23,11 @@ struct StatementControlFlowSugar {
 impl Sugar for StatementControlFlowSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         if statement_position::has_control_flow(&self.expr) {
-            return Outcome::Hit(Effect::ControlFlow {
+            return Outcome::Incomplete(Effect::ControlFlow {
                 boundary: token_key(&self.expr),
             });
         }
-        Outcome::Hit(Effect::Unsupported {
+        Outcome::Incomplete(Effect::Unsupported {
             reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
         })
     }

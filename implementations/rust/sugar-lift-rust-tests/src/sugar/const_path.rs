@@ -206,7 +206,7 @@ impl Sugar for ConstSugar {
                     term = ?value,
                     "resolved primitive associated const compiler axiom"
                 );
-                Outcome::Dug(Desugared::Term(value))
+                Outcome::Complete(Desugared::Term(value))
             }
             ConstSugar::Path {
                 name,

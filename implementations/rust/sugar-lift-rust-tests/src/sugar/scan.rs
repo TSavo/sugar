@@ -94,7 +94,7 @@ struct ScanSugar {
 impl Sugar for ScanSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         Outcome::from_opt((|| {
-            let seq = self.inner.desugar(ctx).dug()?.into_seq()?;
+            let seq = self.inner.desugar(ctx).complete()?.into_seq()?;
             let mut state = self.init;
             let mut out: Vec<DesugaredElem> = Vec::with_capacity(seq.len());
             for elem in &seq {
@@ -228,7 +228,7 @@ fn is_compound_assign_op(op: &BinOp) -> bool {
 
 /// Evaluate `old_state <assign-op> rhs_val` to produce the new state.
 /// Returns `None` on overflow, division-by-zero, or unsupported op (all bail
-/// the whole scan to the opaque fallback — EXACT-OR-BAIL, never a fake-dig).
+/// the whole scan to the opaque fallback — EXACT-OR-BAIL, never a fake-complete).
 fn apply_assign_op(op: &BinOp, state: i64, rhs: i64) -> Option<i64> {
     match op {
         BinOp::AddAssign(_) => state.checked_add(rhs),

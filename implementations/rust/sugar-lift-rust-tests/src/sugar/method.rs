@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // `MethodSugar` + the TERM recognizer for `Expr::MethodCall`. The constructive
-// method-call term node digs the receiver child FIRST, applies the per-occurrence
-// consuming-iterator `@adv{n}` re-tag (a runtime read of `ctx.scope`), then digs the
+// method-call term node completes the receiver child FIRST, applies the per-occurrence
+// consuming-iterator `@adv{n}` re-tag (a runtime read of `ctx.scope`), then completes the
 // arg children in source order, and emits `method:<m>` over `[receiver, args..]`.
 //
 // The recognizer runs the source-of-truth preamble in order: a CLOSED
@@ -20,7 +20,7 @@ use sugar_ir_symbolic::{make_var, Term};
 use syn::Expr;
 
 use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::sugar::term_leaf::reasoned_hit;
+use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::try_fold_eval;
 use crate::{
     angle_args_key, closure_adaptor_refusal, is_consuming_iterator_method,
@@ -47,9 +47,9 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     }
     // A closure-bearing adaptor in term position refuses with collection provenance.
     if let Some(reason) = closure_adaptor_refusal(expr, scope) {
-        return Some(reasoned_hit(reason));
+        return Some(reasoned_incomplete(reason));
     }
-    // The constructive `method:` ctor. The RECEIVER is dug first; a per-occurrence
+    // The constructive `method:` ctor. The RECEIVER is completed first; a per-occurrence
     // consuming-iterator advance re-tags the receiver var (`@adv{n}`).
     Some(Box::new(MethodSugar::Constructive {
         method: method_key(call),
@@ -121,7 +121,7 @@ impl Sugar for MethodSugar {
                 if matches!(method.as_str(), "starts_with" | "ends_with") {
                     if let Some(recv_name) = simple_path_name(receiver) {
                         if ctx.scope.is_mut_local(&recv_name) {
-                            return Outcome::Hit(Effect::Unsupported {
+                            return Outcome::Incomplete(Effect::Unsupported {
                                 reason: format!(
                                     "{method} predicate over a MUTABLE-local receiver `{recv_name}` \
                                      (bin-2: a slice/string mutated by side-effecting iteration, not \
@@ -135,11 +135,11 @@ impl Sugar for MethodSugar {
                 let let_inits = merge_let_inits(&stable, let_inits);
                 let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
                 let mut receiver = match build_term(receiver, &fcx).desugar(ctx) {
-                    Outcome::Dug(d) => match d.into_term() {
+                    Outcome::Complete(d) => match d.into_term() {
                         Some(t) => t,
                         None => return Outcome::from_opt(None),
                     },
-                    Outcome::Hit(e) => return Outcome::Hit(e),
+                    Outcome::Incomplete(e) => return Outcome::Incomplete(e),
                 };
                 if *is_consuming {
                     if let Term::Var { name } = receiver.as_ref() {
@@ -154,15 +154,15 @@ impl Sugar for MethodSugar {
                 let mut terms = vec![receiver];
                 for arg in args {
                     let term = match build_term(arg, &fcx).desugar(ctx) {
-                        Outcome::Dug(d) => match d.into_term() {
+                        Outcome::Complete(d) => match d.into_term() {
                             Some(t) => t,
                             None => return Outcome::from_opt(None),
                         },
-                        Outcome::Hit(e) => return Outcome::Hit(e),
+                        Outcome::Incomplete(e) => return Outcome::Incomplete(e),
                     };
                     terms.push(term);
                 }
-                Outcome::Dug(Desugared::Term(Rc::new(Term::Ctor {
+                Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
                     name: format!("method:{method}"),
                     args: terms,
                 })))

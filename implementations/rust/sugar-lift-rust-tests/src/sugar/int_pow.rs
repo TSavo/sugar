@@ -72,8 +72,8 @@ fn desugar_term_expr(
     fcx: &SugarBuildCtx,
 ) -> Result<Rc<Term>, Outcome> {
     match build_term(expr, fcx).desugar(ctx) {
-        Outcome::Dug(d) => d.into_term().ok_or_else(|| Outcome::from_opt(None)),
-        Outcome::Hit(e) => Err(Outcome::Hit(e)),
+        Outcome::Complete(d) => d.into_term().ok_or_else(|| Outcome::from_opt(None)),
+        Outcome::Incomplete(e) => Err(Outcome::Incomplete(e)),
     }
 }
 
@@ -103,7 +103,7 @@ impl Sugar for IntPowSugar {
             exponent,
             "resolved primitive integer pow compiler axiom"
         );
-        Outcome::Dug(Desugared::Term(term))
+        Outcome::Complete(Desugared::Term(term))
     }
 }
 

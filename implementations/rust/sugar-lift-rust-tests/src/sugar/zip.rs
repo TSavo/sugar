@@ -86,8 +86,8 @@ impl Sugar for ZipSugar {
                 .unwrap_or_else(|| build_composite(&self.left, &fcx));
             let right_node = method_family::build_literal_sequence_composite(&self.right, &fcx)
                 .unwrap_or_else(|| build_composite(&self.right, &fcx));
-            let left = left_node.desugar(ctx).dug()?.into_seq()?;
-            let right = right_node.desugar(ctx).dug()?.into_seq()?;
+            let left = left_node.desugar(ctx).complete()?.into_seq()?;
+            let right = right_node.desugar(ctx).complete()?.into_seq()?;
             // `zip` stops at the shorter side: `min(left.len, right.len)` pairs.
             let len = left.len().min(right.len());
             if len > SUGAR_SEQ_CAP as usize {

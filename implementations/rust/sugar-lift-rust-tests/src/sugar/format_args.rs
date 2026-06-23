@@ -58,6 +58,6 @@ impl Sugar for EstimatedCapacitySugar {
             capacity = self.capacity,
             "resolved format_args estimated_capacity compiler axiom to literal"
         );
-        Outcome::Dug(Desugared::Term(num(self.capacity as i128)))
+        Outcome::Complete(Desugared::Term(num(self.capacity as i128)))
     }
 }
