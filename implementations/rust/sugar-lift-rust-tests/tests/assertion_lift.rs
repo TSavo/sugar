@@ -1869,6 +1869,30 @@ fn option_result_literal_methods_compose_to_literal_floor() {
             "#,
         ),
         (
+            "coretests/option/compose_some_map_unwrap_or_good.rs",
+            "t_compose_some_map_unwrap_or_good",
+            "method:unwrap_or",
+            true,
+            r#"
+                #[test]
+                fn t_compose_some_map_unwrap_or_good() {
+                    assert_eq!(Some(3i32).map(|x| x + 1).unwrap_or(9), 4);
+                }
+            "#,
+        ),
+        (
+            "coretests/option/compose_some_map_unwrap_or_bad.rs",
+            "t_compose_some_map_unwrap_or_bad",
+            "method:unwrap_or",
+            false,
+            r#"
+                #[test]
+                fn t_compose_some_map_unwrap_or_bad() {
+                    assert_eq!(Some(3i32).map(|x| x + 1).unwrap_or(9), 9);
+                }
+            "#,
+        ),
+        (
             "coretests/option/compose_none_map_good.rs",
             "t_compose_none_map_good",
             "method:map",
@@ -1891,6 +1915,78 @@ fn option_result_literal_methods_compose_to_literal_floor() {
                 fn t_compose_none_map_bad() {
                     let opt: Option<i32> = None;
                     assert_eq!(opt.map(|x| x + 1), Some(1));
+                }
+            "#,
+        ),
+        (
+            "coretests/option/compose_some_and_then_unwrap_or_good.rs",
+            "t_compose_some_and_then_unwrap_or_good",
+            "method:and_then",
+            true,
+            r#"
+                #[test]
+                fn t_compose_some_and_then_unwrap_or_good() {
+                    assert_eq!(Some(3i32).and_then(|x| Some(x + 2)).unwrap_or(9), 5);
+                }
+            "#,
+        ),
+        (
+            "coretests/option/compose_some_and_then_unwrap_or_bad.rs",
+            "t_compose_some_and_then_unwrap_or_bad",
+            "method:and_then",
+            false,
+            r#"
+                #[test]
+                fn t_compose_some_and_then_unwrap_or_bad() {
+                    assert_eq!(Some(3i32).and_then(|x| Some(x + 2)).unwrap_or(9), 9);
+                }
+            "#,
+        ),
+        (
+            "coretests/option/compose_some_filter_unwrap_or_good.rs",
+            "t_compose_some_filter_unwrap_or_good",
+            "method:filter",
+            true,
+            r#"
+                #[test]
+                fn t_compose_some_filter_unwrap_or_good() {
+                    assert_eq!(Some(4i32).filter(|x| *x > 3).unwrap_or(9), 4);
+                }
+            "#,
+        ),
+        (
+            "coretests/option/compose_some_filter_unwrap_or_bad.rs",
+            "t_compose_some_filter_unwrap_or_bad",
+            "method:filter",
+            false,
+            r#"
+                #[test]
+                fn t_compose_some_filter_unwrap_or_bad() {
+                    assert_eq!(Some(4i32).filter(|x| *x > 3).unwrap_or(9), 9);
+                }
+            "#,
+        ),
+        (
+            "coretests/option/compose_none_ok_or_is_err_good.rs",
+            "t_compose_none_ok_or_is_err_good",
+            "method:ok_or",
+            true,
+            r#"
+                #[test]
+                fn t_compose_none_ok_or_is_err_good() {
+                    assert!(None::<i32>.ok_or(7).is_err());
+                }
+            "#,
+        ),
+        (
+            "coretests/option/compose_none_ok_or_is_err_bad.rs",
+            "t_compose_none_ok_or_is_err_bad",
+            "method:ok_or",
+            false,
+            r#"
+                #[test]
+                fn t_compose_none_ok_or_is_err_bad() {
+                    assert!(None::<i32>.ok_or(7).is_ok());
                 }
             "#,
         ),
@@ -2073,6 +2169,32 @@ fn option_result_literal_methods_compose_to_literal_floor() {
             "#,
         ),
         (
+            "coretests/result/compose_err_map_err_unwrap_or_else_good.rs",
+            "t_compose_err_map_err_unwrap_or_else_good",
+            "method:unwrap_or_else",
+            true,
+            r#"
+                #[test]
+                fn t_compose_err_map_err_unwrap_or_else_good() {
+                    let r: Result<i32, i32> = Err(5);
+                    assert_eq!(r.map_err(|e| e + 2).unwrap_or_else(|e| e + 10), 17);
+                }
+            "#,
+        ),
+        (
+            "coretests/result/compose_err_map_err_unwrap_or_else_bad.rs",
+            "t_compose_err_map_err_unwrap_or_else_bad",
+            "method:unwrap_or_else",
+            false,
+            r#"
+                #[test]
+                fn t_compose_err_map_err_unwrap_or_else_bad() {
+                    let r: Result<i32, i32> = Err(5);
+                    assert_eq!(r.map_err(|e| e + 2).unwrap_or_else(|e| e + 10), 15);
+                }
+            "#,
+        ),
+        (
             "coretests/result/compose_ok_pred_bad.rs",
             "t_compose_ok_pred_bad",
             "method:is_err",
@@ -2152,6 +2274,17 @@ fn option_result_literal_methods_runtime_payloads_decline() {
                 }
             "#,
         ),
+        (
+            "coretests/option/compose_runtime_payload_chain.rs",
+            r#"
+                fn runtime() -> i32 { std::env::args().count() as i32 }
+
+                #[test]
+                fn t_runtime_payload_chain() {
+                    assert_eq!(Some(runtime()).map(|x| x + 1).unwrap_or(9), 9);
+                }
+            "#,
+        ),
     ];
 
     for (path, src) in cases {
@@ -2159,6 +2292,13 @@ fn option_result_literal_methods_runtime_payloads_decline() {
         assert_eq!(
             out.assertions_lifted, 0,
             "{path} has a runtime payload; literal-method sugar must propagate Hit/refuse instead of inventing a literal assertion"
+        );
+        assert!(
+            out.skip_reasons
+                .iter()
+                .any(|reason| reason.contains("runtime Option/Result payload, not literal")),
+            "{path} should name-refuse runtime monadic payloads: {:?}",
+            out.skip_reasons
         );
     }
 }

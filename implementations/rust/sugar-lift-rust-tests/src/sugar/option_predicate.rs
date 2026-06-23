@@ -79,7 +79,7 @@ impl Sugar for OptionPredicateSugar {
             Err(kind) => {
                 return Outcome::Hit(Effect::Unsupported {
                     reason: format!(
-                        "Option `{}` over non-literal `{kind}` payload; refused",
+                        "runtime Option/Result payload, not literal (`{}` over `{kind}`)",
                         self.method
                     ),
                 })
@@ -135,7 +135,12 @@ fn receiver_resolves_option_source(expr: &Expr, fcx: &SugarBuildCtx, depth: usiz
             let child_fcx = fcx.with_bound_path(&name);
             receiver_resolves_option_source(init, &child_fcx, depth + 1)
         }
-        Expr::MethodCall(call) if call.method == "map" && call.args.len() == 1 => {
+        Expr::MethodCall(call)
+            if matches!(
+                call.method.to_string().as_str(),
+                "map" | "and_then" | "filter"
+            ) =>
+        {
             receiver_resolves_option_source(&call.receiver, fcx, depth + 1)
         }
         Expr::Paren(paren) => receiver_resolves_option_source(&paren.expr, fcx, depth + 1),
