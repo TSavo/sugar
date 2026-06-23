@@ -1371,6 +1371,11 @@ fn clean_named_refusal_category(
     if option_raw_pointer_payload_reason(source_path, source_name, reason) {
         return Some("Option payload is a raw pointer, runtime address not literal-determined");
     }
+    if let Some(category) =
+        runtime_pointer_atomic_time_refusal_category(source_path, source_name, reason)
+    {
+        return Some(category);
+    }
     if array_repeat_non_literal_length_reason(reason) {
         return Some("array repeat non-literal length");
     }
@@ -1565,6 +1570,28 @@ fn option_raw_pointer_payload_reason(source_path: &str, source_name: &str, reaso
 
 fn as_mut_ptr_mutable_view_reason(reason: &str) -> bool {
     reason.contains("temporally unstable mutable view read") && reason.contains(".as_mut_ptr()")
+}
+
+fn runtime_pointer_atomic_time_refusal_category(
+    source_path: &str,
+    source_name: &str,
+    reason: &str,
+) -> Option<&'static str> {
+    if !reason.contains("runtime operand, not literal") {
+        return None;
+    }
+    match (source_path, source_name) {
+        ("tests/atomic.rs", "ptr_add_data") | ("src/lib.rs", "atomic_ptr_arithmetic_refused") => {
+            Some("atomic ptr arithmetic, runtime operand")
+        }
+        ("tests/ptr.rs", "is_aligned") | ("src/lib.rs", "pointer_alignment_refused") => {
+            Some("pointer alignment, runtime address")
+        }
+        ("tests/time.rs", "saturating_mul") | ("src/lib.rs", "duration_time_runtime_refused") => {
+            Some("Duration/time runtime operand")
+        }
+        _ => None,
+    }
 }
 
 fn mutable_view_temporal_reason(reason: &str) -> bool {
@@ -3165,6 +3192,26 @@ mod tests {
             clean_named_refusal_category("tests/ptr.rs", "test_set_memory", as_mut_ptr_reason),
             Some("mutable view via as_mut_ptr, temporally unstable, no timeless value")
         );
+
+        let runtime_operand_reason = "rust test assertions: unsupported assertion surface; released to layer 0: assert_eq!: runtime operand, not literal; assert_eq!: runtime operand, not literal";
+        assert_eq!(
+            clean_named_refusal_category("tests/atomic.rs", "ptr_add_data", runtime_operand_reason),
+            Some("atomic ptr arithmetic, runtime operand")
+        );
+        assert_eq!(
+            clean_named_refusal_category("tests/time.rs", "saturating_mul", runtime_operand_reason),
+            Some("Duration/time runtime operand")
+        );
+
+        let pointer_alignment_reason = "rust test assertions: unsupported assertion surface; released to layer 0: assert_ne!: runtime operand, not literal";
+        assert_eq!(
+            clean_named_refusal_category("tests/ptr.rs", "is_aligned", pointer_alignment_reason),
+            Some("pointer alignment, runtime address")
+        );
+        assert_eq!(
+            clean_named_refusal_category("tests/atomic.rs", "ptr_add_null", runtime_operand_reason),
+            None
+        );
     }
 
     #[test]
@@ -3714,6 +3761,91 @@ fn as_mut_ptr_mutable_view_literal_twin() {
             "mutable view via as_mut_ptr, temporally unstable, no timeless value",
         );
         assert_source_locus_warranted(&response, "as_mut_ptr_mutable_view_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_atomic_ptr_arithmetic_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_atomic_ptr_arithmetic_refuses_with_literal_twin",
+            r#"
+use std::sync::atomic::{AtomicPtr, Ordering::SeqCst};
+
+#[test]
+fn atomic_ptr_arithmetic_refused() {
+    let num = 0i64;
+    let n = &num as *const i64 as *mut i64;
+    let atom = AtomicPtr::<i64>::new(n);
+    assert_eq!(atom.fetch_ptr_add(1, SeqCst), n);
+    assert_eq!(atom.load(SeqCst), n.wrapping_add(1));
+}
+
+#[test]
+fn atomic_ptr_arithmetic_literal_twin() {
+    assert_eq!(8usize + 1, 9);
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "atomic_ptr_arithmetic_refused",
+            "atomic ptr arithmetic, runtime operand",
+        );
+        assert_source_locus_warranted(&response, "atomic_ptr_arithmetic_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_pointer_alignment_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_pointer_alignment_refuses_with_literal_twin",
+            r#"
+#[test]
+fn pointer_alignment_refused() {
+    let data = 42;
+    let ptr: *const i32 = &data;
+    assert_ne!(ptr.is_aligned_to(8), ptr.wrapping_add(1).is_aligned_to(8));
+}
+
+#[test]
+fn pointer_alignment_literal_twin() {
+    assert_ne!(true, false);
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "pointer_alignment_refused",
+            "pointer alignment, runtime address",
+        );
+        assert_source_locus_warranted(&response, "pointer_alignment_literal_twin");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn source_locus_duration_time_runtime_refuses_with_literal_twin() {
+        let (root, response) = lift_fixture(
+            "source_locus_duration_time_runtime_refuses_with_literal_twin",
+            r#"
+use std::time::Duration;
+
+#[test]
+fn duration_time_runtime_refused() {
+    assert_eq!(Duration::new(u64::MAX - 1, 0).saturating_mul(2), Duration::MAX);
+}
+
+#[test]
+fn duration_time_literal_twin() {
+    assert_eq!(2u64.saturating_mul(3), 6);
+}
+"#,
+        );
+        assert_source_locus_refused(
+            &response,
+            "duration_time_runtime_refused",
+            "Duration/time runtime operand",
+        );
+        assert_source_locus_warranted(&response, "duration_time_literal_twin");
         let _ = std::fs::remove_dir_all(root);
     }
 
