@@ -9,13 +9,15 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{build_constraint, SugarBuildCtx};
+use crate::sugar::factory::{
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+};
 use crate::{
     ascii_byte_class_atom, ascii_char_class_atom, bool_const, closure_simple_param_name,
     literal_byte_string_value, literal_char_predicate_atom, literal_string_value,
     matches_param_receiver, scalar_iter_domain_elems, scalar_literal_array_elems, simple_path_name,
     substitute_expr, term_single_char_value, token_key, AssertionFactKind, Desugared, Effect,
-    Outcome, Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON,
+    Outcome, Sugar, SugarCtx, Warrant,
 };
 use sugar_ir_symbolic::{and_, eq, num, or_, str_const, Formula, Term};
 use syn::{Expr, ExprClosure, ExprMethodCall};
@@ -40,8 +42,21 @@ enum LiteralIteratorKind {
 
 struct LiteralIteratorQuantifierSugar {
     method: Quantifier,
-    receiver: Expr,
     closure: ExprClosure,
+    domain: QuantifierDomain,
+}
+
+enum QuantifierDomain {
+    Literal {
+        kind: LiteralIteratorKind,
+        elements: Vec<Rc<Term>>,
+    },
+    Scalar {
+        constraints: Vec<SugarBody>,
+    },
+    InvalidParam {
+        reason: String,
+    },
 }
 
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
@@ -66,75 +81,93 @@ fn recognize_method(
     if closure.inputs.len() != 1 {
         return None;
     }
-    if literal_iterator_elements(&call.receiver).is_none()
-        && scalar_iter_domain_elems(&call.receiver, fcx.scope()).is_none()
-        && scalar_iter_domain_elems_from_let_inits(&call.receiver, fcx.let_inits()).is_none()
-    {
+    let literal_elements = literal_iterator_elements(&call.receiver);
+    let scalar_elements = scalar_iter_domain_elems(&call.receiver, fcx.scope())
+        .or_else(|| scalar_iter_domain_elems_from_let_inits(&call.receiver, fcx.let_inits()));
+    if literal_elements.is_none() && scalar_elements.is_none() {
         return None;
     }
+    let Some(param_name) = closure_simple_param_name(closure) else {
+        return Some(LiteralIteratorQuantifierSugar {
+            method,
+            closure: closure.clone(),
+            domain: QuantifierDomain::InvalidParam {
+                reason: format!(
+                    "{} predicate requires a simple identifier parameter",
+                    method.as_str()
+                ),
+            },
+        });
+    };
+    let domain = if let Some((kind, elements)) = literal_elements {
+        QuantifierDomain::Literal { kind, elements }
+    } else {
+        let constraints = scalar_elements?
+            .into_iter()
+            .map(|element| {
+                let mut bindings = BTreeMap::new();
+                bindings.insert(param_name.clone(), element);
+                let body = substitute_expr(closure.body.as_ref(), &bindings);
+                SugarBody::constraint(&body, fcx)
+            })
+            .collect();
+        QuantifierDomain::Scalar { constraints }
+    };
     Some(LiteralIteratorQuantifierSugar {
         method,
-        receiver: (*call.receiver).clone(),
         closure: closure.clone(),
+        domain,
     })
 }
 
 impl Sugar for LiteralIteratorQuantifierSugar {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+        match &self.domain {
+            QuantifierDomain::InvalidParam { reason } => {
+                return Ok(unsupported(reason.clone()));
+            }
+            QuantifierDomain::Literal { kind, elements } => {
+                let mut atoms = Vec::new();
+                for element in elements {
+                    let atom = match iterator_element_predicate_atom(
+                        self.closure.body.as_ref(),
+                        closure_simple_param_name(&self.closure)
+                            .as_deref()
+                            .unwrap_or("_"),
+                        element.clone(),
+                        *kind,
+                    ) {
+                        Ok(atom) => atom,
+                        Err(reason) => return Ok(unsupported(reason)),
+                    };
+                    atoms.push(atom);
+                }
+                Ok(constraint(
+                    self.join(atoms),
+                    AssertionFactKind::Warranted,
+                    None,
+                ))
+            }
+            QuantifierDomain::Scalar { constraints } => {
+                let mut atoms = Vec::new();
+                let mut kind = AssertionFactKind::Support;
+                for body in constraints {
+                    let payload = match constraint_payload(body, ctx) {
+                        Ok(payload) => payload,
+                        Err(reduction) => return reduction,
+                    };
+                    if payload.kind.is_warranted() {
+                        kind = AssertionFactKind::Warranted;
+                    }
+                    atoms.push(payload.atom);
+                }
+                Ok(constraint(self.join(atoms), kind, None))
+            }
+        }
+    }
+
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let Some(param_name) = closure_simple_param_name(&self.closure) else {
-            if literal_iterator_elements(&self.receiver).is_some()
-                || scalar_iter_domain_elems(&self.receiver, ctx.scope).is_some()
-            {
-                return unsupported(format!(
-                    "{} predicate requires a simple identifier parameter",
-                    self.method.as_str()
-                ));
-            }
-            return Outcome::Incomplete(Effect::Unsupported {
-                reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
-            });
-        };
-
-        if let Some((kind, elements)) = literal_iterator_elements(&self.receiver) {
-            let mut atoms = Vec::new();
-            for element in elements {
-                let atom = match iterator_element_predicate_atom(
-                    self.closure.body.as_ref(),
-                    &param_name,
-                    element,
-                    kind,
-                ) {
-                    Ok(atom) => atom,
-                    Err(reason) => return unsupported(reason),
-                };
-                atoms.push(atom);
-            }
-            return constraint(self.join(atoms), AssertionFactKind::Warranted, None);
-        }
-
-        let Some(elements) = scalar_iter_domain_elems(&self.receiver, ctx.scope) else {
-            return Outcome::Incomplete(Effect::Unsupported {
-                reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
-            });
-        };
-        let mut atoms = Vec::new();
-        let mut kind = AssertionFactKind::Support;
-        for element in elements {
-            let mut bindings = BTreeMap::new();
-            bindings.insert(param_name.clone(), element);
-            let body = substitute_expr(self.closure.body.as_ref(), &bindings);
-            let empty = BTreeMap::new();
-            let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &empty);
-            let payload = match constraint_payload(&*build_constraint(&body, &fcx), ctx) {
-                Ok(payload) => payload,
-                Err(outcome) => return outcome,
-            };
-            if payload.kind.is_warranted() {
-                kind = AssertionFactKind::Warranted;
-            }
-            atoms.push(payload.atom);
-        }
-        constraint(self.join(atoms), kind, None)
+        compat_reduction(self.reduce(ctx))
     }
 }
 
@@ -242,15 +275,19 @@ struct ConstraintPayload {
     kind: AssertionFactKind,
 }
 
-fn constraint_payload(node: &dyn Sugar, ctx: &SugarCtx) -> Result<ConstraintPayload, Outcome> {
-    match node.desugar(ctx) {
-        Outcome::Complete(Desugared::Constraints { atom, kind, .. }) => {
+fn constraint_payload(
+    body: &SugarBody,
+    ctx: &SugarCtx,
+) -> Result<ConstraintPayload, FactoryReduction> {
+    match body.reduce(ctx) {
+        Ok(Outcome::Complete(Desugared::Constraints { atom, kind, .. })) => {
             Ok(ConstraintPayload { atom, kind })
         }
-        Outcome::Complete(_) => Err(Outcome::Incomplete(Effect::Unsupported {
-            reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
-        })),
-        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
+        Ok(Outcome::Complete(_)) => Err(Err(FactoryGap::new(
+            "literal iterator quantifier body reduced to non-constraint",
+        ))),
+        Ok(Outcome::Incomplete(effect)) => Err(Ok(Outcome::Incomplete(effect))),
+        Err(gap) => Err(Err(gap)),
     }
 }
 

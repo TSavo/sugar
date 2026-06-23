@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // COMPOSITE recognizer for literal range constructor values used as statement/let
-// surfaces. The recognizer only captures the raw bound expressions; desugar builds
-// each bound lazily and either emits construction field facts or propagates the
-// child's named Incomplete unchanged.
+// surfaces. The recognizer constructs each field's child body without reducing it;
+// desugar/reduce emits construction field facts or propagates the child's terminal
+// answer unchanged.
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{and_, eq, Term};
 use syn::{Expr, Member};
 
-use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::sugar::format::stable_let_bindings;
+use crate::sugar::factory::{
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+};
 use crate::{AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -40,24 +40,28 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
                 return None;
             }
             let kind = RangeConstructKind::from_struct_path(&s.path)?;
-            let mut fields = Vec::new();
+            let mut raw_fields = Vec::new();
             for field in &s.fields {
                 let name = match &field.member {
                     Member::Named(id) => id.to_string(),
                     Member::Unnamed(idx) => idx.index.to_string(),
                 };
                 if kind.accepts_field(&name) {
-                    fields.push((name, field.expr.clone()));
+                    raw_fields.push((name, &field.expr));
                 }
             }
-            if !kind.has_required_fields(&fields) {
+            let field_names = raw_fields
+                .iter()
+                .map(|(name, _)| name.clone())
+                .collect::<Vec<_>>();
+            if !kind.has_required_field_names(&field_names) {
                 return None;
             }
-            Some(Box::new(RangeConstructSugar {
-                kind,
-                fields,
-                let_inits: capture_let_inits(fcx),
-            }))
+            let fields = raw_fields
+                .into_iter()
+                .map(|(name, expr)| (name, SugarBody::term(expr, fcx)))
+                .collect();
+            Some(RangeConstructSugar::new(kind, fields))
         }
         Expr::Call(call) => {
             let Expr::Path(path) = call.func.as_ref() else {
@@ -67,14 +71,13 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
             if call.args.len() != 2 {
                 return None;
             }
-            Some(Box::new(RangeConstructSugar {
+            Some(RangeConstructSugar::new(
                 kind,
-                fields: vec![
-                    ("start".to_string(), call.args[0].clone()),
-                    ("end".to_string(), call.args[1].clone()),
+                vec![
+                    ("start".to_string(), SugarBody::term(&call.args[0], fcx)),
+                    ("end".to_string(), SugarBody::term(&call.args[1], fcx)),
                 ],
-                let_inits: capture_let_inits(fcx),
-            }))
+            ))
         }
         _ => None,
     }
@@ -115,13 +118,13 @@ impl RangeConstructKind {
         }
     }
 
-    fn has_required_fields(self, fields: &[(String, Expr)]) -> bool {
+    fn has_required_field_names(self, fields: &[String]) -> bool {
         match self {
             Self::Range | Self::RangeInclusive => {
-                has_field(fields, "start") && has_field(fields, "end")
+                has_field_name(fields, "start") && has_field_name(fields, "end")
             }
-            Self::RangeFrom => has_field(fields, "start"),
-            Self::RangeTo | Self::RangeToInclusive => has_field(fields, "end"),
+            Self::RangeFrom => has_field_name(fields, "start"),
+            Self::RangeTo | Self::RangeToInclusive => has_field_name(fields, "end"),
         }
     }
 
@@ -146,29 +149,29 @@ impl RangeConstructKind {
     }
 }
 
-fn has_field(fields: &[(String, Expr)], want: &str) -> bool {
-    fields.iter().any(|(field, _)| field == want)
+fn has_field_name(fields: &[String], want: &str) -> bool {
+    fields.iter().any(|field| field == want)
 }
 
 struct RangeConstructSugar {
     kind: RangeConstructKind,
-    fields: Vec<(String, Expr)>,
-    let_inits: BTreeMap<String, Expr>,
+    fields: Vec<(String, SugarBody)>,
 }
 
 impl Sugar for RangeConstructSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let stable = stable_let_bindings(ctx.scope);
-        let let_inits = merge_let_inits(&stable, &self.let_inits);
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
         let mut fields = Vec::new();
-        for (name, expr) in &self.fields {
-            let term = match build_term(expr, &fcx).desugar(ctx) {
+        for (name, body) in &self.fields {
+            let term = match body.reduce(ctx)? {
                 Outcome::Complete(d) => match d.into_term() {
                     Some(term) => term,
-                    None => return Outcome::from_opt(None),
+                    None => {
+                        return Err(FactoryGap::new(format!(
+                            "range construct field `{name}` reduced to non-term",
+                        )))
+                    }
                 },
-                Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+                Outcome::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
             };
             fields.push((name.clone(), term));
         }
@@ -188,16 +191,20 @@ impl Sugar for RangeConstructSugar {
             .collect::<Vec<_>>();
         let n = atoms.len();
         if n == 0 {
-            return Outcome::from_opt(None);
+            return Err(FactoryGap::new("range construct has no fields"));
         }
-        Outcome::Complete(Desugared::Constraints {
+        Ok(Outcome::Complete(Desugared::Constraints {
             atom: and_(atoms),
             n,
             kind: AssertionFactKind::Warranted,
             warrant: Warrant {
                 name: Some(self.kind.warrant_name().to_string()),
             },
-        })
+        }))
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
     }
 }
 
@@ -238,20 +245,8 @@ impl RangeConstructSugar {
     }
 }
 
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
-}
-
-fn merge_let_inits<'a>(
-    stable: &'a BTreeMap<String, Expr>,
-    captured: &'a BTreeMap<String, Expr>,
-) -> BTreeMap<String, &'a Expr> {
-    stable
-        .iter()
-        .map(|(name, init)| (name.clone(), init))
-        .chain(captured.iter().map(|(name, init)| (name.clone(), init)))
-        .collect()
+impl RangeConstructSugar {
+    fn new(kind: RangeConstructKind, fields: Vec<(String, SugarBody)>) -> Box<dyn Sugar> {
+        Box::new(Self { kind, fields })
+    }
 }

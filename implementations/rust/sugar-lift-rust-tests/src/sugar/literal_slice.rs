@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use syn::{Expr, ExprArray, ExprRange};
+use syn::{Expr, ExprArray, ExprRange, Pat, Stmt};
 use tracing::debug;
 
 use crate::sugar::factory::SugarBuildCtx;
@@ -112,6 +112,9 @@ fn resolve_literal_array<'a>(
 }
 
 fn slice_bounds(expr: &Expr, len: usize) -> Option<(usize, usize)> {
+    if let Some(bounds) = exhausted_literal_iterator_block_bounds(expr, len) {
+        return Some(bounds);
+    }
     if len > SUGAR_SEQ_CAP as usize {
         return None;
     }
@@ -119,6 +122,67 @@ fn slice_bounds(expr: &Expr, len: usize) -> Option<(usize, usize)> {
         return None;
     };
     slice_range_bounds(range, len)
+}
+
+fn exhausted_literal_iterator_block_bounds(expr: &Expr, len: usize) -> Option<(usize, usize)> {
+    let Expr::Block(block) = strip_refs_groups(expr) else {
+        return None;
+    };
+    let [Stmt::Local(local), Stmt::Expr(drain, _), Stmt::Expr(tail, None)] =
+        block.block.stmts.as_slice()
+    else {
+        return None;
+    };
+    let name = mutable_simple_binding(&local.pat)?;
+    let init = local.init.as_ref().filter(|init| init.diverge.is_none())?;
+    if !is_full_drain_by_ref_count(drain, &name) || !is_path_named(tail, &name) {
+        return None;
+    }
+    exhausted_range_empty_bounds(&init.expr, len)
+}
+
+fn mutable_simple_binding(pat: &Pat) -> Option<String> {
+    match pat {
+        Pat::Ident(id) if id.subpat.is_none() && id.mutability.is_some() && id.by_ref.is_none() => {
+            Some(id.ident.to_string())
+        }
+        Pat::Type(t) => mutable_simple_binding(&t.pat),
+        Pat::Paren(p) => mutable_simple_binding(&p.pat),
+        _ => None,
+    }
+}
+
+fn is_full_drain_by_ref_count(expr: &Expr, name: &str) -> bool {
+    let Expr::MethodCall(count) = strip_refs_groups(expr) else {
+        return false;
+    };
+    if count.method != "count" || !count.args.is_empty() {
+        return false;
+    }
+    let Expr::MethodCall(by_ref) = strip_refs_groups(&count.receiver) else {
+        return false;
+    };
+    by_ref.method == "by_ref" && by_ref.args.is_empty() && is_path_named(&by_ref.receiver, name)
+}
+
+fn is_path_named(expr: &Expr, name: &str) -> bool {
+    matches!(strip_refs_groups(expr), Expr::Path(path) if path.qself.is_none() && path.path.is_ident(name))
+}
+
+fn exhausted_range_empty_bounds(expr: &Expr, len: usize) -> Option<(usize, usize)> {
+    let Expr::Range(range) = strip_refs_groups(expr) else {
+        return None;
+    };
+    let start = match &range.start {
+        Some(start) => const_usize(start)?,
+        None => 0,
+    };
+    let end = const_usize(range.end.as_deref()?)?;
+    let exhausted_at = match range.limits {
+        syn::RangeLimits::HalfOpen(_) => end,
+        syn::RangeLimits::Closed(_) => end.checked_add(1)?,
+    };
+    (start <= exhausted_at && exhausted_at <= len).then_some((exhausted_at, exhausted_at))
 }
 
 fn slice_range_bounds(range: &ExprRange, len: usize) -> Option<(usize, usize)> {

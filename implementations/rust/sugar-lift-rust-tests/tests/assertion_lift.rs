@@ -10875,11 +10875,24 @@ fn fmt_arith_bad() {
     }
 }
 
+fn assert_factory_gap_for_site(out: &AdapterOutput, selected: &str, site_needle: &str) {
+    assert!(
+        out.factory_audits.iter().any(|audit| {
+            audit.selected == Some(selected)
+                && audit.site.contains(site_needle)
+                && audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Unresolved
+                && audit.output == "gap"
+        }),
+        "expected factory gap for `{selected}` at `{site_needle}`: {:?}",
+        out.factory_audits
+    );
+}
+
 #[test]
-fn format_overflowing_arithmetic_stays_opaque_no_false_warrant() {
+fn format_overflowing_arithmetic_gaps_no_false_warrant() {
     // The cardinal-sin guard: `200u8 + 100u8` OVERFLOWS u8 (real rust panics in debug,
-    // wraps in release), so it is NOT text-determined. The fold BAILS and the macro stays
-    // an opaque `macro:` term -- never a forged "300" or the release-wrap "44".
+    // wraps in release), so it is NOT text-determined. FormatSugar must not forge
+    // "300", the release-wrap "44", or an opaque Complete; it records a factory gap.
     let src = r#"
 #[test]
 fn fmt_overflow() {
@@ -10887,23 +10900,19 @@ fn fmt_overflow() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/fmt.rs");
-    let ops = inv_operands(single_warranted_decl(&out));
-    assert_eq!(ops.len(), 1);
-    let lhs = eq_lhs_name(&ops[0]);
     assert!(
-        lhs.starts_with("macro:"),
-        "overflowing-arithmetic format! stays opaque (no false warrant): {lhs}"
+        warranted_decls(&out).is_empty(),
+        "overflowing format must not warrant a forged or opaque value: {:?}",
+        out.decls
     );
+    assert_factory_gap_for_site(&out, "macro_term", "format !");
 }
 
 #[test]
-fn identical_runtime_format_calls_coalesce_congruence() {
-    // Teeth (the opaque path STILL applies to a RUNTIME arg): two identical
-    // `format!("{x:?}")` over a RUNTIME-bound `x` (`let x = runtime();`, NOT a
-    // resolvable literal) are NOT dissolvable by FormatSugar, so they lift as the SAME
-    // opaque `macro:` term -- a contradiction over them stays UNSAT (the non-vacuity
-    // guarantee for the un-dissolvable case). FormatSugar bails on the runtime binding
-    // and the existing opaque-macro path takes over, exactly as before.
+fn identical_runtime_format_calls_gap_not_forge_congruence() {
+    // Runtime `format!("{x:?}")` has no text-determined value. The old opaque macro
+    // warrant was a side door; the honest result is no warranted value plus gap rows for
+    // both format sites.
     let src = r#"
 #[test]
 fn fmt_twice() {
@@ -10913,25 +10922,18 @@ fn fmt_twice() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/fmt.rs");
-    let ops = inv_operands(single_warranted_decl(&out));
-    assert_eq!(ops.len(), 2);
-    let lhs0 = eq_lhs_name(&ops[0]);
-    let lhs1 = eq_lhs_name(&ops[1]);
     assert!(
-        lhs0.starts_with("macro:"),
-        "runtime-arg format! stays opaque: {lhs0}"
+        warranted_decls(&out).is_empty(),
+        "runtime format must not warrant a forged or opaque value: {:?}",
+        out.decls
     );
-    assert_eq!(
-        lhs0, lhs1,
-        "identical runtime format! calls coalesce (congruence)"
-    );
+    assert_factory_gap_for_site(&out, "macro_term", "format ! ({ x :? })");
 }
 
 #[test]
-fn distinct_runtime_format_calls_do_not_coalesce() {
-    // Distinctness over RUNTIME-bound args: different macro source -> different opaque
-    // terms. Both bindings are runtime (un-dissolvable), so FormatSugar bails and the
-    // opaque path keys them by their (distinct) source text.
+fn distinct_runtime_format_calls_gap_not_forge_values() {
+    // Distinct runtime bindings are still not dissolvable; both sites must gap rather
+    // than mint opaque Complete terms or forged string literals.
     let src = r#"
 #[test]
 fn fmt_distinct() {
@@ -10942,13 +10944,13 @@ fn fmt_distinct() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/fmt.rs");
-    let ops = inv_operands(single_warranted_decl(&out));
-    assert_eq!(ops.len(), 2);
-    assert_ne!(
-        eq_lhs_name(&ops[0]),
-        eq_lhs_name(&ops[1]),
-        "distinct runtime format! calls do not coalesce"
+    assert!(
+        warranted_decls(&out).is_empty(),
+        "runtime format must not warrant a forged or opaque value: {:?}",
+        out.decls
     );
+    assert_factory_gap_for_site(&out, "macro_term", "format ! ({ x :? })");
+    assert_factory_gap_for_site(&out, "macro_term", "format ! ({ y :? })");
 }
 
 #[test]
@@ -16318,6 +16320,84 @@ fn iter_next_over_literal_array_grounds_to_some_first_element() {
 }
 
 #[test]
+fn iterator_composite_bound_path_and_const_cfg_range_have_teeth() {
+    let good = r#"
+        #[test]
+        fn bound_count_good() {
+            let iter = 0..=2;
+            assert_eq!(iter.count(), 3);
+        }
+    "#;
+    let out = lift_file(&parse(good), "tests/iter_bound_count_good.rs");
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        complete_eq_int_pairs(single_warranted_decl(&out)),
+        vec![(3, 3)],
+        "bound iterator count must compose through bound_path_composite"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "bound_count_good") {
+        assert!(sat, "0..=2 has count 3");
+    }
+
+    let bad = r#"
+        #[test]
+        fn bound_count_bad() {
+            let iter = 0..=2;
+            assert_eq!(iter.count(), 4);
+        }
+    "#;
+    let out = lift_file(&parse(bad), "tests/iter_bound_count_bad.rs");
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        complete_eq_int_pairs(single_warranted_decl(&out)),
+        vec![(3, 4)],
+        "bad twin must carry the concrete range count against the wrong literal"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "bound_count_bad") {
+        assert!(!sat, "0..=2 has count 3, not 4");
+    }
+
+    let cfg_good = r#"
+        #[test]
+        fn cfg_count_good() {
+            let iter = if cfg!(miri) { 0..=1 } else { 0..=2 };
+            assert_eq!(iter.count(), 3);
+        }
+    "#;
+    let cfg = TargetCfg::from_rustc_cfg_facts(["unix", "target_pointer_width=\"64\""])
+        .expect("target cfg parses");
+    let opts = LiftOptions::for_target_cfg(cfg);
+    let out = lift_file_with_options(&parse(cfg_good), "tests/iter_cfg_count_good.rs", &opts);
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        complete_eq_int_pairs(single_warranted_decl(&out)),
+        vec![(3, 3)],
+        "const cfg range branches must lower lazily as Composite values"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "cfg_count_good") {
+        assert!(sat, "default cfg path chooses 0..=2 with count 3");
+    }
+
+    let cfg_bad = r#"
+        #[test]
+        fn cfg_count_bad() {
+            let iter = if cfg!(miri) { 0..=1 } else { 0..=2 };
+            assert_eq!(iter.count(), 2);
+        }
+    "#;
+    let out = lift_file_with_options(&parse(cfg_bad), "tests/iter_cfg_count_bad.rs", &opts);
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        complete_eq_int_pairs(single_warranted_decl(&out)),
+        vec![(3, 2)],
+        "bad cfg twin must carry the target-resolved range count against the wrong literal"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "cfg_count_bad") {
+        assert!(!sat, "non-miri cfg path chooses 0..=2 with count 3, not 2");
+    }
+}
+
+#[test]
 fn iter_nth_and_last_over_literal_array_ground_with_teeth() {
     // `.nth(k)` -> `Some(elem[k])`; `.last()` -> `Some(elem[len-1])`. Past the end
     // -> `None`. Each grounds with bad-twin teeth.
@@ -20890,47 +20970,35 @@ fn str_replace_trim_methods_have_teeth() {
 fn str_method_non_ascii_unicode_case_stays_opaque_no_false_warrant() {
     // DISCRIMINATION (no false warrant): `.to_uppercase()` over a NON-ASCII receiver is
     // not byte-wise text-determined here (a Unicode-table dependency we refuse to guess),
-    // so str_method returns Incomplete the frontier and the LHS stays opaque -- never a forged
-    // version-dependent value. (The byte-wise `to_ascii_*` recompute over the same
+    // so str_method gaps the frontier -- never a forged version-dependent value. (The byte-wise `to_ascii_*` recompute over the same
     // non-ASCII input IS proven exact by the str_method resolver unit tests.)
     let out = lift_file(
         &parse("#[test]\nfn t() { assert_eq!(\"\u{00df}\u{00fc}rl\".to_uppercase(), \"x\"); }\n"),
         "tests/str_teeth.rs",
     );
-    let warranted: Vec<_> = warranted_decls(&out).into_iter().cloned().collect();
-    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&warranted);
     assert!(
-        doc.contains("opaque:")
-            && doc.contains("to_uppercase")
-            && !doc.contains("\"args\":[{\"kind\":\"const\",\"value\":\"x\""),
-        "a non-ASCII to_uppercase stays opaque (not a forged literal): {doc}"
+        warranted_decls(&out).is_empty(),
+        "non-ASCII to_uppercase must not warrant a forged or opaque value: {:?}",
+        out.decls
     );
+    assert_factory_gap_for_site(&out, "str_method", "to_uppercase");
 }
 
 #[test]
 fn format_runtime_arg_does_not_overfire() {
     // DISCRIMINATION (fake-complete guard): a `format!` over a RUNTIME arg must NOT dissolve
-    // to a str_const (it has no written-literal value). It falls through to the opaque
-    // path, so the obligation is NOT a `eq(str_const, str_const)` the wrong-twin would
-    // refute -- i.e. FormatSugar does not forge a value it cannot reconstruct.
+    // to a str_const (it has no written-literal value). It records a factory gap, so the
+    // obligation is NOT a forged `eq(str_const, str_const)` the wrong-twin would refute.
     let out = lift_file(
         &parse("#[test]\nfn t() { assert_eq!(format!(\"{}\", runtime_var), \"0\"); }\n"),
         "tests/fmt_teeth.rs",
     );
-    // The lift still produces a decl (opaque EUF var == str_const), but it must NOT
-    // contain a str_const LHS equal to a reconstructed value -- the LHS stays a Var.
-    let warranted: Vec<_> = warranted_decls(&out).into_iter().cloned().collect();
-    let doc = sugar_ir_symbolic::serialize::marshal_declarations(&warranted);
     assert!(
-        doc.contains("macro:") || doc.contains("\"name\":\"="),
-        "a runtime-arg format! stays opaque (not a forged literal): {doc}"
+        warranted_decls(&out).is_empty(),
+        "runtime-arg format must not warrant a forged or opaque value: {:?}",
+        out.decls
     );
-    // And it must not have dissolved to the literal "0" on the LHS (only the RHS is "0").
-    let lhs_is_forged_zero = doc.matches("\"value\":\"0\"").count() >= 2;
-    assert!(
-        !lhs_is_forged_zero,
-        "a runtime-arg format! must NOT forge a reconstructed string literal: {doc}"
-    );
+    assert_factory_gap_for_site(&out, "macro_term", "format !");
 }
 
 #[test]
@@ -22763,11 +22831,10 @@ fn t() {
 }
 
 #[test]
-fn unexpandable_term_position_macro_still_falls_back_to_opaque_var() {
+fn unexpandable_term_position_macro_is_gap_not_opaque_var() {
     // REGRESSION GUARD: a macro we hold NO definition for (a builtin / opaque macro,
-    // here `line!`) in term position must STILL fall back to the coarse opaque
-    // `macro:<tokens>` EUF var -- the deferred-complete expansion path declines (no held
-    // definition) and `MacroSugar::desugar` completes the pre-built opaque var unchanged.
+    // here `line!`) in term position is a factory gap. It must not fall back to a coarse
+    // opaque `macro:<tokens>` Complete.
     let src = r#"
 #[test]
 fn t() {
@@ -22775,17 +22842,12 @@ fn t() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/macro_term.rs");
-    assert_eq!(out.decls.len(), 1, "warnings: {:?}", out.warnings);
-    let (lhs, _) = single_eq_atom(&out.decls[0]);
-    match lhs.as_ref() {
-        Term::Var { name } => assert!(
-            name.starts_with("macro:line"),
-            "an unexpandable macro must stay the opaque `macro:` var, got `{name}`"
-        ),
-        other => {
-            panic!("an unexpandable macro must lift to the opaque `macro:` var, got {other:?}")
-        }
-    }
+    assert!(
+        warranted_decls(&out).is_empty(),
+        "unexpandable macro must not warrant an opaque Complete: {:?}",
+        out.decls
+    );
+    assert_factory_gap_for_site(&out, "macro_term", "line !");
 }
 
 #[test]
@@ -29378,6 +29440,60 @@ fn consumed_iterator_len_after_full_drain_rewrites_to_zero_with_twins() {
         out.assertions_lifted,
         out.assertions_refused,
     );
+}
+
+#[test]
+fn exhausted_literal_iterator_block_slice_index_has_teeth() {
+    let good = r#"
+        #[test]
+        fn exhausted_block_slice_good() {
+            let data = [0, 1, 2, 3, 4, 5];
+            assert_eq!(
+                data[{ let mut iter = 0..=5; iter.by_ref().count(); iter }].len(),
+                0
+            );
+        }
+    "#;
+    let out = lift_file(
+        &parse(good),
+        "coretests/slice/exhausted_block_slice_good.rs",
+    );
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        complete_eq_int_pairs(single_warranted_decl(&out)),
+        vec![(0, 0)],
+        "fully exhausted literal iterator block should index the empty tail slice"
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "exhausted_block_slice_good",
+    ) {
+        assert!(sat, "empty tail slice length == 0 should be SAT");
+    }
+
+    let bad = r#"
+        #[test]
+        fn exhausted_block_slice_bad() {
+            let data = [0, 1, 2, 3, 4, 5];
+            assert_eq!(
+                data[{ let mut iter = 0..=5; iter.by_ref().count(); iter }].len(),
+                1
+            );
+        }
+    "#;
+    let out = lift_file(&parse(bad), "coretests/slice/exhausted_block_slice_bad.rs");
+    assert_warranted_decl_count(&out, 1);
+    assert_eq!(
+        complete_eq_int_pairs(single_warranted_decl(&out)),
+        vec![(0, 1)],
+        "bad twin must carry the real empty-tail length against the wrong literal"
+    );
+    if let Some(sat) = z3_verdict(
+        &inv_json(single_warranted_decl(&out)),
+        "exhausted_block_slice_bad",
+    ) {
+        assert!(!sat, "empty tail slice length == 1 should be z3-UNSAT");
+    }
 }
 
 /// (b) `it.next()` itself (the consuming call) must NOT be refused -- refusal only

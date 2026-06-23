@@ -14,13 +14,14 @@
 // fallback owns the call -- never a fabricated pairing. A recognized-but-unbounded operand
 // (an open range) has no grounded `Seq`, so `into_seq` bails and the node produces nothing.
 
-use std::collections::BTreeMap;
-
 use syn::Expr;
 use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{build_composite, has_composite, SugarBuildCtx};
+use crate::sugar::factory::{
+    build_composite, compat_reduction, has_composite, FactoryGap, FactoryReduction, SugarBody,
+    SugarBuildCtx,
+};
 use crate::sugar::method_family;
 use crate::{ConstVal, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
 
@@ -42,11 +43,10 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     {
         return None;
     }
-    Some(Box::new(ZipSugar {
-        left: (*call.receiver).clone(),
-        right: call.args[0].clone(),
-        let_inits: capture_let_inits(fcx),
-    }))
+    Some(ZipSugar::new(
+        operand_body(&call.receiver, fcx),
+        operand_body(&call.args[0], fcx),
+    ))
 }
 
 fn operand_resolves_literal_sequence(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
@@ -56,70 +56,86 @@ fn operand_resolves_literal_sequence(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
 /// Pair the two finite domains element-wise, truncating to the shorter: element `l_i` and
 /// `r_i` become the tuple `(l_i, r_i)`.
 struct ZipSugar {
-    left: Expr,
-    right: Expr,
-    let_inits: BTreeMap<String, Expr>,
+    left: SugarBody,
+    right: SugarBody,
 }
 
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
+impl ZipSugar {
+    fn new(left: SugarBody, right: SugarBody) -> Box<dyn Sugar> {
+        Box::new(Self { left, right })
+    }
+}
+
+fn operand_body(expr: &Expr, fcx: &SugarBuildCtx) -> SugarBody {
+    SugarBody::from_node(
+        method_family::build_literal_sequence_composite(expr, fcx)
+            .unwrap_or_else(|| build_composite(expr, fcx)),
+    )
 }
 
 impl Sugar for ZipSugar {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+        let left = match sequence_from_body(&self.left, ctx, "zip lhs") {
+            Ok(seq) => seq,
+            Err(reduction) => return reduction,
+        };
+        let right = match sequence_from_body(&self.right, ctx, "zip rhs") {
+            Ok(seq) => seq,
+            Err(reduction) => return reduction,
+        };
+        // `zip` stops at the shorter side: `min(left.len, right.len)` pairs.
+        let len = left.len().min(right.len());
+        if len > SUGAR_SEQ_CAP as usize {
+            return Err(FactoryGap::new(format!(
+                "zip sequence length {len} exceeds cap {SUGAR_SEQ_CAP}"
+            )));
+        }
+        let mut out = Vec::with_capacity(len);
+        // `Iterator::zip` already halts at the shorter operand, so this yields exactly
+        // `len` pairs in source order.
+        for (l, r) in left.into_iter().zip(right) {
+            let le = &l.expr;
+            let re = &r.expr;
+            // The pair EXPR `(l, r)` is always materializable (for EUF keys and the
+            // for-loop pattern substitution); the pair VALUE needs BOTH element consts
+            // (an opaque side -> no tuple value, like an opaque `enumerate` element).
+            let pair_expr: Expr =
+                syn::parse_str(&format!("({}, {})", quote::quote!(#le), quote::quote!(#re)))
+                    .map_err(|err| {
+                        FactoryGap::new(format!("zip pair expression parse failed: {err}"))
+                    })?;
+            let pair_cv = match (l.value, r.value) {
+                (Some(lv), Some(rv)) => Some(ConstVal::Tuple(vec![lv, rv])),
+                _ => None,
+            };
+            out.push(DesugaredElem {
+                expr: pair_expr,
+                value: pair_cv,
+            });
+        }
+        debug!(
+            target: "sugar_lift_rust_tests::sugar::zip",
+            len = out.len(),
+            "zipped two finite literal-derived domains (truncated to the shorter)"
+        );
+        Ok(Outcome::Complete(Desugared::Seq(out)))
+    }
+
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-            let let_inits: BTreeMap<String, &Expr> = stable
-                .iter()
-                .map(|(name, init)| (name.clone(), init))
-                .chain(
-                    self.let_inits
-                        .iter()
-                        .map(|(name, init)| (name.clone(), init)),
-                )
-                .collect();
-            let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-            let left_node = method_family::build_literal_sequence_composite(&self.left, &fcx)
-                .unwrap_or_else(|| build_composite(&self.left, &fcx));
-            let right_node = method_family::build_literal_sequence_composite(&self.right, &fcx)
-                .unwrap_or_else(|| build_composite(&self.right, &fcx));
-            let left = left_node.desugar(ctx).complete()?.into_seq()?;
-            let right = right_node.desugar(ctx).complete()?.into_seq()?;
-            // `zip` stops at the shorter side: `min(left.len, right.len)` pairs.
-            let len = left.len().min(right.len());
-            if len > SUGAR_SEQ_CAP as usize {
-                return None;
-            }
-            let mut out = Vec::with_capacity(len);
-            // `Iterator::zip` already halts at the shorter operand, so this yields exactly
-            // `len` pairs in source order.
-            for (l, r) in left.into_iter().zip(right) {
-                let le = &l.expr;
-                let re = &r.expr;
-                // The pair EXPR `(l, r)` is always materializable (for EUF keys and the
-                // for-loop pattern substitution); the pair VALUE needs BOTH element consts
-                // (an opaque side -> no tuple value, like an opaque `enumerate` element).
-                let pair_expr: Expr =
-                    syn::parse_str(&format!("({}, {})", quote::quote!(#le), quote::quote!(#re)))
-                        .ok()?;
-                let pair_cv = match (l.value, r.value) {
-                    (Some(lv), Some(rv)) => Some(ConstVal::Tuple(vec![lv, rv])),
-                    _ => None,
-                };
-                out.push(DesugaredElem {
-                    expr: pair_expr,
-                    value: pair_cv,
-                });
-            }
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::zip",
-                len = out.len(),
-                "zipped two finite literal-derived domains (truncated to the shorter)"
-            );
-            Some(Desugared::Seq(out))
-        })())
+        compat_reduction(self.reduce(ctx))
+    }
+}
+
+fn sequence_from_body(
+    body: &SugarBody,
+    ctx: &SugarCtx,
+    label: &'static str,
+) -> Result<Vec<DesugaredElem>, FactoryReduction> {
+    match body.reduce(ctx) {
+        Ok(Outcome::Complete(d)) => d
+            .into_seq()
+            .ok_or_else(|| Err(FactoryGap::new(format!("{label} reduced to non-sequence")))),
+        Ok(Outcome::Incomplete(effect)) => Err(Ok(Outcome::Incomplete(effect))),
+        Err(gap) => Err(Err(gap)),
     }
 }

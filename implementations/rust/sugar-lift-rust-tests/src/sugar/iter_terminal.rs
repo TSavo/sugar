@@ -32,10 +32,9 @@
 // element and OR (`any`) / AND (`all`) the per-element bools to a GROUNDED bool const.
 //
 // This is the TERM-position node. It declares it comes before `method::recognize`, so a
-// shape-matched terminal gets the first chance to compose to the literal floor instead of
-// immediately becoming the opaque `method:<m>` EUF ctor. Receiver ownership is decided at
-// desugar time: a literal `Seq` reduces, a structural bail falls back to `MethodSugar`, and
-// a named `Incomplete` propagates.
+// shape-matched terminal owns the source shape. Receiver ownership is decided at desugar
+// time: a literal `Seq` reduces, a structural bail takes the factory gap path, and a
+// named `Incomplete` propagates.
 //
 // THE POSITIONAL TERMINALS GROUND VIA `MonadicSugar`. The positional terminals return
 // `Option<&T>`; we GROUND them to a `MonadicSugar` `Some(element)` / `None` constructed
@@ -52,10 +51,9 @@
 // LITERAL `Seq`. If the receiver desugar `Incomplete`s -- the base was an effect / runtime call /
 // opaque collection (`someFileIo.iter()`, `make_ys().iter()`) -- the `Incomplete` is PROPAGATED
 // VERBATIM. A literal element that is not an exact integer const (a float / string /
-// opaque element) bails the whole reduction (EXACT-OR-BAIL), then the generic method
-// fallback owns the term. There are no fake-completes: every grounded value carries the real
-// reduction, so a wrong-expected twin is z3-UNSAT (the teeth), not a vacuously-satisfiable
-// opaque accessor.
+// opaque element) bails the whole reduction (EXACT-OR-GAP). There are no fake-completes:
+// every grounded value carries the real reduction, so a wrong-expected twin is z3-UNSAT
+// (the teeth), not a vacuously-satisfiable opaque accessor.
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -66,15 +64,14 @@ use tracing::debug;
 
 use crate::sugar::factory::{build_composite, build_term, has_composite, SugarBuildCtx};
 use crate::sugar::literal::EMPTY_DOMAIN_REASON;
-use crate::sugar::method;
 use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::{
-    closure_body_is_side_effecting, closure_single_param_ident, const_eval_unary_closure,
-    const_fold_acc_update, const_fold_int_term, const_int, const_int_acc_init, parse_int_lit,
-    simple_path_name, strip_refs_groups, token_key, ConstVal, Desugared, DesugaredElem, Effect,
-    Outcome, Sugar, SugarCtx, TemporalScope,
+    closure_adaptor_refusal, closure_body_is_side_effecting, closure_single_param_ident,
+    const_eval_unary_closure, const_fold_acc_update, const_fold_int_term, const_int,
+    const_int_acc_init, parse_int_lit, simple_path_name, strip_refs_groups, token_key, ConstVal,
+    Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx, TemporalScope,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -156,13 +153,13 @@ impl Terminal {
 /// method is a recognized reduction. Recognition captures the raw receiver only; the
 /// receiver chain is composed to a literal `Seq` lazily in `desugar`, where the live SSA
 /// binding/temporal context exists. Any receiver that cannot compose to a text-determined
-/// sequence structurally bails to the opaque `method:` fallback, while named receiver
+/// sequence structurally bails to the factory gap path, while named receiver
 /// `Incomplete`s propagate.
 ///
 /// The soundness line is the receiver `Outcome`: a `Complete(Seq)` is the only path to a
 /// grounded value; a named `Incomplete` poisons the terminal and propagates; a structural bail
-/// emits the opaque fallback. So the node can only ever ground-with-teeth, propagate a
-/// real boundary, or reproduce the baseline opaque term -- never reduce-to-maybe-wrong.
+/// stays structural. So the node can only ever ground-with-teeth, propagate a real boundary,
+/// or gap -- never reduce-to-maybe-wrong.
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::MethodCall(call) = expr else {
         return None;
@@ -173,8 +170,8 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     }
     Some(Box::new(IterTerminalSugar {
         terminal,
+        site: expr.clone(),
         inner: (*call.receiver).clone(),
-        fallback: expr.clone(),
         let_inits: capture_let_inits(fcx),
     }))
 }
@@ -296,6 +293,9 @@ fn receiver_resolves_static_sequence(expr: &Expr, fcx: &SugarBuildCtx, depth: us
     {
         return true;
     }
+    if let Some(active) = const_resolved_if_sequence_tail(expr, fcx) {
+        return receiver_resolves_static_sequence(active, fcx, depth + 1);
+    }
     let Some(name) = simple_path_name(expr) else {
         return false;
     };
@@ -315,6 +315,29 @@ fn receiver_resolves_static_sequence(expr: &Expr, fcx: &SugarBuildCtx, depth: us
         .copied()
         .or_else(|| fcx.scope().stable_let_binding_for_term(&name))
         .is_some_and(|current| receiver_resolves_static_sequence(current, fcx, depth + 1))
+}
+
+fn const_resolved_if_sequence_tail<'a>(expr: &'a Expr, fcx: &SugarBuildCtx) -> Option<&'a Expr> {
+    let Expr::If(if_expr) = strip_refs_groups(expr) else {
+        return None;
+    };
+    let active_then = crate::const_fold_bool_guard(&if_expr.cond, fcx.options())?;
+    if active_then {
+        return single_expr_tail(&if_expr.then_branch.stmts);
+    }
+    let (_, else_expr) = if_expr.else_branch.as_ref()?;
+    match strip_refs_groups(else_expr) {
+        Expr::Block(block) => single_expr_tail(&block.block.stmts),
+        Expr::If(_) => Some(else_expr),
+        _ => None,
+    }
+}
+
+fn single_expr_tail(stmts: &[Stmt]) -> Option<&Expr> {
+    match stmts {
+        [Stmt::Expr(expr, None)] => Some(expr),
+        _ => None,
+    }
 }
 
 fn receiver_has_static_sequence_len(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
@@ -453,7 +476,7 @@ fn recognize_terminal(call: &syn::ExprMethodCall) -> Option<Terminal> {
         "min" if call.args.is_empty() => Terminal::Min,
         "max" if call.args.is_empty() => Terminal::Max,
         // `.nth(k)` takes exactly one int-literal index. A non-literal / wide
-        // index is NOT recognized -> fall through to the opaque ctor.
+        // index is outside this terminal owner and remains a factory miss/gap.
         "nth" if call.args.len() == 1 => {
             let Expr::Lit(syn::ExprLit {
                 lit: syn::Lit::Int(k),
@@ -479,11 +502,11 @@ fn recognize_terminal(call: &syn::ExprMethodCall) -> Option<Terminal> {
             Terminal::NthBack(k)
         }
         // The closure-bearing predicate terminals take exactly one CLOSURE arg. A
-        // non-closure arg (a fn path, a partially-applied predicate) is NOT recognized
-        // here -> fall through to the opaque ctor. The closure is const-evaluated over
-        // each literal element at desugar; a closure that cannot const-eval (a runtime
-        // capture, a multi-statement body) bails the whole reduction to the opaque
-        // fallback (never a fake-complete).
+        // non-closure arg (a fn path, a partially-applied predicate) is outside this
+        // terminal owner and remains a factory miss/gap. The closure is const-evaluated
+        // over each literal element at desugar; a closure that cannot const-eval (a
+        // runtime capture, a multi-statement body) bails the reduction to the factory
+        // gap path (never a fake-complete).
         "any" | "all" | "find" | "position" if call.args.len() == 1 => {
             let Expr::Closure(closure) = strip_refs_groups(&call.args[0]) else {
                 return None;
@@ -507,7 +530,7 @@ fn recognize_terminal(call: &syn::ExprMethodCall) -> Option<Terminal> {
         }
         // `.reduce(|acc, x| expr)` -- fold from element[0], returns `Option<T>`.
         // Requires a single closure arg; a non-closure (fn path, partially-applied)
-        // falls through to the opaque ctor.
+        // remains a factory miss/gap.
         "reduce" if call.args.len() == 1 => {
             let Expr::Closure(closure) = strip_refs_groups(&call.args[0]) else {
                 return None;
@@ -515,8 +538,8 @@ fn recognize_terminal(call: &syn::ExprMethodCall) -> Option<Terminal> {
             Terminal::Reduce(closure.clone())
         }
         // `.fold(init, |acc, x| expr)` -- explicit-initializer accumulator fold.
-        // Requires a closure second arg; a function path stays with the ordinary method
-        // fallback because this reducer cannot instantiate arbitrary code.
+        // Requires a closure second arg; a function path stays outside this owner and
+        // remains a factory miss/gap because this reducer cannot instantiate arbitrary code.
         "fold" if call.args.len() == 2 => {
             let Expr::Closure(closure) = strip_refs_groups(&call.args[1]) else {
                 return None;
@@ -561,15 +584,13 @@ fn term_as_usize(term: &Rc<Term>) -> Option<usize> {
 }
 
 /// The iterator scalar-reduction terminal node. Holds the raw receiver expression and
-/// the captured reduction kind, plus the opaque `method:` ctor fallback. `desugar`
-/// lazily composes the receiver to a literal `Seq`, then reduces it to the scalar value
-/// term; if the elements are not cleanly const-reducible (a non-const element under
-/// `.sum()`/`.product()`, an empty/oversize domain), it emits the fallback (the baseline
-/// opaque term) rather than refusing.
+/// the captured reduction kind. `desugar` lazily composes the receiver to a literal `Seq`,
+/// then reduces it to the scalar value term; if the elements are not cleanly
+/// const-reducible, it structurally bails to the factory gap path.
 struct IterTerminalSugar {
     terminal: Terminal,
+    site: Expr,
     inner: Expr,
-    fallback: Expr,
     let_inits: BTreeMap<String, Expr>,
 }
 
@@ -658,9 +679,8 @@ impl IterTerminalSugar {
     }
 
     /// Reduce the literal `Seq` to the value term. Receiver composition happens here,
-    /// at desugar time: named `Incomplete`s propagate, while a generic structural bail lets the
-    /// caller emit the opaque fallback. Never a guessed value: every `Complete` carries the
-    /// EXACT reduction.
+    /// at desugar time: named `Incomplete`s propagate, while a generic structural bail takes the
+    /// factory gap path. Never a guessed value: every `Complete` carries the EXACT reduction.
     fn reduce(&self, ctx: &SugarCtx) -> Outcome {
         let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
         let let_inits: BTreeMap<String, &Expr> = stable
@@ -846,7 +866,7 @@ impl IterTerminalSugar {
             };
             return Outcome::Complete(Desugared::Term(term));
         }
-        Outcome::from_opt((|| {
+        let reduced = (|| {
             // `.count()` reduces structure (the LENGTH) after the receiver has composed to a
             // literal `Seq`. A receiver `Incomplete` has already propagated above.
             if matches!(self.terminal, Terminal::Count) {
@@ -856,7 +876,7 @@ impl IterTerminalSugar {
             // `.last()`): index the literal Seq and GROUND to a `MonadicSugar`
             // `Some(element)` / `None` (the ADT-backed `opt:some`/`opt:none` ctor). An
             // in-range element must be an EXACT integer const (the ADT field sort is
-            // `Int`); a non-int element bails to the opaque fallback (never a guessed
+            // `Int`); a non-int element bails to the factory gap path (never a guessed
             // value). An out-of-range index grounds to the structural `None`.
             let positional_idx = match &self.terminal {
                 Terminal::Next => Some(Some(0usize)),
@@ -884,8 +904,8 @@ impl IterTerminalSugar {
             }
             // EXTREMUM terminals (`.min()`/`.max()`): fold over the elements' EXACT integer
             // const values and wrap the extremum in `MonadicSugar`'s `opt:some` (the result of
-            // `.min()`/`.max()` is `Option<&T>`). EXACT-OR-BAIL: a non-int / opaque element ->
-            // `None` (the opaque fallback). Empty literal ranges have the real floor `None`;
+            // `.min()`/`.max()` is `Option<&T>`). EXACT-OR-BAIL: a non-int / opaque element
+            // gaps. Empty literal ranges have the real floor `None`;
             // empty non-range literal domains still decline before this arm.
             if matches!(self.terminal, Terminal::Min | Terminal::Max) {
                 if seq.is_empty() {
@@ -910,8 +930,8 @@ impl IterTerminalSugar {
             // `MapSugar`/`FilterSugar` adaptors use), grounding the FIRST match to a
             // `MonadicSugar` `opt:some` (`.find` wraps the ELEMENT, `.position` wraps the
             // INDEX) and no match to `opt:none`. EXACT-OR-BAIL: an opaque element, a closure
-            // that cannot const-eval to a bool, or a `.find` element that is not an int ->
-            // `None` (the opaque fallback), never a guessed value.
+            // that cannot const-eval to a bool, or a `.find` element that is not an int
+            // gaps, never a guessed value.
             if let Terminal::Find(pred) | Terminal::Position(pred) = &self.terminal {
                 let want_index = matches!(self.terminal, Terminal::Position(_));
                 for (idx, elem) in seq.iter().enumerate() {
@@ -925,7 +945,7 @@ impl IterTerminalSugar {
             }
             // PREDICATE-BOOL terminals (`.any(p)`/`.all(p)`): const-evaluate the closure over
             // every literal element and reduce OR / AND to a ground bool const. EXACT-OR-BAIL:
-            // any opaque element or non-const-evaluable closure -> `None` (opaque fallback).
+            // any opaque element or non-const-evaluable closure gaps.
             if let Terminal::Any(pred) | Terminal::All(pred) = &self.terminal {
                 let is_all = matches!(self.terminal, Terminal::All(_));
                 let mut acc = is_all;
@@ -1011,37 +1031,35 @@ impl IterTerminalSugar {
                 }
                 _ => None,
             }
-        })())
+        })();
+        match reduced {
+            Some(d) => Outcome::Complete(d),
+            None => self
+                .named_closure_boundary(ctx)
+                .unwrap_or_else(|| Outcome::from_opt(None)),
+        }
+    }
+
+    fn named_closure_boundary(&self, ctx: &SugarCtx) -> Option<Outcome> {
+        match self.terminal {
+            Terminal::Any(_)
+            | Terminal::All(_)
+            | Terminal::Find(_)
+            | Terminal::Position(_)
+            | Terminal::Reduce(_)
+            | Terminal::Fold(_, _) => closure_adaptor_refusal(&self.site, ctx.scope)
+                .map(|reason| reasoned_incomplete(reason).desugar(ctx)),
+            _ => None,
+        }
     }
 }
 
 impl Sugar for IterTerminalSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        // GROUND the literal reduction with teeth, or emit the opaque baseline fallback.
+        // GROUND the literal reduction with teeth, or take the factory gap path.
         // Receiver composition is lazy: only a Complete literal sequence reaches `reduce`;
-        // structural bail falls through to the generic method shape, and named returns Incomplete
-        // propagate unchanged.
-        match self.reduce(ctx) {
-            Outcome::Complete(d) => Outcome::Complete(d),
-            hit if hit.is_structural_bail() => {
-                let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-                let let_inits: BTreeMap<String, &Expr> = stable
-                    .iter()
-                    .map(|(name, init)| (name.clone(), init))
-                    .chain(
-                        self.let_inits
-                            .iter()
-                            .map(|(name, init)| (name.clone(), init)),
-                    )
-                    .collect();
-                let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-                match method::recognize(&self.fallback, &fcx) {
-                    Some(fallback) => fallback.desugar(ctx),
-                    None => Outcome::from_opt(None),
-                }
-            }
-            hit => hit,
-        }
+        // structural bail remains structural, and named Incomplete propagates unchanged.
+        self.reduce(ctx)
     }
 }
 

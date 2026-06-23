@@ -6,8 +6,11 @@
 
 use std::collections::BTreeMap;
 
-use crate::sugar::ctor_term::CtorSugar;
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use sugar_ir_symbolic::Term;
+
+use crate::sugar::factory::{
+    build_term, compat_reduction, FactoryGap, FactoryReduction, SugarBuildCtx,
+};
 use crate::{const_eval, const_val_term, token_key, ConstVal, Desugared, Outcome, Sugar, SugarCtx};
 use syn::Expr;
 
@@ -19,7 +22,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     match expr {
         Expr::Field(field) => Some(Box::new(FieldTermSugar {
             member: token_key(&field.member),
-            base: field.base.as_ref().clone(),
+            base: build_term(&field.base, fcx),
             whole: expr.clone(),
             let_inits: capture_let_inits(fcx),
         })),
@@ -29,7 +32,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
 
 struct FieldTermSugar {
     member: String,
-    base: Expr,
+    base: Box<dyn Sugar>,
     whole: Expr,
     let_inits: BTreeMap<String, Expr>,
 }
@@ -73,19 +76,35 @@ fn const_env(bindings: &BTreeMap<String, &Expr>) -> BTreeMap<String, ConstVal> {
 }
 
 impl Sugar for FieldTermSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
         let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
         let let_inits = merge_let_inits(&stable, &self.let_inits);
         if let Some(term) =
             const_eval(&self.whole, &const_env(&let_inits)).and_then(|value| const_val_term(&value))
         {
-            return Outcome::Complete(Desugared::Term(term));
+            return Ok(Outcome::Complete(Desugared::Term(term)));
         }
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        CtorSugar::new(
-            format!("field:{}", self.member),
-            vec![build_term(&self.base, &fcx)],
-        )
-        .desugar(ctx)
+        let base = match self.base.reduce(ctx)? {
+            Outcome::Complete(d) => match d.into_term() {
+                Some(term) => term,
+                None => {
+                    return Err(FactoryGap::new(format!(
+                        "field `{}` base completed a non-Term where a Term was required; write more Sugar for this AST",
+                        self.member
+                    )))
+                }
+            },
+            Outcome::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+        };
+        Ok(Outcome::Complete(Desugared::Term(std::rc::Rc::new(
+            Term::Ctor {
+                name: format!("field:{}", self.member),
+                args: vec![base],
+            },
+        ))))
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
     }
 }

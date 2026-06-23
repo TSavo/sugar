@@ -886,7 +886,29 @@ fn factory_walk_from_response(response: &Value) -> Result<Vec<Value>, String> {
             );
         }
     }
-    Ok(rows)
+    Ok(rows
+        .into_iter()
+        .map(normalize_factory_gap_walk_row)
+        .collect())
+}
+
+fn normalize_factory_gap_walk_row(row: Value) -> Value {
+    let status = normalized_source_status(row.get("status").and_then(Value::as_str));
+    if status != "unresolved" {
+        return row;
+    }
+    match row {
+        Value::Object(mut object) => {
+            object.insert(
+                "status".to_string(),
+                Value::String("unresolved".to_string()),
+            );
+            object.insert("verdict".to_string(), Value::String("gap".to_string()));
+            object.insert("output".to_string(), Value::String("gap".to_string()));
+            Value::Object(object)
+        }
+        other => other,
+    }
 }
 
 fn factory_accounting_summary_from_response(
@@ -1826,6 +1848,7 @@ fn render_factory_walk(summary: &LiftReportSummary) -> String {
     let mut out = String::new();
     out.push_str("factory whole-walk:\n");
     let mut incomplete_here_seen: BTreeSet<(String, u64)> = BTreeSet::new();
+    let mut gap_here_seen: BTreeSet<(String, u64)> = BTreeSet::new();
     for ((file, line), mut rows) in by_line {
         rows.sort_by_key(|row| {
             row.get("sourceMemento")
@@ -1835,12 +1858,22 @@ fn render_factory_walk(summary: &LiftReportSummary) -> String {
         });
         out.push_str(&format!("  {file}:{line}\n"));
         for row in rows {
-            let raw_verdict = row
-                .get("verdict")
-                .and_then(Value::as_str)
-                .unwrap_or("incomplete");
+            let status = normalized_source_status(row.get("status").and_then(Value::as_str));
+            let raw_verdict = if status == "unresolved" {
+                "gap"
+            } else {
+                row.get("verdict")
+                    .and_then(Value::as_str)
+                    .unwrap_or("incomplete")
+            };
             let verdict = if raw_verdict == "complete" {
                 "complete"
+            } else if raw_verdict == "gap" {
+                if gap_here_seen.insert((file.clone(), line)) {
+                    "GAP HERE"
+                } else {
+                    "gap"
+                }
             } else if incomplete_here_seen.insert((file.clone(), line)) {
                 "INCOMPLETE HERE"
             } else {
@@ -1855,7 +1888,11 @@ fn render_factory_walk(summary: &LiftReportSummary) -> String {
                 .get("selected")
                 .and_then(Value::as_str)
                 .unwrap_or("<none>");
-            let output = row.get("output").and_then(Value::as_str).unwrap_or("?");
+            let output = if status == "unresolved" {
+                "gap"
+            } else {
+                row.get("output").and_then(Value::as_str).unwrap_or("?")
+            };
             let term = resolve_factory_walk_term(summary.project_root.as_deref(), &row);
             out.push_str(&format!(
                 "    {verdict} [{role}/{ast_kind}] selected={selected} output={output} term=`{term}`"
@@ -3341,7 +3378,7 @@ fn render_factory_accounting(factory_audits: &[Value]) -> String {
             "factory boundaries (refused)"
         } else {
             match status {
-                "unresolved" => "factory unresolved",
+                "unresolved" => "factory gaps (unresolved)",
                 "support" => "factory support",
                 "warranted" => "factory warranted",
                 _ => "factory other",
@@ -5529,9 +5566,7 @@ mod tests {
         );
         assert!(human.contains("factory whole-walk:"), "{human}");
         assert!(human.contains("complete [Term/expr] selected=binary output=term term=`1 + 2`"));
-        assert!(human.contains(
-            "INCOMPLETE HERE [Term/expr] selected=<none> output=structural-backstop term=`runtime()`"
-        ));
+        assert!(human.contains("GAP HERE [Term/expr] selected=<none> output=gap term=`runtime()`"));
         assert!(parsed_json.get("sourceLedger").is_none(), "{json}");
         assert_eq!(parsed_json["sourceAccounting"]["loci"], 2);
         assert_eq!(parsed_json["sourceAccounting"]["unresolved"], 0);
@@ -5550,6 +5585,9 @@ mod tests {
             "tests/foo.rs"
         );
         assert_eq!(parsed_json["unresolvedFactorySites"][0]["line"], 1);
+        assert_eq!(parsed_json["factoryWalk"][1]["status"], "unresolved");
+        assert_eq!(parsed_json["factoryWalk"][1]["verdict"], "gap");
+        assert_eq!(parsed_json["factoryWalk"][1]["output"], "gap");
         assert!(parsed_json["unresolvedFactorySites"][0]
             .get("term")
             .is_none());

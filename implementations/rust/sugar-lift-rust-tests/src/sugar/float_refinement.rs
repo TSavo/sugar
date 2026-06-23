@@ -4,12 +4,12 @@
 // first-order refinement atoms over the receiver, not generic
 // `method:is_nan(receiver) == true` booleans.
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::sugar::format::stable_let_bindings;
+use crate::sugar::factory::{
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+};
 use crate::{
     bool_const, callsite_assertion_name, eq, strip_refs_groups, token_key, AssertionFactKind,
     Desugared, Effect, FloatWidthScope, Outcome, Sugar, SugarCtx, Warrant,
@@ -27,7 +27,7 @@ pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
 struct FloatRefinementSugar {
     method: String,
     receiver_expr: Expr,
-    let_inits: BTreeMap<String, Expr>,
+    receiver: SugarBody,
     site: String,
 }
 
@@ -48,13 +48,13 @@ fn recognize_method(call: &ExprMethodCall, fcx: &SugarBuildCtx) -> Option<Box<dy
     Some(Box::new(FloatRefinementSugar {
         method,
         receiver_expr: (*call.receiver).clone(),
-        let_inits: capture_let_inits(fcx),
+        receiver: SugarBody::term(&call.receiver, fcx),
         site: token_key(Expr::MethodCall(call.clone())),
     }))
 }
 
 impl Sugar for FloatRefinementSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
         let width = {
             let widths = ctx.float_widths.borrow();
             float_refinement_receiver_width(&self.receiver_expr, &widths)
@@ -66,49 +66,34 @@ impl Sugar for FloatRefinementSugar {
             } else {
                 format!("{unstable_width} bit-width not modeled")
             };
-            return unsupported(format!(
+            return Ok(unsupported(format!(
                 "float refinement predicate `{}` {width_reason} `{}`",
                 self.method, self.site
-            ));
+            )));
         }
         let Some(width) = width else {
-            return unsupported(format!(
+            return Ok(unsupported(format!(
                 "float refinement predicate `{}` requires known f32/f64 receiver width `{}`",
                 self.method, self.site
-            ));
+            )));
         };
         if let Some(value) = literal_float_refinement_value(&self.method, &self.receiver_expr) {
-            return constraint(eq(bool_const(value), bool_const(true)), None);
+            return Ok(constraint(eq(bool_const(value), bool_const(true)), None));
         }
-        let stable = stable_let_bindings(ctx.scope);
-        let let_inits: BTreeMap<String, &Expr> = stable
-            .iter()
-            .map(|(name, init)| (name.clone(), init))
-            .chain(
-                self.let_inits
-                    .iter()
-                    .map(|(name, init)| (name.clone(), init)),
-            )
-            .collect();
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        let receiver_node = build_term(&self.receiver_expr, &fcx);
-        let receiver = match term_payload(receiver_node.as_ref(), ctx) {
+        let receiver = match term_payload(&self.receiver, ctx) {
             Ok(term) => term,
-            Err(outcome) => return outcome,
+            Err(reduction) => return reduction,
         };
         let name = callsite_assertion_name(receiver.as_ref(), ctx.scope.local_scope());
-        constraint(
+        Ok(constraint(
             atomic_(format!("float.{width}.{}", self.method), vec![receiver]),
             name,
-        )
+        ))
     }
-}
 
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
+    }
 }
 
 enum LiteralFloat {
@@ -355,14 +340,15 @@ fn constraint(atom: Rc<Formula>, name: Option<String>) -> Outcome {
     })
 }
 
-fn term_payload(node: &dyn Sugar, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
-    match node.desugar(ctx) {
-        Outcome::Complete(desugared) => desugared.into_term().ok_or_else(|| {
-            Outcome::Incomplete(Effect::Unsupported {
-                reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
-            })
+fn term_payload(body: &SugarBody, ctx: &SugarCtx) -> Result<Rc<Term>, FactoryReduction> {
+    match body.reduce(ctx) {
+        Ok(Outcome::Complete(desugared)) => desugared.into_term().ok_or_else(|| {
+            Err(FactoryGap::new(format!(
+                "float refinement receiver reduced to non-term: {STRUCTURAL_BACKSTOP_REASON}"
+            )))
         }),
-        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
+        Ok(Outcome::Incomplete(effect)) => Err(Ok(Outcome::Incomplete(effect))),
+        Err(gap) => Err(Err(gap)),
     }
 }
 

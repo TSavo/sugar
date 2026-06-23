@@ -4,16 +4,15 @@
 // SAME items in the SAME order, so over a finite literal sequence it is the IDENTITY
 // adaptor. `Result::{inspect, inspect_err}` similarly returns the original Result; the
 // term-level arm below erases it only when the receiver is a stable Result constructor
-// and the callback is syntactically proven no-op, otherwise it falls back to the opaque
-// `method:inspect` term.
-
-use std::collections::BTreeMap;
+// and the callback is syntactically proven no-op. Any other claimed case takes the
+// factory gap path unless another sugar names a real source/effect boundary.
 
 use syn::{Expr, ExprClosure};
 
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::factory::{
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+};
 use crate::sugar::identity::IdentitySugar;
-use crate::sugar::method;
 use crate::sugar::method_family;
 use crate::sugar::monadic::{RES_ERR, RES_OK};
 use crate::{strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
@@ -48,71 +47,51 @@ pub(crate) fn recognize_term(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn
     if !is_stable_result_source(&call.receiver, fcx) {
         return None;
     }
-    Some(Box::new(ResultInspectSugar {
-        receiver: (*call.receiver).clone(),
-        callback: call.args[0].clone(),
-        fallback: expr.clone(),
-        let_inits: capture_let_inits(fcx),
-    }))
+    let receiver = SugarBody::term(&call.receiver, fcx);
+    Some(ResultInspectSugar::new(receiver, call.args[0].clone()))
 }
 
 struct ResultInspectSugar {
-    receiver: Expr,
+    receiver: SugarBody,
     callback: Expr,
-    fallback: Expr,
-    let_inits: BTreeMap<String, Expr>,
-}
-
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
-}
-
-fn merge_let_inits<'a>(
-    stable: &'a BTreeMap<String, Expr>,
-    captured: &'a BTreeMap<String, Expr>,
-) -> BTreeMap<String, &'a Expr> {
-    stable
-        .iter()
-        .map(|(name, init)| (name.clone(), init))
-        .chain(captured.iter().map(|(name, init)| (name.clone(), init)))
-        .collect()
 }
 
 impl ResultInspectSugar {
-    fn fallback(&self, ctx: &SugarCtx) -> Outcome {
-        let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-        let let_inits = merge_let_inits(&stable, &self.let_inits);
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        method::recognize(&self.fallback, &fcx)
-            .map(|fallback| fallback.desugar(ctx))
-            .unwrap_or_else(|| Outcome::from_opt(None))
+    fn new(receiver: SugarBody, callback: Expr) -> Box<dyn Sugar> {
+        Box::new(Self { receiver, callback })
     }
 }
 
 impl Sugar for ResultInspectSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
         if !callback_is_noop(&self.callback, ctx) {
-            return self.fallback(ctx);
+            return Err(FactoryGap::new(
+                "Result inspect callback is not provably no-op",
+            ));
         }
-        let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-        let let_inits = merge_let_inits(&stable, &self.let_inits);
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        let receiver = match build_term(&self.receiver, &fcx).desugar(ctx) {
+        let receiver = match self.receiver.reduce(ctx)? {
             Outcome::Complete(d) => match d.into_term() {
                 Some(term) => term,
-                None => return self.fallback(ctx),
+                None => {
+                    return Err(FactoryGap::new(
+                        "Result inspect receiver reduced to non-term",
+                    ))
+                }
             },
-            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
+            Outcome::Incomplete(e) => return Ok(Outcome::Incomplete(e)),
         };
         match receiver.as_ref() {
             sugar_ir_symbolic::Term::Ctor { name, .. } if name == RES_OK || name == RES_ERR => {
-                Outcome::Complete(Desugared::Term(receiver))
+                Ok(Outcome::Complete(Desugared::Term(receiver)))
             }
-            _ => self.fallback(ctx),
+            _ => Err(FactoryGap::new(
+                "Result inspect receiver did not reduce to Result constructor",
+            )),
         }
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
     }
 }
 

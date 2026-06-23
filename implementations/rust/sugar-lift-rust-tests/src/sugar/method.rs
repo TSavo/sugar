@@ -13,13 +13,14 @@
 // adaptor/match-scrutinee dispatch the COMPOSITE catalog routes `Expr::MethodCall` to.
 // Byte-identical to the old fat factory's `Expr::MethodCall` term arm.
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{make_var, Term};
 use syn::Expr;
 
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::factory::{
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+};
 use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::try_fold_eval;
 use crate::{
@@ -40,8 +41,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     if matches!(call.method.to_string().as_str(), "try_fold" | "try_rfold") {
         if let Some(grounded) = try_fold_eval::eval_try_fold_operand(expr, scope) {
             return Some(Box::new(MethodSugar::Grounded {
-                expr: grounded,
-                let_inits: capture_let_inits(fcx),
+                body: SugarBody::term(&grounded, fcx),
             }));
         }
     }
@@ -53,10 +53,14 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     // consuming-iterator advance re-tags the receiver var (`@adv{n}`).
     Some(Box::new(MethodSugar::Constructive {
         method: method_key(call),
-        receiver: call.receiver.as_ref().clone(),
+        receiver_expr: call.receiver.as_ref().clone(),
+        receiver: SugarBody::term(&call.receiver, fcx),
         is_consuming: is_consuming_iterator_method(&call.method.to_string()),
-        args: call.args.iter().cloned().collect(),
-        let_inits: capture_let_inits(fcx),
+        args: call
+            .args
+            .iter()
+            .map(|arg| SugarBody::term(arg, fcx))
+            .collect(),
     }))
 }
 
@@ -68,78 +72,55 @@ pub(crate) fn method_key(call: &syn::ExprMethodCall) -> String {
     }
 }
 
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
-}
-
-fn merge_let_inits<'a>(
-    stable: &'a BTreeMap<String, Expr>,
-    captured: &'a BTreeMap<String, Expr>,
-) -> BTreeMap<String, &'a Expr> {
-    stable
-        .iter()
-        .map(|(name, init)| (name.clone(), init))
-        .chain(captured.iter().map(|(name, init)| (name.clone(), init)))
-        .collect()
-}
-
-/// Method-call term nodes capture only raw child expressions in recognition. Child
-/// decomposition happens here, at desugar time, when the binding/sort context is live.
+/// Method-call term nodes are constructed with their receiver/arg bodies. Raw source
+/// spelling is retained only for method identity and source-property checks.
 enum MethodSugar {
     Grounded {
-        expr: Expr,
-        let_inits: BTreeMap<String, Expr>,
+        body: SugarBody,
     },
     Constructive {
         method: String,
-        receiver: Expr,
+        receiver_expr: Expr,
+        receiver: SugarBody,
         is_consuming: bool,
-        args: Vec<Expr>,
-        let_inits: BTreeMap<String, Expr>,
+        args: Vec<SugarBody>,
     },
 }
 
 impl Sugar for MethodSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
         match self {
-            MethodSugar::Grounded { expr, let_inits } => {
-                let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-                let let_inits = merge_let_inits(&stable, let_inits);
-                let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-                build_term(expr, &fcx).desugar(ctx)
-            }
+            MethodSugar::Grounded { body } => body.reduce(ctx),
             MethodSugar::Constructive {
                 method,
+                receiver_expr,
                 receiver,
                 is_consuming,
                 args,
-                let_inits,
             } => {
                 if matches!(method.as_str(), "starts_with" | "ends_with") {
-                    if let Some(recv_name) = simple_path_name(receiver) {
+                    if let Some(recv_name) = simple_path_name(receiver_expr) {
                         if ctx.scope.is_mut_local(&recv_name) {
-                            return Outcome::Incomplete(Effect::Unsupported {
+                            return Ok(Outcome::Incomplete(Effect::Unsupported {
                                 reason: format!(
                                     "{method} predicate over a MUTABLE-local receiver `{recv_name}` \
                                      (bin-2: a slice/string mutated by side-effecting iteration, not \
                                      constructed from source literals); refused"
                                 ),
-                            });
+                            }));
                         }
                     }
                 }
-                let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-                let let_inits = merge_let_inits(&stable, let_inits);
-                let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-                let mut receiver = match build_term(receiver, &fcx).desugar(ctx) {
+                let mut receiver = match receiver.reduce(ctx)? {
                     Outcome::Complete(d) => match d.into_term() {
                         Some(t) => t,
-                        None => return Outcome::from_opt(None),
+                        None => {
+                            return Err(FactoryGap::new(format!(
+                                "method `{method}` receiver completed a non-Term where a Term was required; write more Sugar for this AST"
+                            )))
+                        }
                     },
-                    Outcome::Incomplete(e) => return Outcome::Incomplete(e),
+                    Outcome::Incomplete(e) => return Ok(Outcome::Incomplete(e)),
                 };
                 if *is_consuming {
                     if let Term::Var { name } = receiver.as_ref() {
@@ -153,20 +134,28 @@ impl Sugar for MethodSugar {
                 }
                 let mut terms = vec![receiver];
                 for arg in args {
-                    let term = match build_term(arg, &fcx).desugar(ctx) {
+                    let term = match arg.reduce(ctx)? {
                         Outcome::Complete(d) => match d.into_term() {
                             Some(t) => t,
-                            None => return Outcome::from_opt(None),
+                            None => {
+                                return Err(FactoryGap::new(format!(
+                                    "method `{method}` argument completed a non-Term where a Term was required; write more Sugar for this AST"
+                                )))
+                            }
                         },
-                        Outcome::Incomplete(e) => return Outcome::Incomplete(e),
+                        Outcome::Incomplete(e) => return Ok(Outcome::Incomplete(e)),
                     };
                     terms.push(term);
                 }
-                Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
+                Ok(Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
                     name: format!("method:{method}"),
                     args: terms,
-                })))
+                }))))
             }
         }
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
     }
 }

@@ -77,7 +77,9 @@ use std::rc::Rc;
 use sugar_ir_symbolic::Term;
 use syn::{Expr, UnOp};
 
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::factory::{
+    build_term, compat_reduction, FactoryGap, FactoryReduction, SugarBuildCtx,
+};
 use crate::{
     const_eval, const_float, const_int, const_val_term, num, real_const, real_literal_is_zero,
     token_key, ConstVal, Desugared, Effect, Outcome, Sugar, SugarCtx,
@@ -147,6 +149,19 @@ fn child_term_or_hit(child: Outcome) -> Result<Rc<Term>, Outcome> {
     }
 }
 
+fn reduce_child_term(child: &dyn Sugar, ctx: &SugarCtx) -> Result<Rc<Term>, FactoryReduction> {
+    match child.reduce(ctx) {
+        Err(gap) => Err(Err(gap)),
+        Ok(outcome) => match child_term_or_hit(outcome) {
+            Ok(term) => Ok(term),
+            Err(Outcome::Incomplete(effect)) => Err(Ok(Outcome::Incomplete(effect))),
+            Err(Outcome::Complete(_)) => Err(Err(FactoryGap::new(
+                "unary operator child completed a non-Term where a Term was required; write more Sugar for this AST",
+            ))),
+        },
+    }
+}
+
 fn merge_let_inits<'a>(
     stable: &'a BTreeMap<String, Expr>,
     captured: &'a BTreeMap<String, Expr>,
@@ -179,12 +194,12 @@ fn const_env(bindings: &BTreeMap<String, &Expr>) -> BTreeMap<String, ConstVal> {
 }
 
 impl Sugar for UnarySugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
         match self.op {
             UnOp::Neg(_) => {
                 // `-x` over a written int literal folds to `num(-value)`.
                 if let Some(value) = const_int(&self.operand) {
-                    return Outcome::Complete(Desugared::Term(num(-value)));
+                    return Ok(Outcome::Complete(Desugared::Term(num(-value))));
                 }
                 // `-x` over a finite-decimal-float literal folds to
                 // `real_const("-{value}")`; a SIGNED-ZERO float literal is REFUSED
@@ -194,26 +209,28 @@ impl Sugar for UnarySugar {
                 match const_float(&self.operand) {
                     Ok(Some(value)) => {
                         if real_literal_is_zero(&value) {
-                            return Outcome::Incomplete(Effect::Unsupported {
+                            return Ok(Outcome::Incomplete(Effect::Unsupported {
                                 reason: format!(
                                     "signed zero float literal remains an IEEE refinement `{}`",
                                     token_key(&self.whole)
                                 ),
-                            });
+                            }));
                         }
-                        return Outcome::Complete(Desugared::Term(real_const(format!("-{value}"))));
+                        return Ok(Outcome::Complete(Desugared::Term(real_const(format!(
+                            "-{value}"
+                        )))));
                     }
                     Ok(None) => {}
-                    Err(reason) => return Outcome::Incomplete(Effect::Unsupported { reason }),
+                    Err(reason) => return Ok(Outcome::Incomplete(Effect::Unsupported { reason })),
                 }
                 // Non-literal `-x`: `0 - x`, the integer-subtraction ctor over the
                 // recursively-desugared operand. A child Incomplete propagates verbatim.
-                match child_term_or_hit(self.inner.desugar(ctx)) {
-                    Ok(child) => Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
+                match reduce_child_term(self.inner.as_ref(), ctx) {
+                    Ok(child) => Ok(Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
                         name: "-".to_string(),
                         args: vec![num(0), child],
-                    }))),
-                    Err(hit) => hit,
+                    })))),
+                    Err(reduction) => reduction,
                 }
             }
             UnOp::Not(_) => {
@@ -222,17 +239,17 @@ impl Sugar for UnarySugar {
                 if let Some(term) = const_eval(&self.whole, &const_env(&let_inits))
                     .and_then(|value| const_val_term(&value))
                 {
-                    return Outcome::Complete(Desugared::Term(term));
+                    return Ok(Outcome::Complete(Desugared::Term(term)));
                 }
-                match child_term_or_hit(self.inner.desugar(ctx)) {
-                    Ok(child) => Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
+                match reduce_child_term(self.inner.as_ref(), ctx) {
+                    Ok(child) => Ok(Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
                         name: "bit-not".to_string(),
                         args: vec![child],
-                    }))),
-                    Err(hit) => hit,
+                    })))),
+                    Err(reduction) => reduction,
                 }
             }
-            UnOp::Deref(_) => match child_term_or_hit(self.inner.desugar(ctx)) {
+            UnOp::Deref(_) => match reduce_child_term(self.inner.as_ref(), ctx) {
                 // `*&e == e`: dereferencing a SHARED borrow yields its pointee. A shared
                 // borrow freezes its pointee for the borrow's lifetime (the borrow
                 // checker forbids mutating the pointee while a `&` is live, and a shared
@@ -250,22 +267,28 @@ impl Sugar for UnarySugar {
                 Ok(child) => {
                     if let Term::Ctor { name, args } = child.as_ref() {
                         if name == "ref" && args.len() == 1 {
-                            return Outcome::Complete(Desugared::Term(Rc::clone(&args[0])));
+                            return Ok(Outcome::Complete(Desugared::Term(Rc::clone(&args[0]))));
                         }
                     }
-                    Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
+                    Ok(Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
                         name: "deref".to_string(),
                         args: vec![child],
-                    })))
+                    }))))
                 }
-                Err(hit) => hit,
+                Err(reduction) => reduction,
             },
             // `syn::UnOp` is `#[non_exhaustive]`; an unknown future operator has no
             // construction-from-literals meaning here, so it is the structural
             // backstop (the legacy catch-all `unsupported term` shape), never a fake
             // construction. Unreachable for today's `{ Deref, Not, Neg }`.
-            _ => Outcome::from_opt(None),
+            _ => Err(FactoryGap::new(
+                "unknown unary operator shape; write more Sugar for this AST",
+            )),
         }
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
     }
 }
 

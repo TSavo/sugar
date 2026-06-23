@@ -2,28 +2,25 @@
 //
 // TERM recognizer for `Expr::Macro`: the mut-local temporal-instability refusal, then -- for a
 // `macro_rules!` we HOLD THE DEFINITION FOR -- an EXPANSION complete walk that feeds the macro's
-// own body back to the factory (`my_macro!(2,3)` -> `2 + 3` -> `+(2,3)`, which grounds),
-// and only ELSE the opaque `macro:<tokens>` EUF var.
+// own body back to the factory (`my_macro!(2,3)` -> `2 + 3` -> `+(2,3)`, which grounds).
+// If it cannot expand to a term we know how to reduce, it takes the factory gap path.
 //
 // The expansion lives at DESUGAR time, not recognize time: the macro_rules registry
 // hangs off `ReductionCtx`, which is in the DESUGAR-time `SugarCtx` (`ctx.reducer`), NOT
-// the build-time `SugarBuildCtx`. So a term-position macro we can expand is a deferred complete walk:
-// `recognize` news a `MacroSugar` carrying the macro node + the opaque fallback term, and
-// `desugar` does the lookup + token expansion + `build_term` recursion when it finally
-// holds the reducer. An unexpandable macro (no held definition, opaque/builtin macro, or
-// a non-term expansion) falls back to the SAME opaque var the old factory emitted -- no
-// regression.
+// the build-time `SugarBuildCtx`. So a term-position macro we can expand is a deferred
+// complete walk: `recognize` news a `MacroSugar` carrying the macro node, and `desugar`
+// does the lookup + token expansion + `build_term` recursion when it finally holds the
+// reducer. An unexpandable macro (no held definition, opaque/builtin macro, or a non-term
+// expansion) is an engine gap, not an opaque Complete.
 
 use std::collections::BTreeMap;
-use std::rc::Rc;
 
-use sugar_ir_symbolic::{make_var, Term};
 use syn::Expr;
 
 use crate::sugar::factory::{build_term, SugarBuildCtx};
 use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::{
-    macro_literal_contains_mut_local, sugar_ctx, token_key, Desugared, Outcome, Sugar, SugarCtx,
+    macro_literal_contains_mut_local, sugar_ctx, token_key, Outcome, Sugar, SugarCtx,
     MAX_MACRO_EXPANSION_DEPTH,
 };
 
@@ -52,42 +49,33 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         )));
     }
     // A term-position macro we MIGHT be able to expand: defer the decision to
-    // `desugar` (which holds the reducer's macro registry). The opaque var is the
-    // fallback if the macro is not one we hold a definition for, or its expansion is
-    // not a liftable single TERM.
-    Some(Box::new(MacroSugar {
-        mac: m.clone(),
-        opaque: make_var(format!("macro:{token_str}")),
-    }))
+    // `desugar` (which holds the reducer's macro registry).
+    Some(Box::new(MacroSugar { mac: m.clone() }))
 }
 
 /// A term-position macro invocation whose disposition is decided at DESUGAR time. If
 /// `ctx.reducer` holds a `macro_rules!` definition for the macro's name, `desugar`
 /// expands the invocation tokens against that definition, parses the expansion as a
 /// single `syn::Expr`, and lifts that expression back through `build_term` -- so a macro
-/// whose body is `$a + $b` completes to a GROUNDED `+(a, b)` term rather than going opaque.
-/// Otherwise (no held definition, an unparseable / non-`Expr` expansion, or expansion
-/// depth exceeded) it completes the pre-built `opaque` `macro:<tokens>` EUF var -- the exact
-/// coarse-but-valid universe-complete the old factory emitted. No regression for the
-/// unexpandable case.
+/// whose body is `$a + $b` completes to a GROUNDED `+(a, b)` term. Otherwise (no held
+/// definition, an unparseable / non-`Expr` expansion, or expansion depth exceeded) it
+/// structurally bails to the factory gap path.
 pub(crate) struct MacroSugar {
     /// The macro invocation node (e.g. `add2!(2, 3)`), owned so the expansion can run at
     /// desugar time when the reducer is in hand.
     pub(crate) mac: syn::ExprMacro,
-    /// The fallback opaque `macro:<tokens>` EUF var, pre-built at recognize time.
-    pub(crate) opaque: Rc<Term>,
 }
 
 impl MacroSugar {
     /// Try to expand this macro invocation to a single TERM-position Sugar using the
     /// reducer's `macro_rules!` registry. `Some(sugar)` if the macro is one we hold a
-    /// definition for AND its expansion parses as a single `syn::Expr`; `None` (the
-    /// caller falls back to the opaque var) if the macro is opaque/builtin/ambiguous,
-    /// expansion failed, or the expansion is not a single expression (e.g. a multi-stmt
-    /// block). Recursion is bounded by `ctx.macro_depth`.
+    /// definition for AND its expansion parses as a single `syn::Expr`; `None` if the
+    /// macro is opaque/builtin/ambiguous, expansion failed, or the expansion is not a
+    /// single expression (e.g. a multi-stmt block). Recursion is bounded by
+    /// `ctx.macro_depth`.
     fn try_expand(&self, ctx: &SugarCtx) -> Option<Box<dyn Sugar>> {
         // Recursion guard: a macro whose body invokes another (in-source) macro must not
-        // loop. Beyond the cap, fall back to opaque -- the coarse but valid complete.
+        // loop. Beyond the cap, gap rather than inventing an opaque complete.
         if ctx.macro_depth >= MAX_MACRO_EXPANSION_DEPTH {
             return None;
         }
@@ -98,8 +86,8 @@ impl MacroSugar {
         // parses straight as `Expr::Binary`; a `{ tail }` body parses as `Expr::Block`,
         // which `block_term` recursing through `build_term` handles transparently. A
         // multi-statement / non-expr expansion does NOT parse as an `Expr` here, so we
-        // fall back to opaque rather than guess (no statement-level re-entry from term
-        // position -- that path is the statement collector's, not the term lifter's).
+        // gap rather than guess (no statement-level re-entry from term position -- that
+        // path is the statement collector's, not the term lifter's).
         let parsed: Expr = syn::parse2(expanded).ok()?;
         // Reconstruct the build-time env from the desugar-time env: the macro's expansion
         // is lifted in the SAME scope/options the invocation was seen in. The expansion is
@@ -128,8 +116,7 @@ impl Sugar for MacroSugar {
             return node.desugar(&bumped);
         }
         // Unexpandable macro (no held definition / opaque / builtin / non-term
-        // expansion / depth exceeded): the coarse-but-valid opaque universe-complete, the
-        // exact term the old factory emitted.
-        Outcome::Complete(Desugared::Term(Rc::clone(&self.opaque)))
+        // expansion / depth exceeded): no Complete, no fake opaque term.
+        Outcome::from_opt(None)
     }
 }

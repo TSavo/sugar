@@ -13,7 +13,7 @@
 // lazily in `desugar`, where the binding context is live. ONLY a literal-resolvable
 // receiver/args warrant; runtime/opaque receivers, `format!`-built receivers, oversized
 // repeats, or non-ASCII full-case mappings Incomplete the structural frontier — never a
-// fabricated value.
+// fabricated value. A structural miss is a factory gap, not an opaque method result.
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -267,7 +267,7 @@ fn merged_let_inits(
 }
 
 /// Compute the result of a supported string method over a literal-resolvable receiver,
-/// or `None` (decline — stays the conservative opaque term, never a forged value).
+/// or `None` (decline -> factory gap, never a forged value).
 fn compute_str_method(call: &ExprMethodCall, binds: &BTreeMap<String, Expr>) -> Option<String> {
     let recv = resolve_str_value(&call.receiver, binds)?;
     let kind = match call.method.to_string().as_str() {

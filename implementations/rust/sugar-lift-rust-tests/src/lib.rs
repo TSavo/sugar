@@ -751,6 +751,8 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         || reason.contains("f16 NaN width not modeled")
         || reason.contains("f16 bit-width not modeled")
         || reason.contains("f128 bit-width not modeled")
+        || reason.contains("f16/f128 Display is unsupported")
+        || reason.contains("all-zeros bit-pattern is not a determinate valid value")
         // TERMINAL: the value proposition is specifically about panic/drop ordering and
         // atomic counter reads during unwinding. That state is produced by runtime drop
         // side effects, not by source literals.
@@ -6130,7 +6132,11 @@ fn peel_fold_adaptors_inner<'a>(
                                 }
                             }
                         }
-                        Box::new(|inner| Box::new(sugar::flatten::FlattenSugar { inner }))
+                        Box::new(|inner| {
+                            Box::new(sugar::flatten::FlattenSugar {
+                                inner: sugar::factory::SugarBody::from_node(inner),
+                            })
+                        })
                     }
                     // `.flat_map(|x| [..])`: map each element to a finite literal
                     // sub-sequence and concatenate (exact-or-refuse inside
@@ -7562,11 +7568,16 @@ struct SugarCtx<'a, 'c> {
 
 /// A node in the desugaring tree. `desugar` recurses inward (each child is a
 /// `Sugar` whose `desugar` we call) until the node either reaches the literal floor
-/// or a runtime/opaque boundary stops it. The reduction is TOTAL: it ALWAYS returns
-/// an `Outcome` -- `Complete` or `Incomplete`. There is no `Option`/`None` bail and
-/// no unclassified return path. Adding a construct = adding one class with one
+/// or a runtime/opaque boundary stops it. The terminal reduction is TOTAL: it returns
+/// `Complete` or a lawfully named `Incomplete`. A structural fall-through is only a
+/// compatibility sentinel; the accounted factory turns it into a gap audit row before
+/// the gate can treat it as a verdict. Adding a construct = adding one class with one
 /// `desugar`.
 trait Sugar {
+    fn reduce(&self, ctx: &SugarCtx) -> sugar::factory::FactoryReduction {
+        Ok(self.desugar(ctx))
+    }
+
     fn desugar(&self, ctx: &SugarCtx) -> Outcome;
 }
 
@@ -7581,19 +7592,21 @@ trait Sugar {
 // source text. No runtime effect stopped the walk. Composition is conjunctive: a composed
 // node is `Complete` iff every child it depends on is `Complete`.
 //
-// `Incomplete` means the walk reached the dragon: IO, mutation, an opaque/runtime value,
-// a non-literal payload, iterator state, temporal state, or the structural backstop for
-// pure syntax this recognizer still does not know how to lower. One `Incomplete` child
-// makes the parent `Incomplete`, but sibling literal leaves remain individually
-// `Complete` and are still emitted as such by the report walk. If this node is where the
-// runtime boundary was first discovered, the report marks it `INCOMPLETE HERE`; parents
-// that merely receive the child verdict are plain `incomplete`.
+// `Incomplete` means the walk reached a named source boundary: IO, mutation, an
+// opaque/runtime value, a non-literal payload, iterator state, or temporal state. One
+// `Incomplete` child makes the parent `Incomplete`, but sibling literal leaves remain
+// individually `Complete` and are still emitted as such by the report walk. If this node
+// is where the runtime boundary was first discovered, the report marks it `INCOMPLETE
+// HERE`; parents that merely receive the child verdict are plain `incomplete`.
 //
-// `Outcome` is TOTAL (two cases, no third): every reduction is `Complete` or
-// `Incomplete`, nothing else. The old untyped `None` bail + downstream reason STRING is
-// gone; the bail is now a typed `Incomplete(Effect)` carrying the SAME reason string the
-// collector emits into `skip_reasons` (recognized as terminal by
-// `refusal_disposition`). The wire format -- and thus the CID + counts -- is unchanged.
+// A structural miss is different. It has no terminal `Outcome`: the legacy sentinel is
+// caught by `AccountedSugar`, recorded as a factory gap, and rendered as `GAP HERE` in
+// audit mode so the engine hole stays visible instead of being laundered into an effect.
+//
+// `Outcome` is TOTAL (two terminal cases, no third): every lawful production reduction
+// is `Complete` or `Incomplete`, nothing else. The old untyped `None` bail survives only
+// as an internal structural sentinel so legacy combinators can compose; accounted factory
+// dispatch catches that sentinel as a gap before it becomes a terminal verdict.
 //
 // `Effect` is a FLAT enum of named order-loss boundaries (a mutation, an iterator
 // advance, an opaque runtime value, TLS, IO, a mutable read, ...), each a structural
@@ -7606,11 +7619,10 @@ trait Sugar {
 // order-loss effect -- a syntactic mutation / `iter.next()` / `&mut` / `.push` on
 // captured state, a genuinely runtime/opaque value (param, runtime call result, TLS,
 // IO), a mutable-container read. A PURE-BUT-UNTRANSLATED term (a pure stdlib method we
-// have not transcribed yet) is NOT an `Effect` we should NAME: it stays a STRUCTURAL
-// backstop (`Effect::Unsupported`, the byte-identical generic reason at its emit site),
-// honest future work for a `Sugar`/`const_eval` arm. Reclassifying a pure-untranslated
-// term as a SPECIFIC named effect would be a FAKE-REFUSE -- mislabeling our own work as
-// a source property.
+// have not transcribed yet) is NOT an `Effect` we should NAME: it takes the structural
+// gap path, honest future work for a `Sugar`/`const_eval` arm. Reclassifying a
+// pure-untranslated term as a SPECIFIC named effect would be a FAKE-REFUSE --
+// mislabeling our own work as a source property.
 
 /// The bail-side rope: a `SourceMemento` ties a refusal to the source boundary that
 /// warrants it (the span / token-key of the offending construct). The mirror of the
@@ -7622,11 +7634,11 @@ struct SourceMemento {
     boundary: String,
 }
 
-/// The outcome of a desugar attempt -- the TOTAL reduction. `Complete` reached truth (a
-/// discharged `Desugared`); `Incomplete` struck a NAMED, WARRANTED order-loss boundary (an
-/// `Effect`, a terminal loud refusal with a cause). There is no third case: the
-/// reduction is total. The collector unwraps it to the existing entries / skip_reasons
-/// emission so the wire format (and thus the CID + counts) is unchanged.
+/// The outcome of a lawful desugar reduction. `Complete` reached truth (a discharged
+/// `Desugared`); `Incomplete` struck a NAMED, WARRANTED order-loss boundary (an
+/// `Effect`, a terminal loud refusal with a cause). There is no third terminal case.
+/// Structural misses are intercepted by the accounted factory as gap audit rows before
+/// gate/report code can bless them as outcomes.
 enum Outcome {
     /// Reached truth: the desugared literal floor / emitted obligation. -> discharged.
     Complete(Desugared),
@@ -7635,12 +7647,11 @@ enum Outcome {
 }
 
 impl Outcome {
-    /// Lift the legacy `Option<Desugared>` into the total `Outcome`: `Some(d)` is
-    /// `Complete`; `None` is the STRUCTURAL backstop
+    /// Lift the legacy `Option<Desugared>` into the compatibility form: `Some(d)` is
+    /// `Complete`; `None` is the STRUCTURAL backstop sentinel
     /// (`Incomplete(Effect::Unsupported)` carrying the byte-identical generic skip
-    /// reason). A consumer that wants old fall-through behavior discards only this
-    /// generic structural backstop and emits its own site-specific reason. There is no
-    /// longer any unclassified return path from `desugar`.
+    /// reason). Accounted factory dispatch converts that sentinel into a gap audit row;
+    /// only named, terminal effects remain `Incomplete`.
     fn from_opt(opt: Option<Desugared>) -> Outcome {
         match opt {
             Some(d) => Outcome::Complete(d),
@@ -7666,8 +7677,7 @@ impl Outcome {
     /// Unsupported)` carrying the `STRUCTURAL_BACKSTOP_REASON` (a pure-but-untranslated
     /// term, "the complete did not reach truth here"), NOT a NAMED order-loss effect
     /// (mutation / iter-advance / runtime / TLS / IO / temporal). FIX(a) uses this at the
-    /// factory: in TERM position a recognized sugar's generic structural bail degrades to
-    /// an opaque-EUF term (warranted-UNDECIDED, congruence-only, can't false-discharge),
+    /// factory: a recognized sugar's generic structural bail becomes a gap audit row,
     /// never a refusal -- a named effect, by contrast, stays the loud terminal refusal.
     pub(crate) fn is_structural_bail(&self) -> bool {
         matches!(self, Outcome::Incomplete(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON)
@@ -7675,12 +7685,10 @@ impl Outcome {
 }
 
 /// The STRUCTURAL backstop reason: the bare structural bail of a `Sugar::desugar`
-/// (the old `None`). It is NEVER emitted to `skip_reasons` -- a
-/// `Incomplete(Effect::Unsupported)` from a `Sugar` bail is discarded by the
-/// fall-through consumer (via `Outcome::complete`)
-/// exactly as the old `None` was, and that consumer emits its OWN site-specific reason.
-/// This string exists only so `Effect` is total over the structural bail; it is the
-/// in-code name of "the complete walk did not reach truth here" with no wire footprint.
+/// (the old `None`). It is not a terminal refusal. Accounted factory dispatch converts
+/// it to a factory gap (`GAP HERE`) before report/gate code accounts for the row. This
+/// string exists only so legacy combinators can carry "the complete walk did not reach
+/// truth here" until the factory has enough site context to name the gap.
 const STRUCTURAL_BACKSTOP_REASON: &str =
     "structural bail: the desugar complete did not reach truth (no named effect); fall through";
 
@@ -7799,7 +7807,8 @@ enum Effect {
     /// the `None` arm of `repeat_count_literal`; a literal length lifts the unrolled array and
     /// never reaches here (the inverse-sin guardrail).
     ArrayRepeat { boundary: String },
-    /// UNSUPPORTED: the STRUCTURAL backstop. Two shapes, both carrying their OWN reason string
+    /// UNSUPPORTED: compatibility carrier for either a named unsupported term or the
+    /// STRUCTURAL gap sentinel. Two shapes carry their OWN reason string
     /// verbatim:
     ///   * a term-shaped `unsupported term` whose SHAPE is a genuinely effectful /
     ///     non-constructible place (a `&mut` borrow of a non-immutable-value place, a raw
@@ -7807,8 +7816,8 @@ enum Effect {
     ///     block). EARNED at the specific term arm; a PURE untranslated term is NOT given
     ///     this reason.
     ///   * the bare structural bail of a `Sugar::desugar` complete that did not reach truth (the
-    ///     old `None`), with `STRUCTURAL_BACKSTOP_REASON` -- NEVER emitted to `skip_reasons`
-    ///     (the fall-through consumer discards it via `Outcome::complete` and emits its own reason).
+    ///     old `None`), with `STRUCTURAL_BACKSTOP_REASON`; accounted factory dispatch turns it
+    ///     into a gap row, not a terminal `Incomplete`.
     /// This is the ONE catch-all variant: it carries a pre-built `reason` string so the emit
     /// site's wire format is conserved.
     Unsupported { reason: String },
@@ -15535,9 +15544,9 @@ fn resolve_fn_registry_asserting_call(
 /// through `build_term` and applies the EXACT-OR-BAIL gate: it commits the peel only if
 /// the rebuilt term is fully grounded (no new opaque `call:`/`method:` leaf, no Var), so
 /// hollow `call:h` becomes a grounded `+(2,1)` ONLY where the body is clean
-/// arithmetic/literal; otherwise the call stays the opaque `call:` ctor (unchanged).
+/// arithmetic/literal; otherwise the ordinary call owner handles the term unchanged.
 ///
-/// Returns `None` (fall through to the opaque ctor, unchanged behavior) when:
+/// Returns `None` (decline this inliner, unchanged behavior) when:
 ///   - the head is not a simple ident, or resolves to no/ambiguous in-source fn;
 ///   - the fn has a `self` receiver or a non-simple param pattern;
 ///   - arity mismatches;

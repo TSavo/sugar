@@ -3184,11 +3184,17 @@ fn factory_walk_rows(rows: &[Value]) -> Vec<Value> {
 }
 
 fn factory_walk_row(row: &Value) -> Value {
-    let status = row.get("status").and_then(Value::as_str).unwrap_or("");
+    let status = factory_row_status(row);
     let verdict = match status {
         "warranted" | "support" => "complete",
-        "refused" | "unresolved" | "unclassified" => "incomplete",
+        "refused" => "incomplete",
+        "unresolved" => "gap",
         _ => "incomplete",
+    };
+    let output = if status == "unresolved" {
+        json!("gap")
+    } else {
+        row.get("output").cloned().unwrap_or(Value::Null)
     };
     let mut compact = json!({
         "file": row.get("file").cloned().unwrap_or(Value::Null),
@@ -3198,7 +3204,7 @@ fn factory_walk_row(row: &Value) -> Value {
         "selected": row.get("selected").cloned().unwrap_or(Value::Null),
         "status": status,
         "verdict": verdict,
-        "output": row.get("output").cloned().unwrap_or(Value::Null),
+        "output": output,
     });
     if let Some(span) = row.get("span").cloned() {
         compact["span"] = span;
@@ -3216,14 +3222,20 @@ fn factory_walk_row(row: &Value) -> Value {
 }
 
 fn factory_summary_site_row(row: &Value) -> Value {
+    let status = factory_row_status(row);
+    let output = if status == "unresolved" {
+        json!("gap")
+    } else {
+        row.get("output").cloned().unwrap_or(Value::Null)
+    };
     let mut compact = json!({
         "file": row.get("file").cloned().unwrap_or(Value::Null),
         "line": row.get("line").cloned().unwrap_or(Value::Null),
         "requested_role": row.get("requested_role").cloned().unwrap_or(Value::Null),
         "ast_kind": row.get("ast_kind").cloned().unwrap_or(Value::Null),
         "selected": row.get("selected").cloned().unwrap_or(Value::Null),
-        "status": row.get("status").cloned().unwrap_or(Value::Null),
-        "output": row.get("output").cloned().unwrap_or(Value::Null),
+        "status": status,
+        "output": output,
     });
     if let Some(span) = row.get("span").cloned() {
         compact["span"] = span;
@@ -3238,6 +3250,16 @@ fn factory_summary_site_row(row: &Value) -> Value {
         compact["occurrences"] = occurrences;
     }
     compact
+}
+
+fn factory_row_status(row: &Value) -> &'static str {
+    match row.get("status").and_then(Value::as_str).unwrap_or("") {
+        "warranted" => "warranted",
+        "refused" => "refused",
+        "support" => "support",
+        "unresolved" | "unclassified" => "unresolved",
+        _ => "unresolved",
+    }
 }
 
 fn unresolved_factory_audit_rows(rows: &[Value]) -> Vec<Value> {
@@ -5644,6 +5666,14 @@ fn literal_counter_while_literal_twin() {
         assert_eq!(summary["unresolvedSites"].as_array().unwrap().len(), 2);
         assert_eq!(summary["unresolvedSites"][0]["line"], 2);
         assert_eq!(summary["unresolvedSites"][1]["line"], 3);
+        assert_eq!(summary["unresolvedSites"][0]["status"], "unresolved");
+        assert_eq!(summary["unresolvedSites"][0]["output"], "gap");
+        assert_eq!(summary["factoryWalk"][1]["status"], "unresolved");
+        assert_eq!(summary["factoryWalk"][1]["verdict"], "gap");
+        assert_eq!(summary["factoryWalk"][1]["output"], "gap");
+        assert_eq!(summary["factoryWalk"][2]["status"], "unresolved");
+        assert_eq!(summary["factoryWalk"][2]["verdict"], "gap");
+        assert_eq!(summary["factoryWalk"][2]["output"], "gap");
         assert!(summary["unresolvedSites"][0].get("term").is_none());
         assert!(summary["unresolvedSites"][0].get("site").is_none());
         assert!(summary["factoryWalk"][1].get("term").is_none());
@@ -5698,6 +5728,16 @@ fn literal_counter_while_literal_twin() {
         assert_eq!(summary["unresolvedSites"].as_array().unwrap().len(), 1);
         assert_eq!(summary["unresolvedSites"][0]["file"], "src/lib.rs");
         assert_eq!(summary["unresolvedSites"][0]["line"], 7);
+        assert_eq!(summary["unresolvedSites"][0]["status"], "unresolved");
+        assert_eq!(summary["unresolvedSites"][0]["output"], "gap");
+        let unresolved_walk = summary["factoryWalk"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["status"] == "unresolved")
+            .expect("unresolved walk row");
+        assert_eq!(unresolved_walk["verdict"], "gap");
+        assert_eq!(unresolved_walk["output"], "gap");
         assert!(summary["unresolvedSites"][0].get("site").is_none());
         assert!(summary["unresolvedSites"][0].get("term").is_none());
     }

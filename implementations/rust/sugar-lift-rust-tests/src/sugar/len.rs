@@ -3,22 +3,19 @@
 // `LenSugar`: std literal-sequence length in term position. For written literal arrays,
 // slices, ranges, and identity iterator chains over them, `.len()` is a compiler/std
 // axiom over the source construction: the value is the concrete element count. Recognition
-// only captures the raw receiver; desugar composes the receiver to a literal `Seq` in the
-// live binding context, then reduces. Named receiver `Incomplete`s propagate; structural bails
-// remain opaque/undecided at the term accounting layer.
-
-use std::collections::BTreeMap;
+// constructs the receiver body and any static-length verifier body without reducing them.
+// Named receiver `Incomplete`s propagate; structural bails take the factory gap path.
 
 use sugar_ir_symbolic::num;
 use syn::Expr;
 use tracing::debug;
 
-use crate::sugar::factory::{build_composite, SugarBuildCtx};
+use crate::sugar::factory::{
+    build_composite, compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+};
 use crate::sugar::literal::EMPTY_DOMAIN_REASON;
-use crate::sugar::method;
 use crate::sugar::method_family;
-use crate::sugar::term_leaf::reasoned_incomplete;
-use crate::{simple_path_name, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::{simple_path_name, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("len", recognize);
@@ -30,143 +27,123 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     if call.method != "len" || !call.args.is_empty() {
         return None;
     }
-    Some(Box::new(LenSugar {
-        receiver: (*call.receiver).clone(),
-        fallback: expr.clone(),
-        let_inits: capture_let_inits(fcx),
-    }))
+    if !len_receiver_is_owned_by_literal_sugar(&call.receiver, fcx) {
+        return None;
+    }
+    let receiver_expr = (*call.receiver).clone();
+    let static_len = method_family::literal_sequence_static_len_in_scope(
+        &call.receiver,
+        fcx.let_inits(),
+        fcx.scope(),
+    );
+    let static_collection_len = method_family::literal_collection_adapter_static_len_in_scope(
+        &call.receiver,
+        fcx.let_inits(),
+        fcx.scope(),
+    )
+    .map(|static_len| StaticLenSource {
+        len: static_len.len,
+        source: sequence_body(&static_len.source, fcx),
+    });
+    Some(LenSugar::new(
+        receiver_expr,
+        sequence_body(&call.receiver, fcx),
+        static_len,
+        static_collection_len,
+    ))
+}
+
+fn len_receiver_is_owned_by_literal_sugar(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
+    method_family::resolves_literal_sequence(expr, fcx.let_inits())
+        || method_family::literal_sequence_static_len_in_scope(expr, fcx.let_inits(), fcx.scope())
+            .is_some()
+        || method_family::literal_collection_adapter_static_len_in_scope(
+            expr,
+            fcx.let_inits(),
+            fcx.scope(),
+        )
+        .is_some()
+        || simple_path_name(expr).is_some_and(|name| fcx.scope().is_consumed_iterator_local(&name))
 }
 
 struct LenSugar {
-    receiver: Expr,
-    fallback: Expr,
-    let_inits: BTreeMap<String, Expr>,
+    receiver_expr: Expr,
+    receiver: SugarBody,
+    static_len: Option<usize>,
+    static_collection_len: Option<StaticLenSource>,
 }
 
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
+struct StaticLenSource {
+    len: usize,
+    source: SugarBody,
 }
 
 impl Sugar for LenSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-        let let_inits: BTreeMap<String, &Expr> = stable
-            .iter()
-            .map(|(name, init)| (name.clone(), init))
-            .chain(
-                self.let_inits
-                    .iter()
-                    .map(|(name, init)| (name.clone(), init)),
-            )
-            .collect();
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        if let Some(name) = simple_path_name(&self.receiver) {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+        if let Some(name) = simple_path_name(&self.receiver_expr) {
             if ctx.scope.is_consumed_iterator_local(&name) {
-                if method_family::literal_sequence_static_len_in_scope(
-                    &self.receiver,
-                    &let_inits,
-                    ctx.scope,
-                ) == Some(0)
-                {
+                if self.static_len == Some(0) {
                     debug!(
                         target: "sugar_lift_rust_tests::sugar::len",
                         len = 0usize,
                         binding = name.as_str(),
                         "reducing exhausted consumed-iterator len through temporal rewrite"
                     );
-                    return Outcome::Complete(Desugared::Term(num(0)));
+                    return Ok(Outcome::Complete(Desugared::Term(num(0))));
                 }
-                return reasoned_incomplete(format!(
-                    "consumed-iterator local `{name}` -- \
+                return Ok(Outcome::Incomplete(Effect::Unsupported {
+                    reason: format!(
+                        "consumed-iterator local `{name}` -- \
                      `.len()` is a temporally unstable stale pre-consumption length read"
-                ))
-                .desugar(ctx);
+                    ),
+                }));
             }
         }
-        if method_family::literal_sequence_static_len_in_scope(
-            &self.receiver,
-            &let_inits,
-            ctx.scope,
-        ) == Some(0)
-        {
+        if self.static_len == Some(0) {
             debug!(
                 target: "sugar_lift_rust_tests::sugar::len",
                 len = 0usize,
                 "reducing empty literal sequence len"
             );
-            return Outcome::Complete(Desugared::Term(num(0)));
+            return Ok(Outcome::Complete(Desugared::Term(num(0))));
         }
-        let seq = match build_composite(&self.receiver, &fcx).desugar(ctx) {
-            Outcome::Complete(d) => match d.into_seq() {
-                Some(seq) => seq,
-                None => return self.fallback_method(ctx, &fcx),
-            },
-            Outcome::Incomplete(Effect::Unsupported { reason })
-                if reason == EMPTY_DOMAIN_REASON
-                    && method_family::literal_sequence_static_len_in_scope(
-                        &self.receiver,
-                        &let_inits,
-                        ctx.scope,
-                    ) == Some(0) =>
+        let seq = match sequence_from_body(&self.receiver, ctx, "len receiver") {
+            Ok(seq) => seq,
+            Err(Ok(Outcome::Incomplete(Effect::Unsupported { reason })))
+                if reason == EMPTY_DOMAIN_REASON && self.static_len == Some(0) =>
             {
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::len",
                     len = 0usize,
                     "reducing empty literal sequence len"
                 );
-                return Outcome::Complete(Desugared::Term(num(0)));
+                return Ok(Outcome::Complete(Desugared::Term(num(0))));
             }
-            hit if hit.is_structural_bail() => {
-                match method_family::build_literal_sequence_composite(&self.receiver, &fcx) {
-                    Some(inner) => match inner.desugar(ctx) {
-                        Outcome::Complete(d) => match d.into_seq() {
-                            Some(seq) => seq,
-                            None => return self.fallback_method(ctx, &fcx),
-                        },
-                        Outcome::Incomplete(Effect::Unsupported { reason })
-                            if reason == EMPTY_DOMAIN_REASON =>
-                        {
+            Err(Ok(Outcome::Complete(_))) => {
+                return Err(FactoryGap::new(
+                    "len receiver sequence helper returned unexpected Complete",
+                ))
+            }
+            Err(Ok(Outcome::Incomplete(effect))) => return Ok(Outcome::Incomplete(effect)),
+            Err(Err(gap)) => {
+                if let Some(static_len) = &self.static_collection_len {
+                    match source_reduces_to_sequence(&static_len.source, ctx) {
+                        Ok(true) => {
                             debug!(
                                 target: "sugar_lift_rust_tests::sugar::len",
-                                len = 0usize,
-                                "reducing empty literal sequence len"
+                                len = static_len.len,
+                                "reducing literal collection len through verified length-only adapter"
                             );
-                            return Outcome::Complete(Desugared::Term(num(0)));
+                            return Ok(Outcome::Complete(Desugared::Term(num(
+                                static_len.len as i128
+                            ))));
                         }
-                        hit if hit.is_structural_bail() => return self.fallback_method(ctx, &fcx),
-                        hit => return hit,
-                    },
-                    None => {
-                        if let Some(static_len) =
-                            method_family::literal_collection_adapter_static_len_in_scope(
-                                &self.receiver,
-                                &let_inits,
-                                ctx.scope,
-                            )
-                        {
-                            match self.verify_static_len_source(&static_len.source, ctx, &fcx) {
-                                Ok(true) => {
-                                    debug!(
-                                        target: "sugar_lift_rust_tests::sugar::len",
-                                        len = static_len.len,
-                                        "reducing literal collection len through verified length-only adapter"
-                                    );
-                                    return Outcome::Complete(Desugared::Term(num(
-                                        static_len.len as i128
-                                    )));
-                                }
-                                Ok(false) => return self.fallback_method(ctx, &fcx),
-                                Err(hit) => return hit,
-                            }
-                        }
-                        return self.fallback_method(ctx, &fcx);
+                        Ok(false) => {}
+                        Err(reduction) => return reduction,
                     }
                 }
+                return Err(gap);
             }
-            hit => return hit,
         };
         let len = seq.len();
         debug!(
@@ -174,35 +151,60 @@ impl Sugar for LenSugar {
             len,
             "reducing literal sequence len"
         );
-        Outcome::Complete(Desugared::Term(num(len as i128)))
+        Ok(Outcome::Complete(Desugared::Term(num(len as i128))))
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
     }
 }
 
 impl LenSugar {
-    fn verify_static_len_source(
-        &self,
-        source: &Expr,
-        ctx: &SugarCtx,
-        fcx: &SugarBuildCtx,
-    ) -> Result<bool, Outcome> {
-        let candidate = method_family::build_literal_sequence_composite(source, fcx)
-            .unwrap_or_else(|| build_composite(source, fcx));
-        match candidate.desugar(ctx) {
-            Outcome::Complete(d) => Ok(d.into_seq().is_some()),
-            Outcome::Incomplete(Effect::Unsupported { reason })
-                if reason == EMPTY_DOMAIN_REASON =>
-            {
-                Ok(true)
-            }
-            hit if hit.is_structural_bail() => Ok(false),
-            hit => Err(hit),
-        }
+    fn new(
+        receiver_expr: Expr,
+        receiver: SugarBody,
+        static_len: Option<usize>,
+        static_collection_len: Option<StaticLenSource>,
+    ) -> Box<dyn Sugar> {
+        Box::new(Self {
+            receiver_expr,
+            receiver,
+            static_len,
+            static_collection_len,
+        })
     }
+}
 
-    fn fallback_method(&self, ctx: &SugarCtx, fcx: &SugarBuildCtx) -> Outcome {
-        match method::recognize(&self.fallback, fcx) {
-            Some(fallback) => fallback.desugar(ctx),
-            None => Outcome::from_opt(None),
+fn sequence_body(expr: &Expr, fcx: &SugarBuildCtx) -> SugarBody {
+    SugarBody::from_node(
+        method_family::build_literal_sequence_composite(expr, fcx)
+            .unwrap_or_else(|| build_composite(expr, fcx)),
+    )
+}
+
+fn sequence_from_body(
+    body: &SugarBody,
+    ctx: &SugarCtx,
+    label: &'static str,
+) -> Result<Vec<DesugaredElem>, FactoryReduction> {
+    match body.reduce(ctx) {
+        Ok(Outcome::Complete(d)) => d
+            .into_seq()
+            .ok_or_else(|| Err(FactoryGap::new(format!("{label} reduced to non-sequence")))),
+        Ok(Outcome::Incomplete(effect)) => Err(Ok(Outcome::Incomplete(effect))),
+        Err(gap) => Err(Err(gap)),
+    }
+}
+
+fn source_reduces_to_sequence(body: &SugarBody, ctx: &SugarCtx) -> Result<bool, FactoryReduction> {
+    match body.reduce(ctx) {
+        Ok(Outcome::Complete(d)) => Ok(d.into_seq().is_some()),
+        Ok(Outcome::Incomplete(Effect::Unsupported { reason }))
+            if reason == EMPTY_DOMAIN_REASON =>
+        {
+            Ok(true)
         }
+        Ok(Outcome::Incomplete(effect)) => Err(Ok(Outcome::Incomplete(effect))),
+        Err(gap) => Err(Err(gap)),
     }
 }

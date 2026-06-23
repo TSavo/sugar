@@ -6,17 +6,17 @@
 // inline inclusive range whose selected endpoint completes to a concrete integer literal, this is
 // value sugar: lower to `ref(<endpoint>)` so the existing unary deref rule can reduce
 // `*(a..=b).start()` / `*(a..=b).end()` to the literal floor. Recognition is deliberately
-// syntactic and lazy: it only captures the raw receiver, and the endpoint child is built here
-// in `desugar`, where the live binding context is available.
+// syntactic and lazy: it selects the endpoint site and constructs the endpoint child body without
+// reducing it. Desugar/reduce owns the terminal decision.
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::Term;
 use syn::{Expr, RangeLimits};
 
-use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::sugar::format::stable_let_bindings;
+use crate::sugar::factory::{
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+};
 use crate::{const_fold_int_term, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -40,11 +40,14 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     if !matches!(range.limits, RangeLimits::Closed(_)) {
         return None;
     }
-    Some(Box::new(RangeAccessorSugar {
+    let endpoint = match kind {
+        EndpointKind::Start => range.start.as_deref(),
+        EndpointKind::End => range.end.as_deref(),
+    }?;
+    Some(RangeAccessorSugar::new(
         kind,
-        receiver: call.receiver.as_ref().clone(),
-        let_inits: capture_let_inits(fcx),
-    }))
+        SugarBody::term(endpoint, fcx),
+    ))
 }
 
 #[derive(Clone, Copy)]
@@ -55,59 +58,51 @@ enum EndpointKind {
 
 struct RangeAccessorSugar {
     kind: EndpointKind,
-    receiver: Expr,
-    let_inits: BTreeMap<String, Expr>,
+    endpoint: SugarBody,
 }
 
 impl Sugar for RangeAccessorSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let Expr::Range(range) = strip_refs_groups(&self.receiver) else {
-            return Outcome::from_opt(None);
-        };
-        if !matches!(range.limits, RangeLimits::Closed(_)) {
-            return Outcome::from_opt(None);
-        }
-        let endpoint = match self.kind {
-            EndpointKind::Start => range.start.as_deref(),
-            EndpointKind::End => range.end.as_deref(),
-        };
-        let Some(endpoint) = endpoint else {
-            return Outcome::from_opt(None);
-        };
-        let stable = stable_let_bindings(ctx.scope);
-        let let_inits = merge_let_inits(&stable, &self.let_inits);
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        let endpoint = match build_term(endpoint, &fcx).desugar(ctx) {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+        let endpoint = match self.endpoint.reduce(ctx)? {
             Outcome::Complete(d) => match d.into_term() {
                 Some(term) => term,
-                None => return Outcome::from_opt(None),
+                None => {
+                    return Err(FactoryGap::new(format!(
+                        "range accessor {} endpoint reduced to non-term",
+                        self.kind.name()
+                    )))
+                }
             },
-            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+            Outcome::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
         };
         if const_fold_int_term(&endpoint).is_none() {
-            return Outcome::from_opt(None);
+            return Err(FactoryGap::new(format!(
+                "range accessor {} endpoint is not literal-determined",
+                self.kind.name()
+            )));
         }
-        Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
+        Ok(Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
             name: "ref".to_string(),
             args: vec![endpoint],
-        })))
+        }))))
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
     }
 }
 
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
+impl EndpointKind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Start => "start",
+            Self::End => "end",
+        }
+    }
 }
 
-fn merge_let_inits<'a>(
-    stable: &'a BTreeMap<String, Expr>,
-    captured: &'a BTreeMap<String, Expr>,
-) -> BTreeMap<String, &'a Expr> {
-    stable
-        .iter()
-        .map(|(name, init)| (name.clone(), init))
-        .chain(captured.iter().map(|(name, init)| (name.clone(), init)))
-        .collect()
+impl RangeAccessorSugar {
+    fn new(kind: EndpointKind, endpoint: SugarBody) -> Box<dyn Sugar> {
+        Box::new(Self { kind, endpoint })
+    }
 }

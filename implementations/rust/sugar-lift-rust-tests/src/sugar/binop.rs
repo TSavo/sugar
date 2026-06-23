@@ -25,7 +25,9 @@ use sugar_ir_symbolic::{ConstValue, Term};
 use syn::{BinOp, Expr};
 
 use crate::sugar::compare::CompareSugar;
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::factory::{
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+};
 use crate::sugar::term_leaf::{reasoned_incomplete, resolved_term};
 use crate::{
     const_eval, const_fold_int_term, const_fold_u128_term, const_val_term, num,
@@ -56,8 +58,8 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     }
     if let Some(rel) = relation_from_binop(&binary.op) {
         return Some(Box::new(CompareSugar {
-            left: build_term(&binary.left, fcx),
-            right: build_term(&binary.right, fcx),
+            left: SugarBody::term(&binary.left, fcx),
+            right: SugarBody::term(&binary.right, fcx),
             rel,
         }));
     }
@@ -68,8 +70,8 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         )));
     };
     Some(Box::new(BinOpSugar {
-        left: build_term(&binary.left, fcx),
-        right: build_term(&binary.right, fcx),
+        left: SugarBody::term(&binary.left, fcx),
+        right: SugarBody::term(&binary.right, fcx),
         op_name: op,
     }))
 }
@@ -138,40 +140,52 @@ impl Sugar for BoolLogicSugar {
 /// the children's terms and emits `Term::Ctor { name: op_name, args: vec![l, r] }` --
 /// byte-identical to the `translate_term_in_scope` arm.
 pub(crate) struct BinOpSugar {
-    pub(crate) left: Box<dyn Sugar>,
-    pub(crate) right: Box<dyn Sugar>,
+    pub(crate) left: SugarBody,
+    pub(crate) right: SugarBody,
     pub(crate) op_name: &'static str,
 }
 
 impl Sugar for BinOpSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let lhs = match self.left.desugar(ctx) {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+        let lhs = match self.left.reduce(ctx)? {
             Outcome::Complete(d) => match d.into_term() {
                 Some(t) => t,
-                None => return Outcome::from_opt(None),
+                None => {
+                    return Err(FactoryGap::new(
+                        "binary operator child completed a non-Term where a Term was required; write more Sugar for this AST",
+                    ))
+                }
             },
-            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
+            Outcome::Incomplete(e) => return Ok(Outcome::Incomplete(e)),
         };
-        let rhs = match self.right.desugar(ctx) {
+        let rhs = match self.right.reduce(ctx)? {
             Outcome::Complete(d) => match d.into_term() {
                 Some(t) => t,
-                None => return Outcome::from_opt(None),
+                None => {
+                    return Err(FactoryGap::new(
+                        "binary operator child completed a non-Term where a Term was required; write more Sugar for this AST",
+                    ))
+                }
             },
-            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
+            Outcome::Incomplete(e) => return Ok(Outcome::Incomplete(e)),
         };
         let term = Rc::new(Term::Ctor {
             name: self.op_name.to_string(),
             args: vec![lhs, rhs],
         });
         if let Some(value) = const_fold_u128_term(&term) {
-            return Outcome::Complete(Desugared::Term(u128_term(value)));
+            return Ok(Outcome::Complete(Desugared::Term(u128_term(value))));
         }
         if int_fold_is_sort_safe(&term) {
             if let Some(value) = const_fold_int_term(&term) {
-                return Outcome::Complete(Desugared::Term(num(value)));
+                return Ok(Outcome::Complete(Desugared::Term(num(value))));
             }
         }
-        Outcome::Complete(Desugared::Term(term))
+        Ok(Outcome::Complete(Desugared::Term(term)))
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
     }
 }
 

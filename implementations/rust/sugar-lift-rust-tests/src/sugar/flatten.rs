@@ -2,18 +2,18 @@
 //
 // `flatten`: the `.flatten()` adaptor over a finite literal of literal sub-sequences
 // (`[[1, 2], [3, 4]].iter().flatten()`). It concatenates each element's OWN finite
-// literal sequence in source order. Each outer element is re-built as a composite
-// from its `expr` and desugared to a sub-`Seq`; if ANY element is not itself a clean
-// finite literal sub-sequence, the whole node bails (`None` -> refuse, never guess) --
-// the same exact-or-refuse discipline as `chain`/`map`. This is the outermost-call
+// literal sequence in source order. Each outer element must itself be a clean finite
+// literal sub-sequence; if not, the node gaps rather than rebuilding through the factory.
+// This is the outermost-call
 // recognizer; `peel_fold_adaptors` carries the same `FlattenSugar` when `.flatten()`
 // sits inside a longer adaptor chain.
 
-use std::collections::BTreeMap;
-
-use crate::sugar::factory::{build_composite, SugarBuildCtx};
+use crate::sugar::factory::{
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+};
+use crate::sugar::literal::{LiteralSugar, EMPTY_DOMAIN_REASON};
 use crate::sugar::method_family;
-use crate::{Desugared, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
+use crate::{Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
 use syn::Expr;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -27,7 +27,10 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     // checked to be sub-sequences at desugar time, bailing if not).
     if call.method == "flatten" && call.args.is_empty() {
         return Some(Box::new(FlattenSugar {
-            inner: method_family::build_literal_sequence_composite(&call.receiver, fcx)?,
+            inner: SugarBody::from_node(method_family::build_literal_sequence_composite(
+                &call.receiver,
+                fcx,
+            )?),
         }));
     }
     None
@@ -35,29 +38,52 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
 
 /// Concatenate each element's own finite literal sub-sequence in source order.
 pub(crate) struct FlattenSugar {
-    pub(crate) inner: Box<dyn Sugar>,
+    pub(crate) inner: SugarBody,
 }
 
 impl Sugar for FlattenSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            let outer = self.inner.desugar(ctx).complete()?.into_seq()?;
-            let let_inits = BTreeMap::new();
-            let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-            let mut out = Vec::new();
-            for elem in outer {
-                // Each outer element must itself complete to a finite literal sub-sequence.
-                let sub = build_composite(&elem.expr, &fcx)
-                    .desugar(ctx)
-                    .complete()?
-                    .into_seq()?;
-                let total = out.len().checked_add(sub.len())?;
-                if total > SUGAR_SEQ_CAP as usize {
-                    return None;
-                }
-                out.extend(sub);
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+        let outer = match self.inner.reduce(ctx)? {
+            Outcome::Complete(d) => d
+                .into_seq()
+                .ok_or_else(|| FactoryGap::new("flatten receiver reduced to non-sequence"))?,
+            Outcome::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+        };
+        let mut out = Vec::new();
+        for elem in outer {
+            let sub = literal_subsequence_from_expr(&elem.expr, ctx)?;
+            let total = out
+                .len()
+                .checked_add(sub.len())
+                .ok_or_else(|| FactoryGap::new("flatten sequence length overflow"))?;
+            if total > SUGAR_SEQ_CAP as usize {
+                return Err(FactoryGap::new(format!(
+                    "flatten sequence length {total} exceeds cap {SUGAR_SEQ_CAP}"
+                )));
             }
-            Some(Desugared::Seq(out))
-        })())
+            out.extend(sub);
+        }
+        Ok(Outcome::Complete(Desugared::Seq(out)))
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
+    }
+}
+
+fn literal_subsequence_from_expr(
+    expr: &Expr,
+    ctx: &SugarCtx,
+) -> Result<Vec<DesugaredElem>, FactoryGap> {
+    match (LiteralSugar { base: expr.clone() }).desugar(ctx) {
+        Outcome::Complete(d) => d
+            .into_seq()
+            .ok_or_else(|| FactoryGap::new("flatten element reduced to non-sequence")),
+        Outcome::Incomplete(Effect::Unsupported { reason }) if reason == EMPTY_DOMAIN_REASON => {
+            Ok(Vec::new())
+        }
+        Outcome::Incomplete(_) => Err(FactoryGap::new(
+            "flatten element is not a literal-determined sub-sequence",
+        )),
     }
 }

@@ -150,8 +150,10 @@ fn result_presence(term: &Term) -> Option<Result<bool, &'static str>> {
 /// a literal-payload `Ok(..)`/`Err(..)`, or a no-op `inspect`/`inspect_err` chain over
 /// one of those stable sources.
 ///
-/// EXACT-OR-NONE AT RECOGNIZE: broad or effectful `Ok(io())`, transforming adaptors,
-/// and non-no-op inspect callbacks still decline to the opaque method path.
+/// EXACT-OR-NONE AT RECOGNIZE: broad or effectful `Ok(io())` and transforming adaptors
+/// stay outside this predicate owner. `inspect`/`inspect_err` itself owns its method
+/// shape before the generic method sugar, so non-no-op inspect callbacks become gaps
+/// instead of opaque predicate terms.
 fn is_known_result_source(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
     receiver_resolves_result_source(strip_refs_groups(expr), fcx, 0)
 }

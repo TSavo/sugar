@@ -16,8 +16,8 @@
 // rhs depends on both state and item simultaneously in an expression — the state is
 // in env so simple forms like `*acc * x` DO work via `const_fold_acc_update`),
 // non-integer state types, and `None`-returning (early-stop) closures. Any shape
-// outside the supported set falls through to the opaque `method:` ctor (the
-// established sound under-claim).
+// outside the supported set declines to the caller; a claimed terminal chain then
+// reports a factory gap rather than forging a value.
 //
 // REGISTERED AS: not in the catalog directly; recognized and constructed by
 // `iter_terminal::try_build_scan_inner` as a pre-pass in that recognizer, so the
@@ -228,7 +228,7 @@ fn is_compound_assign_op(op: &BinOp) -> bool {
 
 /// Evaluate `old_state <assign-op> rhs_val` to produce the new state.
 /// Returns `None` on overflow, division-by-zero, or unsupported op (all bail
-/// the whole scan to the opaque fallback — EXACT-OR-BAIL, never a fake-complete).
+/// the whole scan to the factory gap path -- EXACT-OR-BAIL, never a fake-complete).
 fn apply_assign_op(op: &BinOp, state: i64, rhs: i64) -> Option<i64> {
     match op {
         BinOp::AddAssign(_) => state.checked_add(rhs),

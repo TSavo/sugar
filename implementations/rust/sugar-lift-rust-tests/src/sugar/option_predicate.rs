@@ -2,17 +2,16 @@
 //
 // `OptionPredicateSugar`: `.is_some()` / `.is_none()` over a grounded std Option
 // constructor. This is value sugar, separate from generic method calls: once the
-// receiver bottoms out to `opt:some(_)` or `opt:none`, the predicate is a literal bool.
-
-use std::collections::BTreeMap;
+// receiver body bottoms out to `opt:some(_)` or `opt:none`, the predicate is a literal bool.
 
 use sugar_ir_symbolic::Term;
 use syn::Expr;
 use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::sugar::format::stable_let_bindings;
+use crate::sugar::factory::{
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+};
 use crate::sugar::monadic::{is_grounded_literal_term, OPT_NONE, OPT_SOME};
 use crate::sugar::nonzero::is_nonzero_new_call;
 use crate::{bool_const, strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
@@ -31,58 +30,50 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if !receiver_resolves_option_source(&call.receiver, fcx, 0) {
         return None;
     }
-    Some(Box::new(OptionPredicateSugar {
-        method,
-        receiver: (*call.receiver).clone(),
-        let_inits: capture_let_inits(fcx),
-    }))
+    let receiver = SugarBody::term(&call.receiver, fcx);
+    Some(OptionPredicateSugar::new(method, receiver))
 }
 
 struct OptionPredicateSugar {
     method: String,
-    receiver: Expr,
-    let_inits: BTreeMap<String, Expr>,
+    receiver: SugarBody,
 }
 
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
+impl OptionPredicateSugar {
+    fn new(method: String, receiver: SugarBody) -> Box<dyn Sugar> {
+        Box::new(Self { method, receiver })
+    }
 }
 
 impl Sugar for OptionPredicateSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let stable = stable_let_bindings(ctx.scope);
-        let let_inits: BTreeMap<String, &Expr> = stable
-            .iter()
-            .map(|(name, init)| (name.clone(), init))
-            .chain(
-                self.let_inits
-                    .iter()
-                    .map(|(name, init)| (name.clone(), init)),
-            )
-            .collect();
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        let receiver = match build_term(&self.receiver, &fcx).desugar(ctx) {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+        let receiver = match self.receiver.reduce(ctx)? {
             Outcome::Complete(d) => match d.into_term() {
                 Some(term) => term,
-                None => return Outcome::from_opt(None),
+                None => {
+                    return Err(FactoryGap::new(format!(
+                        "Option predicate `{}` receiver reduced to non-term",
+                        self.method
+                    )))
+                }
             },
-            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
+            Outcome::Incomplete(e) => return Ok(Outcome::Incomplete(e)),
         };
         let Some(presence) = option_presence(&receiver) else {
-            return Outcome::from_opt(None);
+            return Err(FactoryGap::new(format!(
+                "Option predicate `{}` receiver did not reduce to Option constructor",
+                self.method
+            )));
         };
         let is_some = match presence {
             Ok(is_some) => is_some,
             Err(kind) => {
-                return Outcome::Incomplete(Effect::Unsupported {
+                return Ok(Outcome::Incomplete(Effect::Unsupported {
                     reason: format!(
                         "runtime Option/Result payload, not literal (`{}` over `{kind}`)",
                         self.method
                     ),
-                })
+                }))
             }
         };
         let value = if self.method == "is_some" {
@@ -96,7 +87,11 @@ impl Sugar for OptionPredicateSugar {
             value,
             "resolved Option presence predicate stdlib axiom"
         );
-        Outcome::Complete(Desugared::Term(bool_const(value)))
+        Ok(Outcome::Complete(Desugared::Term(bool_const(value))))
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
     }
 }
 

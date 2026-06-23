@@ -13,17 +13,18 @@ use std::rc::Rc;
 
 use sugar_ir_symbolic::Term;
 
+use crate::sugar::factory::{compat_reduction, FactoryGap, FactoryReduction, SugarBody};
 use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
 /// A generic CONSTRUCTIVE named-ctor term node: completes each child to its `Term` in order
 /// and emits `Term::Ctor { name, args }`.
 pub(crate) struct CtorSugar {
     name: String,
-    args: Vec<Box<dyn Sugar>>,
+    args: Vec<SugarBody>,
 }
 
 impl CtorSugar {
-    pub(crate) fn new(name: impl Into<String>, args: Vec<Box<dyn Sugar>>) -> Self {
+    pub(crate) fn new(name: impl Into<String>, args: Vec<SugarBody>) -> Self {
         CtorSugar {
             name: name.into(),
             args,
@@ -32,21 +33,30 @@ impl CtorSugar {
 }
 
 impl Sugar for CtorSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
         let mut args = Vec::new();
         for arg in &self.args {
-            let term = match arg.desugar(ctx) {
+            let term = match arg.reduce(ctx)? {
                 Outcome::Complete(d) => match d.into_term() {
                     Some(t) => t,
-                    None => return Outcome::from_opt(None),
+                    None => {
+                        return Err(FactoryGap::new(format!(
+                            "ctor `{}` child completed a non-Term where a Term was required; write more Sugar for this AST",
+                            self.name
+                        )))
+                    }
                 },
-                Outcome::Incomplete(e) => return Outcome::Incomplete(e),
+                Outcome::Incomplete(e) => return Ok(Outcome::Incomplete(e)),
             };
             args.push(term);
         }
-        Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
+        Ok(Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
             name: self.name.clone(),
             args,
-        })))
+        }))))
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
     }
 }

@@ -17,7 +17,9 @@ use syn::{Expr, Pat, Stmt};
 use crate::sugar::backstop::boxed;
 use crate::sugar::configuration::{CfgDisposition, ConfigurationSugar};
 use crate::sugar::constraint_runtime_boundary::panic_payload_match_value_reason;
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::factory::{
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+};
 use crate::sugar::monadic;
 use crate::{
     bool_const, closure_body_is_side_effecting, collect_assertion_entries, count_asserts_in_stmts,
@@ -50,7 +52,7 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
 /// This is the value half of the same source shape `panic_locus_match_entry` uses for
 /// facts. The fact side says the surviving pattern held; the term side says the match
 /// expression evaluates to the surviving arm's value under that pattern binding.
-fn recognize_term(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize_term(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Match(m) = expr else {
         return None;
     };
@@ -64,7 +66,10 @@ fn recognize_term(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     {
         return Some(crate::sugar::term_leaf::resolved_term(term));
     }
-    Some(Box::new(MatchValueTermSugar { m: m.clone() }))
+    Some(Box::new(MatchValueTermSugar {
+        scrutinee: SugarBody::term(&m.expr, fcx),
+        m: m.clone(),
+    }))
 }
 
 /// A match arm reduced to its discriminant guard + body statements. The guard is
@@ -197,50 +202,42 @@ impl Sugar for ArmPresent {
 }
 
 struct MatchValueTermSugar {
+    scrutinee: SugarBody,
     m: syn::ExprMatch,
 }
 
 impl Sugar for MatchValueTermSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
         if let Some(reason) = panic_payload_match_value_reason(&self.m, ctx) {
-            return Outcome::Incomplete(Effect::Unsupported { reason });
+            return Ok(Outcome::Incomplete(Effect::Unsupported { reason }));
         }
         let Some((pat, body)) = single_surviving_value_arm(&self.m) else {
-            return Outcome::from_opt(None);
+            return Err(FactoryGap::new("match value has no single surviving arm"));
         };
-        let empty = BTreeMap::new();
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &empty);
-        let scrutinee = match build_term(&self.m.expr, &fcx).desugar(ctx) {
+        let scrutinee = match self.scrutinee.reduce(ctx)? {
             Outcome::Complete(d) => match d.into_term() {
                 Some(term) => term,
-                None => return Outcome::from_opt(None),
+                None => return Err(FactoryGap::new("match value scrutinee reduced to non-term")),
             },
-            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+            Outcome::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
         };
         let Some(bindings) = value_arm_term_bindings(pat, &scrutinee) else {
-            return Outcome::from_opt(None);
+            return Err(FactoryGap::new(
+                "match value surviving arm pattern is not term-bindable",
+            ));
         };
         let mut arm_scope = ctx.scope.clone();
         for (name, term) in bindings {
             arm_scope.record_let_term_binding(&name, term);
         }
-        let arm_fcx = SugarBuildCtx::new(&arm_scope, ctx.options, &empty);
-        let mut fw = ctx.float_widths.borrow_mut();
-        let arm_ctx = crate::sugar_ctx_with_factory_audits(
-            &arm_scope,
-            ctx.options,
-            ctx.reducer,
-            *fw,
-            ctx.macro_depth,
-            ctx.factory_audits,
-        );
-        match build_term(body, &arm_fcx).desugar(&arm_ctx) {
-            Outcome::Complete(d) => match d.into_term() {
-                Some(term) => Outcome::Complete(Desugared::Term(term)),
-                None => Outcome::from_opt(None),
-            },
-            Outcome::Incomplete(effect) => Outcome::Incomplete(effect),
+        match translate_term_in_scope(body, &arm_scope) {
+            Ok(term) => Ok(Outcome::Complete(Desugared::Term(term))),
+            Err(reason) => Ok(Outcome::Incomplete(Effect::Unsupported { reason })),
         }
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
     }
 }
 

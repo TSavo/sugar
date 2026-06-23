@@ -21,10 +21,11 @@
 //!
 //! ## The three laws
 //!
-//! 1. **TOTAL.** Every `Expr` maps to *some* `Box<dyn Sugar>`. A term shape with no
-//!    constructible value becomes a reasoned leaf (a `ReasonedIncompleteSugar` carrying the
-//!    arm's EXACT refusal string, or [`UnsupportedSugar`] for the structural backstop)
-//!    — NEVER a silent skip. The walk cannot return `None`.
+//! 1. **TOTAL.** Every `Expr` maps to *some* `Box<dyn Sugar>`. A term shape with a
+//!    proven runtime/effect boundary becomes a reasoned leaf carrying the arm's EXACT
+//!    refusal string. A structural miss reaches [`UnsupportedSugar`], but that is a gap
+//!    sentinel, not a terminal verdict: accounted desugar records it as unresolved factory
+//!    work so the production gate stays loud. The walk cannot return `None`.
 //! 2. **RECURSIVE.** A composite term node builds each operand with `build_term(child)`
 //!    and composes the child Sugar; transparent wrappers (`Paren`/`Group`) recurse
 //!    straight through. `desugar` then collapses the whole tree inside-out.
@@ -64,6 +65,57 @@ use crate::{
     FactoryAudit, FactoryAuditSpan, FactoryCandidateAudit, FactoryDisposition, LiftOptions,
     Outcome, Sugar, SugarCtx, TemporalScope, STRUCTURAL_BACKSTOP_REASON,
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FactoryGap {
+    pub(crate) reason: String,
+}
+
+pub(crate) type FactoryReduction = Result<Outcome, FactoryGap>;
+
+impl FactoryGap {
+    pub(crate) fn new(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+        }
+    }
+}
+
+/// A factory-built child/body for a parent Sugar.
+///
+/// This is the post-order contract in code: a non-leaf parent is constructed with
+/// `SugarBody` values for the expressions it encloses. Raw `Expr` may still be kept for
+/// provenance, token keys, literal fast paths, or pattern metadata, but not as the body
+/// that the parent later re-builds through the factory.
+pub(crate) struct SugarBody {
+    node: Box<dyn Sugar>,
+}
+
+impl SugarBody {
+    pub(crate) fn from_node(node: Box<dyn Sugar>) -> Self {
+        Self { node }
+    }
+
+    pub(crate) fn term(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
+        Self::from_node(build_term(expr, fcx))
+    }
+
+    pub(crate) fn composite(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
+        Self::from_node(build_composite(expr, fcx))
+    }
+
+    pub(crate) fn constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
+        Self::from_node(build_constraint(expr, fcx))
+    }
+
+    pub(crate) fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+        self.node.reduce(ctx)
+    }
+
+    pub(crate) fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
+    }
+}
 
 /// What a recognizer needs from its environment to construct a node: the temporal
 /// `scope` (binding / mutability oracle), the lift `options`, and the in-scope `let`
@@ -142,6 +194,15 @@ pub(crate) fn build_expr(expr: &Expr, fcx: &SugarBuildCtx, role: SugarRole) -> B
     catalog::build_expr_role(expr, fcx, role)
 }
 
+pub(crate) fn reduce_expr(
+    expr: &Expr,
+    fcx: &SugarBuildCtx,
+    role: SugarRole,
+    ctx: &SugarCtx,
+) -> FactoryReduction {
+    build_expr(expr, fcx, role).reduce(ctx)
+}
+
 pub(crate) fn has_expr_role(expr: &Expr, fcx: &SugarBuildCtx, role: SugarRole) -> bool {
     !catalog::matching_expr_claims_for_role(expr, fcx, role).is_empty()
 }
@@ -151,18 +212,31 @@ pub(crate) fn has_item_role(item: &Item, fcx: &SugarBuildCtx, role: SugarRole) -
 }
 
 /// Compatibility TERM wrapper: ask the unified candidate catalog, then return the first
-/// candidate whose old source-position role is `Term`, else the structural backstop.
-/// TOTAL — every shape news a node (a reasoned leaf for the no-value shapes).
+/// candidate whose old source-position role is `Term`, else the structural gap sentinel.
+/// TOTAL — every shape news a node, but an unclaimed node is unresolved factory work.
 /// RECURSIVE — composite term recognizers build their operands with `build_term`.
 pub(crate) fn build_term(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
     build_expr(expr, fcx, SugarRole::Term)
 }
 
+pub(crate) fn reduce_term(expr: &Expr, fcx: &SugarBuildCtx, ctx: &SugarCtx) -> FactoryReduction {
+    reduce_expr(expr, fcx, SugarRole::Term, ctx)
+}
+
 /// Compatibility COMPOSITE wrapper: ask the unified candidate catalog, then return the
 /// first candidate whose old source-position role is `Composite`, else the structural
-/// backstop. Total: an unowned shape becomes the [`UnsupportedSugar`] backstop.
+/// gap sentinel. Total: an unowned shape becomes [`UnsupportedSugar`], which accounted
+/// desugar records as an unresolved factory gap.
 pub(crate) fn build_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
     build_expr(expr, fcx, SugarRole::Composite)
+}
+
+pub(crate) fn reduce_composite(
+    expr: &Expr,
+    fcx: &SugarBuildCtx,
+    ctx: &SugarCtx,
+) -> FactoryReduction {
+    reduce_expr(expr, fcx, SugarRole::Composite, ctx)
 }
 
 pub(crate) fn has_composite(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
@@ -175,6 +249,14 @@ pub(crate) fn has_composite(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
 /// constraint terminal.
 pub(crate) fn build_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
     build_expr(expr, fcx, SugarRole::Constraint)
+}
+
+pub(crate) fn reduce_constraint(
+    expr: &Expr,
+    fcx: &SugarBuildCtx,
+    ctx: &SugarCtx,
+) -> FactoryReduction {
+    reduce_expr(expr, fcx, SugarRole::Constraint, ctx)
 }
 
 pub(crate) fn has_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
@@ -248,8 +330,17 @@ impl FactoryAuditSeed {
         }
     }
 
-    fn audit(&self, outcome: &Outcome) -> FactoryAudit {
-        let (disposition, output, reason) = self.disposition(outcome);
+    fn audit_result(&self, reduction: &FactoryReduction) -> FactoryAudit {
+        let (disposition, output, reason) = self.disposition_result(reduction);
+        self.audit_with(disposition, output, reason)
+    }
+
+    fn audit_with(
+        &self,
+        disposition: FactoryDisposition,
+        output: &'static str,
+        reason: Option<String>,
+    ) -> FactoryAudit {
         FactoryAudit {
             ast_kind: self.ast_kind,
             site: self.site.clone(),
@@ -264,7 +355,27 @@ impl FactoryAuditSeed {
         }
     }
 
-    fn disposition(&self, outcome: &Outcome) -> (FactoryDisposition, &'static str, Option<String>) {
+    fn disposition_result(
+        &self,
+        reduction: &FactoryReduction,
+    ) -> (FactoryDisposition, &'static str, Option<String>) {
+        let outcome = match reduction {
+            Ok(outcome) => outcome,
+            Err(gap) => {
+                return (
+                    FactoryDisposition::Unresolved,
+                    "gap",
+                    Some(gap.reason.clone()),
+                )
+            }
+        };
+        self.disposition_outcome(outcome)
+    }
+
+    fn disposition_outcome(
+        &self,
+        outcome: &Outcome,
+    ) -> (FactoryDisposition, &'static str, Option<String>) {
         match outcome {
             Outcome::Complete(Desugared::Constraints { kind, .. }) => match kind {
                 AssertionFactKind::Warranted => {
@@ -289,15 +400,6 @@ impl FactoryAuditSeed {
                 Some("inert: empty sequence; no obligation emitted".to_string()),
             ),
             Outcome::Complete(Desugared::Seq(_)) => (FactoryDisposition::Warranted, "sequence", None),
-            Outcome::Incomplete(Effect::Unsupported { reason })
-                if reason == STRUCTURAL_BACKSTOP_REASON =>
-            {
-                (
-                    FactoryDisposition::Unresolved,
-                    "structural-backstop",
-                    Some(self.unresolved_reason()),
-                )
-            }
             Outcome::Incomplete(effect) => {
                 let reason = effect.reason();
                 match refusal_disposition(&reason) {
@@ -309,8 +411,8 @@ impl FactoryAuditSeed {
                     ),
                     Disposition::Unclassified => (
                         FactoryDisposition::Unresolved,
-                        "structural-backstop",
-                        Some(format!("{reason}; write more Sugar for this AST")),
+                        "gap",
+                        Some(gap_reason_from_unsupported_reason(self, &reason)),
                     ),
                 }
             }
@@ -329,6 +431,33 @@ impl FactoryAuditSeed {
             ),
         }
     }
+}
+
+fn structural_bail_to_gap(seed: &FactoryAuditSeed, outcome: Outcome) -> FactoryReduction {
+    match &outcome {
+        Outcome::Incomplete(Effect::Unsupported { reason })
+            if refusal_disposition(reason) == Disposition::Unclassified =>
+        {
+            Err(FactoryGap {
+                reason: gap_reason_from_unsupported_reason(seed, reason),
+            })
+        }
+        _ => Ok(outcome),
+    }
+}
+
+fn gap_reason_from_unsupported_reason(seed: &FactoryAuditSeed, reason: &str) -> String {
+    if reason == STRUCTURAL_BACKSTOP_REASON {
+        seed.unresolved_reason()
+    } else if reason.contains("write more Sugar for this AST") {
+        reason.to_string()
+    } else {
+        format!("{reason}; write more Sugar for this AST")
+    }
+}
+
+fn gap_to_compat_outcome(gap: FactoryGap) -> Outcome {
+    Outcome::Incomplete(Effect::Unsupported { reason: gap.reason })
 }
 
 fn factory_audit_span(span: proc_macro2::Span) -> FactoryAuditSpan {
@@ -353,56 +482,11 @@ impl AccountedSugar {
     }
 }
 
-/// FIX(a): the factory-level over-refusal fix. A RECOGNIZED **Term** sugar (`selected`
-/// is Some) that struck ONLY the GENERIC structural backstop (`Outcome::is_structural_bail`
-/// -- a pure-but-untranslated term, NOT a NAMED order-loss effect) degrades to an
-/// opaque-EUF term `Var{name:"opaque:<site>"}` -- a warranted-UNDECIDED congruence leaf --
-/// instead of a refusal. A structural bail in term position is OUR untranslated-term gap,
-/// not a source property; refusing it manufactures a false dragon (over-refusal). The
-/// opaque var has NO teeth (SAT for any value) so it can NEVER false-discharge AND never
-/// false-refute: the only motion is refused->undecided, which is strictly safer. Keyed by
-/// the token-key so identical subterms stay congruent.
-///
-/// NOT converted (stay refused / unchanged): a NAMED effect (mutation / runtime / temporal
-/// / IO -- a real source property); a non-Term role (a Constraint that cannot lift IS a
-/// refusal); an UNRECOGNIZED shape (`selected` is None -> nothing claimed it); and the two
-/// exempt recognizers -- `match_value_term` (owns a value-CONTRACT emission path whose
-/// deliberate decline must stand) and `transparent_term` (paren/group pass-through; a
-/// paren's inner is converted at its own level, so the wrapper only bails when its inner
-/// is itself exempt, e.g. `(match ...)`).
-fn term_bail_to_opaque(
-    requested_role: &str,
-    selected: Option<&'static str>,
-    site: &str,
-    outcome: Outcome,
-) -> Outcome {
-    let eligible = requested_role == "Term"
-        && selected.is_some()
-        && !matches!(
-            selected,
-            Some("match_value_term") | Some("transparent_term")
-        )
-        && outcome.is_structural_bail();
-    if eligible {
-        Outcome::Complete(Desugared::Term(std::rc::Rc::new(
-            sugar_ir_symbolic::Term::Var {
-                name: format!("opaque:{site}"),
-            },
-        )))
-    } else {
-        outcome
-    }
-}
-
 impl Sugar for AccountedSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let outcome = term_bail_to_opaque(
-            &self.seed.requested_role,
-            self.seed.selected,
-            &self.seed.site,
-            self.inner.desugar(ctx),
-        );
-        let audit = self.seed.audit(&outcome);
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+        let outcome = self.inner.desugar(ctx);
+        let reduction = structural_bail_to_gap(&self.seed, outcome);
+        let audit = self.seed.audit_result(&reduction);
         if matches!(
             audit.disposition,
             FactoryDisposition::Refused | FactoryDisposition::Unresolved
@@ -433,7 +517,21 @@ impl Sugar for AccountedSugar {
             );
         }
         ctx.record_factory_audit(audit);
-        outcome
+        reduction
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        match self.reduce(ctx) {
+            Ok(outcome) => outcome,
+            Err(gap) => gap_to_compat_outcome(gap),
+        }
+    }
+}
+
+pub(crate) fn compat_reduction(reduction: FactoryReduction) -> Outcome {
+    match reduction {
+        Ok(outcome) => outcome,
+        Err(gap) => gap_to_compat_outcome(gap),
     }
 }
 
@@ -463,7 +561,7 @@ mod tests {
             },
         });
 
-        let audit = seed.audit(&outcome);
+        let audit = seed.audit_result(&Ok(outcome));
 
         assert_eq!(audit.disposition, FactoryDisposition::Warranted);
         assert_eq!(audit.output, "auxiliary-constraints");
@@ -476,78 +574,124 @@ mod tests {
         );
     }
 
-    // FIX(a) discrimination: a recognized-TERM GENERIC structural bail degrades to an
-    // opaque-EUF term (warranted-UNDECIDED), never a refusal -- but a named/reasoned
-    // refusal, an unrecognized backstop, a non-Term role, the exempt recognizers, and a
-    // successful Complete are all left UNCHANGED. (opaque-EUF carries no teeth, so the only
-    // motion is refused->undecided: it can neither false-discharge nor false-refute.)
     #[test]
-    fn fix_a_term_structural_bail_degrades_to_opaque_undecided_not_refused() {
-        use sugar_ir_symbolic::Term;
-        let is_opaque = |o: &Outcome| {
-            matches!(o, Outcome::Complete(Desugared::Term(t))
-                if matches!(t.as_ref(), Term::Var { name } if name.starts_with("opaque:")))
+    fn structural_backstop_is_factory_gap_not_incomplete_outcome() {
+        let seed = FactoryAuditSeed {
+            ast_kind: "expr",
+            site: "iter".to_string(),
+            line: 7,
+            span: None,
+            requested_role: "Composite".to_string(),
+            selected: Some("bound_path_composite"),
+            candidates: Vec::new(),
         };
-        let is_refused = |o: &Outcome| matches!(o, Outcome::Incomplete(_));
 
-        // (1) THE FIX: a recognized-Term generic structural bail -> opaque-EUF (undecided).
-        let bailed = term_bail_to_opaque("Term", Some("binop"), "a + b", Outcome::from_opt(None));
+        let reduction = structural_bail_to_gap(&seed, Outcome::from_opt(None));
         assert!(
-            is_opaque(&bailed),
-            "a recognized-Term structural bail must become an opaque-EUF undecided term"
+            reduction.is_err(),
+            "a structural factory miss has no terminal Outcome"
         );
 
-        // (2) a NAMED / reasoned refusal (non-backstop reason) STAYS the loud refusal.
-        let named = Outcome::Incomplete(Effect::Unsupported {
-            reason: "unsupported term operator `@`".to_string(),
-        });
+        let audit = seed.audit_result(&reduction);
+        assert_eq!(audit.disposition, FactoryDisposition::Unresolved);
+        assert_eq!(audit.output, "gap");
         assert!(
-            is_refused(&term_bail_to_opaque("Term", Some("binop"), "x", named)),
-            "a named/reasoned refusal must stay refused"
+            audit
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("write more Sugar")),
+            "{audit:?}"
+        );
+    }
+
+    #[test]
+    fn no_candidate_structural_backstop_is_factory_gap() {
+        let seed = FactoryAuditSeed {
+            ast_kind: "expr",
+            site: "opaque_shape()".to_string(),
+            line: 11,
+            span: None,
+            requested_role: "Composite".to_string(),
+            selected: None,
+            candidates: Vec::new(),
+        };
+
+        let reduction = structural_bail_to_gap(&seed, Outcome::from_opt(None));
+        assert!(
+            reduction.is_err(),
+            "a no-candidate factory miss has no terminal Outcome"
         );
 
-        // (3) an UNRECOGNIZED shape (no candidate selected -> backstop) stays refused.
+        let audit = seed.audit_result(&reduction);
+        assert_eq!(audit.disposition, FactoryDisposition::Unresolved);
+        assert_eq!(audit.output, "gap");
         assert!(
-            is_refused(&term_bail_to_opaque(
-                "Term",
-                None,
-                "x",
-                Outcome::from_opt(None)
-            )),
-            "an unrecognized backstop bail must stay refused (nothing claimed it)"
+            audit.reason.as_deref().is_some_and(|reason| reason
+                .contains("no Sugar candidate for role Composite at `opaque_shape()`")),
+            "{audit:?}"
+        );
+    }
+
+    #[test]
+    fn named_effect_stays_incomplete_outcome_not_factory_gap() {
+        let seed = FactoryAuditSeed {
+            ast_kind: "expr",
+            site: "&mut x".to_string(),
+            line: 7,
+            span: None,
+            requested_role: "Term".to_string(),
+            selected: Some("reference_term"),
+            candidates: Vec::new(),
+        };
+
+        let reduction = structural_bail_to_gap(
+            &seed,
+            Outcome::Incomplete(Effect::TemporalRead {
+                boundary: "&mut x".to_string(),
+            }),
+        );
+        assert!(
+            reduction.is_ok(),
+            "a real effect remains a terminal Outcome"
         );
 
-        // (4) a non-Term role stays refused (a Constraint that cannot lift IS a refusal).
+        let audit = seed.audit_result(&reduction);
+        assert_eq!(audit.disposition, FactoryDisposition::Refused);
+        assert_eq!(audit.output, "effect");
+    }
+
+    #[test]
+    fn recognized_term_structural_bail_is_gap_not_opaque_complete() {
+        let seed = FactoryAuditSeed {
+            ast_kind: "expr",
+            site: "a + b".to_string(),
+            line: 7,
+            span: None,
+            requested_role: "Term".to_string(),
+            selected: Some("binop"),
+            candidates: Vec::new(),
+        };
+
+        let bailed = structural_bail_to_gap(&seed, Outcome::from_opt(None));
         assert!(
-            is_refused(&term_bail_to_opaque(
-                "Constraint",
-                Some("c"),
-                "x",
-                Outcome::from_opt(None)
-            )),
-            "a non-Term role bail must stay refused"
+            bailed.is_err(),
+            "a recognized-Term structural bail must be a factory gap, not an opaque Complete"
         );
 
-        // (5) the exempt recognizers keep their deliberate decline.
-        for exempt in ["match_value_term", "transparent_term"] {
-            assert!(
-                is_refused(&term_bail_to_opaque(
-                    "Term",
-                    Some(exempt),
-                    "x",
-                    Outcome::from_opt(None)
-                )),
-                "exempt recognizer `{exempt}` must stay refused"
-            );
-        }
+        let audit = seed.audit_result(&bailed);
+        assert_eq!(audit.disposition, FactoryDisposition::Unresolved);
+        assert_eq!(audit.output, "gap");
 
-        // (6) a successful Complete passes through unchanged (no spurious opaque substitution).
-        let completed = Outcome::Complete(Desugared::Term(std::rc::Rc::new(Term::Var {
-            name: "real".to_string(),
-        })));
+        let completed = Outcome::Complete(Desugared::Term(std::rc::Rc::new(
+            sugar_ir_symbolic::Term::Var {
+                name: "real".to_string(),
+            },
+        )));
         assert!(
-            matches!(term_bail_to_opaque("Term", Some("binop"), "x", completed),
-                Outcome::Complete(Desugared::Term(t)) if matches!(t.as_ref(), Term::Var { name } if name == "real")),
+            matches!(structural_bail_to_gap(&seed, completed),
+                Ok(
+                Outcome::Complete(Desugared::Term(t))
+            ) if matches!(t.as_ref(), sugar_ir_symbolic::Term::Var { name } if name == "real")),
             "a successful Complete must pass through unchanged"
         );
     }

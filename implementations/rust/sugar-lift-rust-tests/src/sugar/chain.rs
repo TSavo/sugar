@@ -4,13 +4,13 @@
 // domain transform, not a terminal method call: the left and right receivers are
 // both built through the composite factory, then concatenated in source order.
 
-use std::collections::BTreeMap;
-
 use syn::Expr;
 use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{build_composite, has_composite, SugarBuildCtx};
+use crate::sugar::factory::{
+    compat_reduction, has_composite, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+};
 use crate::{Desugared, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -29,59 +29,66 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     if !has_composite(&call.receiver, fcx) || !has_composite(&call.args[0], fcx) {
         return None;
     }
-    Some(Box::new(ChainSugar {
-        left: (*call.receiver).clone(),
-        right: call.args[0].clone(),
-        let_inits: capture_let_inits(fcx),
-    }))
+    Some(ChainSugar::new(
+        SugarBody::composite(&call.receiver, fcx),
+        SugarBody::composite(&call.args[0], fcx),
+    ))
 }
 
 struct ChainSugar {
-    left: Expr,
-    right: Expr,
-    let_inits: BTreeMap<String, Expr>,
+    left: SugarBody,
+    right: SugarBody,
 }
 
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
+impl ChainSugar {
+    fn new(left: SugarBody, right: SugarBody) -> Box<dyn Sugar> {
+        Box::new(Self { left, right })
+    }
 }
 
 impl Sugar for ChainSugar {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+        let mut left = match sequence_from_body(&self.left, ctx, "chain lhs") {
+            Ok(seq) => seq,
+            Err(reduction) => return reduction,
+        };
+        let right = match sequence_from_body(&self.right, ctx, "chain rhs") {
+            Ok(seq) => seq,
+            Err(reduction) => return reduction,
+        };
+        let total = left
+            .len()
+            .checked_add(right.len())
+            .ok_or_else(|| FactoryGap::new("chain sequence length overflow"))?;
+        if total > SUGAR_SEQ_CAP as usize {
+            return Err(FactoryGap::new(format!(
+                "chain sequence length {total} exceeds cap {SUGAR_SEQ_CAP}"
+            )));
+        }
+        left.extend(right);
+        debug!(
+            target: "sugar_lift_rust_tests::sugar::chain",
+            len = left.len(),
+            "chained finite literal-derived domain"
+        );
+        Ok(Outcome::Complete(Desugared::Seq(left)))
+    }
+
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-            let let_inits: BTreeMap<String, &Expr> = stable
-                .iter()
-                .map(|(name, init)| (name.clone(), init))
-                .chain(
-                    self.let_inits
-                        .iter()
-                        .map(|(name, init)| (name.clone(), init)),
-                )
-                .collect();
-            let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-            let mut left = build_composite(&self.left, &fcx)
-                .desugar(ctx)
-                .complete()?
-                .into_seq()?;
-            let right = build_composite(&self.right, &fcx)
-                .desugar(ctx)
-                .complete()?
-                .into_seq()?;
-            let total = left.len().checked_add(right.len())?;
-            if total > SUGAR_SEQ_CAP as usize {
-                return None;
-            }
-            left.extend(right);
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::chain",
-                len = left.len(),
-                "chained finite literal-derived domain"
-            );
-            Some(Desugared::Seq(left))
-        })())
+        compat_reduction(self.reduce(ctx))
+    }
+}
+
+fn sequence_from_body(
+    body: &SugarBody,
+    ctx: &SugarCtx,
+    label: &'static str,
+) -> Result<Vec<crate::DesugaredElem>, FactoryReduction> {
+    match body.reduce(ctx) {
+        Ok(Outcome::Complete(d)) => d
+            .into_seq()
+            .ok_or_else(|| Err(FactoryGap::new(format!("{label} reduced to non-sequence")))),
+        Ok(Outcome::Incomplete(effect)) => Err(Ok(Outcome::Incomplete(effect))),
+        Err(gap) => Err(Err(gap)),
     }
 }

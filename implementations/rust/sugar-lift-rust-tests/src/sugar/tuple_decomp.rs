@@ -26,14 +26,16 @@
 // (declined), or the arities differ, we decline -> the ordinary equality path applies
 // (no regression, never a false discharge).
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{build_term, build_tuple_producer, has_tuple_producer, SugarBuildCtx};
+use crate::sugar::factory::{
+    build_tuple_producer, compat_reduction, has_tuple_producer, FactoryGap, FactoryReduction,
+    SugarBody, SugarBuildCtx,
+};
 use crate::{
-    callsite_assertion_name, parse_macro_args, AssertionFactKind, Desugared, Effect, Outcome,
-    Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON,
+    callsite_assertion_name, parse_macro_args, AssertionFactKind, Desugared, Outcome, Sugar,
+    SugarCtx, Warrant,
 };
 use sugar_ir_symbolic::{and_, atomic_, Term};
 use syn::{BinOp, Expr, ExprBinary, ExprMacro};
@@ -81,11 +83,15 @@ fn build(lhs: &Expr, rhs: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> 
         (literal_tuple_elements(lhs), literal_tuple_elements(rhs))
     {
         if !lhs_exprs.is_empty() && lhs_exprs.len() == rhs_exprs.len() {
-            return Some(Box::new(TupleDecompSugar {
-                kind: TupleDecompKind::LiteralPair {
-                    lhs_exprs,
-                    rhs_exprs,
-                },
+            return Some(TupleDecompSugar::new(TupleDecompKind::LiteralPair {
+                lhs_terms: lhs_exprs
+                    .iter()
+                    .map(|expr| SugarBody::term(expr, fcx))
+                    .collect(),
+                rhs_terms: rhs_exprs
+                    .iter()
+                    .map(|expr| SugarBody::term(expr, fcx))
+                    .collect(),
             }));
         }
     }
@@ -94,11 +100,12 @@ fn build(lhs: &Expr, rhs: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> 
     if literal_exprs.is_empty() {
         return None;
     }
-    Some(Box::new(TupleDecompSugar {
-        kind: TupleDecompKind::ProducerLiteral {
-            producer,
-            literal_exprs,
-        },
+    Some(TupleDecompSugar::new(TupleDecompKind::ProducerLiteral {
+        producer,
+        literal_terms: literal_exprs
+            .iter()
+            .map(|expr| SugarBody::term(expr, fcx))
+            .collect(),
     }))
 }
 
@@ -109,15 +116,15 @@ fn match_producer_and_literal(
     lhs: &Expr,
     rhs: &Expr,
     fcx: &SugarBuildCtx,
-) -> Option<(Expr, Vec<Expr>)> {
+) -> Option<(SugarBody, Vec<Expr>)> {
     if has_tuple_producer(lhs, fcx) {
         if let Some(l) = literal_tuple_elements(rhs) {
-            return Some((lhs.clone(), l));
+            return Some((SugarBody::from_node(build_tuple_producer(lhs, fcx)), l));
         }
     }
     if has_tuple_producer(rhs, fcx) {
         if let Some(l) = literal_tuple_elements(lhs) {
-            return Some((rhs.clone(), l));
+            return Some((SugarBody::from_node(build_tuple_producer(rhs, fcx)), l));
         }
     }
     None
@@ -142,12 +149,12 @@ fn strip_paren_group(expr: &Expr) -> &Expr {
 
 enum TupleDecompKind {
     ProducerLiteral {
-        producer: Expr,
-        literal_exprs: Vec<Expr>,
+        producer: SugarBody,
+        literal_terms: Vec<SugarBody>,
     },
     LiteralPair {
-        lhs_exprs: Vec<Expr>,
-        rhs_exprs: Vec<Expr>,
+        lhs_terms: Vec<SugarBody>,
+        rhs_terms: Vec<SugarBody>,
     },
 }
 
@@ -156,69 +163,70 @@ struct TupleDecompSugar {
 }
 
 impl Sugar for TupleDecompSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let let_inits = scope_let_inits(ctx);
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
         match &self.kind {
             TupleDecompKind::ProducerLiteral {
                 producer,
-                literal_exprs,
+                literal_terms,
             } => {
-                let producer = build_tuple_producer(producer, &fcx);
-                let literal_terms: Vec<Box<dyn Sugar>> = literal_exprs
-                    .iter()
-                    .map(|literal| build_term(literal, &fcx))
-                    .collect();
-                let producer_components = match producer.desugar(ctx) {
+                let producer_components = match producer.reduce(ctx)? {
                     Outcome::Complete(desugared) => match desugared.into_tuple_components() {
                         Some(components) => components,
-                        None => return Outcome::from_opt(None),
+                        None => {
+                            return Err(FactoryGap::new(
+                                "tuple producer reduced to non-tuple-components",
+                            ))
+                        }
                     },
-                    Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+                    Outcome::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
                 };
                 if producer_components.len() != literal_terms.len() {
-                    return Outcome::from_opt(None);
+                    return Err(FactoryGap::new("tuple decomp arity mismatch"));
                 }
                 let mut atoms = Vec::with_capacity(literal_terms.len());
                 let mut anchor: Option<Rc<Term>> = None;
-                for (lhs_term, rhs) in producer_components.into_iter().zip(&literal_terms) {
-                    let rhs_term = match term_payload(rhs.as_ref(), ctx) {
+                for (lhs_term, rhs) in producer_components.into_iter().zip(literal_terms) {
+                    let rhs_term = match term_payload(rhs, ctx) {
                         Ok(term) => term,
-                        Err(outcome) => return outcome,
+                        Err(reduction) => return reduction,
                     };
                     if anchor.is_none() {
                         anchor = Some(Rc::clone(&lhs_term));
                     }
                     atoms.push(atomic_("=".to_string(), vec![lhs_term, rhs_term]));
                 }
-                constraints(atoms, anchor, ctx)
+                Ok(constraints(atoms, anchor, ctx))
             }
             TupleDecompKind::LiteralPair {
-                lhs_exprs,
-                rhs_exprs,
+                lhs_terms,
+                rhs_terms,
             } => {
-                if lhs_exprs.len() != rhs_exprs.len() {
-                    return Outcome::from_opt(None);
+                if lhs_terms.len() != rhs_terms.len() {
+                    return Err(FactoryGap::new("tuple literal decomp arity mismatch"));
                 }
-                let mut atoms = Vec::with_capacity(lhs_exprs.len());
+                let mut atoms = Vec::with_capacity(lhs_terms.len());
                 let mut anchor: Option<Rc<Term>> = None;
-                for (lhs, rhs) in lhs_exprs.iter().zip(rhs_exprs) {
-                    let lhs_term = match term_from_expr(lhs, &fcx, ctx) {
+                for (lhs, rhs) in lhs_terms.iter().zip(rhs_terms) {
+                    let lhs_term = match term_payload(lhs, ctx) {
                         Ok(term) => term,
-                        Err(outcome) => return outcome,
+                        Err(reduction) => return reduction,
                     };
-                    let rhs_term = match term_from_expr(rhs, &fcx, ctx) {
+                    let rhs_term = match term_payload(rhs, ctx) {
                         Ok(term) => term,
-                        Err(outcome) => return outcome,
+                        Err(reduction) => return reduction,
                     };
                     if anchor.is_none() {
                         anchor = Some(Rc::clone(&lhs_term));
                     }
                     atoms.push(atomic_("=".to_string(), vec![lhs_term, rhs_term]));
                 }
-                constraints(atoms, anchor, ctx)
+                Ok(constraints(atoms, anchor, ctx))
             }
         }
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
     }
 }
 
@@ -238,25 +246,18 @@ fn constraints(
     })
 }
 
-fn scope_let_inits<'a, 'c>(ctx: &SugarCtx<'a, 'c>) -> BTreeMap<String, &'a Expr> {
-    ctx.scope
-        .let_bindings_iter()
-        .map(|(name, init)| (name.clone(), init))
-        .collect()
-}
-
-fn term_payload(node: &dyn Sugar, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
-    match node.desugar(ctx) {
-        Outcome::Complete(desugared) => desugared.into_term().ok_or_else(|| {
-            Outcome::Incomplete(Effect::Unsupported {
-                reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
-            })
-        }),
-        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
+impl TupleDecompSugar {
+    fn new(kind: TupleDecompKind) -> Box<dyn Sugar> {
+        Box::new(Self { kind })
     }
 }
 
-fn term_from_expr(expr: &Expr, fcx: &SugarBuildCtx, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
-    let node = build_term(expr, fcx);
-    term_payload(node.as_ref(), ctx)
+fn term_payload(body: &SugarBody, ctx: &SugarCtx) -> Result<Rc<Term>, FactoryReduction> {
+    match body.reduce(ctx) {
+        Ok(Outcome::Complete(desugared)) => desugared
+            .into_term()
+            .ok_or_else(|| Err(FactoryGap::new("tuple decomp literal reduced to non-term"))),
+        Ok(Outcome::Incomplete(effect)) => Err(Ok(Outcome::Incomplete(effect))),
+        Err(gap) => Err(Err(gap)),
+    }
 }

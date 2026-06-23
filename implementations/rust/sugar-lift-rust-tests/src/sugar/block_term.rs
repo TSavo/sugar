@@ -2,13 +2,10 @@
 //
 // TERM recognizer for the VALUE-TRANSPARENT blocks `Expr::Unsafe` (`unsafe { expr }`)
 // and `Expr::Block` (`{ expr }`): a single-tail block is the value of its tail. The
-// recognizer captures that raw tail expression; `desugar` recurses through
-// `build_term` when the binding context is live. Any other block shape is refused by
-// name. Byte-identical to the `Expr::Unsafe`/`Expr::Block` arms of the old fat factory.
+// recognizer substitutes any inert let-prefix and constructs the tail body immediately.
+// Any other block shape is refused by name.
 
-use std::collections::BTreeMap;
-
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx};
 use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::sugar::unsafe_memory;
 use crate::{substitute_expr, token_key, ExprBindings, Outcome, Sugar, SugarCtx};
@@ -45,43 +42,20 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
 }
 
 struct BlockTermSugar {
-    tail: Expr,
-    let_inits: BTreeMap<String, Expr>,
+    tail: SugarBody,
 }
 
 impl BlockTermSugar {
     fn boxed(tail: Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
         Box::new(Self {
-            tail,
-            let_inits: capture_let_inits(fcx),
+            tail: SugarBody::term(&tail, fcx),
         })
     }
 }
 
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
-}
-
-fn merge_let_inits<'a>(
-    stable: &'a BTreeMap<String, Expr>,
-    captured: &'a BTreeMap<String, Expr>,
-) -> BTreeMap<String, &'a Expr> {
-    stable
-        .iter()
-        .map(|(name, init)| (name.clone(), init))
-        .chain(captured.iter().map(|(name, init)| (name.clone(), init)))
-        .collect()
-}
-
 impl Sugar for BlockTermSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-        let let_inits = merge_let_inits(&stable, &self.let_inits);
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        build_term(&self.tail, &fcx).desugar(ctx)
+        self.tail.desugar(ctx)
     }
 }
 
