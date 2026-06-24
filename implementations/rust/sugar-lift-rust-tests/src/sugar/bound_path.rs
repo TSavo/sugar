@@ -5,7 +5,10 @@
 // this sugar its already-built body. Desugar never re-opens the factory from raw syntax.
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{CompositeFloor, ConstraintFloor, SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::factory::{
+    has_tuple_producer, CompositeFloor, ConstraintFloor, SugarBody, SugarBuildCtx, TermFloor,
+    TupleProducerFloor,
+};
 use crate::sugar::term_leaf::{reasoned_incomplete, resolved_term};
 use crate::{token_key, Outcome, Sugar, SugarCtx};
 use syn::{Expr, ExprPath};
@@ -26,6 +29,9 @@ pub(crate) const COMPOSITE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::composit
     recognize_composite,
 );
 
+pub(crate) const TUPLE_PRODUCER_EXPR_SUGAR: ExprSugarClaim =
+    ExprSugarClaim::tuple_producer("bound_path_tuple_producer", recognize_tuple_producer);
+
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     recognize_role(expr, fcx, BoundPathRole::Term)
 }
@@ -36,6 +42,10 @@ fn recognize_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
 
 fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     recognize_role(expr, fcx, BoundPathRole::Composite)
+}
+
+fn recognize_tuple_producer(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+    recognize_role(expr, fcx, BoundPathRole::TupleProducer)
 }
 
 fn recognize_role(expr: &Expr, fcx: &SugarBuildCtx, role: BoundPathRole) -> Option<Box<dyn Sugar>> {
@@ -72,6 +82,7 @@ enum BoundPathRole {
     Term,
     Constraint,
     Composite,
+    TupleProducer,
 }
 
 impl BoundPathRole {
@@ -80,6 +91,7 @@ impl BoundPathRole {
             BoundPathRole::Term => "Term",
             BoundPathRole::Constraint => "Constraint",
             BoundPathRole::Composite => "Composite",
+            BoundPathRole::TupleProducer => "TupleProducer",
         }
     }
 }
@@ -97,6 +109,10 @@ enum BoundPathSugar {
         name: String,
         body: SugarBody<CompositeFloor>,
     },
+    TupleProducer {
+        name: String,
+        body: SugarBody<TupleProducerFloor>,
+    },
 }
 
 impl BoundPathSugar {
@@ -104,7 +120,8 @@ impl BoundPathSugar {
         match self {
             Self::Term { name, .. }
             | Self::Constraint { name, .. }
-            | Self::Composite { name, .. } => name,
+            | Self::Composite { name, .. }
+            | Self::TupleProducer { name, .. } => name,
         }
     }
 
@@ -113,6 +130,7 @@ impl BoundPathSugar {
             Self::Term { .. } => BoundPathRole::Term,
             Self::Constraint { .. } => BoundPathRole::Constraint,
             Self::Composite { .. } => BoundPathRole::Composite,
+            Self::TupleProducer { .. } => BoundPathRole::TupleProducer,
         }
     }
 }
@@ -133,6 +151,8 @@ fn construct_bound_path_sugar(
             .map(|body| Box::new(BoundPathSugar::Constraint { name, body }) as Box<dyn Sugar>),
         BoundPathRole::Composite => construct_composite_body(&name, fcx, &child_fcx)
             .map(|body| Box::new(BoundPathSugar::Composite { name, body }) as Box<dyn Sugar>),
+        BoundPathRole::TupleProducer => construct_tuple_producer_body(&name, fcx, &child_fcx)
+            .map(|body| Box::new(BoundPathSugar::TupleProducer { name, body }) as Box<dyn Sugar>),
     }
 }
 
@@ -204,6 +224,19 @@ fn construct_composite_body(
     Some(SugarBody::composite(init, child_fcx))
 }
 
+fn construct_tuple_producer_body(
+    name: &str,
+    fcx: &SugarBuildCtx,
+    child_fcx: &SugarBuildCtx,
+) -> Option<SugarBody<TupleProducerFloor>> {
+    if let Some(current) = temporal_rewrite_expr(name, fcx, BoundPathRole::TupleProducer) {
+        return has_tuple_producer(&current, child_fcx)
+            .then(|| SugarBody::tuple_producer(&current, child_fcx));
+    }
+    let init = fcx.scope().stable_let_binding_for_term(name)?;
+    has_tuple_producer(init, child_fcx).then(|| SugarBody::tuple_producer(init, child_fcx))
+}
+
 impl Sugar for BoundPathSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         debug!(
@@ -216,6 +249,7 @@ impl Sugar for BoundPathSugar {
             BoundPathSugar::Term { body, .. } => body.reduce(ctx),
             BoundPathSugar::Constraint { body, .. } => body.reduce(ctx),
             BoundPathSugar::Composite { body, .. } => body.reduce(ctx),
+            BoundPathSugar::TupleProducer { body, .. } => body.reduce(ctx),
         }
     }
 }

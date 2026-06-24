@@ -44,6 +44,8 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &cfg_select::ASSERTION_SURFACE_EXPR_SUGAR,
     &tuple_decomp::ASSERTION_SURFACE_EXPR_SUGAR,
     &slice_search::ASSERTION_SURFACE_EXPR_SUGAR,
+    &bound_path::TUPLE_PRODUCER_EXPR_SUGAR,
+    &tuple_term::TUPLE_PRODUCER_EXPR_SUGAR,
     &integer_decode::TUPLE_PRODUCER_EXPR_SUGAR,
     &size_hint::TUPLE_PRODUCER_EXPR_SUGAR,
     &primitive_int::TUPLE_PRODUCER_EXPR_SUGAR,
@@ -508,6 +510,29 @@ mod tests {
             .into_iter()
             .map(|candidate| candidate.name())
             .collect()
+    }
+
+    #[test]
+    fn literal_tuple_has_tuple_producer_candidate() {
+        let expr: Expr = syn::parse_str("(1, 2)").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::TupleProducer);
+        assert!(
+            names.contains(&"literal_tuple_producer"),
+            "literal tuple must expose its component floor through TupleProducer: {names:?}"
+        );
+    }
+
+    #[test]
+    fn bound_literal_tuple_has_tuple_producer_candidate() {
+        let expr: Expr = syn::parse_str("pair").unwrap();
+        let mut let_inits = BTreeMap::new();
+        let_inits.insert("pair".to_string(), syn::parse_str("(1, 2)").unwrap());
+        let names =
+            candidate_names_for_role_with_let_inits(&expr, SugarRole::TupleProducer, &let_inits);
+        assert!(
+            names.contains(&"bound_path_tuple_producer"),
+            "bound tuple must forward its component floor through TupleProducer: {names:?}"
+        );
     }
 
     fn run_expr_with_audit(expr: &Expr, role: SugarRole) -> Vec<crate::FactoryAudit> {

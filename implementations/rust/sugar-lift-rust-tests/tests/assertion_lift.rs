@@ -18445,6 +18445,41 @@ fn temporal_nested_map_curry_dispatch_reduces_inner_floor_before_materializing()
 }
 
 #[test]
+fn temporal_map_tuple_projection_chain_visits_floor_before_currying() {
+    // This is the construction-law composition in one fluent chain:
+    // map #1 curries `n`, tuple projection visits `(n, n + 10)` as a tuple floor
+    // and selects `.1`, then map #2 curries that scalar floor again before `sum`.
+    let lhs = "[1i32, 2].into_iter().map(|n| (n, n + 10).1).map(|v| v * 2).sum::<i32>()";
+
+    let good = lift_eq_decl(lhs, "46i32", "tests/temporal_map_tuple_field_chain_good.rs");
+    assert_eq!(
+        complete_eq_int_pairs(&good),
+        vec![(46, 46)],
+        "tuple projection inside map must reduce to a scalar floor before the next map curries it"
+    );
+    let good_dump = format!("{:?}", good.inv);
+    assert!(
+        !good_dump.contains("literal:Tuple(")
+            && !good_dump.contains("field:1")
+            && !good_dump.contains("method:map"),
+        "the fluent chain must not leak tuple, field, or map residue after floor visits: {good_dump}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&good), "temporal_map_tuple_field_chain_good") {
+        assert!(sat, "tuple-field map chain good twin must be SAT");
+    }
+
+    let bad = lift_eq_decl(lhs, "47i32", "tests/temporal_map_tuple_field_chain_bad.rs");
+    assert_eq!(
+        complete_eq_int_pairs(&bad),
+        vec![(46, 47)],
+        "wrong expected value must still see the exact scalar floor from the composed chain"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&bad), "temporal_map_tuple_field_chain_bad") {
+        assert!(!sat, "tuple-field map chain bad twin must be z3-UNSAT");
+    }
+}
+
+#[test]
 fn temporal_closure_adaptor_terminals_compose_to_literal_floor_with_teeth() {
     let int_cases: &[(&str, &str, &str, i128, i128)] = &[
         (
