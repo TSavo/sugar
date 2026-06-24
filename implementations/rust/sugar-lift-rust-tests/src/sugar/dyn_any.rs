@@ -34,9 +34,18 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
 
 #[derive(Clone)]
 enum DynAnyPredicateKind {
-    Is { receiver: Expr, target: String },
-    DowncastRefIsSome { receiver: Expr, target: String },
-    DowncastBoxIsOk { receiver: Expr, target: String },
+    Is {
+        receiver: DynAnyReceiver,
+        target: String,
+    },
+    DowncastRefIsSome {
+        receiver: DynAnyReceiver,
+        target: String,
+    },
+    DowncastBoxIsOk {
+        receiver: DynAnyReceiver,
+        target: String,
+    },
 }
 
 impl DynAnyPredicateKind {
@@ -50,7 +59,9 @@ impl DynAnyPredicateKind {
         }
         match method.as_str() {
             "is" => Some(Self::Is {
-                receiver: (*call.receiver).clone(),
+                receiver: DynAnyReceiver {
+                    raw: (*call.receiver).clone(),
+                },
                 target: turbofish_type_key(&call.turbofish)?,
             }),
             "is_some" => {
@@ -61,7 +72,9 @@ impl DynAnyPredicateKind {
                     return None;
                 }
                 Some(Self::DowncastRefIsSome {
-                    receiver: (*inner.receiver).clone(),
+                    receiver: DynAnyReceiver {
+                        raw: (*inner.receiver).clone(),
+                    },
                     target: turbofish_type_key(&inner.turbofish)?,
                 })
             }
@@ -73,7 +86,9 @@ impl DynAnyPredicateKind {
                     return None;
                 }
                 Some(Self::DowncastBoxIsOk {
-                    receiver: (*inner.receiver).clone(),
+                    receiver: DynAnyReceiver {
+                        raw: (*inner.receiver).clone(),
+                    },
                     target: turbofish_type_key(&inner.turbofish)?,
                 })
             }
@@ -81,7 +96,7 @@ impl DynAnyPredicateKind {
         }
     }
 
-    fn receiver(&self) -> &Expr {
+    fn receiver(&self) -> &DynAnyReceiver {
         match self {
             Self::Is { receiver, .. }
             | Self::DowncastRefIsSome { receiver, .. }
@@ -118,16 +133,21 @@ impl Sugar for DynAnyPredicateSugar {
             Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
         let Some(concrete) = concrete else {
-            return Outcome::from_opt(None);
+            dyn_any_gap("concrete type child completed as a non-type-id term");
         };
         Outcome::Complete(Desugared::Term(bool_const(concrete == self.kind.target())))
     }
 }
 
 struct DynAnyConcreteTypeSugar {
-    receiver: Expr,
+    receiver: DynAnyReceiver,
     let_inits: BTreeMap<String, Expr>,
     depth: usize,
+}
+
+#[derive(Clone)]
+struct DynAnyReceiver {
+    raw: Expr,
 }
 
 impl Sugar for DynAnyConcreteTypeSugar {
@@ -135,16 +155,16 @@ impl Sugar for DynAnyConcreteTypeSugar {
         if self.depth > 12 {
             return dyn_any_unknown();
         }
-        if let Some((name, bound)) = let_bound_reference(&self.receiver, &self.let_inits) {
+        if let Some((name, bound)) = let_bound_reference(&self.receiver.raw, &self.let_inits) {
             let child = DynAnyConcreteTypeSugar {
-                receiver: bound,
+                receiver: DynAnyReceiver { raw: bound },
                 let_inits: self.let_inits.clone(),
                 depth: self.depth + 1,
             };
             return BoundSugar::new(name, Box::new(child)).desugar(ctx);
         }
         match concrete_type_from_dyn_any_receiver(
-            &self.receiver,
+            &self.receiver.raw,
             &self.let_inits,
             ctx,
             self.depth + 1,
@@ -418,7 +438,11 @@ fn type_key_from_type_id_term(term: &Rc<Term>) -> Option<String> {
 }
 
 fn dyn_any_unknown() -> Outcome {
-    Outcome::Incomplete(Effect::Unsupported {
-        reason: "dyn Any concrete type not statically determined".to_string(),
+    Outcome::Incomplete(Effect::DynAnyConcreteType {
+        boundary: "dyn Any concrete type not statically determined".to_string(),
     })
+}
+
+fn dyn_any_gap(reason: &str) -> ! {
+    panic!("dyn_any did not reach a lawful type identity floor: {reason}")
 }

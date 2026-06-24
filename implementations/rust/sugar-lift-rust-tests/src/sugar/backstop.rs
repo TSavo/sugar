@@ -19,6 +19,10 @@ struct UnsupportedSugar;
 
 impl Sugar for UnsupportedSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt(None)
+        factory_gap("no sugar candidate reached this source shape")
     }
+}
+
+fn factory_gap(reason: &str) -> ! {
+    panic!("factory structural gap: {reason}")
 }

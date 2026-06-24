@@ -90,6 +90,7 @@ pub mod sugar {
     pub mod filter_map;
     pub mod flat_map;
     pub mod flatten;
+    pub mod float_floor;
     pub mod float_literal_method;
     pub mod float_refinement;
     pub mod fold;
@@ -789,6 +790,9 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         || reason.contains("chunk source is runtime slice, not literal")
         || reason.contains("runtime slice source, not literal")
         || reason.contains("runtime slice index, not literal")
+        || reason.contains("dyn Any concrete type not statically determined")
+        || reason.contains("runtime IP address receiver, not literal")
+        || reason.contains("runtime memchr needle, not literal")
         // TERMINAL: a GENERIC type/const-parametric helper (`fn test_num<T: Add..>`,
         // `fn check_size_hint<const N: usize>`, `fn inner<SuppressConstPromotion>`,
         // `fn test_parse<T: FromStr>`). Its asserts are written over the type/const
@@ -6045,18 +6049,26 @@ fn peel_fold_adaptors_inner<'a>(
                         "iter" | "into_iter" | "cloned" | "copied" | "fuse" | "peekable" | "clone"
                         | "to_vec" | "as_slice" | "to_owned" | "into_vec",
                         0,
-                    ) => Box::new(|inner, _fcx| Box::new(sugar::identity::IdentitySugar { inner })),
+                    ) => Box::new(|inner, _fcx| {
+                        Box::new(sugar::identity::IdentitySugar {
+                            inner: sugar::factory::SugarBody::from_node(inner),
+                        })
+                    }),
                     ("rev", 0) => Box::new(|inner, _fcx| Box::new(sugar::rev::RevSugar { inner })),
                     // `.inspect(f)` yields the SAME items in the SAME order -- the closure
                     // receives `&Item` and CANNOT alter the value stream (its side effect is
                     // irrelevant to the asserted values). So it is the identity adaptor over
                     // the value sequence, regardless of the argument form.
-                    ("inspect", 1) => {
-                        Box::new(|inner, _fcx| Box::new(sugar::identity::IdentitySugar { inner }))
-                    }
-                    ("enumerate", 0) => {
-                        Box::new(|inner, _fcx| Box::new(sugar::enumerate::EnumerateSugar { inner }))
-                    }
+                    ("inspect", 1) => Box::new(|inner, _fcx| {
+                        Box::new(sugar::identity::IdentitySugar {
+                            inner: sugar::factory::SugarBody::from_node(inner),
+                        })
+                    }),
+                    ("enumerate", 0) => Box::new(|inner, _fcx| {
+                        Box::new(sugar::enumerate::EnumerateSugar {
+                            inner: sugar::factory::SugarBody::from_node(inner),
+                        })
+                    }),
                     ("filter", 1) => match &m.args[0] {
                         Expr::Closure(c) => {
                             let pred = c.clone();
@@ -7956,6 +7968,18 @@ enum Effect {
     /// non-regular feature the shared RegLan lowering authority cannot represent. The
     /// pattern child completed; the regex language boundary itself is the named stop.
     RegexPattern { boundary: String, reason: String },
+    /// DYN-ANY-CONCRETE-TYPE: a `dyn Any` predicate has no visible coercion or binding
+    /// proving the erased concrete type. Visible `&expr as &dyn Any`/`Box<dyn Any>`
+    /// coercions complete to structural type identity; runtime dyn dispatch earns this
+    /// boundary.
+    DynAnyConcreteType { boundary: String },
+    /// RUNTIME-IP-ADDR: an IP property predicate has a runtime/non-literal receiver.
+    /// Literal constructors/macros complete; runtime network values have no source
+    /// literal address for this lift to inspect.
+    RuntimeIpAddr { boundary: String },
+    /// MEMCHR-RUNTIME: `memchr`/`memrchr` can ground literal needles and literal byte
+    /// sequences. Runtime needles or haystacks are real runtime data, not a factory gap.
+    MemchrRuntime { boundary: String, reason: String },
     /// FUTURE-HANDOFF: an assertion-bearing `async { .. }` future is handed to a
     /// call/method driver. `async` syntax itself is compiler-known and inert, but the
     /// driver call is library/runtime semantics unless dynamically learned from visible
@@ -8000,6 +8024,17 @@ enum Effect {
         operation: String,
         kind: String,
     },
+    /// RUNTIME-FLOAT-OPERAND: an IEEE float operation (`to_bits`, `integer_decode`,
+    /// literal float bit conversion) needs a concrete f32/f64 floor, but the receiver or
+    /// bit-pattern source reduced to runtime data. This is the float sibling of
+    /// `RuntimeNumericOperand`: the sender dispatches to the float floor and bubbles this
+    /// only when no literal IEEE value exists.
+    RuntimeFloatOperand { boundary: String, operation: String },
+    /// FLOAT-IEEE-REFINEMENT: the source is float-shaped, but the exact IEEE proposition is
+    /// outside the modeled floor: f16/f128, signed-zero as a Real, NaN/infinity requested as
+    /// a finite Real, or another named float representation boundary. This is a real float
+    /// boundary, never the generic unsupported catch-all.
+    FloatIeeeRefinement { boundary: String, reason: String },
     /// REPRESENTATION-CAST: the cast itself asks Rust for address/provenance or
     /// representation semantics (`&x as *const T`, raw-pointer casts, or another
     /// non-scalar `as` shape). This is a real source boundary owned by CastSugar:
@@ -8094,6 +8129,13 @@ impl Effect {
                  possible callback effects"
             ),
             Effect::RegexPattern { reason, .. } => reason.clone(),
+            Effect::DynAnyConcreteType { .. } => {
+                "dyn Any concrete type not statically determined".to_string()
+            }
+            Effect::RuntimeIpAddr { boundary } => {
+                format!("runtime IP address receiver, not literal `{boundary}`")
+            }
+            Effect::MemchrRuntime { reason, .. } => reason.clone(),
             Effect::FutureHandoff { boundary } => format!(
                 "future handoff boundary `{boundary}`: assertion inside an async future handed to \
                  a non-axiomatic driver; driver semantics must be learned dynamically from \
@@ -8121,6 +8163,10 @@ impl Effect {
             Effect::RuntimeNumericOperand {
                 operation, kind, ..
             } => format!("runtime {kind} {operation} operand, not literal-determined"),
+            Effect::RuntimeFloatOperand { boundary, .. } => {
+                format!("runtime float operand, not literal `{boundary}`")
+            }
+            Effect::FloatIeeeRefinement { reason, .. } => reason.clone(),
             Effect::RepresentationCast { boundary, kind } => format!(
                 "unsupported term `{boundary}`: effectful / raw-pointer / mutable-reference term \
                  ({kind}) is not a constructible timeless value; refused"
@@ -8155,6 +8201,9 @@ impl Effect {
             | Effect::CellRuntimeAliased { boundary }
             | Effect::ResultInspectCallback { boundary }
             | Effect::RegexPattern { boundary, .. }
+            | Effect::DynAnyConcreteType { boundary }
+            | Effect::RuntimeIpAddr { boundary }
+            | Effect::MemchrRuntime { boundary, .. }
             | Effect::FutureHandoff { boundary }
             | Effect::DormantFuture { boundary }
             | Effect::RuntimeMatchScrutinee { boundary }
@@ -8162,6 +8211,8 @@ impl Effect {
             | Effect::LiteralDomain { boundary, .. }
             | Effect::LiteralPanic { boundary, .. }
             | Effect::RuntimeNumericOperand { boundary, .. }
+            | Effect::RuntimeFloatOperand { boundary, .. }
+            | Effect::FloatIeeeRefinement { boundary, .. }
             | Effect::RepresentationCast { boundary, .. }
             | Effect::RuntimeArgument { boundary, .. }
             | Effect::UnicodeStringCase { boundary }
@@ -9009,8 +9060,8 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
                 sugar::factory::build_term(expr, &fcx).reduce(&child)
             };
             match reduction {
-                Ok(Outcome::Complete(d)) => d.into_term().or_else(opaque_or_fallback),
-                Ok(Outcome::Incomplete(_)) | Err(_) => opaque_or_fallback(),
+                Outcome::Complete(d) => d.into_term().or_else(opaque_or_fallback),
+                Outcome::Incomplete(_) => opaque_or_fallback(),
             }
         };
         match expr {
@@ -10023,7 +10074,7 @@ fn reflection_scrutinee(scrut: &Expr) -> Option<String> {
 /// fake-refused. We detect runtime ONLY by a positive syntactic signal (`&mut` /
 /// assignment); absence of that signal is treated as NOT-runtime (the conservative,
 /// non-draining default).
-fn if_guard_is_runtime(cond: &Expr) -> bool {
+pub(crate) fn if_guard_is_runtime(cond: &Expr) -> bool {
     // A `cfg!(..)` guard is a compile-time constant predicate -- explicitly NOT runtime,
     // even though it is a macro call. Strip the common `!cfg!(..)` / `cfg!(..)` shapes.
     if expr_is_cfg_macro(cond) {

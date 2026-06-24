@@ -111,6 +111,10 @@ impl Sugar for RepresentationCastSugar {
             kind: self.kind.clone(),
         })
     }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        self.reduce(ctx)
+    }
 }
 
 fn fold_grounded_scalar_cast(term: &Rc<Term>, cast_type: &str) -> Option<Rc<Term>> {

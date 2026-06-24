@@ -43,7 +43,10 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     };
     if call.method == "peekable" && call.args.is_empty() {
         return Some(Box::new(IdentitySugar {
-            inner: method_family::build_literal_sequence_composite(&call.receiver, fcx)?,
+            inner: SugarBody::from_node(method_family::build_literal_sequence_composite(
+                &call.receiver,
+                fcx,
+            )?),
         }));
     }
     None

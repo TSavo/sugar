@@ -7,7 +7,7 @@ use syn::Expr;
 use crate::sugar::claim::SugarRole;
 use crate::sugar::closure_adaptor;
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{token_key, Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON};
+use crate::{token_key, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::new(
@@ -34,8 +34,10 @@ impl Sugar for ClosureRuntimeReceiverSugar {
                 accessor: false,
             });
         }
-        Outcome::Incomplete(Effect::Unsupported {
-            reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
-        })
+        closure_runtime_receiver_gap("recognized site no longer has a runtime receiver")
     }
+}
+
+fn closure_runtime_receiver_gap(reason: &str) -> ! {
+    panic!("closure_runtime_receiver did not reach a lawful floor: {reason}")
 }

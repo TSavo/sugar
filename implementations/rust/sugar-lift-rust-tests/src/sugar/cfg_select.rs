@@ -279,10 +279,8 @@ fn reduce_surfaces(surfaces: &[SugarBody<AssertionSurfaceFloor>], ctx: &SugarCtx
                 }
             }
             Outcome::Complete(other) => {
-                panic!(
-                    "cfg_select assertion-surface child did not reduce to constraints: {:?}",
-                    other
-                );
+                let _ = other;
+                panic!("cfg_select assertion-surface child did not reduce to constraints");
             }
             Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
         }

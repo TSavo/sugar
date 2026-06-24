@@ -5,14 +5,12 @@
 // The sequence construction is delegated to the existing composite Sugar catalog;
 // this node owns only the terminal string join.
 
-use std::collections::BTreeMap;
-
 use sugar_ir_symbolic::str_const;
 use syn::{Expr, Lit};
 use tracing::debug;
 
-use crate::sugar::factory::{build_composite, SugarBuildCtx};
-use crate::sugar::format::stable_let_bindings;
+use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
+use crate::sugar::method_family;
 use crate::{strip_refs_groups, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -42,52 +40,43 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         return None;
     }
     let sep = literal_string(&intersperse_call.args[0])?;
-    let seq_expr = (*intersperse_call.receiver).clone();
+    let seq = SugarBody::from_node(method_family::build_literal_sequence_composite(
+        &intersperse_call.receiver,
+        fcx,
+    )?);
 
     debug!(
         target: "sugar_lift_rust_tests::sugar::intersperse_concat",
         sep = %sep,
         "recognized literal intersperse collect concat"
     );
-    Some(Box::new(IntersperseConcatSugar { seq_expr, sep }))
+    Some(Box::new(IntersperseConcatSugar { seq, sep }))
 }
 
 struct IntersperseConcatSugar {
-    seq_expr: Expr,
+    seq: SugarBody<CompositeFloor>,
     sep: String,
 }
 
 impl Sugar for IntersperseConcatSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            let seq = build_composite_in_ctx(&self.seq_expr, ctx)
-                .desugar(ctx)
-                .complete()?
-                .into_seq()?;
-            let parts = seq_strings(seq)?;
-            let joined = parts.join(&self.sep);
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::intersperse_concat",
-                len = parts.len(),
-                "literal intersperse concat reduced"
-            );
-            Some(Desugared::Term(str_const(joined)))
-        })())
+        match self.seq.reduce(ctx) {
+            Outcome::Complete(d) => {
+                let seq = d
+                    .into_seq()
+                    .unwrap_or_else(|| intersperse_concat_gap("receiver reduced to non-sequence"));
+                let parts = seq_strings(seq);
+                let joined = parts.join(&self.sep);
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::intersperse_concat",
+                    len = parts.len(),
+                    "literal intersperse concat reduced"
+                );
+                Outcome::Complete(Desugared::Term(str_const(joined)))
+            }
+            Outcome::Incomplete(effect) => Outcome::Incomplete(effect),
+        }
     }
-}
-
-fn build_composite_in_ctx(expr: &Expr, ctx: &SugarCtx) -> Box<dyn Sugar> {
-    let stable = stable_let_bindings(ctx.scope);
-    let let_inits = stable_let_refs(&stable);
-    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-    build_composite(expr, &fcx)
-}
-
-fn stable_let_refs(stable: &BTreeMap<String, Expr>) -> BTreeMap<String, &Expr> {
-    stable
-        .iter()
-        .map(|(name, init)| (name.clone(), init))
-        .collect()
 }
 
 fn resolve_bound_expr(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> Option<Expr> {
@@ -109,9 +98,13 @@ fn resolve_bound_expr(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> Option<
     }
 }
 
-fn seq_strings(seq: Vec<DesugaredElem>) -> Option<Vec<String>> {
+fn seq_strings(seq: Vec<DesugaredElem>) -> Vec<String> {
     seq.into_iter()
-        .map(|elem| literal_string(&elem.expr))
+        .map(|elem| {
+            literal_string(&elem.expr).unwrap_or_else(|| {
+                intersperse_concat_gap("sequence element was not a string literal")
+            })
+        })
         .collect()
 }
 
@@ -123,4 +116,8 @@ fn literal_string(expr: &Expr) -> Option<String> {
         },
         _ => None,
     }
+}
+
+fn intersperse_concat_gap(reason: &str) -> ! {
+    panic!("intersperse_concat did not reach a lawful floor: {reason}")
 }

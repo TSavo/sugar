@@ -83,6 +83,8 @@ pub(crate) struct LiteralCStrFloor;
 pub(crate) struct FormatTemplateFloor;
 pub(crate) struct FormatValueFloor;
 pub(crate) struct BoolFloor;
+pub(crate) struct IeeeFloatFloor;
+pub(crate) struct IpAddrFloor;
 
 impl BodyFloor for TermFloor {}
 impl BodyFloor for CompositeFloor {}
@@ -94,6 +96,8 @@ impl BodyFloor for LiteralCStrFloor {}
 impl BodyFloor for FormatTemplateFloor {}
 impl BodyFloor for FormatValueFloor {}
 impl BodyFloor for BoolFloor {}
+impl BodyFloor for IeeeFloatFloor {}
+impl BodyFloor for IpAddrFloor {}
 
 /// A factory-built child/body for a parent Sugar.
 ///
@@ -126,6 +130,19 @@ impl<F: BodyFloor> SugarBody<F> {
 impl SugarBody<TermFloor> {
     pub(crate) fn term(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
         Self::from_node(build_term(expr, fcx))
+    }
+}
+
+impl SugarBody<IeeeFloatFloor> {
+    pub(crate) fn ieee_float(
+        expr: &Expr,
+        fcx: &SugarBuildCtx,
+        width_hint: Option<crate::sugar::float_floor::IeeeFloatWidth>,
+        operation: &'static str,
+    ) -> Self {
+        Self::from_node(crate::sugar::float_floor::build_ieee_float(
+            expr, fcx, width_hint, operation,
+        ))
     }
 }
 
@@ -505,6 +522,9 @@ impl FactoryAuditSeed {
             }
             Outcome::Complete(Desugared::TupleComponents(_)) => {
                 (FactoryDisposition::Warranted, "tuple-components", None)
+            }
+            Outcome::Complete(Desugared::TermSeq(_)) => {
+                (FactoryDisposition::Warranted, "term-sequence", None)
             }
             Outcome::Complete(Desugared::Seq(seq)) if seq.is_empty() => (
                 FactoryDisposition::Support,

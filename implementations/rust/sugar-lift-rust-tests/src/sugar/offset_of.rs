@@ -109,12 +109,8 @@ impl Sugar for OffsetOfSugar {
             local_type_prelude_bytes = prelude.len(),
             "offset_of compiler axiom layout is not known to this lift"
         );
-        Outcome::Incomplete(Effect::Unsupported {
-            reason: format!(
-                "unsupported term `offset_of!({}, {})`: layout is unknown to this lift \
-                 (rustc could not compile a monomorphic offset_of harness for this type); refused",
-                self.ty_key, self.field_src
-            ),
+        Outcome::Incomplete(Effect::TypeLayout {
+            boundary: format!("offset_of!({}, {})", self.ty_key, self.field_src),
         })
     }
 }

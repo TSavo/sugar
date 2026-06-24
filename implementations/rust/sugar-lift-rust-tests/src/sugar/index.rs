@@ -50,7 +50,7 @@ use crate::sugar::method_family;
 use crate::sugar::temporal_read::decompose_temporal_read;
 use crate::{
     const_eval, const_fold_int_term, const_index_term_in_scope, const_val_term, num,
-    simple_path_name, ConstVal, Desugared, Effect, Outcome, Sugar, SugarCtx,
+    simple_path_name, token_key, ConstVal, Desugared, Effect, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =

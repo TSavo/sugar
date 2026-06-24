@@ -14,7 +14,7 @@
 //!   * **Active**    -> desugar the wrapped inner `Sugar` (the construct exists here).
 //!   * **Inactive**  -> `Complete(Seq[])` -- the no-op / empty floor (rustc strips the
 //!     construct pre-codegen, so it contributes nothing; NOT a refusal).
-//!   * **Ambiguous** -> `Incomplete(Effect::Unsupported { "ambiguous cfg: <reason>" })` -- with
+//!   * **Ambiguous** -> `Incomplete(Effect::Configuration { "ambiguous cfg: <reason>" })` -- with
 //!     no target facts we honestly cannot resolve it. By the no-scan / `Outcome` law this
 //!     RETURNS INCOMPLETE (a named, terminal effect); it is NEVER a silent skip.
 //!
@@ -199,7 +199,8 @@ impl Sugar for ConfigurationSugar {
             CfgDisposition::Absent(_) => Outcome::Complete(Desugared::Seq(Vec::new())),
             // No pinned target facts -> we cannot resolve the predicate. The no-scan law:
             // a named, terminal Incomplete, never a silent skip.
-            CfgDisposition::Ambiguous(reason) => Outcome::Incomplete(Effect::Unsupported {
+            CfgDisposition::Ambiguous(reason) => Outcome::Incomplete(Effect::Configuration {
+                boundary: render_cfg_attrs(&self.attrs),
                 reason: format!("ambiguous cfg: {reason}"),
             }),
         }
@@ -317,19 +318,23 @@ mod tests {
     }
 
     #[test]
-    fn ambiguous_cfg_hits_unsupported_not_silent() {
-        // No target_cfg pinned at all -> Ambiguous -> Incomplete(Unsupported "ambiguous cfg: ..").
+    fn ambiguous_cfg_hits_configuration_not_silent() {
+        // No target_cfg pinned at all -> Ambiguous -> Incomplete(Configuration "ambiguous cfg: ..").
         // The no-scan law: it RETURNS INCOMPLETE, it is not a silent skip.
         let options = LiftOptions::default();
         match run(vec![cfg_attr(quote::quote!(target_os = "linux"))], &options) {
-            Outcome::Incomplete(Effect::Unsupported { reason }) => {
+            Outcome::Incomplete(Effect::Configuration { boundary, reason }) => {
+                assert_eq!(
+                    boundary, "# [cfg (target_os = \"linux\")]",
+                    "configuration effect names the cfg boundary"
+                );
                 assert!(
                     reason.starts_with("ambiguous cfg: "),
                     "ambiguous cfg names its boundary, got {reason:?}"
                 );
             }
             Outcome::Incomplete(_) => {
-                panic!("expected Incomplete(Unsupported), got a different Incomplete")
+                panic!("expected Incomplete(Configuration), got a different Incomplete")
             }
             Outcome::Complete(_) => {
                 panic!("ambiguous cfg must INCOMPLETE (no-scan law), not Complete")

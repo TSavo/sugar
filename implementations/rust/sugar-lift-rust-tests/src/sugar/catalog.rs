@@ -410,7 +410,7 @@ mod tests {
 
     impl Sugar for NoopSugar {
         fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-            Outcome::from_opt(None)
+            panic!("catalog NoopSugar is candidate-only and must not desugar")
         }
     }
 

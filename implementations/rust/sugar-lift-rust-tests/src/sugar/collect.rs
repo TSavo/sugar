@@ -268,10 +268,14 @@ impl Sugar for CollectSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match self.plan.reduce(ctx, &self.let_inits) {
             Ok(Some(term)) => Outcome::Complete(Desugared::Term(term)),
-            Ok(None) => Outcome::from_opt(None),
+            Ok(None) => collect_gap("recognized collect chain did not reduce to a literal floor"),
             Err(effect) => Outcome::Incomplete(effect),
         }
     }
+}
+
+fn collect_gap(reason: &str) -> ! {
+    panic!("collect did not reach a lawful sequence floor: {reason}")
 }
 
 pub(crate) fn collects_vec(call: &syn::ExprMethodCall) -> bool {
@@ -425,6 +429,13 @@ fn const_val_term(value: &ConstVal) -> Option<Rc<Term>> {
                 .collect::<Vec<_>>()
                 .join(",");
             Some(make_var(format!("literal:Tuple({inner})")))
+        }
+        ConstVal::Array(parts) => {
+            let terms = parts
+                .iter()
+                .map(const_val_term)
+                .collect::<Option<Vec<_>>>()?;
+            Some(literal_vec_term(&terms))
         }
     }
 }

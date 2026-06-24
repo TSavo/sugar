@@ -223,9 +223,10 @@ impl DesugaredFloorVisitor for RequiredTermVisitor<'_> {
     }
 
     fn visit_passthrough(self, floor: Desugared) -> Self::Output {
+        let _ = floor;
         panic!(
-            "{} completed a non-term floor where a term floor was required: {:?}",
-            self.owner, floor
+            "{} completed a non-term floor where a term floor was required",
+            self.owner
         )
     }
 }

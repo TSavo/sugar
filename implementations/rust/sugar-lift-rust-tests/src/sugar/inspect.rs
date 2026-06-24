@@ -10,7 +10,7 @@
 use quote::ToTokens;
 use syn::{Expr, ExprClosure};
 
-use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::identity::IdentitySugar;
 use crate::sugar::method_family;
 use crate::sugar::monadic::{RES_ERR, RES_OK};
@@ -28,7 +28,9 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     };
     if call.method == "inspect" && call.args.len() == 1 {
         return Some(Box::new(IdentitySugar {
-            inner: method_family::build_literal_sequence_composite(&call.receiver, fcx)?,
+            inner: SugarBody::<CompositeFloor>::from_node(
+                method_family::build_literal_sequence_composite(&call.receiver, fcx)?,
+            ),
         }));
     }
     None

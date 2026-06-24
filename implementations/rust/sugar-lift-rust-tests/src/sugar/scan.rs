@@ -27,7 +27,7 @@ use std::collections::BTreeMap;
 
 use syn::{BinOp, Expr, Stmt, UnOp};
 
-use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::{
     closure_single_param_ident, const_fold_acc_update, const_int_acc_init, strip_refs_groups,
     ConstVal, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx,
@@ -57,7 +57,9 @@ pub(crate) fn try_build_scan_inner(expr: &Expr, fcx: &SugarBuildCtx) -> Option<B
         return None;
     }
     // The scan's own receiver must bottom out in a finite literal sequence.
-    let inner = crate::sugar::method_family::build_literal_sequence_composite(&call.receiver, fcx)?;
+    let inner = SugarBody::from_node(
+        crate::sugar::method_family::build_literal_sequence_composite(&call.receiver, fcx)?,
+    );
     // init: the initial state value (a const integer -- the same regime as fold's acc init).
     let init = const_int_acc_init(&call.args[0], fcx.let_inits())?;
     // Closure: |acc, x| { *acc <op>= rhs; Some(*acc) }
@@ -84,7 +86,7 @@ pub(crate) fn try_build_scan_inner(expr: &Expr, fcx: &SugarBuildCtx) -> Option<B
 /// integer `DesugaredElem`. Produces `Desugared::Seq` so all downstream terminals
 /// can operate on the grounded values with z3 teeth.
 struct ScanSugar {
-    inner: Box<dyn Sugar>,
+    inner: SugarBody<CompositeFloor>,
     init: i64,
     state_var: String,
     item_var: String,
@@ -93,36 +95,47 @@ struct ScanSugar {
 
 impl Sugar for ScanSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            let seq = self.inner.desugar(ctx).complete()?.into_seq()?;
-            let mut state = self.init;
-            let mut out: Vec<DesugaredElem> = Vec::with_capacity(seq.len());
-            for elem in &seq {
-                let item_val = elem
-                    .value
-                    .as_ref()
-                    .and_then(ConstVal::as_int)
-                    .and_then(|n| i64::try_from(n).ok())?;
-                // Evaluate the rhs expression with BOTH state_var and item_var bound
-                // so that expressions like `*acc * x` or `*acc + x` const-fold correctly.
-                let mut env: BTreeMap<String, i64> = BTreeMap::new();
-                env.insert(self.state_var.clone(), state);
-                env.insert(self.item_var.clone(), item_val);
-                let rhs_val = const_fold_acc_update(&self.body.rhs, &env)?;
-                // Apply the compound-assign op to get the new state.
-                state = apply_assign_op(&self.body.assign_op, state, rhs_val)?;
-                // Synthesize a literal int expression so `translate_term_in_scope`
-                // can ground it when the downstream terminal substitutes elements.
-                let expr: Expr = syn::parse_str(&state.to_string())
-                    .expect("i64 always parses as a Rust integer literal");
-                out.push(DesugaredElem {
-                    expr,
-                    value: Some(ConstVal::Int(i128::from(state))),
-                });
-            }
-            Some(Desugared::Seq(out))
-        })())
+        let seq = match self.inner.reduce(ctx) {
+            Outcome::Complete(desugared) => desugared
+                .into_seq()
+                .unwrap_or_else(|| scan_gap("inner completed as non-sequence")),
+            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+        };
+        let mut state = self.init;
+        let mut out: Vec<DesugaredElem> = Vec::with_capacity(seq.len());
+        for elem in &seq {
+            let item_val = elem
+                .value
+                .as_ref()
+                .and_then(ConstVal::as_int)
+                .and_then(|n| i64::try_from(n).ok())
+                .unwrap_or_else(|| scan_gap("sequence element did not carry an integer literal"));
+            // Evaluate the rhs expression with BOTH state_var and item_var bound
+            // so that expressions like `*acc * x` or `*acc + x` const-fold correctly.
+            let mut env: BTreeMap<String, i64> = BTreeMap::new();
+            env.insert(self.state_var.clone(), state);
+            env.insert(self.item_var.clone(), item_val);
+            let rhs_val = const_fold_acc_update(&self.body.rhs, &env)
+                .unwrap_or_else(|| scan_gap("scan rhs did not reduce under literal state/item"));
+            // Apply the compound-assign op to get the new state.
+            state = apply_assign_op(&self.body.assign_op, state, rhs_val).unwrap_or_else(|| {
+                scan_gap("scan compound assignment overflowed or divided by zero")
+            });
+            // Synthesize a literal int expression so `translate_term_in_scope`
+            // can ground it when the downstream terminal substitutes elements.
+            let expr: Expr = syn::parse_str(&state.to_string())
+                .expect("i64 always parses as a Rust integer literal");
+            out.push(DesugaredElem {
+                expr,
+                value: Some(ConstVal::Int(i128::from(state))),
+            });
+        }
+        Outcome::Complete(Desugared::Seq(out))
     }
+}
+
+fn scan_gap(reason: &str) -> ! {
+    panic!("scan did not reach a lawful sequence floor: {reason}")
 }
 
 /// Parse the closure body `{ *state_var <op>= rhs; Some(*state_var) }`.
