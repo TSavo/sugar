@@ -19469,12 +19469,6 @@ fn tail_inv(tail: &Expr, scope: &TemporalScope) -> Option<Rc<Formula>> {
     if let Some(universe) = bounded_output_universe(tail, scope) {
         return Some(universe);
     }
-    // (c) Slice 2/5 -- value-term + method-call-as-EUF: out = <euf term>.
-    if let Ok(term) = translate_term_in_scope(tail, scope) {
-        if term_is_euf_value(&term) {
-            return Some(eq(make_var("out"), term));
-        }
-    }
     // (e) Slice 8 -- value-position if / else-if / else -> ite via implies/and.
     if let Some(inv) = emit_if_value(tail, scope) {
         return Some(inv);
@@ -19483,11 +19477,26 @@ fn tail_inv(tail: &Expr, scope: &TemporalScope) -> Option<Rc<Formula>> {
     if let Some(inv) = emit_match_value(tail, scope) {
         return Some(inv);
     }
+    if is_non_term_control_expr(tail) {
+        return None;
+    }
     // (f) Slice 9 -- bool-predicate body (comparison / && / || / !), GATED so it
-    //     can't mis-accept a non-bool call as a predicate. out <-> F.
+    //     can't mis-accept a non-bool call as a predicate. out <-> F. This runs
+    //     before the EUF-term path because value-contract boolean predicates own
+    //     comparisons/connectives in this position; term-position `cmp:*` ctors are
+    //     for nested values, not the returned bool relation itself.
     if is_bool_shaped_expr(tail) {
         if let Ok(entry) = translate_bool_assertion(tail, scope, &FloatWidthScope::new()) {
             return Some(biconditional_out(entry.atom));
+        }
+    }
+    if contains_builtin_matches_expr(tail) {
+        return None;
+    }
+    // (c) Slice 2/5 -- value-term + method-call-as-EUF: out = <euf term>.
+    if let Ok(term) = translate_term_in_scope(tail, scope) {
+        if term_is_euf_value(&term) {
+            return Some(eq(make_var("out"), term));
         }
     }
     None
@@ -19606,11 +19615,11 @@ fn let_prefix_euf_term(block: &syn::Block, scope: &TemporalScope) -> Option<Rc<T
         return None;
     }
     let subst = collect_let_subst(prefix, scope)?;
-    let mut tail = translate_term_in_scope(tail_expr, scope).ok()?;
+    let mut tail = euf_value_term_in_scope(tail_expr, scope)?;
     for (n, t) in &subst {
         tail = subst_var_in_term(&tail, n, t);
     }
-    term_is_euf_value(&tail).then_some(tail)
+    Some(tail)
 }
 
 /// True iff an expression is syntactically a boolean predicate the assertion
@@ -19636,6 +19645,51 @@ fn is_bool_shaped_expr(expr: &Expr) -> bool {
         Expr::Group(g) => is_bool_shaped_expr(&g.expr),
         _ => false,
     }
+}
+
+fn contains_builtin_matches_expr(expr: &Expr) -> bool {
+    match expr {
+        Expr::Macro(m) => m.mac.path.is_ident("matches"),
+        Expr::Unary(u) if matches!(u.op, UnOp::Not(_)) => contains_builtin_matches_expr(&u.expr),
+        Expr::Binary(b)
+            if matches!(
+                b.op,
+                BinOp::And(_) | BinOp::Or(_) | BinOp::BitAnd(_) | BinOp::BitOr(_)
+            ) =>
+        {
+            contains_builtin_matches_expr(&b.left) || contains_builtin_matches_expr(&b.right)
+        }
+        Expr::Paren(p) => contains_builtin_matches_expr(&p.expr),
+        Expr::Group(g) => contains_builtin_matches_expr(&g.expr),
+        _ => false,
+    }
+}
+
+fn is_non_term_control_expr(expr: &Expr) -> bool {
+    match expr {
+        Expr::If(_) | Expr::Let(_) | Expr::Match(_) | Expr::While(_) | Expr::ForLoop(_) => true,
+        Expr::Loop(loop_expr) => !loop_has_single_break_payload(loop_expr),
+        Expr::Return(_) | Expr::Break(_) | Expr::Continue(_) => true,
+        Expr::Paren(p) => is_non_term_control_expr(&p.expr),
+        Expr::Group(g) => is_non_term_control_expr(&g.expr),
+        _ => false,
+    }
+}
+
+fn loop_has_single_break_payload(loop_expr: &syn::ExprLoop) -> bool {
+    matches!(
+        loop_expr.body.stmts.as_slice(),
+        [Stmt::Expr(Expr::Break(expr_break), _)]
+            if expr_break.label.is_none() && expr_break.expr.is_some()
+    )
+}
+
+fn euf_value_term_in_scope(expr: &Expr, scope: &TemporalScope) -> Option<Rc<Term>> {
+    if is_non_term_control_expr(expr) {
+        return None;
+    }
+    let term = translate_term_in_scope(expr, scope).ok()?;
+    term_is_euf_value(&term).then_some(term)
 }
 
 /// A value-position `match` (no arm guards) over a scalar OR enum scrutinee,
@@ -19829,10 +19883,7 @@ fn match_arm_discriminant(
 fn arm_body_euf_term(expr: &Expr, scope: &TemporalScope) -> Option<Rc<Term>> {
     match expr {
         Expr::Block(b) => block_euf_term(&b.block, scope),
-        other => {
-            let t = translate_term_in_scope(other, scope).ok()?;
-            term_is_euf_value(&t).then_some(t)
-        }
+        other => euf_value_term_in_scope(other, scope),
     }
 }
 
@@ -19840,8 +19891,7 @@ fn arm_body_euf_term(expr: &Expr, scope: &TemporalScope) -> Option<Rc<Term>> {
 /// immutable-let prefix substituted into an EUF tail. None if neither shape.
 fn block_euf_term(block: &syn::Block, scope: &TemporalScope) -> Option<Rc<Term>> {
     if let [Stmt::Expr(tail, None)] = block.stmts.as_slice() {
-        let t = translate_term_in_scope(tail, scope).ok()?;
-        return term_is_euf_value(&t).then_some(t);
+        return euf_value_term_in_scope(tail, scope);
     }
     let_prefix_euf_term(block, scope)
 }
@@ -19885,6 +19935,9 @@ fn collect_if_clauses(
     // model it as `cond_term == true`. The if-condition POSITION guarantees the
     // expr is bool, so this is sound (no is_bool_shaped gate needed here). An
     // `if let` cond is an Expr::Let -> neither path -> None.
+    if is_non_term_control_expr(&if_expr.cond) {
+        return None;
+    }
     let cond = match translate_bool_assertion(&if_expr.cond, scope, &FloatWidthScope::new()) {
         Ok(entry) => entry.atom,
         Err(_) => {
