@@ -16,10 +16,8 @@
 use syn::Expr;
 use tracing::debug;
 
-use crate::sugar::factory::{
-    compat_reduction, has_composite, CompositeFloor, FactoryGap, FactoryReduction, SugarBody,
-    SugarBuildCtx,
-};
+use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuildCtx};
+use crate::sugar::sequence_floor::RequiredSequenceVisitor;
 use crate::{const_int, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -71,17 +69,14 @@ impl IterNextSugar {
 }
 
 impl Sugar for IterNextSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
-        let seq = match self.inner.reduce(ctx)? {
-            Outcome::Complete(desugared) => match desugared.into_seq() {
-                Some(seq) => seq,
-                None => {
-                    return Err(FactoryGap::new(
-                        "iter_next composite receiver reduced to non-sequence",
-                    ))
-                }
-            },
-            Outcome::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        let seq = match self.inner.reduce(ctx) {
+            Outcome::Complete(desugared) => {
+                desugared.accept_sequence_floor(RequiredSequenceVisitor {
+                    owner: "iter_next composite receiver",
+                })
+            }
+            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
         debug!(
             target: "sugar_lift_rust_tests::sugar::iter_next",
@@ -97,10 +92,6 @@ impl Sugar for IterNextSugar {
                 seq.into_iter().take(keep).collect()
             }
         };
-        Ok(Outcome::Complete(Desugared::Seq(out)))
-    }
-
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
+        Outcome::Complete(Desugared::Seq(out))
     }
 }

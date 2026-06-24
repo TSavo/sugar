@@ -1,6 +1,42 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{ConstVal, DesugaredElem};
+use crate::{ConstVal, Desugared, DesugaredElem};
+
+/// Dispatch a completed composite floor by whether it is a finite sequence.
+pub(crate) trait SequenceFloorVisitor {
+    type Output;
+
+    fn visit_sequence(self, seq: Vec<DesugaredElem>) -> Self::Output;
+    fn visit_non_sequence(self, floor: Desugared) -> Self::Output;
+}
+
+impl Desugared {
+    pub(crate) fn accept_sequence_floor<V: SequenceFloorVisitor>(self, visitor: V) -> V::Output {
+        match self {
+            Desugared::Seq(seq) => visitor.visit_sequence(seq),
+            other => visitor.visit_non_sequence(other),
+        }
+    }
+}
+
+pub(crate) struct RequiredSequenceVisitor<'a> {
+    pub(crate) owner: &'a str,
+}
+
+impl SequenceFloorVisitor for RequiredSequenceVisitor<'_> {
+    type Output = Vec<DesugaredElem>;
+
+    fn visit_sequence(self, seq: Vec<DesugaredElem>) -> Self::Output {
+        seq
+    }
+
+    fn visit_non_sequence(self, floor: Desugared) -> Self::Output {
+        panic!(
+            "{} completed a non-sequence floor where a sequence floor was required: {:?}",
+            self.owner, floor
+        )
+    }
+}
 
 /// Dispatch a completed sequence element by the literal floor it carries.
 ///
