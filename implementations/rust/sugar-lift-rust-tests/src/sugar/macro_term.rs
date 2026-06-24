@@ -11,9 +11,8 @@
 use syn::Expr;
 
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
-use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::{
-    macro_literal_contains_mut_local, token_key, Outcome, Sugar, SugarCtx,
+    macro_literal_contains_mut_local, token_key, Effect, Outcome, Sugar, SugarCtx,
     MAX_MACRO_EXPANSION_DEPTH,
 };
 
@@ -36,10 +35,15 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         _ => false,
     });
     if contains_mut_local {
-        return Some(reasoned_incomplete(format!(
-            "macro in term position references a `let mut` local; \
-             temporally unstable — refused: `{token_str}`"
-        )));
+        return Some(Box::new(MacroSugar {
+            body: MacroTermBody::MutLocalTemporalEffect {
+                boundary: token_str.clone(),
+                reason: format!(
+                    "macro in term position references a `let mut` local; \
+                     temporally unstable — refused: `{token_str}`"
+                ),
+            },
+        }));
     }
     Some(Box::new(MacroSugar {
         body: build_macro_body(m, fcx),
@@ -54,6 +58,7 @@ pub(crate) struct MacroSugar {
 }
 
 enum MacroTermBody {
+    MutLocalTemporalEffect { boundary: String, reason: String },
     Expanded(SugarBody<TermFloor>),
     Unconstructible(String),
 }
@@ -108,6 +113,12 @@ fn build_macro_body(mac: &syn::ExprMacro, fcx: &SugarBuildCtx) -> MacroTermBody 
 impl Sugar for MacroSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match &self.body {
+            MacroTermBody::MutLocalTemporalEffect { boundary, reason } => {
+                Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
+                    boundary: boundary.clone(),
+                    reason: reason.clone(),
+                })
+            }
             MacroTermBody::Expanded(body) => body.reduce(ctx),
             MacroTermBody::Unconstructible(reason) => {
                 panic!("{reason}");
