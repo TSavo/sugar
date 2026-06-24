@@ -5,21 +5,21 @@
 // the selected branch is lowered exactly as if its statements were written
 // directly at the callsite.
 
-use std::collections::{BTreeMap, HashSet};
 use std::rc::Rc;
 
 use proc_macro2::{TokenStream, TokenTree};
-use sugar_ir_symbolic::{and_, Formula};
+use sugar_ir_symbolic::{and_, eq, Formula};
 use syn::parse::{Parse, ParseStream};
 use syn::visit::Visit;
 use syn::{Expr, ExprMacro, Stmt, Token};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::configuration::{resolve_predicate as cfg_resolve_predicate, CfgDisposition};
-use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::factory::{AssertionSurfaceFloor, SugarBody, SugarBuildCtx};
+use crate::sugar::macro_assertion_surface::collect_assertion_surfaces_from_stmts;
 use crate::{
-    collect_assertion_entries, token_key, AssertionFactKind, CfgPredicate, Desugared, Effect,
-    FnRegistry, LayoutTypeRegistry, Outcome, Sugar, SugarCtx, Warrant,
+    bool_const, token_key, AssertionFactKind, CfgPredicate, Desugared, Effect, Outcome, Sugar,
+    SugarCtx, Warrant,
 };
 
 pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
@@ -29,8 +29,19 @@ pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::
 );
 
 struct CfgSelectSugar {
-    mac: syn::Macro,
+    body: CfgSelectBody,
     site: String,
+}
+
+enum CfgSelectBody {
+    Arms(Vec<CfgSelectBuiltArm>),
+    Unconstructible(String),
+}
+
+struct CfgSelectBuiltArm {
+    predicate: Option<CfgPredicate>,
+    assertion_count: usize,
+    surfaces: Vec<SugarBody<AssertionSurfaceFloor>>,
 }
 
 #[cfg(test)]
@@ -117,7 +128,7 @@ fn parse_arm_predicate(input: ParseStream<'_>) -> syn::Result<Option<CfgPredicat
     syn::parse2::<CfgPredicate>(tokens).map(Some)
 }
 
-fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Macro(ExprMacro { mac, .. }) = expr else {
         return None;
     };
@@ -129,143 +140,159 @@ fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     {
         return None;
     }
-    let arms = syn::parse2::<CfgSelectArms>(mac.tokens.clone()).ok()?;
-    let assertion_surfaces: usize = arms
-        .arms
-        .iter()
-        .map(|arm| syntactic_assert_count_in_stmts(&arm.block.stmts))
-        .sum();
-    if assertion_surfaces == 0 {
-        return None;
-    }
-    Some(Box::new(CfgSelectSugar {
-        mac: mac.clone(),
-        site: token_key(expr),
-    }))
+    let site = token_key(expr);
+    let arms = match syn::parse2::<CfgSelectArms>(mac.tokens.clone()) {
+        Ok(arms) => arms,
+        Err(error) => {
+            return Some(Box::new(CfgSelectSugar {
+                body: CfgSelectBody::Unconstructible(format!(
+                    "macro `cfg_select`: cannot parse cfg-select arms at construction time: {error}; write more Sugar for this AST"
+                )),
+                site,
+            }));
+        }
+    };
+    let body = build_cfg_select_body(arms, fcx)?;
+    Some(Box::new(CfgSelectSugar { body, site }))
 }
 
 impl Sugar for CfgSelectSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let arms = match syn::parse2::<CfgSelectArms>(self.mac.tokens.clone()) {
-            Ok(arms) => arms,
-            Err(e) => {
-                return Outcome::Incomplete(Effect::Unsupported {
-                    reason: format!(
-                        "macro `cfg_select`: cannot parse cfg-select arms at desugar time: {e}; released to layer 0"
-                    ),
-                });
-            }
+        let CfgSelectBody::Arms(arms) = &self.body else {
+            let CfgSelectBody::Unconstructible(reason) = &self.body else {
+                unreachable!("cfg_select body has only two variants")
+            };
+            panic!("{reason}");
         };
 
         let mut inactive_assertions = 0usize;
-        for arm in arms.arms {
+        for arm in arms {
             let selected = match &arm.predicate {
                 Some(predicate) => match cfg_resolve_predicate(predicate, ctx.options) {
                     CfgDisposition::Present => true,
                     CfgDisposition::Absent(_) => {
-                        inactive_assertions += syntactic_assert_count_in_stmts(&arm.block.stmts);
+                        inactive_assertions += arm.assertion_count;
                         false
                     }
                     CfgDisposition::Ambiguous(reason) => {
-                        return Outcome::Incomplete(Effect::Unsupported {
+                        return Outcome::Incomplete(Effect::Configuration {
+                            boundary: self.site.clone(),
                             reason: format!(
-                                "macro `cfg_select`: ambiguous cfg branch `{predicate}`: {reason}; released to layer 0"
+                                "macro `cfg_select`: ambiguous cfg branch `{predicate}`: {reason}; refused"
                             ),
-                        });
+                        })
                     }
                 },
                 None => true,
             };
             if selected {
-                return self.desugar_selected_branch(&arm.block.stmts, inactive_assertions, ctx);
+                return self.desugar_selected_branch(arm, inactive_assertions, ctx);
             }
         }
 
-        if inactive_assertions > 0 {
-            Outcome::Incomplete(Effect::Unsupported {
-                reason: format!(
-                    "inactive cfg select: {inactive_assertions} assertion surface(s) stripped on this target"
-                ),
-            })
-        } else {
-            Outcome::from_opt(None)
-        }
+        self.inactive_noop(ctx, inactive_assertions)
     }
 }
 
 impl CfgSelectSugar {
     fn desugar_selected_branch(
         &self,
-        stmts: &[Stmt],
+        arm: &CfgSelectBuiltArm,
         inactive_before: usize,
         ctx: &SugarCtx,
     ) -> Outcome {
-        let expected = syntactic_assert_count_in_stmts(stmts);
-        if expected == 0 {
-            return Outcome::Incomplete(Effect::Unsupported {
-                reason: format!(
-                    "inactive cfg select: {inactive_before} assertion surface(s) stripped before selected assertion-free branch"
-                ),
-            });
+        if arm.surfaces.is_empty() {
+            return self.inactive_noop(ctx, inactive_before);
         }
-        let Some(atom) = self.lift_branch_conj(stmts, expected, ctx) else {
-            return Outcome::from_opt(None);
-        };
+        reduce_surfaces(&arm.surfaces, ctx)
+    }
+
+    fn inactive_noop(&self, ctx: &SugarCtx, inactive_assertions: usize) -> Outcome {
         Outcome::Complete(Desugared::Constraints {
-            atom,
-            n: expected,
-            kind: AssertionFactKind::Warranted,
+            atom: eq(bool_const(true), bool_const(true)),
+            n: 0,
+            kind: AssertionFactKind::Support,
             warrant: Warrant {
                 name: Some(format!(
-                    "{}::cfg-select::{}",
+                    "{}::cfg-select-inactive::{}::{}",
                     ctx.scope.local_scope(),
+                    inactive_assertions,
                     compact_warrant_fragment(&self.site)
                 )),
             },
         })
     }
+}
 
-    fn lift_branch_conj(
-        &self,
-        stmts: &[Stmt],
-        expected: usize,
-        ctx: &SugarCtx,
-    ) -> Option<Rc<Formula>> {
-        let mut entries = Vec::new();
-        let mut skipped = Vec::new();
-        let mut lifted = 0usize;
-        let mut helpers = HashSet::new();
-        collect_assertion_entries(
-            stmts,
-            ctx.scope.local_scope(),
-            ctx.options,
-            ctx.reducer,
-            *ctx.float_widths.borrow_mut(),
-            &mut entries,
-            &mut skipped,
-            &mut lifted,
-            &mut helpers,
-            ctx.factory_audits,
-            ctx.macro_depth,
-            &ctx.scope.plan.interior_mut,
-            None,
-            ctx.scope.macro_registry(),
-            &BTreeMap::new(),
-            &FnRegistry::new(),
-            &LayoutTypeRegistry::new(),
-        );
-        let warranted: usize = entries
-            .iter()
-            .filter(|entry| matches!(entry.kind, AssertionFactKind::Warranted))
-            .map(|entry| entry.claim_count)
-            .sum();
-        if !skipped.is_empty() || warranted != expected {
-            return None;
+fn build_cfg_select_body(arms: CfgSelectArms, fcx: &SugarBuildCtx) -> Option<CfgSelectBody> {
+    let mut built = Vec::new();
+    let mut total_assertions = 0usize;
+    for arm in arms.arms {
+        let assertion_count = syntactic_assert_count_in_stmts(&arm.block.stmts);
+        total_assertions += assertion_count;
+        let mut surface_exprs = Vec::new();
+        collect_assertion_surfaces_from_stmts(&arm.block.stmts, fcx, &mut surface_exprs);
+        if assertion_count > 0 && surface_exprs.is_empty() {
+            return Some(CfgSelectBody::Unconstructible(format!(
+                "macro `cfg_select`: branch contains assertion surface syntax but no factory assertion-surface child was constructible; write more Sugar for this AST"
+            )));
         }
-        Some(and_(
-            entries.iter().map(|entry| entry.atom.clone()).collect(),
-        ))
+        built.push(CfgSelectBuiltArm {
+            predicate: arm.predicate,
+            assertion_count,
+            surfaces: surface_exprs
+                .into_iter()
+                .map(|expr| SugarBody::assertion_surface(&expr, fcx))
+                .collect(),
+        });
     }
+    if total_assertions == 0 {
+        None
+    } else {
+        Some(CfgSelectBody::Arms(built))
+    }
+}
+
+fn reduce_surfaces(surfaces: &[SugarBody<AssertionSurfaceFloor>], ctx: &SugarCtx) -> Outcome {
+    if surfaces.len() == 1 {
+        return surfaces[0].reduce(ctx);
+    }
+    let mut atoms = Vec::<Rc<Formula>>::new();
+    let mut claim_count = 0usize;
+    let mut kind = AssertionFactKind::Support;
+    let mut warrant_name = None::<String>;
+    for surface in surfaces {
+        match surface.reduce(ctx) {
+            Outcome::Complete(Desugared::Constraints {
+                atom,
+                n,
+                kind: child_kind,
+                warrant,
+            }) => {
+                atoms.push(atom);
+                claim_count += n;
+                if child_kind.is_warranted() {
+                    kind = AssertionFactKind::Warranted;
+                }
+                if warrant_name.is_none() {
+                    warrant_name = warrant.name;
+                }
+            }
+            Outcome::Complete(other) => {
+                panic!(
+                    "cfg_select assertion-surface child did not reduce to constraints: {:?}",
+                    other
+                );
+            }
+            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+        }
+    }
+    Outcome::Complete(Desugared::Constraints {
+        atom: and_(atoms),
+        n: claim_count,
+        kind,
+        warrant: Warrant { name: warrant_name },
+    })
 }
 
 fn compact_warrant_fragment(site: &str) -> String {
