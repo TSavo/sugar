@@ -197,6 +197,39 @@ impl DesugaredFloorAccept for Desugared {
     }
 }
 
+pub(crate) struct RequiredTermVisitor<'a> {
+    pub(crate) owner: &'a str,
+}
+
+impl DesugaredFloorVisitor for RequiredTermVisitor<'_> {
+    type Output = Rc<Term>;
+
+    fn visit_term(self, term: Rc<Term>) -> Self::Output {
+        term
+    }
+
+    fn visit_term_seq(self, _terms: Vec<Rc<Term>>) -> Self::Output {
+        panic!(
+            "{} completed a sequence floor where a term floor was required",
+            self.owner
+        )
+    }
+
+    fn visit_tuple_components(self, _parts: Vec<Rc<Term>>) -> Self::Output {
+        panic!(
+            "{} completed a tuple-components floor where a term floor was required",
+            self.owner
+        )
+    }
+
+    fn visit_passthrough(self, floor: Desugared) -> Self::Output {
+        panic!(
+            "{} completed a non-term floor where a term floor was required: {:?}",
+            self.owner, floor
+        )
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct CurryVisitor<'a> {
     pub(crate) param: &'a str,

@@ -14,8 +14,9 @@ use std::rc::Rc;
 use sugar_ir_symbolic::Term;
 use syn::{Expr, RangeLimits};
 
-use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::term_dispatch::{
+    DesugaredFloorAccept, RequiredTermVisitor, TermFloorAccept, TermFloorVisitor,
 };
 use crate::{const_fold_int_term, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 
@@ -62,33 +63,37 @@ struct RangeAccessorSugar {
 }
 
 impl Sugar for RangeAccessorSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
-        let endpoint = match self.endpoint.reduce(ctx)? {
-            Outcome::Complete(d) => match d.into_term() {
-                Some(term) => term,
-                None => {
-                    return Err(FactoryGap::new(format!(
-                        "range accessor {} endpoint reduced to non-term",
-                        self.kind.name()
-                    )))
-                }
-            },
-            Outcome::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        let endpoint = match self.endpoint.reduce(ctx) {
+            Outcome::Complete(d) => d.accept_desugared_floor(RequiredTermVisitor {
+                owner: "range accessor endpoint",
+            }),
+            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
-        if const_fold_int_term(&endpoint).is_none() {
-            return Err(FactoryGap::new(format!(
-                "range accessor {} endpoint is not literal-determined",
-                self.kind.name()
-            )));
-        }
-        Ok(Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
+        endpoint.accept_term_floor(RequiredLiteralEndpointVisitor {
+            endpoint: self.kind.name(),
+        });
+        Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
             name: "ref".to_string(),
             args: vec![endpoint],
-        }))))
+        })))
     }
+}
 
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
+struct RequiredLiteralEndpointVisitor<'a> {
+    endpoint: &'a str,
+}
+
+impl TermFloorVisitor for RequiredLiteralEndpointVisitor<'_> {
+    type Output = ();
+
+    fn visit_term(self, term: &Rc<Term>) -> Self::Output {
+        if const_fold_int_term(term).is_none() {
+            panic!(
+                "range accessor {} endpoint did not dispatch to an integer literal floor",
+                self.endpoint
+            );
+        }
     }
 }
 
