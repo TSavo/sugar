@@ -16,10 +16,11 @@
 // translator falls back to (which the solver satisfies tautologically — no teeth).
 //
 // COMPOSITIONAL. Each format ARGUMENT is itself resolved through this same module:
-// `format!("{}", x)` completes when `x` resolves to a literal (inline literal, a `let`/
-// `const`-bound literal, a nested `format!`/`concat!`/`.to_string()`); it BAILS (a
-// genuinely runtime arg) when `x` is opaque. The format-string operand MUST be a
-// literal; a runtime format string bails.
+// `format!("{}", x)` completes when `x` resolves through its child floor (inline
+// literal, a `let`/`const`-bound literal, a nested `format!`/`concat!`/`.to_string()`).
+// Runtime/opaque-ness belongs to the child that owns it. If this sugar cannot construct
+// that typed child floor, it is a factory gap and panics instead of inventing an effect.
+// The format-string operand MUST be a literal/template floor.
 //
 // REFUSE BY NAME, NEVER GUESS. A format spec we do not FAITHFULLY reproduce
 // (`{:p}` pointer, an unhandled fill/align/width/sign/precision combination) does not
@@ -27,8 +28,8 @@
 // STATICALLY-WRITTEN real `format!` call (we cannot pass a runtime spec string to
 // `format!`, whose first arg must be a compile-time literal; so each supported spec is
 // one written arm calling the real macro). `f16`/`f128` are unstable and unformattable on
-// the stable toolchain the lifter ships; they bail with a terminal Display-unsupported
-// reason carrying the k-remedy (build on nightly).
+// the stable toolchain the lifter ships; until a typed owner exists, reaching that path
+// is a factory gap, not a runtime-argument effect.
 
 use std::collections::BTreeMap;
 use std::ffi::CStr;
@@ -40,7 +41,7 @@ use crate::sugar::cstr::{CStrBytes, LiteralCStrVisitor};
 use crate::sugar::factory::{
     FloorRead, FormatValueFloor, LiteralCStrFloor, LiteralStringFloor, SugarBody, SugarBuildCtx,
 };
-use crate::{strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::{strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 
 /// The terminal reason for an `f16`/`f128` formatting operand: the stable toolchain
 /// the lifter ships cannot Display it, and we never model the algorithm (no-model
@@ -91,22 +92,20 @@ pub(crate) fn build_literal_string_body(expr: &Expr, fcx: &SugarBuildCtx) -> Box
                         "self-referential literal string binding; write more Sugar for this AST"
                             .to_string(),
                     ),
-                    None => LiteralStringBody::Runtime(
-                        "runtime format string, not literal-determined (bin-2: runtime data, not constructed from source literals); refused"
-                            .to_string(),
+                    None => LiteralStringBody::Unconstructible(
+                        format!(
+                            "format string path `{name}` has no literal-string child floor; write more Sugar for this AST"
+                        ),
                     ),
                 }
             }
-            None => LiteralStringBody::Runtime(
-                "runtime format string, not literal-determined (bin-2: runtime data, not constructed from source literals); refused"
-                    .to_string(),
+            None => LiteralStringBody::Unconstructible(
+                "format string path has no ident; write more Sugar for this AST".to_string(),
             ),
         },
-        Expr::Macro(m) if macro_is(m, "format") => {
-            LiteralStringBody::Child(SugarBody::from_node(
-                crate::sugar::format_macro::build_literal_string_node(expr, fcx),
-            ))
-        }
+        Expr::Macro(m) if macro_is(m, "format") => LiteralStringBody::Child(SugarBody::from_node(
+            crate::sugar::format_macro::build_literal_string_node(expr, fcx),
+        )),
         Expr::Macro(m) if macro_is(m, "concat") => match build_concat_string_body(expr, fcx) {
             Ok(body) => body,
             Err(reason) => LiteralStringBody::Unconstructible(reason),
@@ -161,39 +160,26 @@ pub(crate) fn build_format_value_body(expr: &Expr, fcx: &SugarBuildCtx) -> Box<d
                         "self-referential format argument binding; write more Sugar for this AST"
                             .to_string(),
                     ),
-                    None => FormatValueBody::Runtime(
-                        "runtime format argument, not literal-determined (bin-2: runtime data, not constructed from source literals); refused"
-                            .to_string(),
+                    None => FormatValueBody::Unconstructible(
+                        format!(
+                            "format argument path `{name}` has no format-value child floor; write more Sugar for this AST"
+                        ),
                     ),
                 }
             }
-            None => FormatValueBody::Runtime(
-                "runtime format argument, not literal-determined (bin-2: runtime data, not constructed from source literals); refused"
-                    .to_string(),
+            None => FormatValueBody::Unconstructible(
+                "format argument path has no ident; write more Sugar for this AST".to_string(),
             ),
         },
         e if is_format_shape(e) => {
             FormatValueBody::String(SugarBody::literal_string(strip_refs_groups(expr), fcx))
         }
-        _ => {
-            FormatValueBody::Runtime(
-                "runtime format argument, not literal-determined (bin-2: runtime data, not constructed from source literals); refused"
-                    .to_string(),
-            )
-        }
+        _ => FormatValueBody::Unconstructible(
+            "format argument has no format-value child floor; write more Sugar for this AST"
+                .to_string(),
+        ),
     };
     Box::new(body)
-}
-
-pub(crate) fn runtime_format_value_body(reason: impl Into<String>) -> Box<dyn Sugar> {
-    Box::new(FormatValueBody::Runtime(reason.into()))
-}
-
-fn runtime_argument_effect(reason: String) -> Effect {
-    Effect::RuntimeArgument {
-        boundary: reason.clone(),
-        reason,
-    }
 }
 
 pub(crate) fn literal_format_capture_names(expr: &Expr) -> Option<Vec<String>> {
@@ -257,7 +243,6 @@ enum LiteralStringBody {
         left: SugarBody<LiteralStringFloor>,
         right: SugarBody<LiteralStringFloor>,
     },
-    Runtime(String),
     Unconstructible(String),
 }
 
@@ -307,7 +292,9 @@ impl Sugar for LiteralStringBody {
                                     Ok(None) => panic!(
                                         "concat fragment did not render as a literal string; implement the typed formatter"
                                     ),
-                                    Err(reason) => return Outcome::Incomplete(runtime_argument_effect(reason)),
+                                    Err(reason) => panic!(
+                                        "concat fragment formatter could not render its literal floor: {reason}"
+                                    ),
                                 }
                             }
                             FloorRead::Incomplete(effect) => return Outcome::Incomplete(effect),
@@ -329,7 +316,9 @@ impl Sugar for LiteralStringBody {
                     Ok(None) => panic!(
                         "to_string receiver did not render as a literal string; implement the typed formatter"
                     ),
-                    Err(reason) => Outcome::Incomplete(runtime_argument_effect(reason)),
+                    Err(reason) => panic!(
+                        "to_string formatter could not render its literal floor: {reason}"
+                    ),
                 }
             }
             LiteralStringBody::StringAdd { left, right } => {
@@ -342,9 +331,6 @@ impl Sugar for LiteralStringBody {
                     FloorRead::Incomplete(effect) => return Outcome::Incomplete(effect),
                 };
                 Outcome::Complete(Desugared::LiteralString(format!("{left}{right}")))
-            }
-            LiteralStringBody::Runtime(reason) => {
-                Outcome::Incomplete(runtime_argument_effect(reason.clone()))
             }
             LiteralStringBody::Unconstructible(reason) => {
                 panic!("{reason}");
@@ -398,7 +384,6 @@ enum FormatValueBody {
         left: SugarBody<FormatValueFloor>,
         right: SugarBody<FormatValueFloor>,
     },
-    Runtime(String),
     Terminal(String),
     Unconstructible(String),
 }
@@ -434,12 +419,9 @@ impl Sugar for FormatValueBody {
                     FmtValue::Int { value, suffix } => FmtValue::Int {
                         value: match value.checked_neg() {
                             Some(value) => value,
-                            None => {
-                                return Outcome::Incomplete(runtime_argument_effect(
-                                    "format integer arithmetic overflow or divide-by-zero, not literal-determined; refused"
-                                        .to_string(),
-                                ));
-                            }
+                            None => panic!(
+                                "format unary negation overflowed; delegate numeric semantics to the owning floor"
+                            ),
                         },
                         suffix,
                     },
@@ -467,18 +449,15 @@ impl Sugar for FormatValueBody {
                     Err(reason)
                         if reason.contains("format integer arithmetic did not constant-fold") =>
                     {
-                        return Outcome::Incomplete(runtime_argument_effect(
-                            "format integer arithmetic overflow or divide-by-zero, not literal-determined; refused"
-                                .to_string(),
-                        ));
+                        panic!(
+                            "format integer arithmetic did not reduce through owning floors: {reason}"
+                        );
                     }
                     Err(reason) => panic!("{reason}"),
                 };
                 Outcome::Complete(Desugared::FormatValue(folded))
             }
-            FormatValueBody::Runtime(reason) | FormatValueBody::Terminal(reason) => {
-                Outcome::Incomplete(runtime_argument_effect(reason.clone()))
-            }
+            FormatValueBody::Terminal(reason) => panic!("{reason}"),
             FormatValueBody::Unconstructible(reason) => {
                 panic!("{reason}");
             }
@@ -634,11 +613,13 @@ fn is_format_shape(expr: &Expr) -> bool {
 
 // ── The core: resolve a format-producing expr to its ONE string value ────────────
 //
-// Result semantics:
+// Result semantics for the legacy helper tests below:
 //   Ok(Some(s)) — dissolved to the string `s` (recompute via real `format!`).
-//   Ok(None)    — a genuinely runtime / unsupported-but-unnamed operand: bail (the
-//                 conservative opaque fall-through; safe under-claim).
-//   Err(reason) — a NAMED terminal (f16/f128 Display unsupported); refuse by name.
+//   Ok(None)    — the helper could not resolve a string on its own. The constructed
+//                 Sugar path must represent that as a factory gap or a child effect,
+//                 never as a local format/runtime-argument effect.
+//   Err(reason) — a named unsupported render path. The constructed Sugar path treats
+//                 this as a gap until a typed owner exists.
 
 /// A typed literal value reconstructed from the source AST, carrying enough to render
 /// it through the real stdlib `format!` for every spec we faithfully reproduce.
@@ -1548,8 +1529,9 @@ fn render_bool(b: bool, spec: &Spec) -> Option<String> {
 
 /// Resolve an argument expr to a `FmtValue` (a typed literal), composing through
 /// `let`/`const` bindings and unary negation / `inf`-`NaN`-shaped float divisions (the
-/// flt2dec corpus shape). `Ok(None)` for a runtime / non-literal arg (bail);
-/// `Err(reason)` for a NAMED terminal (f16/f128).
+/// flt2dec corpus shape). `Ok(None)` means this helper did not resolve the value by
+/// itself; constructed Sugar must gap or bubble a child effect instead of inventing a
+/// local format effect. `Err(reason)` is an unsupported render path.
 fn resolve_fmt_value(
     expr: &Expr,
     binds: &BTreeMap<String, Expr>,

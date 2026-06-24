@@ -15,10 +15,7 @@
 //         }
 //         if let Some(value) = const_float(&unary.expr)? {
 //             if real_literal_is_zero(&value) {
-//                 return Err(format!(
-//                     "signed zero float literal remains an IEEE refinement `{}`",
-//                     token_key(expr)
-//                 ));
+//                 panic!("signed zero float literal needs the owning float floor");
 //             }
 //             return Ok(real_const(format!("-{value}")));
 //         }
@@ -154,13 +151,7 @@ impl Sugar for UnarySugar {
                 } = child.as_ref()
                 {
                     if real_literal_is_zero(value) {
-                        return Outcome::Incomplete(Effect::RuntimeArgument {
-                            boundary: self.site.clone(),
-                            reason: format!(
-                                "signed zero float literal remains an IEEE refinement `{}`",
-                                self.site
-                            ),
-                        });
+                        unary_gap("signed zero float literal needs the owning float floor");
                     }
                     return Outcome::Complete(Desugared::Term(real_const(format!("-{value}"))));
                 }

@@ -163,7 +163,7 @@ impl Sugar for IndexSugar {
             Ok(Some(term)) => return Outcome::Complete(Desugared::Term(term)),
             Ok(None) => {}
             Err(reason) => {
-                return Outcome::Incomplete(Effect::RuntimeArgument {
+                return Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
                     boundary: token_key(&Expr::Index(self.index.clone())),
                     reason,
                 })

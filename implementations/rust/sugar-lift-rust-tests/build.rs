@@ -85,6 +85,9 @@ const FORBIDDEN_GAP_SYMBOLS: &[&str] = &[
     "structural_bail_to_gap",
 ];
 
+const FORBIDDEN_SUGAR_RUNTIME_ARGUMENT_SYMBOLS: &[&str] =
+    &["Effect::RuntimeArgument", "RuntimeArgument {"];
+
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let src_dir = manifest_dir.join("src");
@@ -112,6 +115,17 @@ fn main() {
         })
     {
         audit_forbidden_gap_symbols(entry.path(), &src_dir, &mut violations);
+    }
+
+    for entry in walkdir::WalkDir::new(&sugar_dir)
+        .max_depth(1)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry.file_type().is_file() && entry.path().extension().is_some_and(|ext| ext == "rs")
+        })
+    {
+        audit_forbidden_sugar_runtime_argument_symbols(entry.path(), &sugar_dir, &mut violations);
     }
 
     if violations.is_empty() {
@@ -246,6 +260,30 @@ fn audit_forbidden_gap_symbols(path: &Path, src_dir: &Path, violations: &mut Vec
             if line.contains(symbol) {
                 violations.push(format!(
                     "{file}:{} forbidden runtime gap symbol `{symbol}`; return a named Effect or a Complete Outcome, never a gap Outcome",
+                    idx + 1
+                ));
+            }
+        }
+    }
+}
+
+fn audit_forbidden_sugar_runtime_argument_symbols(
+    path: &Path,
+    sugar_dir: &Path,
+    violations: &mut Vec<String>,
+) {
+    let src = fs::read_to_string(path)
+        .unwrap_or_else(|err| panic!("cannot read {}: {err}", path.display()));
+    let rel = path
+        .strip_prefix(sugar_dir.parent().unwrap())
+        .unwrap_or(path);
+    let file = rel.to_string_lossy().replace('\\', "/");
+
+    for (idx, line) in src.lines().enumerate() {
+        for symbol in FORBIDDEN_SUGAR_RUNTIME_ARGUMENT_SYMBOLS {
+            if line.contains(symbol) {
+                violations.push(format!(
+                    "{file}:{} forbidden sugar-owned RuntimeArgument symbol `{symbol}`; RuntimeArgument is owned only by function/input argument boundary sugar",
                     idx + 1
                 ));
             }

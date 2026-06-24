@@ -405,15 +405,9 @@ impl StringPredicateSugar {
     fn desugar_binary_string_predicate(&self, ctx: &SugarCtx, atom_name: &str) -> Outcome {
         if let Some(recv_name) = &self.receiver_name {
             if ctx.scope.is_mut_local(&recv_name) {
-                return runtime_argument(
-                    recv_name.clone(),
-                    format!(
-                        "{} predicate over a MUTABLE-local receiver `{recv_name}` \
-                     (bin-2: a slice/string mutated by side-effecting iteration, not \
-                     constructed from source literals); refused",
-                        self.method
-                    ),
-                );
+                return Outcome::Incomplete(Effect::TemporalRead {
+                    boundary: recv_name.clone(),
+                });
             }
         }
         let receiver = match self.receiver_string(ctx) {
@@ -640,8 +634,4 @@ fn eval_ascii_byte_class(byte: u8, atom_name: &str) -> bool {
         "str.is_ascii_control" => byte.is_ascii_control(),
         _ => panic!("eval_ascii_byte_class: unknown atom name `{atom_name}`"),
     }
-}
-
-fn runtime_argument(boundary: String, reason: String) -> Outcome {
-    Outcome::Incomplete(Effect::RuntimeArgument { boundary, reason })
 }

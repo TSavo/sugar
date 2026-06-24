@@ -8006,8 +8006,10 @@ enum Effect {
     /// it is not the child being opaque, and it is not missing sugar for a literal
     /// arithmetic cast.
     RepresentationCast { boundary: String, kind: String },
-    /// RUNTIME-ARGUMENT: a child value needed by a compositor is runtime / not
-    /// literal-determined. The parent only bubbles this effect; the child owns it.
+    /// RUNTIME-ARGUMENT: a source function/input parameter is runtime data, e.g.
+    /// `fn f(x: i32) { x }`. Parent/compositor sugar must never construct this as a
+    /// generic "not literal" fallback; it can only bubble an effect that the boundary
+    /// owner already emitted.
     RuntimeArgument { boundary: String, reason: String },
     /// UNICODE-STRING-CASE: Rust's full `str::to_uppercase` / `to_lowercase` over a
     /// non-ASCII string depends on Unicode case mapping tables. ASCII receivers complete
