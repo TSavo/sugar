@@ -21,16 +21,13 @@
 // verdict is made, and the single LEAF owns it:
 //   * the METHOD leaf: a recognized asserting impl method body is reachable only at call time
 //     over the receiver's runtime state -> `ImplMethod`.
-// The composite makes NO check of its own: a recognized node always returns Incomplete its `ImplMethod` leaf
-// (recognition -- an asserting method -- IS the verdict's precondition). The STRUCTURAL
-// backstop (`Effect::Unsupported` with `STRUCTURAL_BACKSTOP_REASON`) is the total-but-
-// unreachable tail kept to mirror the node shape -- a `Incomplete` the fall-through router would
-// discard exactly as the old `None`, never a fake-refuse.
+// The composite makes NO check of its own: a recognized node always returns Incomplete from
+// its `ImplMethod` leaf (recognition -- an asserting method -- IS the verdict's precondition).
 
 use syn::{Item, ItemImpl};
 
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{impl_block_method_name, Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON};
+use crate::{impl_block_method_name, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const ITEM_SUGAR: crate::sugar::claim::ItemSugarClaim =
     crate::sugar::claim::ItemSugarClaim::statement_item("impl_method", recognize);
@@ -62,25 +59,21 @@ impl ImplMethodSugar {
     /// runs, observing the receiver's RUNTIME state -- no single timeless `t` -> `ImplMethod`.
     /// Recognition (an asserting method) is this leaf's precondition, so it always fires for a
     /// built node; it never completes.
-    fn impl_method_effect(&self) -> Option<Effect> {
-        Some(Effect::ImplMethod {
+    fn impl_method_effect(&self) -> Effect {
+        Effect::ImplMethod {
             boundary: format!("impl method `{}`", self.method),
-        })
+        }
+    }
+
+    pub(crate) fn desugar_ctx_free(&self) -> Outcome {
+        Outcome::Incomplete(self.impl_method_effect())
     }
 }
 
 impl Sugar for ImplMethodSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        // The composite makes NO verdict of its own: it returns Incomplete its single METHOD leaf. A built
-        // node always names `ImplMethod` (recognition is the verdict's precondition); the
-        // STRUCTURAL backstop is the total-but-unreachable tail the fall-through router would
-        // discard as the old `None`.
-        if let Some(effect) = self.impl_method_effect() {
-            return Outcome::Incomplete(effect);
-        }
-        Outcome::Incomplete(Effect::Unsupported {
-            reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
-        })
+        // A built node always names `ImplMethod`; recognition is the verdict's precondition.
+        self.desugar_ctx_free()
     }
 }
 
@@ -93,4 +86,41 @@ impl Sugar for ImplMethodSugar {
 pub(crate) fn decompose_impl_method(imp: &ItemImpl) -> Option<ImplMethodSugar> {
     let method = impl_block_method_name(imp)?;
     Some(ImplMethodSugar { method })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use syn::Item;
+
+    #[test]
+    fn asserting_impl_method_desugars_to_named_impl_method_effect() {
+        let item: Item =
+            syn::parse_str("impl W { fn write(&self) { assert_eq!(self.done, true); } }").unwrap();
+        let Item::Impl(imp) = item else {
+            panic!("expected impl item")
+        };
+
+        let node = decompose_impl_method(&imp).expect("asserting impl method should construct");
+        match node.desugar_ctx_free() {
+            Outcome::Incomplete(Effect::ImplMethod { boundary }) => {
+                assert_eq!(boundary, "impl method `write`");
+            }
+            other => panic!("asserting impl method must name ImplMethod, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn assert_free_impl_declines_impl_method_sugar() {
+        let item: Item =
+            syn::parse_str("impl W { fn write(&self) { let _ = self.done; } }").unwrap();
+        let Item::Impl(imp) = item else {
+            panic!("expected impl item")
+        };
+
+        assert!(
+            decompose_impl_method(&imp).is_none(),
+            "assert-free impls are not impl-method refusals"
+        );
+    }
 }
