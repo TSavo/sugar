@@ -130,6 +130,7 @@ pub mod sugar {
     pub mod literal;
     pub mod literal_iterator_quantifier;
     pub mod literal_slice;
+    pub mod macro_assertion_surface;
     pub mod macro_term;
     pub mod map;
     pub mod match_node;

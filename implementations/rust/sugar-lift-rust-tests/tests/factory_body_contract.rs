@@ -183,6 +183,11 @@ side_door_floor!(
     "LiteralIteratorQuantifierSugar"
 );
 side_door_floor!(
+    macro_assertion_surface_desugar_uses_upstream_sugar_body,
+    "src/sugar/macro_assertion_surface.rs",
+    "MacroAssertionSurfaceSugar"
+);
+side_door_floor!(
     map_desugar_uses_upstream_sugar_body,
     "src/sugar/map.rs",
     "MapTermSugar"
