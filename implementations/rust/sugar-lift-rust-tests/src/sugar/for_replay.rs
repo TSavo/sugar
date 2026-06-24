@@ -16,15 +16,16 @@ use crate::sugar::callsite::{CallsiteOutcome, CallsiteSugar};
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::configuration::{resolve as cfg_resolve, CfgDisposition};
 use crate::sugar::extract_if::{ExtractIfSugar, ReplayAction};
-use crate::sugar::factory::{build_composite, build_term, has_composite, SugarBuildCtx};
+use crate::sugar::factory::{
+    build_composite, build_term, has_composite, CompositeFloor, SugarBody, SugarBuildCtx,
+};
 use crate::sugar::insert::InsertSugar;
 use crate::{
     bool_const, bounded_domain_from_expr, const_fold_int_term, const_fold_u128_term,
     count_asserts_in_stmts, helper_param_names, macro_is_assertion_surface, path_to_variant_string,
     simple_call_name, simple_pat_name, strip_refs_groups, substitute_expr, substitute_macro_tokens,
     term_as_int, translate_term_in_scope, u128_expr, AssertionFactKind, BoundedDomain, ConstVal,
-    Desugared, Effect, ExprBindings, Outcome, Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON,
-    SUGAR_SEQ_CAP,
+    Desugared, Effect, ExprBindings, Outcome, Sugar, SugarCtx, Warrant, SUGAR_SEQ_CAP,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -116,7 +117,8 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     );
     Some(Box::new(ForReplaySugar {
         vars,
-        domain: (*for_loop.expr).clone(),
+        domain: SugarBody::composite(&for_loop.expr, fcx),
+        domain_expr: (*for_loop.expr).clone(),
         body_stmts: for_loop.body.stmts.clone(),
         seed_names,
     }))
@@ -683,24 +685,36 @@ pub(crate) struct ForReplaySugar {
     /// bound to these names -- a single element value for a 1-ident plan, or the tuple
     /// components for a multi-ident plan.
     vars: Vec<String>,
-    domain: Expr,
+    domain: SugarBody<CompositeFloor>,
+    domain_expr: Expr,
     body_stmts: Vec<Stmt>,
     seed_names: Vec<String>,
 }
 
+fn for_replay_construction_gap(reason: String) -> ! {
+    panic!("for_replay recognized a replay shape it could not lawfully reduce: {reason}")
+}
+
 impl Sugar for ForReplaySugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let Some(values) = finite_domain_exprs(&self.domain, ctx) else {
-            return Outcome::from_opt(None);
+        let values = match finite_domain_body_exprs(&self.domain, ctx) {
+            Ok(values) => values,
+            Err(effect) => return Outcome::Incomplete(effect),
         };
         if values.is_empty() || values.len() > SUGAR_SEQ_CAP as usize {
-            return Outcome::from_opt(None);
+            for_replay_construction_gap(format!(
+                "recognized domain `{}` reduced to an empty or over-cap sequence",
+                crate::token_key(&self.domain_expr)
+            ));
         }
         let source_asserts = replay_assert_count(&self.body_stmts, ctx.scope);
         if source_asserts == 0 {
             if replay_temporal_assignment_loop(ctx, &self.vars, &self.body_stmts, values).is_none()
             {
-                return Outcome::from_opt(None);
+                for_replay_construction_gap(format!(
+                    "temporal assignment replay failed for `{}`",
+                    crate::token_key(&self.domain_expr)
+                ));
             }
             return Outcome::Complete(Desugared::Constraints {
                 atom: eq(bool_const(true), bool_const(true)),
@@ -727,16 +741,22 @@ impl Sugar for ForReplaySugar {
                     if terminal_effect.is_none() {
                         terminal_effect = replay.terminal_effect.take();
                     }
-                    return terminal_effect
-                        .map(Outcome::Incomplete)
-                        .unwrap_or_else(|| Outcome::from_opt(None));
+                    return terminal_effect.map(Outcome::Incomplete).unwrap_or_else(|| {
+                        for_replay_construction_gap(format!(
+                            "body replay failed without a named child effect for `{}`",
+                            crate::token_key(&self.domain_expr)
+                        ))
+                    });
                 }
                 atoms.extend(replay.atoms);
             }
         } else {
             let mut replay = Replay::new(ctx);
             if replay.seed_source_bindings(&self.seed_names).is_none() {
-                return Outcome::from_opt(None);
+                for_replay_construction_gap(format!(
+                    "seed binding replay failed for `{}`",
+                    crate::token_key(&self.domain_expr)
+                ));
             }
             for value in values {
                 if bind_loop_value(&mut replay.bindings, &self.vars, value).is_none()
@@ -745,18 +765,24 @@ impl Sugar for ForReplaySugar {
                     if terminal_effect.is_none() {
                         terminal_effect = replay.terminal_effect.take();
                     }
-                    return terminal_effect
-                        .map(Outcome::Incomplete)
-                        .unwrap_or_else(|| Outcome::from_opt(None));
+                    return terminal_effect.map(Outcome::Incomplete).unwrap_or_else(|| {
+                        for_replay_construction_gap(format!(
+                            "seeded body replay failed without a named child effect for `{}`",
+                            crate::token_key(&self.domain_expr)
+                        ))
+                    });
                 }
             }
             terminal_effect = replay.terminal_effect.take();
             atoms.extend(replay.atoms);
         }
         if atoms.is_empty() {
-            return terminal_effect
-                .map(Outcome::Incomplete)
-                .unwrap_or_else(|| Outcome::from_opt(None));
+            return terminal_effect.map(Outcome::Incomplete).unwrap_or_else(|| {
+                for_replay_construction_gap(format!(
+                    "recognized replay produced no atoms for `{}`",
+                    crate::token_key(&self.domain_expr)
+                ))
+            });
         }
         Outcome::Complete(Desugared::Constraints {
             atom: and_(atoms),
@@ -1200,12 +1226,14 @@ impl<'a, 'c, 's> Replay<'a, 'c, 's> {
                 self.atoms.push(atom);
                 Some(())
             }
-            Outcome::Incomplete(Effect::Unsupported { reason })
-                if reason == STRUCTURAL_BACKSTOP_REASON =>
-            {
-                None
-            }
             Outcome::Incomplete(effect) => {
+                let reason = effect.reason();
+                if reason.contains("structural backstop") {
+                    for_replay_construction_gap(format!(
+                        "nested assertion `{}` hit the structural backstop",
+                        crate::token_key(expr)
+                    ));
+                }
                 self.terminal_effect = Some(effect);
                 None
             }
@@ -1638,6 +1666,49 @@ fn is_const_pattern_ident(name: &str) -> bool {
         && name
             .chars()
             .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
+}
+
+fn finite_domain_body_exprs(
+    domain: &SugarBody<CompositeFloor>,
+    ctx: &SugarCtx,
+) -> Result<Vec<Expr>, Effect> {
+    let seq = match domain.reduce(ctx) {
+        Outcome::Complete(Desugared::Seq(seq)) => seq,
+        Outcome::Complete(_) => {
+            for_replay_construction_gap(
+                "domain body completed as a non-sequence floor".to_string(),
+            );
+        }
+        Outcome::Incomplete(effect) => return Err(effect),
+    };
+    let mut values = Vec::with_capacity(seq.len());
+    for elem in seq {
+        let value = match elem.value.as_ref() {
+            Some(ConstVal::Int(value)) => int_expr(*value).unwrap_or_else(|| {
+                for_replay_construction_gap(format!(
+                    "integer domain element `{value}` did not reify to an expression"
+                ))
+            }),
+            Some(ConstVal::PrimitiveInt { .. }) => elem
+                .value
+                .as_ref()
+                .and_then(ConstVal::to_expr)
+                .unwrap_or_else(|| {
+                    for_replay_construction_gap(
+                        "primitive integer domain element did not reify to an expression"
+                            .to_string(),
+                    )
+                }),
+            Some(ConstVal::UInt128(value)) => u128_expr(*value).unwrap_or_else(|| {
+                for_replay_construction_gap(format!(
+                    "u128 domain element `{value}` did not reify to an expression"
+                ))
+            }),
+            _ => elem.expr,
+        };
+        values.push(value);
+    }
+    Ok(values)
 }
 
 fn finite_domain_exprs(expr: &Expr, ctx: &SugarCtx) -> Option<Vec<Expr>> {

@@ -133,6 +133,11 @@ side_door_floor!(
     "FloatRefinementSugar"
 );
 side_door_floor!(
+    for_replay_desugar_uses_upstream_sugar_body,
+    "src/sugar/for_replay.rs",
+    "ForReplaySugar"
+);
+side_door_floor!(
     index_desugar_uses_upstream_sugar_body,
     "src/sugar/index.rs",
     "IndexSugar"
