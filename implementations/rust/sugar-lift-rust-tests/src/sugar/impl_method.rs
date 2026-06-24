@@ -106,7 +106,7 @@ mod tests {
             Outcome::Incomplete(Effect::ImplMethod { boundary }) => {
                 assert_eq!(boundary, "impl method `write`");
             }
-            other => panic!("asserting impl method must name ImplMethod, got {other:?}"),
+            _ => panic!("asserting impl method must name ImplMethod"),
         }
     }
 
