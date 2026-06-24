@@ -181,6 +181,7 @@ pub mod sugar {
     pub mod statement_control_flow;
     pub mod statement_future_handoff;
     pub mod statement_loop_advance;
+    pub mod statement_nested_assertion;
     pub mod statement_position;
     pub mod statement_reflection;
     pub mod statement_runtime_expr;
@@ -713,6 +714,11 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // no `&mut`/mutation signal and STAYS the unclassified "unlifted expression
         // statement" reason (the fake-refuse guardrail). Typed `RuntimeExprStmtEffect`.
         || reason.contains("runtime expression-statement")
+        // TERMINAL: an assertion macro statement nested inside a value expression/block (for
+        // example a closure body used as a map value) is not an unconditional top-level
+        // point-wise assertion. The assertion statement owns this stop; enclosing block sugar
+        // only bubbles it. A pure-but-untranslated block remains a construction gap.
+        || reason.contains("assertion surface nested in value expression")
         // TERMINAL: an assertion-bearing `async { .. }` future has been handed to an
         // arbitrary call/method driver. The `async` block is compiler syntax, but the driver
         // call is NOT a compiler axiom; it must be learned dynamically from visible source /
@@ -7960,6 +7966,13 @@ enum Effect {
     /// the `StatementPositionSugar` aliased-read leaf; a statement over a CONSTRUCTED literal
     /// value stays unclassified.
     RuntimeExprStmt { boundary: String },
+    /// NESTED-ASSERTION-VALUE: an assertion macro statement appears inside a value expression,
+    /// such as a closure body used as a term. It is not an unconditional assertion surface at
+    /// that source point and cannot be reinterpreted as a top-level point-wise claim. The
+    /// assertion statement owns the boundary; enclosing blocks only bubble it. Pure value blocks
+    /// still complete through `BlockTermSugar`; blocks without assertion syntax stay construction
+    /// gaps.
+    NestedAssertionValue { boundary: String },
     /// CELL-RUNTIME-ALIASED: a tracked `Cell`/`RefCell` read whose temporal ledger proves
     /// the current value is runtime/aliased instead of literal-pinned. Literal-pinned
     /// cell states complete through `CellRefCellSugar`; this fires only after an aliasing
@@ -8130,6 +8143,10 @@ impl Effect {
                 "assertion in a runtime expression-statement `{boundary}` (value read through a \
                  `&mut` borrow / mutation, not constructible from source literals); refused"
             ),
+            Effect::NestedAssertionValue { boundary } => format!(
+                "assertion surface nested in value expression `{boundary}` is not an \
+                 unconditional point-wise assertion; refused"
+            ),
             Effect::CellRuntimeAliased { boundary } => boundary.clone(),
             Effect::ResultInspectCallback { boundary } => format!(
                 "Result inspect callback `{boundary}` is not provably no-op; refusing to erase \
@@ -8205,6 +8222,7 @@ impl Effect {
             | Effect::ImplMethod { boundary }
             | Effect::IfGuardRuntime { boundary }
             | Effect::RuntimeExprStmt { boundary }
+            | Effect::NestedAssertionValue { boundary }
             | Effect::CellRuntimeAliased { boundary }
             | Effect::ResultInspectCallback { boundary }
             | Effect::RegexPattern { boundary, .. }

@@ -31,10 +31,10 @@ use crate::sugar::{
     reference_term, regex_match, repeat_term, result_predicate, result_transpose_collect, rev,
     size_hint, sizeof, skip, skip_while, slice_accessor, slice_chunk_window, slice_index,
     slice_search, statement_async_future, statement_control_flow, statement_future_handoff,
-    statement_loop_advance, statement_reflection, statement_runtime_expr, step_by, str_method,
-    string_add, string_predicate, struct_term, take, take_while, term_literal, to_string,
-    transparent_term, try_from, try_from_fn, try_map, tuple_decomp, tuple_term, unary,
-    unsafe_memory, vec_literal, vec_macro, wrapping_neg, zip,
+    statement_loop_advance, statement_nested_assertion, statement_reflection,
+    statement_runtime_expr, step_by, str_method, string_add, string_predicate, struct_term, take,
+    take_while, term_literal, to_string, transparent_term, try_from, try_from_fn, try_map,
+    tuple_decomp, tuple_term, unary, unsafe_memory, vec_literal, vec_macro, wrapping_neg, zip,
 };
 use crate::{FactoryCandidateAudit, Sugar};
 
@@ -218,6 +218,8 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &statement_future_handoff::EXPR_SUGAR,
     &statement_reflection::EXPR_SUGAR,
     &statement_loop_advance::EXPR_SUGAR,
+    &statement_nested_assertion::EXPR_SUGAR,
+    &unsafe_memory::STATEMENT_EXPR_SUGAR,
     &statement_runtime_expr::EXPR_SUGAR,
     &match_scrutinee::VERDICT_EXPR_SUGAR,
 ];
@@ -1379,6 +1381,22 @@ mod tests {
         let names = candidate_names_for_role(&expr, SugarRole::StatementEffect);
 
         assert_eq!(names, vec!["statement_runtime_expr"]);
+    }
+
+    #[test]
+    fn statement_nested_assertion_effect_is_a_catalog_claim() {
+        let expr: Expr = syn::parse_str("assert_eq!(i, 1)").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::StatementEffect);
+
+        assert_eq!(names, vec!["statement_nested_assertion"]);
+    }
+
+    #[test]
+    fn unsafe_memory_statement_effect_is_a_catalog_claim() {
+        let expr: Expr = syn::parse_str("a.clone_to_uninit(dst)").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::StatementEffect);
+
+        assert_eq!(names, vec!["statement_unsafe_memory"]);
     }
 
     #[test]
