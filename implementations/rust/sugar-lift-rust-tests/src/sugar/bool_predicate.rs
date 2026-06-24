@@ -3,13 +3,14 @@
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{make_var, Term};
-use syn::{Expr, Pat};
+use syn::Pat;
 
 use crate::sugar::factory::{BoolFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::term_dispatch::{
-    BoolFloorAccept, CurryOccurrence, CurryVisitor, DesugaredFloorAccept, RequiredBoolVisitor,
+    CurryOccurrence, CurryVisitor, DesugaredFloorAccept, LiteralPredicateBoolVisitor,
+    TermFloorAccept,
 };
-use crate::{const_val_term, token_key, DesugaredElem, Outcome, SugarCtx};
+use crate::{canonical_term_sig, const_val_term, token_key, DesugaredElem, Outcome, SugarCtx};
 
 /// A unary predicate closure whose body is already factory-owned.
 ///
@@ -48,7 +49,16 @@ impl BoolPredicateClosure {
         let term = body
             .into_term()
             .unwrap_or_else(|| bool_predicate_gap(family, "predicate body reduced to non-Term"));
-        Ok(term.accept_bool_floor(RequiredBoolVisitor { owner: family }))
+        term.accept_term_floor(LiteralPredicateBoolVisitor)
+            .ok_or_else(|| {
+                bool_predicate_gap(
+                    family,
+                    &format!(
+                        "predicate floor did not reduce to literal bool: {}",
+                        canonical_term_sig(&term)
+                    ),
+                )
+            })
     }
 }
 

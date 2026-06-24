@@ -36,7 +36,7 @@ pub(crate) const RELATION_MACRO_ASSERTION_SURFACE: ExprSugarClaim =
     ExprSugarClaim::fallback_with_ordering(
         "assertion_surface_relation_macro",
         SugarRole::AssertionSurface,
-        &["assertion_surface_assert_macro"],
+        &["assertion_surface_assert_macro", "macro_assertion_surface"],
         recognize_relation_macro,
     );
 

@@ -358,7 +358,7 @@ pub(crate) fn has_item_role(item: &Item, fcx: &SugarBuildCtx, role: SugarRole) -
 
 /// Compatibility TERM wrapper: ask the unified candidate catalog, then return the first
 /// candidate whose old source-position role is `Term`, else the structural gap sentinel.
-/// TOTAL — every shape news a node, but an unclaimed node is unresolved factory work.
+/// TOTAL — every shape news either a lawful sugar node or the loud factory-gap node.
 /// RECURSIVE — composite term recognizers build their operands with `build_term`.
 pub(crate) fn build_term(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
     build_expr(expr, fcx, SugarRole::Term)
@@ -370,8 +370,8 @@ pub(crate) fn reduce_term(expr: &Expr, fcx: &SugarBuildCtx, ctx: &SugarCtx) -> O
 
 /// Compatibility COMPOSITE wrapper: ask the unified candidate catalog, then return the
 /// first candidate whose old source-position role is `Composite`, else the structural
-/// gap sentinel. Total: an unowned shape becomes [`UnsupportedSugar`], which accounted
-/// desugar records as an unresolved factory gap.
+/// gap sentinel. Total: an unowned shape becomes the loud factory-gap node; recognizers
+/// must not manufacture that node from their own failed construction.
 pub(crate) fn build_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
     build_expr(expr, fcx, SugarRole::Composite)
 }

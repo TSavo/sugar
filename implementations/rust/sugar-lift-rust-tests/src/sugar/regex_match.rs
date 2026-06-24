@@ -47,7 +47,10 @@ use syn::Expr;
 use crate::strip_refs_groups;
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{FloorRead, LiteralStringFloor, SugarBody, SugarBuildCtx, TermFloor};
-use crate::sugar::format::stable_let_bindings;
+use crate::sugar::format::{
+    is_concat_macro_shape, is_factory_string_add_shape, is_format_macro_shape, is_to_string_shape,
+    stable_let_bindings,
+};
 use crate::{
     callsite_assertion_name, AssertionFactKind, Desugared, Effect, Outcome, Sugar, SugarCtx,
     Warrant,
@@ -86,11 +89,40 @@ struct RegexMatchSugar {
 fn recognize_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let stable = stable_let_bindings(fcx.scope());
     let matched = recognize_regex_match(expr, &stable, fcx)?;
+    if !pattern_claims_literal_string_floor(&matched.pattern, &stable, fcx) {
+        return None;
+    }
     Some(Box::new(RegexMatchSugar {
         pattern: SugarBody::literal_string(&matched.pattern, fcx),
         subject: SugarBody::term(&matched.subject, fcx),
         method: matched.method,
     }))
+}
+
+fn pattern_claims_literal_string_floor(
+    expr: &Expr,
+    let_bindings: &BTreeMap<String, Expr>,
+    fcx: &SugarBuildCtx,
+) -> bool {
+    match unwrap_grouping(expr) {
+        Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(_),
+            ..
+        }) => true,
+        Expr::Macro(_) => is_format_macro_shape(expr) || is_concat_macro_shape(expr),
+        Expr::MethodCall(call) if call.args.is_empty() && is_to_string_shape(expr) => true,
+        Expr::Binary(_) if is_factory_string_add_shape(expr, fcx) => true,
+        Expr::Path(path) if path.qself.is_none() => {
+            let Some(name) = path.path.get_ident().map(ToString::to_string) else {
+                return false;
+            };
+            let Some(bound) = let_bindings.get(&name) else {
+                return false;
+            };
+            pattern_claims_literal_string_floor(bound, let_bindings, fcx)
+        }
+        _ => false,
+    }
 }
 
 impl Sugar for RegexMatchSugar {

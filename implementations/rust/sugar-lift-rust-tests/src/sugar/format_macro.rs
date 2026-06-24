@@ -104,9 +104,10 @@ fn capture_bodies(
                         ));
                     }
                     None => {
-                        return Err(format!(
-                            "format capture `{name}` has no format-value child floor; write more Sugar for this AST"
-                        ));
+                        let captured: Expr = syn::parse_str(&name).unwrap_or_else(|err| {
+                            panic!("format capture `{name}` was not an expression path: {err}")
+                        });
+                        SugarBody::format_value(&captured, fcx)
                     }
                 };
                 Ok((name, body))

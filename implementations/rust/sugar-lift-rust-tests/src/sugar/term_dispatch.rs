@@ -620,6 +620,40 @@ mod tests {
     }
 
     #[test]
+    fn predicate_visitor_folds_nested_deref_bitand_comparison_floor() {
+        let term = Rc::new(Term::Ctor {
+            name: "cmp:eq".to_string(),
+            args: vec![
+                Rc::new(Term::Ctor {
+                    name: "bit-and".to_string(),
+                    args: vec![
+                        Rc::new(Term::Ctor {
+                            name: "deref".to_string(),
+                            args: vec![var("n")],
+                        }),
+                        num(1),
+                    ],
+                }),
+                num(0),
+            ],
+        });
+
+        let curried = term.accept_term_floor(CurryVisitor {
+            param: "n",
+            arg: &num(2),
+            occurrence: CurryOccurrence {
+                family: "filter",
+                ordinal: 0,
+            },
+        });
+
+        assert_eq!(
+            curried.accept_term_floor(LiteralPredicateBoolVisitor),
+            Some(true)
+        );
+    }
+
+    #[test]
     fn nested_curry_appends_occurrence_context_to_materialized_calls() {
         let inner = Rc::new(Term::Ctor {
             name: "call:f#map1".to_string(),

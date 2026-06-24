@@ -50,7 +50,7 @@ pub(crate) fn recognize_term(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dy
 /// COMPOSITE recognizer for effectful control-flow (`Expr::TryBlock`/`Async`/`Try`):
 /// boxes the `ControlFlowTermSugar` refuse-shape directly (the collector's `.complete()`
 /// site reads its `Effect::ControlFlow` Incomplete). Byte-identical to the
-/// `Expr::TryBlock | Expr::Async | Expr::Try => boxed(decompose_control_flow_term(expr))`
+/// `Expr::TryBlock | Expr::Async | Expr::Try => decompose_control_flow_term(expr)`
 /// COMPOSITE arm of the old fat factory.
 pub(crate) fn recognize_composite(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {

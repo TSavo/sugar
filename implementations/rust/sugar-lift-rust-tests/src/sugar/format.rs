@@ -33,15 +33,23 @@
 
 use std::collections::BTreeMap;
 use std::ffi::CStr;
+use std::rc::Rc;
 
 use syn::punctuated::Punctuated;
 use syn::{Expr, ExprLit, Lit, Pat, Stmt, Token};
 
+use crate::canonical_term_sig;
 use crate::sugar::cstr::{CStrBytes, LiteralCStrVisitor};
 use crate::sugar::factory::{
     FloorRead, FormatValueFloor, LiteralCStrFloor, LiteralStringFloor, SugarBody, SugarBuildCtx,
+    TermFloor,
 };
+use crate::sugar::int_literal::{
+    numeric_floor_from_term, ExactInt, IntKind as NumericIntKind, NumericFloor,
+};
+use crate::sugar::term_dispatch::{TermFloorAccept, TermFloorVisitor};
 use crate::{strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
+use sugar_ir_symbolic::{ConstValue, Term};
 
 /// The terminal reason for an `f16`/`f128` formatting operand: the stable toolchain
 /// the lifter ships cannot Display it, and we never model the algorithm (no-model
@@ -160,24 +168,15 @@ pub(crate) fn build_format_value_body(expr: &Expr, fcx: &SugarBuildCtx) -> Box<d
                         "self-referential format argument binding; write more Sugar for this AST"
                             .to_string(),
                     ),
-                    None => FormatValueBody::Unconstructible(
-                        format!(
-                            "format argument path `{name}` has no format-value child floor; write more Sugar for this AST"
-                        ),
-                    ),
+                    None => FormatValueBody::Term(SugarBody::term(strip_refs_groups(expr), fcx)),
                 }
             }
-            None => FormatValueBody::Unconstructible(
-                "format argument path has no ident; write more Sugar for this AST".to_string(),
-            ),
+            None => FormatValueBody::Term(SugarBody::term(strip_refs_groups(expr), fcx)),
         },
         e if is_format_shape(e) => {
             FormatValueBody::String(SugarBody::literal_string(strip_refs_groups(expr), fcx))
         }
-        _ => FormatValueBody::Unconstructible(
-            "format argument has no format-value child floor; write more Sugar for this AST"
-                .to_string(),
-        ),
+        _ => FormatValueBody::Term(SugarBody::term(strip_refs_groups(expr), fcx)),
     };
     Box::new(body)
 }
@@ -378,6 +377,7 @@ enum FormatValueBody {
     Child(SugarBody<FormatValueFloor>),
     String(SugarBody<LiteralStringFloor>),
     CStr(SugarBody<LiteralCStrFloor>),
+    Term(SugarBody<TermFloor>),
     Neg(SugarBody<FormatValueFloor>),
     Binary {
         op: syn::BinOp,
@@ -409,6 +409,15 @@ impl Sugar for FormatValueBody {
                     Outcome::Complete(Desugared::FormatValue(FmtValue::CStr(value)))
                 }
                 FloorRead::Incomplete(effect) => Outcome::Incomplete(effect),
+            },
+            FormatValueBody::Term(child) => match child.reduce(ctx) {
+                Outcome::Complete(Desugared::Term(term)) => Outcome::Complete(
+                    Desugared::FormatValue(format_value_from_term_floor(&term, "format argument")),
+                ),
+                Outcome::Complete(_) => {
+                    panic!("format argument child completed a non-term floor; fix the factory")
+                }
+                Outcome::Incomplete(effect) => Outcome::Incomplete(effect),
             },
             FormatValueBody::Neg(child) => {
                 let value = match child.reduce_format_value(ctx) {
@@ -668,6 +677,81 @@ impl FmtValue {
     fn render(&self, spec: &Spec) -> Result<Option<String>, String> {
         self.accept(RenderVisitor { spec })
     }
+}
+
+fn format_value_from_term_floor(term: &Rc<Term>, owner: &str) -> FmtValue {
+    term.accept_term_floor(FormatValueTermVisitor { owner })
+}
+
+struct FormatValueTermVisitor<'a> {
+    owner: &'a str,
+}
+
+impl TermFloorVisitor for FormatValueTermVisitor<'_> {
+    type Output = FmtValue;
+
+    fn visit_term(self, term: &Rc<Term>) -> Self::Output {
+        if let Some(floor) = numeric_floor_from_term(term) {
+            return format_value_from_numeric_floor(floor).unwrap_or_else(|| {
+                panic!(
+                    "{} numeric term floor did not fit the format integer carrier: {}",
+                    self.owner,
+                    canonical_term_sig(term)
+                )
+            });
+        }
+
+        match term.as_ref() {
+            Term::Const {
+                value: ConstValue::String(value),
+                ..
+            } => FmtValue::Str(value.clone()),
+            Term::Const {
+                value: ConstValue::Bool(value),
+                ..
+            } => FmtValue::Bool(*value),
+            _ => panic!(
+                "{} term floor did not dispatch to a literal format value: {}",
+                self.owner,
+                canonical_term_sig(term)
+            ),
+        }
+    }
+}
+
+fn format_value_from_numeric_floor(floor: NumericFloor) -> Option<FmtValue> {
+    match floor {
+        NumericFloor::Untyped(value) => Some(FmtValue::Int {
+            value,
+            suffix: IntKind::Unsuffixed,
+        }),
+        NumericFloor::Typed { value, kind } => {
+            let suffix = format_int_kind(kind)?;
+            let value = match value {
+                ExactInt::Signed(value) => value,
+                ExactInt::Unsigned(value) => value as i128,
+            };
+            Some(FmtValue::Int { value, suffix })
+        }
+    }
+}
+
+fn format_int_kind(kind: NumericIntKind) -> Option<IntKind> {
+    Some(match kind.name {
+        "i8" => IntKind::I8,
+        "i16" => IntKind::I16,
+        "i32" => IntKind::I32,
+        "i64" => IntKind::I64,
+        "i128" => IntKind::I128,
+        "isize" => IntKind::Isize,
+        "u8" => IntKind::U8,
+        "u16" => IntKind::U16,
+        "u32" => IntKind::U32,
+        "u64" => IntKind::U64,
+        "u128" => IntKind::U128,
+        "usize" => IntKind::Usize,
+        _ => return None,
+    })
 }
 
 struct RenderVisitor<'a> {
@@ -2510,6 +2594,7 @@ pub(crate) fn lift_flt2dec_helper(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sugar_ir_symbolic::num;
 
     fn parse(src: &str) -> Expr {
         syn::parse_str(src).expect("expr parses")
@@ -2535,6 +2620,15 @@ mod tests {
         } else {
             Ok(None)
         }
+    }
+
+    #[test]
+    fn format_value_dispatches_completed_int_term_floor() {
+        let value = format_value_from_term_floor(&num(5), "test");
+        assert_eq!(
+            value.render(&Spec::parse("?").unwrap()).unwrap().as_deref(),
+            Some("5")
+        );
     }
 
     // ── Display / Debug over each scalar kind ──

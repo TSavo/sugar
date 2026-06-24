@@ -25,7 +25,6 @@ use std::collections::BTreeMap;
 
 use syn::Expr;
 
-use crate::sugar::backstop::boxed;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{
     const_eval, repeat_count_in_scope, repeat_count_literal, token_key, Desugared, DesugaredElem,
@@ -36,10 +35,9 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("array_repeat", recognize_composite);
 
 /// COMPOSITE recognizer for `Expr::Repeat`: the `ArrayRepeatSugar` refuse-shape (via
-/// [`decompose_array_repeat`]). Byte-identical to the
-/// `Expr::Repeat(_) => boxed(decompose_array_repeat(expr))` arm of the old fat
-/// `build_composite`. DISTINCT from the TERM-position `Expr::Repeat` (which expands a
-/// literal-count aggregate); the two roles genuinely differ.
+/// [`decompose_array_repeat`]). DISTINCT from the TERM-position `Expr::Repeat` (which
+/// expands a literal-count aggregate); the two roles genuinely differ. A repeat that
+/// cannot construct this node declines instead of manufacturing a backstop sugar.
 pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Repeat(repeat) = expr else {
         return None;
@@ -61,7 +59,13 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
             boundary: token_key(expr),
         }));
     }
-    Some(boxed(decompose_array_repeat(expr)))
+    decompose_array_repeat(expr).map(|node| Box::new(node) as Box<dyn Sugar>)
+}
+
+pub(crate) fn refusal_node(expr: &Expr) -> Box<dyn Sugar> {
+    Box::new(ArrayRepeatSugar {
+        boundary: token_key(expr),
+    })
 }
 
 /// CONSTRUCTIVE `[elem; N]` with a LITERAL count: desugars to a Seq of `N` copies of the
