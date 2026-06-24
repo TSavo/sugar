@@ -73,11 +73,6 @@ fn build_assertion_surface(
     let op = peekable_op(actual)?;
     let receiver = simple_path_name(&op.receiver);
     if let Some(name) = receiver.as_deref() {
-        if runtime_peekable_binding(name, fcx) {
-            return Some(Box::new(PeekableRuntimeRefusalSugar {
-                receiver: name.to_string(),
-            }));
-        }
         if fcx.scope().is_consumed_iterator_local(name)
             || fcx
                 .scope()
@@ -194,16 +189,6 @@ fn strip_groups(expr: &Expr) -> &Expr {
     }
 }
 
-fn peekable_receiver_resolves_literal(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
-    if depth > 8 {
-        return false;
-    }
-    let Some(source) = peekable_source_expr(expr, fcx, depth) else {
-        return false;
-    };
-    literal_peekable_source(&source, fcx, depth + 1)
-}
-
 fn peekable_source_expr(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> Option<Expr> {
     if depth > 8 {
         return None;
@@ -232,22 +217,6 @@ fn peekable_source_expr(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> Optio
         }
         _ => None,
     }
-}
-
-fn runtime_peekable_binding(name: &str, fcx: &SugarBuildCtx) -> bool {
-    let Some(init) = fcx
-        .scope()
-        .let_bindings_iter()
-        .find_map(|(binding, init)| (binding == name).then_some(init))
-    else {
-        return false;
-    };
-    let Expr::MethodCall(call) = strip_refs_groups(init) else {
-        return false;
-    };
-    call.method == "peekable"
-        && call.args.is_empty()
-        && !literal_peekable_source(&call.receiver, fcx, 0)
 }
 
 fn literal_peekable_source(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> bool {
@@ -331,10 +300,6 @@ struct PeekableLiteralAssertionSugar {
     expected: SugarBody<TermFloor>,
 }
 
-struct PeekableRuntimeRefusalSugar {
-    receiver: String,
-}
-
 impl Sugar for PeekableLiteralAssertionSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match self.constraint(ctx) {
@@ -363,16 +328,6 @@ impl PeekableLiteralAssertionSugar {
         let expected = term_from_body(&self.expected, ctx)?;
         let atom = and_(vec![eq(Rc::clone(&actual), expected)]);
         Ok((atom, Some(actual)))
-    }
-}
-
-impl Sugar for PeekableRuntimeRefusalSugar {
-    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        let reason = format!("runtime slice source, not literal `{}`", self.receiver);
-        Outcome::Incomplete(Effect::RuntimeArgument {
-            boundary: reason.clone(),
-            reason,
-        })
     }
 }
 
