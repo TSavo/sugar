@@ -98,6 +98,11 @@ macro_rules! side_door_floor {
 }
 
 side_door_floor!(
+    aggregate_decomp_desugar_uses_upstream_sugar_body,
+    "src/sugar/aggregate_decomp.rs",
+    "AggregateDecompSugar"
+);
+side_door_floor!(
     bound_path_desugar_uses_upstream_sugar_body,
     "src/sugar/bound_path.rs",
     "BoundPathSugar"

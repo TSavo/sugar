@@ -4,26 +4,22 @@
 //
 // This is the array/slice sibling of `tuple_decomp`: `assert_eq!(&[1, 2], &[1, 3])`
 // is not a scalar assertion, but it is fully determined by source text. Lower it to
-// scalar teeth: a length equality plus one equality per element. Runtime elements or
-// unstable bindings Incomplete at desugar time.
+// scalar teeth: a length equality plus one equality per element. Child runtime/effect
+// boundaries propagate; this sugar does not mint its own effects.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::rc::Rc;
 
-use quote::ToTokens;
 use sugar_ir_symbolic::{and_, atomic_, num, str_const, Term};
 use syn::{BinOp, Expr, ExprMacro};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{
-    build_composite, build_term, compat_reduction, FactoryGap, FactoryReduction, SugarBuildCtx,
-};
-use crate::sugar::literal::RUNTIME_ELEM_REASON;
-use crate::sugar::monadic::{is_grounded_literal_term, RES_OK};
+use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::monadic::RES_OK;
 use crate::{
-    callsite_assertion_name, parse_macro_args, path_to_variant_string, repeat_count_in_scope,
-    strip_refs_groups, token_key, AssertionFactKind, Desugared, Effect, Outcome, RelationOp, Sugar,
-    SugarCtx, Warrant, SUGAR_SEQ_CAP,
+    callsite_assertion_name, const_val_term, parse_macro_args, path_to_variant_string,
+    repeat_count_in_scope, strip_refs_groups, token_key, AssertionFactKind, Desugared, Outcome,
+    RelationOp, Sugar, SugarCtx, Warrant, SUGAR_SEQ_CAP,
 };
 
 pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim =
@@ -37,7 +33,7 @@ pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim =
         recognize,
     );
 
-fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
+fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Macro(expr_macro) = expr else {
         return None;
     };
@@ -50,7 +46,13 @@ fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if !shape_matches {
         return None;
     }
-    Some(Box::new(AggregateDecompSugar { lhs, rhs, op }))
+    Some(Box::new(AggregateDecompSugar {
+        lhs: aggregate_body(&lhs, fcx, &mut BTreeSet::new()),
+        rhs: aggregate_body(&rhs, fcx, &mut BTreeSet::new()),
+        lhs_term: SugarBody::term(&lhs, fcx),
+        rhs_term: SugarBody::term(&rhs, fcx),
+        op,
+    }))
 }
 
 fn macro_eq_operands(expr_macro: &ExprMacro) -> Option<(Expr, Expr, RelationOp, bool)> {
@@ -124,27 +126,52 @@ fn explicit_aggregateish(expr: &Expr) -> bool {
     }
 }
 
+enum AggregateBody {
+    Array(Vec<AggregateBody>),
+    Repeat {
+        elem: Box<AggregateBody>,
+        count: usize,
+    },
+    Struct {
+        name: String,
+        fields: Vec<(String, AggregateBody)>,
+    },
+    Ctor {
+        name: &'static str,
+        arg: Box<AggregateBody>,
+    },
+    CollectVec {
+        receiver: SugarBody<CompositeFloor>,
+    },
+    UnwrapResult {
+        receiver: SugarBody<TermFloor>,
+    },
+    Term {
+        body: SugarBody<TermFloor>,
+    },
+}
+
 struct AggregateDecompSugar {
-    lhs: Expr,
-    rhs: Expr,
+    lhs: AggregateBody,
+    rhs: AggregateBody,
+    lhs_term: SugarBody<TermFloor>,
+    rhs_term: SugarBody<TermFloor>,
     op: RelationOp,
 }
 
 impl Sugar for AggregateDecompSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
-        let let_inits = scope_let_inits(ctx);
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        let lhs = aggregate_components(&self.lhs, &fcx, ctx, &mut BTreeSet::new());
-        let rhs = aggregate_components(&self.rhs, &fcx, ctx, &mut BTreeSet::new());
+    fn reduce(&self, ctx: &SugarCtx) -> Outcome {
+        let lhs = aggregate_components(&self.lhs, ctx);
+        let rhs = aggregate_components(&self.rhs, ctx);
         match (lhs, rhs) {
-            (Ok(Some(lhs)), Ok(Some(rhs))) => Ok(decompose_eq(lhs, rhs, ctx)),
-            (Err(outcome), _) | (_, Err(outcome)) => Ok(outcome),
-            _ => fallback_relation(&self.lhs, &self.rhs, self.op, &fcx, ctx),
+            (Ok(Some(lhs)), Ok(Some(rhs))) => decompose_eq(lhs, rhs, ctx),
+            (Err(outcome), _) | (_, Err(outcome)) => outcome,
+            _ => fallback_relation(&self.lhs_term, &self.rhs_term, self.op, ctx),
         }
     }
 
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
+        self.reduce(ctx)
     }
 }
 
@@ -173,59 +200,32 @@ fn decompose_eq(lhs: Vec<Rc<Term>>, rhs: Vec<Rc<Term>>, ctx: &SugarCtx) -> Outco
     })
 }
 
-fn aggregate_components(
-    expr: &Expr,
-    fcx: &SugarBuildCtx,
-    ctx: &SugarCtx,
-    seen: &mut BTreeSet<String>,
-) -> Result<Option<Vec<Rc<Term>>>, Outcome> {
+fn aggregate_body(expr: &Expr, fcx: &SugarBuildCtx, seen: &mut BTreeSet<String>) -> AggregateBody {
     match strip_refs_groups(expr) {
         Expr::Array(array) => {
-            let mut out = Vec::with_capacity(array.elems.len());
-            for elem in &array.elems {
-                append_expr_components(&mut out, elem, fcx, ctx, seen)?;
-            }
-            Ok(Some(out))
+            let elems = array
+                .elems
+                .iter()
+                .map(|elem| aggregate_body(elem, fcx, seen))
+                .collect();
+            AggregateBody::Array(elems)
         }
-        Expr::Repeat(repeat) => {
-            let Some(count) = repeat_count_in_scope(&repeat.len, ctx.scope) else {
-                return Err(Outcome::Incomplete(Effect::ArrayRepeat {
-                    boundary: token_key(expr),
-                }));
-            };
-            if count > SUGAR_SEQ_CAP as usize {
-                return Err(Outcome::Incomplete(Effect::ArrayRepeat {
-                    boundary: token_key(expr),
-                }));
-            }
-            let mut elem = Vec::new();
-            append_expr_components(&mut elem, &repeat.expr, fcx, ctx, seen)?;
-            let Some(total) = elem.len().checked_mul(count) else {
-                return Err(Outcome::Incomplete(Effect::ArrayRepeat {
-                    boundary: token_key(expr),
-                }));
-            };
-            if total > SUGAR_SEQ_CAP as usize {
-                return Err(Outcome::Incomplete(Effect::ArrayRepeat {
-                    boundary: token_key(expr),
-                }));
-            }
-            let mut out = Vec::with_capacity(total);
-            for _ in 0..count {
-                out.extend(elem.iter().cloned());
-            }
-            Ok(Some(out))
-        }
+        Expr::Repeat(repeat) => match repeat_count_in_scope(&repeat.len, fcx.scope()) {
+            Some(count) if count <= SUGAR_SEQ_CAP as usize => AggregateBody::Repeat {
+                elem: Box::new(aggregate_body(&repeat.expr, fcx, seen)),
+                count,
+            },
+            _ => AggregateBody::Term {
+                body: SugarBody::term(expr, fcx),
+            },
+        },
         Expr::Struct(strukt) => {
             if strukt.rest.is_some() {
-                return Err(Outcome::Incomplete(Effect::Unsupported {
-                    reason: format!(
-                        "struct literal with `..rest` is not fully pinned from the literal: `{}`",
-                        token_key(expr)
-                    ),
-                }));
+                return AggregateBody::Term {
+                    body: SugarBody::term(expr, fcx),
+                };
             }
-            let mut fields: Vec<(String, &Expr)> = strukt
+            let mut fields: Vec<(String, AggregateBody)> = strukt
                 .fields
                 .iter()
                 .map(|field| {
@@ -233,47 +233,47 @@ fn aggregate_components(
                         syn::Member::Named(ident) => ident.to_string(),
                         syn::Member::Unnamed(index) => index.index.to_string(),
                     };
-                    (name, &field.expr)
+                    (name, aggregate_body(&field.expr, fcx, seen))
                 })
                 .collect();
             fields.sort_by(|a, b| a.0.cmp(&b.0));
-            let mut out = Vec::with_capacity(fields.len() * 2 + 1);
-            out.push(str_const(format!(
-                "struct:{}",
-                path_to_variant_string(&strukt.path)
-            )));
-            for (name, value) in fields {
-                out.push(str_const(format!("field:{name}")));
-                append_expr_components(&mut out, value, fcx, ctx, seen)?;
+            AggregateBody::Struct {
+                name: path_to_variant_string(&strukt.path),
+                fields,
             }
-            Ok(Some(out))
         }
-        Expr::Index(index) if is_full_range(&index.index) => {
-            aggregate_components(&index.expr, fcx, ctx, seen)
-        }
-        Expr::Cast(cast) => aggregate_components(&cast.expr, fcx, ctx, seen),
+        Expr::Index(index) if is_full_range(&index.index) => aggregate_body(&index.expr, fcx, seen),
+        Expr::Cast(cast) => aggregate_body(&cast.expr, fcx, seen),
         Expr::MethodCall(call)
             if call.method == "collect"
                 && call.args.is_empty()
                 && crate::sugar::collect::collects_vec(call) =>
         {
-            collect_vec_components(&call.receiver, fcx, ctx, seen)
+            AggregateBody::CollectVec {
+                receiver: SugarBody::composite(&call.receiver, fcx),
+            }
         }
         Expr::Path(path) if path.qself.is_none() => {
             let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) else {
-                return Ok(None);
+                return AggregateBody::Term {
+                    body: SugarBody::term(expr, fcx),
+                };
             };
             if !seen.insert(name.clone()) {
-                return Ok(None);
+                return AggregateBody::Term {
+                    body: SugarBody::term(expr, fcx),
+                };
             }
-            let resolved = ctx
-                .scope
+            let resolved = fcx
+                .scope()
                 .temporal_rewrite_expr_for(&name)
-                .or_else(|| ctx.scope.stable_let_binding_for_term(&name).cloned());
-            let Some(init) = resolved else {
-                return Ok(None);
+                .or_else(|| fcx.scope().stable_let_binding_for_term(&name).cloned());
+            let result = match resolved {
+                Some(init) => aggregate_body(&init, &fcx.with_bound_path(&name), seen),
+                None => AggregateBody::Term {
+                    body: SugarBody::term(expr, fcx),
+                },
             };
-            let result = aggregate_components(&init, &fcx.with_bound_path(&name), ctx, seen);
             seen.remove(&name);
             result
         }
@@ -284,25 +284,149 @@ fn aggregate_components(
                 return Ok(None);
             }
             if call.method == "expect" && call.args.len() != 1 {
-                return Ok(None);
+                return AggregateBody::Term {
+                    body: SugarBody::term(expr, fcx),
+                };
             }
-            unwrap_result_components(&call.receiver, fcx, ctx, seen)
+            if let Expr::Call(receiver_call) = strip_refs_groups(&call.receiver) {
+                if receiver_call.args.len() == 1 && is_try_from_callee(&receiver_call.func) {
+                    return aggregate_body(&receiver_call.args[0], fcx, seen);
+                }
+            }
+            AggregateBody::UnwrapResult {
+                receiver: SugarBody::term(&call.receiver, fcx),
+            }
         }
-        Expr::Call(call) => structural_call_components(call, fcx, ctx, seen),
-        Expr::Macro(expr_macro) => vec_macro_components(expr_macro, fcx, ctx, seen),
-        Expr::Paren(paren) => aggregate_components(&paren.expr, fcx, ctx, seen),
-        Expr::Group(group) => aggregate_components(&group.expr, fcx, ctx, seen),
-        _ => Ok(None),
+        Expr::Call(call) => match structural_ctor_term_name(&call.func) {
+            Some(name) if call.args.len() == 1 => AggregateBody::Ctor {
+                name,
+                arg: Box::new(aggregate_body(&call.args[0], fcx, seen)),
+            },
+            _ if call.args.len() == 1 && is_try_from_callee(&call.func) => {
+                aggregate_body(&call.args[0], fcx, seen)
+            }
+            _ => AggregateBody::Term {
+                body: SugarBody::term(expr, fcx),
+            },
+        },
+        Expr::Macro(expr_macro) if vec_macro_name(expr_macro) => {
+            let Ok(args) = parse_macro_args(expr_macro.mac.tokens.clone()) else {
+                return AggregateBody::Term {
+                    body: SugarBody::term(expr, fcx),
+                };
+            };
+            AggregateBody::Array(
+                args.exprs
+                    .iter()
+                    .map(|expr| aggregate_body(expr, fcx, seen))
+                    .collect(),
+            )
+        }
+        Expr::Paren(paren) => aggregate_body(&paren.expr, fcx, seen),
+        Expr::Group(group) => aggregate_body(&group.expr, fcx, seen),
+        _ => AggregateBody::Term {
+            body: SugarBody::term(expr, fcx),
+        },
     }
 }
 
-fn collect_vec_components(
-    receiver: &Expr,
-    fcx: &SugarBuildCtx,
+fn aggregate_components(
+    body: &AggregateBody,
     ctx: &SugarCtx,
-    seen: &mut BTreeSet<String>,
 ) -> Result<Option<Vec<Rc<Term>>>, Outcome> {
-    let seq = match build_composite(receiver, fcx).desugar(ctx) {
+    match body {
+        AggregateBody::Array(elems) => {
+            let mut out = Vec::new();
+            for elem in elems {
+                append_body_components(&mut out, elem, ctx)?;
+            }
+            Ok(Some(out))
+        }
+        AggregateBody::Repeat { elem, count } => {
+            let mut elem_parts = Vec::new();
+            append_body_components(&mut elem_parts, elem, ctx)?;
+            let total = elem_parts
+                .len()
+                .checked_mul(*count)
+                .unwrap_or_else(|| panic!("aggregate repeat component count overflow"));
+            if total > SUGAR_SEQ_CAP as usize {
+                panic!("aggregate repeat component count {total} exceeds cap {SUGAR_SEQ_CAP}");
+            }
+            let mut out = Vec::with_capacity(total);
+            for _ in 0..*count {
+                out.extend(elem_parts.iter().cloned());
+            }
+            Ok(Some(out))
+        }
+        AggregateBody::Struct { name, fields } => {
+            let mut out = Vec::with_capacity(fields.len() * 2 + 1);
+            out.push(str_const(format!("struct:{name}")));
+            for (name, value) in fields {
+                out.push(str_const(format!("field:{name}")));
+                append_body_components(&mut out, value, ctx)?;
+            }
+            Ok(Some(out))
+        }
+        AggregateBody::Ctor { name, arg } => {
+            let Some(parts) = aggregate_components(arg, ctx)? else {
+                return Ok(None);
+            };
+            let mut out = vec![str_const(format!("ctor:{name}:1"))];
+            out.extend(parts);
+            Ok(Some(out))
+        }
+        AggregateBody::CollectVec { receiver } => collect_vec_components(receiver, ctx),
+        AggregateBody::UnwrapResult { receiver } => unwrap_result_components(receiver, ctx),
+        AggregateBody::Term { body } => {
+            let term = text_determined_term(body, ctx)?;
+            grounded_term_components(term)
+        }
+    }
+}
+
+fn append_body_components(
+    out: &mut Vec<Rc<Term>>,
+    body: &AggregateBody,
+    ctx: &SugarCtx,
+) -> Result<(), Outcome> {
+    match aggregate_components(body, ctx)? {
+        Some(parts) => {
+            out.extend(parts);
+            Ok(())
+        }
+        None => {
+            let term = term_payload(body, ctx)?;
+            match grounded_term_components(term)? {
+                Some(parts) => {
+                    out.extend(parts);
+                    Ok(())
+                }
+                None => aggregate_decomp_construction_gap(
+                    "aggregate child completed without a grounded component",
+                ),
+            }
+        }
+    }
+}
+
+fn vec_macro_name(expr_macro: &ExprMacro) -> bool {
+    let Some(name) = expr_macro
+        .mac
+        .path
+        .segments
+        .last()
+        .map(|seg| seg.ident.to_string())
+    else {
+        return false;
+    };
+    name == "vec"
+}
+
+fn collect_vec_components(
+    receiver: &SugarBody<CompositeFloor>,
+    ctx: &SugarCtx,
+) -> Result<Option<Vec<Rc<Term>>>, Outcome> {
+    let seq = match receiver.reduce(ctx) {
         Outcome::Complete(desugared) => {
             let Some(seq) = desugared.into_seq() else {
                 return Ok(None);
@@ -313,165 +437,56 @@ fn collect_vec_components(
     };
     let mut out = Vec::with_capacity(seq.len());
     for elem in seq {
-        append_expr_components(&mut out, &elem.expr, fcx, ctx, seen)?;
-    }
-    Ok(Some(out))
-}
-
-fn append_expr_components(
-    out: &mut Vec<Rc<Term>>,
-    expr: &Expr,
-    fcx: &SugarBuildCtx,
-    ctx: &SugarCtx,
-    seen: &mut BTreeSet<String>,
-) -> Result<(), Outcome> {
-    match aggregate_components(expr, fcx, ctx, seen)? {
-        Some(parts) => {
-            out.extend(parts);
-            Ok(())
-        }
-        None => {
-            let term = text_determined_term(expr, fcx, ctx)?;
-            match grounded_term_components(term)? {
-                Some(parts) => {
-                    out.extend(parts);
-                    Ok(())
-                }
-                None => Err(runtime_hit()),
-            }
-        }
-    }
-}
-
-fn structural_call_components(
-    call: &syn::ExprCall,
-    fcx: &SugarBuildCtx,
-    ctx: &SugarCtx,
-    seen: &mut BTreeSet<String>,
-) -> Result<Option<Vec<Rc<Term>>>, Outcome> {
-    let Some(name) = structural_ctor_term_name(&call.func) else {
-        return Ok(None);
-    };
-    match (name, call.args.len()) {
-        ("opt:some" | "res:ok" | "res:err", 1) => {
-            let Some(parts) = aggregate_components(&call.args[0], fcx, ctx, seen)? else {
-                return Ok(None);
-            };
-            let mut out = vec![str_const(format!("ctor:{name}:1"))];
-            out.extend(parts);
-            Ok(Some(out))
-        }
-        _ => Ok(None),
-    }
-}
-
-fn vec_macro_components(
-    expr_macro: &ExprMacro,
-    fcx: &SugarBuildCtx,
-    ctx: &SugarCtx,
-    seen: &mut BTreeSet<String>,
-) -> Result<Option<Vec<Rc<Term>>>, Outcome> {
-    let Some(name) = expr_macro
-        .mac
-        .path
-        .segments
-        .last()
-        .map(|seg| seg.ident.to_string())
-    else {
-        return Ok(None);
-    };
-    if name != "vec" {
-        return Ok(None);
-    }
-    let Ok(args) = parse_macro_args(expr_macro.mac.tokens.clone()) else {
-        return Ok(None);
-    };
-    let mut out = Vec::new();
-    for expr in args.exprs {
-        append_expr_components(&mut out, &expr, fcx, ctx, seen)?;
+        let Some(term) = elem.value.as_ref().and_then(const_val_term) else {
+            return Ok(None);
+        };
+        out.push(term);
     }
     Ok(Some(out))
 }
 
 fn unwrap_result_components(
-    receiver: &Expr,
-    fcx: &SugarBuildCtx,
+    receiver: &SugarBody<TermFloor>,
     ctx: &SugarCtx,
-    seen: &mut BTreeSet<String>,
 ) -> Result<Option<Vec<Rc<Term>>>, Outcome> {
-    match strip_refs_groups(receiver) {
-        Expr::Path(path) if path.qself.is_none() => {
-            let Some(name) = path.path.get_ident().map(|ident| ident.to_string()) else {
-                return Ok(None);
-            };
-            if !seen.insert(name.clone()) {
-                return Ok(None);
-            }
-            let resolved = ctx
-                .scope
-                .temporal_rewrite_expr_for(&name)
-                .or_else(|| ctx.scope.stable_let_binding_for_term(&name).cloned());
-            let Some(init) = resolved else {
-                return Err(runtime_hit());
-            };
-            let result = unwrap_result_components(&init, &fcx.with_bound_path(&name), ctx, seen);
-            seen.remove(&name);
-            result
-        }
-        Expr::Call(call) if call.args.len() == 1 && is_try_from_callee(&call.func) => {
-            aggregate_components(&call.args[0], fcx, ctx, seen)
-        }
-        Expr::Call(_) => {
-            let term = build_term(receiver, fcx).desugar(ctx);
-            let Outcome::Complete(desugared) = term else {
-                return match term {
-                    Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
-                    Outcome::Complete(_) => Ok(None),
-                };
-            };
-            let Some(term) = desugared.into_term() else {
-                return Ok(None);
-            };
-            let Term::Ctor { name, args } = term.as_ref() else {
-                return Ok(None);
-            };
-            if name == RES_OK && args.len() == 1 {
-                grounded_term_components(Rc::clone(&args[0]))
-            } else {
-                Ok(None)
-            }
-        }
-        Expr::Paren(paren) => unwrap_result_components(&paren.expr, fcx, ctx, seen),
-        Expr::Group(group) => unwrap_result_components(&group.expr, fcx, ctx, seen),
-        _ => Ok(None),
+    let term = match receiver.reduce(ctx) {
+        Outcome::Complete(desugared) => desugared
+            .into_term()
+            .unwrap_or_else(|| panic!("aggregate unwrap receiver reduced to non-term")),
+        Outcome::Incomplete(effect) => return Err(Outcome::Incomplete(effect)),
+    };
+    let Term::Ctor { name, args } = term.as_ref() else {
+        return Ok(None);
+    };
+    if name == RES_OK && args.len() == 1 {
+        grounded_term_components(Rc::clone(&args[0]))
+    } else {
+        Ok(None)
     }
 }
 
-fn text_determined_term(
-    expr: &Expr,
-    fcx: &SugarBuildCtx,
-    ctx: &SugarCtx,
-) -> Result<Rc<Term>, Outcome> {
-    match build_term(expr, fcx).desugar(ctx) {
-        Outcome::Complete(desugared) => {
-            let Some(term) = desugared.into_term() else {
-                return Err(runtime_hit());
-            };
-            if is_grounded_literal_term(term.as_ref()) {
-                Ok(term)
-            } else {
-                Err(runtime_hit())
-            }
-        }
-        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
+fn text_determined_term(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
+    let term = match body.reduce(ctx) {
+        Outcome::Complete(desugared) => desugared
+            .into_term()
+            .unwrap_or_else(|| panic!("aggregate term child reduced to non-term")),
+        Outcome::Incomplete(effect) => return Err(Outcome::Incomplete(effect)),
+    };
+    Ok(term)
+}
+
+fn term_payload(body: &AggregateBody, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
+    match body {
+        AggregateBody::Term { body } => text_determined_term(body, ctx),
+        _ => aggregate_decomp_construction_gap("aggregate body had no scalar term payload"),
     }
 }
 
 fn grounded_term_components(term: Rc<Term>) -> Result<Option<Vec<Rc<Term>>>, Outcome> {
     let term = strip_value_ref(term);
     match term.as_ref() {
-        Term::Ctor { name, .. } if name == "agg:Array" => Err(runtime_hit()),
-        Term::Var { name } if name.starts_with("agg:Array(") => Err(runtime_hit()),
+        Term::Ctor { name, .. } if name == "agg:Array" => Ok(None),
+        Term::Var { name } if name.starts_with("agg:Array(") => Ok(None),
         Term::Const { .. } => Ok(Some(vec![Rc::clone(&term)])),
         Term::Var { name } if name.starts_with("literal:") => Ok(Some(vec![Rc::clone(&term)])),
         Term::Var { .. } => Ok(None),
@@ -519,42 +534,43 @@ fn structural_ctor_term_name(func: &Expr) -> Option<&'static str> {
 }
 
 fn fallback_relation(
-    lhs: &Expr,
-    rhs: &Expr,
+    lhs: &SugarBody<TermFloor>,
+    rhs: &SugarBody<TermFloor>,
     op: RelationOp,
-    fcx: &SugarBuildCtx,
     ctx: &SugarCtx,
-) -> FactoryReduction {
-    let lhs = match text_term_or_backstop(lhs, fcx, ctx) {
+) -> Outcome {
+    let lhs = match term_or_construction_gap(lhs, "aggregate fallback lhs", ctx) {
         Ok(term) => term,
-        Err(reduction) => return reduction,
+        Err(outcome) => return outcome,
     };
-    let rhs = match text_term_or_backstop(rhs, fcx, ctx) {
+    let rhs = match term_or_construction_gap(rhs, "aggregate fallback rhs", ctx) {
         Ok(term) => term,
-        Err(reduction) => return reduction,
+        Err(outcome) => return outcome,
     };
     let entry = crate::assertion_entry_from_relation(lhs, rhs, op, ctx.scope);
-    Ok(Outcome::Complete(Desugared::Constraints {
+    Outcome::Complete(Desugared::Constraints {
         atom: entry.atom,
         n: 1,
         kind: AssertionFactKind::Warranted,
         warrant: Warrant { name: entry.name },
-    }))
+    })
 }
 
-fn text_term_or_backstop(
-    expr: &Expr,
-    fcx: &SugarBuildCtx,
+fn term_or_construction_gap(
+    body: &SugarBody<TermFloor>,
+    label: &'static str,
     ctx: &SugarCtx,
-) -> Result<Rc<Term>, FactoryReduction> {
-    match build_term(expr, fcx).reduce(ctx) {
-        Ok(Outcome::Complete(desugared)) => desugared.into_term().ok_or_else(|| Ok(runtime_hit())),
-        Ok(Outcome::Incomplete(effect)) => Err(Ok(Outcome::Incomplete(effect))),
-        Err(gap) => Err(Err(FactoryGap::new(format!(
-            "{} while reducing aggregate fallback operand `{}`",
-            gap.reason,
-            expr.to_token_stream()
-        )))),
+) -> Result<Rc<Term>, Outcome> {
+    match body.reduce(ctx) {
+        Outcome::Complete(desugared) => Ok(desugared
+            .into_term()
+            .unwrap_or_else(|| panic!("{label} reduced to non-term"))),
+        Outcome::Incomplete(effect) => {
+            if effect.reason().contains("structural backstop") {
+                aggregate_decomp_construction_gap(label);
+            }
+            Err(Outcome::Incomplete(effect))
+        }
     }
 }
 
@@ -585,15 +601,6 @@ fn strip_value_ref(mut term: Rc<Term>) -> Rc<Term> {
     }
 }
 
-fn runtime_hit() -> Outcome {
-    Outcome::Incomplete(Effect::Unsupported {
-        reason: RUNTIME_ELEM_REASON.to_string(),
-    })
-}
-
-fn scope_let_inits<'a, 'c>(ctx: &SugarCtx<'a, 'c>) -> BTreeMap<String, &'a Expr> {
-    ctx.scope
-        .let_bindings_iter()
-        .map(|(name, init)| (name.clone(), init))
-        .collect()
+fn aggregate_decomp_construction_gap<T>(reason: &'static str) -> T {
+    panic!("aggregate_decomp recognized a shape it could not lawfully reduce: {reason}")
 }
