@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
 };
 use crate::{
     bool_const, callsite_assertion_name, eq, strip_refs_groups, token_key, AssertionFactKind,
@@ -27,7 +27,7 @@ pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
 struct FloatRefinementSugar {
     method: String,
     receiver_expr: Expr,
-    receiver: SugarBody,
+    receiver: SugarBody<TermFloor>,
     site: String,
 }
 
@@ -340,7 +340,7 @@ fn constraint(atom: Rc<Formula>, name: Option<String>) -> Outcome {
     })
 }
 
-fn term_payload(body: &SugarBody, ctx: &SugarCtx) -> Result<Rc<Term>, FactoryReduction> {
+fn term_payload(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>, FactoryReduction> {
     match body.reduce(ctx) {
         Ok(Outcome::Complete(desugared)) => desugared.into_term().ok_or_else(|| {
             Err(FactoryGap::new(format!(

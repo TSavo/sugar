@@ -21,7 +21,7 @@ use std::rc::Rc;
 
 use sugar_ir_symbolic::Term;
 
-use crate::sugar::factory::{compat_reduction, FactoryGap, FactoryReduction, SugarBody};
+use crate::sugar::factory::{compat_reduction, FactoryGap, FactoryReduction, SugarBody, TermFloor};
 use crate::{bool_const, const_fold_int_term, Desugared, Outcome, RelationOp, Sugar, SugarCtx};
 
 /// The constructive comparison-term node. `left`/`right` are the pre-built operand
@@ -30,8 +30,8 @@ use crate::{bool_const, const_fold_int_term, Desugared, Outcome, RelationOp, Sug
 /// composes the children's terms and emits `cmp:<rel.cmp_ctor_name()>(l, r)` --
 /// byte-identical to the `translate_term_in_scope` arm.
 pub(crate) struct CompareSugar {
-    pub(crate) left: SugarBody,
-    pub(crate) right: SugarBody,
+    pub(crate) left: SugarBody<TermFloor>,
+    pub(crate) right: SugarBody<TermFloor>,
     pub(crate) rel: RelationOp,
 }
 
@@ -144,8 +144,8 @@ mod tests {
     #[test]
     fn compare_lt_emits_cmp_lt_ctor_over_both_operand_terms() {
         let node = CompareSugar {
-            left: Box::new(StubTerm(make_var("x"))),
-            right: Box::new(StubTerm(make_var("y"))),
+            left: SugarBody::from_node(Box::new(StubTerm(make_var("x")))),
+            right: SugarBody::from_node(Box::new(StubTerm(make_var("y")))),
             rel: RelationOp::Lt,
         };
         let term = match run(&node) {
@@ -164,8 +164,8 @@ mod tests {
         // Collapse-inside-out: when both operands ground to concrete ints, the
         // comparison folds to its real Bool value (no uninterpreted cmp ctor).
         let true_node = CompareSugar {
-            left: Box::new(StubTerm(crate::num(1))),
-            right: Box::new(StubTerm(crate::num(4))),
+            left: SugarBody::from_node(Box::new(StubTerm(crate::num(1)))),
+            right: SugarBody::from_node(Box::new(StubTerm(crate::num(4)))),
             rel: RelationOp::Lt,
         };
         match run(&true_node) {
@@ -181,8 +181,8 @@ mod tests {
         // Discrimination: the SAME shape with the relation actually false folds to
         // Bool(false) -- the fold carries the real value, it is not a fake-true.
         let false_node = CompareSugar {
-            left: Box::new(StubTerm(crate::num(4))),
-            right: Box::new(StubTerm(crate::num(1))),
+            left: SugarBody::from_node(Box::new(StubTerm(crate::num(4)))),
+            right: SugarBody::from_node(Box::new(StubTerm(crate::num(1)))),
             rel: RelationOp::Lt,
         };
         match run(&false_node) {
@@ -201,8 +201,8 @@ mod tests {
     fn compare_ne_keys_cmp_neq_distinct_from_eq() {
         // The teeth: `!=` keys `cmp:neq`, NOT `cmp:eq` (the cmp_ctor_name split).
         let node = CompareSugar {
-            left: Box::new(StubTerm(make_var("a"))),
-            right: Box::new(StubTerm(make_var("b"))),
+            left: SugarBody::from_node(Box::new(StubTerm(make_var("a")))),
+            right: SugarBody::from_node(Box::new(StubTerm(make_var("b")))),
             rel: RelationOp::Ne,
         };
         let term = match run(&node) {
@@ -216,8 +216,8 @@ mod tests {
     #[test]
     fn compare_propagates_left_child_hit_verbatim() {
         let node = CompareSugar {
-            left: Box::new(StubIncomplete),
-            right: Box::new(StubTerm(make_var("y"))),
+            left: SugarBody::from_node(Box::new(StubIncomplete)),
+            right: SugarBody::from_node(Box::new(StubTerm(make_var("y")))),
             rel: RelationOp::Lt,
         };
         match run(&node) {
@@ -234,8 +234,8 @@ mod tests {
     #[test]
     fn compare_propagates_right_child_hit_verbatim() {
         let node = CompareSugar {
-            left: Box::new(StubTerm(make_var("x"))),
-            right: Box::new(StubIncomplete),
+            left: SugarBody::from_node(Box::new(StubTerm(make_var("x")))),
+            right: SugarBody::from_node(Box::new(StubIncomplete)),
             rel: RelationOp::Lt,
         };
         match run(&node) {

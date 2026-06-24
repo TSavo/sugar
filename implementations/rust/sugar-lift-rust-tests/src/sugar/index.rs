@@ -46,7 +46,8 @@ use sugar_ir_symbolic::Term;
 use syn::{Expr, ExprIndex};
 
 use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    compat_reduction, CompositeFloor, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    TermFloor,
 };
 use crate::sugar::method_family;
 use crate::sugar::temporal_read::decompose_temporal_read;
@@ -75,9 +76,9 @@ pub(crate) struct IndexSugar {
     /// builds the container and index child terms lazily if the constructive tail is
     /// reached.
     index: ExprIndex,
-    container: SugarBody,
-    idx: SugarBody,
-    literal_container: Option<SugarBody>,
+    container: SugarBody<TermFloor>,
+    idx: SugarBody<TermFloor>,
+    literal_container: Option<SugarBody<CompositeFloor>>,
 }
 
 impl IndexSugar {
@@ -220,7 +221,7 @@ impl Sugar for IndexSugar {
 }
 
 fn term_from_body(
-    body: &SugarBody,
+    body: &SugarBody<TermFloor>,
     ctx: &SugarCtx,
     label: &'static str,
 ) -> Result<Rc<Term>, FactoryReduction> {

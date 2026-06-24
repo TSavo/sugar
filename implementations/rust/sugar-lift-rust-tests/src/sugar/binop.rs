@@ -26,7 +26,7 @@ use syn::{BinOp, Expr};
 
 use crate::sugar::compare::CompareSugar;
 use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
 };
 use crate::sugar::term_leaf::{reasoned_incomplete, resolved_term};
 use crate::{
@@ -140,8 +140,8 @@ impl Sugar for BoolLogicSugar {
 /// the children's terms and emits `Term::Ctor { name: op_name, args: vec![l, r] }` --
 /// byte-identical to the `translate_term_in_scope` arm.
 pub(crate) struct BinOpSugar {
-    pub(crate) left: SugarBody,
-    pub(crate) right: SugarBody,
+    pub(crate) left: SugarBody<TermFloor>,
+    pub(crate) right: SugarBody<TermFloor>,
     pub(crate) op_name: &'static str,
 }
 
@@ -267,8 +267,8 @@ mod tests {
     #[test]
     fn binop_add_emits_plus_ctor_over_both_operand_terms() {
         let node = BinOpSugar {
-            left: Box::new(StubTerm(make_var("x"))),
-            right: Box::new(StubTerm(make_var("y"))),
+            left: SugarBody::from_node(Box::new(StubTerm(make_var("x")))),
+            right: SugarBody::from_node(Box::new(StubTerm(make_var("y")))),
             op_name: "+",
         };
         let term = match run(&node) {
@@ -287,8 +287,8 @@ mod tests {
         // The node emits the op-name string it was handed unchanged (e.g. `int-div`
         // for `/`, `shift-right` for `>>`) -- it does NOT re-derive it.
         let node = BinOpSugar {
-            left: Box::new(StubTerm(make_var("a"))),
-            right: Box::new(StubTerm(make_var("b"))),
+            left: SugarBody::from_node(Box::new(StubTerm(make_var("a")))),
+            right: SugarBody::from_node(Box::new(StubTerm(make_var("b")))),
             op_name: "int-div",
         };
         let term = match run(&node) {
@@ -302,8 +302,8 @@ mod tests {
     #[test]
     fn binop_folds_ground_untyped_int_children_after_recursive_desugar() {
         let node = BinOpSugar {
-            left: Box::new(StubTerm(num(6))),
-            right: Box::new(StubTerm(num(1))),
+            left: SugarBody::from_node(Box::new(StubTerm(num(6)))),
+            right: SugarBody::from_node(Box::new(StubTerm(num(1)))),
             op_name: "+",
         };
         let term = match run(&node) {
@@ -316,8 +316,8 @@ mod tests {
     #[test]
     fn binop_propagates_left_child_hit_verbatim() {
         let node = BinOpSugar {
-            left: Box::new(StubIncomplete),
-            right: Box::new(StubTerm(make_var("y"))),
+            left: SugarBody::from_node(Box::new(StubIncomplete)),
+            right: SugarBody::from_node(Box::new(StubTerm(make_var("y")))),
             op_name: "+",
         };
         match run(&node) {
@@ -334,8 +334,8 @@ mod tests {
     #[test]
     fn binop_propagates_right_child_hit_verbatim() {
         let node = BinOpSugar {
-            left: Box::new(StubTerm(make_var("x"))),
-            right: Box::new(StubIncomplete),
+            left: SugarBody::from_node(Box::new(StubTerm(make_var("x")))),
+            right: SugarBody::from_node(Box::new(StubIncomplete)),
             op_name: "+",
         };
         match run(&node) {

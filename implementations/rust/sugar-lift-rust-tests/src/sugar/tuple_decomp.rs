@@ -30,8 +30,8 @@ use std::rc::Rc;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{
-    build_tuple_producer, compat_reduction, has_tuple_producer, FactoryGap, FactoryReduction,
-    SugarBody, SugarBuildCtx,
+    compat_reduction, has_tuple_producer, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    TermFloor, TupleProducerFloor,
 };
 use crate::{
     callsite_assertion_name, parse_macro_args, AssertionFactKind, Desugared, Outcome, Sugar,
@@ -116,15 +116,15 @@ fn match_producer_and_literal(
     lhs: &Expr,
     rhs: &Expr,
     fcx: &SugarBuildCtx,
-) -> Option<(SugarBody, Vec<Expr>)> {
+) -> Option<(SugarBody<TupleProducerFloor>, Vec<Expr>)> {
     if has_tuple_producer(lhs, fcx) {
         if let Some(l) = literal_tuple_elements(rhs) {
-            return Some((SugarBody::from_node(build_tuple_producer(lhs, fcx)), l));
+            return Some((SugarBody::tuple_producer(lhs, fcx), l));
         }
     }
     if has_tuple_producer(rhs, fcx) {
         if let Some(l) = literal_tuple_elements(lhs) {
-            return Some((SugarBody::from_node(build_tuple_producer(rhs, fcx)), l));
+            return Some((SugarBody::tuple_producer(rhs, fcx), l));
         }
     }
     None
@@ -149,12 +149,12 @@ fn strip_paren_group(expr: &Expr) -> &Expr {
 
 enum TupleDecompKind {
     ProducerLiteral {
-        producer: SugarBody,
-        literal_terms: Vec<SugarBody>,
+        producer: SugarBody<TupleProducerFloor>,
+        literal_terms: Vec<SugarBody<TermFloor>>,
     },
     LiteralPair {
-        lhs_terms: Vec<SugarBody>,
-        rhs_terms: Vec<SugarBody>,
+        lhs_terms: Vec<SugarBody<TermFloor>>,
+        rhs_terms: Vec<SugarBody<TermFloor>>,
     },
 }
 
@@ -252,7 +252,7 @@ impl TupleDecompSugar {
     }
 }
 
-fn term_payload(body: &SugarBody, ctx: &SugarCtx) -> Result<Rc<Term>, FactoryReduction> {
+fn term_payload(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>, FactoryReduction> {
     match body.reduce(ctx) {
         Ok(Outcome::Complete(desugared)) => desugared
             .into_term()

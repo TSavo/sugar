@@ -6,7 +6,7 @@
 // `Expr::Struct` arm of the old fat factory.
 
 use crate::sugar::ctor_term::CtorSugar;
-use crate::sugar::factory::{SugarBody, SugarBuildCtx};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::{path_to_variant_string, token_key, Sugar};
 use syn::Expr;
@@ -25,7 +25,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
             token_key(expr)
         )));
     }
-    let mut fields: Vec<(String, SugarBody)> = Vec::new();
+    let mut fields: Vec<(String, SugarBody<TermFloor>)> = Vec::new();
     for fv in &s.fields {
         let fname = match &fv.member {
             syn::Member::Named(id) => id.to_string(),
@@ -34,7 +34,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         fields.push((fname, SugarBody::term(&fv.expr, fcx)));
     }
     fields.sort_by(|a, b| a.0.cmp(&b.0));
-    let field_ctors: Vec<SugarBody> = fields
+    let field_ctors: Vec<SugarBody<TermFloor>> = fields
         .into_iter()
         .map(|(fname, child)| {
             SugarBody::from_node(Box::new(CtorSugar::new(

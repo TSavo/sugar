@@ -9,7 +9,8 @@ use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{
-    compat_reduction, has_composite, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    compat_reduction, has_composite, CompositeFloor, FactoryGap, FactoryReduction, SugarBody,
+    SugarBuildCtx,
 };
 use crate::{Desugared, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
 
@@ -36,12 +37,12 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
 }
 
 struct ChainSugar {
-    left: SugarBody,
-    right: SugarBody,
+    left: SugarBody<CompositeFloor>,
+    right: SugarBody<CompositeFloor>,
 }
 
 impl ChainSugar {
-    fn new(left: SugarBody, right: SugarBody) -> Box<dyn Sugar> {
+    fn new(left: SugarBody<CompositeFloor>, right: SugarBody<CompositeFloor>) -> Box<dyn Sugar> {
         Box::new(Self { left, right })
     }
 }
@@ -80,7 +81,7 @@ impl Sugar for ChainSugar {
 }
 
 fn sequence_from_body(
-    body: &SugarBody,
+    body: &SugarBody<CompositeFloor>,
     ctx: &SugarCtx,
     label: &'static str,
 ) -> Result<Vec<crate::DesugaredElem>, FactoryReduction> {

@@ -9,7 +9,7 @@ use syn::{Expr, UnOp};
 use crate::sugar::assign_op::CellKind;
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
 };
 use crate::{simple_path_name, strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
@@ -43,7 +43,7 @@ struct CellRefCellSugar {
 }
 
 enum CellValue {
-    Body(SugarBody),
+    Body(SugarBody<TermFloor>),
     Missing,
     Refused(String),
 }

@@ -11,7 +11,8 @@ use syn::Expr;
 use tracing::debug;
 
 use crate::sugar::factory::{
-    build_composite, compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    build_composite, compat_reduction, CompositeFloor, FactoryGap, FactoryReduction, SugarBody,
+    SugarBuildCtx,
 };
 use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::method_family;
@@ -68,14 +69,14 @@ fn len_receiver_is_owned_by_literal_sugar(expr: &Expr, fcx: &SugarBuildCtx) -> b
 
 struct LenSugar {
     receiver_expr: Expr,
-    receiver: SugarBody,
+    receiver: SugarBody<CompositeFloor>,
     static_len: Option<usize>,
     static_collection_len: Option<StaticLenSource>,
 }
 
 struct StaticLenSource {
     len: usize,
-    source: SugarBody,
+    source: SugarBody<CompositeFloor>,
 }
 
 impl Sugar for LenSugar {
@@ -162,7 +163,7 @@ impl Sugar for LenSugar {
 impl LenSugar {
     fn new(
         receiver_expr: Expr,
-        receiver: SugarBody,
+        receiver: SugarBody<CompositeFloor>,
         static_len: Option<usize>,
         static_collection_len: Option<StaticLenSource>,
     ) -> Box<dyn Sugar> {
@@ -175,7 +176,7 @@ impl LenSugar {
     }
 }
 
-fn sequence_body(expr: &Expr, fcx: &SugarBuildCtx) -> SugarBody {
+fn sequence_body(expr: &Expr, fcx: &SugarBuildCtx) -> SugarBody<CompositeFloor> {
     SugarBody::from_node(
         method_family::build_literal_sequence_composite(expr, fcx)
             .unwrap_or_else(|| build_composite(expr, fcx)),
@@ -183,7 +184,7 @@ fn sequence_body(expr: &Expr, fcx: &SugarBuildCtx) -> SugarBody {
 }
 
 fn sequence_from_body(
-    body: &SugarBody,
+    body: &SugarBody<CompositeFloor>,
     ctx: &SugarCtx,
     label: &'static str,
 ) -> Result<Vec<DesugaredElem>, FactoryReduction> {
@@ -196,7 +197,10 @@ fn sequence_from_body(
     }
 }
 
-fn source_reduces_to_sequence(body: &SugarBody, ctx: &SugarCtx) -> Result<bool, FactoryReduction> {
+fn source_reduces_to_sequence(
+    body: &SugarBody<CompositeFloor>,
+    ctx: &SugarCtx,
+) -> Result<bool, FactoryReduction> {
     match body.reduce(ctx) {
         Ok(Outcome::Complete(d)) => Ok(d.into_seq().is_some()),
         Ok(Outcome::Incomplete(Effect::Unsupported { reason }))

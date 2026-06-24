@@ -11,9 +11,9 @@
 // `RegLan` term. We LIFT THE SHAPE; we never link or run the `regex` crate.
 //
 // THE PATTERN IS A CHILD SUGAR, NOT A RAW LITERAL. The `<pattern>` operand of
-// `Regex::new(<pattern>)` is built into an inner `Sugar` by the SAME `build` walk
-// as everything else (mirroring `MapSugar`'s inner sequence). The regex node's
-// `desugar` resolves it: `self.pattern.desugar(ctx).complete()?.as_string_literal()?`.
+// `Regex::new(<pattern>)` is built into an inner `SugarBody<LiteralStringFloor>` by
+// the SAME `build` walk as everything else (mirroring `MapSugar`'s inner sequence).
+// The regex node's `desugar` reduces that body and reads the literal string floor.
 // So the pattern is not REQUIRED to BE a `LitStr` — it must DESUGAR to one:
 //   * an inline `"pat"` literal builds to a string `LiteralSugar` (completes NOW);
 //   * a `let p = "pat";` / `const PAT: &str = "pat";` builds to whatever resolves
@@ -43,13 +43,17 @@ use std::collections::BTreeMap;
 
 use syn::Expr;
 
-use crate::sugar::bound::BoundSugar;
+#[cfg(test)]
+use crate::strip_refs_groups;
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::factory::{
+    compat_reduction, FactoryGap, FactoryReduction, FloorRead, LiteralStringFloor, SugarBody,
+    SugarBuildCtx, TermFloor,
+};
 use crate::sugar::format::stable_let_bindings;
 use crate::{
-    callsite_assertion_name, strip_refs_groups, AssertionFactKind, Desugared, Effect, Outcome,
-    Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON,
+    callsite_assertion_name, AssertionFactKind, Desugared, Effect, Outcome, Sugar, SugarCtx,
+    Warrant,
 };
 use sugar_ir_symbolic::{atomic_, str_const, Formula, Term};
 
@@ -77,30 +81,29 @@ pub(crate) struct RegexMatch {
 }
 
 struct RegexMatchSugar {
-    matched: RegexMatch,
+    pattern: SugarBody<LiteralStringFloor>,
+    subject: SugarBody<TermFloor>,
+    method: &'static str,
 }
 
 fn recognize_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let stable = stable_let_bindings(fcx.scope());
     let matched = recognize_regex_match(expr, &stable, fcx)?;
-    Some(Box::new(RegexMatchSugar { matched }))
+    Some(Box::new(RegexMatchSugar {
+        pattern: SugarBody::literal_string(&matched.pattern, fcx),
+        subject: SugarBody::term(&matched.subject, fcx),
+        method: matched.method,
+    }))
 }
 
 impl Sugar for RegexMatchSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let pattern_str = match self.matched.resolve_pattern(ctx) {
-            Outcome::Complete(desugared) => match desugared.as_string_literal() {
-                Some(pattern) => pattern,
-                None => {
-                    return Outcome::Incomplete(Effect::Unsupported {
-                        reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
-                    });
-                }
-            },
-            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+        let pattern_str = match self.pattern.reduce_literal_string(ctx)? {
+            FloorRead::Complete(pattern) => pattern,
+            FloorRead::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
         };
         if let Err(e) = sugar_ir_compiler_smt_lib::regex_regln::regex_to_regln(&pattern_str) {
-            return unsupported(match e {
+            return Ok(unsupported(match e {
                 sugar_ir_compiler_smt_lib::regex_regln::RegexError::NotRegular(feat) => format!(
                     "regex pattern `{}` uses a non-regular feature ({feat}) -- not expressible \
                      as RegLan; refused by name (no str.in-regex membership row)",
@@ -110,35 +113,47 @@ impl Sugar for RegexMatchSugar {
                     "regex pattern `{}` is malformed ({msg}); refused (no str.in-regex membership row)",
                     pattern_str
                 ),
-            });
+            }));
         }
-        let subject_node = build_term_in_ctx(&self.matched.subject, ctx);
-        let subject = match term_payload(&*subject_node, ctx) {
-            Ok(term) => term,
-            Err(outcome) => return outcome,
+        let subject = match self.subject.reduce(ctx)? {
+            Outcome::Complete(desugared) => desugared.into_term().ok_or_else(|| {
+                FactoryGap::new(
+                    "regex subject completed a non-Term where a Term was required; write more Sugar for this AST",
+                )
+            })?,
+            Outcome::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
         };
         let pattern = str_const(pattern_str);
         let name = method_assertion_name(
-            self.matched.method,
+            self.method,
             vec![subject.clone(), pattern.clone()],
             ctx.scope.local_scope(),
         );
-        constraint(atomic_("str.in-regex", vec![subject, pattern]), name)
+        Ok(constraint(
+            atomic_("str.in-regex", vec![subject, pattern]),
+            name,
+        ))
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
     }
 }
 
 impl RegexMatch {
     /// Resolve the pattern operand by lazily building and DESUGARING the pattern `Sugar`
     /// (mirroring `MapSugar`'s `self.inner.desugar(ctx)`). The caller reads the
-    /// resolved string off the `Outcome` via `Desugared::as_string_literal`. A
-    /// `Complete` carries the resolved literal term; a `Incomplete` is a genuinely runtime /
-    /// unsupported pattern, so the caller declines on `Incomplete`. This is the WHOLE
-    /// compositional contract: `RegexSugar` consumes whatever its pattern child completed to.
-    pub(crate) fn resolve_pattern(&self, ctx: &SugarCtx) -> Outcome {
+    /// resolved string off the typed literal-string floor. A `Complete` carries the
+    /// resolved literal; an `Incomplete` is a genuinely runtime / unsupported pattern.
+    /// A gap has no terminal outcome and must propagate to audit/panic.
+    pub(crate) fn resolve_pattern_floor(
+        &self,
+        ctx: &SugarCtx,
+    ) -> Result<FloorRead<String>, FactoryGap> {
         let stable = stable_let_bindings(ctx.scope);
         let let_inits = stable_let_refs(&stable);
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        build_pattern_sugar(self.pattern.clone(), &stable, &fcx).desugar(ctx)
+        SugarBody::literal_string(&self.pattern, &fcx).reduce_literal_string(ctx)
     }
 }
 
@@ -253,22 +268,9 @@ fn unwrap_grouping(expr: &Expr) -> &Expr {
 // `Regex::new(<pattern>)`. A bare stable binding gets a `BoundSugar` provenance wrapper;
 // everything else goes through the ordinary term factory.
 
-/// Build the pattern operand into a child `Sugar`. The operand completes to a string
-/// literal when the recursive factory bottoms it out as a string term. Runtime or
-/// unsupported producers decline later when the resolved term is not a string const.
-pub(crate) fn build_pattern_sugar(
-    pattern: Expr,
-    let_bindings: &BTreeMap<String, Expr>,
-    fcx: &SugarBuildCtx,
-) -> Box<dyn Sugar> {
-    if let Some((name, bound)) = let_bound_reference(&pattern, let_bindings) {
-        return BoundSugar::new(name, build_pattern_sugar(bound, let_bindings, fcx));
-    }
-    build_term(&pattern, fcx)
-}
-
 /// If the pattern operand is a bare stable binding name, return the binding and route
 /// it through `BoundSugar`. Other shapes go straight to the recursive term factory.
+#[cfg(test)]
 fn let_bound_reference(
     pattern: &Expr,
     let_bindings: &BTreeMap<String, Expr>,
@@ -292,17 +294,6 @@ fn constraint(atom: std::rc::Rc<Formula>, name: Option<String>) -> Outcome {
     })
 }
 
-fn term_payload(node: &dyn Sugar, ctx: &SugarCtx) -> Result<std::rc::Rc<Term>, Outcome> {
-    match node.desugar(ctx) {
-        Outcome::Complete(desugared) => desugared.into_term().ok_or_else(|| {
-            Outcome::Incomplete(Effect::Unsupported {
-                reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
-            })
-        }),
-        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
-    }
-}
-
 fn method_assertion_name(
     method: &str,
     args: Vec<std::rc::Rc<Term>>,
@@ -317,13 +308,6 @@ fn method_assertion_name(
 
 fn unsupported(reason: String) -> Outcome {
     Outcome::Incomplete(Effect::Unsupported { reason })
-}
-
-fn build_term_in_ctx(expr: &Expr, ctx: &SugarCtx) -> Box<dyn Sugar> {
-    let stable = stable_let_bindings(ctx.scope);
-    let let_inits = stable_let_refs(&stable);
-    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-    build_term(expr, &fcx)
 }
 
 fn stable_let_refs(stable: &BTreeMap<String, Expr>) -> BTreeMap<String, &Expr> {

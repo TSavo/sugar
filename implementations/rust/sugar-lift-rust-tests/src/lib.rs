@@ -590,6 +590,16 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // dissolvable by evaluation nor modellable (no-model axiom) -- a source/environment
         // property, not a lifter gap.
         || reason.contains("f16/f128 formatting is unstable")
+        // TERMINAL: integer arithmetic inside a `format!` argument that overflows or divides
+        // by zero is not a text-determined formatting value. We must not forge either the
+        // debug-panic behavior or a release-wrap value, so the format value floor stops with
+        // a named source boundary.
+        || reason.contains("format integer arithmetic overflow or divide-by-zero")
+        // TERMINAL: Unicode full-case mapping is intentionally not lowered for non-ASCII
+        // receivers because the result depends on the Unicode mapping table. ASCII receivers
+        // still warrant through the complete path; only the version-sensitive frontier earns
+        // this refusal.
+        || reason.contains("Unicode string case mapping is not modeled")
         // TERMINAL: a SIDE-EFFECTING closure body (HALF 2 of the fold-closure bucket) --
         // a `.for_each`/`.map`/`.fold` closure that mutates captured state or advances an
         // iterator (`iter.next()`, `nth += 1`). Its assert observes a per-iteration
@@ -7479,6 +7489,12 @@ pub(crate) enum Desugared {
     /// `Rc<Term>` the `translate_term_in_scope` shard for that shape produces today,
     /// so wiring a node is byte-identical by construction.
     Term(Rc<Term>),
+    /// A literal string payload for sugars whose semantic child floor is a Rust string
+    /// value, not a generic term. `format!` consumes this for its format string.
+    LiteralString(String),
+    /// A typed literal formatting value, preserving distinctions a generic term cannot
+    /// carry faithfully (for example `char` Display vs Debug).
+    FormatValue(sugar::format::FmtValue),
     /// A tuple-valued producer decomposed into component terms at DESUGAR time.
     /// `tuple_decomp` consumes this to emit component-wise scalar equalities while
     /// the producer sugar owns the decomposition semantics.
@@ -7493,6 +7509,8 @@ impl Desugared {
             Desugared::Seq(s) => Some(s),
             Desugared::Constraints { .. } => None,
             Desugared::Term(_) => None,
+            Desugared::LiteralString(_) => None,
+            Desugared::FormatValue(_) => None,
             Desugared::TupleComponents(_) => None,
         }
     }
@@ -7506,6 +7524,8 @@ impl Desugared {
             Desugared::Term(t) => Some(t),
             Desugared::Seq(_) => None,
             Desugared::Constraints { .. } => None,
+            Desugared::LiteralString(_) => None,
+            Desugared::FormatValue(_) => None,
             Desugared::TupleComponents(_) => None,
         }
     }
@@ -7513,7 +7533,11 @@ impl Desugared {
     pub(crate) fn into_tuple_components(self) -> Option<Vec<Rc<Term>>> {
         match self {
             Desugared::TupleComponents(parts) => Some(parts),
-            Desugared::Seq(_) | Desugared::Constraints { .. } | Desugared::Term(_) => None,
+            Desugared::Seq(_)
+            | Desugared::Constraints { .. }
+            | Desugared::Term(_)
+            | Desugared::LiteralString(_)
+            | Desugared::FormatValue(_) => None,
         }
     }
 
@@ -7528,6 +7552,9 @@ impl Desugared {
     /// `desugar` -> `as_string_literal` path.
     pub(crate) fn as_string_literal(&self) -> Option<String> {
         let seq = match self {
+            Desugared::LiteralString(s) => return Some(s.clone()),
+            Desugared::FormatValue(sugar::format::FmtValue::Str(s)) => return Some(s.clone()),
+            Desugared::FormatValue(_) => return None,
             Desugared::Term(term) => {
                 return match term.as_ref() {
                     Term::Const {
@@ -7568,11 +7595,11 @@ struct SugarCtx<'a, 'c> {
 
 /// A node in the desugaring tree. `desugar` recurses inward (each child is a
 /// `Sugar` whose `desugar` we call) until the node either reaches the literal floor
-/// or a runtime/opaque boundary stops it. The terminal reduction is TOTAL: it returns
-/// `Complete` or a lawfully named `Incomplete`. A structural fall-through is only a
-/// compatibility sentinel; the accounted factory turns it into a gap audit row before
-/// the gate can treat it as a verdict. Adding a construct = adding one class with one
-/// `desugar`.
+/// or a runtime/opaque boundary stops it. The terminal reduction is TOTAL only when it
+/// returns `Complete` or a lawfully named `Incomplete`. A structural fall-through is a
+/// factory gap, has no `Outcome`, and must be read through `reduce()`/audit; production
+/// `desugar()` panics if a gap reaches it. Adding a construct = adding one class with
+/// one `desugar`.
 trait Sugar {
     fn reduce(&self, ctx: &SugarCtx) -> sugar::factory::FactoryReduction {
         Ok(self.desugar(ctx))
@@ -8778,15 +8805,6 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
     pub(crate) fn opaque_callsite_term(&self, expr: &Expr) -> Option<Rc<Term>> {
         let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
         let fcx = sugar::factory::SugarBuildCtx::new(self.scope, self.options, &let_inits);
-        let mut fw = self.float_widths.borrow_mut();
-        let child = SugarCtx {
-            scope: self.scope,
-            options: self.options,
-            reducer: self.reducer,
-            float_widths: std::cell::RefCell::new(&mut *fw),
-            factory_audits: self.factory_audits,
-            macro_depth: MAX_VALUE_CALL_INLINE_DEPTH,
-        };
         let dig_child = |expr: &Expr| -> Option<Rc<Term>> {
             if sugar::method_family::literal_sequence_static_len_in_scope(
                 expr, &let_inits, self.scope,
@@ -8794,9 +8812,25 @@ impl<'a, 'c> SugarCtx<'a, 'c> {
             {
                 return callsite_child_fallback_term(expr, self.scope);
             }
-            match sugar::factory::build_term(expr, &fcx).desugar(&child) {
-                Outcome::Complete(d) => d.into_term(),
-                Outcome::Incomplete(_) => callsite_child_fallback_term(expr, self.scope),
+            let opaque_or_fallback = || {
+                self.opaque_callsite_term(expr)
+                    .or_else(|| callsite_child_fallback_term(expr, self.scope))
+            };
+            let reduction = {
+                let mut fw = self.float_widths.borrow_mut();
+                let child = SugarCtx {
+                    scope: self.scope,
+                    options: self.options,
+                    reducer: self.reducer,
+                    float_widths: std::cell::RefCell::new(&mut *fw),
+                    factory_audits: self.factory_audits,
+                    macro_depth: MAX_VALUE_CALL_INLINE_DEPTH,
+                };
+                sugar::factory::build_term(expr, &fcx).reduce(&child)
+            };
+            match reduction {
+                Ok(Outcome::Complete(d)) => d.into_term().or_else(opaque_or_fallback),
+                Ok(Outcome::Incomplete(_)) | Err(_) => opaque_or_fallback(),
             }
         };
         match expr {
@@ -8991,6 +9025,8 @@ fn emit_desugared(
         // A bare term at statement position is not an emit (a term floor must be
         // wrapped by an asserting node to become a `Constraints`); mirrors `Seq`.
         Desugared::Term(_) => false,
+        Desugared::LiteralString(_) => false,
+        Desugared::FormatValue(_) => false,
         Desugared::TupleComponents(_) => false,
     }
 }
@@ -9228,8 +9264,6 @@ pub(crate) fn temporal_panic_freedom_entry(
     panics: bool,
 ) -> Option<AssertionEntry> {
     let mut float_widths = record.float_widths.clone();
-    let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
-    let fcx = sugar::factory::SugarBuildCtx::new(&record.scope, options, &let_inits);
     let ctx = sugar_ctx_with_factory_audits(
         &record.scope,
         options,
@@ -9238,10 +9272,7 @@ pub(crate) fn temporal_panic_freedom_entry(
         macro_depth,
         factory_audits,
     );
-    let term = match sugar::factory::build_term(&record.expr, &fcx).desugar(&ctx) {
-        Outcome::Complete(d) => d.into_term()?,
-        Outcome::Incomplete(_) => return None,
-    };
+    let term = ctx.opaque_callsite_term(&record.expr)?;
     let temporal_subject = Rc::new(Term::Ctor {
         name: "temporal-callsite".to_string(),
         args: vec![
@@ -18548,14 +18579,19 @@ fn translate_regex_match_assertion(
     let mut fw = FloatWidthScope::new();
     let reducer = ReductionCtx::from_items(&[]);
     let ctx = sugar_ctx(scope, &options, &reducer, &mut fw, 0);
-    let Some(pattern_str) = m
-        .resolve_pattern(&ctx)
-        .complete()
-        .and_then(|d| d.as_string_literal())
-    else {
-        // Runtime / unsupported pattern operand -> not a recognized regex
-        // membership today (the composition frontier). Declined, not refused.
-        return Ok(None);
+    let pattern_str = match m.resolve_pattern_floor(&ctx) {
+        Ok(sugar::factory::FloorRead::Complete(pattern)) => pattern,
+        Ok(sugar::factory::FloorRead::Incomplete(_)) => {
+            // Runtime / unsupported pattern operand -> not a recognized regex
+            // membership today (the composition frontier). Declined, not refused.
+            return Ok(None);
+        }
+        Err(gap) => {
+            panic!(
+                "factory gap has no terminal Outcome: {}; run the factory audit gap report to enumerate this engine hole",
+                gap.reason
+            );
+        }
     };
     // REFUSE BY NAME at lift time if the resolved pattern is not a regular language
     // — mirroring the Java `PatternUniverseWalker`, which refuses a non-regular
@@ -20146,13 +20182,15 @@ fn callsite_child_fallback_term(expr: &Expr, scope: &TemporalScope) -> Option<Rc
     // Panic-freedom talks about the callsite identity, not the returned value. A
     // mutated receiver may be refused as a value read while still being a sound
     // opaque receiver identity for `method:<m>#panic_callsite(...)` support.
-    let Expr::Path(path) = strip_refs_groups(expr) else {
-        return None;
-    };
-    if path.qself.is_some() {
-        return None;
+    if let Expr::Path(path) = strip_refs_groups(expr) {
+        if path.qself.is_none() {
+            return scope.path_name(&path.path).ok().map(make_var);
+        }
     }
-    scope.path_name(&path.path).ok().map(make_var)
+    Some(Rc::new(Term::Ctor {
+        name: format!("opaque:callsite-child:{}", expr_head_key(expr)),
+        args: Vec::new(),
+    }))
 }
 
 fn method_call_assertion_name(
@@ -25132,21 +25170,18 @@ mod lifter_key_tests {
         let refused = out
             .skip_reasons
             .iter()
-            .any(|r| r.contains("mut") && r.contains("local"))
+            .any(|r| r.contains("runtime format argument"))
+            || out
+                .skip_reasons
+                .iter()
+                .any(|r| r.contains("mut") && r.contains("local"))
             || out
                 .skip_reasons
                 .iter()
                 .any(|r| r.contains("temporally unstable"));
-        // If they were lifted, there should be at most 1 obligation (not 2 contradictory ones).
-        let fmt_obligations = out
-            .decls
-            .iter()
-            .filter(|d| d.name.contains("format"))
-            .count();
         assert!(
-            refused || fmt_obligations <= 1,
-            "format! with mut local should be refused or produce at most 1 obligation; \
-             skips: {:?}, fmt_obligations: {fmt_obligations}",
+            refused,
+            "format! with mut local should be refused by name; skips: {:?}",
             out.skip_reasons
         );
     }
@@ -25169,15 +25204,14 @@ mod lifter_key_tests {
         let refused = out
             .skip_reasons
             .iter()
-            .any(|r| r.contains("temporally unstable") || r.contains("mut"));
-        let fmt_contracts = out
-            .decls
-            .iter()
-            .filter(|d| d.name.contains("format"))
-            .count();
+            .any(|r| r.contains("runtime format argument"))
+            || out
+                .skip_reasons
+                .iter()
+                .any(|r| r.contains("temporally unstable") || r.contains("mut"));
         assert!(
-            refused || fmt_contracts <= 1,
-            "format! with inline mut capture should be refused; skips: {:?}",
+            refused,
+            "format! with inline mut capture should be refused by name; skips: {:?}",
             out.skip_reasons
         );
     }
@@ -25546,6 +25580,8 @@ mod lifter_key_tests {
             "macro `m`: expansion yielded no liftable assertion (type-level or effectful body); released to layer 0",
             "assertion under while context: not unconditional point-wise; released to layer 0",
             "flt2dec assert: f16/f128 formatting is unstable -- unformattable on the stable toolchain the lifter ships and not modellable as a point-wise claim; refused",
+            "format integer arithmetic overflow or divide-by-zero, not literal-determined; refused",
+            "Unicode string case mapping is not modeled for non-ASCII receivers; refused",
             "assertion in a side-effecting closure body (mutates captured state / advances an iterator); not a pure point-wise claim; refused",
             "assertion in a closure over an opaque/effectful accessor (bin-2: runtime data, not constructible from source literals); refused",
             "unsupported term `buf[i]`: mutable container is not temporally stable",

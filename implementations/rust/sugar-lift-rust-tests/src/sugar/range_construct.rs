@@ -11,7 +11,7 @@ use sugar_ir_symbolic::{and_, eq, Term};
 use syn::{Expr, Member};
 
 use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
 };
 use crate::{AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant};
 
@@ -155,7 +155,7 @@ fn has_field_name(fields: &[String], want: &str) -> bool {
 
 struct RangeConstructSugar {
     kind: RangeConstructKind,
-    fields: Vec<(String, SugarBody)>,
+    fields: Vec<(String, SugarBody<TermFloor>)>,
 }
 
 impl Sugar for RangeConstructSugar {
@@ -246,7 +246,10 @@ impl RangeConstructSugar {
 }
 
 impl RangeConstructSugar {
-    fn new(kind: RangeConstructKind, fields: Vec<(String, SugarBody)>) -> Box<dyn Sugar> {
+    fn new(
+        kind: RangeConstructKind,
+        fields: Vec<(String, SugarBody<TermFloor>)>,
+    ) -> Box<dyn Sugar> {
         Box::new(Self { kind, fields })
     }
 }

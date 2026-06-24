@@ -10,11 +10,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
+use quote::ToTokens;
 use sugar_ir_symbolic::{and_, atomic_, num, str_const, Term};
 use syn::{BinOp, Expr, ExprMacro};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{build_composite, build_term, SugarBuildCtx};
+use crate::sugar::factory::{
+    build_composite, build_term, compat_reduction, FactoryGap, FactoryReduction, SugarBuildCtx,
+};
 use crate::sugar::literal::RUNTIME_ELEM_REASON;
 use crate::sugar::monadic::{is_grounded_literal_term, RES_OK};
 use crate::{
@@ -128,16 +131,20 @@ struct AggregateDecompSugar {
 }
 
 impl Sugar for AggregateDecompSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
         let let_inits = scope_let_inits(ctx);
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
         let lhs = aggregate_components(&self.lhs, &fcx, ctx, &mut BTreeSet::new());
         let rhs = aggregate_components(&self.rhs, &fcx, ctx, &mut BTreeSet::new());
         match (lhs, rhs) {
-            (Ok(Some(lhs)), Ok(Some(rhs))) => decompose_eq(lhs, rhs, ctx),
-            (Err(outcome), _) | (_, Err(outcome)) => outcome,
+            (Ok(Some(lhs)), Ok(Some(rhs))) => Ok(decompose_eq(lhs, rhs, ctx)),
+            (Err(outcome), _) | (_, Err(outcome)) => Ok(outcome),
             _ => fallback_relation(&self.lhs, &self.rhs, self.op, &fcx, ctx),
         }
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
     }
 }
 
@@ -517,32 +524,37 @@ fn fallback_relation(
     op: RelationOp,
     fcx: &SugarBuildCtx,
     ctx: &SugarCtx,
-) -> Outcome {
+) -> FactoryReduction {
     let lhs = match text_term_or_backstop(lhs, fcx, ctx) {
         Ok(term) => term,
-        Err(outcome) => return outcome,
+        Err(reduction) => return reduction,
     };
     let rhs = match text_term_or_backstop(rhs, fcx, ctx) {
         Ok(term) => term,
-        Err(outcome) => return outcome,
+        Err(reduction) => return reduction,
     };
     let entry = crate::assertion_entry_from_relation(lhs, rhs, op, ctx.scope);
-    Outcome::Complete(Desugared::Constraints {
+    Ok(Outcome::Complete(Desugared::Constraints {
         atom: entry.atom,
         n: 1,
         kind: AssertionFactKind::Warranted,
         warrant: Warrant { name: entry.name },
-    })
+    }))
 }
 
 fn text_term_or_backstop(
     expr: &Expr,
     fcx: &SugarBuildCtx,
     ctx: &SugarCtx,
-) -> Result<Rc<Term>, Outcome> {
-    match build_term(expr, fcx).desugar(ctx) {
-        Outcome::Complete(desugared) => desugared.into_term().ok_or_else(runtime_hit),
-        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
+) -> Result<Rc<Term>, FactoryReduction> {
+    match build_term(expr, fcx).reduce(ctx) {
+        Ok(Outcome::Complete(desugared)) => desugared.into_term().ok_or_else(|| Ok(runtime_hit())),
+        Ok(Outcome::Incomplete(effect)) => Err(Ok(Outcome::Incomplete(effect))),
+        Err(gap) => Err(Err(FactoryGap::new(format!(
+            "{} while reducing aggregate fallback operand `{}`",
+            gap.reason,
+            expr.to_token_stream()
+        )))),
     }
 }
 

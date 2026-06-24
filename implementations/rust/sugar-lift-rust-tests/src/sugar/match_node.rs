@@ -18,7 +18,7 @@ use crate::sugar::backstop::boxed;
 use crate::sugar::configuration::{CfgDisposition, ConfigurationSugar};
 use crate::sugar::constraint_runtime_boundary::panic_payload_match_value_reason;
 use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
 };
 use crate::sugar::monadic;
 use crate::{
@@ -202,7 +202,7 @@ impl Sugar for ArmPresent {
 }
 
 struct MatchValueTermSugar {
-    scrutinee: SugarBody,
+    scrutinee: SugarBody<TermFloor>,
     m: syn::ExprMatch,
 }
 

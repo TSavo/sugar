@@ -17,7 +17,8 @@ use syn::Expr;
 use tracing::debug;
 
 use crate::sugar::factory::{
-    compat_reduction, has_composite, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    compat_reduction, has_composite, CompositeFloor, FactoryGap, FactoryReduction, SugarBody,
+    SugarBuildCtx,
 };
 use crate::{const_int, Desugared, Outcome, Sugar, SugarCtx};
 
@@ -54,13 +55,13 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
 }
 
 struct IterNextSugar {
-    inner: SugarBody,
+    inner: SugarBody<CompositeFloor>,
     direction: Direction,
     count: usize,
 }
 
 impl IterNextSugar {
-    fn new(inner: SugarBody, direction: Direction, count: usize) -> Box<dyn Sugar> {
+    fn new(inner: SugarBody<CompositeFloor>, direction: Direction, count: usize) -> Box<dyn Sugar> {
         Box::new(Self {
             inner,
             direction,

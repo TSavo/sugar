@@ -19,7 +19,7 @@ use sugar_ir_symbolic::{make_var, Term};
 use syn::Expr;
 
 use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
 };
 use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::try_fold_eval;
@@ -76,14 +76,14 @@ pub(crate) fn method_key(call: &syn::ExprMethodCall) -> String {
 /// spelling is retained only for method identity and source-property checks.
 enum MethodSugar {
     Grounded {
-        body: SugarBody,
+        body: SugarBody<TermFloor>,
     },
     Constructive {
         method: String,
         receiver_expr: Expr,
-        receiver: SugarBody,
+        receiver: SugarBody<TermFloor>,
         is_consuming: bool,
-        args: Vec<SugarBody>,
+        args: Vec<SugarBody<TermFloor>>,
     },
 }
 

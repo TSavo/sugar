@@ -14,7 +14,8 @@ use syn::Expr;
 use tracing::debug;
 
 use crate::sugar::factory::{
-    compat_reduction, has_composite, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    compat_reduction, has_composite, CompositeFloor, FactoryGap, FactoryReduction, SugarBody,
+    SugarBuildCtx,
 };
 use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::monadic;
@@ -41,11 +42,11 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
 
 struct SizeHintTupleProducer {
     receiver_expr: Expr,
-    receiver: SugarBody,
+    receiver: SugarBody<CompositeFloor>,
 }
 
 impl SizeHintTupleProducer {
-    fn new(receiver_expr: Expr, receiver: SugarBody) -> Box<dyn Sugar> {
+    fn new(receiver_expr: Expr, receiver: SugarBody<CompositeFloor>) -> Box<dyn Sugar> {
         Box::new(Self {
             receiver_expr,
             receiver,

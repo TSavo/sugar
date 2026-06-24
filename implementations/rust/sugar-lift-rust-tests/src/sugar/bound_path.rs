@@ -5,7 +5,10 @@
 // this sugar its already-built body. Desugar never re-opens the factory from raw syntax.
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{compat_reduction, FactoryReduction, SugarBody, SugarBuildCtx};
+use crate::sugar::factory::{
+    compat_reduction, CompositeFloor, ConstraintFloor, FactoryReduction, SugarBody, SugarBuildCtx,
+    TermFloor,
+};
 use crate::sugar::term_leaf::{reasoned_incomplete, resolved_term};
 use crate::{token_key, Outcome, Sugar, SugarCtx};
 use syn::{Expr, ExprPath};
@@ -64,8 +67,7 @@ fn recognize_role(expr: &Expr, fcx: &SugarBuildCtx, role: BoundPathRole) -> Opti
     if let Some(hit) = runtime_destructured_source_refusal(&name, fcx) {
         return Some(hit);
     }
-    let body = construct_bound_path_body(&name, fcx, role)?;
-    Some(BoundPathSugar::new(name, role, body))
+    construct_bound_path_sugar(name, fcx, role)
 }
 
 #[derive(Clone, Copy)]
@@ -85,24 +87,56 @@ impl BoundPathRole {
     }
 }
 
-struct BoundPathSugar {
-    name: String,
-    role: BoundPathRole,
-    body: SugarBody,
+enum BoundPathSugar {
+    Term {
+        name: String,
+        body: SugarBody<TermFloor>,
+    },
+    Constraint {
+        name: String,
+        body: SugarBody<ConstraintFloor>,
+    },
+    Composite {
+        name: String,
+        body: SugarBody<CompositeFloor>,
+    },
 }
 
 impl BoundPathSugar {
-    fn new(name: String, role: BoundPathRole, body: SugarBody) -> Box<dyn Sugar> {
-        Box::new(Self { name, role, body })
+    fn name(&self) -> &str {
+        match self {
+            Self::Term { name, .. }
+            | Self::Constraint { name, .. }
+            | Self::Composite { name, .. } => name,
+        }
+    }
+
+    fn role(&self) -> BoundPathRole {
+        match self {
+            Self::Term { .. } => BoundPathRole::Term,
+            Self::Constraint { .. } => BoundPathRole::Constraint,
+            Self::Composite { .. } => BoundPathRole::Composite,
+        }
     }
 }
 
-fn construct_bound_path_body(
-    name: &str,
+fn construct_bound_path_sugar(
+    name: String,
     fcx: &SugarBuildCtx,
     role: BoundPathRole,
-) -> Option<SugarBody> {
-    let child_fcx = fcx.with_bound_path(name);
+) -> Option<Box<dyn Sugar>> {
+    let child_fcx = fcx.with_bound_path(&name);
+    match role {
+        BoundPathRole::Term => construct_term_body(&name, fcx, &child_fcx)
+            .map(|body| Box::new(BoundPathSugar::Term { name, body }) as Box<dyn Sugar>),
+        BoundPathRole::Constraint => construct_constraint_body(&name, fcx, &child_fcx)
+            .map(|body| Box::new(BoundPathSugar::Constraint { name, body }) as Box<dyn Sugar>),
+        BoundPathRole::Composite => construct_composite_body(&name, fcx, &child_fcx)
+            .map(|body| Box::new(BoundPathSugar::Composite { name, body }) as Box<dyn Sugar>),
+    }
+}
+
+fn temporal_rewrite_expr(name: &str, fcx: &SugarBuildCtx, role: BoundPathRole) -> Option<Expr> {
     if let Some(current) = fcx.scope().temporal_rewrite_expr_for(name) {
         debug!(
             target: "sugar_lift_rust_tests::temporal_rewrite",
@@ -111,44 +145,69 @@ fn construct_bound_path_body(
             role = role.as_log_role(),
             "factory constructed bound path temporal body"
         );
-        return Some(role.body_from_expr(&current, &child_fcx));
+        return Some(current);
     }
-
-    if matches!(role, BoundPathRole::Term) {
-        if let Some(term) = fcx.scope().stable_term_binding_for_term(name) {
-            debug!(
-                target: "sugar_lift_rust_tests::bound_path",
-                binding = name,
-                role = "Term",
-                "factory constructed bound path term-binding body"
-            );
-            return Some(SugarBody::from_node(resolved_term(term)));
-        }
-    };
-
-    let init = fcx.scope().stable_let_binding_for_term(name)?;
-    Some(role.body_from_expr(init, &child_fcx))
+    None
 }
 
-impl BoundPathRole {
-    fn body_from_expr(self, expr: &Expr, fcx: &SugarBuildCtx) -> SugarBody {
-        match self {
-            BoundPathRole::Term => SugarBody::term(expr, fcx),
-            BoundPathRole::Constraint => SugarBody::constraint(expr, fcx),
-            BoundPathRole::Composite => SugarBody::composite(expr, fcx),
-        }
+fn construct_term_body(
+    name: &str,
+    fcx: &SugarBuildCtx,
+    child_fcx: &SugarBuildCtx,
+) -> Option<SugarBody<TermFloor>> {
+    if let Some(current) = temporal_rewrite_expr(name, fcx, BoundPathRole::Term) {
+        return Some(SugarBody::term(&current, child_fcx));
     }
+    if let Some(term) = fcx.scope().stable_term_binding_for_term(name) {
+        debug!(
+            target: "sugar_lift_rust_tests::bound_path",
+            binding = name,
+            role = "Term",
+            "factory constructed bound path term-binding body"
+        );
+        return Some(SugarBody::from_node(resolved_term(term)));
+    }
+    let init = fcx.scope().stable_let_binding_for_term(name)?;
+    Some(SugarBody::term(init, child_fcx))
+}
+
+fn construct_constraint_body(
+    name: &str,
+    fcx: &SugarBuildCtx,
+    child_fcx: &SugarBuildCtx,
+) -> Option<SugarBody<ConstraintFloor>> {
+    if let Some(current) = temporal_rewrite_expr(name, fcx, BoundPathRole::Constraint) {
+        return Some(SugarBody::constraint(&current, child_fcx));
+    }
+    let init = fcx.scope().stable_let_binding_for_term(name)?;
+    Some(SugarBody::constraint(init, child_fcx))
+}
+
+fn construct_composite_body(
+    name: &str,
+    fcx: &SugarBuildCtx,
+    child_fcx: &SugarBuildCtx,
+) -> Option<SugarBody<CompositeFloor>> {
+    if let Some(current) = temporal_rewrite_expr(name, fcx, BoundPathRole::Composite) {
+        return Some(SugarBody::composite(&current, child_fcx));
+    }
+    let init = fcx.scope().stable_let_binding_for_term(name)?;
+    Some(SugarBody::composite(init, child_fcx))
 }
 
 impl Sugar for BoundPathSugar {
     fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
         debug!(
             target: "sugar_lift_rust_tests::bound_path",
-            binding = self.name.as_str(),
-            role = self.role.as_log_role(),
+            binding = self.name(),
+            role = self.role().as_log_role(),
             "reducing factory-constructed bound path body"
         );
-        self.body.reduce(ctx)
+        match self {
+            BoundPathSugar::Term { body, .. } => body.reduce(ctx),
+            BoundPathSugar::Constraint { body, .. } => body.reduce(ctx),
+            BoundPathSugar::Composite { body, .. } => body.reduce(ctx),
+        }
     }
 
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {

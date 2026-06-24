@@ -10,7 +10,7 @@ use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
 };
 use crate::sugar::monadic::{is_grounded_literal_term, OPT_NONE, OPT_SOME};
 use crate::sugar::nonzero::is_nonzero_new_call;
@@ -36,11 +36,11 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
 
 struct OptionPredicateSugar {
     method: String,
-    receiver: SugarBody,
+    receiver: SugarBody<TermFloor>,
 }
 
 impl OptionPredicateSugar {
-    fn new(method: String, receiver: SugarBody) -> Box<dyn Sugar> {
+    fn new(method: String, receiver: SugarBody<TermFloor>) -> Box<dyn Sugar> {
         Box::new(Self { method, receiver })
     }
 }
