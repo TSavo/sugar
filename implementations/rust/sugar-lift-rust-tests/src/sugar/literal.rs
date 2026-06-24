@@ -13,8 +13,8 @@ use syn::Expr;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::{
     bounded_domain_from_expr, const_eval, const_fold_int_term, const_fold_u128_term,
-    strip_refs_groups, term_as_int, u128_expr, BoundedDomain, ConstVal, Desugared, DesugaredElem,
-    Effect, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP,
+    strip_refs_groups, term_as_int, token_key, u128_expr, BoundedDomain, ConstVal, Desugared,
+    DesugaredElem, Effect, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP,
 };
 
 // ── NAMED-DRAGON reasons for the six unwarrantable literal SHAPES ─────────────────────
@@ -80,11 +80,15 @@ impl Sugar for LiteralSugar {
         // (`unresolved`, which reads as missing work). A genuinely-unrecognized decline stays
         // the generic backstop. PURE RECLASSIFICATION -- only declines are ever named.
         if let Some(reason) = classify_unwarrantable_literal(&self.base) {
-            return Outcome::Incomplete(Effect::Unsupported {
+            return Outcome::Incomplete(Effect::LiteralDomain {
+                boundary: token_key(&self.base),
                 reason: reason.to_string(),
             });
         }
-        Outcome::from_opt(None)
+        panic!(
+            "literal domain sugar declined outside its classified source boundaries: `{}`",
+            token_key(&self.base)
+        )
     }
 }
 

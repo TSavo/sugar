@@ -15,17 +15,15 @@
 // repeats, or non-ASCII full-case mappings Incomplete the structural frontier — never a
 // fabricated value. A structural miss is a factory gap, not an opaque method result.
 
-use std::collections::BTreeMap;
-use sugar_ir_symbolic::{num, str_const};
+use std::{collections::BTreeMap, rc::Rc};
+use sugar_ir_symbolic::{num, str_const, Term};
 use syn::{Expr, ExprLit, ExprMethodCall, Lit};
 
-use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, FloorRead, LiteralStringFloor, SugarBody,
-    SugarBuildCtx,
-};
+use crate::sugar::factory::{FloorRead, LiteralStringFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::format::stable_let_bindings;
 use crate::{
-    bool_const, simple_path_name, strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx,
+    bool_const, const_fold_int_term, simple_path_name, strip_refs_groups, Desugared, Effect,
+    Outcome, Sugar, SugarCtx,
 };
 
 /// Upper bound on a `.repeat(n)` expansion (bytes). A larger expansion DECLINES rather
@@ -50,7 +48,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     Some(Box::new(StrMethodSugar {
         kind,
         receiver_body: SugarBody::literal_string(&receiver, fcx),
-        args: recognized_args(call, kind),
+        args: recognized_args(call, kind, fcx, &let_inits)?,
     }))
 }
 
@@ -81,24 +79,36 @@ enum StringMethodKind {
 struct StrMethodSugar {
     kind: StrMethodKind,
     receiver_body: SugarBody<LiteralStringFloor>,
-    args: Vec<Expr>,
+    args: StrMethodArgs,
+}
+
+enum StrMethodArgs {
+    None,
+    StartsWith {
+        needle: SugarBody<LiteralStringFloor>,
+    },
+    Contains {
+        pattern: StrPatternArg,
+    },
+    Replace {
+        from: StrPatternArg,
+        to: SugarBody<LiteralStringFloor>,
+    },
+    Repeat {
+        count: SugarBody<TermFloor>,
+    },
+}
+
+enum StrPatternArg {
+    String(SugarBody<LiteralStringFloor>),
+    Char(char),
 }
 
 impl Sugar for StrMethodSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
-        self.eval(ctx)
-    }
-
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
-    }
-}
-
-impl StrMethodSugar {
-    fn eval(&self, ctx: &SugarCtx) -> FactoryReduction {
-        let recv = match self.receiver_body.reduce_literal_string(ctx)? {
+        let recv = match self.receiver_body.reduce_literal_string(ctx) {
             FloorRead::Complete(value) => value,
-            FloorRead::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+            FloorRead::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
         let term = match self.kind {
             StrMethodKind::String(kind) => {
@@ -107,38 +117,93 @@ impl StrMethodSugar {
                     StringMethodKind::ToUppercase | StringMethodKind::ToLowercase
                 ) && !recv.is_ascii()
                 {
-                    return Ok(Outcome::Incomplete(Effect::Unsupported {
-                        reason:
-                            "Unicode string case mapping is not modeled for non-ASCII receivers; refused"
-                                .to_string(),
-                    }));
+                    return Outcome::Incomplete(Effect::UnicodeStringCase { boundary: recv });
                 }
-                compute_string_kind(kind, recv, &self.args)
-                    .map(str_const)
-                    .ok_or_else(|| FactoryGap::new("string method did not reduce to a literal string; write more Sugar for this AST"))?
+                match self.compute_string_kind(kind, recv, ctx) {
+                    Ok(value) => str_const(value),
+                    Err(outcome) => return outcome,
+                }
             }
             StrMethodKind::Len => num(recv.len() as i128),
             StrMethodKind::CharsCount => num(rev_char_count(&recv)),
             StrMethodKind::BytesCount => num(recv.len() as i128),
             StrMethodKind::IsEmpty => bool_const(recv.is_empty()),
             StrMethodKind::StartsWith => {
-                let needle = string_literal_value(&self.args[0]).ok_or_else(|| {
-                    FactoryGap::new(
-                        "starts_with argument did not reduce to a literal string; write more Sugar for this AST",
-                    )
-                })?;
+                let needle = match &self.args {
+                    StrMethodArgs::StartsWith { needle } => match needle.reduce_literal_string(ctx)
+                    {
+                        FloorRead::Complete(value) => value,
+                        FloorRead::Incomplete(effect) => return Outcome::Incomplete(effect),
+                    },
+                    _ => panic!("str_method starts_with constructed without typed needle"),
+                };
                 bool_const(recv.starts_with(&needle))
             }
             StrMethodKind::Contains => {
-                let needle = resolve_pattern_value(&self.args[0]).ok_or_else(|| {
-                    FactoryGap::new(
-                        "contains argument did not reduce to a literal pattern; write more Sugar for this AST",
-                    )
-                })?;
+                let needle = match &self.args {
+                    StrMethodArgs::Contains { pattern } => match pattern.reduce(ctx) {
+                        Ok(value) => value,
+                        Err(outcome) => return outcome,
+                    },
+                    _ => panic!("str_method contains constructed without typed pattern"),
+                };
                 bool_const(recv.contains(&needle))
             }
         };
-        Ok(Outcome::Complete(Desugared::Term(term)))
+        Outcome::Complete(Desugared::Term(term))
+    }
+}
+
+impl StrMethodSugar {
+    fn compute_string_kind(
+        &self,
+        kind: StringMethodKind,
+        recv: String,
+        ctx: &SugarCtx,
+    ) -> Result<String, Outcome> {
+        match kind {
+            StringMethodKind::ToAsciiUppercase => Ok(recv.to_ascii_uppercase()),
+            StringMethodKind::ToAsciiLowercase => Ok(recv.to_ascii_lowercase()),
+            // Unicode full-case mapping: warrant ONLY for an ASCII receiver, where it equals
+            // the byte-wise `to_ascii_*` and is Unicode-version-independent. A non-ASCII
+            // receiver returns a named incomplete before this arm.
+            StringMethodKind::ToUppercase if recv.is_ascii() => Ok(recv.to_uppercase()),
+            StringMethodKind::ToLowercase if recv.is_ascii() => Ok(recv.to_lowercase()),
+            StringMethodKind::ToUppercase | StringMethodKind::ToLowercase => {
+                unreachable!("non-ASCII Unicode case was handled before string computation")
+            }
+            StringMethodKind::Trim => Ok(recv.trim().to_string()),
+            StringMethodKind::TrimStart => Ok(recv.trim_start().to_string()),
+            StringMethodKind::TrimEnd => Ok(recv.trim_end().to_string()),
+            StringMethodKind::Replace => {
+                let (from, to) = match &self.args {
+                    StrMethodArgs::Replace { from, to } => {
+                        let from = from.reduce(ctx)?;
+                        let to = match to.reduce_literal_string(ctx) {
+                            FloorRead::Complete(value) => value,
+                            FloorRead::Incomplete(effect) => {
+                                return Err(Outcome::Incomplete(effect));
+                            }
+                        };
+                        (from, to)
+                    }
+                    _ => panic!("str_method replace constructed without typed args"),
+                };
+                Ok(recv.replace(&from, &to))
+            }
+            StringMethodKind::Repeat => {
+                let n = match &self.args {
+                    StrMethodArgs::Repeat { count } => repeat_count(count, ctx)?,
+                    _ => panic!("str_method repeat constructed without typed count"),
+                };
+                match recv.len().checked_mul(n) {
+                    Some(bytes) if bytes <= REPEAT_BYTE_CAP => Ok(recv.repeat(n)),
+                    _ => panic!(
+                        "str repeat expansion exceeds finite literal cap; write a streaming string floor before Outcome"
+                    ),
+                }
+            }
+        }
     }
 }
 
@@ -160,14 +225,14 @@ fn recognized_kind(
         }
         "starts_with"
             if call.args.len() == 1
-                && string_literal_value(&call.args[0]).is_some()
+                && is_text_receiver_shape(&call.args[0], let_inits)
                 && is_text_receiver_shape(&call.receiver, let_inits) =>
         {
             Some(StrMethodKind::StartsWith)
         }
         "contains"
             if call.args.len() == 1
-                && resolve_pattern_value(&call.args[0]).is_some()
+                && is_pattern_arg_shape(&call.args[0], let_inits)
                 && is_text_receiver_shape(&call.receiver, let_inits) =>
         {
             Some(StrMethodKind::Contains)
@@ -191,13 +256,13 @@ fn recognized_string_method(
         "trim_start" if call.args.is_empty() => StringMethodKind::TrimStart,
         "trim_end" if call.args.is_empty() => StringMethodKind::TrimEnd,
         "replace"
-            if call.args.len() == 2 && replace_args_are_literal(&call.args[0], &call.args[1]) =>
+            if call.args.len() == 2
+                && is_pattern_arg_shape(&call.args[0], let_inits)
+                && is_text_receiver_shape(&call.args[1], let_inits) =>
         {
             StringMethodKind::Replace
         }
-        "repeat" if call.args.len() == 1 && usize_literal_value(&call.args[0]).is_some() => {
-            StringMethodKind::Repeat
-        }
+        "repeat" if call.args.len() == 1 => StringMethodKind::Repeat,
         _ => return None,
     };
     is_text_receiver_shape(&call.receiver, let_inits).then_some(kind)
@@ -236,10 +301,51 @@ fn recognized_receiver(call: &ExprMethodCall, kind: StrMethodKind) -> Option<&Ex
     }
 }
 
-fn recognized_args(call: &ExprMethodCall, kind: StrMethodKind) -> Vec<Expr> {
+fn recognized_args(
+    call: &ExprMethodCall,
+    kind: StrMethodKind,
+    fcx: &SugarBuildCtx,
+    let_inits: &BTreeMap<String, Expr>,
+) -> Option<StrMethodArgs> {
     match kind {
-        StrMethodKind::CharsCount | StrMethodKind::BytesCount => Vec::new(),
-        _ => call.args.iter().cloned().collect(),
+        StrMethodKind::String(StringMethodKind::Replace) => {
+            let [from, to] = call.args.iter().collect::<Vec<_>>()[..] else {
+                return None;
+            };
+            Some(StrMethodArgs::Replace {
+                from: pattern_arg(from, fcx, let_inits)?,
+                to: SugarBody::literal_string(to, fcx),
+            })
+        }
+        StrMethodKind::String(StringMethodKind::Repeat) => {
+            let [count] = call.args.iter().collect::<Vec<_>>()[..] else {
+                return None;
+            };
+            Some(StrMethodArgs::Repeat {
+                count: SugarBody::term(count, fcx),
+            })
+        }
+        StrMethodKind::String(_)
+        | StrMethodKind::Len
+        | StrMethodKind::CharsCount
+        | StrMethodKind::BytesCount
+        | StrMethodKind::IsEmpty => Some(StrMethodArgs::None),
+        StrMethodKind::StartsWith => {
+            let [needle] = call.args.iter().collect::<Vec<_>>()[..] else {
+                return None;
+            };
+            Some(StrMethodArgs::StartsWith {
+                needle: SugarBody::literal_string(needle, fcx),
+            })
+        }
+        StrMethodKind::Contains => {
+            let [pattern] = call.args.iter().collect::<Vec<_>>()[..] else {
+                return None;
+            };
+            Some(StrMethodArgs::Contains {
+                pattern: pattern_arg(pattern, fcx, let_inits)?,
+            })
+        }
     }
 }
 
@@ -308,10 +414,15 @@ fn compute_str_method(call: &ExprMethodCall, binds: &BTreeMap<String, Expr>) -> 
         _ => return None,
     };
     let args: Vec<Expr> = call.args.iter().cloned().collect();
-    compute_string_kind(kind, recv, &args)
+    compute_string_kind_for_test(kind, recv, &args)
 }
 
-fn compute_string_kind(kind: StringMethodKind, recv: String, args: &[Expr]) -> Option<String> {
+#[cfg(test)]
+fn compute_string_kind_for_test(
+    kind: StringMethodKind,
+    recv: String,
+    args: &[Expr],
+) -> Option<String> {
     match kind {
         StringMethodKind::ToAsciiUppercase => Some(recv.to_ascii_uppercase()),
         StringMethodKind::ToAsciiLowercase => Some(recv.to_ascii_lowercase()),
@@ -380,6 +491,62 @@ fn resolve_str_value(expr: &Expr, binds: &BTreeMap<String, Expr>) -> Option<Stri
 
 fn replace_args_are_literal(from: &Expr, to: &Expr) -> bool {
     resolve_pattern_value(from).is_some() && string_literal_value(to).is_some()
+}
+
+fn pattern_arg(
+    expr: &Expr,
+    fcx: &SugarBuildCtx,
+    let_inits: &BTreeMap<String, Expr>,
+) -> Option<StrPatternArg> {
+    if is_text_receiver_shape(expr, let_inits) {
+        return Some(StrPatternArg::String(SugarBody::literal_string(expr, fcx)));
+    }
+    match strip_refs_groups(expr) {
+        Expr::Lit(ExprLit {
+            lit: Lit::Char(c), ..
+        }) => Some(StrPatternArg::Char(c.value())),
+        _ => None,
+    }
+}
+
+fn is_pattern_arg_shape(expr: &Expr, let_inits: &BTreeMap<String, Expr>) -> bool {
+    is_text_receiver_shape(expr, let_inits)
+        || matches!(
+            strip_refs_groups(expr),
+            Expr::Lit(ExprLit {
+                lit: Lit::Char(_),
+                ..
+            })
+        )
+}
+
+impl StrPatternArg {
+    fn reduce(&self, ctx: &SugarCtx) -> Result<String, Outcome> {
+        match self {
+            StrPatternArg::String(body) => match body.reduce_literal_string(ctx) {
+                FloorRead::Complete(value) => Ok(value),
+                FloorRead::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
+            },
+            StrPatternArg::Char(ch) => Ok(ch.to_string()),
+        }
+    }
+}
+
+fn repeat_count(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<usize, Outcome> {
+    let term = term_body(body, ctx)?;
+    let Some(value) = const_fold_int_term(&term) else {
+        panic!("str repeat count did not reduce to an integer literal");
+    };
+    usize::try_from(value).unwrap_or_else(|_| panic!("str repeat count is negative or too large"))
+}
+
+fn term_body(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
+    match body.reduce(ctx) {
+        Outcome::Complete(d) => Ok(d
+            .into_term()
+            .unwrap_or_else(|| panic!("term body completed as non-term before str_method"))),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
+    }
 }
 
 fn macro_name_is(m: &syn::ExprMacro, name: &str) -> bool {

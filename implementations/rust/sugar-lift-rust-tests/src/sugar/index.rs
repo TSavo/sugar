@@ -45,10 +45,7 @@ use std::rc::Rc;
 use sugar_ir_symbolic::Term;
 use syn::{Expr, ExprIndex};
 
-use crate::sugar::factory::{
-    compat_reduction, CompositeFloor, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
-    TermFloor,
-};
+use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::method_family;
 use crate::sugar::temporal_read::decompose_temporal_read;
 use crate::{
@@ -102,22 +99,19 @@ impl IndexSugar {
     /// element). The caller then emits the symbolic `index` ctor. SOUND: only an
     /// in-bounds const index into a literal int Seq grounds; a non-literal read is never
     /// given a guessed value, and an out-of-bounds index (a rust panic) stays symbolic.
-    fn ground_literal_index(&self, ctx: &SugarCtx) -> Result<Option<Rc<Term>>, FactoryReduction> {
+    fn ground_literal_index(&self, ctx: &SugarCtx) -> Result<Option<Rc<Term>>, Outcome> {
         let Some(container) = &self.literal_container else {
             return Ok(None);
         };
         let seq = match container.reduce(ctx) {
-            Ok(Outcome::Complete(d)) => d.into_seq().ok_or_else(|| {
-                Err(FactoryGap::new(
-                    "index literal container reduced to non-sequence",
-                ))
-            })?,
-            Ok(Outcome::Incomplete(effect)) => return Err(Ok(Outcome::Incomplete(effect))),
-            Err(gap) => return Err(Err(gap)),
+            Outcome::Complete(d) => d
+                .into_seq()
+                .unwrap_or_else(|| index_gap("index literal container reduced to non-sequence")),
+            Outcome::Incomplete(effect) => return Err(Outcome::Incomplete(effect)),
         };
         let idx = match term_from_body(&self.idx, ctx, "index position") {
             Ok(term) => term,
-            Err(reduction) => return Err(reduction),
+            Err(outcome) => return Err(outcome),
         };
         let Some(k) = const_fold_int_term(&idx).and_then(|k| usize::try_from(k).ok()) else {
             return Ok(None);
@@ -131,16 +125,13 @@ impl IndexSugar {
         Ok(Some(num(n)))
     }
 
-    fn ground_temporal_rewrite_index(
-        &self,
-        ctx: &SugarCtx,
-    ) -> Result<Option<Outcome>, FactoryReduction> {
+    fn ground_temporal_rewrite_index(&self, ctx: &SugarCtx) -> Result<Option<Outcome>, Outcome> {
         let Some(base) = simple_path_name(&self.index.expr) else {
             return Ok(None);
         };
         let idx = match term_from_body(&self.idx, ctx, "index temporal position") {
             Ok(term) => term,
-            Err(reduction) => return Err(reduction),
+            Err(outcome) => return Err(outcome),
         };
         let Some(k) = const_fold_int_term(&idx).and_then(|k| usize::try_from(k).ok()) else {
             return Ok(None);
@@ -152,11 +143,9 @@ impl IndexSugar {
             .and_then(|value| const_val_term(&value))
             .map(Desugared::Term)
             .map(Outcome::Complete)
-            .ok_or_else(|| {
-                Err(FactoryGap::new(
-                    "temporal index rewrite element is not literal-determined",
-                ))
-            })?;
+            .unwrap_or_else(|| {
+                index_gap("temporal index rewrite element is not literal-determined")
+            });
         Ok(Some(value))
     }
 }
@@ -167,28 +156,31 @@ impl Sugar for IndexSugar {
     /// `Expr::Index` arm, byte-identical (ctor name `"index"`, args in container-then-
     /// index order). A child that `Incomplete`s a named order-loss boundary propagates that
     /// `Incomplete` verbatim (the old named inner `Err`); a child that completes to a non-term
-    /// `Desugared` (`into_term` -> `None`) bails the node via the structural backstop
-    /// (`Outcome::from_opt(None)`, the old `?`-propagated generic refusal).
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+    /// `Desugared` (`into_term` -> `None`) is an impossible floor mismatch and panics
+    /// loudly instead of manufacturing a terminal verdict.
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match const_index_term_in_scope(&self.index, ctx.scope) {
-            Ok(Some(term)) => return Ok(Outcome::Complete(Desugared::Term(term))),
+            Ok(Some(term)) => return Outcome::Complete(Desugared::Term(term)),
             Ok(None) => {}
-            Err(reason) => return Ok(Outcome::Incomplete(Effect::Unsupported { reason })),
+            Err(reason) => {
+                return Outcome::Incomplete(Effect::RuntimeArgument {
+                    boundary: token_key(&Expr::Index(self.index.clone())),
+                    reason,
+                })
+            }
         }
         if let Some(outcome) = match self.ground_temporal_rewrite_index(ctx) {
             Ok(outcome) => outcome,
-            Err(reduction) => return reduction,
+            Err(outcome) => return outcome,
         } {
-            return Ok(outcome);
+            return outcome;
         }
         let source = Expr::Index(self.index.clone());
         if let Some(node) = decompose_temporal_read(&source, ctx.scope) {
             if let Outcome::Incomplete(effect @ Effect::TemporalRead { .. }) =
                 node.desugar_ctx_free()
             {
-                return Ok(Outcome::Incomplete(Effect::Unsupported {
-                    reason: effect.reason(),
-                }));
+                return Outcome::Incomplete(effect);
             }
         }
         // c2: ground `literal_array[const_k]` to the element (`[10,20,99][2]` -> `99`) so
@@ -197,26 +189,22 @@ impl Sugar for IndexSugar {
         // Falls through to the symbolic ctor for a non-literal container.
         if let Some(term) = match self.ground_literal_index(ctx) {
             Ok(term) => term,
-            Err(reduction) => return reduction,
+            Err(outcome) => return outcome,
         } {
-            return Ok(Outcome::Complete(Desugared::Term(term)));
+            return Outcome::Complete(Desugared::Term(term));
         }
         let container = match term_from_body(&self.container, ctx, "index container") {
             Ok(term) => term,
-            Err(reduction) => return reduction,
+            Err(outcome) => return outcome,
         };
         let idx = match term_from_body(&self.idx, ctx, "index position") {
             Ok(term) => term,
-            Err(reduction) => return reduction,
+            Err(outcome) => return outcome,
         };
-        Ok(Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
+        Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
             name: "index".to_string(),
             args: vec![container, idx],
-        }))))
-    }
-
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
+        })))
     }
 }
 
@@ -224,14 +212,17 @@ fn term_from_body(
     body: &SugarBody<TermFloor>,
     ctx: &SugarCtx,
     label: &'static str,
-) -> Result<Rc<Term>, FactoryReduction> {
+) -> Result<Rc<Term>, Outcome> {
     match body.reduce(ctx) {
-        Ok(Outcome::Complete(d)) => d
+        Outcome::Complete(d) => d
             .into_term()
-            .ok_or_else(|| Err(FactoryGap::new(format!("{label} reduced to non-term")))),
-        Ok(Outcome::Incomplete(effect)) => Err(Ok(Outcome::Incomplete(effect))),
-        Err(gap) => Err(Err(gap)),
+            .ok_or_else(|| index_gap(&format!("{label} reduced to non-term"))),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
+}
+
+fn index_gap(reason: &str) -> ! {
+    panic!("index completed without a term/composite floor: {reason}")
 }
 
 #[cfg(test)]

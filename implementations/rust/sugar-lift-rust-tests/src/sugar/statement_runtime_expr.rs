@@ -7,7 +7,7 @@ use syn::Expr;
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::statement_position;
-use crate::{token_key, Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON};
+use crate::{token_key, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "statement_runtime_expr",
@@ -25,31 +25,32 @@ pub(crate) fn recognize_statement_effect(
     if fcx.scope().temporal_rewrite_can_apply(expr) {
         return None;
     }
-    statement_position::has_runtime_expr(expr)
-        .then(|| Box::new(StatementRuntimeExprSugar { expr: expr.clone() }) as Box<dyn Sugar>)
+    statement_position::has_runtime_expr(expr).then(|| {
+        Box::new(StatementRuntimeExprSugar {
+            boundary: token_key(expr),
+        }) as Box<dyn Sugar>
+    })
 }
 
 pub(crate) fn recognize_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if fcx.scope().temporal_rewrite_can_apply(expr) {
         return None;
     }
-    statement_position::is_runtime_mutation_statement(expr)
-        .then(|| Box::new(StatementRuntimeExprSugar { expr: expr.clone() }) as Box<dyn Sugar>)
+    statement_position::is_runtime_mutation_statement(expr).then(|| {
+        Box::new(StatementRuntimeExprSugar {
+            boundary: token_key(expr),
+        }) as Box<dyn Sugar>
+    })
 }
 
 struct StatementRuntimeExprSugar {
-    expr: Expr,
+    boundary: String,
 }
 
 impl Sugar for StatementRuntimeExprSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        if statement_position::has_runtime_boundary(&self.expr) {
-            return Outcome::Incomplete(Effect::RuntimeExprStmt {
-                boundary: token_key(&self.expr),
-            });
-        }
-        Outcome::Incomplete(Effect::Unsupported {
-            reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
+        Outcome::Incomplete(Effect::RuntimeExprStmt {
+            boundary: self.boundary.clone(),
         })
     }
 }

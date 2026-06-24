@@ -5,10 +5,7 @@
 // this sugar its already-built body. Desugar never re-opens the factory from raw syntax.
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{
-    compat_reduction, CompositeFloor, ConstraintFloor, FactoryReduction, SugarBody, SugarBuildCtx,
-    TermFloor,
-};
+use crate::sugar::factory::{CompositeFloor, ConstraintFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::term_leaf::{reasoned_incomplete, resolved_term};
 use crate::{token_key, Outcome, Sugar, SugarCtx};
 use syn::{Expr, ExprPath};
@@ -125,7 +122,10 @@ fn construct_bound_path_sugar(
     fcx: &SugarBuildCtx,
     role: BoundPathRole,
 ) -> Option<Box<dyn Sugar>> {
-    let child_fcx = fcx.with_bound_path(&name);
+    let mut child_fcx = fcx.with_bound_path(&name);
+    if let Some(expected) = fcx.scope().let_binding_expected_type(&name) {
+        child_fcx = child_fcx.with_expected_type(Some(expected.to_string()));
+    }
     match role {
         BoundPathRole::Term => construct_term_body(&name, fcx, &child_fcx)
             .map(|body| Box::new(BoundPathSugar::Term { name, body }) as Box<dyn Sugar>),
@@ -155,6 +155,15 @@ fn construct_term_body(
     fcx: &SugarBuildCtx,
     child_fcx: &SugarBuildCtx,
 ) -> Option<SugarBody<TermFloor>> {
+    if let Some(term) = fcx.scope().temporal_rewrite_term_for(name) {
+        debug!(
+            target: "sugar_lift_rust_tests::temporal_rewrite",
+            binding = name,
+            role = "Term",
+            "factory constructed bound path temporal term body"
+        );
+        return Some(SugarBody::from_node(resolved_term(term)));
+    }
     if let Some(current) = temporal_rewrite_expr(name, fcx, BoundPathRole::Term) {
         return Some(SugarBody::term(&current, child_fcx));
     }
@@ -196,7 +205,7 @@ fn construct_composite_body(
 }
 
 impl Sugar for BoundPathSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         debug!(
             target: "sugar_lift_rust_tests::bound_path",
             binding = self.name(),
@@ -208,10 +217,6 @@ impl Sugar for BoundPathSugar {
             BoundPathSugar::Constraint { body, .. } => body.reduce(ctx),
             BoundPathSugar::Composite { body, .. } => body.reduce(ctx),
         }
-    }
-
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
     }
 }
 

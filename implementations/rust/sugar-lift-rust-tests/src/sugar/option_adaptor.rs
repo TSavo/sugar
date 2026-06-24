@@ -13,9 +13,7 @@ use syn::{Expr, GenericArgument, Path, PathArguments, Type};
 use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
-};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::monadic::{
     err_term, is_grounded_literal_term, none_term, ok_term, some_term, OPT_NONE, OPT_SOME, RES_ERR,
     RES_OK,
@@ -23,8 +21,8 @@ use crate::sugar::monadic::{
 use crate::sugar::option_unwrap::receiver_resolves_monadic_source;
 use crate::{
     bool_const, const_eval, const_eval_unary_closure, const_fold_int_term, const_fold_u128_term,
-    num, primitive_int_term, str_const, strip_refs_groups, u128_term, ConstVal, Desugared, Effect,
-    Outcome, Sugar, SugarCtx,
+    num, primitive_int_term, str_const, strip_refs_groups, u128_term, ConstVal, Desugared, Outcome,
+    Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -124,19 +122,19 @@ impl OptionAdaptorSugar {
 }
 
 impl Sugar for OptionAdaptorSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let receiver = match term_from_body(&self.receiver, ctx, "option adaptor receiver") {
             Ok(term) => term,
-            Err(reduction) => return reduction,
+            Err(outcome) => return outcome,
         };
-        let outcome = match &self.kind {
+        match &self.kind {
             Kind::Map(f) => {
                 if let Some(payload) = option_payload(&receiver) {
                     desugar_option_map(f, payload)
                 } else if let Some(payload) = result_payload(&receiver) {
                     desugar_result_map(f, payload)
                 } else {
-                    Outcome::from_opt(None)
+                    option_adaptor_gap("map receiver completed without Option/Result floor")
                 }
             }
             Kind::AndThen(f) => {
@@ -145,45 +143,45 @@ impl Sugar for OptionAdaptorSugar {
                 } else if let Some(payload) = result_payload(&receiver) {
                     desugar_result_and_then(f, payload)
                 } else {
-                    Outcome::from_opt(None)
+                    option_adaptor_gap("and_then receiver completed without Option/Result floor")
                 }
             }
             Kind::Filter(f) => {
                 if let Some(payload) = option_payload(&receiver) {
                     desugar_option_filter(f, payload)
                 } else {
-                    Outcome::from_opt(None)
+                    option_adaptor_gap("filter receiver completed without Option floor")
                 }
             }
             Kind::OkOr(default) => {
                 let default = match build_eager_default(default, ctx) {
                     Ok(term) => term,
-                    Err(reduction) => return reduction,
+                    Err(outcome) => return outcome,
                 };
                 if let Some(payload) = option_payload(&receiver) {
                     desugar_option_ok_or(payload, default)
                 } else {
-                    Outcome::from_opt(None)
+                    option_adaptor_gap("ok_or receiver completed without Option floor")
                 }
             }
             Kind::MapErr(f) => {
                 if let Some(payload) = result_payload(&receiver) {
                     desugar_result_map_err(f, payload)
                 } else {
-                    Outcome::from_opt(None)
+                    option_adaptor_gap("map_err receiver completed without Result floor")
                 }
             }
             Kind::UnwrapOr(default) => {
                 let default = match build_eager_default(default, ctx) {
                     Ok(term) => term,
-                    Err(reduction) => return reduction,
+                    Err(outcome) => return outcome,
                 };
                 if let Some(payload) = option_payload(&receiver) {
                     desugar_option_unwrap_or(payload, default)
                 } else if let Some(payload) = result_payload(&receiver) {
                     desugar_result_unwrap_or(payload, default)
                 } else {
-                    Outcome::from_opt(None)
+                    option_adaptor_gap("unwrap_or receiver completed without Option/Result floor")
                 }
             }
             Kind::UnwrapOrElse(f) => {
@@ -192,7 +190,9 @@ impl Sugar for OptionAdaptorSugar {
                 } else if let Some(payload) = result_payload(&receiver) {
                     desugar_result_unwrap_or_else(f, payload)
                 } else {
-                    Outcome::from_opt(None)
+                    option_adaptor_gap(
+                        "unwrap_or_else receiver completed without Option/Result floor",
+                    )
                 }
             }
             Kind::UnwrapOrDefault { default } => {
@@ -201,18 +201,12 @@ impl Sugar for OptionAdaptorSugar {
                 } else if let Some(payload) = result_payload(&receiver) {
                     desugar_result_unwrap_or_default(payload, default.clone())
                 } else {
-                    Outcome::from_opt(None)
+                    option_adaptor_gap(
+                        "unwrap_or_default receiver completed without Option/Result floor",
+                    )
                 }
             }
-        };
-        outcome_to_reduction(
-            outcome,
-            "option adaptor did not reduce to a terminal verdict",
-        )
-    }
-
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
+        }
     }
 }
 
@@ -220,22 +214,17 @@ fn term_from_body(
     body: &SugarBody<TermFloor>,
     ctx: &SugarCtx,
     label: &'static str,
-) -> Result<Rc<Term>, FactoryReduction> {
+) -> Result<Rc<Term>, Outcome> {
     match body.reduce(ctx) {
-        Ok(Outcome::Complete(d)) => d
+        Outcome::Complete(d) => d
             .into_term()
-            .ok_or_else(|| Err(FactoryGap::new(format!("{label} reduced to non-term")))),
-        Ok(Outcome::Incomplete(effect)) => Err(Ok(Outcome::Incomplete(effect))),
-        Err(gap) => Err(Err(gap)),
+            .ok_or_else(|| option_adaptor_gap(&format!("{label} reduced to non-term"))),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
 
-fn outcome_to_reduction(outcome: Outcome, gap_reason: &'static str) -> FactoryReduction {
-    if outcome.is_structural_bail() {
-        Err(FactoryGap::new(gap_reason))
-    } else {
-        Ok(outcome)
-    }
+fn option_adaptor_gap(reason: &str) -> ! {
+    panic!("option_adaptor completed without a monadic literal floor: {reason}")
 }
 
 #[derive(Clone)]
@@ -273,10 +262,10 @@ fn desugar_option_and_then(f: &syn::ExprClosure, payload: Option<Rc<Term>>) -> O
                 return outcome;
             }
             let Some(value) = term_to_const_val(&inner) else {
-                return Outcome::from_opt(None);
+                option_adaptor_gap("Option::and_then payload did not reduce to a const value");
             };
             let Some(mapped) = const_eval_unary_option_closure(f, &value) else {
-                return Outcome::from_opt(None);
+                option_adaptor_gap("Option::and_then closure did not reduce to an Option literal");
             };
             debug!(
                 target: "sugar_lift_rust_tests::sugar::option_adaptor",
@@ -303,10 +292,10 @@ fn desugar_result_and_then(f: &syn::ExprClosure, payload: ResultPayload) -> Outc
                 return outcome;
             }
             let Some(value) = term_to_const_val(&inner) else {
-                return Outcome::from_opt(None);
+                option_adaptor_gap("Result::and_then Ok payload did not reduce to a const value");
             };
             let Some(mapped) = const_eval_unary_result_closure(f, &value) else {
-                return Outcome::from_opt(None);
+                option_adaptor_gap("Result::and_then closure did not reduce to a Result literal");
             };
             debug!(
                 target: "sugar_lift_rust_tests::sugar::option_adaptor",
@@ -336,11 +325,11 @@ fn desugar_option_filter(f: &syn::ExprClosure, payload: Option<Rc<Term>>) -> Out
                 return outcome;
             }
             let Some(value) = term_to_const_val(&inner) else {
-                return Outcome::from_opt(None);
+                option_adaptor_gap("Option::filter payload did not reduce to a const value");
             };
             let Some(keep) = const_eval_unary_closure(f, &value).and_then(|value| value.as_bool())
             else {
-                return Outcome::from_opt(None);
+                option_adaptor_gap("Option::filter closure did not reduce to a bool literal");
             };
             debug!(
                 target: "sugar_lift_rust_tests::sugar::option_adaptor",
@@ -396,13 +385,13 @@ fn desugar_option_map(f: &syn::ExprClosure, payload: Option<Rc<Term>>) -> Outcom
                 return outcome;
             }
             let Some(value) = term_to_const_val(&inner) else {
-                return Outcome::from_opt(None);
+                option_adaptor_gap("Option::map payload did not reduce to a const value");
             };
             let Some(mapped) = const_eval_unary_closure(f, &value) else {
-                return Outcome::from_opt(None);
+                option_adaptor_gap("Option::map closure did not reduce to a literal");
             };
             let Some(term) = const_val_to_term(&mapped) else {
-                return Outcome::from_opt(None);
+                option_adaptor_gap("Option::map closure result did not reify to a term");
             };
             debug!(
                 target: "sugar_lift_rust_tests::sugar::option_adaptor",
@@ -429,13 +418,13 @@ fn desugar_result_map(f: &syn::ExprClosure, payload: ResultPayload) -> Outcome {
                 return outcome;
             }
             let Some(value) = term_to_const_val(&inner) else {
-                return Outcome::from_opt(None);
+                option_adaptor_gap("Result::map Ok payload did not reduce to a const value");
             };
             let Some(mapped) = const_eval_unary_closure(f, &value) else {
-                return Outcome::from_opt(None);
+                option_adaptor_gap("Result::map closure did not reduce to a literal");
             };
             let Some(term) = const_val_to_term(&mapped) else {
-                return Outcome::from_opt(None);
+                option_adaptor_gap("Result::map closure result did not reify to a term");
             };
             debug!(
                 target: "sugar_lift_rust_tests::sugar::option_adaptor",
@@ -476,13 +465,13 @@ fn desugar_result_map_err(f: &syn::ExprClosure, payload: ResultPayload) -> Outco
                 return outcome;
             }
             let Some(value) = term_to_const_val(&inner) else {
-                return Outcome::from_opt(None);
+                option_adaptor_gap("Result::map_err Err payload did not reduce to a const value");
             };
             let Some(mapped) = const_eval_unary_closure(f, &value) else {
-                return Outcome::from_opt(None);
+                option_adaptor_gap("Result::map_err closure did not reduce to a literal");
             };
             let Some(term) = const_val_to_term(&mapped) else {
-                return Outcome::from_opt(None);
+                option_adaptor_gap("Result::map_err closure result did not reify to a term");
             };
             debug!(
                 target: "sugar_lift_rust_tests::sugar::option_adaptor",
@@ -535,7 +524,7 @@ fn desugar_option_unwrap_or_else(f: &syn::ExprClosure, payload: Option<Rc<Term>>
             let Some(default) =
                 const_eval_nullary_closure(f).and_then(|value| const_val_to_term(&value))
             else {
-                return Outcome::from_opt(None);
+                option_adaptor_gap("Option::unwrap_or_else closure did not reduce to a literal");
             };
             debug!(
                 target: "sugar_lift_rust_tests::sugar::option_adaptor",
@@ -565,12 +554,14 @@ fn desugar_result_unwrap_or_else(f: &syn::ExprClosure, payload: ResultPayload) -
                 return outcome;
             }
             let Some(value) = term_to_const_val(&inner) else {
-                return Outcome::from_opt(None);
+                option_adaptor_gap(
+                    "Result::unwrap_or_else Err payload did not reduce to a const value",
+                );
             };
             let Some(default) =
                 const_eval_unary_closure(f, &value).and_then(|value| const_val_to_term(&value))
             else {
-                return Outcome::from_opt(None);
+                option_adaptor_gap("Result::unwrap_or_else closure did not reduce to a literal");
             };
             debug!(
                 target: "sugar_lift_rust_tests::sugar::option_adaptor",
@@ -627,7 +618,7 @@ fn desugar_option_unwrap_or_default(
         }
         None => {
             let Some(default) = default else {
-                return Outcome::from_opt(None);
+                option_adaptor_gap("Option::unwrap_or_default had no reified default term");
             };
             debug!(
                 target: "sugar_lift_rust_tests::sugar::option_adaptor",
@@ -657,7 +648,7 @@ fn desugar_result_unwrap_or_default(payload: ResultPayload, default: Option<Rc<T
                 return outcome;
             }
             let Some(default) = default else {
-                return Outcome::from_opt(None);
+                option_adaptor_gap("Result::unwrap_or_default had no reified default term");
             };
             debug!(
                 target: "sugar_lift_rust_tests::sugar::option_adaptor",
@@ -672,15 +663,13 @@ fn desugar_result_unwrap_or_default(payload: ResultPayload, default: Option<Rc<T
 fn build_eager_default(
     default: &SugarBody<TermFloor>,
     ctx: &SugarCtx,
-) -> Result<Rc<Term>, FactoryReduction> {
+) -> Result<Rc<Term>, Outcome> {
     let term = match term_from_body(default, ctx, "monadic eager default") {
         Ok(term) => term,
-        Err(reduction) => return Err(reduction),
+        Err(outcome) => return Err(outcome),
     };
     if !is_grounded_literal_term(term.as_ref()) {
-        return Err(Ok(Outcome::Incomplete(Effect::Unsupported {
-            reason: "monadic unwrap_or over non-literal default; refused".to_string(),
-        })));
+        option_adaptor_gap("monadic eager default completed without a literal floor");
     }
     Ok(term)
 }
@@ -693,9 +682,9 @@ fn ensure_grounded_payload(
     if is_grounded_literal_term(term.as_ref()) {
         return Ok(());
     }
-    Err(Outcome::Incomplete(Effect::Unsupported {
-        reason: format!("runtime Option/Result payload, not literal (`{method}` over `{ctor}`)"),
-    }))
+    option_adaptor_gap(&format!(
+        "runtime Option/Result payload completed without literal floor (`{method}` over `{ctor}`)"
+    ))
 }
 
 fn default_term_for_receiver(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> Option<Rc<Term>> {

@@ -10,7 +10,7 @@ use std::{collections::BTreeMap, rc::Rc};
 use sugar_ir_symbolic::{make_var, num, str_const, ConstValue, Sort, Term};
 use syn::{Expr, ExprClosure};
 
-use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::monadic;
 use crate::sugar::unit_path::unit_path_literal_name;
 use crate::{
@@ -34,15 +34,13 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     }
     let func = TryMapFunc::from_arg(strip_refs_groups(&call.args[0]), fcx)?;
     Some(Box::new(TryMapSugar {
-        source: expr.clone(),
-        receiver: (*call.receiver).clone(),
+        receiver: SugarBody::composite(&call.receiver, fcx),
         func,
     }))
 }
 
 struct TryMapSugar {
-    source: Expr,
-    receiver: Expr,
+    receiver: SugarBody<CompositeFloor>,
     func: TryMapFunc,
 }
 
@@ -75,25 +73,34 @@ impl TryMapFunc {
 
 impl Sugar for TryMapSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt(reduce_try_map(
-            &self.source,
-            &self.receiver,
-            &self.func,
-            ctx,
-        ))
+        reduce_try_map(&self.receiver, &self.func, ctx)
     }
 }
 
 fn reduce_try_map(
-    source: &Expr,
-    receiver: &Expr,
+    receiver: &SugarBody<CompositeFloor>,
     func: &TryMapFunc,
     ctx: &SugarCtx,
-) -> Option<Desugared> {
-    let values = literal_receiver_values(receiver)?;
+) -> Outcome {
+    let seq = match receiver.reduce(ctx) {
+        Outcome::Complete(d) => d
+            .into_seq()
+            .unwrap_or_else(|| try_map_gap("try_map receiver reduced to non-sequence")),
+        Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+    };
+    let values = seq
+        .iter()
+        .map(|elem| {
+            elem.value
+                .clone()
+                .unwrap_or_else(|| try_map_gap("try_map receiver element was not literal"))
+        })
+        .collect::<Vec<_>>();
     let mut mapped = Vec::with_capacity(values.len());
     for (index, value) in values.iter().enumerate() {
-        match eval_option_function(func, &value, ctx)? {
+        match eval_option_function(func, value, ctx)
+            .unwrap_or_else(|| try_map_gap("try_map function did not reduce to Option"))
+        {
             Some(value) => mapped.push(value),
             None => {
                 tracing::debug!(
@@ -102,19 +109,23 @@ fn reduce_try_map(
                     index,
                     "literal array try_map short-circuited to None"
                 );
-                return Some(Desugared::Term(monadic::none_term()));
+                return Outcome::Complete(Desugared::Term(monadic::none_term()));
             }
         }
     }
-    let _ = source;
-    let array_term = literal_array_term_from_values(&mapped)?;
+    let array_term = literal_array_term_from_values(&mapped)
+        .unwrap_or_else(|| try_map_gap("try_map result did not materialize as literal array"));
     tracing::debug!(
         target: "sugar_lift_rust_tests::sugar::try_map",
         len = mapped.len(),
         func = %func.token(),
         "literal array try_map reduced to Some(array)"
     );
-    Some(Desugared::Term(monadic::some_term(array_term)))
+    Outcome::Complete(Desugared::Term(monadic::some_term(array_term)))
+}
+
+fn try_map_gap(reason: &str) -> ! {
+    panic!("try_map did not reach a lawful floor: {reason}")
 }
 
 fn is_literal_array_receiver(expr: &Expr) -> bool {

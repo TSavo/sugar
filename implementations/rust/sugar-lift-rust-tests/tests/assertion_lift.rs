@@ -2228,10 +2228,12 @@ fn option_result_literal_methods_compose_to_literal_floor() {
 }
 
 #[test]
-fn option_result_literal_methods_runtime_payloads_decline() {
+fn option_result_presence_predicates_ignore_runtime_payload_floor() {
     let cases = [
         (
-            "coretests/option/compose_runtime_some_pred.rs",
+            "coretests/option/runtime_some_pred_good.rs",
+            "runtime_some_pred_good",
+            true,
             r#"
                 fn runtime() -> i32 { std::env::args().count() as i32 }
 
@@ -2242,7 +2244,22 @@ fn option_result_literal_methods_runtime_payloads_decline() {
             "#,
         ),
         (
-            "coretests/result/compose_runtime_ok_pred.rs",
+            "coretests/option/runtime_some_pred_bad.rs",
+            "runtime_some_pred_bad",
+            false,
+            r#"
+                fn runtime() -> i32 { std::env::args().count() as i32 }
+
+                #[test]
+                fn t_runtime_some_pred_bad() {
+                    assert!(Some(runtime()).is_none());
+                }
+            "#,
+        ),
+        (
+            "coretests/result/runtime_ok_pred_good.rs",
+            "runtime_ok_pred_good",
+            true,
             r#"
                 fn runtime() -> i32 { std::env::args().count() as i32 }
 
@@ -2252,6 +2269,50 @@ fn option_result_literal_methods_runtime_payloads_decline() {
                 }
             "#,
         ),
+        (
+            "coretests/result/runtime_ok_pred_bad.rs",
+            "runtime_ok_pred_bad",
+            false,
+            r#"
+                fn runtime() -> i32 { std::env::args().count() as i32 }
+
+                #[test]
+                fn t_runtime_ok_pred_bad() {
+                    assert!(Ok::<i32, i32>(runtime()).is_err());
+                }
+            "#,
+        ),
+    ];
+
+    for (path, z3_name, expect_sat, src) in cases {
+        let out = lift_file(&parse(src), path);
+        assert_eq!(
+            out.assertions_lifted, 1,
+            "{path}: presence predicates dispatch on the monadic variant floor and ignore payload value; skips={:?}; audits={:?}",
+            out.skip_reasons,
+            out.factory_audits
+        );
+        assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+        let doc = warranted_doc(&out);
+        assert!(
+            !doc.contains("method:is_some")
+                && !doc.contains("method:is_none")
+                && !doc.contains("method:is_ok")
+                && !doc.contains("method:is_err"),
+            "{path}: presence predicate must lower to Bool, not method EUF: {doc}"
+        );
+        if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), z3_name) {
+            assert_eq!(
+                sat, expect_sat,
+                "{path}: monadic presence predicate z3 verdict mismatch"
+            );
+        }
+    }
+}
+
+#[test]
+fn option_result_value_consuming_methods_runtime_payloads_decline() {
+    let cases = [
         (
             "coretests/option/compose_runtime_unwrap_or.rs",
             r#"
@@ -18331,6 +18392,59 @@ fn temporal_closure_adaptor_recognizers_are_lazy_source_audit() {
 }
 
 #[test]
+fn temporal_map_literal_domain_rewrites_body_call_args_per_element() {
+    // Regression pin for the construction law: map owns only the finite-domain binding
+    // (`n := 1`, `n := 2`). The closure body floor accepts the curry visitor, so opaque
+    // callbacks become orderless per-point symbols (`x_1()`, `x_2()`), not a raw
+    // `method:map` residue, a single unbound `x(n)` callsite, or an ordered trace.
+    let src = r#"
+fn x(n: i32) -> i32 { opaque(n) }
+
+#[test]
+fn t() {
+    let got = [1i32, 2].into_iter().map(|n| x(n)).collect::<Vec<_>>();
+    assert_eq!(got, [10i32, 20]);
+}
+"#;
+    let out = lift_file(&parse(src), "tests/temporal_map_body_call.rs");
+    assert_warranted_decl_count(&out, 1);
+    let dump = format!("{:?}", single_warranted_decl(&out));
+    assert!(
+        dump.contains("call:x#map1") && dump.contains("call:x#map2"),
+        "map must instantiate the closure body as one orderless FOL occurrence per literal element: {dump}"
+    );
+    assert!(
+        !dump.contains("method:map") && !dump.contains("call:x(n)") && !dump.contains("Before"),
+        "map must not leak the adaptor or unbound closure parameter as the body floor: {dump}"
+    );
+}
+
+#[test]
+fn temporal_nested_map_curry_dispatch_reduces_inner_floor_before_materializing() {
+    let lhs = "[1i32, 2].into_iter().map(|n| [1i32, 2].into_iter().map(|h| n + h).sum::<i32>()).sum::<i32>()";
+
+    let good = lift_eq_decl(lhs, "12i32", "tests/temporal_nested_map_sum_good.rs");
+    assert_eq!(
+        complete_eq_int_pairs(&good),
+        vec![(12, 12)],
+        "nested map floors must curry outer n through the inner map before scalar reduction"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&good), "temporal_nested_map_sum_good") {
+        assert!(sat, "nested map good twin must be SAT");
+    }
+
+    let bad = lift_eq_decl(lhs, "13i32", "tests/temporal_nested_map_sum_bad.rs");
+    assert_eq!(
+        complete_eq_int_pairs(&bad),
+        vec![(12, 13)],
+        "nested map bad twin must retain the exact computed scalar floor"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(&bad), "temporal_nested_map_sum_bad") {
+        assert!(!sat, "nested map bad twin must be z3-UNSAT");
+    }
+}
+
+#[test]
 fn temporal_closure_adaptor_terminals_compose_to_literal_floor_with_teeth() {
     let int_cases: &[(&str, &str, &str, i128, i128)] = &[
         (
@@ -21406,6 +21520,51 @@ fn t() {
             && !doc.contains("method:trailing_zeros"),
         "NonZero unwrap and primitive zero-count methods should lower to grounded scalar facts: {doc}"
     );
+}
+
+#[test]
+fn typed_into_over_nonzero_unwrap_dispatches_to_primitive_floor() {
+    let good = r#"
+use core::num::NonZero;
+
+#[test]
+fn t() {
+    let nz = NonZero::new(1u32).unwrap();
+    let num: u32 = nz.into();
+    assert_eq!(num, 1u32);
+}
+"#;
+    let out = lift_file(&parse(good), "tests/nonzero-into-good.rs");
+    assert_eq!(out.assertions_lifted, 1, "{:?}", out.skip_reasons);
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    let doc = warranted_doc(&out);
+    assert!(
+        !doc.contains("method:into") && !doc.contains("method:unwrap"),
+        "typed .into() should dispatch through the reduced primitive floor, not leave method residue: {doc}"
+    );
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "nonzero_into_good") {
+        assert!(sat, "good .into() twin must be z3-SAT");
+    }
+
+    let bad = r#"
+use core::num::NonZero;
+
+#[test]
+fn t() {
+    let nz = NonZero::new(1u32).unwrap();
+    let num: u32 = nz.into();
+    assert_eq!(num, 2u32);
+}
+"#;
+    let out = lift_file(&parse(bad), "tests/nonzero-into-bad.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "bad .into() twin must still lift so the contradiction is checkable: {:?}",
+        out.skip_reasons
+    );
+    if let Some(sat) = z3_verdict(&inv_json(single_warranted_decl(&out)), "nonzero_into_bad") {
+        assert!(!sat, "wrong .into() expected value must be z3-UNSAT");
+    }
 }
 
 // `uint_bit_width` (`bit_width`): highest-set-bit + 1, value-determined. Over a

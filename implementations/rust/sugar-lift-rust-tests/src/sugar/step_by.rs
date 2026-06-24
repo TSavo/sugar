@@ -6,14 +6,12 @@
 // integer `n >= 1` over a finite literal sequence; `step_by(0)` is a Rust panic, so
 // it refuses (`None`) rather than guess. Mirrors `SkipSugar`/`TakeSugar`.
 
-use std::collections::BTreeMap;
-
 use syn::Expr;
 
-use crate::sugar::factory::{has_composite, SugarBuildCtx};
+use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::method_family;
-use crate::{const_int, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx};
+use crate::{const_int, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("step_by", recognize_composite);
@@ -35,95 +33,48 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     {
         return None;
     }
-    Some(Box::new(StepByRecognizedSugar {
-        receiver: (*call.receiver).clone(),
-        source: Expr::MethodCall(call.clone()),
+    let source = Expr::MethodCall(call.clone());
+    Some(Box::new(StepBySugar {
+        inner: SugarBody::composite(&call.receiver, fcx),
         n,
-        let_inits: capture_let_inits(fcx),
+        finite_source: method_family::finite_int_iter_sequence(&source),
     }))
-}
-
-struct StepByRecognizedSugar {
-    receiver: Expr,
-    source: Expr,
-    n: usize,
-    let_inits: BTreeMap<String, Expr>,
-}
-
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
-}
-
-impl Sugar for StepByRecognizedSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            if self.n == 0 {
-                return None;
-            }
-            let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-            let let_inits: BTreeMap<String, &Expr> = stable
-                .iter()
-                .map(|(name, init)| (name.clone(), init))
-                .chain(
-                    self.let_inits
-                        .iter()
-                        .map(|(name, init)| (name.clone(), init)),
-                )
-                .collect();
-            let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-            let seq = if method_family::literal_sequence_static_len_in_scope(
-                &self.receiver,
-                &let_inits,
-                ctx.scope,
-            ) == Some(0)
-            {
-                Vec::new()
-            } else {
-                let outcome =
-                    method_family::build_literal_sequence_composite(&self.receiver, &fcx)?
-                        .desugar(ctx);
-                seq_or_empty(outcome)
-                    .or_else(|| method_family::finite_int_iter_sequence(&self.source))?
-            };
-            let out = seq.into_iter().step_by(self.n).collect();
-            Some(Desugared::Seq(out))
-        })())
-    }
 }
 
 /// Keep every `n`-th element of the inner sequence, starting at index 0.
 pub(crate) struct StepBySugar {
-    pub(crate) inner: Box<dyn Sugar>,
+    pub(crate) inner: SugarBody<CompositeFloor>,
     pub(crate) n: usize,
-    pub(crate) source: Option<Expr>,
+    pub(crate) finite_source: Option<Vec<DesugaredElem>>,
 }
 
 impl Sugar for StepBySugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            if self.n == 0 {
-                return None;
-            }
-            let seq = seq_or_empty(self.inner.desugar(ctx)).or_else(|| {
-                self.source
-                    .as_ref()
-                    .and_then(method_family::finite_int_iter_sequence)
-            })?;
-            let out = seq.into_iter().step_by(self.n).collect();
-            Some(Desugared::Seq(out))
-        })())
+        if self.n == 0 {
+            step_by_gap("step_by(0) should be rejected at construction");
+        }
+        let seq = match seq_or_empty(self.inner.reduce(ctx)) {
+            Ok(Some(seq)) => seq,
+            Ok(None) => match self.finite_source.clone() {
+                Some(seq) => seq,
+                None => step_by_gap("step_by receiver reduced to non-sequence"),
+            },
+            Err(outcome) => match self.finite_source.clone() {
+                Some(seq) => seq,
+                None => return outcome,
+            },
+        };
+        let out = seq.into_iter().step_by(self.n).collect();
+        Outcome::Complete(Desugared::Seq(out))
     }
 }
 
-fn seq_or_empty(outcome: Outcome) -> Option<Vec<DesugaredElem>> {
+fn seq_or_empty(outcome: Outcome) -> Result<Option<Vec<DesugaredElem>>, Outcome> {
     match outcome {
-        Outcome::Complete(d) => d.into_seq(),
-        Outcome::Incomplete(Effect::Unsupported { reason }) if reason == EMPTY_DOMAIN_REASON => {
-            Some(Vec::new())
+        Outcome::Complete(d) => Ok(d.into_seq()),
+        Outcome::Incomplete(effect) if effect.reason() == EMPTY_DOMAIN_REASON => {
+            Ok(Some(Vec::new()))
         }
-        Outcome::Incomplete(_) => None,
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }

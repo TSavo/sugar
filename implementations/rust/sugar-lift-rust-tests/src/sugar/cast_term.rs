@@ -10,14 +10,10 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{ConstValue, Sort, Term};
 
 use crate::sugar::ctor_term::CtorSugar;
-use crate::sugar::factory::{
-    build_term, compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
-};
-use crate::sugar::term_leaf::reasoned_incomplete;
+use crate::sugar::factory::{build_term, SugarBody, SugarBuildCtx, TermFloor};
 use crate::{
     cast_const_fold_value, const_fold_int_term, is_shared_dyn_any_type, scalar_cast_type_key,
     str_const, token_key, type_key, u128_term, Desugared, Effect, Outcome, Sugar, SugarCtx,
-    UnsupportedTermCause,
 };
 use syn::{Expr, Type};
 
@@ -44,9 +40,10 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         return Some(build_term(&cast.expr, fcx));
     }
     if matches!(cast.ty.as_ref(), Type::Ptr(_)) {
-        let effect =
-            Effect::unsupported_term(&token_key(expr), UnsupportedTermCause::RawPointerCast);
-        return Some(reasoned_incomplete(effect.reason()));
+        return Some(Box::new(RepresentationCastSugar {
+            boundary: token_key(expr),
+            kind: "a raw pointer cast".to_string(),
+        }));
     }
     if is_shared_dyn_any_type(&cast.ty) {
         return Some(Box::new(CtorSugar::new(
@@ -60,10 +57,10 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
             inner: SugarBody::term(&cast.expr, fcx),
         }));
     }
-    Some(reasoned_incomplete(format!(
-        "unsupported term `{}`",
-        token_key(expr)
-    )))
+    Some(Box::new(RepresentationCastSugar {
+        boundary: token_key(expr),
+        kind: "a non-scalar representation cast".to_string(),
+    }))
 }
 
 /// `&[_]` / `&[T]` / `&mut [_]`: a reference to a SLICE. A cast to such a type is an
@@ -80,30 +77,39 @@ struct CastSugar {
 }
 
 impl Sugar for CastSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
-        let inner = match self.inner.reduce(ctx)? {
+    fn reduce(&self, ctx: &SugarCtx) -> Outcome {
+        let inner = match self.inner.reduce(ctx) {
             Outcome::Complete(d) => match d.into_term() {
                 Some(term) => term,
-                None => {
-                    return Err(FactoryGap::new(format!(
-                        "cast `{}` child completed a non-Term where a Term was required; write more Sugar for this AST",
-                        self.cast_type
-                    )))
-                }
+                None => unreachable!("typed cast `{}` child reduced to non-term", self.cast_type),
             },
-            Outcome::Incomplete(e) => return Ok(Outcome::Incomplete(e)),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
         if let Some(term) = fold_grounded_scalar_cast(&inner, &self.cast_type) {
-            return Ok(Outcome::Complete(Desugared::Term(term)));
+            return Outcome::Complete(Desugared::Term(term));
         }
-        Ok(Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
+        Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
             name: format!("cast:{}", self.cast_type),
             args: vec![inner],
-        }))))
+        })))
     }
 
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
+        self.reduce(ctx)
+    }
+}
+
+struct RepresentationCastSugar {
+    boundary: String,
+    kind: String,
+}
+
+impl Sugar for RepresentationCastSugar {
+    fn reduce(&self, _ctx: &SugarCtx) -> Outcome {
+        Outcome::Incomplete(Effect::RepresentationCast {
+            boundary: self.boundary.clone(),
+            kind: self.kind.clone(),
+        })
     }
 }
 

@@ -20,8 +20,8 @@
 // int/char/byte literal, possibly negated, through paren/group/ref wrappers); a
 // repeat needs a const count. A runtime endpoint, an open-ended range, a
 // runtime / mutated / opaque receiver (a runtime `Vec` / `String` / unstable local) takes
-// a named `Incomplete`; anything desugar cannot compose to a literal `Seq` structurally
-// bails to the factory gap path. No guess is made in recognition.
+// a named `Incomplete`; anything desugar completes as the wrong floor panics. No guess
+// is made in recognition.
 //
 // TEETH. The lowered `Bool` is a real value: `assert!((0..5).is_empty())` lowers
 // to `Bool(false)` -> the obligation is z3-UNSAT (a wrong claim is REFUTED);
@@ -31,10 +31,7 @@ use syn::{Expr, ExprLit, Lit, UnOp};
 use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{
-    build_composite, compat_reduction, CompositeFloor, FactoryGap, FactoryReduction, SugarBody,
-    SugarBuildCtx,
-};
+use crate::sugar::factory::{build_composite, CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::method_family;
 use crate::{
@@ -55,7 +52,7 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if !is_empty_receiver_is_owned_by_literal_sugar(&call.receiver, fcx) {
         return None;
     }
-    let receiver_expr = (*call.receiver).clone();
+    let literal_empty = literal_empty_without_elements(&call.receiver);
     let static_len = method_family::literal_sequence_static_len_in_scope(
         &call.receiver,
         fcx.let_inits(),
@@ -71,7 +68,7 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
         source: sequence_body(&static_len.source, fcx),
     });
     Some(IsEmptySugar::new(
-        receiver_expr,
+        literal_empty,
         sequence_body(&call.receiver, fcx),
         static_len,
         static_collection_len,
@@ -129,7 +126,7 @@ fn endpoint_const_scalar(expr: &Expr) -> Option<i128> {
 }
 
 struct IsEmptySugar {
-    receiver_expr: Expr,
+    literal_empty: Option<bool>,
     receiver: SugarBody<CompositeFloor>,
     static_len: Option<usize>,
     static_collection_len: Option<StaticLenSource>,
@@ -141,44 +138,42 @@ struct StaticLenSource {
 }
 
 impl Sugar for IsEmptySugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
-        if let Some(value) = literal_empty_without_elements(&self.receiver_expr) {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        if let Some(value) = self.literal_empty {
             debug!(
                 target: "sugar_lift_rust_tests::sugar::is_empty",
                 value,
                 "resolved range is_empty stdlib axiom to a ground bool"
             );
-            return Ok(Outcome::Complete(Desugared::Term(bool_const(value))));
+            return Outcome::Complete(Desugared::Term(bool_const(value)));
         }
         if self.static_len == Some(0) {
             debug!(
                 target: "sugar_lift_rust_tests::sugar::is_empty",
                 "resolved zero-length literal-sequence is_empty stdlib axiom to true"
             );
-            return Ok(Outcome::Complete(Desugared::Term(bool_const(true))));
+            return Outcome::Complete(Desugared::Term(bool_const(true)));
         }
         let value = match sequence_from_body(&self.receiver, ctx, "is_empty receiver") {
             Ok(seq) => seq.is_empty(),
-            Err(Ok(Outcome::Incomplete(Effect::Unsupported { reason })))
-                if reason == EMPTY_DOMAIN_REASON && self.static_len == Some(0) =>
+            Err(Outcome::Incomplete(effect))
+                if effect.reason() == EMPTY_DOMAIN_REASON && self.static_len == Some(0) =>
             {
                 true
             }
-            Err(Ok(Outcome::Complete(_))) => {
-                return Err(FactoryGap::new(
-                    "is_empty receiver sequence helper returned unexpected Complete",
-                ))
+            Err(Outcome::Complete(_)) => {
+                is_empty_gap("is_empty receiver sequence helper returned unexpected Complete")
             }
-            Err(Ok(Outcome::Incomplete(effect))) => return Ok(Outcome::Incomplete(effect)),
-            Err(Err(gap)) => {
+            Err(Outcome::Incomplete(effect)) => return Outcome::Incomplete(effect),
+            Err(gap) => {
                 if let Some(static_len) = &self.static_collection_len {
                     match source_reduces_to_sequence(&static_len.source, ctx) {
                         Ok(true) => static_len.len == 0,
-                        Ok(false) => return Err(gap),
-                        Err(reduction) => return reduction,
+                        Ok(false) => return gap,
+                        Err(outcome) => return outcome,
                     }
                 } else {
-                    return Err(gap);
+                    return gap;
                 }
             }
         };
@@ -187,23 +182,19 @@ impl Sugar for IsEmptySugar {
             value,
             "resolved literal-sequence is_empty stdlib axiom to a ground bool"
         );
-        Ok(Outcome::Complete(Desugared::Term(bool_const(value))))
-    }
-
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
+        Outcome::Complete(Desugared::Term(bool_const(value)))
     }
 }
 
 impl IsEmptySugar {
     fn new(
-        receiver_expr: Expr,
+        literal_empty: Option<bool>,
         receiver: SugarBody<CompositeFloor>,
         static_len: Option<usize>,
         static_collection_len: Option<StaticLenSource>,
     ) -> Box<dyn Sugar> {
         Box::new(Self {
-            receiver_expr,
+            literal_empty,
             receiver,
             static_len,
             static_collection_len,
@@ -229,28 +220,26 @@ fn sequence_from_body(
     body: &SugarBody<CompositeFloor>,
     ctx: &SugarCtx,
     label: &'static str,
-) -> Result<Vec<DesugaredElem>, FactoryReduction> {
+) -> Result<Vec<DesugaredElem>, Outcome> {
     match body.reduce(ctx) {
-        Ok(Outcome::Complete(d)) => d
+        Outcome::Complete(d) => d
             .into_seq()
-            .ok_or_else(|| Err(FactoryGap::new(format!("{label} reduced to non-sequence")))),
-        Ok(Outcome::Incomplete(effect)) => Err(Ok(Outcome::Incomplete(effect))),
-        Err(gap) => Err(Err(gap)),
+            .ok_or_else(|| is_empty_gap(&format!("{label} reduced to non-sequence"))),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
 
 fn source_reduces_to_sequence(
     body: &SugarBody<CompositeFloor>,
     ctx: &SugarCtx,
-) -> Result<bool, FactoryReduction> {
+) -> Result<bool, Outcome> {
     match body.reduce(ctx) {
-        Ok(Outcome::Complete(d)) => Ok(d.into_seq().is_some()),
-        Ok(Outcome::Incomplete(Effect::Unsupported { reason }))
-            if reason == EMPTY_DOMAIN_REASON =>
-        {
-            Ok(true)
-        }
-        Ok(Outcome::Incomplete(effect)) => Err(Ok(Outcome::Incomplete(effect))),
-        Err(gap) => Err(Err(gap)),
+        Outcome::Complete(d) => Ok(d.into_seq().is_some()),
+        Outcome::Incomplete(effect) if effect.reason() == EMPTY_DOMAIN_REASON => Ok(true),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
+}
+
+fn is_empty_gap(reason: &str) -> ! {
+    panic!("is_empty completed without a literal sequence floor: {reason}")
 }

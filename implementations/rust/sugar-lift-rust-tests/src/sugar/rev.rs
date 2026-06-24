@@ -8,9 +8,8 @@
 use syn::Expr;
 
 use crate::sugar::factory::SugarBuildCtx;
-use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::method_family;
-use crate::{Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx};
+use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("rev", recognize_composite);
@@ -33,21 +32,13 @@ pub(crate) struct RevSugar {
 
 impl Sugar for RevSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            let seq = seq_or_empty(self.inner.desugar(ctx))?;
-            let mut s = seq;
-            s.reverse();
-            Some(Desugared::Seq(s))
-        })())
-    }
-}
-
-fn seq_or_empty(outcome: Outcome) -> Option<Vec<DesugaredElem>> {
-    match outcome {
-        Outcome::Complete(d) => d.into_seq(),
-        Outcome::Incomplete(Effect::Unsupported { reason }) if reason == EMPTY_DOMAIN_REASON => {
-            Some(Vec::new())
-        }
-        Outcome::Incomplete(_) => None,
+        let mut seq = match self.inner.desugar(ctx) {
+            Outcome::Complete(d) => d
+                .into_seq()
+                .unwrap_or_else(|| panic!("rev inner completed as non-sequence")),
+            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+        };
+        seq.reverse();
+        Outcome::Complete(Desugared::Seq(seq))
     }
 }

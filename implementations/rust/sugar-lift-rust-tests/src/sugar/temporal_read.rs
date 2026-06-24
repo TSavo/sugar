@@ -27,15 +27,12 @@
 // The composite makes NO check of its own: a recognized node always returns Incomplete its container leaf
 // (recognition -- a `mut`-local container -- IS the verdict's precondition). The verdict, once
 // the `mut`-oracle predicate is settled at build time, is purely SYNTACTIC, so it is delegated
-// by `desugar` to `desugar_ctx_free`. The STRUCTURAL backstop (`Effect::Unsupported` with
-// `STRUCTURAL_BACKSTOP_REASON`) is the total-but-unreachable tail kept to mirror the node shape.
+// by `desugar` to `desugar_ctx_free`. Any failure to name `TemporalRead` after construction is
+// a construction-law bug and panics.
 
 use syn::Expr;
 
-use crate::{
-    simple_path_name, token_key, Effect, Outcome, Sugar, SugarCtx, TemporalScope,
-    STRUCTURAL_BACKSTOP_REASON,
-};
+use crate::{simple_path_name, token_key, Effect, Outcome, Sugar, SugarCtx, TemporalScope};
 
 /// The mutable-container index read `a[i]`, composed as a node whose `desugar` makes the
 /// temporal-read verdict at its single LEAF (the container). See the module header.
@@ -51,10 +48,10 @@ impl TemporalReadSugar {
     /// read -- the `mut` oracle proved it may be index-assigned or method-mutated, so there is
     /// no single timeless `t` -> `TemporalRead`. Recognition (a `mut`-local container) is this
     /// leaf's precondition, so it always fires for a built node; it never completes.
-    fn temporal_read_effect(&self) -> Option<Effect> {
-        Some(Effect::TemporalRead {
+    fn temporal_read_effect(&self) -> Effect {
+        Effect::TemporalRead {
             boundary: self.boundary.clone(),
-        })
+        }
     }
 
     /// The total reduction, made WITHOUT a `SugarCtx` -- the `mut`-oracle predicate is settled
@@ -62,16 +59,10 @@ impl TemporalReadSugar {
     /// reads only the recognized shape and does not need scope/options. The `Sugar::desugar(&ctx)`
     /// impl delegates here so the node has the canonical trait shape, while the thin caller-router
     /// (the `Expr::Index` arm) reads the SAME verdict here. The composite makes NO verdict of its
-    /// own: it returns Incomplete its single CONTAINER leaf. A built node always names `TemporalRead`
-    /// (recognition is the verdict's precondition); the STRUCTURAL backstop is the
-    /// total-but-unreachable tail.
+    /// own: it returns Incomplete its single CONTAINER leaf. A built node always names
+    /// `TemporalRead` (recognition is the verdict's precondition).
     pub(crate) fn desugar_ctx_free(&self) -> Outcome {
-        if let Some(effect) = self.temporal_read_effect() {
-            return Outcome::Incomplete(effect);
-        }
-        Outcome::Incomplete(Effect::Unsupported {
-            reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
-        })
+        Outcome::Incomplete(self.temporal_read_effect())
     }
 }
 

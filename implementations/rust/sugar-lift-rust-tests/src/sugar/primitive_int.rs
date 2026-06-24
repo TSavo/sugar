@@ -4,7 +4,6 @@
 // grounded literal terms. The compiler owns these semantics; this sugar reads
 // them out when the receiver/argument have already bottomed out.
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{num, real_const, ConstValue, Term};
@@ -12,13 +11,13 @@ use syn::{Expr, ExprPath, PathArguments, Type};
 use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::monadic::{none_term, some_term};
 use crate::sugar::nonzero::nonzero_assoc_const_expr;
 use crate::sugar::option_unwrap::is_known_monadic_source;
 use crate::{
     bool_const, canonical_term_sig, const_fold_int_term, const_fold_u128_term, simple_path_name,
-    strip_refs_groups, u128_term, Desugared, Effect, Outcome, Sugar, SugarCtx,
+    strip_refs_groups, u128_term, Desugared, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -29,8 +28,6 @@ pub(crate) const TUPLE_PRODUCER_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new
     SugarRole::TupleProducer,
     recognize_tuple_producer,
 );
-
-const RUNTIME_OPERAND_REASON: &str = "runtime operand, not literal";
 
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::MethodCall(call) = expr else {
@@ -60,67 +57,67 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
         }
         ("lowest_one", 0) if integer_receiver_can_ground(&call.receiver, fcx, 0) => Kind::LowestOne,
         ("min", 1) if integer_receiver_can_ground(&call.receiver, fcx, 0) => {
-            Kind::Min(call.args[0].clone())
+            Kind::Min(PrimitiveIntArg::new(&call.args[0], fcx))
         }
         ("max", 1)
             if integer_receiver_can_ground(&call.receiver, fcx, 0)
                 && integer_receiver_can_ground(&call.args[0], fcx, 0) =>
         {
-            Kind::Max(call.args[0].clone())
+            Kind::Max(PrimitiveIntArg::new(&call.args[0], fcx))
         }
         ("checked_add", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Checked(CheckedOp::Add, call.args[0].clone())
+            Kind::Checked(CheckedOp::Add, PrimitiveIntArg::new(&call.args[0], fcx))
         }
         ("checked_sub", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Checked(CheckedOp::Sub, call.args[0].clone())
+            Kind::Checked(CheckedOp::Sub, PrimitiveIntArg::new(&call.args[0], fcx))
         }
         ("checked_mul", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Checked(CheckedOp::Mul, call.args[0].clone())
+            Kind::Checked(CheckedOp::Mul, PrimitiveIntArg::new(&call.args[0], fcx))
         }
         ("checked_pow", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Checked(CheckedOp::Pow, call.args[0].clone())
+            Kind::Checked(CheckedOp::Pow, PrimitiveIntArg::new(&call.args[0], fcx))
         }
         ("checked_div", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Checked(CheckedOp::Div, call.args[0].clone())
+            Kind::Checked(CheckedOp::Div, PrimitiveIntArg::new(&call.args[0], fcx))
         }
         ("saturating_add", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Saturating(SaturatingOp::Add, call.args[0].clone())
+            Kind::Saturating(SaturatingOp::Add, PrimitiveIntArg::new(&call.args[0], fcx))
         }
         ("saturating_sub", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Saturating(SaturatingOp::Sub, call.args[0].clone())
+            Kind::Saturating(SaturatingOp::Sub, PrimitiveIntArg::new(&call.args[0], fcx))
         }
         ("saturating_mul", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Saturating(SaturatingOp::Mul, call.args[0].clone())
+            Kind::Saturating(SaturatingOp::Mul, PrimitiveIntArg::new(&call.args[0], fcx))
         }
         ("saturating_pow", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Saturating(SaturatingOp::Pow, call.args[0].clone())
+            Kind::Saturating(SaturatingOp::Pow, PrimitiveIntArg::new(&call.args[0], fcx))
         }
         ("next_multiple_of", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::NextMultipleOf(call.args[0].clone())
+            Kind::NextMultipleOf(PrimitiveIntArg::new(&call.args[0], fcx))
         }
         ("overflowing_add", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Overflowing(OverflowingOp::Add, call.args[0].clone())
+            Kind::Overflowing(OverflowingOp::Add, PrimitiveIntArg::new(&call.args[0], fcx))
         }
         ("overflowing_sub", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Overflowing(OverflowingOp::Sub, call.args[0].clone())
+            Kind::Overflowing(OverflowingOp::Sub, PrimitiveIntArg::new(&call.args[0], fcx))
         }
         ("overflowing_mul", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Overflowing(OverflowingOp::Mul, call.args[0].clone())
+            Kind::Overflowing(OverflowingOp::Mul, PrimitiveIntArg::new(&call.args[0], fcx))
         }
         ("overflowing_pow", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Overflowing(OverflowingOp::Pow, call.args[0].clone())
+            Kind::Overflowing(OverflowingOp::Pow, PrimitiveIntArg::new(&call.args[0], fcx))
         }
         ("wrapping_add", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Wrapping(WrappingOp::Add, call.args[0].clone())
+            Kind::Wrapping(WrappingOp::Add, PrimitiveIntArg::new(&call.args[0], fcx))
         }
         ("wrapping_sub", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Wrapping(WrappingOp::Sub, call.args[0].clone())
+            Kind::Wrapping(WrappingOp::Sub, PrimitiveIntArg::new(&call.args[0], fcx))
         }
         ("wrapping_mul", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Wrapping(WrappingOp::Mul, call.args[0].clone())
+            Kind::Wrapping(WrappingOp::Mul, PrimitiveIntArg::new(&call.args[0], fcx))
         }
         ("wrapping_pow", 1) if integer_binary_candidate(&call.receiver, &call.args[0], fcx) => {
-            Kind::Wrapping(WrappingOp::Pow, call.args[0].clone())
+            Kind::Wrapping(WrappingOp::Pow, PrimitiveIntArg::new(&call.args[0], fcx))
         }
         ("abs", 0) if numeric_receiver_can_ground(&call.receiver, fcx, 0) => Kind::Abs,
         ("signum", 0) if numeric_receiver_can_ground(&call.receiver, fcx, 0) => Kind::Signum,
@@ -128,10 +125,10 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     };
     Some(Box::new(PrimitiveIntSugar {
         method,
-        receiver_expr: (*call.receiver).clone(),
-        receiver: (*call.receiver).clone(),
+        receiver: SugarBody::term(&call.receiver, fcx),
         kind,
-        let_inits: capture_let_inits(fcx),
+        kind_hint: integer_kind_hint_in_scope(&call.receiver, fcx, 0),
+        assoc_const_count_ones: assoc_const_count_ones(&call.receiver),
     }))
 }
 
@@ -151,11 +148,10 @@ fn recognize_tuple_producer(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn 
     };
     Some(Box::new(PrimitiveIntTupleProducer {
         method: call.method.to_string(),
-        receiver_expr: (*call.receiver).clone(),
-        receiver: (*call.receiver).clone(),
-        rhs: call.args[0].clone(),
+        receiver: SugarBody::term(&call.receiver, fcx),
+        rhs: SugarBody::term(&call.args[0], fcx),
         op,
-        let_inits: capture_let_inits(fcx),
+        kind_hint: integer_kind_hint_in_scope(&call.receiver, fcx, 0),
     }))
 }
 
@@ -284,13 +280,13 @@ enum Kind {
     IsolateLowestOne,
     HighestOne,
     LowestOne,
-    Min(Expr),
-    Max(Expr),
-    Checked(CheckedOp, Expr),
-    Wrapping(WrappingOp, Expr),
-    Saturating(SaturatingOp, Expr),
-    NextMultipleOf(Expr),
-    Overflowing(OverflowingOp, Expr),
+    Min(PrimitiveIntArg),
+    Max(PrimitiveIntArg),
+    Checked(CheckedOp, PrimitiveIntArg),
+    Wrapping(WrappingOp, PrimitiveIntArg),
+    Saturating(SaturatingOp, PrimitiveIntArg),
+    NextMultipleOf(PrimitiveIntArg),
+    Overflowing(OverflowingOp, PrimitiveIntArg),
     Abs,
     Signum,
 }
@@ -337,76 +333,66 @@ enum OverflowingOp {
 
 struct PrimitiveIntSugar {
     method: String,
-    receiver_expr: Expr,
-    receiver: Expr,
+    receiver: SugarBody<TermFloor>,
     kind: Kind,
-    let_inits: BTreeMap<String, Expr>,
+    kind_hint: Option<IntegerKind>,
+    assoc_const_count_ones: Option<u32>,
 }
 
 struct PrimitiveIntTupleProducer {
     method: String,
-    receiver_expr: Expr,
-    receiver: Expr,
-    rhs: Expr,
+    receiver: SugarBody<TermFloor>,
+    rhs: SugarBody<TermFloor>,
     op: OverflowingOp,
-    let_inits: BTreeMap<String, Expr>,
+    kind_hint: Option<IntegerKind>,
 }
 
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
+struct PrimitiveIntArg {
+    term: SugarBody<TermFloor>,
 }
 
-fn merge_let_inits<'a>(
-    stable: &'a BTreeMap<String, Expr>,
-    captured: &'a BTreeMap<String, Expr>,
-) -> BTreeMap<String, &'a Expr> {
-    stable
-        .iter()
-        .map(|(name, init)| (name.clone(), init))
-        .chain(captured.iter().map(|(name, init)| (name.clone(), init)))
-        .collect()
+impl PrimitiveIntArg {
+    fn new(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
+        Self {
+            term: SugarBody::term(expr, fcx),
+        }
+    }
 }
 
-fn desugar_term_expr(
-    expr: &Expr,
+fn term_body(
+    body: &SugarBody<TermFloor>,
     ctx: &SugarCtx,
-    fcx: &SugarBuildCtx,
+    owner: &str,
 ) -> Result<Rc<Term>, Outcome> {
-    match build_term(expr, fcx).desugar(ctx) {
-        Outcome::Complete(d) => d.into_term().ok_or_else(|| Outcome::from_opt(None)),
+    match body.reduce(ctx) {
+        Outcome::Complete(d) => d
+            .into_term()
+            .ok_or_else(|| panic!("{owner} term body completed as non-term")),
         Outcome::Incomplete(e) => Err(Outcome::Incomplete(e)),
     }
 }
 
-fn runtime_operand_hit() -> Outcome {
-    Outcome::Incomplete(Effect::Unsupported {
-        reason: RUNTIME_OPERAND_REASON.to_string(),
-    })
+fn primitive_int_gap(reason: &str) -> ! {
+    panic!("primitive_int completed without a numeric literal floor: {reason}")
 }
 
 impl Sugar for PrimitiveIntTupleProducer {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-        let let_inits = merge_let_inits(&stable, &self.let_inits);
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        let receiver = match desugar_term_expr(&self.receiver, ctx, &fcx) {
+        let receiver = match term_body(&self.receiver, ctx, "primitive_int overflowing receiver") {
             Ok(term) => term,
             Err(outcome) => return outcome,
         };
-        let rhs = match desugar_term_expr(&self.rhs, ctx, &fcx) {
+        let rhs = match term_body(&self.rhs, ctx, "primitive_int overflowing rhs") {
             Ok(term) => term,
             Err(outcome) => return outcome,
         };
         let lhs_u128 = const_fold_u128_term(&receiver);
         let lhs_i128 = const_fold_int_term(&receiver);
-        let kind_hint = integer_kind_hint_in_scope(&self.receiver_expr, &fcx, 0);
+        let kind_hint = self.kind_hint;
         let Some((value, overflow)) =
             overflowing_int_op_terms(lhs_i128, lhs_u128, &rhs, self.op, kind_hint)
         else {
-            return runtime_operand_hit();
+            primitive_int_gap("overflowing tuple operands did not reduce to typed integer floors");
         };
         debug!(
             target: "sugar_lift_rust_tests::sugar::primitive_int",
@@ -424,7 +410,7 @@ impl Sugar for PrimitiveIntTupleProducer {
 impl Sugar for PrimitiveIntSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         if matches!(&self.kind, Kind::CountOnes) {
-            if let Some(value) = assoc_const_count_ones(&self.receiver_expr) {
+            if let Some(value) = self.assoc_const_count_ones {
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::primitive_int",
                     method = self.method.as_str(),
@@ -435,16 +421,13 @@ impl Sugar for PrimitiveIntSugar {
             }
         }
 
-        let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-        let let_inits = merge_let_inits(&stable, &self.let_inits);
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        let receiver = match desugar_term_expr(&self.receiver, ctx, &fcx) {
+        let receiver = match term_body(&self.receiver, ctx, "primitive_int receiver") {
             Ok(term) => term,
             Err(outcome) => return outcome,
         };
         let lhs_u128 = const_fold_u128_term(&receiver);
         let lhs_i128 = const_fold_int_term(&receiver);
-        let kind_hint = integer_kind_hint_in_scope(&self.receiver_expr, &fcx, 0);
+        let kind_hint = self.kind_hint;
 
         match &self.kind {
             Kind::CountOnes => {
@@ -460,10 +443,10 @@ impl Sugar for PrimitiveIntSugar {
                     return Outcome::Complete(Desugared::Term(num(i128::from(value))));
                 }
                 let Some(lhs) = lhs_i128 else {
-                    return Outcome::from_opt(None);
+                    primitive_int_gap("count_ones receiver did not reduce to an integer floor");
                 };
                 let Some(value) = count_ones_value(lhs, kind_hint) else {
-                    return Outcome::from_opt(None);
+                    primitive_int_gap("count_ones receiver did not carry a computable width");
                 };
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::primitive_int",
@@ -476,7 +459,9 @@ impl Sugar for PrimitiveIntSugar {
             }
             Kind::ZeroCount(op) => {
                 let Some(value) = zero_count_value(lhs_i128, lhs_u128, kind_hint, *op) else {
-                    return Outcome::from_opt(None);
+                    primitive_int_gap(
+                        "zero-count receiver did not reduce to a typed integer floor",
+                    );
                 };
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::primitive_int",
@@ -490,7 +475,9 @@ impl Sugar for PrimitiveIntSugar {
             }
             Kind::BitWidth => {
                 let Some(value) = bit_width_value(lhs_i128, lhs_u128) else {
-                    return Outcome::from_opt(None);
+                    primitive_int_gap(
+                        "bit_width receiver did not reduce to an unsigned integer floor",
+                    );
                 };
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::primitive_int",
@@ -504,7 +491,9 @@ impl Sugar for PrimitiveIntSugar {
             }
             Kind::IsolateHighestOne => {
                 let Some(term) = isolate_highest_one_term(lhs_i128, lhs_u128, kind_hint) else {
-                    return Outcome::from_opt(None);
+                    primitive_int_gap(
+                        "isolate_highest_one receiver did not reduce to a typed integer floor",
+                    );
                 };
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::primitive_int",
@@ -517,7 +506,9 @@ impl Sugar for PrimitiveIntSugar {
             }
             Kind::IsolateLowestOne => {
                 let Some(term) = isolate_lowest_one_term(lhs_i128, lhs_u128, kind_hint) else {
-                    return Outcome::from_opt(None);
+                    primitive_int_gap(
+                        "isolate_lowest_one receiver did not reduce to a typed integer floor",
+                    );
                 };
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::primitive_int",
@@ -530,7 +521,9 @@ impl Sugar for PrimitiveIntSugar {
             }
             Kind::HighestOne => {
                 let Some(value) = highest_one_value(lhs_i128, lhs_u128, kind_hint) else {
-                    return Outcome::from_opt(None);
+                    primitive_int_gap(
+                        "highest_one receiver did not reduce to a typed integer floor",
+                    );
                 };
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::primitive_int",
@@ -544,7 +537,9 @@ impl Sugar for PrimitiveIntSugar {
             }
             Kind::LowestOne => {
                 let Some(value) = lowest_one_value(lhs_i128, lhs_u128, kind_hint) else {
-                    return Outcome::from_opt(None);
+                    primitive_int_gap(
+                        "lowest_one receiver did not reduce to a typed integer floor",
+                    );
                 };
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::primitive_int",
@@ -557,7 +552,7 @@ impl Sugar for PrimitiveIntSugar {
                 Outcome::Complete(Desugared::Term(num(i128::from(value))))
             }
             Kind::Min(rhs) | Kind::Max(rhs) => {
-                let rhs = match desugar_term_expr(rhs, ctx, &fcx) {
+                let rhs = match term_body(&rhs.term, ctx, "primitive_int extremum rhs") {
                     Ok(term) => term,
                     Err(outcome) => return outcome,
                 };
@@ -565,12 +560,12 @@ impl Sugar for PrimitiveIntSugar {
                     let Some(lhs) =
                         lhs_u128.or_else(|| lhs_i128.and_then(|n| u128::try_from(n).ok()))
                     else {
-                        return runtime_operand_hit();
+                        primitive_int_gap("extremum lhs did not reduce to an integer floor");
                     };
                     let Some(rhs) = const_fold_u128_term(&rhs)
                         .or_else(|| const_fold_int_term(&rhs).and_then(|n| u128::try_from(n).ok()))
                     else {
-                        return runtime_operand_hit();
+                        primitive_int_gap("extremum rhs did not reduce to an integer floor");
                     };
                     let value = if matches!(&self.kind, Kind::Min(_)) {
                         lhs.min(rhs)
@@ -588,10 +583,10 @@ impl Sugar for PrimitiveIntSugar {
                     return Outcome::Complete(Desugared::Term(u128_term(value)));
                 }
                 let Some(lhs) = lhs_i128 else {
-                    return runtime_operand_hit();
+                    primitive_int_gap("extremum lhs did not reduce to a signed integer floor");
                 };
                 let Some(rhs) = const_fold_int_term(&rhs) else {
-                    return runtime_operand_hit();
+                    primitive_int_gap("extremum rhs did not reduce to a signed integer floor");
                 };
                 let value = if matches!(&self.kind, Kind::Min(_)) {
                     lhs.min(rhs)
@@ -609,7 +604,7 @@ impl Sugar for PrimitiveIntSugar {
                 Outcome::Complete(Desugared::Term(num(value)))
             }
             Kind::Checked(op, rhs) => {
-                let rhs = match desugar_term_expr(rhs, ctx, &fcx) {
+                let rhs = match term_body(&rhs.term, ctx, "primitive_int checked rhs") {
                     Ok(term) => term,
                     Err(outcome) => return outcome,
                 };
@@ -617,12 +612,12 @@ impl Sugar for PrimitiveIntSugar {
                     let Some(lhs) =
                         lhs_u128.or_else(|| lhs_i128.and_then(|n| u128::try_from(n).ok()))
                     else {
-                        return Outcome::from_opt(None);
+                        primitive_int_gap("checked lhs did not reduce to an integer floor");
                     };
                     let Some(rhs) = const_fold_u128_term(&rhs)
                         .or_else(|| const_fold_int_term(&rhs).and_then(|n| u128::try_from(n).ok()))
                     else {
-                        return Outcome::from_opt(None);
+                        primitive_int_gap("checked rhs did not reduce to an integer floor");
                     };
                     let result = checked_u128(lhs, rhs, *op);
                     debug!(
@@ -640,10 +635,10 @@ impl Sugar for PrimitiveIntSugar {
                     return Outcome::Complete(Desugared::Term(term));
                 }
                 let Some(lhs) = lhs_i128 else {
-                    return Outcome::from_opt(None);
+                    primitive_int_gap("checked lhs did not reduce to a signed integer floor");
                 };
                 let Some(rhs) = const_fold_int_term(&rhs) else {
-                    return Outcome::from_opt(None);
+                    primitive_int_gap("checked rhs did not reduce to a signed integer floor");
                 };
                 let result = checked_int_op(lhs, rhs, *op, kind_hint);
                 debug!(
@@ -661,13 +656,13 @@ impl Sugar for PrimitiveIntSugar {
                 Outcome::Complete(Desugared::Term(term))
             }
             Kind::Wrapping(op, rhs) => {
-                let rhs = match desugar_term_expr(rhs, ctx, &fcx) {
+                let rhs = match term_body(&rhs.term, ctx, "primitive_int wrapping rhs") {
                     Ok(term) => term,
                     Err(outcome) => return outcome,
                 };
                 let Some(term) = wrapping_int_op_term(lhs_i128, lhs_u128, &rhs, *op, kind_hint)
                 else {
-                    return runtime_operand_hit();
+                    primitive_int_gap("wrapping operands did not reduce to typed integer floors");
                 };
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::primitive_int",
@@ -679,13 +674,13 @@ impl Sugar for PrimitiveIntSugar {
                 Outcome::Complete(Desugared::Term(term))
             }
             Kind::Saturating(op, rhs) => {
-                let rhs = match desugar_term_expr(rhs, ctx, &fcx) {
+                let rhs = match term_body(&rhs.term, ctx, "primitive_int saturating rhs") {
                     Ok(term) => term,
                     Err(outcome) => return outcome,
                 };
                 let Some(term) = saturating_int_op_term(lhs_i128, lhs_u128, &rhs, *op, kind_hint)
                 else {
-                    return runtime_operand_hit();
+                    primitive_int_gap("saturating operands did not reduce to typed integer floors");
                 };
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::primitive_int",
@@ -697,13 +692,15 @@ impl Sugar for PrimitiveIntSugar {
                 Outcome::Complete(Desugared::Term(term))
             }
             Kind::NextMultipleOf(rhs) => {
-                let rhs = match desugar_term_expr(rhs, ctx, &fcx) {
+                let rhs = match term_body(&rhs.term, ctx, "primitive_int next_multiple_of rhs") {
                     Ok(term) => term,
                     Err(outcome) => return outcome,
                 };
                 let Some(term) = next_multiple_of_int_term(lhs_i128, lhs_u128, &rhs, kind_hint)
                 else {
-                    return runtime_operand_hit();
+                    primitive_int_gap(
+                        "next_multiple_of operands did not reduce to typed integer floors",
+                    );
                 };
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::primitive_int",
@@ -715,14 +712,16 @@ impl Sugar for PrimitiveIntSugar {
                 Outcome::Complete(Desugared::Term(term))
             }
             Kind::Overflowing(op, rhs) => {
-                let rhs = match desugar_term_expr(rhs, ctx, &fcx) {
+                let rhs = match term_body(&rhs.term, ctx, "primitive_int overflowing rhs") {
                     Ok(term) => term,
                     Err(outcome) => return outcome,
                 };
                 let Some((value, overflow)) =
                     overflowing_int_op_terms(lhs_i128, lhs_u128, &rhs, *op, kind_hint)
                 else {
-                    return runtime_operand_hit();
+                    primitive_int_gap(
+                        "overflowing operands did not reduce to typed integer floors",
+                    );
                 };
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::primitive_int",
@@ -740,7 +739,9 @@ impl Sugar for PrimitiveIntSugar {
             Kind::Abs => {
                 if let Some(value) = const_fold_real_term(&receiver) {
                     let Some(value) = real_abs_value(&value) else {
-                        return Outcome::from_opt(None);
+                        primitive_int_gap(
+                            "float abs receiver did not have a modeled literal value",
+                        );
                     };
                     debug!(
                         target: "sugar_lift_rust_tests::sugar::primitive_int",
@@ -751,7 +752,7 @@ impl Sugar for PrimitiveIntSugar {
                     return Outcome::Complete(Desugared::Term(real_const(value)));
                 }
                 let Some(term) = abs_int_term(lhs_i128, lhs_u128, kind_hint) else {
-                    return Outcome::from_opt(None);
+                    primitive_int_gap("abs receiver did not reduce to a signed integer floor");
                 };
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::primitive_int",
@@ -765,7 +766,9 @@ impl Sugar for PrimitiveIntSugar {
             Kind::Signum => {
                 if let Some(value) = const_fold_real_term(&receiver) {
                     let Some(value) = real_signum_value(&value) else {
-                        return Outcome::from_opt(None);
+                        primitive_int_gap(
+                            "float signum receiver did not have a modeled literal value",
+                        );
                     };
                     debug!(
                         target: "sugar_lift_rust_tests::sugar::primitive_int",
@@ -776,7 +779,7 @@ impl Sugar for PrimitiveIntSugar {
                     return Outcome::Complete(Desugared::Term(real_const(value)));
                 }
                 let Some(value) = signum_int_value(lhs_i128, lhs_u128, kind_hint) else {
-                    return Outcome::from_opt(None);
+                    primitive_int_gap("signum receiver did not reduce to a signed integer floor");
                 };
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::primitive_int",

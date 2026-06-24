@@ -4,13 +4,11 @@
 // sequence-`Sugar` that keeps the first `n` elements. Lifted verbatim from the
 // `Adaptor::Take(n)` arm of the former `apply_one_adaptor` match.
 
-use std::collections::BTreeMap;
-
 use syn::Expr;
 
-use crate::sugar::factory::{has_composite, SugarBuildCtx};
+use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
-use crate::{const_int, Desugared, Outcome, Sugar, SugarCtx};
+use crate::{const_int, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("take", recognize_composite);
@@ -28,75 +26,38 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     {
         return None;
     }
-    Some(Box::new(TakeRecognizedSugar {
-        receiver: (*call.receiver).clone(),
-        source: Expr::MethodCall(call.clone()),
+    let source = Expr::MethodCall(call.clone());
+    Some(Box::new(TakeSugar {
+        inner: SugarBody::composite(&call.receiver, fcx),
         n,
-        let_inits: capture_let_inits(fcx),
+        finite_source: method_family::finite_int_iter_sequence(&source),
     }))
-}
-
-struct TakeRecognizedSugar {
-    receiver: Expr,
-    source: Expr,
-    n: usize,
-    let_inits: BTreeMap<String, Expr>,
-}
-
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
-}
-
-impl Sugar for TakeRecognizedSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-            let let_inits: BTreeMap<String, &Expr> = stable
-                .iter()
-                .map(|(name, init)| (name.clone(), init))
-                .chain(
-                    self.let_inits
-                        .iter()
-                        .map(|(name, init)| (name.clone(), init)),
-                )
-                .collect();
-            let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-            let seq = method_family::build_literal_sequence_composite(&self.receiver, &fcx)?
-                .desugar(ctx)
-                .complete()
-                .and_then(|d| d.into_seq())
-                .or_else(|| method_family::finite_int_iter_sequence(&self.source))?;
-            let out = seq.into_iter().take(self.n).collect();
-            Some(Desugared::Seq(out))
-        })())
-    }
 }
 
 /// Keep the first `n` elements of the inner sequence.
 pub(crate) struct TakeSugar {
-    pub(crate) inner: Box<dyn Sugar>,
+    pub(crate) inner: SugarBody<CompositeFloor>,
     pub(crate) n: usize,
-    pub(crate) source: Option<Expr>,
+    pub(crate) finite_source: Option<Vec<DesugaredElem>>,
 }
 
 impl Sugar for TakeSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            let seq = self
-                .inner
-                .desugar(ctx)
-                .complete()
-                .and_then(|d| d.into_seq())
-                .or_else(|| {
-                    self.source
-                        .as_ref()
-                        .and_then(method_family::finite_int_iter_sequence)
-                })?;
-            let out = seq.into_iter().take(self.n).collect();
-            Some(Desugared::Seq(out))
-        })())
+        let seq = match self.inner.reduce(ctx) {
+            Outcome::Complete(d) => d
+                .into_seq()
+                .or_else(|| self.finite_source.clone())
+                .unwrap_or_else(|| take_gap("take receiver reduced to non-sequence")),
+            Outcome::Incomplete(effect) => match self.finite_source.clone() {
+                Some(seq) => seq,
+                None => return Outcome::Incomplete(effect),
+            },
+        };
+        let out = seq.into_iter().take(self.n).collect();
+        Outcome::Complete(Desugared::Seq(out))
     }
+}
+
+fn take_gap(reason: &str) -> ! {
+    panic!("take did not reach a lawful floor: {reason}")
 }

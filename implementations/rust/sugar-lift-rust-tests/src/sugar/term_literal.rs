@@ -24,8 +24,7 @@
 // helper (imported from `crate::`) rather than re-transcribing its width-keyed body:
 // the arm IS `translate_lit(lit)`, so the node is too. `Ok(term)` completes to
 // `Desugared::Term(term)`; an `Err(reason)` -- a non-scalar literal (e.g. a
-// `Lit::Verbatim`) -- returns Incomplete `Effect::Unsupported { reason }`, carrying the verbatim
-// reason the arm's `Err` propagated, so the wire format (CID + counts) is conserved.
+// `Lit::Verbatim`) -- is a construction gap for this scalar leaf, not a runtime effect.
 //
 // SIBLING TO `LiteralSugar`, NOT A COLLISION (the naming + purpose split). A
 // `LiteralSugar` ALREADY EXISTS in `src/sugar/literal.rs`; it is the SEQUENCE-floor
@@ -48,7 +47,7 @@
 use syn::{Expr, ExprLit, Lit};
 
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{translate_lit, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::{translate_lit, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("term_literal", recognize);
@@ -78,16 +77,18 @@ pub(crate) struct TermLiteralSugar {
 impl Sugar for TermLiteralSugar {
     /// LEAF term reduction: `translate_lit(&self.lit)`. `Ok(term)` completes to
     /// `Desugared::Term(term)` (the width-keyed `Const` / `str_const` / `bool_const`
-    /// / content-keyed bytes `Var` the arm produced); an `Err(reason)` -- a
-    /// non-scalar literal -- returns Incomplete `Effect::Unsupported { reason }`, the verbatim
-    /// reason the arm's `Err` carried. `ctx` is unused: a literal is atomic, its
-    /// value fixed by its tokens.
+    /// / content-keyed bytes `Var` the arm produced); an `Err(reason)` is a scalar-leaf
+    /// construction gap. `ctx` is unused: a literal is atomic, its value fixed by its tokens.
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         match translate_lit(&self.lit) {
             Ok(term) => Outcome::Complete(Desugared::Term(term)),
-            Err(reason) => Outcome::Incomplete(Effect::Unsupported { reason }),
+            Err(reason) => term_literal_gap(&reason),
         }
     }
+}
+
+fn term_literal_gap(reason: &str) -> ! {
+    panic!("term_literal did not reach a lawful scalar floor: {reason}")
 }
 
 #[cfg(test)]

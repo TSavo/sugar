@@ -26,14 +26,13 @@
 // TEETH. `u8::try_from(255u16)` -> `Ok(255)` (`.unwrap()` -> 255, discharged);
 // `u8::try_from(256u16)` -> `Err(_)` (`.is_err()` -> true; `.unwrap()` panics).
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use syn::{Expr, ExprCall};
 use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::int_literal::{exact_int_value, primitive_int_kind, ExactInt, IntKind};
 use crate::sugar::monadic::{err_term, ok_term};
 use crate::{expr_head_key, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
@@ -52,7 +51,11 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     }
     let dst = try_from_destination(&call.func)?;
     primitive_int_kind(&dst)?;
-    Some(Box::new(TryFromSugar { call: call.clone() }))
+    Some(Box::new(TryFromSugar {
+        func_key: expr_head_key(&call.func),
+        arg: SugarBody::term(&call.args[0], fcx),
+        folded: try_from_fold_inputs(call, Some(fcx)),
+    }))
 }
 
 /// Does this call fold to a `Result` (an integer-destination `try_from` over a
@@ -107,14 +110,14 @@ fn try_from_destination(func: &Expr) -> Option<String> {
 }
 
 struct TryFromSugar {
-    call: ExprCall,
+    func_key: String,
+    arg: SugarBody<TermFloor>,
+    folded: Option<(IntKind, ExactInt)>,
 }
 
 impl Sugar for TryFromSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let let_inits: BTreeMap<String, &Expr> = BTreeMap::new();
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        if let Some((kind, value)) = try_from_fold_inputs(&self.call, Some(&fcx)) {
+        if let Some((kind, value)) = self.folded {
             let in_range = value.fits_kind(kind);
             debug!(
                 target: "sugar_lift_rust_tests::sugar::try_from",
@@ -124,9 +127,9 @@ impl Sugar for TryFromSugar {
                 "resolved TryFrom range check stdlib axiom to Ok/Err"
             );
             let term = if in_range {
-                let Some(value) = value.term_for_kind(kind) else {
-                    return Outcome::from_opt(None);
-                };
+                let value = value
+                    .term_for_kind(kind)
+                    .unwrap_or_else(|| try_from_gap("in-range TryFrom value did not materialize"));
                 ok_term(value)
             } else {
                 // `TryFromIntError` carries no observable value; the Err discriminant
@@ -135,27 +138,26 @@ impl Sugar for TryFromSugar {
             };
             Outcome::Complete(Desugared::Term(term))
         } else {
-            self.fallback_call(ctx, &fcx)
+            self.fallback_call(ctx)
         }
     }
 }
 
 impl TryFromSugar {
-    fn fallback_call(&self, ctx: &SugarCtx, fcx: &SugarBuildCtx) -> Outcome {
-        let mut args: Vec<Rc<Term>> = Vec::new();
-        for arg in &self.call.args {
-            let term = match build_term(arg, fcx).desugar(ctx) {
-                Outcome::Complete(d) => match d.into_term() {
-                    Some(term) => term,
-                    None => return Outcome::from_opt(None),
-                },
-                Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
-            };
-            args.push(term);
-        }
+    fn fallback_call(&self, ctx: &SugarCtx) -> Outcome {
+        let arg = match self.arg.reduce(ctx) {
+            Outcome::Complete(d) => d
+                .into_term()
+                .unwrap_or_else(|| try_from_gap("TryFrom argument reduced to non-Term")),
+            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+        };
         Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
-            name: format!("call:{}", expr_head_key(&self.call.func)),
-            args,
+            name: format!("call:{}", self.func_key),
+            args: vec![arg],
         })))
     }
+}
+
+fn try_from_gap(reason: &str) -> ! {
+    panic!("try_from did not reach a lawful floor: {reason}")
 }

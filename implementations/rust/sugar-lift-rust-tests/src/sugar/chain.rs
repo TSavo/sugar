@@ -8,11 +8,8 @@ use syn::Expr;
 use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{
-    compat_reduction, has_composite, CompositeFloor, FactoryGap, FactoryReduction, SugarBody,
-    SugarBuildCtx,
-};
-use crate::{Desugared, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
+use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuildCtx};
+use crate::{Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("chain", SugarRole::Composite, recognize_composite);
@@ -48,23 +45,21 @@ impl ChainSugar {
 }
 
 impl Sugar for ChainSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+    fn reduce(&self, ctx: &SugarCtx) -> Outcome {
         let mut left = match sequence_from_body(&self.left, ctx, "chain lhs") {
             Ok(seq) => seq,
-            Err(reduction) => return reduction,
+            Err(outcome) => return outcome,
         };
         let right = match sequence_from_body(&self.right, ctx, "chain rhs") {
             Ok(seq) => seq,
-            Err(reduction) => return reduction,
+            Err(outcome) => return outcome,
         };
         let total = left
             .len()
             .checked_add(right.len())
-            .ok_or_else(|| FactoryGap::new("chain sequence length overflow"))?;
+            .unwrap_or_else(|| panic!("chain sequence length overflow"));
         if total > SUGAR_SEQ_CAP as usize {
-            return Err(FactoryGap::new(format!(
-                "chain sequence length {total} exceeds cap {SUGAR_SEQ_CAP}"
-            )));
+            panic!("chain sequence length {total} exceeds cap {SUGAR_SEQ_CAP}");
         }
         left.extend(right);
         debug!(
@@ -72,11 +67,11 @@ impl Sugar for ChainSugar {
             len = left.len(),
             "chained finite literal-derived domain"
         );
-        Ok(Outcome::Complete(Desugared::Seq(left)))
+        Outcome::Complete(Desugared::Seq(left))
     }
 
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
+        self.reduce(ctx)
     }
 }
 
@@ -84,12 +79,11 @@ fn sequence_from_body(
     body: &SugarBody<CompositeFloor>,
     ctx: &SugarCtx,
     label: &'static str,
-) -> Result<Vec<crate::DesugaredElem>, FactoryReduction> {
+) -> Result<Vec<DesugaredElem>, Outcome> {
     match body.reduce(ctx) {
-        Ok(Outcome::Complete(d)) => d
+        Outcome::Complete(d) => Ok(d
             .into_seq()
-            .ok_or_else(|| Err(FactoryGap::new(format!("{label} reduced to non-sequence")))),
-        Ok(Outcome::Incomplete(effect)) => Err(Ok(Outcome::Incomplete(effect))),
-        Err(gap) => Err(Err(gap)),
+            .unwrap_or_else(|| panic!("{label} reduced to non-sequence"))),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }

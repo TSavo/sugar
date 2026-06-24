@@ -21,18 +21,21 @@ pub(crate) fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sug
     let Expr::Async(async_expr) = expr else {
         return None;
     };
-    (count_asserts_in_stmts(&async_expr.block.stmts) > 0)
-        .then(|| Box::new(StatementAsyncFutureSugar { expr: expr.clone() }) as Box<dyn Sugar>)
+    (count_asserts_in_stmts(&async_expr.block.stmts) > 0).then(|| {
+        Box::new(StatementAsyncFutureSugar {
+            boundary: token_key(expr),
+        }) as Box<dyn Sugar>
+    })
 }
 
 struct StatementAsyncFutureSugar {
-    expr: Expr,
+    boundary: String,
 }
 
 impl Sugar for StatementAsyncFutureSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         Outcome::Incomplete(Effect::DormantFuture {
-            boundary: token_key(&self.expr),
+            boundary: self.boundary.clone(),
         })
     }
 }

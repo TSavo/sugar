@@ -4,8 +4,8 @@
 // function call. The Rust compiler has already made `T` meaningful for compiled
 // code; the kit reads that axiom and emits a concrete size literal when `T` is
 // concrete enough for rustc to answer. If rustc cannot compile the monomorphic
-// harness, the layout is unknown to this lift and the sugar stops with a named
-// boundary. It never emits a symbolic `sizeof:T` pseudo-fact.
+// harness, the type-layout boundary is named as an effect. It never emits a
+// symbolic `sizeof:T` pseudo-fact.
 
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
@@ -82,12 +82,8 @@ impl Sugar for SizeOfSugar {
             local_type_prelude_bytes = prelude.len(),
             "size_of compiler axiom layout is not known to this lift"
         );
-        Outcome::Incomplete(Effect::Unsupported {
-            reason: format!(
-                "unsupported term `mem::size_of::<{}>()`: layout is unknown to this lift \
-                 (rustc could not compile a monomorphic size_of harness for this type); refused",
-                self.ty_key
-            ),
+        Outcome::Incomplete(Effect::TypeLayout {
+            boundary: format!("mem::size_of::<{}>()", self.ty_key),
         })
     }
 }
@@ -343,6 +339,17 @@ mod tests {
     fn rustc_size_of_harness_answers_concrete_type_and_rejects_unbound_t() {
         assert_eq!(rustc_size_of_type("u32", "u32", ""), Some(4));
         assert_eq!(rustc_size_of_type("T", "T", ""), None);
+    }
+
+    #[test]
+    fn type_layout_effect_names_sizeof_harness_miss() {
+        let effect = Effect::TypeLayout {
+            boundary: "mem::size_of::<T>()".to_string(),
+        };
+        let reason = effect.reason();
+        assert!(reason.contains("mem::size_of::<T>()"));
+        assert!(reason.contains("layout is unknown to this lift"));
+        assert!(reason.contains("monomorphic size_of harness"));
     }
 
     fn ty(src: &str) -> Type {

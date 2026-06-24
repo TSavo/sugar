@@ -1,0 +1,450 @@
+// SPDX-License-Identifier: Apache-2.0
+
+use std::rc::Rc;
+
+use sugar_ir_symbolic::{make_var, ConstValue, LetBinding, Term};
+
+use crate::sugar::int_literal::{numeric_floor_from_term, NumericFloor};
+use crate::sugar::monadic::{OPT_NONE, OPT_SOME, RES_ERR, RES_OK};
+use crate::{canonical_term_sig, const_fold_int_term, num, Desugared};
+
+/// A finite-domain occurrence context for a term-floor curry.
+///
+/// The caller supplies the binding (`param := arg`) and the occurrence owner
+/// supplies the point identity. Runtime call/method terms inside the body become
+/// nullary occurrence symbols (`call:f#map1()`, `call:f#map2()`) instead of
+/// ordered call traces such as `Before(f(1), f(2))`.
+#[derive(Clone, Copy)]
+pub(crate) struct CurryOccurrence<'a> {
+    pub(crate) family: &'a str,
+    pub(crate) ordinal: usize,
+}
+
+impl CurryOccurrence<'_> {
+    fn suffix(&self) -> String {
+        format!("#{}{}", self.family, self.ordinal + 1)
+    }
+}
+
+pub(crate) trait TermFloorVisitor {
+    type Output;
+
+    fn visit_term(self, term: &Rc<Term>) -> Self::Output;
+}
+
+pub(crate) trait TermFloorAccept {
+    fn accept_term_floor<V: TermFloorVisitor>(&self, visitor: V) -> V::Output;
+}
+
+impl TermFloorAccept for Rc<Term> {
+    fn accept_term_floor<V: TermFloorVisitor>(&self, visitor: V) -> V::Output {
+        visitor.visit_term(self)
+    }
+}
+
+pub(crate) trait BoolFloorVisitor {
+    type Output;
+
+    fn visit_bool(self, value: bool) -> Self::Output;
+    fn visit_non_bool(self, term: &Rc<Term>) -> Self::Output;
+}
+
+pub(crate) trait BoolFloorAccept {
+    fn accept_bool_floor<V: BoolFloorVisitor>(&self, visitor: V) -> V::Output;
+}
+
+impl BoolFloorAccept for Rc<Term> {
+    fn accept_bool_floor<V: BoolFloorVisitor>(&self, visitor: V) -> V::Output {
+        match self.as_ref() {
+            Term::Const {
+                value: ConstValue::Bool(value),
+                ..
+            } => visitor.visit_bool(*value),
+            _ => visitor.visit_non_bool(self),
+        }
+    }
+}
+
+pub(crate) struct RequiredBoolVisitor<'a> {
+    pub(crate) owner: &'a str,
+}
+
+impl BoolFloorVisitor for RequiredBoolVisitor<'_> {
+    type Output = bool;
+
+    fn visit_bool(self, value: bool) -> Self::Output {
+        value
+    }
+
+    fn visit_non_bool(self, term: &Rc<Term>) -> Self::Output {
+        panic!(
+            "{} did not dispatch to BoolLiteral: {}",
+            self.owner,
+            canonical_term_sig(term)
+        )
+    }
+}
+
+pub(crate) trait ScalarFloorVisitor {
+    type Output;
+
+    fn visit_numeric(self, floor: NumericFloor) -> Self::Output;
+    fn visit_bool(self, value: bool) -> Self::Output;
+    fn visit_char(self, value: char) -> Self::Output;
+    fn visit_runtime(self, term: &Rc<Term>) -> Self::Output;
+}
+
+pub(crate) trait ScalarFloorAccept {
+    fn accept_scalar_floor<V: ScalarFloorVisitor>(&self, visitor: V) -> V::Output;
+}
+
+impl ScalarFloorAccept for Rc<Term> {
+    fn accept_scalar_floor<V: ScalarFloorVisitor>(&self, visitor: V) -> V::Output {
+        if let Some(floor) = numeric_floor_from_term(self) {
+            return visitor.visit_numeric(floor);
+        }
+        match self.as_ref() {
+            Term::Const {
+                value: ConstValue::Bool(value),
+                ..
+            } => visitor.visit_bool(*value),
+            Term::Const {
+                value: ConstValue::String(value),
+                ..
+            } => {
+                let mut chars = value.chars();
+                let Some(ch) = chars.next() else {
+                    return visitor.visit_runtime(self);
+                };
+                if chars.next().is_some() {
+                    visitor.visit_runtime(self)
+                } else {
+                    visitor.visit_char(ch)
+                }
+            }
+            _ => visitor.visit_runtime(self),
+        }
+    }
+}
+
+pub(crate) trait MonadicFloorVisitor {
+    type Output;
+
+    fn visit_some(self, inner: &Rc<Term>) -> Self::Output;
+    fn visit_none(self) -> Self::Output;
+    fn visit_ok(self, inner: &Rc<Term>) -> Self::Output;
+    fn visit_err(self, inner: &Rc<Term>) -> Self::Output;
+    fn visit_non_monadic(self, term: &Rc<Term>) -> Self::Output;
+}
+
+pub(crate) trait MonadicFloorAccept {
+    fn accept_monadic_floor<V: MonadicFloorVisitor>(&self, visitor: V) -> V::Output;
+}
+
+impl MonadicFloorAccept for Rc<Term> {
+    fn accept_monadic_floor<V: MonadicFloorVisitor>(&self, visitor: V) -> V::Output {
+        match self.as_ref() {
+            Term::Ctor { name, args } if name == OPT_SOME && args.len() == 1 => {
+                visitor.visit_some(&args[0])
+            }
+            Term::Ctor { name, args } if name == OPT_NONE && args.is_empty() => {
+                visitor.visit_none()
+            }
+            Term::Ctor { name, args } if name == RES_OK && args.len() == 1 => {
+                visitor.visit_ok(&args[0])
+            }
+            Term::Ctor { name, args } if name == RES_ERR && args.len() == 1 => {
+                visitor.visit_err(&args[0])
+            }
+            _ => visitor.visit_non_monadic(self),
+        }
+    }
+}
+
+pub(crate) trait DesugaredFloorVisitor {
+    type Output;
+
+    fn visit_term(self, term: Rc<Term>) -> Self::Output;
+    fn visit_term_seq(self, terms: Vec<Rc<Term>>) -> Self::Output;
+    fn visit_tuple_components(self, parts: Vec<Rc<Term>>) -> Self::Output;
+    fn visit_passthrough(self, floor: Desugared) -> Self::Output;
+}
+
+pub(crate) trait DesugaredFloorAccept {
+    fn accept_desugared_floor<V: DesugaredFloorVisitor>(self, visitor: V) -> V::Output;
+}
+
+impl DesugaredFloorAccept for Desugared {
+    fn accept_desugared_floor<V: DesugaredFloorVisitor>(self, visitor: V) -> V::Output {
+        match self {
+            Desugared::Term(term) => visitor.visit_term(term),
+            Desugared::TermSeq(terms) => visitor.visit_term_seq(terms),
+            Desugared::TupleComponents(parts) => visitor.visit_tuple_components(parts),
+            other => visitor.visit_passthrough(other),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct CurryVisitor<'a> {
+    pub(crate) param: &'a str,
+    pub(crate) arg: &'a Rc<Term>,
+    pub(crate) occurrence: CurryOccurrence<'a>,
+}
+
+impl TermFloorVisitor for CurryVisitor<'_> {
+    type Output = Rc<Term>;
+
+    fn visit_term(self, term: &Rc<Term>) -> Self::Output {
+        curry_term(term, self.param, self.arg, &self.occurrence)
+    }
+}
+
+impl DesugaredFloorVisitor for CurryVisitor<'_> {
+    type Output = Desugared;
+
+    fn visit_term(self, term: Rc<Term>) -> Self::Output {
+        Desugared::Term(term.accept_term_floor(self))
+    }
+
+    fn visit_term_seq(self, terms: Vec<Rc<Term>>) -> Self::Output {
+        Desugared::TermSeq(
+            terms
+                .into_iter()
+                .map(|term| term.accept_term_floor(self))
+                .collect(),
+        )
+    }
+
+    fn visit_tuple_components(self, parts: Vec<Rc<Term>>) -> Self::Output {
+        Desugared::TupleComponents(
+            parts
+                .into_iter()
+                .map(|part| part.accept_term_floor(self))
+                .collect(),
+        )
+    }
+
+    fn visit_passthrough(self, floor: Desugared) -> Self::Output {
+        floor
+    }
+}
+
+fn curry_term(
+    term: &Rc<Term>,
+    param: &str,
+    arg: &Rc<Term>,
+    occurrence: &CurryOccurrence<'_>,
+) -> Rc<Term> {
+    match term.as_ref() {
+        Term::Var { name } if name == param => Rc::clone(arg),
+        Term::Ctor { name, args } if runtime_occurrence_ctor(name) => Rc::new(Term::Ctor {
+            name: format!("{}{}", name, occurrence.suffix()),
+            args: Vec::new(),
+        }),
+        Term::Ctor { name, args } => Rc::new(Term::Ctor {
+            name: name.clone(),
+            args: args
+                .iter()
+                .map(|child| curry_term(child, param, arg, occurrence))
+                .collect(),
+        }),
+        Term::Let { bindings, body } => Rc::new(Term::Let {
+            bindings: bindings
+                .iter()
+                .map(|binding| LetBinding {
+                    name: binding.name.clone(),
+                    bound_term: curry_term(&binding.bound_term, param, arg, occurrence),
+                })
+                .collect(),
+            body: curry_term(body, param, arg, occurrence),
+        }),
+        Term::Lambda {
+            param_name,
+            param_sort,
+            body,
+        } if param_name != param => Rc::new(Term::Lambda {
+            param_name: param_name.clone(),
+            param_sort: param_sort.clone(),
+            body: curry_term(body, param, arg, occurrence),
+        }),
+        _ => Rc::clone(term),
+    }
+}
+
+fn runtime_occurrence_ctor(name: &str) -> bool {
+    name.starts_with("call:") || name.starts_with("method:")
+}
+
+pub(crate) fn literal_array_term_from_terms(terms: &[Rc<Term>]) -> Rc<Term> {
+    let inner = terms
+        .iter()
+        .map(|term| canonical_term_sig(term))
+        .collect::<Vec<_>>()
+        .join(",");
+    make_var(format!("literal:Array({inner})"))
+}
+
+pub(crate) fn fold_int_terms(
+    op: &str,
+    identity: i128,
+    terms: impl IntoIterator<Item = Rc<Term>>,
+) -> Rc<Term> {
+    terms.into_iter().fold(num(identity), |acc, term| {
+        let combined = Rc::new(Term::Ctor {
+            name: op.to_string(),
+            args: vec![acc, term],
+        });
+        const_fold_int_term(&combined).map_or(combined, num)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sugar_ir_symbolic::num;
+
+    fn var(name: &str) -> Rc<Term> {
+        make_var(name)
+    }
+
+    #[test]
+    fn curry_replaces_bound_param_inside_ground_arithmetic() {
+        let term = Rc::new(Term::Ctor {
+            name: "+".to_string(),
+            args: vec![var("x"), num(1)],
+        });
+
+        let curried = term.accept_term_floor(CurryVisitor {
+            param: "x",
+            arg: &num(2),
+            occurrence: CurryOccurrence {
+                family: "map",
+                ordinal: 0,
+            },
+        });
+
+        assert_eq!(const_fold_int_term(&curried), Some(3));
+    }
+
+    #[test]
+    fn runtime_call_curries_to_orderless_occurrence_symbol() {
+        let term = Rc::new(Term::Ctor {
+            name: "call:f".to_string(),
+            args: vec![var("x")],
+        });
+
+        let curried = term.accept_term_floor(CurryVisitor {
+            param: "x",
+            arg: &num(2),
+            occurrence: CurryOccurrence {
+                family: "map",
+                ordinal: 1,
+            },
+        });
+
+        match curried.as_ref() {
+            Term::Ctor { name, args } => {
+                assert_eq!(name, "call:f#map2");
+                assert!(args.is_empty());
+            }
+            other => panic!("expected curried call occurrence, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn nested_curry_appends_occurrence_context_to_materialized_calls() {
+        let inner = Rc::new(Term::Ctor {
+            name: "call:f#map1".to_string(),
+            args: Vec::new(),
+        });
+
+        let outer = inner.accept_term_floor(CurryVisitor {
+            param: "n",
+            arg: &num(2),
+            occurrence: CurryOccurrence {
+                family: "map",
+                ordinal: 1,
+            },
+        });
+
+        match outer.as_ref() {
+            Term::Ctor { name, args } => {
+                assert_eq!(name, "call:f#map1#map2");
+                assert!(args.is_empty());
+            }
+            other => panic!("expected nested curried occurrence, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn desugared_term_sequence_accepts_curry_without_materializing_array() {
+        let floor = Desugared::TermSeq(vec![
+            Rc::new(Term::Ctor {
+                name: "+".to_string(),
+                args: vec![var("n"), num(1)],
+            }),
+            Rc::new(Term::Ctor {
+                name: "+".to_string(),
+                args: vec![var("n"), num(2)],
+            }),
+        ]);
+
+        let curried = floor.accept_desugared_floor(CurryVisitor {
+            param: "n",
+            arg: &num(10),
+            occurrence: CurryOccurrence {
+                family: "map",
+                ordinal: 0,
+            },
+        });
+
+        let Desugared::TermSeq(terms) = curried else {
+            panic!("expected term sequence floor");
+        };
+        assert_eq!(
+            terms.iter().map(const_fold_int_term).collect::<Vec<_>>(),
+            vec![Some(11), Some(12),]
+        );
+    }
+
+    #[test]
+    fn curry_walks_let_body_floor_before_materializing_calls() {
+        let term = Rc::new(Term::Let {
+            bindings: vec![LetBinding {
+                name: "y".to_string(),
+                bound_term: var("x"),
+            }],
+            body: Rc::new(Term::Ctor {
+                name: "call:g".to_string(),
+                args: vec![var("y")],
+            }),
+        });
+
+        let curried = term.accept_term_floor(CurryVisitor {
+            param: "x",
+            arg: &num(9),
+            occurrence: CurryOccurrence {
+                family: "map",
+                ordinal: 0,
+            },
+        });
+
+        match curried.as_ref() {
+            Term::Let { bindings, body } => {
+                assert!(matches!(
+                    bindings[0].bound_term.as_ref(),
+                    Term::Const {
+                        value: sugar_ir_symbolic::ConstValue::Int(9),
+                        sort
+                    } if sort.name == "Int"
+                ));
+                assert!(matches!(
+                    body.as_ref(),
+                    Term::Ctor { name, args } if name == "call:g#map1" && args.is_empty()
+                ));
+            }
+            other => panic!("expected let body floor, got {other:?}"),
+        }
+    }
+}

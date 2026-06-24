@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Sugar Rust test-assertion consistency lifter: lift #[test] scalar assertions into inv-only closed consistency contracts."
+build = "build.rs"
 
 [lib]
 doctest = false
@@ -35,6 +36,12 @@ walkdir = { workspace = true }
 rayon = { workspace = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[build-dependencies]
+proc-macro2 = { workspace = true, features = ["span-locations"] }
+quote = { workspace = true }
+syn = { workspace = true }
+walkdir = { workspace = true }
 
 [[bin]]
 name = "rust_test_assertions_rpc"

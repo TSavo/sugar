@@ -16,10 +16,7 @@ use syn::{Expr, Pat, Stmt};
 
 use crate::sugar::backstop::boxed;
 use crate::sugar::configuration::{CfgDisposition, ConfigurationSugar};
-use crate::sugar::constraint_runtime_boundary::panic_payload_match_value_reason;
-use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
-};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::monadic;
 use crate::{
     bool_const, closure_body_is_side_effecting, collect_assertion_entries, count_asserts_in_stmts,
@@ -66,6 +63,8 @@ fn recognize_term(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     {
         return Some(crate::sugar::term_leaf::resolved_term(term));
     }
+    let (pat, _) = single_surviving_value_arm(m)?;
+    value_arm_pattern_is_term_bindable(pat)?;
     Some(Box::new(MatchValueTermSugar {
         scrutinee: SugarBody::term(&m.expr, fcx),
         m: m.clone(),
@@ -207,37 +206,34 @@ struct MatchValueTermSugar {
 }
 
 impl Sugar for MatchValueTermSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
-        if let Some(reason) = panic_payload_match_value_reason(&self.m, ctx) {
-            return Ok(Outcome::Incomplete(Effect::Unsupported { reason }));
-        }
+    fn reduce(&self, ctx: &SugarCtx) -> Outcome {
         let Some((pat, body)) = single_surviving_value_arm(&self.m) else {
-            return Err(FactoryGap::new("match value has no single surviving arm"));
+            unreachable!("MatchValueTermSugar constructed without one surviving arm");
         };
-        let scrutinee = match self.scrutinee.reduce(ctx)? {
+        let scrutinee = match self.scrutinee.reduce(ctx) {
             Outcome::Complete(d) => match d.into_term() {
                 Some(term) => term,
-                None => return Err(FactoryGap::new("match value scrutinee reduced to non-term")),
+                None => unreachable!("typed match scrutinee body reduced to a non-term floor"),
             },
-            Outcome::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
         let Some(bindings) = value_arm_term_bindings(pat, &scrutinee) else {
-            return Err(FactoryGap::new(
-                "match value surviving arm pattern is not term-bindable",
-            ));
+            unreachable!("MatchValueTermSugar constructed with an unbindable value pattern");
         };
         let mut arm_scope = ctx.scope.clone();
         for (name, term) in bindings {
             arm_scope.record_let_term_binding(&name, term);
         }
         match translate_term_in_scope(body, &arm_scope) {
-            Ok(term) => Ok(Outcome::Complete(Desugared::Term(term))),
-            Err(reason) => Ok(Outcome::Incomplete(Effect::Unsupported { reason })),
+            Ok(term) => Outcome::Complete(Desugared::Term(term)),
+            Err(reason) => {
+                unreachable!("constructed match value body did not reduce as a term: {reason}")
+            }
         }
     }
 
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
+        self.reduce(ctx)
     }
 }
 
@@ -259,6 +255,44 @@ fn single_surviving_value_arm(m: &syn::ExprMatch) -> Option<(&Pat, &Expr)> {
     }
     let arm = surviving[0];
     Some((&arm.pat, &arm.body))
+}
+
+fn value_arm_pattern_is_term_bindable(pat: &Pat) -> Option<()> {
+    match pat {
+        Pat::Wild(_) | Pat::Path(_) => Some(()),
+        Pat::Ident(id) if id.subpat.is_none() && id.mutability.is_none() && id.by_ref.is_none() => {
+            Some(())
+        }
+        Pat::TupleStruct(ts) => {
+            for elem in &ts.elems {
+                match elem {
+                    Pat::Wild(_) | Pat::Rest(_) => {}
+                    Pat::Ident(id)
+                        if id.subpat.is_none()
+                            && id.mutability.is_none()
+                            && id.by_ref.is_none() => {}
+                    _ => return None,
+                }
+            }
+            Some(())
+        }
+        Pat::Struct(s) => {
+            for field in &s.fields {
+                match &*field.pat {
+                    Pat::Wild(_) => {}
+                    Pat::Ident(id)
+                        if id.subpat.is_none()
+                            && id.mutability.is_none()
+                            && id.by_ref.is_none() => {}
+                    _ => return None,
+                }
+            }
+            Some(())
+        }
+        Pat::Reference(r) => value_arm_pattern_is_term_bindable(&r.pat),
+        Pat::Paren(p) => value_arm_pattern_is_term_bindable(&p.pat),
+        _ => None,
+    }
 }
 
 fn value_arm_term_bindings(pat: &Pat, scrutinee: &Rc<Term>) -> Option<Vec<(String, Rc<Term>)>> {
@@ -394,6 +428,7 @@ pub(crate) fn decompose_match(
     let scrut = translate_term_in_scope(&m.expr, scope).ok()?;
     let last_idx = active_arms.len().checked_sub(1)?;
     let mut arms = Vec::with_capacity(active_arms.len());
+    let mut total_asserts = 0usize;
     for (i, arm) in active_arms.iter().enumerate() {
         // An arm guard `pat if cond =>` changes which values reach the arm; the
         // discriminant `pat` alone no longer characterizes the arm. BAIL.
@@ -401,87 +436,77 @@ pub(crate) fn decompose_match(
             return None;
         }
         let guard = match_arm_guard(&arm.pat, &scrut, i == last_idx, scope)?;
-        arms.push(MatchArmLift {
-            guard,
-            body_stmts: arm_body_stmts(&arm.body),
-        });
+        let body_stmts = arm_body_stmts(&arm.body);
+        if loop_body_mutates(&body_stmts) {
+            return None;
+        }
+        total_asserts += count_asserts_in_stmts(&body_stmts);
+        arms.push(MatchArmLift { guard, body_stmts });
     }
-    Some(MatchSugar { arms })
+    (total_asserts > 0).then_some(MatchSugar { arms })
 }
 
 impl Sugar for MatchSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        // TOTAL: the complete body computes the legacy `Option<Desugared>`; `Outcome::from_opt`
-        // lifts it (the structural bail -> `Incomplete(Effect::Unsupported)`, discarded by the
-        // fall-through consumer exactly as the old `None` was).
-        Outcome::from_opt((|| {
-            // At least one arm must carry an assertion (else nothing to classify --
-            // leave it to the existing handling, e.g. a non-asserting `match p { A =>
-            // do_a(), B => do_b() }`). Mirrors `ConditionalSugar`'s `then+else == 0`.
-            let total: usize = self
-                .arms
-                .iter()
-                .map(|a| count_asserts_in_stmts(&a.body_stmts))
-                .sum();
-            if total == 0 {
-                return None;
-            }
-            // No arm body may mutate captured state: a single guarded implication is a
-            // point-wise claim only if the body is pure (mirrors `ConditionalSugar`).
-            if self.arms.iter().any(|a| loop_body_mutates(&a.body_stmts)) {
-                return None;
-            }
-            let mut conjuncts: Vec<Rc<Formula>> = Vec::new();
-            // Running disjunction of prior arms' discriminant guards -- the wildcard's
-            // guard is its negation (`_` fires iff no prior arm matched).
-            let mut prior_guards: Vec<Rc<Formula>> = Vec::new();
-            for arm in &self.arms {
-                let arm_guard = match &arm.guard {
-                    Some(g) => {
-                        prior_guards.push(g.clone());
-                        g.clone()
-                    }
-                    // The final `_`: guard = negation of the disjunction of all prior
-                    // arm guards. (`decompose_match` guarantees only the last arm is a
-                    // bare `_`, so `prior_guards` is every preceding discriminant.)
-                    None => {
-                        if prior_guards.is_empty() {
-                            // `match scrut { _ => .. }` -- a single catch-all is
-                            // unconditional; its guard is vacuous. Lift the body bare
-                            // (the asserts are point-wise). Use `true` antecedent so the
-                            // emit stays a uniform implication shape.
-                            eq(bool_const(true), bool_const(true))
-                        } else if prior_guards.len() == 1 {
-                            not_(prior_guards[0].clone())
-                        } else {
-                            not_(or_(prior_guards.clone()))
-                        }
-                    }
-                };
-                let count = count_asserts_in_stmts(&arm.body_stmts);
-                if count == 0 {
-                    // A diverging / non-asserting arm (`panic!()`, `do_a()`) carries no
-                    // claim -- it contributes no implication, only its guard to the
-                    // wildcard's negation (already pushed above). Skip.
-                    continue;
+        let total: usize = self
+            .arms
+            .iter()
+            .map(|a| count_asserts_in_stmts(&a.body_stmts))
+            .sum();
+        debug_assert!(total > 0, "MatchSugar constructed without assertions");
+        let mut conjuncts: Vec<Rc<Formula>> = Vec::new();
+        // Running disjunction of prior arms' discriminant guards -- the wildcard's
+        // guard is its negation (`_` fires iff no prior arm matched).
+        let mut prior_guards: Vec<Rc<Formula>> = Vec::new();
+        for arm in &self.arms {
+            let arm_guard = match &arm.guard {
+                Some(g) => {
+                    prior_guards.push(g.clone());
+                    g.clone()
                 }
-                let body_conj = self.lift_arm_conj(&arm.body_stmts, count, ctx)?;
-                conjuncts.push(implies(arm_guard, body_conj));
-            }
-            // If every asserting arm bailed there'd be nothing here -- but `total > 0`
-            // and each asserting arm either lifts (push) or returns None above, so a
-            // non-empty `conjuncts` is guaranteed when we reach here.
-            let atom = and_(conjuncts);
-            let warrant = Warrant {
-                name: Some(format!("{}::match", ctx.scope.local_scope())),
+                // The final `_`: guard = negation of the disjunction of all prior
+                // arm guards. (`decompose_match` guarantees only the last arm is a
+                // bare `_`, so `prior_guards` is every preceding discriminant.)
+                None => {
+                    if prior_guards.is_empty() {
+                        // `match scrut { _ => .. }` -- a single catch-all is
+                        // unconditional; its guard is vacuous. Lift the body bare
+                        // (the asserts are point-wise). Use `true` antecedent so the
+                        // emit stays a uniform implication shape.
+                        eq(bool_const(true), bool_const(true))
+                    } else if prior_guards.len() == 1 {
+                        not_(prior_guards[0].clone())
+                    } else {
+                        not_(or_(prior_guards.clone()))
+                    }
+                }
             };
-            Some(Desugared::Constraints {
-                atom,
-                n: total,
-                kind: AssertionFactKind::Warranted,
-                warrant,
-            })
-        })())
+            let count = count_asserts_in_stmts(&arm.body_stmts);
+            if count == 0 {
+                // A diverging / non-asserting arm (`panic!()`, `do_a()`) carries no
+                // claim -- it contributes no implication, only its guard to the
+                // wildcard's negation (already pushed above). Skip.
+                continue;
+            }
+            let body_conj = self
+                .lift_arm_conj(&arm.body_stmts, count, ctx)
+                .unwrap_or_else(|| unreachable!("constructed match arm body did not lift"));
+            conjuncts.push(implies(arm_guard, body_conj));
+        }
+        debug_assert!(
+            !conjuncts.is_empty(),
+            "MatchSugar constructed with assertions but no lifted arm"
+        );
+        let atom = and_(conjuncts);
+        let warrant = Warrant {
+            name: Some(format!("{}::match", ctx.scope.local_scope())),
+        };
+        Outcome::Complete(Desugared::Constraints {
+            atom,
+            n: total,
+            kind: AssertionFactKind::Warranted,
+            warrant,
+        })
     }
 }
 

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// TERM recognizer for `Expr::Reference`. Mirrors the three source-of-truth guard arms
-// in order: `&x` -> `ref` ctor; `&mut <immutable value>` -> `ref_mut` ctor; any other
-// `&mut <place>` -> reasoned Incomplete (mutable reference). Byte-identical to the
-// `Expr::Reference` arms of the old fat factory.
+// TERM recognizer for `Expr::Reference`. Shared and mutable references are
+// capability constructors: `&x` -> `ref(x)`, `&mut x` -> `ref_mut(x)`.
+// Construction itself is inert; consumers own any temporal effect when the
+// capability is written through or escapes.
 //
 // THE `ref`/`ref_mut` CTORS ARE STRUCTURAL: they keep a borrowed value distinct as a
 // term so that an EUF call-result key (`r.contains(&i)` -> `..c:ref(i)`) and a pointer-
@@ -19,8 +19,7 @@
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::ctor_term::CtorSugar;
 use crate::sugar::factory::{SugarBody, SugarBuildCtx};
-use crate::sugar::term_leaf::reasoned_incomplete;
-use crate::{is_immutable_value_expr, token_key, Effect, Sugar, UnsupportedTermCause};
+use crate::Sugar;
 use syn::Expr;
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -31,19 +30,65 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     let Expr::Reference(reference) = expr else {
         return None;
     };
-    if reference.mutability.is_none() {
-        return Some(Box::new(CtorSugar::new(
-            "ref",
-            vec![SugarBody::term(&reference.expr, fcx)],
-        )));
+    let ctor = if reference.mutability.is_some() {
+        "ref_mut"
+    } else {
+        "ref"
+    };
+    Some(Box::new(CtorSugar::new(
+        ctor,
+        vec![SugarBody::term(reference.expr.as_ref(), fcx)],
+    )))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::rc::Rc;
+
+    use super::*;
+    use crate::{
+        sugar_ctx, Desugared, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, TemporalPlan,
+        TemporalScope,
+    };
+    use sugar_ir_symbolic::Term;
+    use syn::Item;
+
+    fn reduce(src: &str) -> Rc<Term> {
+        let expr: Expr = syn::parse_str(src).expect("parse reference expr");
+        let scope = TemporalScope::new("reference-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = std::collections::BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        let node = recognize(&expr, &fcx).expect("reference_term recognizes");
+        let items: Vec<Item> = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let mut float_widths = FloatWidthScope::new();
+        let ctx = sugar_ctx(&scope, &options, &reducer, &mut float_widths, 0);
+        let Outcome::Complete(Desugared::Term(term)) = node.desugar(&ctx) else {
+            panic!("reference sugar should complete as an inert reference term")
+        };
+        term
     }
-    if is_immutable_value_expr(&reference.expr) {
-        return Some(Box::new(CtorSugar::new(
-            "ref_mut",
-            vec![SugarBody::term(&reference.expr, fcx)],
-        )));
+
+    #[test]
+    fn shared_reference_constructs_ref_floor() {
+        let term = reduce("&x");
+        let Term::Ctor { name, args } = term.as_ref() else {
+            panic!("expected ref ctor, got {term:?}");
+        };
+        assert_eq!(name, "ref");
+        assert_eq!(args.len(), 1);
+        assert!(matches!(args[0].as_ref(), Term::Var { name } if name == "x"));
     }
-    // reference.mutability.is_some() && not an immutable value place.
-    let effect = Effect::unsupported_term(&token_key(expr), UnsupportedTermCause::MutableReference);
-    Some(reasoned_incomplete(effect.reason()))
+
+    #[test]
+    fn mutable_reference_constructs_ref_mut_floor() {
+        let term = reduce("&mut x");
+        let Term::Ctor { name, args } = term.as_ref() else {
+            panic!("expected ref_mut ctor, got {term:?}");
+        };
+        assert_eq!(name, "ref_mut");
+        assert_eq!(args.len(), 1);
+        assert!(matches!(args[0].as_ref(), Term::Var { name } if name == "x"));
+    }
 }

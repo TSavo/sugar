@@ -19,8 +19,7 @@ use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{
-    build_composite, compat_reduction, has_composite, CompositeFloor, FactoryGap, FactoryReduction,
-    SugarBody, SugarBuildCtx,
+    build_composite, has_composite, CompositeFloor, SugarBody, SugarBuildCtx,
 };
 use crate::sugar::method_family;
 use crate::{ConstVal, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
@@ -74,21 +73,19 @@ fn operand_body(expr: &Expr, fcx: &SugarBuildCtx) -> SugarBody<CompositeFloor> {
 }
 
 impl Sugar for ZipSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+    fn reduce(&self, ctx: &SugarCtx) -> Outcome {
         let left = match sequence_from_body(&self.left, ctx, "zip lhs") {
             Ok(seq) => seq,
-            Err(reduction) => return reduction,
+            Err(outcome) => return outcome,
         };
         let right = match sequence_from_body(&self.right, ctx, "zip rhs") {
             Ok(seq) => seq,
-            Err(reduction) => return reduction,
+            Err(outcome) => return outcome,
         };
         // `zip` stops at the shorter side: `min(left.len, right.len)` pairs.
         let len = left.len().min(right.len());
         if len > SUGAR_SEQ_CAP as usize {
-            return Err(FactoryGap::new(format!(
-                "zip sequence length {len} exceeds cap {SUGAR_SEQ_CAP}"
-            )));
+            panic!("zip sequence length {len} exceeds cap {SUGAR_SEQ_CAP}");
         }
         let mut out = Vec::with_capacity(len);
         // `Iterator::zip` already halts at the shorter operand, so this yields exactly
@@ -101,9 +98,7 @@ impl Sugar for ZipSugar {
             // (an opaque side -> no tuple value, like an opaque `enumerate` element).
             let pair_expr: Expr =
                 syn::parse_str(&format!("({}, {})", quote::quote!(#le), quote::quote!(#re)))
-                    .map_err(|err| {
-                        FactoryGap::new(format!("zip pair expression parse failed: {err}"))
-                    })?;
+                    .unwrap_or_else(|err| panic!("zip pair expression parse failed: {err}"));
             let pair_cv = match (l.value, r.value) {
                 (Some(lv), Some(rv)) => Some(ConstVal::Tuple(vec![lv, rv])),
                 _ => None,
@@ -118,11 +113,11 @@ impl Sugar for ZipSugar {
             len = out.len(),
             "zipped two finite literal-derived domains (truncated to the shorter)"
         );
-        Ok(Outcome::Complete(Desugared::Seq(out)))
+        Outcome::Complete(Desugared::Seq(out))
     }
 
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
+        self.reduce(ctx)
     }
 }
 
@@ -130,12 +125,11 @@ fn sequence_from_body(
     body: &SugarBody<CompositeFloor>,
     ctx: &SugarCtx,
     label: &'static str,
-) -> Result<Vec<DesugaredElem>, FactoryReduction> {
+) -> Result<Vec<DesugaredElem>, Outcome> {
     match body.reduce(ctx) {
-        Ok(Outcome::Complete(d)) => d
+        Outcome::Complete(d) => Ok(d
             .into_seq()
-            .ok_or_else(|| Err(FactoryGap::new(format!("{label} reduced to non-sequence")))),
-        Ok(Outcome::Incomplete(effect)) => Err(Ok(Outcome::Incomplete(effect))),
-        Err(gap) => Err(Err(gap)),
+            .unwrap_or_else(|| panic!("{label} reduced to non-sequence"))),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }

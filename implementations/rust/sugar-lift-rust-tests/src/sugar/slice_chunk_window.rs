@@ -6,13 +6,10 @@
 // sub-slice is represented as an array expression plus a tuple ConstVal payload so
 // closure sugar can evaluate `chunk.iter().sum()` without inventing runtime state.
 
-use std::collections::BTreeMap;
-
 use quote::quote;
 use syn::Expr;
 
-use crate::sugar::factory::SugarBuildCtx;
-use crate::sugar::method_family;
+use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::{ConstVal, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -46,89 +43,34 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
         "windows" => SliceChunkWindowKind::Windows,
         _ => return None,
     };
-    Some(Box::new(SliceChunkWindowCallSugar {
-        receiver: (*call.receiver).clone(),
+    Some(Box::new(SliceChunkWindowSugar {
+        inner: SugarBody::composite(&call.receiver, fcx),
         kind,
         n,
-        let_inits: capture_let_inits(fcx),
     }))
 }
 
-struct SliceChunkWindowCallSugar {
-    receiver: Expr,
-    kind: SliceChunkWindowKind,
-    n: usize,
-    let_inits: BTreeMap<String, Expr>,
-}
-
 pub(crate) struct SliceChunkWindowSugar {
-    pub(crate) inner: Box<dyn Sugar>,
+    pub(crate) inner: SugarBody<CompositeFloor>,
     pub(crate) kind: SliceChunkWindowKind,
     pub(crate) n: usize,
 }
 
 impl Sugar for SliceChunkWindowSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let seq = match self.inner.desugar(ctx) {
-            Outcome::Complete(d) => match d.into_seq() {
-                Some(seq) => seq,
-                None => return Outcome::from_opt(None),
-            },
-            hit if hit.is_structural_bail() => return Outcome::from_opt(None),
-            hit => return hit,
-        };
         if self.n == 0 {
-            return Outcome::from_opt(None);
+            slice_chunk_window_gap("zero chunk/window size should be rejected at construction");
         }
-        let Some(out) = chunk_window_sequence(&seq, self.kind, self.n) else {
-            return Outcome::from_opt(None);
+        let seq = match self.inner.reduce(ctx) {
+            Outcome::Complete(d) => d
+                .into_seq()
+                .unwrap_or_else(|| slice_chunk_window_gap("receiver reduced to non-sequence")),
+            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
+        let out = chunk_window_sequence(&seq, self.kind, self.n)
+            .unwrap_or_else(|| slice_chunk_window_gap("chunk/window output did not materialize"));
         Outcome::Complete(Desugared::Seq(out))
     }
-}
-
-impl Sugar for SliceChunkWindowCallSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-        let let_inits: BTreeMap<String, &Expr> = stable
-            .iter()
-            .map(|(name, init)| (name.clone(), init))
-            .chain(
-                self.let_inits
-                    .iter()
-                    .map(|(name, init)| (name.clone(), init)),
-            )
-            .collect();
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        let Some(inner) = method_family::build_literal_sequence_composite(&self.receiver, &fcx)
-        else {
-            return Outcome::Incomplete(crate::Effect::Unsupported {
-                reason: format!(
-                    "chunk source is runtime slice, not literal `{}`",
-                    crate::token_key(&self.receiver)
-                ),
-            });
-        };
-        let seq = match inner.desugar(ctx) {
-            Outcome::Complete(d) => match d.into_seq() {
-                Some(seq) => seq,
-                None => return Outcome::from_opt(None),
-            },
-            hit if hit.is_structural_bail() => return Outcome::from_opt(None),
-            hit => return hit,
-        };
-        let Some(out) = chunk_window_sequence(&seq, self.kind, self.n) else {
-            return Outcome::from_opt(None);
-        };
-        Outcome::Complete(Desugared::Seq(out))
-    }
-}
-
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
 }
 
 fn chunk_window_sequence(
@@ -179,6 +121,10 @@ fn chunk_window_sequence(
         }
     }
     Some(out)
+}
+
+fn slice_chunk_window_gap(reason: &str) -> ! {
+    panic!("slice_chunk_window did not reach a lawful floor: {reason}")
 }
 
 fn subslice_elem(elems: &[DesugaredElem]) -> Option<DesugaredElem> {

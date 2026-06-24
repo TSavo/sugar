@@ -79,26 +79,26 @@ pub(crate) fn build_literal_sequence_composite(
     {
         return None;
     }
-    let mut node = literal_iter_call_base(&base)
-        .then(|| {
-            Box::new(LiteralIterCallSugar {
-                source: base.clone(),
-            }) as Box<dyn Sugar>
-        })
-        .unwrap_or_else(|| build_composite(&base, fcx));
+    let mut node = if literal_iter_call_base(&base) {
+        Box::new(LiteralIterCallSugar {
+            seq: literal_iter_call_sequence(&base)?,
+        }) as Box<dyn Sugar>
+    } else {
+        build_composite(&base, fcx)
+    };
     for wrap in adaptors {
-        node = wrap(node);
+        node = wrap(node, fcx);
     }
     Some(node)
 }
 
 struct LiteralIterCallSugar {
-    source: Expr,
+    seq: Vec<DesugaredElem>,
 }
 
 impl Sugar for LiteralIterCallSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt(literal_iter_call_sequence(&self.source).map(Desugared::Seq))
+        Outcome::Complete(Desugared::Seq(self.seq.clone()))
     }
 }
 
