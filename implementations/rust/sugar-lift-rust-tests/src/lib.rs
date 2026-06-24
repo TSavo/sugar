@@ -7944,6 +7944,10 @@ enum Effect {
     /// execution boundary owned by the callback site; the identity adaptor must refuse
     /// instead of dropping possible effects.
     ResultInspectCallback { boundary: String },
+    /// REGEX-PATTERN: a resolved `Regex::new(<literal>)` pattern is malformed or uses a
+    /// non-regular feature the shared RegLan lowering authority cannot represent. The
+    /// pattern child completed; the regex language boundary itself is the named stop.
+    RegexPattern { boundary: String, reason: String },
     /// FUTURE-HANDOFF: an assertion-bearing `async { .. }` future is handed to a
     /// call/method driver. `async` syntax itself is compiler-known and inert, but the
     /// driver call is library/runtime semantics unless dynamically learned from visible
@@ -8074,6 +8078,7 @@ impl Effect {
                 "Result inspect callback `{boundary}` is not provably no-op; refusing to erase \
                  possible callback effects"
             ),
+            Effect::RegexPattern { reason, .. } => reason.clone(),
             Effect::FutureHandoff { boundary } => format!(
                 "future handoff boundary `{boundary}`: assertion inside an async future handed to \
                  a non-axiomatic driver; driver semantics must be learned dynamically from \
@@ -8133,6 +8138,7 @@ impl Effect {
             | Effect::RuntimeExprStmt { boundary }
             | Effect::CellRuntimeAliased { boundary }
             | Effect::ResultInspectCallback { boundary }
+            | Effect::RegexPattern { boundary, .. }
             | Effect::FutureHandoff { boundary }
             | Effect::DormantFuture { boundary }
             | Effect::RuntimeMatchScrutinee { boundary }
@@ -18620,17 +18626,11 @@ fn translate_regex_match_assertion(
     let reducer = ReductionCtx::from_items(&[]);
     let ctx = sugar_ctx(scope, &options, &reducer, &mut fw, 0);
     let pattern_str = match m.resolve_pattern_floor(&ctx) {
-        Ok(sugar::factory::FloorRead::Complete(pattern)) => pattern,
-        Ok(sugar::factory::FloorRead::Incomplete(_)) => {
+        sugar::factory::FloorRead::Complete(pattern) => pattern,
+        sugar::factory::FloorRead::Incomplete(_) => {
             // Runtime / unsupported pattern operand -> not a recognized regex
             // membership today (the composition frontier). Declined, not refused.
             return Ok(None);
-        }
-        Err(gap) => {
-            panic!(
-                "factory gap has no terminal Outcome: {}; run the factory audit gap report to enumerate this engine hole",
-                gap.reason
-            );
         }
     };
     // REFUSE BY NAME at lift time if the resolved pattern is not a regular language

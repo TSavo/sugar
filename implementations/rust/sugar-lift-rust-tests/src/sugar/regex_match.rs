@@ -46,10 +46,7 @@ use syn::Expr;
 #[cfg(test)]
 use crate::strip_refs_groups;
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, FloorRead, LiteralStringFloor, SugarBody,
-    SugarBuildCtx, TermFloor,
-};
+use crate::sugar::factory::{FloorRead, LiteralStringFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::format::stable_let_bindings;
 use crate::{
     callsite_assertion_name, AssertionFactKind, Desugared, Effect, Outcome, Sugar, SugarCtx,
@@ -97,31 +94,21 @@ fn recognize_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
 }
 
 impl Sugar for RegexMatchSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
-        let pattern_str = match self.pattern.reduce_literal_string(ctx)? {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        let pattern_str = match self.pattern.reduce_literal_string(ctx) {
             FloorRead::Complete(pattern) => pattern,
-            FloorRead::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+            FloorRead::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
         if let Err(e) = sugar_ir_compiler_smt_lib::regex_regln::regex_to_regln(&pattern_str) {
-            return Ok(unsupported(match e {
-                sugar_ir_compiler_smt_lib::regex_regln::RegexError::NotRegular(feat) => format!(
-                    "regex pattern `{}` uses a non-regular feature ({feat}) -- not expressible \
-                     as RegLan; refused by name (no str.in-regex membership row)",
-                    pattern_str
-                ),
-                sugar_ir_compiler_smt_lib::regex_regln::RegexError::Malformed(msg) => format!(
-                    "regex pattern `{}` is malformed ({msg}); refused (no str.in-regex membership row)",
-                    pattern_str
-                ),
-            }));
+            return regex_pattern_incomplete(pattern_str, e);
         }
-        let subject = match self.subject.reduce(ctx)? {
-            Outcome::Complete(desugared) => desugared.into_term().ok_or_else(|| {
-                FactoryGap::new(
+        let subject = match self.subject.reduce(ctx) {
+            Outcome::Complete(desugared) => desugared.into_term().unwrap_or_else(|| {
+                regex_gap(
                     "regex subject completed a non-Term where a Term was required; write more Sugar for this AST",
                 )
-            })?,
-            Outcome::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+            }),
+            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
         let pattern = str_const(pattern_str);
         let name = method_assertion_name(
@@ -129,14 +116,7 @@ impl Sugar for RegexMatchSugar {
             vec![subject.clone(), pattern.clone()],
             ctx.scope.local_scope(),
         );
-        Ok(constraint(
-            atomic_("str.in-regex", vec![subject, pattern]),
-            name,
-        ))
-    }
-
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
+        constraint(atomic_("str.in-regex", vec![subject, pattern]), name)
     }
 }
 
@@ -146,10 +126,7 @@ impl RegexMatch {
     /// resolved string off the typed literal-string floor. A `Complete` carries the
     /// resolved literal; an `Incomplete` is a genuinely runtime / unsupported pattern.
     /// A gap has no terminal outcome and must propagate to audit/panic.
-    pub(crate) fn resolve_pattern_floor(
-        &self,
-        ctx: &SugarCtx,
-    ) -> Result<FloorRead<String>, FactoryGap> {
+    pub(crate) fn resolve_pattern_floor(&self, ctx: &SugarCtx) -> FloorRead<String> {
         let stable = stable_let_bindings(ctx.scope);
         let let_inits = stable_let_refs(&stable);
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
@@ -306,8 +283,29 @@ fn method_assertion_name(
     callsite_assertion_name(&term, local_scope)
 }
 
-fn unsupported(reason: String) -> Outcome {
-    Outcome::Incomplete(Effect::Unsupported { reason })
+fn regex_pattern_incomplete(
+    pattern: String,
+    error: sugar_ir_compiler_smt_lib::regex_regln::RegexError,
+) -> Outcome {
+    let reason = match error {
+        sugar_ir_compiler_smt_lib::regex_regln::RegexError::NotRegular(feat) => format!(
+            "regex pattern `{}` uses a non-regular feature ({feat}) -- not expressible \
+             as RegLan; refused by name (no str.in-regex membership row)",
+            pattern
+        ),
+        sugar_ir_compiler_smt_lib::regex_regln::RegexError::Malformed(msg) => format!(
+            "regex pattern `{}` is malformed ({msg}); refused (no str.in-regex membership row)",
+            pattern
+        ),
+    };
+    Outcome::Incomplete(Effect::RegexPattern {
+        boundary: pattern,
+        reason,
+    })
+}
+
+fn regex_gap(reason: &str) -> ! {
+    panic!("RegexMatchSugar did not reach a lawful value floor: {reason}")
 }
 
 fn stable_let_refs(stable: &BTreeMap<String, Expr>) -> BTreeMap<String, &Expr> {
