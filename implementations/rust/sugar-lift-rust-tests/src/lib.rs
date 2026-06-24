@@ -20175,7 +20175,7 @@ pub(crate) fn literal_string_value(expr: &Expr) -> Option<String> {
     }
 }
 
-fn literal_byte_string_value(expr: &Expr) -> Option<Vec<u8>> {
+pub(crate) fn literal_byte_string_value(expr: &Expr) -> Option<Vec<u8>> {
     match expr {
         Expr::Lit(ExprLit {
             lit: Lit::ByteStr(bytes),

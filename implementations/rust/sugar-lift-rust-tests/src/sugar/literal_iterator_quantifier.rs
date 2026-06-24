@@ -1,26 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// LiteralIteratorQuantifierSugar: `iter().all(..)` / `iter().any(..)` in
-// assertion position over finite literal domains. The receiver construction is
-// the stdlib/compiler axiom; every closure body is lowered by the recursive
-// constraint factory after substituting the pinned element.
+// LiteralIteratorQuantifierSugar: constraint-position `.all(..)` / `.any(..)`
+// over a finite literal iterator. This node is deliberately boring glue: the
+// receiver body owns sequence construction, the predicate body owns its own term
+// floor, and this sugar only curries that predicate over each element and joins
+// the resulting boolean floors.
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
+use sugar_ir_symbolic::{and_, eq, or_, Formula, Term};
+use syn::{Expr, ExprMethodCall};
+
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{
-    compat_reduction, ConstraintFloor, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::method_family;
+use crate::sugar::term_dispatch::{
+    CurryOccurrence, CurryVisitor, DesugaredFloorAccept, LiteralPredicateBoolVisitor,
+    TermFloorAccept,
 };
 use crate::{
-    ascii_byte_class_atom, ascii_char_class_atom, bool_const, closure_simple_param_name,
-    literal_byte_string_value, literal_char_predicate_atom, literal_string_value,
-    matches_param_receiver, scalar_iter_domain_elems, scalar_literal_array_elems, simple_path_name,
-    substitute_expr, term_single_char_value, token_key, AssertionFactKind, Desugared, Effect,
-    Outcome, Sugar, SugarCtx, Warrant,
+    bool_const, closure_simple_param_name, const_val_term, make_var, token_key, AssertionFactKind,
+    Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, Warrant,
 };
-use sugar_ir_symbolic::{and_, eq, num, or_, str_const, Formula, Term};
-use syn::{Expr, ExprClosure, ExprMethodCall};
 
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
     "constraint_literal_iterator_quantifier",
@@ -34,29 +35,15 @@ enum Quantifier {
     Any,
 }
 
-#[derive(Clone, Copy)]
-enum LiteralIteratorKind {
-    Chars,
-    Bytes,
-}
-
 struct LiteralIteratorQuantifierSugar {
     method: Quantifier,
-    closure: ExprClosure,
-    domain: QuantifierDomain,
+    receiver: SugarBody<CompositeFloor>,
+    predicate: QuantifierPredicate,
 }
 
-enum QuantifierDomain {
-    Literal {
-        kind: LiteralIteratorKind,
-        elements: Vec<Rc<Term>>,
-    },
-    Scalar {
-        constraints: Vec<SugarBody<ConstraintFloor>>,
-    },
-    InvalidParam {
-        reason: String,
-    },
+struct QuantifierPredicate {
+    param: String,
+    body: SugarBody<TermFloor>,
 }
 
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
@@ -78,96 +65,51 @@ fn recognize_method(
     let Expr::Closure(closure) = call.args.first()? else {
         return None;
     };
-    if closure.inputs.len() != 1 {
-        return None;
-    }
-    let literal_elements = literal_iterator_elements(&call.receiver);
-    let scalar_elements = scalar_iter_domain_elems(&call.receiver, fcx.scope())
-        .or_else(|| scalar_iter_domain_elems_from_let_inits(&call.receiver, fcx.let_inits()));
-    if literal_elements.is_none() && scalar_elements.is_none() {
-        return None;
-    }
-    let Some(param_name) = closure_simple_param_name(closure) else {
-        return Some(LiteralIteratorQuantifierSugar {
-            method,
-            closure: closure.clone(),
-            domain: QuantifierDomain::InvalidParam {
-                reason: format!(
-                    "{} predicate requires a simple identifier parameter",
-                    method.as_str()
-                ),
-            },
-        });
-    };
-    let domain = if let Some((kind, elements)) = literal_elements {
-        QuantifierDomain::Literal { kind, elements }
-    } else {
-        let constraints = scalar_elements?
-            .into_iter()
-            .map(|element| {
-                let mut bindings = BTreeMap::new();
-                bindings.insert(param_name.clone(), element);
-                let body = substitute_expr(closure.body.as_ref(), &bindings);
-                SugarBody::constraint(&body, fcx)
-            })
-            .collect();
-        QuantifierDomain::Scalar { constraints }
-    };
+    let param = closure_simple_param_name(closure)?;
     Some(LiteralIteratorQuantifierSugar {
         method,
-        closure: closure.clone(),
-        domain,
+        receiver: SugarBody::from_node(method_family::build_literal_sequence_composite(
+            &call.receiver,
+            fcx,
+        )?),
+        predicate: QuantifierPredicate {
+            param,
+            body: SugarBody::term(closure.body.as_ref(), fcx),
+        },
     })
 }
 
 impl Sugar for LiteralIteratorQuantifierSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
-        match &self.domain {
-            QuantifierDomain::InvalidParam { reason } => {
-                return Ok(unsupported(reason.clone()));
-            }
-            QuantifierDomain::Literal { kind, elements } => {
-                let mut atoms = Vec::new();
-                for element in elements {
-                    let atom = match iterator_element_predicate_atom(
-                        self.closure.body.as_ref(),
-                        closure_simple_param_name(&self.closure)
-                            .as_deref()
-                            .unwrap_or("_"),
-                        element.clone(),
-                        *kind,
-                    ) {
-                        Ok(atom) => atom,
-                        Err(reason) => return Ok(unsupported(reason)),
-                    };
-                    atoms.push(atom);
-                }
-                Ok(constraint(
-                    self.join(atoms),
-                    AssertionFactKind::Warranted,
-                    None,
-                ))
-            }
-            QuantifierDomain::Scalar { constraints } => {
-                let mut atoms = Vec::new();
-                let mut kind = AssertionFactKind::Support;
-                for body in constraints {
-                    let payload = match constraint_payload(body, ctx) {
-                        Ok(payload) => payload,
-                        Err(reduction) => return reduction,
-                    };
-                    if payload.kind.is_warranted() {
-                        kind = AssertionFactKind::Warranted;
-                    }
-                    atoms.push(payload.atom);
-                }
-                Ok(constraint(self.join(atoms), kind, None))
-            }
-        }
-    }
-
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
+        let seq = match self.receiver.reduce(ctx) {
+            Outcome::Complete(desugared) => desugared
+                .into_seq()
+                .unwrap_or_else(|| quantifier_gap("receiver completed as non-sequence")),
+            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+        };
+
+        let mut atoms = Vec::with_capacity(seq.len());
+        let mut warranted = true;
+        for (idx, elem) in seq.into_iter().enumerate() {
+            let term = match self.predicate.curried_term(&elem, idx, ctx) {
+                Ok(term) => term,
+                Err(outcome) => return outcome,
+            };
+            let PredicateAtom { atom, literal } = predicate_atom(term);
+            warranted &= literal;
+            atoms.push(atom);
+        }
+
+        Outcome::Complete(Desugared::Constraints {
+            atom: self.join(atoms),
+            n: 1,
+            kind: if warranted {
+                AssertionFactKind::Warranted
+            } else {
+                AssertionFactKind::Support
+            },
+            warrant: Warrant { name: None },
+        })
     }
 }
 
@@ -192,114 +134,57 @@ impl LiteralIteratorQuantifierSugar {
     }
 }
 
-impl Quantifier {
-    fn as_str(self) -> &'static str {
-        match self {
-            Quantifier::All => "all",
-            Quantifier::Any => "any",
-        }
+impl QuantifierPredicate {
+    fn curried_term(
+        &self,
+        elem: &DesugaredElem,
+        ordinal: usize,
+        ctx: &SugarCtx,
+    ) -> Result<Rc<Term>, Outcome> {
+        let elem_term = elem_term_floor(elem);
+        let curried = match self.body.reduce(ctx) {
+            Outcome::Complete(desugared) => desugared.accept_desugared_floor(CurryVisitor {
+                param: &self.param,
+                arg: &elem_term,
+                occurrence: CurryOccurrence {
+                    family: "quant",
+                    ordinal,
+                },
+            }),
+            Outcome::Incomplete(effect) => return Err(Outcome::Incomplete(effect)),
+        };
+        Ok(curried
+            .into_term()
+            .unwrap_or_else(|| quantifier_gap("predicate body completed as non-term")))
     }
 }
 
-fn scalar_iter_domain_elems_from_let_inits(
-    receiver: &Expr,
-    let_inits: &BTreeMap<String, &Expr>,
-) -> Option<Vec<Expr>> {
-    let base = crate::iter_adaptor_base(receiver);
-    if let Some(elems) = scalar_literal_array_elems(base) {
-        return Some(elems);
-    }
-    let name = simple_path_name(base)?;
-    scalar_literal_array_elems(let_inits.get(&name)?)
-}
-
-fn literal_iterator_elements(expr: &Expr) -> Option<(LiteralIteratorKind, Vec<Rc<Term>>)> {
-    match expr {
-        Expr::MethodCall(call) if call.args.is_empty() && call.method == "chars" => {
-            let value = literal_string_value(&call.receiver)?;
-            let elements = value
-                .chars()
-                .map(|ch| str_const(ch.to_string()))
-                .collect::<Vec<_>>();
-            Some((LiteralIteratorKind::Chars, elements))
-        }
-        Expr::MethodCall(call) if call.args.is_empty() && call.method == "iter" => {
-            let bytes = literal_byte_string_value(&call.receiver)?;
-            let elements = bytes.into_iter().map(|b| num(i128::from(b))).collect();
-            Some((LiteralIteratorKind::Bytes, elements))
-        }
-        Expr::Paren(paren) => literal_iterator_elements(&paren.expr),
-        Expr::Group(group) => literal_iterator_elements(&group.expr),
-        _ => None,
-    }
-}
-
-fn iterator_element_predicate_atom(
-    body: &Expr,
-    param_name: &str,
-    element: Rc<Term>,
-    iter_kind: LiteralIteratorKind,
-) -> Result<Rc<Formula>, String> {
-    let Expr::MethodCall(call) = body else {
-        return Err(format!(
-            "iterator closure body must be a simple method call, got `{}`",
-            token_key(body)
-        ));
-    };
-    if !call.args.is_empty() {
-        return Err(format!(
-            "iterator closure predicate `{}` expects no arguments",
-            call.method
-        ));
-    }
-    if !matches_param_receiver(&call.receiver, param_name) {
-        return Err(format!(
-            "iterator closure predicate must read its bound parameter `{param_name}`"
-        ));
-    }
-    let method = call.method.to_string();
-    match iter_kind {
-        LiteralIteratorKind::Chars => ascii_char_class_atom(&method, element.clone())
-            .or_else(|| {
-                term_single_char_value(&element)
-                    .and_then(|ch| literal_char_predicate_atom(&method, ch))
-            })
-            .ok_or_else(|| format!("unsupported char iterator predicate `{method}`")),
-        LiteralIteratorKind::Bytes => ascii_byte_class_atom(&method, element)
-            .ok_or_else(|| format!("unsupported byte iterator predicate `{method}`")),
-    }
-}
-
-struct ConstraintPayload {
+struct PredicateAtom {
     atom: Rc<Formula>,
-    kind: AssertionFactKind,
+    literal: bool,
 }
 
-fn constraint_payload(
-    body: &SugarBody<ConstraintFloor>,
-    ctx: &SugarCtx,
-) -> Result<ConstraintPayload, FactoryReduction> {
-    match body.reduce(ctx) {
-        Ok(Outcome::Complete(Desugared::Constraints { atom, kind, .. })) => {
-            Ok(ConstraintPayload { atom, kind })
+fn predicate_atom(term: Rc<Term>) -> PredicateAtom {
+    if let Some(value) = term.accept_term_floor(LiteralPredicateBoolVisitor) {
+        PredicateAtom {
+            atom: eq(bool_const(value), bool_const(true)),
+            literal: true,
         }
-        Ok(Outcome::Complete(_)) => Err(Err(FactoryGap::new(
-            "literal iterator quantifier body reduced to non-constraint",
-        ))),
-        Ok(Outcome::Incomplete(effect)) => Err(Ok(Outcome::Incomplete(effect))),
-        Err(gap) => Err(Err(gap)),
+    } else {
+        PredicateAtom {
+            atom: eq(term, bool_const(true)),
+            literal: false,
+        }
     }
 }
 
-fn constraint(atom: Rc<Formula>, kind: AssertionFactKind, name: Option<String>) -> Outcome {
-    Outcome::Complete(Desugared::Constraints {
-        atom,
-        n: 1,
-        kind,
-        warrant: Warrant { name },
-    })
+fn elem_term_floor(elem: &DesugaredElem) -> Rc<Term> {
+    elem.value
+        .as_ref()
+        .and_then(const_val_term)
+        .unwrap_or_else(|| make_var(format!("opaque:quantifier-elem:{}", token_key(&elem.expr))))
 }
 
-fn unsupported(reason: String) -> Outcome {
-    Outcome::Incomplete(Effect::Unsupported { reason })
+fn quantifier_gap(reason: &str) -> ! {
+    panic!("literal iterator quantifier did not reach typed floors: {reason}")
 }

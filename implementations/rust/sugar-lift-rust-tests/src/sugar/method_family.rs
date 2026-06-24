@@ -9,8 +9,9 @@ use syn::{Expr, ExprCall, ExprRange, GenericArgument, UnOp};
 use crate::sugar::factory::{build_composite, has_composite, SugarBuildCtx};
 use crate::sugar::literal_slice;
 use crate::{
-    const_eval, const_int, peel_fold_adaptors, peel_fold_adaptors_in_scope, strip_refs_groups,
-    Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, TemporalScope,
+    const_eval, const_int, literal_byte_string_value, literal_string_value, peel_fold_adaptors,
+    peel_fold_adaptors_in_scope, strip_refs_groups, ConstVal, Desugared, DesugaredElem, Outcome,
+    Sugar, SugarCtx, TemporalScope,
 };
 
 pub(crate) fn is_literal_sequence_base(expr: &Expr) -> bool {
@@ -25,6 +26,7 @@ pub(crate) fn is_literal_sequence_base(expr: &Expr) -> bool {
         // `Vec::from([a, b, c])`) construct exactly an array literal -- classified the same.
         other => crate::sugar::collection_literal::collection_literal_array(other).is_some(),
     }) || literal_iter_call_base(expr)
+        || literal_method_sequence_base(expr)
 }
 
 /// Scope-aware [`is_literal_sequence_base`]: additionally treats a CONST-length repeat
@@ -43,6 +45,7 @@ pub(crate) fn is_literal_sequence_base_in_scope(expr: &Expr, scope: &TemporalSco
         // ctx-free classifier; recognition is purely syntactic, no scope needed.
         other => crate::sugar::collection_literal::collection_literal_array(other).is_some(),
     }) || literal_iter_call_base(expr)
+        || literal_method_sequence_base(expr)
 }
 
 pub(crate) fn resolves_literal_sequence<'a>(
@@ -83,6 +86,10 @@ pub(crate) fn build_literal_sequence_composite(
         Box::new(LiteralIterCallSugar {
             seq: literal_iter_call_sequence(&base)?,
         }) as Box<dyn Sugar>
+    } else if literal_method_sequence_base(&base) {
+        Box::new(LiteralIterCallSugar {
+            seq: literal_method_sequence(&base)?,
+        }) as Box<dyn Sugar>
     } else {
         build_composite(&base, fcx)
     };
@@ -104,6 +111,57 @@ impl Sugar for LiteralIterCallSugar {
 
 fn literal_iter_call_base(expr: &Expr) -> bool {
     literal_iter_call_len_expr(expr).is_some()
+}
+
+fn literal_method_sequence_base(expr: &Expr) -> bool {
+    literal_method_sequence(expr).is_some()
+}
+
+fn literal_method_sequence(expr: &Expr) -> Option<Vec<DesugaredElem>> {
+    let Expr::MethodCall(call) = strip_refs_groups(expr) else {
+        return None;
+    };
+    if !call.args.is_empty() {
+        return None;
+    }
+    match call.method.to_string().as_str() {
+        "chars" => literal_string_value(&call.receiver).map(|value| {
+            value
+                .chars()
+                .map(|ch| DesugaredElem {
+                    expr: char_expr(ch),
+                    value: Some(ConstVal::Char(ch)),
+                })
+                .collect()
+        }),
+        "bytes" => literal_string_value(&call.receiver).map(|value| {
+            value
+                .bytes()
+                .map(|byte| DesugaredElem {
+                    expr: byte_expr(byte),
+                    value: Some(ConstVal::Int(i128::from(byte))),
+                })
+                .collect()
+        }),
+        "iter" => literal_byte_string_value(&call.receiver).map(|bytes| {
+            bytes
+                .into_iter()
+                .map(|byte| DesugaredElem {
+                    expr: byte_expr(byte),
+                    value: Some(ConstVal::Int(i128::from(byte))),
+                })
+                .collect()
+        }),
+        _ => None,
+    }
+}
+
+fn char_expr(ch: char) -> Expr {
+    syn::parse_str(&format!("{ch:?}")).expect("char debug form is a Rust char literal")
+}
+
+fn byte_expr(byte: u8) -> Expr {
+    syn::parse_str(&format!("{byte}u8")).expect("u8 literal text is a Rust expression")
 }
 
 fn literal_iter_call_sequence(expr: &Expr) -> Option<Vec<DesugaredElem>> {
