@@ -27110,7 +27110,7 @@ fn t() {
 //
 // Finite-or-refuse: teeth are added ONLY for primitive integers and bool, where
 // all-zeros is a determinate valid value.  NonZero* types and anything else
-// fall through to opaque — never fabricate a zero for them.
+// become named invalid-bit-pattern refusals — never fabricate a zero for them.
 
 /// THE TEETH (written first, per supersonic workflow): `MaybeUninit::<u32>::zeroed()
 /// .assume_init() == 1` reduces to `0 == 1` which is z3-UNSAT.  Before this
@@ -27198,10 +27198,11 @@ fn t() {
 }
 
 /// FINITE-OR-REFUSE: `MaybeUninit::<NonZeroU32>::zeroed().assume_init()` must NOT
-/// acquire teeth — all-zeros is UB for NonZero* types.  It stays opaque; a wrong
-/// RHS must remain SAT, never UNSAT.
+/// acquire teeth — all-zeros is UB for NonZero* types.  The zeroed sugar owns
+/// that invalid bit-pattern effect by name; it must not fall back to an opaque
+/// support term or fabricate a zero.
 #[test]
-fn maybe_uninit_zeroed_nonzero_stays_opaque_no_teeth() {
+fn maybe_uninit_zeroed_nonzero_refuses_invalid_bit_pattern() {
     let src = r#"
 #[test]
 fn t() {
@@ -27209,16 +27210,14 @@ fn t() {
 }
 "#;
     let out = lift_file(&parse(src), "tests/maybe_uninit_zeroed_nonzero.rs");
-    // If any claim was produced it must be SAT — opaque EUF, no discrimination.
-    for decl in &out.decls {
-        if let Some(sat) = z3_verdict(&inv_json(decl), "maybe_uninit_zeroed_nonzero_no_teeth") {
-            assert!(
-                sat,
-                "NonZeroU32 zeroed().assume_init() == 99 must be SAT (opaque/no teeth): {:?}",
-                decl
-            );
-        }
-    }
+    assert_warranted_decl_count(&out, 0);
+    assert_eq!(out.assertions_refused, 1, "{:?}", out.skip_reasons);
+    assert!(
+        out.skip_reasons.iter().any(|reason| reason
+            .contains("all-zeros bit-pattern is not a determinate valid value for `NonZeroU32`")),
+        "NonZeroU32 zeroed().assume_init() must be named as an invalid bit-pattern refusal: {:?}",
+        out.skip_reasons
+    );
 }
 
 // ── mem::zeroed::<T>() teeth ──────────────────────────────────────────────────

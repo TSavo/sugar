@@ -8035,6 +8035,12 @@ enum Effect {
     /// the child floors are known, and the operation itself proves there is no value floor to
     /// hand upward.
     LiteralPanic { boundary: String, reason: String },
+    /// INVALID-BIT-PATTERN: a fully-literal memory constructor asks Rust to produce a value
+    /// from a bit pattern that is not valid for the target type
+    /// (`MaybeUninit::<NonZeroU32>::zeroed().assume_init()`,
+    /// `mem::zeroed::<NonZeroU32>()`, ...). Primitive zeroable types complete to their
+    /// literal floor; invalid bit patterns stop here by name.
+    InvalidBitPattern { boundary: String, reason: String },
     /// RUNTIME-NUMERIC-OPERAND: a stdlib/compiler numeric operation is defined only when its
     /// operands are literal-determined in this lift (`i8::midpoint(a, b)`, `u128::from(x)`,
     /// etc.). If a child completes to a non-literal term, there is no concrete numeric floor
@@ -8184,6 +8190,7 @@ impl Effect {
             ),
             Effect::LiteralDomain { reason, .. } => reason.clone(),
             Effect::LiteralPanic { reason, .. } => reason.clone(),
+            Effect::InvalidBitPattern { reason, .. } => reason.clone(),
             Effect::RuntimeNumericOperand {
                 operation, kind, ..
             } => format!("runtime {kind} {operation} operand, not literal-determined"),
@@ -8235,6 +8242,7 @@ impl Effect {
             | Effect::ArrayRepeat { boundary }
             | Effect::LiteralDomain { boundary, .. }
             | Effect::LiteralPanic { boundary, .. }
+            | Effect::InvalidBitPattern { boundary, .. }
             | Effect::RuntimeNumericOperand { boundary, .. }
             | Effect::RuntimeFloatOperand { boundary, .. }
             | Effect::FloatIeeeRefinement { boundary, .. }
