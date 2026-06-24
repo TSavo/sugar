@@ -10,7 +10,7 @@
 use syn::{Expr, ExprClosure};
 
 use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
 };
 use crate::sugar::identity::IdentitySugar;
 use crate::sugar::method_family;
@@ -52,12 +52,12 @@ pub(crate) fn recognize_term(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn
 }
 
 struct ResultInspectSugar {
-    receiver: SugarBody,
+    receiver: SugarBody<TermFloor>,
     callback: Expr,
 }
 
 impl ResultInspectSugar {
-    fn new(receiver: SugarBody, callback: Expr) -> Box<dyn Sugar> {
+    fn new(receiver: SugarBody<TermFloor>, callback: Expr) -> Box<dyn Sugar> {
         Box::new(Self { receiver, callback })
     }
 }

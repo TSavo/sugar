@@ -8,7 +8,8 @@ use std::rc::Rc;
 
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    compat_reduction, CompositeFloor, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    TermFloor,
 };
 
 use sugar_ir_symbolic::Term;
@@ -31,7 +32,9 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if fcx.resolving_const_path(&name) {
         return None;
     }
-    let body = construct_const_body(&name, path, fcx, ConstBodyRole::Term)?;
+    let ConstBody::Term(body) = construct_const_body(&name, path, fcx, ConstBodyRole::Term)? else {
+        return None;
+    };
     Some(ConstSugar::new_path(name, body))
 }
 
@@ -40,7 +43,11 @@ fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
     if fcx.resolving_const_path(&name) {
         return None;
     }
-    let body = construct_const_body(&name, path, fcx, ConstBodyRole::Composite)?;
+    let ConstBody::Composite(body) =
+        construct_const_body(&name, path, fcx, ConstBodyRole::Composite)?
+    else {
+        return None;
+    };
     Some(ConstCompositeSugar::new(name, body))
 }
 
@@ -172,13 +179,18 @@ struct PrimitiveAssocConst {
 }
 
 pub(crate) enum ConstSugar {
-    Primitive { expr: Expr },
-    Path { name: String, body: SugarBody },
+    Primitive {
+        expr: Expr,
+    },
+    Path {
+        name: String,
+        body: SugarBody<TermFloor>,
+    },
 }
 
 pub(crate) struct ConstCompositeSugar {
     name: String,
-    body: SugarBody,
+    body: SugarBody<CompositeFloor>,
 }
 
 impl ConstSugar {
@@ -186,13 +198,13 @@ impl ConstSugar {
         Box::new(Self::Primitive { expr })
     }
 
-    fn new_path(name: String, body: SugarBody) -> Box<dyn Sugar> {
+    fn new_path(name: String, body: SugarBody<TermFloor>) -> Box<dyn Sugar> {
         Box::new(Self::Path { name, body })
     }
 }
 
 impl ConstCompositeSugar {
-    fn new(name: String, body: SugarBody) -> Box<dyn Sugar> {
+    fn new(name: String, body: SugarBody<CompositeFloor>) -> Box<dyn Sugar> {
         Box::new(Self { name, body })
     }
 }
@@ -208,13 +220,20 @@ fn construct_const_body(
     path: &syn::Path,
     fcx: &SugarBuildCtx,
     role: ConstBodyRole,
-) -> Option<SugarBody> {
+) -> Option<ConstBody> {
     let init = fcx.scope().const_expr_for_path(path)?;
     let child_fcx = fcx.with_const_path(name);
     Some(match role {
-        ConstBodyRole::Term => SugarBody::term(init.as_ref(), &child_fcx),
-        ConstBodyRole::Composite => SugarBody::composite(init.as_ref(), &child_fcx),
+        ConstBodyRole::Term => ConstBody::Term(SugarBody::term(init.as_ref(), &child_fcx)),
+        ConstBodyRole::Composite => {
+            ConstBody::Composite(SugarBody::composite(init.as_ref(), &child_fcx))
+        }
     })
+}
+
+enum ConstBody {
+    Term(SugarBody<TermFloor>),
+    Composite(SugarBody<CompositeFloor>),
 }
 
 impl Sugar for ConstSugar {

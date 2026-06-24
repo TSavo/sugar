@@ -9040,12 +9040,18 @@ fn string_method_frontiers() {
     let out = lift_file(&parse(src), "tests/str.rs");
     let doc = warranted_doc(&out);
     assert!(
-        doc.contains("opaque:")
-            && doc.contains("to_uppercase")
-            && doc.contains("format !")
-            && !doc.contains("\"args\":[{\"kind\":\"const\",\"value\":\"SS\"")
-            && !doc.contains("\"args\":[{\"kind\":\"const\",\"value\":2"),
-        "non-ASCII case and format!-built receivers are frontiers, not fabricated folds: {doc}"
+        !doc.contains("\"args\":[{\"kind\":\"const\",\"value\":\"SS\""),
+        "non-ASCII case mapping must not fabricate the Unicode expansion: {doc}"
+    );
+    assert_factory_refusal_for_site(
+        &out,
+        "str_method",
+        "to_uppercase",
+        "Unicode string case mapping",
+    );
+    assert!(
+        doc.contains("\"value\":2"),
+        "format!-built literal string receivers should now compose for len(): {doc}"
     );
 }
 
@@ -9096,10 +9102,8 @@ fn concat_pattern_composes() {
 #[test]
 fn regex_match_format_pattern_bails_today_as_composition_frontier() {
     // COMPOSITION FRONTIER: `Regex::new(format!(…))` IS recognized as a Regex::new
-    // construction, but the pattern operand desugars to `Incomplete` (runtime — no
-    // FormatSugar yet), so the regex node DECLINES (no str.in-regex row). This is
-    // NOT a refusal-by-name; it is the case that flips to complete FOR FREE the instant
-    // a FormatSugar producer lands, with zero change to RegexSugar.
+    // construction. A runtime format payload name-refuses, so the regex node emits no
+    // forged `str.in-regex` membership row.
     let src = r#"
 #[test]
 fn format_pattern() {
@@ -10775,7 +10779,7 @@ fn eq_lhs_name(formula: &Formula) -> String {
 
 #[test]
 fn format_over_literal_binding_dissolves_to_str_const() {
-    // SUPERSEDES the old `format_roundtrip_lifts_as_macro_term`: with FormatSugar, a
+    // SUPERSEDES the old `format_roundtrip_lifts_as_macro_term`: with format sugar, a
     // `format!("{x:?}")` whose implicit-capture `x` is an IMMUTABLE `let`-bound literal
     // (`x = 5`) is sugar for ONE string. It no longer lifts as an opaque `macro:` EUF
     // var (which the solver satisfied tautologically -- no teeth); it DISSOLVES to the
@@ -10888,11 +10892,33 @@ fn assert_factory_gap_for_site(out: &AdapterOutput, selected: &str, site_needle:
     );
 }
 
+fn assert_factory_refusal_for_site(
+    out: &AdapterOutput,
+    selected: &str,
+    site_needle: &str,
+    reason_needle: &str,
+) {
+    assert!(
+        out.factory_audits.iter().any(|audit| {
+            audit.selected == Some(selected)
+                && audit.site.contains(site_needle)
+                && audit.disposition == sugar_lift_rust_tests::FactoryDisposition::Refused
+                && audit
+                    .reason
+                    .as_deref()
+                    .is_some_and(|reason| reason.contains(reason_needle))
+        }),
+        "expected factory refusal for `{selected}` at `{site_needle}` containing `{reason_needle}`: {:?}",
+        out.factory_audits
+    );
+}
+
 #[test]
 fn format_overflowing_arithmetic_gaps_no_false_warrant() {
     // The cardinal-sin guard: `200u8 + 100u8` OVERFLOWS u8 (real rust panics in debug,
-    // wraps in release), so it is NOT text-determined. FormatSugar must not forge
-    // "300", the release-wrap "44", or an opaque Complete; it records a factory gap.
+    // wraps in release), so it is NOT text-determined. Format sugar must not forge
+    // "300", the release-wrap "44", or an opaque Complete; it name-refuses the
+    // ambiguous arithmetic.
     let src = r#"
 #[test]
 fn fmt_overflow() {
@@ -10905,14 +10931,19 @@ fn fmt_overflow() {
         "overflowing format must not warrant a forged or opaque value: {:?}",
         out.decls
     );
-    assert_factory_gap_for_site(&out, "macro_term", "format !");
+    assert_factory_refusal_for_site(
+        &out,
+        "format_macro",
+        "format !",
+        "format integer arithmetic overflow",
+    );
 }
 
 #[test]
 fn identical_runtime_format_calls_gap_not_forge_congruence() {
     // Runtime `format!("{x:?}")` has no text-determined value. The old opaque macro
-    // warrant was a side door; the honest result is no warranted value plus gap rows for
-    // both format sites.
+    // warrant was a side door; the honest result is no warranted value plus named
+    // refusals for both format sites.
     let src = r#"
 #[test]
 fn fmt_twice() {
@@ -10927,13 +10958,18 @@ fn fmt_twice() {
         "runtime format must not warrant a forged or opaque value: {:?}",
         out.decls
     );
-    assert_factory_gap_for_site(&out, "macro_term", "format ! ({ x :? })");
+    assert_factory_refusal_for_site(
+        &out,
+        "format_macro",
+        "format ! (\"{x:?}\")",
+        "runtime format argument",
+    );
 }
 
 #[test]
 fn distinct_runtime_format_calls_gap_not_forge_values() {
-    // Distinct runtime bindings are still not dissolvable; both sites must gap rather
-    // than mint opaque Complete terms or forged string literals.
+    // Distinct runtime bindings are still not dissolvable; both sites must refuse by
+    // name rather than mint opaque Complete terms or forged string literals.
     let src = r#"
 #[test]
 fn fmt_distinct() {
@@ -10949,8 +10985,18 @@ fn fmt_distinct() {
         "runtime format must not warrant a forged or opaque value: {:?}",
         out.decls
     );
-    assert_factory_gap_for_site(&out, "macro_term", "format ! ({ x :? })");
-    assert_factory_gap_for_site(&out, "macro_term", "format ! ({ y :? })");
+    assert_factory_refusal_for_site(
+        &out,
+        "format_macro",
+        "format ! (\"{x:?}\")",
+        "runtime format argument",
+    );
+    assert_factory_refusal_for_site(
+        &out,
+        "format_macro",
+        "format ! (\"{y:?}\")",
+        "runtime format argument",
+    );
 }
 
 #[test]
@@ -20894,7 +20940,7 @@ fn format_bool_eq_has_teeth() {
 
 #[test]
 fn format_float_eq_has_teeth() {
-    // Float Display + precision through FormatSugar's float engine (the subsumed
+    // Float Display + precision through the format float engine (the subsumed
     // flt2dec compute path), end-to-end with teeth.
     if let Some(good) = format_eq_verdict(r#"format!("{:.2}", 3.14159)"#, r#""3.14""#, "flt_good") {
         assert!(
@@ -20919,6 +20965,28 @@ fn format_concat_and_to_string_have_teeth() {
         let tsbad = format_eq_verdict(r#"42u8.to_string()"#, r#""43""#, "tostr_bad").unwrap();
         assert!(!tsbad, "wrong to_string must be z3-UNSAT (teeth)");
     }
+}
+
+#[test]
+fn nested_format_argument_uses_literal_string_floor() {
+    let Some(good) = format_eq_verdict(
+        r#"format!("{}", format!("a{}", 1))"#,
+        r#""a1""#,
+        "nested_format_good",
+    ) else {
+        return; // z3 absent
+    };
+    assert!(
+        good,
+        "nested format argument must reduce inner format! to a literal string floor"
+    );
+    let bad = format_eq_verdict(
+        r#"format!("{}", format!("a{}", 1))"#,
+        r#""a2""#,
+        "nested_format_bad",
+    )
+    .unwrap();
+    assert!(!bad, "wrong nested format string must be z3-UNSAT (teeth)");
 }
 
 #[test]
@@ -20970,7 +21038,7 @@ fn str_replace_trim_methods_have_teeth() {
 fn str_method_non_ascii_unicode_case_stays_opaque_no_false_warrant() {
     // DISCRIMINATION (no false warrant): `.to_uppercase()` over a NON-ASCII receiver is
     // not byte-wise text-determined here (a Unicode-table dependency we refuse to guess),
-    // so str_method gaps the frontier -- never a forged version-dependent value. (The byte-wise `to_ascii_*` recompute over the same
+    // so str_method name-refuses -- never a forged version-dependent value. (The byte-wise `to_ascii_*` recompute over the same
     // non-ASCII input IS proven exact by the str_method resolver unit tests.)
     let out = lift_file(
         &parse("#[test]\nfn t() { assert_eq!(\"\u{00df}\u{00fc}rl\".to_uppercase(), \"x\"); }\n"),
@@ -20981,13 +21049,18 @@ fn str_method_non_ascii_unicode_case_stays_opaque_no_false_warrant() {
         "non-ASCII to_uppercase must not warrant a forged or opaque value: {:?}",
         out.decls
     );
-    assert_factory_gap_for_site(&out, "str_method", "to_uppercase");
+    assert_factory_refusal_for_site(
+        &out,
+        "str_method",
+        "to_uppercase",
+        "Unicode string case mapping",
+    );
 }
 
 #[test]
 fn format_runtime_arg_does_not_overfire() {
     // DISCRIMINATION (fake-complete guard): a `format!` over a RUNTIME arg must NOT dissolve
-    // to a str_const (it has no written-literal value). It records a factory gap, so the
+    // to a str_const (it has no written-literal value). It name-refuses, so the
     // obligation is NOT a forged `eq(str_const, str_const)` the wrong-twin would refute.
     let out = lift_file(
         &parse("#[test]\nfn t() { assert_eq!(format!(\"{}\", runtime_var), \"0\"); }\n"),
@@ -20998,7 +21071,7 @@ fn format_runtime_arg_does_not_overfire() {
         "runtime-arg format must not warrant a forged or opaque value: {:?}",
         out.decls
     );
-    assert_factory_gap_for_site(&out, "macro_term", "format !");
+    assert_factory_refusal_for_site(&out, "format_macro", "format !", "runtime format argument");
 }
 
 #[test]

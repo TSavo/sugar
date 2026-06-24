@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    compat_reduction, ConstraintFloor, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
 };
 use crate::{
     ascii_byte_class_atom, ascii_char_class_atom, bool_const, closure_simple_param_name,
@@ -52,7 +52,7 @@ enum QuantifierDomain {
         elements: Vec<Rc<Term>>,
     },
     Scalar {
-        constraints: Vec<SugarBody>,
+        constraints: Vec<SugarBody<ConstraintFloor>>,
     },
     InvalidParam {
         reason: String,
@@ -276,7 +276,7 @@ struct ConstraintPayload {
 }
 
 fn constraint_payload(
-    body: &SugarBody,
+    body: &SugarBody<ConstraintFloor>,
     ctx: &SugarCtx,
 ) -> Result<ConstraintPayload, FactoryReduction> {
     match body.reduce(ctx) {

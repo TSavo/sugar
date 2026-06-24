@@ -5,7 +5,7 @@
 // recognizer substitutes any inert let-prefix and constructs the tail body immediately.
 // Any other block shape is refused by name.
 
-use crate::sugar::factory::{SugarBody, SugarBuildCtx};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::sugar::unsafe_memory;
 use crate::{substitute_expr, token_key, ExprBindings, Outcome, Sugar, SugarCtx};
@@ -42,7 +42,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
 }
 
 struct BlockTermSugar {
-    tail: SugarBody,
+    tail: SugarBody<TermFloor>,
 }
 
 impl BlockTermSugar {

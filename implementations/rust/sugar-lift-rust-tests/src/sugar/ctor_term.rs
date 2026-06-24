@@ -13,18 +13,18 @@ use std::rc::Rc;
 
 use sugar_ir_symbolic::Term;
 
-use crate::sugar::factory::{compat_reduction, FactoryGap, FactoryReduction, SugarBody};
+use crate::sugar::factory::{compat_reduction, FactoryGap, FactoryReduction, SugarBody, TermFloor};
 use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
 /// A generic CONSTRUCTIVE named-ctor term node: completes each child to its `Term` in order
 /// and emits `Term::Ctor { name, args }`.
 pub(crate) struct CtorSugar {
     name: String,
-    args: Vec<SugarBody>,
+    args: Vec<SugarBody<TermFloor>>,
 }
 
 impl CtorSugar {
-    pub(crate) fn new(name: impl Into<String>, args: Vec<SugarBody>) -> Self {
+    pub(crate) fn new(name: impl Into<String>, args: Vec<SugarBody<TermFloor>>) -> Self {
         CtorSugar {
             name: name.into(),
             args,

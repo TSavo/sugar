@@ -15,7 +15,7 @@ use sugar_ir_symbolic::Term;
 use syn::{Expr, RangeLimits};
 
 use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
 };
 use crate::{const_fold_int_term, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 
@@ -58,7 +58,7 @@ enum EndpointKind {
 
 struct RangeAccessorSugar {
     kind: EndpointKind,
-    endpoint: SugarBody,
+    endpoint: SugarBody<TermFloor>,
 }
 
 impl Sugar for RangeAccessorSugar {
@@ -102,7 +102,7 @@ impl EndpointKind {
 }
 
 impl RangeAccessorSugar {
-    fn new(kind: EndpointKind, endpoint: SugarBody) -> Box<dyn Sugar> {
+    fn new(kind: EndpointKind, endpoint: SugarBody<TermFloor>) -> Box<dyn Sugar> {
         Box::new(Self { kind, endpoint })
     }
 }

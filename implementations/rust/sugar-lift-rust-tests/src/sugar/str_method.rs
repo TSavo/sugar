@@ -16,16 +16,16 @@
 // fabricated value. A structural miss is a factory gap, not an opaque method result.
 
 use std::collections::BTreeMap;
-use std::rc::Rc;
-
-use sugar_ir_symbolic::{num, str_const, Term};
+use sugar_ir_symbolic::{num, str_const};
 use syn::{Expr, ExprLit, ExprMethodCall, Lit};
 
-use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::factory::{
+    compat_reduction, FactoryGap, FactoryReduction, FloorRead, LiteralStringFloor, SugarBody,
+    SugarBuildCtx,
+};
 use crate::sugar::format::stable_let_bindings;
 use crate::{
     bool_const, simple_path_name, strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx,
-    STRUCTURAL_BACKSTOP_REASON,
 };
 
 /// Upper bound on a `.repeat(n)` expansion (bytes). A larger expansion DECLINES rather
@@ -46,9 +46,10 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     let stable = stable_let_bindings(fcx.scope());
     let let_inits = merged_let_inits(&stable, fcx.let_inits());
     let kind = recognized_kind(call, &let_inits)?;
+    let receiver = recognized_receiver(call, kind)?.clone();
     Some(Box::new(StrMethodSugar {
         kind,
-        receiver: recognized_receiver(call, kind)?.clone(),
+        receiver_body: SugarBody::literal_string(&receiver, fcx),
         args: recognized_args(call, kind),
     }))
 }
@@ -79,42 +80,65 @@ enum StringMethodKind {
 
 struct StrMethodSugar {
     kind: StrMethodKind,
-    receiver: Expr,
+    receiver_body: SugarBody<LiteralStringFloor>,
     args: Vec<Expr>,
 }
 
 impl Sugar for StrMethodSugar {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+        self.eval(ctx)
+    }
+
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        match self.eval(ctx) {
-            Ok(term) => Outcome::Complete(Desugared::Term(term)),
-            Err(()) => Outcome::Incomplete(Effect::Unsupported {
-                reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
-            }),
-        }
+        compat_reduction(self.reduce(ctx))
     }
 }
 
 impl StrMethodSugar {
-    fn eval(&self, ctx: &SugarCtx) -> Result<Rc<Term>, ()> {
-        let binds = stable_let_bindings(ctx.scope);
-        let recv = resolve_str_value(&self.receiver, &binds).ok_or(())?;
-        match self.kind {
-            StrMethodKind::String(kind) => compute_string_kind(kind, recv, &self.args)
-                .map(str_const)
-                .ok_or(()),
-            StrMethodKind::Len => Ok(num(recv.len() as i128)),
-            StrMethodKind::CharsCount => Ok(num(rev_char_count(&recv))),
-            StrMethodKind::BytesCount => Ok(num(recv.len() as i128)),
-            StrMethodKind::IsEmpty => Ok(bool_const(recv.is_empty())),
+    fn eval(&self, ctx: &SugarCtx) -> FactoryReduction {
+        let recv = match self.receiver_body.reduce_literal_string(ctx)? {
+            FloorRead::Complete(value) => value,
+            FloorRead::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+        };
+        let term = match self.kind {
+            StrMethodKind::String(kind) => {
+                if matches!(
+                    kind,
+                    StringMethodKind::ToUppercase | StringMethodKind::ToLowercase
+                ) && !recv.is_ascii()
+                {
+                    return Ok(Outcome::Incomplete(Effect::Unsupported {
+                        reason:
+                            "Unicode string case mapping is not modeled for non-ASCII receivers; refused"
+                                .to_string(),
+                    }));
+                }
+                compute_string_kind(kind, recv, &self.args)
+                    .map(str_const)
+                    .ok_or_else(|| FactoryGap::new("string method did not reduce to a literal string; write more Sugar for this AST"))?
+            }
+            StrMethodKind::Len => num(recv.len() as i128),
+            StrMethodKind::CharsCount => num(rev_char_count(&recv)),
+            StrMethodKind::BytesCount => num(recv.len() as i128),
+            StrMethodKind::IsEmpty => bool_const(recv.is_empty()),
             StrMethodKind::StartsWith => {
-                let needle = string_literal_value(&self.args[0]).ok_or(())?;
-                Ok(bool_const(recv.starts_with(&needle)))
+                let needle = string_literal_value(&self.args[0]).ok_or_else(|| {
+                    FactoryGap::new(
+                        "starts_with argument did not reduce to a literal string; write more Sugar for this AST",
+                    )
+                })?;
+                bool_const(recv.starts_with(&needle))
             }
             StrMethodKind::Contains => {
-                let needle = resolve_pattern_value(&self.args[0]).ok_or(())?;
-                Ok(bool_const(recv.contains(&needle)))
+                let needle = resolve_pattern_value(&self.args[0]).ok_or_else(|| {
+                    FactoryGap::new(
+                        "contains argument did not reduce to a literal pattern; write more Sugar for this AST",
+                    )
+                })?;
+                bool_const(recv.contains(&needle))
             }
-        }
+        };
+        Ok(Outcome::Complete(Desugared::Term(term)))
     }
 }
 
@@ -268,6 +292,7 @@ fn merged_let_inits(
 
 /// Compute the result of a supported string method over a literal-resolvable receiver,
 /// or `None` (decline -> factory gap, never a forged value).
+#[cfg(test)]
 fn compute_str_method(call: &ExprMethodCall, binds: &BTreeMap<String, Expr>) -> Option<String> {
     let recv = resolve_str_value(&call.receiver, binds)?;
     let kind = match call.method.to_string().as_str() {
@@ -326,6 +351,7 @@ fn compute_string_kind(kind: StringMethodKind, recv: String, args: &[Expr]) -> O
 /// Resolve an expr to its written string value: a `&str` literal, an immutable
 /// `let`/`const`-bound name resolving to one, or a nested supported string-method call
 /// (chaining). `None` for any runtime / non-literal receiver.
+#[cfg(test)]
 fn resolve_str_value(expr: &Expr, binds: &BTreeMap<String, Expr>) -> Option<String> {
     match strip_refs_groups(expr) {
         Expr::Lit(ExprLit {

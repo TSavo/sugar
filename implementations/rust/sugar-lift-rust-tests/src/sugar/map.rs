@@ -13,7 +13,7 @@ use sugar_ir_symbolic::{make_var, Term};
 use syn::{Expr, Pat, Type};
 
 use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    compat_reduction, CompositeFloor, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
 };
 use crate::sugar::method_family;
 use crate::{
@@ -76,7 +76,7 @@ pub(crate) fn recognize_term(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn
 /// A source-level `.map(..)` site. It captures the raw receiver and builds the
 /// sequence child lazily in `desugar`, once the full scope is available.
 struct MapCallSugar {
-    inner: SugarBody,
+    inner: SugarBody<CompositeFloor>,
     f: syn::ExprClosure,
     u128_shift_hint: bool,
 }
@@ -123,7 +123,7 @@ impl Sugar for MapSugar {
 }
 
 pub(crate) struct MapTermSugar {
-    pub(crate) inner: SugarBody,
+    pub(crate) inner: SugarBody<CompositeFloor>,
     pub(crate) f: syn::ExprClosure,
     pub(crate) u128_shift_hint: bool,
 }
@@ -287,7 +287,7 @@ fn reduce_map(
 }
 
 fn reduce_map_body(
-    inner: &SugarBody,
+    inner: &SugarBody<CompositeFloor>,
     f: &syn::ExprClosure,
     u128_shift_hint: bool,
     ctx: &SugarCtx,

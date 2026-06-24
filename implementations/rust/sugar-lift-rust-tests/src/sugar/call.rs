@@ -31,7 +31,7 @@ use sugar_ir_symbolic::{str_const, Term};
 use syn::Expr;
 
 use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
 };
 use crate::sugar::monadic::{none_term, some_term};
 use crate::sugar::term_leaf::reasoned_incomplete;
@@ -70,13 +70,19 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
 /// `desugar` emits the `call:<head>` ctor over its argument child terms (the
 /// constructive tail of the `Expr::Call` arm). See the module header.
 pub(crate) enum CallSugar {
-    TypeId { func: Expr, arg_len: usize },
-    Constructive { func: Expr, args: Vec<SugarBody> },
+    TypeId {
+        func: Expr,
+        arg_len: usize,
+    },
+    Constructive {
+        func: Expr,
+        args: Vec<SugarBody<TermFloor>>,
+    },
 }
 
 impl CallSugar {
     #[allow(dead_code)]
-    pub(crate) fn new(func: Expr, args: Vec<SugarBody>) -> Self {
+    pub(crate) fn new(func: Expr, args: Vec<SugarBody<TermFloor>>) -> Self {
         CallSugar::Constructive { func, args }
     }
 }
@@ -254,6 +260,15 @@ mod tests {
         syn::parse_str(src).expect("parse expr")
     }
 
+    fn term_body(src: &str) -> SugarBody<TermFloor> {
+        let parsed = expr(src);
+        let scope = TemporalScope::new("test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = std::collections::BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        SugarBody::term(&parsed, &fcx)
+    }
+
     /// Run `node.desugar` against a freshly-built, minimal-but-real `SugarCtx`.
     fn run(node: &CallSugar) -> Outcome {
         let items: Vec<Item> = Vec::new();
@@ -282,7 +297,7 @@ mod tests {
     fn emits_call_ctor_with_args_in_order() {
         // `f(x, y)` -> `Ctor { name: "call:f", args: [Var(x), Var(y)] }` -- the exact
         // ctor the `Expr::Call` constructive tail emits, args in SOURCE ORDER.
-        let node = CallSugar::new(expr("f"), vec![expr("x"), expr("y")], BTreeMap::new());
+        let node = CallSugar::new(expr("f"), vec![term_body("x"), term_body("y")]);
         let Outcome::Complete(Desugared::Term(term)) = run(&node) else {
             panic!("expected a Complete term");
         };
@@ -297,7 +312,7 @@ mod tests {
     #[test]
     fn nullary_call_emits_empty_args() {
         // `g()` -> `Ctor { name: "call:g", args: [] }`.
-        let node = CallSugar::new(expr("g"), Vec::new(), BTreeMap::new());
+        let node = CallSugar::new(expr("g"), Vec::new());
         let Outcome::Complete(Desugared::Term(term)) = run(&node) else {
             panic!("expected a Complete term");
         };
@@ -313,7 +328,7 @@ mod tests {
     #[test]
     fn head_key_computed_from_func_expr() {
         // The function expression is retained raw and keyed lazily in `desugar`.
-        let node = CallSugar::new(expr("h"), vec![expr("a")], BTreeMap::new());
+        let node = CallSugar::new(expr("h"), vec![term_body("a")]);
         let Outcome::Complete(Desugared::Term(term)) = run(&node) else {
             panic!("expected a Complete term");
         };
@@ -327,7 +342,7 @@ mod tests {
     fn propagates_child_hit_verbatim() {
         // A child that returns Incomplete aborts the whole node with that SAME `Incomplete` (the old named
         // inner `translate_term_in_scope?` `Err`).
-        let node = CallSugar::new(expr("f"), vec![expr("x"), expr("&mut y")], BTreeMap::new());
+        let node = CallSugar::new(expr("f"), vec![term_body("x"), term_body("&mut y")]);
         match run(&node) {
             Outcome::Incomplete(Effect::Unsupported { reason }) => {
                 assert!(

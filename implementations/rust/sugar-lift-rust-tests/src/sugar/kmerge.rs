@@ -10,7 +10,8 @@ use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{
-    compat_reduction, has_composite, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    compat_reduction, has_composite, CompositeFloor, FactoryGap, FactoryReduction, SugarBody,
+    SugarBuildCtx,
 };
 use crate::sugar::literal::{LiteralSugar, EMPTY_DOMAIN_REASON};
 use crate::{ConstVal, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
@@ -34,7 +35,7 @@ fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
 }
 
 struct KMergeSugar {
-    inner: SugarBody,
+    inner: SugarBody<CompositeFloor>,
 }
 
 impl Sugar for KMergeSugar {

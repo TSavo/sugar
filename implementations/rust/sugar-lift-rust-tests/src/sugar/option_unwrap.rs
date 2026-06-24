@@ -12,7 +12,7 @@ use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
 };
 use crate::sugar::monadic::{is_grounded_literal_term, OPT_NONE, OPT_SOME, RES_ERR, RES_OK};
 use crate::sugar::nonzero::is_nonzero_new_call;
@@ -43,7 +43,7 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
 
 struct OptionUnwrapSugar {
     method: String,
-    receiver: SugarBody,
+    receiver: SugarBody<TermFloor>,
 }
 
 impl Sugar for OptionUnwrapSugar {

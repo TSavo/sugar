@@ -862,6 +862,25 @@ mod tests {
     }
 
     #[test]
+    fn format_macro_claims_shape_before_literal_resolution() {
+        let expr: Expr = syn::parse_str("format!(\"{}\", some_var)").unwrap();
+        let names = candidate_names_for_role(&expr, SugarRole::Term);
+
+        assert!(
+            names.contains(&"format_macro"),
+            "format! recognition is shape-only; payload resolution belongs to desugar: {names:?}"
+        );
+        assert!(
+            names.contains(&"macro_term"),
+            "generic macro fallback remains visible behind the format-specific owner: {names:?}"
+        );
+        assert_eq!(
+            selected_candidate_name_for_role(&expr, SugarRole::Term),
+            Some("format_macro")
+        );
+    }
+
+    #[test]
     fn referenced_format_macro_prioritizes_format_before_reference_wrapper() {
         let expr: Expr = syn::parse_str("&format!(\"{}\", 1)").unwrap();
         let names = candidate_names(&expr);
@@ -1054,6 +1073,20 @@ mod tests {
         assert!(
             string_add < binop,
             "StringAddSugar should outrank generic BinopSugar: {names:?}"
+        );
+    }
+
+    #[test]
+    fn numeric_addition_stays_with_binop_not_string_add() {
+        let expr: Expr = syn::parse_str("n + n").unwrap();
+        let names = candidate_names(&expr);
+        assert!(
+            !names.contains(&"string_add"),
+            "plain numeric/opaque `+` must not be stolen by StringAddSugar: {names:?}"
+        );
+        assert!(
+            names.contains(&"binop"),
+            "plain numeric/opaque `+` remains owned by BinOpSugar: {names:?}"
         );
     }
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// `FormatSugar`: the general string-formatting unroller. A `format!`/`.to_string()`/
+// The general string-formatting reducer. A `format!`/`.to_string()`/
 // `concat!`/string-`+` over operands that all resolve to WRITTEN LITERALS is sugar for
 // ONE reproducible string. We compute it by reconstructing the typed literal values
 // from the AST and calling **Rust's real `format!`** at lift time. The lifter is built
@@ -35,7 +35,11 @@ use std::collections::BTreeMap;
 use syn::punctuated::Punctuated;
 use syn::{Expr, ExprLit, Lit, Pat, Stmt, Token};
 
-use crate::{strip_refs_groups, Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx};
+use crate::sugar::factory::{
+    compat_reduction, FactoryGap, FactoryReduction, FloorRead, FormatValueFloor,
+    LiteralStringFloor, SugarBody, SugarBuildCtx,
+};
+use crate::{strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 /// The terminal reason for an `f16`/`f128` formatting operand: the stable toolchain
 /// the lifter ships cannot Display it, and we never model the algorithm (no-model
@@ -44,56 +48,534 @@ pub(crate) const F16_F128_DISPLAY_UNSUPPORTED: &str =
     "format: f16/f128 Display is unsupported by stdlib on the stable toolchain the \
      lifter ships; build on nightly to enable; refused";
 
-/// Build a `&str` literal expr from a Rust string value (so a resolved format string
-/// can flow back through the normal term translator's `Lit::Str -> str_const` path).
-fn string_literal_expr(s: &str) -> Expr {
-    Expr::Lit(ExprLit {
-        attrs: Vec::new(),
-        lit: Lit::Str(syn::LitStr::new(s, proc_macro2::Span::call_site())),
+pub(crate) fn build_literal_string_term_node(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
+    Box::new(LiteralStringTermSugar {
+        body: SugarBody::literal_string(expr, fcx),
     })
 }
 
-/// A recognized string-formatting construction whose operands MAY all resolve to
-/// literals. `let_bindings` resolves a `let`/`const`-bound operand to its written
-/// literal (one or more pure indirections), exactly like `RegexSugar`'s pattern
-/// resolver. Recognition keys on the construction SHAPE; whether the operands resolve
-/// to literals is decided LATER by `desugar` (the complete), so a binding/nested-format
-/// operand is recognized and composes.
-pub(crate) struct FormatSugar {
-    expr: Expr,
-    let_bindings: BTreeMap<String, Expr>,
+pub(crate) fn build_format_template_body(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
+    let body = match strip_refs_groups(expr) {
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(s), ..
+        }) => FormatTemplateBody::Literal(s.value()),
+        Expr::Macro(m) if macro_is(m, "concat") => {
+            match build_concat_string_body(expr, fcx) {
+                Ok(body) => FormatTemplateBody::LiteralString(SugarBody::from_node(Box::new(body))),
+                Err(reason) => FormatTemplateBody::Gap(reason),
+            }
+        }
+        _ => FormatTemplateBody::Gap(
+            "format template constructor reached a non-template source site; write more Sugar for this AST"
+                .to_string(),
+        ),
+    };
+    Box::new(body)
 }
 
-impl Sugar for FormatSugar {
-    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        match resolve_format_string(&self.expr, &self.let_bindings) {
-            Ok(Some(s)) => Outcome::Complete(Desugared::Seq(vec![DesugaredElem {
-                expr: string_literal_expr(&s),
-                value: None,
-            }])),
-            // A runtime / unsupported producer (runtime arg, runtime fmt string, an
-            // unsupported spec) -> structural gap.
-            Ok(None) => Outcome::from_opt(None),
-            // A NAMED terminal (f16/f128 Display unsupported) -> refused by reason.
-            Err(reason) => Outcome::Incomplete(Effect::Unsupported { reason }),
+pub(crate) fn build_literal_string_body(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
+    let body = match strip_refs_groups(expr) {
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(s), ..
+        }) => LiteralStringBody::Literal(s.value()),
+        Expr::Path(path) if path.qself.is_none() => match path.path.get_ident() {
+            Some(ident) => {
+                let name = ident.to_string();
+                match stable_binding_init(&name, fcx) {
+                    Some(init) if !fcx.resolving_bound_path(&name) => {
+                        let child_fcx = fcx.with_bound_path(&name);
+                        LiteralStringBody::Child(SugarBody::literal_string(init, &child_fcx))
+                    }
+                    Some(_) => LiteralStringBody::Gap(
+                        "self-referential literal string binding; write more Sugar for this AST"
+                            .to_string(),
+                    ),
+                    None => LiteralStringBody::Runtime(
+                        "runtime format string, not literal-determined (bin-2: runtime data, not constructed from source literals); refused"
+                            .to_string(),
+                    ),
+                }
+            }
+            None => LiteralStringBody::Runtime(
+                "runtime format string, not literal-determined (bin-2: runtime data, not constructed from source literals); refused"
+                    .to_string(),
+            ),
+        },
+        Expr::Macro(m) if macro_is(m, "format") => {
+            match crate::sugar::format_macro::build_literal_string_node(expr, fcx) {
+                Ok(node) => LiteralStringBody::Child(SugarBody::from_node(node)),
+                Err(reason) => LiteralStringBody::Gap(reason),
+            }
+        }
+        Expr::Macro(m) if macro_is(m, "concat") => match build_concat_string_body(expr, fcx) {
+            Ok(body) => body,
+            Err(reason) => LiteralStringBody::Gap(reason),
+        },
+        Expr::MethodCall(c) if c.method == "to_string" && c.args.is_empty() => {
+            LiteralStringBody::ToString {
+                receiver: SugarBody::format_value(&c.receiver, fcx),
+            }
+        }
+        Expr::Binary(b) if matches!(b.op, syn::BinOp::Add(_)) => LiteralStringBody::StringAdd {
+            left: SugarBody::literal_string(&b.left, fcx),
+            right: SugarBody::literal_string(&b.right, fcx),
+        },
+        _ => LiteralStringBody::Gap(
+            "format string body did not reduce to a literal string; write more Sugar for this AST"
+                .to_string(),
+        ),
+    };
+    Box::new(body)
+}
+
+pub(crate) fn build_format_value_body(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
+    let body = match strip_refs_groups(expr) {
+        Expr::Lit(ExprLit { lit, .. }) => match reconstruct_lit(lit) {
+            Ok(Some(value)) => FormatValueBody::Literal(value),
+            Ok(None) => FormatValueBody::Gap(
+                "format argument literal is not supported; write more Sugar for this AST"
+                    .to_string(),
+            ),
+            Err(reason) => FormatValueBody::Unsupported(reason),
+        },
+        Expr::Unary(u) if matches!(u.op, syn::UnOp::Neg(_)) => {
+            FormatValueBody::Neg(SugarBody::format_value(&u.expr, fcx))
+        }
+        Expr::Binary(b) if is_fmt_arith_op(&b.op) => FormatValueBody::Binary {
+            op: b.op.clone(),
+            left: SugarBody::format_value(&b.left, fcx),
+            right: SugarBody::format_value(&b.right, fcx),
+        },
+        Expr::Path(path) if path.qself.is_none() => match path.path.get_ident() {
+            Some(ident) => {
+                let name = ident.to_string();
+                match stable_binding_init(&name, fcx) {
+                    Some(init) if !fcx.resolving_bound_path(&name) => {
+                        let child_fcx = fcx.with_bound_path(&name);
+                        FormatValueBody::Child(SugarBody::format_value(init, &child_fcx))
+                    }
+                    Some(_) => FormatValueBody::Gap(
+                        "self-referential format argument binding; write more Sugar for this AST"
+                            .to_string(),
+                    ),
+                    None => FormatValueBody::Runtime(
+                        "runtime format argument, not literal-determined (bin-2: runtime data, not constructed from source literals); refused"
+                            .to_string(),
+                    ),
+                }
+            }
+            None => FormatValueBody::Runtime(
+                "runtime format argument, not literal-determined (bin-2: runtime data, not constructed from source literals); refused"
+                    .to_string(),
+            ),
+        },
+        e if is_format_shape(e) => {
+            FormatValueBody::String(SugarBody::literal_string(strip_refs_groups(expr), fcx))
+        }
+        _ => {
+            FormatValueBody::Runtime(
+                "runtime format argument, not literal-determined (bin-2: runtime data, not constructed from source literals); refused"
+                    .to_string(),
+            )
+        }
+    };
+    Box::new(body)
+}
+
+pub(crate) fn runtime_format_value_body(reason: impl Into<String>) -> Box<dyn Sugar> {
+    Box::new(FormatValueBody::Runtime(reason.into()))
+}
+
+pub(crate) fn literal_format_capture_names(expr: &Expr) -> Option<Vec<String>> {
+    let Expr::Lit(ExprLit {
+        lit: Lit::Str(value),
+        ..
+    }) = strip_refs_groups(expr)
+    else {
+        return None;
+    };
+    format_capture_names(&value.value())
+}
+
+pub(crate) fn format_capture_names(fmt: &str) -> Option<Vec<String>> {
+    let mut names = Vec::new();
+    for piece in parse_fmt_pieces(fmt)? {
+        if let Piece::Placeholder {
+            arg: ArgRef::Named(name),
+            ..
+        } = piece
+        {
+            names.push(name);
         }
     }
+    Some(names)
 }
 
-/// Build a `FormatSugar` for any format-producing SHAPE (`format!`/`concat!`/
-/// `.to_string()`/ string `+`), else `None` (decline to recognize — not this node).
-/// Recognition does NOT pre-judge resolvability; the complete decides that.
-pub(crate) fn decompose_format(
-    expr: &Expr,
-    let_bindings: &BTreeMap<String, Expr>,
-) -> Option<FormatSugar> {
-    if !is_format_shape(expr) {
-        return None;
+fn stable_binding_init<'a>(name: &str, fcx: &'a SugarBuildCtx) -> Option<&'a Expr> {
+    fcx.scope().stable_let_binding_for_term(name)
+}
+
+enum FormatTemplateBody {
+    Literal(String),
+    LiteralString(SugarBody<LiteralStringFloor>),
+    Gap(String),
+}
+
+impl Sugar for FormatTemplateBody {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+        match self {
+            FormatTemplateBody::Literal(value) => {
+                Ok(Outcome::Complete(Desugared::LiteralString(value.clone())))
+            }
+            FormatTemplateBody::LiteralString(child) => match child.reduce_literal_string(ctx)? {
+                FloorRead::Complete(value) => {
+                    Ok(Outcome::Complete(Desugared::LiteralString(value)))
+                }
+                FloorRead::Incomplete(effect) => Ok(Outcome::Incomplete(effect)),
+            },
+            FormatTemplateBody::Gap(reason) => Err(FactoryGap::new(reason.clone())),
+        }
     }
-    Some(FormatSugar {
-        expr: expr.clone(),
-        let_bindings: let_bindings.clone(),
-    })
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
+    }
+}
+
+enum LiteralStringBody {
+    Literal(String),
+    Child(SugarBody<LiteralStringFloor>),
+    Concat(Vec<ConcatFragmentBody>),
+    ToString {
+        receiver: SugarBody<FormatValueFloor>,
+    },
+    StringAdd {
+        left: SugarBody<LiteralStringFloor>,
+        right: SugarBody<LiteralStringFloor>,
+    },
+    Runtime(String),
+    Gap(String),
+}
+
+enum ConcatFragmentBody {
+    String(SugarBody<LiteralStringFloor>),
+    Value(SugarBody<FormatValueFloor>),
+    Gap(String),
+}
+
+struct LiteralStringTermSugar {
+    body: SugarBody<LiteralStringFloor>,
+}
+
+impl Sugar for LiteralStringTermSugar {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+        match self.body.reduce_literal_string(ctx)? {
+            FloorRead::Complete(value) => Ok(Outcome::Complete(Desugared::Term(
+                sugar_ir_symbolic::str_const(value),
+            ))),
+            FloorRead::Incomplete(effect) => Ok(Outcome::Incomplete(effect)),
+        }
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
+    }
+}
+
+impl Sugar for LiteralStringBody {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+        match self {
+            LiteralStringBody::Literal(value) => {
+                Ok(Outcome::Complete(Desugared::LiteralString(value.clone())))
+            }
+            LiteralStringBody::Child(child) => match child.reduce_literal_string(ctx)? {
+                FloorRead::Complete(value) => {
+                    Ok(Outcome::Complete(Desugared::LiteralString(value)))
+                }
+                FloorRead::Incomplete(effect) => Ok(Outcome::Incomplete(effect)),
+            },
+            LiteralStringBody::Concat(fragments) => {
+                let mut out = String::new();
+                for fragment in fragments {
+                    match fragment {
+                        ConcatFragmentBody::String(body) => {
+                            match body.reduce_literal_string(ctx)? {
+                                FloorRead::Complete(value) => out.push_str(&value),
+                                FloorRead::Incomplete(effect) => {
+                                    return Ok(Outcome::Incomplete(effect))
+                                }
+                            }
+                        }
+                        ConcatFragmentBody::Value(body) => match body.reduce_format_value(ctx)? {
+                            FloorRead::Complete(value) => {
+                                match render_one(&value, &Spec::display()) {
+                                    Ok(Some(value)) => out.push_str(&value),
+                                    Ok(None) => {
+                                        return Err(FactoryGap::new(
+                                        "concat fragment did not render as a literal string; write more Sugar for this AST",
+                                    ));
+                                    }
+                                    Err(reason) => {
+                                        return Ok(Outcome::Incomplete(Effect::Unsupported {
+                                            reason,
+                                        }));
+                                    }
+                                }
+                            }
+                            FloorRead::Incomplete(effect) => {
+                                return Ok(Outcome::Incomplete(effect))
+                            }
+                        },
+                        ConcatFragmentBody::Gap(reason) => {
+                            return Err(FactoryGap::new(reason.clone()));
+                        }
+                    }
+                }
+                Ok(Outcome::Complete(Desugared::LiteralString(out)))
+            }
+            LiteralStringBody::ToString { receiver } => {
+                let value = match receiver.reduce_format_value(ctx)? {
+                    FloorRead::Complete(value) => value,
+                    FloorRead::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+                };
+                match render_one(&value, &Spec::display()) {
+                    Ok(Some(value)) => Ok(Outcome::Complete(Desugared::LiteralString(value))),
+                    Ok(None) => Err(FactoryGap::new(
+                        "to_string receiver did not render as a literal string; write more Sugar for this AST",
+                    )),
+                    Err(reason) => Ok(Outcome::Incomplete(Effect::Unsupported { reason })),
+                }
+            }
+            LiteralStringBody::StringAdd { left, right } => {
+                let left = match left.reduce_literal_string(ctx)? {
+                    FloorRead::Complete(value) => value,
+                    FloorRead::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+                };
+                let right = match right.reduce_literal_string(ctx)? {
+                    FloorRead::Complete(value) => value,
+                    FloorRead::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+                };
+                Ok(Outcome::Complete(Desugared::LiteralString(format!(
+                    "{left}{right}"
+                ))))
+            }
+            LiteralStringBody::Runtime(reason) => Ok(Outcome::Incomplete(Effect::Unsupported {
+                reason: reason.clone(),
+            })),
+            LiteralStringBody::Gap(reason) => Err(FactoryGap::new(reason.clone())),
+        }
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
+    }
+}
+
+fn build_concat_string_body(expr: &Expr, fcx: &SugarBuildCtx) -> Result<LiteralStringBody, String> {
+    let Expr::Macro(mac) = strip_refs_groups(expr) else {
+        return Err(
+            "concat macro recognizer received a non-macro site; write more Sugar for this AST"
+                .to_string(),
+        );
+    };
+    let args = parse_args(&mac.mac.tokens).ok_or_else(|| {
+        "concat macro arguments did not parse; write more Sugar for this AST".to_string()
+    })?;
+    Ok(LiteralStringBody::Concat(
+        args.iter()
+            .map(|arg| build_concat_fragment_body(arg, fcx))
+            .collect(),
+    ))
+}
+
+fn build_concat_fragment_body(expr: &Expr, fcx: &SugarBuildCtx) -> ConcatFragmentBody {
+    match strip_refs_groups(expr) {
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(_), ..
+        })
+        | Expr::Macro(_) => ConcatFragmentBody::String(SugarBody::literal_string(expr, fcx)),
+        Expr::Lit(_) => ConcatFragmentBody::Value(SugarBody::format_value(expr, fcx)),
+        Expr::Path(path) if path.qself.is_none() => {
+            ConcatFragmentBody::String(SugarBody::literal_string(expr, fcx))
+        }
+        _ => ConcatFragmentBody::Gap(
+            "concat fragment is not a literal string/value floor; write more Sugar for this AST"
+                .to_string(),
+        ),
+    }
+}
+
+enum FormatValueBody {
+    Literal(FmtValue),
+    Child(SugarBody<FormatValueFloor>),
+    String(SugarBody<LiteralStringFloor>),
+    Neg(SugarBody<FormatValueFloor>),
+    Binary {
+        op: syn::BinOp,
+        left: SugarBody<FormatValueFloor>,
+        right: SugarBody<FormatValueFloor>,
+    },
+    Runtime(String),
+    Unsupported(String),
+    Gap(String),
+}
+
+impl Sugar for FormatValueBody {
+    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+        match self {
+            FormatValueBody::Literal(value) => {
+                Ok(Outcome::Complete(Desugared::FormatValue(value.clone())))
+            }
+            FormatValueBody::Child(child) => match child.reduce_format_value(ctx)? {
+                FloorRead::Complete(value) => Ok(Outcome::Complete(Desugared::FormatValue(value))),
+                FloorRead::Incomplete(effect) => Ok(Outcome::Incomplete(effect)),
+            },
+            FormatValueBody::String(child) => match child.reduce_literal_string(ctx)? {
+                FloorRead::Complete(value) => Ok(Outcome::Complete(Desugared::FormatValue(
+                    FmtValue::Str(value),
+                ))),
+                FloorRead::Incomplete(effect) => Ok(Outcome::Incomplete(effect)),
+            },
+            FormatValueBody::Neg(child) => {
+                let value = match child.reduce_format_value(ctx)? {
+                    FloorRead::Complete(value) => value,
+                    FloorRead::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+                };
+                let negated = match value {
+                    FmtValue::Int { value, suffix } => FmtValue::Int {
+                        value: value
+                            .checked_neg()
+                            .ok_or_else(|| FactoryGap::new("format integer negation overflow; write more Sugar for this AST"))?,
+                        suffix,
+                    },
+                    FmtValue::F32(value) => FmtValue::F32(-value),
+                    FmtValue::F64(value) => FmtValue::F64(-value),
+                    _ => {
+                        return Err(FactoryGap::new(
+                            "format unary negation did not receive a numeric value; write more Sugar for this AST",
+                        ))
+                    }
+                };
+                Ok(Outcome::Complete(Desugared::FormatValue(negated)))
+            }
+            FormatValueBody::Binary { op, left, right } => {
+                let left = match left.reduce_format_value(ctx)? {
+                    FloorRead::Complete(value) => value,
+                    FloorRead::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+                };
+                let right = match right.reduce_format_value(ctx)? {
+                    FloorRead::Complete(value) => value,
+                    FloorRead::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+                };
+                let folded = match fold_format_values(op, left, right) {
+                    Ok(value) => value,
+                    Err(gap)
+                        if gap
+                            .reason
+                            .contains("format integer arithmetic did not constant-fold") =>
+                    {
+                        return Ok(Outcome::Incomplete(Effect::Unsupported {
+                            reason:
+                                "format integer arithmetic overflow or divide-by-zero, not literal-determined; refused"
+                                    .to_string(),
+                        }));
+                    }
+                    Err(gap) => return Err(gap),
+                };
+                Ok(Outcome::Complete(Desugared::FormatValue(folded)))
+            }
+            FormatValueBody::Runtime(reason) | FormatValueBody::Unsupported(reason) => {
+                Ok(Outcome::Incomplete(Effect::Unsupported {
+                    reason: reason.clone(),
+                }))
+            }
+            FormatValueBody::Gap(reason) => Err(FactoryGap::new(reason.clone())),
+        }
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        compat_reduction(self.reduce(ctx))
+    }
+}
+
+pub(crate) fn literal_string_floor_from_outcome(
+    reduction: Outcome,
+) -> Result<FloorRead<String>, FactoryGap> {
+    match reduction {
+        Outcome::Complete(Desugared::LiteralString(value)) => Ok(FloorRead::Complete(value)),
+        Outcome::Complete(_) => Err(FactoryGap::new(
+            "format string child completed a non-literal-string floor; write more Sugar for this AST",
+        )),
+        Outcome::Incomplete(effect) => Ok(FloorRead::Incomplete(effect)),
+    }
+}
+
+pub(crate) fn format_template_floor_from_outcome(
+    reduction: Outcome,
+) -> Result<FloorRead<String>, FactoryGap> {
+    match reduction {
+        Outcome::Complete(Desugared::LiteralString(value)) => Ok(FloorRead::Complete(value)),
+        Outcome::Complete(_) => Err(FactoryGap::new(
+            "format template child completed a non-template floor; write more Sugar for this AST",
+        )),
+        Outcome::Incomplete(effect) => Ok(FloorRead::Incomplete(effect)),
+    }
+}
+
+pub(crate) fn format_value_floor_from_outcome(
+    reduction: Outcome,
+) -> Result<FloorRead<FmtValue>, FactoryGap> {
+    match reduction {
+        Outcome::Complete(Desugared::FormatValue(value)) => Ok(FloorRead::Complete(value)),
+        Outcome::Complete(_) => Err(FactoryGap::new(
+            "format argument child completed a non-format-value floor; write more Sugar for this AST",
+        )),
+        Outcome::Incomplete(effect) => Ok(FloorRead::Incomplete(effect)),
+    }
+}
+
+fn fold_format_values(
+    op: &syn::BinOp,
+    left: FmtValue,
+    right: FmtValue,
+) -> Result<FmtValue, FactoryGap> {
+    if let (
+        FmtValue::Int {
+            value: lv,
+            suffix: ls,
+        },
+        FmtValue::Int {
+            value: rv,
+            suffix: rs,
+        },
+    ) = (&left, &right)
+    {
+        return fold_int_arith(op, *lv, *ls, *rv, *rs)
+            .map(|(value, suffix)| FmtValue::Int { value, suffix })
+            .ok_or_else(|| {
+                FactoryGap::new("format integer arithmetic did not constant-fold; write more Sugar for this AST")
+            });
+    }
+
+    if matches!(op, syn::BinOp::Div(_)) {
+        return match (left, right) {
+            (FmtValue::F64(l), FmtValue::F64(r)) => Ok(FmtValue::F64(l / r)),
+            (FmtValue::F32(l), FmtValue::F32(r)) => Ok(FmtValue::F32(l / r)),
+            _ => Err(FactoryGap::new(
+                "format float division did not receive matching float literals; write more Sugar for this AST",
+            )),
+        };
+    }
+
+    if matches!(op, syn::BinOp::Add(_)) {
+        if let (FmtValue::Str(left), FmtValue::Str(right)) = (left, right) {
+            return Ok(FmtValue::Str(format!("{left}{right}")));
+        }
+    }
+
+    Err(FactoryGap::new(
+        "format binary argument did not reduce to a supported literal operation; write more Sugar for this AST",
+    ))
 }
 
 pub(crate) fn is_format_macro_shape(expr: &Expr) -> bool {
@@ -122,6 +604,40 @@ pub(crate) fn is_string_add_shape(expr: &Expr) -> bool {
     )
 }
 
+pub(crate) fn is_factory_string_add_shape(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
+    let Expr::Binary(binary) = strip_refs_groups(expr) else {
+        return false;
+    };
+    matches!(binary.op, syn::BinOp::Add(_))
+        && (is_string_add_operand_shape(&binary.left, fcx)
+            || is_string_add_operand_shape(&binary.right, fcx))
+}
+
+fn is_string_add_operand_shape(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
+    match strip_refs_groups(expr) {
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(_), ..
+        }) => true,
+        Expr::Macro(m) if macro_is(m, "format") || macro_is(m, "concat") => true,
+        Expr::MethodCall(call) if call.method == "to_string" && call.args.is_empty() => true,
+        Expr::Binary(_) => is_factory_string_add_shape(expr, fcx),
+        Expr::Path(path) if path.qself.is_none() => path
+            .path
+            .get_ident()
+            .and_then(|ident| {
+                let name = ident.to_string();
+                if fcx.resolving_bound_path(&name) {
+                    return None;
+                }
+                let child_fcx = fcx.with_bound_path(&name);
+                stable_binding_init(&name, fcx)
+                    .map(|init| is_string_add_operand_shape(init, &child_fcx))
+            })
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
 /// Is `expr` one of the recognized format-producing shapes? (Recognition only — the
 /// operands need not be literals here.)
 fn is_format_shape(expr: &Expr) -> bool {
@@ -141,7 +657,8 @@ fn is_format_shape(expr: &Expr) -> bool {
 
 /// A typed literal value reconstructed from the source AST, carrying enough to render
 /// it through the real stdlib `format!` for every spec we faithfully reproduce.
-enum FmtValue {
+#[derive(Clone, Debug)]
+pub(crate) enum FmtValue {
     /// An integer with its width suffix (so `{:x}`/`{:b}`/`{:o}` render at the right
     /// width and a value's signed/unsigned-ness is honored). i128 carrier; the suffix
     /// drives the actual render.
@@ -156,8 +673,8 @@ enum FmtValue {
     Bool(bool),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum IntKind {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum IntKind {
     I8,
     I16,
     I32,
@@ -382,7 +899,7 @@ fn macro_is(m: &syn::ExprMacro, name: &str) -> bool {
     m.mac.path.segments.last().is_some_and(|s| s.ident == name)
 }
 
-fn parse_args(tokens: &proc_macro2::TokenStream) -> Option<Vec<Expr>> {
+pub(crate) fn parse_args(tokens: &proc_macro2::TokenStream) -> Option<Vec<Expr>> {
     let parser = syn::punctuated::Punctuated::<Expr, syn::Token![,]>::parse_terminated;
     syn::parse::Parser::parse2(parser, tokens.clone())
         .ok()
@@ -446,6 +963,46 @@ fn render_format(
                         Some(s) => out.push_str(&s),
                         None => return Ok(None),
                     },
+                    None => return Ok(None),
+                }
+            }
+        }
+    }
+    Ok(Some(out))
+}
+
+pub(crate) fn render_format_values(
+    fmt: &str,
+    positional: &[FmtValue],
+    explicit_named: &BTreeMap<String, FmtValue>,
+    captures: &BTreeMap<String, FmtValue>,
+) -> Result<Option<String>, String> {
+    let pieces = match parse_fmt_pieces(fmt) {
+        Some(p) => p,
+        None => return Ok(None),
+    };
+    let mut next_positional = 0usize;
+    let mut out = String::new();
+    for piece in pieces {
+        match piece {
+            Piece::Lit(s) => out.push_str(&s),
+            Piece::Placeholder { arg, spec } => {
+                let value = match arg {
+                    ArgRef::Implicit => {
+                        let value = positional.get(next_positional);
+                        next_positional += 1;
+                        value
+                    }
+                    ArgRef::Positional(i) => positional.get(i),
+                    ArgRef::Named(name) => {
+                        explicit_named.get(&name).or_else(|| captures.get(&name))
+                    }
+                };
+                let Some(value) = value else {
+                    return Ok(None);
+                };
+                match render_one(value, &spec)? {
+                    Some(s) => out.push_str(&s),
                     None => return Ok(None),
                 }
             }
@@ -1114,6 +1671,12 @@ fn int_value_range(suffix: IntKind) -> Option<(i128, i128)> {
 fn reconstruct_lit(lit: &Lit) -> Result<Option<FmtValue>, String> {
     match lit {
         Lit::Int(i) => {
+            if i.suffix() == "f32" {
+                return Ok(i.base10_digits().parse::<f32>().ok().map(FmtValue::F32));
+            }
+            if i.suffix() == "f64" {
+                return Ok(i.base10_digits().parse::<f64>().ok().map(FmtValue::F64));
+            }
             let value = match i.base10_parse::<i128>() {
                 Ok(v) => v,
                 // a u128 literal larger than i128::MAX.
@@ -1160,21 +1723,7 @@ fn reconstruct_lit(lit: &Lit) -> Result<Option<FmtValue>, String> {
     }
 }
 
-/// Public entry: resolve a format-producing expr to its string value, classifying the
-/// outcome for the caller's term-translation hook. `Ok(Some(s))` completes to `str_const(s)`;
-/// `Ok(None)` is a gap; `Err(reason)` is a named terminal refusal (f16/f128 Display
-/// unsupported).
-pub(crate) fn try_resolve_format(
-    expr: &Expr,
-    let_bindings: &BTreeMap<String, Expr>,
-) -> Result<Option<String>, String> {
-    if !is_format_shape(expr) {
-        return Ok(None);
-    }
-    resolve_format_string(expr, let_bindings)
-}
-
-/// The in-scope IMMUTABLE `let` bindings (`name -> init`), the map the FormatSugar
+/// The in-scope IMMUTABLE `let` bindings (`name -> init`), the map the format reducer
 /// hooks (`a + b`, `format!`, `.to_string()`) resolve operands against: a `let mut` is
 /// excluded so a mutated operand is never mis-dissolved. Byte-identical to the inline
 /// `stable` map the old inline term translation built from `scope.let_bindings`.
@@ -1192,12 +1741,12 @@ pub(crate) fn stable_let_bindings(scope: &crate::TemporalScope) -> BTreeMap<Stri
 // The four `core::num::imp::flt2dec` test-helper surfaces (`to_shortest_str` /
 // `to_exact_fixed_str` / `to_exact_exp_str` / `to_shortest_exp_str`) format a closed
 // float with a sign-mode and a digit count. They are NOT plain `format!` calls, but
-// each one IS a `format!` rendering of the value — so FormatSugar, the single format
-// authority, computes them HERE with the lifter's own stdlib `format!` (recompute-
+// each one IS a `format!` rendering of the value — so the format reducer, the single
+// format authority, computes them HERE with the lifter's own stdlib `format!` (recompute-
 // don't-reimplement), exactly as it computes a `format!("{}", x)`. The flt2dec
 // recognizer (lib.rs `dissolve_flt2dec_assert`) reconstructs the `(value, sign, mode,
 // digits)` operands and calls these functions; the float-formatting computation lives
-// here, in FormatSugar, not in a separate float-only module.
+// here, in the format reducer, not in a separate float-only module.
 //
 // `format!` is itself built on `core::num`'s flt2dec, so this evaluation and the
 // term-under-test compute the IDENTICAL canonical shortest/exact decimal — an
@@ -1400,9 +1949,9 @@ pub(crate) fn shortest_exp_f32(v: f32, sign: FmtSign, lo: i32, hi: i32, upper: b
 // here). The four `core::num::imp::flt2dec` test-helper surfaces are recognized
 // (`flt2dec_helper_mode`), their `(value, sign, mode, digits)` operands reconstructed
 // (`parse_flt2dec_value` / `parse_flt2dec_sign` / ...), and each assert dissolved by
-// rendering the value through the FormatSugar float engine above and comparing to the
+// rendering the value through the format float engine above and comparing to the
 // asserted literal (`dissolve_flt2dec_assert`). `lift_flt2dec_helper` is the single
-// entry lib.rs `visit_non_test_fn` calls; FormatSugar owns the entire feature.
+// entry lib.rs `visit_non_test_fn` calls; the format reducer owns the entire feature.
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Flt2decMode {
@@ -1919,7 +2468,23 @@ mod tests {
         BTreeMap::new()
     }
     fn resolve(src: &str) -> Result<Option<String>, String> {
-        try_resolve_format(&parse(src), &no_binds())
+        let expr = parse(src);
+        if is_format_shape(&expr) {
+            resolve_format_string(&expr, &no_binds())
+        } else {
+            Ok(None)
+        }
+    }
+    fn resolve_with_binds(
+        src: &str,
+        binds: &BTreeMap<String, Expr>,
+    ) -> Result<Option<String>, String> {
+        let expr = parse(src);
+        if is_format_shape(&expr) {
+            resolve_format_string(&expr, binds)
+        } else {
+            Ok(None)
+        }
     }
 
     // ── Display / Debug over each scalar kind ──
@@ -2076,7 +2641,7 @@ mod tests {
         let mut binds = BTreeMap::new();
         binds.insert("max".to_string(), parse("9u8"));
         assert_eq!(
-            try_resolve_format(&parse(r#"format!("{max}")"#), &binds)
+            resolve_with_binds(r#"format!("{max}")"#, &binds)
                 .unwrap()
                 .as_deref(),
             Some("9")
@@ -2170,7 +2735,7 @@ mod tests {
         // a text-determined LOCAL operand resolves through the binding map, then folds.
         let binds = bind("n", "2");
         assert_eq!(
-            try_resolve_format(&parse(r#"format!("{}", n + 40)"#), &binds)
+            resolve_with_binds(r#"format!("{}", n + 40)"#, &binds)
                 .unwrap()
                 .as_deref(),
             Some("42")
@@ -2179,7 +2744,7 @@ mod tests {
         let mut two = bind("a", "6");
         two.insert("b".to_string(), parse("7"));
         assert_eq!(
-            try_resolve_format(&parse(r#"format!("{}-{}", a * b, b - a)"#), &two)
+            resolve_with_binds(r#"format!("{}-{}", a * b, b - a)"#, &two)
                 .unwrap()
                 .as_deref(),
             Some("42-1")
@@ -2218,7 +2783,7 @@ mod tests {
         // must keep resolving via the string path (folding must not intercept it).
         let binds = bind("s", r#""foo".to_string() + "bar""#);
         assert_eq!(
-            try_resolve_format(&parse(r#"format!("{}", s)"#), &binds)
+            resolve_with_binds(r#"format!("{}", s)"#, &binds)
                 .unwrap()
                 .as_deref(),
             Some("foobar")
@@ -2235,16 +2800,16 @@ mod tests {
         assert!(r.is_err());
     }
 
-    // ── DECOMPOSE: recognizes the shapes, declines foreign ──
+    // ── SHAPE: recognizes the format family, declines foreign ──
     #[test]
-    fn decompose_recognizes_shapes() {
-        assert!(decompose_format(&parse(r#"format!("{}", 1)"#), &no_binds()).is_some());
-        assert!(decompose_format(&parse(r#"concat!("a")"#), &no_binds()).is_some());
-        assert!(decompose_format(&parse(r#"x.to_string()"#), &no_binds()).is_some());
-        assert!(decompose_format(&parse(r#"a + b"#), &no_binds()).is_some());
+    fn format_shape_recognizes_family() {
+        assert!(is_format_shape(&parse(r#"format!("{}", 1)"#)));
+        assert!(is_format_shape(&parse(r#"concat!("a")"#)));
+        assert!(is_format_shape(&parse(r#"x.to_string()"#)));
+        assert!(is_format_shape(&parse(r#"a + b"#)));
         // foreign: not a format shape.
-        assert!(decompose_format(&parse(r#"foo.bar()"#), &no_binds()).is_none());
-        assert!(decompose_format(&parse(r#"vec![1, 2]"#), &no_binds()).is_none());
+        assert!(!is_format_shape(&parse(r#"foo.bar()"#)));
+        assert!(!is_format_shape(&parse(r#"vec![1, 2]"#)));
     }
 
     // ── flt2dec dissolution: ldexp values + format! expected-RHS ──────────────

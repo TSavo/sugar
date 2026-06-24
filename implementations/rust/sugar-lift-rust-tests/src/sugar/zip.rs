@@ -19,8 +19,8 @@ use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{
-    build_composite, compat_reduction, has_composite, FactoryGap, FactoryReduction, SugarBody,
-    SugarBuildCtx,
+    build_composite, compat_reduction, has_composite, CompositeFloor, FactoryGap, FactoryReduction,
+    SugarBody, SugarBuildCtx,
 };
 use crate::sugar::method_family;
 use crate::{ConstVal, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
@@ -56,17 +56,17 @@ fn operand_resolves_literal_sequence(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
 /// Pair the two finite domains element-wise, truncating to the shorter: element `l_i` and
 /// `r_i` become the tuple `(l_i, r_i)`.
 struct ZipSugar {
-    left: SugarBody,
-    right: SugarBody,
+    left: SugarBody<CompositeFloor>,
+    right: SugarBody<CompositeFloor>,
 }
 
 impl ZipSugar {
-    fn new(left: SugarBody, right: SugarBody) -> Box<dyn Sugar> {
+    fn new(left: SugarBody<CompositeFloor>, right: SugarBody<CompositeFloor>) -> Box<dyn Sugar> {
         Box::new(Self { left, right })
     }
 }
 
-fn operand_body(expr: &Expr, fcx: &SugarBuildCtx) -> SugarBody {
+fn operand_body(expr: &Expr, fcx: &SugarBuildCtx) -> SugarBody<CompositeFloor> {
     SugarBody::from_node(
         method_family::build_literal_sequence_composite(expr, fcx)
             .unwrap_or_else(|| build_composite(expr, fcx)),
@@ -127,7 +127,7 @@ impl Sugar for ZipSugar {
 }
 
 fn sequence_from_body(
-    body: &SugarBody,
+    body: &SugarBody<CompositeFloor>,
     ctx: &SugarCtx,
     label: &'static str,
 ) -> Result<Vec<DesugaredElem>, FactoryReduction> {

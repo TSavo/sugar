@@ -9,7 +9,7 @@
 // sits inside a longer adaptor chain.
 
 use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    compat_reduction, CompositeFloor, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
 };
 use crate::sugar::literal::{LiteralSugar, EMPTY_DOMAIN_REASON};
 use crate::sugar::method_family;
@@ -38,7 +38,7 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
 
 /// Concatenate each element's own finite literal sub-sequence in source order.
 pub(crate) struct FlattenSugar {
-    pub(crate) inner: SugarBody,
+    pub(crate) inner: SugarBody<CompositeFloor>,
 }
 
 impl Sugar for FlattenSugar {

@@ -52,6 +52,7 @@
 //! catalog roles, not composite fallbacks.
 
 use std::collections::BTreeMap;
+use std::marker::PhantomData;
 
 use quote::ToTokens;
 use syn::spanned::Spanned;
@@ -81,31 +82,48 @@ impl FactoryGap {
     }
 }
 
+pub(crate) enum FloorRead<T> {
+    Complete(T),
+    Incomplete(Effect),
+}
+
+pub(crate) trait BodyFloor {}
+
+pub(crate) struct TermFloor;
+pub(crate) struct CompositeFloor;
+pub(crate) struct ConstraintFloor;
+pub(crate) struct AssertionSurfaceFloor;
+pub(crate) struct TupleProducerFloor;
+pub(crate) struct LiteralStringFloor;
+pub(crate) struct FormatTemplateFloor;
+pub(crate) struct FormatValueFloor;
+
+impl BodyFloor for TermFloor {}
+impl BodyFloor for CompositeFloor {}
+impl BodyFloor for ConstraintFloor {}
+impl BodyFloor for AssertionSurfaceFloor {}
+impl BodyFloor for TupleProducerFloor {}
+impl BodyFloor for LiteralStringFloor {}
+impl BodyFloor for FormatTemplateFloor {}
+impl BodyFloor for FormatValueFloor {}
+
 /// A factory-built child/body for a parent Sugar.
 ///
 /// This is the post-order contract in code: a non-leaf parent is constructed with
 /// `SugarBody` values for the expressions it encloses. Raw `Expr` may still be kept for
 /// provenance, token keys, literal fast paths, or pattern metadata, but not as the body
 /// that the parent later re-builds through the factory.
-pub(crate) struct SugarBody {
+pub(crate) struct SugarBody<F: BodyFloor> {
     node: Box<dyn Sugar>,
+    _floor: PhantomData<F>,
 }
 
-impl SugarBody {
+impl<F: BodyFloor> SugarBody<F> {
     pub(crate) fn from_node(node: Box<dyn Sugar>) -> Self {
-        Self { node }
-    }
-
-    pub(crate) fn term(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
-        Self::from_node(build_term(expr, fcx))
-    }
-
-    pub(crate) fn composite(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
-        Self::from_node(build_composite(expr, fcx))
-    }
-
-    pub(crate) fn constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
-        Self::from_node(build_constraint(expr, fcx))
+        Self {
+            node,
+            _floor: PhantomData,
+        }
     }
 
     pub(crate) fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
@@ -114,6 +132,75 @@ impl SugarBody {
 
     pub(crate) fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         compat_reduction(self.reduce(ctx))
+    }
+}
+
+impl SugarBody<TermFloor> {
+    pub(crate) fn term(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
+        Self::from_node(build_term(expr, fcx))
+    }
+}
+
+impl SugarBody<CompositeFloor> {
+    pub(crate) fn composite(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
+        Self::from_node(build_composite(expr, fcx))
+    }
+}
+
+impl SugarBody<ConstraintFloor> {
+    pub(crate) fn constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
+        Self::from_node(build_constraint(expr, fcx))
+    }
+}
+
+impl SugarBody<AssertionSurfaceFloor> {
+    pub(crate) fn assertion_surface(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
+        Self::from_node(build_assertion_surface(expr, fcx))
+    }
+}
+
+impl SugarBody<TupleProducerFloor> {
+    pub(crate) fn tuple_producer(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
+        Self::from_node(build_tuple_producer(expr, fcx))
+    }
+}
+
+impl SugarBody<LiteralStringFloor> {
+    pub(crate) fn literal_string(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
+        Self::from_node(crate::sugar::format::build_literal_string_body(expr, fcx))
+    }
+
+    pub(crate) fn reduce_literal_string(
+        &self,
+        ctx: &SugarCtx,
+    ) -> Result<FloorRead<String>, FactoryGap> {
+        crate::sugar::format::literal_string_floor_from_outcome(self.reduce(ctx)?)
+    }
+}
+
+impl SugarBody<FormatTemplateFloor> {
+    pub(crate) fn format_template(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
+        Self::from_node(crate::sugar::format::build_format_template_body(expr, fcx))
+    }
+
+    pub(crate) fn reduce_format_template(
+        &self,
+        ctx: &SugarCtx,
+    ) -> Result<FloorRead<String>, FactoryGap> {
+        crate::sugar::format::format_template_floor_from_outcome(self.reduce(ctx)?)
+    }
+}
+
+impl SugarBody<FormatValueFloor> {
+    pub(crate) fn format_value(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
+        Self::from_node(crate::sugar::format::build_format_value_body(expr, fcx))
+    }
+
+    pub(crate) fn reduce_format_value(
+        &self,
+        ctx: &SugarCtx,
+    ) -> Result<FloorRead<crate::sugar::format::FmtValue>, FactoryGap> {
+        crate::sugar::format::format_value_floor_from_outcome(self.reduce(ctx)?)
     }
 }
 
@@ -391,6 +478,12 @@ impl FactoryAuditSeed {
                 ),
             },
             Outcome::Complete(Desugared::Term(_)) => (FactoryDisposition::Warranted, "term", None),
+            Outcome::Complete(Desugared::LiteralString(_)) => {
+                (FactoryDisposition::Warranted, "literal-string", None)
+            }
+            Outcome::Complete(Desugared::FormatValue(_)) => {
+                (FactoryDisposition::Warranted, "format-value", None)
+            }
             Outcome::Complete(Desugared::TupleComponents(_)) => {
                 (FactoryDisposition::Warranted, "tuple-components", None)
             }
@@ -456,8 +549,11 @@ fn gap_reason_from_unsupported_reason(seed: &FactoryAuditSeed, reason: &str) -> 
     }
 }
 
-fn gap_to_compat_outcome(gap: FactoryGap) -> Outcome {
-    Outcome::Incomplete(Effect::Unsupported { reason: gap.reason })
+fn panic_on_gap(gap: FactoryGap) -> ! {
+    panic!(
+        "factory gap has no terminal Outcome: {}; run the factory audit gap report to enumerate this engine hole",
+        gap.reason
+    )
 }
 
 fn factory_audit_span(span: proc_macro2::Span) -> FactoryAuditSpan {
@@ -484,8 +580,10 @@ impl AccountedSugar {
 
 impl Sugar for AccountedSugar {
     fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
-        let outcome = self.inner.desugar(ctx);
-        let reduction = structural_bail_to_gap(&self.seed, outcome);
+        let reduction = match self.inner.reduce(ctx) {
+            Ok(outcome) => structural_bail_to_gap(&self.seed, outcome),
+            Err(gap) => Err(gap),
+        };
         let audit = self.seed.audit_result(&reduction);
         if matches!(
             audit.disposition,
@@ -523,7 +621,7 @@ impl Sugar for AccountedSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match self.reduce(ctx) {
             Ok(outcome) => outcome,
-            Err(gap) => gap_to_compat_outcome(gap),
+            Err(gap) => panic_on_gap(gap),
         }
     }
 }
@@ -531,7 +629,7 @@ impl Sugar for AccountedSugar {
 pub(crate) fn compat_reduction(reduction: FactoryReduction) -> Outcome {
     match reduction {
         Ok(outcome) => outcome,
-        Err(gap) => gap_to_compat_outcome(gap),
+        Err(gap) => panic_on_gap(gap),
     }
 }
 
@@ -693,6 +791,17 @@ mod tests {
                 Outcome::Complete(Desugared::Term(t))
             ) if matches!(t.as_ref(), sugar_ir_symbolic::Term::Var { name } if name == "real")),
             "a successful Complete must pass through unchanged"
+        );
+    }
+
+    #[test]
+    fn factory_gap_panics_if_read_as_desugar_outcome() {
+        let gap = FactoryGap::new("gap is audit-only");
+        let panic = std::panic::catch_unwind(|| compat_reduction(Err(gap)));
+
+        assert!(
+            panic.is_err(),
+            "a factory gap has no Outcome; callers must use reduce/audit, not desugar"
         );
     }
 }

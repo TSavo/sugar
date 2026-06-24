@@ -14,7 +14,7 @@ use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
 };
 use crate::sugar::monadic::{
     err_term, is_grounded_literal_term, none_term, ok_term, some_term, OPT_NONE, OPT_SOME, RES_ERR,
@@ -105,20 +105,20 @@ enum Kind {
     Map(syn::ExprClosure),
     AndThen(syn::ExprClosure),
     Filter(syn::ExprClosure),
-    OkOr(SugarBody),
+    OkOr(SugarBody<TermFloor>),
     MapErr(syn::ExprClosure),
-    UnwrapOr(SugarBody),
+    UnwrapOr(SugarBody<TermFloor>),
     UnwrapOrElse(syn::ExprClosure),
     UnwrapOrDefault { default: Option<Rc<Term>> },
 }
 
 struct OptionAdaptorSugar {
-    receiver: SugarBody,
+    receiver: SugarBody<TermFloor>,
     kind: Kind,
 }
 
 impl OptionAdaptorSugar {
-    fn new(receiver: SugarBody, kind: Kind) -> Box<dyn Sugar> {
+    fn new(receiver: SugarBody<TermFloor>, kind: Kind) -> Box<dyn Sugar> {
         Box::new(Self { receiver, kind })
     }
 }
@@ -217,7 +217,7 @@ impl Sugar for OptionAdaptorSugar {
 }
 
 fn term_from_body(
-    body: &SugarBody,
+    body: &SugarBody<TermFloor>,
     ctx: &SugarCtx,
     label: &'static str,
 ) -> Result<Rc<Term>, FactoryReduction> {
@@ -669,7 +669,10 @@ fn desugar_result_unwrap_or_default(payload: ResultPayload, default: Option<Rc<T
     }
 }
 
-fn build_eager_default(default: &SugarBody, ctx: &SugarCtx) -> Result<Rc<Term>, FactoryReduction> {
+fn build_eager_default(
+    default: &SugarBody<TermFloor>,
+    ctx: &SugarCtx,
+) -> Result<Rc<Term>, FactoryReduction> {
     let term = match term_from_body(default, ctx, "monadic eager default") {
         Ok(term) => term,
         Err(reduction) => return Err(reduction),

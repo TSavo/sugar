@@ -11,7 +11,7 @@ use sugar_ir_symbolic::{ConstValue, Sort, Term};
 
 use crate::sugar::ctor_term::CtorSugar;
 use crate::sugar::factory::{
-    build_term, compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
+    build_term, compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
 };
 use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::{
@@ -76,7 +76,7 @@ fn is_slice_reference_cast(ty: &Type) -> bool {
 
 struct CastSugar {
     cast_type: String,
-    inner: SugarBody,
+    inner: SugarBody<TermFloor>,
 }
 
 impl Sugar for CastSugar {
