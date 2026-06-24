@@ -1,57 +1,48 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// TERM recognizer for unsafe-memory writes. `clone_to_uninit` mutates raw /
-// MaybeUninit storage, so a value flowing through it is not a timeless
-// construction from source literals.
+// Sugar for unsafe-memory writes. `clone_to_uninit` mutates raw / MaybeUninit
+// storage, so a value flowing through it is not a timeless construction from
+// source literals. The method call owns the typed boundary; enclosing blocks only
+// bubble this effect.
 
-use syn::{visit::Visit, Expr, Stmt};
+use syn::Expr;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::factory::SugarBuildCtx;
-use crate::sugar::term_leaf::reasoned_incomplete;
-use crate::{token_key, Effect, Sugar};
+use crate::{token_key, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("unsafe_memory", SugarRole::Term, recognize);
+
+pub(crate) const STATEMENT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
+    "statement_unsafe_memory",
+    SugarRole::StatementEffect,
+    recognize,
+);
 
 pub(crate) fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::MethodCall(call) = expr else {
         return None;
     };
-    is_unsafe_memory_method(&call.method)
-        .then(|| reasoned_incomplete(runtime_memory_reason(&token_key(expr))))
-}
-
-pub(crate) fn unsafe_memory_boundary_stmts(stmts: &[Stmt]) -> bool {
-    let mut scan = UnsafeMemoryScan::default();
-    for stmt in stmts {
-        scan.visit_stmt(stmt);
-    }
-    scan.found
-}
-
-pub(crate) fn runtime_memory_reason(boundary: &str) -> String {
-    Effect::RuntimeExprStmt {
-        boundary: boundary.to_string(),
-    }
-    .reason()
+    is_unsafe_memory_method(&call.method).then(|| {
+        Box::new(UnsafeMemorySugar {
+            boundary: token_key(expr),
+        }) as Box<dyn Sugar>
+    })
 }
 
 fn is_unsafe_memory_method(method: &syn::Ident) -> bool {
     method == "clone_to_uninit"
 }
 
-#[derive(Default)]
-struct UnsafeMemoryScan {
-    found: bool,
+struct UnsafeMemorySugar {
+    boundary: String,
 }
 
-impl<'ast> Visit<'ast> for UnsafeMemoryScan {
-    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
-        if is_unsafe_memory_method(&call.method) {
-            self.found = true;
-            return;
-        }
-        syn::visit::visit_expr_method_call(self, call);
+impl Sugar for UnsafeMemorySugar {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        Outcome::Incomplete(Effect::RuntimeExprStmt {
+            boundary: self.boundary.clone(),
+        })
     }
 }
