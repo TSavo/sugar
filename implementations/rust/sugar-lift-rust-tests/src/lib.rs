@@ -7933,6 +7933,12 @@ enum Effect {
     /// the `StatementPositionSugar` aliased-read leaf; a statement over a CONSTRUCTED literal
     /// value stays unclassified.
     RuntimeExprStmt { boundary: String },
+    /// CELL-RUNTIME-ALIASED: a tracked `Cell`/`RefCell` read whose temporal ledger proves
+    /// the current value is runtime/aliased instead of literal-pinned. Literal-pinned
+    /// cell states complete through `CellRefCellSugar`; this fires only after an aliasing
+    /// write or runtime cell source dirties the ledger, so no single timeless value can
+    /// be warranted.
+    CellRuntimeAliased { boundary: String },
     /// FUTURE-HANDOFF: an assertion-bearing `async { .. }` future is handed to a
     /// call/method driver. `async` syntax itself is compiler-known and inert, but the
     /// driver call is library/runtime semantics unless dynamically learned from visible
@@ -8058,6 +8064,7 @@ impl Effect {
                 "assertion in a runtime expression-statement `{boundary}` (value read through a \
                  `&mut` borrow / mutation, not constructible from source literals); refused"
             ),
+            Effect::CellRuntimeAliased { boundary } => boundary.clone(),
             Effect::FutureHandoff { boundary } => format!(
                 "future handoff boundary `{boundary}`: assertion inside an async future handed to \
                  a non-axiomatic driver; driver semantics must be learned dynamically from \
@@ -8115,6 +8122,7 @@ impl Effect {
             | Effect::ImplMethod { boundary }
             | Effect::IfGuardRuntime { boundary }
             | Effect::RuntimeExprStmt { boundary }
+            | Effect::CellRuntimeAliased { boundary }
             | Effect::FutureHandoff { boundary }
             | Effect::DormantFuture { boundary }
             | Effect::RuntimeMatchScrutinee { boundary }

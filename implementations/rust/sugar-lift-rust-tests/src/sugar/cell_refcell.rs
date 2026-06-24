@@ -8,9 +8,7 @@ use syn::{Expr, UnOp};
 
 use crate::sugar::assign_op::CellKind;
 use crate::sugar::claim::ExprSugarClaim;
-use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
-};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::{simple_path_name, strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -49,33 +47,25 @@ enum CellValue {
 }
 
 impl Sugar for CellRefCellSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let value = match &self.value {
             CellValue::Body(value) => value,
             CellValue::Missing => {
-                return Err(FactoryGap::new(
-                    "tracked Cell/RefCell read has no temporal value",
-                ))
+                cell_refcell_gap("tracked Cell/RefCell read has no temporal value")
             }
             CellValue::Refused(reason) => {
-                return Ok(Outcome::Incomplete(Effect::Unsupported {
-                    reason: reason.clone(),
-                }))
+                return Outcome::Incomplete(Effect::CellRuntimeAliased {
+                    boundary: reason.clone(),
+                })
             }
         };
-        match value.reduce(ctx)? {
+        match value.reduce(ctx) {
             Outcome::Complete(d) => match d.into_term() {
-                Some(term) => Ok(Outcome::Complete(Desugared::Term(term))),
-                None => Err(FactoryGap::new(
-                    "tracked Cell/RefCell value reduced to non-term",
-                )),
+                Some(term) => Outcome::Complete(Desugared::Term(term)),
+                None => cell_refcell_gap("tracked Cell/RefCell value reduced to non-term"),
             },
-            Outcome::Incomplete(effect) => Ok(Outcome::Incomplete(effect)),
+            Outcome::Incomplete(effect) => Outcome::Incomplete(effect),
         }
-    }
-
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
     }
 }
 
@@ -99,6 +89,10 @@ fn cell_value(receiver: &Expr, kind: CellKind, fcx: &SugarBuildCtx) -> CellValue
 fn tracked_cell_kind(receiver: &Expr, fcx: &SugarBuildCtx) -> Option<CellKind> {
     let name = simple_path_name(receiver)?;
     fcx.scope().temporal_cell_kind(&name)
+}
+
+fn cell_refcell_gap(reason: &str) -> ! {
+    panic!("tracked Cell/RefCell read did not reach a lawful value floor: {reason}")
 }
 
 fn cell_get_receiver(expr: &Expr) -> Option<&Expr> {
