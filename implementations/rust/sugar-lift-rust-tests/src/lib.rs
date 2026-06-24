@@ -7939,6 +7939,11 @@ enum Effect {
     /// write or runtime cell source dirties the ledger, so no single timeless value can
     /// be warranted.
     CellRuntimeAliased { boundary: String },
+    /// RESULT-INSPECT-CALLBACK: erasing `Result::{inspect, inspect_err}` is lawful only
+    /// when the callback is syntactically proven no-op. A non-noop callback is a real
+    /// execution boundary owned by the callback site; the identity adaptor must refuse
+    /// instead of dropping possible effects.
+    ResultInspectCallback { boundary: String },
     /// FUTURE-HANDOFF: an assertion-bearing `async { .. }` future is handed to a
     /// call/method driver. `async` syntax itself is compiler-known and inert, but the
     /// driver call is library/runtime semantics unless dynamically learned from visible
@@ -8065,6 +8070,10 @@ impl Effect {
                  `&mut` borrow / mutation, not constructible from source literals); refused"
             ),
             Effect::CellRuntimeAliased { boundary } => boundary.clone(),
+            Effect::ResultInspectCallback { boundary } => format!(
+                "Result inspect callback `{boundary}` is not provably no-op; refusing to erase \
+                 possible callback effects"
+            ),
             Effect::FutureHandoff { boundary } => format!(
                 "future handoff boundary `{boundary}`: assertion inside an async future handed to \
                  a non-axiomatic driver; driver semantics must be learned dynamically from \
@@ -8123,6 +8132,7 @@ impl Effect {
             | Effect::IfGuardRuntime { boundary }
             | Effect::RuntimeExprStmt { boundary }
             | Effect::CellRuntimeAliased { boundary }
+            | Effect::ResultInspectCallback { boundary }
             | Effect::FutureHandoff { boundary }
             | Effect::DormantFuture { boundary }
             | Effect::RuntimeMatchScrutinee { boundary }

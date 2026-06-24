@@ -4,18 +4,17 @@
 // SAME items in the SAME order, so over a finite literal sequence it is the IDENTITY
 // adaptor. `Result::{inspect, inspect_err}` similarly returns the original Result; the
 // term-level arm below erases it only when the receiver is a stable Result constructor
-// and the callback is syntactically proven no-op. Any other claimed case takes the
-// factory gap path unless another sugar names a real source/effect boundary.
+// and the callback is syntactically proven no-op. A non-noop callback is a named
+// refusal; an impossible non-Result receiver is a construction-law panic.
 
+use quote::ToTokens;
 use syn::{Expr, ExprClosure};
 
-use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
-};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::identity::IdentitySugar;
 use crate::sugar::method_family;
 use crate::sugar::monadic::{RES_ERR, RES_OK};
-use crate::{strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
+use crate::{strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("inspect", recognize_composite);
@@ -63,36 +62,30 @@ impl ResultInspectSugar {
 }
 
 impl Sugar for ResultInspectSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         if !callback_is_noop(&self.callback, ctx) {
-            return Err(FactoryGap::new(
-                "Result inspect callback is not provably no-op",
-            ));
+            return Outcome::Incomplete(Effect::ResultInspectCallback {
+                boundary: self.callback.to_token_stream().to_string(),
+            });
         }
-        let receiver = match self.receiver.reduce(ctx)? {
+        let receiver = match self.receiver.reduce(ctx) {
             Outcome::Complete(d) => match d.into_term() {
                 Some(term) => term,
-                None => {
-                    return Err(FactoryGap::new(
-                        "Result inspect receiver reduced to non-term",
-                    ))
-                }
+                None => result_inspect_gap("Result inspect receiver reduced to non-term"),
             },
-            Outcome::Incomplete(e) => return Ok(Outcome::Incomplete(e)),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
         match receiver.as_ref() {
             sugar_ir_symbolic::Term::Ctor { name, .. } if name == RES_OK || name == RES_ERR => {
-                Ok(Outcome::Complete(Desugared::Term(receiver)))
+                Outcome::Complete(Desugared::Term(receiver))
             }
-            _ => Err(FactoryGap::new(
-                "Result inspect receiver did not reduce to Result constructor",
-            )),
+            _ => result_inspect_gap("Result inspect receiver did not reduce to Result constructor"),
         }
     }
+}
 
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
-    }
+fn result_inspect_gap(reason: &str) -> ! {
+    panic!("ResultInspectSugar did not reach a lawful value floor: {reason}")
 }
 
 pub(crate) fn is_stable_result_source(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
