@@ -22907,6 +22907,66 @@ fn t() {
         "factory should audit the expanded body, not the vendor wrapper macro: {:?}",
         unresolved_wrapper_macro_audits
     );
+    for wrapper in ["compile_guard", "imm_bits_guard"] {
+        assert!(
+            out.factory_audits.iter().any(|audit| {
+                audit.selected == Some("macro_assertion_surface") && audit.site.contains(wrapper)
+            }),
+            "{wrapper} must be factory-owned by macro_assertion_surface, audits: {:?}",
+            out.factory_audits
+        );
+    }
+}
+
+#[test]
+fn non_assert_named_statement_macro_is_factory_assertion_surface_with_teeth() {
+    let good = r#"
+macro_rules! guard {
+    ($e:expr) => { const { assert!($e); } };
+}
+
+#[test]
+fn t() {
+    guard!(1 + 1 == 2);
+}
+"#;
+    let out = lift_file(&parse(good), "tests/macro_assertion_surface.rs");
+    assert_eq!(
+        out.assertions_lifted, 1,
+        "held source wrapper macro should expand to its assertion-surface body; skips: {:?}; audits: {:?}",
+        out.skip_reasons, out.factory_audits
+    );
+    assert_eq!(out.assertions_refused, 0, "{:?}", out.skip_reasons);
+    assert!(
+        out.factory_audits.iter().any(|audit| {
+            audit.selected == Some("macro_assertion_surface") && audit.site.contains("guard")
+        }),
+        "statement macro wrapper must be owned by macro_assertion_surface, audits: {:?}",
+        out.factory_audits
+    );
+    if let Some(sat) = z3_sat_of_inv(&out.decls[0], "macro-assertion-good") {
+        assert!(sat, "good expanded macro assertion must be z3-SAT");
+    }
+
+    let bad = r#"
+macro_rules! guard {
+    ($e:expr) => { const { assert!($e); } };
+}
+
+#[test]
+fn t() {
+    guard!(1 + 1 == 3);
+}
+"#;
+    let bad_out = lift_file(&parse(bad), "tests/macro_assertion_surface.rs");
+    assert_eq!(
+        bad_out.assertions_lifted, 1,
+        "bad twin must still lift the macro assertion surface; skips: {:?}; audits: {:?}",
+        bad_out.skip_reasons, bad_out.factory_audits
+    );
+    if let Some(sat) = z3_sat_of_inv(&bad_out.decls[0], "macro-assertion-bad") {
+        assert!(!sat, "wrong expanded macro assertion must be z3-UNSAT");
+    }
 }
 
 // ── Term-position macro_rules expansion (the deferred complete walk in `macro_term`) ──────────
