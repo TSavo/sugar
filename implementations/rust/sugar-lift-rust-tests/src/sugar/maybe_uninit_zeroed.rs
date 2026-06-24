@@ -9,8 +9,9 @@
 //       `mem::zeroed::<T>()`
 //
 // For types where all-zeros is a determinate valid value (primitive integers
-// and `bool`), the recognizer emits the zero constant directly — giving z3
-// TEETH: `MaybeUninit::<u32>::zeroed().assume_init() == 1` becomes UNSAT.
+// and `bool`), the sugar completes to the zero constant at desugar time —
+// giving z3 TEETH: `MaybeUninit::<u32>::zeroed().assume_init() == 1` becomes
+// UNSAT.
 //
 // Finite-or-refuse: for types where all-zeros is UB or indeterminate
 // (`NonZero*`, references, raw pointers, user-defined structs, ...) the recognizer
@@ -34,8 +35,7 @@ use syn::{Expr, GenericArgument, PathArguments, Type};
 
 use crate::sugar::claim::ExprSugarClaim;
 use crate::sugar::factory::SugarBuildCtx;
-use crate::sugar::term_leaf::{reasoned_incomplete, resolved_term};
-use crate::{bool_const, num, strip_refs_groups, Sugar};
+use crate::{bool_const, num, strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 // ── (A) MaybeUninit::<T>::zeroed().assume_init() ─────────────────────────────
 
@@ -52,7 +52,7 @@ fn recognize_assume_init(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Su
     }
     // Receiver must be `MaybeUninit::<T>::zeroed()`.
     let ty = maybe_uninit_zeroed_type(&outer.receiver)?;
-    Some(zeroed_type_sugar(&ty))
+    Some(Box::new(ZeroedSugar { ty }))
 }
 
 /// Return `T` for `MaybeUninit::<T>::zeroed()`, or `None` if the receiver is not that shape.
@@ -99,7 +99,7 @@ fn recognize_mem_zeroed(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sug
         return None;
     }
     let ty = mem_zeroed_type(&call.func)?;
-    Some(zeroed_type_sugar(&ty))
+    Some(Box::new(ZeroedSugar { ty }))
 }
 
 /// Return `T` for `mem::zeroed::<T>()` / `core::mem::zeroed::<T>()`, or `None` if the func is not that shape.
@@ -171,12 +171,22 @@ fn primitive_zero_term(ty: &Type) -> Option<Rc<Term>> {
     }
 }
 
-fn zeroed_type_sugar(ty: &Type) -> Box<dyn Sugar> {
-    if let Some(term) = primitive_zero_term(ty) {
-        return resolved_term(term);
+struct ZeroedSugar {
+    ty: Type,
+}
+
+impl Sugar for ZeroedSugar {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        if let Some(term) = primitive_zero_term(&self.ty) {
+            return Outcome::Complete(Desugared::Term(term));
+        }
+
+        let ty = quote::ToTokens::to_token_stream(&self.ty).to_string();
+        Outcome::Incomplete(Effect::InvalidBitPattern {
+            boundary: ty.clone(),
+            reason: format!(
+                "all-zeros bit-pattern is not a determinate valid value for `{ty}`; refused"
+            ),
+        })
     }
-    reasoned_incomplete(format!(
-        "all-zeros bit-pattern is not a determinate valid value for `{}`; refused",
-        quote::ToTokens::to_token_stream(ty)
-    ))
 }
