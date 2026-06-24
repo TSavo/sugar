@@ -7646,6 +7646,10 @@ pub(crate) enum Desugared {
     /// A literal string payload for sugars whose semantic child floor is a Rust string
     /// value, not a generic term. `format!` consumes this for its format string.
     LiteralString(String),
+    /// A literal C string payload: compiler-checked bytes with the implicit trailing NUL.
+    /// CStr method sugars consume this floor through `LiteralCStrVisitor` so byte/NUL
+    /// semantics stay out of generic string floors.
+    LiteralCStr(sugar::cstr::CStrBytes),
     /// A typed literal formatting value, preserving distinctions a generic term cannot
     /// carry faithfully (for example `char` Display vs Debug).
     FormatValue(sugar::format::FmtValue),
@@ -7665,6 +7669,7 @@ impl Desugared {
             Desugared::Constraints { .. } => None,
             Desugared::Term(_) => None,
             Desugared::LiteralString(_) => None,
+            Desugared::LiteralCStr(_) => None,
             Desugared::FormatValue(_) => None,
             Desugared::TupleComponents(_) => None,
         }
@@ -7683,6 +7688,7 @@ impl Desugared {
             Desugared::Seq(_) => None,
             Desugared::Constraints { .. } => None,
             Desugared::LiteralString(_) => None,
+            Desugared::LiteralCStr(_) => None,
             Desugared::FormatValue(_) => None,
             Desugared::TupleComponents(_) => None,
         }
@@ -7696,6 +7702,7 @@ impl Desugared {
             | Desugared::Constraints { .. }
             | Desugared::Term(_)
             | Desugared::LiteralString(_)
+            | Desugared::LiteralCStr(_)
             | Desugared::FormatValue(_) => None,
         }
     }
@@ -7712,6 +7719,7 @@ impl Desugared {
     pub(crate) fn as_string_literal(&self) -> Option<String> {
         let seq = match self {
             Desugared::LiteralString(s) => return Some(s.clone()),
+            Desugared::LiteralCStr(_) => return None,
             Desugared::FormatValue(sugar::format::FmtValue::Str(s)) => return Some(s.clone()),
             Desugared::FormatValue(_) => return None,
             Desugared::Term(term) => {
@@ -9196,6 +9204,7 @@ fn emit_desugared(
         // wrapped by an asserting node to become a `Constraints`); mirrors `Seq`.
         Desugared::Term(_) => false,
         Desugared::LiteralString(_) => false,
+        Desugared::LiteralCStr(_) => false,
         Desugared::FormatValue(_) => false,
         Desugared::TupleComponents(_) => false,
     }

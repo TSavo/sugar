@@ -79,6 +79,7 @@ pub(crate) struct ConstraintFloor;
 pub(crate) struct AssertionSurfaceFloor;
 pub(crate) struct TupleProducerFloor;
 pub(crate) struct LiteralStringFloor;
+pub(crate) struct LiteralCStrFloor;
 pub(crate) struct FormatTemplateFloor;
 pub(crate) struct FormatValueFloor;
 pub(crate) struct BoolFloor;
@@ -89,6 +90,7 @@ impl BodyFloor for ConstraintFloor {}
 impl BodyFloor for AssertionSurfaceFloor {}
 impl BodyFloor for TupleProducerFloor {}
 impl BodyFloor for LiteralStringFloor {}
+impl BodyFloor for LiteralCStrFloor {}
 impl BodyFloor for FormatTemplateFloor {}
 impl BodyFloor for FormatValueFloor {}
 impl BodyFloor for BoolFloor {}
@@ -164,6 +166,19 @@ impl SugarBody<LiteralStringFloor> {
 
     pub(crate) fn reduce_literal_string(&self, ctx: &SugarCtx) -> FloorRead<String> {
         crate::sugar::format::literal_string_floor_from_outcome(self.reduce(ctx))
+    }
+}
+
+impl SugarBody<LiteralCStrFloor> {
+    pub(crate) fn literal_cstr(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
+        Self::from_node(crate::sugar::cstr::build_literal_cstr_body(expr, fcx))
+    }
+
+    pub(crate) fn reduce_literal_cstr(
+        &self,
+        ctx: &SugarCtx,
+    ) -> FloorRead<crate::sugar::cstr::CStrBytes> {
+        crate::sugar::cstr::literal_cstr_floor_from_outcome(self.reduce(ctx))
     }
 }
 
@@ -481,6 +496,9 @@ impl FactoryAuditSeed {
             Outcome::Complete(Desugared::Term(_)) => (FactoryDisposition::Warranted, "term", None),
             Outcome::Complete(Desugared::LiteralString(_)) => {
                 (FactoryDisposition::Warranted, "literal-string", None)
+            }
+            Outcome::Complete(Desugared::LiteralCStr(_)) => {
+                (FactoryDisposition::Warranted, "literal-cstr", None)
             }
             Outcome::Complete(Desugared::FormatValue(_)) => {
                 (FactoryDisposition::Warranted, "format-value", None)

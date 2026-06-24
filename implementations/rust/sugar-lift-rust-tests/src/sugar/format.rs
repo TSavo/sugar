@@ -31,12 +31,14 @@
 // reason carrying the k-remedy (build on nightly).
 
 use std::collections::BTreeMap;
+use std::ffi::CStr;
 
 use syn::punctuated::Punctuated;
 use syn::{Expr, ExprLit, Lit, Pat, Stmt, Token};
 
+use crate::sugar::cstr::{CStrBytes, LiteralCStrVisitor};
 use crate::sugar::factory::{
-    FloorRead, FormatValueFloor, LiteralStringFloor, SugarBody, SugarBuildCtx,
+    FloorRead, FormatValueFloor, LiteralCStrFloor, LiteralStringFloor, SugarBody, SugarBuildCtx,
 };
 use crate::{strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
@@ -128,6 +130,9 @@ pub(crate) fn build_literal_string_body(expr: &Expr, fcx: &SugarBuildCtx) -> Box
 
 pub(crate) fn build_format_value_body(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
     let body = match strip_refs_groups(expr) {
+        e if crate::sugar::cstr::has_literal_cstr_floor(e, fcx) => {
+            FormatValueBody::CStr(SugarBody::literal_cstr(e, fcx))
+        }
         Expr::Lit(ExprLit { lit, .. }) => match reconstruct_lit(lit) {
             Ok(Some(value)) => FormatValueBody::Literal(value),
             Ok(None) => FormatValueBody::Unconstructible(
@@ -386,6 +391,7 @@ enum FormatValueBody {
     Literal(FmtValue),
     Child(SugarBody<FormatValueFloor>),
     String(SugarBody<LiteralStringFloor>),
+    CStr(SugarBody<LiteralCStrFloor>),
     Neg(SugarBody<FormatValueFloor>),
     Binary {
         op: syn::BinOp,
@@ -410,6 +416,12 @@ impl Sugar for FormatValueBody {
             FormatValueBody::String(child) => match child.reduce_literal_string(ctx) {
                 FloorRead::Complete(value) => {
                     Outcome::Complete(Desugared::FormatValue(FmtValue::Str(value)))
+                }
+                FloorRead::Incomplete(effect) => Outcome::Incomplete(effect),
+            },
+            FormatValueBody::CStr(child) => match child.reduce_literal_cstr(ctx) {
+                FloorRead::Complete(value) => {
+                    Outcome::Complete(Desugared::FormatValue(FmtValue::CStr(value)))
                 }
                 FloorRead::Incomplete(effect) => Outcome::Incomplete(effect),
             },
@@ -643,6 +655,7 @@ pub(crate) enum FmtValue {
     F64(f64),
     Char(char),
     Str(String),
+    CStr(CStrBytes),
     Bool(bool),
 }
 
@@ -654,6 +667,7 @@ trait FormatLiteralVisitor {
     fn visit_f64(self, value: f64) -> Self::Output;
     fn visit_char(self, value: char) -> Self::Output;
     fn visit_string(self, value: &str) -> Self::Output;
+    fn visit_cstr(self, value: &CStrBytes) -> Self::Output;
     fn visit_bool(self, value: bool) -> Self::Output;
 }
 
@@ -665,6 +679,7 @@ impl FmtValue {
             FmtValue::F64(value) => visitor.visit_f64(*value),
             FmtValue::Char(value) => visitor.visit_char(*value),
             FmtValue::Str(value) => visitor.visit_string(value),
+            FmtValue::CStr(value) => visitor.visit_cstr(value),
             FmtValue::Bool(value) => visitor.visit_bool(*value),
         }
     }
@@ -701,8 +716,24 @@ impl FormatLiteralVisitor for RenderVisitor<'_> {
         Ok(render_str(value, self.spec))
     }
 
+    fn visit_cstr(self, value: &CStrBytes) -> Self::Output {
+        value.accept_literal_cstr(RenderCStrVisitor { spec: self.spec })
+    }
+
     fn visit_bool(self, value: bool) -> Self::Output {
         Ok(render_bool(value, self.spec))
+    }
+}
+
+struct RenderCStrVisitor<'a> {
+    spec: &'a Spec,
+}
+
+impl LiteralCStrVisitor for RenderCStrVisitor<'_> {
+    type Output = Result<Option<String>, String>;
+
+    fn visit_cstr(self, bytes: &CStrBytes) -> Self::Output {
+        Ok(Some(render_cstr(bytes, self.spec)))
     }
 }
 
@@ -1487,6 +1518,19 @@ fn render_str(s: &str, spec: &Spec) -> Option<String> {
         }
     }
     Some(body)
+}
+
+fn render_cstr(bytes: &CStrBytes, spec: &Spec) -> String {
+    if spec.kind != Kind::Debug
+        || spec.plus
+        || spec.zero_width.is_some()
+        || spec.precision.is_some()
+    {
+        panic!("CStr reached a non-Debug formatter; rustc would reject this source")
+    }
+    let value = CStr::from_bytes_with_nul(bytes.with_nul())
+        .unwrap_or_else(|_| panic!("LiteralCStrFloor carried invalid C string bytes"));
+    format!("{value:?}")
 }
 
 fn render_bool(b: bool, spec: &Spec) -> Option<String> {
