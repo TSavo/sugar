@@ -7,11 +7,8 @@
 use std::rc::Rc;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{build_constraint, SugarBuildCtx};
-use crate::{
-    AssertionFactKind, Desugared, Effect, Outcome, Sugar, SugarCtx, Warrant,
-    STRUCTURAL_BACKSTOP_REASON,
-};
+use crate::sugar::factory::{ConstraintFloor, SugarBody, SugarBuildCtx};
+use crate::{AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant};
 use sugar_ir_symbolic::{and_, or_, Formula};
 use syn::{BinOp, Expr, ExprBinary};
 
@@ -19,8 +16,8 @@ pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("constraint_bool_bitwise", SugarRole::Constraint, recognize);
 
 struct BoolBitwiseSugar {
-    left: Box<dyn Sugar>,
-    right: Box<dyn Sugar>,
+    left: SugarBody<ConstraintFloor>,
+    right: SugarBody<ConstraintFloor>,
     is_and: bool,
 }
 
@@ -40,19 +37,19 @@ fn recognize_binary(binary: &ExprBinary, fcx: &SugarBuildCtx) -> Option<Box<dyn 
         _ => return None,
     };
     Some(Box::new(BoolBitwiseSugar {
-        left: build_constraint(&binary.left, fcx),
-        right: build_constraint(&binary.right, fcx),
+        left: SugarBody::constraint(&binary.left, fcx),
+        right: SugarBody::constraint(&binary.right, fcx),
         is_and,
     }))
 }
 
 impl Sugar for BoolBitwiseSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let left = match constraint_payload(&*self.left, ctx) {
+        let left = match constraint_payload(&self.left, ctx) {
             Ok(payload) => payload,
             Err(outcome) => return outcome,
         };
-        let right = match constraint_payload(&*self.right, ctx) {
+        let right = match constraint_payload(&self.right, ctx) {
             Ok(payload) => payload,
             Err(outcome) => return outcome,
         };
@@ -82,8 +79,11 @@ struct ConstraintPayload {
     name: Option<String>,
 }
 
-fn constraint_payload(node: &dyn Sugar, ctx: &SugarCtx) -> Result<ConstraintPayload, Outcome> {
-    match node.desugar(ctx) {
+fn constraint_payload(
+    body: &SugarBody<ConstraintFloor>,
+    ctx: &SugarCtx,
+) -> Result<ConstraintPayload, Outcome> {
+    match body.reduce(ctx) {
         Outcome::Complete(Desugared::Constraints {
             atom,
             kind,
@@ -94,9 +94,7 @@ fn constraint_payload(node: &dyn Sugar, ctx: &SugarCtx) -> Result<ConstraintPayl
             kind,
             name: warrant.name,
         }),
-        Outcome::Complete(_) => Err(Outcome::Incomplete(Effect::Unsupported {
-            reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
-        })),
+        Outcome::Complete(_) => bool_bitwise_gap("child reduced to a non-constraint floor"),
         Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
@@ -106,4 +104,8 @@ fn common_constraint_name(left: &Option<String>, right: &Option<String>) -> Opti
         (Some(left), Some(right)) if left == right => Some(left.clone()),
         _ => None,
     }
+}
+
+fn bool_bitwise_gap(reason: &str) -> ! {
+    panic!("bool_bitwise did not reach a lawful floor: {reason}")
 }

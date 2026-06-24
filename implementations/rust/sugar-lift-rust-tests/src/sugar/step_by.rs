@@ -78,3 +78,7 @@ fn seq_or_empty(outcome: Outcome) -> Result<Option<Vec<DesugaredElem>>, Outcome>
         Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
+
+fn step_by_gap(reason: &str) -> ! {
+    panic!("step_by did not reach a lawful sequence floor: {reason}")
+}

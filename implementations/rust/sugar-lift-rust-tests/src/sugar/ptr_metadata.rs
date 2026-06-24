@@ -6,12 +6,9 @@
 // recognize it and stop with a named Incomplete instead of falling to the
 // structural backstop.
 
-use std::collections::BTreeMap;
-
 use syn::{Expr, Lit};
 
 use crate::sugar::claim::ExprSugarClaim;
-use crate::sugar::format::stable_let_bindings;
 use crate::sugar::literal_slice;
 use crate::{num, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
@@ -20,7 +17,7 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim =
 
 pub(crate) fn recognize(
     expr: &Expr,
-    _fcx: &crate::sugar::factory::SugarBuildCtx,
+    fcx: &crate::sugar::factory::SugarBuildCtx,
 ) -> Option<Box<dyn Sugar>> {
     let Expr::Call(call) = peel_groups(expr) else {
         return None;
@@ -28,36 +25,42 @@ pub(crate) fn recognize(
     if call.args.len() != 1 || !path_last_is(&call.func, "metadata") {
         return None;
     }
-    Some(Box::new(PtrMetadataSugar {
-        arg: call.args.first()?.clone(),
-    }))
+    let arg = call.args.first()?;
+    let value = metadata_len(arg, fcx.let_inits(), 0)
+        .map(MetadataValue::Len)
+        .unwrap_or_else(|| {
+            MetadataValue::LayoutBoundary(format!(
+                "pointer metadata is a runtime layout property (bin-2: layout/vtable metadata, \
+                 not constructed from source literals); refused: `{}`",
+                token_key(arg)
+            ))
+        });
+    Some(Box::new(PtrMetadataSugar { value }))
 }
 
 struct PtrMetadataSugar {
-    arg: Expr,
+    value: MetadataValue,
+}
+
+enum MetadataValue {
+    Len(usize),
+    LayoutBoundary(String),
 }
 
 impl Sugar for PtrMetadataSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let stable = stable_let_bindings(ctx.scope);
-        let let_inits: BTreeMap<String, &Expr> =
-            stable.iter().map(|(k, v)| (k.clone(), v)).collect();
-        if let Some(len) = metadata_len(&self.arg, &let_inits, 0) {
-            return Outcome::Complete(Desugared::Term(num(len as i128)));
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        match &self.value {
+            MetadataValue::Len(len) => Outcome::Complete(Desugared::Term(num(*len as i128))),
+            MetadataValue::LayoutBoundary(reason) => Outcome::Incomplete(Effect::TypeLayout {
+                boundary: reason.clone(),
+            }),
         }
-        Outcome::Incomplete(Effect::Unsupported {
-            reason: format!(
-                "pointer metadata is a runtime layout property (bin-2: layout/vtable metadata, \
-                 not constructed from source literals); refused: `{}`",
-                token_key(&self.arg)
-            ),
-        })
     }
 }
 
 fn metadata_len<'a>(
     expr: &'a Expr,
-    let_inits: &BTreeMap<String, &'a Expr>,
+    let_inits: &std::collections::BTreeMap<String, &'a Expr>,
     depth: usize,
 ) -> Option<usize> {
     const MAX_DEPTH: usize = 8;

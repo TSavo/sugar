@@ -44,6 +44,10 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
             .skip(start)
             .take(end - start)
             .cloned()
+            .map(|expr| DesugaredElem {
+                value: const_eval(&expr, &BTreeMap::new()),
+                expr,
+            })
             .collect(),
     }))
 }
@@ -73,21 +77,12 @@ pub(crate) fn literal_slice_len<'a>(
 }
 
 struct LiteralSliceSugar {
-    elems: Vec<Expr>,
+    elems: Vec<DesugaredElem>,
 }
 
 impl Sugar for LiteralSliceSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        Outcome::Complete(Desugared::Seq(
-            self.elems
-                .iter()
-                .cloned()
-                .map(|expr| DesugaredElem {
-                    value: const_eval(&expr, &BTreeMap::new()),
-                    expr,
-                })
-                .collect(),
-        ))
+        Outcome::Complete(Desugared::Seq(self.elems.clone()))
     }
 }
 

@@ -31,9 +31,10 @@ impl SequenceFloorVisitor for RequiredSequenceVisitor<'_> {
     }
 
     fn visit_non_sequence(self, floor: Desugared) -> Self::Output {
+        let _ = floor;
         panic!(
-            "{} completed a non-sequence floor where a sequence floor was required: {:?}",
-            self.owner, floor
+            "{} completed a non-sequence floor where a sequence floor was required",
+            self.owner
         )
     }
 }

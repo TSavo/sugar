@@ -537,7 +537,8 @@ fn repeat_count(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<usize, Ou
     let Some(value) = const_fold_int_term(&term) else {
         panic!("str repeat count did not reduce to an integer literal");
     };
-    usize::try_from(value).unwrap_or_else(|_| panic!("str repeat count is negative or too large"))
+    Ok(usize::try_from(value)
+        .unwrap_or_else(|_| panic!("str repeat count is negative or too large")))
 }
 
 fn term_body(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {

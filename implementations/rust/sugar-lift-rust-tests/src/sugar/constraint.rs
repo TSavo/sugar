@@ -1176,7 +1176,7 @@ fn is_str_or_char_lit(expr: &Expr) -> bool {
     }
 }
 
-fn constraint_gap<T>(reason: impl Into<String>) -> T {
+fn constraint_gap(reason: impl Into<String>) -> ! {
     panic!(
         "constraint did not reach a lawful proof-universe floor: {}",
         reason.into()

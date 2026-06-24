@@ -15,7 +15,7 @@ use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::collect::literal_vec_term;
-use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::sugar::unit_path::unit_path_literal_name;
@@ -59,44 +59,70 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     }
 
     Some(Box::new(ResultTransposeCollectSugar {
-        base: method_family::build_literal_sequence_composite(&map.receiver, fcx)?,
-        closure: closure.clone(),
+        base: SugarBody::from_node(method_family::build_literal_sequence_composite(
+            &map.receiver,
+            fcx,
+        )?),
+        mapper: ResultTransposeClosure {
+            raw: closure.clone(),
+        },
     }))
 }
 
 struct ResultTransposeCollectSugar {
-    base: Box<dyn Sugar>,
-    closure: ExprClosure,
+    base: SugarBody<CompositeFloor>,
+    mapper: ResultTransposeClosure,
+}
+
+struct ResultTransposeClosure {
+    raw: ExprClosure,
 }
 
 impl Sugar for ResultTransposeCollectSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            let seq = self.base.desugar(ctx).complete()?.into_seq()?;
-            let mut kept = Vec::new();
-            for (index, elem) in seq.into_iter().enumerate() {
-                let value = elem.value.as_ref()?;
-                match eval_result_option_closure(&self.closure, value, ctx)? {
-                    ResultOptionValue::Ok(Some(value)) => kept.push(value_term(&value)?),
-                    ResultOptionValue::Ok(None) => {}
-                    ResultOptionValue::Err(err) => {
-                        debug!(
-                            target: "sugar_lift_rust_tests::sugar::result_transpose_collect",
-                            index,
-                            "Result transpose/filter_map collect short-circuited to Err"
-                        );
-                        return Some(Desugared::Term(monadic::err_term(err)));
-                    }
+        let seq = match self.base.reduce(ctx) {
+            Outcome::Complete(desugared) => desugared
+                .into_seq()
+                .unwrap_or_else(|| result_transpose_collect_gap("base completed as non-sequence")),
+            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+        };
+        let mut kept = Vec::new();
+        for (index, elem) in seq.into_iter().enumerate() {
+            let Some(value) = elem.value.as_ref() else {
+                result_transpose_collect_gap("sequence element did not carry a literal value");
+            };
+            match eval_result_option_closure(&self.mapper.raw, value, ctx) {
+                Some(ResultOptionValue::Ok(Some(value))) => {
+                    let Some(term) = value_term(&value) else {
+                        result_transpose_collect_gap("closure value did not reduce to a term");
+                    };
+                    kept.push(term);
                 }
+                Some(ResultOptionValue::Ok(None)) => {}
+                Some(ResultOptionValue::Err(err)) => {
+                    debug!(
+                        target: "sugar_lift_rust_tests::sugar::result_transpose_collect",
+                        index,
+                        "Result transpose/filter_map collect short-circuited to Err"
+                    );
+                    return Outcome::Complete(Desugared::Term(monadic::err_term(err)));
+                }
+                None => result_transpose_collect_gap(
+                    "recognized transpose/filter_map closure did not reduce to a literal result",
+                ),
             }
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::result_transpose_collect",
-                len = kept.len(),
-                "Result transpose/filter_map collect reduced to Ok(Vec)"
-            );
-            Some(Desugared::Term(monadic::ok_term(literal_vec_term(&kept))))
-        })())
+        }
+        debug!(
+            target: "sugar_lift_rust_tests::sugar::result_transpose_collect",
+            len = kept.len(),
+            "Result transpose/filter_map collect reduced to Ok(Vec)"
+        );
+        Outcome::Complete(Desugared::Term(monadic::ok_term(literal_vec_term(&kept))))
     }
+}
+
+fn result_transpose_collect_gap(reason: &str) -> ! {
+    panic!("result_transpose_collect did not reach a lawful literal floor: {reason}")
 }
 
 enum ResultOptionValue {
@@ -311,6 +337,7 @@ fn value_term(value: &ConstVal) -> Option<Rc<Term>> {
         ConstVal::Char(c) => Some(str_const(c.to_string())),
         ConstVal::UnitPath(path) => Some(make_var(unit_path_literal_name(path))),
         ConstVal::Tuple(_) => None,
+        ConstVal::Array(_) => None,
     }
 }
 

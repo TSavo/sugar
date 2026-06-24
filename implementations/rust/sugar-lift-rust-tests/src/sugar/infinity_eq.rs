@@ -8,12 +8,12 @@ use std::rc::Rc;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::configuration;
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::{
-    callsite_assertion_name, parse_macro_args, token_key, AssertionFactKind, CfgDisposition,
-    CfgPredicate, Desugared, Effect, Outcome, Sugar, SugarCtx, Warrant, STRUCTURAL_BACKSTOP_REASON,
+    bool_const, callsite_assertion_name, parse_macro_args, token_key, AssertionFactKind,
+    CfgDisposition, CfgPredicate, Desugared, Outcome, Sugar, SugarCtx, Warrant,
 };
-use sugar_ir_symbolic::{and_, atomic_, Formula, Term};
+use sugar_ir_symbolic::{and_, atomic_, eq, Formula, Term};
 use syn::{BinOp, Expr, ExprBinary, ExprMacro};
 
 pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim =
@@ -27,7 +27,7 @@ pub(crate) const ASSERTION_SURFACE_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::
 
 struct InfinityEqSugar {
     name: String,
-    receiver: Box<dyn Sugar>,
+    receiver: SugarBody<TermFloor>,
     receiver_expr: Expr,
     width: &'static str,
     is_positive: bool,
@@ -80,7 +80,7 @@ fn build(
         };
     Some(Box::new(InfinityEqSugar {
         name: name.to_string(),
-        receiver: build_term(&receiver_expr, fcx),
+        receiver: SugarBody::term(&receiver_expr, fcx),
         receiver_expr,
         width,
         is_positive,
@@ -90,8 +90,8 @@ fn build(
 
 impl Sugar for InfinityEqSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        if let Err(reason) = ensure_debug_assertions_active(&self.name, self.debug_gated, ctx) {
-            return unsupported(reason);
+        if let Some(outcome) = inactive_debug_assertion(&self.name, self.debug_gated, ctx) {
+            return outcome;
         }
 
         let receiver_width = {
@@ -100,7 +100,7 @@ impl Sugar for InfinityEqSugar {
         };
         if let Some(receiver_width) = receiver_width {
             if receiver_width != self.width {
-                return unsupported(format!(
+                infinity_eq_gap(&format!(
                     "infinity equality: receiver width `{receiver_width}` conflicts with constant width `{}` in `{}`",
                     self.width,
                     token_key(&self.receiver_expr)
@@ -108,7 +108,7 @@ impl Sugar for InfinityEqSugar {
             }
         }
 
-        let receiver = match term_payload(&*self.receiver, ctx) {
+        let receiver = match term_payload(&self.receiver, ctx) {
             Ok(term) => term,
             Err(outcome) => return outcome,
         };
@@ -230,23 +230,19 @@ fn path_to_name(path: &syn::Path) -> String {
         .join("::")
 }
 
-fn ensure_debug_assertions_active(
-    name: &str,
-    debug_gated: bool,
-    ctx: &SugarCtx,
-) -> Result<(), String> {
+fn inactive_debug_assertion(name: &str, debug_gated: bool, ctx: &SugarCtx) -> Option<Outcome> {
     if !debug_gated {
-        return Ok(());
+        return None;
     }
     match configuration::resolve_predicate(
         &CfgPredicate::Name("debug_assertions".to_string()),
         ctx.options,
     ) {
-        CfgDisposition::Present => Ok(()),
-        CfgDisposition::Absent(reason) => Err(format!(
+        CfgDisposition::Present => None,
+        CfgDisposition::Absent(reason) => Some(inert_support_constraint(format!(
             "{name}!: cfg(debug_assertions) not active; skipped: {reason}"
-        )),
-        CfgDisposition::Ambiguous(reason) => Err(format!(
+        ))),
+        CfgDisposition::Ambiguous(reason) => infinity_eq_gap(&format!(
             "{name}!: cfg(debug_assertions) ambiguous; skipped: {reason}"
         )),
     }
@@ -261,17 +257,24 @@ fn constraint(atom: Rc<Formula>, name: Option<String>) -> Outcome {
     })
 }
 
-fn term_payload(node: &dyn Sugar, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
-    match node.desugar(ctx) {
-        Outcome::Complete(desugared) => desugared.into_term().ok_or_else(|| {
-            Outcome::Incomplete(Effect::Unsupported {
-                reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
-            })
-        }),
+fn inert_support_constraint(reason: String) -> Outcome {
+    Outcome::Complete(Desugared::Constraints {
+        atom: eq(bool_const(true), bool_const(true)),
+        n: 0,
+        kind: AssertionFactKind::Support,
+        warrant: Warrant { name: Some(reason) },
+    })
+}
+
+fn term_payload(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
+    match body.reduce(ctx) {
+        Outcome::Complete(desugared) => Ok(desugared
+            .into_term()
+            .unwrap_or_else(|| infinity_eq_gap("receiver reduced to a non-term floor"))),
         Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
 
-fn unsupported(reason: String) -> Outcome {
-    Outcome::Incomplete(Effect::Unsupported { reason })
+fn infinity_eq_gap(reason: &str) -> ! {
+    panic!("infinity_eq did not reach a lawful floor: {reason}")
 }

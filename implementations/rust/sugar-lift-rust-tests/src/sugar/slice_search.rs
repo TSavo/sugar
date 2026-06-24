@@ -12,15 +12,14 @@ use sugar_ir_symbolic::{and_, atomic_, Term};
 use syn::{BinOp, Expr, ExprClosure, ExprMacro, ExprMethodCall};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::factory::{build_term, CompositeFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::format::stable_let_bindings;
 use crate::sugar::method_family;
 use crate::sugar::monadic;
 use crate::{
     callsite_assertion_name, const_eval_unary_closure, const_fold_int_term, const_int, num,
     parse_macro_args, repeat_count_in_scope, strip_refs_groups, AssertionFactKind, ConstVal,
-    Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx, Warrant,
-    STRUCTURAL_BACKSTOP_REASON, SUGAR_SEQ_CAP,
+    Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx, Warrant, SUGAR_SEQ_CAP,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -40,27 +39,43 @@ pub(crate) fn recognize_term(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn
     let Expr::MethodCall(call) = strip_refs_groups(expr) else {
         return None;
     };
-    let kind = recognize_search_kind(call)?;
-    match &kind {
-        SearchKind::BinarySearchBy(_) => {
-            literal_unit_repeat_len(&call.receiver, fcx, 0)?;
-        }
-        _ => {
+    let kind = match recognize_search_kind(call)? {
+        SearchKind::RPosition(pred) => {
             if !literal_int_slice_receiver(&call.receiver, fcx, 0) {
                 return None;
             }
-            if matches!(kind, SearchKind::BinarySearch)
-                && !unique_sorted_int_sequence(&call.receiver, fcx)
-            {
+            SearchKind::RPosition(pred)
+        }
+        SearchKind::BinarySearch => {
+            if !literal_int_slice_receiver(&call.receiver, fcx, 0) {
                 return None;
             }
+            if !unique_sorted_int_sequence(&call.receiver, fcx) {
+                return None;
+            }
+            SearchKind::BinarySearch
         }
-    }
+        SearchKind::BinarySearchBy { pred, .. } => SearchKind::BinarySearchBy {
+            pred,
+            len: literal_unit_repeat_len(&call.receiver, fcx, 0)?,
+        },
+    };
+    let receiver = if matches!(kind, SearchKind::BinarySearchBy { .. }) {
+        None
+    } else {
+        Some(SugarBody::from_node(
+            method_family::build_literal_sequence_composite(&call.receiver, fcx)?,
+        ))
+    };
+    let needle = if matches!(kind, SearchKind::BinarySearch) {
+        Some(SugarBody::<TermFloor>::term(&call.args[0], fcx))
+    } else {
+        None
+    };
     Some(Box::new(SliceSearchTermSugar {
         kind,
-        receiver: call.receiver.as_ref().clone(),
-        args: call.args.iter().cloned().collect(),
-        let_inits: capture_let_inits(fcx),
+        receiver,
+        needle,
     }))
 }
 
@@ -113,14 +128,13 @@ fn build_assertion_surface(lhs: &Expr, rhs: &Expr, fcx: &SugarBuildCtx) -> Optio
 enum SearchKind {
     RPosition(ExprClosure),
     BinarySearch,
-    BinarySearchBy(ExprClosure),
+    BinarySearchBy { pred: ExprClosure, len: usize },
 }
 
 struct SliceSearchTermSugar {
     kind: SearchKind,
-    receiver: Expr,
-    args: Vec<Expr>,
-    let_inits: BTreeMap<String, Expr>,
+    receiver: Option<SugarBody<CompositeFloor>>,
+    needle: Option<SugarBody<TermFloor>>,
 }
 
 impl Sugar for SliceSearchTermSugar {
@@ -134,17 +148,19 @@ impl Sugar for SliceSearchTermSugar {
 
 impl SliceSearchTermSugar {
     fn eval(&self, ctx: &SugarCtx) -> Result<Rc<Term>, Effect> {
-        let stable = stable_let_bindings(ctx.scope);
-        let let_inits = merge_let_inits(&stable, &self.let_inits);
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
         match &self.kind {
             SearchKind::RPosition(pred) => {
-                let seq = literal_sequence(&self.receiver, &fcx, ctx)?;
+                let seq = literal_sequence_body(self.receiver_body(), ctx)?;
                 for (idx, elem) in seq.iter().enumerate().rev() {
-                    let value = elem.value.as_ref().ok_or_else(structural_effect)?;
+                    let value = elem
+                        .value
+                        .as_ref()
+                        .unwrap_or_else(|| slice_search_gap("rposition element was not literal"));
                     let hit = const_eval_unary_closure(pred, value)
                         .and_then(|v| v.as_bool())
-                        .ok_or_else(structural_effect)?;
+                        .unwrap_or_else(|| {
+                            slice_search_gap("rposition predicate did not reduce to bool")
+                        });
                     if hit {
                         return Ok(monadic::some_term(num(idx as i128)));
                     }
@@ -152,52 +168,68 @@ impl SliceSearchTermSugar {
                 Ok(monadic::none_term())
             }
             SearchKind::BinarySearch => {
-                let seq = literal_sequence(&self.receiver, &fcx, ctx)?;
-                let needle = self.int_arg(0, &fcx, ctx)?;
-                let elems = int_values(&seq)?;
+                let seq = literal_sequence_body(self.receiver_body(), ctx)?;
+                let needle = self.needle_int(ctx)?;
+                let elems = int_values(&seq);
                 if !elems.windows(2).all(|pair| pair[0] <= pair[1]) {
-                    return Err(structural_effect());
+                    slice_search_gap("binary_search receiver was not sorted");
                 }
                 match elems.binary_search(&needle) {
                     Ok(idx) => {
                         if elems.iter().filter(|&&elem| elem == needle).count() != 1 {
-                            return Err(structural_effect());
+                            slice_search_gap("binary_search receiver had duplicate needle values");
                         }
                         Ok(monadic::ok_term(num(idx as i128)))
                     }
                     Err(idx) => Ok(monadic::err_term(num(idx as i128))),
                 }
             }
-            SearchKind::BinarySearchBy(pred) => {
-                let len = literal_unit_repeat_len(&self.receiver, &fcx, 0)
-                    .ok_or_else(structural_effect)?;
-                if len != usize::MAX {
-                    return Err(structural_effect());
+            SearchKind::BinarySearchBy { pred, len } => {
+                if *len != usize::MAX {
+                    slice_search_gap("binary_search_by unit-repeat length was not usize::MAX");
                 }
-                match const_ordering_closure(pred).ok_or_else(structural_effect)? {
+                match const_ordering_closure(pred)
+                    .unwrap_or_else(|| slice_search_gap("binary_search_by closure was not const"))
+                {
                     OrderingConst::Equal => {
-                        let idx = len.checked_sub(1).ok_or_else(structural_effect)?;
+                        let idx = len.checked_sub(1).unwrap_or_else(|| {
+                            slice_search_gap("binary_search_by length underflow")
+                        });
                         Ok(monadic::ok_term(num(idx as i128)))
                     }
                     OrderingConst::Greater => Ok(monadic::err_term(num(0))),
-                    OrderingConst::Less => Ok(monadic::err_term(num(len as i128))),
+                    OrderingConst::Less => Ok(monadic::err_term(num(*len as i128))),
                 }
             }
         }
     }
 
-    fn int_arg(&self, idx: usize, fcx: &SugarBuildCtx, ctx: &SugarCtx) -> Result<i128, Effect> {
-        let arg = self.args.get(idx).ok_or_else(structural_effect)?;
-        let term = term_for(strip_refs_groups(arg), fcx, ctx)?;
-        const_fold_int_term(&term).ok_or_else(structural_effect)
+    fn receiver_body(&self) -> &SugarBody<CompositeFloor> {
+        self.receiver
+            .as_ref()
+            .unwrap_or_else(|| slice_search_gap("slice search receiver body was not constructed"))
+    }
+
+    fn needle_int(&self, ctx: &SugarCtx) -> Result<i128, Effect> {
+        let needle = self
+            .needle
+            .as_ref()
+            .unwrap_or_else(|| slice_search_gap("binary_search needle body was not constructed"));
+        let term = match needle.reduce(ctx) {
+            Outcome::Complete(d) => d
+                .into_term()
+                .unwrap_or_else(|| slice_search_gap("binary_search needle reduced to non-term")),
+            Outcome::Incomplete(effect) => return Err(effect),
+        };
+        Ok(const_fold_int_term(&term)
+            .unwrap_or_else(|| slice_search_gap("binary_search needle was not literal int")))
     }
 }
 
-#[derive(Clone)]
 enum TupleOptionProducer {
-    SplitFirst { receiver: Expr },
-    SplitLast { receiver: Expr },
-    EnumerateNext { receiver: Expr },
+    SplitFirst { receiver: SugarBody<CompositeFloor> },
+    SplitLast { receiver: SugarBody<CompositeFloor> },
+    EnumerateNext { receiver: SugarBody<CompositeFloor> },
 }
 
 #[derive(Clone)]
@@ -238,29 +270,25 @@ impl SliceSplitAssertionSugar {
         let stable = stable_let_bindings(ctx.scope);
         let let_inits = merge_let_inits(&stable, &self.let_inits);
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        let actual = self.actual_parts(&fcx, ctx)?;
+        let actual = self.actual_parts(ctx)?;
         option_tuple_atoms(actual, &self.expected, &fcx, ctx)
     }
 
-    fn actual_parts(
-        &self,
-        fcx: &SugarBuildCtx,
-        ctx: &SugarCtx,
-    ) -> Result<Option<Vec<ActualPart>>, Effect> {
+    fn actual_parts(&self, ctx: &SugarCtx) -> Result<Option<Vec<ActualPart>>, Effect> {
         let (receiver, kind) = match &self.producer {
             TupleOptionProducer::SplitFirst { receiver } => (receiver, SplitKind::First),
             TupleOptionProducer::SplitLast { receiver } => (receiver, SplitKind::Last),
             TupleOptionProducer::EnumerateNext { receiver } => (receiver, SplitKind::EnumerateNext),
         };
-        let seq = literal_sequence(receiver, fcx, ctx)?;
+        let seq = literal_sequence_body(receiver, ctx)?;
         match kind {
             SplitKind::First => {
                 let Some((head, tail)) = seq.split_first() else {
                     return Ok(None);
                 };
                 Ok(Some(vec![
-                    ActualPart::Scalar(elem_int(head)?),
-                    ActualPart::Seq(int_values(tail)?),
+                    ActualPart::Scalar(elem_int(head)),
+                    ActualPart::Seq(int_values(tail)),
                 ]))
             }
             SplitKind::Last => {
@@ -268,8 +296,8 @@ impl SliceSplitAssertionSugar {
                     return Ok(None);
                 };
                 Ok(Some(vec![
-                    ActualPart::Scalar(elem_int(last)?),
-                    ActualPart::Seq(int_values(init)?),
+                    ActualPart::Scalar(elem_int(last)),
+                    ActualPart::Seq(int_values(init)),
                 ]))
             }
             SplitKind::EnumerateNext => {
@@ -278,7 +306,7 @@ impl SliceSplitAssertionSugar {
                 };
                 Ok(Some(vec![
                     ActualPart::Scalar(0),
-                    ActualPart::Scalar(elem_int(first)?),
+                    ActualPart::Scalar(elem_int(first)),
                 ]))
             }
         }
@@ -310,7 +338,10 @@ fn recognize_search_kind(call: &ExprMethodCall) -> Option<SearchKind> {
             let Expr::Closure(closure) = strip_refs_groups(&call.args[0]) else {
                 return None;
             };
-            SearchKind::BinarySearchBy(closure.clone())
+            SearchKind::BinarySearchBy {
+                pred: closure.clone(),
+                len: usize::MAX,
+            }
         }
         _ => return None,
     })
@@ -347,14 +378,20 @@ fn recognize_tuple_option_producer(
             if call.args.is_empty() && literal_int_slice_receiver(&call.receiver, fcx, 0) =>
         {
             Some(TupleOptionProducer::SplitFirst {
-                receiver: call.receiver.as_ref().clone(),
+                receiver: SugarBody::from_node(method_family::build_literal_sequence_composite(
+                    &call.receiver,
+                    fcx,
+                )?),
             })
         }
         "split_last"
             if call.args.is_empty() && literal_int_slice_receiver(&call.receiver, fcx, 0) =>
         {
             Some(TupleOptionProducer::SplitLast {
-                receiver: call.receiver.as_ref().clone(),
+                receiver: SugarBody::from_node(method_family::build_literal_sequence_composite(
+                    &call.receiver,
+                    fcx,
+                )?),
             })
         }
         "next" if call.args.is_empty() => recognize_enumerate_next_receiver(&call.receiver, fcx),
@@ -376,7 +413,10 @@ fn recognize_enumerate_next_receiver(
         return None;
     }
     Some(TupleOptionProducer::EnumerateNext {
-        receiver: enumerate.receiver.as_ref().clone(),
+        receiver: SugarBody::from_node(method_family::build_literal_sequence_composite(
+            &enumerate.receiver,
+            fcx,
+        )?),
     })
 }
 
@@ -627,43 +667,58 @@ fn literal_int_values_syntax(expr: &Expr, fcx: &SugarBuildCtx, depth: usize) -> 
     }
 }
 
-fn literal_sequence(
-    expr: &Expr,
-    fcx: &SugarBuildCtx,
-    ctx: &SugarCtx,
-) -> Result<Vec<DesugaredElem>, Effect> {
-    let node =
-        method_family::build_literal_sequence_composite(expr, fcx).ok_or_else(structural_effect)?;
-    match node.desugar(ctx) {
-        Outcome::Complete(d) => d.into_seq().ok_or_else(structural_effect),
-        Outcome::Incomplete(effect) => Err(effect),
-    }
-}
-
 fn literal_int_sequence_arg(
     expr: &Expr,
     fcx: &SugarBuildCtx,
     ctx: &SugarCtx,
 ) -> Result<Vec<i128>, Effect> {
-    int_values(&literal_sequence(strip_refs_groups(expr), fcx, ctx)?)
+    let body = method_family::build_literal_sequence_composite(strip_refs_groups(expr), fcx)
+        .unwrap_or_else(|| slice_search_gap("expected tuple part was not a literal int sequence"));
+    Ok(int_values(&literal_sequence_node(body, ctx)?))
 }
 
 fn term_for(expr: &Expr, fcx: &SugarBuildCtx, ctx: &SugarCtx) -> Result<Rc<Term>, Effect> {
     match build_term(expr, fcx).desugar(ctx) {
-        Outcome::Complete(d) => d.into_term().ok_or_else(structural_effect),
+        Outcome::Complete(d) => Ok(d
+            .into_term()
+            .unwrap_or_else(|| slice_search_gap("expected scalar reduced to non-term"))),
         Outcome::Incomplete(effect) => Err(effect),
     }
 }
 
-fn int_values(seq: &[DesugaredElem]) -> Result<Vec<i128>, Effect> {
+fn literal_sequence_body(
+    body: &SugarBody<CompositeFloor>,
+    ctx: &SugarCtx,
+) -> Result<Vec<DesugaredElem>, Effect> {
+    match body.reduce(ctx) {
+        Outcome::Complete(d) => Ok(d
+            .into_seq()
+            .unwrap_or_else(|| slice_search_gap("slice search receiver reduced to non-sequence"))),
+        Outcome::Incomplete(effect) => Err(effect),
+    }
+}
+
+fn literal_sequence_node(
+    node: Box<dyn Sugar>,
+    ctx: &SugarCtx,
+) -> Result<Vec<DesugaredElem>, Effect> {
+    match node.desugar(ctx) {
+        Outcome::Complete(d) => Ok(d
+            .into_seq()
+            .unwrap_or_else(|| slice_search_gap("literal sequence node reduced to non-sequence"))),
+        Outcome::Incomplete(effect) => Err(effect),
+    }
+}
+
+fn int_values(seq: &[DesugaredElem]) -> Vec<i128> {
     seq.iter().map(elem_int).collect()
 }
 
-fn elem_int(elem: &DesugaredElem) -> Result<i128, Effect> {
+fn elem_int(elem: &DesugaredElem) -> i128 {
     elem.value
         .as_ref()
         .and_then(ConstVal::as_int)
-        .ok_or_else(structural_effect)
+        .unwrap_or_else(|| slice_search_gap("slice search element was not a literal int"))
 }
 
 fn path_ends_with(path: &syn::ExprPath, name: &str) -> bool {
@@ -673,10 +728,8 @@ fn path_ends_with(path: &syn::ExprPath, name: &str) -> bool {
         .is_some_and(|seg| seg.ident == name)
 }
 
-fn structural_effect() -> Effect {
-    Effect::Unsupported {
-        reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
-    }
+fn slice_search_gap(reason: &str) -> ! {
+    panic!("slice_search did not reach a lawful floor: {reason}")
 }
 
 fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {

@@ -6,7 +6,7 @@ use syn::Expr;
 
 use crate::sugar::closure_adaptor;
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{token_key, Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON};
+use crate::{token_key, Effect, Outcome, Sugar, SugarCtx};
 
 /// Mutating body is the conservative verdict owner: Mutation never understates
 /// a write effect that an accessor verdict would. This mirrors
@@ -42,8 +42,10 @@ impl Sugar for ClosureMutatingBodySugar {
                 boundary: token_key(self.site.expr()),
             });
         }
-        Outcome::Incomplete(Effect::Unsupported {
-            reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
-        })
+        closure_mutating_body_gap("recognized site no longer has a mutating body")
     }
+}
+
+fn closure_mutating_body_gap(reason: &str) -> ! {
+    panic!("closure_mutating_body did not reach a lawful floor: {reason}")
 }

@@ -57,6 +57,7 @@ fn recognize_method(call: &ExprMethodCall, fcx: &SugarBuildCtx) -> Option<Box<dy
         return None;
     }
     Some(Box::new(FloatRefinementSugar {
+        method: method.clone(),
         literal_value: literal_float_refinement_value(&method, &call.receiver),
         receiver_width: float_receiver_width_source(&call.receiver),
         receiver: SugarBody::term(&call.receiver, fcx),
@@ -119,7 +120,7 @@ impl FloatReceiverWidth {
                 .unwrap_or(FloatWidthResolution::Unknown),
             FloatReceiverWidth::Unstable(width) => FloatWidthResolution::Unstable(width),
             FloatReceiverWidth::Unknown => FloatWidthResolution::Unknown,
-        };
+        }
     }
 }
 

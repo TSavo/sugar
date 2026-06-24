@@ -319,6 +319,6 @@ fn elem_term(elem: &DesugaredElem) -> Result<Rc<Term>, Outcome> {
         }))
 }
 
-fn slice_accessor_gap<T>(reason: &str) -> T {
+fn slice_accessor_gap(reason: &str) -> ! {
     panic!("slice_accessor did not reach a lawful floor: {reason}")
 }

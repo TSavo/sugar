@@ -5,14 +5,11 @@
 // This owns only the terminal string materialization. The sequence receiver is still
 // built through the factory so array/range/slice/iterator sugar compose normally.
 
-use std::collections::BTreeMap;
-
 use sugar_ir_symbolic::str_const;
 use syn::{Expr, GenericArgument, Lit, Type};
 use tracing::debug;
 
-use crate::sugar::factory::{build_composite, SugarBuildCtx};
-use crate::sugar::format::stable_let_bindings;
+use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::{
     closure_single_param_ident, strip_refs_groups, ConstVal, Desugared, Outcome, Sugar, SugarCtx,
@@ -60,50 +57,50 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         "recognized literal intersperse collect string"
     );
     Some(Box::new(IntersperseCollectStringSugar {
-        seq_expr: (*map_call.receiver).clone(),
+        seq: SugarBody::from_node(method_family::build_literal_sequence_composite(
+            &map_call.receiver,
+            fcx,
+        )?),
         sep,
     }))
 }
 
 struct IntersperseCollectStringSugar {
-    seq_expr: Expr,
+    seq: SugarBody<CompositeFloor>,
     sep: String,
 }
 
 impl Sugar for IntersperseCollectStringSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            let seq = build_composite_in_ctx(&self.seq_expr, ctx)
-                .desugar(ctx)
-                .complete()?
-                .into_seq()?;
-            let parts = seq
-                .iter()
-                .map(|elem| elem.value.as_ref().and_then(const_value_to_string))
-                .collect::<Option<Vec<_>>>()?;
-            let joined = parts.join(&self.sep);
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::intersperse_collect_string",
-                len = parts.len(),
-                "literal intersperse collect string reduced"
-            );
-            Some(Desugared::Term(str_const(joined)))
-        })())
+        match self.seq.reduce(ctx) {
+            Outcome::Complete(d) => {
+                let seq = d.into_seq().unwrap_or_else(|| {
+                    intersperse_collect_string_gap("receiver reduced to non-sequence")
+                });
+                let parts = seq
+                    .iter()
+                    .map(|elem| {
+                        elem.value
+                            .as_ref()
+                            .and_then(const_value_to_string)
+                            .unwrap_or_else(|| {
+                                intersperse_collect_string_gap(
+                                    "sequence element did not reduce to a literal string value",
+                                )
+                            })
+                    })
+                    .collect::<Vec<_>>();
+                let joined = parts.join(&self.sep);
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::intersperse_collect_string",
+                    len = parts.len(),
+                    "literal intersperse collect string reduced"
+                );
+                Outcome::Complete(Desugared::Term(str_const(joined)))
+            }
+            Outcome::Incomplete(effect) => Outcome::Incomplete(effect),
+        }
     }
-}
-
-fn build_composite_in_ctx(expr: &Expr, ctx: &SugarCtx) -> Box<dyn Sugar> {
-    let stable = stable_let_bindings(ctx.scope);
-    let let_inits = stable_let_refs(&stable);
-    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-    build_composite(expr, &fcx)
-}
-
-fn stable_let_refs(stable: &BTreeMap<String, Expr>) -> BTreeMap<String, &Expr> {
-    stable
-        .iter()
-        .map(|(name, init)| (name.clone(), init))
-        .collect()
 }
 
 fn collects_string(call: &syn::ExprMethodCall) -> bool {
@@ -176,5 +173,10 @@ fn const_value_to_string(value: &ConstVal) -> Option<String> {
         ConstVal::Char(c) => c.to_string(),
         ConstVal::UnitPath(path) => path.clone(),
         ConstVal::Tuple(_) => return None,
+        ConstVal::Array(_) => return None,
     })
+}
+
+fn intersperse_collect_string_gap(reason: &str) -> ! {
+    panic!("intersperse_collect_string did not reach a lawful floor: {reason}")
 }

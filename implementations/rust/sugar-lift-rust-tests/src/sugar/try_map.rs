@@ -188,6 +188,7 @@ fn const_val_term(value: &ConstVal) -> Option<Rc<Term>> {
                 .join(",");
             Some(make_var(format!("literal:Tuple({inner})")))
         }
+        ConstVal::Array(parts) => literal_array_term_from_values(parts),
     }
 }
 

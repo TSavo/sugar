@@ -5,14 +5,13 @@
 // factory so bound variables keep their RHS/callsite identity; this node owns
 // only the pattern-to-constraint semantics.
 
-use std::{collections::BTreeMap, rc::Rc};
+use std::rc::Rc;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::{
     callsite_assertion_name, lit_membership_term, strict_variant_path, token_key, wrapped_variant,
-    AssertionFactKind, Desugared, Effect, Outcome, Sugar, SugarCtx, Warrant,
-    STRUCTURAL_BACKSTOP_REASON,
+    AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant,
 };
 use sugar_ir_symbolic::{and_, eq, str_const, Formula, Term};
 use syn::parse::{ParseStream, Parser};
@@ -22,10 +21,9 @@ pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("constraint_matches_macro", SugarRole::Constraint, recognize);
 
 struct MatchesMacroSugar {
-    subject: Expr,
+    subject: SugarBody<TermFloor>,
     pattern: Pat,
     site: String,
-    let_inits: BTreeMap<String, Expr>,
 }
 
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
@@ -44,30 +42,22 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     };
     let (subject, pattern) = Parser::parse2(parser, mac.tokens.clone()).ok()?;
     Some(Box::new(MatchesMacroSugar {
-        subject,
+        subject: SugarBody::term(&subject, fcx),
         pattern,
         site: token_key(expr),
-        let_inits: capture_let_inits(fcx),
     }))
-}
-
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
 }
 
 impl Sugar for MatchesMacroSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let subject = match term_payload(&self.subject, ctx, &self.let_inits) {
+        let subject = match term_payload(&self.subject, ctx) {
             Ok(term) => term,
             Err(outcome) => return outcome,
         };
         let Some(atom) = pattern_atom(&subject, &self.pattern) else {
-            return unsupported(format!(
+            matches_macro_gap(&format!(
                 "matches! pattern is not an unambiguous qualified variant \
-                 (binding/wildcard/single-segment/or-pattern); refused by name: `{}`",
+                 (binding/wildcard/single-segment/or-pattern): `{}`",
                 self.site
             ));
         };
@@ -154,32 +144,15 @@ fn constraint(atom: Rc<Formula>, name: Option<String>) -> Outcome {
     })
 }
 
-fn term_payload(
-    expr: &Expr,
-    ctx: &SugarCtx,
-    captured_let_inits: &BTreeMap<String, Expr>,
-) -> Result<Rc<Term>, Outcome> {
-    let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-    let let_inits: BTreeMap<String, &Expr> = stable
-        .iter()
-        .map(|(name, init)| (name.clone(), init))
-        .chain(
-            captured_let_inits
-                .iter()
-                .map(|(name, init)| (name.clone(), init)),
-        )
-        .collect();
-    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-    match build_term(expr, &fcx).desugar(ctx) {
-        Outcome::Complete(desugared) => desugared.into_term().ok_or_else(|| {
-            Outcome::Incomplete(Effect::Unsupported {
-                reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
-            })
-        }),
+fn term_payload(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
+    match body.reduce(ctx) {
+        Outcome::Complete(desugared) => Ok(desugared
+            .into_term()
+            .unwrap_or_else(|| matches_macro_gap("subject reduced to a non-term floor"))),
         Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
 
-fn unsupported(reason: String) -> Outcome {
-    Outcome::Incomplete(Effect::Unsupported { reason })
+fn matches_macro_gap(reason: &str) -> ! {
+    panic!("matches_macro did not reach a lawful floor: {reason}")
 }

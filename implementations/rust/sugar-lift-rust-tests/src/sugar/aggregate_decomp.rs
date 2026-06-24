@@ -281,7 +281,9 @@ fn aggregate_body(expr: &Expr, fcx: &SugarBuildCtx, seen: &mut BTreeSet<String>)
             if matches!(call.method.to_string().as_str(), "unwrap" | "expect") =>
         {
             if call.method == "unwrap" && !call.args.is_empty() {
-                return Ok(None);
+                return AggregateBody::Term {
+                    body: SugarBody::term(expr, fcx),
+                };
             }
             if call.method == "expect" && call.args.len() != 1 {
                 return AggregateBody::Term {
@@ -601,6 +603,6 @@ fn strip_value_ref(mut term: Rc<Term>) -> Rc<Term> {
     }
 }
 
-fn aggregate_decomp_construction_gap<T>(reason: &'static str) -> T {
+fn aggregate_decomp_construction_gap(reason: &'static str) -> ! {
     panic!("aggregate_decomp recognized a shape it could not lawfully reduce: {reason}")
 }

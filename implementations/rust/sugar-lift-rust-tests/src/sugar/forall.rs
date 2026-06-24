@@ -17,13 +17,15 @@ use sugar_ir_symbolic::{
 use syn::{Expr, Pat, Stmt};
 use tracing::debug;
 
-use crate::sugar::factory::{build_composite, has_composite, SugarBuildCtx};
+use crate::sugar::factory::{
+    build_composite, has_composite, CompositeFloor, SugarBody, SugarBuildCtx,
+};
 use crate::sugar::method_family;
 use crate::{
     bounded_domain_from_expr, capture_literal_arrays, collect_assertion_entries,
     const_fold_int_term, const_val_term, count_asserts_in_stmts, loop_body_mutates,
     resolve_index_in_formula, subst_var_in_formula, term_as_int, translate_term_in_scope,
-    AssertionFactKind, BoundedDomain, Desugared, FloatWidthScope, LiftOptions, Outcome,
+    AssertionFactKind, BoundedDomain, Desugared, Effect, FloatWidthScope, LiftOptions, Outcome,
     ReductionCtx, Sugar, SugarCtx, TemporalScope, Warrant, SUGAR_SEQ_CAP,
 };
 
@@ -300,130 +302,161 @@ pub(crate) struct ForAllSugar {
 
 enum ForAllDomain {
     Bounded(BoundedDomain),
-    Sequence(Box<dyn Sugar>),
+    Sequence(SugarBody<CompositeFloor>),
 }
 
 impl Sugar for ForAllSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        // TOTAL: the complete body computes the legacy `Option<Desugared>`; `Outcome::from_opt`
-        // lifts it (the structural bail -> `Incomplete(Effect::Unsupported)`, discarded by the
-        // fall-through consumer exactly as the old `None` was).
-        Outcome::from_opt((|| {
-            // Translate the captured literal arrays' element exprs to TERMS so the body's
-            // `index(ys, <const>)` reads (the LITERAL-INT RANGE unroll) can resolve to
-            // concrete elements. SOUNDNESS: only an IMMUTABLE literal array may have its
-            // index reads resolved -- a `let mut arr = [..]` could be index-assigned, so
-            // its value at a later point is not the written literal (leave its reads as
-            // the EUF accessor). An element that does not translate cleanly drops that
-            // array (its reads stay the EUF accessor -- a sound under-claim, never a
-            // fake-complete). Byte-identical to `FoldSugar`'s array_terms capture.
-            let mut array_terms: BTreeMap<String, Vec<Rc<Term>>> = BTreeMap::new();
-            for (arr, elems) in &self.literal_arrays {
-                if ctx.scope.is_mut_local(arr) {
-                    continue;
-                }
-                let mut ts = Vec::with_capacity(elems.len());
-                let mut ok = true;
-                for e in elems {
-                    match translate_term_in_scope(e, ctx.scope) {
-                        Ok(t) => ts.push(t),
-                        Err(_) => {
-                            ok = false;
-                            break;
-                        }
-                    }
-                }
-                if ok {
-                    array_terms.insert(arr.clone(), ts);
-                }
-            }
-
-            // `lift_bounded_forall` is the shared verified core: it const-checks the
-            // domain (range -> guarded forall OR -- when both endpoints are literal ints
-            // and the count is small -- a finite point-wise unroll; array -> finite
-            // conjunction), lifts the body all-or-nothing through the normal collector,
-            // and gates purity. We re-discriminate the domain here (it is consumed by
-            // value) by re-reading; pass the already-resolved `BoundedDomain`.
-            let domain = match &self.domain {
-                ForAllDomain::Bounded(domain) => {
-                    if bounded_domain_is_static_empty(domain) {
-                        return Some(self.empty_loop_no_panic(ctx));
-                    }
-                    domain.clone()
-                }
-                ForAllDomain::Sequence(receiver) => {
-                    let seq = receiver.desugar(ctx).complete()?.into_seq()?;
-                    if seq.is_empty() {
-                        return Some(self.empty_loop_no_panic(ctx));
-                    }
-                    if seq.len() > SUGAR_SEQ_CAP as usize {
-                        debug!(
-                            target: "sugar_lift_rust_tests::sugar::forall",
-                            var = self.var.as_str(),
-                            len = seq.len(),
-                            cap = SUGAR_SEQ_CAP,
-                            "forall sequence domain declined: empty or over cap"
-                        );
-                        return None;
-                    }
-                    debug!(
-                        target: "sugar_lift_rust_tests::sugar::forall",
-                        var = self.var.as_str(),
-                        len = seq.len(),
-                        "forall sequence domain materialized"
-                    );
-                    let mut elems = Vec::with_capacity(seq.len());
-                    for elem in seq {
-                        let Some(term) = elem
-                            .value
-                            .as_ref()
-                            .and_then(const_val_term)
-                            .or_else(|| translate_term_in_scope(&elem.expr, ctx.scope).ok())
-                        else {
-                            debug!(
-                                target: "sugar_lift_rust_tests::sugar::forall",
-                                var = self.var.as_str(),
-                                elem = %crate::token_key(&elem.expr),
-                                "forall sequence domain declined: element did not translate to term"
-                            );
-                            return None;
-                        };
-                        elems.push(term);
-                    }
-                    BoundedDomain::Array(elems)
-                }
-            };
-            let (quantified, n_body) = lift_bounded_forall(
-                &self.var,
-                domain,
-                &self.body_stmts,
-                ctx.scope,
-                ctx.options,
-                ctx.reducer,
-                *ctx.float_widths.borrow_mut(),
-                ctx.macro_depth,
-                ctx.factory_audits,
-                &array_terms,
-            )?;
-            let warrant = Warrant {
-                name: Some(format!(
-                    "{}::{}::{}",
-                    ctx.scope.local_scope(),
-                    self.kind,
-                    self.var
-                )),
-            };
-            Some(Desugared::Constraints {
-                atom: quantified,
-                n: n_body,
-                kind: AssertionFactKind::Warranted,
-                warrant,
-            })
-        })())
+        match self.desugar_forall(ctx) {
+            Ok(desugared) => Outcome::Complete(desugared),
+            Err(outcome) => outcome,
+        }
     }
 }
 
 impl ForAllSugar {
+    fn desugar_forall(&self, ctx: &SugarCtx) -> Result<Desugared, Outcome> {
+        if loop_body_mutates(&self.body_stmts) {
+            return Err(Outcome::Incomplete(Effect::Mutation {
+                boundary: self.body_boundary(ctx),
+            }));
+        }
+        // Translate the captured literal arrays' element exprs to TERMS so the body's
+        // `index(ys, <const>)` reads (the LITERAL-INT RANGE unroll) can resolve to
+        // concrete elements. SOUNDNESS: only an IMMUTABLE literal array may have its
+        // index reads resolved -- a `let mut arr = [..]` could be index-assigned, so
+        // its value at a later point is not the written literal (leave its reads as
+        // the EUF accessor). An element that does not translate cleanly drops that
+        // array (its reads stay the EUF accessor -- a sound under-claim, never a
+        // fake-complete). Byte-identical to `FoldSugar`'s array_terms capture.
+        let mut array_terms: BTreeMap<String, Vec<Rc<Term>>> = BTreeMap::new();
+        for (arr, elems) in &self.literal_arrays {
+            if ctx.scope.is_mut_local(arr) {
+                continue;
+            }
+            let mut ts = Vec::with_capacity(elems.len());
+            let mut ok = true;
+            for e in elems {
+                match translate_term_in_scope(e, ctx.scope) {
+                    Ok(t) => ts.push(t),
+                    Err(_) => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if ok {
+                array_terms.insert(arr.clone(), ts);
+            }
+        }
+
+        if count_asserts_in_stmts(&self.body_stmts) == 0 {
+            forall_gap("body has no assertion macros");
+        }
+
+        // `lift_bounded_forall` is the shared verified core: it const-checks the
+        // domain (range -> guarded forall OR -- when both endpoints are literal ints
+        // and the count is small -- a finite point-wise unroll; array -> finite
+        // conjunction), lifts the body all-or-nothing through the normal collector,
+        // and gates purity. We re-discriminate the domain here (it is consumed by
+        // value) by re-reading; pass the already-resolved `BoundedDomain`.
+        let domain = match &self.domain {
+            ForAllDomain::Bounded(domain) => {
+                if bounded_domain_is_static_empty(domain) {
+                    return Ok(self.empty_loop_no_panic(ctx));
+                }
+                domain.clone()
+            }
+            ForAllDomain::Sequence(receiver) => {
+                let seq = match receiver.reduce(ctx) {
+                    Outcome::Complete(d) => d
+                        .into_seq()
+                        .unwrap_or_else(|| forall_gap("sequence domain reduced to non-sequence")),
+                    Outcome::Incomplete(effect) => {
+                        return Err(Outcome::Incomplete(effect));
+                    }
+                };
+                if seq.is_empty() {
+                    return Ok(self.empty_loop_no_panic(ctx));
+                }
+                if seq.len() > SUGAR_SEQ_CAP as usize {
+                    debug!(
+                        target: "sugar_lift_rust_tests::sugar::forall",
+                        var = self.var.as_str(),
+                        len = seq.len(),
+                        cap = SUGAR_SEQ_CAP,
+                        "forall sequence domain declined: empty or over cap"
+                    );
+                    return Err(Outcome::Incomplete(Effect::LiteralDomain {
+                        boundary: self.body_boundary(ctx),
+                        reason: format!(
+                            "forall sequence domain length {} exceeds sugar cap {}",
+                            seq.len(),
+                            SUGAR_SEQ_CAP
+                        ),
+                    }));
+                }
+                debug!(
+                    target: "sugar_lift_rust_tests::sugar::forall",
+                    var = self.var.as_str(),
+                    len = seq.len(),
+                    "forall sequence domain materialized"
+                );
+                let mut elems = Vec::with_capacity(seq.len());
+                for elem in seq {
+                    let Some(term) = elem
+                        .value
+                        .as_ref()
+                        .and_then(const_val_term)
+                        .or_else(|| translate_term_in_scope(&elem.expr, ctx.scope).ok())
+                    else {
+                        debug!(
+                            target: "sugar_lift_rust_tests::sugar::forall",
+                            var = self.var.as_str(),
+                            elem = %crate::token_key(&elem.expr),
+                            "forall sequence domain declined: element did not translate to term"
+                        );
+                        forall_gap("sequence element did not translate to term");
+                    };
+                    elems.push(term);
+                }
+                BoundedDomain::Array(elems)
+            }
+        };
+        let Some((quantified, n_body)) = lift_bounded_forall(
+            &self.var,
+            domain,
+            &self.body_stmts,
+            ctx.scope,
+            ctx.options,
+            ctx.reducer,
+            *ctx.float_widths.borrow_mut(),
+            ctx.macro_depth,
+            ctx.factory_audits,
+            &array_terms,
+        ) else {
+            forall_gap("bounded forall core declined");
+        };
+        let warrant = Warrant {
+            name: Some(format!(
+                "{}::{}::{}",
+                ctx.scope.local_scope(),
+                self.kind,
+                self.var
+            )),
+        };
+        Ok(Desugared::Constraints {
+            atom: quantified,
+            n: n_body,
+            kind: AssertionFactKind::Warranted,
+            warrant,
+        })
+    }
+
+    fn body_boundary(&self, ctx: &SugarCtx) -> String {
+        format!("{}::{}::{}", ctx.scope.local_scope(), self.kind, self.var)
+    }
+
     fn empty_loop_no_panic(&self, ctx: &SugarCtx) -> Desugared {
         let subject = str_const(format!(
             "{}::{}::{}::empty-domain",
@@ -506,7 +539,7 @@ pub(crate) fn decompose_for_each(
     };
     Some(ForAllSugar {
         var,
-        domain: ForAllDomain::Sequence(build_composite(&call.receiver, fcx)),
+        domain: ForAllDomain::Sequence(SugarBody::from_node(build_composite(&call.receiver, fcx))),
         body_stmts,
         kind: "for_each",
         literal_arrays: capture_literal_arrays(let_inits),
@@ -526,7 +559,7 @@ pub(crate) fn decompose_for_loop(
     let domain = if let Some(domain) = bounded_domain_from_expr(&f.expr, scope) {
         ForAllDomain::Bounded(domain)
     } else if has_composite(&f.expr, fcx) {
-        ForAllDomain::Sequence(build_composite(&f.expr, fcx))
+        ForAllDomain::Sequence(SugarBody::from_node(build_composite(&f.expr, fcx)))
     } else {
         return None;
     };
@@ -537,6 +570,10 @@ pub(crate) fn decompose_for_loop(
         kind: "loop",
         literal_arrays: capture_literal_arrays(let_inits),
     })
+}
+
+fn forall_gap(reason: &str) -> ! {
+    panic!("forall did not reach a lawful floor: {reason}")
 }
 
 fn for_loop_pat_ident(pat: &Pat) -> Option<String> {

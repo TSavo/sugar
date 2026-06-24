@@ -13,23 +13,22 @@ use quote::format_ident;
 use sugar_ir_symbolic::{and_, eq, implies, not_, Formula, Term};
 use syn::{BinOp, Expr, Stmt};
 
-use crate::sugar::backstop::boxed;
 use crate::sugar::factory::{build_composite, build_term, SugarBuildCtx};
 use crate::{
     bool_const, closure_body_is_side_effecting, collect_assertion_entries, const_fold_int_term,
     const_fold_u128_term, count_asserts_in_stmts, loop_body_mutates, lower_assert_condition,
-    AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant,
+    token_key, AssertionFactKind, Desugared, Effect, Outcome, Sugar, SugarCtx, Warrant,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("conditional", recognize_composite);
 
 /// COMPOSITE recognizer for `Expr::If`: the implication composite ([`ConditionalSugar`]
-/// via [`decompose_if`]). Byte-identical to the `Expr::If(i) => boxed(decompose_if(i))`
-/// arm of the old fat `build_composite`.
+/// via [`decompose_if`]). Byte-identical to the `Expr::If(i) => decompose_if(i)`
+/// arm of the old fat `build_composite`, with gaps now loud.
 pub(crate) fn recognize_composite(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {
-        Expr::If(i) => Some(boxed(decompose_if(i))),
+        Expr::If(i) => decompose_if(i).map(|node| Box::new(node) as Box<dyn Sugar>),
         _ => None,
     }
 }
@@ -51,14 +50,14 @@ impl Sugar for ConditionalSugar {
         let then_count = count_asserts_in_stmts(&self.then_stmts);
         let else_count = count_asserts_in_stmts(&self.else_stmts);
         if then_count + else_count == 0 {
-            return self
-                .desugar_sequence_branch(ctx)
-                .unwrap_or_else(|| Outcome::from_opt(None));
+            return self.desugar_sequence_branch(ctx).unwrap_or_else(|| {
+                self.runtime_guard_or_gap("sequence conditional did not select a branch")
+            });
         }
         // The assertion-bearing path still uses the legacy `Option<Desugared>` bridge.
         // A structural `None` here is plumbing for the older fall-through path, not a
         // semantic runtime/effect verdict.
-        Outcome::from_opt((|| {
+        match (|| {
             // An `if let PAT = e { .. }` is a pattern-match guard, not a boolean
             // predicate -- the panic-locus path handles the diverging-else shape;
             // anything else here bails (we do not model the bound bindings).
@@ -146,7 +145,10 @@ impl Sugar for ConditionalSugar {
                 kind: AssertionFactKind::Warranted,
                 warrant,
             })
-        })())
+        })() {
+            Some(desugared) => Outcome::Complete(desugared),
+            None => self.runtime_guard_or_gap("assertion conditional did not reduce"),
+        }
     }
 }
 
@@ -206,6 +208,15 @@ impl ConditionalSugar {
             return None;
         }
         Some(and_(body_entries.iter().map(|e| e.atom.clone()).collect()))
+    }
+
+    fn runtime_guard_or_gap(&self, reason: &str) -> Outcome {
+        if crate::if_guard_is_runtime(&self.cond) {
+            return Outcome::Incomplete(Effect::IfGuardRuntime {
+                boundary: token_key(&self.cond),
+            });
+        }
+        conditional_gap(reason)
     }
 }
 
@@ -329,6 +340,10 @@ fn branch_stmts_with_stable_bindings(branch_stmts: &[Stmt], ctx: &SugarCtx) -> V
     }
     stmts.extend(branch_stmts.iter().cloned());
     stmts
+}
+
+fn conditional_gap(reason: &str) -> ! {
+    panic!("conditional did not reach a lawful floor: {reason}")
 }
 
 /// Build a `ConditionalSugar` from a `Stmt::Expr(Expr::If(..))`. The then-branch
