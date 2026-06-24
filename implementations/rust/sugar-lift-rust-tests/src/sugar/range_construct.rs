@@ -10,9 +10,8 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{and_, eq, Term};
 use syn::{Expr, Member};
 
-use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
-};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::term_dispatch::{DesugaredFloorAccept, RequiredTermVisitor};
 use crate::{AssertionFactKind, Desugared, Outcome, Sugar, SugarCtx, Warrant};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -159,19 +158,14 @@ struct RangeConstructSugar {
 }
 
 impl Sugar for RangeConstructSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let mut fields = Vec::new();
         for (name, body) in &self.fields {
-            let term = match body.reduce(ctx)? {
-                Outcome::Complete(d) => match d.into_term() {
-                    Some(term) => term,
-                    None => {
-                        return Err(FactoryGap::new(format!(
-                            "range construct field `{name}` reduced to non-term",
-                        )))
-                    }
-                },
-                Outcome::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+            let term = match body.reduce(ctx) {
+                Outcome::Complete(d) => d.accept_desugared_floor(RequiredTermVisitor {
+                    owner: "range construct field",
+                }),
+                Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
             };
             fields.push((name.clone(), term));
         }
@@ -191,20 +185,16 @@ impl Sugar for RangeConstructSugar {
             .collect::<Vec<_>>();
         let n = atoms.len();
         if n == 0 {
-            return Err(FactoryGap::new("range construct has no fields"));
+            panic!("range construct has no fields");
         }
-        Ok(Outcome::Complete(Desugared::Constraints {
+        Outcome::Complete(Desugared::Constraints {
             atom: and_(atoms),
             n,
             kind: AssertionFactKind::Warranted,
             warrant: Warrant {
                 name: Some(self.kind.warrant_name().to_string()),
             },
-        }))
-    }
-
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
+        })
     }
 }
 
