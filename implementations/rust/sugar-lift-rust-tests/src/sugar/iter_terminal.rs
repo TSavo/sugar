@@ -713,13 +713,9 @@ impl IterTerminalSugar {
                 Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
             };
             let Some(n) = term_as_usize(&n_term) else {
-                return Outcome::Incomplete(Effect::RuntimeArgument {
-                    boundary: token_key(arg),
-                    reason: format!(
-                        "iterator advance count `{}` is not a literal usize",
-                        token_key(arg)
-                    ),
-                });
+                iter_terminal_gap(
+                    "advance_by argument reduced but did not dispatch to a literal usize floor",
+                );
             };
             let len = terms.len();
             let term = if n <= len {
@@ -784,7 +780,7 @@ impl IterTerminalSugar {
             if ctx.scope.is_consumed_iterator_local(&name)
                 && ctx.scope.temporal_rewrite_expr_for(&name).is_none()
             {
-                return Outcome::Incomplete(Effect::RuntimeArgument {
+                return Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
                     boundary: name.clone(),
                     reason: format!(
                         "consumed iterator `{name}` has no replayable temporal rewrite at this point; refused"
@@ -822,13 +818,10 @@ impl IterTerminalSugar {
                     Expr::MethodCall(call) => call.receiver.as_ref(),
                     _ => &chunk_expr,
                 };
-                return Outcome::Incomplete(Effect::RuntimeArgument {
-                    boundary: token_key(receiver),
-                    reason: format!(
-                        "chunk source is runtime slice, not literal `{}`",
-                        token_key(receiver)
-                    ),
-                });
+                iter_terminal_gap(&format!(
+                    "chunk/window count source `{}` has no literal sequence floor",
+                    token_key(receiver)
+                ));
             }
         }
         let static_empty_sequence = method_family::literal_sequence_static_len_in_scope(
@@ -948,13 +941,9 @@ impl IterTerminalSugar {
                 Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
             };
             let Some(n) = term_as_usize(&n_term) else {
-                return Outcome::Incomplete(Effect::RuntimeArgument {
-                    boundary: token_key(arg),
-                    reason: format!(
-                        "iterator advance count `{}` is not a literal usize",
-                        token_key(arg)
-                    ),
-                });
+                iter_terminal_gap(
+                    "advance_by argument reduced but did not dispatch to a literal usize floor",
+                );
             };
             let len = seq.len();
             debug!(

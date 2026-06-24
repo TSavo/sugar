@@ -13,7 +13,6 @@ use crate::sugar::factory::{
 };
 use crate::sugar::format::{
     is_format_macro_shape, literal_format_capture_names, parse_args, render_format_values,
-    runtime_format_value_body,
 };
 use crate::{strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 
@@ -74,7 +73,7 @@ fn build_format_macro(expr: &Expr, fcx: &SugarBuildCtx) -> Result<FormatMacroStr
         }
     }
 
-    let captures = capture_bodies(fmt_expr, fcx, &explicit_named);
+    let captures = capture_bodies(fmt_expr, fcx, &explicit_named)?;
 
     Ok(FormatMacroStringSugar {
         fmt: SugarBody::format_template(fmt_expr, fcx),
@@ -88,7 +87,7 @@ fn capture_bodies(
     fmt_expr: &Expr,
     fcx: &SugarBuildCtx,
     explicit_named: &BTreeMap<String, SugarBody<FormatValueFloor>>,
-) -> BTreeMap<String, SugarBody<FormatValueFloor>> {
+) -> Result<BTreeMap<String, SugarBody<FormatValueFloor>>, String> {
     match literal_format_capture_names(fmt_expr) {
         Some(names) => names
             .into_iter()
@@ -99,14 +98,21 @@ fn capture_bodies(
                         let child_fcx = fcx.with_bound_path(&name);
                         SugarBody::format_value(init, &child_fcx)
                     }
-                    _ => SugarBody::from_node(runtime_format_value_body(format!(
-                        "runtime format argument `{name}`, not literal-determined (bin-2: runtime data, not constructed from source literals); refused"
-                    ))),
+                    Some(_) => {
+                        return Err(format!(
+                            "format capture `{name}` is self-referential; write more Sugar for this AST"
+                        ));
+                    }
+                    None => {
+                        return Err(format!(
+                            "format capture `{name}` has no format-value child floor; write more Sugar for this AST"
+                        ));
+                    }
                 };
-                (name, body)
+                Ok((name, body))
             })
             .collect(),
-        None => fcx
+        None => Ok(fcx
             .scope()
             .let_bindings_iter()
             .filter_map(|(name, _)| {
@@ -120,7 +126,7 @@ fn capture_bodies(
                 let child_fcx = fcx.with_bound_path(name);
                 Some((name.clone(), SugarBody::format_value(init, &child_fcx)))
             })
-            .collect(),
+            .collect()),
     }
 }
 

@@ -89,7 +89,7 @@ impl Sugar for LenSugar {
                     );
                     return Outcome::Complete(Desugared::Term(num(0)));
                 }
-                return Outcome::Incomplete(Effect::RuntimeArgument {
+                return Outcome::Incomplete(Effect::AmbiguousTemporalIdentity {
                     boundary: name.clone(),
                     reason: format!(
                         "consumed-iterator local `{name}` -- \
