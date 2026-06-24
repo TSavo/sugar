@@ -208,6 +208,11 @@ side_door_floor!(
     "RangeConstructSugar"
 );
 side_door_floor!(
+    slice_accessor_desugar_uses_upstream_sugar_body,
+    "src/sugar/slice_accessor.rs",
+    "SliceAccessorSugar"
+);
+side_door_floor!(
     size_hint_desugar_uses_upstream_sugar_body,
     "src/sugar/size_hint.rs",
     "SizeHintTupleProducer"
