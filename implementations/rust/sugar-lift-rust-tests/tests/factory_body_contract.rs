@@ -128,6 +128,11 @@ side_door_floor!(
     "ConstCompositeSugar"
 );
 side_door_floor!(
+    constraint_relation_macro_desugar_uses_upstream_sugar_body,
+    "src/sugar/constraint.rs",
+    "RelationMacroSugar"
+);
+side_door_floor!(
     flatten_desugar_uses_upstream_sugar_body,
     "src/sugar/flatten.rs",
     "FlattenSugar"

@@ -8,20 +8,17 @@
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
 use crate::sugar::configuration;
-use crate::sugar::constraint_runtime_boundary;
-use crate::sugar::format::stable_let_bindings;
 use crate::sugar::method_family;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
-use crate::sugar::factory::{build_constraint, build_term, SugarBuildCtx};
+use crate::sugar::factory::{ConstraintFloor, SugarBody, SugarBuildCtx, TermFloor};
 use crate::{
     ascii_byte_class_atom, ascii_char_class_atom, assertion_entry_from_relation, bool_const,
     callsite_assertion_name, const_fold_int_term, const_fold_u128_term,
     literal_char_predicate_atom, literal_string_value, parse_macro_args, simple_path_name,
-    source_location_runtime_reason, strip_refs_groups, token_key, AssertionFactKind,
-    CfgDisposition, CfgPredicate, Desugared, Effect, Outcome, RelationOp, Sugar, SugarCtx, Warrant,
-    STRUCTURAL_BACKSTOP_REASON,
+    strip_refs_groups, token_key, AssertionFactKind, CfgDisposition, CfgPredicate, Desugared,
+    Outcome, RelationOp, Sugar, SugarCtx, Warrant,
 };
 use sugar_ir_symbolic::{and_, atomic_, eq, not_, num, str_const, ConstValue, Formula, Term};
 use syn::parse::{Parse, ParseStream};
@@ -99,8 +96,8 @@ pub(crate) const NO_PANIC_CALL_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
 
 struct RelationMacroSugar {
     name: String,
-    lhs_expr: Expr,
-    rhs_expr: Expr,
+    lhs: SugarBody<TermFloor>,
+    rhs: SugarBody<TermFloor>,
     op: RelationOp,
     debug_gated: bool,
 }
@@ -145,7 +142,7 @@ impl Sugar for BoundedLiteralMacroSugar {
                 let atom = ascii_char_class_atom(&self.predicate, str_const(ch.to_string()))
                     .or_else(|| literal_char_predicate_atom(&self.predicate, ch));
                 let Some(atom) = atom else {
-                    return unsupported(format!(
+                    constraint_gap(format!(
                         "unsupported bounded literal macro predicate `{}`",
                         self.predicate
                     ));
@@ -156,7 +153,7 @@ impl Sugar for BoundedLiteralMacroSugar {
                 for byte in source.as_bytes() {
                     let Some(atom) = ascii_byte_class_atom(&self.predicate, num(i128::from(*byte)))
                     else {
-                        return unsupported(format!(
+                        constraint_gap(format!(
                             "unsupported bounded literal macro predicate `{}`",
                             self.predicate
                         ));
@@ -166,7 +163,7 @@ impl Sugar for BoundedLiteralMacroSugar {
             }
         }
         if atoms.is_empty() {
-            return unsupported("bounded literal macro emitted no predicate atoms".to_string());
+            constraint_gap("bounded literal macro emitted no predicate atoms");
         }
         Outcome::Complete(Desugared::Constraints {
             atom: and_(atoms),
@@ -211,8 +208,8 @@ fn recognize_relation_macro(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn 
     }
     Some(Box::new(RelationMacroSugar {
         name,
-        lhs_expr: args.exprs[0].clone(),
-        rhs_expr: args.exprs[1].clone(),
+        lhs: SugarBody::term(&args.exprs[0], fcx),
+        rhs: SugarBody::term(&args.exprs[1], fcx),
         op,
         debug_gated,
     }))
@@ -233,8 +230,8 @@ fn recognize_assert_eq_const_safe_macro(
     let (lhs_expr, rhs_expr) = parse_assert_eq_const_safe_operands(mac.tokens.clone())?;
     Some(Box::new(RelationMacroSugar {
         name: "assert_eq_const_safe".to_string(),
-        lhs_expr,
-        rhs_expr,
+        lhs: SugarBody::term(&lhs_expr, fcx),
+        rhs: SugarBody::term(&rhs_expr, fcx),
         op: RelationOp::Eq,
         debug_gated: false,
     }))
@@ -269,44 +266,16 @@ impl Parse for AssertEqConstSafeArgs {
 
 impl Sugar for RelationMacroSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        if let Err(reason) = ensure_debug_assertions_active(&self.name, self.debug_gated, ctx) {
-            return unsupported(reason);
+        if let Some(outcome) = inactive_debug_assertion(&self.name, self.debug_gated, ctx) {
+            return outcome;
         }
-        if let Some(reason) = source_location_runtime_reason(&self.lhs_expr)
-            .or_else(|| source_location_runtime_reason(&self.rhs_expr))
-        {
-            return unsupported(format!("{}!: {reason}", self.name));
-        }
-        if let Some(reason) = constraint_runtime_boundary::relation_runtime_boundary_reason(
-            &self.lhs_expr,
-            &self.rhs_expr,
-            ctx,
-        ) {
-            return unsupported(format!("{}!: {reason}", self.name));
-        }
-        let lhs = build_term_in_ctx(&self.lhs_expr, ctx);
-        let rhs = build_term_in_ctx(&self.rhs_expr, ctx);
-        relation_constraint(&self.name, &*lhs, &*rhs, self.op, ctx)
+        relation_constraint_from_bodies(&self.name, &self.lhs, &self.rhs, self.op, ctx)
     }
-}
-
-fn build_term_in_ctx(expr: &Expr, ctx: &SugarCtx) -> Box<dyn Sugar> {
-    let stable = stable_let_bindings(ctx.scope);
-    let let_inits = stable_let_refs(&stable);
-    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-    build_term(expr, &fcx)
-}
-
-fn stable_let_refs(stable: &BTreeMap<String, Expr>) -> BTreeMap<String, &Expr> {
-    stable
-        .iter()
-        .map(|(name, expr)| (name.clone(), expr))
-        .collect()
 }
 
 struct AssertSugar {
     name: String,
-    payload: Box<dyn Sugar>,
+    payload: SugarBody<ConstraintFloor>,
     debug_gated: bool,
 }
 
@@ -324,17 +293,17 @@ fn recognize_assert_macro(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Su
     let expr = args.exprs.first()?.clone();
     Some(Box::new(AssertSugar {
         name,
-        payload: build_constraint(&expr, fcx),
+        payload: SugarBody::constraint(&expr, fcx),
         debug_gated,
     }))
 }
 
 impl Sugar for AssertSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        if let Err(reason) = ensure_debug_assertions_active(&self.name, self.debug_gated, ctx) {
-            return unsupported(reason);
+        if let Some(outcome) = inactive_debug_assertion(&self.name, self.debug_gated, ctx) {
+            return outcome;
         }
-        self.payload.desugar(ctx)
+        self.payload.reduce(ctx)
     }
 }
 
@@ -362,17 +331,15 @@ impl Sugar for CfgMacroSugar {
         let predicate = match self.mac.parse_body::<CfgPredicate>() {
             Ok(predicate) => predicate,
             Err(e) => {
-                return unsupported(format!("cfg!: cannot parse cfg predicate: {e}"));
+                constraint_gap(format!("cfg!: cannot parse cfg predicate: {e}"));
             }
         };
         let value = match configuration::resolve_predicate(&predicate, ctx.options) {
             CfgDisposition::Present => true,
             CfgDisposition::Absent(_) => false,
-            CfgDisposition::Ambiguous(reason) => {
-                return unsupported(format!(
-                    "cfg!: ambiguous cfg predicate `{predicate}`: {reason}"
-                ));
-            }
+            CfgDisposition::Ambiguous(reason) => constraint_gap(format!(
+                "cfg!: ambiguous cfg predicate `{predicate}`: {reason}"
+            )),
         };
         Outcome::Complete(Desugared::Constraints {
             atom: eq(bool_const(value), bool_const(true)),
@@ -385,25 +352,23 @@ impl Sugar for CfgMacroSugar {
 
 enum BoolExprKind {
     Connective {
-        left: Box<dyn Sugar>,
-        right: Box<dyn Sugar>,
+        left: SugarBody<ConstraintFloor>,
+        right: SugarBody<ConstraintFloor>,
         is_and: bool,
     },
     Relation {
-        lhs: Box<dyn Sugar>,
-        rhs: Box<dyn Sugar>,
-        lhs_expr: Expr,
-        rhs_expr: Expr,
+        lhs: SugarBody<TermFloor>,
+        rhs: SugarBody<TermFloor>,
         op: RelationOp,
     },
-    Not(Box<dyn Sugar>),
+    Not(SugarBody<ConstraintFloor>),
     Literal(bool),
     PredicateTerm {
-        term: Box<dyn Sugar>,
+        term: SugarBody<TermFloor>,
         expr: Expr,
         asserted: bool,
     },
-    Wrapper(Box<dyn Sugar>),
+    Wrapper(SugarBody<ConstraintFloor>),
 }
 
 struct BoolExprSugar {
@@ -415,8 +380,8 @@ fn recognize_bool_expr(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
         Expr::Binary(binary) if matches!(binary.op, BinOp::And(_) | BinOp::Or(_)) => {
             Some(Box::new(BoolExprSugar {
                 kind: BoolExprKind::Connective {
-                    left: build_constraint(&binary.left, fcx),
-                    right: build_constraint(&binary.right, fcx),
+                    left: SugarBody::constraint(&binary.left, fcx),
+                    right: SugarBody::constraint(&binary.right, fcx),
                     is_and: matches!(binary.op, BinOp::And(_)),
                 },
             }))
@@ -425,16 +390,14 @@ fn recognize_bool_expr(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
             let op = relation_from_binop(&binary.op)?;
             Some(Box::new(BoolExprSugar {
                 kind: BoolExprKind::Relation {
-                    lhs: build_term(&binary.left, fcx),
-                    rhs: build_term(&binary.right, fcx),
-                    lhs_expr: (*binary.left).clone(),
-                    rhs_expr: (*binary.right).clone(),
+                    lhs: SugarBody::term(&binary.left, fcx),
+                    rhs: SugarBody::term(&binary.right, fcx),
                     op,
                 },
             }))
         }
         Expr::Unary(unary) if matches!(unary.op, UnOp::Not(_)) => Some(Box::new(BoolExprSugar {
-            kind: BoolExprKind::Not(build_constraint(&unary.expr, fcx)),
+            kind: BoolExprKind::Not(SugarBody::constraint(&unary.expr, fcx)),
         })),
         Expr::Lit(ExprLit {
             lit: Lit::Bool(value),
@@ -444,16 +407,16 @@ fn recognize_bool_expr(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar
         })),
         expr if is_predicate_term_expr(expr) => Some(Box::new(BoolExprSugar {
             kind: BoolExprKind::PredicateTerm {
-                term: build_term(expr, fcx),
+                term: SugarBody::term(expr, fcx),
                 expr: expr.clone(),
                 asserted: true,
             },
         })),
         Expr::Paren(paren) => Some(Box::new(BoolExprSugar {
-            kind: BoolExprKind::Wrapper(build_constraint(&paren.expr, fcx)),
+            kind: BoolExprKind::Wrapper(SugarBody::constraint(&paren.expr, fcx)),
         })),
         Expr::Group(group) => Some(Box::new(BoolExprSugar {
-            kind: BoolExprKind::Wrapper(build_constraint(&group.expr, fcx)),
+            kind: BoolExprKind::Wrapper(SugarBody::constraint(&group.expr, fcx)),
         })),
         _ => None,
     }
@@ -467,7 +430,7 @@ impl Sugar for BoolExprSugar {
                 right,
                 is_and,
             } => {
-                let left = match constraint_payload(&**left, ctx) {
+                let left = match constraint_payload(left, ctx) {
                     Ok(payload) => payload,
                     Err(outcome) => return outcome,
                 };
@@ -488,7 +451,7 @@ impl Sugar for BoolExprSugar {
                             left_value = *is_and,
                             "continued boolean constraint after non-deciding left literal-backed side"
                         );
-                        let right = match constraint_payload(&**right, ctx) {
+                        let right = match constraint_payload(right, ctx) {
                             Ok(payload) => payload,
                             Err(outcome) => return outcome,
                         };
@@ -496,7 +459,7 @@ impl Sugar for BoolExprSugar {
                     }
                     _ => {}
                 }
-                let right = match constraint_payload(&**right, ctx) {
+                let right = match constraint_payload(right, ctx) {
                     Ok(payload) => payload,
                     Err(outcome) => return outcome,
                 };
@@ -518,27 +481,11 @@ impl Sugar for BoolExprSugar {
                     },
                 })
             }
-            BoolExprKind::Relation {
-                lhs,
-                rhs,
-                lhs_expr,
-                rhs_expr,
-                op,
-            } => {
-                if let Some(reason) = constraint_runtime_boundary::relation_runtime_boundary_reason(
-                    lhs_expr, rhs_expr, ctx,
-                ) {
-                    return unsupported(format!("assert!: {reason}"));
-                }
-                if let Some(reason) = source_location_runtime_reason(lhs_expr)
-                    .or_else(|| source_location_runtime_reason(rhs_expr))
-                {
-                    return unsupported(format!("assert!: {reason}"));
-                }
-                relation_constraint("assert", &**lhs, &**rhs, *op, ctx)
+            BoolExprKind::Relation { lhs, rhs, op } => {
+                relation_constraint_from_bodies("assert", lhs, rhs, *op, ctx)
             }
             BoolExprKind::Not(inner) => {
-                let inner = match constraint_payload(&**inner, ctx) {
+                let inner = match constraint_payload(inner, ctx) {
                     Ok(payload) => payload,
                     Err(outcome) => return outcome,
                 };
@@ -568,13 +515,10 @@ impl Sugar for BoolExprSugar {
             }
             BoolExprKind::PredicateTerm {
                 term,
-                expr,
+                expr: _,
                 asserted,
             } => {
-                if let Some(reason) = mutable_local_slice_predicate_reason(expr, ctx) {
-                    return unsupported(reason);
-                }
-                let term = match term_payload(&**term, ctx) {
+                let term = match term_payload(term, ctx) {
                     Ok(term) => term,
                     Err(outcome) => return outcome,
                 };
@@ -585,7 +529,7 @@ impl Sugar for BoolExprSugar {
                     ctx.scope,
                 ))
             }
-            BoolExprKind::Wrapper(inner) => inner.desugar(ctx),
+            BoolExprKind::Wrapper(inner) => inner.reduce(ctx),
         }
     }
 }
@@ -765,7 +709,7 @@ fn compare_i128(name: &str, left: i128, right: i128) -> Option<bool> {
 }
 
 struct IfPanicSugar {
-    cond: Box<dyn Sugar>,
+    cond: SugarBody<ConstraintFloor>,
     negate: bool,
 }
 
@@ -780,11 +724,11 @@ fn recognize_if_panic(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>
     let else_diverges = else_branch_diverges(if_expr);
     match (then_diverges, else_diverges) {
         (true, false) => Some(Box::new(IfPanicSugar {
-            cond: build_constraint(&if_expr.cond, fcx),
+            cond: SugarBody::constraint(&if_expr.cond, fcx),
             negate: true,
         })),
         (false, true) => Some(Box::new(IfPanicSugar {
-            cond: build_constraint(&if_expr.cond, fcx),
+            cond: SugarBody::constraint(&if_expr.cond, fcx),
             negate: false,
         })),
         _ => None,
@@ -793,7 +737,7 @@ fn recognize_if_panic(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>
 
 impl Sugar for IfPanicSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let payload = match constraint_payload(&*self.cond, ctx) {
+        let payload = match constraint_payload(&self.cond, ctx) {
             Ok(payload) => payload,
             Err(outcome) => return outcome,
         };
@@ -846,30 +790,16 @@ impl Sugar for NoPanicCallSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         let (normal_universe, name) = match &self.term_expr {
             Some(expr) => {
-                if let Some(reason) = no_panic_callsite_terminal_effect(expr) {
-                    return unsupported(reason);
-                }
                 if is_no_panic_literal_empty_into_iter(expr)
                     || is_no_panic_empty_literal_sequence_callsite(expr, ctx)
                 {
                     return no_panic_tautology_for_site(ctx, &self.site);
                 }
-                if is_dyn_any_predicate_call(expr) {
-                    match build_term_in_ctx(expr, ctx).desugar(ctx) {
-                        Outcome::Complete(d) => {
-                            if d.into_term()
-                                .as_ref()
-                                .and_then(|term| term_bool(term.as_ref()))
-                                .is_some()
-                            {
-                                return no_panic_tautology_for_site(ctx, &self.site);
-                            }
-                        }
-                        Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
-                    }
-                }
                 let Some(subject) = ctx.opaque_callsite_term(expr) else {
-                    return Outcome::from_opt(None);
+                    constraint_gap(format!(
+                        "no-panic callsite `{}` had no opaque subject term",
+                        self.site
+                    ));
                 };
                 // Lane 5 concrete-fold: ASCII char-class predicates and
                 // `eq_ignore_ascii_case` on literal receivers can NEVER panic.
@@ -1519,26 +1449,38 @@ fn panic_macro(mac: &syn::Macro) -> bool {
     })
 }
 
-fn ensure_debug_assertions_active(
-    name: &str,
-    debug_gated: bool,
-    ctx: &SugarCtx,
-) -> Result<(), String> {
+fn inactive_debug_assertion(name: &str, debug_gated: bool, ctx: &SugarCtx) -> Option<Outcome> {
     if !debug_gated {
-        return Ok(());
+        return None;
     }
     match configuration::resolve_predicate(
         &CfgPredicate::Name("debug_assertions".to_string()),
         ctx.options,
     ) {
-        CfgDisposition::Present => Ok(()),
-        CfgDisposition::Absent(reason) => Err(format!(
-            "{name}!: cfg(debug_assertions) not active; skipped: {reason}"
+        CfgDisposition::Present => None,
+        CfgDisposition::Absent(reason) => Some(inert_support_constraint(
+            ctx,
+            format!("{name}!: cfg(debug_assertions) not active; skipped: {reason}"),
         )),
-        CfgDisposition::Ambiguous(reason) => Err(format!(
+        CfgDisposition::Ambiguous(reason) => constraint_gap(format!(
             "{name}!: cfg(debug_assertions) ambiguous; skipped: {reason}"
         )),
     }
+}
+
+fn inert_support_constraint(ctx: &SugarCtx, reason: String) -> Outcome {
+    Outcome::Complete(Desugared::Constraints {
+        atom: eq(bool_const(true), bool_const(true)),
+        n: 0,
+        kind: AssertionFactKind::Support,
+        warrant: Warrant {
+            name: Some(format!(
+                "{}::inactive::{}",
+                ctx.scope.local_scope(),
+                compact_warrant_fragment(&reason)
+            )),
+        },
+    })
 }
 
 fn constraint_from_entry(entry: crate::AssertionEntry) -> Outcome {
@@ -1556,8 +1498,11 @@ struct ConstraintPayload {
     name: Option<String>,
 }
 
-fn constraint_payload(node: &dyn Sugar, ctx: &SugarCtx) -> Result<ConstraintPayload, Outcome> {
-    match node.desugar(ctx) {
+fn constraint_payload(
+    body: &SugarBody<ConstraintFloor>,
+    ctx: &SugarCtx,
+) -> Result<ConstraintPayload, Outcome> {
+    match body.reduce(ctx) {
         Outcome::Complete(Desugared::Constraints {
             atom,
             kind,
@@ -1568,50 +1513,37 @@ fn constraint_payload(node: &dyn Sugar, ctx: &SugarCtx) -> Result<ConstraintPayl
             kind,
             name: warrant.name,
         }),
-        Outcome::Complete(_) => Err(Outcome::Incomplete(Effect::Unsupported {
-            reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
-        })),
+        Outcome::Complete(_) => {
+            constraint_gap("constraint body reduced to a non-constraint floor");
+        }
         Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
 }
 
-fn relation_constraint(
+fn relation_constraint_from_bodies(
     name: &str,
-    lhs: &dyn Sugar,
-    rhs: &dyn Sugar,
+    lhs: &SugarBody<TermFloor>,
+    rhs: &SugarBody<TermFloor>,
     op: RelationOp,
     ctx: &SugarCtx,
 ) -> Outcome {
     let lhs = match term_payload(lhs, ctx) {
         Ok(term) => term,
-        Err(outcome) => return prefixed_backstop(name, outcome),
+        Err(outcome) => return outcome,
     };
     let rhs = match term_payload(rhs, ctx) {
         Ok(term) => term,
-        Err(outcome) => return prefixed_backstop(name, outcome),
+        Err(outcome) => return outcome,
     };
     constraint_from_entry(assertion_entry_from_relation(lhs, rhs, op, ctx.scope))
 }
 
-fn term_payload(node: &dyn Sugar, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
-    match node.desugar(ctx) {
-        Outcome::Complete(desugared) => desugared.into_term().ok_or_else(|| {
-            Outcome::Incomplete(Effect::Unsupported {
-                reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
-            })
-        }),
+fn term_payload(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
+    match body.reduce(ctx) {
+        Outcome::Complete(desugared) => Ok(desugared
+            .into_term()
+            .unwrap_or_else(|| constraint_gap("term body reduced to a non-term floor"))),
         Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
-    }
-}
-
-fn prefixed_backstop(name: &str, outcome: Outcome) -> Outcome {
-    match outcome {
-        Outcome::Incomplete(Effect::Unsupported { reason })
-            if reason != STRUCTURAL_BACKSTOP_REASON =>
-        {
-            unsupported(format!("{name}!: {reason}"))
-        }
-        other => other,
     }
 }
 
@@ -1725,6 +1657,9 @@ fn is_str_or_char_lit(expr: &Expr) -> bool {
     }
 }
 
-fn unsupported(reason: String) -> Outcome {
-    Outcome::Incomplete(Effect::Unsupported { reason })
+fn constraint_gap<T>(reason: impl Into<String>) -> T {
+    panic!(
+        "constraint did not reach a lawful proof-universe floor: {}",
+        reason.into()
+    )
 }
