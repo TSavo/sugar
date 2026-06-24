@@ -25,14 +25,13 @@ use sugar_ir_symbolic::{ConstValue, Term};
 use syn::{BinOp, Expr};
 
 use crate::sugar::compare::CompareSugar;
-use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
-};
+use crate::sugar::factory::{BoolFloor, SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::term_dispatch::{BoolFloorAccept, RequiredBoolVisitor};
 use crate::sugar::term_leaf::{reasoned_incomplete, resolved_term};
 use crate::{
-    const_eval, const_fold_int_term, const_fold_u128_term, const_val_term, num,
-    relation_from_binop, term_binop_name, token_key, u128_term, ConstVal, Desugared, Effect,
-    Outcome, Sugar, SugarCtx,
+    bool_const, const_eval, const_fold_int_term, const_fold_u128_term, const_val_term, num,
+    relation_from_binop, term_binop_name, token_key, u128_term, Desugared, Outcome, Sugar,
+    SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -52,8 +51,9 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     }
     if matches!(binary.op, BinOp::And(_) | BinOp::Or(_)) {
         return Some(Box::new(BoolLogicSugar {
-            whole: expr.clone(),
-            let_inits: capture_let_inits(fcx),
+            left: SugarBody::<BoolFloor>::bool_expr(&binary.left, fcx),
+            right: SugarBody::<BoolFloor>::bool_expr(&binary.right, fcx),
+            is_and: matches!(binary.op, BinOp::And(_)),
         }));
     }
     if let Some(rel) = relation_from_binop(&binary.op) {
@@ -76,62 +76,44 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     }))
 }
 
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
-}
-
-fn merge_let_inits<'a>(
-    stable: &'a BTreeMap<String, Expr>,
-    captured: &'a BTreeMap<String, Expr>,
-) -> BTreeMap<String, &'a Expr> {
-    stable
-        .iter()
-        .map(|(name, init)| (name.clone(), init))
-        .chain(captured.iter().map(|(name, init)| (name.clone(), init)))
-        .collect()
-}
-
-fn const_env(bindings: &BTreeMap<String, &Expr>) -> BTreeMap<String, ConstVal> {
-    let mut env = BTreeMap::new();
-    for _ in 0..bindings.len() {
-        let mut changed = false;
-        for (name, init) in bindings {
-            if env.contains_key(name) {
-                continue;
-            }
-            if let Some(value) = const_eval(init, &env) {
-                env.insert(name.clone(), value);
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-    env
-}
-
-struct BoolLogicSugar {
-    whole: Expr,
-    let_inits: BTreeMap<String, Expr>,
+pub(crate) struct BoolLogicSugar {
+    pub(crate) left: SugarBody<BoolFloor>,
+    pub(crate) right: SugarBody<BoolFloor>,
+    pub(crate) is_and: bool,
 }
 
 impl Sugar for BoolLogicSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-        let let_inits = merge_let_inits(&stable, &self.let_inits);
-        if let Some(term) =
-            const_eval(&self.whole, &const_env(&let_inits)).and_then(|value| const_val_term(&value))
-        {
-            return Outcome::Complete(Desugared::Term(term));
+        let left = match bool_body_value(&self.left, ctx, "binary boolean operator") {
+            Ok(value) => value,
+            Err(outcome) => return outcome,
+        };
+        if self.is_and && !left {
+            return Outcome::Complete(Desugared::Term(bool_const(false)));
         }
-        Outcome::Incomplete(Effect::Unsupported {
-            reason: format!("unsupported term operator `{}`", token_key(&self.whole)),
-        })
+        if !self.is_and && left {
+            return Outcome::Complete(Desugared::Term(bool_const(true)));
+        }
+        let right = match bool_body_value(&self.right, ctx, "binary boolean operator") {
+            Ok(value) => value,
+            Err(outcome) => return outcome,
+        };
+        Outcome::Complete(Desugared::Term(bool_const(right)))
     }
+}
+
+fn bool_body_value(
+    body: &SugarBody<BoolFloor>,
+    ctx: &SugarCtx,
+    owner: &'static str,
+) -> Result<bool, Outcome> {
+    let term = match body.reduce(ctx) {
+        Outcome::Complete(d) => d
+            .into_term()
+            .unwrap_or_else(|| binop_gap("boolean child completed as non-term")),
+        Outcome::Incomplete(effect) => return Err(Outcome::Incomplete(effect)),
+    };
+    Ok(term.accept_bool_floor(RequiredBoolVisitor { owner }))
 }
 
 /// The constructive arithmetic-term node. `left`/`right` are the pre-built operand
@@ -146,47 +128,43 @@ pub(crate) struct BinOpSugar {
 }
 
 impl Sugar for BinOpSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
-        let lhs = match self.left.reduce(ctx)? {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        let lhs = match self.left.reduce(ctx) {
             Outcome::Complete(d) => match d.into_term() {
                 Some(t) => t,
-                None => {
-                    return Err(FactoryGap::new(
-                        "binary operator child completed a non-Term where a Term was required; write more Sugar for this AST",
-                    ))
-                }
+                None => binop_gap(
+                    "binary operator child completed a non-Term where a Term was required",
+                ),
             },
-            Outcome::Incomplete(e) => return Ok(Outcome::Incomplete(e)),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
-        let rhs = match self.right.reduce(ctx)? {
+        let rhs = match self.right.reduce(ctx) {
             Outcome::Complete(d) => match d.into_term() {
                 Some(t) => t,
-                None => {
-                    return Err(FactoryGap::new(
-                        "binary operator child completed a non-Term where a Term was required; write more Sugar for this AST",
-                    ))
-                }
+                None => binop_gap(
+                    "binary operator child completed a non-Term where a Term was required",
+                ),
             },
-            Outcome::Incomplete(e) => return Ok(Outcome::Incomplete(e)),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
         let term = Rc::new(Term::Ctor {
             name: self.op_name.to_string(),
             args: vec![lhs, rhs],
         });
         if let Some(value) = const_fold_u128_term(&term) {
-            return Ok(Outcome::Complete(Desugared::Term(u128_term(value))));
+            return Outcome::Complete(Desugared::Term(u128_term(value)));
         }
         if int_fold_is_sort_safe(&term) {
             if let Some(value) = const_fold_int_term(&term) {
-                return Ok(Outcome::Complete(Desugared::Term(num(value))));
+                return Outcome::Complete(Desugared::Term(num(value)));
             }
         }
-        Ok(Outcome::Complete(Desugared::Term(term)))
+        Outcome::Complete(Desugared::Term(term))
     }
+}
 
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
-    }
+fn binop_gap(reason: &str) -> ! {
+    panic!("binary operator did not reach lawful child floors: {reason}; write more Sugar for this AST")
 }
 
 fn int_fold_is_sort_safe(term: &Term) -> bool {
@@ -264,6 +242,19 @@ mod tests {
         }
     }
 
+    fn bool_const_value(t: &Term) -> bool {
+        match t {
+            Term::Const {
+                value: ConstValue::Bool(value),
+                sort,
+            } => {
+                assert_eq!(sort.name, "Bool");
+                *value
+            }
+            _ => panic!("expected a Bool const term, got {t:?}"),
+        }
+    }
+
     #[test]
     fn binop_add_emits_plus_ctor_over_both_operand_terms() {
         let node = BinOpSugar {
@@ -311,6 +302,52 @@ mod tests {
             Outcome::Incomplete(_) => panic!("expected Complete, got Incomplete"),
         };
         assert_eq!(int_const(&term), 7);
+    }
+
+    #[test]
+    fn bool_logic_and_dispatches_left_floor_and_short_circuits_false() {
+        let node = BoolLogicSugar {
+            left: SugarBody::from_node(Box::new(StubTerm(bool_const(false)))),
+            right: SugarBody::from_node(Box::new(StubIncomplete)),
+            is_and: true,
+        };
+        let term = match run(&node) {
+            Outcome::Complete(d) => d.into_term().expect("a Term"),
+            Outcome::Incomplete(_) => panic!("expected left-false && to complete before right"),
+        };
+        assert!(!bool_const_value(&term));
+    }
+
+    #[test]
+    fn bool_logic_or_dispatches_left_floor_and_short_circuits_true() {
+        let node = BoolLogicSugar {
+            left: SugarBody::from_node(Box::new(StubTerm(bool_const(true)))),
+            right: SugarBody::from_node(Box::new(StubIncomplete)),
+            is_and: false,
+        };
+        let term = match run(&node) {
+            Outcome::Complete(d) => d.into_term().expect("a Term"),
+            Outcome::Incomplete(_) => panic!("expected left-true || to complete before right"),
+        };
+        assert!(bool_const_value(&term));
+    }
+
+    #[test]
+    fn bool_logic_propagates_right_child_hit_when_right_is_evaluated() {
+        let node = BoolLogicSugar {
+            left: SugarBody::from_node(Box::new(StubTerm(bool_const(true)))),
+            right: SugarBody::from_node(Box::new(StubIncomplete)),
+            is_and: true,
+        };
+        match run(&node) {
+            Outcome::Incomplete(Effect::Mutation { boundary }) => {
+                assert_eq!(boundary, "stub");
+            }
+            Outcome::Incomplete(_) => {
+                panic!("expected the right child's Mutation Incomplete, got a different Effect")
+            }
+            Outcome::Complete(_) => panic!("expected evaluated right child's Incomplete"),
+        }
     }
 
     #[test]
