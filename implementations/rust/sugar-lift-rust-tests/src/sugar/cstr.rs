@@ -11,21 +11,22 @@ use syn::{Expr, ExprLit, Lit};
 use tracing::debug;
 
 use crate::sugar::claim::ExprSugarClaim;
-use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::factory::{FloorRead, LiteralCStrFloor, SugarBody, SugarBuildCtx};
 use crate::{
-    bytes_literal_term_from_bytes, bytes_to_hex, num, Desugared, Effect, Outcome, Sugar, SugarCtx,
-    STRUCTURAL_BACKSTOP_REASON,
+    bytes_literal_term_from_bytes, bytes_to_hex, num, Desugared, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::term("cstr", recognize);
 
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    if direct_cstr_expr(expr) {
+    if has_literal_cstr_floor(expr, fcx) {
         debug!(
             target: "sugar_lift_rust_tests::sugar::cstr",
             "cstr literal claimed as compiler-axiom bytes"
         );
-        return Some(Box::new(CStrSugar::identity(expr.clone())));
+        return Some(Box::new(CStrSugar::identity(SugarBody::literal_cstr(
+            expr, fcx,
+        ))));
     }
 
     let Expr::MethodCall(call) = expr else {
@@ -35,9 +36,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         return None;
     }
     let receiver = (*call.receiver).clone();
-    if !cstr_receiver_is_literal(&receiver, fcx) {
-        return None;
-    }
+    cstr_receiver_bytes(&receiver, fcx, &mut Vec::new())?;
     match call.method.to_string().as_str() {
         "count_bytes" => {
             debug!(
@@ -45,7 +44,10 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
                 method = "count_bytes",
                 "cstr literal-backed method claimed"
             );
-            Some(Box::new(CStrSugar::method(receiver, CStrKind::CountBytes)))
+            Some(Box::new(CStrSugar::method(
+                SugarBody::literal_cstr(&receiver, fcx),
+                CStrKind::CountBytes,
+            )))
         }
         "to_bytes" => {
             debug!(
@@ -53,7 +55,10 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
                 method = "to_bytes",
                 "cstr literal-backed method claimed"
             );
-            Some(Box::new(CStrSugar::method(receiver, CStrKind::ToBytes)))
+            Some(Box::new(CStrSugar::method(
+                SugarBody::literal_cstr(&receiver, fcx),
+                CStrKind::ToBytes,
+            )))
         }
         "to_bytes_with_nul" => {
             debug!(
@@ -62,7 +67,7 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
                 "cstr literal-backed method claimed"
             );
             Some(Box::new(CStrSugar::method(
-                receiver,
+                SugarBody::literal_cstr(&receiver, fcx),
                 CStrKind::ToBytesWithNul,
             )))
         }
@@ -70,8 +75,12 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     }
 }
 
+pub(crate) fn has_literal_cstr_floor(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
+    cstr_receiver_bytes(expr, fcx, &mut Vec::new()).is_some()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct CStrBytes {
+pub(crate) struct CStrBytes {
     without_nul: Vec<u8>,
     with_nul: Vec<u8>,
 }
@@ -84,6 +93,34 @@ impl CStrBytes {
             with_nul: value.as_bytes_with_nul().to_vec(),
         }
     }
+
+    pub(crate) fn without_nul(&self) -> &[u8] {
+        &self.without_nul
+    }
+
+    pub(crate) fn with_nul(&self) -> &[u8] {
+        &self.with_nul
+    }
+
+    pub(crate) fn accept_literal_cstr<V: LiteralCStrVisitor>(&self, visitor: V) -> V::Output {
+        visitor.visit_cstr(self)
+    }
+}
+
+pub(crate) trait LiteralCStrVisitor {
+    type Output;
+
+    fn visit_cstr(self, bytes: &CStrBytes) -> Self::Output;
+}
+
+struct LiteralCStrSugar {
+    bytes: CStrBytes,
+}
+
+impl Sugar for LiteralCStrSugar {
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+        Outcome::Complete(Desugared::LiteralCStr(self.bytes.clone()))
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -95,37 +132,68 @@ enum CStrKind {
 }
 
 pub(crate) struct CStrSugar {
-    expr: Expr,
+    body: SugarBody<LiteralCStrFloor>,
     kind: CStrKind,
 }
 
 impl CStrSugar {
-    fn identity(expr: Expr) -> Self {
+    fn identity(body: SugarBody<LiteralCStrFloor>) -> Self {
         Self {
-            expr,
+            body,
             kind: CStrKind::Identity,
         }
     }
 
-    fn method(expr: Expr, kind: CStrKind) -> Self {
-        Self { expr, kind }
+    fn method(body: SugarBody<LiteralCStrFloor>, kind: CStrKind) -> Self {
+        Self { body, kind }
     }
 }
 
 impl Sugar for CStrSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let Some(bytes) = cstr_receiver_bytes_in_ctx(&self.expr, ctx, &mut Vec::new()) else {
-            return Outcome::Incomplete(Effect::Unsupported {
-                reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
-            });
+        let bytes = match self.body.reduce_literal_cstr(ctx) {
+            FloorRead::Complete(bytes) => bytes,
+            FloorRead::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
-        let term = match self.kind {
-            CStrKind::Identity => cstr_literal_term_from_bytes_with_nul(&bytes.with_nul),
-            CStrKind::CountBytes => num(bytes.without_nul.len() as i128),
-            CStrKind::ToBytes => bytes_literal_term_from_bytes(&bytes.without_nul),
-            CStrKind::ToBytesWithNul => bytes_literal_term_from_bytes(&bytes.with_nul),
-        };
+        let term = bytes.accept_literal_cstr(CStrTermVisitor { kind: self.kind });
         Outcome::Complete(Desugared::Term(term))
+    }
+}
+
+struct CStrTermVisitor {
+    kind: CStrKind,
+}
+
+impl LiteralCStrVisitor for CStrTermVisitor {
+    type Output = Rc<Term>;
+
+    fn visit_cstr(self, bytes: &CStrBytes) -> Self::Output {
+        match self.kind {
+            CStrKind::Identity => cstr_literal_term_from_bytes_with_nul(bytes.with_nul()),
+            CStrKind::CountBytes => num(bytes.without_nul().len() as i128),
+            CStrKind::ToBytes => bytes_literal_term_from_bytes(bytes.without_nul()),
+            CStrKind::ToBytesWithNul => bytes_literal_term_from_bytes(bytes.with_nul()),
+        }
+    }
+}
+
+pub(crate) fn build_literal_cstr_body(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
+    let bytes = cstr_receiver_bytes(expr, fcx, &mut Vec::new()).unwrap_or_else(|| {
+        panic!(
+            "literal CStr construction failed for `{}`",
+            crate::token_key(expr)
+        )
+    });
+    Box::new(LiteralCStrSugar { bytes })
+}
+
+pub(crate) fn literal_cstr_floor_from_outcome(reduction: Outcome) -> FloorRead<CStrBytes> {
+    match reduction {
+        Outcome::Complete(Desugared::LiteralCStr(value)) => FloorRead::Complete(value),
+        Outcome::Complete(_) => {
+            panic!("literal CStr child completed a non-literal-cstr floor; fix the factory")
+        }
+        Outcome::Incomplete(effect) => FloorRead::Incomplete(effect),
     }
 }
 
@@ -145,52 +213,9 @@ fn direct_cstr_bytes(expr: &Expr) -> Option<CStrBytes> {
     }
 }
 
-fn direct_cstr_expr(expr: &Expr) -> bool {
-    match expr {
-        Expr::Lit(ExprLit {
-            lit: Lit::CStr(_), ..
-        }) => true,
-        Expr::Paren(paren) => direct_cstr_expr(&paren.expr),
-        Expr::Group(group) => direct_cstr_expr(&group.expr),
-        _ => false,
-    }
-}
-
-fn cstr_receiver_is_literal(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
-    if direct_cstr_expr(expr) {
-        return true;
-    }
-    match expr {
-        Expr::Reference(reference) if reference.mutability.is_none() => {
-            cstr_receiver_is_literal(&reference.expr, fcx)
-        }
-        Expr::Paren(paren) => cstr_receiver_is_literal(&paren.expr, fcx),
-        Expr::Group(group) => cstr_receiver_is_literal(&group.expr, fcx),
-        Expr::Path(path) if path.qself.is_none() => {
-            let Some(ident) = path.path.get_ident() else {
-                return false;
-            };
-            let name = ident.to_string();
-            if fcx.resolving_bound_path(&name) {
-                return false;
-            }
-            if let Some(current) = fcx.scope().temporal_rewrite_expr_for(&name) {
-                let child_fcx = fcx.with_bound_path(&name);
-                return cstr_receiver_is_literal(&current, &child_fcx);
-            }
-            let Some(init) = fcx.scope().stable_let_binding_for_term(&name) else {
-                return false;
-            };
-            let child_fcx = fcx.with_bound_path(&name);
-            cstr_receiver_is_literal(init, &child_fcx)
-        }
-        _ => false,
-    }
-}
-
-fn cstr_receiver_bytes_in_ctx(
+fn cstr_receiver_bytes(
     expr: &Expr,
-    ctx: &SugarCtx,
+    fcx: &SugarBuildCtx,
     resolving: &mut Vec<String>,
 ) -> Option<CStrBytes> {
     if let Some(bytes) = direct_cstr_bytes(expr) {
@@ -198,26 +223,107 @@ fn cstr_receiver_bytes_in_ctx(
     }
     match expr {
         Expr::Reference(reference) if reference.mutability.is_none() => {
-            cstr_receiver_bytes_in_ctx(&reference.expr, ctx, resolving)
+            cstr_receiver_bytes(&reference.expr, fcx, resolving)
         }
-        Expr::Paren(paren) => cstr_receiver_bytes_in_ctx(&paren.expr, ctx, resolving),
-        Expr::Group(group) => cstr_receiver_bytes_in_ctx(&group.expr, ctx, resolving),
+        Expr::Paren(paren) => cstr_receiver_bytes(&paren.expr, fcx, resolving),
+        Expr::Group(group) => cstr_receiver_bytes(&group.expr, fcx, resolving),
         Expr::Path(path) if path.qself.is_none() => {
-            let name = path.path.get_ident()?.to_string();
-            if resolving.iter().any(|current| current == &name) {
+            let Some(ident) = path.path.get_ident() else {
+                return None;
+            };
+            let name = ident.to_string();
+            if fcx.resolving_bound_path(&name) || resolving.iter().any(|current| current == &name) {
                 return None;
             }
             resolving.push(name.clone());
-            let out = if let Some(current) = ctx.scope.temporal_rewrite_expr_for(&name) {
-                cstr_receiver_bytes_in_ctx(&current, ctx, resolving)
-            } else {
-                ctx.scope
-                    .stable_let_binding_for_term(&name)
-                    .and_then(|init| cstr_receiver_bytes_in_ctx(init, ctx, resolving))
+            if let Some(current) = fcx.scope().temporal_rewrite_expr_for(&name) {
+                let child_fcx = fcx.with_bound_path(&name);
+                let out = cstr_receiver_bytes(&current, &child_fcx, resolving);
+                resolving.pop();
+                return out;
+            }
+            let Some(init) = fcx.scope().stable_let_binding_for_term(&name) else {
+                resolving.pop();
+                return None;
             };
+            let child_fcx = fcx.with_bound_path(&name);
+            let out = cstr_receiver_bytes(init, &child_fcx, resolving);
             resolving.pop();
             out
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct CountBytesWithNul;
+
+    impl LiteralCStrVisitor for CountBytesWithNul {
+        type Output = usize;
+
+        fn visit_cstr(self, bytes: &CStrBytes) -> Self::Output {
+            bytes.with_nul().len()
+        }
+    }
+
+    #[test]
+    fn literal_cstr_floor_exposes_bytes_through_neutral_visitor() {
+        let expr: Expr = syn::parse_str(r#"c"hi""#).unwrap();
+        let bytes = direct_cstr_bytes(&expr).expect("literal cstr bytes");
+
+        assert_eq!(bytes.accept_literal_cstr(CountBytesWithNul), 3);
+    }
+
+    #[test]
+    fn literal_cstr_floor_from_outcome_rejects_non_cstr_floors() {
+        let bytes = CStrBytes {
+            without_nul: b"hi".to_vec(),
+            with_nul: b"hi\0".to_vec(),
+        };
+
+        match literal_cstr_floor_from_outcome(Outcome::Complete(Desugared::LiteralCStr(bytes))) {
+            crate::sugar::factory::FloorRead::Complete(value) => {
+                assert_eq!(value.without_nul(), b"hi");
+                assert_eq!(value.with_nul(), b"hi\0");
+            }
+            crate::sugar::factory::FloorRead::Incomplete(_) => {
+                panic!("literal cstr floor should complete")
+            }
+        }
+    }
+
+    #[test]
+    fn literal_cstr_floor_composes_into_debug_format_value() {
+        let bytes = CStrBytes {
+            without_nul: b"hi".to_vec(),
+            with_nul: b"hi\0".to_vec(),
+        };
+        let out = crate::sugar::format::render_format_values(
+            "{:?}",
+            &[crate::sugar::format::FmtValue::CStr(bytes)],
+            &Default::default(),
+            &Default::default(),
+        );
+
+        assert_eq!(out, "\"hi\"");
+    }
+
+    #[test]
+    #[should_panic(expected = "rustc would reject")]
+    fn literal_cstr_display_format_panics_as_compiler_impossible() {
+        let bytes = CStrBytes {
+            without_nul: b"hi".to_vec(),
+            with_nul: b"hi\0".to_vec(),
+        };
+
+        let _ = crate::sugar::format::render_format_values(
+            "{}",
+            &[crate::sugar::format::FmtValue::CStr(bytes)],
+            &Default::default(),
+            &Default::default(),
+        );
     }
 }
