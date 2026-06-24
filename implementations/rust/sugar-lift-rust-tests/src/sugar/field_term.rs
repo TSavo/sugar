@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// TERM recognizer for `Expr::Field` (`base.member`): the `field:<member>` ctor over
-// the base child. Recognition constructs the base as a typed term body; `desugar`
-// reduces that body, propagates child effects, and emits the projection ctor.
+// TERM recognizer for `Expr::Field` (`base.member`): the base child is constructed
+// by the factory, and desugar visits the floor it returns. Tuple-component floors
+// project directly; ordinary term floors emit the congruent `field:<member>` ctor.
 
-use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use sugar_ir_symbolic::Term;
 
-use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
-use crate::{const_eval, const_val_term, token_key, ConstVal, Desugared, Outcome, Sugar, SugarCtx};
+use crate::sugar::factory::{
+    has_tuple_producer, SugarBody, SugarBuildCtx, TermFloor, TupleProducerFloor,
+};
+use crate::sugar::term_dispatch::{DesugaredFloorAccept, DesugaredFloorVisitor};
+use crate::{token_key, Desugared, Outcome, Sugar, SugarCtx};
 use syn::Expr;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -18,11 +21,24 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 /// TERM recognizer for `Expr::Field`.
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {
+        Expr::Field(field)
+            if matches!(field.member, syn::Member::Unnamed(_))
+                && has_tuple_producer(&field.base, fcx) =>
+        {
+            Some(Box::new(FieldTermSugar {
+                member: token_key(&field.member),
+                base: FieldBase::Tuple {
+                    body: SugarBody::tuple_producer(&field.base, fcx),
+                },
+                tuple_index: tuple_index(&field.member),
+            }))
+        }
         Expr::Field(field) => Some(Box::new(FieldTermSugar {
             member: token_key(&field.member),
-            base: SugarBody::term(&field.base, fcx),
-            whole: expr.clone(),
-            let_inits: capture_let_inits(fcx),
+            base: FieldBase::Term {
+                body: SugarBody::term(&field.base, fcx),
+            },
+            tuple_index: tuple_index(&field.member),
         })),
         _ => None,
     }
@@ -30,74 +46,76 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
 
 struct FieldTermSugar {
     member: String,
-    base: SugarBody<TermFloor>,
-    whole: Expr,
-    let_inits: BTreeMap<String, Expr>,
+    base: FieldBase,
+    tuple_index: Option<usize>,
 }
 
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
-}
-
-fn merge_let_inits<'a>(
-    stable: &'a BTreeMap<String, Expr>,
-    captured: &'a BTreeMap<String, Expr>,
-) -> BTreeMap<String, &'a Expr> {
-    stable
-        .iter()
-        .map(|(name, init)| (name.clone(), init))
-        .chain(captured.iter().map(|(name, init)| (name.clone(), init)))
-        .collect()
-}
-
-fn const_env(bindings: &BTreeMap<String, &Expr>) -> BTreeMap<String, ConstVal> {
-    let mut env = BTreeMap::new();
-    for _ in 0..bindings.len() {
-        let mut changed = false;
-        for (name, init) in bindings {
-            if env.contains_key(name) {
-                continue;
-            }
-            if let Some(value) = const_eval(init, &env) {
-                env.insert(name.clone(), value);
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-    env
+enum FieldBase {
+    Term { body: SugarBody<TermFloor> },
+    Tuple { body: SugarBody<TupleProducerFloor> },
 }
 
 impl Sugar for FieldTermSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-        let let_inits = merge_let_inits(&stable, &self.let_inits);
-        if let Some(term) =
-            const_eval(&self.whole, &const_env(&let_inits)).and_then(|value| const_val_term(&value))
-        {
-            return Outcome::Complete(Desugared::Term(term));
-        }
-        let base = match self.base.reduce(ctx) {
-            Outcome::Complete(d) => match d.into_term() {
-                Some(term) => term,
-                None => field_gap(&self.member),
+        let floor = match &self.base {
+            FieldBase::Term { body } => match body.reduce(ctx) {
+                Outcome::Complete(floor) => floor,
+                Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
             },
-            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+            FieldBase::Tuple { body } => match body.reduce(ctx) {
+                Outcome::Complete(floor) => floor,
+                Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+            },
         };
-        Outcome::Complete(Desugared::Term(std::rc::Rc::new(Term::Ctor {
+        floor.accept_desugared_floor(FieldProjectionVisitor {
+            member: &self.member,
+            tuple_index: self.tuple_index,
+        })
+    }
+}
+
+struct FieldProjectionVisitor<'a> {
+    member: &'a str,
+    tuple_index: Option<usize>,
+}
+
+impl DesugaredFloorVisitor for FieldProjectionVisitor<'_> {
+    type Output = Outcome;
+
+    fn visit_term(self, term: Rc<Term>) -> Self::Output {
+        Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
             name: format!("field:{}", self.member),
-            args: vec![base],
+            args: vec![term],
         })))
+    }
+
+    fn visit_term_seq(self, _terms: Vec<Rc<Term>>) -> Self::Output {
+        field_gap(self.member)
+    }
+
+    fn visit_tuple_components(self, parts: Vec<Rc<Term>>) -> Self::Output {
+        let index = self.tuple_index.unwrap_or_else(|| field_gap(self.member));
+        let term = parts
+            .get(index)
+            .cloned()
+            .unwrap_or_else(|| field_gap(self.member));
+        Outcome::Complete(Desugared::Term(term))
+    }
+
+    fn visit_passthrough(self, _floor: Desugared) -> Self::Output {
+        field_gap(self.member)
+    }
+}
+
+fn tuple_index(member: &syn::Member) -> Option<usize> {
+    match member {
+        syn::Member::Unnamed(index) => Some(index.index as usize),
+        syn::Member::Named(_) => None,
     }
 }
 
 fn field_gap(member: &str) -> ! {
     panic!(
-        "FieldTermSugar `{member}` base completed a non-Term where a Term was required; write more Sugar for this AST"
+        "FieldTermSugar `{member}` base completed a floor that cannot own field projection; write more Sugar for this AST"
     )
 }
