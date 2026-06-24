@@ -21950,6 +21950,64 @@ mod lifter_key_tests {
     }
 
     #[test]
+    fn runtime_return_callsite_warrants_only_no_panic_universe() {
+        // `std::env::args()` returns runtime data, so value-position sugars may later
+        // refuse the iterator contents. The callsite still has one lawful invariant:
+        // the passing test reached normal return through this evaluated call.
+        let src = r#"
+            #[test]
+            fn args_callsite_surface() {
+                let _args = std::env::args();
+            }
+        "#;
+        let out = lift_src(src);
+        assert_eq!(
+            out.assertions_lifted, 0,
+            "no-panic facts do not increment scalar assertion count: {:?}",
+            out.decls
+        );
+        assert_eq!(
+            out.assertions_refused, 0,
+            "runtime return value must not be reclassified by no-panic: {:?}",
+            out.skip_reasons
+        );
+        let panic_fact_contracts: Vec<&str> = out
+            .assertion_facts
+            .iter()
+            .filter(|fact| fact.kind == AssertionFactKind::Warranted)
+            .map(|fact| fact.contract_name.as_str())
+            .collect();
+        assert_eq!(
+            panic_fact_contracts.len(),
+            1,
+            "std::env::args() should contribute exactly one normal-return fact: {panic_fact_contracts:?}"
+        );
+        assert!(
+            panic_fact_contracts
+                .iter()
+                .all(|contract| contract.contains("std::env::args")),
+            "the fact must be keyed to the args() callsite, not a runtime value effect: {panic_fact_contracts:?}"
+        );
+        assert!(
+            out.factory_audits.iter().any(|audit| {
+                audit.requested_role == "SupportConstraint"
+                    && audit.selected == Some("constraint_no_panic_call")
+                    && audit.disposition == FactoryDisposition::Warranted
+                    && audit.site.contains("std :: env :: args")
+            }),
+            "args() must route through NoPanicCallSugar as support: {:?}",
+            out.factory_audits
+        );
+        let dump = format!("{:?}", out.decls);
+        assert!(
+            dump.contains("panic")
+                && dump.contains("not")
+                && dump.contains("call:std::env::args#panic_callsite"),
+            "the only emitted universe should be not(panic(args-callsite)): {dump}"
+        );
+    }
+
+    #[test]
     fn stable_bound_receiver_rewrites_method_subject_through_factory() {
         // `m` is stable source sugar for the constructor epoch. The assertion's FOL
         // subject is the rewritten method call over `Maker::new(42)`, not a bare
