@@ -22,29 +22,30 @@ pub(crate) const EXPR_SUGAR: ExprSugarClaim =
 
 pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let source = resolve_vec_literal_source(expr, fcx, 0)?;
-    vec_builder_pattern(&source)?;
-    Some(Box::new(VecLiteralSugar { source }))
+    let seq = eval_vec_builder_source_static(&source)?;
+    if seq.is_empty() || seq.len() > SUGAR_SEQ_CAP as usize {
+        return None;
+    }
+    Some(Box::new(VecLiteralSugar {
+        seq,
+        source_key: token_key(&source),
+    }))
 }
 
 struct VecLiteralSugar {
-    source: Expr,
+    seq: Vec<DesugaredElem>,
+    source_key: String,
 }
 
 impl Sugar for VecLiteralSugar {
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let Some(seq) = eval_vec_builder_source(&self.source, ctx, 0) else {
-            return Outcome::from_opt(None);
-        };
-        if seq.is_empty() || seq.len() > SUGAR_SEQ_CAP as usize {
-            return Outcome::from_opt(None);
-        }
+    fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
         debug!(
             target: "sugar_lift_rust_tests::sugar::vec_literal",
-            len = seq.len(),
-            source = %token_key(&self.source),
+            len = self.seq.len(),
+            source = %self.source_key,
             "resolved vec builder to literal sequence"
         );
-        Outcome::Complete(Desugared::Seq(seq))
+        Outcome::Complete(Desugared::Seq(self.seq.clone()))
     }
 }
 
@@ -84,6 +85,13 @@ fn eval_vec_builder_source(
         }
         _ => None,
     }
+}
+
+fn eval_vec_builder_source_static(expr: &Expr) -> Option<Vec<DesugaredElem>> {
+    let Expr::Block(block) = strip_refs_groups(expr) else {
+        return None;
+    };
+    eval_vec_builder_block(&block.block.stmts)
 }
 
 fn eval_vec_builder_block(stmts: &[Stmt]) -> Option<Vec<DesugaredElem>> {

@@ -39,6 +39,7 @@ pub mod sugar {
     pub mod block_term;
     pub mod bool_bitwise;
     pub mod bool_method;
+    pub mod bool_predicate;
     pub mod bound;
     pub mod bound_path;
     pub mod call;
@@ -115,6 +116,7 @@ pub mod sugar {
     pub mod intersperse;
     pub mod intersperse_collect_string;
     pub mod intersperse_concat;
+    pub mod into;
     pub mod ip_addr;
     pub mod is_empty;
     pub mod is_sorted;
@@ -161,6 +163,7 @@ pub mod sugar {
     pub mod result_transpose_collect;
     pub mod rev;
     pub mod scan;
+    pub mod sequence_floor;
     pub mod should_panic;
     pub mod size_hint;
     pub mod sizeof;
@@ -185,6 +188,7 @@ pub mod sugar {
     pub mod take;
     pub mod take_while;
     pub mod temporal_read;
+    pub mod term_dispatch;
     pub mod term_leaf;
     pub mod term_literal;
     pub mod to_string;
@@ -771,6 +775,10 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // or bit operand is text-determined. A runtime float/bit source has no literal
         // IEEE pattern to read from the source text.
         || reason.contains("runtime float operand, not literal")
+        // TERMINAL: primitive numeric stdlib operations compute a concrete value only
+        // for literal-determined operands in this lift. The child scalar floor owns this
+        // effect; parents that need the value dispatch to it and propagate the result.
+        || reason.contains("operand, not literal-determined")
         || reason.contains("f16/f128 float bit model is not expressible")
         || reason.contains("float bit pattern is not expressible as a finite Real literal")
         // TERMINAL: slice/array accessors only ground when the receiver and any index
@@ -812,6 +820,10 @@ pub fn refusal_disposition(reason: &str) -> Disposition {
         // genuine UB with no determinate value, so just that branch refuses (the reason is
         // prefixed "out-of-bounds unchecked slice indexing").
         || reason.contains("unchecked slice indexing")
+        // TERMINAL: a fully-literal stdlib/compiler operation is reached, but Rust would
+        // panic before yielding a value (`(-1).isqrt()`, monadic unwrap on `None`/`Err`).
+        // The literal input path is known; the absence of a value is the source property.
+        || reason.contains("panics; refused")
         // TERMINAL: an `unsupported term` whose SHAPE is genuinely effectful / non-constructible
         // -- a `&mut` borrow, raw address, or raw-pointer cast (`&raw const`/`&raw mut`/
         // `as *const`/`as *mut`). None is a single timeless value constructible from source
@@ -1986,13 +1998,7 @@ fn source_assertion_entries_in_stmts(
         }
 
         if let Stmt::Local(local) = stmt {
-            if let (Some(name), Some(init)) =
-                (let_simple_value_binding(&local.pat), local.init.as_ref())
-            {
-                if init.diverge.is_none() {
-                    temporal_scope.record_let_binding(&name, (*init.expr).clone());
-                }
-            }
+            record_simple_value_binding(&mut temporal_scope, local);
             if let Some(init) = local.init.as_ref().filter(|init| init.diverge.is_none()) {
                 record_destructured_let_bindings(&mut temporal_scope, &local.pat, &init.expr);
             }
@@ -4482,6 +4488,11 @@ pub(crate) struct TemporalScope {
     /// / unresolvable binding makes the evaluator decline (the operand stays in its
     /// existing refusal -- a safe under-claim).
     let_bindings: BTreeMap<String, Expr>,
+    /// Expected type pinned by a typed simple binding (`let x: T = ...`). The factory
+    /// threads this through a later `BoundPathSugar` construction so target-typed sugars
+    /// such as `.into()` can dispatch against the compiler-provided target instead of
+    /// re-opening the source statement.
+    let_binding_types: BTreeMap<String, String>,
     /// In-scope bindings that have already reduced to a ProofIR term. This is the
     /// term-side twin of `let_bindings`: a value-position sugar such as
     /// `match r { Ok(v) => v, Err(e) => panic!(..) }` can bind `v` to
@@ -4565,6 +4576,7 @@ impl TemporalScope {
             consuming_occurrence: std::cell::RefCell::new(BTreeMap::new()),
             literal_arrays: BTreeMap::new(),
             let_bindings: BTreeMap::new(),
+            let_binding_types: BTreeMap::new(),
             term_bindings: BTreeMap::new(),
             runtime_destructured_locals: BTreeSet::new(),
             unresolved_destructured_locals: BTreeSet::new(),
@@ -4719,6 +4731,13 @@ impl TemporalScope {
                 .filter(|(name, _)| parent.stable_let_binding_for_term(name).is_some())
                 .map(|(name, expr)| (name.clone(), expr.clone())),
         );
+        self.let_binding_types.extend(
+            parent
+                .let_binding_types
+                .iter()
+                .filter(|(name, _)| parent.stable_let_binding_for_term(name).is_some())
+                .map(|(name, ty)| (name.clone(), ty.clone())),
+        );
         self.term_bindings.extend(
             parent
                 .term_bindings
@@ -4752,6 +4771,11 @@ impl TemporalScope {
                 .filter(|init| stable_iterator_next_unwrap_snapshot(init));
         }
         self.let_binding(name)
+    }
+
+    pub(crate) fn let_binding_expected_type(&self, name: &str) -> Option<&str> {
+        self.stable_let_binding_for_term(name)?;
+        self.let_binding_types.get(name).map(String::as_str)
     }
 
     pub(crate) fn stable_term_binding_for_term(&self, name: &str) -> Option<Rc<Term>> {
@@ -4852,19 +4876,29 @@ impl TemporalScope {
                 "declined self-referential stable let binding"
             );
             self.let_bindings.remove(name);
+            self.let_binding_types.remove(name);
             self.term_bindings.remove(name);
             self.runtime_destructured_locals.remove(name);
             self.unresolved_destructured_locals.remove(name);
             return;
         }
         self.term_bindings.remove(name);
+        self.let_binding_types.remove(name);
         self.runtime_destructured_locals.remove(name);
         self.unresolved_destructured_locals.remove(name);
         self.let_bindings.insert(name.to_string(), rewritten);
     }
 
+    fn record_let_binding_expected_type(&mut self, name: &str, ty: &Type) {
+        if self.let_bindings.contains_key(name) {
+            self.let_binding_types
+                .insert(name.to_string(), type_key(ty));
+        }
+    }
+
     pub(crate) fn record_let_term_binding(&mut self, name: &str, term: Rc<Term>) {
         self.let_bindings.remove(name);
+        self.let_binding_types.remove(name);
         self.runtime_destructured_locals.remove(name);
         self.unresolved_destructured_locals.remove(name);
         self.term_bindings.insert(name.to_string(), term);
@@ -4872,6 +4906,7 @@ impl TemporalScope {
 
     fn record_runtime_destructured_binding(&mut self, name: &str) {
         self.let_bindings.remove(name);
+        self.let_binding_types.remove(name);
         self.term_bindings.remove(name);
         self.unresolved_destructured_locals.remove(name);
         self.runtime_destructured_locals.insert(name.to_string());
@@ -4879,6 +4914,7 @@ impl TemporalScope {
 
     fn record_unresolved_destructured_binding(&mut self, name: &str) {
         self.let_bindings.remove(name);
+        self.let_binding_types.remove(name);
         self.term_bindings.remove(name);
         self.runtime_destructured_locals.remove(name);
         self.unresolved_destructured_locals.insert(name.to_string());
@@ -5860,7 +5896,12 @@ fn bounded_domain_from_expr(expr: &Expr, scope: &TemporalScope) -> Option<Bounde
 /// / flatten / a windowing/stateful one) makes the peel return None -> bail (honest,
 /// never a fake-complete). (`filter_map` IS replicable via the closed Option-eval, so it
 /// produces a `FilterMapSugar` wrapper.)
-type AdaptorWrap = Box<dyn FnOnce(Box<dyn Sugar>) -> Box<dyn Sugar>>;
+type AdaptorWrap = Box<
+    dyn for<'a, 'e> FnOnce(
+        Box<dyn Sugar>,
+        &sugar::factory::SugarBuildCtx<'a, 'e>,
+    ) -> Box<dyn Sugar>,
+>;
 
 enum PeeledExpr<'a> {
     Borrowed(&'a Expr),
@@ -5974,23 +6015,31 @@ fn peel_fold_adaptors_inner<'a>(
                         "iter" | "into_iter" | "cloned" | "copied" | "fuse" | "peekable" | "clone"
                         | "to_vec" | "as_slice" | "to_owned" | "into_vec",
                         0,
-                    ) => Box::new(|inner| Box::new(sugar::identity::IdentitySugar { inner })),
-                    ("rev", 0) => Box::new(wrap_rev),
+                    ) => Box::new(|inner, _fcx| Box::new(sugar::identity::IdentitySugar { inner })),
+                    ("rev", 0) => Box::new(|inner, _fcx| Box::new(sugar::rev::RevSugar { inner })),
                     // `.inspect(f)` yields the SAME items in the SAME order -- the closure
                     // receives `&Item` and CANNOT alter the value stream (its side effect is
                     // irrelevant to the asserted values). So it is the identity adaptor over
                     // the value sequence, regardless of the argument form.
                     ("inspect", 1) => {
-                        Box::new(|inner| Box::new(sugar::identity::IdentitySugar { inner }))
+                        Box::new(|inner, _fcx| Box::new(sugar::identity::IdentitySugar { inner }))
                     }
                     ("enumerate", 0) => {
-                        Box::new(|inner| Box::new(sugar::enumerate::EnumerateSugar { inner }))
+                        Box::new(|inner, _fcx| Box::new(sugar::enumerate::EnumerateSugar { inner }))
                     }
                     ("filter", 1) => match &m.args[0] {
                         Expr::Closure(c) => {
                             let pred = c.clone();
-                            Box::new(move |inner| {
-                                Box::new(sugar::filter::FilterSugar { inner, pred })
+                            Box::new(move |inner, fcx| {
+                                Box::new(sugar::filter::FilterSugar {
+                                    inner: sugar::factory::SugarBody::from_node(inner),
+                                    pred: sugar::bool_predicate::BoolPredicateClosure::build(
+                                        pred, fcx,
+                                    )
+                                    .unwrap_or_else(|| {
+                                        panic!("filter wrapper could not construct predicate body")
+                                    }),
+                                })
                             })
                         }
                         _ => return None,
@@ -5999,23 +6048,32 @@ fn peel_fold_adaptors_inner<'a>(
                         Expr::Closure(c) => {
                             let f = c.clone();
                             if sugar::identity_map::is_identity_closure(&f) {
-                                Box::new(move |inner| {
-                                    Box::new(sugar::identity_map::IdentityMapSugar { inner })
+                                Box::new(move |inner, _fcx| {
+                                    Box::new(sugar::identity_map::IdentityMapSugar {
+                                        inner: sugar::factory::SugarBody::from_node(inner),
+                                    })
                                 })
                             } else {
-                                Box::new(move |inner| {
+                                Box::new(move |inner, fcx| {
                                     Box::new(sugar::map::MapSugar {
-                                        inner,
-                                        f,
-                                        u128_shift_hint: false,
+                                        inner: sugar::factory::SugarBody::from_node(inner),
+                                        mapper: sugar::map::MapClosure::build(f, fcx, false)
+                                            .unwrap_or_else(|| {
+                                                panic!(
+                                                    "map wrapper could not construct closure body"
+                                                )
+                                            }),
                                     })
                                 })
                             }
                         }
                         func if matches!(strip_refs_groups(func), Expr::Path(_)) => {
                             let func = strip_refs_groups(func).clone();
-                            Box::new(move |inner| {
-                                Box::new(sugar::function_map::FunctionMapSugar { inner, func })
+                            Box::new(move |inner, _fcx| {
+                                Box::new(sugar::function_map::FunctionMapSugar {
+                                    inner: sugar::factory::SugarBody::from_node(inner),
+                                    func,
+                                })
                             })
                         }
                         _ => return None,
@@ -6023,29 +6081,48 @@ fn peel_fold_adaptors_inner<'a>(
                     ("filter_map", 1) => match &m.args[0] {
                         Expr::Closure(c) => {
                             let f = c.clone();
-                            Box::new(move |inner| {
-                                Box::new(sugar::filter_map::FilterMapSugar { inner, f })
+                            Box::new(move |inner, _fcx| {
+                                Box::new(sugar::filter_map::FilterMapSugar {
+                                    inner: sugar::factory::SugarBody::from_node(inner),
+                                    mapper: sugar::filter_map::FilterMapClosure::new(f),
+                                })
                             })
                         }
                         _ => return None,
                     },
                     ("intersperse", 1) => {
                         let separator = m.args[0].clone();
-                        Box::new(move |inner| {
-                            Box::new(sugar::intersperse::IntersperseSugar { inner, separator })
+                        Box::new(move |inner, _fcx| {
+                            Box::new(sugar::intersperse::IntersperseSugar {
+                                inner: sugar::factory::SugarBody::from_node(inner),
+                                separator: sugar::intersperse::IntersperseSeparator::new(separator),
+                            })
                         })
                     }
                     ("intersperse_with", 1) => {
                         let separator = m.args[0].clone();
-                        Box::new(move |inner| {
-                            Box::new(sugar::intersperse::IntersperseWithSugar { inner, separator })
+                        Box::new(move |inner, _fcx| {
+                            Box::new(sugar::intersperse::IntersperseWithSugar {
+                                inner: sugar::factory::SugarBody::from_node(inner),
+                                separator: sugar::intersperse::IntersperseSeparator::new(separator),
+                            })
                         })
                     }
                     ("skip_while", 1) => match &m.args[0] {
                         Expr::Closure(c) => {
                             let pred = c.clone();
-                            Box::new(move |inner| {
-                                Box::new(sugar::skip_while::SkipWhileSugar { inner, pred })
+                            Box::new(move |inner, fcx| {
+                                Box::new(sugar::skip_while::SkipWhileSugar {
+                                    inner: sugar::factory::SugarBody::from_node(inner),
+                                    pred: sugar::bool_predicate::BoolPredicateClosure::build(
+                                        pred, fcx,
+                                    )
+                                    .unwrap_or_else(|| {
+                                        panic!(
+                                            "skip_while wrapper could not construct predicate body"
+                                        )
+                                    }),
+                                })
                             })
                         }
                         _ => return None,
@@ -6053,24 +6130,41 @@ fn peel_fold_adaptors_inner<'a>(
                     ("take_while", 1) => match &m.args[0] {
                         Expr::Closure(c) => {
                             let pred = c.clone();
-                            Box::new(move |inner| {
-                                Box::new(sugar::take_while::TakeWhileSugar { inner, pred })
+                            Box::new(move |inner, fcx| {
+                                Box::new(sugar::take_while::TakeWhileSugar {
+                                    inner: sugar::factory::SugarBody::from_node(inner),
+                                    pred: sugar::bool_predicate::BoolPredicateClosure::build(
+                                        pred, fcx,
+                                    )
+                                    .unwrap_or_else(|| {
+                                        panic!(
+                                            "take_while wrapper could not construct predicate body"
+                                        )
+                                    }),
+                                })
                             })
                         }
                         _ => return None,
                     },
                     ("skip", 1) => {
                         let n: usize = const_int(&m.args[0])?.try_into().ok()?;
-                        Box::new(move |inner| Box::new(sugar::skip::SkipSugar { inner, n }))
+                        Box::new(move |inner, _fcx| {
+                            Box::new(sugar::skip::SkipSugar {
+                                inner: sugar::factory::SugarBody::from_node(inner),
+                                n,
+                            })
+                        })
                     }
                     ("take", 1) => {
                         let n: usize = const_int(&m.args[0])?.try_into().ok()?;
                         let source = Expr::MethodCall(m.clone());
-                        Box::new(move |inner| {
+                        Box::new(move |inner, _fcx| {
                             Box::new(sugar::take::TakeSugar {
-                                inner,
+                                inner: sugar::factory::SugarBody::from_node(inner),
                                 n,
-                                source: Some(source),
+                                finite_source: sugar::method_family::finite_int_iter_sequence(
+                                    &source,
+                                ),
                             })
                         })
                     }
@@ -6099,9 +6193,9 @@ fn peel_fold_adaptors_inner<'a>(
                             "windows" => sugar::slice_chunk_window::SliceChunkWindowKind::Windows,
                             _ => return None,
                         };
-                        Box::new(move |inner| {
+                        Box::new(move |inner, _fcx| {
                             Box::new(sugar::slice_chunk_window::SliceChunkWindowSugar {
-                                inner,
+                                inner: sugar::factory::SugarBody::from_node(inner),
                                 kind,
                                 n,
                             })
@@ -6115,11 +6209,13 @@ fn peel_fold_adaptors_inner<'a>(
                             return None;
                         }
                         let source = Expr::MethodCall(m.clone());
-                        Box::new(move |inner| {
+                        Box::new(move |inner, _fcx| {
                             Box::new(sugar::step_by::StepBySugar {
-                                inner,
+                                inner: sugar::factory::SugarBody::from_node(inner),
                                 n,
-                                source: Some(source),
+                                finite_source: sugar::method_family::finite_int_iter_sequence(
+                                    &source,
+                                ),
                             })
                         })
                     }
@@ -6134,15 +6230,18 @@ fn peel_fold_adaptors_inner<'a>(
                             if map_call.method == "map" && map_call.args.len() == 1 {
                                 if let Expr::Closure(c) = &map_call.args[0] {
                                     let f = c.clone();
-                                    adaptors_rev.push(Box::new(move |inner| {
-                                        Box::new(sugar::flat_map::FlatMapSugar { inner, f })
+                                    adaptors_rev.push(Box::new(move |inner, _fcx| {
+                                        Box::new(sugar::flat_map::FlatMapSugar {
+                                            inner: sugar::factory::SugarBody::from_node(inner),
+                                            mapper: sugar::flat_map::FlatMapClosure::new(f),
+                                        })
                                     }));
                                     cur = &map_call.receiver;
                                     continue;
                                 }
                             }
                         }
-                        Box::new(|inner| {
+                        Box::new(|inner, _fcx| {
                             Box::new(sugar::flatten::FlattenSugar {
                                 inner: sugar::factory::SugarBody::from_node(inner),
                             })
@@ -6154,8 +6253,11 @@ fn peel_fold_adaptors_inner<'a>(
                     ("flat_map", 1) => match &m.args[0] {
                         Expr::Closure(c) => {
                             let f = c.clone();
-                            Box::new(move |inner| {
-                                Box::new(sugar::flat_map::FlatMapSugar { inner, f })
+                            Box::new(move |inner, _fcx| {
+                                Box::new(sugar::flat_map::FlatMapSugar {
+                                    inner: sugar::factory::SugarBody::from_node(inner),
+                                    mapper: sugar::flat_map::FlatMapClosure::new(f),
+                                })
                             })
                         }
                         _ => return None,
@@ -6236,6 +6338,7 @@ enum ConstVal {
     Bool(bool),
     Char(char),
     UnitPath(String),
+    Array(Vec<ConstVal>),
     Tuple(Vec<ConstVal>),
 }
 
@@ -6250,6 +6353,13 @@ impl ConstVal {
             ConstVal::Bool(b) => b.to_string(),
             ConstVal::Char(c) => format!("{c:?}"), // debug form emits a valid char literal
             ConstVal::UnitPath(path) => path.clone(),
+            ConstVal::Array(items) => {
+                let elems = items
+                    .iter()
+                    .map(ConstVal::to_expr)
+                    .collect::<Option<Vec<_>>>()?;
+                return Some(syn::parse_quote!([#(#elems),*]));
+            }
             // a tuple element fed to a later adaptor stays a ConstVal; only scalars are
             // ever materialized back to an Expr (the fold item). A tuple item is uncommon
             // and we conservatively decline materializing it.
@@ -6425,6 +6535,13 @@ fn const_eval(expr: &Expr, env: &BTreeMap<String, ConstVal>) -> Option<ConstVal>
         Expr::Paren(pr) => const_eval(&pr.expr, env),
         Expr::Group(g) => const_eval(&g.expr, env),
         Expr::Reference(r) => const_eval(&r.expr, env),
+        Expr::Array(array) => {
+            let mut vals = Vec::with_capacity(array.elems.len());
+            for e in &array.elems {
+                vals.push(const_eval(e, env)?);
+            }
+            Some(ConstVal::Array(vals))
+        }
         Expr::Tuple(t) => {
             let mut vals = Vec::with_capacity(t.elems.len());
             for e in &t.elems {
@@ -7471,6 +7588,13 @@ pub(crate) enum Desugared {
     /// synthetic-but-warranted). Produced by `LiteralSugar` and the sequence
     /// adaptors (`IterSugar`/`FilterSugar`/`MapSugar`/...).
     Seq(Vec<DesugaredElem>),
+    /// A finite sequence whose elements are already reduced terms. This is the
+    /// temporal-map floor: `.map(|x| body(x))` over a literal domain reduces the
+    /// closure body to a term and asks that term to curry itself with each element
+    /// term. Runtime call/method leaves become per-point FOL occurrence symbols
+    /// (`x_1()`, `x_2()`, ...), not an ordered execution trace. The next terminal
+    /// consumes those curried terms without re-opening raw syntax.
+    TermSeq(Vec<Rc<Term>>),
     /// An emitted finite conjunction (a fold/for_each/for-loop terminal): the
     /// formula, the static assert-macro count it accounts, its fact kind, and
     /// its warrant.
@@ -7507,6 +7631,7 @@ impl Desugared {
     pub(crate) fn into_seq(self) -> Option<Vec<DesugaredElem>> {
         match self {
             Desugared::Seq(s) => Some(s),
+            Desugared::TermSeq(_) => None,
             Desugared::Constraints { .. } => None,
             Desugared::Term(_) => None,
             Desugared::LiteralString(_) => None,
@@ -7522,6 +7647,9 @@ impl Desugared {
     pub(crate) fn into_term(self) -> Option<Rc<Term>> {
         match self {
             Desugared::Term(t) => Some(t),
+            Desugared::TermSeq(terms) => {
+                Some(sugar::term_dispatch::literal_array_term_from_terms(&terms))
+            }
             Desugared::Seq(_) => None,
             Desugared::Constraints { .. } => None,
             Desugared::LiteralString(_) => None,
@@ -7534,6 +7662,7 @@ impl Desugared {
         match self {
             Desugared::TupleComponents(parts) => Some(parts),
             Desugared::Seq(_)
+            | Desugared::TermSeq(_)
             | Desugared::Constraints { .. }
             | Desugared::Term(_)
             | Desugared::LiteralString(_)
@@ -7565,6 +7694,7 @@ impl Desugared {
                 };
             }
             Desugared::Seq(s) => s,
+            Desugared::TermSeq(_) => return None,
             Desugared::Constraints { .. } => return None,
             Desugared::TupleComponents(_) => return None,
         };
@@ -7595,14 +7725,13 @@ struct SugarCtx<'a, 'c> {
 
 /// A node in the desugaring tree. `desugar` recurses inward (each child is a
 /// `Sugar` whose `desugar` we call) until the node either reaches the literal floor
-/// or a runtime/opaque boundary stops it. The terminal reduction is TOTAL only when it
-/// returns `Complete` or a lawfully named `Incomplete`. A structural fall-through is a
-/// factory gap, has no `Outcome`, and must be read through `reduce()`/audit; production
-/// `desugar()` panics if a gap reaches it. Adding a construct = adding one class with
-/// one `desugar`.
+/// or a runtime/opaque boundary stops it. The terminal reduction is TOTAL: every
+/// lawful node returns `Complete` or a lawfully named `Incomplete`. A structural
+/// factory miss is not an `Outcome`; it is a construction failure that must be fixed
+/// before the crate compiles.
 trait Sugar {
-    fn reduce(&self, ctx: &SugarCtx) -> sugar::factory::FactoryReduction {
-        Ok(self.desugar(ctx))
+    fn reduce(&self, ctx: &SugarCtx) -> Outcome {
+        self.desugar(ctx)
     }
 
     fn desugar(&self, ctx: &SugarCtx) -> Outcome;
@@ -7626,14 +7755,9 @@ trait Sugar {
 // is where the runtime boundary was first discovered, the report marks it `INCOMPLETE
 // HERE`; parents that merely receive the child verdict are plain `incomplete`.
 //
-// A structural miss is different. It has no terminal `Outcome`: the legacy sentinel is
-// caught by `AccountedSugar`, recorded as a factory gap, and rendered as `GAP HERE` in
-// audit mode so the engine hole stays visible instead of being laundered into an effect.
-//
 // `Outcome` is TOTAL (two terminal cases, no third): every lawful production reduction
-// is `Complete` or `Incomplete`, nothing else. The old untyped `None` bail survives only
-// as an internal structural sentinel so legacy combinators can compose; accounted factory
-// dispatch catches that sentinel as a gap before it becomes a terminal verdict.
+// is `Complete` or `Incomplete`, nothing else. The old untyped `None` bail is not a
+// terminal verdict and is no longer part of the desugar contract.
 //
 // `Effect` is a FLAT enum of named order-loss boundaries (a mutation, an iterator
 // advance, an opaque runtime value, TLS, IO, a mutable read, ...), each a structural
@@ -7646,10 +7770,8 @@ trait Sugar {
 // order-loss effect -- a syntactic mutation / `iter.next()` / `&mut` / `.push` on
 // captured state, a genuinely runtime/opaque value (param, runtime call result, TLS,
 // IO), a mutable-container read. A PURE-BUT-UNTRANSLATED term (a pure stdlib method we
-// have not transcribed yet) is NOT an `Effect` we should NAME: it takes the structural
-// gap path, honest future work for a `Sugar`/`const_eval` arm. Reclassifying a
-// pure-untranslated term as a SPECIFIC named effect would be a FAKE-REFUSE --
-// mislabeling our own work as a source property.
+// have not transcribed yet) is NOT an `Effect` we should NAME; it is construction work
+// that must fail at the factory/compile boundary until a real Sugar owns it.
 
 /// The bail-side rope: a `SourceMemento` ties a refusal to the source boundary that
 /// warrants it (the span / token-key of the offending construct). The mirror of the
@@ -7664,8 +7786,6 @@ struct SourceMemento {
 /// The outcome of a lawful desugar reduction. `Complete` reached truth (a discharged
 /// `Desugared`); `Incomplete` struck a NAMED, WARRANTED order-loss boundary (an
 /// `Effect`, a terminal loud refusal with a cause). There is no third terminal case.
-/// Structural misses are intercepted by the accounted factory as gap audit rows before
-/// gate/report code can bless them as outcomes.
 enum Outcome {
     /// Reached truth: the desugared literal floor / emitted obligation. -> discharged.
     Complete(Desugared),
@@ -7674,55 +7794,19 @@ enum Outcome {
 }
 
 impl Outcome {
-    /// Lift the legacy `Option<Desugared>` into the compatibility form: `Some(d)` is
-    /// `Complete`; `None` is the STRUCTURAL backstop sentinel
-    /// (`Incomplete(Effect::Unsupported)` carrying the byte-identical generic skip
-    /// reason). Accounted factory dispatch converts that sentinel into a gap audit row;
-    /// only named, terminal effects remain `Incomplete`.
-    fn from_opt(opt: Option<Desugared>) -> Outcome {
-        match opt {
-            Some(d) => Outcome::Complete(d),
-            None => Outcome::Incomplete(Effect::Unsupported {
-                reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
-            }),
-        }
-    }
-
-    /// The completed payload, or `None` if this struck a boundary (`Incomplete`). The
-    /// dual of `from_opt`: a consumer that wants the legacy `Option<Desugared>`
-    /// fall-through (`.and_then` / `?`) reads through this. An `Incomplete` is
-    /// discarded exactly as the old `None` was -- the consumer's own site-specific
-    /// reason classification is unchanged.
+    /// The completed payload, or `None` if this struck a named boundary
+    /// (`Incomplete`).
     fn complete(self) -> Option<Desugared> {
         match self {
             Outcome::Complete(d) => Some(d),
             Outcome::Incomplete(_) => None,
         }
     }
-
-    /// True iff this struck ONLY the GENERIC structural backstop -- `Incomplete(Effect::
-    /// Unsupported)` carrying the `STRUCTURAL_BACKSTOP_REASON` (a pure-but-untranslated
-    /// term, "the complete did not reach truth here"), NOT a NAMED order-loss effect
-    /// (mutation / iter-advance / runtime / TLS / IO / temporal). FIX(a) uses this at the
-    /// factory: a recognized sugar's generic structural bail becomes a gap audit row,
-    /// never a refusal -- a named effect, by contrast, stays the loud terminal refusal.
-    pub(crate) fn is_structural_bail(&self) -> bool {
-        matches!(self, Outcome::Incomplete(Effect::Unsupported { reason }) if reason == STRUCTURAL_BACKSTOP_REASON)
-    }
 }
-
-/// The STRUCTURAL backstop reason: the bare structural bail of a `Sugar::desugar`
-/// (the old `None`). It is not a terminal refusal. Accounted factory dispatch converts
-/// it to a factory gap (`GAP HERE`) before report/gate code accounts for the row. This
-/// string exists only so legacy combinators can carry "the complete walk did not reach
-/// truth here" until the factory has enough site context to name the gap.
-const STRUCTURAL_BACKSTOP_REASON: &str =
-    "structural bail: the desugar complete did not reach truth (no named effect); fall through";
 
 /// A typed order-loss boundary -- the `Incomplete` side of `Outcome`. A FLAT enum: one variant
 /// per named effect (a mutation, an iterator advance, an opaque runtime value, TLS, IO, a
-/// mutable read, ...), plus the `Unsupported` STRUCTURAL backstop (a bare structural bail,
-/// or a term-shaped `unsupported term`). `reason()` returns the terminal refusal string
+/// mutable read, ...), plus named unsupported terms. `reason()` returns the terminal refusal string
 /// (recognized by `refusal_disposition`); `boundary()` returns the `SourceMemento`
 /// warranting that the bail names a SOURCE property. Adding an effect = adding one variant
 /// + one `reason()` arm.
@@ -7783,6 +7867,11 @@ enum Effect {
     /// construction to walk -- a SOURCE property (the `bin-2` class). A `match` over a
     /// CONSTRUCTED literal scrutinee never reaches here, so this only refuses a reflective read.
     Reflection { boundary: String },
+    /// TYPE-LAYOUT: `mem::size_of::<T>()` asked rustc for a concrete layout through the
+    /// monomorphic harness, and rustc did not produce one in this source/harness context.
+    /// Concrete layouts complete; a miss is the named layout boundary, not a runtime
+    /// argument and not a symbolic `sizeof:T` side door.
+    TypeLayout { boundary: String },
     /// LOOP-ADVANCE: the asserted value flows through a `loop { .. }` over a RUNTIME iterator
     /// the loop body itself ADVANCES (`iter.next()` to drive / break) and reads
     /// non-deterministically (`iter.size_hint()`). Per-iteration runtime bounds, no finite
@@ -7834,56 +7923,34 @@ enum Effect {
     /// the `None` arm of `repeat_count_literal`; a literal length lifts the unrolled array and
     /// never reaches here (the inverse-sin guardrail).
     ArrayRepeat { boundary: String },
-    /// UNSUPPORTED: compatibility carrier for either a named unsupported term or the
-    /// STRUCTURAL gap sentinel. Two shapes carry their OWN reason string
-    /// verbatim:
-    ///   * a term-shaped `unsupported term` whose SHAPE is a genuinely effectful /
-    ///     non-constructible place (a `&mut` borrow of a non-immutable-value place, a raw
-    ///     pointer `&raw const`/`&raw mut`, a raw pointer cast, a `const { <bare path> }`
-    ///     block). EARNED at the specific term arm; a PURE untranslated term is NOT given
-    ///     this reason.
-    ///   * the bare structural bail of a `Sugar::desugar` complete that did not reach truth (the
-    ///     old `None`), with `STRUCTURAL_BACKSTOP_REASON`; accounted factory dispatch turns it
-    ///     into a gap row, not a terminal `Incomplete`.
-    /// This is the ONE catch-all variant: it carries a pre-built `reason` string so the emit
-    /// site's wire format is conserved.
-    Unsupported { reason: String },
-}
-
-/// The named effectful CAUSE of an `Effect::Unsupported` term-shaped bail (selects the
-/// reason clause). A PURE untranslated term has NONE of these shapes and STAYS the bare
-/// `unsupported term` reason -- UNCLASSIFIED work (the inverse-sin guardrail).
-#[derive(Debug, Clone, Copy)]
-enum UnsupportedTermCause {
-    /// `&mut <place>`: a mutable borrow of a non-immutable-value referent.
-    MutableReference,
-    /// `&raw const`/`&raw mut`: a raw pointer (runtime address).
-    RawPointer,
-    /// `expr as *const T` / `expr as *mut T`: a raw pointer/provenance cast.
-    RawPointerCast,
-}
-
-impl UnsupportedTermCause {
-    fn clause(self) -> &'static str {
-        match self {
-            UnsupportedTermCause::MutableReference => "a `&mut` borrow",
-            UnsupportedTermCause::RawPointer => "a raw pointer (`&raw const`/`&raw mut`)",
-            UnsupportedTermCause::RawPointerCast => "a raw pointer cast (`as *const`/`as *mut`)",
-        }
-    }
-
-    /// Build the term-shaped `Effect::Unsupported` reason for this cause over `boundary`.
-    /// Carries the existing `unsupported term` prefix verbatim so the term path's prior
-    /// emission shape is conserved, plus the named effectful cause that earns the terminal
-    /// whitelist entry "effectful / raw-pointer / mutable-reference term".
-    fn unsupported_term_reason(self, boundary: &str) -> String {
-        format!(
-            "unsupported term `{}`: effectful / raw-pointer / mutable-reference term \
-             ({}) is not a constructible timeless value; refused",
-            boundary,
-            self.clause()
-        )
-    }
+    /// LITERAL-PANIC: a fully-literal stdlib/compiler operation has no returned value because
+    /// Rust panics on that exact source path (`(-1).isqrt()`, `None.unwrap()`, ...). This is a
+    /// source/runtime boundary, not a missing deconstruction and not an opaque support term:
+    /// the child floors are known, and the operation itself proves there is no value floor to
+    /// hand upward.
+    LiteralPanic { boundary: String, reason: String },
+    /// RUNTIME-NUMERIC-OPERAND: a stdlib/compiler numeric operation is defined only when its
+    /// operands are literal-determined in this lift (`i8::midpoint(a, b)`, `u128::from(x)`,
+    /// etc.). If a child completes to a non-literal term, there is no concrete numeric floor
+    /// to compute here; the runtime value boundary is the honest terminal stop.
+    RuntimeNumericOperand {
+        boundary: String,
+        operation: String,
+        kind: String,
+    },
+    /// REPRESENTATION-CAST: the cast itself asks Rust for address/provenance or
+    /// representation semantics (`&x as *const T`, raw-pointer casts, or another
+    /// non-scalar `as` shape). This is a real source boundary owned by CastSugar:
+    /// it is not the child being opaque, and it is not missing sugar for a literal
+    /// arithmetic cast.
+    RepresentationCast { boundary: String, kind: String },
+    /// RUNTIME-ARGUMENT: a child value needed by a compositor is runtime / not
+    /// literal-determined. The parent only bubbles this effect; the child owns it.
+    RuntimeArgument { boundary: String, reason: String },
+    /// UNICODE-STRING-CASE: Rust's full `str::to_uppercase` / `to_lowercase` over a
+    /// non-ASCII string depends on Unicode case mapping tables. ASCII receivers complete
+    /// through the literal string floor; the version-sensitive frontier is the named stop.
+    UnicodeStringCase { boundary: String },
 }
 
 impl Effect {
@@ -7930,6 +7997,10 @@ impl Effect {
                 "assertion over opaque compile-time reflection `{boundary}` (Type::of/TypeId: \
                  runtime type identity, not constructed from source literals); refused"
             ),
+            Effect::TypeLayout { boundary } => format!(
+                "unsupported term `{boundary}`: layout is unknown to this lift \
+                 (rustc could not compile a monomorphic size_of harness for this type); refused"
+            ),
             Effect::LoopAdvance { boundary } => format!(
                 "assertion inside a loop over a runtime-advanced iterator `{boundary}` \
                  (size_hint/next: per-iteration runtime bounds, no finite literal \
@@ -7969,15 +8040,24 @@ impl Effect {
                 "array-repeat length runtime, not const -- array-repeat `[_; N]` has a non-literal length -- not a finite \
                  construction from the literal; refused by name: `{boundary}`"
             ),
-            // The structural backstop carries its OWN pre-built reason verbatim (a term-shaped
-            // `unsupported term` cause, or the never-emitted `STRUCTURAL_BACKSTOP_REASON`).
-            Effect::Unsupported { reason } => reason.clone(),
+            Effect::LiteralPanic { reason, .. } => reason.clone(),
+            Effect::RuntimeNumericOperand {
+                operation, kind, ..
+            } => format!("runtime {kind} {operation} operand, not literal-determined"),
+            Effect::RepresentationCast { boundary, kind } => format!(
+                "unsupported term `{boundary}`: effectful / raw-pointer / mutable-reference term \
+                 ({kind}) is not a constructible timeless value; refused"
+            ),
+            Effect::RuntimeArgument { reason, .. } => reason.clone(),
+            Effect::UnicodeStringCase { .. } => {
+                "Unicode string case mapping is not modeled for non-ASCII receivers; refused"
+                    .to_string()
+            }
         }
     }
 
     /// The `SourceMemento` warranting that the bail names a SOURCE property -- the bail-side
-    /// rope (mirror of the complete-side `Warrant`). For `Unsupported`, the boundary is the reason
-    /// itself (the backstop carries no separate token-key; the reason names the construct).
+    /// rope (mirror of the complete-side `Warrant`).
     fn boundary(&self) -> SourceMemento {
         let boundary = match self {
             Effect::Mutation { boundary }
@@ -7988,6 +8068,7 @@ impl Effect {
             | Effect::TemporalRead { boundary }
             | Effect::ControlFlow { boundary }
             | Effect::Reflection { boundary }
+            | Effect::TypeLayout { boundary }
             | Effect::LoopAdvance { boundary }
             | Effect::ImplMethod { boundary }
             | Effect::IfGuardRuntime { boundary }
@@ -7995,21 +8076,14 @@ impl Effect {
             | Effect::FutureHandoff { boundary }
             | Effect::DormantFuture { boundary }
             | Effect::RuntimeMatchScrutinee { boundary }
-            | Effect::ArrayRepeat { boundary } => boundary.clone(),
-            Effect::Unsupported { reason } => reason.clone(),
+            | Effect::ArrayRepeat { boundary }
+            | Effect::LiteralPanic { boundary, .. }
+            | Effect::RuntimeNumericOperand { boundary, .. }
+            | Effect::RepresentationCast { boundary, .. }
+            | Effect::RuntimeArgument { boundary, .. }
+            | Effect::UnicodeStringCase { boundary } => boundary.clone(),
         };
         SourceMemento { boundary }
-    }
-
-    /// Build the term-shaped `Effect::Unsupported` for a genuinely effectful / non-
-    /// constructible TERM (a `&mut` borrow, a raw address, or a raw-pointer cast). The
-    /// reason carries the `unsupported term` prefix + named cause verbatim (the term path's
-    /// prior emission shape). A PURE untranslated term is NOT given this -- it keeps its bare
-    /// `unsupported term` reason elsewhere (the inverse-sin guardrail).
-    fn unsupported_term(boundary: &str, cause: UnsupportedTermCause) -> Effect {
-        Effect::Unsupported {
-            reason: cause.unsupported_term_reason(boundary),
-        }
     }
 }
 
@@ -8109,6 +8183,28 @@ fn let_simple_value_binding(pat: &Pat) -> Option<String> {
         Pat::Ident(pi) if pi.by_ref.is_none() && pi.subpat.is_none() => Some(pi.ident.to_string()),
         Pat::Type(t) => let_simple_value_binding(&t.pat),
         _ => None,
+    }
+}
+
+fn let_simple_value_binding_type(pat: &Pat) -> Option<(String, &Type)> {
+    match pat {
+        Pat::Type(t) => let_simple_value_binding(&t.pat).map(|name| (name, t.ty.as_ref())),
+        _ => None,
+    }
+}
+
+fn record_simple_value_binding(scope: &mut TemporalScope, local: &syn::Local) {
+    let Some(init) = local.init.as_ref().filter(|init| init.diverge.is_none()) else {
+        return;
+    };
+    let Some(name) = let_simple_value_binding(&local.pat) else {
+        return;
+    };
+    scope.record_let_binding(&name, (*init.expr).clone());
+    if let Some((typed_name, ty)) = let_simple_value_binding_type(&local.pat) {
+        if typed_name == name {
+            scope.record_let_binding_expected_type(&name, ty);
+        }
     }
 }
 
@@ -9021,7 +9117,7 @@ fn emit_desugared(
             }
             true
         }
-        Desugared::Seq(_) => false,
+        Desugared::Seq(_) | Desugared::TermSeq(_) => false,
         // A bare term at statement position is not an emit (a term floor must be
         // wrapped by an asserting node to become a `Constraints`); mirrors `Seq`.
         Desugared::Term(_) => false,
@@ -9045,13 +9141,6 @@ fn emit_constraint_outcome(
         Outcome::Complete(_) => skipped.push(format!(
             "constraint-shaped expression did not emit a constraint `{site}`; released to layer 0"
         )),
-        Outcome::Incomplete(Effect::Unsupported { reason })
-            if reason == STRUCTURAL_BACKSTOP_REASON =>
-        {
-            skipped.push(format!(
-                "constraint-shaped expression did not reach bedrock `{site}`; released to layer 0"
-            ));
-        }
         Outcome::Incomplete(effect) => skipped.push(effect.reason()),
     }
 }
@@ -9088,13 +9177,6 @@ fn emit_assertion_surface_outcome(
         Outcome::Complete(_) => {
             skipped.push(format!(
                 "assertion surface `{site}` did not emit a constraint; released to layer 0"
-            ));
-        }
-        Outcome::Incomplete(Effect::Unsupported { reason })
-            if reason == STRUCTURAL_BACKSTOP_REASON =>
-        {
-            skipped.push(format!(
-                "assertion surface `{site}` did not reach bedrock; released to layer 0"
             ));
         }
         Outcome::Incomplete(effect) => skipped.push(effect.reason()),
@@ -9238,13 +9320,7 @@ pub(crate) fn should_panic_temporal_callsite_records(
         }
         if let Stmt::Local(local) = stmt {
             update_float_width_scope_for_pat(&local.pat, &mut float_widths);
-            if let (Some(name), Some(init)) =
-                (let_simple_value_binding(&local.pat), local.init.as_ref())
-            {
-                if init.diverge.is_none() {
-                    temporal_scope.record_let_binding(&name, (*init.expr).clone());
-                }
-            }
+            record_simple_value_binding(&mut temporal_scope, local);
             temporal_scope.record_temporal_rewrite_local(local);
         }
         advance_temporal_scope_for_stmt(stmt, &mut temporal_scope);
@@ -9773,12 +9849,6 @@ fn closure_method_terminal_effect(
         factory_audits,
     );
     match node.desugar(&ctx) {
-        // The STRUCTURAL backstop = the honest-unclassified fall-through (the old `None`).
-        Outcome::Incomplete(Effect::Unsupported { reason })
-            if reason == STRUCTURAL_BACKSTOP_REASON =>
-        {
-            None
-        }
         // A NAMED order-loss boundary -- the verdict the caller renders to skip_reasons.
         Outcome::Incomplete(effect) => Some(effect),
         // A bail-side node never reaches truth; `Complete` is unreachable here.
@@ -10025,12 +10095,6 @@ fn statement_position_terminal_effect(
         factory_audits,
     );
     match node.desugar(&ctx) {
-        // The STRUCTURAL backstop = the honest-unclassified fall-through (the old `None`).
-        Outcome::Incomplete(Effect::Unsupported { reason })
-            if reason == STRUCTURAL_BACKSTOP_REASON =>
-        {
-            None
-        }
         // A NAMED statement-position boundary -- the verdict the caller renders to skip_reasons.
         Outcome::Incomplete(effect) => Some(effect),
         // A bail-side node never reaches truth; `Complete` is unreachable here.
@@ -10080,12 +10144,6 @@ fn impl_method_terminal_effect(
         factory_audits,
     );
     match node.desugar(&ctx) {
-        // The STRUCTURAL backstop = the honest-unclassified fall-through (the old `None`).
-        Outcome::Incomplete(Effect::Unsupported { reason })
-            if reason == STRUCTURAL_BACKSTOP_REASON =>
-        {
-            None
-        }
         // A NAMED impl-method boundary -- the verdict the caller renders to skipped.
         Outcome::Incomplete(effect) => Some(effect),
         // A bail-side node never reaches truth; `Complete` is unreachable here.
@@ -10975,42 +11033,6 @@ fn collect_assertion_entries<'a>(
                             Outcome::Complete(desugared) => {
                                 emit_desugared(desugared, entries, macros_lifted);
                             }
-                            Outcome::Incomplete(Effect::Unsupported { reason })
-                                if reason == STRUCTURAL_BACKSTOP_REASON =>
-                            {
-                                let mut count = count_asserts_in_expr(&init.expr);
-                                if let Some((_, diverge)) = &init.diverge {
-                                    count += count_asserts_in_expr(diverge);
-                                }
-                                let reason = closure_method_terminal_effect(
-                                    &init.expr,
-                                    &temporal_scope,
-                                    options,
-                                    reducer,
-                                    float_widths,
-                                    macro_depth,
-                                    &let_inits,
-                                    factory_audits,
-                                )
-                                .or_else(|| {
-                                    statement_position_terminal_effect(
-                                        &init.expr,
-                                        &temporal_scope,
-                                        options,
-                                        reducer,
-                                        float_widths,
-                                        macro_depth,
-                                        factory_audits,
-                                    )
-                                })
-                                .map(|e| e.reason())
-                                .unwrap_or_else(|| {
-                                    "assertion inside a let-initializer expression: not a top-level point-wise assertion; released to layer 0".to_string()
-                                });
-                                for _ in 0..count {
-                                    skipped.push(reason.clone());
-                                }
-                            }
                             Outcome::Incomplete(effect)
                                 if sugar::range_construct::is_range_construct_expr(&init.expr) =>
                             {
@@ -11098,13 +11120,7 @@ fn collect_assertion_entries<'a>(
                 // Record simple `let mut` bindings too: value-method inlining may try
                 // them best-effort, but the temporal version/ambiguity gates reject the
                 // peel once actual mutation is observed.
-                if let (Some(name), Some(init)) =
-                    (let_simple_value_binding(&local.pat), local.init.as_ref())
-                {
-                    if init.diverge.is_none() {
-                        temporal_scope.record_let_binding(&name, (*init.expr).clone());
-                    }
-                }
+                record_simple_value_binding(&mut temporal_scope, local);
                 if let Some(init) = local.init.as_ref().filter(|init| init.diverge.is_none()) {
                     record_destructured_let_bindings(&mut temporal_scope, &local.pat, &init.expr);
                 }
@@ -16822,12 +16838,6 @@ fn runtime_match_scrutinee_effect(expr: &Expr, scope: &TemporalScope) -> Option<
     let node =
         sugar::catalog::build_expr_role(expr, &fcx, sugar::claim::SugarRole::MatchScrutineeVerdict);
     match node.desugar(&ctx) {
-        // The STRUCTURAL backstop = the honest-unclassified fall-through (the old `None`).
-        Outcome::Incomplete(Effect::Unsupported { reason })
-            if reason == STRUCTURAL_BACKSTOP_REASON =>
-        {
-            None
-        }
         // A NAMED runtime-match-scrutinee boundary -- the verdict the caller renders.
         Outcome::Incomplete(effect) => Some(effect),
         // A bail-side node never reaches truth; `Complete` is unreachable here.

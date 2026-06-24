@@ -13,9 +13,11 @@
 
 use syn::Expr;
 
-use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
-use crate::{const_eval_option_closure, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx};
+use crate::{
+    const_eval_option_closure, ConstVal, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx,
+};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("filter_map", recognize_composite);
@@ -31,36 +33,69 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
         return None;
     };
     Some(Box::new(FilterMapSugar {
-        inner: method_family::build_literal_sequence_composite(&call.receiver, fcx)?,
-        f: f.clone(),
+        inner: SugarBody::from_node(method_family::build_literal_sequence_composite(
+            &call.receiver,
+            fcx,
+        )?),
+        mapper: FilterMapClosure::new(f.clone()),
     }))
+}
+
+pub(crate) struct FilterMapClosure {
+    expr: syn::ExprClosure,
+}
+
+impl FilterMapClosure {
+    pub(crate) fn new(expr: syn::ExprClosure) -> Self {
+        Self { expr }
+    }
+
+    fn eval(&self, value: &ConstVal) -> Option<Option<ConstVal>> {
+        const_eval_option_closure(&self.expr, value)
+    }
 }
 
 /// Const-evaluate `f` (returning `Option`) over each element and keep the `Some` values.
 pub(crate) struct FilterMapSugar {
-    pub(crate) inner: Box<dyn Sugar>,
-    pub(crate) f: syn::ExprClosure,
+    pub(crate) inner: SugarBody<CompositeFloor>,
+    pub(crate) mapper: FilterMapClosure,
 }
 
 impl Sugar for FilterMapSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            let seq = self.inner.desugar(ctx).complete()?.into_seq()?;
-            let mut out = Vec::with_capacity(seq.len());
-            for elem in seq {
-                let v = elem.value.as_ref()?; // opaque element under a filter_map -> bail
-                                              // The closure returns `Option<_>`: a `None` drops the element, a
-                                              // `Some(v)` keeps it with its mapped const value. A non-`Option` /
-                                              // runtime / unmodeled body bails the whole defold.
-                if let Some(mapped) = const_eval_option_closure(&self.f, v)? {
-                    let mexpr = mapped.to_expr()?; // materialize for EUF translation
-                    out.push(DesugaredElem {
-                        expr: mexpr,
-                        value: Some(mapped),
-                    });
-                }
+        let seq = match self.inner.reduce(ctx) {
+            Outcome::Complete(d) => d
+                .into_seq()
+                .unwrap_or_else(|| filter_map_gap("filter_map receiver reduced to non-sequence")),
+            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+        };
+        let mut out = Vec::with_capacity(seq.len());
+        for elem in seq {
+            let v = elem
+                .value
+                .as_ref()
+                .unwrap_or_else(|| filter_map_gap("filter_map element was not literal"));
+            // The closure returns `Option<_>`: a `None` drops the element, a
+            // `Some(v)` keeps it with its mapped const value. A non-`Option` /
+            // runtime / unmodeled body is a gap, not a fake effect.
+            if let Some(mapped) = self
+                .mapper
+                .eval(v)
+                .unwrap_or_else(|| filter_map_gap("filter_map closure did not reduce to Option"))
+            {
+                let mexpr = mapped
+                    .to_expr()
+                    .unwrap_or_else(|| filter_map_gap("filter_map result could not materialize"));
+                out.push(DesugaredElem {
+                    expr: mexpr,
+                    value: Some(mapped),
+                });
             }
-            Some(Desugared::Seq(out))
-        })())
+        }
+        Outcome::Complete(Desugared::Seq(out))
     }
+}
+
+fn filter_map_gap(reason: &str) -> ! {
+    panic!("filter_map did not reach a lawful floor: {reason}")
 }

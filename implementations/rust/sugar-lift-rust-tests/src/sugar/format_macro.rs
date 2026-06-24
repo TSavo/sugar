@@ -9,14 +9,13 @@ use sugar_ir_symbolic::str_const;
 use syn::Expr;
 
 use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, FloorRead, FormatTemplateFloor,
-    FormatValueFloor, LiteralStringFloor, SugarBody, SugarBuildCtx,
+    FloorRead, FormatTemplateFloor, FormatValueFloor, LiteralStringFloor, SugarBody, SugarBuildCtx,
 };
 use crate::sugar::format::{
     is_format_macro_shape, literal_format_capture_names, parse_args, render_format_values,
     runtime_format_value_body,
 };
-use crate::{strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::{strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term_before(
@@ -29,19 +28,15 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     if !is_format_macro_shape(expr) {
         return None;
     }
-    Some(match build_literal_string_node(expr, fcx) {
-        Ok(node) => Box::new(FormatMacroTermSugar {
-            body: SugarBody::from_node(node),
-        }),
-        Err(reason) => Box::new(FormatMacroGap { reason }),
-    })
+    Some(Box::new(FormatMacroTermSugar {
+        body: SugarBody::from_node(build_literal_string_node(expr, fcx)),
+    }))
 }
 
-pub(crate) fn build_literal_string_node(
-    expr: &Expr,
-    fcx: &SugarBuildCtx,
-) -> Result<Box<dyn Sugar>, String> {
-    build_format_macro(expr, fcx).map(|node| Box::new(node) as Box<dyn Sugar>)
+pub(crate) fn build_literal_string_node(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
+    Box::new(build_format_macro(expr, fcx).unwrap_or_else(|reason| {
+        panic!("format macro construction failed: {reason}");
+    }))
 }
 
 struct FormatMacroTermSugar {
@@ -53,10 +48,6 @@ struct FormatMacroStringSugar {
     positional: Vec<SugarBody<FormatValueFloor>>,
     explicit_named: BTreeMap<String, SugarBody<FormatValueFloor>>,
     captures: BTreeMap<String, SugarBody<FormatValueFloor>>,
-}
-
-struct FormatMacroGap {
-    reason: String,
 }
 
 fn build_format_macro(expr: &Expr, fcx: &SugarBuildCtx) -> Result<FormatMacroStringSugar, String> {
@@ -145,73 +136,54 @@ fn explicit_named_arg(expr: &Expr) -> Option<(String, &Expr)> {
 }
 
 impl Sugar for FormatMacroTermSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
-        match self.body.reduce_literal_string(ctx)? {
-            FloorRead::Complete(value) => Ok(Outcome::Complete(Desugared::Term(str_const(value)))),
-            FloorRead::Incomplete(effect) => Ok(Outcome::Incomplete(effect)),
-        }
-    }
-
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
+        match self.body.reduce_literal_string(ctx) {
+            FloorRead::Complete(value) => Outcome::Complete(Desugared::Term(str_const(value))),
+            FloorRead::Incomplete(effect) => Outcome::Incomplete(effect),
+        }
     }
 }
 
 impl Sugar for FormatMacroStringSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
-        let fmt = match self.fmt.reduce_format_template(ctx)? {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        let fmt = match self.fmt.reduce_format_template(ctx) {
             FloorRead::Complete(value) => value,
-            FloorRead::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+            FloorRead::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
 
         let mut positional = Vec::new();
         for body in &self.positional {
-            match body.reduce_format_value(ctx)? {
+            match body.reduce_format_value(ctx) {
                 FloorRead::Complete(value) => positional.push(value),
-                FloorRead::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+                FloorRead::Incomplete(effect) => return Outcome::Incomplete(effect),
             }
         }
 
         let mut explicit_named = BTreeMap::new();
         for (name, body) in &self.explicit_named {
-            match body.reduce_format_value(ctx)? {
+            match body.reduce_format_value(ctx) {
                 FloorRead::Complete(value) => {
                     explicit_named.insert(name.clone(), value);
                 }
-                FloorRead::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+                FloorRead::Incomplete(effect) => return Outcome::Incomplete(effect),
             }
         }
 
         let mut captures = BTreeMap::new();
         for (name, body) in &self.captures {
-            match body.reduce_format_value(ctx)? {
+            match body.reduce_format_value(ctx) {
                 FloorRead::Complete(value) => {
                     captures.insert(name.clone(), value);
                 }
-                FloorRead::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+                FloorRead::Incomplete(effect) => return Outcome::Incomplete(effect),
             }
         }
 
-        match render_format_values(&fmt, &positional, &explicit_named, &captures) {
-            Ok(Some(value)) => Ok(Outcome::Complete(Desugared::LiteralString(value))),
-            Ok(None) => Err(FactoryGap::new(
-                "format macro did not reduce to a supported literal rendering; write more Sugar for this AST",
-            )),
-            Err(reason) => Ok(Outcome::Incomplete(Effect::Unsupported { reason })),
-        }
-    }
-
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
-    }
-}
-
-impl Sugar for FormatMacroGap {
-    fn reduce(&self, _ctx: &SugarCtx) -> FactoryReduction {
-        Err(FactoryGap::new(self.reason.clone()))
-    }
-
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
+        Outcome::Complete(Desugared::LiteralString(render_format_values(
+            &fmt,
+            &positional,
+            &explicit_named,
+            &captures,
+        )))
     }
 }

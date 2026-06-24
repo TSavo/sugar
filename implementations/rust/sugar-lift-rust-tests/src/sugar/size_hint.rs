@@ -13,13 +13,10 @@ use sugar_ir_symbolic::num;
 use syn::Expr;
 use tracing::debug;
 
-use crate::sugar::factory::{
-    compat_reduction, has_composite, CompositeFloor, FactoryGap, FactoryReduction, SugarBody,
-    SugarBuildCtx,
-};
+use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::monadic;
-use crate::{const_int, strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::{const_int, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const TUPLE_PRODUCER_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::tuple_producer("size_hint_tuple_producer", recognize);
@@ -35,45 +32,37 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
         return None;
     }
     Some(SizeHintTupleProducer::new(
-        (*call.receiver).clone(),
+        exact_static_size_hint_len(&call.receiver),
         SugarBody::composite(&call.receiver, fcx),
     ))
 }
 
 struct SizeHintTupleProducer {
-    receiver_expr: Expr,
+    static_len: Option<usize>,
     receiver: SugarBody<CompositeFloor>,
 }
 
 impl SizeHintTupleProducer {
-    fn new(receiver_expr: Expr, receiver: SugarBody<CompositeFloor>) -> Box<dyn Sugar> {
+    fn new(static_len: Option<usize>, receiver: SugarBody<CompositeFloor>) -> Box<dyn Sugar> {
         Box::new(Self {
-            receiver_expr,
+            static_len,
             receiver,
         })
     }
 }
 
 impl Sugar for SizeHintTupleProducer {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
-        if let Some(len) = exact_static_size_hint_len(&self.receiver_expr) {
-            return Ok(tuple_components(len));
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        if let Some(len) = self.static_len {
+            return tuple_components(len);
         }
-        let seq = match self.receiver.reduce(ctx)? {
+        let seq = match self.receiver.reduce(ctx) {
             Outcome::Complete(desugared) => match desugared.into_seq() {
                 Some(seq) => seq,
-                None => {
-                    return Err(FactoryGap::new(
-                        "size_hint receiver reduced to non-sequence",
-                    ))
-                }
+                None => size_hint_gap("size_hint receiver reduced to non-sequence"),
             },
-            Outcome::Incomplete(Effect::Unsupported { reason })
-                if reason == EMPTY_DOMAIN_REASON =>
-            {
-                Vec::new()
-            }
-            Outcome::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+            Outcome::Incomplete(effect) if effect.reason() == EMPTY_DOMAIN_REASON => Vec::new(),
+            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
         let len = seq.len();
         debug!(
@@ -81,11 +70,7 @@ impl Sugar for SizeHintTupleProducer {
             len,
             "resolved finite composite size_hint to tuple components"
         );
-        Ok(tuple_components(len))
-    }
-
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
+        tuple_components(len)
     }
 }
 
@@ -169,6 +154,10 @@ fn is_open_ended_literal_range(expr: &Expr) -> bool {
         }
         _ => false,
     }
+}
+
+fn size_hint_gap(reason: &str) -> ! {
+    panic!("size_hint did not reach a lawful floor: {reason}")
 }
 
 fn literal_signed_int(expr: &Expr) -> Option<i128> {

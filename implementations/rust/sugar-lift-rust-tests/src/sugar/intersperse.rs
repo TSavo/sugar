@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use syn::{BinOp, Expr, Stmt};
 use tracing::debug;
 
-use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::{
     const_eval, simple_path_name, strip_refs_groups, ConstVal, Desugared, DesugaredElem, Outcome,
@@ -35,116 +35,131 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     };
     method_family::resolves_literal_sequence(&call.receiver, fcx.let_inits()).then(|| {
         Box::new(IntersperseCallSugar {
-            receiver: (*call.receiver).clone(),
-            separator: call.args[0].clone(),
+            inner: SugarBody::composite(&call.receiver, fcx),
+            separator: IntersperseSeparator::new(call.args[0].clone()),
             with,
-            let_inits: capture_let_inits(fcx),
         }) as Box<dyn Sugar>
     })
 }
 
 struct IntersperseCallSugar {
-    receiver: Expr,
-    separator: Expr,
+    inner: SugarBody<CompositeFloor>,
+    separator: IntersperseSeparator,
     with: bool,
-    let_inits: BTreeMap<String, Expr>,
 }
 
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
+pub(crate) struct IntersperseSeparator {
+    expr: Expr,
+}
+
+impl IntersperseSeparator {
+    pub(crate) fn new(expr: Expr) -> Self {
+        Self { expr }
+    }
 }
 
 impl Sugar for IntersperseCallSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-            let let_inits: BTreeMap<String, &Expr> = stable
-                .iter()
-                .map(|(name, init)| (name.clone(), init))
-                .chain(
-                    self.let_inits
-                        .iter()
-                        .map(|(name, init)| (name.clone(), init)),
-                )
-                .collect();
-            let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-            let inner = method_family::build_literal_sequence_composite(&self.receiver, &fcx)?;
-            if self.with {
-                reduce_intersperse_with(inner.as_ref(), &self.separator, ctx)
-            } else {
-                reduce_intersperse(inner.as_ref(), &self.separator, ctx)
-            }
-            .map(Desugared::Seq)
-        })())
+        reduce_intersperse_family(&self.inner, &self.separator, self.with, ctx)
     }
 }
 
 pub(crate) struct IntersperseSugar {
-    pub(crate) inner: Box<dyn Sugar>,
-    pub(crate) separator: Expr,
+    pub(crate) inner: SugarBody<CompositeFloor>,
+    pub(crate) separator: IntersperseSeparator,
 }
 
 impl Sugar for IntersperseSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt(
-            reduce_intersperse(self.inner.as_ref(), &self.separator, ctx).map(Desugared::Seq),
-        )
+        reduce_intersperse_family(&self.inner, &self.separator, false, ctx)
     }
 }
 
 pub(crate) struct IntersperseWithSugar {
-    pub(crate) inner: Box<dyn Sugar>,
-    pub(crate) separator: Expr,
+    pub(crate) inner: SugarBody<CompositeFloor>,
+    pub(crate) separator: IntersperseSeparator,
 }
 
 impl Sugar for IntersperseWithSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt(
-            reduce_intersperse_with(self.inner.as_ref(), &self.separator, ctx).map(Desugared::Seq),
-        )
+        reduce_intersperse_family(&self.inner, &self.separator, true, ctx)
     }
+}
+
+fn reduce_intersperse_family(
+    inner: &SugarBody<CompositeFloor>,
+    separator: &IntersperseSeparator,
+    with: bool,
+    ctx: &SugarCtx,
+) -> Outcome {
+    let reduced = if with {
+        reduce_intersperse_with(inner, &separator.expr, ctx)
+    } else {
+        reduce_intersperse(inner, &separator.expr, ctx)
+    };
+    let out = match reduced {
+        Ok(Some(out)) => out,
+        Ok(None) => intersperse_gap("intersperse output did not materialize"),
+        Err(outcome) => return outcome,
+    };
+    Outcome::Complete(Desugared::Seq(out))
 }
 
 fn reduce_intersperse(
-    inner: &dyn Sugar,
+    inner: &SugarBody<CompositeFloor>,
     separator: &Expr,
     ctx: &SugarCtx,
-) -> Option<Vec<DesugaredElem>> {
-    let seq = inner.desugar(ctx).complete()?.into_seq()?;
+) -> Result<Option<Vec<DesugaredElem>>, Outcome> {
+    let Some(seq) = reduce_inner_seq(inner, ctx)? else {
+        return Ok(None);
+    };
     if seq.len() <= 1 {
-        return Some(seq);
+        return Ok(Some(seq));
     }
-    let sep = elem_from_expr(separator, ctx)?;
-    let out = interleave(seq, || Some(sep.clone()))?;
+    let Some(sep) = elem_from_expr(separator, ctx) else {
+        return Ok(None);
+    };
+    let out = interleave(seq, || Some(sep.clone()));
     debug!(
         target: "sugar_lift_rust_tests::sugar::intersperse",
-        len = out.len(),
+        len = out.as_ref().map_or(0, Vec::len),
         "literal intersperse reduced"
     );
-    Some(out)
+    Ok(out)
 }
 
 fn reduce_intersperse_with(
-    inner: &dyn Sugar,
+    inner: &SugarBody<CompositeFloor>,
     separator: &Expr,
     ctx: &SugarCtx,
-) -> Option<Vec<DesugaredElem>> {
-    let seq = inner.desugar(ctx).complete()?.into_seq()?;
+) -> Result<Option<Vec<DesugaredElem>>, Outcome> {
+    let Some(seq) = reduce_inner_seq(inner, ctx)? else {
+        return Ok(None);
+    };
     if seq.len() <= 1 {
-        return Some(seq);
+        return Ok(Some(seq));
     }
-    let closure = resolve_zero_arg_closure(separator, ctx)?;
+    let Some(closure) = resolve_zero_arg_closure(separator, ctx) else {
+        return Ok(None);
+    };
     let mut state = BTreeMap::new();
-    let out = interleave(seq, || eval_separator_closure(closure, ctx, &mut state))?;
+    let out = interleave(seq, || eval_separator_closure(closure, ctx, &mut state));
     debug!(
         target: "sugar_lift_rust_tests::sugar::intersperse",
-        len = out.len(),
+        len = out.as_ref().map_or(0, Vec::len),
         "literal intersperse_with reduced"
     );
-    Some(out)
+    Ok(out)
+}
+
+fn reduce_inner_seq(
+    inner: &SugarBody<CompositeFloor>,
+    ctx: &SugarCtx,
+) -> Result<Option<Vec<DesugaredElem>>, Outcome> {
+    match inner.reduce(ctx) {
+        Outcome::Complete(d) => Ok(d.into_seq()),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
+    }
 }
 
 fn interleave<F>(seq: Vec<DesugaredElem>, mut separator: F) -> Option<Vec<DesugaredElem>>
@@ -163,6 +178,10 @@ where
         out.push(elem);
     }
     Some(out)
+}
+
+fn intersperse_gap(reason: &str) -> ! {
+    panic!("intersperse did not reach a lawful floor: {reason}")
 }
 
 fn elem_from_expr(expr: &Expr, ctx: &SugarCtx) -> Option<DesugaredElem> {

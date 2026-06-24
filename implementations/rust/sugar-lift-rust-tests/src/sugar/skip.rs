@@ -6,7 +6,7 @@
 
 use syn::Expr;
 
-use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::{const_int, Desugared, Outcome, Sugar, SugarCtx};
 
@@ -22,23 +22,33 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
     }
     let n: usize = const_int(&call.args[0])?.try_into().ok()?;
     Some(Box::new(SkipSugar {
-        inner: method_family::build_literal_sequence_composite(&call.receiver, fcx)?,
+        inner: SugarBody::from_node(method_family::build_literal_sequence_composite(
+            &call.receiver,
+            fcx,
+        )?),
         n,
     }))
 }
 
 /// Drop the first `n` elements of the inner sequence.
 pub(crate) struct SkipSugar {
-    pub(crate) inner: Box<dyn Sugar>,
+    pub(crate) inner: SugarBody<CompositeFloor>,
     pub(crate) n: usize,
 }
 
 impl Sugar for SkipSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            let seq = self.inner.desugar(ctx).complete()?.into_seq()?;
-            let out = seq.into_iter().skip(self.n).collect();
-            Some(Desugared::Seq(out))
-        })())
+        let seq = match self.inner.reduce(ctx) {
+            Outcome::Complete(d) => d
+                .into_seq()
+                .unwrap_or_else(|| skip_gap("skip receiver reduced to non-sequence")),
+            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+        };
+        let out = seq.into_iter().skip(self.n).collect();
+        Outcome::Complete(Desugared::Seq(out))
     }
+}
+
+fn skip_gap(reason: &str) -> ! {
+    panic!("skip did not reach a lawful floor: {reason}")
 }

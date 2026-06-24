@@ -6,13 +6,12 @@
 // a non-bool / runtime closure result. Lifted verbatim from the
 // `Adaptor::SkipWhile(closure)` arm of the former `apply_one_adaptor` match.
 
-use std::collections::BTreeMap;
-
 use syn::Expr;
 
-use crate::sugar::factory::{has_composite, SugarBuildCtx};
+use crate::sugar::bool_predicate::BoolPredicateClosure;
+use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
-use crate::{const_eval_unary_closure, Desugared, Outcome, Sugar, SugarCtx};
+use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("skip_while", recognize_composite);
@@ -33,83 +32,63 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
         return None;
     }
     Some(Box::new(SkipWhileRecognizedSugar {
-        receiver: (*call.receiver).clone(),
-        pred: pred.clone(),
-        let_inits: capture_let_inits(fcx),
+        inner: SugarBody::composite(&call.receiver, fcx),
+        pred: BoolPredicateClosure::build(pred.clone(), fcx)?,
     }))
 }
 
 struct SkipWhileRecognizedSugar {
-    receiver: Expr,
-    pred: syn::ExprClosure,
-    let_inits: BTreeMap<String, Expr>,
-}
-
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
+    inner: SugarBody<CompositeFloor>,
+    pred: BoolPredicateClosure,
 }
 
 impl Sugar for SkipWhileRecognizedSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-            let let_inits: BTreeMap<String, &Expr> = stable
-                .iter()
-                .map(|(name, init)| (name.clone(), init))
-                .chain(
-                    self.let_inits
-                        .iter()
-                        .map(|(name, init)| (name.clone(), init)),
-                )
-                .collect();
-            let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-            let seq = method_family::build_literal_sequence_composite(&self.receiver, &fcx)?
-                .desugar(ctx)
-                .complete()?
-                .into_seq()?;
-            let mut out = Vec::new();
-            let mut still_skipping = true;
-            for elem in seq {
-                if still_skipping {
-                    let v = elem.value.as_ref()?;
-                    if const_eval_unary_closure(&self.pred, v)?.as_bool()? {
-                        continue;
-                    }
-                    still_skipping = false;
-                }
-                out.push(elem);
-            }
-            Some(Desugared::Seq(out))
-        })())
+        reduce_skip_while(&self.inner, &self.pred, ctx)
     }
 }
 
 /// Drop the leading run of elements where `pred` const-evaluates true.
 pub(crate) struct SkipWhileSugar {
-    pub(crate) inner: Box<dyn Sugar>,
-    pub(crate) pred: syn::ExprClosure,
+    pub(crate) inner: SugarBody<CompositeFloor>,
+    pub(crate) pred: BoolPredicateClosure,
 }
 
 impl Sugar for SkipWhileSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            let seq = self.inner.desugar(ctx).complete()?.into_seq()?;
-            let mut out = Vec::new();
-            let mut still_skipping = true;
-            for elem in seq {
-                if still_skipping {
-                    let v = elem.value.as_ref()?;
-                    if const_eval_unary_closure(&self.pred, v)?.as_bool()? {
-                        continue;
-                    }
-                    still_skipping = false;
-                }
-                out.push(elem);
-            }
-            Some(Desugared::Seq(out))
-        })())
+        reduce_skip_while(&self.inner, &self.pred, ctx)
     }
+}
+
+fn reduce_skip_while(
+    inner: &SugarBody<CompositeFloor>,
+    pred: &BoolPredicateClosure,
+    ctx: &SugarCtx,
+) -> Outcome {
+    let seq = match inner.reduce(ctx) {
+        Outcome::Complete(d) => d
+            .into_seq()
+            .unwrap_or_else(|| skip_while_gap("skip_while receiver reduced to non-sequence")),
+        Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+    };
+    let mut out = Vec::new();
+    let mut still_skipping = true;
+    for (idx, elem) in seq.into_iter().enumerate() {
+        if still_skipping {
+            let skip = match pred.eval_for_elem(&elem, idx, "skip_while", ctx) {
+                Ok(skip) => skip,
+                Err(outcome) => return outcome,
+            };
+            if skip {
+                continue;
+            }
+            still_skipping = false;
+        }
+        out.push(elem);
+    }
+    Outcome::Complete(Desugared::Seq(out))
+}
+
+fn skip_while_gap(reason: &str) -> ! {
+    panic!("skip_while did not reach a lawful floor: {reason}")
 }

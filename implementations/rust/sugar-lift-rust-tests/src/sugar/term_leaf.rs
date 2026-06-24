@@ -17,7 +17,7 @@
 //     "unsupported term operator", an `is_immutable_value_expr`-failing `&mut`, a
 //     raw pointer, a non-scalar cast, an `..rest` struct literal, a mut-local macro,
 //     the `other =>` "unsupported term" catch-all, ...). The leaf returns Incomplete the SAME
-//     reason string verbatim, carried as `Effect::Unsupported { reason }` — the
+//     reason string verbatim, carried as a named runtime-argument boundary — the
 //     terminal, loud, reasoned bail (NEVER a silent skip). Consumed by the thin
 //     `translate_term_in_scope` adapter via `effect.reason()`, this reproduces the
 //     legacy `Err(reason)` byte-identically, so the wire format (CID + counts) is
@@ -51,15 +51,16 @@ impl Sugar for ResolvedTermSugar {
 
 /// The "reasoned-Incomplete" leaf: holds the verbatim reason string a legacy
 /// `translate_term_in_scope` arm produced via `Err(reason)`, and returns Incomplete
-/// `Effect::Unsupported { reason }`. The thin adapter renders it back through
-/// `effect.reason()`, reproducing the legacy `Err` byte-identically. `ctx` is unused.
+/// with the same named reason. The thin adapter renders it back through `effect.reason()`,
+/// reproducing the legacy `Err` byte-identically. `ctx` is unused.
 pub(crate) struct ReasonedIncompleteSugar {
     pub(crate) reason: String,
 }
 
 impl Sugar for ReasonedIncompleteSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        Outcome::Incomplete(Effect::Unsupported {
+        Outcome::Incomplete(Effect::RuntimeArgument {
+            boundary: self.reason.clone(),
             reason: self.reason.clone(),
         })
     }

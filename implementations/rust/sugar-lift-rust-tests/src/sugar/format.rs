@@ -36,8 +36,7 @@ use syn::punctuated::Punctuated;
 use syn::{Expr, ExprLit, Lit, Pat, Stmt, Token};
 
 use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, FloorRead, FormatValueFloor,
-    LiteralStringFloor, SugarBody, SugarBuildCtx,
+    FloorRead, FormatValueFloor, LiteralStringFloor, SugarBody, SugarBuildCtx,
 };
 use crate::{strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
@@ -62,10 +61,10 @@ pub(crate) fn build_format_template_body(expr: &Expr, fcx: &SugarBuildCtx) -> Bo
         Expr::Macro(m) if macro_is(m, "concat") => {
             match build_concat_string_body(expr, fcx) {
                 Ok(body) => FormatTemplateBody::LiteralString(SugarBody::from_node(Box::new(body))),
-                Err(reason) => FormatTemplateBody::Gap(reason),
+                Err(reason) => FormatTemplateBody::Unconstructible(reason),
             }
         }
-        _ => FormatTemplateBody::Gap(
+        _ => FormatTemplateBody::Unconstructible(
             "format template constructor reached a non-template source site; write more Sugar for this AST"
                 .to_string(),
         ),
@@ -86,7 +85,7 @@ pub(crate) fn build_literal_string_body(expr: &Expr, fcx: &SugarBuildCtx) -> Box
                         let child_fcx = fcx.with_bound_path(&name);
                         LiteralStringBody::Child(SugarBody::literal_string(init, &child_fcx))
                     }
-                    Some(_) => LiteralStringBody::Gap(
+                    Some(_) => LiteralStringBody::Unconstructible(
                         "self-referential literal string binding; write more Sugar for this AST"
                             .to_string(),
                     ),
@@ -102,14 +101,13 @@ pub(crate) fn build_literal_string_body(expr: &Expr, fcx: &SugarBuildCtx) -> Box
             ),
         },
         Expr::Macro(m) if macro_is(m, "format") => {
-            match crate::sugar::format_macro::build_literal_string_node(expr, fcx) {
-                Ok(node) => LiteralStringBody::Child(SugarBody::from_node(node)),
-                Err(reason) => LiteralStringBody::Gap(reason),
-            }
+            LiteralStringBody::Child(SugarBody::from_node(
+                crate::sugar::format_macro::build_literal_string_node(expr, fcx),
+            ))
         }
         Expr::Macro(m) if macro_is(m, "concat") => match build_concat_string_body(expr, fcx) {
             Ok(body) => body,
-            Err(reason) => LiteralStringBody::Gap(reason),
+            Err(reason) => LiteralStringBody::Unconstructible(reason),
         },
         Expr::MethodCall(c) if c.method == "to_string" && c.args.is_empty() => {
             LiteralStringBody::ToString {
@@ -120,7 +118,7 @@ pub(crate) fn build_literal_string_body(expr: &Expr, fcx: &SugarBuildCtx) -> Box
             left: SugarBody::literal_string(&b.left, fcx),
             right: SugarBody::literal_string(&b.right, fcx),
         },
-        _ => LiteralStringBody::Gap(
+        _ => LiteralStringBody::Unconstructible(
             "format string body did not reduce to a literal string; write more Sugar for this AST"
                 .to_string(),
         ),
@@ -132,11 +130,11 @@ pub(crate) fn build_format_value_body(expr: &Expr, fcx: &SugarBuildCtx) -> Box<d
     let body = match strip_refs_groups(expr) {
         Expr::Lit(ExprLit { lit, .. }) => match reconstruct_lit(lit) {
             Ok(Some(value)) => FormatValueBody::Literal(value),
-            Ok(None) => FormatValueBody::Gap(
+            Ok(None) => FormatValueBody::Unconstructible(
                 "format argument literal is not supported; write more Sugar for this AST"
                     .to_string(),
             ),
-            Err(reason) => FormatValueBody::Unsupported(reason),
+            Err(reason) => FormatValueBody::Terminal(reason),
         },
         Expr::Unary(u) if matches!(u.op, syn::UnOp::Neg(_)) => {
             FormatValueBody::Neg(SugarBody::format_value(&u.expr, fcx))
@@ -154,7 +152,7 @@ pub(crate) fn build_format_value_body(expr: &Expr, fcx: &SugarBuildCtx) -> Box<d
                         let child_fcx = fcx.with_bound_path(&name);
                         FormatValueBody::Child(SugarBody::format_value(init, &child_fcx))
                     }
-                    Some(_) => FormatValueBody::Gap(
+                    Some(_) => FormatValueBody::Unconstructible(
                         "self-referential format argument binding; write more Sugar for this AST"
                             .to_string(),
                     ),
@@ -184,6 +182,13 @@ pub(crate) fn build_format_value_body(expr: &Expr, fcx: &SugarBuildCtx) -> Box<d
 
 pub(crate) fn runtime_format_value_body(reason: impl Into<String>) -> Box<dyn Sugar> {
     Box::new(FormatValueBody::Runtime(reason.into()))
+}
+
+fn runtime_argument_effect(reason: String) -> Effect {
+    Effect::RuntimeArgument {
+        boundary: reason.clone(),
+        reason,
+    }
 }
 
 pub(crate) fn literal_format_capture_names(expr: &Expr) -> Option<Vec<String>> {
@@ -218,27 +223,21 @@ fn stable_binding_init<'a>(name: &str, fcx: &'a SugarBuildCtx) -> Option<&'a Exp
 enum FormatTemplateBody {
     Literal(String),
     LiteralString(SugarBody<LiteralStringFloor>),
-    Gap(String),
+    Unconstructible(String),
 }
 
 impl Sugar for FormatTemplateBody {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match self {
             FormatTemplateBody::Literal(value) => {
-                Ok(Outcome::Complete(Desugared::LiteralString(value.clone())))
+                Outcome::Complete(Desugared::LiteralString(value.clone()))
             }
-            FormatTemplateBody::LiteralString(child) => match child.reduce_literal_string(ctx)? {
-                FloorRead::Complete(value) => {
-                    Ok(Outcome::Complete(Desugared::LiteralString(value)))
-                }
-                FloorRead::Incomplete(effect) => Ok(Outcome::Incomplete(effect)),
+            FormatTemplateBody::LiteralString(child) => match child.reduce_literal_string(ctx) {
+                FloorRead::Complete(value) => Outcome::Complete(Desugared::LiteralString(value)),
+                FloorRead::Incomplete(effect) => Outcome::Incomplete(effect),
             },
-            FormatTemplateBody::Gap(reason) => Err(FactoryGap::new(reason.clone())),
+            FormatTemplateBody::Unconstructible(reason) => panic!("{reason}"),
         }
-    }
-
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
     }
 }
 
@@ -254,13 +253,13 @@ enum LiteralStringBody {
         right: SugarBody<LiteralStringFloor>,
     },
     Runtime(String),
-    Gap(String),
+    Unconstructible(String),
 }
 
 enum ConcatFragmentBody {
     String(SugarBody<LiteralStringFloor>),
     Value(SugarBody<FormatValueFloor>),
-    Gap(String),
+    Unconstructible(String),
 }
 
 struct LiteralStringTermSugar {
@@ -268,106 +267,84 @@ struct LiteralStringTermSugar {
 }
 
 impl Sugar for LiteralStringTermSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
-        match self.body.reduce_literal_string(ctx)? {
-            FloorRead::Complete(value) => Ok(Outcome::Complete(Desugared::Term(
-                sugar_ir_symbolic::str_const(value),
-            ))),
-            FloorRead::Incomplete(effect) => Ok(Outcome::Incomplete(effect)),
-        }
-    }
-
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
+        match self.body.reduce_literal_string(ctx) {
+            FloorRead::Complete(value) => {
+                Outcome::Complete(Desugared::Term(sugar_ir_symbolic::str_const(value)))
+            }
+            FloorRead::Incomplete(effect) => Outcome::Incomplete(effect),
+        }
     }
 }
 
 impl Sugar for LiteralStringBody {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match self {
             LiteralStringBody::Literal(value) => {
-                Ok(Outcome::Complete(Desugared::LiteralString(value.clone())))
+                Outcome::Complete(Desugared::LiteralString(value.clone()))
             }
-            LiteralStringBody::Child(child) => match child.reduce_literal_string(ctx)? {
-                FloorRead::Complete(value) => {
-                    Ok(Outcome::Complete(Desugared::LiteralString(value)))
-                }
-                FloorRead::Incomplete(effect) => Ok(Outcome::Incomplete(effect)),
+            LiteralStringBody::Child(child) => match child.reduce_literal_string(ctx) {
+                FloorRead::Complete(value) => Outcome::Complete(Desugared::LiteralString(value)),
+                FloorRead::Incomplete(effect) => Outcome::Incomplete(effect),
             },
             LiteralStringBody::Concat(fragments) => {
                 let mut out = String::new();
                 for fragment in fragments {
                     match fragment {
-                        ConcatFragmentBody::String(body) => {
-                            match body.reduce_literal_string(ctx)? {
-                                FloorRead::Complete(value) => out.push_str(&value),
-                                FloorRead::Incomplete(effect) => {
-                                    return Ok(Outcome::Incomplete(effect))
-                                }
-                            }
-                        }
-                        ConcatFragmentBody::Value(body) => match body.reduce_format_value(ctx)? {
-                            FloorRead::Complete(value) => {
-                                match render_one(&value, &Spec::display()) {
-                                    Ok(Some(value)) => out.push_str(&value),
-                                    Ok(None) => {
-                                        return Err(FactoryGap::new(
-                                        "concat fragment did not render as a literal string; write more Sugar for this AST",
-                                    ));
-                                    }
-                                    Err(reason) => {
-                                        return Ok(Outcome::Incomplete(Effect::Unsupported {
-                                            reason,
-                                        }));
-                                    }
-                                }
-                            }
-                            FloorRead::Incomplete(effect) => {
-                                return Ok(Outcome::Incomplete(effect))
-                            }
+                        ConcatFragmentBody::String(body) => match body.reduce_literal_string(ctx) {
+                            FloorRead::Complete(value) => out.push_str(&value),
+                            FloorRead::Incomplete(effect) => return Outcome::Incomplete(effect),
                         },
-                        ConcatFragmentBody::Gap(reason) => {
-                            return Err(FactoryGap::new(reason.clone()));
+                        ConcatFragmentBody::Value(body) => match body.reduce_format_value(ctx) {
+                            FloorRead::Complete(value) => {
+                                match value.render(&Spec::display()) {
+                                    Ok(Some(value)) => out.push_str(&value),
+                                    Ok(None) => panic!(
+                                        "concat fragment did not render as a literal string; implement the typed formatter"
+                                    ),
+                                    Err(reason) => return Outcome::Incomplete(runtime_argument_effect(reason)),
+                                }
+                            }
+                            FloorRead::Incomplete(effect) => return Outcome::Incomplete(effect),
+                        },
+                        ConcatFragmentBody::Unconstructible(reason) => {
+                            panic!("{reason}");
                         }
                     }
                 }
-                Ok(Outcome::Complete(Desugared::LiteralString(out)))
+                Outcome::Complete(Desugared::LiteralString(out))
             }
             LiteralStringBody::ToString { receiver } => {
-                let value = match receiver.reduce_format_value(ctx)? {
+                let value = match receiver.reduce_format_value(ctx) {
                     FloorRead::Complete(value) => value,
-                    FloorRead::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+                    FloorRead::Incomplete(effect) => return Outcome::Incomplete(effect),
                 };
-                match render_one(&value, &Spec::display()) {
-                    Ok(Some(value)) => Ok(Outcome::Complete(Desugared::LiteralString(value))),
-                    Ok(None) => Err(FactoryGap::new(
-                        "to_string receiver did not render as a literal string; write more Sugar for this AST",
-                    )),
-                    Err(reason) => Ok(Outcome::Incomplete(Effect::Unsupported { reason })),
+                match value.render(&Spec::display()) {
+                    Ok(Some(value)) => Outcome::Complete(Desugared::LiteralString(value)),
+                    Ok(None) => panic!(
+                        "to_string receiver did not render as a literal string; implement the typed formatter"
+                    ),
+                    Err(reason) => Outcome::Incomplete(runtime_argument_effect(reason)),
                 }
             }
             LiteralStringBody::StringAdd { left, right } => {
-                let left = match left.reduce_literal_string(ctx)? {
+                let left = match left.reduce_literal_string(ctx) {
                     FloorRead::Complete(value) => value,
-                    FloorRead::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+                    FloorRead::Incomplete(effect) => return Outcome::Incomplete(effect),
                 };
-                let right = match right.reduce_literal_string(ctx)? {
+                let right = match right.reduce_literal_string(ctx) {
                     FloorRead::Complete(value) => value,
-                    FloorRead::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+                    FloorRead::Incomplete(effect) => return Outcome::Incomplete(effect),
                 };
-                Ok(Outcome::Complete(Desugared::LiteralString(format!(
-                    "{left}{right}"
-                ))))
+                Outcome::Complete(Desugared::LiteralString(format!("{left}{right}")))
             }
-            LiteralStringBody::Runtime(reason) => Ok(Outcome::Incomplete(Effect::Unsupported {
-                reason: reason.clone(),
-            })),
-            LiteralStringBody::Gap(reason) => Err(FactoryGap::new(reason.clone())),
+            LiteralStringBody::Runtime(reason) => {
+                Outcome::Incomplete(runtime_argument_effect(reason.clone()))
+            }
+            LiteralStringBody::Unconstructible(reason) => {
+                panic!("{reason}");
+            }
         }
-    }
-
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
     }
 }
 
@@ -398,7 +375,7 @@ fn build_concat_fragment_body(expr: &Expr, fcx: &SugarBuildCtx) -> ConcatFragmen
         Expr::Path(path) if path.qself.is_none() => {
             ConcatFragmentBody::String(SugarBody::literal_string(expr, fcx))
         }
-        _ => ConcatFragmentBody::Gap(
+        _ => ConcatFragmentBody::Unconstructible(
             "concat fragment is not a literal string/value floor; write more Sugar for this AST"
                 .to_string(),
         ),
@@ -416,121 +393,114 @@ enum FormatValueBody {
         right: SugarBody<FormatValueFloor>,
     },
     Runtime(String),
-    Unsupported(String),
-    Gap(String),
+    Terminal(String),
+    Unconstructible(String),
 }
 
 impl Sugar for FormatValueBody {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match self {
             FormatValueBody::Literal(value) => {
-                Ok(Outcome::Complete(Desugared::FormatValue(value.clone())))
+                Outcome::Complete(Desugared::FormatValue(value.clone()))
             }
-            FormatValueBody::Child(child) => match child.reduce_format_value(ctx)? {
-                FloorRead::Complete(value) => Ok(Outcome::Complete(Desugared::FormatValue(value))),
-                FloorRead::Incomplete(effect) => Ok(Outcome::Incomplete(effect)),
+            FormatValueBody::Child(child) => match child.reduce_format_value(ctx) {
+                FloorRead::Complete(value) => Outcome::Complete(Desugared::FormatValue(value)),
+                FloorRead::Incomplete(effect) => Outcome::Incomplete(effect),
             },
-            FormatValueBody::String(child) => match child.reduce_literal_string(ctx)? {
-                FloorRead::Complete(value) => Ok(Outcome::Complete(Desugared::FormatValue(
-                    FmtValue::Str(value),
-                ))),
-                FloorRead::Incomplete(effect) => Ok(Outcome::Incomplete(effect)),
+            FormatValueBody::String(child) => match child.reduce_literal_string(ctx) {
+                FloorRead::Complete(value) => {
+                    Outcome::Complete(Desugared::FormatValue(FmtValue::Str(value)))
+                }
+                FloorRead::Incomplete(effect) => Outcome::Incomplete(effect),
             },
             FormatValueBody::Neg(child) => {
-                let value = match child.reduce_format_value(ctx)? {
+                let value = match child.reduce_format_value(ctx) {
                     FloorRead::Complete(value) => value,
-                    FloorRead::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+                    FloorRead::Incomplete(effect) => return Outcome::Incomplete(effect),
                 };
                 let negated = match value {
                     FmtValue::Int { value, suffix } => FmtValue::Int {
-                        value: value
-                            .checked_neg()
-                            .ok_or_else(|| FactoryGap::new("format integer negation overflow; write more Sugar for this AST"))?,
+                        value: match value.checked_neg() {
+                            Some(value) => value,
+                            None => {
+                                return Outcome::Incomplete(runtime_argument_effect(
+                                    "format integer arithmetic overflow or divide-by-zero, not literal-determined; refused"
+                                        .to_string(),
+                                ));
+                            }
+                        },
                         suffix,
                     },
                     FmtValue::F32(value) => FmtValue::F32(-value),
                     FmtValue::F64(value) => FmtValue::F64(-value),
                     _ => {
-                        return Err(FactoryGap::new(
-                            "format unary negation did not receive a numeric value; write more Sugar for this AST",
-                        ))
+                        panic!(
+                            "format unary negation did not receive a numeric value; write the owning format value floor"
+                        )
                     }
                 };
-                Ok(Outcome::Complete(Desugared::FormatValue(negated)))
+                Outcome::Complete(Desugared::FormatValue(negated))
             }
             FormatValueBody::Binary { op, left, right } => {
-                let left = match left.reduce_format_value(ctx)? {
+                let left = match left.reduce_format_value(ctx) {
                     FloorRead::Complete(value) => value,
-                    FloorRead::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+                    FloorRead::Incomplete(effect) => return Outcome::Incomplete(effect),
                 };
-                let right = match right.reduce_format_value(ctx)? {
+                let right = match right.reduce_format_value(ctx) {
                     FloorRead::Complete(value) => value,
-                    FloorRead::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+                    FloorRead::Incomplete(effect) => return Outcome::Incomplete(effect),
                 };
                 let folded = match fold_format_values(op, left, right) {
                     Ok(value) => value,
-                    Err(gap)
-                        if gap
-                            .reason
-                            .contains("format integer arithmetic did not constant-fold") =>
+                    Err(reason)
+                        if reason.contains("format integer arithmetic did not constant-fold") =>
                     {
-                        return Ok(Outcome::Incomplete(Effect::Unsupported {
-                            reason:
-                                "format integer arithmetic overflow or divide-by-zero, not literal-determined; refused"
-                                    .to_string(),
-                        }));
+                        return Outcome::Incomplete(runtime_argument_effect(
+                            "format integer arithmetic overflow or divide-by-zero, not literal-determined; refused"
+                                .to_string(),
+                        ));
                     }
-                    Err(gap) => return Err(gap),
+                    Err(reason) => panic!("{reason}"),
                 };
-                Ok(Outcome::Complete(Desugared::FormatValue(folded)))
+                Outcome::Complete(Desugared::FormatValue(folded))
             }
-            FormatValueBody::Runtime(reason) | FormatValueBody::Unsupported(reason) => {
-                Ok(Outcome::Incomplete(Effect::Unsupported {
-                    reason: reason.clone(),
-                }))
+            FormatValueBody::Runtime(reason) | FormatValueBody::Terminal(reason) => {
+                Outcome::Incomplete(runtime_argument_effect(reason.clone()))
             }
-            FormatValueBody::Gap(reason) => Err(FactoryGap::new(reason.clone())),
+            FormatValueBody::Unconstructible(reason) => {
+                panic!("{reason}");
+            }
         }
     }
+}
 
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
+pub(crate) fn literal_string_floor_from_outcome(reduction: Outcome) -> FloorRead<String> {
+    match reduction {
+        Outcome::Complete(Desugared::LiteralString(value)) => FloorRead::Complete(value),
+        Outcome::Complete(_) => {
+            panic!("format string child completed a non-literal-string floor; fix the factory")
+        }
+        Outcome::Incomplete(effect) => FloorRead::Incomplete(effect),
     }
 }
 
-pub(crate) fn literal_string_floor_from_outcome(
-    reduction: Outcome,
-) -> Result<FloorRead<String>, FactoryGap> {
+pub(crate) fn format_template_floor_from_outcome(reduction: Outcome) -> FloorRead<String> {
     match reduction {
-        Outcome::Complete(Desugared::LiteralString(value)) => Ok(FloorRead::Complete(value)),
-        Outcome::Complete(_) => Err(FactoryGap::new(
-            "format string child completed a non-literal-string floor; write more Sugar for this AST",
-        )),
-        Outcome::Incomplete(effect) => Ok(FloorRead::Incomplete(effect)),
+        Outcome::Complete(Desugared::LiteralString(value)) => FloorRead::Complete(value),
+        Outcome::Complete(_) => {
+            panic!("format template child completed a non-template floor; fix the factory")
+        }
+        Outcome::Incomplete(effect) => FloorRead::Incomplete(effect),
     }
 }
 
-pub(crate) fn format_template_floor_from_outcome(
-    reduction: Outcome,
-) -> Result<FloorRead<String>, FactoryGap> {
+pub(crate) fn format_value_floor_from_outcome(reduction: Outcome) -> FloorRead<FmtValue> {
     match reduction {
-        Outcome::Complete(Desugared::LiteralString(value)) => Ok(FloorRead::Complete(value)),
-        Outcome::Complete(_) => Err(FactoryGap::new(
-            "format template child completed a non-template floor; write more Sugar for this AST",
-        )),
-        Outcome::Incomplete(effect) => Ok(FloorRead::Incomplete(effect)),
-    }
-}
-
-pub(crate) fn format_value_floor_from_outcome(
-    reduction: Outcome,
-) -> Result<FloorRead<FmtValue>, FactoryGap> {
-    match reduction {
-        Outcome::Complete(Desugared::FormatValue(value)) => Ok(FloorRead::Complete(value)),
-        Outcome::Complete(_) => Err(FactoryGap::new(
-            "format argument child completed a non-format-value floor; write more Sugar for this AST",
-        )),
-        Outcome::Incomplete(effect) => Ok(FloorRead::Incomplete(effect)),
+        Outcome::Complete(Desugared::FormatValue(value)) => FloorRead::Complete(value),
+        Outcome::Complete(_) => {
+            panic!("format argument child completed a non-format-value floor; fix the factory")
+        }
+        Outcome::Incomplete(effect) => FloorRead::Incomplete(effect),
     }
 }
 
@@ -538,7 +508,7 @@ fn fold_format_values(
     op: &syn::BinOp,
     left: FmtValue,
     right: FmtValue,
-) -> Result<FmtValue, FactoryGap> {
+) -> Result<FmtValue, String> {
     if let (
         FmtValue::Int {
             value: lv,
@@ -553,7 +523,8 @@ fn fold_format_values(
         return fold_int_arith(op, *lv, *ls, *rv, *rs)
             .map(|(value, suffix)| FmtValue::Int { value, suffix })
             .ok_or_else(|| {
-                FactoryGap::new("format integer arithmetic did not constant-fold; write more Sugar for this AST")
+                "format integer arithmetic did not constant-fold; write more Sugar for this AST"
+                    .to_string()
             });
     }
 
@@ -561,9 +532,10 @@ fn fold_format_values(
         return match (left, right) {
             (FmtValue::F64(l), FmtValue::F64(r)) => Ok(FmtValue::F64(l / r)),
             (FmtValue::F32(l), FmtValue::F32(r)) => Ok(FmtValue::F32(l / r)),
-            _ => Err(FactoryGap::new(
-                "format float division did not receive matching float literals; write more Sugar for this AST",
-            )),
+            _ => Err(
+                "format float division did not receive matching float literals; write more Sugar for this AST"
+                    .to_string(),
+            ),
         };
     }
 
@@ -573,9 +545,10 @@ fn fold_format_values(
         }
     }
 
-    Err(FactoryGap::new(
-        "format binary argument did not reduce to a supported literal operation; write more Sugar for this AST",
-    ))
+    Err(
+        "format binary argument did not reduce to a supported literal operation; write more Sugar for this AST"
+            .to_string(),
+    )
 }
 
 pub(crate) fn is_format_macro_shape(expr: &Expr) -> bool {
@@ -673,6 +646,66 @@ pub(crate) enum FmtValue {
     Bool(bool),
 }
 
+trait FormatLiteralVisitor {
+    type Output;
+
+    fn visit_int(self, value: i128, suffix: IntKind) -> Self::Output;
+    fn visit_f32(self, value: f32) -> Self::Output;
+    fn visit_f64(self, value: f64) -> Self::Output;
+    fn visit_char(self, value: char) -> Self::Output;
+    fn visit_string(self, value: &str) -> Self::Output;
+    fn visit_bool(self, value: bool) -> Self::Output;
+}
+
+impl FmtValue {
+    fn accept<V: FormatLiteralVisitor>(&self, visitor: V) -> V::Output {
+        match self {
+            FmtValue::Int { value, suffix } => visitor.visit_int(*value, *suffix),
+            FmtValue::F32(value) => visitor.visit_f32(*value),
+            FmtValue::F64(value) => visitor.visit_f64(*value),
+            FmtValue::Char(value) => visitor.visit_char(*value),
+            FmtValue::Str(value) => visitor.visit_string(value),
+            FmtValue::Bool(value) => visitor.visit_bool(*value),
+        }
+    }
+
+    fn render(&self, spec: &Spec) -> Result<Option<String>, String> {
+        self.accept(RenderVisitor { spec })
+    }
+}
+
+struct RenderVisitor<'a> {
+    spec: &'a Spec,
+}
+
+impl FormatLiteralVisitor for RenderVisitor<'_> {
+    type Output = Result<Option<String>, String>;
+
+    fn visit_int(self, value: i128, suffix: IntKind) -> Self::Output {
+        Ok(render_int(value, suffix, self.spec))
+    }
+
+    fn visit_f32(self, value: f32) -> Self::Output {
+        Ok(render_float_f32(value, self.spec))
+    }
+
+    fn visit_f64(self, value: f64) -> Self::Output {
+        Ok(render_float_f64(value, self.spec))
+    }
+
+    fn visit_char(self, value: char) -> Self::Output {
+        Ok(render_char(value, self.spec))
+    }
+
+    fn visit_string(self, value: &str) -> Self::Output {
+        Ok(render_str(value, self.spec))
+    }
+
+    fn visit_bool(self, value: bool) -> Self::Output {
+        Ok(render_bool(value, self.spec))
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum IntKind {
     I8,
@@ -730,7 +763,7 @@ fn resolve_format_string(
         // `<expr>.to_string()` — Display of the resolved value.
         Expr::MethodCall(c) if c.method == "to_string" && c.args.is_empty() => {
             match resolve_fmt_value(&c.receiver, binds)? {
-                Some(v) => render_one(&v, &Spec::display()),
+                Some(v) => v.render(&Spec::display()),
                 None => Ok(None),
             }
         }
@@ -959,7 +992,7 @@ fn render_format(
                     }
                 };
                 match value {
-                    Some(v) => match render_one(&v, &spec)? {
+                    Some(v) => match v.render(&spec)? {
                         Some(s) => out.push_str(&s),
                         None => return Ok(None),
                     },
@@ -976,10 +1009,10 @@ pub(crate) fn render_format_values(
     positional: &[FmtValue],
     explicit_named: &BTreeMap<String, FmtValue>,
     captures: &BTreeMap<String, FmtValue>,
-) -> Result<Option<String>, String> {
+) -> String {
     let pieces = match parse_fmt_pieces(fmt) {
         Some(p) => p,
-        None => return Ok(None),
+        None => panic!("compiled format template did not parse; fix format template sugar"),
     };
     let mut next_positional = 0usize;
     let mut out = String::new();
@@ -999,16 +1032,21 @@ pub(crate) fn render_format_values(
                     }
                 };
                 let Some(value) = value else {
-                    return Ok(None);
+                    panic!(
+                        "compiled format template referenced an argument the factory did not build"
+                    );
                 };
-                match render_one(value, &spec)? {
-                    Some(s) => out.push_str(&s),
-                    None => return Ok(None),
+                match value.render(&spec) {
+                    Ok(Some(s)) => out.push_str(&s),
+                    Ok(None) => panic!(
+                        "completed format value did not render; implement double dispatch for this formatter"
+                    ),
+                    Err(reason) => panic!("completed format value failed to render: {reason}"),
                 }
             }
         }
     }
-    Ok(Some(out))
+    out
 }
 
 /// Find an explicit `name = <expr>` trailing format argument.
@@ -1241,20 +1279,6 @@ impl Spec {
 // literal), so each supported (kind, plus, zero_width, precision) combination dispatches
 // to a statically-written `format!` call. This is the recompute-don't-reimplement floor:
 // the bytes come from stdlib's own formatter, never from our re-derivation.
-
-fn render_one(v: &FmtValue, spec: &Spec) -> Result<Option<String>, String> {
-    // f16/f128 never reach here (FmtValue has no such variant); reconstruction names
-    // them terminal upstream. Floats only support Display/Debug/exp; ints support all.
-    let s = match v {
-        FmtValue::Int { value, suffix } => render_int(*value, *suffix, spec),
-        FmtValue::F64(x) => render_float_f64(*x, spec),
-        FmtValue::F32(x) => render_float_f32(*x, spec),
-        FmtValue::Char(c) => render_char(*c, spec),
-        FmtValue::Str(s) => render_str(s, spec),
-        FmtValue::Bool(b) => render_bool(*b, spec),
-    };
-    Ok(s)
-}
 
 /// Apply the `0`-pad-to-width and `+`-sign post-formatting that our supported spec
 /// allows, given an already-rendered magnitude+sign body. Used where the static

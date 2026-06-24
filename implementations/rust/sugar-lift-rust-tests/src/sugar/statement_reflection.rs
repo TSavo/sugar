@@ -7,7 +7,7 @@ use syn::Expr;
 use crate::sugar::claim::SugarRole;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::statement_position;
-use crate::{Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON};
+use crate::{Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::new(
@@ -18,20 +18,17 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
 
 pub(crate) fn recognize(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     statement_position::reflection_boundary(expr)
-        .map(|_| Box::new(StatementReflectionSugar { expr: expr.clone() }) as Box<dyn Sugar>)
+        .map(|boundary| Box::new(StatementReflectionSugar { boundary }) as Box<dyn Sugar>)
 }
 
 struct StatementReflectionSugar {
-    expr: Expr,
+    boundary: String,
 }
 
 impl Sugar for StatementReflectionSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        if let Some(boundary) = statement_position::reflection_boundary(&self.expr) {
-            return Outcome::Incomplete(Effect::Reflection { boundary });
-        }
-        Outcome::Incomplete(Effect::Unsupported {
-            reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
+        Outcome::Incomplete(Effect::Reflection {
+            boundary: self.boundary.clone(),
         })
     }
 }

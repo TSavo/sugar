@@ -21,11 +21,10 @@
 //!
 //! ## The three laws
 //!
-//! 1. **TOTAL.** Every `Expr` maps to *some* `Box<dyn Sugar>`. A term shape with a
-//!    proven runtime/effect boundary becomes a reasoned leaf carrying the arm's EXACT
-//!    refusal string. A structural miss reaches [`UnsupportedSugar`], but that is a gap
-//!    sentinel, not a terminal verdict: accounted desugar records it as unresolved factory
-//!    work so the production gate stays loud. The walk cannot return `None`.
+//! 1. **TOTAL OR CRASH.** Every constructible `Expr` maps to a `Box<dyn Sugar>` whose
+//!    `reduce` returns exactly one terminal boundary: `Complete` or `Incomplete(named
+//!    Effect)`. A factory miss is not an Outcome; it is a construction-law violation that
+//!    must be fixed by writing the Sugar or by proving a named runtime/effect boundary.
 //! 2. **RECURSIVE.** A composite term node builds each operand with `build_term(child)`
 //!    and composes the child Sugar; transparent wrappers (`Paren`/`Group`) recurse
 //!    straight through. `desugar` then collapses the whole tree inside-out.
@@ -64,23 +63,8 @@ use crate::sugar::claim::SugarRole;
 use crate::{
     refusal_disposition, token_key, AssertionFactKind, Desugared, Disposition, Effect,
     FactoryAudit, FactoryAuditSpan, FactoryCandidateAudit, FactoryDisposition, LiftOptions,
-    Outcome, Sugar, SugarCtx, TemporalScope, STRUCTURAL_BACKSTOP_REASON,
+    Outcome, Sugar, SugarCtx, TemporalScope,
 };
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FactoryGap {
-    pub(crate) reason: String,
-}
-
-pub(crate) type FactoryReduction = Result<Outcome, FactoryGap>;
-
-impl FactoryGap {
-    pub(crate) fn new(reason: impl Into<String>) -> Self {
-        Self {
-            reason: reason.into(),
-        }
-    }
-}
 
 pub(crate) enum FloorRead<T> {
     Complete(T),
@@ -97,6 +81,7 @@ pub(crate) struct TupleProducerFloor;
 pub(crate) struct LiteralStringFloor;
 pub(crate) struct FormatTemplateFloor;
 pub(crate) struct FormatValueFloor;
+pub(crate) struct BoolFloor;
 
 impl BodyFloor for TermFloor {}
 impl BodyFloor for CompositeFloor {}
@@ -106,6 +91,7 @@ impl BodyFloor for TupleProducerFloor {}
 impl BodyFloor for LiteralStringFloor {}
 impl BodyFloor for FormatTemplateFloor {}
 impl BodyFloor for FormatValueFloor {}
+impl BodyFloor for BoolFloor {}
 
 /// A factory-built child/body for a parent Sugar.
 ///
@@ -126,17 +112,23 @@ impl<F: BodyFloor> SugarBody<F> {
         }
     }
 
-    pub(crate) fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+    pub(crate) fn reduce(&self, ctx: &SugarCtx) -> Outcome {
         self.node.reduce(ctx)
     }
 
     pub(crate) fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
+        self.reduce(ctx)
     }
 }
 
 impl SugarBody<TermFloor> {
     pub(crate) fn term(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
+        Self::from_node(build_term(expr, fcx))
+    }
+}
+
+impl SugarBody<BoolFloor> {
+    pub(crate) fn bool_expr(expr: &Expr, fcx: &SugarBuildCtx) -> Self {
         Self::from_node(build_term(expr, fcx))
     }
 }
@@ -170,11 +162,8 @@ impl SugarBody<LiteralStringFloor> {
         Self::from_node(crate::sugar::format::build_literal_string_body(expr, fcx))
     }
 
-    pub(crate) fn reduce_literal_string(
-        &self,
-        ctx: &SugarCtx,
-    ) -> Result<FloorRead<String>, FactoryGap> {
-        crate::sugar::format::literal_string_floor_from_outcome(self.reduce(ctx)?)
+    pub(crate) fn reduce_literal_string(&self, ctx: &SugarCtx) -> FloorRead<String> {
+        crate::sugar::format::literal_string_floor_from_outcome(self.reduce(ctx))
     }
 }
 
@@ -183,11 +172,8 @@ impl SugarBody<FormatTemplateFloor> {
         Self::from_node(crate::sugar::format::build_format_template_body(expr, fcx))
     }
 
-    pub(crate) fn reduce_format_template(
-        &self,
-        ctx: &SugarCtx,
-    ) -> Result<FloorRead<String>, FactoryGap> {
-        crate::sugar::format::format_template_floor_from_outcome(self.reduce(ctx)?)
+    pub(crate) fn reduce_format_template(&self, ctx: &SugarCtx) -> FloorRead<String> {
+        crate::sugar::format::format_template_floor_from_outcome(self.reduce(ctx))
     }
 }
 
@@ -199,8 +185,8 @@ impl SugarBody<FormatValueFloor> {
     pub(crate) fn reduce_format_value(
         &self,
         ctx: &SugarCtx,
-    ) -> Result<FloorRead<crate::sugar::format::FmtValue>, FactoryGap> {
-        crate::sugar::format::format_value_floor_from_outcome(self.reduce(ctx)?)
+    ) -> FloorRead<crate::sugar::format::FmtValue> {
+        crate::sugar::format::format_value_floor_from_outcome(self.reduce(ctx))
     }
 }
 
@@ -213,6 +199,7 @@ pub(crate) struct SugarBuildCtx<'a, 'e> {
     scope: &'a TemporalScope,
     options: &'a LiftOptions,
     let_inits: &'a BTreeMap<String, &'e Expr>,
+    expected_type: Option<String>,
     bound_path_stack: Vec<String>,
     const_path_stack: Vec<String>,
 }
@@ -227,6 +214,7 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
             scope,
             options,
             let_inits,
+            expected_type: None,
             bound_path_stack: Vec::new(),
             const_path_stack: Vec::new(),
         }
@@ -244,6 +232,21 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
         self.let_inits
     }
 
+    pub(crate) fn expected_type(&self) -> Option<&str> {
+        self.expected_type.as_deref()
+    }
+
+    pub(crate) fn with_expected_type(&self, expected_type: Option<String>) -> Self {
+        Self {
+            scope: self.scope,
+            options: self.options,
+            let_inits: self.let_inits,
+            expected_type,
+            bound_path_stack: self.bound_path_stack.clone(),
+            const_path_stack: self.const_path_stack.clone(),
+        }
+    }
+
     pub(crate) fn resolving_bound_path(&self, name: &str) -> bool {
         self.bound_path_stack.iter().any(|current| current == name)
     }
@@ -255,6 +258,7 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
             scope: self.scope,
             options: self.options,
             let_inits: self.let_inits,
+            expected_type: self.expected_type.clone(),
             bound_path_stack,
             const_path_stack: self.const_path_stack.clone(),
         }
@@ -271,6 +275,7 @@ impl<'a, 'e> SugarBuildCtx<'a, 'e> {
             scope: self.scope,
             options: self.options,
             let_inits: self.let_inits,
+            expected_type: self.expected_type.clone(),
             bound_path_stack: self.bound_path_stack.clone(),
             const_path_stack,
         }
@@ -286,7 +291,7 @@ pub(crate) fn reduce_expr(
     fcx: &SugarBuildCtx,
     role: SugarRole,
     ctx: &SugarCtx,
-) -> FactoryReduction {
+) -> Outcome {
     build_expr(expr, fcx, role).reduce(ctx)
 }
 
@@ -306,7 +311,7 @@ pub(crate) fn build_term(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar> {
     build_expr(expr, fcx, SugarRole::Term)
 }
 
-pub(crate) fn reduce_term(expr: &Expr, fcx: &SugarBuildCtx, ctx: &SugarCtx) -> FactoryReduction {
+pub(crate) fn reduce_term(expr: &Expr, fcx: &SugarBuildCtx, ctx: &SugarCtx) -> Outcome {
     reduce_expr(expr, fcx, SugarRole::Term, ctx)
 }
 
@@ -318,11 +323,7 @@ pub(crate) fn build_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Sugar
     build_expr(expr, fcx, SugarRole::Composite)
 }
 
-pub(crate) fn reduce_composite(
-    expr: &Expr,
-    fcx: &SugarBuildCtx,
-    ctx: &SugarCtx,
-) -> FactoryReduction {
+pub(crate) fn reduce_composite(expr: &Expr, fcx: &SugarBuildCtx, ctx: &SugarCtx) -> Outcome {
     reduce_expr(expr, fcx, SugarRole::Composite, ctx)
 }
 
@@ -338,11 +339,7 @@ pub(crate) fn build_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Box<dyn Suga
     build_expr(expr, fcx, SugarRole::Constraint)
 }
 
-pub(crate) fn reduce_constraint(
-    expr: &Expr,
-    fcx: &SugarBuildCtx,
-    ctx: &SugarCtx,
-) -> FactoryReduction {
+pub(crate) fn reduce_constraint(expr: &Expr, fcx: &SugarBuildCtx, ctx: &SugarCtx) -> Outcome {
     reduce_expr(expr, fcx, SugarRole::Constraint, ctx)
 }
 
@@ -417,8 +414,8 @@ impl FactoryAuditSeed {
         }
     }
 
-    fn audit_result(&self, reduction: &FactoryReduction) -> FactoryAudit {
-        let (disposition, output, reason) = self.disposition_result(reduction);
+    fn audit_result(&self, outcome: &Outcome) -> FactoryAudit {
+        let (disposition, output, reason) = self.disposition_outcome(outcome);
         self.audit_with(disposition, output, reason)
     }
 
@@ -440,23 +437,6 @@ impl FactoryAuditSeed {
             output,
             reason,
         }
-    }
-
-    fn disposition_result(
-        &self,
-        reduction: &FactoryReduction,
-    ) -> (FactoryDisposition, &'static str, Option<String>) {
-        let outcome = match reduction {
-            Ok(outcome) => outcome,
-            Err(gap) => {
-                return (
-                    FactoryDisposition::Unresolved,
-                    "gap",
-                    Some(gap.reason.clone()),
-                )
-            }
-        };
-        self.disposition_outcome(outcome)
     }
 
     fn disposition_outcome(
@@ -502,11 +482,11 @@ impl FactoryAuditSeed {
                         "inactive",
                         Some(format!("inert: {reason}")),
                     ),
-                    Disposition::Unclassified => (
-                        FactoryDisposition::Unresolved,
-                        "gap",
-                        Some(gap_reason_from_unsupported_reason(self, &reason)),
-                    ),
+                    Disposition::Unclassified => {
+                        panic!(
+                            "incomplete Outcome has an unclassified Effect: {reason}; all Incomplete Outcomes must carry a named terminal Effect"
+                        )
+                    }
                 }
             }
         }
@@ -524,36 +504,6 @@ impl FactoryAuditSeed {
             ),
         }
     }
-}
-
-fn structural_bail_to_gap(seed: &FactoryAuditSeed, outcome: Outcome) -> FactoryReduction {
-    match &outcome {
-        Outcome::Incomplete(Effect::Unsupported { reason })
-            if refusal_disposition(reason) == Disposition::Unclassified =>
-        {
-            Err(FactoryGap {
-                reason: gap_reason_from_unsupported_reason(seed, reason),
-            })
-        }
-        _ => Ok(outcome),
-    }
-}
-
-fn gap_reason_from_unsupported_reason(seed: &FactoryAuditSeed, reason: &str) -> String {
-    if reason == STRUCTURAL_BACKSTOP_REASON {
-        seed.unresolved_reason()
-    } else if reason.contains("write more Sugar for this AST") {
-        reason.to_string()
-    } else {
-        format!("{reason}; write more Sugar for this AST")
-    }
-}
-
-fn panic_on_gap(gap: FactoryGap) -> ! {
-    panic!(
-        "factory gap has no terminal Outcome: {}; run the factory audit gap report to enumerate this engine hole",
-        gap.reason
-    )
 }
 
 fn factory_audit_span(span: proc_macro2::Span) -> FactoryAuditSpan {
@@ -579,12 +529,9 @@ impl AccountedSugar {
 }
 
 impl Sugar for AccountedSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
-        let reduction = match self.inner.reduce(ctx) {
-            Ok(outcome) => structural_bail_to_gap(&self.seed, outcome),
-            Err(gap) => Err(gap),
-        };
-        let audit = self.seed.audit_result(&reduction);
+    fn reduce(&self, ctx: &SugarCtx) -> Outcome {
+        let outcome = self.inner.reduce(ctx);
+        let audit = self.seed.audit_result(&outcome);
         if matches!(
             audit.disposition,
             FactoryDisposition::Refused | FactoryDisposition::Unresolved
@@ -615,21 +562,11 @@ impl Sugar for AccountedSugar {
             );
         }
         ctx.record_factory_audit(audit);
-        reduction
+        outcome
     }
 
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        match self.reduce(ctx) {
-            Ok(outcome) => outcome,
-            Err(gap) => panic_on_gap(gap),
-        }
-    }
-}
-
-pub(crate) fn compat_reduction(reduction: FactoryReduction) -> Outcome {
-    match reduction {
-        Ok(outcome) => outcome,
-        Err(gap) => panic_on_gap(gap),
+        self.reduce(ctx)
     }
 }
 
@@ -659,7 +596,7 @@ mod tests {
             },
         });
 
-        let audit = seed.audit_result(&Ok(outcome));
+        let audit = seed.audit_result(&outcome);
 
         assert_eq!(audit.disposition, FactoryDisposition::Warranted);
         assert_eq!(audit.output, "auxiliary-constraints");
@@ -673,65 +610,7 @@ mod tests {
     }
 
     #[test]
-    fn structural_backstop_is_factory_gap_not_incomplete_outcome() {
-        let seed = FactoryAuditSeed {
-            ast_kind: "expr",
-            site: "iter".to_string(),
-            line: 7,
-            span: None,
-            requested_role: "Composite".to_string(),
-            selected: Some("bound_path_composite"),
-            candidates: Vec::new(),
-        };
-
-        let reduction = structural_bail_to_gap(&seed, Outcome::from_opt(None));
-        assert!(
-            reduction.is_err(),
-            "a structural factory miss has no terminal Outcome"
-        );
-
-        let audit = seed.audit_result(&reduction);
-        assert_eq!(audit.disposition, FactoryDisposition::Unresolved);
-        assert_eq!(audit.output, "gap");
-        assert!(
-            audit
-                .reason
-                .as_deref()
-                .is_some_and(|reason| reason.contains("write more Sugar")),
-            "{audit:?}"
-        );
-    }
-
-    #[test]
-    fn no_candidate_structural_backstop_is_factory_gap() {
-        let seed = FactoryAuditSeed {
-            ast_kind: "expr",
-            site: "opaque_shape()".to_string(),
-            line: 11,
-            span: None,
-            requested_role: "Composite".to_string(),
-            selected: None,
-            candidates: Vec::new(),
-        };
-
-        let reduction = structural_bail_to_gap(&seed, Outcome::from_opt(None));
-        assert!(
-            reduction.is_err(),
-            "a no-candidate factory miss has no terminal Outcome"
-        );
-
-        let audit = seed.audit_result(&reduction);
-        assert_eq!(audit.disposition, FactoryDisposition::Unresolved);
-        assert_eq!(audit.output, "gap");
-        assert!(
-            audit.reason.as_deref().is_some_and(|reason| reason
-                .contains("no Sugar candidate for role Composite at `opaque_shape()`")),
-            "{audit:?}"
-        );
-    }
-
-    #[test]
-    fn named_effect_stays_incomplete_outcome_not_factory_gap() {
+    fn named_effect_stays_incomplete_outcome() {
         let seed = FactoryAuditSeed {
             ast_kind: "expr",
             site: "&mut x".to_string(),
@@ -742,66 +621,12 @@ mod tests {
             candidates: Vec::new(),
         };
 
-        let reduction = structural_bail_to_gap(
-            &seed,
-            Outcome::Incomplete(Effect::TemporalRead {
-                boundary: "&mut x".to_string(),
-            }),
-        );
-        assert!(
-            reduction.is_ok(),
-            "a real effect remains a terminal Outcome"
-        );
+        let outcome = Outcome::Incomplete(Effect::TemporalRead {
+            boundary: "&mut x".to_string(),
+        });
 
-        let audit = seed.audit_result(&reduction);
+        let audit = seed.audit_result(&outcome);
         assert_eq!(audit.disposition, FactoryDisposition::Refused);
         assert_eq!(audit.output, "effect");
-    }
-
-    #[test]
-    fn recognized_term_structural_bail_is_gap_not_opaque_complete() {
-        let seed = FactoryAuditSeed {
-            ast_kind: "expr",
-            site: "a + b".to_string(),
-            line: 7,
-            span: None,
-            requested_role: "Term".to_string(),
-            selected: Some("binop"),
-            candidates: Vec::new(),
-        };
-
-        let bailed = structural_bail_to_gap(&seed, Outcome::from_opt(None));
-        assert!(
-            bailed.is_err(),
-            "a recognized-Term structural bail must be a factory gap, not an opaque Complete"
-        );
-
-        let audit = seed.audit_result(&bailed);
-        assert_eq!(audit.disposition, FactoryDisposition::Unresolved);
-        assert_eq!(audit.output, "gap");
-
-        let completed = Outcome::Complete(Desugared::Term(std::rc::Rc::new(
-            sugar_ir_symbolic::Term::Var {
-                name: "real".to_string(),
-            },
-        )));
-        assert!(
-            matches!(structural_bail_to_gap(&seed, completed),
-                Ok(
-                Outcome::Complete(Desugared::Term(t))
-            ) if matches!(t.as_ref(), sugar_ir_symbolic::Term::Var { name } if name == "real")),
-            "a successful Complete must pass through unchanged"
-        );
-    }
-
-    #[test]
-    fn factory_gap_panics_if_read_as_desugar_outcome() {
-        let gap = FactoryGap::new("gap is audit-only");
-        let panic = std::panic::catch_unwind(|| compat_reduction(Err(gap)));
-
-        assert!(
-            panic.is_err(),
-            "a factory gap has no Outcome; callers must use reduce/audit, not desugar"
-        );
     }
 }

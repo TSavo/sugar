@@ -5,16 +5,14 @@
 // receiver bottoms out to `res:ok(_)` or `res:err(_)`, the predicate is a literal
 // bool, replacing the opaque `method:is_ok` EUF var (no teeth).
 //
-// EXACT-OR-NONE AT RECOGNIZE. We claim only when the receiver is known to ground
-// to `res:ok`/`res:err`: integer `try_from(literal)`, literal-payload `Ok(..)`/
-// `Err(..)`, or a no-op `inspect`/`inspect_err` chain over one of those stable
-// sources. Runtime/effectful payloads, transforming adaptors, and non-no-op
-// callbacks decline so existing opaque-EUF handling stands.
+// EXACT-OR-PANIC AT DESUGAR. We claim only when the receiver is known to ground
+// to `res:ok`/`res:err`: integer `try_from(literal)`, Result constructors, or
+// adaptors that preserve the Result floor. Runtime/effectful children propagate
+// their own Effect; a constructed receiver that is not a Result floor is a factory
+// construction bug and panics.
 //
 // TEETH. `u8::try_from(256u16).is_err()` grounds to `res:err` -> `Bool(true)`;
 // `.is_ok()` -> `Bool(false)` (z3-UNSAT if asserted).
-
-use std::collections::BTreeMap;
 
 use std::rc::Rc;
 
@@ -23,12 +21,11 @@ use syn::Expr;
 use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::sugar::format::stable_let_bindings;
-use crate::sugar::monadic::{is_grounded_literal_term, RES_ERR, RES_OK};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::term_dispatch::{MonadicFloorAccept, MonadicFloorVisitor};
 use crate::{
-    bool_const, const_fold_int_term, const_fold_u128_term, strip_refs_groups, Desugared, Effect,
-    Outcome, Sugar, SugarCtx,
+    bool_const, const_fold_int_term, const_fold_u128_term, strip_refs_groups, Desugared, Outcome,
+    Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
@@ -47,38 +44,32 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     }
     Some(Box::new(ResultPredicateSugar {
         method,
-        receiver: (*call.receiver).clone(),
-        let_inits: capture_let_inits(fcx),
+        receiver: SugarBody::term(&call.receiver, fcx),
+        layout: layout_from_size_align_args(&call.receiver).map(|(size, align)| LayoutArgs {
+            size: SugarBody::term(size, fcx),
+            align: SugarBody::term(align, fcx),
+        }),
     }))
 }
 
 struct ResultPredicateSugar {
     method: String,
-    receiver: Expr,
-    let_inits: BTreeMap<String, Expr>,
+    receiver: SugarBody<TermFloor>,
+    layout: Option<LayoutArgs>,
 }
 
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
+struct LayoutArgs {
+    size: SugarBody<TermFloor>,
+    align: SugarBody<TermFloor>,
 }
 
 impl Sugar for ResultPredicateSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let stable = stable_let_bindings(ctx.scope);
-        let let_inits: BTreeMap<String, &Expr> = stable
-            .iter()
-            .map(|(name, init)| (name.clone(), init))
-            .chain(
-                self.let_inits
-                    .iter()
-                    .map(|(name, init)| (name.clone(), init)),
-            )
-            .collect();
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        if let Some(is_ok) = layout_from_size_align_is_ok(&self.receiver, ctx, &fcx) {
+        if let Some(layout) = &self.layout {
+            let is_ok = match layout.is_ok(ctx) {
+                Ok(value) => value,
+                Err(outcome) => return outcome,
+            };
             let value = if self.method == "is_ok" {
                 is_ok
             } else {
@@ -92,24 +83,94 @@ impl Sugar for ResultPredicateSugar {
             );
             return Outcome::Complete(Desugared::Term(bool_const(value)));
         }
-        let receiver = match desugar_term_expr(&self.receiver, ctx, &fcx) {
-            Ok(term) => term,
-            Err(outcome) => return outcome,
+        let receiver = match self.receiver.reduce(ctx) {
+            Outcome::Complete(d) => d.into_term().unwrap_or_else(|| {
+                panic!(
+                    "Result predicate `{}` receiver reduced to non-term",
+                    self.method
+                )
+            }),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
-        let Some(presence) = result_presence(&receiver) else {
-            return Outcome::from_opt(None);
+        receiver.accept_monadic_floor(ResultPresenceVisitor {
+            method: &self.method,
+        })
+    }
+}
+
+impl LayoutArgs {
+    fn is_ok(&self, ctx: &SugarCtx) -> Result<bool, Outcome> {
+        let size = term_as_u128(&reduce_term_body(&self.size, ctx)?)
+            .unwrap_or_else(|| panic!("Layout::from_size_align size did not reduce to integer"));
+        let align = term_as_u128(&reduce_term_body(&self.align, ctx)?)
+            .unwrap_or_else(|| panic!("Layout::from_size_align align did not reduce to integer"));
+        if align == 0 || !align.is_power_of_two() {
+            return Ok(false);
+        }
+        let rem = size % align;
+        let rounded = if rem == 0 {
+            size
+        } else {
+            let padding = align
+                .checked_sub(rem)
+                .unwrap_or_else(|| panic!("Layout::from_size_align align remainder underflowed"));
+            let Some(rounded) = size.checked_add(padding) else {
+                return Ok(false);
+            };
+            rounded
         };
-        let is_ok = match presence {
-            Ok(is_ok) => is_ok,
-            Err(kind) => {
-                return Outcome::Incomplete(Effect::Unsupported {
-                    reason: format!(
-                        "runtime Option/Result payload, not literal (`{}` over `{kind}`)",
-                        self.method
-                    ),
-                })
-            }
-        };
+        Ok(rounded <= isize::MAX as u128)
+    }
+}
+
+fn reduce_term_body(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
+    match body.reduce(ctx) {
+        Outcome::Complete(d) => Ok(d
+            .into_term()
+            .unwrap_or_else(|| panic!("Layout::from_size_align argument reduced to non-term"))),
+        Outcome::Incomplete(e) => Err(Outcome::Incomplete(e)),
+    }
+}
+
+struct ResultPresenceVisitor<'a> {
+    method: &'a str,
+}
+
+impl MonadicFloorVisitor for ResultPresenceVisitor<'_> {
+    type Output = Outcome;
+
+    fn visit_some(self, _inner: &Rc<Term>) -> Self::Output {
+        panic!(
+            "Result predicate `{}` received an Option::Some floor",
+            self.method
+        )
+    }
+
+    fn visit_none(self) -> Self::Output {
+        panic!(
+            "Result predicate `{}` received an Option::None floor",
+            self.method
+        )
+    }
+
+    fn visit_ok(self, _inner: &Rc<Term>) -> Self::Output {
+        self.complete(true)
+    }
+
+    fn visit_err(self, _inner: &Rc<Term>) -> Self::Output {
+        self.complete(false)
+    }
+
+    fn visit_non_monadic(self, _term: &Rc<Term>) -> Self::Output {
+        panic!(
+            "Result predicate `{}` receiver did not reduce to Result constructor",
+            self.method
+        )
+    }
+}
+
+impl ResultPresenceVisitor<'_> {
+    fn complete(self, is_ok: bool) -> Outcome {
         let value = if self.method == "is_ok" {
             is_ok
         } else {
@@ -117,32 +178,11 @@ impl Sugar for ResultPredicateSugar {
         };
         debug!(
             target: "sugar_lift_rust_tests::sugar::result_predicate",
-            method = self.method.as_str(),
+            method = self.method,
             value,
             "resolved Result presence predicate stdlib axiom"
         );
         Outcome::Complete(Desugared::Term(bool_const(value)))
-    }
-}
-
-/// `Some(true)` for `res:ok`, `Some(false)` for `res:err`, `None` otherwise.
-fn result_presence(term: &Term) -> Option<Result<bool, &'static str>> {
-    match term {
-        Term::Ctor { name, args } if name == RES_OK && args.len() == 1 => {
-            if is_grounded_literal_term(args[0].as_ref()) {
-                Some(Ok(true))
-            } else {
-                Some(Err(RES_OK))
-            }
-        }
-        Term::Ctor { name, args } if name == RES_ERR && args.len() == 1 => {
-            if is_grounded_literal_term(args[0].as_ref()) {
-                Some(Ok(false))
-            } else {
-                Some(Err(RES_ERR))
-            }
-        }
-        _ => None,
     }
 }
 
@@ -211,24 +251,6 @@ fn layout_from_size_align_candidate(expr: &Expr, fcx: &SugarBuildCtx) -> bool {
         && crate::sugar::primitive_int::integer_receiver_can_ground(align, fcx, 0)
 }
 
-fn layout_from_size_align_is_ok(expr: &Expr, ctx: &SugarCtx, fcx: &SugarBuildCtx) -> Option<bool> {
-    let (size, align) = layout_from_size_align_args(expr)?;
-    let size_term = desugar_term_expr(size, ctx, fcx).ok()?;
-    let align_term = desugar_term_expr(align, ctx, fcx).ok()?;
-    let size = term_as_u128(&size_term)?;
-    let align = term_as_u128(&align_term)?;
-    if align == 0 || !align.is_power_of_two() {
-        return Some(false);
-    }
-    let rem = size % align;
-    let rounded = if rem == 0 {
-        size
-    } else {
-        size.checked_add(align.checked_sub(rem)?)?
-    };
-    Some(rounded <= isize::MAX as u128)
-}
-
 fn layout_from_size_align_args(expr: &Expr) -> Option<(&Expr, &Expr)> {
     let Expr::Call(call) = strip_refs_groups(expr) else {
         return None;
@@ -246,17 +268,6 @@ fn layout_from_size_align_args(expr: &Expr) -> Option<(&Expr, &Expr)> {
         return None;
     }
     Some((&call.args[0], &call.args[1]))
-}
-
-fn desugar_term_expr(
-    expr: &Expr,
-    ctx: &SugarCtx,
-    fcx: &SugarBuildCtx,
-) -> Result<Rc<Term>, Outcome> {
-    match build_term(expr, fcx).desugar(ctx) {
-        Outcome::Complete(d) => d.into_term().ok_or_else(|| Outcome::from_opt(None)),
-        Outcome::Incomplete(e) => Err(Outcome::Incomplete(e)),
-    }
 }
 
 fn term_as_u128(term: &Rc<Term>) -> Option<u128> {

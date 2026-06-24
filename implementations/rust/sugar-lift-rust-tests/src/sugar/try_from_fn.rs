@@ -40,21 +40,34 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         return None;
     }
     Some(Box::new(TryFromFnSugar {
-        source: expr.clone(),
+        source_site: TryFromFnSource::new(expr.clone()),
         len,
         func: func.clone(),
     }))
 }
 
+struct TryFromFnSource {
+    expr: Expr,
+}
+
+impl TryFromFnSource {
+    fn new(expr: Expr) -> Self {
+        Self { expr }
+    }
+}
+
 struct TryFromFnSugar {
-    source: Expr,
+    source_site: TryFromFnSource,
     len: usize,
     func: Expr,
 }
 
 impl Sugar for TryFromFnSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt(reduce_try_from_fn(&self.source, self.len, &self.func, ctx))
+        Outcome::Complete(
+            reduce_try_from_fn(&self.source_site.expr, self.len, &self.func, ctx)
+                .unwrap_or_else(|| try_from_fn_gap("try_from_fn did not reduce to a monadic term")),
+        )
     }
 }
 
@@ -84,6 +97,10 @@ fn reduce_try_from_fn(source: &Expr, len: usize, func: &Expr, ctx: &SugarCtx) ->
         "literal array try_from_fn reduced to Some(array)"
     );
     Some(Desugared::Term(monadic::some_term(array_term)))
+}
+
+fn try_from_fn_gap(reason: &str) -> ! {
+    panic!("{reason}")
 }
 
 fn eval_option_function(func: &Expr, arg: Expr, ctx: &SugarCtx) -> Option<Option<ConstVal>> {

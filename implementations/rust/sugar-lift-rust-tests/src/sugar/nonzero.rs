@@ -6,15 +6,18 @@
 
 use std::rc::Rc;
 
-use sugar_ir_symbolic::{ConstValue, Term};
+use sugar_ir_symbolic::Term;
 use syn::{Expr, ExprPath, PathArguments, Type};
 use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::sugar::int_sqrt::term_as_int;
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::int_literal::{ExactInt, NumericFloor};
 use crate::sugar::monadic::{none_term, some_term};
-use crate::{const_fold_u128_term, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
+use crate::sugar::term_dispatch::{
+    MonadicFloorAccept, MonadicFloorVisitor, ScalarFloorAccept, ScalarFloorVisitor,
+};
+use crate::{str_const, strip_refs_groups, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const NEW_EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("nonzero_new", SugarRole::Term, recognize_new);
@@ -32,8 +35,8 @@ fn recognize_assoc_const(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box<dyn Su
     let Expr::Path(path) = expr else {
         return None;
     };
-    nonzero_assoc_const_path(path)?;
-    Some(Box::new(NonZeroAssocConstSugar { expr: expr.clone() }))
+    let (kind, konst) = nonzero_assoc_const_path(path)?;
+    Some(Box::new(NonZeroAssocConstSugar { kind, konst }))
 }
 
 fn recognize_new(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
@@ -44,7 +47,8 @@ fn recognize_new(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
         return None;
     }
     Some(Box::new(NonZeroNewSugar {
-        value: build_term(&call.args[0], fcx),
+        value: SugarBody::term(&call.args[0], fcx),
+        site: token_key(expr),
     }))
 }
 
@@ -56,28 +60,27 @@ fn recognize_get(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
         return None;
     }
     Some(Box::new(NonZeroGetSugar {
-        receiver: build_term(&call.receiver, fcx),
+        receiver: SugarBody::term(&call.receiver, fcx),
+        site: token_key(expr),
     }))
 }
 
 struct NonZeroAssocConstSugar {
-    expr: Expr,
+    kind: NonZeroIntegerKind,
+    konst: String,
 }
 
 impl Sugar for NonZeroAssocConstSugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        let Expr::Path(path) = &self.expr else {
-            return Outcome::from_opt(None);
-        };
-        let Some((kind, konst)) = nonzero_assoc_const_path(path) else {
-            return Outcome::from_opt(None);
-        };
-        let Some(term) = nonzero_assoc_const_term(kind, &konst) else {
-            return Outcome::from_opt(None);
-        };
+        let term = nonzero_assoc_const_term(self.kind, &self.konst).unwrap_or_else(|| {
+            panic!(
+                "NonZero associated constant `{}` did not reduce to a scalar floor",
+                self.konst
+            )
+        });
         debug!(
             target: "sugar_lift_rust_tests::sugar::nonzero",
-            konst = konst.as_str(),
+            konst = self.konst.as_str(),
             "resolved NonZero associated constant axiom"
         );
         Outcome::Complete(Desugared::Term(term))
@@ -85,21 +88,59 @@ impl Sugar for NonZeroAssocConstSugar {
 }
 
 struct NonZeroNewSugar {
-    value: Box<dyn Sugar>,
+    value: SugarBody<TermFloor>,
+    site: String,
 }
 
 impl Sugar for NonZeroNewSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let value = match self.value.desugar(ctx) {
-            Outcome::Complete(d) => match d.into_term() {
-                Some(term) => term,
-                None => return Outcome::from_opt(None),
-            },
+        let value = match self.value.reduce(ctx) {
+            Outcome::Complete(d) => d
+                .into_term()
+                .unwrap_or_else(|| panic!("NonZero::new argument completed as non-term")),
             Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
-        let Some(is_zero) = nonzero_scalar_is_zero(&value) else {
-            return Outcome::from_opt(None);
-        };
+        value.accept_scalar_floor(NonZeroNewVisitor { site: &self.site })
+    }
+}
+
+struct NonZeroNewVisitor<'a> {
+    site: &'a str,
+}
+
+impl ScalarFloorVisitor for NonZeroNewVisitor<'_> {
+    type Output = Outcome;
+
+    fn visit_numeric(self, floor: NumericFloor) -> Self::Output {
+        let is_zero = numeric_floor_is_zero(floor);
+        let value = floor.term().unwrap_or_else(|| {
+            panic!(
+                "NonZero::new numeric floor did not reify as a term for `{}`",
+                self.site
+            )
+        });
+        self.complete(value, is_zero)
+    }
+
+    fn visit_bool(self, _value: bool) -> Self::Output {
+        panic!("NonZero::new received a bool floor for `{}`", self.site)
+    }
+
+    fn visit_char(self, value: char) -> Self::Output {
+        self.complete(str_const(value.to_string()), value == '\0')
+    }
+
+    fn visit_runtime(self, _term: &Rc<Term>) -> Self::Output {
+        Outcome::Incomplete(Effect::RuntimeNumericOperand {
+            boundary: self.site.to_string(),
+            operation: "NonZero::new".to_string(),
+            kind: "scalar".to_string(),
+        })
+    }
+}
+
+impl NonZeroNewVisitor<'_> {
+    fn complete(self, value: Rc<Term>, is_zero: bool) -> Outcome {
         debug!(
             target: "sugar_lift_rust_tests::sugar::nonzero",
             is_some = !is_zero,
@@ -114,55 +155,110 @@ impl Sugar for NonZeroNewSugar {
     }
 }
 
-fn nonzero_scalar_is_zero(term: &Rc<Term>) -> Option<bool> {
-    nonzero_scalar_codepoint(term).map(|n| n == 0).or_else(|| {
-        let value = const_fold_u128_term(term)?;
-        Some(value == 0)
-    })
-}
-
-fn nonzero_scalar_codepoint(term: &Rc<Term>) -> Option<i128> {
-    term_as_int(term).or_else(|| char_literal_codepoint(term))
-}
-
-fn char_literal_codepoint(term: &Rc<Term>) -> Option<i128> {
-    let Term::Const {
-        value: ConstValue::String(value),
-        sort,
-    } = term.as_ref()
-    else {
-        return None;
-    };
-    if sort.name != "String" {
-        return None;
+fn numeric_floor_is_zero(floor: NumericFloor) -> bool {
+    match floor {
+        NumericFloor::Untyped(value) => value == 0,
+        NumericFloor::Typed {
+            value: ExactInt::Signed(value),
+            ..
+        } => value == 0,
+        NumericFloor::Typed {
+            value: ExactInt::Unsigned(value),
+            ..
+        } => value == 0,
     }
-    let mut chars = value.chars();
-    let ch = chars.next()?;
-    chars.next().is_none().then_some(i128::from(u32::from(ch)))
 }
 
 struct NonZeroGetSugar {
-    receiver: Box<dyn Sugar>,
+    receiver: SugarBody<TermFloor>,
+    site: String,
 }
 
 impl Sugar for NonZeroGetSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let receiver = match self.receiver.desugar(ctx) {
-            Outcome::Complete(d) => match d.into_term() {
-                Some(term) => term,
-                None => return Outcome::from_opt(None),
-            },
+        let receiver = match self.receiver.reduce(ctx) {
+            Outcome::Complete(d) => d
+                .into_term()
+                .unwrap_or_else(|| panic!("NonZero::get receiver completed as non-term")),
             Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
-        let Some(value) = unwrap_some(&receiver).or_else(|| {
-            if term_as_int(&receiver).is_some() || const_fold_u128_term(&receiver).is_some() {
-                Some(Rc::clone(&receiver))
-            } else {
-                None
-            }
-        }) else {
-            return Outcome::from_opt(None);
-        };
+        receiver.accept_monadic_floor(NonZeroGetMonadicVisitor { site: &self.site })
+    }
+}
+
+struct NonZeroGetMonadicVisitor<'a> {
+    site: &'a str,
+}
+
+impl MonadicFloorVisitor for NonZeroGetMonadicVisitor<'_> {
+    type Output = Outcome;
+
+    fn visit_some(self, inner: &Rc<Term>) -> Self::Output {
+        inner.accept_scalar_floor(NonZeroGetScalarVisitor { site: self.site })
+    }
+
+    fn visit_none(self) -> Self::Output {
+        panic!(
+            "NonZero::get received a None floor for `{}`; unwrap owns that literal panic",
+            self.site
+        )
+    }
+
+    fn visit_ok(self, _inner: &Rc<Term>) -> Self::Output {
+        panic!(
+            "NonZero::get received a Result::Ok floor for `{}`",
+            self.site
+        )
+    }
+
+    fn visit_err(self, _inner: &Rc<Term>) -> Self::Output {
+        panic!(
+            "NonZero::get received a Result::Err floor for `{}`",
+            self.site
+        )
+    }
+
+    fn visit_non_monadic(self, term: &Rc<Term>) -> Self::Output {
+        term.accept_scalar_floor(NonZeroGetScalarVisitor { site: self.site })
+    }
+}
+
+struct NonZeroGetScalarVisitor<'a> {
+    site: &'a str,
+}
+
+impl ScalarFloorVisitor for NonZeroGetScalarVisitor<'_> {
+    type Output = Outcome;
+
+    fn visit_numeric(self, floor: NumericFloor) -> Self::Output {
+        let value = floor.term().unwrap_or_else(|| {
+            panic!(
+                "NonZero::get numeric floor did not reify as a term for `{}`",
+                self.site
+            )
+        });
+        self.complete(value)
+    }
+
+    fn visit_bool(self, _value: bool) -> Self::Output {
+        panic!("NonZero::get received a bool floor for `{}`", self.site)
+    }
+
+    fn visit_char(self, value: char) -> Self::Output {
+        self.complete(str_const(value.to_string()))
+    }
+
+    fn visit_runtime(self, _term: &Rc<Term>) -> Self::Output {
+        Outcome::Incomplete(Effect::RuntimeNumericOperand {
+            boundary: self.site.to_string(),
+            operation: "NonZero::get".to_string(),
+            kind: "scalar".to_string(),
+        })
+    }
+}
+
+impl NonZeroGetScalarVisitor<'_> {
+    fn complete(self, value: Rc<Term>) -> Outcome {
         debug!(
             target: "sugar_lift_rust_tests::sugar::nonzero",
             "resolved NonZero::get stdlib axiom to inner literal"
@@ -325,14 +421,5 @@ fn is_nonzero_derived(expr: &Expr) -> bool {
             is_nonzero_derived(&call.receiver)
         }
         _ => false,
-    }
-}
-
-fn unwrap_some(term: &Rc<Term>) -> Option<Rc<Term>> {
-    match term.as_ref() {
-        Term::Ctor { name, args } if name == crate::sugar::monadic::OPT_SOME && args.len() == 1 => {
-            Some(Rc::clone(&args[0]))
-        }
-        _ => None,
     }
 }

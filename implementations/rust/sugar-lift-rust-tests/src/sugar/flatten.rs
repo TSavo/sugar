@@ -2,18 +2,17 @@
 //
 // `flatten`: the `.flatten()` adaptor over a finite literal of literal sub-sequences
 // (`[[1, 2], [3, 4]].iter().flatten()`). It concatenates each element's OWN finite
-// literal sequence in source order. Each outer element must itself be a clean finite
-// literal sub-sequence; if not, the node gaps rather than rebuilding through the factory.
+// literal sequence in source order. Each completed outer element dispatches to its own
+// literal floor via `SequenceElementVisitor`; this node never reconstructs nested sugar
+// from raw syntax.
 // This is the outermost-call
 // recognizer; `peel_fold_adaptors` carries the same `FlattenSugar` when `.flatten()`
 // sits inside a longer adaptor chain.
 
-use crate::sugar::factory::{
-    compat_reduction, CompositeFloor, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx,
-};
-use crate::sugar::literal::{LiteralSugar, EMPTY_DOMAIN_REASON};
+use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
-use crate::{Desugared, DesugaredElem, Effect, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
+use crate::sugar::sequence_floor::SequenceElementVisitor;
+use crate::{Desugared, DesugaredElem, Outcome, Sugar, SugarCtx, SUGAR_SEQ_CAP};
 use syn::Expr;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -42,48 +41,54 @@ pub(crate) struct FlattenSugar {
 }
 
 impl Sugar for FlattenSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
-        let outer = match self.inner.reduce(ctx)? {
+    fn reduce(&self, ctx: &SugarCtx) -> Outcome {
+        let outer = match self.inner.reduce(ctx) {
             Outcome::Complete(d) => d
                 .into_seq()
-                .ok_or_else(|| FactoryGap::new("flatten receiver reduced to non-sequence"))?,
-            Outcome::Incomplete(effect) => return Ok(Outcome::Incomplete(effect)),
+                .unwrap_or_else(|| panic!("typed flatten receiver reduced to non-sequence")),
+            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
         };
         let mut out = Vec::new();
         for elem in outer {
-            let sub = literal_subsequence_from_expr(&elem.expr, ctx)?;
+            let sub = match elem.accept_sequence(FlattenSubsequenceVisitor) {
+                Ok(seq) => seq,
+                Err(outcome) => return outcome,
+            };
             let total = out
                 .len()
                 .checked_add(sub.len())
-                .ok_or_else(|| FactoryGap::new("flatten sequence length overflow"))?;
+                .unwrap_or_else(|| panic!("flatten sequence length overflow"));
             if total > SUGAR_SEQ_CAP as usize {
-                return Err(FactoryGap::new(format!(
-                    "flatten sequence length {total} exceeds cap {SUGAR_SEQ_CAP}"
-                )));
+                panic!("flatten sequence length {total} exceeds cap {SUGAR_SEQ_CAP}");
             }
             out.extend(sub);
         }
-        Ok(Outcome::Complete(Desugared::Seq(out)))
+        Outcome::Complete(Desugared::Seq(out))
     }
 
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
+        self.reduce(ctx)
     }
 }
 
-fn literal_subsequence_from_expr(
-    expr: &Expr,
-    ctx: &SugarCtx,
-) -> Result<Vec<DesugaredElem>, FactoryGap> {
-    match (LiteralSugar { base: expr.clone() }).desugar(ctx) {
-        Outcome::Complete(d) => d
-            .into_seq()
-            .ok_or_else(|| FactoryGap::new("flatten element reduced to non-sequence")),
-        Outcome::Incomplete(Effect::Unsupported { reason }) if reason == EMPTY_DOMAIN_REASON => {
-            Ok(Vec::new())
-        }
-        Outcome::Incomplete(_) => Err(FactoryGap::new(
-            "flatten element is not a literal-determined sub-sequence",
-        )),
+struct FlattenSubsequenceVisitor;
+
+impl SequenceElementVisitor for FlattenSubsequenceVisitor {
+    type Output = Result<Vec<DesugaredElem>, Outcome>;
+
+    fn visit_sequence(self, seq: Vec<DesugaredElem>) -> Self::Output {
+        Ok(seq)
+    }
+
+    fn visit_runtime(self, elem: &DesugaredElem) -> Self::Output {
+        let expr = &elem.expr;
+        panic!(
+            "flatten element did not dispatch to a nested sequence floor: {}",
+            quote::quote!(#expr)
+        )
+    }
+
+    fn visit_non_sequence_literal(self, _elem: &DesugaredElem) -> Self::Output {
+        panic!("flatten element dispatched to a non-sequence literal floor")
     }
 }

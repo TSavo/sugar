@@ -3,18 +3,17 @@
 // `OptionPredicateSugar`: `.is_some()` / `.is_none()` over a grounded std Option
 // constructor. This is value sugar, separate from generic method calls: once the
 // receiver body bottoms out to `opt:some(_)` or `opt:none`, the predicate is a literal bool.
+// The payload does not participate: `Some(runtime()).is_some()` is still the literal
+// predicate `true`, with the runtime payload safely ignored by the monadic visitor.
 
-use sugar_ir_symbolic::Term;
 use syn::Expr;
 use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
-};
-use crate::sugar::monadic::{is_grounded_literal_term, OPT_NONE, OPT_SOME};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::nonzero::is_nonzero_new_call;
-use crate::{bool_const, strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::sugar::term_dispatch::{MonadicFloorAccept, MonadicFloorVisitor};
+use crate::{bool_const, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("option_predicate", SugarRole::Term, recognize);
@@ -46,36 +45,66 @@ impl OptionPredicateSugar {
 }
 
 impl Sugar for OptionPredicateSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
-        let receiver = match self.receiver.reduce(ctx)? {
+    fn reduce(&self, ctx: &SugarCtx) -> Outcome {
+        let receiver = match self.receiver.reduce(ctx) {
             Outcome::Complete(d) => match d.into_term() {
                 Some(term) => term,
-                None => {
-                    return Err(FactoryGap::new(format!(
-                        "Option predicate `{}` receiver reduced to non-term",
-                        self.method
-                    )))
-                }
+                None => panic!(
+                    "Option predicate `{}` receiver reduced to non-term",
+                    self.method
+                ),
             },
-            Outcome::Incomplete(e) => return Ok(Outcome::Incomplete(e)),
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
-        let Some(presence) = option_presence(&receiver) else {
-            return Err(FactoryGap::new(format!(
-                "Option predicate `{}` receiver did not reduce to Option constructor",
-                self.method
-            )));
-        };
-        let is_some = match presence {
-            Ok(is_some) => is_some,
-            Err(kind) => {
-                return Ok(Outcome::Incomplete(Effect::Unsupported {
-                    reason: format!(
-                        "runtime Option/Result payload, not literal (`{}` over `{kind}`)",
-                        self.method
-                    ),
-                }))
-            }
-        };
+        receiver.accept_monadic_floor(OptionPresenceVisitor {
+            method: &self.method,
+        })
+    }
+
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
+        self.reduce(ctx)
+    }
+}
+
+struct OptionPresenceVisitor<'a> {
+    method: &'a str,
+}
+
+impl MonadicFloorVisitor for OptionPresenceVisitor<'_> {
+    type Output = Outcome;
+
+    fn visit_some(self, _inner: &std::rc::Rc<sugar_ir_symbolic::Term>) -> Self::Output {
+        self.complete(true)
+    }
+
+    fn visit_none(self) -> Self::Output {
+        self.complete(false)
+    }
+
+    fn visit_ok(self, _inner: &std::rc::Rc<sugar_ir_symbolic::Term>) -> Self::Output {
+        panic!(
+            "Option predicate `{}` received a Result::Ok floor",
+            self.method
+        )
+    }
+
+    fn visit_err(self, _inner: &std::rc::Rc<sugar_ir_symbolic::Term>) -> Self::Output {
+        panic!(
+            "Option predicate `{}` received a Result::Err floor",
+            self.method
+        )
+    }
+
+    fn visit_non_monadic(self, _term: &std::rc::Rc<sugar_ir_symbolic::Term>) -> Self::Output {
+        panic!(
+            "Option predicate `{}` receiver did not reduce to Option constructor",
+            self.method
+        )
+    }
+}
+
+impl OptionPresenceVisitor<'_> {
+    fn complete(self, is_some: bool) -> Outcome {
         let value = if self.method == "is_some" {
             is_some
         } else {
@@ -83,29 +112,11 @@ impl Sugar for OptionPredicateSugar {
         };
         debug!(
             target: "sugar_lift_rust_tests::sugar::option_predicate",
-            method = self.method.as_str(),
+            method = self.method,
             value,
             "resolved Option presence predicate stdlib axiom"
         );
-        Ok(Outcome::Complete(Desugared::Term(bool_const(value))))
-    }
-
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
-    }
-}
-
-fn option_presence(term: &Term) -> Option<Result<bool, &'static str>> {
-    match term {
-        Term::Ctor { name, args } if name == OPT_SOME && args.len() == 1 => {
-            if is_grounded_literal_term(args[0].as_ref()) {
-                Some(Ok(true))
-            } else {
-                Some(Err(OPT_SOME))
-            }
-        }
-        Term::Ctor { name, args } if name == OPT_NONE && args.is_empty() => Some(Ok(false)),
-        _ => None,
+        Outcome::Complete(Desugared::Term(bool_const(value)))
     }
 }
 

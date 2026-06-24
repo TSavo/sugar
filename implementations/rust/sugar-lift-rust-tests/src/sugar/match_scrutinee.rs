@@ -23,19 +23,14 @@
 // is made, and the single LEAF owns it:
 //   * the SCRUTINEE leaf: a recognized runtime-call scrutinee is a non-scalar runtime result
 //     -- the arm taken is not constructible from source literals -> `RuntimeMatchScrutinee`.
-// The composite makes NO check of its own: a recognized node always returns Incomplete its scrutinee leaf
-// (recognition -- a runtime-call scrutinee -- IS the verdict's precondition). The STRUCTURAL
-// backstop (`Effect::Unsupported` with `STRUCTURAL_BACKSTOP_REASON`) is the total-but-
-// unreachable tail kept to mirror the node shape -- a `Incomplete` the fall-through routers (both
-// callsites) discard exactly as the old `None` was, never a fake-refuse.
+// The composite makes NO check of its own: a recognized node always returns Incomplete
+// from its scrutinee leaf. Recognition -- a runtime-call scrutinee -- IS the verdict's
+// precondition.
 
 use syn::Expr;
 
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{
-    expr_is_runtime_call_result, token_key, Effect, Outcome, Sugar, SugarCtx,
-    STRUCTURAL_BACKSTOP_REASON,
-};
+use crate::{expr_is_runtime_call_result, token_key, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const VERDICT_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::match_scrutinee_verdict(
@@ -59,10 +54,8 @@ pub(crate) fn recognize_verdict(expr: &Expr, _fcx: &SugarBuildCtx) -> Option<Box
 /// non-scalar result, composed as a node whose `desugar` makes the runtime-match-scrutinee
 /// verdict at its single LEAF (the scrutinee). See the module header.
 pub(crate) struct MatchScrutineeSugar {
-    /// The full `match` expr -- the `boundary` token-key is `token_key(&expr)` (byte-identical
-    /// to the old predicate's `token_key(expr)`), and the leaf whose scrutinee is the runtime
-    /// call result.
-    expr: Expr,
+    /// Byte-identical to the old predicate's `token_key(expr)` boundary.
+    boundary: String,
 }
 
 impl MatchScrutineeSugar {
@@ -71,10 +64,10 @@ impl MatchScrutineeSugar {
     /// value produced only at run time -- not constructible from source literals, no single
     /// timeless `t` -> `RuntimeMatchScrutinee`. Recognition (a runtime-call scrutinee) is this
     /// leaf's precondition, so it always fires for a built node; it never completes.
-    fn runtime_scrutinee_effect(&self) -> Option<Effect> {
-        Some(Effect::RuntimeMatchScrutinee {
-            boundary: token_key(&self.expr),
-        })
+    fn runtime_scrutinee_effect(&self) -> Effect {
+        Effect::RuntimeMatchScrutinee {
+            boundary: self.boundary.clone(),
+        }
     }
 
     /// The total reduction, made WITHOUT a `SugarCtx` -- the verdict is purely SYNTACTIC (it
@@ -82,17 +75,11 @@ impl MatchScrutineeSugar {
     /// `Sugar::desugar(&ctx)` impl delegates here so the node has the canonical trait shape,
     /// while the thin node-router (`runtime_match_scrutinee_effect`) reads the SAME verdict
     /// through the trait.
-    /// The composite makes NO verdict of its own: it returns Incomplete its single SCRUTINEE leaf. A built
-    /// node always names `RuntimeMatchScrutinee` (recognition is the verdict's precondition);
-    /// the STRUCTURAL backstop is the total-but-unreachable tail the fall-through routers
-    /// discard as the old `None`.
+    /// The composite makes NO verdict of its own: it returns Incomplete from its single
+    /// SCRUTINEE leaf. A built node always names `RuntimeMatchScrutinee`; recognition is
+    /// the verdict's precondition.
     pub(crate) fn desugar_ctx_free(&self) -> Outcome {
-        if let Some(effect) = self.runtime_scrutinee_effect() {
-            return Outcome::Incomplete(effect);
-        }
-        Outcome::Incomplete(Effect::Unsupported {
-            reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
-        })
+        Outcome::Incomplete(self.runtime_scrutinee_effect())
     }
 }
 
@@ -119,5 +106,7 @@ pub(crate) fn decompose_match_scrutinee(expr: &Expr) -> Option<MatchScrutineeSug
     if !expr_is_runtime_call_result(&m.expr) {
         return None;
     }
-    Some(MatchScrutineeSugar { expr: expr.clone() })
+    Some(MatchScrutineeSugar {
+        boundary: token_key(expr),
+    })
 }

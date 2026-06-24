@@ -6,13 +6,12 @@
 // non-bool / runtime closure result. Lifted verbatim from the
 // `Adaptor::TakeWhile(closure)` arm of the former `apply_one_adaptor` match.
 
-use std::collections::BTreeMap;
-
 use syn::Expr;
 
-use crate::sugar::factory::{has_composite, SugarBuildCtx};
+use crate::sugar::bool_predicate::BoolPredicateClosure;
+use crate::sugar::factory::{has_composite, CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
-use crate::{const_eval_unary_closure, Desugared, Outcome, Sugar, SugarCtx};
+use crate::{Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::composite("take_while", recognize_composite);
@@ -33,77 +32,60 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
         return None;
     }
     Some(Box::new(TakeWhileRecognizedSugar {
-        receiver: (*call.receiver).clone(),
-        pred: pred.clone(),
-        let_inits: capture_let_inits(fcx),
+        inner: SugarBody::composite(&call.receiver, fcx),
+        pred: BoolPredicateClosure::build(pred.clone(), fcx)?,
     }))
 }
 
 struct TakeWhileRecognizedSugar {
-    receiver: Expr,
-    pred: syn::ExprClosure,
-    let_inits: BTreeMap<String, Expr>,
-}
-
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
+    inner: SugarBody<CompositeFloor>,
+    pred: BoolPredicateClosure,
 }
 
 impl Sugar for TakeWhileRecognizedSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            let stable = crate::sugar::format::stable_let_bindings(ctx.scope);
-            let let_inits: BTreeMap<String, &Expr> = stable
-                .iter()
-                .map(|(name, init)| (name.clone(), init))
-                .chain(
-                    self.let_inits
-                        .iter()
-                        .map(|(name, init)| (name.clone(), init)),
-                )
-                .collect();
-            let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-            let seq = method_family::build_literal_sequence_composite(&self.receiver, &fcx)?
-                .desugar(ctx)
-                .complete()?
-                .into_seq()?;
-            let mut out = Vec::new();
-            for elem in seq {
-                let v = elem.value.as_ref()?;
-                if const_eval_unary_closure(&self.pred, v)?.as_bool()? {
-                    out.push(elem);
-                } else {
-                    break;
-                }
-            }
-            Some(Desugared::Seq(out))
-        })())
+        reduce_take_while(&self.inner, &self.pred, ctx)
     }
 }
 
 /// Keep the leading run of elements where `pred` const-evaluates true.
 pub(crate) struct TakeWhileSugar {
-    pub(crate) inner: Box<dyn Sugar>,
-    pub(crate) pred: syn::ExprClosure,
+    pub(crate) inner: SugarBody<CompositeFloor>,
+    pub(crate) pred: BoolPredicateClosure,
 }
 
 impl Sugar for TakeWhileSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            let seq = self.inner.desugar(ctx).complete()?.into_seq()?;
-            let mut out = Vec::new();
-            for elem in seq {
-                let v = elem.value.as_ref()?;
-                if const_eval_unary_closure(&self.pred, v)?.as_bool()? {
-                    out.push(elem);
-                } else {
-                    break;
-                }
-            }
-            Some(Desugared::Seq(out))
-        })())
+        reduce_take_while(&self.inner, &self.pred, ctx)
     }
+}
+
+fn reduce_take_while(
+    inner: &SugarBody<CompositeFloor>,
+    pred: &BoolPredicateClosure,
+    ctx: &SugarCtx,
+) -> Outcome {
+    let seq = match inner.reduce(ctx) {
+        Outcome::Complete(d) => d
+            .into_seq()
+            .unwrap_or_else(|| take_while_gap("take_while receiver reduced to non-sequence")),
+        Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+    };
+    let mut out = Vec::new();
+    for (idx, elem) in seq.into_iter().enumerate() {
+        let keep = match pred.eval_for_elem(&elem, idx, "take_while", ctx) {
+            Ok(keep) => keep,
+            Err(outcome) => return outcome,
+        };
+        if keep {
+            out.push(elem);
+        } else {
+            break;
+        }
+    }
+    Outcome::Complete(Desugared::Seq(out))
+}
+
+fn take_while_gap(reason: &str) -> ! {
+    panic!("take_while did not reach a lawful floor: {reason}")
 }

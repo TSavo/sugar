@@ -7,13 +7,10 @@
 use std::rc::Rc;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
-};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::{
     bool_const, callsite_assertion_name, eq, strip_refs_groups, token_key, AssertionFactKind,
     Desugared, Effect, FloatWidthScope, Outcome, Sugar, SugarCtx, Warrant,
-    STRUCTURAL_BACKSTOP_REASON,
 };
 use sugar_ir_symbolic::{atomic_, Formula, Term};
 use syn::{Expr, ExprLit, ExprMethodCall, Lit, Type};
@@ -26,9 +23,23 @@ pub(crate) const CONSTRAINT_EXPR_SUGAR: ExprSugarClaim = ExprSugarClaim::new(
 
 struct FloatRefinementSugar {
     method: String,
-    receiver_expr: Expr,
+    receiver_width: FloatReceiverWidth,
+    literal_value: Option<bool>,
     receiver: SugarBody<TermFloor>,
     site: String,
+}
+
+enum FloatReceiverWidth {
+    Static(&'static str),
+    ScopePath(String),
+    Unstable(&'static str),
+    Unknown,
+}
+
+enum FloatWidthResolution {
+    Known(&'static str),
+    Unstable(&'static str),
+    Unknown,
 }
 
 fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
@@ -46,53 +57,69 @@ fn recognize_method(call: &ExprMethodCall, fcx: &SugarBuildCtx) -> Option<Box<dy
         return None;
     }
     Some(Box::new(FloatRefinementSugar {
-        method,
-        receiver_expr: (*call.receiver).clone(),
+        literal_value: literal_float_refinement_value(&method, &call.receiver),
+        receiver_width: float_receiver_width_source(&call.receiver),
         receiver: SugarBody::term(&call.receiver, fcx),
         site: token_key(Expr::MethodCall(call.clone())),
     }))
 }
 
 impl Sugar for FloatRefinementSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
-        let width = {
+    fn reduce(&self, ctx: &SugarCtx) -> Outcome {
+        let width = match {
             let widths = ctx.float_widths.borrow();
-            float_refinement_receiver_width(&self.receiver_expr, &widths)
+            self.receiver_width.resolve(&widths)
+        } {
+            FloatWidthResolution::Known(width) => width,
+            FloatWidthResolution::Unstable(unstable_width) => {
+                let width_reason = if unstable_width == "f16" && self.method == "is_nan" {
+                    "f16 NaN width not modeled".to_string()
+                } else {
+                    format!("{unstable_width} bit-width not modeled")
+                };
+                panic!(
+                    "float refinement predicate `{}` {width_reason} `{}`",
+                    self.method, self.site
+                );
+            }
+            FloatWidthResolution::Unknown => {
+                panic!(
+                    "float refinement predicate `{}` requires known f32/f64 receiver width `{}`",
+                    self.method, self.site
+                );
+            }
         };
-        if let Some(unstable_width) = float_refinement_receiver_unstable_width(&self.receiver_expr)
-        {
-            let width_reason = if unstable_width == "f16" && self.method == "is_nan" {
-                "f16 NaN width not modeled".to_string()
-            } else {
-                format!("{unstable_width} bit-width not modeled")
-            };
-            return Ok(unsupported(format!(
-                "float refinement predicate `{}` {width_reason} `{}`",
-                self.method, self.site
-            )));
-        }
-        let Some(width) = width else {
-            return Ok(unsupported(format!(
-                "float refinement predicate `{}` requires known f32/f64 receiver width `{}`",
-                self.method, self.site
-            )));
-        };
-        if let Some(value) = literal_float_refinement_value(&self.method, &self.receiver_expr) {
-            return Ok(constraint(eq(bool_const(value), bool_const(true)), None));
+        if let Some(value) = self.literal_value {
+            return constraint(eq(bool_const(value), bool_const(true)), None);
         }
         let receiver = match term_payload(&self.receiver, ctx) {
             Ok(term) => term,
-            Err(reduction) => return reduction,
+            Err(outcome) => return outcome,
         };
         let name = callsite_assertion_name(receiver.as_ref(), ctx.scope.local_scope());
-        Ok(constraint(
+        constraint(
             atomic_(format!("float.{width}.{}", self.method), vec![receiver]),
             name,
-        ))
+        )
     }
 
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
+        self.reduce(ctx)
+    }
+}
+
+impl FloatReceiverWidth {
+    fn resolve(&self, float_widths: &FloatWidthScope) -> FloatWidthResolution {
+        match self {
+            FloatReceiverWidth::Static(width) => FloatWidthResolution::Known(width),
+            FloatReceiverWidth::ScopePath(name) => float_widths
+                .get(name)
+                .copied()
+                .map(FloatWidthResolution::Known)
+                .unwrap_or(FloatWidthResolution::Unknown),
+            FloatReceiverWidth::Unstable(width) => FloatWidthResolution::Unstable(width),
+            FloatReceiverWidth::Unknown => FloatWidthResolution::Unknown,
+        };
     }
 }
 
@@ -154,6 +181,46 @@ fn is_liftable_float_refinement_method(method: &str) -> bool {
             | "is_sign_positive"
             | "is_sign_negative"
     )
+}
+
+fn float_receiver_width_source(expr: &Expr) -> FloatReceiverWidth {
+    if let Some(width) = float_refinement_receiver_unstable_width(expr) {
+        return FloatReceiverWidth::Unstable(width);
+    }
+    if let Some(width) = float_refinement_receiver_static_width(expr) {
+        return FloatReceiverWidth::Static(width);
+    }
+    match expr {
+        Expr::Path(path) => FloatReceiverWidth::ScopePath(path_to_name(&path.path)),
+        Expr::Paren(paren) => float_receiver_width_source(&paren.expr),
+        Expr::Group(group) => float_receiver_width_source(&group.expr),
+        Expr::MethodCall(call) if call.method == "unwrap" => {
+            float_receiver_width_source(&call.receiver)
+        }
+        _ => FloatReceiverWidth::Unknown,
+    }
+}
+
+fn float_refinement_receiver_static_width(expr: &Expr) -> Option<&'static str> {
+    match expr {
+        Expr::MethodCall(call) => float_width_from_method_name(&call.method.to_string())
+            .or_else(|| float_width_from_method_turbofish(call))
+            .or_else(|| {
+                if call.method == "unwrap" {
+                    float_refinement_receiver_static_width(&call.receiver)
+                } else {
+                    None
+                }
+            }),
+        Expr::Path(path) => float_width_from_path(&path.path),
+        Expr::Lit(ExprLit {
+            lit: Lit::Float(lit),
+            ..
+        }) => float_width_from_suffix(lit.suffix()),
+        Expr::Paren(paren) => float_refinement_receiver_static_width(&paren.expr),
+        Expr::Group(group) => float_refinement_receiver_static_width(&group.expr),
+        _ => None,
+    }
 }
 
 fn float_refinement_receiver_width(
@@ -340,18 +407,11 @@ fn constraint(atom: Rc<Formula>, name: Option<String>) -> Outcome {
     })
 }
 
-fn term_payload(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>, FactoryReduction> {
+fn term_payload(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
     match body.reduce(ctx) {
-        Ok(Outcome::Complete(desugared)) => desugared.into_term().ok_or_else(|| {
-            Err(FactoryGap::new(format!(
-                "float refinement receiver reduced to non-term: {STRUCTURAL_BACKSTOP_REASON}"
-            )))
-        }),
-        Ok(Outcome::Incomplete(effect)) => Err(Ok(Outcome::Incomplete(effect))),
-        Err(gap) => Err(Err(gap)),
+        Outcome::Complete(desugared) => Ok(desugared
+            .into_term()
+            .unwrap_or_else(|| panic!("typed float refinement receiver reduced to non-term"))),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
-}
-
-fn unsupported(reason: String) -> Outcome {
-    Outcome::Incomplete(Effect::Unsupported { reason })
 }

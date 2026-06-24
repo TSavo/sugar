@@ -6,7 +6,7 @@ use syn::Expr;
 
 use crate::sugar::closure_adaptor;
 use crate::sugar::factory::SugarBuildCtx;
-use crate::{token_key, Effect, Outcome, Sugar, SugarCtx, STRUCTURAL_BACKSTOP_REASON};
+use crate::{token_key, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::closure_adaptor_verdict_before(
@@ -27,13 +27,8 @@ struct ClosureIterAdvanceBodySugar {
 
 impl Sugar for ClosureIterAdvanceBodySugar {
     fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
-        if self.site.has_iter_advance_body() {
-            return Outcome::Incomplete(Effect::IterAdvance {
-                boundary: token_key(self.site.expr()),
-            });
-        }
-        Outcome::Incomplete(Effect::Unsupported {
-            reason: STRUCTURAL_BACKSTOP_REASON.to_string(),
+        Outcome::Incomplete(Effect::IterAdvance {
+            boundary: token_key(self.site.expr()),
         })
     }
 }

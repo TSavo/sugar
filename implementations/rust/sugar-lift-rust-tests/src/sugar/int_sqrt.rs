@@ -1,23 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // `IntSqrtSugar`: Rust's primitive integer `isqrt` family over a grounded integer is
-// a stdlib/compiler axiom. When the receiver has already bottomed out to a literal
-// integer, compute the exact floor square root and emit that literal (or the
-// structural `Option` value for `checked_isqrt`).
+// a stdlib/compiler axiom. The receiver child owns the numeric floor; this sugar
+// dispatches the sqrt operation to that floor and handles only the method surface
+// (`isqrt` panic vs `checked_isqrt` Option wrapping).
 
 use std::rc::Rc;
 
-use sugar_ir_symbolic::{num, Term};
+use sugar_ir_symbolic::Term;
 use syn::Expr;
 use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{build_term, SugarBuildCtx};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
+use crate::sugar::int_literal::{numeric_floor_from_term, IsqrtVisitor, NumericSqrt};
 use crate::sugar::monadic::{none_term, some_term};
-use crate::{
-    const_fold_int_term, const_fold_u128_term, u128_term, Desugared, Effect, Outcome, Sugar,
-    SugarCtx,
-};
+use crate::{const_fold_int_term, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("int_sqrt", SugarRole::Term, recognize);
@@ -36,7 +34,8 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     };
     Some(Box::new(IntSqrtSugar {
         kind,
-        receiver: build_term(&call.receiver, fcx),
+        site: token_key(expr),
+        receiver: SugarBody::term(&call.receiver, fcx),
     }))
 }
 
@@ -48,153 +47,81 @@ enum Kind {
 
 struct IntSqrtSugar {
     kind: Kind,
-    receiver: Box<dyn Sugar>,
+    site: String,
+    receiver: SugarBody<TermFloor>,
 }
 
 impl Sugar for IntSqrtSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let receiver = match self.receiver.desugar(ctx) {
-            Outcome::Complete(d) => match d.into_term() {
-                Some(term) => term,
-                None => return Outcome::from_opt(None),
-            },
-            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
+        let receiver = match term_body(&self.receiver, ctx) {
+            Ok(term) => term,
+            Err(outcome) => return outcome,
         };
-        if let Some(value) = const_fold_u128_term(&receiver) {
-            return self.desugar_u128(value);
-        }
-        let Some(value) = const_fold_int_term(&receiver) else {
-            return Outcome::Complete(Desugared::Term(self.symbolic_term(receiver)));
+        let Some(floor) = numeric_floor_from_term(&receiver) else {
+            panic!(
+                "int sqrt receiver did not reduce to a numeric floor; write the owning Sugar before Outcome"
+            );
         };
-        self.desugar_i128(value)
-    }
-}
-
-impl IntSqrtSugar {
-    fn symbolic_term(&self, receiver: Rc<Term>) -> Rc<Term> {
-        let method = match self.kind {
-            Kind::Sqrt => "method:isqrt",
-            Kind::CheckedSqrt => "method:checked_isqrt",
+        let Some(result) = floor.accept(IsqrtVisitor) else {
+            panic!(
+                "int sqrt numeric floor could not compute a result; write the owning typed floor before Outcome"
+            );
         };
-        debug!(
-            target: "sugar_lift_rust_tests::sugar::int_sqrt",
-            method,
-            "kept primitive integer sqrt call symbolic for point-wise contract"
-        );
-        Rc::new(Term::Ctor {
-            name: method.to_string(),
-            args: vec![receiver],
-        })
-    }
-
-    fn desugar_i128(&self, value: i128) -> Outcome {
-        match self.kind {
-            Kind::Sqrt => {
-                let Some(root) = int_sqrt(value) else {
-                    return Outcome::Incomplete(Effect::Unsupported {
-                        reason: format!(
-                            "primitive integer `isqrt` on negative literal `{value}` panics; refused"
-                        ),
-                    });
+        match (self.kind, result) {
+            (Kind::Sqrt, NumericSqrt::Root(root)) => {
+                let Some(term) = root.term() else {
+                    panic!("int sqrt numeric floor could not reify its result term");
                 };
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::int_sqrt",
-                    value,
-                    root,
+                    ?floor,
+                    ?root,
                     "resolved primitive integer isqrt stdlib axiom to literal"
                 );
-                Outcome::Complete(Desugared::Term(num(root)))
-            }
-            Kind::CheckedSqrt => {
-                let term = match int_sqrt(value) {
-                    Some(root) => {
-                        debug!(
-                            target: "sugar_lift_rust_tests::sugar::int_sqrt",
-                            value,
-                            root,
-                            "resolved primitive integer checked_isqrt stdlib axiom to Some literal"
-                        );
-                        some_term(num(root))
-                    }
-                    None => {
-                        debug!(
-                            target: "sugar_lift_rust_tests::sugar::int_sqrt",
-                            value,
-                            "resolved primitive integer checked_isqrt stdlib axiom to None"
-                        );
-                        none_term()
-                    }
-                };
                 Outcome::Complete(Desugared::Term(term))
             }
-        }
-    }
-
-    fn desugar_u128(&self, value: u128) -> Outcome {
-        let root = int_sqrt_u128(value);
-        match self.kind {
-            Kind::Sqrt => {
+            (Kind::Sqrt, NumericSqrt::Negative) => Outcome::Incomplete(Effect::LiteralPanic {
+                boundary: self.site.clone(),
+                reason: format!(
+                    "primitive integer `isqrt` on negative literal `{}` panics; refused",
+                    receiver_label(&receiver)
+                ),
+            }),
+            (Kind::CheckedSqrt, NumericSqrt::Root(root)) => {
+                let Some(term) = root.term() else {
+                    panic!("checked_isqrt numeric floor could not reify its result term");
+                };
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::int_sqrt",
-                    value = %value,
-                    root = %root,
-                    "resolved primitive u128 isqrt stdlib axiom to literal"
+                    ?floor,
+                    ?root,
+                    "resolved primitive integer checked_isqrt stdlib axiom to Some literal"
                 );
-                Outcome::Complete(Desugared::Term(u128_term(root)))
+                Outcome::Complete(Desugared::Term(some_term(term)))
             }
-            Kind::CheckedSqrt => {
+            (Kind::CheckedSqrt, NumericSqrt::Negative) => {
                 debug!(
                     target: "sugar_lift_rust_tests::sugar::int_sqrt",
-                    value = %value,
-                    root = %root,
-                    "resolved primitive u128 checked_isqrt stdlib axiom to Some literal"
+                    ?floor,
+                    "resolved primitive integer checked_isqrt stdlib axiom to None"
                 );
-                Outcome::Complete(Desugared::Term(some_term(u128_term(root))))
+                Outcome::Complete(Desugared::Term(none_term()))
             }
         }
     }
 }
 
-pub(crate) fn int_sqrt(value: i128) -> Option<i128> {
-    if value < 0 {
-        return None;
+fn term_body(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
+    match body.reduce(ctx) {
+        Outcome::Complete(d) => Ok(d
+            .into_term()
+            .unwrap_or_else(|| panic!("term body completed as non-term before int sqrt"))),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
     }
-    let n = value as u128;
-    if n < 2 {
-        return Some(value);
-    }
-    let mut lo = 1u128;
-    let mut hi = 1u128 << 64;
-    let mut best = 1u128;
-    while lo <= hi {
-        let mid = lo + ((hi - lo) / 2);
-        if mid <= n / mid {
-            best = mid;
-            lo = mid + 1;
-        } else {
-            hi = mid - 1;
-        }
-    }
-    i128::try_from(best).ok()
 }
 
-fn int_sqrt_u128(value: u128) -> u128 {
-    if value < 2 {
-        return value;
-    }
-    let mut lo = 1u128;
-    let mut hi = 1u128 << 64;
-    let mut best = 1u128;
-    while lo <= hi {
-        let mid = lo + ((hi - lo) / 2);
-        if mid <= value / mid {
-            best = mid;
-            lo = mid + 1;
-        } else {
-            hi = mid - 1;
-        }
-    }
-    best
+fn receiver_label(receiver: &Rc<Term>) -> String {
+    const_fold_int_term(receiver).map_or_else(|| format!("{receiver:?}"), |value| value.to_string())
 }
 
 pub(crate) fn term_as_int(term: &Rc<Term>) -> Option<i128> {

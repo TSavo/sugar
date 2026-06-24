@@ -11,12 +11,10 @@ use syn::Expr;
 use tracing::debug;
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
-};
-use crate::sugar::monadic::{is_grounded_literal_term, OPT_NONE, OPT_SOME, RES_ERR, RES_OK};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::nonzero::is_nonzero_new_call;
-use crate::{strip_refs_groups, Desugared, Effect, Outcome, Sugar, SugarCtx};
+use crate::sugar::term_dispatch::{MonadicFloorAccept, MonadicFloorVisitor};
+use crate::{strip_refs_groups, token_key, Desugared, Effect, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: ExprSugarClaim =
     ExprSugarClaim::new("option_unwrap", SugarRole::Term, recognize);
@@ -35,77 +33,95 @@ fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     if method == "expect" && call.args.len() != 1 {
         return None;
     }
+    if !receiver_resolves_monadic_source(&call.receiver, fcx, 0) {
+        return None;
+    }
     Some(Box::new(OptionUnwrapSugar {
         method,
         receiver: SugarBody::term(&call.receiver, fcx),
+        site_key: token_key(expr),
     }))
 }
 
 struct OptionUnwrapSugar {
     method: String,
     receiver: SugarBody<TermFloor>,
+    site_key: String,
 }
 
 impl Sugar for OptionUnwrapSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
-        let receiver = match self.receiver.reduce(ctx)? {
+    fn reduce(&self, ctx: &SugarCtx) -> Outcome {
+        let receiver = match self.receiver.reduce(ctx) {
             Outcome::Complete(d) => match d.into_term() {
                 Some(term) => term,
-                None => {
-                    return Err(FactoryGap::new(format!(
-                        "monadic `{}` receiver completed a non-Term where a Term was required; write more Sugar for this AST",
-                        self.method
-                    )))
-                }
-            },
-            Outcome::Incomplete(e) => return Ok(Outcome::Incomplete(e)),
-        };
-        match unwrap_monadic(&receiver) {
-            Some(Ok(inner)) => {
-                if !is_grounded_literal_term(inner.as_ref()) {
-                    return Ok(Outcome::Incomplete(Effect::Unsupported {
-                        reason: format!(
-                            "runtime Option/Result payload, not literal (`{}`)",
-                            self.method
-                        ),
-                    }));
-                }
-                debug!(
-                    target: "sugar_lift_rust_tests::sugar::option_unwrap",
-                    method = self.method.as_str(),
-                    "resolved monadic unwrap/expect stdlib axiom to inner literal"
-                );
-                Ok(Outcome::Complete(Desugared::Term(inner)))
-            }
-            Some(Err(kind)) => Ok(Outcome::Incomplete(Effect::Unsupported {
-                reason: format!(
-                    "monadic `{}` on literal `{kind}` panics; refused",
+                None => unreachable!(
+                    "typed monadic `{}` receiver reduced to a non-term floor",
                     self.method
                 ),
-            })),
-            None => Err(FactoryGap::new(format!(
-                "monadic `{}` receiver did not reduce to a known Option/Result constructor; write more Sugar for this AST",
-                self.method
-            ))),
-        }
+            },
+            Outcome::Incomplete(e) => return Outcome::Incomplete(e),
+        };
+        receiver.accept_monadic_floor(UnwrapVisitor {
+            method: &self.method,
+            site_key: &self.site_key,
+        })
     }
 
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
+        self.reduce(ctx)
     }
 }
 
-fn unwrap_monadic(term: &Rc<Term>) -> Option<Result<Rc<Term>, &'static str>> {
-    match term.as_ref() {
-        Term::Ctor { name, args } if name == OPT_SOME && args.len() == 1 => {
-            Some(Ok(Rc::clone(&args[0])))
-        }
-        Term::Ctor { name, args } if name == RES_OK && args.len() == 1 => {
-            Some(Ok(Rc::clone(&args[0])))
-        }
-        Term::Ctor { name, .. } if name == OPT_NONE => Some(Err(OPT_NONE)),
-        Term::Ctor { name, .. } if name == RES_ERR => Some(Err(RES_ERR)),
-        _ => None,
+struct UnwrapVisitor<'a> {
+    method: &'a str,
+    site_key: &'a str,
+}
+
+impl MonadicFloorVisitor for UnwrapVisitor<'_> {
+    type Output = Outcome;
+
+    fn visit_some(self, inner: &Rc<Term>) -> Self::Output {
+        self.complete(inner)
+    }
+
+    fn visit_none(self) -> Self::Output {
+        self.literal_panic("opt:none")
+    }
+
+    fn visit_ok(self, inner: &Rc<Term>) -> Self::Output {
+        self.complete(inner)
+    }
+
+    fn visit_err(self, _inner: &Rc<Term>) -> Self::Output {
+        self.literal_panic("res:err")
+    }
+
+    fn visit_non_monadic(self, _term: &Rc<Term>) -> Self::Output {
+        panic!(
+            "constructed monadic `{}` receiver did not reduce to Option/Result constructor",
+            self.method
+        )
+    }
+}
+
+impl UnwrapVisitor<'_> {
+    fn complete(self, inner: &Rc<Term>) -> Outcome {
+        debug!(
+            target: "sugar_lift_rust_tests::sugar::option_unwrap",
+            method = self.method,
+            "resolved monadic unwrap/expect stdlib axiom to inner term floor"
+        );
+        Outcome::Complete(Desugared::Term(Rc::clone(inner)))
+    }
+
+    fn literal_panic(self, kind: &str) -> Outcome {
+        Outcome::Incomplete(Effect::LiteralPanic {
+            boundary: self.site_key.to_string(),
+            reason: format!(
+                "monadic `{}` on literal `{kind}` panics; refused",
+                self.method
+            ),
+        })
     }
 }
 

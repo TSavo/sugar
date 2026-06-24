@@ -8,7 +8,7 @@
 use syn::{Expr, ExprClosure};
 use tracing::debug;
 
-use crate::sugar::factory::SugarBuildCtx;
+use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
 use crate::{closure_single_param_ident, strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 
@@ -38,7 +38,10 @@ pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Bo
         "recognized literal identity map"
     );
     Some(Box::new(IdentityMapSugar {
-        inner: method_family::build_literal_sequence_composite(&call.receiver, fcx)?,
+        inner: SugarBody::from_node(method_family::build_literal_sequence_composite(
+            &call.receiver,
+            fcx,
+        )?),
     }))
 }
 
@@ -78,19 +81,26 @@ fn identity_body_expr(expr: &Expr, param: &str) -> bool {
 
 /// `.map(|x| x)` / `.map(|x| *x)`: pass the inner element sequence through unchanged.
 pub(crate) struct IdentityMapSugar {
-    pub(crate) inner: Box<dyn Sugar>,
+    pub(crate) inner: SugarBody<CompositeFloor>,
 }
 
 impl Sugar for IdentityMapSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            let seq = self.inner.desugar(ctx).complete()?.into_seq()?;
-            debug!(
-                target: "sugar_lift_rust_tests::sugar::identity_map",
-                len = seq.len(),
-                "literal identity map preserved sequence"
-            );
-            Some(Desugared::Seq(seq))
-        })())
+        let seq = match self.inner.reduce(ctx) {
+            Outcome::Complete(d) => d.into_seq().unwrap_or_else(|| {
+                identity_map_gap("identity map receiver reduced to non-sequence")
+            }),
+            Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+        };
+        debug!(
+            target: "sugar_lift_rust_tests::sugar::identity_map",
+            len = seq.len(),
+            "literal identity map preserved sequence"
+        );
+        Outcome::Complete(Desugared::Seq(seq))
     }
+}
+
+fn identity_map_gap(reason: &str) -> ! {
+    panic!("identity_map did not reach a lawful floor: {reason}")
 }

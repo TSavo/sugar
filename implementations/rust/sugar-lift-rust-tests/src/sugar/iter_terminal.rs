@@ -62,10 +62,13 @@ use sugar_ir_symbolic::{make_var, num, ConstValue, Sort, Term};
 use syn::{Expr, Stmt};
 use tracing::debug;
 
-use crate::sugar::factory::{build_composite, build_term, has_composite, SugarBuildCtx};
+use crate::sugar::factory::{
+    build_composite, build_term, has_composite, CompositeFloor, SugarBody, SugarBuildCtx,
+};
 use crate::sugar::literal::EMPTY_DOMAIN_REASON;
 use crate::sugar::method_family;
 use crate::sugar::monadic;
+use crate::sugar::term_dispatch::fold_int_terms;
 use crate::sugar::term_leaf::reasoned_incomplete;
 use crate::{
     closure_adaptor_refusal, closure_body_is_side_effecting, closure_single_param_ident,
@@ -170,8 +173,9 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     }
     Some(Box::new(IterTerminalSugar {
         terminal,
-        site: expr.clone(),
-        inner: (*call.receiver).clone(),
+        site_key: token_key(expr),
+        closure_refusal: closure_adaptor_refusal(expr, fcx.scope()),
+        receiver: IterTerminalReceiver::new((*call.receiver).clone(), fcx),
         let_inits: capture_let_inits(fcx),
     }))
 }
@@ -589,9 +593,26 @@ fn term_as_usize(term: &Rc<Term>) -> Option<usize> {
 /// const-reducible, it structurally bails to the factory gap path.
 struct IterTerminalSugar {
     terminal: Terminal,
-    site: Expr,
-    inner: Expr,
+    site_key: String,
+    closure_refusal: Option<String>,
+    receiver: IterTerminalReceiver,
     let_inits: BTreeMap<String, Expr>,
+}
+
+struct IterTerminalReceiver {
+    source: Expr,
+    body: SugarBody<CompositeFloor>,
+}
+
+impl IterTerminalReceiver {
+    fn new(source: Expr, fcx: &SugarBuildCtx) -> Self {
+        let body = SugarBody::from_node(
+            crate::sugar::scan::try_build_scan_inner(&source, fcx)
+                .or_else(|| method_family::build_literal_sequence_composite(&source, fcx))
+                .unwrap_or_else(|| build_composite(&source, fcx)),
+        );
+        Self { source, body }
+    }
 }
 
 impl IterTerminalSugar {
@@ -622,14 +643,14 @@ impl IterTerminalSugar {
             | Terminal::Position(_)
             | Terminal::AdvanceBy(_) => {
                 method_family::literal_range_sequence_static_len_in_scope(
-                    &self.inner,
+                    &self.receiver.source,
                     let_inits,
                     scope,
                 )
                 .is_some()
                     || (matches!(self.terminal, Terminal::Count)
                         && method_family::literal_collection_adapter_static_len_in_scope(
-                            &self.inner,
+                            &self.receiver.source,
                             let_inits,
                             scope,
                         )
@@ -653,13 +674,12 @@ impl IterTerminalSugar {
     ) -> Result<Option<Vec<DesugaredElem>>, Outcome> {
         match candidate.desugar(ctx) {
             Outcome::Complete(d) => Ok(d.into_seq()),
-            Outcome::Incomplete(Effect::Unsupported { reason })
-                if allow_empty_domain && reason == EMPTY_DOMAIN_REASON =>
+            Outcome::Incomplete(effect)
+                if allow_empty_domain && effect.reason() == EMPTY_DOMAIN_REASON =>
             {
                 Ok(Some(Vec::new()))
             }
-            hit if hit.is_structural_bail() => Ok(None),
-            hit => Err(hit),
+            Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
         }
     }
 
@@ -675,6 +695,69 @@ impl IterTerminalSugar {
             Ok(Some(_)) => Ok(true),
             Ok(None) => Ok(false),
             Err(hit) => Err(hit),
+        }
+    }
+
+    fn reduce_term_seq_terminal(
+        &self,
+        terms: Vec<Rc<Term>>,
+        fcx: &SugarBuildCtx,
+        ctx: &SugarCtx,
+    ) -> Outcome {
+        if let Terminal::AdvanceBy(arg) = &self.terminal {
+            let n_term = match build_term(arg, fcx).desugar(ctx) {
+                Outcome::Complete(d) => match d.into_term() {
+                    Some(term) => term,
+                    None => iter_terminal_gap("advance_by argument reduced to non-Term"),
+                },
+                Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
+            };
+            let Some(n) = term_as_usize(&n_term) else {
+                return Outcome::Incomplete(Effect::RuntimeArgument {
+                    boundary: token_key(arg),
+                    reason: format!(
+                        "iterator advance count `{}` is not a literal usize",
+                        token_key(arg)
+                    ),
+                });
+            };
+            let len = terms.len();
+            let term = if n <= len {
+                monadic::ok_term(unit_term())
+            } else {
+                monadic::err_term(num((n - len) as i128))
+            };
+            return Outcome::Complete(Desugared::Term(term));
+        }
+        if matches!(self.terminal, Terminal::Count) {
+            return Outcome::Complete(Desugared::Term(num(terms.len() as i128)));
+        }
+        let positional_idx = match &self.terminal {
+            Terminal::Next => Some(Some(0usize)),
+            Terminal::NextBack => Some(terms.len().checked_sub(1)),
+            Terminal::Nth(k) => Some(Some(*k)),
+            Terminal::NthBack(k) => {
+                let Some(offset) = k.checked_add(1) else {
+                    return Outcome::Complete(Desugared::Term(monadic::none_term()));
+                };
+                Some(terms.len().checked_sub(offset))
+            }
+            Terminal::Last => Some(terms.len().checked_sub(1)),
+            _ => None,
+        };
+        if let Some(idx) = positional_idx {
+            let term = match idx.and_then(|idx| terms.get(idx)) {
+                Some(term) => monadic::some_term(Rc::clone(term)),
+                None => monadic::none_term(),
+            };
+            return Outcome::Complete(Desugared::Term(term));
+        }
+        match self.terminal {
+            Terminal::Sum => Outcome::Complete(Desugared::Term(fold_int_terms("+", 0, terms))),
+            Terminal::Product => Outcome::Complete(Desugared::Term(fold_int_terms("*", 1, terms))),
+            _ => self.named_closure_boundary(ctx).unwrap_or_else(|| {
+                iter_terminal_gap("iterator terminal cannot consume a curried term sequence yet")
+            }),
         }
     }
 
@@ -694,20 +777,24 @@ impl IterTerminalSugar {
             .collect();
         let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
         // Consumed-iterator gate: apply it lazily, with the live temporal rewrite table.
-        if let Some(name) = simple_path_name(&self.inner) {
+        if let Some(name) = simple_path_name(&self.receiver.source) {
             if let Some(reason) = ctx.scope.unknown_iterator_consumption_reason(&name) {
                 return reasoned_incomplete(reason).desugar(ctx);
             }
             if ctx.scope.is_consumed_iterator_local(&name)
                 && ctx.scope.temporal_rewrite_expr_for(&name).is_none()
             {
-                // Opaque-EUF disposition: UNDECIDED (honest dark), never refused.
-                return Outcome::from_opt(None);
+                return Outcome::Incomplete(Effect::RuntimeArgument {
+                    boundary: name.clone(),
+                    reason: format!(
+                        "consumed iterator `{name}` has no replayable temporal rewrite at this point; refused"
+                    ),
+                });
             }
         }
         if matches!(self.terminal, Terminal::Count) {
             if let Some(chunk_expr) =
-                resolve_chunk_window_receiver(&self.inner, &let_inits, ctx.scope, 0)
+                resolve_chunk_window_receiver(&self.receiver.source, &let_inits, ctx.scope, 0)
             {
                 if let Some(static_len) =
                     method_family::literal_collection_adapter_static_len_in_scope(
@@ -725,7 +812,9 @@ impl IterTerminalSugar {
                             );
                             return Outcome::Complete(Desugared::Term(num(static_len.len as i128)));
                         }
-                        Ok(false) => return Outcome::from_opt(None),
+                        Ok(false) => iter_terminal_gap(
+                            "verified chunk/window length source did not reduce to a sequence",
+                        ),
                         Err(hit) => return hit,
                     }
                 }
@@ -733,7 +822,8 @@ impl IterTerminalSugar {
                     Expr::MethodCall(call) => call.receiver.as_ref(),
                     _ => &chunk_expr,
                 };
-                return Outcome::Incomplete(Effect::Unsupported {
+                return Outcome::Incomplete(Effect::RuntimeArgument {
+                    boundary: token_key(receiver),
                     reason: format!(
                         "chunk source is runtime slice, not literal `{}`",
                         token_key(receiver)
@@ -741,37 +831,39 @@ impl IterTerminalSugar {
                 });
             }
         }
-        let static_empty_sequence =
-            method_family::literal_sequence_static_len_in_scope(&self.inner, &let_inits, ctx.scope)
-                == Some(0)
-                || (matches!(self.terminal, Terminal::Count)
-                    && method_family::literal_collection_adapter_static_len_in_scope(
-                        &self.inner,
-                        &let_inits,
-                        ctx.scope,
-                    )
-                    .is_some_and(|proof| proof.len == 0));
+        let static_empty_sequence = method_family::literal_sequence_static_len_in_scope(
+            &self.receiver.source,
+            &let_inits,
+            ctx.scope,
+        ) == Some(0)
+            || (matches!(self.terminal, Terminal::Count)
+                && method_family::literal_collection_adapter_static_len_in_scope(
+                    &self.receiver.source,
+                    &let_inits,
+                    ctx.scope,
+                )
+                .is_some_and(|proof| proof.len == 0));
         let allow_empty_sequence =
             static_empty_sequence && self.accepts_empty_sequence_for_source(&let_inits, ctx.scope);
         let seq = if allow_empty_sequence {
             Vec::new()
         } else {
-            let inner = crate::sugar::scan::try_build_scan_inner(&self.inner, &fcx)
-                .or_else(|| method_family::build_literal_sequence_composite(&self.inner, &fcx))
-                .unwrap_or_else(|| build_composite(&self.inner, &fcx));
-            match inner.desugar(ctx) {
+            match self.receiver.body.reduce(ctx) {
+                Outcome::Complete(Desugared::TermSeq(terms)) => {
+                    return self.reduce_term_seq_terminal(terms, &fcx, ctx);
+                }
                 Outcome::Complete(d) => match d.into_seq() {
                     Some(seq) => seq,
-                    None => return Outcome::from_opt(None),
+                    None => iter_terminal_gap("iterator terminal receiver reduced to non-sequence"),
                 },
-                Outcome::Incomplete(Effect::Unsupported { reason })
-                    if reason == EMPTY_DOMAIN_REASON && allow_empty_sequence =>
+                Outcome::Incomplete(effect)
+                    if effect.reason() == EMPTY_DOMAIN_REASON && allow_empty_sequence =>
                 {
                     Vec::new()
                 }
-                hit if hit.is_structural_bail() && self.can_try_literal_sequence_family() => {
+                Outcome::Incomplete(effect) if self.can_try_literal_sequence_family() => {
                     if let Some(candidate) =
-                        method_family::build_literal_sequence_composite(&self.inner, &fcx)
+                        method_family::build_literal_sequence_composite(&self.receiver.source, &fcx)
                     {
                         match Self::desugar_seq_candidate(candidate, ctx, allow_empty_sequence) {
                             Ok(Some(seq)) => seq,
@@ -779,7 +871,7 @@ impl IterTerminalSugar {
                                 if let Terminal::Count = self.terminal {
                                     if let Some(static_len) =
                                         method_family::literal_collection_adapter_static_len_in_scope(
-                                            &self.inner,
+                                            &self.receiver.source,
                                             &let_inits,
                                             ctx.scope,
                                         )
@@ -795,23 +887,27 @@ impl IterTerminalSugar {
                                                     len = static_len.len,
                                                     "reducing literal collection count through verified length-only adapter"
                                                 );
-                                                return Outcome::Complete(Desugared::Term(num(
-                                                    static_len.len as i128,
-                                                )));
-                                            }
-                                            Ok(false) => return Outcome::from_opt(None),
+                                                    return Outcome::Complete(Desugared::Term(num(
+                                                        static_len.len as i128,
+                                                    )));
+                                                }
+                                            Ok(false) => iter_terminal_gap(
+                                                "literal collection count static source did not reduce",
+                                            ),
                                             Err(hit) => return hit,
                                         }
                                     }
                                 }
-                                return Outcome::from_opt(None);
+                                iter_terminal_gap(
+                                    "iterator terminal literal-sequence fallback missed",
+                                );
                             }
                             Err(hit) => return hit,
                         }
                     } else if let Terminal::Count = self.terminal {
                         if let Some(static_len) =
                             method_family::literal_collection_adapter_static_len_in_scope(
-                                &self.inner,
+                                &self.receiver.source,
                                 &let_inits,
                                 ctx.scope,
                             )
@@ -827,30 +923,38 @@ impl IterTerminalSugar {
                                         static_len.len as i128
                                     )));
                                 }
-                                Ok(false) => return Outcome::from_opt(None),
+                                Ok(false) => iter_terminal_gap(
+                                    "literal collection count static source did not reduce",
+                                ),
                                 Err(hit) => return hit,
                             }
                         }
-                        return Outcome::from_opt(None);
+                        iter_terminal_gap(
+                            "iterator terminal count had no sequence body or static length",
+                        );
                     } else {
-                        return Outcome::from_opt(None);
+                        return Outcome::Incomplete(effect);
                     }
                 }
-                hit if hit.is_structural_bail() => return Outcome::from_opt(None),
-                hit => return hit,
+                Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
             }
         };
         if let Terminal::AdvanceBy(arg) = &self.terminal {
             let n_term = match build_term(arg, &fcx).desugar(ctx) {
                 Outcome::Complete(d) => match d.into_term() {
                     Some(term) => term,
-                    None => return Outcome::from_opt(None),
+                    None => iter_terminal_gap("advance_by argument reduced to non-Term"),
                 },
-                hit if hit.is_structural_bail() => return Outcome::from_opt(None),
-                hit => return hit,
+                Outcome::Incomplete(effect) => return Outcome::Incomplete(effect),
             };
             let Some(n) = term_as_usize(&n_term) else {
-                return Outcome::from_opt(None);
+                return Outcome::Incomplete(Effect::RuntimeArgument {
+                    boundary: token_key(arg),
+                    reason: format!(
+                        "iterator advance count `{}` is not a literal usize",
+                        token_key(arg)
+                    ),
+                });
             };
             let len = seq.len();
             debug!(
@@ -1034,9 +1138,9 @@ impl IterTerminalSugar {
         })();
         match reduced {
             Some(d) => Outcome::Complete(d),
-            None => self
-                .named_closure_boundary(ctx)
-                .unwrap_or_else(|| Outcome::from_opt(None)),
+            None => self.named_closure_boundary(ctx).unwrap_or_else(|| {
+                iter_terminal_gap("iterator terminal reduction did not reach a floor")
+            }),
         }
     }
 
@@ -1047,11 +1151,17 @@ impl IterTerminalSugar {
             | Terminal::Find(_)
             | Terminal::Position(_)
             | Terminal::Reduce(_)
-            | Terminal::Fold(_, _) => closure_adaptor_refusal(&self.site, ctx.scope)
+            | Terminal::Fold(_, _) => self
+                .closure_refusal
+                .clone()
                 .map(|reason| reasoned_incomplete(reason).desugar(ctx)),
             _ => None,
         }
     }
+}
+
+fn iter_terminal_gap(reason: &str) -> ! {
+    panic!("iterator terminal did not reach a lawful floor: {reason}")
 }
 
 impl Sugar for IterTerminalSugar {

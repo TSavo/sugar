@@ -1,19 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// TERM recognizer for pure total `char` methods over char literals (including
-// stable SSA literal bindings). Recognition is intentionally lazy: it captures
-// the raw receiver/args for the method shape, but the receiver is only proven
-// char-literal-owned in `desugar`, after scope/binding context is available.
+// TERM/CONSTRAINT recognizers for pure total `char` methods. This sugar has no
+// effect verdict of its own: it composes typed child floors, or bubbles a child
+// Incomplete unchanged.
 
-use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{eq, num, str_const, ConstValue, Formula, Term};
 use syn::{Expr, ExprLit, Lit};
 
 use crate::sugar::claim::{ExprSugarClaim, SugarRole};
-use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::sugar::format::stable_let_bindings;
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::monadic::{none_term, some_term};
 use crate::{
     bool_const, callsite_assertion_name, strip_refs_groups, AssertionFactKind, Desugared, Outcome,
@@ -34,22 +31,29 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     let Expr::MethodCall(call) = strip_refs_groups(expr) else {
         return None;
     };
-    if call.turbofish.is_some() {
+    if call.turbofish.is_some() || definitely_not_char_receiver(&call.receiver) {
         return None;
     }
     let method = call.method.to_string();
-    if !is_supported_method(&method, call.args.len()) {
-        return None;
-    }
-    if definitely_not_char_receiver(&call.receiver) {
-        return None;
-    }
+    let kind = match method.as_str() {
+        method if is_bool_method(method) && call.args.is_empty() => CharMethodKind::Bool {
+            method: method.to_string(),
+        },
+        "to_ascii_uppercase" if call.args.is_empty() => CharMethodKind::AsciiUpper,
+        "to_ascii_lowercase" if call.args.is_empty() => CharMethodKind::AsciiLower,
+        "to_uppercase" if call.args.is_empty() => CharMethodKind::UnicodeUpper,
+        "to_lowercase" if call.args.is_empty() => CharMethodKind::UnicodeLower,
+        "to_string" if call.args.is_empty() => CharMethodKind::ToString,
+        "len_utf8" if call.args.is_empty() => CharMethodKind::LenUtf8,
+        "to_digit" if call.args.len() == 1 => CharMethodKind::ToDigit {
+            radix: SugarBody::term(&call.args[0], fcx),
+        },
+        _ => return None,
+    };
 
     Some(Box::new(CharMethodSugar {
-        method,
-        receiver: call.receiver.as_ref().clone(),
-        args: call.args.iter().cloned().collect(),
-        let_inits: capture_let_inits(fcx),
+        receiver: SugarBody::term(&call.receiver, fcx),
+        kind,
     }))
 }
 
@@ -57,50 +61,21 @@ fn recognize_constraint(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     let Expr::MethodCall(call) = strip_refs_groups(expr) else {
         return None;
     };
-    if call.turbofish.is_some() {
+    if call.turbofish.is_some()
+        || !call.args.is_empty()
+        || definitely_not_char_receiver(&call.receiver)
+    {
         return None;
     }
     let method = call.method.to_string();
-    if !is_bool_method(&method) || !call.args.is_empty() {
-        return None;
-    }
-    if definitely_not_char_receiver(&call.receiver) {
+    if !is_bool_method(&method) {
         return None;
     }
 
     Some(Box::new(CharBoolConstraintSugar {
         method,
-        receiver: call.receiver.as_ref().clone(),
-        let_inits: capture_let_inits(fcx),
+        receiver: SugarBody::term(&call.receiver, fcx),
     }))
-}
-
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
-}
-
-fn merge_let_inits<'a>(
-    stable: &'a BTreeMap<String, Expr>,
-    captured: &'a BTreeMap<String, Expr>,
-) -> BTreeMap<String, &'a Expr> {
-    stable
-        .iter()
-        .map(|(name, init)| (name.clone(), init))
-        .chain(captured.iter().map(|(name, init)| (name.clone(), init)))
-        .collect()
-}
-
-fn is_supported_method(method: &str, argc: usize) -> bool {
-    match method {
-        "to_digit" => argc == 1,
-        "is_alphabetic" | "is_numeric" | "is_ascii" | "is_alphanumeric" | "is_whitespace"
-        | "is_uppercase" | "is_lowercase" | "to_ascii_uppercase" | "to_ascii_lowercase"
-        | "to_uppercase" | "to_lowercase" | "to_string" | "len_utf8" => argc == 0,
-        _ => false,
-    }
 }
 
 fn definitely_not_char_receiver(expr: &Expr) -> bool {
@@ -112,10 +87,6 @@ fn definitely_not_char_receiver(expr: &Expr) -> bool {
         Expr::MethodCall(call) => definitely_not_char_receiver(&call.receiver),
         _ => false,
     }
-}
-
-fn method_returns_char(method: &str, argc: usize) -> bool {
-    matches!(method, "to_ascii_uppercase" | "to_ascii_lowercase") && argc == 0
 }
 
 fn is_bool_method(method: &str) -> bool {
@@ -144,143 +115,25 @@ fn eval_bool_method(method: &str, ch: char) -> Option<bool> {
     }
 }
 
-fn source_resolves_to_char(expr: &Expr, bindings: &BTreeMap<String, &Expr>) -> bool {
-    match strip_refs_groups(expr) {
-        Expr::Lit(ExprLit {
-            lit: Lit::Char(_), ..
-        }) => true,
-        Expr::Path(path) if path.qself.is_none() => {
-            let Some(id) = path.path.get_ident().map(ToString::to_string) else {
-                return false;
-            };
-            let Some(bound) = bindings.get(&id).copied() else {
-                return false;
-            };
-            let mut narrowed = bindings.clone();
-            narrowed.remove(&id);
-            source_resolves_to_char(bound, &narrowed)
-        }
-        Expr::MethodCall(call)
-            if method_returns_char(&call.method.to_string(), call.args.len())
-                && call.turbofish.is_none() =>
-        {
-            source_resolves_to_char(&call.receiver, bindings)
-        }
-        _ => false,
-    }
-}
-
-fn source_resolves_to_char_case_mapping(expr: &Expr, bindings: &BTreeMap<String, &Expr>) -> bool {
-    match strip_refs_groups(expr) {
-        Expr::Path(path) if path.qself.is_none() => {
-            let Some(id) = path.path.get_ident().map(ToString::to_string) else {
-                return false;
-            };
-            let Some(bound) = bindings.get(&id).copied() else {
-                return false;
-            };
-            let mut narrowed = bindings.clone();
-            narrowed.remove(&id);
-            source_resolves_to_char_case_mapping(bound, &narrowed)
-        }
-        Expr::MethodCall(call)
-            if matches!(
-                call.method.to_string().as_str(),
-                "to_uppercase" | "to_lowercase"
-            ) && call.args.is_empty()
-                && call.turbofish.is_none() =>
-        {
-            source_resolves_to_char(&call.receiver, bindings)
-        }
-        _ => false,
-    }
-}
-
-fn term_to_string_const(term: &Rc<Term>) -> Option<String> {
-    let Term::Const {
-        value: ConstValue::String(value),
-        ..
-    } = term.as_ref()
-    else {
-        return None;
-    };
-    Some(value.clone())
-}
-
-fn term_to_char(term: &Rc<Term>) -> Option<char> {
-    let Term::Const {
-        value: ConstValue::String(value),
-        ..
-    } = term.as_ref()
-    else {
-        return None;
-    };
-    let mut chars = value.chars();
-    let ch = chars.next()?;
-    if chars.next().is_none() {
-        Some(ch)
-    } else {
-        None
-    }
-}
-
-fn term_to_radix(term: &Rc<Term>) -> Option<u32> {
-    let Term::Const {
-        value: ConstValue::Int(value),
-        ..
-    } = term.as_ref()
-    else {
-        return None;
-    };
-    u32::try_from(*value)
-        .ok()
-        .filter(|radix| (2..=36).contains(radix))
-}
-
 struct CharMethodSugar {
-    method: String,
-    receiver: Expr,
-    args: Vec<Expr>,
-    let_inits: BTreeMap<String, Expr>,
+    receiver: SugarBody<TermFloor>,
+    kind: CharMethodKind,
+}
+
+enum CharMethodKind {
+    Bool { method: String },
+    AsciiUpper,
+    AsciiLower,
+    UnicodeUpper,
+    UnicodeLower,
+    ToString,
+    LenUtf8,
+    ToDigit { radix: SugarBody<TermFloor> },
 }
 
 struct CharBoolConstraintSugar {
     method: String,
-    receiver: Expr,
-    let_inits: BTreeMap<String, Expr>,
-}
-
-impl CharMethodSugar {
-    fn build_child_term(
-        expr: &Expr,
-        fcx: &SugarBuildCtx,
-        ctx: &SugarCtx,
-    ) -> Result<Rc<Term>, Outcome> {
-        match build_term(expr, fcx).desugar(ctx) {
-            Outcome::Complete(d) => d.into_term().ok_or_else(|| Outcome::from_opt(None)),
-            Outcome::Incomplete(e) => Err(Outcome::Incomplete(e)),
-        }
-    }
-
-    fn opaque_method_term(
-        &self,
-        receiver: Rc<Term>,
-        fcx: &SugarBuildCtx,
-        ctx: &SugarCtx,
-    ) -> Outcome {
-        let mut terms = vec![receiver];
-        for arg in &self.args {
-            let term = match Self::build_child_term(arg, fcx, ctx) {
-                Ok(term) => term,
-                Err(outcome) => return outcome,
-            };
-            terms.push(term);
-        }
-        Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
-            name: format!("method:{}", self.method),
-            args: terms,
-        })))
-    }
+    receiver: SugarBody<TermFloor>,
 }
 
 fn constraint(atom: Rc<Formula>, name: Option<String>) -> Outcome {
@@ -302,100 +155,123 @@ fn method_assertion_name(method: &str, args: Vec<Rc<Term>>, local_scope: &str) -
 
 impl Sugar for CharBoolConstraintSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let stable = stable_let_bindings(ctx.scope);
-        let let_inits = merge_let_inits(&stable, &self.let_inits);
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        let receiver = match CharMethodSugar::build_child_term(&self.receiver, &fcx, ctx) {
+        let receiver = match term_body(&self.receiver, ctx) {
             Ok(term) => term,
             Err(outcome) => return outcome,
         };
-
-        if source_resolves_to_char(&self.receiver, &let_inits) {
-            let Some(ch) = term_to_char(&receiver) else {
-                return Outcome::from_opt(None);
-            };
-            let Some(result) = eval_bool_method(&self.method, ch) else {
-                return Outcome::from_opt(None);
-            };
-            let name = method_assertion_name(
-                &self.method,
-                vec![receiver.clone()],
-                ctx.scope.local_scope(),
-            );
-            return constraint(eq(bool_const(result), bool_const(true)), name);
-        }
-
-        let method_term = Rc::new(Term::Ctor {
-            name: format!("method:{}", self.method),
-            args: vec![receiver],
-        });
-        let name = callsite_assertion_name(&method_term, ctx.scope.local_scope());
-        constraint(eq(method_term, bool_const(true)), name)
+        let ch = require_char(&receiver, "char bool constraint receiver");
+        let result = eval_bool_method(&self.method, ch)
+            .unwrap_or_else(|| panic!("unknown char bool method `{}`", self.method));
+        let name = method_assertion_name(
+            &self.method,
+            vec![receiver.clone()],
+            ctx.scope.local_scope(),
+        );
+        constraint(eq(bool_const(result), bool_const(true)), name)
     }
 }
 
 impl Sugar for CharMethodSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        let stable = stable_let_bindings(ctx.scope);
-        let let_inits = merge_let_inits(&stable, &self.let_inits);
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-
-        let receiver = match Self::build_child_term(&self.receiver, &fcx, ctx) {
+        let receiver = match term_body(&self.receiver, ctx) {
             Ok(term) => term,
             Err(outcome) => return outcome,
         };
-        if self.method == "to_string" {
-            if source_resolves_to_char(&self.receiver, &let_inits) {
-                let Some(ch) = term_to_char(&receiver) else {
-                    return Outcome::from_opt(None);
-                };
-                return Outcome::Complete(Desugared::Term(str_const(ch.to_string())));
-            }
-            if source_resolves_to_char_case_mapping(&self.receiver, &let_inits) {
-                let Some(value) = term_to_string_const(&receiver) else {
-                    return Outcome::from_opt(None);
-                };
-                return Outcome::Complete(Desugared::Term(str_const(value)));
-            }
-            return self.opaque_method_term(receiver, &fcx, ctx);
-        }
-        if !source_resolves_to_char(&self.receiver, &let_inits) {
-            return self.opaque_method_term(receiver, &fcx, ctx);
-        }
-        let Some(ch) = term_to_char(&receiver) else {
-            return Outcome::from_opt(None);
-        };
 
-        let term = match self.method.as_str() {
-            method if is_bool_method(method) => {
-                let Some(result) = eval_bool_method(method, ch) else {
-                    return Outcome::from_opt(None);
-                };
+        let term = match &self.kind {
+            CharMethodKind::Bool { method } => {
+                let ch = require_char(&receiver, "char bool method receiver");
+                let result = eval_bool_method(method, ch)
+                    .unwrap_or_else(|| panic!("unknown char bool method `{method}`"));
                 bool_const(result)
             }
-            "to_ascii_uppercase" => str_const(ch.to_ascii_uppercase().to_string()),
-            "to_ascii_lowercase" => str_const(ch.to_ascii_lowercase().to_string()),
-            "to_uppercase" => str_const(ch.to_uppercase().collect::<String>()),
-            "to_lowercase" => str_const(ch.to_lowercase().collect::<String>()),
-            "len_utf8" => num(ch.len_utf8() as i128),
-            "to_digit" => {
-                let Some(arg) = self.args.first() else {
-                    return Outcome::from_opt(None);
-                };
-                let arg_term = match Self::build_child_term(arg, &fcx, ctx) {
-                    Ok(term) => term,
+            CharMethodKind::AsciiUpper => {
+                let ch = require_char(&receiver, "to_ascii_uppercase receiver");
+                str_const(ch.to_ascii_uppercase().to_string())
+            }
+            CharMethodKind::AsciiLower => {
+                let ch = require_char(&receiver, "to_ascii_lowercase receiver");
+                str_const(ch.to_ascii_lowercase().to_string())
+            }
+            CharMethodKind::UnicodeUpper => {
+                let ch = require_char(&receiver, "to_uppercase receiver");
+                str_const(ch.to_uppercase().collect::<String>())
+            }
+            CharMethodKind::UnicodeLower => {
+                let ch = require_char(&receiver, "to_lowercase receiver");
+                str_const(ch.to_lowercase().collect::<String>())
+            }
+            CharMethodKind::ToString => match term_to_string_const(&receiver) {
+                Some(value) => str_const(value),
+                None => str_const(require_char(&receiver, "to_string receiver").to_string()),
+            },
+            CharMethodKind::LenUtf8 => {
+                let ch = require_char(&receiver, "len_utf8 receiver");
+                num(ch.len_utf8() as i128)
+            }
+            CharMethodKind::ToDigit { radix } => {
+                let ch = require_char(&receiver, "to_digit receiver");
+                let radix = match term_body(radix, ctx) {
+                    Ok(term) => require_radix(&term),
                     Err(outcome) => return outcome,
-                };
-                let Some(radix) = term_to_radix(&arg_term) else {
-                    return Outcome::from_opt(None);
                 };
                 match ch.to_digit(radix) {
                     Some(value) => some_term(num(i128::from(value))),
                     None => none_term(),
                 }
             }
-            _ => return Outcome::from_opt(None),
         };
         Outcome::Complete(Desugared::Term(term))
     }
+}
+
+fn term_body(body: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Result<Rc<Term>, Outcome> {
+    match body.reduce(ctx) {
+        Outcome::Complete(d) => Ok(d
+            .into_term()
+            .unwrap_or_else(|| panic!("term body completed as non-term before char method"))),
+        Outcome::Incomplete(effect) => Err(Outcome::Incomplete(effect)),
+    }
+}
+
+fn term_to_string_const(term: &Rc<Term>) -> Option<String> {
+    let Term::Const {
+        value: ConstValue::String(value),
+        ..
+    } = term.as_ref()
+    else {
+        return None;
+    };
+    Some(value.clone())
+}
+
+fn term_to_char(term: &Rc<Term>) -> Option<char> {
+    let value = term_to_string_const(term)?;
+    let mut chars = value.chars();
+    let ch = chars.next()?;
+    if chars.next().is_none() {
+        Some(ch)
+    } else {
+        None
+    }
+}
+
+fn require_char(term: &Rc<Term>, context: &str) -> char {
+    term_to_char(term).unwrap_or_else(|| {
+        panic!("{context} did not reduce to a literal char; write the owning Sugar before Outcome")
+    })
+}
+
+fn require_radix(term: &Rc<Term>) -> u32 {
+    let Term::Const {
+        value: ConstValue::Int(value),
+        ..
+    } = term.as_ref()
+    else {
+        panic!("to_digit radix did not reduce to an integer literal; write the owning Sugar before Outcome");
+    };
+    u32::try_from(*value)
+        .ok()
+        .filter(|radix| (2..=36).contains(radix))
+        .unwrap_or_else(|| panic!("to_digit radix is outside 2..=36; no char-method Effect exists"))
 }

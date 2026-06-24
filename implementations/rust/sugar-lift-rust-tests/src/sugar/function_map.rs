@@ -9,11 +9,12 @@ use std::{collections::BTreeMap, rc::Rc};
 use sugar_ir_symbolic::{ConstValue, Term};
 use syn::Expr;
 
-use crate::sugar::factory::{build_composite, SugarBuildCtx};
+use crate::sugar::factory::{CompositeFloor, SugarBody, SugarBuildCtx};
 use crate::sugar::method_family;
+use crate::sugar::term_dispatch::literal_array_term_from_terms;
 use crate::{
-    const_eval, const_fold_int_term, literal_aggregate_term_in_scope, resolve_value_call_inline,
-    strip_refs_groups, ConstVal, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx,
+    const_eval, const_fold_int_term, const_val_term, resolve_value_call_inline, strip_refs_groups,
+    ConstVal, Desugared, DesugaredElem, Outcome, Sugar, SugarCtx,
 };
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -22,15 +23,18 @@ pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("function_map_term", recognize_term);
 
 pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
-    recognize_function_map(expr, fcx, SequenceKind::Any)
-        .map(|(receiver, func)| Box::new(FunctionMapCallSugar { receiver, func }) as Box<dyn Sugar>)
+    recognize_function_map(expr, fcx, SequenceKind::Any).map(|(receiver, func)| {
+        Box::new(FunctionMapCallSugar {
+            inner: SugarBody::composite(&receiver, fcx),
+            func,
+        }) as Box<dyn Sugar>
+    })
 }
 
 pub(crate) fn recognize_term(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     recognize_function_map(expr, fcx, SequenceKind::ArrayOnly).map(|(receiver, func)| {
         Box::new(FunctionMapTermSugar {
-            source: expr.clone(),
-            receiver,
+            inner: SugarBody::composite(&receiver, fcx),
             func,
         }) as Box<dyn Sugar>
     })
@@ -73,77 +77,84 @@ fn recognize_function_map(
 }
 
 struct FunctionMapCallSugar {
-    receiver: Expr,
+    inner: SugarBody<CompositeFloor>,
     func: Expr,
 }
 
 impl Sugar for FunctionMapCallSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            let inner = build_inner_composite(&self.receiver, ctx);
-            reduce_function_map(inner.as_ref(), &self.func, ctx).map(Desugared::Seq)
-        })())
+        match reduce_function_map(&self.inner, &self.func, ctx) {
+            Ok(seq) => Outcome::Complete(Desugared::Seq(seq)),
+            Err(outcome) => outcome,
+        }
     }
 }
 
 pub(crate) struct FunctionMapSugar {
-    pub(crate) inner: Box<dyn Sugar>,
+    pub(crate) inner: SugarBody<CompositeFloor>,
     pub(crate) func: Expr,
 }
 
 impl Sugar for FunctionMapSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt(
-            reduce_function_map(self.inner.as_ref(), &self.func, ctx).map(Desugared::Seq),
-        )
+        match reduce_function_map(&self.inner, &self.func, ctx) {
+            Ok(seq) => Outcome::Complete(Desugared::Seq(seq)),
+            Err(outcome) => outcome,
+        }
     }
 }
 
 pub(crate) struct FunctionMapTermSugar {
-    pub(crate) source: Expr,
-    pub(crate) receiver: Expr,
+    pub(crate) inner: SugarBody<CompositeFloor>,
     pub(crate) func: Expr,
 }
 
 impl Sugar for FunctionMapTermSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        Outcome::from_opt((|| {
-            let inner = build_inner_composite(&self.receiver, ctx);
-            let mapped = reduce_function_map(inner.as_ref(), &self.func, ctx)?;
-            let exprs: Vec<Expr> = mapped.into_iter().map(|elem| elem.expr).collect();
-            let term =
-                literal_aggregate_term_in_scope("Array", exprs.iter(), &self.source, ctx.scope)
-                    .ok()?;
-            Some(Desugared::Term(term))
-        })())
+        let mapped = match reduce_function_map(&self.inner, &self.func, ctx) {
+            Ok(mapped) => mapped,
+            Err(outcome) => return outcome,
+        };
+        let terms = mapped
+            .iter()
+            .map(|elem| {
+                elem.value
+                    .as_ref()
+                    .and_then(const_val_term)
+                    .unwrap_or_else(|| {
+                        function_map_gap("function map term element was not literal")
+                    })
+            })
+            .collect::<Vec<_>>();
+        Outcome::Complete(Desugared::Term(literal_array_term_from_terms(&terms)))
     }
 }
 
-fn build_inner_composite(receiver: &Expr, ctx: &SugarCtx) -> Box<dyn Sugar> {
-    let let_inits = scope_let_inits(ctx);
-    let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-    build_composite(receiver, &fcx)
-}
-
-fn scope_let_inits<'a, 'c>(ctx: &SugarCtx<'a, 'c>) -> BTreeMap<String, &'a Expr> {
-    ctx.scope
-        .let_bindings_iter()
-        .map(|(name, init)| (name.clone(), init))
-        .collect()
-}
-
 fn reduce_function_map(
-    inner: &dyn Sugar,
+    inner: &SugarBody<CompositeFloor>,
     func: &Expr,
     ctx: &SugarCtx,
-) -> Option<Vec<DesugaredElem>> {
-    let seq = inner.desugar(ctx).complete()?.into_seq()?;
+) -> Result<Vec<DesugaredElem>, Outcome> {
+    let seq = match inner.reduce(ctx) {
+        Outcome::Complete(d) => d
+            .into_seq()
+            .unwrap_or_else(|| function_map_gap("function map receiver reduced to non-sequence")),
+        Outcome::Incomplete(effect) => return Err(Outcome::Incomplete(effect)),
+    };
     let mut out = Vec::with_capacity(seq.len());
     for elem in seq {
-        let value = elem.value.as_ref()?;
-        let arg = value.to_expr()?;
-        let mapped = eval_function_value(func, arg, ctx)?;
-        let expr = mapped.to_expr()?;
+        let value = elem
+            .value
+            .as_ref()
+            .unwrap_or_else(|| function_map_gap("function map element was not literal"));
+        let arg = value
+            .to_expr()
+            .unwrap_or_else(|| function_map_gap("function map element could not materialize"));
+        let mapped = eval_function_value(func, arg, ctx)
+            .unwrap_or_else(|| function_map_gap("function map body did not reduce to a literal"));
+        let expr = mapped
+            .to_expr()
+            .unwrap_or_else(|| function_map_gap("function map result could not materialize"));
         out.push(DesugaredElem {
             expr,
             value: Some(mapped),
@@ -155,7 +166,11 @@ fn reduce_function_map(
         func = %crate::token_key(func),
         "literal function map reduced"
     );
-    Some(out)
+    Ok(out)
+}
+
+fn function_map_gap(reason: &str) -> ! {
+    panic!("function_map did not reach a lawful floor: {reason}")
 }
 
 fn eval_function_value(func: &Expr, arg: Expr, ctx: &SugarCtx) -> Option<ConstVal> {

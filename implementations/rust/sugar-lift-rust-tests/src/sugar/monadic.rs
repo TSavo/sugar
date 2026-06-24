@@ -36,20 +36,19 @@
 // stays on the existing call machinery. (A user type's *constructor* named
 // `Some`/`Ok`/`Err`/`None` is pathological and not in scope.)
 //
-// THE INNER IS BUILT VIA THE FACTORY AT DESUGAR TIME. `Some(x)`'s inner `x` is
-// composed with `build_term`, so a constructor over a literal (`Some(&1)` ->
-// `Some(1)`), a const, or any grounding term flows through. A child `Incomplete`
-// propagates verbatim (the effect/runtime boundary holds: `Some(some_io())`
-// blows up, never grounds); a child that does not reduce to a term bails via the
-// structural backstop.
+// THE INNER IS BUILT BY THE FACTORY AT CONSTRUCTION TIME. `Some(x)`'s inner `x`
+// is a `SugarBody<TermFloor>` handed to this node by the recognizer, so desugar
+// only reduces the already-constructed body and wraps the monadic floor. A child
+// `Incomplete` propagates verbatim (the effect/runtime boundary holds:
+// `Some(some_io())` blows up, never grounds); a child that completes to a
+// non-term is a construction-law bug and panics.
 
-use std::{collections::BTreeMap, rc::Rc};
+use std::rc::Rc;
 
 use sugar_ir_symbolic::Term;
 use syn::Expr;
 
-use crate::sugar::factory::{build_term, SugarBuildCtx};
-use crate::sugar::format::stable_let_bindings;
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::{strip_refs_groups, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -74,11 +73,11 @@ pub(crate) const RES_ERR: &str = "res:err";
 /// Which monadic constructor this node builds.
 enum Kind {
     /// `Some(x)` -- one inner child.
-    Some(Expr),
+    Some(SugarBody<TermFloor>),
     /// `Ok(x)` -- one inner child.
-    Ok(Expr),
+    Ok(SugarBody<TermFloor>),
     /// `Err(x)` -- one inner child.
-    Err(Expr),
+    Err(SugarBody<TermFloor>),
     /// `None` -- nullary.
     None,
 }
@@ -98,10 +97,9 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
         // `None::<isize>` with a turbofish, `Option::None`). `is_ident` is too
         // strict (it rejects a turbofish / a qualified path), and `None::<T>` is
         // the common form in vendor code, so match the FINAL SEGMENT ident.
-        Expr::Path(path) if path_ends_with(path, "None") => Some(Box::new(MonadicSugar {
-            kind: Kind::None,
-            let_inits: capture_let_inits(fcx),
-        })),
+        Expr::Path(path) if path_ends_with(path, "None") => {
+            Some(Box::new(MonadicSugar { kind: Kind::None }))
+        }
         // `Some(x)` / `Ok(x)` / `Err(x)`: a single-argument call whose head path's
         // final segment is the constructor ident (also allowing a turbofish /
         // qualified path like `Some::<i32>(x)` / `Option::Some(x)`).
@@ -109,19 +107,17 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
             let Expr::Path(path) = &*call.func else {
                 return None;
             };
+            let inner = SugarBody::term(strip_refs_groups(&call.args[0]), fcx);
             let kind = if path_ends_with(path, "Some") {
-                Kind::Some(call.args[0].clone())
+                Kind::Some(inner)
             } else if path_ends_with(path, "Ok") {
-                Kind::Ok(call.args[0].clone())
+                Kind::Ok(inner)
             } else if path_ends_with(path, "Err") {
-                Kind::Err(call.args[0].clone())
+                Kind::Err(inner)
             } else {
                 return None;
             };
-            Some(Box::new(MonadicSugar {
-                kind,
-                let_inits: capture_let_inits(fcx),
-            }))
+            Some(Box::new(MonadicSugar { kind }))
         }
         _ => None,
     }
@@ -198,49 +194,17 @@ pub(crate) fn is_grounded_literal_term(term: &Term) -> bool {
 /// The constructive `Option`/`Result` constructor node. completes its inner child to
 /// a `Term` (for the unary ctors) and emits `Term::Ctor { name, args }` keyed by
 /// the reserved monadic name. A child `Incomplete` propagates verbatim; a child that
-/// does not reduce to a term bails via the structural backstop.
+/// completes to a non-term panics because this node was constructed with a term floor.
 struct MonadicSugar {
     kind: Kind,
-    let_inits: BTreeMap<String, Expr>,
-}
-
-fn capture_let_inits(fcx: &SugarBuildCtx) -> BTreeMap<String, Expr> {
-    fcx.let_inits()
-        .iter()
-        .map(|(name, init)| (name.clone(), (**init).clone()))
-        .collect()
 }
 
 impl MonadicSugar {
-    fn build(
-        name: &str,
-        inner: &Expr,
-        ctx: &SugarCtx,
-        captured_let_inits: &BTreeMap<String, Expr>,
-    ) -> Outcome {
-        let stable = stable_let_bindings(ctx.scope);
-        let let_inits: BTreeMap<String, &Expr> = stable
-            .iter()
-            .map(|(name, init)| (name.clone(), init))
-            .chain(
-                captured_let_inits
-                    .iter()
-                    .map(|(name, init)| (name.clone(), init)),
-            )
-            .collect();
-        let fcx = SugarBuildCtx::new(ctx.scope, ctx.options, &let_inits);
-        // Strip a leading `&`/`&mut`/paren/group on the inner: `Some(&1)` and
-        // `Some(1)` denote the SAME `Option` value (a borrow of a literal is
-        // value-equal to the literal under structural `==`), and the iterator
-        // positional terminals yield `Some(&T)` -> `opt:some(<elem>)`, so the
-        // borrow must NOT introduce a spurious `ref(_)` wrapper that would make
-        // `Some(&1)` differ from the grounded `.next()` value. Building the
-        // STRIPPED inner keeps both sides byte-identical so they meet under the
-        // ADT.
-        let term = match build_term(strip_refs_groups(inner), &fcx).desugar(ctx) {
+    fn build(name: &str, inner: &SugarBody<TermFloor>, ctx: &SugarCtx) -> Outcome {
+        let term = match inner.reduce(ctx) {
             Outcome::Complete(d) => match d.into_term() {
                 Some(t) => t,
-                None => return Outcome::from_opt(None),
+                None => panic!("monadic constructor child completed as non-term for `{name}`"),
             },
             Outcome::Incomplete(e) => return Outcome::Incomplete(e),
         };
@@ -254,9 +218,9 @@ impl MonadicSugar {
 impl Sugar for MonadicSugar {
     fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match &self.kind {
-            Kind::Some(inner) => MonadicSugar::build(OPT_SOME, inner, ctx, &self.let_inits),
-            Kind::Ok(inner) => MonadicSugar::build(RES_OK, inner, ctx, &self.let_inits),
-            Kind::Err(inner) => MonadicSugar::build(RES_ERR, inner, ctx, &self.let_inits),
+            Kind::Some(inner) => MonadicSugar::build(OPT_SOME, inner, ctx),
+            Kind::Ok(inner) => MonadicSugar::build(RES_OK, inner, ctx),
+            Kind::Err(inner) => MonadicSugar::build(RES_ERR, inner, ctx),
             Kind::None => Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
                 name: OPT_NONE.to_string(),
                 args: Vec::new(),
@@ -269,7 +233,26 @@ impl Sugar for MonadicSugar {
 mod tests {
     use super::*;
     use crate::Effect;
-    use sugar_ir_symbolic::num;
+    use sugar_ir_symbolic::{make_var, num};
+
+    fn body(term: Rc<Term>) -> SugarBody<TermFloor> {
+        SugarBody::from_node(crate::sugar::term_leaf::resolved_term(term))
+    }
+
+    struct StubIncomplete;
+
+    impl Sugar for StubIncomplete {
+        fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+            Outcome::Incomplete(Effect::LiteralPanic {
+                boundary: "monadic-child".to_string(),
+                reason: "literal child panic; refused".to_string(),
+            })
+        }
+    }
+
+    fn incomplete_body() -> SugarBody<TermFloor> {
+        SugarBody::from_node(Box::new(StubIncomplete))
+    }
 
     fn run(node: &dyn Sugar) -> Outcome {
         let scope = crate::TemporalScope::new("test", crate::TemporalPlan::default());
@@ -298,8 +281,7 @@ mod tests {
     #[test]
     fn some_emits_opt_some_over_inner_term() {
         let node = MonadicSugar {
-            kind: Kind::Some(syn::parse_quote!(1)),
-            let_inits: BTreeMap::new(),
+            kind: Kind::Some(body(num(1))),
         };
         let term = dug_term(&node);
         let (name, args) = ctor_of(&term);
@@ -311,10 +293,7 @@ mod tests {
 
     #[test]
     fn none_emits_nullary_opt_none() {
-        let node = MonadicSugar {
-            kind: Kind::None,
-            let_inits: BTreeMap::new(),
-        };
+        let node = MonadicSugar { kind: Kind::None };
         let term = dug_term(&node);
         let (name, args) = ctor_of(&term);
         assert_eq!(name, OPT_NONE);
@@ -324,12 +303,10 @@ mod tests {
     #[test]
     fn ok_and_err_are_distinct_reserved_names() {
         let ok = dug_term(&MonadicSugar {
-            kind: Kind::Ok(syn::parse_quote!(x)),
-            let_inits: BTreeMap::new(),
+            kind: Kind::Ok(body(make_var("x"))),
         });
         let err = dug_term(&MonadicSugar {
-            kind: Kind::Err(syn::parse_quote!(x)),
-            let_inits: BTreeMap::new(),
+            kind: Kind::Err(body(make_var("x"))),
         });
         assert_eq!(ctor_of(&ok).0, RES_OK);
         assert_eq!(ctor_of(&err).0, RES_ERR);
@@ -341,14 +318,13 @@ mod tests {
         // The effect/runtime boundary holds: `Some(<unsupported term>)` blows up,
         // never grounds.
         let node = MonadicSugar {
-            kind: Kind::Some(syn::parse_quote!(async { 1 })),
-            let_inits: BTreeMap::new(),
+            kind: Kind::Some(incomplete_body()),
         };
         match run(&node) {
-            Outcome::Incomplete(Effect::Unsupported { reason }) => {
+            Outcome::Incomplete(Effect::LiteralPanic { reason, .. }) => {
                 assert!(!reason.is_empty())
             }
-            Outcome::Incomplete(_) => panic!("expected the child's Unsupported Incomplete"),
+            Outcome::Incomplete(_) => panic!("expected the child's LiteralPanic Incomplete"),
             Outcome::Complete(_) => panic!("expected the child's Incomplete, got Complete"),
         }
     }
