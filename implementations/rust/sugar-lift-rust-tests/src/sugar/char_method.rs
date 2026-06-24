@@ -180,10 +180,16 @@ impl Sugar for CharMethodSugar {
 
         let term = match &self.kind {
             CharMethodKind::Bool { method } => {
-                let ch = require_char(&receiver, "char bool method receiver");
-                let result = eval_bool_method(method, ch)
-                    .unwrap_or_else(|| panic!("unknown char bool method `{method}`"));
-                bool_const(result)
+                if let Some(ch) = term_to_char(&receiver) {
+                    let result = eval_bool_method(method, ch)
+                        .unwrap_or_else(|| panic!("unknown char bool method `{method}`"));
+                    bool_const(result)
+                } else {
+                    Rc::new(Term::Ctor {
+                        name: format!("method:{method}"),
+                        args: vec![receiver],
+                    })
+                }
             }
             CharMethodKind::AsciiUpper => {
                 let ch = require_char(&receiver, "to_ascii_uppercase receiver");

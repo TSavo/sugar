@@ -6,7 +6,9 @@ use sugar_ir_symbolic::{make_var, ConstValue, LetBinding, Term};
 
 use crate::sugar::int_literal::{numeric_floor_from_term, NumericFloor};
 use crate::sugar::monadic::{OPT_NONE, OPT_SOME, RES_ERR, RES_OK};
-use crate::{canonical_term_sig, const_fold_int_term, num, Desugared};
+use crate::{
+    bool_const, canonical_term_sig, const_fold_int_term, const_fold_u128_term, num, Desugared,
+};
 
 /// A finite-domain occurrence context for a term-floor curry.
 ///
@@ -82,6 +84,16 @@ impl BoolFloorVisitor for RequiredBoolVisitor<'_> {
             self.owner,
             canonical_term_sig(term)
         )
+    }
+}
+
+pub(crate) struct LiteralPredicateBoolVisitor;
+
+impl TermFloorVisitor for LiteralPredicateBoolVisitor {
+    type Output = Option<bool>;
+
+    fn visit_term(self, term: &Rc<Term>) -> Self::Output {
+        literal_predicate_bool(term)
     }
 }
 
@@ -238,10 +250,23 @@ fn curry_term(
 ) -> Rc<Term> {
     match term.as_ref() {
         Term::Var { name } if name == param => Rc::clone(arg),
-        Term::Ctor { name, args } if runtime_occurrence_ctor(name) => Rc::new(Term::Ctor {
-            name: format!("{}{}", name, occurrence.suffix()),
-            args: Vec::new(),
-        }),
+        Term::Ctor { name, args } if runtime_occurrence_ctor(name) => {
+            let curried = Rc::new(Term::Ctor {
+                name: name.clone(),
+                args: args
+                    .iter()
+                    .map(|child| curry_term(child, param, arg, occurrence))
+                    .collect(),
+            });
+            if let Some(value) = literal_predicate_bool(&curried) {
+                bool_const(value)
+            } else {
+                Rc::new(Term::Ctor {
+                    name: format!("{}{}", name, occurrence.suffix()),
+                    args: Vec::new(),
+                })
+            }
+        }
         Term::Ctor { name, args } => Rc::new(Term::Ctor {
             name: name.clone(),
             args: args
@@ -274,6 +299,139 @@ fn curry_term(
 
 fn runtime_occurrence_ctor(name: &str) -> bool {
     name.starts_with("call:") || name.starts_with("method:")
+}
+
+fn literal_predicate_bool(term: &Rc<Term>) -> Option<bool> {
+    match term.as_ref() {
+        Term::Const {
+            value: ConstValue::Bool(value),
+            ..
+        } => Some(*value),
+        Term::Ctor { name, args } if name == "bit-not" && args.len() == 1 => {
+            literal_predicate_bool(&args[0]).map(|value| !value)
+        }
+        Term::Ctor { name, args } if name == "deref" && args.len() == 1 => {
+            literal_predicate_bool(&args[0])
+        }
+        Term::Ctor { name, args } if name.starts_with("cmp:") && args.len() == 2 => {
+            literal_cmp_bool(name, &args[0], &args[1])
+        }
+        Term::Ctor { name, args } if name.starts_with("method:") && args.len() == 1 => {
+            literal_method_bool(name.strip_prefix("method:")?, &args[0])
+        }
+        _ => None,
+    }
+}
+
+fn literal_cmp_bool(name: &str, left: &Rc<Term>, right: &Rc<Term>) -> Option<bool> {
+    let left = peel_deref_term(left);
+    let right = peel_deref_term(right);
+    if let Some((left, right)) = literal_u128_pair(left, right) {
+        return match name {
+            "cmp:eq" => Some(left == right),
+            "cmp:neq" => Some(left != right),
+            "cmp:lt" => Some(left < right),
+            "cmp:le" => Some(left <= right),
+            "cmp:gt" => Some(left > right),
+            "cmp:ge" => Some(left >= right),
+            _ => None,
+        };
+    }
+    let (left, right) = (const_fold_int_term(left)?, const_fold_int_term(right)?);
+    match name {
+        "cmp:eq" => Some(left == right),
+        "cmp:neq" => Some(left != right),
+        "cmp:lt" => Some(left < right),
+        "cmp:le" => Some(left <= right),
+        "cmp:gt" => Some(left > right),
+        "cmp:ge" => Some(left >= right),
+        _ => None,
+    }
+}
+
+fn literal_u128_pair(left: &Rc<Term>, right: &Rc<Term>) -> Option<(u128, u128)> {
+    let left_u = const_fold_u128_term(left);
+    let right_u = const_fold_u128_term(right);
+    if left_u.is_none() && right_u.is_none() {
+        return None;
+    }
+    Some((
+        left_u.or_else(|| const_fold_int_term(left).and_then(|n| u128::try_from(n).ok()))?,
+        right_u.or_else(|| const_fold_int_term(right).and_then(|n| u128::try_from(n).ok()))?,
+    ))
+}
+
+fn literal_method_bool(method: &str, receiver: &Rc<Term>) -> Option<bool> {
+    let receiver = peel_deref_term(receiver);
+    if let Some(ch) = literal_char(receiver) {
+        return literal_char_method_bool(method, ch);
+    }
+    let byte = const_fold_int_term(receiver).and_then(|n| u8::try_from(n).ok())?;
+    literal_byte_method_bool(method, byte)
+}
+
+fn peel_deref_term(term: &Rc<Term>) -> &Rc<Term> {
+    match term.as_ref() {
+        Term::Ctor { name, args } if name == "deref" && args.len() == 1 => {
+            peel_deref_term(&args[0])
+        }
+        _ => term,
+    }
+}
+
+fn literal_char(term: &Rc<Term>) -> Option<char> {
+    let Term::Const {
+        value: ConstValue::String(value),
+        ..
+    } = term.as_ref()
+    else {
+        return None;
+    };
+    let mut chars = value.chars();
+    let ch = chars.next()?;
+    chars.next().is_none().then_some(ch)
+}
+
+fn literal_char_method_bool(method: &str, ch: char) -> Option<bool> {
+    match method {
+        "is_alphabetic" => Some(ch.is_alphabetic()),
+        "is_numeric" => Some(ch.is_numeric()),
+        "is_ascii" => Some(ch.is_ascii()),
+        "is_alphanumeric" => Some(ch.is_alphanumeric()),
+        "is_whitespace" => Some(ch.is_whitespace()),
+        "is_uppercase" => Some(ch.is_uppercase()),
+        "is_lowercase" => Some(ch.is_lowercase()),
+        "is_ascii_alphabetic" => Some(ch.is_ascii_alphabetic()),
+        "is_ascii_digit" => Some(ch.is_ascii_digit()),
+        "is_ascii_alphanumeric" => Some(ch.is_ascii_alphanumeric()),
+        "is_ascii_octdigit" => Some(matches!(ch, '0'..='7')),
+        "is_ascii_lowercase" => Some(ch.is_ascii_lowercase()),
+        "is_ascii_uppercase" => Some(ch.is_ascii_uppercase()),
+        "is_ascii_hexdigit" => Some(ch.is_ascii_hexdigit()),
+        "is_ascii_punctuation" => Some(ch.is_ascii_punctuation()),
+        "is_ascii_graphic" => Some(ch.is_ascii_graphic()),
+        "is_ascii_whitespace" => Some(ch.is_ascii_whitespace()),
+        "is_ascii_control" => Some(ch.is_ascii_control()),
+        _ => None,
+    }
+}
+
+fn literal_byte_method_bool(method: &str, byte: u8) -> Option<bool> {
+    match method {
+        "is_ascii" => Some(byte.is_ascii()),
+        "is_ascii_alphabetic" => Some(byte.is_ascii_alphabetic()),
+        "is_ascii_digit" => Some(byte.is_ascii_digit()),
+        "is_ascii_alphanumeric" => Some(byte.is_ascii_alphanumeric()),
+        "is_ascii_octdigit" => Some(matches!(byte, b'0'..=b'7')),
+        "is_ascii_lowercase" => Some(byte.is_ascii_lowercase()),
+        "is_ascii_uppercase" => Some(byte.is_ascii_uppercase()),
+        "is_ascii_hexdigit" => Some(byte.is_ascii_hexdigit()),
+        "is_ascii_punctuation" => Some(byte.is_ascii_punctuation()),
+        "is_ascii_graphic" => Some(byte.is_ascii_graphic()),
+        "is_ascii_whitespace" => Some(byte.is_ascii_whitespace()),
+        "is_ascii_control" => Some(byte.is_ascii_control()),
+        _ => None,
+    }
 }
 
 pub(crate) fn literal_array_term_from_terms(terms: &[Rc<Term>]) -> Rc<Term> {
@@ -350,6 +508,81 @@ mod tests {
             }
             other => panic!("expected curried call occurrence, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn curry_dispatches_literal_method_predicate_to_bool_floor() {
+        let term = Rc::new(Term::Ctor {
+            name: "method:is_ascii_uppercase".to_string(),
+            args: vec![var("ch")],
+        });
+
+        let curried = term.accept_term_floor(CurryVisitor {
+            param: "ch",
+            arg: &num(i128::from(b'A')),
+            occurrence: CurryOccurrence {
+                family: "quant",
+                ordinal: 0,
+            },
+        });
+
+        assert_eq!(
+            curried.accept_term_floor(LiteralPredicateBoolVisitor),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn curry_keeps_opaque_method_as_orderless_occurrence_symbol() {
+        let term = Rc::new(Term::Ctor {
+            name: "method:opaque_predicate".to_string(),
+            args: vec![var("x")],
+        });
+
+        let curried = term.accept_term_floor(CurryVisitor {
+            param: "x",
+            arg: &num(7),
+            occurrence: CurryOccurrence {
+                family: "quant",
+                ordinal: 2,
+            },
+        });
+
+        match curried.as_ref() {
+            Term::Ctor { name, args } => {
+                assert_eq!(name, "method:opaque_predicate#quant3");
+                assert!(args.is_empty());
+            }
+            other => panic!("expected opaque method occurrence, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn predicate_visitor_folds_curried_comparison_floor() {
+        let term = Rc::new(Term::Ctor {
+            name: "cmp:gt".to_string(),
+            args: vec![
+                Rc::new(Term::Ctor {
+                    name: "deref".to_string(),
+                    args: vec![var("n")],
+                }),
+                num(3),
+            ],
+        });
+
+        let curried = term.accept_term_floor(CurryVisitor {
+            param: "n",
+            arg: &num(4),
+            occurrence: CurryOccurrence {
+                family: "quant",
+                ordinal: 0,
+            },
+        });
+
+        assert_eq!(
+            curried.accept_term_floor(LiteralPredicateBoolVisitor),
+            Some(true)
+        );
     }
 
     #[test]
