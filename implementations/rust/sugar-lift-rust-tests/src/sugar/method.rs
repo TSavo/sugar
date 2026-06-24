@@ -1,32 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// `MethodSugar` + the TERM recognizer for `Expr::MethodCall`. The constructive
-// method-call term node completes the receiver child FIRST, applies the per-occurrence
-// consuming-iterator `@adv{n}` re-tag (a runtime read of `ctx.scope`), then completes the
-// arg children in source order, and emits `method:<m>` over `[receiver, args..]`.
+// `MethodSugar` + the TERM recognizer for `Expr::MethodCall`.
 //
-// The recognizer runs the source-of-truth preamble in order: a CLOSED
-// `try_fold`/`try_rfold` grounds to a literal and re-builds THAT; a closure-bearing
-// adaptor in term position refuses with collection provenance; otherwise the EUF
-// `method:` ctor node. This is the TERM-position node — DISTINCT from the COMPOSITE
-// `fold`/`for_each`/closure-
-// adaptor/match-scrutinee dispatch the COMPOSITE catalog routes `Expr::MethodCall` to.
-// Byte-identical to the old fat factory's `Expr::MethodCall` term arm.
+// MethodSugar owns method callsite identity, not method-specific value semantics
+// and not runtime effects. It completes the receiver child first, then arg children
+// in source order, and emits `method:<m>` over `[receiver, args..]`. Child effects
+// bubble up unchanged. A receiver/arg that completes as a non-term is an impossible
+// construction state and panics loudly.
 
 use std::rc::Rc;
 
-use sugar_ir_symbolic::{make_var, Term};
+use sugar_ir_symbolic::Term;
 use syn::Expr;
 
-use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
-};
-use crate::sugar::term_leaf::reasoned_incomplete;
-use crate::try_fold_eval;
-use crate::{
-    angle_args_key, closure_adaptor_refusal, is_consuming_iterator_method,
-    receiver_is_versioned_iterator, simple_path_name, Desugared, Effect, Outcome, Sugar, SugarCtx,
-};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
+use crate::{angle_args_key, Desugared, Outcome, Sugar, SugarCtx};
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::fallback_term("method", recognize);
@@ -36,32 +24,14 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     let Expr::MethodCall(call) = expr else {
         return None;
     };
-    let scope = fcx.scope();
-    // CLOSED try_fold / try_rfold: ground to a literal and re-build THAT.
-    if matches!(call.method.to_string().as_str(), "try_fold" | "try_rfold") {
-        if let Some(grounded) = try_fold_eval::eval_try_fold_operand(expr, scope) {
-            return Some(Box::new(MethodSugar::Grounded {
-                body: SugarBody::term(&grounded, fcx),
-            }));
-        }
-    }
-    // A closure-bearing adaptor in term position refuses with collection provenance.
-    if let Some(reason) = closure_adaptor_refusal(expr, scope) {
-        return Some(reasoned_incomplete(reason));
-    }
-    // The constructive `method:` ctor. The RECEIVER is completed first; a per-occurrence
-    // consuming-iterator advance re-tags the receiver var (`@adv{n}`).
-    Some(Box::new(MethodSugar::Constructive {
-        method: method_key(call),
-        receiver_expr: call.receiver.as_ref().clone(),
-        receiver: SugarBody::term(&call.receiver, fcx),
-        is_consuming: is_consuming_iterator_method(&call.method.to_string()),
-        args: call
-            .args
+    Some(Box::new(MethodSugar::new(
+        method_key(call),
+        SugarBody::term(&call.receiver, fcx),
+        call.args
             .iter()
             .map(|arg| SugarBody::term(arg, fcx))
             .collect(),
-    }))
+    )))
 }
 
 /// The `method:<m>` ctor key: `method.turbofish` appends the angle-args key.
@@ -72,90 +42,207 @@ pub(crate) fn method_key(call: &syn::ExprMethodCall) -> String {
     }
 }
 
-/// Method-call term nodes are constructed with their receiver/arg bodies. Raw source
-/// spelling is retained only for method identity and source-property checks.
+/// Method-call term nodes are constructed with their receiver/arg bodies. The
+/// only source-derived payload retained by this generic bridge is the stable
+/// method key; value semantics belong to specific method sugars and floors.
 enum MethodSugar {
-    Grounded {
-        body: SugarBody<TermFloor>,
-    },
     Constructive {
         method: String,
-        receiver_expr: Expr,
         receiver: SugarBody<TermFloor>,
-        is_consuming: bool,
         args: Vec<SugarBody<TermFloor>>,
     },
 }
 
+impl MethodSugar {
+    fn new(
+        method: impl Into<String>,
+        receiver: SugarBody<TermFloor>,
+        args: Vec<SugarBody<TermFloor>>,
+    ) -> Self {
+        MethodSugar::Constructive {
+            method: method.into(),
+            receiver,
+            args,
+        }
+    }
+}
+
 impl Sugar for MethodSugar {
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match self {
-            MethodSugar::Grounded { body } => body.reduce(ctx),
             MethodSugar::Constructive {
                 method,
-                receiver_expr,
                 receiver,
-                is_consuming,
                 args,
             } => {
-                if matches!(method.as_str(), "starts_with" | "ends_with") {
-                    if let Some(recv_name) = simple_path_name(receiver_expr) {
-                        if ctx.scope.is_mut_local(&recv_name) {
-                            return Ok(Outcome::Incomplete(Effect::Unsupported {
-                                reason: format!(
-                                    "{method} predicate over a MUTABLE-local receiver `{recv_name}` \
-                                     (bin-2: a slice/string mutated by side-effecting iteration, not \
-                                     constructed from source literals); refused"
-                                ),
-                            }));
-                        }
-                    }
-                }
-                let mut receiver = match receiver.reduce(ctx)? {
+                let receiver = match receiver.reduce(ctx) {
                     Outcome::Complete(d) => match d.into_term() {
                         Some(t) => t,
                         None => {
-                            return Err(FactoryGap::new(format!(
+                            panic!(
                                 "method `{method}` receiver completed a non-Term where a Term was required; write more Sugar for this AST"
-                            )))
+                            );
                         }
                     },
-                    Outcome::Incomplete(e) => return Ok(Outcome::Incomplete(e)),
+                    Outcome::Incomplete(e) => return Outcome::Incomplete(e),
                 };
-                if *is_consuming {
-                    if let Term::Var { name } = receiver.as_ref() {
-                        if receiver_is_versioned_iterator(name, ctx.scope) {
-                            let occ = ctx.scope.bump_consuming_occurrence(name);
-                            if occ > 0 {
-                                receiver = make_var(format!("{name}@adv{occ}"));
-                            }
-                        }
-                    }
-                }
                 let mut terms = vec![receiver];
                 for arg in args {
-                    let term = match arg.reduce(ctx)? {
+                    let term = match arg.reduce(ctx) {
                         Outcome::Complete(d) => match d.into_term() {
                             Some(t) => t,
                             None => {
-                                return Err(FactoryGap::new(format!(
+                                panic!(
                                     "method `{method}` argument completed a non-Term where a Term was required; write more Sugar for this AST"
-                                )))
+                                );
                             }
                         },
-                        Outcome::Incomplete(e) => return Ok(Outcome::Incomplete(e)),
+                        Outcome::Incomplete(e) => return Outcome::Incomplete(e),
                     };
                     terms.push(term);
                 }
-                Ok(Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
+                Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
                     name: format!("method:{method}"),
                     args: terms,
-                }))))
+                })))
             }
         }
     }
+}
 
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        sugar_ctx, Desugared, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar,
+        TemporalPlan, TemporalScope,
+    };
+    use sugar_ir_symbolic::{make_var, Term};
+    use syn::Item;
+
+    fn expr(src: &str) -> Expr {
+        syn::parse_str(src).expect("parse expr")
+    }
+
+    fn term_body(src: &str) -> SugarBody<TermFloor> {
+        let parsed = expr(src);
+        let scope = TemporalScope::new("test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = std::collections::BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        SugarBody::term(&parsed, &fcx)
+    }
+
+    fn run(node: &MethodSugar) -> Outcome {
+        let items: Vec<Item> = Vec::new();
+        let reducer = ReductionCtx::from_items(&items);
+        let scope = TemporalScope::new("test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let mut fw = FloatWidthScope::new();
+        let ctx = sugar_ctx(&scope, &options, &reducer, &mut fw, 0);
+        node.desugar(&ctx)
+    }
+
+    fn ctor_arg_vars(term: &Term) -> Vec<String> {
+        let Term::Ctor { args, .. } = term else {
+            panic!("expected a Ctor, got {term:?}");
+        };
+        args.iter()
+            .map(|a| match &**a {
+                Term::Var { name } => name.clone(),
+                other => panic!("expected a Var arg, got {other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn emits_method_ctor_with_receiver_then_args() {
+        let node = MethodSugar::new("get", term_body("receiver"), vec![term_body("idx")]);
+
+        let Outcome::Complete(Desugared::Term(term)) = run(&node) else {
+            panic!("expected a Complete term");
+        };
+
+        match &*term {
+            Term::Ctor { name, .. } => assert_eq!(name, "method:get"),
+            other => panic!("expected a Ctor, got {other:?}"),
+        }
+        assert_eq!(
+            ctor_arg_vars(&term),
+            vec!["receiver".to_string(), "idx".to_string()]
+        );
+    }
+
+    #[test]
+    fn method_does_not_own_starts_with_refusal() {
+        let node = MethodSugar::new(
+            "starts_with",
+            term_body("receiver"),
+            vec![term_body("needle")],
+        );
+
+        let Outcome::Complete(Desugared::Term(term)) = run(&node) else {
+            panic!("expected method bridge, not a method-owned effect");
+        };
+
+        match &*term {
+            Term::Ctor { name, args } => {
+                assert_eq!(name, "method:starts_with");
+                assert_eq!(args.len(), 2);
+            }
+            other => panic!("expected a Ctor, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn propagates_receiver_effect_verbatim() {
+        let node = MethodSugar::new("touch", term_body("&mut receiver"), Vec::new());
+
+        match run(&node) {
+            Outcome::Incomplete(effect) => {
+                let reason = effect.reason();
+                assert!(
+                    reason.contains("mutable"),
+                    "unexpected receiver effect: {reason}"
+                );
+            }
+            Outcome::Complete(_) => panic!("expected receiver effect to bubble up"),
+        }
+    }
+
+    #[test]
+    fn propagates_argument_effect_verbatim() {
+        let node = MethodSugar::new("touch", term_body("receiver"), vec![term_body("&mut arg")]);
+
+        match run(&node) {
+            Outcome::Incomplete(effect) => {
+                let reason = effect.reason();
+                assert!(
+                    reason.contains("mutable"),
+                    "unexpected argument effect: {reason}"
+                );
+            }
+            Outcome::Complete(_) => panic!("expected argument effect to bubble up"),
+        }
+    }
+
+    #[test]
+    fn non_term_receiver_is_a_gap_not_an_effect() {
+        struct NonTermReceiver;
+
+        impl Sugar for NonTermReceiver {
+            fn desugar(&self, _ctx: &SugarCtx) -> Outcome {
+                Outcome::Complete(Desugared::TermSeq(vec![make_var("not_a_receiver_term")]))
+            }
+        }
+
+        let node = MethodSugar::new(
+            "touch",
+            SugarBody::from_node(Box::new(NonTermReceiver)),
+            Vec::new(),
+        );
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&node)));
+        assert!(panic.is_err(), "non-term receiver must gap loudly");
     }
 }
