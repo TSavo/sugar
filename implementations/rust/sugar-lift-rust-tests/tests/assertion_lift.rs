@@ -8275,7 +8275,7 @@ fn const_array_ops() {
 }
 
 #[test]
-fn nested_const_block_arguments_stay_residual_until_keyed_deliberately() {
+fn nested_const_block_function_item_is_a_gap_not_a_fake_residual() {
     let src = r#"
 fn apply(_: fn(usize) -> usize) -> usize { 0 }
 
@@ -8287,16 +8287,20 @@ fn nested_const_arg() {
     assert_eq!(apply(const { doubler }), 0);
 }
 "#;
-    let out = lift_file(&parse(src), "tests/array.rs");
-    assert_eq!(out.seen, 1);
-    assert_eq!(out.lifted, 0);
-    assert!(out.decls.is_empty());
+    let panic = std::panic::catch_unwind(|| lift_file(&parse(src), "tests/array.rs"))
+        .expect_err("function-item const block must be a direct gap");
+    let message = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap_or("<non-string panic>");
     assert!(
-        out.warnings.iter().any(|warning| warning
-            .reason
-            .contains("unsupported term `const { doubler }`")),
-        "nested const block should stay residual, warnings: {:?}",
-        out.warnings
+        message.contains("unsupported term `const { doubler }`"),
+        "gap must name the const function-item site: {message}"
+    );
+    assert!(
+        !message.contains("legacy reason leaf"),
+        "const block must gap directly, not through ReasonedIncompleteSugar: {message}"
     );
 }
 
