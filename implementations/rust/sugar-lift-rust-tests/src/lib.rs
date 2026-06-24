@@ -131,6 +131,7 @@ pub mod sugar {
     pub mod literal;
     pub mod literal_iterator_quantifier;
     pub mod literal_slice;
+    pub mod loop_break_term;
     pub mod macro_assertion_surface;
     pub mod macro_term;
     pub mod map;
@@ -5714,6 +5715,12 @@ pub(crate) fn const_fold_int_term(term: &Rc<Term>) -> Option<i128> {
         // like `Add::add(lhs, &rhs)` fold through the `ref(...)` wrapper that
         // `reference_term::recognize` emits for the borrowed argument.
         Term::Ctor { name, args } if name == "ref" && args.len() == 1 => {
+            const_fold_int_term(&args[0])
+        }
+        // Predicate/iterator floors often see `|&x| *x` as `deref(literal)`.
+        // Deref is transparent only when the child already owns a const integer
+        // floor; runtime or pointer-like derefs still decline.
+        Term::Ctor { name, args } if name == "deref" && args.len() == 1 => {
             const_fold_int_term(&args[0])
         }
         _ => None,
@@ -11376,13 +11383,9 @@ fn collect_assertion_entries<'a>(
                         macro_depth,
                         factory_audits,
                     );
-                    // FACTORY WIRING (slice 1): the recursive `build` factory
-                    // dispatches `Expr::ForLoop` to `decompose_for_loop` (its arm is
-                    // `boxed(decompose_for_loop(f, scope, let_inits))`), so this is the
-                    // byte-identical drop-in for the former inline call -- `boxed(Some)
-                    // .desugar().complete()` == the old `.and_then(|s| s.desugar().complete())`,
-                    // and `boxed(None)` -> `Incomplete(Unsupported)` -> `.complete()` == the old
-                    // `None`. First site where `build()` goes live in the collector.
+                    // FACTORY WIRING: a constructible `Expr::ForLoop` builds the typed
+                    // `ForAllSugar`; an unconstructible one declines, and the catalog
+                    // miss stays a loud factory gap instead of a deferred backstop node.
                     let fcx = sugar::factory::SugarBuildCtx::new(&for_scope, options, &let_inits);
                     sugar::factory::build_composite(e, &fcx)
                         .desugar(&ctx)
@@ -24628,55 +24631,26 @@ mod lifter_key_tests {
     }
 
     #[test]
-    fn adversarial_c_pure_but_untranslated_term_stays_unclassified_not_refused() {
-        // (c) THE CRITICAL LINE: a PURE-but-untranslated term must STAY UNCLASSIFIED
-        // (honest future work for a Sugar/const_eval arm), NEVER reclassified as a
-        // SideEffect. A VALUE-POSITION `loop`/`break` term (`loop { break 5; }`) is
-        // PURE -- no mutation, no iter-advance, no runtime value (it breaks with a
-        // literal) -- we simply have not transcribed a value-producing `loop { break v }`
-        // yet. (The EUF term path completes MOST untranslated calls as uninterpreted symbols
-        // -- e.g. `char::from_u32(i).unwrap().to_ascii_uppercase()` over `0..3` lifts
-        // soundly via EUF -- so a genuine term-GAP is rare; this loop-break term is one.
-        // Refusing it as an effect would be a FAKE-REFUSE: mislabeling our own work as a
-        // source property -- the exact trap that put 8 bad terminals in an earlier floor.)
-        //
-        // NOTE: this fixture has migrated as each shape got an arm -- `(1i32 as f64)` (a
-        // then-untranslated cast, now the opaque `cast:fN(..)` ctor), then
-        // `if true { 1 } else { 2 }` (now const-folded by `const_if`), then
-        // `match 7 { 7 => 1, _ => 2 }` (now const-folded by `match_value_term`). The intent
-        // (a pure term stays unclassified, never fake-refused) is preserved here with the
-        // still-untranslated `loop`/`break` value term.
+    fn literal_loop_break_term_warrants_literal_value() {
+        // A value-position `loop { break v; }` with a literal break payload is a
+        // finite source rewrite, not a runtime effect and not an accounting gap. The
+        // loop sugar owns only the loop/break shell; the break payload is a typed
+        // term child and therefore carries any downstream effect itself.
         let src = r#"
             #[test]
-            fn pure_untranslated() {
-                assert_eq!(loop { break 5; }, 1);
+            fn literal_loop_break() {
+                assert_eq!(loop { break 5; }, 5);
             }
         "#;
         let out = lift_src(src);
-        // It is refused-as-not-discharged (we did not lift it), but its disposition is
-        // UNCLASSIFIED work, NOT a terminal SideEffect refuse.
         assert_eq!(
-            out.assertions_lifted, 0,
-            "the untranslated pure term must not be (falsely) discharged: {:?}",
+            out.assertions_lifted, 1,
+            "literal loop-break should reduce to its payload term: {:?}",
             out.skip_reasons
         );
         assert!(
-            !out.skip_reasons.is_empty()
-                && out
-                    .skip_reasons
-                    .iter()
-                    .all(|r| matches!(refusal_disposition(r), Disposition::Unclassified)),
-            "a PURE-but-untranslated term must STAY UNCLASSIFIED, never a SideEffect refuse: {:?}",
-            out.skip_reasons
-        );
-        // And specifically: it must NOT have been laundered into any effect reason.
-        assert!(
-            out.skip_reasons.iter().all(|r| {
-                !r.contains("side-effecting closure body")
-                    && !r.contains("mutable container is not temporally stable")
-                    && !(r.contains("bin-2") && r.contains("runtime"))
-            }),
-            "EFFECT-OR-LEAVE: a pure term must not wear any SideEffect reason: {:?}",
+            out.skip_reasons.is_empty(),
+            "literal loop-break should not emit a refuse/gap reason: {:?}",
             out.skip_reasons
         );
     }

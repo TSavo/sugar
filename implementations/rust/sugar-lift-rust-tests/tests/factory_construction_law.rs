@@ -75,6 +75,8 @@ const FORBIDDEN_GAP_SYMBOLS: &[&str] = &[
     "structural_bail_to_gap",
 ];
 
+const FORBIDDEN_OPTIONAL_BACKSTOP_SYMBOLS: &[&str] = &["backstop::boxed"];
+
 const FORBIDDEN_SUGAR_RUNTIME_ARGUMENT_SYMBOLS: &[&str] =
     &["Effect::RuntimeArgument", "RuntimeArgument {"];
 
@@ -100,6 +102,22 @@ fn names_and_blames_fake_gap_symbols() {
     assert!(
         violations.is_empty(),
         "construction-law fake-gap violation: panic is the convention-failure path; Incomplete is only a named effect.\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
+fn names_and_blames_optional_backstop_boxing() {
+    let violations = forbidden_symbol_violations(
+        &manifest_dir().join("src/sugar"),
+        &manifest_dir().join("src"),
+        FORBIDDEN_OPTIONAL_BACKSTOP_SYMBOLS,
+        "optional backstop boxing",
+        "recognizers must decline None instead of constructing a structural backstop sugar",
+    );
+    assert!(
+        violations.is_empty(),
+        "construction-law optional-backstop violation: failing to construct a sugar is a factory gap/decline, not a deferred sugar object.\n{}",
         violations.join("\n")
     );
 }

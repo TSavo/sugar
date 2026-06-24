@@ -23,14 +23,14 @@ use crate::sugar::{
     identity_map, impl_method, index, infinity_eq, inspect, int_midpoint, int_pow, int_sqrt,
     integer_decode, intersperse, intersperse_collect_string, intersperse_concat, into, ip_addr,
     is_empty, is_sorted, iter_next, iter_terminal, iterator, kmerge, len, literal,
-    literal_iterator_quantifier, literal_slice, macro_assertion_surface, macro_term, map,
-    match_node, match_scrutinee, matches_macro, maybe_uninit_new, maybe_uninit_zeroed, memchr,
-    method, monadic, nonzero, offset_of, option_adaptor, option_predicate, option_unwrap,
-    partition_point, path, peekable, primitive_int, ptr_metadata, range_accessor, range_construct,
-    range_contains, range_term, raw_addr_term, reference_sequence, reference_term, regex_match,
-    repeat_term, result_predicate, result_transpose_collect, rev, size_hint, sizeof, skip,
-    skip_while, slice_accessor, slice_chunk_window, slice_index, slice_search,
-    statement_async_future, statement_control_flow, statement_future_handoff,
+    literal_iterator_quantifier, literal_slice, loop_break_term, macro_assertion_surface,
+    macro_term, map, match_node, match_scrutinee, matches_macro, maybe_uninit_new,
+    maybe_uninit_zeroed, memchr, method, monadic, nonzero, offset_of, option_adaptor,
+    option_predicate, option_unwrap, partition_point, path, peekable, primitive_int, ptr_metadata,
+    range_accessor, range_construct, range_contains, range_term, raw_addr_term, reference_sequence,
+    reference_term, regex_match, repeat_term, result_predicate, result_transpose_collect, rev,
+    size_hint, sizeof, skip, skip_while, slice_accessor, slice_chunk_window, slice_index,
+    slice_search, statement_async_future, statement_control_flow, statement_future_handoff,
     statement_loop_advance, statement_reflection, statement_runtime_expr, step_by, str_method,
     string_add, string_predicate, struct_term, take, take_while, term_literal, to_string,
     transparent_term, try_from, try_from_fn, try_map, tuple_decomp, tuple_term, unary,
@@ -167,6 +167,7 @@ const EXPR_CLAIMS: &[&ExprSugarClaim] = &[
     &macro_term::EXPR_SUGAR,
     &closure_term::EXPR_SUGAR,
     &block_term::EXPR_SUGAR,
+    &loop_break_term::EXPR_SUGAR,
     &control_flow_term::TERM_EXPR_SUGAR,
     &transparent_term::COMPOSITE_EXPR_SUGAR,
     &bound_path::COMPOSITE_EXPR_SUGAR,
@@ -402,8 +403,8 @@ mod tests {
     use crate::sugar::claim::{ExprSugarClaim, SugarRole};
     use crate::sugar::factory::SugarBuildCtx;
     use crate::{
-        FactoryAuditLog, FactoryDisposition, LiftOptions, Outcome, ReductionCtx, Sugar, SugarCtx,
-        TemporalPlan, TemporalScope,
+        FactoryAuditLog, FactoryDisposition, LiftOptions, MacroRegistry, Outcome, ReductionCtx,
+        Sugar, SugarCtx, TemporalPlan, TemporalScope,
     };
 
     struct NoopSugar;
@@ -474,6 +475,22 @@ mod tests {
 
     fn selected_candidate_name_for_role(expr: &Expr, role: SugarRole) -> Option<&'static str> {
         let scope = TemporalScope::new("catalog-test", TemporalPlan::default());
+        let options = LiftOptions::default();
+        let let_inits = BTreeMap::new();
+        let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
+        super::matching_expr_claims_for_role(expr, &fcx, role)
+            .into_iter()
+            .next()
+            .map(|candidate| candidate.name())
+    }
+
+    fn selected_candidate_name_for_role_with_macros(
+        expr: &Expr,
+        role: SugarRole,
+        macros: MacroRegistry,
+    ) -> Option<&'static str> {
+        let scope =
+            TemporalScope::new("catalog-test", TemporalPlan::default()).with_macro_registry(macros);
         let options = LiftOptions::default();
         let let_inits = BTreeMap::new();
         let fcx = SugarBuildCtx::new(&scope, &options, &let_inits);
@@ -1373,6 +1390,30 @@ mod tests {
         assert_eq!(
             selected_candidate_name_for_role(&expr, SugarRole::Constraint),
             Some("constraint_runtime_expr")
+        );
+    }
+
+    #[test]
+    fn relation_macro_assertion_surface_outranks_macro_expansion_surface() {
+        let expr: Expr = syn::parse_str("assert_eq_const_safe!(u8: make_val(), 42)").unwrap();
+        let mut macros = MacroRegistry::new();
+        macros.scan_source(
+            r#"
+            macro_rules! assert_eq_const_safe {
+                ($t:ty: $left:expr, $right:expr) => {
+                    assert_eq!($left, $right);
+                };
+            }
+            "#,
+        );
+
+        assert_eq!(
+            selected_candidate_name_for_role_with_macros(
+                &expr,
+                SugarRole::AssertionSurface,
+                macros
+            ),
+            Some("assertion_surface_relation_macro")
         );
     }
 

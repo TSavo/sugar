@@ -14,7 +14,6 @@ use std::rc::Rc;
 use sugar_ir_symbolic::{and_, eq, implies, not_, or_, str_const, Formula, Term};
 use syn::{Expr, Pat, Stmt};
 
-use crate::sugar::backstop::boxed;
 use crate::sugar::configuration::{CfgDisposition, ConfigurationSugar};
 use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::monadic;
@@ -32,12 +31,12 @@ pub(crate) const TERM_EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::term("match_value_term", recognize_term);
 
 /// COMPOSITE recognizer for `Expr::Match`: the conjunction composite ([`MatchSugar`]
-/// via [`decompose_match`]). Byte-identical to the
-/// `Expr::Match(m) => boxed(decompose_match(m, fcx.scope(), fcx.options()))` arm of the old
-/// fat `build_composite`.
+/// via [`decompose_match`]). If the match cannot construct a lawful node, this
+/// recognizer declines and lets the factory's structural gap stay loud.
 pub(crate) fn recognize_composite(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     match expr {
-        Expr::Match(m) => Some(boxed(decompose_match(m, fcx.scope(), fcx.options()))),
+        Expr::Match(m) => decompose_match(m, fcx.scope(), fcx.options())
+            .map(|node| Box::new(node) as Box<dyn Sugar>),
         _ => None,
     }
 }

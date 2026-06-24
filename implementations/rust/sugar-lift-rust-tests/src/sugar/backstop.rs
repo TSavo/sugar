@@ -8,13 +8,6 @@ pub(crate) fn unsupported() -> Box<dyn Sugar> {
     Box::new(UnsupportedSugar)
 }
 
-pub(crate) fn boxed<S: Sugar + 'static>(node: Option<S>) -> Box<dyn Sugar> {
-    match node {
-        Some(node) => Box::new(node),
-        None => unsupported(),
-    }
-}
-
 struct UnsupportedSugar;
 
 impl Sugar for UnsupportedSugar {

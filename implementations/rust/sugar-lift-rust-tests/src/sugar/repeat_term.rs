@@ -8,12 +8,10 @@
 // `decompose_array_repeat` directly as the refuse-shape). Byte-identical to the
 // `Expr::Repeat` arm of the old fat factory.
 
-use crate::sugar::array_repeat::decompose_array_repeat;
+use crate::sugar::array_repeat;
 use crate::sugar::factory::SugarBuildCtx;
 use crate::sugar::term_leaf::{reasoned_incomplete, resolved_term};
-use crate::{
-    literal_aggregate_term_in_scope, repeat_count_in_scope, token_key, Effect, Outcome, Sugar,
-};
+use crate::{literal_aggregate_term_in_scope, repeat_count_in_scope, Sugar};
 use syn::Expr;
 
 pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
@@ -26,23 +24,11 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
     };
     let scope = fcx.scope();
     let Some(count) = repeat_count_in_scope(&repeat.len, scope) else {
-        return Some(match decompose_array_repeat(expr) {
-            Some(node) => match node.desugar_ctx_free() {
-                Outcome::Incomplete(effect @ Effect::ArrayRepeat { .. }) => {
-                    reasoned_incomplete(effect.reason())
-                }
-                _ => reasoned_incomplete(format!("unsupported term `{}`", token_key(expr))),
-            },
-            None => reasoned_incomplete(format!("unsupported term `{}`", token_key(expr))),
-        });
+        return Some(array_repeat::refusal_node(expr));
     };
     const MAX_REPEAT: usize = 4096;
     if count > MAX_REPEAT {
-        return Some(reasoned_incomplete(format!(
-            "array-repeat length {count} exceeds the {MAX_REPEAT}-element \
-             expansion bound; refused by name: `{}`",
-            token_key(expr)
-        )));
+        return Some(array_repeat::refusal_node(expr));
     }
     let elem_refs = std::iter::repeat(&*repeat.expr).take(count);
     Some(
