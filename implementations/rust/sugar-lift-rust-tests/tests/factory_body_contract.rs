@@ -113,6 +113,11 @@ side_door_floor!(
     "CellRefCellSugar"
 );
 side_door_floor!(
+    call_desugar_uses_upstream_sugar_body,
+    "src/sugar/call.rs",
+    "CallSugar"
+);
+side_door_floor!(
     chain_desugar_uses_upstream_sugar_body,
     "src/sugar/chain.rs",
     "ChainSugar"

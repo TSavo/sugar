@@ -9,9 +9,8 @@
 //
 //   Term::Ctor { name: format!("call:{}", expr_head_key(&func)), args: <arg terms> }
 //
-// The recognizer captures the raw function expression and raw arguments. `desugar`
-// computes the func-head key and builds each child argument lazily, in source order,
-// once the full binding context is available.
+// The recognizer captures the function-head key and typed argument bodies at
+// construction. `desugar` only reduces those bodies and composes the term floor.
 //
 // THE RECOGNIZER PREAMBLE. The `Expr::Call` shape has an EARLY-RETURN
 // recognizer BEFORE the constructive tail:
@@ -20,21 +19,20 @@
 //       return Ok(term);
 //   }
 //
-// That `TypeId::of::<T>()` const-fold (and its own `?`-propagated `Err`) is owned by
-// `recognize`: it decides whether the constructive `call:` ctor is reached at all.
-// `CallSugar` is the CONSTRUCTIVE COMPOSER ONLY -- it is built only after the preamble
-// has been cleared, and then emits the `call:` ctor.
+// That `TypeId::of::<T>()` const-fold is owned by the recognizer: it decides whether
+// the constructive `call:` ctor is reached at all. A malformed `TypeId::of` shape is
+// a construction gap and panics instead of manufacturing an effect. `CallSugar` is the
+// CONSTRUCTIVE COMPOSER ONLY -- it is built only after the preamble has been cleared,
+// and then emits the `call:` ctor.
 
 use std::rc::Rc;
 
 use sugar_ir_symbolic::{str_const, Term};
 use syn::Expr;
 
-use crate::sugar::factory::{
-    compat_reduction, FactoryGap, FactoryReduction, SugarBody, SugarBuildCtx, TermFloor,
-};
+use crate::sugar::factory::{SugarBody, SugarBuildCtx, TermFloor};
 use crate::sugar::monadic::{none_term, some_term};
-use crate::sugar::term_leaf::reasoned_incomplete;
+use crate::sugar::term_leaf::resolved_term;
 use crate::{
     const_fold_int_term, const_fold_u128_term, expr_head_key, num, type_id_of_call_term, u128_term,
     Desugared, Outcome, Sugar, SugarCtx,
@@ -44,20 +42,28 @@ pub(crate) const EXPR_SUGAR: crate::sugar::claim::ExprSugarClaim =
     crate::sugar::claim::ExprSugarClaim::fallback_term("call", recognize);
 
 /// TERM recognizer for `Expr::Call`. Mirrors the source-of-truth arm in order: the
-/// `TypeId::of` const-fold preamble FIRST (a resolved term, or a reasoned-Incomplete on
-/// `Err`), then the constructive `call:<head>` ctor over the arg children ([`CallSugar`]).
+/// `TypeId::of` const-fold preamble FIRST (a resolved term, or a construction gap on
+/// malformed syntax), then the constructive `call:<head>` ctor over the arg children
+/// ([`CallSugar`]).
 pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Sugar>> {
     let Expr::Call(call) = expr else {
         return None;
     };
     if type_id_of_call_decision(&call.func, call.args.len()).is_some() {
-        return Some(Box::new(CallSugar::TypeId {
-            func: call.func.as_ref().clone(),
-            arg_len: call.args.len(),
-        }));
+        return Some(match type_id_of_call_term(&call.func, call.args.len()) {
+            Ok(Some(term)) => resolved_term(term),
+            Ok(None) => {
+                panic!("TypeId::of call did not resolve; write more Sugar for this AST")
+            }
+            Err(reason) => {
+                panic!(
+                    "TypeId::of call is not structurally constructible: {reason}; write more Sugar for this AST"
+                )
+            }
+        });
     }
     Some(Box::new(CallSugar::Constructive {
-        func: call.func.as_ref().clone(),
+        head_key: expr_head_key(&call.func),
         args: call
             .args
             .iter()
@@ -70,20 +76,24 @@ pub(crate) fn recognize(expr: &Expr, fcx: &SugarBuildCtx) -> Option<Box<dyn Suga
 /// `desugar` emits the `call:<head>` ctor over its argument child terms (the
 /// constructive tail of the `Expr::Call` arm). See the module header.
 pub(crate) enum CallSugar {
-    TypeId {
-        func: Expr,
-        arg_len: usize,
-    },
     Constructive {
-        func: Expr,
+        head_key: String,
         args: Vec<SugarBody<TermFloor>>,
     },
 }
 
 impl CallSugar {
     #[allow(dead_code)]
-    pub(crate) fn new(func: Expr, args: Vec<SugarBody<TermFloor>>) -> Self {
-        CallSugar::Constructive { func, args }
+    pub(crate) fn new(head_key: impl Into<String>, args: Vec<SugarBody<TermFloor>>) -> Self {
+        CallSugar::Constructive {
+            head_key: head_key.into(),
+            args,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn from_func(func: &Expr, args: Vec<SugarBody<TermFloor>>) -> Self {
+        CallSugar::new(expr_head_key(func), args)
     }
 }
 
@@ -128,41 +138,32 @@ fn is_type_id_of_path(path: &syn::Path) -> bool {
 impl Sugar for CallSugar {
     /// Dig each argument child to its `Term` (in source order), then emit the
     /// `call:<head>` ctor over the collected terms -- the constructive tail of the
-    /// `Expr::Call` arm, byte-identical. A child that `Incomplete`s a named order-loss
-    /// boundary propagates that `Incomplete` verbatim (the old named inner `Err`); a child
-    /// that completes to a non-term `Desugared` (`into_term` -> `None`) bails the node via
-    /// the structural backstop (`Outcome::from_opt(None)`, the old `?`-propagated
-    /// generic refusal).
-    fn reduce(&self, ctx: &SugarCtx) -> FactoryReduction {
+    /// `Expr::Call` arm, byte-identical. A child that `Incomplete`s a named boundary
+    /// propagates that `Incomplete` verbatim; a child
+    /// that completes to a non-term `Desugared` is an impossible construction state and
+    /// panics loudly.
+    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
         match self {
-            CallSugar::TypeId { func, arg_len } => match type_id_of_call_term(func, *arg_len) {
-                Ok(Some(term)) => Ok(Outcome::Complete(Desugared::Term(term))),
-                Ok(None) => Err(FactoryGap::new(
-                    "TypeId::of call did not resolve; write more Sugar for this AST",
-                )),
-                Err(reason) => Ok(reasoned_incomplete(reason).desugar(ctx)),
-            },
-            CallSugar::Constructive { func, args } => {
+            CallSugar::Constructive { head_key, args } => {
                 let mut terms = Vec::new();
                 for arg in args {
-                    let term = match arg.reduce(ctx)? {
+                    let term = match arg.reduce(ctx) {
                         Outcome::Complete(d) => match d.into_term() {
                             Some(t) => t,
                             None => {
-                                return Err(FactoryGap::new(format!(
+                                panic!(
                                     "call `{}` argument completed a non-Term where a Term was required; write more Sugar for this AST",
-                                    expr_head_key(func)
-                                )))
+                                    head_key
+                                );
                             }
                         },
-                        Outcome::Incomplete(e) => return Ok(Outcome::Incomplete(e)),
+                        Outcome::Incomplete(e) => return Outcome::Incomplete(e),
                     };
                     terms.push(term);
                 }
-                let head_key = expr_head_key(func);
                 if terms.len() == 1 {
-                    if let Some(term) = fold_char_from_u32_call(&head_key, &terms[0]) {
-                        return Ok(Outcome::Complete(Desugared::Term(term)));
+                    if let Some(term) = fold_char_from_u32_call(head_key, &terms[0]) {
+                        return Outcome::Complete(Desugared::Term(term));
                     }
                 }
                 // ARITHMETIC TRAIT-METHOD FOLD: `Add::add(x, y)` → `x + y`, const-evaluated.
@@ -175,29 +176,25 @@ impl Sugar for CallSugar {
                 // `const_fold_int_term` now transparently strips). Without this fold the call
                 // emits an opaque `call:Add::add(...)` EUF that the SMT cannot evaluate.
                 if terms.len() == 2 {
-                    if let Some(arith_op) = arith_trait_method_op(&head_key) {
+                    if let Some(arith_op) = arith_trait_method_op(head_key) {
                         let folded = Rc::new(Term::Ctor {
                             name: arith_op.to_string(),
                             args: terms.clone(),
                         });
                         if let Some(value) = const_fold_u128_term(&folded) {
-                            return Ok(Outcome::Complete(Desugared::Term(u128_term(value))));
+                            return Outcome::Complete(Desugared::Term(u128_term(value)));
                         }
                         if let Some(value) = const_fold_int_term(&folded) {
-                            return Ok(Outcome::Complete(Desugared::Term(num(value))));
+                            return Outcome::Complete(Desugared::Term(num(value)));
                         }
                     }
                 }
-                Ok(Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
+                Outcome::Complete(Desugared::Term(Rc::new(Term::Ctor {
                     name: format!("call:{head_key}"),
                     args: terms,
-                }))))
+                })))
             }
         }
-    }
-
-    fn desugar(&self, ctx: &SugarCtx) -> Outcome {
-        compat_reduction(self.reduce(ctx))
     }
 }
 
@@ -243,14 +240,14 @@ fn arith_trait_method_op(head_key: &str) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    // `CallSugar` is the CONSTRUCTIVE composer: given raw argument expressions and a
-    // raw function expression, it lazily emits the `call:<head>` ctor over the child
-    // terms. These tests exercise that constructive tail directly through the real
-    // factory path, asserting the exact emitted ctor (name + args order) and verbatim
-    // child `Incomplete` propagation.
+    // `CallSugar` is the CONSTRUCTIVE composer: given a captured function-head key
+    // and typed argument bodies, it emits the `call:<head>` ctor over the child terms.
+    // These tests exercise that constructive tail directly through the real factory
+    // path, asserting the exact emitted ctor (name + args order) and verbatim child
+    // `Incomplete` propagation.
     use super::*;
     use crate::{
-        sugar_ctx, Desugared, Effect, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar,
+        sugar_ctx, Desugared, FloatWidthScope, LiftOptions, Outcome, ReductionCtx, Sugar,
         TemporalPlan, TemporalScope,
     };
     use sugar_ir_symbolic::Term;
@@ -297,7 +294,7 @@ mod tests {
     fn emits_call_ctor_with_args_in_order() {
         // `f(x, y)` -> `Ctor { name: "call:f", args: [Var(x), Var(y)] }` -- the exact
         // ctor the `Expr::Call` constructive tail emits, args in SOURCE ORDER.
-        let node = CallSugar::new(expr("f"), vec![term_body("x"), term_body("y")]);
+        let node = CallSugar::new("f", vec![term_body("x"), term_body("y")]);
         let Outcome::Complete(Desugared::Term(term)) = run(&node) else {
             panic!("expected a Complete term");
         };
@@ -312,7 +309,7 @@ mod tests {
     #[test]
     fn nullary_call_emits_empty_args() {
         // `g()` -> `Ctor { name: "call:g", args: [] }`.
-        let node = CallSugar::new(expr("g"), Vec::new());
+        let node = CallSugar::new("g", Vec::new());
         let Outcome::Complete(Desugared::Term(term)) = run(&node) else {
             panic!("expected a Complete term");
         };
@@ -327,8 +324,10 @@ mod tests {
 
     #[test]
     fn head_key_computed_from_func_expr() {
-        // The function expression is retained raw and keyed lazily in `desugar`.
-        let node = CallSugar::new(expr("h"), vec![term_body("a")]);
+        // `from_func` is the construction-time adapter that turns syntax into the
+        // stable head key. `desugar` never retains or reopens the raw function expr.
+        let func = expr("h");
+        let node = CallSugar::from_func(&func, vec![term_body("a")]);
         let Outcome::Complete(Desugared::Term(term)) = run(&node) else {
             panic!("expected a Complete term");
         };
@@ -342,17 +341,15 @@ mod tests {
     fn propagates_child_hit_verbatim() {
         // A child that returns Incomplete aborts the whole node with that SAME `Incomplete` (the old named
         // inner `translate_term_in_scope?` `Err`).
-        let node = CallSugar::new(expr("f"), vec![term_body("x"), term_body("&mut y")]);
+        let node = CallSugar::new("f", vec![term_body("x"), term_body("&mut y")]);
         match run(&node) {
-            Outcome::Incomplete(Effect::Unsupported { reason }) => {
+            Outcome::Incomplete(effect) => {
+                let reason = effect.reason();
                 assert!(
                     reason.contains("unsupported term"),
                     "unexpected reason: {reason}"
                 );
                 assert!(reason.contains("mutable"), "unexpected reason: {reason}");
-            }
-            Outcome::Incomplete(_) => {
-                panic!("expected the child's Unsupported Incomplete, got a different Incomplete")
             }
             Outcome::Complete(_) => {
                 panic!("expected the child's Incomplete to propagate, got a Complete")
